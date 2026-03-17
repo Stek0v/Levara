@@ -1,0 +1,158 @@
+services:
+  cognee:
+    build:
+      context: ./cognee
+      dockerfile: Dockerfile
+    ports:
+      - "8002:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    environment:
+      - HOST=0.0.0.0
+      - ENVIRONMENT=local
+      - LOG_LEVEL=INFO
+      - DEBUG=false
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-*}
+      # LLM — Qwen 3.5 via Ollama
+      - LLM_API_KEY=ollama
+      - LLM_MODEL=openai/qwen3.5
+      - LLM_PROVIDER=openai
+      - LLM_ENDPOINT=http://10.23.0.64:11434/v1
+      # Embedding — nomic-embed-text via Ollama
+      - EMBEDDING_MODEL=nomic-embed-text
+      - EMBEDDING_PROVIDER=ollama
+      - EMBEDDING_ENDPOINT=http://10.23.0.64:11434/api/embed
+      - HUGGINGFACE_TOKENIZER=nomic-ai/nomic-embed-text-v1.5
+      - EMBEDDING_DIMENSIONS=768
+      # PostgreSQL
+      - DB_PROVIDER=postgres
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=${POSTGRES_DB:-cognee_db}
+      - DB_USERNAME=${POSTGRES_USER:-cognee}
+      - DB_PASSWORD=${POSTGRES_PASSWORD:-cognee}
+      # Neo4j
+      - GRAPH_DATABASE_PROVIDER=neo4j
+      - GRAPH_DATABASE_URL=bolt://neo4j:7687
+      - GRAPH_DATABASE_NAME=neo4j
+      - GRAPH_DATABASE_USERNAME=neo4j
+      - GRAPH_DATABASE_PASSWORD=${NEO4J_PASSWORD:-pleaseletmein}
+      # VectraDB
+      - VECTOR_DB_PROVIDER=vectradb
+      - VECTOR_DB_URL=http://vectradb:8080
+      - VECTOR_DB_KEY=${VECTOR_DB_KEY:-}
+      # Redis
+      - REDIS_URL=redis://redis:6379
+      # Rate Limiting
+      - LLM_RATE_LIMIT_ENABLED=true
+      - LLM_RATE_LIMIT_REQUESTS=30
+      - LLM_RATE_LIMIT_INTERVAL=60
+      # Monitoring
+      - LITELLM_LOG=DEBUG
+      - TELEMETRY_DISABLED=1
+      - COGNEE_SKIP_CONNECTION_TEST=true
+      - GRAPH_DATASET_DATABASE_HANDLER=neo4j_aura_dev
+      - ENABLE_BACKEND_ACCESS_CONTROL=false
+    depends_on:
+      postgres:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      vectradb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c 'import urllib.request; r=urllib.request.urlopen(\"http://localhost:8000/health\"); exit(0 if r.status==200 else 1)'"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - cognee-network
+    deploy:
+      resources:
+        limits:
+          cpus: "4.0"
+          memory: 8GB
+
+  vectradb:
+    build: ./VectraDB
+    ports:
+      - "8080:8080"
+    volumes:
+      - vectradb-data:/app/data
+    command: ["./vectradb", "-bootstrap=true", "-dim=${VECTRADB_DIM:-768}", "-shards=${VECTRADB_SHARDS:-3}", "-port=8080"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/metrics"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - cognee-network
+
+  postgres:
+    image: pgvector/pgvector:pg17
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-cognee}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cognee}
+      POSTGRES_DB: ${POSTGRES_DB:-cognee_db}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cognee} -d ${POSTGRES_DB:-cognee_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cognee-network
+
+  neo4j:
+    image: neo4j:5-community
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD:-pleaseletmein}
+      - NEO4J_PLUGINS=["apoc"]
+    volumes:
+      - neo4j-data:/data
+    healthcheck:
+      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "${NEO4J_PASSWORD:-pleaseletmein}", "RETURN 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks:
+      - cognee-network
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6381:6379"
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - cognee-network
+
+networks:
+  cognee-network:
+    name: cognee-qwen-network
+
+volumes:
+  vectradb-data:
+  postgres-data:
+  neo4j-data:
+  redis-data:
