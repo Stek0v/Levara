@@ -3,6 +3,7 @@ package store
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"sync"
 )
 
@@ -10,6 +11,13 @@ type VectroRecord struct {
 	ID    string
 	Score float32
 	Data  json.RawMessage
+}
+
+// pendingItem holds data for records accepted but not yet indexed by HNSW.
+type pendingItem struct {
+	vector []float32
+	id     string
+	idx    uint32
 }
 
 type VectraDB struct {
@@ -30,6 +38,12 @@ type VectraDB struct {
 	wal *WAL
 
 	hnsw *HNSWIndex
+
+	// Async HNSW indexing: records land here after durable write,
+	// background goroutine drains them into hnsw.Add().
+	pendingMu   sync.RWMutex
+	pendingVecs []pendingItem
+	indexSignal chan struct{}
 }
 
 func NewVectraDB(dim int, storagePath string) (*VectraDB, error) {
@@ -46,14 +60,15 @@ func NewVectraDB(dim int, storagePath string) (*VectraDB, error) {
 	localArena := NewVectorArena(dim)
 
 	db := &VectraDB{
-		index:    make(map[string]uint32),
-		revIndex: make([]string, 0, 10000),
-		arena:    localArena,
-		metaLocs: make(map[uint32]FileLocation),
-		disk:     ds,
-		dim:      dim,
-		wal:      wal,
-		hnsw:     NewHNSWIndex(localArena),
+		index:       make(map[string]uint32),
+		revIndex:    make([]string, 0, 10000),
+		arena:       localArena,
+		metaLocs:    make(map[uint32]FileLocation),
+		disk:        ds,
+		dim:         dim,
+		wal:         wal,
+		hnsw:        NewHNSWIndex(localArena),
+		indexSignal: make(chan struct{}, 1),
 	}
 
 	fmt.Println("Replaying WAL to restore data....")
@@ -64,29 +79,63 @@ func NewVectraDB(dim int, storagePath string) (*VectraDB, error) {
 	})
 	fmt.Printf("Recovered %d records from WAL\n", count)
 
+	// Start background HNSW indexer.
+	go db.indexerLoop()
+
 	return db, nil
+}
+
+// indexerLoop drains pendingVecs into hnsw.Add in the background.
+func (db *VectraDB) indexerLoop() {
+	for range db.indexSignal {
+		for {
+			db.pendingMu.Lock()
+			if len(db.pendingVecs) == 0 {
+				db.pendingMu.Unlock()
+				break
+			}
+			batch := db.pendingVecs
+			db.pendingVecs = nil
+			db.pendingMu.Unlock()
+
+			for _, p := range batch {
+				db.hnsw.Add(p.vector, p.id, p.idx)
+			}
+		}
+	}
+}
+
+// signalIndexer wakes up the background HNSW indexer (non-blocking).
+func (db *VectraDB) signalIndexer() {
+	select {
+	case db.indexSignal <- struct{}{}:
+	default:
+	}
 }
 
 func (db *VectraDB) Insert(id string, vector []float32, data any) error {
 	db.mu.Lock()
-	defer db.mu.Unlock()
 
 	bytes, err := json.Marshal(data)
 	if err != nil {
+		db.mu.Unlock()
 		return fmt.Errorf("Failed to marshal metadata: %w", err)
 	}
 
 	idx, err := db.arena.Add(vector)
 	if err != nil {
+		db.mu.Unlock()
 		return err
 	}
 
 	loc, err := db.disk.Write(bytes)
 	if err != nil {
+		db.mu.Unlock()
 		return err
 	}
 
 	if err := db.wal.WriteEntry(OpInsert, id, vector, bytes, loc); err != nil {
+		db.mu.Unlock()
 		return fmt.Errorf("wal write: %w", err)
 	}
 
@@ -97,14 +146,20 @@ func (db *VectraDB) Insert(id string, vector []float32, data any) error {
 		db.revIndex = newSlice
 	}
 	db.revIndex[idx] = id
-
 	db.metaLocs[idx] = loc
 
-	db.hnsw.Add(vector, id, idx)
+	// Durable write done — release db.mu, enqueue for async HNSW indexing.
+	db.mu.Unlock()
+
+	db.pendingMu.Lock()
+	db.pendingVecs = append(db.pendingVecs, pendingItem{vector: vector, id: id, idx: idx})
+	db.pendingMu.Unlock()
+	db.signalIndexer()
 
 	return nil
 }
 
+// insertInMemory is used during WAL recovery — synchronous HNSW.Add (no async).
 func (db *VectraDB) insertInMemory(id string, vector []float32, loc FileLocation) error {
 	idx, err := db.arena.Add(vector)
 	if err != nil {
@@ -126,9 +181,11 @@ func (db *VectraDB) insertInMemory(id string, vector []float32, loc FileLocation
 }
 
 func (db *VectraDB) BatchInsert(records []BatchItem) []error {
+	// Phase 1: durable write (arena + disk + WAL + index maps) under db.mu.
 	db.mu.Lock()
-	defer db.mu.Unlock()
 	var errs []error
+	toIndex := make([]pendingItem, 0, len(records))
+
 	for _, rec := range records {
 		bytes, err := json.Marshal(rec.Data)
 		if err != nil {
@@ -157,11 +214,21 @@ func (db *VectraDB) BatchInsert(records []BatchItem) []error {
 		}
 		db.revIndex[idx] = rec.ID
 		db.metaLocs[idx] = loc
-		db.hnsw.Add(rec.Vector, rec.ID, idx)
+		toIndex = append(toIndex, pendingItem{vector: rec.Vector, id: rec.ID, idx: idx})
 	}
 	if err := db.wal.Flush(); err != nil {
 		errs = append(errs, fmt.Errorf("wal flush: %w", err))
 	}
+	db.mu.Unlock()
+
+	// Phase 2: enqueue for async HNSW indexing.
+	if len(toIndex) > 0 {
+		db.pendingMu.Lock()
+		db.pendingVecs = append(db.pendingVecs, toIndex...)
+		db.pendingMu.Unlock()
+		db.signalIndexer()
+	}
+
 	return errs
 }
 
@@ -184,12 +251,37 @@ func (db *VectraDB) Get(id string) ([]float32, []byte, bool) {
 }
 
 func (db *VectraDB) Search(query []float32, topK int) []VectroRecord {
+	normQ := normalizeVec(query)
+
+	// HNSW search (indexed records).
 	db.mu.RLock()
-	defer db.mu.RUnlock()
+	records := db.hnsw.Search(normQ, topK)
+	db.mu.RUnlock()
 
-	records := db.hnsw.Search(query, topK)
+	// Brute-force scan of pending records not yet in HNSW.
+	db.pendingMu.RLock()
+	pending := db.pendingVecs
+	db.pendingMu.RUnlock()
 
-	// Enrich results with metadata from disk
+	if len(pending) > 0 {
+		for _, p := range pending {
+			d := dist(normQ, p.vector)
+			records = append(records, VectroRecord{
+				ID:    p.id,
+				Score: 1 - d, // cosine similarity
+				Data:  json.RawMessage("{}"),
+			})
+		}
+		sort.Slice(records, func(i, j int) bool {
+			return records[i].Score > records[j].Score
+		})
+		if len(records) > topK {
+			records = records[:topK]
+		}
+	}
+
+	// Enrich results with metadata from disk.
+	db.mu.RLock()
 	for i, rec := range records {
 		if idx, ok := db.index[rec.ID]; ok {
 			if loc, ok := db.metaLocs[idx]; ok {
@@ -199,6 +291,7 @@ func (db *VectraDB) Search(query []float32, topK int) []VectroRecord {
 			}
 		}
 	}
+	db.mu.RUnlock()
 
 	return records
 }
