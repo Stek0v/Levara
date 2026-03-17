@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	RaftTimeout = 10 * time.Second
+	RaftTimeout = 500 * time.Millisecond
 )
 
 type RaftNode struct {
@@ -33,13 +33,17 @@ func NewRaftNode(shardID int, nodeID string, baseDir string, raftPort int, db *s
 
 	config := raft.DefaultConfig()
 	config.LocalID = raft.ServerID(fmt.Sprintf("%s-shard-%d", nodeID, shardID))
+	config.HeartbeatTimeout = 200 * time.Millisecond
+	config.ElectionTimeout = 300 * time.Millisecond
+	config.CommitTimeout = 10 * time.Millisecond
+	config.SnapshotThreshold = 65536
 
 	addr := fmt.Sprintf("127.0.0.1:%d", raftPort)
 	tcpAddr, err := net.ResolveTCPAddr("tcp", addr)
 	if err != nil {
 		return nil, err
 	}
-	transport, err := raft.NewTCPTransport(addr, tcpAddr, 3, 10*time.Second, os.Stderr)
+	transport, err := raft.NewTCPTransport(addr, tcpAddr, 3, time.Second, os.Stderr)
 	if err != nil {
 		return nil, err
 	}
