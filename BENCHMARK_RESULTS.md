@@ -109,6 +109,45 @@ Even with all optimizations, VectraDB will not match LanceDB write speed due to 
                   +------------------+---------------------+
 ```
 
+## Go Rewrite Results (2026-03-17)
+
+New Go components eliminate HTTP+JSON+Python overhead for vector operations.
+
+### Transport Latency Comparison (search, 500 vectors, dim=64)
+
+| Transport | Latency | vs Python HTTP |
+|-----------|---------|----------------|
+| Python + HTTP + JSON | 2.6 ms | baseline |
+| Go gRPC (cross-process) | 0.31 ms | **8.4x faster** |
+| Go in-process (library call) | 0.10 ms | **26x faster** |
+
+### Go Chunking (book "Ураган", 1430 chunks)
+
+| Language | Time | Speedup |
+|----------|------|---------|
+| Python | 50-200 ms | baseline |
+| Go | 7.4 ms | **7-27x faster** |
+
+Python parity: exact same chunk count (1430) and chapter detection (45 chapters).
+
+### New Go Components
+
+| Component | Files | Tests | Status |
+|-----------|-------|-------|--------|
+| CollectionManager | `internal/store/collections.go` | 6 | native collections, WAL persistence |
+| Delete-by-ID | `internal/store/db.go` | 3 | HNSW tombstone + WAL OpDelete |
+| gRPC Server | `internal/grpc/service.go` | 4 | :50051, all CRUD + search + chunking |
+| Text Chunker | `pkg/chunker/` | 5 | paragraph, sentence, merged strategies |
+| Embed Client | `pkg/embed/client.go` | 1 | OpenAI-compatible, connection pooling |
+| Search Pipeline | `pipeline/search.go` | 3 | embed → in-process search |
+| **Total** | **12 files** | **19 Go tests** | **all passing** |
+
+### What Remains Python (LLM-bound, no benefit from Go)
+
+- LLM graph extraction (50-300ms/chunk — GPU-bound)
+- LLM structured output (instructor + litellm — no Go equivalent)
+- Document parsing (unstructured library — 20+ formats)
+
 ## Coverage: cases.md
 
 20/20 test cases covered:
