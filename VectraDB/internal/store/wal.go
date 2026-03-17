@@ -107,14 +107,24 @@ func (wal *WAL) WriteEntryNoFlush(op byte, id string, vector []float32, metadata
 	return binary.Write(wal.writer, binary.LittleEndian, uint32(loc.Length))
 }
 
-// Flush flushes the buffered writer to disk.
+// Flush flushes the buffered writer and fsyncs to ensure durability.
 func (wal *WAL) Flush() error {
-	return wal.writer.Flush()
+	if err := wal.writer.Flush(); err != nil {
+		return err
+	}
+	return wal.file.Sync()
 }
 
-// Close ensures everything is written to disk
+// Close ensures everything is written to disk and synced
 func (w *WAL) Close() error {
-	w.writer.Flush()
+	if err := w.writer.Flush(); err != nil {
+		w.file.Close()
+		return err
+	}
+	if err := w.file.Sync(); err != nil {
+		w.file.Close()
+		return err
+	}
 	return w.file.Close()
 }
 
@@ -130,27 +140,44 @@ func (wal *WAL) Recover(fn WALIterator) error {
 		// 1. Read Payload Size
 		var size uint32
 		if err := binary.Read(reader, binary.LittleEndian, &size); err != nil {
-			if err == io.EOF {
+			if err == io.EOF || err == io.ErrUnexpectedEOF {
 				break // End of file, we are done
 			}
 			return err
 		}
 
 		// 2. Read Operation
-		op, _ := reader.ReadByte()
+		op, err := reader.ReadByte()
+		if err != nil {
+			break // Truncated entry
+		}
 
 		// 3. Read ID
 		var idLen uint32
-		binary.Read(reader, binary.LittleEndian, &idLen)
+		if err := binary.Read(reader, binary.LittleEndian, &idLen); err != nil {
+			break
+		}
+		if idLen > size || idLen > 1<<20 {
+			break // Sanity check: ID can't be larger than entry or 1MB
+		}
 		idBytes := make([]byte, idLen)
-		reader.Read(idBytes)
+		if _, err := io.ReadFull(reader, idBytes); err != nil {
+			break
+		}
 		id := string(idBytes)
 
 		// 4. Read Vector (bulk unsafe read)
 		var vecLen uint32
-		binary.Read(reader, binary.LittleEndian, &vecLen)
+		if err := binary.Read(reader, binary.LittleEndian, &vecLen); err != nil {
+			break
+		}
+		if vecLen > size || vecLen > 1<<26 {
+			break // Sanity check: vector can't exceed 64MB
+		}
 		vecBytes := make([]byte, vecLen)
-		io.ReadFull(reader, vecBytes)
+		if _, err := io.ReadFull(reader, vecBytes); err != nil {
+			break
+		}
 		if vecLen == 0 {
 			continue
 		}
@@ -158,17 +185,28 @@ func (wal *WAL) Recover(fn WALIterator) error {
 
 		// 5. Read Metadata
 		var metaLen uint32
-		binary.Read(reader, binary.LittleEndian, &metaLen)
+		if err := binary.Read(reader, binary.LittleEndian, &metaLen); err != nil {
+			break
+		}
+		if metaLen > size || metaLen > 1<<20 {
+			break // Sanity check: metadata can't exceed 1MB
+		}
 		meta := make([]byte, metaLen)
-		reader.Read(meta)
+		if _, err := io.ReadFull(reader, meta); err != nil {
+			break
+		}
 
 		// Read Offset
 		var offset int64
-		binary.Read(reader, binary.LittleEndian, &offset)
+		if err := binary.Read(reader, binary.LittleEndian, &offset); err != nil {
+			break
+		}
 
 		// Read Length after offset
 		var locLen int32
-		binary.Read(reader, binary.LittleEndian, &locLen)
+		if err := binary.Read(reader, binary.LittleEndian, &locLen); err != nil {
+			break
+		}
 
 		// 6. Execute callback (Re-insert into DB)
 		if op == OpInsert {

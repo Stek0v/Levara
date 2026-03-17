@@ -71,10 +71,24 @@ func NewVectraDB(dim int, storagePath string) (*VectraDB, error) {
 		indexSignal: make(chan struct{}, 1),
 	}
 
+	// Truncate meta.bin before WAL recovery: WAL contains full metadata,
+	// so we rebuild the disk store from scratch to guarantee valid offsets.
+	if err := ds.Truncate(); err != nil {
+		return nil, fmt.Errorf("failed to truncate disk store for recovery: %w", err)
+	}
+
 	fmt.Println("Replaying WAL to restore data....")
 	count := 0
 	err = wal.Recover(func(id string, vector []float32, meta []byte, loc FileLocation) {
-		db.insertInMemory(id, vector, loc)
+		// Re-write metadata from WAL to disk to get a valid FileLocation.
+		// The loc from WAL may reference stale offsets if meta.bin was
+		// partially flushed before the crash.
+		newLoc, writeErr := db.disk.Write(meta)
+		if writeErr != nil {
+			fmt.Printf("WAL recovery: failed to write metadata for %s: %v\n", id, writeErr)
+			return
+		}
+		db.insertInMemory(id, vector, newLoc)
 		count++
 	})
 	fmt.Printf("Recovered %d records from WAL\n", count)
@@ -294,4 +308,13 @@ func (db *VectraDB) Search(query []float32, topK int) []VectroRecord {
 	db.mu.RUnlock()
 
 	return records
+}
+
+// Close flushes WAL and disk store, ensuring all data is persisted.
+func (db *VectraDB) Close() error {
+	if err := db.wal.Close(); err != nil {
+		db.disk.Close()
+		return fmt.Errorf("wal close: %w", err)
+	}
+	return db.disk.Close()
 }

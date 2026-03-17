@@ -62,6 +62,10 @@ func (ds *DiskStore) Read(loc FileLocation) ([]byte, error) {
 	ds.mu.RLock()
 	defer ds.mu.RUnlock()
 
+	if loc.Length <= 0 || loc.Offset < 0 {
+		return nil, fmt.Errorf("invalid file location: offset=%d, length=%d", loc.Offset, loc.Length)
+	}
+
 	buffer := make([]byte, loc.Length)
 
 	_, err := ds.file.ReadAt(buffer, loc.Offset)
@@ -69,6 +73,22 @@ func (ds *DiskStore) Read(loc FileLocation) ([]byte, error) {
 		return nil, err
 	}
 	return buffer, nil
+}
+
+// Truncate resets the disk store file to zero length.
+// Used before WAL recovery to rebuild metadata from scratch.
+func (ds *DiskStore) Truncate() error {
+	ds.mu.Lock()
+	defer ds.mu.Unlock()
+
+	if err := ds.file.Truncate(0); err != nil {
+		return fmt.Errorf("truncate: %w", err)
+	}
+	if _, err := ds.file.Seek(0, 0); err != nil {
+		return fmt.Errorf("seek after truncate: %w", err)
+	}
+	ds.pos = 0
+	return nil
 }
 
 func (ds *DiskStore) Close() error {
