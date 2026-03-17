@@ -101,6 +101,29 @@ func (h *Handler) BatchInsert(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusOK).JSON(resp)
 }
 
+// Delete handles POST /api/v1/delete.
+func (h *Handler) Delete(c *fiber.Ctx) error {
+	var req DeleteRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "cannot parse json"})
+	}
+	if len(req.IDs) == 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "ids array is required"})
+	}
+
+	errs := h.cluster.BatchDelete(req.IDs)
+
+	resp := DeleteResponse{
+		Deleted: len(req.IDs) - len(errs),
+		Failed:  len(errs),
+	}
+	for _, e := range errs {
+		resp.Errors = append(resp.Errors, e.Error())
+	}
+
+	return c.JSON(resp)
+}
+
 func (h *Handler) Search(c *fiber.Ctx) error {
 	metrics.SearchRequests.Inc()
 	timer := prometheus.NewTimer(metrics.SearchDuration)
