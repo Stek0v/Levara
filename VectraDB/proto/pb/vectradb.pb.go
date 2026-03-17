@@ -760,6 +760,195 @@ func (x *SearchResult) GetMetadataJson() string {
 	return ""
 }
 
+// Text chunking
+type ChunkTextReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Text          string                 `protobuf:"bytes,1,opt,name=text,proto3" json:"text,omitempty"`
+	Strategy      string                 `protobuf:"bytes,2,opt,name=strategy,proto3" json:"strategy,omitempty"`                                   // "merged" (default), "paragraph", "sentence"
+	MinChunkChars int32                  `protobuf:"varint,3,opt,name=min_chunk_chars,json=minChunkChars,proto3" json:"min_chunk_chars,omitempty"` // default: 80
+	MaxChunkChars int32                  `protobuf:"varint,4,opt,name=max_chunk_chars,json=maxChunkChars,proto3" json:"max_chunk_chars,omitempty"` // default: 600
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ChunkTextReq) Reset() {
+	*x = ChunkTextReq{}
+	mi := &file_proto_vectradb_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ChunkTextReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ChunkTextReq) ProtoMessage() {}
+
+func (x *ChunkTextReq) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_vectradb_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ChunkTextReq.ProtoReflect.Descriptor instead.
+func (*ChunkTextReq) Descriptor() ([]byte, []int) {
+	return file_proto_vectradb_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *ChunkTextReq) GetText() string {
+	if x != nil {
+		return x.Text
+	}
+	return ""
+}
+
+func (x *ChunkTextReq) GetStrategy() string {
+	if x != nil {
+		return x.Strategy
+	}
+	return ""
+}
+
+func (x *ChunkTextReq) GetMinChunkChars() int32 {
+	if x != nil {
+		return x.MinChunkChars
+	}
+	return 0
+}
+
+func (x *ChunkTextReq) GetMaxChunkChars() int32 {
+	if x != nil {
+		return x.MaxChunkChars
+	}
+	return 0
+}
+
+type ChunkTextResp struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Chunks        []*TextChunk           `protobuf:"bytes,1,rep,name=chunks,proto3" json:"chunks,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ChunkTextResp) Reset() {
+	*x = ChunkTextResp{}
+	mi := &file_proto_vectradb_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ChunkTextResp) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ChunkTextResp) ProtoMessage() {}
+
+func (x *ChunkTextResp) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_vectradb_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ChunkTextResp.ProtoReflect.Descriptor instead.
+func (*ChunkTextResp) Descriptor() ([]byte, []int) {
+	return file_proto_vectradb_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *ChunkTextResp) GetChunks() []*TextChunk {
+	if x != nil {
+		return x.Chunks
+	}
+	return nil
+}
+
+type TextChunk struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Text          string                 `protobuf:"bytes,2,opt,name=text,proto3" json:"text,omitempty"`
+	Chapter       int32                  `protobuf:"varint,3,opt,name=chapter,proto3" json:"chapter,omitempty"`
+	ChunkIndex    int32                  `protobuf:"varint,4,opt,name=chunk_index,json=chunkIndex,proto3" json:"chunk_index,omitempty"`
+	CutType       string                 `protobuf:"bytes,5,opt,name=cut_type,json=cutType,proto3" json:"cut_type,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TextChunk) Reset() {
+	*x = TextChunk{}
+	mi := &file_proto_vectradb_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TextChunk) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TextChunk) ProtoMessage() {}
+
+func (x *TextChunk) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_vectradb_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TextChunk.ProtoReflect.Descriptor instead.
+func (*TextChunk) Descriptor() ([]byte, []int) {
+	return file_proto_vectradb_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *TextChunk) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *TextChunk) GetText() string {
+	if x != nil {
+		return x.Text
+	}
+	return ""
+}
+
+func (x *TextChunk) GetChapter() int32 {
+	if x != nil {
+		return x.Chapter
+	}
+	return 0
+}
+
+func (x *TextChunk) GetChunkIndex() int32 {
+	if x != nil {
+		return x.ChunkIndex
+	}
+	return 0
+}
+
+func (x *TextChunk) GetCutType() string {
+	if x != nil {
+		return x.CutType
+	}
+	return ""
+}
+
 // Info
 type InfoResp struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -773,7 +962,7 @@ type InfoResp struct {
 
 func (x *InfoResp) Reset() {
 	*x = InfoResp{}
-	mi := &file_proto_vectradb_proto_msgTypes[14]
+	mi := &file_proto_vectradb_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -785,7 +974,7 @@ func (x *InfoResp) String() string {
 func (*InfoResp) ProtoMessage() {}
 
 func (x *InfoResp) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_vectradb_proto_msgTypes[14]
+	mi := &file_proto_vectradb_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -798,7 +987,7 @@ func (x *InfoResp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InfoResp.ProtoReflect.Descriptor instead.
 func (*InfoResp) Descriptor() ([]byte, []int) {
-	return file_proto_vectradb_proto_rawDescGZIP(), []int{14}
+	return file_proto_vectradb_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *InfoResp) GetDimension() int32 {
@@ -887,12 +1076,26 @@ const file_proto_vectradb_proto_rawDesc = "" +
 	"\fSearchResult\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x14\n" +
 	"\x05score\x18\x02 \x01(\x02R\x05score\x12#\n" +
-	"\rmetadata_json\x18\x03 \x01(\tR\fmetadataJson\"z\n" +
+	"\rmetadata_json\x18\x03 \x01(\tR\fmetadataJson\"\x8e\x01\n" +
+	"\fChunkTextReq\x12\x12\n" +
+	"\x04text\x18\x01 \x01(\tR\x04text\x12\x1a\n" +
+	"\bstrategy\x18\x02 \x01(\tR\bstrategy\x12&\n" +
+	"\x0fmin_chunk_chars\x18\x03 \x01(\x05R\rminChunkChars\x12&\n" +
+	"\x0fmax_chunk_chars\x18\x04 \x01(\x05R\rmaxChunkChars\"?\n" +
+	"\rChunkTextResp\x12.\n" +
+	"\x06chunks\x18\x01 \x03(\v2\x16.vectradb.v1.TextChunkR\x06chunks\"\x85\x01\n" +
+	"\tTextChunk\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
+	"\x04text\x18\x02 \x01(\tR\x04text\x12\x18\n" +
+	"\achapter\x18\x03 \x01(\x05R\achapter\x12\x1f\n" +
+	"\vchunk_index\x18\x04 \x01(\x05R\n" +
+	"chunkIndex\x12\x19\n" +
+	"\bcut_type\x18\x05 \x01(\tR\acutType\"z\n" +
 	"\bInfoResp\x12\x1c\n" +
 	"\tdimension\x18\x01 \x01(\x05R\tdimension\x12\x16\n" +
 	"\x06shards\x18\x02 \x01(\x05R\x06shards\x12\x16\n" +
 	"\x06status\x18\x03 \x01(\tR\x06status\x12 \n" +
-	"\vcollections\x18\x04 \x03(\tR\vcollections2\xa2\x04\n" +
+	"\vcollections\x18\x04 \x03(\tR\vcollections2\xe6\x04\n" +
 	"\x0fVectraDBService\x12M\n" +
 	"\x10CreateCollection\x12 .vectradb.v1.CreateCollectionReq\x1a\x17.vectradb.v1.StatusResp\x12I\n" +
 	"\x0eDropCollection\x12\x1e.vectradb.v1.DropCollectionReq\x1a\x17.vectradb.v1.StatusResp\x12G\n" +
@@ -900,7 +1103,8 @@ const file_proto_vectradb_proto_rawDesc = "" +
 	"\x06Insert\x12\x16.vectradb.v1.InsertReq\x1a\x17.vectradb.v1.StatusResp\x12H\n" +
 	"\vBatchInsert\x12\x1b.vectradb.v1.BatchInsertReq\x1a\x1c.vectradb.v1.BatchInsertResp\x129\n" +
 	"\x06Delete\x12\x16.vectradb.v1.DeleteReq\x1a\x17.vectradb.v1.DeleteResp\x129\n" +
-	"\x06Search\x12\x16.vectradb.v1.SearchReq\x1a\x17.vectradb.v1.SearchResp\x121\n" +
+	"\x06Search\x12\x16.vectradb.v1.SearchReq\x1a\x17.vectradb.v1.SearchResp\x12B\n" +
+	"\tChunkText\x12\x19.vectradb.v1.ChunkTextReq\x1a\x1a.vectradb.v1.ChunkTextResp\x121\n" +
 	"\x04Info\x12\x12.vectradb.v1.Empty\x1a\x15.vectradb.v1.InfoRespB(Z&github.com/rupamthxt/vectradb/proto/pbb\x06proto3"
 
 var (
@@ -915,7 +1119,7 @@ func file_proto_vectradb_proto_rawDescGZIP() []byte {
 	return file_proto_vectradb_proto_rawDescData
 }
 
-var file_proto_vectradb_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
+var file_proto_vectradb_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
 var file_proto_vectradb_proto_goTypes = []any{
 	(*Empty)(nil),               // 0: vectradb.v1.Empty
 	(*StatusResp)(nil),          // 1: vectradb.v1.StatusResp
@@ -931,32 +1135,38 @@ var file_proto_vectradb_proto_goTypes = []any{
 	(*SearchReq)(nil),           // 11: vectradb.v1.SearchReq
 	(*SearchResp)(nil),          // 12: vectradb.v1.SearchResp
 	(*SearchResult)(nil),        // 13: vectradb.v1.SearchResult
-	(*InfoResp)(nil),            // 14: vectradb.v1.InfoResp
+	(*ChunkTextReq)(nil),        // 14: vectradb.v1.ChunkTextReq
+	(*ChunkTextResp)(nil),       // 15: vectradb.v1.ChunkTextResp
+	(*TextChunk)(nil),           // 16: vectradb.v1.TextChunk
+	(*InfoResp)(nil),            // 17: vectradb.v1.InfoResp
 }
 var file_proto_vectradb_proto_depIdxs = []int32{
 	7,  // 0: vectradb.v1.BatchInsertReq.records:type_name -> vectradb.v1.InsertRecord
 	13, // 1: vectradb.v1.SearchResp.results:type_name -> vectradb.v1.SearchResult
-	2,  // 2: vectradb.v1.VectraDBService.CreateCollection:input_type -> vectradb.v1.CreateCollectionReq
-	3,  // 3: vectradb.v1.VectraDBService.DropCollection:input_type -> vectradb.v1.DropCollectionReq
-	0,  // 4: vectradb.v1.VectraDBService.ListCollections:input_type -> vectradb.v1.Empty
-	5,  // 5: vectradb.v1.VectraDBService.Insert:input_type -> vectradb.v1.InsertReq
-	6,  // 6: vectradb.v1.VectraDBService.BatchInsert:input_type -> vectradb.v1.BatchInsertReq
-	9,  // 7: vectradb.v1.VectraDBService.Delete:input_type -> vectradb.v1.DeleteReq
-	11, // 8: vectradb.v1.VectraDBService.Search:input_type -> vectradb.v1.SearchReq
-	0,  // 9: vectradb.v1.VectraDBService.Info:input_type -> vectradb.v1.Empty
-	1,  // 10: vectradb.v1.VectraDBService.CreateCollection:output_type -> vectradb.v1.StatusResp
-	1,  // 11: vectradb.v1.VectraDBService.DropCollection:output_type -> vectradb.v1.StatusResp
-	4,  // 12: vectradb.v1.VectraDBService.ListCollections:output_type -> vectradb.v1.ListCollectionsResp
-	1,  // 13: vectradb.v1.VectraDBService.Insert:output_type -> vectradb.v1.StatusResp
-	8,  // 14: vectradb.v1.VectraDBService.BatchInsert:output_type -> vectradb.v1.BatchInsertResp
-	10, // 15: vectradb.v1.VectraDBService.Delete:output_type -> vectradb.v1.DeleteResp
-	12, // 16: vectradb.v1.VectraDBService.Search:output_type -> vectradb.v1.SearchResp
-	14, // 17: vectradb.v1.VectraDBService.Info:output_type -> vectradb.v1.InfoResp
-	10, // [10:18] is the sub-list for method output_type
-	2,  // [2:10] is the sub-list for method input_type
-	2,  // [2:2] is the sub-list for extension type_name
-	2,  // [2:2] is the sub-list for extension extendee
-	0,  // [0:2] is the sub-list for field type_name
+	16, // 2: vectradb.v1.ChunkTextResp.chunks:type_name -> vectradb.v1.TextChunk
+	2,  // 3: vectradb.v1.VectraDBService.CreateCollection:input_type -> vectradb.v1.CreateCollectionReq
+	3,  // 4: vectradb.v1.VectraDBService.DropCollection:input_type -> vectradb.v1.DropCollectionReq
+	0,  // 5: vectradb.v1.VectraDBService.ListCollections:input_type -> vectradb.v1.Empty
+	5,  // 6: vectradb.v1.VectraDBService.Insert:input_type -> vectradb.v1.InsertReq
+	6,  // 7: vectradb.v1.VectraDBService.BatchInsert:input_type -> vectradb.v1.BatchInsertReq
+	9,  // 8: vectradb.v1.VectraDBService.Delete:input_type -> vectradb.v1.DeleteReq
+	11, // 9: vectradb.v1.VectraDBService.Search:input_type -> vectradb.v1.SearchReq
+	14, // 10: vectradb.v1.VectraDBService.ChunkText:input_type -> vectradb.v1.ChunkTextReq
+	0,  // 11: vectradb.v1.VectraDBService.Info:input_type -> vectradb.v1.Empty
+	1,  // 12: vectradb.v1.VectraDBService.CreateCollection:output_type -> vectradb.v1.StatusResp
+	1,  // 13: vectradb.v1.VectraDBService.DropCollection:output_type -> vectradb.v1.StatusResp
+	4,  // 14: vectradb.v1.VectraDBService.ListCollections:output_type -> vectradb.v1.ListCollectionsResp
+	1,  // 15: vectradb.v1.VectraDBService.Insert:output_type -> vectradb.v1.StatusResp
+	8,  // 16: vectradb.v1.VectraDBService.BatchInsert:output_type -> vectradb.v1.BatchInsertResp
+	10, // 17: vectradb.v1.VectraDBService.Delete:output_type -> vectradb.v1.DeleteResp
+	12, // 18: vectradb.v1.VectraDBService.Search:output_type -> vectradb.v1.SearchResp
+	15, // 19: vectradb.v1.VectraDBService.ChunkText:output_type -> vectradb.v1.ChunkTextResp
+	17, // 20: vectradb.v1.VectraDBService.Info:output_type -> vectradb.v1.InfoResp
+	12, // [12:21] is the sub-list for method output_type
+	3,  // [3:12] is the sub-list for method input_type
+	3,  // [3:3] is the sub-list for extension type_name
+	3,  // [3:3] is the sub-list for extension extendee
+	0,  // [0:3] is the sub-list for field type_name
 }
 
 func init() { file_proto_vectradb_proto_init() }
@@ -970,7 +1180,7 @@ func file_proto_vectradb_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_vectradb_proto_rawDesc), len(file_proto_vectradb_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   15,
+			NumMessages:   18,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
