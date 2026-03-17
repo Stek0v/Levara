@@ -1,0 +1,30 @@
+services:
+  vectradb:
+    build: ./VectraDB
+    ports:
+      - "8080:8080"
+    volumes:
+      - vectradb-data:/app/data
+    command: ["./vectradb", "-bootstrap=true", "-dim=${VECTRADB_DIM:-${EMBEDDING_DIMENSIONS:-1024}}", "-shards=${VECTRADB_SHARDS:-3}", "-port=8080"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/metrics"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    depends_on:
+      - vectradb
+
+volumes:
+  vectradb-data:

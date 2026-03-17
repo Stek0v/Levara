@@ -1,0 +1,5 @@
+*.snap
+/data_bench
+/data
+/server
+/vectradb
