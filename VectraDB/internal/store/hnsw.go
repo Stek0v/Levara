@@ -349,6 +349,21 @@ func (h *HNSWIndex) searchLayerTopK(query []float32, entry *HNSWNode, layer, ef 
 	return out
 }
 
+// deleted tracks tombstoned arena offsets. Search skips them.
+var deletedSet sync.Map // map[uint32]struct{}
+
+// MarkDeleted marks an arena offset as deleted (tombstone).
+// Search will skip deleted records. Thread-safe.
+func (h *HNSWIndex) MarkDeleted(arenaOffset uint32) {
+	deletedSet.Store(arenaOffset, struct{}{})
+}
+
+// isDeleted checks if an arena offset is tombstoned.
+func isDeleted(arenaOffset uint32) bool {
+	_, ok := deletedSet.Load(arenaOffset)
+	return ok
+}
+
 // Search finds and returns the k closest nodes to the query vector.
 func (h *HNSWIndex) Search(query []float32, k int) []VectroRecord {
 	// Normalize query so dot-product distance works correctly.
@@ -386,6 +401,9 @@ func (h *HNSWIndex) Search(query []float32, k int) []VectroRecord {
 
 	records := make([]VectroRecord, 0, len(topResults))
 	for _, sr := range topResults {
+		if isDeleted(sr.node.ArenaOffset) {
+			continue // Skip tombstoned records
+		}
 		records = append(records, VectroRecord{
 			ID:    sr.node.ID,
 			Score: 1 - sr.d,

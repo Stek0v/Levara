@@ -20,6 +20,8 @@ type ShardHandler interface {
 	// Returns a (possibly empty) slice of per-record errors.
 	BatchInsert(records []BatchItem) []error
 	Search(query []float32, topK int) []VectroRecord
+	Delete(id string) error
+	BatchDelete(ids []string) []error
 }
 
 type Cluster struct {
@@ -94,6 +96,20 @@ func (c *Cluster) BatchInsert(items []BatchItem) []error {
 	var allErrs []error
 	for r := range resultCh {
 		allErrs = append(allErrs, r.errs...)
+	}
+	return allErrs
+}
+
+func (c *Cluster) Delete(id string) error {
+	return c.getShard(id).Delete(id)
+}
+
+func (c *Cluster) BatchDelete(ids []string) []error {
+	var allErrs []error
+	for _, id := range ids {
+		if err := c.Delete(id); err != nil {
+			allErrs = append(allErrs, err)
+		}
 	}
 	return allErrs
 }

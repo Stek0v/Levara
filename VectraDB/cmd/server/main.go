@@ -85,6 +85,7 @@ func main() {
 	api.Post("/insert", handler.Insert)
 	api.Post("/batch_insert", handler.BatchInsert)
 	api.Post("/search", handler.Search)
+	api.Post("/delete", handler.Delete)
 
 	mode := "standalone/WAL"
 	if !*standalone {

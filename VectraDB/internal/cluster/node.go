@@ -195,3 +195,11 @@ func (rn *RaftNode) batchInsertRaft(records []BatchRecord) []error {
 func (rn *RaftNode) Search(query []float32, topK int) []store.VectroRecord {
 	return rn.DB.Search(query, topK)
 }
+
+func (rn *RaftNode) Delete(id string) error {
+	return rn.DB.Delete(id)
+}
+
+func (rn *RaftNode) BatchDelete(ids []string) []error {
+	return rn.DB.BatchDelete(ids)
+}

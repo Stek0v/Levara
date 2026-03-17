@@ -58,13 +58,17 @@ func (wal *WAL) WriteEntry(op byte, id string, vector []float32, metadata []byte
 
 	// Write Vector (bulk unsafe write — 1 call instead of dim calls)
 	binary.Write(wal.writer, binary.LittleEndian, vectorLen)
-	vecPtr := unsafe.Pointer(&vector[0])
-	vecBytes := unsafe.Slice((*byte)(vecPtr), len(vector)*4)
-	wal.writer.Write(vecBytes)
+	if vectorLen > 0 {
+		vecPtr := unsafe.Pointer(&vector[0])
+		vecBytes := unsafe.Slice((*byte)(vecPtr), len(vector)*4)
+		wal.writer.Write(vecBytes)
+	}
 
 	// Write Metadata
 	binary.Write(wal.writer, binary.LittleEndian, metadataLen)
-	wal.writer.Write(metadata)
+	if metadataLen > 0 {
+		wal.writer.Write(metadata)
+	}
 
 	// Write Offset (8 bytes)
 	if err := binary.Write(wal.writer, binary.LittleEndian, int64(loc.Offset)); err != nil {
@@ -96,11 +100,15 @@ func (wal *WAL) WriteEntryNoFlush(op byte, id string, vector []float32, metadata
 	binary.Write(wal.writer, binary.LittleEndian, idLen)
 	wal.writer.Write(idBytes)
 	binary.Write(wal.writer, binary.LittleEndian, vectorLen)
-	vecPtr := unsafe.Pointer(&vector[0])
-	vecBytes := unsafe.Slice((*byte)(vecPtr), len(vector)*4)
-	wal.writer.Write(vecBytes)
+	if vectorLen > 0 {
+		vecPtr := unsafe.Pointer(&vector[0])
+		vecBytes := unsafe.Slice((*byte)(vecPtr), len(vector)*4)
+		wal.writer.Write(vecBytes)
+	}
 	binary.Write(wal.writer, binary.LittleEndian, metadataLen)
-	wal.writer.Write(metadata)
+	if metadataLen > 0 {
+		wal.writer.Write(metadata)
+	}
 	if err := binary.Write(wal.writer, binary.LittleEndian, int64(loc.Offset)); err != nil {
 		return err
 	}
@@ -131,7 +139,25 @@ func (w *WAL) Close() error {
 // Iterator function type
 type WALIterator func(id string, vector []float32, meta []byte, loc FileLocation)
 
+// WALIteratorEx receives the operation type so callers can handle deletes.
+type WALIteratorEx func(op byte, id string, vector []float32, meta []byte, loc FileLocation)
+
+// RecoverEx replays WAL entries with operation type awareness (insert + delete).
+func (wal *WAL) RecoverEx(fn WALIteratorEx) error {
+	return wal.recoverInternal(func(op byte, id string, vector []float32, meta []byte, loc FileLocation) {
+		fn(op, id, vector, meta, loc)
+	})
+}
+
 func (wal *WAL) Recover(fn WALIterator) error {
+	return wal.recoverInternal(func(op byte, id string, vector []float32, meta []byte, loc FileLocation) {
+		if op == OpInsert {
+			fn(id, vector, meta, loc)
+		}
+	})
+}
+
+func (wal *WAL) recoverInternal(fn func(op byte, id string, vector []float32, meta []byte, loc FileLocation)) error {
 	// Reset file pointer to start
 	wal.file.Seek(0, 0)
 	reader := bufio.NewReader(wal.file)
@@ -178,10 +204,10 @@ func (wal *WAL) Recover(fn WALIterator) error {
 		if _, err := io.ReadFull(reader, vecBytes); err != nil {
 			break
 		}
-		if vecLen == 0 {
-			continue
+		var vector []float32
+		if vecLen > 0 {
+			vector = unsafe.Slice((*float32)(unsafe.Pointer(&vecBytes[0])), vecLen/4)
 		}
-		vector := unsafe.Slice((*float32)(unsafe.Pointer(&vecBytes[0])), vecLen/4)
 
 		// 5. Read Metadata
 		var metaLen uint32
@@ -208,10 +234,8 @@ func (wal *WAL) Recover(fn WALIterator) error {
 			break
 		}
 
-		// 6. Execute callback (Re-insert into DB)
-		if op == OpInsert {
-			fn(id, vector, meta, FileLocation{Offset: offset, Length: locLen})
-		}
+		// 6. Execute callback with operation type
+		fn(op, id, vector, meta, FileLocation{Offset: offset, Length: locLen})
 	}
 
 	// Move pointer back to end for appending new writes

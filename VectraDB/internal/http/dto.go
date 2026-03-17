@@ -42,3 +42,23 @@ type SearchResult struct {
 	Score float32         `json:"score"`
 	Data  json.RawMessage `json:"metadata"`
 }
+
+// Delete DTOs
+type DeleteRequest struct {
+	IDs []string `json:"ids"`
+}
+
+type DeleteResponse struct {
+	Deleted int      `json:"deleted"`
+	Failed  int      `json:"failed"`
+	Errors  []string `json:"errors,omitempty"`
+}
+
+// Collection DTOs
+type CreateCollectionRequest struct {
+	Name string `json:"name"`
+}
+
+type ListCollectionsResponse struct {
+	Collections []string `json:"collections"`
+}

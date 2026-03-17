@@ -78,20 +78,38 @@ func NewVectraDB(dim int, storagePath string) (*VectraDB, error) {
 	}
 
 	fmt.Println("Replaying WAL to restore data....")
-	count := 0
-	err = wal.Recover(func(id string, vector []float32, meta []byte, loc FileLocation) {
-		// Re-write metadata from WAL to disk to get a valid FileLocation.
-		// The loc from WAL may reference stale offsets if meta.bin was
-		// partially flushed before the crash.
-		newLoc, writeErr := db.disk.Write(meta)
-		if writeErr != nil {
-			fmt.Printf("WAL recovery: failed to write metadata for %s: %v\n", id, writeErr)
-			return
+	insertCount := 0
+	deleteCount := 0
+	deletedIDs := make(map[string]struct{})
+
+	// 2-pass recovery: first collect deletes, then apply inserts (skip deleted)
+	err = wal.RecoverEx(func(op byte, id string, vector []float32, meta []byte, loc FileLocation) {
+		switch op {
+		case OpInsert:
+			if _, deleted := deletedIDs[id]; deleted {
+				return // Skip records that were later deleted
+			}
+			newLoc, writeErr := db.disk.Write(meta)
+			if writeErr != nil {
+				fmt.Printf("WAL recovery: failed to write metadata for %s: %v\n", id, writeErr)
+				return
+			}
+			db.insertInMemory(id, vector, newLoc)
+			insertCount++
+		case OpDelete:
+			deletedIDs[id] = struct{}{}
+			// If already inserted during this recovery, remove it
+			if idx, ok := db.index[id]; ok {
+				delete(db.index, id)
+				if int(idx) < len(db.revIndex) {
+					db.revIndex[idx] = ""
+				}
+				delete(db.metaLocs, idx)
+				deleteCount++
+			}
 		}
-		db.insertInMemory(id, vector, newLoc)
-		count++
 	})
-	fmt.Printf("Recovered %d records from WAL\n", count)
+	fmt.Printf("Recovered %d records (%d deleted) from WAL\n", insertCount, deleteCount)
 
 	// Start background HNSW indexer.
 	go db.indexerLoop()
@@ -308,6 +326,55 @@ func (db *VectraDB) Search(query []float32, topK int) []VectroRecord {
 	db.mu.RUnlock()
 
 	return records
+}
+
+// Delete removes a record by ID (index + HNSW tombstone + WAL).
+func (db *VectraDB) Delete(id string) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	idx, ok := db.index[id]
+	if !ok {
+		return fmt.Errorf("record %q not found", id)
+	}
+
+	// WAL: write delete entry for crash recovery
+	if err := db.wal.WriteEntry(OpDelete, id, nil, nil, FileLocation{}); err != nil {
+		return fmt.Errorf("wal delete: %w", err)
+	}
+
+	// Remove from in-memory maps
+	delete(db.index, id)
+	if int(idx) < len(db.revIndex) {
+		db.revIndex[idx] = ""
+	}
+	delete(db.metaLocs, idx)
+
+	// Mark deleted in HNSW (tombstone — search will skip)
+	db.hnsw.MarkDeleted(idx)
+
+	// Also remove from pending vectors (if not yet indexed)
+	db.pendingMu.Lock()
+	for i, p := range db.pendingVecs {
+		if p.id == id {
+			db.pendingVecs = append(db.pendingVecs[:i], db.pendingVecs[i+1:]...)
+			break
+		}
+	}
+	db.pendingMu.Unlock()
+
+	return nil
+}
+
+// BatchDelete removes multiple records by ID.
+func (db *VectraDB) BatchDelete(ids []string) []error {
+	var errs []error
+	for _, id := range ids {
+		if err := db.Delete(id); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errs
 }
 
 // Close flushes WAL and disk store, ensuring all data is persisted.
