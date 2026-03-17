@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/rupamthxt/vectradb/internal/store"
+	"github.com/rupamthxt/vectradb/pkg/chunker"
 	pb "github.com/rupamthxt/vectradb/proto/pb"
 )
 
@@ -137,6 +138,39 @@ func (s *Service) Search(_ context.Context, req *pb.SearchReq) (*pb.SearchResp, 
 	}
 
 	return &pb.SearchResp{Results: pbResults}, nil
+}
+
+func (s *Service) ChunkText(_ context.Context, req *pb.ChunkTextReq) (*pb.ChunkTextResp, error) {
+	minChars := int(req.MinChunkChars)
+	if minChars <= 0 {
+		minChars = chunker.DefaultMinChunkChars
+	}
+	maxChars := int(req.MaxChunkChars)
+	if maxChars <= 0 {
+		maxChars = chunker.DefaultMaxChunkChars
+	}
+
+	var chunks []chunker.Chunk
+	switch req.Strategy {
+	case "paragraph":
+		chunks = chunker.ChunkByParagraphSimple(req.Text, minChars)
+	case "sentence":
+		chunks = chunker.ChunkBySentence(req.Text, minChars, maxChars)
+	default: // "merged" or empty
+		chunks = chunker.ChunkByParagraphMerged(req.Text, minChars, maxChars)
+	}
+
+	pbChunks := make([]*pb.TextChunk, len(chunks))
+	for i, c := range chunks {
+		pbChunks[i] = &pb.TextChunk{
+			Id:         c.ID,
+			Text:       c.Text,
+			Chapter:    int32(c.Chapter),
+			ChunkIndex: int32(c.ChunkIndex),
+			CutType:    c.CutType,
+		}
+	}
+	return &pb.ChunkTextResp{Chunks: pbChunks}, nil
 }
 
 func (s *Service) Info(_ context.Context, _ *pb.Empty) (*pb.InfoResp, error) {

@@ -26,6 +26,7 @@ const (
 	VectraDBService_BatchInsert_FullMethodName      = "/vectradb.v1.VectraDBService/BatchInsert"
 	VectraDBService_Delete_FullMethodName           = "/vectradb.v1.VectraDBService/Delete"
 	VectraDBService_Search_FullMethodName           = "/vectradb.v1.VectraDBService/Search"
+	VectraDBService_ChunkText_FullMethodName        = "/vectradb.v1.VectraDBService/ChunkText"
 	VectraDBService_Info_FullMethodName             = "/vectradb.v1.VectraDBService/Info"
 )
 
@@ -42,6 +43,8 @@ type VectraDBServiceClient interface {
 	BatchInsert(ctx context.Context, in *BatchInsertReq, opts ...grpc.CallOption) (*BatchInsertResp, error)
 	Delete(ctx context.Context, in *DeleteReq, opts ...grpc.CallOption) (*DeleteResp, error)
 	Search(ctx context.Context, in *SearchReq, opts ...grpc.CallOption) (*SearchResp, error)
+	// Text processing
+	ChunkText(ctx context.Context, in *ChunkTextReq, opts ...grpc.CallOption) (*ChunkTextResp, error)
 	// Info
 	Info(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*InfoResp, error)
 }
@@ -124,6 +127,16 @@ func (c *vectraDBServiceClient) Search(ctx context.Context, in *SearchReq, opts 
 	return out, nil
 }
 
+func (c *vectraDBServiceClient) ChunkText(ctx context.Context, in *ChunkTextReq, opts ...grpc.CallOption) (*ChunkTextResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ChunkTextResp)
+	err := c.cc.Invoke(ctx, VectraDBService_ChunkText_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *vectraDBServiceClient) Info(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*InfoResp, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(InfoResp)
@@ -147,6 +160,8 @@ type VectraDBServiceServer interface {
 	BatchInsert(context.Context, *BatchInsertReq) (*BatchInsertResp, error)
 	Delete(context.Context, *DeleteReq) (*DeleteResp, error)
 	Search(context.Context, *SearchReq) (*SearchResp, error)
+	// Text processing
+	ChunkText(context.Context, *ChunkTextReq) (*ChunkTextResp, error)
 	// Info
 	Info(context.Context, *Empty) (*InfoResp, error)
 	mustEmbedUnimplementedVectraDBServiceServer()
@@ -179,6 +194,9 @@ func (UnimplementedVectraDBServiceServer) Delete(context.Context, *DeleteReq) (*
 }
 func (UnimplementedVectraDBServiceServer) Search(context.Context, *SearchReq) (*SearchResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method Search not implemented")
+}
+func (UnimplementedVectraDBServiceServer) ChunkText(context.Context, *ChunkTextReq) (*ChunkTextResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method ChunkText not implemented")
 }
 func (UnimplementedVectraDBServiceServer) Info(context.Context, *Empty) (*InfoResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method Info not implemented")
@@ -330,6 +348,24 @@ func _VectraDBService_Search_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _VectraDBService_ChunkText_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ChunkTextReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VectraDBServiceServer).ChunkText(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: VectraDBService_ChunkText_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VectraDBServiceServer).ChunkText(ctx, req.(*ChunkTextReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _VectraDBService_Info_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(Empty)
 	if err := dec(in); err != nil {
@@ -382,6 +418,10 @@ var VectraDBService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Search",
 			Handler:    _VectraDBService_Search_Handler,
+		},
+		{
+			MethodName: "ChunkText",
+			Handler:    _VectraDBService_ChunkText_Handler,
 		},
 		{
 			MethodName: "Info",
