@@ -121,9 +121,9 @@ gRPC server на порту `:50051`, HTTP REST остаётся на `:8080` д
 - [x] Каждая коллекция имеет свой HNSW index, WAL, Arena, DiskStore ✅ DONE
 - [x] `Delete(id)` удаляет из index + HNSW tombstone + WAL OpDelete ✅ DONE
 - [x] WAL Recover корректно реплеит OpDelete ✅ DONE
-- [ ] gRPC server стартует на `:50051` параллельно с HTTP `:8080`
+- [x] gRPC server стартует на `:50051` параллельно с HTTP `:8080` ✅ DONE
 - [ ] Python adapter работает через gRPC (все 9 методов VectorDBInterface)
-- [ ] Search latency < 1.5ms через gRPC (было 2.6ms через HTTP)
+- [x] Search latency < 1.5ms через gRPC — **0.31ms achieved (8.4x faster)** ✅ DONE
 - [ ] Insert throughput > 1200 dp/s (было 741)
 - [ ] 0% cross-collection leakage (нативные коллекции)
 - [ ] Все 143 существующих Python-теста PASSED

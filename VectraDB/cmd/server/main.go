@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/signal"
 	"syscall"
@@ -11,7 +12,10 @@ import (
 	"github.com/hashicorp/raft"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rupamthxt/vectradb/internal/cluster"
+	vectorGrpc "github.com/rupamthxt/vectradb/internal/grpc"
 	"github.com/rupamthxt/vectradb/internal/store"
+	pb "github.com/rupamthxt/vectradb/proto/pb"
+	"google.golang.org/grpc"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/adaptor"
@@ -27,6 +31,7 @@ func main() {
 	port := flag.Int("port", 8080, "HTTP API port")
 	numShardsFlag := flag.Int("shards", 3, "Number of shards")
 	dataDir := flag.String("data-dir", "data", "Directory for persistent data storage")
+	grpcPort := flag.Int("grpc-port", 50051, "gRPC API port (0 to disable)")
 
 	flag.Parse()
 
@@ -87,12 +92,34 @@ func main() {
 	api.Post("/search", handler.Search)
 	api.Post("/delete", handler.Delete)
 
+	// Initialize CollectionManager for native collections (used by gRPC)
+	colManager, err := store.NewCollectionManager(*dim, *dataDir+"/"+nodeID)
+	if err != nil {
+		log.Fatalf("Failed to init CollectionManager: %v", err)
+	}
+
+	// Start gRPC server (parallel to HTTP)
+	if *grpcPort > 0 {
+		go func() {
+			lis, err := net.Listen("tcp", fmt.Sprintf(":%d", *grpcPort))
+			if err != nil {
+				log.Fatalf("gRPC listen: %v", err)
+			}
+			grpcServer := grpc.NewServer()
+			pb.RegisterVectraDBServiceServer(grpcServer, vectorGrpc.NewService(colManager, c, *dim))
+			log.Printf("gRPC server listening on port %d", *grpcPort)
+			if err := grpcServer.Serve(lis); err != nil {
+				log.Fatalf("gRPC serve: %v", err)
+			}
+		}()
+	}
+
 	mode := "standalone/WAL"
 	if !*standalone {
 		mode = "Raft consensus"
 	}
 	addr := fmt.Sprintf(":%d", *port)
-	log.Printf("VectraDB listening on port %d (dim=%d, shards=%d, mode=%s)", *port, *dim, numShards, mode)
+	log.Printf("VectraDB listening on HTTP:%d gRPC:%d (dim=%d, shards=%d, mode=%s)", *port, *grpcPort, *dim, numShards, mode)
 
 	// Graceful shutdown: flush WAL + disk on SIGTERM/SIGINT
 	go func() {
@@ -107,6 +134,9 @@ func main() {
 					log.Printf("shard %d close error: %v", i, err)
 				}
 			}
+		}
+		if err := colManager.Close(); err != nil {
+			log.Printf("collection manager close: %v", err)
 		}
 		log.Println("All shards flushed and closed")
 		app.Shutdown()
