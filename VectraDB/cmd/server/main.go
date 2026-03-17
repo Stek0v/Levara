@@ -17,12 +17,9 @@ import (
 	vectorHttp "github.com/rupamthxt/vectradb/internal/http"
 )
 
-const SnapshotPath = "./vectradb.snap"
-
 func main() {
-	fmt.Println("Initializing VectraDB (High-Perf) mode...")
-
-	bootstrap := flag.Bool("bootstrap", false, "Bootstrap the cluster (Leader only)")
+	bootstrap := flag.Bool("bootstrap", false, "Bootstrap the Raft cluster (Leader only)")
+	standalone := flag.Bool("standalone", true, "Standalone mode: WAL-only, no Raft consensus (fastest)")
 	dim := flag.Int("dim", 128, "Vector dimension size (must match embedding model output)")
 	port := flag.Int("port", 8080, "HTTP API port")
 	numShardsFlag := flag.Int("shards", 3, "Number of shards")
@@ -34,6 +31,12 @@ func main() {
 	basePort := 9000
 	numShards := *numShardsFlag
 
+	if *standalone {
+		log.Printf("VectraDB standalone mode (WAL-only, no Raft)")
+	} else {
+		log.Printf("VectraDB Raft consensus mode")
+	}
+
 	var shards []store.ShardHandler
 
 	for i := range numShards {
@@ -43,23 +46,27 @@ func main() {
 			log.Fatal(err)
 		}
 
-		raftNode, err := cluster.NewRaftNode(i, nodeID, *dataDir+"/"+nodeID, basePort+i, db)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		if *bootstrap {
-			configuration := raft.Configuration{
-				Servers: []raft.Server{
-					{
-						ID:      raft.ServerID(fmt.Sprintf("%s-shard-%d", nodeID, i)),
-						Address: raft.ServerAddress(fmt.Sprintf("127.0.0.1:%d", basePort+i)),
-					},
-				},
+		if *standalone {
+			shards = append(shards, &cluster.DirectNode{DB: db})
+		} else {
+			raftNode, err := cluster.NewRaftNode(i, nodeID, *dataDir+"/"+nodeID, basePort+i, db)
+			if err != nil {
+				log.Fatal(err)
 			}
-			raftNode.Raft.BootstrapCluster(configuration)
+
+			if *bootstrap {
+				configuration := raft.Configuration{
+					Servers: []raft.Server{
+						{
+							ID:      raft.ServerID(fmt.Sprintf("%s-shard-%d", nodeID, i)),
+							Address: raft.ServerAddress(fmt.Sprintf("127.0.0.1:%d", basePort+i)),
+						},
+					},
+				}
+				raftNode.Raft.BootstrapCluster(configuration)
+			}
+			shards = append(shards, raftNode)
 		}
-		shards = append(shards, raftNode)
 	}
 
 	c := store.NewCluster(shards)
@@ -76,7 +83,11 @@ func main() {
 	api.Post("/batch_insert", handler.BatchInsert)
 	api.Post("/search", handler.Search)
 
+	mode := "standalone/WAL"
+	if !*standalone {
+		mode = "Raft consensus"
+	}
 	addr := fmt.Sprintf(":%d", *port)
-	log.Printf("VectraDB listening on port %d (dim=%d, shards=%d)", *port, *dim, numShards)
+	log.Printf("VectraDB listening on port %d (dim=%d, shards=%d, mode=%s)", *port, *dim, numShards, mode)
 	log.Fatal(app.Listen(addr))
 }
