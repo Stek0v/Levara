@@ -4,6 +4,9 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/hashicorp/raft"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -89,5 +92,24 @@ func main() {
 	}
 	addr := fmt.Sprintf(":%d", *port)
 	log.Printf("VectraDB listening on port %d (dim=%d, shards=%d, mode=%s)", *port, *dim, numShards, mode)
+
+	// Graceful shutdown: flush WAL + disk on SIGTERM/SIGINT
+	go func() {
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+		sig := <-sigCh
+		log.Printf("Received %v, shutting down gracefully...", sig)
+
+		for i, shard := range shards {
+			if dn, ok := shard.(*cluster.DirectNode); ok {
+				if err := dn.DB.Close(); err != nil {
+					log.Printf("shard %d close error: %v", i, err)
+				}
+			}
+		}
+		log.Println("All shards flushed and closed")
+		app.Shutdown()
+	}()
+
 	log.Fatal(app.Listen(addr))
 }
