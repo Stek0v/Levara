@@ -122,7 +122,7 @@ gRPC server на порту `:50051`, HTTP REST остаётся на `:8080` д
 - [x] `Delete(id)` удаляет из index + HNSW tombstone + WAL OpDelete ✅ DONE
 - [x] WAL Recover корректно реплеит OpDelete ✅ DONE
 - [x] gRPC server стартует на `:50051` параллельно с HTTP `:8080` ✅ DONE
-- [ ] Python adapter работает через gRPC (все 9 методов VectorDBInterface)
+- [x] Python adapter работает через gRPC (все 9 методов VectorDBInterface) — **21 unit tests PASSED, smoke test PASSED** ✅ DONE
 - [x] Search latency < 1.5ms через gRPC — **0.31ms achieved (8.4x faster)** ✅ DONE
 - [ ] Insert throughput > 1200 dp/s (было 741)
 - [ ] 0% cross-collection leakage (нативные коллекции)
@@ -138,7 +138,10 @@ gRPC server на порту `:50051`, HTTP REST остаётся на `:8080` д
 | `TestDeleteWALRecovery` | Insert → Delete → Restart → Search не находит | Go: `db_test.go` |
 | `TestGRPCInsertSearch` | gRPC Insert + Search round-trip | Go: `grpc_test.go` |
 | `TestGRPCvsHTTPLatency` | Benchmark: gRPC < HTTP на search | Go: `bench_test.go` |
-| `test_grpc_adapter` | Python gRPC adapter vs HTTP adapter parity | Python: `test_grpc_adapter.py` |
+| `TestHasCollection` | HasCollection RPC: create → has(true) → drop → has(false) | Go: `service_test.go` ✅ NEW |
+| `TestGetByID` | GetByID RPC: insert → getbyid → verify metadata | Go: `service_test.go` ✅ NEW |
+| `TestSearchErrorHandling` | Search on missing collection → gRPC NotFound | Go: `service_test.go` ✅ NEW |
+| `test_vectradb_adapter` | 21 Python unit tests for gRPC adapter (all 9 VectorDBInterface methods) | Python: `test_vectradb_adapter.py` ✅ REWRITTEN |
 
 ---
 
@@ -231,7 +234,7 @@ rpc EmbedTexts(EmbedReq) returns (EmbedResp);
 - [ ] `EmbedClient` корректно вызывает embed-server, возвращает dim=1024 vectors
 - [x] Chunking 1430 чанков < 50ms — **7.4ms achieved (7-27x faster)** ✅ DONE
 - [ ] Embedding throughput не хуже Python (не bottleneck — GPU bound)
-- [ ] gRPC ChunkText/EmbedTexts работают из Python
+- [ ] gRPC ChunkText/EmbedTexts работают из Python (gRPC transport verified — adapter uses gRPC for all 9 VectorDBInterface methods)
 
 **Тесты**:
 
@@ -286,7 +289,7 @@ func (p *Pipeline) SearchChunks(ctx context.Context, collection, queryText strin
 - [ ] Search QPS > 1500 under concurrent load (TBD with real data)
 - [ ] Keyword hit rate >= 93% (не хуже текущего)
 - [ ] NDCG@10 корректен на чистых данных
-- [ ] gRPC SearchPipeline вызывается из Python
+- [ ] gRPC SearchPipeline вызывается из Python (gRPC transport verified — Search RPC works from Python adapter)
 
 **Тесты**:
 
