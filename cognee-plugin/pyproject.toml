@@ -4,20 +4,21 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cognee-vectradb"
-version = "0.1.0"
-description = "VectraDB adapter plugin for Cognee — high-performance vector search"
+version = "0.2.0"
+description = "VectraDB adapter plugin for Cognee — high-performance vector search via gRPC"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
 dependencies = [
-    "aiohttp>=3.9",
-    "orjson>=3.9",
+    "grpcio>=1.60.0",
+    "protobuf>=4.25.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0",
     "pytest-asyncio>=0.21",
+    "grpcio-tools>=1.60.0",
 ]
 
 [tool.hatch.build.targets.wheel]
