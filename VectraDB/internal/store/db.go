@@ -46,7 +46,11 @@ type VectraDB struct {
 	indexSignal chan struct{}
 }
 
-func NewVectraDB(dim int, storagePath string) (*VectraDB, error) {
+func NewVectraDB(dim int, storagePath string, cfg ...HNSWConfig) (*VectraDB, error) {
+	hnswCfg := DefaultHNSWConfig()
+	if len(cfg) > 0 {
+		hnswCfg = cfg[0]
+	}
 
 	ds, err := NewDiskStore(storagePath)
 	if err != nil {
@@ -67,7 +71,7 @@ func NewVectraDB(dim int, storagePath string) (*VectraDB, error) {
 		disk:        ds,
 		dim:         dim,
 		wal:         wal,
-		hnsw:        NewHNSWIndex(localArena),
+		hnsw:        NewHNSWIndex(localArena, hnswCfg),
 		indexSignal: make(chan struct{}, 1),
 	}
 
