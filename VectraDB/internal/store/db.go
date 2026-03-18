@@ -213,40 +213,50 @@ func (db *VectraDB) insertInMemory(id string, vector []float32, loc FileLocation
 }
 
 func (db *VectraDB) BatchInsert(records []BatchItem) []error {
-	// Phase 1: durable write (arena + disk + WAL + index maps) under db.mu.
-	db.mu.Lock()
+	// Phase 0: marshal metadata outside lock (CPU-bound, no db state needed).
+	type prepared struct {
+		rec   BatchItem
+		bytes []byte
+	}
+	prepped := make([]prepared, 0, len(records))
 	var errs []error
-	toIndex := make([]pendingItem, 0, len(records))
-
 	for _, rec := range records {
 		bytes, err := json.Marshal(rec.Data)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: marshal: %w", rec.ID, err))
 			continue
 		}
-		idx, err := db.arena.Add(rec.Vector)
+		prepped = append(prepped, prepared{rec: rec, bytes: bytes})
+	}
+
+	// Phase 1: durable write (arena + disk + WAL + index maps) under db.mu.
+	db.mu.Lock()
+	toIndex := make([]pendingItem, 0, len(prepped))
+
+	for _, p := range prepped {
+		idx, err := db.arena.Add(p.rec.Vector)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("%s: arena: %w", rec.ID, err))
+			errs = append(errs, fmt.Errorf("%s: arena: %w", p.rec.ID, err))
 			continue
 		}
-		loc, err := db.disk.Write(bytes)
+		loc, err := db.disk.Write(p.bytes)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("%s: disk: %w", rec.ID, err))
+			errs = append(errs, fmt.Errorf("%s: disk: %w", p.rec.ID, err))
 			continue
 		}
-		if err := db.wal.WriteEntryNoFlush(OpInsert, rec.ID, rec.Vector, bytes, loc); err != nil {
-			errs = append(errs, fmt.Errorf("%s: wal: %w", rec.ID, err))
+		if err := db.wal.WriteEntryNoFlush(OpInsert, p.rec.ID, p.rec.Vector, p.bytes, loc); err != nil {
+			errs = append(errs, fmt.Errorf("%s: wal: %w", p.rec.ID, err))
 			continue
 		}
-		db.index[rec.ID] = idx
+		db.index[p.rec.ID] = idx
 		if int(idx) >= len(db.revIndex) {
 			ns := make([]string, int(idx)+1024)
 			copy(ns, db.revIndex)
 			db.revIndex = ns
 		}
-		db.revIndex[idx] = rec.ID
+		db.revIndex[idx] = p.rec.ID
 		db.metaLocs[idx] = loc
-		toIndex = append(toIndex, pendingItem{vector: rec.Vector, id: rec.ID, idx: idx})
+		toIndex = append(toIndex, pendingItem{vector: p.rec.Vector, id: p.rec.ID, idx: idx})
 	}
 	if err := db.wal.Flush(); err != nil {
 		errs = append(errs, fmt.Errorf("wal flush: %w", err))
