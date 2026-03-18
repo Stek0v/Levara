@@ -101,6 +101,51 @@ func BenchmarkSearchTopK50(b *testing.B) {
 	}
 }
 
+// ── dist() SIMD vs Scalar benchmarks ─────────────────────────────────────────
+
+func BenchmarkDistScalar(b *testing.B) {
+	v1 := make([]float32, 1024)
+	v2 := make([]float32, 1024)
+	for i := range v1 {
+		v1[i] = float32(i) * 0.001
+		v2[i] = float32(i) * 0.002
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		distScalar(v1, v2)
+	}
+}
+
+func BenchmarkDistSIMD(b *testing.B) {
+	v1 := make([]float32, 1024)
+	v2 := make([]float32, 1024)
+	for i := range v1 {
+		v1[i] = float32(i) * 0.001
+		v2[i] = float32(i) * 0.002
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		dist(v1, v2)
+	}
+}
+
+func TestDistSIMDCorrectness(t *testing.T) {
+	rng := rand.New(rand.NewSource(42))
+	for trial := 0; trial < 100; trial++ {
+		v1 := make([]float32, 1024)
+		v2 := make([]float32, 1024)
+		for i := range v1 {
+			v1[i] = rng.Float32()*2 - 1
+			v2[i] = rng.Float32()*2 - 1
+		}
+		got := dist(v1, v2)
+		want := distScalar(v1, v2)
+		if diff := got - want; diff > 1e-5 || diff < -1e-5 {
+			t.Errorf("trial %d: SIMD dist=%f, scalar dist=%f, diff=%f", trial, got, want, diff)
+		}
+	}
+}
+
 // ── Recall@10 ────────────────────────────────────────────────────────────────
 
 func TestRecallAt10(t *testing.T) {
