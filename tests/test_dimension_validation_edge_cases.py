@@ -2,12 +2,15 @@
 Edge case tests for dimension validation across all layers.
 """
 
+import sys
 from unittest.mock import AsyncMock, MagicMock
 
 import aiohttp
 import pytest
 
 from cognee.infrastructure.databases.vector.vectradb.VectraDBAdapter import VectraDBAdapter
+
+pb = sys.modules["cognee.infrastructure.databases.vector.vectradb.generated.vectradb_pb2"]
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -53,6 +56,18 @@ def _patch_session(adapter, resp):
     adapter._session = mock_session
 
 
+def _patch_stub(adapter, dimension: int, shards: int = 1, status: str = "ready"):
+    """Replace adapter._stub with a mock whose Info returns pb.InfoResp."""
+    stub = MagicMock()
+    stub.Info = AsyncMock(return_value=pb.InfoResp(
+        dimension=dimension,
+        shards=shards,
+        status=status,
+    ))
+    adapter._stub = stub
+    return stub
+
+
 # ── Edge case tests ───────────────────────────────────────────────────────────
 
 
@@ -61,16 +76,14 @@ class TestDimensionEdgeCases:
     async def test_dim_1_valid(self):
         """dim=1 is valid — smallest possible vector."""
         adapter = _make_adapter(engine_dim=1)
-        resp = _FakeResponse(200, {"dimension": 1, "shards": 1})
-        _patch_session(adapter, resp)
+        _patch_stub(adapter, dimension=1, shards=1)
         await adapter.health_check()
 
     @pytest.mark.asyncio
     async def test_dim_4096_valid(self):
         """Large dimension (e.g., GPT-3 ada) → OK."""
         adapter = _make_adapter(engine_dim=4096)
-        resp = _FakeResponse(200, {"dimension": 4096, "shards": 1})
-        _patch_session(adapter, resp)
+        _patch_stub(adapter, dimension=4096, shards=1)
         await adapter.health_check()
 
     @pytest.mark.asyncio
@@ -117,11 +130,10 @@ class TestDimensionEdgeCases:
 
     @pytest.mark.asyncio
     async def test_server_missing_dimension_key(self):
-        """Server returns {"shards": 4} without dimension key → server_dim=None → passes."""
+        """protobuf int32 dimension defaults to 0 when not set → server_dim=0 (falsy) → passes."""
         adapter = _make_adapter(engine_dim=768)
-        resp = _FakeResponse(200, {"shards": 4})
-        _patch_session(adapter, resp)
-        # .get("dimension") returns None → passes
+        _patch_stub(adapter, dimension=0, shards=4)
+        # server_dim=0 is falsy → `if server_dim and ...` skips the check → passes
         await adapter.health_check()
 
     @pytest.mark.asyncio
