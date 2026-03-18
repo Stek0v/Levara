@@ -8,6 +8,8 @@ import (
 	"github.com/rupamthxt/vectradb/internal/store"
 	"github.com/rupamthxt/vectradb/pkg/chunker"
 	pb "github.com/rupamthxt/vectradb/proto/pb"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // Service implements the VectraDBService gRPC server.
@@ -46,6 +48,10 @@ func (s *Service) DropCollection(_ context.Context, req *pb.DropCollectionReq) (
 
 func (s *Service) ListCollections(_ context.Context, _ *pb.Empty) (*pb.ListCollectionsResp, error) {
 	return &pb.ListCollectionsResp{Collections: s.collections.List()}, nil
+}
+
+func (s *Service) HasCollection(_ context.Context, req *pb.HasCollectionReq) (*pb.HasCollectionResp, error) {
+	return &pb.HasCollectionResp{Exists: s.collections.Has(req.Name)}, nil
 }
 
 func (s *Service) Insert(_ context.Context, req *pb.InsertReq) (*pb.StatusResp, error) {
@@ -115,7 +121,7 @@ func (s *Service) Delete(_ context.Context, req *pb.DeleteReq) (*pb.DeleteResp, 
 
 func (s *Service) Search(_ context.Context, req *pb.SearchReq) (*pb.SearchResp, error) {
 	if req.Collection == "" || len(req.Vector) == 0 {
-		return &pb.SearchResp{}, nil
+		return nil, status.Error(codes.InvalidArgument, "collection and vector are required")
 	}
 
 	topK := int(req.TopK)
@@ -125,7 +131,7 @@ func (s *Service) Search(_ context.Context, req *pb.SearchReq) (*pb.SearchResp, 
 
 	results, err := s.collections.Search(req.Collection, req.Vector, topK)
 	if err != nil {
-		return &pb.SearchResp{}, nil
+		return nil, status.Errorf(codes.NotFound, "collection %q: %v", req.Collection, err)
 	}
 
 	pbResults := make([]*pb.SearchResult, 0, len(results))
@@ -138,6 +144,29 @@ func (s *Service) Search(_ context.Context, req *pb.SearchReq) (*pb.SearchResp, 
 	}
 
 	return &pb.SearchResp{Results: pbResults}, nil
+}
+
+func (s *Service) GetByID(_ context.Context, req *pb.GetByIDReq) (*pb.GetByIDResp, error) {
+	if req.Collection == "" || len(req.Ids) == 0 {
+		return &pb.GetByIDResp{}, nil
+	}
+
+	db, err := s.collections.Get(req.Collection)
+	if err != nil {
+		return nil, status.Errorf(codes.NotFound, "collection %q not found", req.Collection)
+	}
+
+	records := make([]*pb.RecordEntry, 0, len(req.Ids))
+	for _, id := range req.Ids {
+		_, meta, found := db.Get(id)
+		entry := &pb.RecordEntry{Id: id, Found: found}
+		if found && meta != nil {
+			entry.MetadataJson = string(meta)
+		}
+		records = append(records, entry)
+	}
+
+	return &pb.GetByIDResp{Records: records}, nil
 }
 
 func (s *Service) ChunkText(_ context.Context, req *pb.ChunkTextReq) (*pb.ChunkTextResp, error) {
