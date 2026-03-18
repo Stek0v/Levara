@@ -103,11 +103,22 @@ def load_and_chunk_book(path: Path, max_chunk_chars: int = 1500) -> List[Dict]:
 
 # ── Mock server ──────────────────────────────────────────────────────────────
 
-class BookMockServer:
-    """In-process VectraDB mock with brute-force cosine search."""
+import json as _json
+
+pb = sys.modules["cognee.infrastructure.databases.vector.vectradb.generated.vectradb_pb2"]
+
+
+class GrpcMockServer:
+    """
+    In-process gRPC stub mock with brute-force cosine search.
+
+    Implements the same async interface as the real VectraDBServiceStub so that
+    ``adapter._stub = server`` is sufficient to redirect all calls here.
+    """
 
     def __init__(self):
-        self._store: Dict[str, Dict] = {}
+        self._store: Dict[str, Dict] = {}  # id -> {vector, metadata_json}
+        self._collections: set = set()
         self.insert_calls = 0
         self.search_calls = 0
 
@@ -119,45 +130,76 @@ class BookMockServer:
             return 0.0
         return dot / (mag_a * mag_b)
 
-    async def handle_batch_insert(self, records) -> dict:
-        if isinstance(records, dict):
-            records = records.get("records", [])
-        for rec in records:
+    async def HasCollection(self, req):
+        return pb.HasCollectionResp(exists=(req.name in self._collections))
+
+    async def CreateCollection(self, req):
+        self._collections.add(req.name)
+        return pb.StatusResp(ok=True)
+
+    async def DropCollection(self, req):
+        self._collections.discard(req.name)
+        return pb.StatusResp(ok=True)
+
+    async def ListCollections(self, req):
+        return pb.ListCollectionsResp(collections=list(self._collections))
+
+    async def BatchInsert(self, req):
+        self._collections.add(req.collection)
+        inserted = 0
+        for rec in req.records:
             self.insert_calls += 1
-            self._store[rec["id"]] = {
-                "vector": rec["vector"],
-                "metadata": rec.get("metadata", {}),
+            self._store[rec.id] = {
+                "vector": list(rec.vector),
+                "metadata_json": rec.metadata_json,
             }
-        return {"inserted": len(records), "failed": 0}
+            inserted += 1
+        return pb.BatchInsertResp(inserted=inserted, failed=0)
 
-    async def dispatch(self, path: str, payload: dict) -> dict:
-        if path == "/api/v1/insert":
-            return await self.handle_batch_insert({"records": [payload]})
-        if path == "/api/v1/batch_insert":
-            return await self.handle_batch_insert(payload)
-        if path == "/api/v1/search":
-            return await self._search(payload)
-        raise ValueError(f"Unknown path: {path}")
-
-    async def _search(self, body: dict) -> dict:
+    async def Search(self, req):
         self.search_calls += 1
-        query = body["vector"]
-        k = body.get("k", 10)
+        query = list(req.vector)
+        k = req.top_k or 10
         scores = []
         for record_id, record in self._store.items():
             sim = self._cosine(query, record["vector"])
-            scores.append((record_id, sim, record["metadata"]))
+            scores.append((record_id, sim, record["metadata_json"]))
         scores.sort(key=lambda x: -x[1])
-        return {
-            "results": [
-                {"id": rid, "score": score, "metadata": meta}
-                for rid, score, meta in scores[:k]
-            ]
-        }
+        results = [
+            pb.SearchResult(id=rid, score=sim, metadata_json=meta_json)
+            for rid, sim, meta_json in scores[:k]
+        ]
+        return pb.SearchResp(results=results)
+
+    async def GetByID(self, req):
+        records = []
+        for rid in req.ids:
+            if rid in self._store:
+                rec = self._store[rid]
+                records.append(pb.RecordEntry(
+                    id=rid,
+                    metadata_json=rec["metadata_json"],
+                    found=True,
+                ))
+            else:
+                records.append(pb.RecordEntry(id=rid, found=False))
+        return pb.GetByIDResp(records=records)
+
+    async def Delete(self, req):
+        deleted = 0
+        for rid in req.ids:
+            if rid in self._store:
+                del self._store[rid]
+                deleted += 1
+        return pb.DeleteResp(deleted=deleted, failed=0)
 
     @property
     def size(self) -> int:
         return len(self._store)
+
+
+# Keep old name as alias so existing test code that references BookMockServer works
+BookMockServer = GrpcMockServer
 
 
 # ── Embedding engine (deterministic) ─────────────────────────────────────────
@@ -205,7 +247,7 @@ class _ChunkDataPoint(_DataPoint):
 
 # ── Adapter factory ──────────────────────────────────────────────────────────
 
-def _make_adapter(server: BookMockServer, engine=None) -> VectraDBAdapter:
+def _make_adapter(server: GrpcMockServer, engine=None) -> VectraDBAdapter:
     if engine is None:
         engine = _make_embedding_engine()
     adapter = VectraDBAdapter(
@@ -213,8 +255,8 @@ def _make_adapter(server: BookMockServer, engine=None) -> VectraDBAdapter:
         api_key=None,
         embedding_engine=engine,
     )
-    adapter._post = server.dispatch
-    adapter._batch_post = server.handle_batch_insert
+    # Replace the real gRPC stub with our in-process mock
+    adapter._stub = server
     return adapter
 
 
@@ -391,11 +433,11 @@ class TestBookInsertPerformance:
         print(f"  Total time: {t_total * 1000:.1f} ms")
         print(f"  Throughput: {throughput:,.0f} chunks/s")
         print(f"  Server records: {server.size}")
-        print(f"  Cache entries:  {len(adapter._id_cache)}")
+        print(f"  Cache entries:  {len(adapter._embedding_cache)}")
         print()
 
         assert server.size == N
-        assert len(adapter._id_cache) == N
+        assert len(adapter._embedding_cache) == N
         assert throughput > 100, f"Insert too slow: {throughput:.0f} chunks/s"
 
 
