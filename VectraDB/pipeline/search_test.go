@@ -32,6 +32,7 @@ func setupTestPipeline(t *testing.T, dim int) (*SearchPipeline, *store.Collectio
 		"http://localhost:9001/v1/embeddings",
 		"pplx-embed-context-v1-0.6b",
 		16,
+		1,
 	)
 
 	pipeline := NewSearchPipeline(embedClient, cm)
@@ -131,7 +132,7 @@ func BenchmarkSearchByVector(b *testing.B) {
 	cm, _ := store.NewCollectionManager(dim, dir)
 	defer cm.Close()
 
-	embedClient := embed.NewClient("http://localhost:9001/v1/embeddings", "test", 16)
+	embedClient := embed.NewClient("http://localhost:9001/v1/embeddings", "test", 16, 1)
 	p := NewSearchPipeline(embedClient, cm)
 
 	// Insert 500 vectors
