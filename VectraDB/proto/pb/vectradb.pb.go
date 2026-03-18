@@ -243,6 +243,94 @@ func (x *ListCollectionsResp) GetCollections() []string {
 	return nil
 }
 
+type HasCollectionReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HasCollectionReq) Reset() {
+	*x = HasCollectionReq{}
+	mi := &file_proto_vectradb_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HasCollectionReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HasCollectionReq) ProtoMessage() {}
+
+func (x *HasCollectionReq) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_vectradb_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HasCollectionReq.ProtoReflect.Descriptor instead.
+func (*HasCollectionReq) Descriptor() ([]byte, []int) {
+	return file_proto_vectradb_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *HasCollectionReq) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+type HasCollectionResp struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Exists        bool                   `protobuf:"varint,1,opt,name=exists,proto3" json:"exists,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HasCollectionResp) Reset() {
+	*x = HasCollectionResp{}
+	mi := &file_proto_vectradb_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HasCollectionResp) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HasCollectionResp) ProtoMessage() {}
+
+func (x *HasCollectionResp) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_vectradb_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HasCollectionResp.ProtoReflect.Descriptor instead.
+func (*HasCollectionResp) Descriptor() ([]byte, []int) {
+	return file_proto_vectradb_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *HasCollectionResp) GetExists() bool {
+	if x != nil {
+		return x.Exists
+	}
+	return false
+}
+
 // Records
 type InsertReq struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -256,7 +344,7 @@ type InsertReq struct {
 
 func (x *InsertReq) Reset() {
 	*x = InsertReq{}
-	mi := &file_proto_vectradb_proto_msgTypes[5]
+	mi := &file_proto_vectradb_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -268,7 +356,7 @@ func (x *InsertReq) String() string {
 func (*InsertReq) ProtoMessage() {}
 
 func (x *InsertReq) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_vectradb_proto_msgTypes[5]
+	mi := &file_proto_vectradb_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -281,7 +369,7 @@ func (x *InsertReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InsertReq.ProtoReflect.Descriptor instead.
 func (*InsertReq) Descriptor() ([]byte, []int) {
-	return file_proto_vectradb_proto_rawDescGZIP(), []int{5}
+	return file_proto_vectradb_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *InsertReq) GetCollection() string {
@@ -322,7 +410,7 @@ type BatchInsertReq struct {
 
 func (x *BatchInsertReq) Reset() {
 	*x = BatchInsertReq{}
-	mi := &file_proto_vectradb_proto_msgTypes[6]
+	mi := &file_proto_vectradb_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -334,7 +422,7 @@ func (x *BatchInsertReq) String() string {
 func (*BatchInsertReq) ProtoMessage() {}
 
 func (x *BatchInsertReq) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_vectradb_proto_msgTypes[6]
+	mi := &file_proto_vectradb_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -347,7 +435,7 @@ func (x *BatchInsertReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BatchInsertReq.ProtoReflect.Descriptor instead.
 func (*BatchInsertReq) Descriptor() ([]byte, []int) {
-	return file_proto_vectradb_proto_rawDescGZIP(), []int{6}
+	return file_proto_vectradb_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *BatchInsertReq) GetCollection() string {
@@ -375,7 +463,7 @@ type InsertRecord struct {
 
 func (x *InsertRecord) Reset() {
 	*x = InsertRecord{}
-	mi := &file_proto_vectradb_proto_msgTypes[7]
+	mi := &file_proto_vectradb_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -387,7 +475,7 @@ func (x *InsertRecord) String() string {
 func (*InsertRecord) ProtoMessage() {}
 
 func (x *InsertRecord) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_vectradb_proto_msgTypes[7]
+	mi := &file_proto_vectradb_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -400,7 +488,7 @@ func (x *InsertRecord) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InsertRecord.ProtoReflect.Descriptor instead.
 func (*InsertRecord) Descriptor() ([]byte, []int) {
-	return file_proto_vectradb_proto_rawDescGZIP(), []int{7}
+	return file_proto_vectradb_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *InsertRecord) GetId() string {
@@ -435,7 +523,7 @@ type BatchInsertResp struct {
 
 func (x *BatchInsertResp) Reset() {
 	*x = BatchInsertResp{}
-	mi := &file_proto_vectradb_proto_msgTypes[8]
+	mi := &file_proto_vectradb_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -447,7 +535,7 @@ func (x *BatchInsertResp) String() string {
 func (*BatchInsertResp) ProtoMessage() {}
 
 func (x *BatchInsertResp) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_vectradb_proto_msgTypes[8]
+	mi := &file_proto_vectradb_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -460,7 +548,7 @@ func (x *BatchInsertResp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BatchInsertResp.ProtoReflect.Descriptor instead.
 func (*BatchInsertResp) Descriptor() ([]byte, []int) {
-	return file_proto_vectradb_proto_rawDescGZIP(), []int{8}
+	return file_proto_vectradb_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *BatchInsertResp) GetInserted() int32 {
@@ -494,7 +582,7 @@ type DeleteReq struct {
 
 func (x *DeleteReq) Reset() {
 	*x = DeleteReq{}
-	mi := &file_proto_vectradb_proto_msgTypes[9]
+	mi := &file_proto_vectradb_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -506,7 +594,7 @@ func (x *DeleteReq) String() string {
 func (*DeleteReq) ProtoMessage() {}
 
 func (x *DeleteReq) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_vectradb_proto_msgTypes[9]
+	mi := &file_proto_vectradb_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -519,7 +607,7 @@ func (x *DeleteReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteReq.ProtoReflect.Descriptor instead.
 func (*DeleteReq) Descriptor() ([]byte, []int) {
-	return file_proto_vectradb_proto_rawDescGZIP(), []int{9}
+	return file_proto_vectradb_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *DeleteReq) GetCollection() string {
@@ -547,7 +635,7 @@ type DeleteResp struct {
 
 func (x *DeleteResp) Reset() {
 	*x = DeleteResp{}
-	mi := &file_proto_vectradb_proto_msgTypes[10]
+	mi := &file_proto_vectradb_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -559,7 +647,7 @@ func (x *DeleteResp) String() string {
 func (*DeleteResp) ProtoMessage() {}
 
 func (x *DeleteResp) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_vectradb_proto_msgTypes[10]
+	mi := &file_proto_vectradb_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -572,7 +660,7 @@ func (x *DeleteResp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteResp.ProtoReflect.Descriptor instead.
 func (*DeleteResp) Descriptor() ([]byte, []int) {
-	return file_proto_vectradb_proto_rawDescGZIP(), []int{10}
+	return file_proto_vectradb_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *DeleteResp) GetDeleted() int32 {
@@ -607,7 +695,7 @@ type SearchReq struct {
 
 func (x *SearchReq) Reset() {
 	*x = SearchReq{}
-	mi := &file_proto_vectradb_proto_msgTypes[11]
+	mi := &file_proto_vectradb_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -619,7 +707,7 @@ func (x *SearchReq) String() string {
 func (*SearchReq) ProtoMessage() {}
 
 func (x *SearchReq) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_vectradb_proto_msgTypes[11]
+	mi := &file_proto_vectradb_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -632,7 +720,7 @@ func (x *SearchReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SearchReq.ProtoReflect.Descriptor instead.
 func (*SearchReq) Descriptor() ([]byte, []int) {
-	return file_proto_vectradb_proto_rawDescGZIP(), []int{11}
+	return file_proto_vectradb_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *SearchReq) GetCollection() string {
@@ -665,7 +753,7 @@ type SearchResp struct {
 
 func (x *SearchResp) Reset() {
 	*x = SearchResp{}
-	mi := &file_proto_vectradb_proto_msgTypes[12]
+	mi := &file_proto_vectradb_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -677,7 +765,7 @@ func (x *SearchResp) String() string {
 func (*SearchResp) ProtoMessage() {}
 
 func (x *SearchResp) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_vectradb_proto_msgTypes[12]
+	mi := &file_proto_vectradb_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -690,7 +778,7 @@ func (x *SearchResp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SearchResp.ProtoReflect.Descriptor instead.
 func (*SearchResp) Descriptor() ([]byte, []int) {
-	return file_proto_vectradb_proto_rawDescGZIP(), []int{12}
+	return file_proto_vectradb_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *SearchResp) GetResults() []*SearchResult {
@@ -711,7 +799,7 @@ type SearchResult struct {
 
 func (x *SearchResult) Reset() {
 	*x = SearchResult{}
-	mi := &file_proto_vectradb_proto_msgTypes[13]
+	mi := &file_proto_vectradb_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -723,7 +811,7 @@ func (x *SearchResult) String() string {
 func (*SearchResult) ProtoMessage() {}
 
 func (x *SearchResult) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_vectradb_proto_msgTypes[13]
+	mi := &file_proto_vectradb_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -736,7 +824,7 @@ func (x *SearchResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SearchResult.ProtoReflect.Descriptor instead.
 func (*SearchResult) Descriptor() ([]byte, []int) {
-	return file_proto_vectradb_proto_rawDescGZIP(), []int{13}
+	return file_proto_vectradb_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *SearchResult) GetId() string {
@@ -760,6 +848,171 @@ func (x *SearchResult) GetMetadataJson() string {
 	return ""
 }
 
+// Record retrieval by ID
+type GetByIDReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Collection    string                 `protobuf:"bytes,1,opt,name=collection,proto3" json:"collection,omitempty"`
+	Ids           []string               `protobuf:"bytes,2,rep,name=ids,proto3" json:"ids,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetByIDReq) Reset() {
+	*x = GetByIDReq{}
+	mi := &file_proto_vectradb_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetByIDReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetByIDReq) ProtoMessage() {}
+
+func (x *GetByIDReq) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_vectradb_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetByIDReq.ProtoReflect.Descriptor instead.
+func (*GetByIDReq) Descriptor() ([]byte, []int) {
+	return file_proto_vectradb_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *GetByIDReq) GetCollection() string {
+	if x != nil {
+		return x.Collection
+	}
+	return ""
+}
+
+func (x *GetByIDReq) GetIds() []string {
+	if x != nil {
+		return x.Ids
+	}
+	return nil
+}
+
+type GetByIDResp struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Records       []*RecordEntry         `protobuf:"bytes,1,rep,name=records,proto3" json:"records,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetByIDResp) Reset() {
+	*x = GetByIDResp{}
+	mi := &file_proto_vectradb_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetByIDResp) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetByIDResp) ProtoMessage() {}
+
+func (x *GetByIDResp) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_vectradb_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetByIDResp.ProtoReflect.Descriptor instead.
+func (*GetByIDResp) Descriptor() ([]byte, []int) {
+	return file_proto_vectradb_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *GetByIDResp) GetRecords() []*RecordEntry {
+	if x != nil {
+		return x.Records
+	}
+	return nil
+}
+
+type RecordEntry struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	MetadataJson  string                 `protobuf:"bytes,2,opt,name=metadata_json,json=metadataJson,proto3" json:"metadata_json,omitempty"`
+	Found         bool                   `protobuf:"varint,3,opt,name=found,proto3" json:"found,omitempty"`
+	Vector        []float32              `protobuf:"fixed32,4,rep,packed,name=vector,proto3" json:"vector,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RecordEntry) Reset() {
+	*x = RecordEntry{}
+	mi := &file_proto_vectradb_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RecordEntry) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RecordEntry) ProtoMessage() {}
+
+func (x *RecordEntry) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_vectradb_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RecordEntry.ProtoReflect.Descriptor instead.
+func (*RecordEntry) Descriptor() ([]byte, []int) {
+	return file_proto_vectradb_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *RecordEntry) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *RecordEntry) GetMetadataJson() string {
+	if x != nil {
+		return x.MetadataJson
+	}
+	return ""
+}
+
+func (x *RecordEntry) GetFound() bool {
+	if x != nil {
+		return x.Found
+	}
+	return false
+}
+
+func (x *RecordEntry) GetVector() []float32 {
+	if x != nil {
+		return x.Vector
+	}
+	return nil
+}
+
 // Text chunking
 type ChunkTextReq struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -773,7 +1026,7 @@ type ChunkTextReq struct {
 
 func (x *ChunkTextReq) Reset() {
 	*x = ChunkTextReq{}
-	mi := &file_proto_vectradb_proto_msgTypes[14]
+	mi := &file_proto_vectradb_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -785,7 +1038,7 @@ func (x *ChunkTextReq) String() string {
 func (*ChunkTextReq) ProtoMessage() {}
 
 func (x *ChunkTextReq) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_vectradb_proto_msgTypes[14]
+	mi := &file_proto_vectradb_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -798,7 +1051,7 @@ func (x *ChunkTextReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChunkTextReq.ProtoReflect.Descriptor instead.
 func (*ChunkTextReq) Descriptor() ([]byte, []int) {
-	return file_proto_vectradb_proto_rawDescGZIP(), []int{14}
+	return file_proto_vectradb_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *ChunkTextReq) GetText() string {
@@ -838,7 +1091,7 @@ type ChunkTextResp struct {
 
 func (x *ChunkTextResp) Reset() {
 	*x = ChunkTextResp{}
-	mi := &file_proto_vectradb_proto_msgTypes[15]
+	mi := &file_proto_vectradb_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -850,7 +1103,7 @@ func (x *ChunkTextResp) String() string {
 func (*ChunkTextResp) ProtoMessage() {}
 
 func (x *ChunkTextResp) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_vectradb_proto_msgTypes[15]
+	mi := &file_proto_vectradb_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -863,7 +1116,7 @@ func (x *ChunkTextResp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChunkTextResp.ProtoReflect.Descriptor instead.
 func (*ChunkTextResp) Descriptor() ([]byte, []int) {
-	return file_proto_vectradb_proto_rawDescGZIP(), []int{15}
+	return file_proto_vectradb_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *ChunkTextResp) GetChunks() []*TextChunk {
@@ -886,7 +1139,7 @@ type TextChunk struct {
 
 func (x *TextChunk) Reset() {
 	*x = TextChunk{}
-	mi := &file_proto_vectradb_proto_msgTypes[16]
+	mi := &file_proto_vectradb_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -898,7 +1151,7 @@ func (x *TextChunk) String() string {
 func (*TextChunk) ProtoMessage() {}
 
 func (x *TextChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_vectradb_proto_msgTypes[16]
+	mi := &file_proto_vectradb_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -911,7 +1164,7 @@ func (x *TextChunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TextChunk.ProtoReflect.Descriptor instead.
 func (*TextChunk) Descriptor() ([]byte, []int) {
-	return file_proto_vectradb_proto_rawDescGZIP(), []int{16}
+	return file_proto_vectradb_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *TextChunk) GetId() string {
@@ -962,7 +1215,7 @@ type InfoResp struct {
 
 func (x *InfoResp) Reset() {
 	*x = InfoResp{}
-	mi := &file_proto_vectradb_proto_msgTypes[17]
+	mi := &file_proto_vectradb_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -974,7 +1227,7 @@ func (x *InfoResp) String() string {
 func (*InfoResp) ProtoMessage() {}
 
 func (x *InfoResp) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_vectradb_proto_msgTypes[17]
+	mi := &file_proto_vectradb_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -987,7 +1240,7 @@ func (x *InfoResp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InfoResp.ProtoReflect.Descriptor instead.
 func (*InfoResp) Descriptor() ([]byte, []int) {
-	return file_proto_vectradb_proto_rawDescGZIP(), []int{17}
+	return file_proto_vectradb_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *InfoResp) GetDimension() int32 {
@@ -1033,7 +1286,11 @@ const file_proto_vectradb_proto_rawDesc = "" +
 	"\x11DropCollectionReq\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\"7\n" +
 	"\x13ListCollectionsResp\x12 \n" +
-	"\vcollections\x18\x01 \x03(\tR\vcollections\"x\n" +
+	"\vcollections\x18\x01 \x03(\tR\vcollections\"&\n" +
+	"\x10HasCollectionReq\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\"+\n" +
+	"\x11HasCollectionResp\x12\x16\n" +
+	"\x06exists\x18\x01 \x01(\bR\x06exists\"x\n" +
 	"\tInsertReq\x12\x1e\n" +
 	"\n" +
 	"collection\x18\x01 \x01(\tR\n" +
@@ -1076,7 +1333,20 @@ const file_proto_vectradb_proto_rawDesc = "" +
 	"\fSearchResult\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x14\n" +
 	"\x05score\x18\x02 \x01(\x02R\x05score\x12#\n" +
-	"\rmetadata_json\x18\x03 \x01(\tR\fmetadataJson\"\x8e\x01\n" +
+	"\rmetadata_json\x18\x03 \x01(\tR\fmetadataJson\">\n" +
+	"\n" +
+	"GetByIDReq\x12\x1e\n" +
+	"\n" +
+	"collection\x18\x01 \x01(\tR\n" +
+	"collection\x12\x10\n" +
+	"\x03ids\x18\x02 \x03(\tR\x03ids\"A\n" +
+	"\vGetByIDResp\x122\n" +
+	"\arecords\x18\x01 \x03(\v2\x18.vectradb.v1.RecordEntryR\arecords\"p\n" +
+	"\vRecordEntry\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12#\n" +
+	"\rmetadata_json\x18\x02 \x01(\tR\fmetadataJson\x12\x14\n" +
+	"\x05found\x18\x03 \x01(\bR\x05found\x12\x16\n" +
+	"\x06vector\x18\x04 \x03(\x02R\x06vector\"\x8e\x01\n" +
 	"\fChunkTextReq\x12\x12\n" +
 	"\x04text\x18\x01 \x01(\tR\x04text\x12\x1a\n" +
 	"\bstrategy\x18\x02 \x01(\tR\bstrategy\x12&\n" +
@@ -1095,17 +1365,19 @@ const file_proto_vectradb_proto_rawDesc = "" +
 	"\tdimension\x18\x01 \x01(\x05R\tdimension\x12\x16\n" +
 	"\x06shards\x18\x02 \x01(\x05R\x06shards\x12\x16\n" +
 	"\x06status\x18\x03 \x01(\tR\x06status\x12 \n" +
-	"\vcollections\x18\x04 \x03(\tR\vcollections2\xe6\x04\n" +
+	"\vcollections\x18\x04 \x03(\tR\vcollections2\xf4\x05\n" +
 	"\x0fVectraDBService\x12M\n" +
 	"\x10CreateCollection\x12 .vectradb.v1.CreateCollectionReq\x1a\x17.vectradb.v1.StatusResp\x12I\n" +
 	"\x0eDropCollection\x12\x1e.vectradb.v1.DropCollectionReq\x1a\x17.vectradb.v1.StatusResp\x12G\n" +
-	"\x0fListCollections\x12\x12.vectradb.v1.Empty\x1a .vectradb.v1.ListCollectionsResp\x129\n" +
+	"\x0fListCollections\x12\x12.vectradb.v1.Empty\x1a .vectradb.v1.ListCollectionsResp\x12N\n" +
+	"\rHasCollection\x12\x1d.vectradb.v1.HasCollectionReq\x1a\x1e.vectradb.v1.HasCollectionResp\x129\n" +
 	"\x06Insert\x12\x16.vectradb.v1.InsertReq\x1a\x17.vectradb.v1.StatusResp\x12H\n" +
 	"\vBatchInsert\x12\x1b.vectradb.v1.BatchInsertReq\x1a\x1c.vectradb.v1.BatchInsertResp\x129\n" +
 	"\x06Delete\x12\x16.vectradb.v1.DeleteReq\x1a\x17.vectradb.v1.DeleteResp\x129\n" +
 	"\x06Search\x12\x16.vectradb.v1.SearchReq\x1a\x17.vectradb.v1.SearchResp\x12B\n" +
 	"\tChunkText\x12\x19.vectradb.v1.ChunkTextReq\x1a\x1a.vectradb.v1.ChunkTextResp\x121\n" +
-	"\x04Info\x12\x12.vectradb.v1.Empty\x1a\x15.vectradb.v1.InfoRespB(Z&github.com/rupamthxt/vectradb/proto/pbb\x06proto3"
+	"\x04Info\x12\x12.vectradb.v1.Empty\x1a\x15.vectradb.v1.InfoResp\x12<\n" +
+	"\aGetByID\x12\x17.vectradb.v1.GetByIDReq\x1a\x18.vectradb.v1.GetByIDRespB(Z&github.com/rupamthxt/vectradb/proto/pbb\x06proto3"
 
 var (
 	file_proto_vectradb_proto_rawDescOnce sync.Once
@@ -1119,54 +1391,64 @@ func file_proto_vectradb_proto_rawDescGZIP() []byte {
 	return file_proto_vectradb_proto_rawDescData
 }
 
-var file_proto_vectradb_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
+var file_proto_vectradb_proto_msgTypes = make([]protoimpl.MessageInfo, 23)
 var file_proto_vectradb_proto_goTypes = []any{
 	(*Empty)(nil),               // 0: vectradb.v1.Empty
 	(*StatusResp)(nil),          // 1: vectradb.v1.StatusResp
 	(*CreateCollectionReq)(nil), // 2: vectradb.v1.CreateCollectionReq
 	(*DropCollectionReq)(nil),   // 3: vectradb.v1.DropCollectionReq
 	(*ListCollectionsResp)(nil), // 4: vectradb.v1.ListCollectionsResp
-	(*InsertReq)(nil),           // 5: vectradb.v1.InsertReq
-	(*BatchInsertReq)(nil),      // 6: vectradb.v1.BatchInsertReq
-	(*InsertRecord)(nil),        // 7: vectradb.v1.InsertRecord
-	(*BatchInsertResp)(nil),     // 8: vectradb.v1.BatchInsertResp
-	(*DeleteReq)(nil),           // 9: vectradb.v1.DeleteReq
-	(*DeleteResp)(nil),          // 10: vectradb.v1.DeleteResp
-	(*SearchReq)(nil),           // 11: vectradb.v1.SearchReq
-	(*SearchResp)(nil),          // 12: vectradb.v1.SearchResp
-	(*SearchResult)(nil),        // 13: vectradb.v1.SearchResult
-	(*ChunkTextReq)(nil),        // 14: vectradb.v1.ChunkTextReq
-	(*ChunkTextResp)(nil),       // 15: vectradb.v1.ChunkTextResp
-	(*TextChunk)(nil),           // 16: vectradb.v1.TextChunk
-	(*InfoResp)(nil),            // 17: vectradb.v1.InfoResp
+	(*HasCollectionReq)(nil),    // 5: vectradb.v1.HasCollectionReq
+	(*HasCollectionResp)(nil),   // 6: vectradb.v1.HasCollectionResp
+	(*InsertReq)(nil),           // 7: vectradb.v1.InsertReq
+	(*BatchInsertReq)(nil),      // 8: vectradb.v1.BatchInsertReq
+	(*InsertRecord)(nil),        // 9: vectradb.v1.InsertRecord
+	(*BatchInsertResp)(nil),     // 10: vectradb.v1.BatchInsertResp
+	(*DeleteReq)(nil),           // 11: vectradb.v1.DeleteReq
+	(*DeleteResp)(nil),          // 12: vectradb.v1.DeleteResp
+	(*SearchReq)(nil),           // 13: vectradb.v1.SearchReq
+	(*SearchResp)(nil),          // 14: vectradb.v1.SearchResp
+	(*SearchResult)(nil),        // 15: vectradb.v1.SearchResult
+	(*GetByIDReq)(nil),          // 16: vectradb.v1.GetByIDReq
+	(*GetByIDResp)(nil),         // 17: vectradb.v1.GetByIDResp
+	(*RecordEntry)(nil),         // 18: vectradb.v1.RecordEntry
+	(*ChunkTextReq)(nil),        // 19: vectradb.v1.ChunkTextReq
+	(*ChunkTextResp)(nil),       // 20: vectradb.v1.ChunkTextResp
+	(*TextChunk)(nil),           // 21: vectradb.v1.TextChunk
+	(*InfoResp)(nil),            // 22: vectradb.v1.InfoResp
 }
 var file_proto_vectradb_proto_depIdxs = []int32{
-	7,  // 0: vectradb.v1.BatchInsertReq.records:type_name -> vectradb.v1.InsertRecord
-	13, // 1: vectradb.v1.SearchResp.results:type_name -> vectradb.v1.SearchResult
-	16, // 2: vectradb.v1.ChunkTextResp.chunks:type_name -> vectradb.v1.TextChunk
-	2,  // 3: vectradb.v1.VectraDBService.CreateCollection:input_type -> vectradb.v1.CreateCollectionReq
-	3,  // 4: vectradb.v1.VectraDBService.DropCollection:input_type -> vectradb.v1.DropCollectionReq
-	0,  // 5: vectradb.v1.VectraDBService.ListCollections:input_type -> vectradb.v1.Empty
-	5,  // 6: vectradb.v1.VectraDBService.Insert:input_type -> vectradb.v1.InsertReq
-	6,  // 7: vectradb.v1.VectraDBService.BatchInsert:input_type -> vectradb.v1.BatchInsertReq
-	9,  // 8: vectradb.v1.VectraDBService.Delete:input_type -> vectradb.v1.DeleteReq
-	11, // 9: vectradb.v1.VectraDBService.Search:input_type -> vectradb.v1.SearchReq
-	14, // 10: vectradb.v1.VectraDBService.ChunkText:input_type -> vectradb.v1.ChunkTextReq
-	0,  // 11: vectradb.v1.VectraDBService.Info:input_type -> vectradb.v1.Empty
-	1,  // 12: vectradb.v1.VectraDBService.CreateCollection:output_type -> vectradb.v1.StatusResp
-	1,  // 13: vectradb.v1.VectraDBService.DropCollection:output_type -> vectradb.v1.StatusResp
-	4,  // 14: vectradb.v1.VectraDBService.ListCollections:output_type -> vectradb.v1.ListCollectionsResp
-	1,  // 15: vectradb.v1.VectraDBService.Insert:output_type -> vectradb.v1.StatusResp
-	8,  // 16: vectradb.v1.VectraDBService.BatchInsert:output_type -> vectradb.v1.BatchInsertResp
-	10, // 17: vectradb.v1.VectraDBService.Delete:output_type -> vectradb.v1.DeleteResp
-	12, // 18: vectradb.v1.VectraDBService.Search:output_type -> vectradb.v1.SearchResp
-	15, // 19: vectradb.v1.VectraDBService.ChunkText:output_type -> vectradb.v1.ChunkTextResp
-	17, // 20: vectradb.v1.VectraDBService.Info:output_type -> vectradb.v1.InfoResp
-	12, // [12:21] is the sub-list for method output_type
-	3,  // [3:12] is the sub-list for method input_type
-	3,  // [3:3] is the sub-list for extension type_name
-	3,  // [3:3] is the sub-list for extension extendee
-	0,  // [0:3] is the sub-list for field type_name
+	9,  // 0: vectradb.v1.BatchInsertReq.records:type_name -> vectradb.v1.InsertRecord
+	15, // 1: vectradb.v1.SearchResp.results:type_name -> vectradb.v1.SearchResult
+	18, // 2: vectradb.v1.GetByIDResp.records:type_name -> vectradb.v1.RecordEntry
+	21, // 3: vectradb.v1.ChunkTextResp.chunks:type_name -> vectradb.v1.TextChunk
+	2,  // 4: vectradb.v1.VectraDBService.CreateCollection:input_type -> vectradb.v1.CreateCollectionReq
+	3,  // 5: vectradb.v1.VectraDBService.DropCollection:input_type -> vectradb.v1.DropCollectionReq
+	0,  // 6: vectradb.v1.VectraDBService.ListCollections:input_type -> vectradb.v1.Empty
+	5,  // 7: vectradb.v1.VectraDBService.HasCollection:input_type -> vectradb.v1.HasCollectionReq
+	7,  // 8: vectradb.v1.VectraDBService.Insert:input_type -> vectradb.v1.InsertReq
+	8,  // 9: vectradb.v1.VectraDBService.BatchInsert:input_type -> vectradb.v1.BatchInsertReq
+	11, // 10: vectradb.v1.VectraDBService.Delete:input_type -> vectradb.v1.DeleteReq
+	13, // 11: vectradb.v1.VectraDBService.Search:input_type -> vectradb.v1.SearchReq
+	19, // 12: vectradb.v1.VectraDBService.ChunkText:input_type -> vectradb.v1.ChunkTextReq
+	0,  // 13: vectradb.v1.VectraDBService.Info:input_type -> vectradb.v1.Empty
+	16, // 14: vectradb.v1.VectraDBService.GetByID:input_type -> vectradb.v1.GetByIDReq
+	1,  // 15: vectradb.v1.VectraDBService.CreateCollection:output_type -> vectradb.v1.StatusResp
+	1,  // 16: vectradb.v1.VectraDBService.DropCollection:output_type -> vectradb.v1.StatusResp
+	4,  // 17: vectradb.v1.VectraDBService.ListCollections:output_type -> vectradb.v1.ListCollectionsResp
+	6,  // 18: vectradb.v1.VectraDBService.HasCollection:output_type -> vectradb.v1.HasCollectionResp
+	1,  // 19: vectradb.v1.VectraDBService.Insert:output_type -> vectradb.v1.StatusResp
+	10, // 20: vectradb.v1.VectraDBService.BatchInsert:output_type -> vectradb.v1.BatchInsertResp
+	12, // 21: vectradb.v1.VectraDBService.Delete:output_type -> vectradb.v1.DeleteResp
+	14, // 22: vectradb.v1.VectraDBService.Search:output_type -> vectradb.v1.SearchResp
+	20, // 23: vectradb.v1.VectraDBService.ChunkText:output_type -> vectradb.v1.ChunkTextResp
+	22, // 24: vectradb.v1.VectraDBService.Info:output_type -> vectradb.v1.InfoResp
+	17, // 25: vectradb.v1.VectraDBService.GetByID:output_type -> vectradb.v1.GetByIDResp
+	15, // [15:26] is the sub-list for method output_type
+	4,  // [4:15] is the sub-list for method input_type
+	4,  // [4:4] is the sub-list for extension type_name
+	4,  // [4:4] is the sub-list for extension extendee
+	0,  // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_proto_vectradb_proto_init() }
@@ -1180,7 +1462,7 @@ func file_proto_vectradb_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_vectradb_proto_rawDesc), len(file_proto_vectradb_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   18,
+			NumMessages:   23,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

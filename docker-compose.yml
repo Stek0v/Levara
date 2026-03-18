@@ -3,9 +3,10 @@ services:
     build: ./VectraDB
     ports:
       - "8080:8080"
+      - "50051:50051"
     volumes:
       - vectradb-data:/app/data
-    command: ["./vectradb", "-standalone=true", "-dim=${VECTRADB_DIM:-${EMBEDDING_DIMENSIONS:-1024}}", "-shards=${VECTRADB_SHARDS:-3}", "-port=8080"]
+    command: ["./vectradb", "-standalone=true", "-dim=${VECTRADB_DIM:-${EMBEDDING_DIMENSIONS:-1024}}", "-shards=${VECTRADB_SHARDS:-3}", "-port=8080", "-grpc-port=50051"]
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/metrics"]
       interval: 10s

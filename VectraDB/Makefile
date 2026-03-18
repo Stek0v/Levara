@@ -57,3 +57,29 @@ clean:
 	@rm -f *.snap
 	@rm -rf data/
 	@echo "Done."
+
+# --- Proto Generation ---
+
+.PHONY: proto-go proto-python proto
+
+proto-go:
+	@echo "Generating Go protobuf stubs..."
+	@protoc --go_out=. --go-grpc_out=. proto/vectradb.proto
+	@echo "Done."
+
+proto-python:
+	@echo "Generating Python gRPC stubs..."
+	@mkdir -p ../cognee/cognee/infrastructure/databases/vector/vectradb/generated
+	@mkdir -p ../cognee-plugin/vectradb_adapter/generated
+	@python3 -m grpc_tools.protoc \
+		-Iproto \
+		--python_out=../cognee/cognee/infrastructure/databases/vector/vectradb/generated \
+		--grpc_python_out=../cognee/cognee/infrastructure/databases/vector/vectradb/generated \
+		proto/vectradb.proto
+	@cp ../cognee/cognee/infrastructure/databases/vector/vectradb/generated/vectradb_pb2.py \
+		../cognee-plugin/vectradb_adapter/generated/ 2>/dev/null || true
+	@cp ../cognee/cognee/infrastructure/databases/vector/vectradb/generated/vectradb_pb2_grpc.py \
+		../cognee-plugin/vectradb_adapter/generated/ 2>/dev/null || true
+	@echo "Done."
+
+proto: proto-go proto-python
