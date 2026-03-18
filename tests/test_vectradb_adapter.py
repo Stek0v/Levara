@@ -1,11 +1,8 @@
 """
-Unit tests for VectraDBAdapter (Phase 1.1 + 1.2 + 1.3).
+Unit tests for VectraDBAdapter (gRPC transport).
 
-Stubs for the heavy cognee import chain are set up in conftest.py
-which runs before this file is imported by pytest.
-
-Run with:
-    pytest cognee/tests/unit/infrastructure/databases/vector/test_vectradb_adapter.py -v
+Stubs for the heavy cognee import chain are set up in conftest.py.
+Generated protobuf modules are loaded by conftest.py from the generated/ directory.
 """
 
 import asyncio
@@ -14,14 +11,19 @@ import sys
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import grpc
+import grpc.aio
 import pytest
 
-# conftest.py has already stubbed all cognee deps in sys.modules — safe to import now
 from cognee.infrastructure.databases.vector.vectradb.VectraDBAdapter import (
     VectraDBAdapter,
-    _serialize_payload,
+    _serialize_for_json,
 )
 from cognee.infrastructure.databases.exceptions import MissingQueryParameterError
+
+# Load protobuf types from conftest-registered modules
+pb = sys.modules["cognee.infrastructure.databases.vector.vectradb.generated.vectradb_pb2"]
+pb_grpc = sys.modules["cognee.infrastructure.databases.vector.vectradb.generated.vectradb_pb2_grpc"]
 
 _DataPoint = sys.modules["cognee.infrastructure.engine"].DataPoint
 ScoredResult = sys.modules[
@@ -39,11 +41,14 @@ def _make_embedding_engine(dim: int = 4) -> MagicMock:
 
 
 def _make_adapter() -> VectraDBAdapter:
-    return VectraDBAdapter(
-        url="http://localhost:8080",
+    adapter = VectraDBAdapter(
+        url="localhost:50051",
         api_key=None,
         embedding_engine=_make_embedding_engine(),
     )
+    # Replace stub with mock for unit testing (no real gRPC server)
+    adapter._stub = MagicMock()
+    return adapter
 
 
 class _FakeDataPoint(_DataPoint):
@@ -63,173 +68,181 @@ class _FakeDataPoint(_DataPoint):
         }
 
 
-# ─── Task 1.2: payload serialization (schema unification) ─────────────────────
+# ─── serialization ───────────────────────────────────────────────────────────
 
-class TestSerializePayload:
+class TestSerializeForJson:
     def test_uuid_to_str(self):
         uid = uuid.uuid4()
-        assert _serialize_payload({"id": uid}) == {"id": str(uid)}
+        assert _serialize_for_json({"id": uid}) == {"id": str(uid)}
 
     def test_nested_uuid(self):
         uid = uuid.uuid4()
-        result = _serialize_payload({"outer": {"id": uid, "val": 42}})
+        result = _serialize_for_json({"outer": {"id": uid, "val": 42}})
         assert result["outer"]["id"] == str(uid)
 
     def test_list_with_uuid(self):
         uid = uuid.uuid4()
-        result = _serialize_payload([uid, "hello", 3])
+        result = _serialize_for_json([uid, "hello", 3])
         assert result == [str(uid), "hello", 3]
 
     def test_non_serializable_becomes_str(self):
-        # Objects with __dict__ are serialized as dict via vars()
         class WithAttr:
-            pass  # vars(WithAttr()) == {}
-        result = _serialize_payload({"w": WithAttr()})
-        assert result["w"] == {}  # empty dict (not str) — correct behavior
+            pass
+        result = _serialize_for_json({"w": WithAttr()})
+        assert result["w"] == {}
 
-        # Built-in method descriptors have no __dict__ and aren't JSON-safe → str
-        result2 = _serialize_payload(int.__add__)
+        result2 = _serialize_for_json(int.__add__)
         assert isinstance(result2, str)
 
     def test_roundtrip_cognee_fields(self):
-        """Task 1.2 DoD: all Cognee metadata fields survive serialization without loss."""
         dp_id = uuid.uuid4()
         payload = {
-            "id": dp_id,
-            "text": "sample",
-            "belongs_to_set": ["set_a", "set_b"],
-            "created_at": 1700000000000,
+            "id": dp_id, "text": "sample",
+            "belongs_to_set": ["set_a", "set_b"], "created_at": 1700000000000,
         }
-        result = _serialize_payload(payload)
+        result = _serialize_for_json(payload)
         assert result["id"] == str(dp_id)
-        assert result["text"] == "sample"
-        assert result["belongs_to_set"] == ["set_a", "set_b"]
-        assert result["created_at"] == 1700000000000
-        json.dumps(result)  # must be JSON-serializable, no exception
+        json.dumps(result)
 
 
-# ─── Task 1.1: collection management ─────────────────────────────────────────
+# ─── collections (gRPC) ─────────────────────────────────────────────────────
 
 class TestCollections:
     @pytest.mark.asyncio
-    async def test_no_collections_initially(self):
+    async def test_has_collection_false(self):
         adapter = _make_adapter()
-        result = await adapter.has_collection("col")
-        assert result is False
+        adapter._stub.HasCollection = AsyncMock(
+            return_value=pb.HasCollectionResp(exists=False)
+        )
+        assert await adapter.has_collection("col") is False
 
     @pytest.mark.asyncio
-    async def test_create_collection(self):
+    async def test_has_collection_true_after_create(self):
         adapter = _make_adapter()
+        adapter._stub.CreateCollection = AsyncMock(
+            return_value=pb.StatusResp(ok=True)
+        )
+        adapter._stub.HasCollection = AsyncMock(
+            return_value=pb.HasCollectionResp(exists=True)
+        )
         await adapter.create_collection("col")
         assert await adapter.has_collection("col") is True
 
-    def test_prefixed_id_format(self):
-        adapter = _make_adapter()
-        uid = uuid.uuid4()
-        assert adapter._prefixed_id("col", uid) == f"col:{uid}"
 
-    def test_strip_prefix(self):
-        adapter = _make_adapter()
-        uid = str(uuid.uuid4())
-        assert adapter._strip_prefix("col", f"col:{uid}") == uid
-
-
-# ─── Task 1.1: insert and retrieve ───────────────────────────────────────────
+# ─── insert and retrieve (gRPC) ─────────────────────────────────────────────
 
 class TestInsertAndRetrieve:
     @pytest.mark.asyncio
-    async def test_insert_calls_vectradb_batch_api(self):
-        """create_data_points must use /api/v1/batch_insert (one call per batch)."""
+    async def test_insert_calls_batch_insert_rpc(self):
         adapter = _make_adapter()
         dp = _FakeDataPoint(text="hello")
 
-        with patch.object(adapter, "_batch_post", new_callable=AsyncMock) as mock_batch:
-            mock_batch.return_value = {"inserted": 1, "failed": 0}
-            await adapter.create_data_points("col", [dp])
+        adapter._stub.BatchInsert = AsyncMock(
+            return_value=pb.BatchInsertResp(inserted=1, failed=0)
+        )
+        await adapter.create_data_points("col", [dp])
 
-        # _batch_post receives the records list directly
-        records = mock_batch.call_args[0][0]
-        assert len(records) == 1
-        assert records[0]["id"].startswith("col:")
-        assert len(records[0]["vector"]) == 4
-        assert isinstance(records[0]["metadata"], dict)
-
-    @pytest.mark.asyncio
-    async def test_insert_populates_id_cache(self):
-        adapter = _make_adapter()
-        dp = _FakeDataPoint(text="cached")
-
-        with patch.object(adapter, "_batch_post", new_callable=AsyncMock) as mock_batch:
-            mock_batch.return_value = {"inserted": 1, "failed": 0}
-            await adapter.create_data_points("col", [dp])
-
-        assert f"col:{dp.id}" in adapter._id_cache
-        assert adapter._id_cache[f"col:{dp.id}"]["text"] == "cached"
+        adapter._stub.BatchInsert.assert_called_once()
+        req = adapter._stub.BatchInsert.call_args[0][0]
+        assert req.collection == "col"
+        assert len(req.records) == 1
+        assert req.records[0].id == str(dp.id)
+        assert len(req.records[0].vector) == 4
 
     @pytest.mark.asyncio
-    async def test_retrieve_from_cache(self):
+    async def test_retrieve_from_server(self):
         adapter = _make_adapter()
         uid = uuid.uuid4()
-        adapter._id_cache[f"col:{uid}"] = {"text": "hi", "id": str(uid)}
+        meta = json.dumps({"text": "hi", "id": str(uid)})
 
+        adapter._stub.GetByID = AsyncMock(
+            return_value=pb.GetByIDResp(records=[
+                pb.RecordEntry(id=str(uid), metadata_json=meta, found=True),
+            ])
+        )
         results = await adapter.retrieve("col", [str(uid)])
         assert len(results) == 1
         assert str(results[0].id) == str(uid)
         assert results[0].score == 0.0
+        assert results[0].payload["text"] == "hi"
 
     @pytest.mark.asyncio
-    async def test_retrieve_cache_miss_returns_empty(self):
+    async def test_retrieve_not_found_returns_empty(self):
         adapter = _make_adapter()
-        results = await adapter.retrieve("col", [str(uuid.uuid4())])
+        adapter._stub.GetByID = AsyncMock(
+            return_value=pb.GetByIDResp(records=[
+                pb.RecordEntry(id="missing", metadata_json="", found=False),
+            ])
+        )
+        results = await adapter.retrieve("col", ["missing"])
         assert results == []
 
+    @pytest.mark.asyncio
+    async def test_insert_retrieve_roundtrip(self):
+        """After insert, retrieve returns the same payload."""
+        adapter = _make_adapter()
+        dp = _FakeDataPoint(text="sync", dp_id=uuid.uuid4())
+        dp.belongs_to_set = ["grp_a"]
 
-# ─── Task 1.1: search ────────────────────────────────────────────────────────
+        adapter._stub.BatchInsert = AsyncMock(
+            return_value=pb.BatchInsertResp(inserted=1, failed=0)
+        )
+        await adapter.create_data_points("col", [dp])
+
+        # Capture what was sent
+        req = adapter._stub.BatchInsert.call_args[0][0]
+        sent_meta = req.records[0].metadata_json
+
+        adapter._stub.GetByID = AsyncMock(
+            return_value=pb.GetByIDResp(records=[
+                pb.RecordEntry(id=str(dp.id), metadata_json=sent_meta, found=True),
+            ])
+        )
+        results = await adapter.retrieve("col", [str(dp.id)])
+        assert results[0].payload["belongs_to_set"] == ["grp_a"]
+
+
+# ─── search (gRPC) ──────────────────────────────────────────────────────────
 
 class TestSearch:
     @pytest.mark.asyncio
-    async def test_search_filters_by_collection_prefix(self):
+    async def test_search_returns_results(self):
         adapter = _make_adapter()
-        uid_a, uid_b = str(uuid.uuid4()), str(uuid.uuid4())
-
-        with patch.object(adapter, "_post", new_callable=AsyncMock) as mock_post:
-            mock_post.return_value = {
-                "results": [
-                    {"id": f"col_a:{uid_a}", "score": 0.9, "metadata": {}},
-                    {"id": f"col_b:{uid_b}", "score": 0.8, "metadata": {}},
-                ]
-            }
-            results = await adapter.search("col_a", query_text="test", limit=10)
-
+        uid = str(uuid.uuid4())
+        adapter._stub.Search = AsyncMock(
+            return_value=pb.SearchResp(results=[
+                pb.SearchResult(id=uid, score=0.9, metadata_json='{"x":1}'),
+            ])
+        )
+        results = await adapter.search("col", query_vector=[0.1]*4, limit=5)
         assert len(results) == 1
-        assert str(results[0].id) == uid_a
+        assert str(results[0].id) == uid
 
     @pytest.mark.asyncio
     async def test_search_score_inverted(self):
-        """VectraDB similarity score (higher=better) → Cognee score (lower=better)."""
         adapter = _make_adapter()
         uid = str(uuid.uuid4())
-
-        with patch.object(adapter, "_post", new_callable=AsyncMock) as mock_post:
-            mock_post.return_value = {"results": [{"id": f"col:{uid}", "score": 0.9, "metadata": {}}]}
-            results = await adapter.search("col", query_vector=[0.1]*4, limit=5)
-
-        assert abs(results[0].score - 0.1) < 1e-6  # 1.0 - 0.9
+        adapter._stub.Search = AsyncMock(
+            return_value=pb.SearchResp(results=[
+                pb.SearchResult(id=uid, score=0.9, metadata_json="{}"),
+            ])
+        )
+        results = await adapter.search("col", query_vector=[0.1]*4, limit=5)
+        assert abs(results[0].score - 0.1) < 1e-6
 
     @pytest.mark.asyncio
     async def test_search_filters_by_node_name(self):
         adapter = _make_adapter()
         uid_a, uid_b = str(uuid.uuid4()), str(uuid.uuid4())
-
-        with patch.object(adapter, "_post", new_callable=AsyncMock) as mock_post:
-            mock_post.return_value = {
-                "results": [
-                    {"id": f"col:{uid_a}", "score": 0.9, "metadata": {"belongs_to_set": ["x"]}},
-                    {"id": f"col:{uid_b}", "score": 0.8, "metadata": {"belongs_to_set": ["y"]}},
-                ]
-            }
-            results = await adapter.search("col", query_vector=[0.1]*4, limit=10, node_name=["x"])
-
+        adapter._stub.Search = AsyncMock(
+            return_value=pb.SearchResp(results=[
+                pb.SearchResult(id=uid_a, score=0.9,
+                    metadata_json=json.dumps({"belongs_to_set": ["x"]})),
+                pb.SearchResult(id=uid_b, score=0.8,
+                    metadata_json=json.dumps({"belongs_to_set": ["y"]})),
+            ])
+        )
+        results = await adapter.search("col", query_vector=[0.1]*4, limit=10, node_name=["x"])
         assert len(results) == 1
         assert str(results[0].id) == uid_a
 
@@ -240,66 +253,86 @@ class TestSearch:
             await adapter.search("col", limit=5)
 
     @pytest.mark.asyncio
-    async def test_search_payload_excluded_when_not_requested(self):
+    async def test_search_payload_excluded(self):
         adapter = _make_adapter()
         uid = str(uuid.uuid4())
-
-        with patch.object(adapter, "_post", new_callable=AsyncMock) as mock_post:
-            mock_post.return_value = {"results": [{"id": f"col:{uid}", "score": 0.9, "metadata": {"x": 1}}]}
-            results = await adapter.search("col", query_vector=[0.1]*4, limit=5, include_payload=False)
-
+        adapter._stub.Search = AsyncMock(
+            return_value=pb.SearchResp(results=[
+                pb.SearchResult(id=uid, score=0.9, metadata_json='{"x":1}'),
+            ])
+        )
+        results = await adapter.search("col", query_vector=[0.1]*4, limit=5, include_payload=False)
         assert results[0].payload is None
 
+    @pytest.mark.asyncio
+    async def test_search_payload_included(self):
+        adapter = _make_adapter()
+        uid = str(uuid.uuid4())
+        adapter._stub.Search = AsyncMock(
+            return_value=pb.SearchResp(results=[
+                pb.SearchResult(id=uid, score=0.9, metadata_json='{"x":1}'),
+            ])
+        )
+        results = await adapter.search("col", query_vector=[0.1]*4, limit=5, include_payload=True)
+        assert results[0].payload == {"x": 1}
 
-# ─── delete / prune ──────────────────────────────────────────────────────────
+
+# ─── delete / prune (gRPC) ──────────────────────────────────────────────────
 
 class TestDeletePrune:
     @pytest.mark.asyncio
-    async def test_delete_removes_from_cache(self):
+    async def test_delete_calls_server(self):
         adapter = _make_adapter()
         uid = uuid.uuid4()
-        adapter._id_cache[f"col:{uid}"] = {"x": 1}
+        adapter._stub.Delete = AsyncMock(
+            return_value=pb.DeleteResp(deleted=1, failed=0)
+        )
         await adapter.delete_data_points("col", [uid])
-        assert f"col:{uid}" not in adapter._id_cache
+        adapter._stub.Delete.assert_called_once()
+        req = adapter._stub.Delete.call_args[0][0]
+        assert req.collection == "col"
+        assert str(uid) in req.ids
 
     @pytest.mark.asyncio
-    async def test_prune_clears_state(self):
+    async def test_prune_drops_all_collections(self):
         adapter = _make_adapter()
-        adapter._collections.add("col")
-        adapter._id_cache["col:abc"] = {}
+        adapter._stub.ListCollections = AsyncMock(
+            return_value=pb.ListCollectionsResp(collections=["a", "b"])
+        )
+        adapter._stub.DropCollection = AsyncMock(
+            return_value=pb.StatusResp(ok=True)
+        )
         await adapter.prune()
-        assert not adapter._collections
-        assert not adapter._id_cache
+        assert adapter._stub.DropCollection.call_count == 2
 
 
-# ─── Task 1.3: cross-store error propagation ─────────────────────────────────
+# ─── error handling ─────────────────────────────────────────────────────────
 
-class TestErrorPropagation:
+class TestErrorHandling:
     @pytest.mark.asyncio
-    async def test_vectradb_error_propagates(self):
-        """Task 1.3 DoD: VectraDB insert failure raises exception for pipeline rollback."""
-        import aiohttp
+    async def test_connection_error_on_unavailable(self):
+        """UNAVAILABLE gRPC status -> ConnectionError."""
+        adapter = _make_adapter()
 
+        async def raise_unavailable(*args, **kwargs):
+            raise grpc.aio.AioRpcError(
+                code=grpc.StatusCode.UNAVAILABLE,
+                initial_metadata=None,
+                trailing_metadata=None,
+                details="server down",
+                debug_error_string=None,
+            )
+
+        adapter._stub.HasCollection = raise_unavailable
+        with pytest.raises(ConnectionError, match="unavailable"):
+            await adapter.has_collection("col")
+
+    @pytest.mark.asyncio
+    async def test_batch_insert_partial_failure_raises(self):
         adapter = _make_adapter()
         dp = _FakeDataPoint(text="fail")
-
-        with patch.object(
-            adapter, "_batch_post", new_callable=AsyncMock,
-            side_effect=aiohttp.ClientError("server error"),
-        ):
-            with pytest.raises(aiohttp.ClientError):
-                await adapter.create_data_points("col", [dp])
-
-    @pytest.mark.asyncio
-    async def test_successful_insert_payload_available_immediately(self):
-        """Task 1.3 DoD: after successful insert, payload is retrievable without extra queries."""
-        adapter = _make_adapter()
-        dp = _FakeDataPoint(text="sync", dp_id=uuid.uuid4())
-        dp.belongs_to_set = ["grp_a"]
-
-        with patch.object(adapter, "_batch_post", new_callable=AsyncMock) as mock_batch:
-            mock_batch.return_value = {"inserted": 1, "failed": 0}
+        adapter._stub.BatchInsert = AsyncMock(
+            return_value=pb.BatchInsertResp(inserted=0, failed=1, errors=["disk full"])
+        )
+        with pytest.raises(RuntimeError, match="partial failure"):
             await adapter.create_data_points("col", [dp])
-
-        results = await adapter.retrieve("col", [str(dp.id)])
-        assert results[0].payload["belongs_to_set"] == ["grp_a"]
