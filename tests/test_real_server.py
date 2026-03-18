@@ -40,7 +40,7 @@ from cognee.infrastructure.databases.vector.vectradb.VectraDBAdapter import (
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-VECTRA_URL = "http://localhost:8080"
+VECTRA_URL = "localhost:50051"
 DIM = 1024
 N = 1000          # number of data points
 N_QUERIES = 200   # number of search queries

@@ -31,7 +31,7 @@ import pytest
 
 from cognee.infrastructure.databases.vector.vectradb.VectraDBAdapter import (
     VectraDBAdapter,
-    _serialize_payload,
+    _serialize_for_json,
 )
 
 import sys
@@ -209,7 +209,7 @@ def _make_adapter(server: BookMockServer, engine=None) -> VectraDBAdapter:
     if engine is None:
         engine = _make_embedding_engine()
     adapter = VectraDBAdapter(
-        url="http://localhost:8080",
+        url="localhost:50051",
         api_key=None,
         embedding_engine=engine,
     )

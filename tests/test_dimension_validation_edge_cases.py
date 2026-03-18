@@ -40,7 +40,7 @@ def _make_adapter(engine_dim: int) -> VectraDBAdapter:
     engine = MagicMock()
     engine.get_vector_size = MagicMock(return_value=engine_dim)
     return VectraDBAdapter(
-        url="http://localhost:8080",
+        url="localhost:50051",
         api_key=None,
         embedding_engine=engine,
     )
