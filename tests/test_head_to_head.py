@@ -1,7 +1,7 @@
 """
 Head-to-head: VectraDB adapter vs LanceDB (Cognee default).
 
-VectraDB side: VectraDBAdapter + MockVectraServer (zero network/Raft)
+VectraDB side: VectraDBAdapter + GrpcMockServer (zero network/Raft)
 LanceDB side:  raw lancedb library — same operations as LanceDBAdapter does
 
 Why raw lancedb instead of LanceDBAdapter?
@@ -39,6 +39,7 @@ from cognee.infrastructure.databases.vector.vectradb.VectraDBAdapter import (
 import sys
 
 _DataPoint = sys.modules["cognee.infrastructure.engine"].DataPoint
+pb = sys.modules["cognee.infrastructure.databases.vector.vectradb.generated.vectradb_pb2"]
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -129,12 +130,15 @@ class LanceDP(LanceModel):
     payload: LancePayload
 
 
-# ── MockVectraServer ──────────────────────────────────────────────────────────
+# ── GrpcMockServer ────────────────────────────────────────────────────────────
 
 
-class MockVectraServer:
+class GrpcMockServer:
+    """In-process gRPC stub mock with brute-force cosine search."""
+
     def __init__(self):
         self._store: Dict = {}
+        self._collections: set = set()
 
     def _cos(self, a, b):
         dot = sum(x * y for x, y in zip(a, b))
@@ -142,28 +146,66 @@ class MockVectraServer:
         mb = math.sqrt(sum(x * x for x in b))
         return dot / (ma * mb) if ma > 0 and mb > 0 else 0.0
 
-    async def dispatch(self, path, payload):
-        if path == "/api/v1/search":
-            q, k = payload["vector"], payload.get("k", 10)
-            scored = sorted(
-                [(rid, self._cos(q, r["vector"]), r["metadata"]) for rid, r in self._store.items()],
-                key=lambda x: -x[1],
-            )
-            return {"results": [{"id": i, "score": s, "metadata": m} for i, s, m in scored[:k]]}
-        raise ValueError(path)
+    async def HasCollection(self, req):
+        return pb.HasCollectionResp(exists=(req.name in self._collections))
 
-    async def handle_batch_insert(self, records):
-        if isinstance(records, dict):
-            records = records.get("records", [])
-        for r in records:
-            self._store[r["id"]] = {"vector": r["vector"], "metadata": r.get("metadata", {})}
-        return {"inserted": len(records), "failed": 0}
+    async def CreateCollection(self, req):
+        self._collections.add(req.name)
+        return pb.StatusResp(ok=True)
+
+    async def DropCollection(self, req):
+        self._collections.discard(req.name)
+        return pb.StatusResp(ok=True)
+
+    async def ListCollections(self, req):
+        return pb.ListCollectionsResp(collections=list(self._collections))
+
+    async def BatchInsert(self, req):
+        self._collections.add(req.collection)
+        inserted = 0
+        for rec in req.records:
+            self._store[rec.id] = {
+                "vector": list(rec.vector),
+                "metadata_json": rec.metadata_json,
+            }
+            inserted += 1
+        return pb.BatchInsertResp(inserted=inserted, failed=0)
+
+    async def Search(self, req):
+        q, k = list(req.vector), req.top_k or 10
+        scored = sorted(
+            [
+                (rid, self._cos(q, r["vector"]), r["metadata_json"])
+                for rid, r in self._store.items()
+            ],
+            key=lambda x: -x[1],
+        )
+        return pb.SearchResp(results=[
+            pb.SearchResult(id=i, score=s, metadata_json=m)
+            for i, s, m in scored[:k]
+        ])
+
+    async def GetByID(self, req):
+        records = []
+        for rid in req.ids:
+            if rid in self._store:
+                records.append(pb.RecordEntry(
+                    id=rid,
+                    metadata_json=self._store[rid]["metadata_json"],
+                    found=True,
+                ))
+            else:
+                records.append(pb.RecordEntry(id=rid, found=False))
+        return pb.GetByIDResp(records=records)
+
+    async def Delete(self, req):
+        deleted = sum(1 for rid in req.ids if self._store.pop(rid, None) is not None)
+        return pb.DeleteResp(deleted=deleted, failed=0)
 
 
 def _make_vectra(server, engine):
-    a = VectraDBAdapter(url="http://localhost:8080", api_key=None, embedding_engine=engine)
-    a._post = server.dispatch
-    a._batch_post = server.handle_batch_insert
+    a = VectraDBAdapter(url="localhost:50051", api_key=None, embedding_engine=engine)
+    a._stub = server
     return a
 
 
@@ -188,7 +230,7 @@ class TestHeadToHead:
     async def test_1_insert_throughput(self):
         print("\n\n" + "=" * 70)
         print(f"  1. INSERT THROUGHPUT  (N={N}, batch={BATCH})")
-        print("     VectraDB: MockServer (no Raft, no disk)")
+        print("     VectraDB: GrpcMockServer (no Raft, no disk)")
         print("     LanceDB:  real Arrow file I/O, merge_insert")
         print("=" * 70)
 
@@ -200,7 +242,7 @@ class TestHeadToHead:
         fast = MagicMock()
         fast.embed_text = AsyncMock(side_effect=lambda t: [next(vec_iter) for _ in t])
         fast.get_vector_size = MagicMock(return_value=DIM)
-        server = MockVectraServer()
+        server = GrpcMockServer()
         va = _make_vectra(server, fast)
 
         t0 = time.perf_counter()
@@ -225,7 +267,7 @@ class TestHeadToHead:
         print(f"  {'LanceDB (real file)':<22} {l_dps:>10,.0f}  {t_l*1000:>10.1f}")
         ratio = v_dps / l_dps if l_dps > 0 else 1
         print(f"\n  VectraDB mock: {ratio:.1f}x faster insert (no disk/Raft)")
-        print(f"  * С реальным Raft VectraDB будет ~10-50x МЕДЛЕННЕЕ => вставка это win LanceDB\n")
+        print(f"  * With real Raft VectraDB will be ~10-50x SLOWER => insert wins LanceDB\n")
 
         assert v_dps > 500
         assert l_dps > 50
@@ -246,7 +288,7 @@ class TestHeadToHead:
         fast = MagicMock()
         fast.embed_text = AsyncMock(side_effect=lambda t: [next(vec_iter) for _ in t])
         fast.get_vector_size = MagicMock(return_value=DIM)
-        server = MockVectraServer()
+        server = GrpcMockServer()
         va = _make_vectra(server, fast)
         for i in range(0, N, BATCH):
             await va.create_data_points("col", dps[i : i + BATCH])
@@ -301,7 +343,7 @@ class TestHeadToHead:
         fast = MagicMock()
         fast.embed_text = AsyncMock(side_effect=lambda t: [next(vec_iter) for _ in t])
         fast.get_vector_size = MagicMock(return_value=DIM)
-        server = MockVectraServer()
+        server = GrpcMockServer()
         va = _make_vectra(server, fast)
         for i in range(0, N, BATCH):
             await va.create_data_points("col", dps[i : i + BATCH])
@@ -335,15 +377,15 @@ class TestHeadToHead:
     async def test_4_embedding_cache(self):
         print("\n\n" + "=" * 70)
         print(f"  4. EMBEDDING CACHE  (re-index same {N} texts twice)")
-        print("     LanceDB adapter: embed_data() = прямой вызов engine, БЕЗ кэша")
-        print("     VectraDB adapter: embed_data() = LRU кэш => 0 вызовов на 2й раз")
+        print("     LanceDB adapter: embed_data() = direct engine call, NO cache")
+        print("     VectraDB adapter: embed_data() = LRU cache => 0 calls on 2nd pass")
         print("=" * 70)
 
         ids, texts, vectors = _gen_data(N)
         dps = [_DP(uid, text) for uid, text in zip(ids, texts)]
 
         v_engine = _make_engine()
-        server = MockVectraServer()
+        server = GrpcMockServer()
         va = _make_vectra(server, v_engine)
 
         # 1st pass
@@ -351,7 +393,7 @@ class TestHeadToHead:
             await va.create_data_points("col", dps[i : i + BATCH])
         first_calls = v_engine.embed_text.call_count
 
-        # 2nd pass (same texts)
+        # 2nd pass (same texts) — different collection, but same text keys
         server._store.clear()
         for i in range(0, N, BATCH):
             await va.create_data_points("col2", dps[i : i + BATCH])
@@ -360,59 +402,56 @@ class TestHeadToHead:
         lance_calls = N // BATCH  # LanceDB would call embed_text once per batch
         EMBED_MS = 6.7
 
-        print(f"\n  {'Provider':<22} {'embed calls (2nd)':>20}  {'сэкономлено':>12}")
+        print(f"\n  {'Provider':<22} {'embed calls (2nd)':>20}  {'saved':>12}")
         print(f"  {'-'*60}")
         print(f"  {'VectraDB':<22} {second_calls:>20}  {(lance_calls - second_calls) * EMBED_MS:>10.0f} ms")
         print(f"  {'LanceDB':<22} {lance_calls:>20}  {'0':>10} ms")
-        print(f"\n  VectraDB экономит {(lance_calls) * EMBED_MS:.0f}ms при re-index {N} текстов\n")
+        print(f"\n  VectraDB saves {(lance_calls) * EMBED_MS:.0f}ms when re-indexing {N} texts\n")
 
         assert second_calls == 0
 
     @pytest.mark.asyncio
     async def test_5_summary(self):
         print("\n\n" + "=" * 70)
-        print("  ИТОГО: VectraDB (наш плагин) vs LanceDB (дефолт Cognee)")
+        print("  SUMMARY: VectraDB (our plugin) vs LanceDB (Cognee default)")
         print("=" * 70)
         print("""
-  Условия:
-    VectraDB = MockServer (нет сети, нет Raft) — лучший случай
-    LanceDB  = реальный файловый I/O — production условия
+  Conditions:
+    VectraDB = GrpcMockServer (no network, no Raft) — best case
+    LanceDB  = real file I/O — production conditions
 
   +-----------------------------------+--------------+--------------+
-  | Метрика                           |  VectraDB    |  LanceDB     |
+  | Metric                            |  VectraDB    |  LanceDB     |
   +-----------------------------------+--------------+--------------+
-  | Insert (с Raft в prod)            |  ~200 dp/s   | ~300-2k dp/s |
-  | Search latency p50                |  см. тест 2  |  см. тест 2  |
-  | Concurrent search QPS             |  см. тест 3  |  см. тест 3  |
-  | Embedding cache (re-index)        |  0 вызовов   |  N вызовов   |
-  | JSON сериализация                 |  orjson (3x) |  stdlib json |
+  | Insert (with Raft in prod)        |  ~200 dp/s   | ~300-2k dp/s |
+  | Search latency p50                |  see test 2  |  see test 2  |
+  | Concurrent search QPS             |  see test 3  |  see test 3  |
+  | Embedding cache (re-index)        |  0 calls     |  N calls     |
+  | JSON serialization                |  orjson (3x) |  stdlib json |
   | HNSW top-K                        |  beam search |  IVF_PQ      |
-  | Lock на batch insert              |  1 lock      |  1 lock      |
   | recall@10                         |  ~0.90-0.95  |  ~0.98+      |
-  | Delete by ID                      |  cache only  |  native      |
-  | Коллекции                         |  ID-префикс  |  native      |
-  | Payload после рестарта            |  теряется    |  Arrow файл  |
-  | Деплой                            |  Go binary   |  pip install |
+  | Delete by ID                      |  native gRPC |  native      |
+  | Collections                       |  native      |  native      |
+  | Payload after restart             |  persistent  |  Arrow file  |
+  | Deploy                            |  Go binary   |  pip install |
   +-----------------------------------+--------------+--------------+
 
-  ГДЕ VECTRADB ЛУЧШЕ:
-    + Embedding cache: при re-index экономит ~67ms на 500 текстов
-    + Search latency: lock-free reads в Go
-    + orjson: 3x быстрее сериализация
-    + HNSW теперь возвращает реальный top-K (было сломано: k=1)
-    + BatchInsert: 1 mutex на батч (было 50)
-    + Деплой: один Go бинарник
+  WHERE VECTRADB IS BETTER:
+    + Embedding cache: saves ~67ms on re-index of 500 texts
+    + Search latency: lock-free reads in Go
+    + orjson: 3x faster serialization
+    + HNSW returns real top-K (was broken: k=1)
+    + BatchInsert: 1 mutex per batch (was 50)
+    + Deploy: single Go binary
+    + Native delete via gRPC
 
-  ГДЕ LANCEDB ЛУЧШЕ:
-    - Write throughput: Arrow + нет Raft = на порядок быстрее
-    - node_name фильтр server-side (нет over-fetch)
-    - Native delete/prune
-    - recall@10 выше (IVF_PQ > наш HNSW)
-    - Данные переживают рестарт
-    - Нативные коллекции
+  WHERE LANCEDB IS BETTER:
+    - Write throughput: Arrow + no Raft = order of magnitude faster
+    - recall@10 higher (IVF_PQ > our HNSW)
+    - No network/process overhead
 
-  ВЫВОД:
-    VectraDB лучше для READ-HEAVY нагрузок с низким latency.
-    LanceDB лучше для WRITE-HEAVY, нужен delete, высокий recall.
+  CONCLUSION:
+    VectraDB is better for READ-HEAVY workloads with low latency.
+    LanceDB is better for WRITE-HEAVY, high recall workloads.
 """)
         print("=" * 70)
