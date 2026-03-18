@@ -22,12 +22,14 @@ const (
 	VectraDBService_CreateCollection_FullMethodName = "/vectradb.v1.VectraDBService/CreateCollection"
 	VectraDBService_DropCollection_FullMethodName   = "/vectradb.v1.VectraDBService/DropCollection"
 	VectraDBService_ListCollections_FullMethodName  = "/vectradb.v1.VectraDBService/ListCollections"
+	VectraDBService_HasCollection_FullMethodName    = "/vectradb.v1.VectraDBService/HasCollection"
 	VectraDBService_Insert_FullMethodName           = "/vectradb.v1.VectraDBService/Insert"
 	VectraDBService_BatchInsert_FullMethodName      = "/vectradb.v1.VectraDBService/BatchInsert"
 	VectraDBService_Delete_FullMethodName           = "/vectradb.v1.VectraDBService/Delete"
 	VectraDBService_Search_FullMethodName           = "/vectradb.v1.VectraDBService/Search"
 	VectraDBService_ChunkText_FullMethodName        = "/vectradb.v1.VectraDBService/ChunkText"
 	VectraDBService_Info_FullMethodName             = "/vectradb.v1.VectraDBService/Info"
+	VectraDBService_GetByID_FullMethodName          = "/vectradb.v1.VectraDBService/GetByID"
 )
 
 // VectraDBServiceClient is the client API for VectraDBService service.
@@ -38,6 +40,7 @@ type VectraDBServiceClient interface {
 	CreateCollection(ctx context.Context, in *CreateCollectionReq, opts ...grpc.CallOption) (*StatusResp, error)
 	DropCollection(ctx context.Context, in *DropCollectionReq, opts ...grpc.CallOption) (*StatusResp, error)
 	ListCollections(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*ListCollectionsResp, error)
+	HasCollection(ctx context.Context, in *HasCollectionReq, opts ...grpc.CallOption) (*HasCollectionResp, error)
 	// Records
 	Insert(ctx context.Context, in *InsertReq, opts ...grpc.CallOption) (*StatusResp, error)
 	BatchInsert(ctx context.Context, in *BatchInsertReq, opts ...grpc.CallOption) (*BatchInsertResp, error)
@@ -47,6 +50,8 @@ type VectraDBServiceClient interface {
 	ChunkText(ctx context.Context, in *ChunkTextReq, opts ...grpc.CallOption) (*ChunkTextResp, error)
 	// Info
 	Info(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*InfoResp, error)
+	// Record retrieval
+	GetByID(ctx context.Context, in *GetByIDReq, opts ...grpc.CallOption) (*GetByIDResp, error)
 }
 
 type vectraDBServiceClient struct {
@@ -81,6 +86,16 @@ func (c *vectraDBServiceClient) ListCollections(ctx context.Context, in *Empty, 
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListCollectionsResp)
 	err := c.cc.Invoke(ctx, VectraDBService_ListCollections_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *vectraDBServiceClient) HasCollection(ctx context.Context, in *HasCollectionReq, opts ...grpc.CallOption) (*HasCollectionResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(HasCollectionResp)
+	err := c.cc.Invoke(ctx, VectraDBService_HasCollection_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -147,6 +162,16 @@ func (c *vectraDBServiceClient) Info(ctx context.Context, in *Empty, opts ...grp
 	return out, nil
 }
 
+func (c *vectraDBServiceClient) GetByID(ctx context.Context, in *GetByIDReq, opts ...grpc.CallOption) (*GetByIDResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetByIDResp)
+	err := c.cc.Invoke(ctx, VectraDBService_GetByID_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // VectraDBServiceServer is the server API for VectraDBService service.
 // All implementations must embed UnimplementedVectraDBServiceServer
 // for forward compatibility.
@@ -155,6 +180,7 @@ type VectraDBServiceServer interface {
 	CreateCollection(context.Context, *CreateCollectionReq) (*StatusResp, error)
 	DropCollection(context.Context, *DropCollectionReq) (*StatusResp, error)
 	ListCollections(context.Context, *Empty) (*ListCollectionsResp, error)
+	HasCollection(context.Context, *HasCollectionReq) (*HasCollectionResp, error)
 	// Records
 	Insert(context.Context, *InsertReq) (*StatusResp, error)
 	BatchInsert(context.Context, *BatchInsertReq) (*BatchInsertResp, error)
@@ -164,6 +190,8 @@ type VectraDBServiceServer interface {
 	ChunkText(context.Context, *ChunkTextReq) (*ChunkTextResp, error)
 	// Info
 	Info(context.Context, *Empty) (*InfoResp, error)
+	// Record retrieval
+	GetByID(context.Context, *GetByIDReq) (*GetByIDResp, error)
 	mustEmbedUnimplementedVectraDBServiceServer()
 }
 
@@ -183,6 +211,9 @@ func (UnimplementedVectraDBServiceServer) DropCollection(context.Context, *DropC
 func (UnimplementedVectraDBServiceServer) ListCollections(context.Context, *Empty) (*ListCollectionsResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListCollections not implemented")
 }
+func (UnimplementedVectraDBServiceServer) HasCollection(context.Context, *HasCollectionReq) (*HasCollectionResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method HasCollection not implemented")
+}
 func (UnimplementedVectraDBServiceServer) Insert(context.Context, *InsertReq) (*StatusResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method Insert not implemented")
 }
@@ -200,6 +231,9 @@ func (UnimplementedVectraDBServiceServer) ChunkText(context.Context, *ChunkTextR
 }
 func (UnimplementedVectraDBServiceServer) Info(context.Context, *Empty) (*InfoResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method Info not implemented")
+}
+func (UnimplementedVectraDBServiceServer) GetByID(context.Context, *GetByIDReq) (*GetByIDResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetByID not implemented")
 }
 func (UnimplementedVectraDBServiceServer) mustEmbedUnimplementedVectraDBServiceServer() {}
 func (UnimplementedVectraDBServiceServer) testEmbeddedByValue()                         {}
@@ -272,6 +306,24 @@ func _VectraDBService_ListCollections_Handler(srv interface{}, ctx context.Conte
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VectraDBServiceServer).ListCollections(ctx, req.(*Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _VectraDBService_HasCollection_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(HasCollectionReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VectraDBServiceServer).HasCollection(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: VectraDBService_HasCollection_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VectraDBServiceServer).HasCollection(ctx, req.(*HasCollectionReq))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -384,6 +436,24 @@ func _VectraDBService_Info_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
+func _VectraDBService_GetByID_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetByIDReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VectraDBServiceServer).GetByID(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: VectraDBService_GetByID_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VectraDBServiceServer).GetByID(ctx, req.(*GetByIDReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // VectraDBService_ServiceDesc is the grpc.ServiceDesc for VectraDBService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -402,6 +472,10 @@ var VectraDBService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListCollections",
 			Handler:    _VectraDBService_ListCollections_Handler,
+		},
+		{
+			MethodName: "HasCollection",
+			Handler:    _VectraDBService_HasCollection_Handler,
 		},
 		{
 			MethodName: "Insert",
@@ -426,6 +500,10 @@ var VectraDBService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Info",
 			Handler:    _VectraDBService_Info_Handler,
+		},
+		{
+			MethodName: "GetByID",
+			Handler:    _VectraDBService_GetByID_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
