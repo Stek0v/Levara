@@ -2,10 +2,12 @@ package grpc
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math/rand"
 	"net"
 	"os"
+	"reflect"
 	"testing"
 	"time"
 
@@ -217,6 +219,116 @@ func TestGRPCInfo(t *testing.T) {
 	}
 	if info.Status != "ready" {
 		t.Fatalf("Status: got %q, want ready", info.Status)
+	}
+}
+
+func TestHasCollection(t *testing.T) {
+	client, cleanup := startTestServer(t, 4)
+	defer cleanup()
+	ctx := context.Background()
+
+	// Non-existent collection
+	resp, err := client.HasCollection(ctx, &pb.HasCollectionReq{Name: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Exists {
+		t.Error("expected false for non-existent collection")
+	}
+
+	// Create and verify
+	client.CreateCollection(ctx, &pb.CreateCollectionReq{Name: "test"})
+	resp, err = client.HasCollection(ctx, &pb.HasCollectionReq{Name: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resp.Exists {
+		t.Error("expected true after creation")
+	}
+
+	// Drop and verify gone
+	client.DropCollection(ctx, &pb.DropCollectionReq{Name: "test"})
+	resp, err = client.HasCollection(ctx, &pb.HasCollectionReq{Name: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Exists {
+		t.Error("expected false after drop")
+	}
+}
+
+func TestGetByID(t *testing.T) {
+	client, cleanup := startTestServer(t, 4)
+	defer cleanup()
+	ctx := context.Background()
+
+	client.CreateCollection(ctx, &pb.CreateCollectionReq{Name: "books"})
+
+	meta := `{"text":"hello world","chapter":1}`
+	client.Insert(ctx, &pb.InsertReq{
+		Collection:   "books",
+		Id:           "rec-1",
+		Vector:       []float32{0.1, 0.2, 0.3, 0.4},
+		MetadataJson: meta,
+	})
+
+	resp, err := client.GetByID(ctx, &pb.GetByIDReq{
+		Collection: "books",
+		Ids:        []string{"rec-1", "rec-missing"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Records) != 2 {
+		t.Fatalf("expected 2 records, got %d", len(resp.Records))
+	}
+	if !resp.Records[0].Found {
+		t.Error("rec-1 should be found")
+	}
+	// Compare JSON semantically — marshal reorders map keys.
+	var wantMeta, gotMeta map[string]any
+	json.Unmarshal([]byte(meta), &wantMeta)
+	json.Unmarshal([]byte(resp.Records[0].MetadataJson), &gotMeta)
+	if !reflect.DeepEqual(wantMeta, gotMeta) {
+		t.Errorf("metadata mismatch: got %s, want %s", resp.Records[0].MetadataJson, meta)
+	}
+	if resp.Records[1].Found {
+		t.Error("rec-missing should not be found")
+	}
+
+	// Missing collection -> gRPC NotFound error
+	_, err = client.GetByID(ctx, &pb.GetByIDReq{
+		Collection: "nonexistent",
+		Ids:        []string{"x"},
+	})
+	if err == nil {
+		t.Error("expected error for missing collection")
+	}
+}
+
+func TestSearchErrorHandling(t *testing.T) {
+	client, cleanup := startTestServer(t, 4)
+	defer cleanup()
+	ctx := context.Background()
+
+	// Search against a collection that doesn't exist
+	_, err := client.Search(ctx, &pb.SearchReq{
+		Collection: "nonexistent",
+		Vector:     []float32{0.1, 0.2, 0.3, 0.4},
+		TopK:       5,
+	})
+	if err == nil {
+		t.Error("expected error for missing collection")
+	}
+
+	// Search with empty collection name
+	_, err = client.Search(ctx, &pb.SearchReq{
+		Collection: "",
+		Vector:     []float32{0.1, 0.2, 0.3, 0.4},
+		TopK:       5,
+	})
+	if err == nil {
+		t.Error("expected error for empty collection")
 	}
 }
 

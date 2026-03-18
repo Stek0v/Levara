@@ -7,6 +7,7 @@ service VectraDBService {
   rpc CreateCollection(CreateCollectionReq) returns (StatusResp);
   rpc DropCollection(DropCollectionReq) returns (StatusResp);
   rpc ListCollections(Empty) returns (ListCollectionsResp);
+  rpc HasCollection(HasCollectionReq) returns (HasCollectionResp);
 
   // Records
   rpc Insert(InsertReq) returns (StatusResp);
@@ -19,6 +20,9 @@ service VectraDBService {
 
   // Info
   rpc Info(Empty) returns (InfoResp);
+
+  // Record retrieval
+  rpc GetByID(GetByIDReq) returns (GetByIDResp);
 }
 
 // Common
@@ -40,6 +44,14 @@ message DropCollectionReq {
 
 message ListCollectionsResp {
   repeated string collections = 1;
+}
+
+message HasCollectionReq {
+  string name = 1;
+}
+
+message HasCollectionResp {
+  bool exists = 1;
 }
 
 // Records
@@ -92,6 +104,23 @@ message SearchResult {
   string id = 1;
   float score = 2;
   string metadata_json = 3;
+}
+
+// Record retrieval by ID
+message GetByIDReq {
+  string collection = 1;
+  repeated string ids = 2;
+}
+
+message GetByIDResp {
+  repeated RecordEntry records = 1;
+}
+
+message RecordEntry {
+  string id = 1;
+  string metadata_json = 2;
+  bool found = 3;
+  repeated float vector = 4;
 }
 
 // Text chunking

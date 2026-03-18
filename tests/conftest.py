@@ -265,6 +265,50 @@ if _lance_adapter_path.exists():
 # ── Load VectraDBAdapter via importlib ────────────────────────────────────────
 _vectradb_pkg = _stub("cognee.infrastructure.databases.vector.vectradb")
 
+# Register the generated protobuf modules BEFORE loading the adapter,
+# so that `from .generated import vectradb_pb2` resolves correctly.
+_generated_dir = (
+    _REPO_ROOT / "cognee" / "infrastructure" / "databases" / "vector"
+    / "vectradb" / "generated"
+)
+_generated_pkg_name = "cognee.infrastructure.databases.vector.vectradb.generated"
+
+# Register the generated package
+_generated_pkg = _stub(_generated_pkg_name)
+
+# Load vectradb_pb2
+_pb2_path = _generated_dir / "vectradb_pb2.py"
+if _pb2_path.exists():
+    _pb2_spec = importlib.util.spec_from_file_location(
+        f"{_generated_pkg_name}.vectradb_pb2", _pb2_path
+    )
+    _pb2_mod = importlib.util.module_from_spec(_pb2_spec)
+    sys.modules[f"{_generated_pkg_name}.vectradb_pb2"] = _pb2_mod
+    _pb2_spec.loader.exec_module(_pb2_mod)
+    _generated_pkg.vectradb_pb2 = _pb2_mod
+else:
+    _pb2_mod = _stub(f"{_generated_pkg_name}.vectradb_pb2")
+    _generated_pkg.vectradb_pb2 = _pb2_mod
+
+# Load vectradb_pb2_grpc
+_pb2_grpc_path = _generated_dir / "vectradb_pb2_grpc.py"
+if _pb2_grpc_path.exists():
+    _pb2_grpc_spec = importlib.util.spec_from_file_location(
+        f"{_generated_pkg_name}.vectradb_pb2_grpc", _pb2_grpc_path
+    )
+    _pb2_grpc_mod = importlib.util.module_from_spec(_pb2_grpc_spec)
+    sys.modules[f"{_generated_pkg_name}.vectradb_pb2_grpc"] = _pb2_grpc_mod
+    # vectradb_pb2_grpc.py uses `import vectradb_pb2` (bare name); alias it
+    sys.modules["vectradb_pb2"] = _pb2_mod
+    _pb2_grpc_spec.loader.exec_module(_pb2_grpc_mod)
+    # Clean up the bare alias so it doesn't pollute the global namespace
+    sys.modules.pop("vectradb_pb2", None)
+    _generated_pkg.vectradb_pb2_grpc = _pb2_grpc_mod
+else:
+    _pb2_grpc_mod = _stub(f"{_generated_pkg_name}.vectradb_pb2_grpc")
+    _generated_pkg.vectradb_pb2_grpc = _pb2_grpc_mod
+
+# Now load the adapter (its `from .generated import vectradb_pb2` will resolve)
 _adapter_path = (
     _REPO_ROOT / "cognee" / "infrastructure" / "databases" / "vector"
     / "vectradb" / "VectraDBAdapter.py"
