@@ -1,15 +1,14 @@
 """
 Integration tests: verify full dimension validation chain across layers.
 
-Extends MockVectraServer from test_vectradb_integration.py with /api/v1/info
-endpoint to test the complete dimension validation flow.
+Uses GrpcMockServer pattern so that adapter._stub = server is sufficient.
+health_check() calls stub.Info(pb.Empty()) — no HTTP session needed.
 """
 
 import asyncio
 import logging
 from unittest.mock import AsyncMock, MagicMock
 
-import aiohttp
 import pytest
 
 from cognee.infrastructure.databases.vector.vectradb.VectraDBAdapter import VectraDBAdapter
@@ -17,82 +16,77 @@ from cognee.infrastructure.databases.vector.vectradb.VectraDBAdapter import Vect
 import sys
 
 _DataPoint = sys.modules["cognee.infrastructure.engine"].DataPoint
+pb = sys.modules["cognee.infrastructure.databases.vector.vectradb.generated.vectradb_pb2"]
 
 
-# ── Extended MockVectraServer with /api/v1/info ──────────────────────────────
+# ── GrpcMockServer with Info RPC ─────────────────────────────────────────────
 
-class MockVectraServerWithInfo:
+class GrpcMockServerWithInfo:
     """
-    Mock VectraDB server that also handles /api/v1/info
+    Mock VectraDB gRPC stub that also handles the Info RPC
     for dimension validation.
     """
 
     def __init__(self, dim: int = 768):
         self.dim = dim
         self._store = {}
+        self._collections: set = set()
         self.insert_calls = 0
         self.info_calls = 0
-        self._info_status = 200  # Override to simulate 404 etc.
+        # Override to simulate Info RPC errors (None = succeed normally)
+        self._info_error = None
 
-    async def handle_insert(self, body: dict) -> dict:
-        self.insert_calls += 1
-        self._store[body["id"]] = {
-            "vector": body["vector"],
-            "metadata": body.get("metadata", {}),
-        }
-        return {"message": "ok"}
+    async def HasCollection(self, req):
+        return pb.HasCollectionResp(exists=(req.name in self._collections))
 
-    async def handle_batch_insert(self, records) -> dict:
-        if isinstance(records, dict):
-            records = records.get("records", [])
-        for rec in records:
+    async def CreateCollection(self, req):
+        self._collections.add(req.name)
+        return pb.StatusResp(ok=True)
+
+    async def DropCollection(self, req):
+        self._collections.discard(req.name)
+        return pb.StatusResp(ok=True)
+
+    async def ListCollections(self, req):
+        return pb.ListCollectionsResp(collections=list(self._collections))
+
+    async def BatchInsert(self, req):
+        self._collections.add(req.collection)
+        inserted = 0
+        for rec in req.records:
             self.insert_calls += 1
-            self._store[rec["id"]] = {
-                "vector": rec["vector"],
-                "metadata": rec.get("metadata", {}),
+            self._store[rec.id] = {
+                "vector": list(rec.vector),
+                "metadata_json": rec.metadata_json,
             }
-        return {"inserted": len(records), "failed": 0}
+            inserted += 1
+        return pb.BatchInsertResp(inserted=inserted, failed=0)
 
-    async def handle_search(self, body: dict) -> dict:
-        return {"results": []}
+    async def Search(self, req):
+        return pb.SearchResp(results=[])
 
-    def get_info_response(self):
-        return {"dimension": self.dim, "shards": 1, "status": "ready"}
+    async def GetByID(self, req):
+        records = []
+        for rid in req.ids:
+            if rid in self._store:
+                records.append(pb.RecordEntry(
+                    id=rid,
+                    metadata_json=self._store[rid]["metadata_json"],
+                    found=True,
+                ))
+            else:
+                records.append(pb.RecordEntry(id=rid, found=False))
+        return pb.GetByIDResp(records=records)
 
-    async def dispatch(self, path: str, payload: dict) -> dict:
-        if path == "/api/v1/insert":
-            return await self.handle_insert(payload)
-        if path == "/api/v1/batch_insert":
-            return await self.handle_batch_insert(payload)
-        if path == "/api/v1/search":
-            return await self.handle_search(payload)
-        raise ValueError(f"Unknown path: {path}")
+    async def Delete(self, req):
+        deleted = sum(1 for rid in req.ids if self._store.pop(rid, None) is not None)
+        return pb.DeleteResp(deleted=deleted, failed=0)
 
-
-class _FakeInfoResponse:
-    """Mock aiohttp response for /api/v1/info."""
-
-    def __init__(self, status, json_body):
-        self.status = status
-        self._json = json_body
-
-    def raise_for_status(self):
-        if self.status >= 400 and self.status != 404:
-            raise aiohttp.ClientResponseError(
-                request_info=MagicMock(),
-                history=(),
-                status=self.status,
-                message=f"HTTP {self.status}",
-            )
-
-    async def json(self, **kw):
-        return self._json
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *a):
-        pass
+    async def Info(self, req):
+        self.info_calls += 1
+        if self._info_error is not None:
+            raise self._info_error
+        return pb.InfoResp(dimension=self.dim, shards=1, status="ready")
 
 
 def _make_engine(dim: int = 768):
@@ -109,32 +103,17 @@ def _make_engine(dim: int = 768):
 
 
 def _make_adapter_with_info_server(
-    server: MockVectraServerWithInfo,
+    server: GrpcMockServerWithInfo,
     engine_dim: int = 768,
-):
+) -> VectraDBAdapter:
     engine = _make_engine(engine_dim)
     adapter = VectraDBAdapter(
         url="localhost:50051",
         api_key=None,
         embedding_engine=engine,
     )
-    adapter._post = server.dispatch
-    adapter._batch_post = server.handle_batch_insert
-
-    # Wire session.get to return /api/v1/info responses
-    mock_session = MagicMock()
-    mock_session.closed = False
-
-    def fake_get(url):
-        server.info_calls += 1
-        resp = _FakeInfoResponse(
-            server._info_status, server.get_info_response()
-        )
-        return resp
-
-    mock_session.get = MagicMock(side_effect=fake_get)
-    adapter._session = mock_session
-
+    # Wire the gRPC stub to our in-process mock
+    adapter._stub = server
     return adapter
 
 
@@ -145,19 +124,19 @@ class TestDimensionIntegration:
     @pytest.mark.asyncio
     async def test_full_chain_matching_dims(self):
         """All layers pass with matching dimensions."""
-        server = MockVectraServerWithInfo(dim=768)
+        server = GrpcMockServerWithInfo(dim=768)
         adapter = _make_adapter_with_info_server(server, engine_dim=768)
 
-        # Layer 3: health_check
+        # health_check calls stub.Info
         await adapter.health_check()
 
-        # Verify info endpoint was called
+        # Verify Info was called
         assert server.info_calls == 1
 
     @pytest.mark.asyncio
     async def test_mismatch_caught_at_layer3(self):
-        """Engine dim != server dim → RuntimeError at Layer 3."""
-        server = MockVectraServerWithInfo(dim=512)
+        """Engine dim != server dim -> RuntimeError at Layer 3."""
+        server = GrpcMockServerWithInfo(dim=512)
         adapter = _make_adapter_with_info_server(server, engine_dim=768)
 
         with pytest.raises(RuntimeError, match="DIMENSION MISMATCH"):
@@ -165,20 +144,25 @@ class TestDimensionIntegration:
 
     @pytest.mark.asyncio
     async def test_old_server_degrades_gracefully(self, caplog):
-        """404 from /api/v1/info → warning, no crash."""
-        server = MockVectraServerWithInfo(dim=768)
-        server._info_status = 404
+        """
+        Server returns dimension=0 (e.g. old server version that doesn't set dim)
+        -> no crash, just a log message.
+        """
+        # When server_dim == 0, the adapter skips the mismatch check and logs info.
+        # Simulate old server that returns dimension=0.
+        server = GrpcMockServerWithInfo(dim=0)
         adapter = _make_adapter_with_info_server(server, engine_dim=768)
 
-        with caplog.at_level(logging.WARNING):
+        with caplog.at_level(logging.INFO):
             await adapter.health_check()
 
-        assert any("old server version" in r.message for r in caplog.records)
+        # No RuntimeError raised — graceful degradation
+        assert server.info_calls == 1
 
     @pytest.mark.asyncio
     async def test_dimension_change_detected(self):
-        """Dims OK initially, then engine changes → Layer 3 catches it."""
-        server = MockVectraServerWithInfo(dim=768)
+        """Dims OK initially, then engine changes -> Layer 3 catches it."""
+        server = GrpcMockServerWithInfo(dim=768)
         adapter = _make_adapter_with_info_server(server, engine_dim=768)
 
         # First check passes
@@ -192,8 +176,8 @@ class TestDimensionIntegration:
 
     @pytest.mark.asyncio
     async def test_concurrent_health_checks(self):
-        """20 parallel health_checks → no race conditions."""
-        server = MockVectraServerWithInfo(dim=768)
+        """20 parallel health_checks -> no race conditions."""
+        server = GrpcMockServerWithInfo(dim=768)
         adapter = _make_adapter_with_info_server(server, engine_dim=768)
 
         results = await asyncio.gather(
@@ -207,7 +191,7 @@ class TestDimensionIntegration:
 
     @pytest.mark.asyncio
     async def test_mismatch_caught_at_layer1(self):
-        """embed dim != configured → RuntimeError at Layer 1 before Layer 3/4."""
+        """embed dim != configured -> RuntimeError at Layer 1 before Layer 3/4."""
         from unittest.mock import patch
 
         embedding_engine = MagicMock()

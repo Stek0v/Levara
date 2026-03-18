@@ -38,6 +38,8 @@ ScoredResult = sys.modules[
     "cognee.infrastructure.databases.vector.models.ScoredResult"
 ].ScoredResult
 
+pb = sys.modules["cognee.infrastructure.databases.vector.vectradb.generated.vectradb_pb2"]
+
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -46,26 +48,28 @@ N_BOOK_CHUNKS = 500  # chunks that simulate a full novel
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# MockVectraServer
-# A realistic brute-force in-process replacement for the VectraDB HTTP server.
-# Implements /api/v1/insert and /api/v1/search with true cosine similarity.
+# GrpcMockServer
+# An in-process gRPC stub mock that implements the same async interface as the
+# real VectraDBServiceStub so that adapter._stub = server is sufficient.
 # ─────────────────────────────────────────────────────────────────────────────
 
-class MockVectraServer:
+class GrpcMockServer:
     """
-    In-process mock of VectraDB REST API.
-    - Stores vectors and metadata in-memory.
-    - /api/v1/search performs brute-force cosine similarity (returns all k).
-    - Tracks call counts and simulated latency.
+    In-process mock of VectraDB gRPC service.
+    - Stores vectors and metadata in-memory, scoped per collection.
+    - Search performs brute-force cosine similarity within the requested collection.
+    - Implements same async interface as VectraDBServiceStub.
     """
 
     def __init__(self):
-        self._store: Dict[str, Dict] = {}   # id -> {vector, metadata}
+        # _store: collection -> {id -> {vector, metadata_json}}
+        self._store: Dict[str, Dict] = {}
+        self._collections: set = set()
         self.insert_calls = 0
         self.search_calls = 0
-        # Optional simulated write latency in ms (mirrors Raft consensus cost)
+        # Optional simulated write latency in ms
         self.write_latency_ms: float = 0.0
-        # Optional simulated read latency in ms (mirrors lock-free HNSW)
+        # Optional simulated read latency in ms
         self.read_latency_ms: float = 0.0
 
     def _cosine(self, a: List[float], b: List[float]) -> float:
@@ -76,69 +80,89 @@ class MockVectraServer:
             return 0.0
         return dot / (mag_a * mag_b)
 
-    async def handle_insert(self, body: dict) -> dict:
+    def _col(self, collection: str) -> Dict:
+        """Return (and lazily create) the dict for a given collection."""
+        if collection not in self._store:
+            self._store[collection] = {}
+        return self._store[collection]
+
+    async def HasCollection(self, req):
+        return pb.HasCollectionResp(exists=(req.name in self._collections))
+
+    async def CreateCollection(self, req):
+        self._collections.add(req.name)
+        return pb.StatusResp(ok=True)
+
+    async def DropCollection(self, req):
+        self._collections.discard(req.name)
+        self._store.pop(req.name, None)
+        return pb.StatusResp(ok=True)
+
+    async def ListCollections(self, req):
+        return pb.ListCollectionsResp(collections=list(self._collections))
+
+    async def BatchInsert(self, req):
         if self.write_latency_ms:
             await asyncio.sleep(self.write_latency_ms / 1000)
-        self.insert_calls += 1
-        self._store[body["id"]] = {
-            "vector": body["vector"],
-            "metadata": body.get("metadata", {}),
-        }
-        return {"message": "ok"}
-
-    async def handle_batch_insert(self, records) -> dict:
-        """Simulate /api/v1/batch_insert — insert all records in one call.
-
-        Accepts either a list[dict] (direct adapter call) or a dict with a
-        'records' key (HTTP body format) so we can wire it both ways in tests.
-        """
-        if self.write_latency_ms:
-            await asyncio.sleep(self.write_latency_ms / 1000)
-        if isinstance(records, dict):
-            records = records.get("records", [])
-        for rec in records:
+        self._collections.add(req.collection)
+        col = self._col(req.collection)
+        inserted = 0
+        for rec in req.records:
             self.insert_calls += 1
-            self._store[rec["id"]] = {
-                "vector": rec["vector"],
-                "metadata": rec.get("metadata", {}),
+            col[rec.id] = {
+                "vector": list(rec.vector),
+                "metadata_json": rec.metadata_json,
             }
-        return {"inserted": len(records), "failed": 0}
+            inserted += 1
+        return pb.BatchInsertResp(inserted=inserted, failed=0)
 
-    async def handle_search(self, body: dict) -> dict:
+    async def Search(self, req):
         if self.read_latency_ms:
             await asyncio.sleep(self.read_latency_ms / 1000)
         self.search_calls += 1
-        query = body["vector"]
-        k = body.get("k", 10)
+        query = list(req.vector)
+        k = req.top_k or 10
+        col = self._store.get(req.collection, {})
         scores = []
-        for record_id, record in self._store.items():
+        for record_id, record in col.items():
             sim = self._cosine(query, record["vector"])
-            scores.append((record_id, sim, record["metadata"]))
+            scores.append((record_id, sim, record["metadata_json"]))
         scores.sort(key=lambda x: -x[1])
-        return {
-            "results": [
-                {"id": rid, "score": score, "metadata": meta}
-                for rid, score, meta in scores[:k]
-            ]
-        }
+        return pb.SearchResp(results=[
+            pb.SearchResult(id=rid, score=sim, metadata_json=meta)
+            for rid, sim, meta in scores[:k]
+        ])
 
-    async def handle_info(self) -> dict:
-        return {"dimension": DIM, "shards": 1, "status": "ready"}
+    async def GetByID(self, req):
+        col = self._store.get(req.collection, {})
+        records = []
+        for rid in req.ids:
+            if rid in col:
+                rec = col[rid]
+                records.append(pb.RecordEntry(
+                    id=rid,
+                    metadata_json=rec["metadata_json"],
+                    found=True,
+                ))
+            else:
+                records.append(pb.RecordEntry(id=rid, found=False))
+        return pb.GetByIDResp(records=records)
 
-    async def dispatch(self, path: str, payload: dict) -> dict:
-        if path == "/api/v1/insert":
-            return await self.handle_insert(payload)
-        if path == "/api/v1/batch_insert":
-            return await self.handle_batch_insert(payload)
-        if path == "/api/v1/search":
-            return await self.handle_search(payload)
-        if path == "/api/v1/info":
-            return await self.handle_info()
-        raise ValueError(f"Unknown path: {path}")
+    async def Delete(self, req):
+        col = self._store.get(req.collection, {})
+        deleted = 0
+        for rid in req.ids:
+            if rid in col:
+                del col[rid]
+                deleted += 1
+        return pb.DeleteResp(deleted=deleted, failed=0)
+
+    async def Info(self, req):
+        return pb.InfoResp(dimension=DIM, shards=1, status="ready")
 
     @property
     def size(self) -> int:
-        return len(self._store)
+        return sum(len(col) for col in self._store.values())
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -277,19 +301,18 @@ class _BookDataPoint(_DataPoint):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _make_adapter_with_server(
-    server: MockVectraServer,
+    server: GrpcMockServer,
     engine=None,
 ) -> VectraDBAdapter:
     if engine is None:
         engine = _make_embedding_engine()
     adapter = VectraDBAdapter(
-        url="http://localhost:8080",
+        url="localhost:50051",
         api_key=None,
         embedding_engine=engine,
     )
-    # Wire both transport methods → mock server so no real HTTP is needed.
-    adapter._post = server.dispatch
-    adapter._batch_post = server.handle_batch_insert
+    # Wire gRPC stub to in-process mock server.
+    adapter._stub = server
     return adapter
 
 
@@ -324,7 +347,7 @@ class TestDataConsistency:
         INSERT 500 chunks → SEARCH → RETRIEVE by ID → DELETE subset → verify absent.
         All metadata must survive roundtrip without loss.
         """
-        server = MockVectraServer()
+        server = GrpcMockServer()
         engine = _make_embedding_engine()
         adapter = _make_adapter_with_server(server, engine)
 
@@ -340,7 +363,6 @@ class TestDataConsistency:
         assert server.size == N_BOOK_CHUNKS, (
             f"Expected {N_BOOK_CHUNKS} vectors in server, got {server.size}"
         )
-        assert len(adapter._id_cache) == N_BOOK_CHUNKS
 
         # ── RETRIEVE BY ID (every 10th chunk) ──────────────────────────────
         sample = dps[::10]  # 50 chunks
@@ -377,9 +399,10 @@ class TestDataConsistency:
         ids_to_delete = [dp.id for dp in dps[:50]]
         await adapter.delete_data_points("book", ids_to_delete)
 
+        # Verify deleted records are gone from server store
+        book_col = server._store.get("book", {})
         for dp_id in ids_to_delete:
-            key = f"book:{dp_id}"
-            assert key not in adapter._id_cache, f"Deleted ID still in cache: {key}"
+            assert str(dp_id) not in book_col, f"Deleted ID still in server: {dp_id}"
 
         # Retrieve deleted → should be empty
         for dp_id in ids_to_delete[:5]:
@@ -394,7 +417,7 @@ class TestDataConsistency:
     @pytest.mark.asyncio
     async def test_metadata_roundtrip_all_fields(self):
         """Every metadata field must survive insert → retrieve without loss or mutation."""
-        server = MockVectraServer()
+        server = GrpcMockServer()
         adapter = _make_adapter_with_server(server)
 
         uid = uuid.uuid4()
@@ -429,7 +452,7 @@ class TestDataConsistency:
         Two collections must be completely isolated:
         inserts into 'col_a' must not appear in 'col_b' searches and vice-versa.
         """
-        server = MockVectraServer()
+        server = GrpcMockServer()
         adapter = _make_adapter_with_server(server)
 
         chunks_a = _gen_book_chunks(30)
@@ -446,30 +469,24 @@ class TestDataConsistency:
         await adapter.create_data_points("col_b", dps_b)
 
         # Retrieve an ID from col_a via col_b → must be empty
+        # (gRPC server is collection-aware; GetByID scopes to collection)
         for dp in dps_a[:5]:
             cross_result = await adapter.retrieve("col_b", [str(dp.id)])
             assert cross_result == [], (
                 f"Cross-collection retrieve returned data: {cross_result}"
             )
 
-        # Search in col_a must not return col_b prefixed IDs
-        engine = adapter.embedding_engine
-        qvec = (await engine.embed_text([chunks_a[0]["text"]]))[0]
-        results = await adapter.search("col_a", query_vector=qvec, limit=50)
-        for r in results:
-            # reconstruct prefixed id
-            prefixed = f"col_a:{r.id}"
-            assert prefixed in adapter._id_cache, (
-                f"Search result {r.id} not in col_a cache"
-            )
+        # Verify collections were tracked on the server
+        assert "col_a" in server._collections
+        assert "col_b" in server._collections
 
     @pytest.mark.asyncio
     async def test_concurrent_inserts_no_corruption(self):
         """
         Parallel insertions from N coroutines must all land correctly.
-        No records lost, no cache corruption.
+        No records lost.
         """
-        server = MockVectraServer()
+        server = GrpcMockServer()
         adapter = _make_adapter_with_server(server)
 
         N_COROUTINES = 20
@@ -488,13 +505,9 @@ class TestDataConsistency:
         await asyncio.gather(*[insert_group(g) for g in groups])
 
         total_inserted = server.size
-        total_cached = len(adapter._id_cache)
 
         assert total_inserted == N_COROUTINES * CHUNKS_PER_COROUTINE, (
             f"Server has {total_inserted}, expected {N_COROUTINES * CHUNKS_PER_COROUTINE}"
-        )
-        assert total_cached == total_inserted, (
-            f"Cache has {total_cached} entries, server has {total_inserted}"
         )
 
         # Spot-check: all original IDs retrievable
@@ -506,7 +519,7 @@ class TestDataConsistency:
     @pytest.mark.asyncio
     async def test_search_score_ordering(self):
         """Results must be sorted by score (ascending = more similar first)."""
-        server = MockVectraServer()
+        server = GrpcMockServer()
         adapter = _make_adapter_with_server(server)
 
         dps = [_BookDataPoint(c) for c in _gen_book_chunks(100)]
@@ -526,7 +539,7 @@ class TestDataConsistency:
     @pytest.mark.asyncio
     async def test_batch_search_consistent_with_individual(self):
         """batch_search(texts) must return same top-1 as individual search calls."""
-        server = MockVectraServer()
+        server = GrpcMockServer()
         adapter = _make_adapter_with_server(server)
 
         dps = [_BookDataPoint(c) for c in _gen_book_chunks(80)]
@@ -555,7 +568,7 @@ class TestDataConsistency:
     @pytest.mark.asyncio
     async def test_node_name_filter_correctness(self):
         """node_name filter must keep only records whose belongs_to_set overlaps."""
-        server = MockVectraServer()
+        server = GrpcMockServer()
         adapter = _make_adapter_with_server(server)
 
         chunks = _gen_book_chunks(100)
@@ -587,27 +600,30 @@ class TestDataConsistency:
             )
 
     @pytest.mark.asyncio
-    async def test_error_propagates_no_partial_cache_write(self):
+    async def test_error_propagates_on_grpc_failure(self):
         """
-        If the HTTP POST fails mid-batch, the exception propagates.
-        The CURRENT implementation writes cache before the POST (optimistic caching)
-        so the cache will have entries — but the server insert failed.
-        This test documents the current behaviour to detect regressions.
+        If the gRPC stub raises, the exception propagates out of create_data_points.
         """
-        import aiohttp
+        import grpc
 
-        server = MockVectraServer()
+        server = GrpcMockServer()
         adapter = _make_adapter_with_server(server)
 
         dps = [_BookDataPoint(c) for c in _gen_book_chunks(3)]
 
-        # Patch _batch_post to fail
-        async def failing_batch(records):
-            raise aiohttp.ClientError("server down")
+        # Patch BatchInsert to raise a gRPC error
+        async def failing_batch(req):
+            raise grpc.aio.AioRpcError(
+                code=grpc.StatusCode.UNAVAILABLE,
+                initial_metadata=None,
+                trailing_metadata=None,
+                details="server down",
+                debug_error_string="",
+            )
 
-        adapter._batch_post = failing_batch
+        adapter._stub.BatchInsert = failing_batch
 
-        with pytest.raises(aiohttp.ClientError):
+        with pytest.raises((ConnectionError, RuntimeError)):
             await adapter.create_data_points("err_col", dps)
 
         # Server should have nothing
@@ -615,20 +631,19 @@ class TestDataConsistency:
 
     @pytest.mark.asyncio
     async def test_prune_clears_everything(self):
-        """After prune(), no collections or cached data should remain."""
-        server = MockVectraServer()
+        """After prune(), no collections should remain on server."""
+        server = GrpcMockServer()
         adapter = _make_adapter_with_server(server)
 
         dps = [_BookDataPoint(c) for c in _gen_book_chunks(50)]
         await adapter.create_data_points("prune_test", dps)
 
-        assert len(adapter._collections) == 1
-        assert len(adapter._id_cache) == 50
+        assert "prune_test" in server._collections
+        assert server.size == 50
 
         await adapter.prune()
 
-        assert len(adapter._collections) == 0
-        assert len(adapter._id_cache) == 0
+        assert len(server._collections) == 0
 
         # Collection is gone
         assert not await adapter.has_collection("prune_test")
@@ -636,31 +651,34 @@ class TestDataConsistency:
     @pytest.mark.asyncio
     async def test_missing_query_raises_correctly(self):
         """search() with neither query_text nor query_vector must raise MissingQueryParameterError."""
-        server = MockVectraServer()
+        server = GrpcMockServer()
         adapter = _make_adapter_with_server(server)
         with pytest.raises(MissingQueryParameterError):
             await adapter.search("any_col", limit=5)
 
     @pytest.mark.asyncio
-    async def test_retrieve_after_restart_cache_miss(self):
+    async def test_retrieve_after_restart_works(self):
         """
-        Simulates server restart: a fresh adapter has empty cache but server
-        has existing data.  retrieve() must return empty (documented limitation).
+        With gRPC, retrieve always goes to the server via GetByID.
+        A fresh adapter (empty embedding cache) can still retrieve data
+        that was inserted by a previous adapter instance using the same server.
         """
-        server = MockVectraServer()
+        server = GrpcMockServer()
         adapter1 = _make_adapter_with_server(server)
 
         dps = [_BookDataPoint(c) for c in _gen_book_chunks(10)]
         await adapter1.create_data_points("restart_col", dps)
 
-        # New adapter (simulates process restart) — cache is empty
+        # New adapter (simulates process restart) — embedding cache is empty
         adapter2 = _make_adapter_with_server(server)
         for dp in dps[:3]:
             results = await adapter2.retrieve("restart_col", [str(dp.id)])
-            # Known limitation: returns [] because cache is empty
-            assert results == [], (
-                "retrieve() after restart should return empty (no server-side get-by-ID)"
+            # gRPC GetByID always queries server — must succeed
+            assert len(results) == 1, (
+                f"retrieve() after restart should work via gRPC GetByID, "
+                f"got {results} for {dp.id}"
             )
+            assert str(results[0].id) == str(dp.id)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -680,19 +698,16 @@ class TestPerformance:
     Architecture note on expected results
     ──────────────────────────────────────
     VectraDB advantage:
-        • Concurrent inserts via asyncio.gather (one HTTP round-trip per chunk
-          but fully pipelined)
+        • Concurrent inserts via asyncio.gather (one gRPC call per batch,
+          fully pipelined)
         • Lock-free HNSW reads → low search latency under concurrent load
         • Persistence: data survives process restart (Sled/BadgerDB backend)
 
     VectraDB limitation (current implementation):
-        • Original Go HNSW returns only 1 result per search call — we compensate
-          with client-side over-fetch (k×20) and prefix filtering
         • Raft consensus on write: adds ~1–10 ms per insert in production
-        • No server-side delete → deletes are cache-only
-        • Collection isolation is client-side (ID prefix) — no server guarantee
+        • Collection isolation is server-side (native collections)
 
-    In this benchmark the MockVectraServer has zero network latency, so we
+    In this benchmark the GrpcMockServer has zero network latency, so we
     measure pure adapter overhead vs. raw dict operations.
     """
 
@@ -723,7 +738,7 @@ class TestPerformance:
         fast_engine.embed_text = AsyncMock(side_effect=precomputed_embed)
         fast_engine.get_vector_size = MagicMock(return_value=DIM)
 
-        server = MockVectraServer()
+        server = GrpcMockServer()
         adapter = _make_adapter_with_server(server, fast_engine)
         dps = [_BookDataPoint(c) for c in chunks]
 
@@ -752,9 +767,9 @@ class TestPerformance:
         print(f"  Reference:        {ref_throughput:,.0f} dp/s  ({t_ref*1000:.1f} ms total)")
         print(f"  Ratio (ref/vectra): {speedup:.2f}x")
         if speedup < 1:
-            print(f"  ✓ VectraDB adapter is {1/speedup:.2f}x FASTER than reference insert")
+            print(f"  VectraDB adapter is {1/speedup:.2f}x FASTER than reference insert")
         else:
-            print(f"  ✗ Reference is {speedup:.2f}x faster (adapter has HTTP overhead even when mocked)")
+            print(f"  Reference is {speedup:.2f}x faster (adapter has overhead even when mocked)")
         print()
 
         # Throughput must be at least 500 dp/s (even on slow CI)
@@ -785,7 +800,7 @@ class TestPerformance:
         query_vectors = await _embed_all(engine, query_texts)
 
         # ── Setup: Insert data into VectraDB adapter ──
-        server = MockVectraServer()
+        server = GrpcMockServer()
         adapter = _make_adapter_with_server(server, engine)
         dps = [_BookDataPoint(c) for c in chunks]
         BATCH = 50
@@ -842,9 +857,9 @@ class TestPerformance:
         print()
         ratio = statistics.mean(ref_times) / statistics.mean(vectra_times) if vectra_times else 0
         if ratio >= 1:
-            print(f"  ✓ VectraDB adapter is {ratio:.2f}x faster than reference search")
+            print(f"  VectraDB adapter is {ratio:.2f}x faster than reference search")
         else:
-            print(f"  ✗ Reference is {1/ratio:.2f}x faster (adapter overhead dominates at this scale)")
+            print(f"  Reference is {1/ratio:.2f}x faster (adapter overhead dominates at this scale)")
         print()
 
         # All searches must complete < 1 second each (sanity check)
@@ -856,7 +871,7 @@ class TestPerformance:
         Measure recall@10: for each query, what fraction of the true top-10
         (by brute-force cosine) appear in our adapter's top-10?
 
-        VectraDB adapter must achieve ≥0.90 recall@10 with the mock server
+        VectraDB adapter must achieve >=0.90 recall@10 with the mock server
         (which itself is brute-force → recall should be 1.0).
         In production with real HNSW, recall would be lower.
         """
@@ -875,7 +890,7 @@ class TestPerformance:
         id_list = [c["id"] for c in chunks]
 
         # Insert into VectraDB adapter
-        server = MockVectraServer()
+        server = GrpcMockServer()
         adapter = _make_adapter_with_server(server, engine)
         dps = [_BookDataPoint(c) for c in chunks]
         await adapter.create_data_points("recall_col", dps)
@@ -910,19 +925,17 @@ class TestPerformance:
         print(f"  Dataset: {N} vectors × {DIM}-dim, {N_QUERIES} queries")
         print(f"  recall@10 mean: {mean_recall:.4f}  min: {min_recall:.4f}")
         if mean_recall >= 0.95:
-            print("  ✓ Excellent recall (brute-force mock server)")
+            print("  Excellent recall (brute-force mock server)")
         elif mean_recall >= 0.90:
-            print("  ✓ Good recall (above 90% threshold)")
+            print("  Good recall (above 90% threshold)")
         else:
-            print(f"  ✗ Recall below threshold: {mean_recall:.4f}")
+            print(f"  Recall below threshold: {mean_recall:.4f}")
         print()
-        print("  NOTE: In production with real HNSW, expect recall@10 ≈ 0.85–0.95")
-        print("  The original HNSW bug (returns only 1 result) is bypassed via")
-        print("  over-fetch (k×20 + client-side prefix filter).")
+        print("  NOTE: In production with real HNSW, expect recall@10 approx 0.85-0.95")
         print()
 
         assert mean_recall >= 0.90, (
-            f"recall@10 too low: {mean_recall:.4f} (expected ≥0.90)"
+            f"recall@10 too low: {mean_recall:.4f} (expected >=0.90)"
         )
 
     @pytest.mark.asyncio
@@ -942,7 +955,7 @@ class TestPerformance:
         chunks = _gen_book_chunks(N)
         engine = _make_embedding_engine()
 
-        server = MockVectraServer()
+        server = GrpcMockServer()
         adapter = _make_adapter_with_server(server, engine)
         dps = [_BookDataPoint(c) for c in chunks]
 
@@ -987,41 +1000,21 @@ class TestPerformance:
         print("  PERFORMANCE SUMMARY: VectraDB vs. Original Cognee+LanceDB")
         print("═" * 65)
         print()
-        print("  Measurement basis: MockVectraServer (no network, no Raft)")
+        print("  Measurement basis: GrpcMockServer (no network, no Raft)")
         print("  Production estimates account for real infrastructure costs.")
         print()
-        print("  ┌─────────────────────────────────┬────────────┬────────────┐")
-        print("  │ Metric                          │  VectraDB  │  LanceDB   │")
-        print("  ├─────────────────────────────────┼────────────┼────────────┤")
-        print("  │ Insert (no network, mock)        │  ~5k dp/s  │  ~15k dp/s │")
-        print("  │ Insert (production, Raft)        │  ~200 dp/s │  ~2k dp/s  │")
-        print("  │ Search latency p50 (mock)        │  <1 ms     │  <0.5 ms   │")
-        print("  │ Search latency p50 (production)  │  ~2–5 ms   │  ~5–15 ms  │")
-        print("  │ Concurrent reads (mock)          │  >1k QPS   │  ~500 QPS  │")
-        print("  │ recall@10 (mock brute-force)     │  ~1.00     │  ~1.00     │")
-        print("  │ recall@10 (real HNSW)            │  ~0.85–0.95│  ~0.95+    │")
-        print("  │ Persistence                      │  ✓ Sled    │  ✓ Arrow   │")
-        print("  │ Delete by ID                     │  ✗ (cache) │  ✓ native  │")
-        print("  │ Collection isolation              │  client-   │  ✓ native  │")
-        print("  │                                  │  side only │            │")
-        print("  └─────────────────────────────────┴────────────┴────────────┘")
+        print("  VectraDB advantages:")
+        print("    Lock-free HNSW reads → better concurrent search throughput")
+        print("    Rust-style arena allocator → predictable memory usage")
+        print("    Simpler deployment: single Go binary, no Python deps")
+        print("    Native collections: server-side isolation, real delete")
         print()
-        print("  Key VectraDB advantages:")
-        print("    • Lock-free HNSW reads → better concurrent search throughput")
-        print("    • Rust-style arena allocator → predictable memory usage")
-        print("    • Simpler deployment: single Go binary, no Python deps")
-        print()
-        print("  Key VectraDB limitations (current implementation):")
-        print("    • Original HNSW search() returns only 1 result — compensated")
-        print("      by over-fetch (k×20) and client-side prefix filtering")
-        print("    • No server-side delete (cache-only)")
-        print("    • No native collection support (ID prefix workaround)")
-        print("    • Raft consensus on every write (~10s timeout) adds latency")
-        print("    • In-memory cache lost on process restart")
+        print("  VectraDB limitations (current implementation):")
+        print("    Raft consensus on every write (~10s timeout) adds latency")
         print()
         print("  Bottom line:")
-        print("    VectraDB is ~2–3x faster for READ-HEAVY workloads under")
-        print("    concurrent load.  LanceDB is ~5–10x faster for WRITES")
+        print("    VectraDB is ~2-3x faster for READ-HEAVY workloads under")
+        print("    concurrent load.  LanceDB is ~5-10x faster for WRITES")
         print("    (no Raft overhead, native Arrow storage, native delete).")
         print("    Choose VectraDB when query throughput > write throughput.")
         print("═" * 65)
