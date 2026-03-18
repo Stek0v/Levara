@@ -5,6 +5,8 @@ import (
 	"math"
 	"math/rand"
 	"sync"
+
+	"github.com/viterin/vek/vek32"
 )
 
 // HNSWConfig holds tunable HNSW parameters.
@@ -100,11 +102,16 @@ func (h *HNSWIndex) randomLevel() int {
 	return lvl
 }
 
-// dist computes dot-product distance (1 - dot(v1, v2)) with 4-way loop unrolling.
+// dist computes cosine distance using SIMD-optimized dot product via vek.
 // Vectors MUST be L2-normalized (Arena normalizes on insert).
 // For unit vectors: dot product = cosine similarity, so this is cosine distance.
 // Lower values = more similar. Identical → 0, orthogonal → 1, opposite → 2.
 func dist(v1, v2 []float32) float32 {
+	return 1 - vek32.Dot(v1, v2)
+}
+
+// distScalar is the original 4-way unrolled scalar implementation, kept for benchmarking.
+func distScalar(v1, v2 []float32) float32 {
 	n := len(v1)
 	var d0, d1, d2, d3 float32
 
