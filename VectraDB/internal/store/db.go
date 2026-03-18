@@ -170,7 +170,7 @@ func (db *VectraDB) Insert(id string, vector []float32, data any) error {
 		return err
 	}
 
-	if err := db.wal.WriteEntry(OpInsert, id, vector, bytes, loc); err != nil {
+	if err := db.wal.WriteEntryNoFlush(OpInsert, id, vector, bytes, loc); err != nil {
 		db.mu.Unlock()
 		return fmt.Errorf("wal write: %w", err)
 	}
@@ -184,8 +184,13 @@ func (db *VectraDB) Insert(id string, vector []float32, data any) error {
 	db.revIndex[idx] = id
 	db.metaLocs[idx] = loc
 
-	// Durable write done — release db.mu, enqueue for async HNSW indexing.
+	// Release db.mu before fsync — group commit coalesces across goroutines.
 	db.mu.Unlock()
+
+	// Group commit: fsync outside db.mu lock
+	if err := db.wal.FlushAsync(); err != nil {
+		return fmt.Errorf("wal flush: %w", err)
+	}
 
 	db.pendingMu.Lock()
 	db.pendingVecs = append(db.pendingVecs, pendingItem{vector: vector, id: id, idx: idx})
@@ -262,10 +267,12 @@ func (db *VectraDB) BatchInsert(records []BatchItem) []error {
 		db.metaLocs[idx] = loc
 		toIndex = append(toIndex, pendingItem{vector: p.rec.Vector, id: p.rec.ID, idx: idx})
 	}
-	if err := db.wal.Flush(); err != nil {
+	db.mu.Unlock()
+
+	// Group commit: fsync outside db.mu lock
+	if err := db.wal.FlushAsync(); err != nil {
 		errs = append(errs, fmt.Errorf("wal flush: %w", err))
 	}
-	db.mu.Unlock()
 
 	// Phase 2: enqueue for async HNSW indexing.
 	if len(toIndex) > 0 {
@@ -345,15 +352,16 @@ func (db *VectraDB) Search(query []float32, topK int) []VectroRecord {
 // Delete removes a record by ID (index + HNSW tombstone + WAL).
 func (db *VectraDB) Delete(id string) error {
 	db.mu.Lock()
-	defer db.mu.Unlock()
 
 	idx, ok := db.index[id]
 	if !ok {
+		db.mu.Unlock()
 		return fmt.Errorf("record %q not found", id)
 	}
 
-	// WAL: write delete entry for crash recovery
-	if err := db.wal.WriteEntry(OpDelete, id, nil, nil, FileLocation{}); err != nil {
+	// WAL: write delete entry (buffered, no flush yet)
+	if err := db.wal.WriteEntryNoFlush(OpDelete, id, nil, nil, FileLocation{}); err != nil {
+		db.mu.Unlock()
 		return fmt.Errorf("wal delete: %w", err)
 	}
 
@@ -366,6 +374,14 @@ func (db *VectraDB) Delete(id string) error {
 
 	// Mark deleted in HNSW (tombstone — search will skip)
 	db.hnsw.MarkDeleted(idx)
+
+	// Release db.mu before fsync — group commit coalesces across goroutines.
+	db.mu.Unlock()
+
+	// Group commit: fsync outside db.mu lock
+	if err := db.wal.FlushAsync(); err != nil {
+		return fmt.Errorf("wal flush: %w", err)
+	}
 
 	// Also remove from pending vectors (if not yet indexed)
 	db.pendingMu.Lock()

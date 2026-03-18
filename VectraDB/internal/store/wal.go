@@ -5,6 +5,9 @@ import (
 	"encoding/binary"
 	"io"
 	"os"
+	"sync"
+	"sync/atomic"
+	"time"
 	"unsafe"
 )
 
@@ -13,33 +16,144 @@ const (
 	OpDelete = 2
 )
 
+// flushRequest is sent by callers to the fsyncLoop goroutine.
+type flushRequest struct {
+	done chan error
+}
+
 type WAL struct {
 	file   *os.File
 	writer *bufio.Writer
+
+	mu        sync.Mutex       // protects writer (bufio.Writer) from concurrent access
+	flushCh   chan flushRequest // group commit channel
+	closeCh   chan struct{}     // signal fsyncLoop to stop
+	closeOnce sync.Once        // ensure single close
+	syncCount uint64           // atomic counter for testing coalescing
 }
 
-// OpenWal creates a new Write Ahead Log and returns a WAL struct
+// OpenWal creates a new Write Ahead Log and returns a WAL struct.
 func OpenWal(path string) (*WAL, error) {
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		return nil, err
 	}
-	return &WAL{
-		file:   f,
-		writer: bufio.NewWriter(f),
-	}, nil
+	wal := &WAL{
+		file:    f,
+		writer:  bufio.NewWriter(f),
+		flushCh: make(chan flushRequest, 64),
+		closeCh: make(chan struct{}),
+	}
+	go wal.fsyncLoop()
+	return wal, nil
 }
 
-// WriterEntry saves an operation in the WAL
+// fsyncLoop is the background goroutine that coalesces flush requests.
+func (wal *WAL) fsyncLoop() {
+	const maxWait = 2 * time.Millisecond
+	const maxPending = 16
 
+	pending := make([]flushRequest, 0, maxPending)
+	timer := time.NewTimer(maxWait)
+	timer.Stop()
+
+	for {
+		select {
+		case req, ok := <-wal.flushCh:
+			if !ok {
+				// Channel closed — flush remaining and exit.
+				wal.doGroupFlush(pending)
+				timer.Stop()
+				return
+			}
+			pending = append(pending, req)
+			if len(pending) >= maxPending {
+				timer.Stop()
+				wal.doGroupFlush(pending)
+				pending = pending[:0]
+			} else if len(pending) == 1 {
+				timer.Reset(maxWait)
+			}
+		case <-timer.C:
+			if len(pending) > 0 {
+				wal.doGroupFlush(pending)
+				pending = pending[:0]
+			}
+		case <-wal.closeCh:
+			timer.Stop()
+			// Drain remaining requests from channel.
+			for {
+				select {
+				case req := <-wal.flushCh:
+					pending = append(pending, req)
+				default:
+					wal.doGroupFlush(pending)
+					return
+				}
+			}
+		}
+	}
+}
+
+// doGroupFlush performs a single fsync for a batch of flush requests.
+func (wal *WAL) doGroupFlush(reqs []flushRequest) {
+	if len(reqs) == 0 {
+		return
+	}
+	err := wal.flushSync()
+	for _, r := range reqs {
+		r.done <- err
+	}
+}
+
+// flushSync flushes the buffered writer and fsyncs to disk under wal.mu.
+func (wal *WAL) flushSync() error {
+	wal.mu.Lock()
+	defer wal.mu.Unlock()
+	atomic.AddUint64(&wal.syncCount, 1)
+	if err := wal.writer.Flush(); err != nil {
+		return err
+	}
+	return wal.file.Sync()
+}
+
+// FlushAsync sends a flush request to fsyncLoop and blocks until completion.
+// Multiple concurrent callers share a single fsync via group commit.
+func (wal *WAL) FlushAsync() error {
+	done := make(chan error, 1)
+	wal.flushCh <- flushRequest{done: done}
+	return <-done
+}
+
+// WriteEntry saves an operation in the WAL with immediate flush (inline).
+// Uses wal.mu to protect the bufio.Writer and flushSync for durability.
 func (wal *WAL) WriteEntry(op byte, id string, vector []float32, metadata []byte, loc FileLocation) error {
-	// Calculate sizes
+	wal.mu.Lock()
+	err := wal.writeEntryLocked(op, id, vector, metadata, loc)
+	wal.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	return wal.flushSync()
+}
+
+// WriteEntryNoFlush writes an entry without flushing — caller must call FlushAsync().
+// Use this in batch operations to amortize I/O across many records.
+// Acquires wal.mu to protect the bufio.Writer from concurrent access.
+func (wal *WAL) WriteEntryNoFlush(op byte, id string, vector []float32, metadata []byte, loc FileLocation) error {
+	wal.mu.Lock()
+	defer wal.mu.Unlock()
+	return wal.writeEntryLocked(op, id, vector, metadata, loc)
+}
+
+// writeEntryLocked writes a WAL entry. Caller must hold wal.mu.
+func (wal *WAL) writeEntryLocked(op byte, id string, vector []float32, metadata []byte, loc FileLocation) error {
 	idBytes := []byte(id)
 	idLen := uint32(len(idBytes))
 	vectorLen := uint32(len(vector) * 4) // 4 bytes per float32
 	metadataLen := uint32(len(metadata))
 
-	// Total Payload Size: Op(1) + IDLen(4) + ID + VecLen(4) + Vec + MetaLen(4) + Meta
+	// Total Payload Size: Op(1) + IDLen(4) + ID + VecLen(4) + Vec + MetaLen(4) + Meta + Offset(8) + Len(4)
 	totalPayloadSize := 1 + 4 + idLen + 4 + vectorLen + 4 + metadataLen + 8 + 4
 
 	// Write Size Header
@@ -75,56 +189,32 @@ func (wal *WAL) WriteEntry(op byte, id string, vector []float32, metadata []byte
 		return err
 	}
 	// Write Len (4 bytes)
-	if err := binary.Write(wal.writer, binary.LittleEndian, uint32(loc.Length)); err != nil {
-		return err
-	}
-
-	return wal.writer.Flush()
-}
-
-// WriteEntryNoFlush writes an entry without flushing — caller must call Flush().
-// Use this in batch operations to amortize I/O across many records.
-func (wal *WAL) WriteEntryNoFlush(op byte, id string, vector []float32, metadata []byte, loc FileLocation) error {
-	idBytes := []byte(id)
-	idLen := uint32(len(idBytes))
-	vectorLen := uint32(len(vector) * 4)
-	metadataLen := uint32(len(metadata))
-	totalPayloadSize := 1 + 4 + idLen + 4 + vectorLen + 4 + metadataLen + 8 + 4
-
-	if err := binary.Write(wal.writer, binary.LittleEndian, uint32(totalPayloadSize)); err != nil {
-		return err
-	}
-	if err := wal.writer.WriteByte(op); err != nil {
-		return err
-	}
-	binary.Write(wal.writer, binary.LittleEndian, idLen)
-	wal.writer.Write(idBytes)
-	binary.Write(wal.writer, binary.LittleEndian, vectorLen)
-	if vectorLen > 0 {
-		vecPtr := unsafe.Pointer(&vector[0])
-		vecBytes := unsafe.Slice((*byte)(vecPtr), len(vector)*4)
-		wal.writer.Write(vecBytes)
-	}
-	binary.Write(wal.writer, binary.LittleEndian, metadataLen)
-	if metadataLen > 0 {
-		wal.writer.Write(metadata)
-	}
-	if err := binary.Write(wal.writer, binary.LittleEndian, int64(loc.Offset)); err != nil {
-		return err
-	}
 	return binary.Write(wal.writer, binary.LittleEndian, uint32(loc.Length))
 }
 
 // Flush flushes the buffered writer and fsyncs to ensure durability.
+// Kept for backward compatibility — prefer FlushAsync for concurrent workloads.
 func (wal *WAL) Flush() error {
-	if err := wal.writer.Flush(); err != nil {
-		return err
-	}
-	return wal.file.Sync()
+	return wal.flushSync()
 }
 
-// Close ensures everything is written to disk and synced
+// SyncCount returns the number of fsyncs performed (for testing coalescing).
+func (wal *WAL) SyncCount() uint64 {
+	return atomic.LoadUint64(&wal.syncCount)
+}
+
+// Close ensures everything is written to disk and synced.
 func (w *WAL) Close() error {
+	w.closeOnce.Do(func() {
+		close(w.closeCh)
+	})
+	// Give fsyncLoop time to drain pending flushes.
+	// The closeCh signal causes fsyncLoop to drain flushCh and exit.
+	// We wait briefly then do final flush under lock.
+	time.Sleep(5 * time.Millisecond)
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	if err := w.writer.Flush(); err != nil {
 		w.file.Close()
 		return err
