@@ -32,8 +32,19 @@ func main() {
 	numShardsFlag := flag.Int("shards", 3, "Number of shards")
 	dataDir := flag.String("data-dir", "data", "Directory for persistent data storage")
 	grpcPort := flag.Int("grpc-port", 50051, "gRPC API port (0 to disable)")
+	hnswM := flag.Int("hnsw-m", 16, "HNSW M parameter: max neighbors per node")
+	hnswEfMult := flag.Int("hnsw-ef-mult", 8, "HNSW efSearch multiplier: efSearch = k * this value")
+	hnswEfMin := flag.Int("hnsw-ef-min", 64, "HNSW minimum efSearch value")
 
 	flag.Parse()
+
+	hnswCfg := store.HNSWConfig{
+		M:            *hnswM,
+		M0:           *hnswM * 2,
+		EfSearchMult: *hnswEfMult,
+		EfSearchMin:  *hnswEfMin,
+		LevelMult:    1.0 / 0.69,
+	}
 
 	nodeID := "node1"
 	basePort := 9000
@@ -49,7 +60,7 @@ func main() {
 
 	for i := range numShards {
 		dbPath := fmt.Sprintf("%s/%s/shard_%d/meta.bin", *dataDir, nodeID, i)
-		db, err := store.NewVectraDB(*dim, dbPath)
+		db, err := store.NewVectraDB(*dim, dbPath, hnswCfg)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -93,7 +104,7 @@ func main() {
 	api.Post("/delete", handler.Delete)
 
 	// Initialize CollectionManager for native collections (used by gRPC)
-	colManager, err := store.NewCollectionManager(*dim, *dataDir+"/"+nodeID)
+	colManager, err := store.NewCollectionManager(*dim, *dataDir+"/"+nodeID, hnswCfg)
 	if err != nil {
 		log.Fatalf("Failed to init CollectionManager: %v", err)
 	}

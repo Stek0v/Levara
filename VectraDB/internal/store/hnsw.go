@@ -7,11 +7,24 @@ import (
 	"sync"
 )
 
-const (
-	HNSW_M         = 16       // Max Neighbours per node
-	MNSW_M0        = 32       // Max Neighbours at layer 0 (usually 2*M)
-	HNSW_LevelMult = 1 / 0.69 // Normalization factor for level generation
-)
+// HNSWConfig holds tunable HNSW parameters.
+type HNSWConfig struct {
+	M            int     // max neighbors per node (default 16)
+	M0           int     // max neighbors at layer 0 (default 2*M)
+	EfSearchMult int     // efSearch = k * EfSearchMult (default 8)
+	EfSearchMin  int     // minimum efSearch (default 64)
+	LevelMult    float64 // level distribution parameter (default 1/ln(2))
+}
+
+func DefaultHNSWConfig() HNSWConfig {
+	return HNSWConfig{
+		M:            16,
+		M0:           32,
+		EfSearchMult: 8,
+		EfSearchMin:  64,
+		LevelMult:    1.0 / 0.69,
+	}
+}
 
 type HNSWNode struct {
 	ID          string
@@ -27,6 +40,7 @@ type HNSWIndex struct {
 	nodesByIdx  []*HNSWNode // direct lookup by ArenaOffset — no map hashing
 	MaxLayer    int
 	Arena       *VectorArena
+	cfg         HNSWConfig
 	sync.RWMutex
 }
 
@@ -49,13 +63,14 @@ func releaseVisited(m map[uint32]struct{}) {
 	visitedPool.Put(m)
 }
 
-// Return a new HNSW Index Tree
-func NewHNSWIndex(arena *VectorArena) *HNSWIndex {
+// NewHNSWIndex returns a new HNSW Index Tree with the given config.
+func NewHNSWIndex(arena *VectorArena, cfg HNSWConfig) *HNSWIndex {
 	return &HNSWIndex{
 		Nodes:      make(map[string]*HNSWNode),
 		nodesByIdx: make([]*HNSWNode, 0, 4096),
 		MaxLayer:   -1,
 		Arena:      arena,
+		cfg:        cfg,
 	}
 }
 
@@ -188,9 +203,9 @@ func (h *HNSWIndex) Add(vector []float32, id string, idx uint32) {
 	}
 	// Pre-allocate connection slices with expected capacity
 	for l := 0; l <= level; l++ {
-		cap := HNSW_M
+		cap := h.cfg.M
 		if l == 0 {
-			cap = MNSW_M0
+			cap = h.cfg.M0
 		}
 		newNode.Connections[l] = make([]uint32, 0, cap)
 	}
@@ -219,9 +234,9 @@ func (h *HNSWIndex) Add(vector []float32, id string, idx uint32) {
 
 	// Build Phase: find M neighbors at each layer and create bidirectional links
 	for l := startLayer; l >= 0; l-- {
-		maxConn := HNSW_M
+		maxConn := h.cfg.M
 		if l == 0 {
-			maxConn = MNSW_M0
+			maxConn = h.cfg.M0
 		}
 
 		neighbors := h.searchLayerTopK(vector, curr, l, maxConn, getVec)
@@ -378,9 +393,9 @@ func (h *HNSWIndex) Search(query []float32, k int) []VectroRecord {
 		return nil
 	}
 
-	efSearch := k * 8
-	if efSearch < 64 {
-		efSearch = 64
+	efSearch := k * h.cfg.EfSearchMult
+	if efSearch < h.cfg.EfSearchMin {
+		efSearch = h.cfg.EfSearchMin
 	}
 
 	query = normQ

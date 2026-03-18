@@ -15,11 +15,18 @@ type CollectionManager struct {
 	collections map[string]*VectraDB
 	dim         int
 	basePath    string
+	hnswCfg     HNSWConfig
 }
 
 // NewCollectionManager creates a manager for named collections.
 // Existing collections are loaded from disk on startup.
-func NewCollectionManager(dim int, basePath string) (*CollectionManager, error) {
+// An optional HNSWConfig can be provided; DefaultHNSWConfig() is used otherwise.
+func NewCollectionManager(dim int, basePath string, cfg ...HNSWConfig) (*CollectionManager, error) {
+	hnswCfg := DefaultHNSWConfig()
+	if len(cfg) > 0 {
+		hnswCfg = cfg[0]
+	}
+
 	collectionsDir := filepath.Join(basePath, "collections")
 	if err := os.MkdirAll(collectionsDir, 0755); err != nil {
 		return nil, fmt.Errorf("create collections dir: %w", err)
@@ -29,6 +36,7 @@ func NewCollectionManager(dim int, basePath string) (*CollectionManager, error) 
 		collections: make(map[string]*VectraDB),
 		dim:         dim,
 		basePath:    collectionsDir,
+		hnswCfg:     hnswCfg,
 	}
 
 	// Load existing collections from disk
@@ -40,7 +48,7 @@ func NewCollectionManager(dim int, basePath string) (*CollectionManager, error) 
 		if e.IsDir() {
 			name := e.Name()
 			dbPath := filepath.Join(collectionsDir, name, "meta.bin")
-			db, err := NewVectraDB(dim, dbPath)
+			db, err := NewVectraDB(dim, dbPath, hnswCfg)
 			if err != nil {
 				fmt.Printf("WARNING: failed to load collection %q: %v\n", name, err)
 				continue
@@ -68,7 +76,7 @@ func (cm *CollectionManager) Create(name string) error {
 	}
 
 	dbPath := filepath.Join(colDir, "meta.bin")
-	db, err := NewVectraDB(cm.dim, dbPath)
+	db, err := NewVectraDB(cm.dim, dbPath, cm.hnswCfg)
 	if err != nil {
 		return fmt.Errorf("create collection %q: %w", name, err)
 	}
