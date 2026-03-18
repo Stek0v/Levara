@@ -1,4 +1,4 @@
-.PHONY: help up down full-stack full-stack-down build test benchmark clean install-hook qv-stack qv-stack-down qv-stack-logs
+.PHONY: help up down full-stack full-stack-down build test benchmark proto clean install-hook qv-stack qv-stack-down qv-stack-logs
 
 # Default
 help:
@@ -51,6 +51,11 @@ test:
 
 benchmark:
 	cd benchmarks && python vectradb_vs_lancedb.py
+
+# --- Proto Generation ---
+
+proto:
+	$(MAKE) -C VectraDB proto
 
 # --- Git Hook ---
 
