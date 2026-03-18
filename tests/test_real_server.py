@@ -1,11 +1,11 @@
 """
 Head-to-head: VectraDB (REAL Go server) vs LanceDB (real file I/O).
 
-NO mocks. VectraDB adapter talks to the real Go HNSW server on localhost:9099.
+NO mocks. VectraDB adapter talks to the real Go HNSW server via gRPC on localhost:50051.
 LanceDB uses the raw lancedb library with real Arrow file I/O.
 
 Prerequisite:
-    ./vectradb -bootstrap -dim=64 -port=9099 -data-dir=/tmp/vectra_bench
+    docker compose up -d --build   (VectraDB with dim=1024, gRPC on :50051)
 
 Run:
     pytest tests/test_real_server.py -v -s
@@ -148,13 +148,15 @@ def _make_engine_deterministic():
 # ── Check server is up ───────────────────────────────────────────────────────
 
 async def _server_alive() -> bool:
+    import grpc.aio
     try:
-        async with aiohttp.ClientSession() as s:
-            async with s.post(
-                f"{VECTRA_URL}/api/v1/search",
-                json={"vector": [0.0] * DIM, "k": 1},
-            ) as resp:
-                return resp.status == 200
+        channel = grpc.aio.insecure_channel(VECTRA_URL)
+        pb = sys.modules["cognee.infrastructure.databases.vector.vectradb.generated.vectradb_pb2"]
+        pb_grpc = sys.modules["cognee.infrastructure.databases.vector.vectradb.generated.vectradb_pb2_grpc"]
+        stub = pb_grpc.VectraDBServiceStub(channel)
+        resp = await asyncio.wait_for(stub.Info(pb.Empty()), timeout=5.0)
+        await channel.close()
+        return resp.status == "ready"
     except Exception:
         return False
 
@@ -175,7 +177,7 @@ def check_server(event_loop):
     if not alive:
         pytest.skip(
             f"VectraDB server not running on {VECTRA_URL}. "
-            "Start with: ./vectradb -bootstrap -dim=64 -port=9099"
+            "Start with: docker compose up -d --build"
         )
 
 
