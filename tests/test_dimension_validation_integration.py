@@ -114,7 +114,7 @@ def _make_adapter_with_info_server(
 ):
     engine = _make_engine(engine_dim)
     adapter = VectraDBAdapter(
-        url="http://localhost:8080",
+        url="localhost:50051",
         api_key=None,
         embedding_engine=engine,
     )

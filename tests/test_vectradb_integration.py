@@ -28,7 +28,7 @@ import pytest
 
 from cognee.infrastructure.databases.vector.vectradb.VectraDBAdapter import (
     VectraDBAdapter,
-    _serialize_payload,
+    _serialize_for_json,
 )
 from cognee.infrastructure.databases.exceptions import MissingQueryParameterError
 
@@ -173,7 +173,7 @@ class ReferenceAdapter:
             key = f"{collection}:{dp.id}"
             payload = dp.model_dump() if hasattr(dp, "model_dump") else {}
             payload["id"] = str(payload.get("id", dp.id))
-            self._store[key] = {"vector": vec, "payload": _serialize_payload(payload)}
+            self._store[key] = {"vector": vec, "payload": _serialize_for_json(payload)}
 
     async def search(self, collection: str, query_vector: List[float], limit: int):
         prefix = f"{collection}:"
