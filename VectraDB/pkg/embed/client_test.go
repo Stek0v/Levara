@@ -26,7 +26,7 @@ func TestEmbedSingle(t *testing.T) {
 		t.Skip("embed-server not available at localhost:9001")
 	}
 
-	client := NewClient(embedURL, embedModel, 16)
+	client := NewClient(embedURL, embedModel, 16, 1)
 	ctx := context.Background()
 
 	vec, err := client.EmbedSingle(ctx, "тестовый текст для эмбеддинга")
@@ -59,7 +59,7 @@ func TestEmbedBatch(t *testing.T) {
 		t.Skip("embed-server not available at localhost:9001")
 	}
 
-	client := NewClient(embedURL, embedModel, 16)
+	client := NewClient(embedURL, embedModel, 16, 1)
 	ctx := context.Background()
 
 	texts := []string{
@@ -93,7 +93,7 @@ func TestEmbedLargeBatch(t *testing.T) {
 		t.Skip("embed-server not available at localhost:9001")
 	}
 
-	client := NewClient(embedURL, embedModel, 16)
+	client := NewClient(embedURL, embedModel, 16, 1)
 	ctx := context.Background()
 
 	// 50 texts → split into 4 batches of 16+16+16+2
@@ -115,7 +115,7 @@ func TestEmbedLargeBatch(t *testing.T) {
 }
 
 func TestEmbedEmpty(t *testing.T) {
-	client := NewClient(embedURL, embedModel, 16)
+	client := NewClient(embedURL, embedModel, 16, 1)
 	ctx := context.Background()
 
 	vecs, err := client.EmbedTexts(ctx, nil)
@@ -140,7 +140,7 @@ func BenchmarkEmbedSingle(b *testing.B) {
 		b.Skip("embed-server not available")
 	}
 
-	client := NewClient(embedURL, embedModel, 16)
+	client := NewClient(embedURL, embedModel, 16, 1)
 	ctx := context.Background()
 
 	b.ResetTimer()

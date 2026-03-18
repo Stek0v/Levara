@@ -9,22 +9,31 @@ import (
 	"net/http"
 	"sort"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 )
 
 // Client calls an OpenAI-compatible embedding API (embed-server, Ollama, etc.).
 type Client struct {
-	url        string
-	model      string
-	batchSize  int
-	httpClient *http.Client
+	url         string
+	model       string
+	batchSize   int
+	concurrency int
+	httpClient  *http.Client
 }
 
 // NewClient creates an embedding client with connection pooling.
-func NewClient(url, model string, batchSize int) *Client {
+// concurrency controls how many batch HTTP requests run simultaneously.
+// Pass 1 for sequential (default/test-safe), 3+ for production throughput.
+func NewClient(url, model string, batchSize, concurrency int) *Client {
+	if concurrency < 1 {
+		concurrency = 1
+	}
 	return &Client{
-		url:       url,
-		model:     model,
-		batchSize: batchSize,
+		url:         url,
+		model:       model,
+		batchSize:   batchSize,
+		concurrency: concurrency,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 			Transport: &http.Transport{
@@ -52,30 +61,41 @@ type embeddingResponse struct {
 
 // EmbedTexts embeds multiple texts, batching by batchSize.
 // Returns one vector per input text, in the same order.
+// Batches are dispatched concurrently up to c.concurrency in-flight at once.
 func (c *Client) EmbedTexts(ctx context.Context, texts []string) ([][]float32, error) {
 	if len(texts) == 0 {
 		return nil, nil
 	}
 
 	allVecs := make([][]float32, len(texts))
+	g, gctx := errgroup.WithContext(ctx)
+	sem := make(chan struct{}, c.concurrency)
 
 	for start := 0; start < len(texts); start += c.batchSize {
+		start := start // capture loop variable
 		end := start + c.batchSize
 		if end > len(texts) {
 			end = len(texts)
 		}
-		batch := texts[start:end]
 
-		vecs, err := c.embedBatch(ctx, batch)
-		if err != nil {
-			return nil, fmt.Errorf("batch [%d:%d]: %w", start, end, err)
-		}
+		g.Go(func() error {
+			sem <- struct{}{}
+			defer func() { <-sem }()
 
-		for i, v := range vecs {
-			allVecs[start+i] = v
-		}
+			vecs, err := c.embedBatch(gctx, texts[start:end])
+			if err != nil {
+				return fmt.Errorf("batch [%d:%d]: %w", start, end, err)
+			}
+			for i, v := range vecs {
+				allVecs[start+i] = v
+			}
+			return nil
+		})
 	}
 
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
 	return allVecs, nil
 }
 
