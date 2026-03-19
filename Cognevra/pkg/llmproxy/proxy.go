@@ -24,7 +24,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/rupamthxt/cognevra/pkg/llmcache"
+	"github.com/stek0v/cognevra/pkg/llmcache"
 )
 
 // Config for the LLM proxy.

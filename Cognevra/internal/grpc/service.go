@@ -9,19 +9,20 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/rupamthxt/cognevra/internal/store"
-	"github.com/rupamthxt/cognevra/pkg/aggregator"
-	"github.com/rupamthxt/cognevra/pkg/chunker"
-	"github.com/rupamthxt/cognevra/pkg/embed"
-	"github.com/rupamthxt/cognevra/pkg/ingest"
-	"github.com/rupamthxt/cognevra/pkg/fileio"
-	"github.com/rupamthxt/cognevra/pkg/graph"
-	"github.com/rupamthxt/cognevra/pkg/bm25"
-	"github.com/rupamthxt/cognevra/pkg/graphdb"
-	"github.com/rupamthxt/cognevra/pkg/llmcache"
-	"github.com/rupamthxt/cognevra/pkg/orchestrator"
-	"github.com/rupamthxt/cognevra/pipeline"
-	pb "github.com/rupamthxt/cognevra/proto/pb"
+	"github.com/stek0v/cognevra/internal/store"
+	"github.com/stek0v/cognevra/pkg/aggregator"
+	"github.com/stek0v/cognevra/pkg/chunker"
+	"github.com/stek0v/cognevra/pkg/embed"
+	"github.com/stek0v/cognevra/pkg/extract"
+	"github.com/stek0v/cognevra/pkg/ingest"
+	"github.com/stek0v/cognevra/pkg/fileio"
+	"github.com/stek0v/cognevra/pkg/graph"
+	"github.com/stek0v/cognevra/pkg/bm25"
+	"github.com/stek0v/cognevra/pkg/graphdb"
+	"github.com/stek0v/cognevra/pkg/llmcache"
+	"github.com/stek0v/cognevra/pkg/orchestrator"
+	"github.com/stek0v/cognevra/pipeline"
+	pb "github.com/stek0v/cognevra/proto/pb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -1605,4 +1606,24 @@ func (s *Service) IngestData(ctx context.Context, req *pb.IngestDataReq) (*pb.In
 
 	resp.TotalMs = time.Since(start).Milliseconds()
 	return resp, nil
+}
+
+// ExtractText extracts text from PDF/DOCX/TXT files in pure Go.
+// Replaces Python's pypdf + unstructured loaders.
+func (s *Service) ExtractText(_ context.Context, req *pb.ExtractTextReq) (*pb.ExtractTextResp, error) {
+	if len(req.FileData) == 0 {
+		return nil, status.Errorf(codes.InvalidArgument, "file_data required")
+	}
+
+	result, err := extract.Extract(req.FileData, req.Filename, req.MimeType)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "extract: %v", err)
+	}
+
+	return &pb.ExtractTextResp{
+		Text:      result.Text,
+		Format:    result.Format,
+		Pages:     int32(result.Pages),
+		ExtractMs: result.ExtractMs,
+	}, nil
 }

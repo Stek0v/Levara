@@ -1,6 +1,6 @@
 syntax = "proto3";
 package cognevra.v1;
-option go_package = "github.com/rupamthxt/cognevra/proto/pb";
+option go_package = "github.com/stek0v/cognevra/proto/pb";
 
 service CognevraService {
   // Collections
@@ -75,6 +75,9 @@ service CognevraService {
 
   // Fast data ingestion: hash + save + classify in one Go call
   rpc IngestData(IngestDataReq) returns (IngestDataResp);
+
+  // Text extraction from PDF/DOCX/TXT (pure Go)
+  rpc ExtractText(ExtractTextReq) returns (ExtractTextResp);
 
   // BM25 lexical search + hybrid
   rpc BM25Index(BM25IndexReq) returns (StatusResp);
@@ -721,6 +724,20 @@ message IngestResult {
   int64 file_size = 6;
   string name = 7;
   bool already_exists = 8;    // true if hash already seen (dedup)
+}
+
+// Text extraction
+message ExtractTextReq {
+  bytes file_data = 1;
+  string filename = 2;
+  string mime_type = 3;
+}
+
+message ExtractTextResp {
+  string text = 1;
+  string format = 2;
+  int32 pages = 3;
+  int64 extract_ms = 4;
 }
 
 message LLMCachePutReq {

@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rupamthxt/cognevra/internal/store"
-	pb "github.com/rupamthxt/cognevra/proto/pb"
+	"github.com/stek0v/cognevra/internal/store"
+	pb "github.com/stek0v/cognevra/proto/pb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
