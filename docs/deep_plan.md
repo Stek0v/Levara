@@ -270,6 +270,17 @@
 | 28 | **BM25Search** | pkg/bm25 | keyword search (2.9ms/10K docs) |
 | 29 | **HybridSearch** | pkg/bm25 | vector + BM25 via RRF fusion |
 
+### + HTTP Proxy (port configurable):
+| # | Endpoint | Пакет | Что делает |
+|---|----------|-------|-----------|
+| P1 | **LLM Proxy** (:11435) | pkg/llmproxy | Cache + in-flight dedup + rate limit (633x cache, 5→1 dedup) |
+
+### + Disk Persistence:
+| # | Файл | Пакет | Что делает |
+|---|------|-------|-----------|
+| D1 | `llm_cache.jsonl` | pkg/llmcache | LLM responses survive restart |
+| D2 | `bm25_{collection}.jsonl` | pkg/bm25 | BM25 inverted index survives restart |
+
 ### Критический путь (cognify write path):
 ```
 extract_chunks  → extract_graph → dedup → write_nodes → write_edges → index
@@ -307,34 +318,69 @@ embed_query → vector_search → graph_read → triplet_score → format_contex
 | BM25 search 10K | N/A (Python) | **~3ms** | NEW |
 | Hybrid search | N/A | **~90ms** | NEW |
 | LLM cache hit | 5-30s | **~0.18ms** | **26K-160Kx** |
+| LLM proxy dedup | 5×5s=25s | **1×5s=5s** | **5x** |
 | **Full search** (excl LLM) | ~600ms | **~90ms** | **7x** |
 | **Total cognify** (excl LLM) | ~4s | **~700ms** | **6x** |
 
 ---
 
+## Выполненные задачи (N-серия)
+
+| # | Задача | Статус | Результат |
+|---|--------|--------|-----------|
+| ~~N2~~ | Persistent BM25 Index | ✅ Done | JSONL append-only, survives restart |
+| ~~N3~~ | LLM Cache persistence | ✅ Done | JSONL disk, loaded at startup |
+| ~~N4~~ | Batch LLM proxy | ✅ Done | HTTP proxy: cache 633x + dedup 5→1 |
+
+---
+
 ## Следующие задачи по ROI
 
-### Tier A: Высокий ROI (новые возможности)
+### Tier A: Высокий ROI
 
 | # | Задача | Effort | Impact | Описание |
 |---|--------|--------|--------|----------|
-| **N1** | Go Pipeline Orchestrator | 1-2 нед | Высокий | Go goroutine-based pipeline: inter-task streaming вместо sequential batch. Chunks → LLM (Python callback) → dedup → write параллельно |
-| **N2** | Persistent BM25 Index | 2-3 дня | Средний | BM25 index сохраняется на диск (сейчас in-memory, теряется при рестарте). WAL для BM25 аналогично vector WAL |
-| **N3** | LLM Cache persistence (Redis/disk) | 1-2 дня | Средний | Текущий кеш in-memory. Добавить Redis backend или disk persistence для выживания рестартов |
-| **N4** | Batch LLM proxy | 3-5 дней | Высокий | Go proxy перед LLM API: батчинг N запросов в один, дедупликация одинаковых промптов в полёте, rate limiting |
+| **N1** | Go Pipeline Orchestrator | 1-2 нед | ⭐⭐⭐⭐⭐ | Go goroutine pipeline: inter-task streaming вместо sequential batch. Chunks потоком → LLM → dedup → write. Единственный способ ускорить LLM-bound cognify (pipeline parallelism, не task parallelism) |
+| **N6** | In-memory Graph Cache | 2-3 дня | ⭐⭐⭐⭐ | Кеш Neo4j графа в Go memory. GraphRead сейчас 60-120ms (Neo4j query). С кешем: ~0.1ms. Invalidation по TTL или при write. Ускоряет GraphCompletionSearch |
+| **N5** | Semantic Dedup (vector) | 2-3 дня | ⭐⭐⭐ | Deduplicate chunks по cosine similarity (>0.95 = same content, разный ID). Уменьшает LLM calls (меньше уникальных chunks) + cleaner retrieval |
 
-### Tier B: Средний ROI (улучшение качества)
+### Tier B: Средний ROI
 
 | # | Задача | Effort | Impact | Описание |
 |---|--------|--------|--------|----------|
-| **N5** | Semantic dedup (vector-based) | 2-3 дня | Средний | Дедупликация чанков не только по ID, но по cosine similarity (>0.95 = duplicate). Уменьшает шум в retrieval |
-| **N6** | Graph index (in-memory) | 3-5 дней | Средний | Постоянный in-memory граф в Go (как BM25 index). Сейчас GraphRead идёт в Neo4j каждый раз — кеш графа ускорит search |
-| **N7** | Multi-query search | 1-2 дня | Средний | SearchByText с entity decomposition: "Кто такая Эмбер и как она связана с Лукасом?" → 2 sub-queries параллельно |
+| **N7** | Multi-query decomposition | 1-2 дня | ⭐⭐⭐ | "Кто Эмбер и как связана с Лукасом?" → 2 parallel SearchByText + merge. Лучший recall для complex queries |
+| **N11** | Embedding cache (Go) | 1 день | ⭐⭐⭐ | Кеш embedding vectors в Go (text→vector). Повторный embed того же текста = 0ms вместо 80ms. LRU + persist |
+| **N12** | Auto-indexing pipeline | 2-3 дня | ⭐⭐ | BatchEmbedAndIndex + BM25Index автоматически при BatchInsert — dual-index без отдельного вызова |
 
-### Tier C: Low ROI / Специализированные
+### Tier C: Специализированные / Low ROI
 
 | # | Задача | Effort | Impact |
 |---|--------|--------|--------|
 | N8 | Streaming gRPC cognify progress | 2-3 дня | UX improvement |
-| N9 | Go PostgreSQL driver (upserts) | 2-3 дня | Минимальный (ORM overhead < 50ms) |
-| N10 | WASM embedding (local, no server) | 1-2 нед | Eliminates embed-server dependency |
+| N9 | Go PostgreSQL driver (upserts) | 2-3 дня | <50ms gain |
+| N10 | WASM/ONNX local embedding | 1-2 нед | Removes embed-server dependency |
+| N13 | Graph visualization (Go WebSocket) | 3-5 дней | Dev tooling |
+| N14 | Prometheus metrics for all RPCs | 1 день | Observability |
+
+### ROI матрица:
+
+```
+Impact ▲
+       │
+  ⭐⭐⭐⭐⭐│  N1 Pipeline Orchestrator
+       │          (1-2 нед, LLM pipeline parallelism)
+       │
+  ⭐⭐⭐⭐ │  N6 Graph Cache
+       │    (2-3 дня, search 0.1ms vs 60ms)
+       │
+  ⭐⭐⭐  │  N5 Semantic Dedup     N7 Multi-query    N11 Embed Cache
+       │    (2-3 дня)              (1-2 дня)          (1 день)
+       │
+  ⭐⭐   │                        N12 Auto-index     N14 Metrics
+       │                          (2-3 дня)          (1 день)
+       │
+  ⭐    │  N8 Streaming    N9 PostgreSQL    N10 WASM
+       │   (2-3 дня)       (2-3 дня)       (1-2 нед)
+       └──────────────────────────────────────────────► Effort
+          1 день        2-3 дня       1-2 нед
+```
