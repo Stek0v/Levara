@@ -164,14 +164,20 @@ func main() {
 		}()
 	}
 
-	// Start LLM proxy (optional)
+	// Start LLM proxy (optional) with persistent cache
 	if *llmProxyPort > 0 && *llmUpstream != "" {
-		cache := llmcache.New(*llmCacheSize, 0)
+		cachePath := *dataDir + "/" + nodeID + "/llm_cache.jsonl"
+		cache, cacheErr := llmcache.NewPersistent(*llmCacheSize, cachePath)
+		if cacheErr != nil {
+			log.Printf("LLM cache persist warning: %v (using in-memory)", cacheErr)
+			cache = &llmcache.PersistentCache{Cache: llmcache.New(*llmCacheSize, 0)}
+		}
+		defer cache.Close()
 		stop, err := llmproxy.StartBackground(
 			fmt.Sprintf(":%d", *llmProxyPort),
 			llmproxy.Config{
 				UpstreamURL: *llmUpstream,
-				Cache:       cache,
+				Cache:       cache.Cache,
 				MaxInFlight: *llmMaxInflight,
 			},
 		)
