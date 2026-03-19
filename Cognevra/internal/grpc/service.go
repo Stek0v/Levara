@@ -1432,7 +1432,13 @@ func (s *Service) SemanticDedup(_ context.Context, req *pb.SemanticDedupReq) (*p
 		ids[i] = v.Id
 	}
 
-	result := graph.SemanticDedup(vectors, threshold)
+	// Use LSH for large inputs (100+), brute-force for small
+	var result graph.SemanticDedupResult
+	if len(vectors) >= 100 {
+		result = graph.SemanticDedupLSH(vectors, threshold, 12, 10)
+	} else {
+		result = graph.SemanticDedup(vectors, threshold)
+	}
 
 	keptIDs := make([]string, len(result.Kept))
 	for i, idx := range result.Kept {
