@@ -30,6 +30,12 @@ service CognevraService {
   // File I/O acceleration
   rpc HashFiles(HashFilesReq) returns (HashFilesResp);
   rpc ListDirectory(ListDirectoryReq) returns (ListDirectoryResp);
+
+  // Search aggregation
+  rpc AggregateSearch(AggregateSearchReq) returns (AggregateSearchResp);
+
+  // Maintenance
+  rpc Compact(Empty) returns (CompactResp);
 }
 
 // Common
@@ -217,4 +223,44 @@ message ListDirectoryReq {
 message ListDirectoryResp {
   repeated string file_paths = 1;
   int32 total = 2;
+}
+
+// Maintenance
+message CompactResp {
+  int32 collections_compacted = 1;
+  string error = 2;
+}
+
+// Search aggregation
+message AggregateSearchReq {
+  repeated ScoredEdge edges = 1;
+  int32 top_k = 2;
+}
+
+message ScoredEdge {
+  string source_id = 1;
+  string source_name = 2;
+  string source_text = 3;
+  float source_distance = 4;
+  string target_id = 5;
+  string target_name = 6;
+  string target_text = 7;
+  float target_distance = 8;
+  string relationship_name = 9;
+  float edge_distance = 10;
+}
+
+message AggregateSearchResp {
+  repeated RankedEdge ranked_edges = 1;
+  string formatted_context = 2;
+  int32 unique_nodes = 3;
+}
+
+message RankedEdge {
+  string source_id = 1;
+  string source_name = 2;
+  string target_id = 3;
+  string target_name = 4;
+  string relationship_name = 5;
+  float score = 6;
 }

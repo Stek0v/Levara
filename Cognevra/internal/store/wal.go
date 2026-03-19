@@ -161,6 +161,12 @@ func (wal *WAL) WriteEntryNoFlush(op byte, id string, vector []float32, metadata
 
 // writeEntryLocked writes a WAL entry. Caller must hold wal.mu.
 func (wal *WAL) writeEntryLocked(op byte, id string, vector []float32, metadata []byte, loc FileLocation) error {
+	return writeWALEntryTo(wal.writer, op, id, vector, metadata, loc)
+}
+
+// writeWALEntryTo writes a single WAL entry to w. Used by both normal WAL writes
+// and checkpoint compaction. The caller is responsible for any locking or flushing.
+func writeWALEntryTo(w *bufio.Writer, op byte, id string, vector []float32, metadata []byte, loc FileLocation) error {
 	idBytes := []byte(id)
 	idLen := uint32(len(idBytes))
 	vectorLen := uint32(len(vector) * 4) // 4 bytes per float32
@@ -170,39 +176,44 @@ func (wal *WAL) writeEntryLocked(op byte, id string, vector []float32, metadata 
 	totalPayloadSize := 1 + 4 + idLen + 4 + vectorLen + 4 + metadataLen + 8 + 4
 
 	// Write Size Header
-	if err := binary.Write(wal.writer, binary.LittleEndian, uint32(totalPayloadSize)); err != nil {
+	if err := binary.Write(w, binary.LittleEndian, uint32(totalPayloadSize)); err != nil {
 		return err
 	}
 
 	// Write operation type
-	if err := wal.writer.WriteByte(op); err != nil {
+	if err := w.WriteByte(op); err != nil {
 		return err
 	}
 
 	// Write ID
-	binary.Write(wal.writer, binary.LittleEndian, idLen)
-	wal.writer.Write(idBytes)
+	binary.Write(w, binary.LittleEndian, idLen)
+	w.Write(idBytes)
 
 	// Write Vector (bulk unsafe write — 1 call instead of dim calls)
-	binary.Write(wal.writer, binary.LittleEndian, vectorLen)
+	binary.Write(w, binary.LittleEndian, vectorLen)
 	if vectorLen > 0 {
 		vecPtr := unsafe.Pointer(&vector[0])
 		vecBytes := unsafe.Slice((*byte)(vecPtr), len(vector)*4)
-		wal.writer.Write(vecBytes)
+		w.Write(vecBytes)
 	}
 
 	// Write Metadata
-	binary.Write(wal.writer, binary.LittleEndian, metadataLen)
+	binary.Write(w, binary.LittleEndian, metadataLen)
 	if metadataLen > 0 {
-		wal.writer.Write(metadata)
+		w.Write(metadata)
 	}
 
 	// Write Offset (8 bytes)
-	if err := binary.Write(wal.writer, binary.LittleEndian, int64(loc.Offset)); err != nil {
+	if err := binary.Write(w, binary.LittleEndian, int64(loc.Offset)); err != nil {
 		return err
 	}
 	// Write Len (4 bytes)
-	return binary.Write(wal.writer, binary.LittleEndian, uint32(loc.Length))
+	return binary.Write(w, binary.LittleEndian, uint32(loc.Length))
+}
+
+// Path returns the filesystem path of the WAL file.
+func (wal *WAL) Path() string {
+	return wal.file.Name()
 }
 
 // Flush flushes the buffered writer and fsyncs to ensure durability.
