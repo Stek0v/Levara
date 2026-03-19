@@ -2,15 +2,15 @@
 
 # Default
 help:
-	@echo "Cognee + VectraDB Development Commands"
+	@echo "Cognee + Cognevra Development Commands"
 	@echo ""
-	@echo "  make up              Start VectraDB + Prometheus (dev mode)"
+	@echo "  make up              Start Cognevra + Prometheus (dev mode)"
 	@echo "  make down            Stop dev services"
-	@echo "  make full-stack      Start all services (Cognee, VectraDB, PG, Neo4j, Redis)"
+	@echo "  make full-stack      Start all services (Cognee, Cognevra, PG, Neo4j, Redis)"
 	@echo "  make full-stack-down Stop all full-stack services"
 	@echo "  make build           Build all Docker images"
-	@echo "  make test            Run VectraDB adapter tests"
-	@echo "  make benchmark       Run VectraDB vs LanceDB benchmark"
+	@echo "  make test            Run Cognevra adapter tests"
+	@echo "  make benchmark       Run Cognevra vs LanceDB benchmark"
 	@echo "  make install-hook    Install Cognee git post-commit hook"
 	@echo "  make clean           Remove data volumes and temp files"
 	@echo ""
@@ -22,7 +22,7 @@ help:
 	@echo "Configuration:"
 	@echo "  cp .env.template .env   # then edit .env with your API keys"
 
-# --- Dev Mode (VectraDB only) ---
+# --- Dev Mode (Cognevra only) ---
 
 up:
 	docker compose up -d --build
@@ -55,7 +55,7 @@ benchmark:
 # --- Proto Generation ---
 
 proto:
-	$(MAKE) -C VectraDB proto
+	$(MAKE) -C Cognevra proto
 
 # --- Git Hook ---
 
@@ -80,4 +80,4 @@ qv-stack-logs:
 clean:
 	docker compose -f docker-compose.full-stack.yml down -v 2>/dev/null || true
 	docker compose down -v 2>/dev/null || true
-	rm -rf VectraDB/data/ VectraDB/bin/ VectraDB/*.snap
+	rm -rf Cognevra/data/ Cognevra/bin/ Cognevra/*.snap

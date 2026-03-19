@@ -1,5 +1,5 @@
 """
-Unit tests for VectraDBAdapter (gRPC transport).
+Unit tests for CognevraAdapter (gRPC transport).
 
 Stubs for the heavy cognee import chain are set up in conftest.py.
 Generated protobuf modules are loaded by conftest.py from the generated/ directory.
@@ -15,15 +15,15 @@ import grpc
 import grpc.aio
 import pytest
 
-from cognee.infrastructure.databases.vector.vectradb.VectraDBAdapter import (
-    VectraDBAdapter,
+from cognee.infrastructure.databases.vector.cognevra.CognevraAdapter import (
+    CognevraAdapter,
     _serialize_for_json,
 )
 from cognee.infrastructure.databases.exceptions import MissingQueryParameterError
 
 # Load protobuf types from conftest-registered modules
-pb = sys.modules["cognee.infrastructure.databases.vector.vectradb.generated.vectradb_pb2"]
-pb_grpc = sys.modules["cognee.infrastructure.databases.vector.vectradb.generated.vectradb_pb2_grpc"]
+pb = sys.modules["cognee.infrastructure.databases.vector.cognevra.generated.cognevra_pb2"]
+pb_grpc = sys.modules["cognee.infrastructure.databases.vector.cognevra.generated.cognevra_pb2_grpc"]
 
 _DataPoint = sys.modules["cognee.infrastructure.engine"].DataPoint
 ScoredResult = sys.modules[
@@ -40,8 +40,8 @@ def _make_embedding_engine(dim: int = 4) -> MagicMock:
     return engine
 
 
-def _make_adapter() -> VectraDBAdapter:
-    adapter = VectraDBAdapter(
+def _make_adapter() -> CognevraAdapter:
+    adapter = CognevraAdapter(
         url="localhost:50051",
         api_key=None,
         embedding_engine=_make_embedding_engine(),

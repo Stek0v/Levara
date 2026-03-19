@@ -40,9 +40,9 @@ services:
       - GRAPH_DATABASE_NAME=neo4j
       - GRAPH_DATABASE_USERNAME=neo4j
       - GRAPH_DATABASE_PASSWORD=${NEO4J_PASSWORD:-pleaseletmein}
-      # VectraDB
-      - VECTOR_DB_PROVIDER=vectradb
-      - VECTOR_DB_URL=http://vectradb:8080
+      # Cognevra
+      - VECTOR_DB_PROVIDER=cognevra
+      - VECTOR_DB_URL=http://cognevra:8080
       - VECTOR_DB_KEY=${VECTOR_DB_KEY:-}
       # Redis
       - REDIS_URL=redis://redis:6379
@@ -63,7 +63,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      vectradb:
+      cognevra:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "python3 -c 'import urllib.request; r=urllib.request.urlopen(\"http://localhost:8000/health\"); exit(0 if r.status==200 else 1)'"]
@@ -79,13 +79,13 @@ services:
           cpus: "4.0"
           memory: 8GB
 
-  vectradb:
-    build: ./VectraDB
+  cognevra:
+    build: ./Cognevra
     ports:
       - "8080:8080"
     volumes:
-      - vectradb-data:/app/data
-    command: ["./vectradb", "-bootstrap=true", "-dim=${VECTRADB_DIM:-768}", "-shards=${VECTRADB_SHARDS:-3}", "-port=8080"]
+      - cognevra-data:/app/data
+    command: ["./cognevra", "-bootstrap=true", "-dim=${COGNEVRA_DIM:-768}", "-shards=${COGNEVRA_SHARDS:-3}", "-port=8080"]
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/metrics"]
       interval: 10s
@@ -152,7 +152,7 @@ networks:
     name: cognee-qwen-network
 
 volumes:
-  vectradb-data:
+  cognevra-data:
   postgres-data:
   neo4j-data:
   redis-data:
