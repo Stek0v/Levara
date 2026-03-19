@@ -427,3 +427,60 @@ class CognevraAdapter(VectorDBInterface):
             ))
         )
         return list(resp.file_paths)
+
+    # ------------------------------------------------------------------ search aggregation
+
+    async def aggregate_search(
+        self,
+        edges: list[dict],
+        top_k: int = 10,
+    ) -> dict:
+        """Rank and format search results via Go aggregator.
+
+        Args:
+            edges: List of dicts with keys: source_id, source_name, source_text,
+                   source_distance, target_id, target_name, target_text,
+                   target_distance, relationship_name, edge_distance
+            top_k: Number of top results to return
+
+        Returns:
+            Dict with: ranked_edges (list), formatted_context (str), unique_nodes (int)
+        """
+        pb_edges = [
+            pb.ScoredEdge(
+                source_id=str(e.get("source_id", "")),
+                source_name=str(e.get("source_name", "")),
+                source_text=str(e.get("source_text", "")),
+                source_distance=float(e.get("source_distance", 0)),
+                target_id=str(e.get("target_id", "")),
+                target_name=str(e.get("target_name", "")),
+                target_text=str(e.get("target_text", "")),
+                target_distance=float(e.get("target_distance", 0)),
+                relationship_name=str(e.get("relationship_name", "")),
+                edge_distance=float(e.get("edge_distance", 0)),
+            )
+            for e in edges
+        ]
+
+        resp = await self._safe_call(
+            self._stub.AggregateSearch(pb.AggregateSearchReq(
+                edges=pb_edges,
+                top_k=top_k,
+            ))
+        )
+
+        return {
+            "ranked_edges": [
+                {
+                    "source_id": r.source_id,
+                    "source_name": r.source_name,
+                    "target_id": r.target_id,
+                    "target_name": r.target_name,
+                    "relationship_name": r.relationship_name,
+                    "score": r.score,
+                }
+                for r in resp.ranked_edges
+            ],
+            "formatted_context": resp.formatted_context,
+            "unique_nodes": resp.unique_nodes,
+        }
