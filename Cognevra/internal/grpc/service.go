@@ -15,6 +15,7 @@ import (
 	"github.com/rupamthxt/cognevra/pkg/fileio"
 	"github.com/rupamthxt/cognevra/pkg/graph"
 	"github.com/rupamthxt/cognevra/pkg/graphdb"
+	"github.com/rupamthxt/cognevra/pkg/llmcache"
 	"github.com/rupamthxt/cognevra/pipeline"
 	pb "github.com/rupamthxt/cognevra/proto/pb"
 	"google.golang.org/grpc/codes"
@@ -27,6 +28,7 @@ type Service struct {
 	collections *store.CollectionManager
 	cluster     *store.Cluster // legacy: for non-collection operations
 	dim         int
+	llmCache    *llmcache.Cache
 }
 
 // NewService creates a gRPC service backed by CollectionManager.
@@ -35,6 +37,7 @@ func NewService(collections *store.CollectionManager, cluster *store.Cluster, di
 		collections: collections,
 		cluster:     cluster,
 		dim:         dim,
+		llmCache:    llmcache.New(10000, 0), // 10K entries, no TTL
 	}
 }
 
@@ -1160,4 +1163,34 @@ func (s *Service) GraphCompletionSearch(ctx context.Context, req *pb.GraphComple
 	resp.TotalMs = time.Since(totalStart).Milliseconds()
 
 	return resp, nil
+}
+
+// LLMCacheGet checks the cache for a previously stored LLM response.
+func (s *Service) LLMCacheGet(_ context.Context, req *pb.LLMCacheGetReq) (*pb.LLMCacheGetResp, error) {
+	key := llmcache.Key(req.Model, req.Prompt, req.SystemPrompt, req.Temperature)
+	resp, hit := s.llmCache.Get(key)
+	return &pb.LLMCacheGetResp{
+		Hit:      hit,
+		Response: resp,
+		CacheKey: key,
+	}, nil
+}
+
+// LLMCachePut stores an LLM response in the cache.
+func (s *Service) LLMCachePut(_ context.Context, req *pb.LLMCachePutReq) (*pb.StatusResp, error) {
+	key := llmcache.Key(req.Model, req.Prompt, req.SystemPrompt, req.Temperature)
+	s.llmCache.Put(key, req.Response, req.Model)
+	return &pb.StatusResp{Ok: true}, nil
+}
+
+// LLMCacheStats returns cache hit/miss statistics.
+func (s *Service) LLMCacheStats(_ context.Context, _ *pb.Empty) (*pb.LLMCacheStatsResp, error) {
+	stats := s.llmCache.Stats()
+	return &pb.LLMCacheStatsResp{
+		Size:    int32(stats.Size),
+		MaxSize: int32(stats.MaxSize),
+		Hits:    stats.Hits,
+		Misses:  stats.Misses,
+		HitRate: float32(stats.HitRate),
+	}, nil
 }
