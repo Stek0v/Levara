@@ -47,6 +47,7 @@ const (
 	CognevraService_LLMCacheGet_FullMethodName             = "/cognevra.v1.CognevraService/LLMCacheGet"
 	CognevraService_LLMCachePut_FullMethodName             = "/cognevra.v1.CognevraService/LLMCachePut"
 	CognevraService_LLMCacheStats_FullMethodName           = "/cognevra.v1.CognevraService/LLMCacheStats"
+	CognevraService_SemanticDedup_FullMethodName           = "/cognevra.v1.CognevraService/SemanticDedup"
 	CognevraService_BM25Index_FullMethodName               = "/cognevra.v1.CognevraService/BM25Index"
 	CognevraService_BM25Search_FullMethodName              = "/cognevra.v1.CognevraService/BM25Search"
 	CognevraService_HybridSearch_FullMethodName            = "/cognevra.v1.CognevraService/HybridSearch"
@@ -103,6 +104,8 @@ type CognevraServiceClient interface {
 	LLMCacheGet(ctx context.Context, in *LLMCacheGetReq, opts ...grpc.CallOption) (*LLMCacheGetResp, error)
 	LLMCachePut(ctx context.Context, in *LLMCachePutReq, opts ...grpc.CallOption) (*StatusResp, error)
 	LLMCacheStats(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*LLMCacheStatsResp, error)
+	// Semantic deduplication (vector cosine similarity)
+	SemanticDedup(ctx context.Context, in *SemanticDedupReq, opts ...grpc.CallOption) (*SemanticDedupResp, error)
 	// BM25 lexical search + hybrid
 	BM25Index(ctx context.Context, in *BM25IndexReq, opts ...grpc.CallOption) (*StatusResp, error)
 	BM25Search(ctx context.Context, in *BM25SearchReq, opts ...grpc.CallOption) (*BM25SearchResp, error)
@@ -408,6 +411,16 @@ func (c *cognevraServiceClient) LLMCacheStats(ctx context.Context, in *Empty, op
 	return out, nil
 }
 
+func (c *cognevraServiceClient) SemanticDedup(ctx context.Context, in *SemanticDedupReq, opts ...grpc.CallOption) (*SemanticDedupResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SemanticDedupResp)
+	err := c.cc.Invoke(ctx, CognevraService_SemanticDedup_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *cognevraServiceClient) BM25Index(ctx context.Context, in *BM25IndexReq, opts ...grpc.CallOption) (*StatusResp, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(StatusResp)
@@ -498,6 +511,8 @@ type CognevraServiceServer interface {
 	LLMCacheGet(context.Context, *LLMCacheGetReq) (*LLMCacheGetResp, error)
 	LLMCachePut(context.Context, *LLMCachePutReq) (*StatusResp, error)
 	LLMCacheStats(context.Context, *Empty) (*LLMCacheStatsResp, error)
+	// Semantic deduplication (vector cosine similarity)
+	SemanticDedup(context.Context, *SemanticDedupReq) (*SemanticDedupResp, error)
 	// BM25 lexical search + hybrid
 	BM25Index(context.Context, *BM25IndexReq) (*StatusResp, error)
 	BM25Search(context.Context, *BM25SearchReq) (*BM25SearchResp, error)
@@ -597,6 +612,9 @@ func (UnimplementedCognevraServiceServer) LLMCachePut(context.Context, *LLMCache
 }
 func (UnimplementedCognevraServiceServer) LLMCacheStats(context.Context, *Empty) (*LLMCacheStatsResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method LLMCacheStats not implemented")
+}
+func (UnimplementedCognevraServiceServer) SemanticDedup(context.Context, *SemanticDedupReq) (*SemanticDedupResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method SemanticDedup not implemented")
 }
 func (UnimplementedCognevraServiceServer) BM25Index(context.Context, *BM25IndexReq) (*StatusResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method BM25Index not implemented")
@@ -1128,6 +1146,24 @@ func _CognevraService_LLMCacheStats_Handler(srv interface{}, ctx context.Context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _CognevraService_SemanticDedup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SemanticDedupReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CognevraServiceServer).SemanticDedup(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CognevraService_SemanticDedup_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CognevraServiceServer).SemanticDedup(ctx, req.(*SemanticDedupReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _CognevraService_BM25Index_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(BM25IndexReq)
 	if err := dec(in); err != nil {
@@ -1314,6 +1350,10 @@ var CognevraService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "LLMCacheStats",
 			Handler:    _CognevraService_LLMCacheStats_Handler,
+		},
+		{
+			MethodName: "SemanticDedup",
+			Handler:    _CognevraService_SemanticDedup_Handler,
 		},
 		{
 			MethodName: "BM25Index",
