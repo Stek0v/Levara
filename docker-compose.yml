@@ -1,12 +1,12 @@
 services:
-  vectradb:
-    build: ./VectraDB
+  cognevra:
+    build: ./Cognevra
     ports:
       - "8080:8080"
       - "50051:50051"
     volumes:
-      - vectradb-data:/app/data
-    command: ["./vectradb", "-standalone=true", "-dim=${VECTRADB_DIM:-${EMBEDDING_DIMENSIONS:-1024}}", "-shards=${VECTRADB_SHARDS:-3}", "-port=8080", "-grpc-port=50051", "-hnsw-m=${HNSW_M:-20}", "-hnsw-ef-mult=${HNSW_EF_MULT:-10}", "-hnsw-ef-min=${HNSW_EF_MIN:-64}"]
+      - cognevra-data:/app/data
+    command: ["./cognevra", "-standalone=true", "-dim=${COGNEVRA_DIM:-${EMBEDDING_DIMENSIONS:-1024}}", "-shards=${COGNEVRA_SHARDS:-3}", "-port=8080", "-grpc-port=50051", "-hnsw-m=${HNSW_M:-20}", "-hnsw-ef-mult=${HNSW_EF_MULT:-10}", "-hnsw-ef-min=${HNSW_EF_MIN:-64}"]
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/metrics"]
       interval: 10s
@@ -25,7 +25,7 @@ services:
       - '--storage.tsdb.retention.time=200h'
       - '--web.enable-lifecycle'
     depends_on:
-      - vectradb
+      - cognevra
 
 volumes:
-  vectradb-data:
+  cognevra-data:

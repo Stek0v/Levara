@@ -8,9 +8,9 @@ from unittest.mock import AsyncMock, MagicMock
 import aiohttp
 import pytest
 
-from cognee.infrastructure.databases.vector.vectradb.VectraDBAdapter import VectraDBAdapter
+from cognee.infrastructure.databases.vector.cognevra.CognevraAdapter import CognevraAdapter
 
-pb = sys.modules["cognee.infrastructure.databases.vector.vectradb.generated.vectradb_pb2"]
+pb = sys.modules["cognee.infrastructure.databases.vector.cognevra.generated.cognevra_pb2"]
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -39,10 +39,10 @@ class _FakeResponse:
         pass
 
 
-def _make_adapter(engine_dim: int) -> VectraDBAdapter:
+def _make_adapter(engine_dim: int) -> CognevraAdapter:
     engine = MagicMock()
     engine.get_vector_size = MagicMock(return_value=engine_dim)
-    return VectraDBAdapter(
+    return CognevraAdapter(
         url="localhost:50051",
         api_key=None,
         embedding_engine=engine,
