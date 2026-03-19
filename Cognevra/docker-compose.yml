@@ -1,13 +1,13 @@
 version: '3.8'
 
 services:
-  vectradb:
+  cognevra:
     build: .
     ports:
       - "8080:8080"
     volumes:
       - ./data:/app/data
-    command: ["./vectradb", "-bootstrap=true"]
+    command: ["./cognevra", "-bootstrap=true"]
 
   prometheus:
     image: prom/prometheus:latest

@@ -263,7 +263,7 @@ if _lance_adapter_path.exists():
         warnings.warn(f"Could not load LanceDBAdapter: {_e}")
 
 # ── Load CognevraAdapter via importlib ────────────────────────────────────────
-_vectradb_pkg = _stub("cognee.infrastructure.databases.vector.cognevra")
+_cognevra_pkg = _stub("cognee.infrastructure.databases.vector.cognevra")
 
 # Register the generated protobuf modules BEFORE loading the adapter,
 # so that `from .generated import cognevra_pb2` resolves correctly.
@@ -322,4 +322,4 @@ sys.modules["cognee.infrastructure.databases.vector.cognevra.CognevraAdapter"] =
 _spec.loader.exec_module(_adapter_mod)
 
 # Attach to parent package so `from cognee...cognevra.CognevraAdapter import X` works
-_vectradb_pkg.CognevraAdapter = _adapter_mod.CognevraAdapter
+_cognevra_pkg.CognevraAdapter = _adapter_mod.CognevraAdapter
