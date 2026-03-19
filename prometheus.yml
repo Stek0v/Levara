@@ -3,9 +3,9 @@ global:
   evaluation_interval: 15s
 
 scrape_configs:
-  - job_name: vectradb
+  - job_name: cognevra
     static_configs:
-      - targets: ['vectradb:8080']
+      - targets: ['cognevra:8080']
     metrics_path: /metrics
 
   - job_name: cognee

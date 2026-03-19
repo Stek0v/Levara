@@ -10,7 +10,7 @@ Tests here use the full retrieval + generation + evaluation pipeline:
 
 Requires:
   - embed-server on :9001
-  - VectraDB on :8080
+  - Cognevra on :8080
   - Ollama with qwen3.5 on :11434
 
 Run:
@@ -34,7 +34,7 @@ import pytest
 
 BOOK_PATH = Path(__file__).parent.parent / "Edvards_Dzanet_Uragan_r4_P61XH.txt"
 EMBED_URL = "http://localhost:9001/v1/embeddings"
-VECTRA_URL = "http://localhost:8080"
+COGNEVRA_URL = "http://localhost:8080"
 OLLAMA_URL = "http://127.0.0.1:11434"
 EMBED_MODEL = "pplx-embed-context-v1-0.6b"
 LLM_MODEL = "qwen3.5:latest"
@@ -95,22 +95,22 @@ async def embed_texts(session: aiohttp.ClientSession,
     return all_vecs
 
 
-# ── VectraDB helpers ──────────────────────────────────────────────────────────
+# ── Cognevra helpers ──────────────────────────────────────────────────────────
 
 
-async def vectra_insert(session: aiohttp.ClientSession,
+async def cognevra_insert(session: aiohttp.ClientSession,
                         records: List[Dict]) -> Dict:
     async with session.post(
-        f"{VECTRA_URL}/api/v1/batch_insert", json={"records": records}
+        f"{COGNEVRA_URL}/api/v1/batch_insert", json={"records": records}
     ) as r:
         r.raise_for_status()
         return await r.json()
 
 
-async def vectra_search(session: aiohttp.ClientSession,
+async def cognevra_search(session: aiohttp.ClientSession,
                         vector: List[float], k: int = K) -> List[Dict]:
     async with session.post(
-        f"{VECTRA_URL}/api/v1/search", json={"vector": vector, "k": k}
+        f"{COGNEVRA_URL}/api/v1/search", json={"vector": vector, "k": k}
     ) as r:
         r.raise_for_status()
         data = await r.json()
@@ -218,13 +218,13 @@ async def llm_judge(session: aiohttp.ClientSession,
 
 async def rag_pipeline(session: aiohttp.ClientSession,
                        question: str) -> Dict:
-    """Full RAG pipeline: embed query -> search VectraDB -> generate answer."""
+    """Full RAG pipeline: embed query -> search Cognevra -> generate answer."""
     # 1. Embed query
     query_vecs = await embed_texts(session, [question])
     query_vec = query_vecs[0]
 
     # 2. Search
-    results = await vectra_search(session, query_vec, k=K)
+    results = await cognevra_search(session, query_vec, k=K)
     context_chunks = [_extract_text(r) for r in results]
     context = "\n---\n".join(c for c in context_chunks if c)
 
@@ -311,7 +311,7 @@ pytestmark = pytest.mark.skipif(
         and _check("http://localhost:8080/metrics")
         and _check("http://127.0.0.1:11434/api/tags")
     ),
-    reason="Need embed-server:9001 + VectraDB:8080 + Ollama:11434",
+    reason="Need embed-server:9001 + Cognevra:8080 + Ollama:11434",
 )
 
 
@@ -320,7 +320,7 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture(scope="module")
 def book_inserted():
-    """Load book, chunk, embed, insert into VectraDB -- once for module."""
+    """Load book, chunk, embed, insert into Cognevra -- once for module."""
     if not BOOK_PATH.exists():
         pytest.skip(f"Book not found: {BOOK_PATH}")
 
@@ -340,7 +340,7 @@ def book_inserted():
                         "chapter": chunks[i]["chapter"],
                     },
                 } for i in range(start, min(start + 50, len(chunks)))]
-                await vectra_insert(session, batch)
+                await cognevra_insert(session, batch)
 
             await asyncio.sleep(2)
         return vecs
@@ -364,7 +364,7 @@ class TestRAGLLMCases:
     async def test_01_grounded_answers(self, book_inserted):
         """Grounded answers: LLM generates answers based only on context.
 
-        Pipeline: query -> embed -> VectraDB search -> Qwen generate
+        Pipeline: query -> embed -> Cognevra search -> Qwen generate
         Check: answer contains expected keywords from context.
         """
         print("\n" + "=" * 72)

@@ -2,7 +2,7 @@
 Full end-to-end benchmark: book-scale search quality and performance.
 
 Uses Janet Edwards' "Ураган" (Hurricane, Hive #3) as a real-world dataset.
-Tests VectraDB adapter with ~500+ text chunks from a Russian sci-fi novel.
+Tests Cognevra adapter with ~500+ text chunks from a Russian sci-fi novel.
 
 What this test measures:
   1. CHUNKING — text splitting into meaningful paragraphs
@@ -29,8 +29,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from cognee.infrastructure.databases.vector.vectradb.VectraDBAdapter import (
-    VectraDBAdapter,
+from cognee.infrastructure.databases.vector.cognevra.CognevraAdapter import (
+    CognevraAdapter,
     _serialize_for_json,
 )
 
@@ -105,14 +105,14 @@ def load_and_chunk_book(path: Path, max_chunk_chars: int = 1500) -> List[Dict]:
 
 import json as _json
 
-pb = sys.modules["cognee.infrastructure.databases.vector.vectradb.generated.vectradb_pb2"]
+pb = sys.modules["cognee.infrastructure.databases.vector.cognevra.generated.cognevra_pb2"]
 
 
 class GrpcMockServer:
     """
     In-process gRPC stub mock with brute-force cosine search.
 
-    Implements the same async interface as the real VectraDBServiceStub so that
+    Implements the same async interface as the real CognevraServiceStub so that
     ``adapter._stub = server`` is sufficient to redirect all calls here.
     """
 
@@ -247,10 +247,10 @@ class _ChunkDataPoint(_DataPoint):
 
 # ── Adapter factory ──────────────────────────────────────────────────────────
 
-def _make_adapter(server: GrpcMockServer, engine=None) -> VectraDBAdapter:
+def _make_adapter(server: GrpcMockServer, engine=None) -> CognevraAdapter:
     if engine is None:
         engine = _make_embedding_engine()
-    adapter = VectraDBAdapter(
+    adapter = CognevraAdapter(
         url="localhost:50051",
         api_key=None,
         embedding_engine=engine,
