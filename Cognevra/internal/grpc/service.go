@@ -911,3 +911,69 @@ func (s *Service) BatchSearchByText(ctx context.Context, req *pb.BatchSearchByTe
 
 	return &pb.BatchSearchByTextResp{Results: groups}, nil
 }
+
+// GraphRead executes Neo4j read queries for search-time graph projection.
+// Replaces 4 separate Python→Neo4j queries with one Go gRPC call.
+func (s *Service) GraphRead(ctx context.Context, req *pb.GraphReadReq) (*pb.GraphReadResp, error) {
+	if req.Neo4JUrl == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "neo4j_url required")
+	}
+	dbName := req.Neo4JDatabase
+	if dbName == "" {
+		dbName = "neo4j"
+	}
+
+	start := time.Now()
+
+	writer, err := graphdb.NewWriter(ctx, req.Neo4JUrl, req.Neo4JUser, req.Neo4JPassword, dbName)
+	if err != nil {
+		return nil, status.Errorf(codes.Unavailable, "neo4j: %v", err)
+	}
+	defer writer.Close(ctx)
+
+	var result graphdb.GraphReadResult
+
+	switch req.Mode {
+	case pb.GraphReadReq_FULL_GRAPH:
+		result, err = writer.ReadFullGraph(ctx)
+	case pb.GraphReadReq_ID_FILTERED:
+		result, err = writer.ReadIDFiltered(ctx, req.NodeIds)
+	case pb.GraphReadReq_NEIGHBOURS:
+		if len(req.NodeIds) == 0 {
+			return nil, status.Errorf(codes.InvalidArgument, "node_ids required for NEIGHBOURS mode")
+		}
+		result, err = writer.ReadNeighbours(ctx, req.NodeIds[0])
+	case pb.GraphReadReq_SUBGRAPH:
+		result, err = writer.ReadSubgraph(ctx, req.NodeLabel, req.NodeNames)
+	default:
+		result, err = writer.ReadFullGraph(ctx)
+	}
+
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "graph read: %v", err)
+	}
+
+	// Convert to proto
+	pbNodes := make([]*pb.GraphReadNode, len(result.Nodes))
+	for i, n := range result.Nodes {
+		propsJSON, _ := json.Marshal(n.Properties)
+		pbNodes[i] = &pb.GraphReadNode{
+			Id: n.ID, Label: n.Label, PropertiesJson: string(propsJSON),
+		}
+	}
+
+	pbEdges := make([]*pb.GraphReadEdge, len(result.Edges))
+	for i, e := range result.Edges {
+		propsJSON, _ := json.Marshal(e.Properties)
+		pbEdges[i] = &pb.GraphReadEdge{
+			SourceId: e.SourceID, TargetId: e.TargetID,
+			RelationshipType: e.RelationshipType, PropertiesJson: string(propsJSON),
+		}
+	}
+
+	return &pb.GraphReadResp{
+		Nodes:   pbNodes,
+		Edges:   pbEdges,
+		QueryMs: time.Since(start).Milliseconds(),
+	}, nil
+}

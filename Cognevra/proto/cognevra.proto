@@ -53,6 +53,9 @@ service CognevraService {
   rpc SearchByText(SearchByTextReq) returns (SearchResp);
   rpc BatchSearchByText(BatchSearchByTextReq) returns (BatchSearchByTextResp);
 
+  // Neo4j graph read queries (search-time)
+  rpc GraphRead(GraphReadReq) returns (GraphReadResp);
+
   // Maintenance
   rpc Compact(Empty) returns (CompactResp);
 }
@@ -487,6 +490,46 @@ message BatchSearchByTextReq {
 
 message BatchSearchByTextResp {
   repeated SearchResultGroup results = 1;
+}
+
+// Neo4j graph read
+message GraphReadReq {
+  string neo4j_url = 1;
+  string neo4j_user = 2;
+  string neo4j_password = 3;
+  string neo4j_database = 4;
+  // Query mode
+  enum Mode {
+    FULL_GRAPH = 0;           // All nodes + edges
+    ID_FILTERED = 1;          // Nodes/edges touching given IDs
+    NEIGHBOURS = 2;           // Direct neighbors of node_id
+    SUBGRAPH = 3;             // Nodes by label + name, with neighbors
+  }
+  Mode mode = 5;
+  // Parameters (used based on mode)
+  repeated string node_ids = 6;          // for ID_FILTERED, NEIGHBOURS
+  string node_label = 7;                 // for SUBGRAPH (e.g. "Entity")
+  repeated string node_names = 8;        // for SUBGRAPH
+  repeated string properties_to_project = 9; // which node props to return
+}
+
+message GraphReadResp {
+  repeated GraphReadNode nodes = 1;
+  repeated GraphReadEdge edges = 2;
+  int64 query_ms = 3;
+}
+
+message GraphReadNode {
+  string id = 1;
+  string label = 2;
+  string properties_json = 3;
+}
+
+message GraphReadEdge {
+  string source_id = 1;
+  string target_id = 2;
+  string relationship_type = 3;
+  string properties_json = 4;
 }
 
 message SearchResultGroup {
