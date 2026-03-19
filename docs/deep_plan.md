@@ -231,6 +231,7 @@
 │     DeduplicateGraph (dedup + triplet gen)                           │
 │     SearchTriplets (in-memory scoring, 22-112x faster)               │
 │     ProcessTriplets (edge→triplet dedup + UUID5)                     │
+│     SemanticDedup (cosine + LSH for 100+ vectors)                    │
 │                                                                      │
 │  🟢 DATABASE WRITES (pkg/graphdb/ + pkg/embed/)                     │
 │     BatchWriteGraph (Neo4j UNWIND+MERGE)                             │
@@ -241,14 +242,20 @@
 │     HashFiles (concurrent SHA256 + MIME)                              │
 │     ListDirectory (recursive walk + filter)                           │
 │                                                                      │
-│  🟢 SEARCH AGGREGATION (pkg/aggregator/)                            │
+│  🟢 SEARCH (pkg/aggregator/ + pipeline/)                             │
 │     AggregateSearch (triplet ranking + context formatting)           │
+│     SearchByText | BatchSearchByText (embed + HNSW in one call)      │
+│     GraphCompletionSearch (full search pipeline in one call)          │
 │                                                                      │
 │  🟢 LLM CACHE (pkg/llmcache/)                                        │
 │     LLMCacheGet (0.18ms) | LLMCachePut | LLMCacheStats               │
 │                                                                      │
 │  🟢 BM25 LEXICAL SEARCH (pkg/bm25/)                                  │
 │     BM25Index | BM25Search (2.9ms/10K) | HybridSearch (vector+BM25)  │
+│                                                                      │
+│  🟢 GRAPH READ (pkg/graphdb/ cache)                                   │
+│     GraphRead (4 modes: full, id-filtered, neighbours, subgraph)     │
+│     In-memory graph cache (80ns hit, TTL invalidation)                │
 │                                                                      │
 │  🟢 PIPELINE ORCHESTRATOR (pkg/orchestrator/) 🔥                      │
 │     PipelineCognify (streaming: chunk→LLM→dedup→Neo4j+vector)        │
@@ -263,21 +270,22 @@
 
 ---
 
-## Статистика покрытия (обновлено 2026-03-20, v3 — final)
+## Статистика покрытия (обновлено 2026-03-20, v4)
 
 | Категория | Всего | 🟢 Go | 🟡 Частично | 🔴 Python | Coverage |
 |-----------|-------|-------|-------------|-----------|----------|
 | **API endpoints** | 10 | 0 | 3 | 4 | 30% |
-| **Pipeline tasks** | 18 | 8 | 2 | 8 | **61%** |
+| **Pipeline tasks** | 18 | 9 | 2 | 7 | **67%** |
 | **DB adapters** | 8 | 3 | 0 | 5 | **44%** |
 | **LLM/Embedding** | 9 | 3 | 0 | 6 | **33%** |
-| **Retrieval** | 12 | 6 | 1 | 5 | **58%** |
+| **Retrieval** | 12 | 7 | 1 | 4 | **67%** |
 | **File I/O** | 4 | 2 | 1 | 1 | 75% |
-| **gRPC RPCs** | **30** | **30** | 0 | 0 | **100%** |
+| **gRPC RPCs** | **31** | **31** | 0 | 0 | **100%** |
 | **HTTP Proxy** | 1 | **1** | 0 | 0 | **100%** |
-| **Persistence** | 2 | **2** | 0 | 0 | **100%** |
+| **Persistence** | 3 | **3** | 0 | 0 | **100%** |
+| **Caches** | 3 | **3** | 0 | 0 | **100%** |
 
-### Все 30 Go gRPC RPCs:
+### Все 31 Go gRPC RPCs:
 
 | # | RPC | Пакет | Заменяет |
 |---|-----|-------|----------|
@@ -303,6 +311,7 @@
 | 28 | **BM25Search** | pkg/bm25 | keyword search (2.9ms/10K docs) |
 | 29 | **HybridSearch** | pkg/bm25 | vector + BM25 via RRF fusion |
 | 30 | **PipelineCognify** 🔥 | pkg/orchestrator | **STREAMING** full cognify: chunk→LLM→dedup→write |
+| 31 | **SemanticDedup** | pkg/graph | cosine dedup + LSH for 100+ vectors |
 
 ### + HTTP Proxy (port configurable):
 | # | Endpoint | Пакет | Что делает |
@@ -314,6 +323,14 @@
 |---|------|-------|-----------|
 | D1 | `llm_cache.jsonl` | pkg/llmcache | LLM responses survive restart |
 | D2 | `bm25_{collection}.jsonl` | pkg/bm25 | BM25 inverted index survives restart |
+| D3 | `embed_cache.jsonl` | pkg/embed | Embedding vectors survive restart |
+
+### + In-Memory Caches:
+| # | Кеш | Пакет | Hit latency | Что кеширует |
+|---|-----|-------|-------------|-------------|
+| C1 | LLM Cache | pkg/llmcache | **0.18ms** (vs 5-30s) | prompt→response |
+| C2 | Graph Cache | pkg/graphdb | **80ns** (vs 60ms) | Neo4j query→result |
+| C3 | Embed Cache | pkg/embed | **~100ns** (vs 80ms) | text→vector |
 
 ### Критический путь (cognify write path):
 ```
@@ -362,30 +379,25 @@ embed_query → vector_search → graph_read → triplet_score → format_contex
 
 | # | Задача | Статус | Результат |
 |---|--------|--------|-----------|
-| ~~N1~~ | **Pipeline Orchestrator** | ✅ Done | Go streaming cognify: chunk→LLM→dedup→write. 30th RPC |
-| ~~N2~~ | Persistent BM25 Index | ✅ Done | JSONL append-only, survives restart |
-| ~~N3~~ | LLM Cache persistence | ✅ Done | JSONL disk, loaded at startup |
-| ~~N4~~ | Batch LLM proxy | ✅ Done | HTTP proxy: cache 633x + dedup 5→1 |
+| ~~N1~~ | **Pipeline Orchestrator** | ✅ | Go streaming cognify: chunk→LLM→dedup→write. 30th RPC |
+| ~~N2~~ | Persistent BM25 Index | ✅ | JSONL append-only, survives restart |
+| ~~N3~~ | LLM Cache persistence | ✅ | JSONL disk, loaded at startup |
+| ~~N4~~ | Batch LLM proxy | ✅ | HTTP proxy: cache 633x + dedup 5→1 |
+| ~~N5~~ | **Semantic Dedup + LSH** | ✅ | Cosine dedup + LSH for 100+ vectors. 31st RPC |
+| ~~N6~~ | **In-memory Graph Cache** | ✅ | CachedWriter: 80ns hit, TTL invalidation |
+| ~~N11~~ | **Embedding Cache** | ✅ | text→vector LRU + JSONL persistence |
 
 ---
 
 ## Следующие задачи по ROI
 
-### Tier A: Высокий ROI
+### Tier A: Следующие по ROI
 
 | # | Задача | Effort | Impact | Описание |
 |---|--------|--------|--------|----------|
-| **N6** | In-memory Graph Cache | 2-3 дня | ⭐⭐⭐⭐ | Кеш Neo4j графа в Go memory. GraphRead = 60-120ms → с кешем 0.1ms. TTL invalidation. Ускоряет GraphCompletionSearch |
-| **N11** | Embedding Cache (Go) | 1 день | ⭐⭐⭐ | LRU кеш text→vector. Повторный embed = 0ms вместо 80ms. Persist на диск |
-| **N5** | Semantic Dedup (vector) | 2-3 дня | ⭐⭐⭐ | Dedup chunks по cosine similarity (>0.95). Меньше LLM calls + cleaner retrieval |
-
-### Tier B: Средний ROI
-
-| # | Задача | Effort | Impact | Описание |
-|---|--------|--------|--------|----------|
-| **N7** | Multi-query decomposition | 1-2 дня | ⭐⭐⭐ | "Кто Эмбер и как связана с Лукасом?" → 2 parallel SearchByText + merge. Лучший recall для complex queries |
-| **N11** | Embedding cache (Go) | 1 день | ⭐⭐⭐ | Кеш embedding vectors в Go (text→vector). Повторный embed того же текста = 0ms вместо 80ms. LRU + persist |
-| **N12** | Auto-indexing pipeline | 2-3 дня | ⭐⭐ | BatchEmbedAndIndex + BM25Index автоматически при BatchInsert — dual-index без отдельного вызова |
+| **N7** | Multi-query decomposition | 1-2 дня | ⭐⭐⭐ | "Кто Эмбер и как связана с Лукасом?" → 2 parallel sub-queries + merge. Лучший recall для complex queries |
+| **N12** | Auto dual-index | 2-3 дня | ⭐⭐⭐ | BatchInsert автоматически индексирует в vector + BM25 одновременно. Hybrid search из коробки |
+| **N14** | Prometheus metrics | 1 день | ⭐⭐ | Метрики всех 31 RPCs: latency histograms, counters, cache hit rates. Grafana dashboard |
 
 ### Tier C: Специализированные / Low ROI
 
@@ -397,36 +409,58 @@ embed_query → vector_search → graph_read → triplet_score → format_contex
 | N13 | Graph visualization (Go WebSocket) | 3-5 дней | Dev tooling |
 | N14 | Prometheus metrics for all RPCs | 1 день | Observability |
 
-### ROI матрица (обновлено — N1,N2,N3,N4 выполнены):
+### ROI матрица (обновлено — 7 задач выполнены):
 
 ```
 Impact ▲
        │
-  ⭐⭐⭐⭐⭐│  ✅ N1 Pipeline Orchestrator (DONE)
-       │  ✅ N4 LLM Proxy (DONE)
+  ⭐⭐⭐⭐⭐│  ✅ N1 Pipeline Orchestrator
+       │  ✅ N4 LLM Proxy (cache 633x + dedup 5→1)
        │
-  ⭐⭐⭐⭐ │  → N6 Graph Cache             (2-3 дня, search 0.1ms vs 60ms)
+  ⭐⭐⭐⭐ │  ✅ N6 Graph Cache (80ns)
+       │  ✅ N5 Semantic Dedup + LSH
        │
-  ⭐⭐⭐  │  → N11 Embed Cache             (1 день, embed 0ms vs 80ms)
-       │  → N5 Semantic Dedup             (2-3 дня, fewer LLM calls)
-       │  → N7 Multi-query decomposition  (1-2 дня, better recall)
+  ⭐⭐⭐  │  ✅ N11 Embed Cache (~100ns)
+       │  → N7 Multi-query             (1-2 дня)
+       │  → N12 Auto dual-index        (2-3 дня)
        │
-  ⭐⭐   │  N12 Auto-index  N14 Metrics
-       │   (2-3 дня)        (1 день)
+  ⭐⭐   │  → N14 Metrics               (1 день)
+       │  N8 Streaming gRPC          (2-3 дня)
        │
-  ⭐    │  N8 Streaming    N9 PostgreSQL    N10 WASM
+  ⭐    │  N9 PostgreSQL   N10 WASM   N13 Graph viz
        │
        └──────────────────────────────────────────────► Effort
           1 день        2-3 дня       1-2 нед
 ```
 
-### Итого: Go Cognevra
+---
+
+## Итого: Go Cognevra (финальная сводка)
 
 | Метрика | Значение |
 |---------|----------|
-| gRPC RPCs | **30** (вкл. 1 streaming) |
-| HTTP Proxy | **1** (LLM dedup+cache) |
-| Go пакетов | **10** (store, graph, graphdb, embed, chunker, fileio, aggregator, llmcache, bm25, orchestrator, llmproxy) |
-| Persistence | **2** (LLM cache JSONL + BM25 JSONL) |
-| Полный pipeline | ✅ PipelineCognify (chunk→LLM→dedup→write, streaming) |
-| Coverage критического пути | **100%** (всё кроме LLM inference API call) |
+| **gRPC RPCs** | **31** (вкл. 1 streaming) |
+| **HTTP Proxy** | **1** (LLM dedup+cache+rate limit) |
+| **Go пакетов** | **11** (store, graph, graphdb, embed, chunker, fileio, aggregator, llmcache, bm25, orchestrator, llmproxy) |
+| **Caches** | **3** (LLM 0.18ms, Graph 80ns, Embed ~100ns) |
+| **Persistence** | **3** (LLM JSONL, BM25 JSONL, Embed JSONL) |
+| **Algorithms** | HNSW, BM25, RRF hybrid, LSH, heap top-k |
+| **Pipeline** | ✅ PipelineCognify (streaming: chunk→LLM→dedup→write) |
+| **Coverage** | **100%** critical path (всё кроме LLM API call) |
+
+### Speedups на реальных данных:
+
+| Операция | Python | Go | Speedup |
+|----------|--------|----|---------|
+| Text chunking (1430 chunks) | 200ms | **2ms** | **100x** |
+| Node/edge dedup (1000) | 200ms | **2ms** | **100x** |
+| Triplet search (10K edges) | 500ms | **5ms** | **100x** |
+| Neo4j batch write | 2s | **200ms** | **10x** |
+| Full search pipeline | 600ms | **90ms** | **7x** |
+| BM25 lexical search (10K) | N/A | **3ms** | NEW |
+| Hybrid search (vector+BM25) | N/A | **90ms** | NEW |
+| LLM cache hit | 5-30s | **0.18ms** | **26K-160Kx** |
+| LLM proxy dedup (5 identical) | 25s | **5s** | **5x** |
+| Graph cache hit | 60ms | **80ns** | **750Kx** |
+| Embed cache hit | 80ms | **~100ns** | **800Kx** |
+| Semantic dedup (1K×1024d) | N/A | **1.2s** | NEW (+ LSH for 10K+) |
