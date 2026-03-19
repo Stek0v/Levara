@@ -43,6 +43,9 @@ service CognevraService {
   // Batch embed + index (embed texts → insert vectors into collections)
   rpc BatchEmbedAndIndex(BatchEmbedAndIndexReq) returns (BatchEmbedAndIndexResp);
 
+  // Batch write nodes/edges to Neo4j
+  rpc BatchWriteGraph(BatchWriteGraphReq) returns (BatchWriteGraphResp);
+
   // Maintenance
   rpc Compact(Empty) returns (CompactResp);
 }
@@ -384,4 +387,33 @@ message BatchEmbedAndIndexResp {
   int32 total_indexed = 2;
   int32 collections_created = 3;
   repeated string errors = 4;
+}
+
+// Batch write to Neo4j
+message BatchWriteGraphReq {
+  string neo4j_url = 1;       // bolt://host:7687
+  string neo4j_user = 2;
+  string neo4j_password = 3;
+  string neo4j_database = 4;  // default: "neo4j"
+  repeated GraphNodeWrite nodes = 5;
+  repeated GraphEdgeWrite edges = 6;
+}
+
+message GraphNodeWrite {
+  string id = 1;
+  string label = 2;           // dynamic label (class name)
+  string properties_json = 3; // JSON-serialized properties
+}
+
+message GraphEdgeWrite {
+  string source_id = 1;
+  string target_id = 2;
+  string relationship_name = 3;
+  string properties_json = 4; // JSON-serialized edge properties
+}
+
+message BatchWriteGraphResp {
+  int32 nodes_written = 1;
+  int32 edges_written = 2;
+  repeated string errors = 3;
 }

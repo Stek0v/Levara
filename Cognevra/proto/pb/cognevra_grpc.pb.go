@@ -37,6 +37,7 @@ const (
 	CognevraService_SearchTriplets_FullMethodName     = "/cognevra.v1.CognevraService/SearchTriplets"
 	CognevraService_DeduplicateGraph_FullMethodName   = "/cognevra.v1.CognevraService/DeduplicateGraph"
 	CognevraService_BatchEmbedAndIndex_FullMethodName = "/cognevra.v1.CognevraService/BatchEmbedAndIndex"
+	CognevraService_BatchWriteGraph_FullMethodName    = "/cognevra.v1.CognevraService/BatchWriteGraph"
 	CognevraService_Compact_FullMethodName            = "/cognevra.v1.CognevraService/Compact"
 )
 
@@ -73,6 +74,8 @@ type CognevraServiceClient interface {
 	DeduplicateGraph(ctx context.Context, in *DeduplicateGraphReq, opts ...grpc.CallOption) (*DeduplicateGraphResp, error)
 	// Batch embed + index (embed texts → insert vectors into collections)
 	BatchEmbedAndIndex(ctx context.Context, in *BatchEmbedAndIndexReq, opts ...grpc.CallOption) (*BatchEmbedAndIndexResp, error)
+	// Batch write nodes/edges to Neo4j
+	BatchWriteGraph(ctx context.Context, in *BatchWriteGraphReq, opts ...grpc.CallOption) (*BatchWriteGraphResp, error)
 	// Maintenance
 	Compact(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*CompactResp, error)
 }
@@ -265,6 +268,16 @@ func (c *cognevraServiceClient) BatchEmbedAndIndex(ctx context.Context, in *Batc
 	return out, nil
 }
 
+func (c *cognevraServiceClient) BatchWriteGraph(ctx context.Context, in *BatchWriteGraphReq, opts ...grpc.CallOption) (*BatchWriteGraphResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(BatchWriteGraphResp)
+	err := c.cc.Invoke(ctx, CognevraService_BatchWriteGraph_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *cognevraServiceClient) Compact(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*CompactResp, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(CompactResp)
@@ -308,6 +321,8 @@ type CognevraServiceServer interface {
 	DeduplicateGraph(context.Context, *DeduplicateGraphReq) (*DeduplicateGraphResp, error)
 	// Batch embed + index (embed texts → insert vectors into collections)
 	BatchEmbedAndIndex(context.Context, *BatchEmbedAndIndexReq) (*BatchEmbedAndIndexResp, error)
+	// Batch write nodes/edges to Neo4j
+	BatchWriteGraph(context.Context, *BatchWriteGraphReq) (*BatchWriteGraphResp, error)
 	// Maintenance
 	Compact(context.Context, *Empty) (*CompactResp, error)
 	mustEmbedUnimplementedCognevraServiceServer()
@@ -373,6 +388,9 @@ func (UnimplementedCognevraServiceServer) DeduplicateGraph(context.Context, *Ded
 }
 func (UnimplementedCognevraServiceServer) BatchEmbedAndIndex(context.Context, *BatchEmbedAndIndexReq) (*BatchEmbedAndIndexResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method BatchEmbedAndIndex not implemented")
+}
+func (UnimplementedCognevraServiceServer) BatchWriteGraph(context.Context, *BatchWriteGraphReq) (*BatchWriteGraphResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method BatchWriteGraph not implemented")
 }
 func (UnimplementedCognevraServiceServer) Compact(context.Context, *Empty) (*CompactResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method Compact not implemented")
@@ -722,6 +740,24 @@ func _CognevraService_BatchEmbedAndIndex_Handler(srv interface{}, ctx context.Co
 	return interceptor(ctx, in, info, handler)
 }
 
+func _CognevraService_BatchWriteGraph_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BatchWriteGraphReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CognevraServiceServer).BatchWriteGraph(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CognevraService_BatchWriteGraph_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CognevraServiceServer).BatchWriteGraph(ctx, req.(*BatchWriteGraphReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _CognevraService_Compact_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(Empty)
 	if err := dec(in); err != nil {
@@ -818,6 +854,10 @@ var CognevraService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "BatchEmbedAndIndex",
 			Handler:    _CognevraService_BatchEmbedAndIndex_Handler,
+		},
+		{
+			MethodName: "BatchWriteGraph",
+			Handler:    _CognevraService_BatchWriteGraph_Handler,
 		},
 		{
 			MethodName: "Compact",

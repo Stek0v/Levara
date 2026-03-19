@@ -13,6 +13,7 @@ import (
 	"github.com/rupamthxt/cognevra/pkg/embed"
 	"github.com/rupamthxt/cognevra/pkg/fileio"
 	"github.com/rupamthxt/cognevra/pkg/graph"
+	"github.com/rupamthxt/cognevra/pkg/graphdb"
 	pb "github.com/rupamthxt/cognevra/proto/pb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -544,5 +545,66 @@ func (s *Service) BatchEmbedAndIndex(ctx context.Context, req *pb.BatchEmbedAndI
 		TotalIndexed:       totalIndexed,
 		CollectionsCreated: collectionsCreated,
 		Errors:             errs,
+	}, nil
+}
+
+// BatchWriteGraph writes nodes and edges to Neo4j in batch via UNWIND+MERGE.
+// Creates a short-lived Neo4j connection per call (caller provides credentials).
+func (s *Service) BatchWriteGraph(ctx context.Context, req *pb.BatchWriteGraphReq) (*pb.BatchWriteGraphResp, error) {
+	if req.Neo4JUrl == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "neo4j_url is required")
+	}
+	dbName := req.Neo4JDatabase
+	if dbName == "" {
+		dbName = "neo4j"
+	}
+
+	writer, err := graphdb.NewWriter(ctx, req.Neo4JUrl, req.Neo4JUser, req.Neo4JPassword, dbName)
+	if err != nil {
+		return nil, status.Errorf(codes.Unavailable, "neo4j connect: %v", err)
+	}
+	defer writer.Close(ctx)
+
+	// Convert proto nodes
+	nodes := make([]graphdb.NodeRecord, len(req.Nodes))
+	for i, n := range req.Nodes {
+		var props map[string]any
+		if n.PropertiesJson != "" {
+			json.Unmarshal([]byte(n.PropertiesJson), &props)
+		}
+		if props == nil {
+			props = map[string]any{}
+		}
+		nodes[i] = graphdb.NodeRecord{
+			ID:         n.Id,
+			Label:      n.Label,
+			Properties: props,
+		}
+	}
+
+	// Convert proto edges
+	edges := make([]graphdb.EdgeRecord, len(req.Edges))
+	for i, e := range req.Edges {
+		var props map[string]any
+		if e.PropertiesJson != "" {
+			json.Unmarshal([]byte(e.PropertiesJson), &props)
+		}
+		if props == nil {
+			props = map[string]any{}
+		}
+		edges[i] = graphdb.EdgeRecord{
+			SourceID:         e.SourceId,
+			TargetID:         e.TargetId,
+			RelationshipName: e.RelationshipName,
+			Properties:       props,
+		}
+	}
+
+	result := writer.BatchWrite(ctx, nodes, edges)
+
+	return &pb.BatchWriteGraphResp{
+		NodesWritten: int32(result.NodesWritten),
+		EdgesWritten: int32(result.EdgesWritten),
+		Errors:       result.Errors,
 	}, nil
 }
