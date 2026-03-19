@@ -73,6 +73,9 @@ service CognevraService {
   // Multi-query search: decompose → parallel search → merge
   rpc MultiQuerySearch(MultiQuerySearchReq) returns (MultiQuerySearchResp);
 
+  // Fast data ingestion: hash + save + classify in one Go call
+  rpc IngestData(IngestDataReq) returns (IngestDataResp);
+
   // BM25 lexical search + hybrid
   rpc BM25Index(BM25IndexReq) returns (StatusResp);
   rpc BM25Search(BM25SearchReq) returns (BM25SearchResp);
@@ -681,6 +684,36 @@ message MultiQueryResult {
   int32 appearances = 3;
   double fused_score = 4;
   string metadata_json = 5;
+}
+
+// Fast data ingestion
+message IngestDataReq {
+  repeated IngestItem items = 1;
+  string storage_path = 2;  // base directory for file storage
+}
+
+message IngestItem {
+  string id = 1;              // optional — generated from hash if empty
+  string text = 2;            // text content (for string input)
+  bytes file_data = 3;        // binary file content (for file upload)
+  string filename = 4;        // original filename
+  string dataset_name = 5;
+}
+
+message IngestDataResp {
+  repeated IngestResult results = 1;
+  int64 total_ms = 2;
+}
+
+message IngestResult {
+  string id = 1;              // generated UUID5(hash + dataset)
+  string content_hash = 2;    // SHA256 of content
+  string file_path = 3;       // file:// URI where stored
+  string mime_type = 4;
+  string extension = 5;
+  int64 file_size = 6;
+  string name = 7;
+  bool already_exists = 8;    // true if hash already seen (dedup)
 }
 
 message LLMCachePutReq {
