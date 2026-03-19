@@ -7,17 +7,27 @@ import (
 	"sync"
 )
 
+// FileLocation identifies a byte range within the DiskStore's metadata file.
+// It is persisted in the WAL so that metadata can be relocated after recovery.
 type FileLocation struct {
 	Offset int64
 	Length int32
 }
 
+// DiskStore is an append-only file store for JSON record metadata (meta.bin).
+//
+// Each [DiskStore.Write] appends data to the file and returns a [FileLocation]
+// that can be used later with [DiskStore.Read] for random-access retrieval.
+// The file is never compacted in-place; during crash recovery the WAL rebuilds
+// it from scratch via [DiskStore.Truncate].
 type DiskStore struct {
 	mu   sync.RWMutex
 	file *os.File
 	pos  int64 // current write position
 }
 
+// NewDiskStore opens (or creates) the metadata file at path and returns a DiskStore.
+// Parent directories are created with mode 0755 if they do not exist.
 func NewDiskStore(path string) (*DiskStore, error) {
 
 	dir := filepath.Dir(path)
@@ -41,6 +51,8 @@ func NewDiskStore(path string) (*DiskStore, error) {
 	}, nil
 }
 
+// Write appends data to the metadata file and returns its [FileLocation].
+// The write is not fsynced; durability is ensured by the WAL.
 func (ds *DiskStore) Write(data []byte) (FileLocation, error) {
 	ds.mu.Lock()
 	defer ds.mu.Unlock()
@@ -58,6 +70,8 @@ func (ds *DiskStore) Write(data []byte) (FileLocation, error) {
 	return loc, nil
 }
 
+// Read returns the bytes stored at loc using a random-access pread. It does not
+// require exclusive access and may be called concurrently with writes.
 func (ds *DiskStore) Read(loc FileLocation) ([]byte, error) {
 	ds.mu.RLock()
 	defer ds.mu.RUnlock()
@@ -91,6 +105,7 @@ func (ds *DiskStore) Truncate() error {
 	return nil
 }
 
+// Close closes the underlying file descriptor.
 func (ds *DiskStore) Close() error {
 	return ds.file.Close()
 }

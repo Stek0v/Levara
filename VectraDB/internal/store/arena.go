@@ -7,8 +7,17 @@ import (
 	"unsafe"
 )
 
+// PageSizeBytes is the size of each arena page in bytes (4 MB).
 const PageSizeBytes = 4 * 1024 * 1024 // 4MB
 
+// VectorArena is a paged memory pool for storing fixed-dimension float32 vectors.
+//
+// Vectors are stored contiguously within 4 MB pages. Each page holds
+// PageSizeBytes / (dim * 4) vectors. This layout keeps hot vectors cache-local
+// and avoids per-vector heap allocations.
+//
+// All vectors are L2-normalized on insertion so that dot-product distance is
+// equivalent to cosine distance, which is required by the HNSW index.
 type VectorArena struct {
 	mu sync.RWMutex
 
@@ -22,7 +31,8 @@ type VectorArena struct {
 	totalVectors   uint32
 }
 
-// Initializes arena with a pre allocated capacity
+// NewVectorArena creates a VectorArena for vectors of the given dimension.
+// No pages are allocated until the first [VectorArena.Add] call.
 func NewVectorArena(dim int) *VectorArena {
 
 	vecSizeBytes := dim * 4 // 4bytes per float32
@@ -39,7 +49,10 @@ func NewVectorArena(dim int) *VectorArena {
 	}
 }
 
-// Inserts a vector in the arena and returns its global index
+// Add L2-normalizes vector in-place, stores it in the arena, and returns its
+// global index. The index is stable and used by [HNSWIndex] as ArenaOffset.
+// Returns an error if the vector length does not match the arena dimension or
+// if the vector contains NaN/Inf values.
 func (a *VectorArena) Add(vector []float32) (uint32, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -101,7 +114,8 @@ func (a *VectorArena) Add(vector []float32) (uint32, error) {
 	return globalId, nil
 }
 
-// Retrieves a vector by its global index
+// Get returns a copy of the vector at the given global index.
+// Returns an error if index is out of range.
 func (a *VectorArena) Get(index uint32) ([]float32, error) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()

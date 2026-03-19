@@ -1,3 +1,36 @@
+// VectraDB server — HTTP + gRPC vector database with HNSW indexing and WAL durability.
+//
+// Usage:
+//
+//	# Standalone mode (default) — WAL-only, no Raft consensus
+//	./server -standalone -dim 1024 -shards 3 -port 8080 -grpc-port 50051 -data-dir /data
+//
+//	# Raft consensus mode (multi-node)
+//	./server -bootstrap -standalone=false -dim 1024
+//
+// Flags:
+//
+//	-dim           Vector dimension (default 128; must match embedding model output)
+//	-port          HTTP API port (default 8080)
+//	-grpc-port     gRPC API port, 0 to disable (default 50051)
+//	-shards        Number of independent HNSW shards (default 3)
+//	-data-dir      Root directory for WAL and metadata files (default "data")
+//	-standalone    Use WAL-only mode without Raft (default true)
+//	-bootstrap     Bootstrap Raft cluster as leader (Raft mode only)
+//	-hnsw-m        HNSW M: max neighbors per node (default 16)
+//	-hnsw-ef-mult  HNSW efSearch multiplier: efSearch = k * mult (default 8)
+//	-hnsw-ef-min   HNSW minimum efSearch value (default 64)
+//
+// HTTP endpoints (prefix /api/v1):
+//
+//	POST /insert           Insert a single record
+//	POST /batch_insert     Insert multiple records in one fsync
+//	POST /search           Vector similarity search
+//	POST /delete           Delete a record by ID
+//	GET  /metrics          Prometheus metrics
+//
+// The server handles SIGTERM and SIGINT with graceful shutdown: all WAL buffers
+// are flushed and disk stores are closed before the process exits.
 package main
 
 import (

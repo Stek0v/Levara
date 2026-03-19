@@ -9,7 +9,8 @@ import (
 	"github.com/viterin/vek/vek32"
 )
 
-// HNSWConfig holds tunable HNSW parameters.
+// HNSWConfig holds tunable parameters for the HNSW graph construction and search.
+// See [DefaultHNSWConfig] for recommended starting values.
 type HNSWConfig struct {
 	M            int     // max neighbors per node (default 16)
 	M0           int     // max neighbors at layer 0 (default 2*M)
@@ -18,6 +19,9 @@ type HNSWConfig struct {
 	LevelMult    float64 // level distribution parameter (default 1/ln(2))
 }
 
+// DefaultHNSWConfig returns production-ready HNSW parameters: M=16, M0=32,
+// efSearchMult=8, efSearchMin=64. These values balance recall (~0.95) with
+// low search latency at the scales tested in VectraDB benchmarks.
 func DefaultHNSWConfig() HNSWConfig {
 	return HNSWConfig{
 		M:            16,
@@ -28,6 +32,9 @@ func DefaultHNSWConfig() HNSWConfig {
 	}
 }
 
+// HNSWNode is a single node in the HNSW graph. It stores the string ID, its
+// maximum layer, and per-layer adjacency lists expressed as arena offsets for
+// O(1) vector lookups without hash-map indirection.
 type HNSWNode struct {
 	ID          string
 	Layer       int
@@ -36,6 +43,16 @@ type HNSWNode struct {
 	sync.RWMutex
 }
 
+// HNSWIndex is a Hierarchical Navigable Small World graph-based approximate
+// nearest-neighbor index. It provides sub-linear search complexity by organizing
+// nodes in a multi-layer graph where each layer is a progressively sparser
+// proximity graph.
+//
+// Insertions ([HNSWIndex.Add]) acquire the exclusive write lock and are called from
+// a background goroutine in [VectraDB] so they do not block the write hot path.
+// Searches ([HNSWIndex.Search]) acquire the read lock and may run concurrently.
+// Deletions are tombstone-only ([HNSWIndex.MarkDeleted]); the graph structure is
+// not modified.
 type HNSWIndex struct {
 	EntryNodeID string
 	Nodes       map[string]*HNSWNode
