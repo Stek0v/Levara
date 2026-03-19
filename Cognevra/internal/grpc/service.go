@@ -113,6 +113,26 @@ func (s *Service) BatchInsert(_ context.Context, req *pb.BatchInsertReq) (*pb.Ba
 
 	errs := s.collections.BatchInsert(req.Collection, items)
 
+	// Auto dual-index: also add to BM25 for hybrid search
+	idx := s.getBM25Index(req.Collection)
+	for _, r := range req.Records {
+		// Extract text from metadata for BM25
+		text := ""
+		if r.MetadataJson != "" {
+			var meta map[string]any
+			if json.Unmarshal([]byte(r.MetadataJson), &meta) == nil {
+				if t, ok := meta["text"].(string); ok {
+					text = t
+				} else if t, ok := meta["name"].(string); ok {
+					text = t
+				}
+			}
+		}
+		if text != "" {
+			idx.Add(r.Id, text, r.MetadataJson)
+		}
+	}
+
 	resp := &pb.BatchInsertResp{
 		Inserted: int32(len(items) - len(errs)),
 		Failed:   int32(len(errs)),
