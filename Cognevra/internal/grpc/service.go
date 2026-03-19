@@ -1455,3 +1455,71 @@ func (s *Service) SemanticDedup(_ context.Context, req *pb.SemanticDedupReq) (*p
 		DuplicatesFound: int32(len(result.Removed)),
 	}, nil
 }
+
+// MultiQuerySearch decomposes a complex query, runs parallel searches, merges results.
+func (s *Service) MultiQuerySearch(ctx context.Context, req *pb.MultiQuerySearchReq) (*pb.MultiQuerySearchResp, error) {
+	if req.QueryText == "" || req.Collection == "" || req.EmbedEndpoint == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "query_text, collection, embed_endpoint required")
+	}
+
+	topK := int(req.TopK)
+	if topK <= 0 {
+		topK = 10
+	}
+	model := req.EmbedModel
+	if model == "" {
+		model = "text-embedding-3-small"
+	}
+
+	// Decompose query
+	subQueries := graph.DecomposeQuery(req.QueryText)
+
+	// Parallel search for each sub-query
+	embedClient := embed.NewClient(req.EmbedEndpoint, model, 16, len(subQueries))
+	sp := pipeline.NewSearchPipeline(embedClient, s.collections)
+
+	type searchOut struct {
+		idx     int
+		results []graph.SearchResultEntry
+	}
+	ch := make(chan searchOut, len(subQueries))
+
+	for i, sq := range subQueries {
+		i, sq := i, sq
+		go func() {
+			res, err := sp.SearchByText(ctx, req.Collection, sq, topK*2) // wider search for merge
+			if err != nil {
+				ch <- searchOut{idx: i}
+				return
+			}
+			entries := make([]graph.SearchResultEntry, len(res))
+			for j, r := range res {
+				entries[j] = graph.SearchResultEntry{ID: r.ID, Score: r.Score, Metadata: string(r.Metadata)}
+			}
+			ch <- searchOut{idx: i, results: entries}
+		}()
+	}
+
+	subResults := make([][]graph.SearchResultEntry, len(subQueries))
+	for range subQueries {
+		out := <-ch
+		subResults[out.idx] = out.results
+	}
+
+	// Merge results
+	merged := graph.MergeResults(subResults, topK)
+
+	pbResults := make([]*pb.MultiQueryResult, len(merged))
+	for i, r := range merged {
+		pbResults[i] = &pb.MultiQueryResult{
+			Id: r.ID, BestScore: r.BestScore, Appearances: int32(r.Appearances),
+			FusedScore: r.FusedScore, MetadataJson: r.Metadata,
+		}
+	}
+
+	return &pb.MultiQuerySearchResp{
+		SubQueries:  subQueries,
+		Results:     pbResults,
+		TotalUnique: int32(len(merged)),
+	}, nil
+}
