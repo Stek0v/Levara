@@ -10,6 +10,7 @@ import (
 	"github.com/rupamthxt/cognevra/internal/store"
 	"github.com/rupamthxt/cognevra/pkg/aggregator"
 	"github.com/rupamthxt/cognevra/pkg/chunker"
+	"github.com/rupamthxt/cognevra/pkg/embed"
 	"github.com/rupamthxt/cognevra/pkg/fileio"
 	"github.com/rupamthxt/cognevra/pkg/graph"
 	pb "github.com/rupamthxt/cognevra/proto/pb"
@@ -466,5 +467,82 @@ func (s *Service) DeduplicateGraph(_ context.Context, req *pb.DeduplicateGraphRe
 		Triplets:     pbTriplets,
 		NodesRemoved: int32(len(req.Nodes) - len(result.Nodes)),
 		EdgesRemoved: int32(len(req.Edges) - len(result.Edges)),
+	}, nil
+}
+
+// BatchEmbedAndIndex embeds texts and inserts vectors into collections in one call.
+// Replaces Python's index_data_points asyncio.gather pattern with Go goroutines.
+func (s *Service) BatchEmbedAndIndex(ctx context.Context, req *pb.BatchEmbedAndIndexReq) (*pb.BatchEmbedAndIndexResp, error) {
+	if req.EmbedEndpoint == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "embed_endpoint is required")
+	}
+	batchSize := int(req.BatchSize)
+	if batchSize <= 0 {
+		batchSize = 16
+	}
+	concurrency := int(req.Concurrency)
+	if concurrency <= 0 {
+		concurrency = 3
+	}
+	model := req.EmbedModel
+	if model == "" {
+		model = "text-embedding-3-small"
+	}
+
+	embedClient := embed.NewClient(req.EmbedEndpoint, model, batchSize, concurrency)
+
+	var totalEmbedded, totalIndexed, collectionsCreated int32
+	var errs []string
+
+	for _, group := range req.Groups {
+		if group.Collection == "" || len(group.Items) == 0 {
+			continue
+		}
+
+		// Create collection if needed
+		if !s.collections.Has(group.Collection) {
+			if err := s.collections.Create(group.Collection); err != nil {
+				errs = append(errs, fmt.Sprintf("create %s: %v", group.Collection, err))
+				continue
+			}
+			collectionsCreated++
+		}
+
+		// Extract texts for embedding
+		texts := make([]string, len(group.Items))
+		for i, item := range group.Items {
+			texts[i] = item.Text
+		}
+
+		// Embed all texts (batched + concurrent internally)
+		vectors, err := embedClient.EmbedTexts(ctx, texts)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("embed %s: %v", group.Collection, err))
+			continue
+		}
+		totalEmbedded += int32(len(vectors))
+
+		// Batch insert into collection
+		for i, item := range group.Items {
+			if i >= len(vectors) {
+				break
+			}
+			meta := item.MetadataJson
+			if meta == "" {
+				meta = "{}"
+			}
+			if err := s.collections.Insert(group.Collection, item.Id, vectors[i], meta); err != nil {
+				errs = append(errs, fmt.Sprintf("insert %s/%s: %v", group.Collection, item.Id, err))
+				continue
+			}
+			totalIndexed++
+		}
+	}
+
+	return &pb.BatchEmbedAndIndexResp{
+		TotalEmbedded:      totalEmbedded,
+		TotalIndexed:       totalIndexed,
+		CollectionsCreated: collectionsCreated,
+		Errors:             errs,
 	}, nil
 }
