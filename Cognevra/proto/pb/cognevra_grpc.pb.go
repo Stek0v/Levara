@@ -19,26 +19,27 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	CognevraService_CreateCollection_FullMethodName   = "/cognevra.v1.CognevraService/CreateCollection"
-	CognevraService_DropCollection_FullMethodName     = "/cognevra.v1.CognevraService/DropCollection"
-	CognevraService_ListCollections_FullMethodName    = "/cognevra.v1.CognevraService/ListCollections"
-	CognevraService_HasCollection_FullMethodName      = "/cognevra.v1.CognevraService/HasCollection"
-	CognevraService_Insert_FullMethodName             = "/cognevra.v1.CognevraService/Insert"
-	CognevraService_BatchInsert_FullMethodName        = "/cognevra.v1.CognevraService/BatchInsert"
-	CognevraService_Delete_FullMethodName             = "/cognevra.v1.CognevraService/Delete"
-	CognevraService_Search_FullMethodName             = "/cognevra.v1.CognevraService/Search"
-	CognevraService_ChunkText_FullMethodName          = "/cognevra.v1.CognevraService/ChunkText"
-	CognevraService_Info_FullMethodName               = "/cognevra.v1.CognevraService/Info"
-	CognevraService_GetByID_FullMethodName            = "/cognevra.v1.CognevraService/GetByID"
-	CognevraService_ProcessTriplets_FullMethodName    = "/cognevra.v1.CognevraService/ProcessTriplets"
-	CognevraService_HashFiles_FullMethodName          = "/cognevra.v1.CognevraService/HashFiles"
-	CognevraService_ListDirectory_FullMethodName      = "/cognevra.v1.CognevraService/ListDirectory"
-	CognevraService_AggregateSearch_FullMethodName    = "/cognevra.v1.CognevraService/AggregateSearch"
-	CognevraService_SearchTriplets_FullMethodName     = "/cognevra.v1.CognevraService/SearchTriplets"
-	CognevraService_DeduplicateGraph_FullMethodName   = "/cognevra.v1.CognevraService/DeduplicateGraph"
-	CognevraService_BatchEmbedAndIndex_FullMethodName = "/cognevra.v1.CognevraService/BatchEmbedAndIndex"
-	CognevraService_BatchWriteGraph_FullMethodName    = "/cognevra.v1.CognevraService/BatchWriteGraph"
-	CognevraService_Compact_FullMethodName            = "/cognevra.v1.CognevraService/Compact"
+	CognevraService_CreateCollection_FullMethodName        = "/cognevra.v1.CognevraService/CreateCollection"
+	CognevraService_DropCollection_FullMethodName          = "/cognevra.v1.CognevraService/DropCollection"
+	CognevraService_ListCollections_FullMethodName         = "/cognevra.v1.CognevraService/ListCollections"
+	CognevraService_HasCollection_FullMethodName           = "/cognevra.v1.CognevraService/HasCollection"
+	CognevraService_Insert_FullMethodName                  = "/cognevra.v1.CognevraService/Insert"
+	CognevraService_BatchInsert_FullMethodName             = "/cognevra.v1.CognevraService/BatchInsert"
+	CognevraService_Delete_FullMethodName                  = "/cognevra.v1.CognevraService/Delete"
+	CognevraService_Search_FullMethodName                  = "/cognevra.v1.CognevraService/Search"
+	CognevraService_ChunkText_FullMethodName               = "/cognevra.v1.CognevraService/ChunkText"
+	CognevraService_Info_FullMethodName                    = "/cognevra.v1.CognevraService/Info"
+	CognevraService_GetByID_FullMethodName                 = "/cognevra.v1.CognevraService/GetByID"
+	CognevraService_ProcessTriplets_FullMethodName         = "/cognevra.v1.CognevraService/ProcessTriplets"
+	CognevraService_HashFiles_FullMethodName               = "/cognevra.v1.CognevraService/HashFiles"
+	CognevraService_ListDirectory_FullMethodName           = "/cognevra.v1.CognevraService/ListDirectory"
+	CognevraService_AggregateSearch_FullMethodName         = "/cognevra.v1.CognevraService/AggregateSearch"
+	CognevraService_SearchTriplets_FullMethodName          = "/cognevra.v1.CognevraService/SearchTriplets"
+	CognevraService_DeduplicateGraph_FullMethodName        = "/cognevra.v1.CognevraService/DeduplicateGraph"
+	CognevraService_BatchEmbedAndIndex_FullMethodName      = "/cognevra.v1.CognevraService/BatchEmbedAndIndex"
+	CognevraService_BatchWriteGraph_FullMethodName         = "/cognevra.v1.CognevraService/BatchWriteGraph"
+	CognevraService_ParallelWriteDataPoints_FullMethodName = "/cognevra.v1.CognevraService/ParallelWriteDataPoints"
+	CognevraService_Compact_FullMethodName                 = "/cognevra.v1.CognevraService/Compact"
 )
 
 // CognevraServiceClient is the client API for CognevraService service.
@@ -76,6 +77,8 @@ type CognevraServiceClient interface {
 	BatchEmbedAndIndex(ctx context.Context, in *BatchEmbedAndIndexReq, opts ...grpc.CallOption) (*BatchEmbedAndIndexResp, error)
 	// Batch write nodes/edges to Neo4j
 	BatchWriteGraph(ctx context.Context, in *BatchWriteGraphReq, opts ...grpc.CallOption) (*BatchWriteGraphResp, error)
+	// Parallel write: dedup + Neo4j + embed + vector index in one call
+	ParallelWriteDataPoints(ctx context.Context, in *ParallelWriteReq, opts ...grpc.CallOption) (*ParallelWriteResp, error)
 	// Maintenance
 	Compact(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*CompactResp, error)
 }
@@ -278,6 +281,16 @@ func (c *cognevraServiceClient) BatchWriteGraph(ctx context.Context, in *BatchWr
 	return out, nil
 }
 
+func (c *cognevraServiceClient) ParallelWriteDataPoints(ctx context.Context, in *ParallelWriteReq, opts ...grpc.CallOption) (*ParallelWriteResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ParallelWriteResp)
+	err := c.cc.Invoke(ctx, CognevraService_ParallelWriteDataPoints_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *cognevraServiceClient) Compact(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*CompactResp, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(CompactResp)
@@ -323,6 +336,8 @@ type CognevraServiceServer interface {
 	BatchEmbedAndIndex(context.Context, *BatchEmbedAndIndexReq) (*BatchEmbedAndIndexResp, error)
 	// Batch write nodes/edges to Neo4j
 	BatchWriteGraph(context.Context, *BatchWriteGraphReq) (*BatchWriteGraphResp, error)
+	// Parallel write: dedup + Neo4j + embed + vector index in one call
+	ParallelWriteDataPoints(context.Context, *ParallelWriteReq) (*ParallelWriteResp, error)
 	// Maintenance
 	Compact(context.Context, *Empty) (*CompactResp, error)
 	mustEmbedUnimplementedCognevraServiceServer()
@@ -391,6 +406,9 @@ func (UnimplementedCognevraServiceServer) BatchEmbedAndIndex(context.Context, *B
 }
 func (UnimplementedCognevraServiceServer) BatchWriteGraph(context.Context, *BatchWriteGraphReq) (*BatchWriteGraphResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method BatchWriteGraph not implemented")
+}
+func (UnimplementedCognevraServiceServer) ParallelWriteDataPoints(context.Context, *ParallelWriteReq) (*ParallelWriteResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method ParallelWriteDataPoints not implemented")
 }
 func (UnimplementedCognevraServiceServer) Compact(context.Context, *Empty) (*CompactResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method Compact not implemented")
@@ -758,6 +776,24 @@ func _CognevraService_BatchWriteGraph_Handler(srv interface{}, ctx context.Conte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _CognevraService_ParallelWriteDataPoints_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ParallelWriteReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CognevraServiceServer).ParallelWriteDataPoints(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CognevraService_ParallelWriteDataPoints_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CognevraServiceServer).ParallelWriteDataPoints(ctx, req.(*ParallelWriteReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _CognevraService_Compact_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(Empty)
 	if err := dec(in); err != nil {
@@ -858,6 +894,10 @@ var CognevraService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "BatchWriteGraph",
 			Handler:    _CognevraService_BatchWriteGraph_Handler,
+		},
+		{
+			MethodName: "ParallelWriteDataPoints",
+			Handler:    _CognevraService_ParallelWriteDataPoints_Handler,
 		},
 		{
 			MethodName: "Compact",
