@@ -60,6 +60,7 @@ type HNSWIndex struct {
 	MaxLayer    int
 	Arena       *VectorArena
 	cfg         HNSWConfig
+	deletedSet  sync.Map // per-instance tombstone set (arena offset → struct{})
 	sync.RWMutex
 }
 
@@ -388,18 +389,15 @@ func (h *HNSWIndex) searchLayerTopK(query []float32, entry *HNSWNode, layer, ef 
 	return out
 }
 
-// deleted tracks tombstoned arena offsets. Search skips them.
-var deletedSet sync.Map // map[uint32]struct{}
-
 // MarkDeleted marks an arena offset as deleted (tombstone).
 // Search will skip deleted records. Thread-safe.
 func (h *HNSWIndex) MarkDeleted(arenaOffset uint32) {
-	deletedSet.Store(arenaOffset, struct{}{})
+	h.deletedSet.Store(arenaOffset, struct{}{})
 }
 
 // isDeleted checks if an arena offset is tombstoned.
-func isDeleted(arenaOffset uint32) bool {
-	_, ok := deletedSet.Load(arenaOffset)
+func (h *HNSWIndex) isDeleted(arenaOffset uint32) bool {
+	_, ok := h.deletedSet.Load(arenaOffset)
 	return ok
 }
 
@@ -440,7 +438,7 @@ func (h *HNSWIndex) Search(query []float32, k int) []VectroRecord {
 
 	records := make([]VectroRecord, 0, len(topResults))
 	for _, sr := range topResults {
-		if isDeleted(sr.node.ArenaOffset) {
+		if h.isDeleted(sr.node.ArenaOffset) {
 			continue // Skip tombstoned records
 		}
 		records = append(records, VectroRecord{
