@@ -977,3 +977,187 @@ func (s *Service) GraphRead(ctx context.Context, req *pb.GraphReadReq) (*pb.Grap
 		QueryMs: time.Since(start).Milliseconds(),
 	}, nil
 }
+
+// GraphCompletionSearch performs the full search pipeline in one Go call:
+// 1. Embed query → 2. Vector search (multi-collection) → 3. Neo4j graph read
+// → 4. Triplet scoring → 5. Format context for LLM
+//
+// Replaces Python's TripletSearchContextProvider which does 5+ separate async calls.
+func (s *Service) GraphCompletionSearch(ctx context.Context, req *pb.GraphCompletionSearchReq) (*pb.GraphCompletionSearchResp, error) {
+	totalStart := time.Now()
+	resp := &pb.GraphCompletionSearchResp{}
+
+	if req.QueryText == "" || req.EmbedEndpoint == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "query_text and embed_endpoint required")
+	}
+
+	vectorTopK := int(req.VectorTopK)
+	if vectorTopK <= 0 {
+		vectorTopK = 100
+	}
+	tripletTopK := int(req.TripletTopK)
+	if tripletTopK <= 0 {
+		tripletTopK = 5
+	}
+	penalty := req.DistancePenalty
+	if penalty <= 0 {
+		penalty = graph.DefaultDistancePenalty
+	}
+	model := req.EmbedModel
+	if model == "" {
+		model = "text-embedding-3-small"
+	}
+
+	embedClient := embed.NewClient(req.EmbedEndpoint, model, 16, 1)
+
+	// --- Step 1: Embed query ---
+	embedStart := time.Now()
+	queryVec, err := embedClient.EmbedSingle(ctx, req.QueryText)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "embed: %v", err)
+	}
+	resp.EmbedMs = time.Since(embedStart).Milliseconds()
+
+	// --- Step 2: Vector search across collections (parallel) ---
+	vsStart := time.Now()
+
+	type vsResult struct {
+		collection string
+		results    []struct{ id string; score float32 }
+		isEdge     bool
+	}
+
+	allCollections := make([]string, 0, len(req.NodeCollections)+1)
+	allCollections = append(allCollections, req.NodeCollections...)
+	if req.EdgeCollection != "" {
+		allCollections = append(allCollections, req.EdgeCollection)
+	}
+
+	vsCh := make(chan vsResult, len(allCollections))
+	for _, coll := range allCollections {
+		coll := coll
+		isEdge := coll == req.EdgeCollection
+		go func() {
+			r := vsResult{collection: coll, isEdge: isEdge}
+			if s.collections.Has(coll) {
+				searchResults, err := s.collections.Search(coll, queryVec, vectorTopK)
+				if err == nil {
+					for _, sr := range searchResults {
+						r.results = append(r.results, struct{ id string; score float32 }{sr.ID, sr.Score})
+					}
+				}
+			}
+			vsCh <- r
+		}()
+	}
+
+	// Collect vector search results
+	var nodeDistEntries []graph.DistanceEntry
+	var edgeDistEntries []graph.DistanceEntry
+	relevantIDs := make(map[string]bool)
+	totalVectorResults := 0
+
+	for i := 0; i < len(allCollections); i++ {
+		r := <-vsCh
+		totalVectorResults += len(r.results)
+		for _, sr := range r.results {
+			if r.isEdge {
+				edgeDistEntries = append(edgeDistEntries, graph.DistanceEntry{ID: sr.id, Distance: sr.score})
+			} else {
+				nodeDistEntries = append(nodeDistEntries, graph.DistanceEntry{ID: sr.id, Distance: sr.score})
+				relevantIDs[sr.id] = true
+			}
+		}
+	}
+
+	resp.VectorSearchMs = time.Since(vsStart).Milliseconds()
+	resp.VectorResults = int32(totalVectorResults)
+
+	// --- Step 3: Neo4j graph read (ID-filtered for relevant nodes) ---
+	graphStart := time.Now()
+	var graphNodes []graph.Node
+	var graphEdges []graph.Edge // reuse from pkg/graph for scoring
+
+	if req.Neo4JUrl != "" && len(relevantIDs) > 0 {
+		dbName := req.Neo4JDatabase
+		if dbName == "" {
+			dbName = "neo4j"
+		}
+		writer, err := graphdb.NewWriter(ctx, req.Neo4JUrl, req.Neo4JUser, req.Neo4JPassword, dbName)
+		if err == nil {
+			defer writer.Close(ctx)
+			ids := make([]string, 0, len(relevantIDs))
+			for id := range relevantIDs {
+				ids = append(ids, id)
+			}
+			readResult, err := writer.ReadIDFiltered(ctx, ids)
+			if err == nil {
+				for _, n := range readResult.Nodes {
+					name, _ := n.Properties["name"].(string)
+					desc, _ := n.Properties["description"].(string)
+					typ, _ := n.Properties["type"].(string)
+					text, _ := n.Properties["text"].(string)
+					graphNodes = append(graphNodes, graph.Node{
+						ID: n.ID, Name: name, Description: desc, Type: typ, Text: text,
+						Distance: penalty,
+					})
+				}
+				for _, e := range readResult.Edges {
+					relName, _ := e.Properties["relationship_name"].(string)
+					if relName == "" {
+						relName = e.RelationshipType
+					}
+					edgeText, _ := e.Properties["edge_text"].(string)
+					graphEdges = append(graphEdges, graph.Edge{
+						Node1ID: e.SourceID, Node2ID: e.TargetID,
+						RelationshipType: relName, EdgeText: edgeText,
+						EdgeTypeID: e.RelationshipType, Distance: penalty,
+					})
+				}
+			}
+		}
+	}
+
+	resp.GraphReadMs = time.Since(graphStart).Milliseconds()
+	resp.GraphNodes = int32(len(graphNodes))
+	resp.GraphEdges = int32(len(graphEdges))
+
+	// --- Step 4: Build in-memory graph + score triplets ---
+	scoringStart := time.Now()
+
+	g := graph.NewGraph(penalty)
+	for _, n := range graphNodes {
+		g.AddNode(n.ID, n.Name, n.Description, n.Type, n.Text)
+	}
+	for _, e := range graphEdges {
+		g.AddEdge(e.Node1ID, e.Node2ID, e.RelationshipType, e.EdgeText, e.EdgeTypeID)
+	}
+
+	g.MapNodeDistances(nodeDistEntries)
+	g.MapEdgeDistances(edgeDistEntries)
+
+	scoredResults := g.SearchTopK(tripletTopK)
+	resp.ScoringMs = time.Since(scoringStart).Milliseconds()
+
+	// --- Step 5: Format results ---
+	triplets := make([]*pb.ScoredTriplet, len(scoredResults))
+	for i, r := range scoredResults {
+		triplets[i] = &pb.ScoredTriplet{
+			Node1Id:          r.Node1.ID,
+			Node1Name:        r.Node1.Name,
+			Node1Description: r.Node1.Description,
+			Node2Id:          r.Node2.ID,
+			Node2Name:        r.Node2.Name,
+			Node2Description: r.Node2.Description,
+			RelationshipType: r.Edge.RelationshipType,
+			EdgeText:         r.Edge.EdgeText,
+			Score:            r.Score,
+		}
+	}
+
+	resp.Triplets = triplets
+	resp.FormattedContext = graph.FormatTriplets(scoredResults)
+	resp.TotalMs = time.Since(totalStart).Milliseconds()
+
+	return resp, nil
+}

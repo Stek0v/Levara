@@ -56,6 +56,9 @@ service CognevraService {
   // Neo4j graph read queries (search-time)
   rpc GraphRead(GraphReadReq) returns (GraphReadResp);
 
+  // Full graph search: embed → vector search → Neo4j graph → triplet scoring → context
+  rpc GraphCompletionSearch(GraphCompletionSearchReq) returns (GraphCompletionSearchResp);
+
   // Maintenance
   rpc Compact(Empty) returns (CompactResp);
 }
@@ -530,6 +533,41 @@ message GraphReadEdge {
   string target_id = 2;
   string relationship_type = 3;
   string properties_json = 4;
+}
+
+// Full graph completion search (end-to-end)
+message GraphCompletionSearchReq {
+  string query_text = 1;
+  // Collections to search for node distances
+  repeated string node_collections = 2;  // e.g. ["Entity_name", "TextSummary_text"]
+  // Collection for edge distances
+  string edge_collection = 3;            // e.g. "EdgeType_relationship_name"
+  int32 vector_top_k = 4;               // limit per collection vector search (default 100)
+  int32 triplet_top_k = 5;              // final triplet results (default 5)
+  // Embedding config
+  string embed_endpoint = 6;
+  string embed_model = 7;
+  // Neo4j config
+  string neo4j_url = 8;
+  string neo4j_user = 9;
+  string neo4j_password = 10;
+  string neo4j_database = 11;
+  // Distance penalty for unseen nodes/edges
+  float distance_penalty = 12;          // default 3.5
+}
+
+message GraphCompletionSearchResp {
+  repeated ScoredTriplet triplets = 1;
+  string formatted_context = 2;
+  // Diagnostics
+  int32 graph_nodes = 3;
+  int32 graph_edges = 4;
+  int32 vector_results = 5;
+  int64 embed_ms = 6;
+  int64 vector_search_ms = 7;
+  int64 graph_read_ms = 8;
+  int64 scoring_ms = 9;
+  int64 total_ms = 10;
 }
 
 message SearchResultGroup {
