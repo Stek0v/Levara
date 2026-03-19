@@ -389,3 +389,41 @@ class CognevraAdapter(VectorDBInterface):
             }
             for chunk in resp.chunks
         ]
+
+    # ------------------------------------------------------------------ file I/O
+
+    async def hash_files(self, file_paths: list[str], max_concurrent: int = 8) -> list[dict]:
+        """Hash files in parallel via Go goroutine pool.
+
+        Returns list of dicts with: file_path, sha256, file_size, mime_type, error
+        """
+        resp = await self._safe_call(
+            self._stub.HashFiles(pb.HashFilesReq(
+                file_paths=file_paths,
+                max_concurrent=max_concurrent,
+            ))
+        )
+        return [
+            {
+                "file_path": r.file_path,
+                "sha256": r.sha256,
+                "file_size": r.file_size,
+                "mime_type": r.mime_type,
+                "error": r.error,
+            }
+            for r in resp.results
+        ]
+
+    async def list_directory(self, root_path: str, recursive: bool = True, extensions: list[str] | None = None) -> list[str]:
+        """List files in directory via Go concurrent traversal.
+
+        Returns list of absolute file paths.
+        """
+        resp = await self._safe_call(
+            self._stub.ListDirectory(pb.ListDirectoryReq(
+                root_path=root_path,
+                recursive=recursive,
+                extensions=extensions or [],
+            ))
+        )
+        return list(resp.file_paths)
