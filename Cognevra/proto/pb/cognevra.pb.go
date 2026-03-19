@@ -5757,14 +5757,15 @@ func (x *IngestResult) GetAlreadyExists() bool {
 	return false
 }
 
-// Text extraction
+// Text extraction (tabula: PDF, DOCX, PPTX, XLSX, HTML, EPUB)
 type ExtractTextReq struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	FileData      []byte                 `protobuf:"bytes,1,opt,name=file_data,json=fileData,proto3" json:"file_data,omitempty"`
-	Filename      string                 `protobuf:"bytes,2,opt,name=filename,proto3" json:"filename,omitempty"`
-	MimeType      string                 `protobuf:"bytes,3,opt,name=mime_type,json=mimeType,proto3" json:"mime_type,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	FileData        []byte                 `protobuf:"bytes,1,opt,name=file_data,json=fileData,proto3" json:"file_data,omitempty"`
+	Filename        string                 `protobuf:"bytes,2,opt,name=filename,proto3" json:"filename,omitempty"`
+	MimeType        string                 `protobuf:"bytes,3,opt,name=mime_type,json=mimeType,proto3" json:"mime_type,omitempty"`
+	IncludeMarkdown bool                   `protobuf:"varint,4,opt,name=include_markdown,json=includeMarkdown,proto3" json:"include_markdown,omitempty"` // also return markdown version
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *ExtractTextReq) Reset() {
@@ -5818,12 +5819,21 @@ func (x *ExtractTextReq) GetMimeType() string {
 	return ""
 }
 
+func (x *ExtractTextReq) GetIncludeMarkdown() bool {
+	if x != nil {
+		return x.IncludeMarkdown
+	}
+	return false
+}
+
 type ExtractTextResp struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Text          string                 `protobuf:"bytes,1,opt,name=text,proto3" json:"text,omitempty"`
-	Format        string                 `protobuf:"bytes,2,opt,name=format,proto3" json:"format,omitempty"`
-	Pages         int32                  `protobuf:"varint,3,opt,name=pages,proto3" json:"pages,omitempty"`
-	ExtractMs     int64                  `protobuf:"varint,4,opt,name=extract_ms,json=extractMs,proto3" json:"extract_ms,omitempty"`
+	Markdown      string                 `protobuf:"bytes,2,opt,name=markdown,proto3" json:"markdown,omitempty"` // markdown-formatted version (if requested)
+	Format        string                 `protobuf:"bytes,3,opt,name=format,proto3" json:"format,omitempty"`
+	Pages         int32                  `protobuf:"varint,4,opt,name=pages,proto3" json:"pages,omitempty"`
+	ExtractMs     int64                  `protobuf:"varint,5,opt,name=extract_ms,json=extractMs,proto3" json:"extract_ms,omitempty"`
+	Warnings      []string               `protobuf:"bytes,6,rep,name=warnings,proto3" json:"warnings,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -5865,6 +5875,13 @@ func (x *ExtractTextResp) GetText() string {
 	return ""
 }
 
+func (x *ExtractTextResp) GetMarkdown() string {
+	if x != nil {
+		return x.Markdown
+	}
+	return ""
+}
+
 func (x *ExtractTextResp) GetFormat() string {
 	if x != nil {
 		return x.Format
@@ -5884,6 +5901,13 @@ func (x *ExtractTextResp) GetExtractMs() int64 {
 		return x.ExtractMs
 	}
 	return 0
+}
+
+func (x *ExtractTextResp) GetWarnings() []string {
+	if x != nil {
+		return x.Warnings
+	}
+	return nil
 }
 
 type LLMCachePutReq struct {
@@ -7046,17 +7070,20 @@ const file_cognevra_proto_rawDesc = "" +
 	"\textension\x18\x05 \x01(\tR\textension\x12\x1b\n" +
 	"\tfile_size\x18\x06 \x01(\x03R\bfileSize\x12\x12\n" +
 	"\x04name\x18\a \x01(\tR\x04name\x12%\n" +
-	"\x0ealready_exists\x18\b \x01(\bR\ralreadyExists\"f\n" +
+	"\x0ealready_exists\x18\b \x01(\bR\ralreadyExists\"\x91\x01\n" +
 	"\x0eExtractTextReq\x12\x1b\n" +
 	"\tfile_data\x18\x01 \x01(\fR\bfileData\x12\x1a\n" +
 	"\bfilename\x18\x02 \x01(\tR\bfilename\x12\x1b\n" +
-	"\tmime_type\x18\x03 \x01(\tR\bmimeType\"r\n" +
+	"\tmime_type\x18\x03 \x01(\tR\bmimeType\x12)\n" +
+	"\x10include_markdown\x18\x04 \x01(\bR\x0fincludeMarkdown\"\xaa\x01\n" +
 	"\x0fExtractTextResp\x12\x12\n" +
-	"\x04text\x18\x01 \x01(\tR\x04text\x12\x16\n" +
-	"\x06format\x18\x02 \x01(\tR\x06format\x12\x14\n" +
-	"\x05pages\x18\x03 \x01(\x05R\x05pages\x12\x1d\n" +
+	"\x04text\x18\x01 \x01(\tR\x04text\x12\x1a\n" +
+	"\bmarkdown\x18\x02 \x01(\tR\bmarkdown\x12\x16\n" +
+	"\x06format\x18\x03 \x01(\tR\x06format\x12\x14\n" +
+	"\x05pages\x18\x04 \x01(\x05R\x05pages\x12\x1d\n" +
 	"\n" +
-	"extract_ms\x18\x04 \x01(\x03R\textractMs\"\xa1\x01\n" +
+	"extract_ms\x18\x05 \x01(\x03R\textractMs\x12\x1a\n" +
+	"\bwarnings\x18\x06 \x03(\tR\bwarnings\"\xa1\x01\n" +
 	"\x0eLLMCachePutReq\x12\x14\n" +
 	"\x05model\x18\x01 \x01(\tR\x05model\x12\x16\n" +
 	"\x06prompt\x18\x02 \x01(\tR\x06prompt\x12#\n" +
