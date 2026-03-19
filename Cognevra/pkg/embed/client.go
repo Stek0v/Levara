@@ -20,6 +20,7 @@ type Client struct {
 	batchSize   int
 	concurrency int
 	httpClient  *http.Client
+	cache       *Cache // optional embedding cache
 }
 
 // NewClient creates an embedding client with connection pooling.
@@ -45,6 +46,12 @@ func NewClient(url, model string, batchSize, concurrency int) *Client {
 	}
 }
 
+// WithCache attaches an embedding cache to the client.
+func (c *Client) WithCache(cache *Cache) *Client {
+	c.cache = cache
+	return c
+}
+
 // embeddingRequest is the OpenAI-compatible request format.
 type embeddingRequest struct {
 	Input []string `json:"input"`
@@ -62,32 +69,59 @@ type embeddingResponse struct {
 // EmbedTexts embeds multiple texts, batching by batchSize.
 // Returns one vector per input text, in the same order.
 // Batches are dispatched concurrently up to c.concurrency in-flight at once.
+// If cache is attached, cached vectors are returned without HTTP call.
 func (c *Client) EmbedTexts(ctx context.Context, texts []string) ([][]float32, error) {
 	if len(texts) == 0 {
 		return nil, nil
 	}
 
 	allVecs := make([][]float32, len(texts))
+
+	// Check cache for existing vectors
+	var missTexts []string
+	var missIndices []int
+	if c.cache != nil {
+		for i, t := range texts {
+			if vec, ok := c.cache.Get(t); ok {
+				allVecs[i] = vec
+			} else {
+				missTexts = append(missTexts, t)
+				missIndices = append(missIndices, i)
+			}
+		}
+		if len(missTexts) == 0 {
+			return allVecs, nil // all cached
+		}
+	} else {
+		missTexts = texts
+		missIndices = make([]int, len(texts))
+		for i := range texts {
+			missIndices[i] = i
+		}
+	}
+
+	// Embed only misses
+	missVecs := make([][]float32, len(missTexts))
 	g, gctx := errgroup.WithContext(ctx)
 	sem := make(chan struct{}, c.concurrency)
 
-	for start := 0; start < len(texts); start += c.batchSize {
-		start := start // capture loop variable
+	for start := 0; start < len(missTexts); start += c.batchSize {
+		start := start
 		end := start + c.batchSize
-		if end > len(texts) {
-			end = len(texts)
+		if end > len(missTexts) {
+			end = len(missTexts)
 		}
 
 		g.Go(func() error {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			vecs, err := c.embedBatch(gctx, texts[start:end])
+			vecs, err := c.embedBatch(gctx, missTexts[start:end])
 			if err != nil {
 				return fmt.Errorf("batch [%d:%d]: %w", start, end, err)
 			}
 			for i, v := range vecs {
-				allVecs[start+i] = v
+				missVecs[start+i] = v
 			}
 			return nil
 		})
@@ -96,6 +130,19 @@ func (c *Client) EmbedTexts(ctx context.Context, texts []string) ([][]float32, e
 	if err := g.Wait(); err != nil {
 		return nil, err
 	}
+
+	// Place miss results back and cache them
+	for i, idx := range missIndices {
+		allVecs[idx] = missVecs[i]
+	}
+	if c.cache != nil {
+		for i, t := range missTexts {
+			if missVecs[i] != nil {
+				c.cache.Put(t, missVecs[i])
+			}
+		}
+	}
+
 	return allVecs, nil
 }
 
