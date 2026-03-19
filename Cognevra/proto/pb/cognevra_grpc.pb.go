@@ -46,6 +46,9 @@ const (
 	CognevraService_LLMCacheGet_FullMethodName             = "/cognevra.v1.CognevraService/LLMCacheGet"
 	CognevraService_LLMCachePut_FullMethodName             = "/cognevra.v1.CognevraService/LLMCachePut"
 	CognevraService_LLMCacheStats_FullMethodName           = "/cognevra.v1.CognevraService/LLMCacheStats"
+	CognevraService_BM25Index_FullMethodName               = "/cognevra.v1.CognevraService/BM25Index"
+	CognevraService_BM25Search_FullMethodName              = "/cognevra.v1.CognevraService/BM25Search"
+	CognevraService_HybridSearch_FullMethodName            = "/cognevra.v1.CognevraService/HybridSearch"
 	CognevraService_Compact_FullMethodName                 = "/cognevra.v1.CognevraService/Compact"
 )
 
@@ -97,6 +100,10 @@ type CognevraServiceClient interface {
 	LLMCacheGet(ctx context.Context, in *LLMCacheGetReq, opts ...grpc.CallOption) (*LLMCacheGetResp, error)
 	LLMCachePut(ctx context.Context, in *LLMCachePutReq, opts ...grpc.CallOption) (*StatusResp, error)
 	LLMCacheStats(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*LLMCacheStatsResp, error)
+	// BM25 lexical search + hybrid
+	BM25Index(ctx context.Context, in *BM25IndexReq, opts ...grpc.CallOption) (*StatusResp, error)
+	BM25Search(ctx context.Context, in *BM25SearchReq, opts ...grpc.CallOption) (*BM25SearchResp, error)
+	HybridSearch(ctx context.Context, in *HybridSearchReq, opts ...grpc.CallOption) (*HybridSearchResp, error)
 	// Maintenance
 	Compact(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*CompactResp, error)
 }
@@ -379,6 +386,36 @@ func (c *cognevraServiceClient) LLMCacheStats(ctx context.Context, in *Empty, op
 	return out, nil
 }
 
+func (c *cognevraServiceClient) BM25Index(ctx context.Context, in *BM25IndexReq, opts ...grpc.CallOption) (*StatusResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(StatusResp)
+	err := c.cc.Invoke(ctx, CognevraService_BM25Index_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *cognevraServiceClient) BM25Search(ctx context.Context, in *BM25SearchReq, opts ...grpc.CallOption) (*BM25SearchResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(BM25SearchResp)
+	err := c.cc.Invoke(ctx, CognevraService_BM25Search_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *cognevraServiceClient) HybridSearch(ctx context.Context, in *HybridSearchReq, opts ...grpc.CallOption) (*HybridSearchResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(HybridSearchResp)
+	err := c.cc.Invoke(ctx, CognevraService_HybridSearch_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *cognevraServiceClient) Compact(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*CompactResp, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(CompactResp)
@@ -437,6 +474,10 @@ type CognevraServiceServer interface {
 	LLMCacheGet(context.Context, *LLMCacheGetReq) (*LLMCacheGetResp, error)
 	LLMCachePut(context.Context, *LLMCachePutReq) (*StatusResp, error)
 	LLMCacheStats(context.Context, *Empty) (*LLMCacheStatsResp, error)
+	// BM25 lexical search + hybrid
+	BM25Index(context.Context, *BM25IndexReq) (*StatusResp, error)
+	BM25Search(context.Context, *BM25SearchReq) (*BM25SearchResp, error)
+	HybridSearch(context.Context, *HybridSearchReq) (*HybridSearchResp, error)
 	// Maintenance
 	Compact(context.Context, *Empty) (*CompactResp, error)
 	mustEmbedUnimplementedCognevraServiceServer()
@@ -529,6 +570,15 @@ func (UnimplementedCognevraServiceServer) LLMCachePut(context.Context, *LLMCache
 }
 func (UnimplementedCognevraServiceServer) LLMCacheStats(context.Context, *Empty) (*LLMCacheStatsResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method LLMCacheStats not implemented")
+}
+func (UnimplementedCognevraServiceServer) BM25Index(context.Context, *BM25IndexReq) (*StatusResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method BM25Index not implemented")
+}
+func (UnimplementedCognevraServiceServer) BM25Search(context.Context, *BM25SearchReq) (*BM25SearchResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method BM25Search not implemented")
+}
+func (UnimplementedCognevraServiceServer) HybridSearch(context.Context, *HybridSearchReq) (*HybridSearchResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method HybridSearch not implemented")
 }
 func (UnimplementedCognevraServiceServer) Compact(context.Context, *Empty) (*CompactResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method Compact not implemented")
@@ -1040,6 +1090,60 @@ func _CognevraService_LLMCacheStats_Handler(srv interface{}, ctx context.Context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _CognevraService_BM25Index_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BM25IndexReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CognevraServiceServer).BM25Index(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CognevraService_BM25Index_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CognevraServiceServer).BM25Index(ctx, req.(*BM25IndexReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _CognevraService_BM25Search_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BM25SearchReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CognevraServiceServer).BM25Search(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CognevraService_BM25Search_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CognevraServiceServer).BM25Search(ctx, req.(*BM25SearchReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _CognevraService_HybridSearch_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(HybridSearchReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CognevraServiceServer).HybridSearch(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CognevraService_HybridSearch_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CognevraServiceServer).HybridSearch(ctx, req.(*HybridSearchReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _CognevraService_Compact_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(Empty)
 	if err := dec(in); err != nil {
@@ -1172,6 +1276,18 @@ var CognevraService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "LLMCacheStats",
 			Handler:    _CognevraService_LLMCacheStats_Handler,
+		},
+		{
+			MethodName: "BM25Index",
+			Handler:    _CognevraService_BM25Index_Handler,
+		},
+		{
+			MethodName: "BM25Search",
+			Handler:    _CognevraService_BM25Search_Handler,
+		},
+		{
+			MethodName: "HybridSearch",
+			Handler:    _CognevraService_HybridSearch_Handler,
 		},
 		{
 			MethodName: "Compact",

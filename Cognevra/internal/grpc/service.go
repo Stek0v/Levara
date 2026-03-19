@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -14,6 +15,7 @@ import (
 	"github.com/rupamthxt/cognevra/pkg/embed"
 	"github.com/rupamthxt/cognevra/pkg/fileio"
 	"github.com/rupamthxt/cognevra/pkg/graph"
+	"github.com/rupamthxt/cognevra/pkg/bm25"
 	"github.com/rupamthxt/cognevra/pkg/graphdb"
 	"github.com/rupamthxt/cognevra/pkg/llmcache"
 	"github.com/rupamthxt/cognevra/pipeline"
@@ -29,6 +31,8 @@ type Service struct {
 	cluster     *store.Cluster // legacy: for non-collection operations
 	dim         int
 	llmCache    *llmcache.Cache
+	bm25Indexes map[string]*bm25.Index
+	bm25Mu      sync.RWMutex
 }
 
 // NewService creates a gRPC service backed by CollectionManager.
@@ -37,7 +41,8 @@ func NewService(collections *store.CollectionManager, cluster *store.Cluster, di
 		collections: collections,
 		cluster:     cluster,
 		dim:         dim,
-		llmCache:    llmcache.New(10000, 0), // 10K entries, no TTL
+		llmCache:    llmcache.New(10000, 0),
+		bm25Indexes: make(map[string]*bm25.Index),
 	}
 }
 
@@ -1193,4 +1198,145 @@ func (s *Service) LLMCacheStats(_ context.Context, _ *pb.Empty) (*pb.LLMCacheSta
 		Misses:  stats.Misses,
 		HitRate: float32(stats.HitRate),
 	}, nil
+}
+
+func (s *Service) getBM25Index(collection string) *bm25.Index {
+	s.bm25Mu.RLock()
+	idx, ok := s.bm25Indexes[collection]
+	s.bm25Mu.RUnlock()
+	if ok {
+		return idx
+	}
+	s.bm25Mu.Lock()
+	defer s.bm25Mu.Unlock()
+	if idx, ok = s.bm25Indexes[collection]; ok {
+		return idx
+	}
+	idx = bm25.NewIndex()
+	s.bm25Indexes[collection] = idx
+	return idx
+}
+
+// BM25Index adds documents to a BM25 inverted index.
+func (s *Service) BM25Index(_ context.Context, req *pb.BM25IndexReq) (*pb.StatusResp, error) {
+	if req.Collection == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "collection required")
+	}
+	idx := s.getBM25Index(req.Collection)
+	for _, item := range req.Items {
+		idx.Add(item.Id, item.Text, item.MetadataJson)
+	}
+	return &pb.StatusResp{Ok: true}, nil
+}
+
+// BM25Search performs keyword/lexical search using BM25 scoring.
+func (s *Service) BM25Search(_ context.Context, req *pb.BM25SearchReq) (*pb.BM25SearchResp, error) {
+	if req.Collection == "" || req.Query == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "collection and query required")
+	}
+	topK := int(req.TopK)
+	if topK <= 0 {
+		topK = 10
+	}
+
+	s.bm25Mu.RLock()
+	idx, ok := s.bm25Indexes[req.Collection]
+	s.bm25Mu.RUnlock()
+	if !ok {
+		return &pb.BM25SearchResp{}, nil // empty collection
+	}
+
+	results := idx.Search(req.Query, topK)
+	pbResults := make([]*pb.BM25Result, len(results))
+	for i, r := range results {
+		pbResults[i] = &pb.BM25Result{Id: r.ID, Score: r.Score, MetadataJson: r.Metadata}
+	}
+	return &pb.BM25SearchResp{Results: pbResults}, nil
+}
+
+// HybridSearch combines vector similarity + BM25 lexical search via Reciprocal Rank Fusion.
+func (s *Service) HybridSearch(ctx context.Context, req *pb.HybridSearchReq) (*pb.HybridSearchResp, error) {
+	if req.Collection == "" || req.QueryText == "" || req.EmbedEndpoint == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "collection, query_text, embed_endpoint required")
+	}
+
+	topK := int(req.TopK)
+	if topK <= 0 {
+		topK = 10
+	}
+	model := req.EmbedModel
+	if model == "" {
+		model = "text-embedding-3-small"
+	}
+
+	// Run vector search + BM25 search in parallel
+	type vsOut struct {
+		results []bm25.VectorResult
+		err     error
+	}
+	type bm25Out struct {
+		results []bm25.Result
+	}
+
+	vsCh := make(chan vsOut, 1)
+	bmCh := make(chan bm25Out, 1)
+
+	// Vector search goroutine
+	go func() {
+		embedClient := embed.NewClient(req.EmbedEndpoint, model, 16, 1)
+		vec, err := embedClient.EmbedSingle(ctx, req.QueryText)
+		if err != nil {
+			vsCh <- vsOut{err: err}
+			return
+		}
+		searchResults, err := s.collections.Search(req.Collection, vec, topK*2)
+		if err != nil {
+			vsCh <- vsOut{err: err}
+			return
+		}
+		vr := make([]bm25.VectorResult, len(searchResults))
+		for i, sr := range searchResults {
+			vr[i] = bm25.VectorResult{ID: sr.ID, Score: sr.Score, Metadata: string(sr.Data)}
+		}
+		vsCh <- vsOut{results: vr}
+	}()
+
+	// BM25 search goroutine
+	go func() {
+		s.bm25Mu.RLock()
+		idx, ok := s.bm25Indexes[req.Collection]
+		s.bm25Mu.RUnlock()
+		if !ok {
+			bmCh <- bm25Out{}
+			return
+		}
+		bmCh <- bm25Out{results: idx.Search(req.QueryText, topK*2)}
+	}()
+
+	vsResult := <-vsCh
+	bmResult := <-bmCh
+
+	if vsResult.err != nil {
+		return nil, status.Errorf(codes.Internal, "vector search: %v", vsResult.err)
+	}
+
+	vw := float64(req.VectorWeight)
+	bw := float64(req.Bm25Weight)
+
+	hybridResults := bm25.HybridSearch(vsResult.results, bmResult.results, topK, vw, bw)
+
+	pbResults := make([]*pb.HybridResult, len(hybridResults))
+	for i, r := range hybridResults {
+		pbResults[i] = &pb.HybridResult{
+			Id:          r.ID,
+			VectorScore: r.VectorScore,
+			Bm25Score:   r.BM25Score,
+			FusedScore:  r.FusedScore,
+			VectorRank:  int32(r.VectorRank),
+			Bm25Rank:    int32(r.BM25Rank),
+			MetadataJson: r.Metadata,
+		}
+	}
+
+	return &pb.HybridSearchResp{Results: pbResults}, nil
 }

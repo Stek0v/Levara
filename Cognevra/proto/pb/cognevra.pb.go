@@ -4906,6 +4906,452 @@ func (x *LLMCacheStatsResp) GetHitRate() float32 {
 	return 0
 }
 
+// BM25 lexical search
+type BM25IndexReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Collection    string                 `protobuf:"bytes,1,opt,name=collection,proto3" json:"collection,omitempty"` // BM25 index name (parallel to vector collection)
+	Items         []*IndexItem           `protobuf:"bytes,2,rep,name=items,proto3" json:"items,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BM25IndexReq) Reset() {
+	*x = BM25IndexReq{}
+	mi := &file_cognevra_proto_msgTypes[72]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BM25IndexReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BM25IndexReq) ProtoMessage() {}
+
+func (x *BM25IndexReq) ProtoReflect() protoreflect.Message {
+	mi := &file_cognevra_proto_msgTypes[72]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BM25IndexReq.ProtoReflect.Descriptor instead.
+func (*BM25IndexReq) Descriptor() ([]byte, []int) {
+	return file_cognevra_proto_rawDescGZIP(), []int{72}
+}
+
+func (x *BM25IndexReq) GetCollection() string {
+	if x != nil {
+		return x.Collection
+	}
+	return ""
+}
+
+func (x *BM25IndexReq) GetItems() []*IndexItem {
+	if x != nil {
+		return x.Items
+	}
+	return nil
+}
+
+type BM25SearchReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Collection    string                 `protobuf:"bytes,1,opt,name=collection,proto3" json:"collection,omitempty"`
+	Query         string                 `protobuf:"bytes,2,opt,name=query,proto3" json:"query,omitempty"`
+	TopK          int32                  `protobuf:"varint,3,opt,name=top_k,json=topK,proto3" json:"top_k,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BM25SearchReq) Reset() {
+	*x = BM25SearchReq{}
+	mi := &file_cognevra_proto_msgTypes[73]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BM25SearchReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BM25SearchReq) ProtoMessage() {}
+
+func (x *BM25SearchReq) ProtoReflect() protoreflect.Message {
+	mi := &file_cognevra_proto_msgTypes[73]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BM25SearchReq.ProtoReflect.Descriptor instead.
+func (*BM25SearchReq) Descriptor() ([]byte, []int) {
+	return file_cognevra_proto_rawDescGZIP(), []int{73}
+}
+
+func (x *BM25SearchReq) GetCollection() string {
+	if x != nil {
+		return x.Collection
+	}
+	return ""
+}
+
+func (x *BM25SearchReq) GetQuery() string {
+	if x != nil {
+		return x.Query
+	}
+	return ""
+}
+
+func (x *BM25SearchReq) GetTopK() int32 {
+	if x != nil {
+		return x.TopK
+	}
+	return 0
+}
+
+type BM25SearchResp struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Results       []*BM25Result          `protobuf:"bytes,1,rep,name=results,proto3" json:"results,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BM25SearchResp) Reset() {
+	*x = BM25SearchResp{}
+	mi := &file_cognevra_proto_msgTypes[74]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BM25SearchResp) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BM25SearchResp) ProtoMessage() {}
+
+func (x *BM25SearchResp) ProtoReflect() protoreflect.Message {
+	mi := &file_cognevra_proto_msgTypes[74]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BM25SearchResp.ProtoReflect.Descriptor instead.
+func (*BM25SearchResp) Descriptor() ([]byte, []int) {
+	return file_cognevra_proto_rawDescGZIP(), []int{74}
+}
+
+func (x *BM25SearchResp) GetResults() []*BM25Result {
+	if x != nil {
+		return x.Results
+	}
+	return nil
+}
+
+type BM25Result struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Score         float64                `protobuf:"fixed64,2,opt,name=score,proto3" json:"score,omitempty"`
+	MetadataJson  string                 `protobuf:"bytes,3,opt,name=metadata_json,json=metadataJson,proto3" json:"metadata_json,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BM25Result) Reset() {
+	*x = BM25Result{}
+	mi := &file_cognevra_proto_msgTypes[75]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BM25Result) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BM25Result) ProtoMessage() {}
+
+func (x *BM25Result) ProtoReflect() protoreflect.Message {
+	mi := &file_cognevra_proto_msgTypes[75]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BM25Result.ProtoReflect.Descriptor instead.
+func (*BM25Result) Descriptor() ([]byte, []int) {
+	return file_cognevra_proto_rawDescGZIP(), []int{75}
+}
+
+func (x *BM25Result) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *BM25Result) GetScore() float64 {
+	if x != nil {
+		return x.Score
+	}
+	return 0
+}
+
+func (x *BM25Result) GetMetadataJson() string {
+	if x != nil {
+		return x.MetadataJson
+	}
+	return ""
+}
+
+// Hybrid search (vector + BM25 via RRF)
+type HybridSearchReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Collection    string                 `protobuf:"bytes,1,opt,name=collection,proto3" json:"collection,omitempty"` // same name for both vector + BM25
+	QueryText     string                 `protobuf:"bytes,2,opt,name=query_text,json=queryText,proto3" json:"query_text,omitempty"`
+	TopK          int32                  `protobuf:"varint,3,opt,name=top_k,json=topK,proto3" json:"top_k,omitempty"`
+	EmbedEndpoint string                 `protobuf:"bytes,4,opt,name=embed_endpoint,json=embedEndpoint,proto3" json:"embed_endpoint,omitempty"`
+	EmbedModel    string                 `protobuf:"bytes,5,opt,name=embed_model,json=embedModel,proto3" json:"embed_model,omitempty"`
+	VectorWeight  float32                `protobuf:"fixed32,6,opt,name=vector_weight,json=vectorWeight,proto3" json:"vector_weight,omitempty"` // RRF weight for vector (default 1.0)
+	Bm25Weight    float32                `protobuf:"fixed32,7,opt,name=bm25_weight,json=bm25Weight,proto3" json:"bm25_weight,omitempty"`       // RRF weight for BM25 (default 1.0)
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HybridSearchReq) Reset() {
+	*x = HybridSearchReq{}
+	mi := &file_cognevra_proto_msgTypes[76]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HybridSearchReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HybridSearchReq) ProtoMessage() {}
+
+func (x *HybridSearchReq) ProtoReflect() protoreflect.Message {
+	mi := &file_cognevra_proto_msgTypes[76]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HybridSearchReq.ProtoReflect.Descriptor instead.
+func (*HybridSearchReq) Descriptor() ([]byte, []int) {
+	return file_cognevra_proto_rawDescGZIP(), []int{76}
+}
+
+func (x *HybridSearchReq) GetCollection() string {
+	if x != nil {
+		return x.Collection
+	}
+	return ""
+}
+
+func (x *HybridSearchReq) GetQueryText() string {
+	if x != nil {
+		return x.QueryText
+	}
+	return ""
+}
+
+func (x *HybridSearchReq) GetTopK() int32 {
+	if x != nil {
+		return x.TopK
+	}
+	return 0
+}
+
+func (x *HybridSearchReq) GetEmbedEndpoint() string {
+	if x != nil {
+		return x.EmbedEndpoint
+	}
+	return ""
+}
+
+func (x *HybridSearchReq) GetEmbedModel() string {
+	if x != nil {
+		return x.EmbedModel
+	}
+	return ""
+}
+
+func (x *HybridSearchReq) GetVectorWeight() float32 {
+	if x != nil {
+		return x.VectorWeight
+	}
+	return 0
+}
+
+func (x *HybridSearchReq) GetBm25Weight() float32 {
+	if x != nil {
+		return x.Bm25Weight
+	}
+	return 0
+}
+
+type HybridSearchResp struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Results       []*HybridResult        `protobuf:"bytes,1,rep,name=results,proto3" json:"results,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HybridSearchResp) Reset() {
+	*x = HybridSearchResp{}
+	mi := &file_cognevra_proto_msgTypes[77]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HybridSearchResp) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HybridSearchResp) ProtoMessage() {}
+
+func (x *HybridSearchResp) ProtoReflect() protoreflect.Message {
+	mi := &file_cognevra_proto_msgTypes[77]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HybridSearchResp.ProtoReflect.Descriptor instead.
+func (*HybridSearchResp) Descriptor() ([]byte, []int) {
+	return file_cognevra_proto_rawDescGZIP(), []int{77}
+}
+
+func (x *HybridSearchResp) GetResults() []*HybridResult {
+	if x != nil {
+		return x.Results
+	}
+	return nil
+}
+
+type HybridResult struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	VectorScore   float32                `protobuf:"fixed32,2,opt,name=vector_score,json=vectorScore,proto3" json:"vector_score,omitempty"`
+	Bm25Score     float64                `protobuf:"fixed64,3,opt,name=bm25_score,json=bm25Score,proto3" json:"bm25_score,omitempty"`
+	FusedScore    float64                `protobuf:"fixed64,4,opt,name=fused_score,json=fusedScore,proto3" json:"fused_score,omitempty"`
+	VectorRank    int32                  `protobuf:"varint,5,opt,name=vector_rank,json=vectorRank,proto3" json:"vector_rank,omitempty"`
+	Bm25Rank      int32                  `protobuf:"varint,6,opt,name=bm25_rank,json=bm25Rank,proto3" json:"bm25_rank,omitempty"`
+	MetadataJson  string                 `protobuf:"bytes,7,opt,name=metadata_json,json=metadataJson,proto3" json:"metadata_json,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HybridResult) Reset() {
+	*x = HybridResult{}
+	mi := &file_cognevra_proto_msgTypes[78]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HybridResult) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HybridResult) ProtoMessage() {}
+
+func (x *HybridResult) ProtoReflect() protoreflect.Message {
+	mi := &file_cognevra_proto_msgTypes[78]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HybridResult.ProtoReflect.Descriptor instead.
+func (*HybridResult) Descriptor() ([]byte, []int) {
+	return file_cognevra_proto_rawDescGZIP(), []int{78}
+}
+
+func (x *HybridResult) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *HybridResult) GetVectorScore() float32 {
+	if x != nil {
+		return x.VectorScore
+	}
+	return 0
+}
+
+func (x *HybridResult) GetBm25Score() float64 {
+	if x != nil {
+		return x.Bm25Score
+	}
+	return 0
+}
+
+func (x *HybridResult) GetFusedScore() float64 {
+	if x != nil {
+		return x.FusedScore
+	}
+	return 0
+}
+
+func (x *HybridResult) GetVectorRank() int32 {
+	if x != nil {
+		return x.VectorRank
+	}
+	return 0
+}
+
+func (x *HybridResult) GetBm25Rank() int32 {
+	if x != nil {
+		return x.Bm25Rank
+	}
+	return 0
+}
+
+func (x *HybridResult) GetMetadataJson() string {
+	if x != nil {
+		return x.MetadataJson
+	}
+	return ""
+}
+
 type SearchResultGroup struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Query         string                 `protobuf:"bytes,1,opt,name=query,proto3" json:"query,omitempty"`
@@ -4916,7 +5362,7 @@ type SearchResultGroup struct {
 
 func (x *SearchResultGroup) Reset() {
 	*x = SearchResultGroup{}
-	mi := &file_cognevra_proto_msgTypes[72]
+	mi := &file_cognevra_proto_msgTypes[79]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4928,7 +5374,7 @@ func (x *SearchResultGroup) String() string {
 func (*SearchResultGroup) ProtoMessage() {}
 
 func (x *SearchResultGroup) ProtoReflect() protoreflect.Message {
-	mi := &file_cognevra_proto_msgTypes[72]
+	mi := &file_cognevra_proto_msgTypes[79]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4941,7 +5387,7 @@ func (x *SearchResultGroup) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SearchResultGroup.ProtoReflect.Descriptor instead.
 func (*SearchResultGroup) Descriptor() ([]byte, []int) {
-	return file_cognevra_proto_rawDescGZIP(), []int{72}
+	return file_cognevra_proto_rawDescGZIP(), []int{79}
 }
 
 func (x *SearchResultGroup) GetQuery() string {
@@ -5379,10 +5825,54 @@ const file_cognevra_proto_rawDesc = "" +
 	"\bmax_size\x18\x02 \x01(\x05R\amaxSize\x12\x12\n" +
 	"\x04hits\x18\x03 \x01(\x03R\x04hits\x12\x16\n" +
 	"\x06misses\x18\x04 \x01(\x03R\x06misses\x12\x19\n" +
-	"\bhit_rate\x18\x05 \x01(\x02R\ahitRate\"^\n" +
+	"\bhit_rate\x18\x05 \x01(\x02R\ahitRate\"\\\n" +
+	"\fBM25IndexReq\x12\x1e\n" +
+	"\n" +
+	"collection\x18\x01 \x01(\tR\n" +
+	"collection\x12,\n" +
+	"\x05items\x18\x02 \x03(\v2\x16.cognevra.v1.IndexItemR\x05items\"Z\n" +
+	"\rBM25SearchReq\x12\x1e\n" +
+	"\n" +
+	"collection\x18\x01 \x01(\tR\n" +
+	"collection\x12\x14\n" +
+	"\x05query\x18\x02 \x01(\tR\x05query\x12\x13\n" +
+	"\x05top_k\x18\x03 \x01(\x05R\x04topK\"C\n" +
+	"\x0eBM25SearchResp\x121\n" +
+	"\aresults\x18\x01 \x03(\v2\x17.cognevra.v1.BM25ResultR\aresults\"W\n" +
+	"\n" +
+	"BM25Result\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x14\n" +
+	"\x05score\x18\x02 \x01(\x01R\x05score\x12#\n" +
+	"\rmetadata_json\x18\x03 \x01(\tR\fmetadataJson\"\xf3\x01\n" +
+	"\x0fHybridSearchReq\x12\x1e\n" +
+	"\n" +
+	"collection\x18\x01 \x01(\tR\n" +
+	"collection\x12\x1d\n" +
+	"\n" +
+	"query_text\x18\x02 \x01(\tR\tqueryText\x12\x13\n" +
+	"\x05top_k\x18\x03 \x01(\x05R\x04topK\x12%\n" +
+	"\x0eembed_endpoint\x18\x04 \x01(\tR\rembedEndpoint\x12\x1f\n" +
+	"\vembed_model\x18\x05 \x01(\tR\n" +
+	"embedModel\x12#\n" +
+	"\rvector_weight\x18\x06 \x01(\x02R\fvectorWeight\x12\x1f\n" +
+	"\vbm25_weight\x18\a \x01(\x02R\n" +
+	"bm25Weight\"G\n" +
+	"\x10HybridSearchResp\x123\n" +
+	"\aresults\x18\x01 \x03(\v2\x19.cognevra.v1.HybridResultR\aresults\"\xe4\x01\n" +
+	"\fHybridResult\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12!\n" +
+	"\fvector_score\x18\x02 \x01(\x02R\vvectorScore\x12\x1d\n" +
+	"\n" +
+	"bm25_score\x18\x03 \x01(\x01R\tbm25Score\x12\x1f\n" +
+	"\vfused_score\x18\x04 \x01(\x01R\n" +
+	"fusedScore\x12\x1f\n" +
+	"\vvector_rank\x18\x05 \x01(\x05R\n" +
+	"vectorRank\x12\x1b\n" +
+	"\tbm25_rank\x18\x06 \x01(\x05R\bbm25Rank\x12#\n" +
+	"\rmetadata_json\x18\a \x01(\tR\fmetadataJson\"^\n" +
 	"\x11SearchResultGroup\x12\x14\n" +
 	"\x05query\x18\x01 \x01(\tR\x05query\x123\n" +
-	"\aresults\x18\x02 \x03(\v2\x19.cognevra.v1.SearchResultR\aresults2\xcb\x10\n" +
+	"\aresults\x18\x02 \x03(\v2\x19.cognevra.v1.SearchResultR\aresults2\xa0\x12\n" +
 	"\x0fCognevraService\x12M\n" +
 	"\x10CreateCollection\x12 .cognevra.v1.CreateCollectionReq\x1a\x17.cognevra.v1.StatusResp\x12I\n" +
 	"\x0eDropCollection\x12\x1e.cognevra.v1.DropCollectionReq\x1a\x17.cognevra.v1.StatusResp\x12G\n" +
@@ -5410,7 +5900,11 @@ const file_cognevra_proto_rawDesc = "" +
 	"\x15GraphCompletionSearch\x12%.cognevra.v1.GraphCompletionSearchReq\x1a&.cognevra.v1.GraphCompletionSearchResp\x12H\n" +
 	"\vLLMCacheGet\x12\x1b.cognevra.v1.LLMCacheGetReq\x1a\x1c.cognevra.v1.LLMCacheGetResp\x12C\n" +
 	"\vLLMCachePut\x12\x1b.cognevra.v1.LLMCachePutReq\x1a\x17.cognevra.v1.StatusResp\x12C\n" +
-	"\rLLMCacheStats\x12\x12.cognevra.v1.Empty\x1a\x1e.cognevra.v1.LLMCacheStatsResp\x127\n" +
+	"\rLLMCacheStats\x12\x12.cognevra.v1.Empty\x1a\x1e.cognevra.v1.LLMCacheStatsResp\x12?\n" +
+	"\tBM25Index\x12\x19.cognevra.v1.BM25IndexReq\x1a\x17.cognevra.v1.StatusResp\x12E\n" +
+	"\n" +
+	"BM25Search\x12\x1a.cognevra.v1.BM25SearchReq\x1a\x1b.cognevra.v1.BM25SearchResp\x12K\n" +
+	"\fHybridSearch\x12\x1c.cognevra.v1.HybridSearchReq\x1a\x1d.cognevra.v1.HybridSearchResp\x127\n" +
 	"\aCompact\x12\x12.cognevra.v1.Empty\x1a\x18.cognevra.v1.CompactRespB(Z&github.com/rupamthxt/cognevra/proto/pbb\x06proto3"
 
 var (
@@ -5426,7 +5920,7 @@ func file_cognevra_proto_rawDescGZIP() []byte {
 }
 
 var file_cognevra_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_cognevra_proto_msgTypes = make([]protoimpl.MessageInfo, 73)
+var file_cognevra_proto_msgTypes = make([]protoimpl.MessageInfo, 80)
 var file_cognevra_proto_goTypes = []any{
 	(GraphReadReq_Mode)(0),            // 0: cognevra.v1.GraphReadReq.Mode
 	(*Empty)(nil),                     // 1: cognevra.v1.Empty
@@ -5501,7 +5995,14 @@ var file_cognevra_proto_goTypes = []any{
 	(*LLMCacheGetResp)(nil),           // 70: cognevra.v1.LLMCacheGetResp
 	(*LLMCachePutReq)(nil),            // 71: cognevra.v1.LLMCachePutReq
 	(*LLMCacheStatsResp)(nil),         // 72: cognevra.v1.LLMCacheStatsResp
-	(*SearchResultGroup)(nil),         // 73: cognevra.v1.SearchResultGroup
+	(*BM25IndexReq)(nil),              // 73: cognevra.v1.BM25IndexReq
+	(*BM25SearchReq)(nil),             // 74: cognevra.v1.BM25SearchReq
+	(*BM25SearchResp)(nil),            // 75: cognevra.v1.BM25SearchResp
+	(*BM25Result)(nil),                // 76: cognevra.v1.BM25Result
+	(*HybridSearchReq)(nil),           // 77: cognevra.v1.HybridSearchReq
+	(*HybridSearchResp)(nil),          // 78: cognevra.v1.HybridSearchResp
+	(*HybridResult)(nil),              // 79: cognevra.v1.HybridResult
+	(*SearchResultGroup)(nil),         // 80: cognevra.v1.SearchResultGroup
 }
 var file_cognevra_proto_depIdxs = []int32{
 	10, // 0: cognevra.v1.BatchInsertReq.records:type_name -> cognevra.v1.InsertRecord
@@ -5532,73 +6033,82 @@ var file_cognevra_proto_depIdxs = []int32{
 	47, // 25: cognevra.v1.ParallelWriteReq.nodes:type_name -> cognevra.v1.DedupNodeMsg
 	48, // 26: cognevra.v1.ParallelWriteReq.edges:type_name -> cognevra.v1.DedupEdgeMsg
 	51, // 27: cognevra.v1.ParallelWriteReq.index_groups:type_name -> cognevra.v1.IndexGroup
-	73, // 28: cognevra.v1.BatchSearchByTextResp.results:type_name -> cognevra.v1.SearchResultGroup
+	80, // 28: cognevra.v1.BatchSearchByTextResp.results:type_name -> cognevra.v1.SearchResultGroup
 	0,  // 29: cognevra.v1.GraphReadReq.mode:type_name -> cognevra.v1.GraphReadReq.Mode
 	65, // 30: cognevra.v1.GraphReadResp.nodes:type_name -> cognevra.v1.GraphReadNode
 	66, // 31: cognevra.v1.GraphReadResp.edges:type_name -> cognevra.v1.GraphReadEdge
 	45, // 32: cognevra.v1.GraphCompletionSearchResp.triplets:type_name -> cognevra.v1.ScoredTriplet
-	16, // 33: cognevra.v1.SearchResultGroup.results:type_name -> cognevra.v1.SearchResult
-	3,  // 34: cognevra.v1.CognevraService.CreateCollection:input_type -> cognevra.v1.CreateCollectionReq
-	4,  // 35: cognevra.v1.CognevraService.DropCollection:input_type -> cognevra.v1.DropCollectionReq
-	1,  // 36: cognevra.v1.CognevraService.ListCollections:input_type -> cognevra.v1.Empty
-	6,  // 37: cognevra.v1.CognevraService.HasCollection:input_type -> cognevra.v1.HasCollectionReq
-	8,  // 38: cognevra.v1.CognevraService.Insert:input_type -> cognevra.v1.InsertReq
-	9,  // 39: cognevra.v1.CognevraService.BatchInsert:input_type -> cognevra.v1.BatchInsertReq
-	12, // 40: cognevra.v1.CognevraService.Delete:input_type -> cognevra.v1.DeleteReq
-	14, // 41: cognevra.v1.CognevraService.Search:input_type -> cognevra.v1.SearchReq
-	20, // 42: cognevra.v1.CognevraService.ChunkText:input_type -> cognevra.v1.ChunkTextReq
-	1,  // 43: cognevra.v1.CognevraService.Info:input_type -> cognevra.v1.Empty
-	17, // 44: cognevra.v1.CognevraService.GetByID:input_type -> cognevra.v1.GetByIDReq
-	24, // 45: cognevra.v1.CognevraService.ProcessTriplets:input_type -> cognevra.v1.ProcessTripletsReq
-	29, // 46: cognevra.v1.CognevraService.HashFiles:input_type -> cognevra.v1.HashFilesReq
-	32, // 47: cognevra.v1.CognevraService.ListDirectory:input_type -> cognevra.v1.ListDirectoryReq
-	35, // 48: cognevra.v1.CognevraService.AggregateSearch:input_type -> cognevra.v1.AggregateSearchReq
-	39, // 49: cognevra.v1.CognevraService.SearchTriplets:input_type -> cognevra.v1.SearchTripletsReq
-	46, // 50: cognevra.v1.CognevraService.DeduplicateGraph:input_type -> cognevra.v1.DeduplicateGraphReq
-	50, // 51: cognevra.v1.CognevraService.BatchEmbedAndIndex:input_type -> cognevra.v1.BatchEmbedAndIndexReq
-	54, // 52: cognevra.v1.CognevraService.BatchWriteGraph:input_type -> cognevra.v1.BatchWriteGraphReq
-	58, // 53: cognevra.v1.CognevraService.ParallelWriteDataPoints:input_type -> cognevra.v1.ParallelWriteReq
-	60, // 54: cognevra.v1.CognevraService.SearchByText:input_type -> cognevra.v1.SearchByTextReq
-	61, // 55: cognevra.v1.CognevraService.BatchSearchByText:input_type -> cognevra.v1.BatchSearchByTextReq
-	63, // 56: cognevra.v1.CognevraService.GraphRead:input_type -> cognevra.v1.GraphReadReq
-	67, // 57: cognevra.v1.CognevraService.GraphCompletionSearch:input_type -> cognevra.v1.GraphCompletionSearchReq
-	69, // 58: cognevra.v1.CognevraService.LLMCacheGet:input_type -> cognevra.v1.LLMCacheGetReq
-	71, // 59: cognevra.v1.CognevraService.LLMCachePut:input_type -> cognevra.v1.LLMCachePutReq
-	1,  // 60: cognevra.v1.CognevraService.LLMCacheStats:input_type -> cognevra.v1.Empty
-	1,  // 61: cognevra.v1.CognevraService.Compact:input_type -> cognevra.v1.Empty
-	2,  // 62: cognevra.v1.CognevraService.CreateCollection:output_type -> cognevra.v1.StatusResp
-	2,  // 63: cognevra.v1.CognevraService.DropCollection:output_type -> cognevra.v1.StatusResp
-	5,  // 64: cognevra.v1.CognevraService.ListCollections:output_type -> cognevra.v1.ListCollectionsResp
-	7,  // 65: cognevra.v1.CognevraService.HasCollection:output_type -> cognevra.v1.HasCollectionResp
-	2,  // 66: cognevra.v1.CognevraService.Insert:output_type -> cognevra.v1.StatusResp
-	11, // 67: cognevra.v1.CognevraService.BatchInsert:output_type -> cognevra.v1.BatchInsertResp
-	13, // 68: cognevra.v1.CognevraService.Delete:output_type -> cognevra.v1.DeleteResp
-	15, // 69: cognevra.v1.CognevraService.Search:output_type -> cognevra.v1.SearchResp
-	21, // 70: cognevra.v1.CognevraService.ChunkText:output_type -> cognevra.v1.ChunkTextResp
-	23, // 71: cognevra.v1.CognevraService.Info:output_type -> cognevra.v1.InfoResp
-	18, // 72: cognevra.v1.CognevraService.GetByID:output_type -> cognevra.v1.GetByIDResp
-	28, // 73: cognevra.v1.CognevraService.ProcessTriplets:output_type -> cognevra.v1.ProcessTripletsResp
-	31, // 74: cognevra.v1.CognevraService.HashFiles:output_type -> cognevra.v1.HashFilesResp
-	33, // 75: cognevra.v1.CognevraService.ListDirectory:output_type -> cognevra.v1.ListDirectoryResp
-	37, // 76: cognevra.v1.CognevraService.AggregateSearch:output_type -> cognevra.v1.AggregateSearchResp
-	44, // 77: cognevra.v1.CognevraService.SearchTriplets:output_type -> cognevra.v1.SearchTripletsResp
-	49, // 78: cognevra.v1.CognevraService.DeduplicateGraph:output_type -> cognevra.v1.DeduplicateGraphResp
-	53, // 79: cognevra.v1.CognevraService.BatchEmbedAndIndex:output_type -> cognevra.v1.BatchEmbedAndIndexResp
-	57, // 80: cognevra.v1.CognevraService.BatchWriteGraph:output_type -> cognevra.v1.BatchWriteGraphResp
-	59, // 81: cognevra.v1.CognevraService.ParallelWriteDataPoints:output_type -> cognevra.v1.ParallelWriteResp
-	15, // 82: cognevra.v1.CognevraService.SearchByText:output_type -> cognevra.v1.SearchResp
-	62, // 83: cognevra.v1.CognevraService.BatchSearchByText:output_type -> cognevra.v1.BatchSearchByTextResp
-	64, // 84: cognevra.v1.CognevraService.GraphRead:output_type -> cognevra.v1.GraphReadResp
-	68, // 85: cognevra.v1.CognevraService.GraphCompletionSearch:output_type -> cognevra.v1.GraphCompletionSearchResp
-	70, // 86: cognevra.v1.CognevraService.LLMCacheGet:output_type -> cognevra.v1.LLMCacheGetResp
-	2,  // 87: cognevra.v1.CognevraService.LLMCachePut:output_type -> cognevra.v1.StatusResp
-	72, // 88: cognevra.v1.CognevraService.LLMCacheStats:output_type -> cognevra.v1.LLMCacheStatsResp
-	34, // 89: cognevra.v1.CognevraService.Compact:output_type -> cognevra.v1.CompactResp
-	62, // [62:90] is the sub-list for method output_type
-	34, // [34:62] is the sub-list for method input_type
-	34, // [34:34] is the sub-list for extension type_name
-	34, // [34:34] is the sub-list for extension extendee
-	0,  // [0:34] is the sub-list for field type_name
+	52, // 33: cognevra.v1.BM25IndexReq.items:type_name -> cognevra.v1.IndexItem
+	76, // 34: cognevra.v1.BM25SearchResp.results:type_name -> cognevra.v1.BM25Result
+	79, // 35: cognevra.v1.HybridSearchResp.results:type_name -> cognevra.v1.HybridResult
+	16, // 36: cognevra.v1.SearchResultGroup.results:type_name -> cognevra.v1.SearchResult
+	3,  // 37: cognevra.v1.CognevraService.CreateCollection:input_type -> cognevra.v1.CreateCollectionReq
+	4,  // 38: cognevra.v1.CognevraService.DropCollection:input_type -> cognevra.v1.DropCollectionReq
+	1,  // 39: cognevra.v1.CognevraService.ListCollections:input_type -> cognevra.v1.Empty
+	6,  // 40: cognevra.v1.CognevraService.HasCollection:input_type -> cognevra.v1.HasCollectionReq
+	8,  // 41: cognevra.v1.CognevraService.Insert:input_type -> cognevra.v1.InsertReq
+	9,  // 42: cognevra.v1.CognevraService.BatchInsert:input_type -> cognevra.v1.BatchInsertReq
+	12, // 43: cognevra.v1.CognevraService.Delete:input_type -> cognevra.v1.DeleteReq
+	14, // 44: cognevra.v1.CognevraService.Search:input_type -> cognevra.v1.SearchReq
+	20, // 45: cognevra.v1.CognevraService.ChunkText:input_type -> cognevra.v1.ChunkTextReq
+	1,  // 46: cognevra.v1.CognevraService.Info:input_type -> cognevra.v1.Empty
+	17, // 47: cognevra.v1.CognevraService.GetByID:input_type -> cognevra.v1.GetByIDReq
+	24, // 48: cognevra.v1.CognevraService.ProcessTriplets:input_type -> cognevra.v1.ProcessTripletsReq
+	29, // 49: cognevra.v1.CognevraService.HashFiles:input_type -> cognevra.v1.HashFilesReq
+	32, // 50: cognevra.v1.CognevraService.ListDirectory:input_type -> cognevra.v1.ListDirectoryReq
+	35, // 51: cognevra.v1.CognevraService.AggregateSearch:input_type -> cognevra.v1.AggregateSearchReq
+	39, // 52: cognevra.v1.CognevraService.SearchTriplets:input_type -> cognevra.v1.SearchTripletsReq
+	46, // 53: cognevra.v1.CognevraService.DeduplicateGraph:input_type -> cognevra.v1.DeduplicateGraphReq
+	50, // 54: cognevra.v1.CognevraService.BatchEmbedAndIndex:input_type -> cognevra.v1.BatchEmbedAndIndexReq
+	54, // 55: cognevra.v1.CognevraService.BatchWriteGraph:input_type -> cognevra.v1.BatchWriteGraphReq
+	58, // 56: cognevra.v1.CognevraService.ParallelWriteDataPoints:input_type -> cognevra.v1.ParallelWriteReq
+	60, // 57: cognevra.v1.CognevraService.SearchByText:input_type -> cognevra.v1.SearchByTextReq
+	61, // 58: cognevra.v1.CognevraService.BatchSearchByText:input_type -> cognevra.v1.BatchSearchByTextReq
+	63, // 59: cognevra.v1.CognevraService.GraphRead:input_type -> cognevra.v1.GraphReadReq
+	67, // 60: cognevra.v1.CognevraService.GraphCompletionSearch:input_type -> cognevra.v1.GraphCompletionSearchReq
+	69, // 61: cognevra.v1.CognevraService.LLMCacheGet:input_type -> cognevra.v1.LLMCacheGetReq
+	71, // 62: cognevra.v1.CognevraService.LLMCachePut:input_type -> cognevra.v1.LLMCachePutReq
+	1,  // 63: cognevra.v1.CognevraService.LLMCacheStats:input_type -> cognevra.v1.Empty
+	73, // 64: cognevra.v1.CognevraService.BM25Index:input_type -> cognevra.v1.BM25IndexReq
+	74, // 65: cognevra.v1.CognevraService.BM25Search:input_type -> cognevra.v1.BM25SearchReq
+	77, // 66: cognevra.v1.CognevraService.HybridSearch:input_type -> cognevra.v1.HybridSearchReq
+	1,  // 67: cognevra.v1.CognevraService.Compact:input_type -> cognevra.v1.Empty
+	2,  // 68: cognevra.v1.CognevraService.CreateCollection:output_type -> cognevra.v1.StatusResp
+	2,  // 69: cognevra.v1.CognevraService.DropCollection:output_type -> cognevra.v1.StatusResp
+	5,  // 70: cognevra.v1.CognevraService.ListCollections:output_type -> cognevra.v1.ListCollectionsResp
+	7,  // 71: cognevra.v1.CognevraService.HasCollection:output_type -> cognevra.v1.HasCollectionResp
+	2,  // 72: cognevra.v1.CognevraService.Insert:output_type -> cognevra.v1.StatusResp
+	11, // 73: cognevra.v1.CognevraService.BatchInsert:output_type -> cognevra.v1.BatchInsertResp
+	13, // 74: cognevra.v1.CognevraService.Delete:output_type -> cognevra.v1.DeleteResp
+	15, // 75: cognevra.v1.CognevraService.Search:output_type -> cognevra.v1.SearchResp
+	21, // 76: cognevra.v1.CognevraService.ChunkText:output_type -> cognevra.v1.ChunkTextResp
+	23, // 77: cognevra.v1.CognevraService.Info:output_type -> cognevra.v1.InfoResp
+	18, // 78: cognevra.v1.CognevraService.GetByID:output_type -> cognevra.v1.GetByIDResp
+	28, // 79: cognevra.v1.CognevraService.ProcessTriplets:output_type -> cognevra.v1.ProcessTripletsResp
+	31, // 80: cognevra.v1.CognevraService.HashFiles:output_type -> cognevra.v1.HashFilesResp
+	33, // 81: cognevra.v1.CognevraService.ListDirectory:output_type -> cognevra.v1.ListDirectoryResp
+	37, // 82: cognevra.v1.CognevraService.AggregateSearch:output_type -> cognevra.v1.AggregateSearchResp
+	44, // 83: cognevra.v1.CognevraService.SearchTriplets:output_type -> cognevra.v1.SearchTripletsResp
+	49, // 84: cognevra.v1.CognevraService.DeduplicateGraph:output_type -> cognevra.v1.DeduplicateGraphResp
+	53, // 85: cognevra.v1.CognevraService.BatchEmbedAndIndex:output_type -> cognevra.v1.BatchEmbedAndIndexResp
+	57, // 86: cognevra.v1.CognevraService.BatchWriteGraph:output_type -> cognevra.v1.BatchWriteGraphResp
+	59, // 87: cognevra.v1.CognevraService.ParallelWriteDataPoints:output_type -> cognevra.v1.ParallelWriteResp
+	15, // 88: cognevra.v1.CognevraService.SearchByText:output_type -> cognevra.v1.SearchResp
+	62, // 89: cognevra.v1.CognevraService.BatchSearchByText:output_type -> cognevra.v1.BatchSearchByTextResp
+	64, // 90: cognevra.v1.CognevraService.GraphRead:output_type -> cognevra.v1.GraphReadResp
+	68, // 91: cognevra.v1.CognevraService.GraphCompletionSearch:output_type -> cognevra.v1.GraphCompletionSearchResp
+	70, // 92: cognevra.v1.CognevraService.LLMCacheGet:output_type -> cognevra.v1.LLMCacheGetResp
+	2,  // 93: cognevra.v1.CognevraService.LLMCachePut:output_type -> cognevra.v1.StatusResp
+	72, // 94: cognevra.v1.CognevraService.LLMCacheStats:output_type -> cognevra.v1.LLMCacheStatsResp
+	2,  // 95: cognevra.v1.CognevraService.BM25Index:output_type -> cognevra.v1.StatusResp
+	75, // 96: cognevra.v1.CognevraService.BM25Search:output_type -> cognevra.v1.BM25SearchResp
+	78, // 97: cognevra.v1.CognevraService.HybridSearch:output_type -> cognevra.v1.HybridSearchResp
+	34, // 98: cognevra.v1.CognevraService.Compact:output_type -> cognevra.v1.CompactResp
+	68, // [68:99] is the sub-list for method output_type
+	37, // [37:68] is the sub-list for method input_type
+	37, // [37:37] is the sub-list for extension type_name
+	37, // [37:37] is the sub-list for extension extendee
+	0,  // [0:37] is the sub-list for field type_name
 }
 
 func init() { file_cognevra_proto_init() }
@@ -5612,7 +6122,7 @@ func file_cognevra_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_cognevra_proto_rawDesc), len(file_cognevra_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   73,
+			NumMessages:   80,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -64,6 +64,11 @@ service CognevraService {
   rpc LLMCachePut(LLMCachePutReq) returns (StatusResp);
   rpc LLMCacheStats(Empty) returns (LLMCacheStatsResp);
 
+  // BM25 lexical search + hybrid
+  rpc BM25Index(BM25IndexReq) returns (StatusResp);
+  rpc BM25Search(BM25SearchReq) returns (BM25SearchResp);
+  rpc HybridSearch(HybridSearchReq) returns (HybridSearchResp);
+
   // Maintenance
   rpc Compact(Empty) returns (CompactResp);
 }
@@ -603,6 +608,53 @@ message LLMCacheStatsResp {
   int64 hits = 3;
   int64 misses = 4;
   float hit_rate = 5;
+}
+
+// BM25 lexical search
+message BM25IndexReq {
+  string collection = 1;  // BM25 index name (parallel to vector collection)
+  repeated IndexItem items = 2;
+}
+
+message BM25SearchReq {
+  string collection = 1;
+  string query = 2;
+  int32 top_k = 3;
+}
+
+message BM25SearchResp {
+  repeated BM25Result results = 1;
+}
+
+message BM25Result {
+  string id = 1;
+  double score = 2;
+  string metadata_json = 3;
+}
+
+// Hybrid search (vector + BM25 via RRF)
+message HybridSearchReq {
+  string collection = 1;         // same name for both vector + BM25
+  string query_text = 2;
+  int32 top_k = 3;
+  string embed_endpoint = 4;
+  string embed_model = 5;
+  float vector_weight = 6;       // RRF weight for vector (default 1.0)
+  float bm25_weight = 7;         // RRF weight for BM25 (default 1.0)
+}
+
+message HybridSearchResp {
+  repeated HybridResult results = 1;
+}
+
+message HybridResult {
+  string id = 1;
+  float vector_score = 2;
+  double bm25_score = 3;
+  double fused_score = 4;
+  int32 vector_rank = 5;
+  int32 bm25_rank = 6;
+  string metadata_json = 7;
 }
 
 message SearchResultGroup {
