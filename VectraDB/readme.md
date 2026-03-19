@@ -1,125 +1,139 @@
 # VectraDB ⚡
 
 > **High-Performance, In-Memory Vector Database written in Go.**
-> *550,000+ Writes/sec | 14,000+ QPS Search | HNSW Indexing*
+> *589 QPS Search | 23ms @ 100K vectors | gRPC + HTTP | WAL + HNSW*
 
-VectraDB is a lightweight, cloud-native vector store designed for AI infrastructure and high-throughput embedding workloads. It leverages **Arena Memory Allocation** to bypass Go's Garbage Collection overhead and implements **IVF (Inverted File Index)** for ultra-fast Approximate Nearest Neighbor (ANN) search.
+VectraDB is a lightweight, cloud-native vector store designed for AI infrastructure and high-throughput embedding workloads (dim=1024). It uses **Arena Memory Allocation** to bypass GC overhead, **HNSW** for O(log N) ANN search, and a **WAL with group commit** for durable writes.
 
-### 🚀 Distributed Mode Available Want to see how this scales? I implemented Multi-Raft Consensus for High Availability and Strong Consistency.
-* **Features:** Leader Election, Log Replication, Fault Tolerance.
-* **Trade-off:** Sacrifices write speed for data safety (CAP Theorem).
-* **View the Code:** [Check out the distributed-consensus branch here.](https://github.com/Rupamthxt/VectraDB/tree/feature/distributed-raft)
+### 🌐 Distributed Mode Available
+Multi-Raft consensus for HA and strong consistency. Leader Election, Log Replication, Fault Tolerance. [View branch →](https://github.com/Rupamthxt/VectraDB/tree/feature/distributed-raft)
 
 ### Architecture
 
 ```mermaid
 graph TD
-    A[Client Request] -->|Insert Vector| B(WAL - Write Ahead Log)
-    B -->|Durability Sync| C{MemTable}
-    C -->|Batch Full| D[Paged Arena Allocator]
-    
-    subgraph "Memory Management"
-    D -->|Alloc 4MB Page| E[Off-Heap Memory Block]
-    E -->|Pointer Arithmetic| F[Vector Node]
-    end
-    
-    subgraph "Indexing"
-    F -->|Insert| G[HNSW Graph Layers]
-    end
-    
+    A[Client] -->|gRPC :50051| B(gRPC Service)
+    A -->|HTTP :8080| C(HTTP Handler)
+    B --> D{CollectionManager}
+    C --> D
+    D -->|WAL group commit| E[WAL fsyncLoop]
+    D -->|Arena alloc| F[Paged Arena Allocator]
+    F --> G[Vector Node]
+    G --> H[HNSW Graph — AVX2 SIMD]
+    E -->|Snapshot| I[Disk — Gob]
+
     style B fill:#f9f,stroke:#333,stroke-width:2px
-    style D fill:#bbf,stroke:#333,stroke-width:2px
+    style E fill:#bbf,stroke:#333,stroke-width:2px
+    style H fill:#bfb,stroke:#333,stroke-width:2px
 ```
 
 ## 🚀 Key Features
 
-* **Zero-Copy Architecture:** Uses a custom memory arena (`[]float32` slab) to minimize GC pauses and maximize CPU cache locality.
-* **HNSW Indexing:** Implements HNSW graph to reduce search complexity from $O(N)$ to $O(N/K)$, achieving **30x speedups** over brute force.
-* **High Concurrency:** Sharded, lock-free read paths achieving linear scaling across CPU cores.
-* **Hybrid Storage:** Hot path for vector math (SIMD-ready) and Cold path for metadata retrieval.
-* **Persistence:** Snapshots to disk (Gob serialization) for crash recovery.
-* **Production Ready:** Dockerized (15MB image) with Multi-Stage builds.
-
-## 🛠️ Architecture
-
-**VectraDB** avoids the common pitfall of storing millions of small structs. Instead, it uses a **Columnar-like memory layout**:
-
-1.  **The Arena:** A contiguous block of memory holding only `float32` vector data. This ensures high cache hit rates during the dot-product loop.
-2.  **The HNSW Index:** An in-memory HNSW index, drastically reducing the search space.
-3.  **The Min-Heap:** A specialized priority queue implementation (zero-allocation) to track "Top-K" results efficiently.
+* **Zero-Copy Arena:** Custom `[]float32` slab — minimizes GC pauses, maximizes CPU cache locality.
+* **HNSW Indexing:** O(log N) ANN search. Configurable M, efMult, efMin via CLI flags.
+* **SIMD Distance (AVX2):** `vek32` dot product — **8.1x** vs scalar (557ns → 69ns/call).
+* **WAL Group Commit:** `fsyncLoop` goroutine coalesces fsyncs — **12.5x** reduction (50 entries → 4 fsyncs).
+* **Native Collections:** `CollectionManager` with WAL-persisted isolation — 0% cross-collection leakage.
+* **gRPC API (:50051):** Protobuf transport, 8.4x lower latency vs HTTP/JSON. Full CRUD + search + chunking.
+* **High Concurrency:** Sharded `RWMutex` — concurrent readers, true Go goroutine parallelism.
+* **Persistence:** WAL + Gob snapshots. **100% crash recovery** validated.
+* **Prometheus Metrics:** `/metrics` on :8080, Grafana-ready.
+* **Python Adapter:** `VectraDBAdapter.py` implements full Cognee `VectorDBInterface` (9 methods, 21 tests).
 
 ## 📊 Benchmarks
 
-Running on standard hardware (M1/M2 or AWS c5.large) with 128-dimensional vectors:
+*Hardware: i7-7700 @ 3.60GHz, Linux 6.8. Vectors: dim=1024. Transport: gRPC.*
 
-| Operation | Throughput | Latency (p99) | Notes |
+### Search
+
+| Scale | p50 latency | QPS | Notes |
 | :--- | :--- | :--- | :--- |
-| **Ingestion** (Write) | **~550,000 ops/sec** | < 0.2ms | Arena allocation speed |
-| **Brute Force Search** | **~430 QPS** | ~10ms | Baseline (100% Recall) |
-| **HNSW Search** | **~14,000 QPS** | **< 0.1ms** | **30x Speedup** (Approximate) |
+| **1K vectors** | **0.99 ms** | **589** | HNSW + AVX2 |
+| **10K vectors** | **7.88 ms** | **480** | +695% scale, +3.7% latency |
+| **100K vectors** | **23.7 ms** | **143** | O(log N) stable |
 
-*Benchmark run with 50,000 vectors, 8 concurrent workers.*
+### Write
+
+| Operation | Throughput | Latency | Notes |
+| :--- | :--- | :--- | :--- |
+| **Insert (gRPC, batch=50)** | **~4,500 dp/s** | 83ms/batch | WAL group commit |
+| **SIMD distance** | — | **69 ns/call** | vek32 AVX2, 8.1x vs scalar |
+
+### vs LanceDB (1.4K real embeddings, GPU)
+
+| Metric | VectraDB | LanceDB | Winner |
+| :--- | :--- | :--- | :--- |
+| Search p50 | **2.6 ms** | 12.9 ms | **VectraDB 4.9x** |
+| Concurrent QPS | **589** | 109 | **VectraDB 5.4x** |
+| Insert dp/s | 591 | **3,911** | LanceDB 6.6x |
+| Crash recovery | **100%** | N/A | VectraDB |
+
+**VectraDB** wins on read-heavy concurrent workloads. **LanceDB** wins on batch ingestion.
 
 ## 📦 Installation & Usage
 
-### 1. Run via Docker (Recommended)
+### Run via Docker (Recommended)
 ```bash
-make docker-run
-# Or manually:
-# docker run -p 8080:8080 -v $(pwd)/data:/root/ vectradb:latest
+docker compose up -d --build
+# VectraDB: http://localhost:8080 | gRPC: localhost:50051
 ```
 
-### 2. Run Locally
+### Run Locally
 ```bash
 make run
+# Flags: --hnsw-m 20 --hnsw-ef-mult 10 --hnsw-ef-min 50
 ```
 
-### 3. API Examples
-#### Insert a Vector:
-```bash 
+### API Examples
+
+#### gRPC (primary)
+```bash
+# Create collection
+grpcurl -plaintext -d '{"name":"my_collection"}' \
+  localhost:50051 vectradb.v1.VectraDBService/CreateCollection
+
+# Insert vectors
+grpcurl -plaintext -d '{"collection":"my_collection","id":"doc_1","vector":[0.1,0.5,0.9],"payload":{"text":"hello"}}' \
+  localhost:50051 vectradb.v1.VectraDBService/Upsert
+
+# Search
+grpcurl -plaintext -d '{"collection":"my_collection","vector":[0.1,0.5,0.8],"k":3}' \
+  localhost:50051 vectradb.v1.VectraDBService/Search
+```
+
+#### HTTP (legacy)
+```bash
 curl -X POST http://localhost:8080/api/v1/insert \
   -H "Content-Type: application/json" \
-  -d '{
-    "id": "user_123",
-    "vector": [0.1, 0.5, 0.9],
-    "metadata": {"role": "engineer"}
-  }'
-```
+  -d '{"id":"user_123","vector":[0.1,0.5,0.9],"metadata":{"role":"engineer"}}'
 
-#### Search:
-```bash
 curl -X POST http://localhost:8080/api/v1/search \
-  -d '{"vector": [0.1, 0.5, 0.8], "k": 3}'
+  -d '{"vector":[0.1,0.5,0.8],"k":3}'
 ```
 
-## 📈 Monitoring & Metrics
+## ⚙️ Configuration
 
-When running the **benchmark** binary you can expose Prometheus metrics
-on `http://localhost:9091/metrics` (port is configurable with `-metrics-port`).  The program instruments:
+| Flag | Default | Description |
+| :--- | :--- | :--- |
+| `--hnsw-m` | `16` | Max connections per node (graph density) |
+| `--hnsw-ef-mult` | `8` | efConstruction multiplier (build quality) |
+| `--hnsw-ef-min` | `32` | Minimum efSearch (query beam width) |
+| `--port` | `8080` | HTTP port |
+| `--grpc-port` | `50051` | gRPC port |
 
-* `vectradb_insert_requests_total`
-* `vectradb_insert_duration_seconds`
-* `vectradb_search_requests_total`
-* `vectradb_search_duration_seconds`
+## 📈 Monitoring
+
+Prometheus metrics at `http://localhost:8080/metrics`:
+
+* `vectradb_insert_requests_total` / `vectradb_insert_duration_seconds`
+* `vectradb_search_requests_total` / `vectradb_search_duration_seconds`
 * `vectradb_vectors_total`
 
-Grafana can scrape Prometheus (configured to target `localhost:9091`) and
-visualize these counters/histograms while the benchmark simulates load.
+## 🧠 Roadmap
 
-```yaml
-# prometheus.yml snippet
-scrape_configs:
-  - job_name: vectradb_bench
-    static_configs:
-      - targets: ['localhost:9091']
-```
-
-The main server (`make run` or `docker-run`) already exposes `/metrics` on
-port `8080` so you can monitor a running cluster as well.
-
-## 🧠 Future Roadmap
-* Add nprobe parameter to search multiple IVF clusters (Trade-off: Speed vs Recall).
-* Implement Product Quantization (PQ) for memory compression.
-* Support gRPC interface for low-latency internal communication.
+* [ ] Product Quantization (PQ) — memory compression for 100M+ vector scale
+* [ ] `nprobe` parameter — multi-cluster IVF search (speed vs recall trade-off)
+* [ ] Horizontal shard scaling — auto-rebalance across nodes
+* [ ] Streaming ingest — reduce WAL fsync tail latency
 
 Built by Rupam as a High-Performance Systems Engineering Portfolio Project.
