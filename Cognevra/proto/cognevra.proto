@@ -70,6 +70,9 @@ service CognevraService {
   // Semantic deduplication (vector cosine similarity)
   rpc SemanticDedup(SemanticDedupReq) returns (SemanticDedupResp);
 
+  // Multi-query search: decompose → parallel search → merge
+  rpc MultiQuerySearch(MultiQuerySearchReq) returns (MultiQuerySearchResp);
+
   // BM25 lexical search + hybrid
   rpc BM25Index(BM25IndexReq) returns (StatusResp);
   rpc BM25Search(BM25SearchReq) returns (BM25SearchResp);
@@ -655,6 +658,29 @@ message SemanticDedupResp {
   repeated string kept_ids = 1;
   repeated string removed_ids = 2;
   int32 duplicates_found = 3;
+}
+
+// Multi-query search
+message MultiQuerySearchReq {
+  string query_text = 1;          // complex query to decompose
+  string collection = 2;
+  int32 top_k = 3;
+  string embed_endpoint = 4;
+  string embed_model = 5;
+}
+
+message MultiQuerySearchResp {
+  repeated string sub_queries = 1;
+  repeated MultiQueryResult results = 2;
+  int32 total_unique = 3;
+}
+
+message MultiQueryResult {
+  string id = 1;
+  float best_score = 2;
+  int32 appearances = 3;
+  double fused_score = 4;
+  string metadata_json = 5;
 }
 
 message LLMCachePutReq {
