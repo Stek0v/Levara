@@ -413,3 +413,58 @@ func (s *Service) SearchTriplets(_ context.Context, req *pb.SearchTripletsReq) (
 		FormattedContext: formatted,
 	}, nil
 }
+
+// DeduplicateGraph removes duplicate nodes/edges and generates triplets.
+// Mirrors Cognee's deduplicate_nodes_and_edges + _create_triplets_from_graph.
+func (s *Service) DeduplicateGraph(_ context.Context, req *pb.DeduplicateGraphReq) (*pb.DeduplicateGraphResp, error) {
+	nodes := make([]graph.DedupNode, len(req.Nodes))
+	for i, n := range req.Nodes {
+		nodes[i] = graph.DedupNode{
+			ID: n.Id, Name: n.Name, Description: n.Description,
+			Type: n.Type, Text: n.Text,
+		}
+	}
+
+	edges := make([]graph.DedupEdge, len(req.Edges))
+	for i, e := range req.Edges {
+		edges[i] = graph.DedupEdge{
+			SourceID: e.SourceId, TargetID: e.TargetId,
+			RelationshipName: e.RelationshipName, EdgeText: e.EdgeText,
+		}
+	}
+
+	result := graph.Deduplicate(nodes, edges)
+
+	// Convert back to proto
+	pbNodes := make([]*pb.DedupNodeMsg, len(result.Nodes))
+	for i, n := range result.Nodes {
+		pbNodes[i] = &pb.DedupNodeMsg{
+			Id: n.ID, Name: n.Name, Description: n.Description,
+			Type: n.Type, Text: n.Text,
+		}
+	}
+
+	pbEdges := make([]*pb.DedupEdgeMsg, len(result.Edges))
+	for i, e := range result.Edges {
+		pbEdges[i] = &pb.DedupEdgeMsg{
+			SourceId: e.SourceID, TargetId: e.TargetID,
+			RelationshipName: e.RelationshipName, EdgeText: e.EdgeText,
+		}
+	}
+
+	pbTriplets := make([]*pb.TripletResult, len(result.Triplets))
+	for i, t := range result.Triplets {
+		pbTriplets[i] = &pb.TripletResult{
+			Id: t.ID, FromNodeId: t.FromNodeID,
+			ToNodeId: t.ToNodeID, Text: t.Text,
+		}
+	}
+
+	return &pb.DeduplicateGraphResp{
+		Nodes:        pbNodes,
+		Edges:        pbEdges,
+		Triplets:     pbTriplets,
+		NodesRemoved: int32(len(req.Nodes) - len(result.Nodes)),
+		EdgesRemoved: int32(len(req.Edges) - len(result.Edges)),
+	}, nil
+}

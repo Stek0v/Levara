@@ -37,6 +37,9 @@ service CognevraService {
   // Triplet search (in-memory graph scoring)
   rpc SearchTriplets(SearchTripletsReq) returns (SearchTripletsResp);
 
+  // Graph deduplication + triplet generation
+  rpc DeduplicateGraph(DeduplicateGraphReq) returns (DeduplicateGraphResp);
+
   // Maintenance
   rpc Compact(Empty) returns (CompactResp);
 }
@@ -322,4 +325,33 @@ message ScoredTriplet {
   string relationship_type = 7;
   string edge_text = 8;
   float score = 9;  // sum of node1_dist + edge_dist + node2_dist
+}
+
+// Graph deduplication
+message DeduplicateGraphReq {
+  repeated DedupNodeMsg nodes = 1;
+  repeated DedupEdgeMsg edges = 2;
+}
+
+message DedupNodeMsg {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  string type = 4;
+  string text = 5;
+}
+
+message DedupEdgeMsg {
+  string source_id = 1;
+  string target_id = 2;
+  string relationship_name = 3;
+  string edge_text = 4;
+}
+
+message DeduplicateGraphResp {
+  repeated DedupNodeMsg nodes = 1;
+  repeated DedupEdgeMsg edges = 2;
+  repeated TripletResult triplets = 3;
+  int32 nodes_removed = 4;
+  int32 edges_removed = 5;
 }
