@@ -39,6 +39,8 @@ const (
 	CognevraService_BatchEmbedAndIndex_FullMethodName      = "/cognevra.v1.CognevraService/BatchEmbedAndIndex"
 	CognevraService_BatchWriteGraph_FullMethodName         = "/cognevra.v1.CognevraService/BatchWriteGraph"
 	CognevraService_ParallelWriteDataPoints_FullMethodName = "/cognevra.v1.CognevraService/ParallelWriteDataPoints"
+	CognevraService_SearchByText_FullMethodName            = "/cognevra.v1.CognevraService/SearchByText"
+	CognevraService_BatchSearchByText_FullMethodName       = "/cognevra.v1.CognevraService/BatchSearchByText"
 	CognevraService_Compact_FullMethodName                 = "/cognevra.v1.CognevraService/Compact"
 )
 
@@ -79,6 +81,9 @@ type CognevraServiceClient interface {
 	BatchWriteGraph(ctx context.Context, in *BatchWriteGraphReq, opts ...grpc.CallOption) (*BatchWriteGraphResp, error)
 	// Parallel write: dedup + Neo4j + embed + vector index in one call
 	ParallelWriteDataPoints(ctx context.Context, in *ParallelWriteReq, opts ...grpc.CallOption) (*ParallelWriteResp, error)
+	// End-to-end text search: embed query + vector search in one call (no Python roundtrip)
+	SearchByText(ctx context.Context, in *SearchByTextReq, opts ...grpc.CallOption) (*SearchResp, error)
+	BatchSearchByText(ctx context.Context, in *BatchSearchByTextReq, opts ...grpc.CallOption) (*BatchSearchByTextResp, error)
 	// Maintenance
 	Compact(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*CompactResp, error)
 }
@@ -291,6 +296,26 @@ func (c *cognevraServiceClient) ParallelWriteDataPoints(ctx context.Context, in 
 	return out, nil
 }
 
+func (c *cognevraServiceClient) SearchByText(ctx context.Context, in *SearchByTextReq, opts ...grpc.CallOption) (*SearchResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SearchResp)
+	err := c.cc.Invoke(ctx, CognevraService_SearchByText_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *cognevraServiceClient) BatchSearchByText(ctx context.Context, in *BatchSearchByTextReq, opts ...grpc.CallOption) (*BatchSearchByTextResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(BatchSearchByTextResp)
+	err := c.cc.Invoke(ctx, CognevraService_BatchSearchByText_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *cognevraServiceClient) Compact(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*CompactResp, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(CompactResp)
@@ -338,6 +363,9 @@ type CognevraServiceServer interface {
 	BatchWriteGraph(context.Context, *BatchWriteGraphReq) (*BatchWriteGraphResp, error)
 	// Parallel write: dedup + Neo4j + embed + vector index in one call
 	ParallelWriteDataPoints(context.Context, *ParallelWriteReq) (*ParallelWriteResp, error)
+	// End-to-end text search: embed query + vector search in one call (no Python roundtrip)
+	SearchByText(context.Context, *SearchByTextReq) (*SearchResp, error)
+	BatchSearchByText(context.Context, *BatchSearchByTextReq) (*BatchSearchByTextResp, error)
 	// Maintenance
 	Compact(context.Context, *Empty) (*CompactResp, error)
 	mustEmbedUnimplementedCognevraServiceServer()
@@ -409,6 +437,12 @@ func (UnimplementedCognevraServiceServer) BatchWriteGraph(context.Context, *Batc
 }
 func (UnimplementedCognevraServiceServer) ParallelWriteDataPoints(context.Context, *ParallelWriteReq) (*ParallelWriteResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method ParallelWriteDataPoints not implemented")
+}
+func (UnimplementedCognevraServiceServer) SearchByText(context.Context, *SearchByTextReq) (*SearchResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method SearchByText not implemented")
+}
+func (UnimplementedCognevraServiceServer) BatchSearchByText(context.Context, *BatchSearchByTextReq) (*BatchSearchByTextResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method BatchSearchByText not implemented")
 }
 func (UnimplementedCognevraServiceServer) Compact(context.Context, *Empty) (*CompactResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method Compact not implemented")
@@ -794,6 +828,42 @@ func _CognevraService_ParallelWriteDataPoints_Handler(srv interface{}, ctx conte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _CognevraService_SearchByText_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SearchByTextReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CognevraServiceServer).SearchByText(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CognevraService_SearchByText_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CognevraServiceServer).SearchByText(ctx, req.(*SearchByTextReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _CognevraService_BatchSearchByText_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BatchSearchByTextReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CognevraServiceServer).BatchSearchByText(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CognevraService_BatchSearchByText_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CognevraServiceServer).BatchSearchByText(ctx, req.(*BatchSearchByTextReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _CognevraService_Compact_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(Empty)
 	if err := dec(in); err != nil {
@@ -898,6 +968,14 @@ var CognevraService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ParallelWriteDataPoints",
 			Handler:    _CognevraService_ParallelWriteDataPoints_Handler,
+		},
+		{
+			MethodName: "SearchByText",
+			Handler:    _CognevraService_SearchByText_Handler,
+		},
+		{
+			MethodName: "BatchSearchByText",
+			Handler:    _CognevraService_BatchSearchByText_Handler,
 		},
 		{
 			MethodName: "Compact",

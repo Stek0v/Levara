@@ -49,6 +49,10 @@ service CognevraService {
   // Parallel write: dedup + Neo4j + embed + vector index in one call
   rpc ParallelWriteDataPoints(ParallelWriteReq) returns (ParallelWriteResp);
 
+  // End-to-end text search: embed query + vector search in one call (no Python roundtrip)
+  rpc SearchByText(SearchByTextReq) returns (SearchResp);
+  rpc BatchSearchByText(BatchSearchByTextReq) returns (BatchSearchByTextResp);
+
   // Maintenance
   rpc Compact(Empty) returns (CompactResp);
 }
@@ -462,4 +466,30 @@ message ParallelWriteResp {
   int64 total_ms = 13;
   // Errors
   repeated string errors = 14;
+}
+
+// End-to-end text search
+message SearchByTextReq {
+  string collection = 1;
+  string query_text = 2;
+  int32 top_k = 3;
+  string embed_endpoint = 4;  // e.g. "http://localhost:9001/v1/embeddings"
+  string embed_model = 5;
+}
+
+message BatchSearchByTextReq {
+  string collection = 1;
+  repeated string queries = 2;
+  int32 top_k = 3;
+  string embed_endpoint = 4;
+  string embed_model = 5;
+}
+
+message BatchSearchByTextResp {
+  repeated SearchResultGroup results = 1;
+}
+
+message SearchResultGroup {
+  string query = 1;
+  repeated SearchResult results = 2;
 }
