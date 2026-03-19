@@ -1620,10 +1620,15 @@ func (s *Service) ExtractText(_ context.Context, req *pb.ExtractTextReq) (*pb.Ex
 		return nil, status.Errorf(codes.Internal, "extract: %v", err)
 	}
 
-	return &pb.ExtractTextResp{
+	resp := &pb.ExtractTextResp{
 		Text:      result.Text,
 		Format:    result.Format,
 		Pages:     int32(result.Pages),
 		ExtractMs: result.ExtractMs,
-	}, nil
+		Warnings:  result.Warnings,
+	}
+	if req.IncludeMarkdown {
+		resp.Markdown = result.Markdown
+	}
+	return resp, nil
 }

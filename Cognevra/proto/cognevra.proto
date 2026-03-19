@@ -726,18 +726,21 @@ message IngestResult {
   bool already_exists = 8;    // true if hash already seen (dedup)
 }
 
-// Text extraction
+// Text extraction (tabula: PDF, DOCX, PPTX, XLSX, HTML, EPUB)
 message ExtractTextReq {
   bytes file_data = 1;
   string filename = 2;
   string mime_type = 3;
+  bool include_markdown = 4;  // also return markdown version
 }
 
 message ExtractTextResp {
   string text = 1;
-  string format = 2;
-  int32 pages = 3;
-  int64 extract_ms = 4;
+  string markdown = 2;        // markdown-formatted version (if requested)
+  string format = 3;
+  int32 pages = 4;
+  int64 extract_ms = 5;
+  repeated string warnings = 6;
 }
 
 message LLMCachePutReq {
