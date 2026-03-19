@@ -11,6 +11,7 @@ import (
 	"github.com/rupamthxt/cognevra/pkg/aggregator"
 	"github.com/rupamthxt/cognevra/pkg/chunker"
 	"github.com/rupamthxt/cognevra/pkg/fileio"
+	"github.com/rupamthxt/cognevra/pkg/graph"
 	pb "github.com/rupamthxt/cognevra/proto/pb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -343,4 +344,72 @@ func (s *Service) Compact(_ context.Context, _ *pb.Empty) (*pb.CompactResp, erro
 		resp.Error = err.Error()
 	}
 	return resp, nil
+}
+
+// SearchTriplets performs in-memory triplet search scoring on a pre-loaded graph.
+// The caller supplies the graph structure + vector distances from DB search;
+// Go does the scoring and top-k selection (100-400x faster than Python).
+func (s *Service) SearchTriplets(_ context.Context, req *pb.SearchTripletsReq) (*pb.SearchTripletsResp, error) {
+	penalty := req.DistancePenalty
+	if penalty <= 0 {
+		penalty = graph.DefaultDistancePenalty
+	}
+	topK := int(req.TopK)
+	if topK <= 0 {
+		topK = 5
+	}
+
+	// Build in-memory graph
+	g := graph.NewGraph(penalty)
+
+	for _, n := range req.Nodes {
+		g.AddNode(n.Id, n.Name, n.Description, n.Type, n.Text)
+	}
+	for _, e := range req.Edges {
+		g.AddEdge(e.Node1Id, e.Node2Id, e.RelationshipType, e.EdgeText, e.EdgeTypeId)
+	}
+
+	// Map node distances (from multiple collections)
+	for _, coll := range req.NodeDistances {
+		entries := make([]graph.DistanceEntry, len(coll.Entries))
+		for i, e := range coll.Entries {
+			entries[i] = graph.DistanceEntry{ID: e.Id, Distance: e.Distance}
+		}
+		g.MapNodeDistances(entries)
+	}
+
+	// Map edge distances
+	if len(req.EdgeDistances) > 0 {
+		entries := make([]graph.DistanceEntry, len(req.EdgeDistances))
+		for i, e := range req.EdgeDistances {
+			entries[i] = graph.DistanceEntry{ID: e.Id, Distance: e.Distance}
+		}
+		g.MapEdgeDistances(entries)
+	}
+
+	// Score and rank
+	results := g.SearchTopK(topK)
+
+	// Convert to proto
+	triplets := make([]*pb.ScoredTriplet, len(results))
+	for i, r := range results {
+		triplets[i] = &pb.ScoredTriplet{
+			Node1Id:          r.Node1.ID,
+			Node1Name:        r.Node1.Name,
+			Node1Description: r.Node1.Description,
+			Node2Id:          r.Node2.ID,
+			Node2Name:        r.Node2.Name,
+			Node2Description: r.Node2.Description,
+			RelationshipType: r.Edge.RelationshipType,
+			EdgeText:         r.Edge.EdgeText,
+			Score:            r.Score,
+		}
+	}
+
+	formatted := graph.FormatTriplets(results)
+
+	return &pb.SearchTripletsResp{
+		Triplets:         triplets,
+		FormattedContext: formatted,
+	}, nil
 }

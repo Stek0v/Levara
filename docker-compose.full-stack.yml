@@ -16,12 +16,14 @@ services:
       - LLM_MODEL=${LLM_MODEL:-qwen}
       - LLM_PROVIDER=${LLM_PROVIDER:-llama_cpp}
       - LLM_ENDPOINT=${LLM_ENDPOINT:-http://10.23.0.64:9004/v1}
+      - LLM_INSTRUCTOR_MODE=${LLM_INSTRUCTOR_MODE:-json_schema_mode}
       - LLM_API_VERSION=${LLM_API_VERSION:-}
       # Embedding → embed-server on GPU server
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-openai/text-embedding-3-small}
       - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-openai}
       - EMBEDDING_ENDPOINT=${EMBEDDING_ENDPOINT:-http://10.23.0.64:9001/v1}
       - EMBEDDING_DIMENSIONS=${EMBEDDING_DIMENSIONS:-1024}
+      - HUGGINGFACE_TOKENIZER=${HUGGINGFACE_TOKENIZER:-Qwen/Qwen3-0.6B}
       # PostgreSQL
       - DB_PROVIDER=postgres
       - DB_HOST=postgres
@@ -36,9 +38,9 @@ services:
       - GRAPH_DATABASE_USERNAME=neo4j
       - GRAPH_DATABASE_PASSWORD=${NEO4J_PASSWORD:-pleaseletmein}
       - GRAPH_DATASET_DATABASE_HANDLER=neo4j_aura_dev
-      # Cognevra
+      # Cognevra (gRPC adapter — URL without http://)
       - VECTOR_DB_PROVIDER=cognevra
-      - VECTOR_DB_URL=http://cognevra:8080
+      - VECTOR_DB_URL=cognevra:50051
       - VECTOR_DB_KEY=${VECTOR_DB_KEY:-}
       # Redis
       - REDIS_URL=redis://redis:6379
@@ -84,9 +86,10 @@ services:
     build: ./Cognevra
     ports:
       - "8080:8080"
+      - "50051:50051"
     volumes:
       - cognevra-data:/app/data
-    command: ["./cognevra", "-bootstrap=true", "-dim=${COGNEVRA_DIM:-${EMBEDDING_DIMENSIONS:-1024}}", "-shards=${COGNEVRA_SHARDS:-3}", "-port=8080"]
+    command: ["./cognevra", "-bootstrap=true", "-dim=${COGNEVRA_DIM:-${EMBEDDING_DIMENSIONS:-1024}}", "-shards=${COGNEVRA_SHARDS:-3}", "-port=8080", "-grpc-port=50051"]
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/metrics"]
       interval: 10s
