@@ -44,19 +44,19 @@ import (
 
 	"github.com/hashicorp/raft"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/rupamthxt/cognevra/internal/cluster"
-	vectorGrpc "github.com/rupamthxt/cognevra/internal/grpc"
-	"github.com/rupamthxt/cognevra/internal/store"
-	"github.com/rupamthxt/cognevra/pkg/llmcache"
-	"github.com/rupamthxt/cognevra/pkg/llmproxy"
-	pb "github.com/rupamthxt/cognevra/proto/pb"
+	"github.com/stek0v/cognevra/internal/cluster"
+	vectorGrpc "github.com/stek0v/cognevra/internal/grpc"
+	"github.com/stek0v/cognevra/internal/store"
+	"github.com/stek0v/cognevra/pkg/llmcache"
+	"github.com/stek0v/cognevra/pkg/llmproxy"
+	pb "github.com/stek0v/cognevra/proto/pb"
 	"google.golang.org/grpc"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/adaptor"
 	"github.com/gofiber/fiber/v2/middleware/logger"
 
-	vectorHttp "github.com/rupamthxt/cognevra/internal/http"
+	vectorHttp "github.com/stek0v/cognevra/internal/http"
 )
 
 func main() {

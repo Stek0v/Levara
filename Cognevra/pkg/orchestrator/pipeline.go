@@ -25,11 +25,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/rupamthxt/cognevra/pkg/chunker"
-	"github.com/rupamthxt/cognevra/pkg/graph"
-	"github.com/rupamthxt/cognevra/pkg/graphdb"
-	"github.com/rupamthxt/cognevra/internal/store"
-	"github.com/rupamthxt/cognevra/pkg/embed"
+	"github.com/stek0v/cognevra/pkg/chunker"
+	"github.com/stek0v/cognevra/pkg/graph"
+	"github.com/stek0v/cognevra/pkg/graphdb"
+	"github.com/stek0v/cognevra/internal/store"
+	"github.com/stek0v/cognevra/pkg/embed"
 )
 
 // Config for the pipeline.
