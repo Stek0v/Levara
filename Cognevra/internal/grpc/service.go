@@ -1585,8 +1585,24 @@ func (s *Service) IngestData(ctx context.Context, req *pb.IngestDataReq) (*pb.In
 		}
 	}
 
-	return &pb.IngestDataResp{
+	resp := &pb.IngestDataResp{
 		Results: pbResults,
 		TotalMs: time.Since(start).Milliseconds(),
-	}, nil
+	}
+
+	// Optional: write metadata to PostgreSQL
+	if req.PostgresDsn != "" && req.OwnerId != "" {
+		mw, err := ingest.NewMetadataWriter(req.PostgresDsn)
+		if err == nil {
+			defer mw.Close()
+			n, err := mw.WriteMetadata(ctx, results, req.OwnerId, req.DatasetId, req.DatasetName)
+			if err == nil {
+				resp.DbRowsWritten = int32(n)
+				resp.DatasetId = req.DatasetId
+			}
+		}
+	}
+
+	resp.TotalMs = time.Since(start).Milliseconds()
+	return resp, nil
 }

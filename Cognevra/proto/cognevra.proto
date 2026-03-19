@@ -690,6 +690,11 @@ message MultiQueryResult {
 message IngestDataReq {
   repeated IngestItem items = 1;
   string storage_path = 2;  // base directory for file storage
+  // Optional: PostgreSQL for metadata persistence
+  string postgres_dsn = 3;  // e.g. "postgres://cognee:cognee@localhost:5433/cognee_db"
+  string owner_id = 4;      // user UUID
+  string dataset_id = 5;    // dataset UUID
+  string dataset_name = 6;
 }
 
 message IngestItem {
@@ -703,6 +708,8 @@ message IngestItem {
 message IngestDataResp {
   repeated IngestResult results = 1;
   int64 total_ms = 2;
+  int32 db_rows_written = 3;  // metadata rows written to PostgreSQL
+  string dataset_id = 4;      // resolved dataset UUID
 }
 
 message IngestResult {
