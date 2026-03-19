@@ -7,7 +7,7 @@ Usage:
     # Against LanceDB (default Cognee)
     python benchmarks/cognevra_vs_lancedb.py --provider=lancedb
 
-    # Against Cognevra (start server first: cd VectraDB && make run)
+    # Against Cognevra (start server first: cd Cognevra && make run)
     python benchmarks/cognevra_vs_lancedb.py --provider=cognevra --cognevra-url=http://localhost:8080
 
     # Both in sequence and compare
@@ -17,7 +17,7 @@ Prerequisites:
     pip install cognee numpy tqdm
 
 For Cognevra, start the server with matching vector dimension:
-    cd VectraDB && ./cognevra -bootstrap=true -dim=384
+    cd Cognevra && ./cognevra -bootstrap=true -dim=384
 """
 
 import argparse
