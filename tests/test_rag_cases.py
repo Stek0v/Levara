@@ -11,7 +11,7 @@ Tests here target vector DB layer (no LLM required):
 
 Requires:
   - embed-server on :9001 (pplx-embed-context-v1-0.6b, dim=1024)
-  - VectraDB on :8080 (dim=1024, 3 shards)
+  - Cognevra on :8080 (dim=1024, 3 shards)
 
 Run:
     pytest tests/test_rag_cases.py -v -s
@@ -43,7 +43,7 @@ import pytest
 
 BOOK_PATH = Path(__file__).parent.parent / "Edvards_Dzanet_Uragan_r4_P61XH.txt"
 EMBED_URL = "http://localhost:9001/v1/embeddings"
-VECTRA_URL = "http://localhost:8080"
+COGNEVRA_URL = "http://localhost:8080"
 EMBED_MODEL = "pplx-embed-context-v1-0.6b"
 DIM = 1024
 MIN_CHUNK_CHARS = 80
@@ -154,39 +154,39 @@ async def embed_texts(session: aiohttp.ClientSession,
     return all_vecs
 
 
-# ── VectraDB helpers ──────────────────────────────────────────────────────────
+# ── Cognevra helpers ──────────────────────────────────────────────────────────
 
 
-async def vectra_insert(session: aiohttp.ClientSession,
+async def cognevra_insert(session: aiohttp.ClientSession,
                         records: List[Dict]) -> Dict:
     async with session.post(
-        f"{VECTRA_URL}/api/v1/batch_insert", json={"records": records}
+        f"{COGNEVRA_URL}/api/v1/batch_insert", json={"records": records}
     ) as r:
         r.raise_for_status()
         return await r.json()
 
 
-async def vectra_search(session: aiohttp.ClientSession,
+async def cognevra_search(session: aiohttp.ClientSession,
                         vector: List[float], k: int = K) -> List[Dict]:
     async with session.post(
-        f"{VECTRA_URL}/api/v1/search", json={"vector": vector, "k": k}
+        f"{COGNEVRA_URL}/api/v1/search", json={"vector": vector, "k": k}
     ) as r:
         r.raise_for_status()
         data = await r.json()
     return data.get("results", [])
 
 
-async def vectra_delete(session: aiohttp.ClientSession,
+async def cognevra_delete(session: aiohttp.ClientSession,
                         ids: List[str]) -> Dict:
     async with session.post(
-        f"{VECTRA_URL}/api/v1/delete", json={"ids": ids}
+        f"{COGNEVRA_URL}/api/v1/delete", json={"ids": ids}
     ) as r:
         r.raise_for_status()
         return await r.json()
 
 
 def _extract_text(result: Dict) -> str:
-    """Extract text from VectraDB or LanceDB result."""
+    """Extract text from Cognevra or LanceDB result."""
     meta = result.get("metadata", result.get("payload", {}))
     if isinstance(meta, str):
         try:
@@ -360,7 +360,7 @@ def _check(url):
 pytestmark = pytest.mark.skipif(
     not (_check("http://localhost:9001/health")
          and _check("http://localhost:8080/metrics")),
-    reason="Need embed-server:9001 + VectraDB:8080",
+    reason="Need embed-server:9001 + Cognevra:8080",
 )
 
 
@@ -391,7 +391,7 @@ def book_data():
 
 @pytest.fixture(scope="module")
 def inserted_data(book_data):
-    """Insert book data into VectraDB and LanceDB, return handles."""
+    """Insert book data into Cognevra and LanceDB, return handles."""
     chunks, vecs, q_vecs = book_data
     N = len(chunks)
 
@@ -404,7 +404,7 @@ def inserted_data(book_data):
                     "metadata": {"text": chunks[i]["text"][:500],
                                  "chapter": chunks[i]["chapter"]},
                 } for i in range(start, min(start + 50, N))]
-                await vectra_insert(session, batch)
+                await cognevra_insert(session, batch)
         # Wait for HNSW indexer
         await asyncio.sleep(2)
 
@@ -438,7 +438,7 @@ def inserted_data(book_data):
 
     lance_tbl = asyncio.run(_insert_lance())
 
-    print(f"  Inserted {N} chunks into VectraDB and LanceDB")
+    print(f"  Inserted {N} chunks into Cognevra and LanceDB")
     return {
         "chunks": chunks,
         "vecs": vecs,
@@ -494,9 +494,9 @@ class TestRAGCases:
         v_full_hits, l_full_hits = 0, 0
 
         for q, qv in zip(MULTIHOP_QUERIES, mh_vecs):
-            # -- VectraDB --
+            # -- Cognevra --
             async with aiohttp.ClientSession() as session:
-                v_results = await vectra_search(session, qv, k=K)
+                v_results = await cognevra_search(session, qv, k=K)
             v_text = " ".join(
                 _extract_text(r) for r in v_results
             ).lower()
@@ -532,7 +532,7 @@ class TestRAGCases:
 
         print(f"\n  {'Provider':<35} {'Full hits':>10} {'Rate':>8}")
         print(f"  {'-'*58}")
-        print(f"  {'VectraDB':<35} {v_full_hits:>5}/{n}    {v_rate:>7.0%}")
+        print(f"  {'Cognevra':<35} {v_full_hits:>5}/{n}    {v_rate:>7.0%}")
         print(f"  {'LanceDB':<35} {l_full_hits:>5}/{n}    {l_rate:>7.0%}")
 
         # At least some multi-hop queries should succeed
@@ -557,11 +557,11 @@ class TestRAGCases:
               f"({len(QUERIES)} queries, 500 noise chunks)")
         print("=" * 72)
 
-        # -- Baseline hit rate (VectraDB) --
+        # -- Baseline hit rate (Cognevra) --
         v_hits_clean = 0
         async with aiohttp.ClientSession() as session:
             for cq, qv in zip(QUERIES, q_vecs):
-                results = await vectra_search(session, qv, k=K)
+                results = await cognevra_search(session, qv, k=K)
                 combined = " ".join(
                     _extract_text(r) for r in results
                 ).lower()
@@ -619,7 +619,7 @@ class TestRAGCases:
                             "chapter": -1,
                         },
                     })
-                await vectra_insert(session, batch)
+                await cognevra_insert(session, batch)
 
         await asyncio.sleep(2)  # Let HNSW index
 
@@ -627,7 +627,7 @@ class TestRAGCases:
         v_hits_noisy = 0
         async with aiohttp.ClientSession() as session:
             for cq, qv in zip(QUERIES, q_vecs):
-                results = await vectra_search(session, qv, k=K)
+                results = await cognevra_search(session, qv, k=K)
                 combined = " ".join(
                     _extract_text(r) for r in results
                 ).lower()
@@ -650,7 +650,7 @@ class TestRAGCases:
             for start in range(0, len(noise_ids), 50):
                 batch_ids = noise_ids[start:start + 50]
                 try:
-                    await vectra_delete(session, batch_ids)
+                    await cognevra_delete(session, batch_ids)
                 except Exception:
                     pass  # Best-effort cleanup
 
@@ -708,12 +708,12 @@ class TestRAGCases:
                                 "chapter": chunks[i]["chapter"],
                             },
                         })
-                    await vectra_insert(session, batch)
+                    await cognevra_insert(session, batch)
 
         # Insert needle
         needle_id = f"needle:{uuid.uuid4()}"
         async with aiohttp.ClientSession() as session:
-            await vectra_insert(session, [{
+            await cognevra_insert(session, [{
                 "id": needle_id,
                 "vector": needle_vec,
                 "metadata": {"text": NEEDLE_TEXT, "chapter": 99},
@@ -725,9 +725,9 @@ class TestRAGCases:
 
         await asyncio.sleep(3)  # Let HNSW index all new vectors
 
-        # -- Search for needle (VectraDB) --
+        # -- Search for needle (Cognevra) --
         async with aiohttp.ClientSession() as session:
-            results = await vectra_search(session, needle_query_vec, k=K)
+            results = await cognevra_search(session, needle_query_vec, k=K)
 
         found_positions = []
         for i, r in enumerate(results):
@@ -739,7 +739,7 @@ class TestRAGCases:
         in_top5 = any(p <= 5 for p in found_positions)
         in_top10 = any(p <= 10 for p in found_positions)
 
-        print(f"  VectraDB needle positions: "
+        print(f"  Cognevra needle positions: "
               f"{found_positions or 'NOT FOUND'}")
         print(f"  In top-1:  {'YES' if in_top1 else 'NO'}")
         print(f"  In top-5:  {'YES' if in_top5 else 'NO'}")
@@ -811,12 +811,12 @@ class TestRAGCases:
         print(f"\n  LanceDB needle positions: {l_found or 'NOT FOUND'}")
         print(f"  LanceDB in top-10: {'YES' if l_in_top10 else 'NO'}")
 
-        # -- Cleanup padding + needle from VectraDB --
+        # -- Cleanup padding + needle from Cognevra --
         async with aiohttp.ClientSession() as session:
             all_cleanup = padding_ids + [needle_id]
             for start in range(0, len(all_cleanup), 50):
                 try:
-                    await vectra_delete(
+                    await cognevra_delete(
                         session, all_cleanup[start:start + 50]
                     )
                 except Exception:
@@ -858,8 +858,8 @@ class TestRAGCases:
             v_hits, l_hits = 0, 0
             async with aiohttp.ClientSession() as session:
                 for cq, qv in zip(queries, query_vecs):
-                    # VectraDB
-                    results = await vectra_search(session, qv, k=K)
+                    # Cognevra
+                    results = await cognevra_search(session, qv, k=K)
                     v_text = " ".join(
                         _extract_text(r) for r in results
                     ).lower()
@@ -879,7 +879,7 @@ class TestRAGCases:
             n = len(queries)
             v_rate = v_hits / n if n else 0
             l_rate = l_hits / n if n else 0
-            print(f"  {label:<20} VectraDB: {v_hits}/{n} ({v_rate:.0%})  "
+            print(f"  {label:<20} Cognevra: {v_hits}/{n} ({v_rate:.0%})  "
                   f"LanceDB: {l_hits}/{n} ({l_rate:.0%})")
             return v_rate, l_rate
 
@@ -892,13 +892,13 @@ class TestRAGCases:
         # Cross-lingual gap
         if ru_v > 0:
             gap_v = (ru_v - en_v) / ru_v
-            print(f"\n  Cross-lingual gap (VectraDB): {gap_v:.0%}")
+            print(f"\n  Cross-lingual gap (Cognevra): {gap_v:.0%}")
         if ru_l > 0:
             gap_l = (ru_l - en_l) / ru_l
             print(f"  Cross-lingual gap (LanceDB):  {gap_l:.0%}")
 
         print(f"\n  Expected: RU > Mixed >= EN")
-        print(f"  VectraDB: {ru_v:.0%} > {mx_v:.0%} >= {en_v:.0%}")
+        print(f"  Cognevra: {ru_v:.0%} > {mx_v:.0%} >= {en_v:.0%}")
         print(f"  LanceDB:  {ru_l:.0%} > {mx_l:.0%} >= {en_l:.0%}")
 
         # RU baseline should be decent
@@ -928,7 +928,7 @@ class TestRAGCases:
         v_hits_clean, l_hits_clean = 0, 0
         async with aiohttp.ClientSession() as session:
             for cq, qv in zip(QUERIES, q_vecs):
-                results = await vectra_search(session, qv, k=K)
+                results = await cognevra_search(session, qv, k=K)
                 combined = " ".join(
                     _extract_text(r) for r in results
                 ).lower()
@@ -957,7 +957,7 @@ class TestRAGCases:
         v_hits_typo, l_hits_typo = 0, 0
         async with aiohttp.ClientSession() as session:
             for cq, qv in zip(TYPO_QUERIES, typo_vecs):
-                results = await vectra_search(session, qv, k=K)
+                results = await cognevra_search(session, qv, k=K)
                 combined = " ".join(
                     _extract_text(r) for r in results
                 ).lower()
@@ -986,7 +986,7 @@ class TestRAGCases:
         v_hits_tr, l_hits_tr = 0, 0
         async with aiohttp.ClientSession() as session:
             for cq, qv in zip(TRANSLIT_QUERIES, translit_vecs):
-                results = await vectra_search(session, qv, k=K)
+                results = await cognevra_search(session, qv, k=K)
                 combined = " ".join(
                     _extract_text(r) for r in results
                 ).lower()
@@ -1020,7 +1020,7 @@ class TestRAGCases:
         else:
             typo_deg_l = translit_deg_l = 0
 
-        print(f"\n  {'Metric':<30} {'VectraDB':>10} {'LanceDB':>10}")
+        print(f"\n  {'Metric':<30} {'Cognevra':>10} {'LanceDB':>10}")
         print(f"  {'-'*55}")
         print(f"  {'Typo degradation':<30} "
               f"{typo_deg_v:>9.0%} {typo_deg_l:>9.0%}")

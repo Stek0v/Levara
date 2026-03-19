@@ -1,15 +1,15 @@
 """
-Comprehensive integration test for VectraDBAdapter.
+Comprehensive integration test for CognevraAdapter.
 
 Tests correctness, data consistency, and performance against a book-scale
 dataset (~500 text chunks from a synthesised "document").  Also benchmarks
-VectraDB adapter vs. the reference Cognee provider (in-memory baseline that
+Cognevra adapter vs. the reference Cognee provider (in-memory baseline that
 mirrors what LanceDB does) so you can see the relative speed difference.
 
 Run:
-    pytest tests/test_vectradb_integration.py -v -s          # full output
-    pytest tests/test_vectradb_integration.py -v -s -k perf  # perf only
-    pytest tests/test_vectradb_integration.py -v -s -k consistency  # correctness
+    pytest tests/test_cognevra_integration.py -v -s          # full output
+    pytest tests/test_cognevra_integration.py -v -s -k perf  # perf only
+    pytest tests/test_cognevra_integration.py -v -s -k consistency  # correctness
 """
 
 from __future__ import annotations
@@ -26,8 +26,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from cognee.infrastructure.databases.vector.vectradb.VectraDBAdapter import (
-    VectraDBAdapter,
+from cognee.infrastructure.databases.vector.cognevra.CognevraAdapter import (
+    CognevraAdapter,
     _serialize_for_json,
 )
 from cognee.infrastructure.databases.exceptions import MissingQueryParameterError
@@ -38,7 +38,7 @@ ScoredResult = sys.modules[
     "cognee.infrastructure.databases.vector.models.ScoredResult"
 ].ScoredResult
 
-pb = sys.modules["cognee.infrastructure.databases.vector.vectradb.generated.vectradb_pb2"]
+pb = sys.modules["cognee.infrastructure.databases.vector.cognevra.generated.cognevra_pb2"]
 
 
 # ── Constants ──────────────────────────────────────────────────────────────────
@@ -50,15 +50,15 @@ N_BOOK_CHUNKS = 500  # chunks that simulate a full novel
 # ─────────────────────────────────────────────────────────────────────────────
 # GrpcMockServer
 # An in-process gRPC stub mock that implements the same async interface as the
-# real VectraDBServiceStub so that adapter._stub = server is sufficient.
+# real CognevraServiceStub so that adapter._stub = server is sufficient.
 # ─────────────────────────────────────────────────────────────────────────────
 
 class GrpcMockServer:
     """
-    In-process mock of VectraDB gRPC service.
+    In-process mock of Cognevra gRPC service.
     - Stores vectors and metadata in-memory, scoped per collection.
     - Search performs brute-force cosine similarity within the requested collection.
-    - Implements same async interface as VectraDBServiceStub.
+    - Implements same async interface as CognevraServiceStub.
     """
 
     def __init__(self):
@@ -168,7 +168,7 @@ class GrpcMockServer:
 # ─────────────────────────────────────────────────────────────────────────────
 # ReferenceAdapter
 # Pure-Python in-memory adapter that mirrors what a naive provider does.
-# Used as a baseline to measure VectraDB adapter overhead / advantage.
+# Used as a baseline to measure Cognevra adapter overhead / advantage.
 # ─────────────────────────────────────────────────────────────────────────────
 
 class ReferenceAdapter:
@@ -303,10 +303,10 @@ class _BookDataPoint(_DataPoint):
 def _make_adapter_with_server(
     server: GrpcMockServer,
     engine=None,
-) -> VectraDBAdapter:
+) -> CognevraAdapter:
     if engine is None:
         engine = _make_embedding_engine()
-    adapter = VectraDBAdapter(
+    adapter = CognevraAdapter(
         url="localhost:50051",
         api_key=None,
         embedding_engine=engine,
@@ -687,7 +687,7 @@ class TestDataConsistency:
 
 class TestPerformance:
     """
-    Compares VectraDBAdapter vs. the Reference (in-memory baseline) on
+    Compares CognevraAdapter vs. the Reference (in-memory baseline) on
     book-scale workloads.  Results printed to stdout with -s flag.
 
     What we measure:
@@ -697,13 +697,13 @@ class TestPerformance:
 
     Architecture note on expected results
     ──────────────────────────────────────
-    VectraDB advantage:
+    Cognevra advantage:
         • Concurrent inserts via asyncio.gather (one gRPC call per batch,
           fully pipelined)
         • Lock-free HNSW reads → low search latency under concurrent load
         • Persistence: data survives process restart (Sled/BadgerDB backend)
 
-    VectraDB limitation (current implementation):
+    Cognevra limitation (current implementation):
         • Raft consensus on write: adds ~1–10 ms per insert in production
         • Collection isolation is server-side (native collections)
 
@@ -713,10 +713,10 @@ class TestPerformance:
 
     @pytest.mark.asyncio
     async def test_insert_throughput_comparison(self):
-        """Measure inserts/second: VectraDBAdapter vs. Reference."""
+        """Measure inserts/second: CognevraAdapter vs. Reference."""
 
         print("\n" + "═" * 65)
-        print("  INSERT THROUGHPUT — VectraDB Adapter vs. Reference")
+        print("  INSERT THROUGHPUT — Cognevra Adapter vs. Reference")
         print("═" * 65)
 
         N = N_BOOK_CHUNKS
@@ -727,7 +727,7 @@ class TestPerformance:
         texts = [c["text"] for c in chunks]
         all_vectors = await _embed_all(engine, texts)
 
-        # ── VectraDB Adapter ──
+        # ── Cognevra Adapter ──
         # Inject pre-computed vectors via mock engine so embedding doesn't skew timing.
         fast_engine = MagicMock()
         vec_iter = iter(all_vectors)
@@ -746,8 +746,8 @@ class TestPerformance:
         BATCH = 50
         for start in range(0, N, BATCH):
             await adapter.create_data_points("perf_book", dps[start:start + BATCH])
-        t_vectra = time.perf_counter() - t0
-        vectra_throughput = N / t_vectra
+        t_cognevra = time.perf_counter() - t0
+        cognevra_throughput = N / t_cognevra
 
         # ── Reference Adapter ── (also uses pre-computed vectors)
         ref = ReferenceAdapter(engine)
@@ -760,32 +760,32 @@ class TestPerformance:
         t_ref = time.perf_counter() - t0
         ref_throughput = N / t_ref
 
-        speedup = ref_throughput / vectra_throughput if vectra_throughput > 0 else 0
+        speedup = ref_throughput / cognevra_throughput if cognevra_throughput > 0 else 0
 
-        print(f"  Dataset:          {N} chunks × {DIM}-dim vectors")
-        print(f"  VectraDB adapter: {vectra_throughput:,.0f} dp/s  ({t_vectra*1000:.1f} ms total)")
-        print(f"  Reference:        {ref_throughput:,.0f} dp/s  ({t_ref*1000:.1f} ms total)")
-        print(f"  Ratio (ref/vectra): {speedup:.2f}x")
+        print(f"  Dataset:           {N} chunks × {DIM}-dim vectors")
+        print(f"  Cognevra adapter:  {cognevra_throughput:,.0f} dp/s  ({t_cognevra*1000:.1f} ms total)")
+        print(f"  Reference:         {ref_throughput:,.0f} dp/s  ({t_ref*1000:.1f} ms total)")
+        print(f"  Ratio (ref/cognevra): {speedup:.2f}x")
         if speedup < 1:
-            print(f"  VectraDB adapter is {1/speedup:.2f}x FASTER than reference insert")
+            print(f"  Cognevra adapter is {1/speedup:.2f}x FASTER than reference insert")
         else:
             print(f"  Reference is {speedup:.2f}x faster (adapter has overhead even when mocked)")
         print()
 
         # Throughput must be at least 500 dp/s (even on slow CI)
-        assert vectra_throughput > 500, (
-            f"VectraDB insert throughput too low: {vectra_throughput:.0f} dp/s"
+        assert cognevra_throughput > 500, (
+            f"Cognevra insert throughput too low: {cognevra_throughput:.0f} dp/s"
         )
 
     @pytest.mark.asyncio
     async def test_search_latency_comparison(self):
         """
         Measure p50/p95/p99 search latency across 200 queries.
-        VectraDB (mocked) vs. Reference brute-force.
+        Cognevra (mocked) vs. Reference brute-force.
         """
 
         print("\n" + "═" * 65)
-        print("  SEARCH LATENCY — VectraDB Adapter vs. Reference (200 queries)")
+        print("  SEARCH LATENCY — Cognevra Adapter vs. Reference (200 queries)")
         print("═" * 65)
 
         N = N_BOOK_CHUNKS
@@ -799,7 +799,7 @@ class TestPerformance:
         ]
         query_vectors = await _embed_all(engine, query_texts)
 
-        # ── Setup: Insert data into VectraDB adapter ──
+        # ── Setup: Insert data into Cognevra adapter ──
         server = GrpcMockServer()
         adapter = _make_adapter_with_server(server, engine)
         dps = [_BookDataPoint(c) for c in chunks]
@@ -818,12 +818,12 @@ class TestPerformance:
                 all_vectors[start:start + BATCH],
             )
 
-        # ── Measure VectraDB search ──
-        vectra_times = []
+        # ── Measure Cognevra search ──
+        cognevra_times = []
         for qvec in query_vectors:
             t0 = time.perf_counter()
             await adapter.search("search_perf", query_vector=qvec, limit=10)
-            vectra_times.append((time.perf_counter() - t0) * 1000)
+            cognevra_times.append((time.perf_counter() - t0) * 1000)
 
         # ── Measure Reference search ──
         ref_times = []
@@ -837,7 +837,7 @@ class TestPerformance:
             n = len(s)
             return s[n // 2], s[int(n * 0.95)], s[int(n * 0.99)]
 
-        vp50, vp95, vp99 = _percentiles(vectra_times)
+        vp50, vp95, vp99 = _percentiles(cognevra_times)
         rp50, rp95, rp99 = _percentiles(ref_times)
 
         print(f"  Dataset: {N} vectors, {N_QUERIES} queries, limit=10")
@@ -845,9 +845,9 @@ class TestPerformance:
         print(f"  {'Provider':<20} {'p50 ms':>8} {'p95 ms':>8} {'p99 ms':>8} {'mean ms':>8}")
         print(f"  {'-'*60}")
         print(
-            f"  {'VectraDB adapter':<20} "
+            f"  {'Cognevra adapter':<20} "
             f"{vp50:>8.3f} {vp95:>8.3f} {vp99:>8.3f} "
-            f"{statistics.mean(vectra_times):>8.3f}"
+            f"{statistics.mean(cognevra_times):>8.3f}"
         )
         print(
             f"  {'Reference (dict)':<20} "
@@ -855,15 +855,15 @@ class TestPerformance:
             f"{statistics.mean(ref_times):>8.3f}"
         )
         print()
-        ratio = statistics.mean(ref_times) / statistics.mean(vectra_times) if vectra_times else 0
+        ratio = statistics.mean(ref_times) / statistics.mean(cognevra_times) if cognevra_times else 0
         if ratio >= 1:
-            print(f"  VectraDB adapter is {ratio:.2f}x faster than reference search")
+            print(f"  Cognevra adapter is {ratio:.2f}x faster than reference search")
         else:
             print(f"  Reference is {1/ratio:.2f}x faster (adapter overhead dominates at this scale)")
         print()
 
         # All searches must complete < 1 second each (sanity check)
-        assert max(vectra_times) < 1000, f"Search too slow: {max(vectra_times):.1f} ms"
+        assert max(cognevra_times) < 1000, f"Search too slow: {max(cognevra_times):.1f} ms"
 
     @pytest.mark.asyncio
     async def test_recall_at_k(self):
@@ -871,13 +871,13 @@ class TestPerformance:
         Measure recall@10: for each query, what fraction of the true top-10
         (by brute-force cosine) appear in our adapter's top-10?
 
-        VectraDB adapter must achieve >=0.90 recall@10 with the mock server
+        Cognevra adapter must achieve >=0.90 recall@10 with the mock server
         (which itself is brute-force → recall should be 1.0).
         In production with real HNSW, recall would be lower.
         """
 
         print("\n" + "═" * 65)
-        print("  RECALL@10 — VectraDB Adapter")
+        print("  RECALL@10 — Cognevra Adapter")
         print("═" * 65)
 
         N = 200  # smaller for speed
@@ -889,7 +889,7 @@ class TestPerformance:
         all_vectors = await _embed_all(engine, texts)
         id_list = [c["id"] for c in chunks]
 
-        # Insert into VectraDB adapter
+        # Insert into Cognevra adapter
         server = GrpcMockServer()
         adapter = _make_adapter_with_server(server, engine)
         dps = [_BookDataPoint(c) for c in chunks]
@@ -942,7 +942,7 @@ class TestPerformance:
     async def test_concurrent_search_throughput(self):
         """
         Fire N_CONCURRENT search queries simultaneously.
-        VectraDB read path is lock-free (RWMutex), so should handle concurrency well.
+        Cognevra read path is lock-free (RWMutex), so should handle concurrency well.
         """
 
         print("\n" + "═" * 65)
@@ -997,26 +997,26 @@ class TestPerformance:
         """
 
         print("\n" + "═" * 65)
-        print("  PERFORMANCE SUMMARY: VectraDB vs. Original Cognee+LanceDB")
+        print("  PERFORMANCE SUMMARY: Cognevra vs. Original Cognee+LanceDB")
         print("═" * 65)
         print()
         print("  Measurement basis: GrpcMockServer (no network, no Raft)")
         print("  Production estimates account for real infrastructure costs.")
         print()
-        print("  VectraDB advantages:")
+        print("  Cognevra advantages:")
         print("    Lock-free HNSW reads → better concurrent search throughput")
         print("    Rust-style arena allocator → predictable memory usage")
         print("    Simpler deployment: single Go binary, no Python deps")
         print("    Native collections: server-side isolation, real delete")
         print()
-        print("  VectraDB limitations (current implementation):")
+        print("  Cognevra limitations (current implementation):")
         print("    Raft consensus on every write (~10s timeout) adds latency")
         print()
         print("  Bottom line:")
-        print("    VectraDB is ~2-3x faster for READ-HEAVY workloads under")
+        print("    Cognevra is ~2-3x faster for READ-HEAVY workloads under")
         print("    concurrent load.  LanceDB is ~5-10x faster for WRITES")
         print("    (no Raft overhead, native Arrow storage, native delete).")
-        print("    Choose VectraDB when query throughput > write throughput.")
+        print("    Choose Cognevra when query throughput > write throughput.")
         print("═" * 65)
 
         # This test always passes — it's a documentation/report test
