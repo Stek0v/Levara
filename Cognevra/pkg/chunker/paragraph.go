@@ -1,6 +1,7 @@
 package chunker
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -13,10 +14,24 @@ func runeLen(s string) int {
 	return utf8.RuneCountInString(s)
 }
 
+// chunkID returns a deterministic UUID5 when documentID is non-empty, using
+// uuid5(NAMESPACE_OID, "{documentID}-{chunkIndex}") — identical to Python's
+// uuid.uuid5(uuid.NAMESPACE_OID, f"{document_id}-{chunk_index}").
+// Falls back to a random UUID4 when documentID is empty (backward compatible).
+func chunkID(documentID string, chunkIndex int) string {
+	if documentID == "" {
+		return uuid.New().String()
+	}
+	name := fmt.Sprintf("%s-%d", documentID, chunkIndex)
+	return uuid.NewSHA1(uuid.NameSpaceOID, []byte(name)).String()
+}
+
 // ChunkByParagraphMerged splits text into paragraphs (by "\n\n"), merges
 // small ones up to maxChunkChars, and discards chunks below minChunkChars.
 // All lengths are in CHARACTERS (runes), matching Python len() behavior.
-func ChunkByParagraphMerged(text string, minChunkChars, maxChunkChars int) []Chunk {
+// When documentID is non-empty, chunk IDs are deterministic UUID5s matching
+// Python's uuid.uuid5(uuid.NAMESPACE_OID, f"{document_id}-{chunk_index}").
+func ChunkByParagraphMerged(text string, minChunkChars, maxChunkChars int, documentID string) []Chunk {
 	// Normalize line endings: CRLF -> LF (Python reads in text mode)
 	text = strings.ReplaceAll(text, "\r\n", "\n")
 	rawParagraphs := strings.Split(text, "\n\n")
@@ -49,7 +64,7 @@ func ChunkByParagraphMerged(text string, minChunkChars, maxChunkChars int) []Chu
 		} else {
 			if bufRuneLen >= minChunkChars && len(bufParts) > 0 {
 				chunks = append(chunks, Chunk{
-					ID:         uuid.New().String(),
+					ID:         chunkID(documentID, len(chunks)),
 					Text:       strings.Join(bufParts, "\n\n"),
 					Chapter:    chapter,
 					ChunkIndex: len(chunks),
@@ -63,7 +78,7 @@ func ChunkByParagraphMerged(text string, minChunkChars, maxChunkChars int) []Chu
 	// Final buffer
 	if bufRuneLen >= minChunkChars && len(bufParts) > 0 {
 		chunks = append(chunks, Chunk{
-			ID:         uuid.New().String(),
+			ID:         chunkID(documentID, len(chunks)),
 			Text:       strings.Join(bufParts, "\n\n"),
 			Chapter:    chapter,
 			ChunkIndex: len(chunks),
@@ -75,7 +90,8 @@ func ChunkByParagraphMerged(text string, minChunkChars, maxChunkChars int) []Chu
 
 // ChunkByParagraphSimple splits text into individual paragraphs (by "\n\n").
 // Each paragraph >= minChunkChars becomes its own chunk (no merging).
-func ChunkByParagraphSimple(text string, minChunkChars int) []Chunk {
+// When documentID is non-empty, chunk IDs are deterministic UUID5s.
+func ChunkByParagraphSimple(text string, minChunkChars int, documentID string) []Chunk {
 	text = strings.ReplaceAll(text, "\r\n", "\n")
 	rawParagraphs := strings.Split(text, "\n\n")
 	var chunks []Chunk
@@ -96,7 +112,7 @@ func ChunkByParagraphSimple(text string, minChunkChars int) []Chunk {
 
 		if runeLen(para) >= minChunkChars {
 			chunks = append(chunks, Chunk{
-				ID:         uuid.New().String(),
+				ID:         chunkID(documentID, len(chunks)),
 				Text:       para,
 				Chapter:    chapter,
 				ChunkIndex: len(chunks),
