@@ -161,7 +161,7 @@
 │       ├── HYBRID ───────────── 🟢 HybridSearch RPC (vector+BM25)   │
 │       ├── NATURAL_LANGUAGE ── 🔴 NL→Cypher (LLM, Python)            │
 │       ├── CYPHER ───────────── 🔴 Raw Cypher query (Python)         │
-│       ├── TEMPORAL ─────────── 🔴 Time-aware graph (Python)          │
+│       ├── TEMPORAL ─────────── 🔴 → ЗАДАЧА: TemporalSearch RPC       │
 │       └── CODING_RULES ────── 🔴 Code-specific rules (Python)       │
 │                                                                      │
 │  🟢 AggregateSearch RPC ────── pkg/aggregator/ (ranking + dedup)    │
@@ -395,7 +395,15 @@ embed_query → vector_search → graph_read → triplet_score → format_contex
 
 ---
 
-## Оставшиеся задачи (специализированные / low ROI)
+## Следующие задачи
+
+### Приоритетные
+
+| # | Задача | Effort | Impact | Описание |
+|---|--------|--------|--------|----------|
+| **T1** | **TemporalSearch RPC** | 2-3 дня | ⭐⭐⭐ | Извлечение timestamps из текста (regex+LLM), temporal index в Neo4j (date property на nodes), range query `WHERE date BETWEEN $start AND $end`. Покрывает последний 🔴 search type из Cognee |
+
+### Оставшиеся (специализированные)
 
 | # | Задача | Effort | Impact |
 |---|--------|--------|--------|
