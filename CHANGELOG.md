@@ -3,6 +3,8 @@
 ## [Unreleased]
 
 ### 2026-03-19
+- docs: rebrand all documentation (VectraDB → Cognevra)
+- docs: add "What is Cognevra" sections explaining product identity
 - docs: add 100K scale test results
 - docs: update BENCHMARK_RESULTS.md with all optimization data
 
@@ -21,11 +23,11 @@
 ### 2026-03-17 — Go Rewrite
 - feat: Go embedding client + search pipeline (26x faster in-process)
 - feat(chunker): Go text chunker with Python parity (7-27x faster)
-- feat(vectradb): gRPC server with collection-aware API
-- feat(vectradb): native collections, delete-by-ID, WAL delete recovery
+- feat(cognevra): gRPC server with collection-aware API
+- feat(cognevra): native collections, delete-by-ID, WAL delete recovery
 
-### 2026-03-15 — Initial Benchmarks
+### 2026-03-15 — Initial Benchmarks (VectraDB era)
 - perf(vectradb): async HNSW indexing
 - perf(vectradb): standalone WAL-only mode
 - fix(vectradb): cosine distance, WAL recovery, data persistence
-- test: comprehensive VectraDB vs LanceDB benchmark
+- test: comprehensive Cognevra vs LanceDB benchmark

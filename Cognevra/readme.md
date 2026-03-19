@@ -1,11 +1,11 @@
-# VectraDB ⚡
+# Cognevra
 
 > **High-Performance, In-Memory Vector Database written in Go.**
 > *589 QPS Search | 23ms @ 100K vectors | gRPC + HTTP | WAL + HNSW*
 
-VectraDB is a lightweight, cloud-native vector store designed for AI infrastructure and high-throughput embedding workloads (dim=1024). It uses **Arena Memory Allocation** to bypass GC overhead, **HNSW** for O(log N) ANN search, and a **WAL with group commit** for durable writes.
+Cognevra is a lightweight, cloud-native vector store designed for AI infrastructure and high-throughput embedding workloads (dim=1024). It uses **Arena Memory Allocation** to bypass GC overhead, **HNSW** for O(log N) ANN search, and a **WAL with group commit** for durable writes. The Go engine is based on [VectraDB](https://github.com/Rupamthxt/VectraDB) by Rupam, extended and optimized for production use as the backend for the [Cognee](https://github.com/topoteretes/cognee) AI memory platform.
 
-### 🌐 Distributed Mode Available
+### Distributed Mode Available
 Multi-Raft consensus for HA and strong consistency. Leader Election, Log Replication, Fault Tolerance. [View branch →](https://github.com/Rupamthxt/VectraDB/tree/feature/distributed-raft)
 
 ### Architecture
@@ -27,7 +27,7 @@ graph TD
     style H fill:#bfb,stroke:#333,stroke-width:2px
 ```
 
-## 🚀 Key Features
+## Key Features
 
 * **Zero-Copy Arena:** Custom `[]float32` slab — minimizes GC pauses, maximizes CPU cache locality.
 * **HNSW Indexing:** O(log N) ANN search. Configurable M, efMult, efMin via CLI flags.
@@ -38,9 +38,9 @@ graph TD
 * **High Concurrency:** Sharded `RWMutex` — concurrent readers, true Go goroutine parallelism.
 * **Persistence:** WAL + Gob snapshots. **100% crash recovery** validated.
 * **Prometheus Metrics:** `/metrics` on :8080, Grafana-ready.
-* **Python Adapter:** `VectraDBAdapter.py` implements full Cognee `VectorDBInterface` (9 methods, 21 tests).
+* **Python Adapter:** `CognevraAdapter.py` implements full Cognee `VectorDBInterface` (9 methods, 21 tests).
 
-## 📊 Benchmarks
+## Benchmarks
 
 *Hardware: i7-7700 @ 3.60GHz, Linux 6.8. Vectors: dim=1024. Transport: gRPC.*
 
@@ -61,21 +61,21 @@ graph TD
 
 ### vs LanceDB (1.4K real embeddings, GPU)
 
-| Metric | VectraDB | LanceDB | Winner |
+| Metric | Cognevra | LanceDB | Winner |
 | :--- | :--- | :--- | :--- |
-| Search p50 | **2.6 ms** | 12.9 ms | **VectraDB 4.9x** |
-| Concurrent QPS | **589** | 109 | **VectraDB 5.4x** |
+| Search p50 | **2.6 ms** | 12.9 ms | **Cognevra 4.9x** |
+| Concurrent QPS | **589** | 109 | **Cognevra 5.4x** |
 | Insert dp/s | 591 | **3,911** | LanceDB 6.6x |
-| Crash recovery | **100%** | N/A | VectraDB |
+| Crash recovery | **100%** | N/A | Cognevra |
 
-**VectraDB** wins on read-heavy concurrent workloads. **LanceDB** wins on batch ingestion.
+**Cognevra** wins on read-heavy concurrent workloads. **LanceDB** wins on batch ingestion.
 
-## 📦 Installation & Usage
+## Installation & Usage
 
 ### Run via Docker (Recommended)
 ```bash
 docker compose up -d --build
-# VectraDB: http://localhost:8080 | gRPC: localhost:50051
+# Cognevra: http://localhost:8080 | gRPC: localhost:50051
 ```
 
 ### Run Locally
@@ -90,15 +90,15 @@ make run
 ```bash
 # Create collection
 grpcurl -plaintext -d '{"name":"my_collection"}' \
-  localhost:50051 vectradb.v1.VectraDBService/CreateCollection
+  localhost:50051 cognevra.v1.CognevraService/CreateCollection
 
 # Insert vectors
 grpcurl -plaintext -d '{"collection":"my_collection","id":"doc_1","vector":[0.1,0.5,0.9],"payload":{"text":"hello"}}' \
-  localhost:50051 vectradb.v1.VectraDBService/Upsert
+  localhost:50051 cognevra.v1.CognevraService/Upsert
 
 # Search
 grpcurl -plaintext -d '{"collection":"my_collection","vector":[0.1,0.5,0.8],"k":3}' \
-  localhost:50051 vectradb.v1.VectraDBService/Search
+  localhost:50051 cognevra.v1.CognevraService/Search
 ```
 
 #### HTTP (legacy)
@@ -111,7 +111,7 @@ curl -X POST http://localhost:8080/api/v1/search \
   -d '{"vector":[0.1,0.5,0.8],"k":3}'
 ```
 
-## ⚙️ Configuration
+## Configuration
 
 | Flag | Default | Description |
 | :--- | :--- | :--- |
@@ -121,19 +121,19 @@ curl -X POST http://localhost:8080/api/v1/search \
 | `--port` | `8080` | HTTP port |
 | `--grpc-port` | `50051` | gRPC port |
 
-## 📈 Monitoring
+## Monitoring
 
 Prometheus metrics at `http://localhost:8080/metrics`:
 
-* `vectradb_insert_requests_total` / `vectradb_insert_duration_seconds`
-* `vectradb_search_requests_total` / `vectradb_search_duration_seconds`
-* `vectradb_vectors_total`
+* `cognevra_insert_requests_total` / `cognevra_insert_duration_seconds`
+* `cognevra_search_requests_total` / `cognevra_search_duration_seconds`
+* `cognevra_vectors_total`
 
-## 🧠 Roadmap
+## Roadmap
 
 * [ ] Product Quantization (PQ) — memory compression for 100M+ vector scale
 * [ ] `nprobe` parameter — multi-cluster IVF search (speed vs recall trade-off)
 * [ ] Horizontal shard scaling — auto-rebalance across nodes
 * [ ] Streaming ingest — reduce WAL fsync tail latency
 
-Built by Rupam as a High-Performance Systems Engineering Portfolio Project.
+Go engine originally built by Rupam as a High-Performance Systems Engineering Portfolio Project. Extended into Cognevra as the production vector backend for the Cognee AI memory platform.
