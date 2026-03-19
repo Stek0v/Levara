@@ -113,11 +113,13 @@
 │       ▼                                                              │
 │  ⚪ Search dispatcher ──────── routes to retriever by SearchType     │
 │       │                                                              │
-│       ├── CHUNKS ──────────── 🟡 Vector similarity (Cognevra gRPC)  │
+│       ├── CHUNKS ──────────── 🟢 SearchByText RPC (embed+search)    │
 │       │                                                              │
-│       ├── GRAPH_COMPLETION ── 🟡 Graph traversal + LLM completion   │
-│       │    ├── 🟢 Vector search on nodes (Cognevra Search RPC)      │
-│       │    ├── 🟢 Vector search on edges (Cognevra Search RPC)      │
+│       ├── GRAPH_COMPLETION ── 🟢 GraphCompletionSearch RPC          │
+│       │    ├── 🟢 Embed query (Go HTTP → embed-server)              │
+│       │    ├── 🟢 Parallel vector search (goroutines)               │
+│       │    ├── 🟢 Neo4j graph read (GraphRead, ID-filtered)         │
+│       │    ├── 🟢 Triplet scoring (in-memory, 0ms)                  │
 │       │    └── 🔴 LLM completion (Python)                           │
 │       │                                                              │
 │       ├── TRIPLET_COMPLETION                                         │
@@ -128,8 +130,8 @@
 │       │    │    └── FormatTriplets → LLM context                     │
 │       │    └── 🔴 LLM completion (Python)                           │
 │       │                                                              │
-│       ├── RAG_COMPLETION ──── 🟡 Chunk search + LLM                 │
-│       ├── SUMMARIES ────────── 🟡 Summary vector search             │
+│       ├── RAG_COMPLETION ──── 🟡 SearchByText + LLM                 │
+│       ├── SUMMARIES ────────── 🟡 SearchByText on summaries         │
 │       ├── CHUNKS_LEXICAL ──── 🔴 BM25 keyword search (Python)       │
 │       ├── NATURAL_LANGUAGE ── 🔴 NL→Cypher (LLM, Python)            │
 │       ├── CYPHER ───────────── 🔴 Raw Cypher query (Python)         │
@@ -223,17 +225,45 @@
 
 ---
 
-## Статистика покрытия
+## Статистика покрытия (обновлено 2026-03-20)
 
-| Категория | Всего компонентов | 🟢 Go | 🟡 Частично | 🔴 Python | Coverage |
-|-----------|-------------------|-------|-------------|-----------|----------|
+| Категория | Всего | 🟢 Go | 🟡 Частично | 🔴 Python | Coverage |
+|-----------|-------|-------|-------------|-----------|----------|
 | **API endpoints** | 10 | 0 | 3 | 4 | 30% |
-| **Pipeline tasks** | 18 | 5 | 4 | 9 | 50% |
-| **DB adapters** | 8 | 2 | 1 | 5 | 38% |
+| **Pipeline tasks** | 18 | 7 | 2 | 9 | **56%** |
+| **DB adapters** | 8 | 3 | 0 | 5 | **44%** |
 | **LLM/Embedding** | 9 | 1 | 0 | 8 | 11% |
-| **Retrieval** | 12 | 2 | 3 | 7 | 42% |
+| **Retrieval** | 12 | 4 | 1 | 7 | **50%** |
 | **File I/O** | 4 | 2 | 1 | 1 | 75% |
-| **gRPC RPCs** | 19 | **19** | 0 | 0 | **100%** |
+| **gRPC RPCs** | **23** | **23** | 0 | 0 | **100%** |
+
+### Все 23 Go gRPC RPCs:
+
+| # | RPC | Категория | Заменяет |
+|---|-----|-----------|----------|
+| 1 | CreateCollection | Vector CRUD | — |
+| 2 | DropCollection | Vector CRUD | — |
+| 3 | ListCollections | Vector CRUD | — |
+| 4 | HasCollection | Vector CRUD | — |
+| 5 | Insert | Vector CRUD | — |
+| 6 | BatchInsert | Vector CRUD | — |
+| 7 | Delete | Vector CRUD | — |
+| 8 | Search | Vector CRUD | — |
+| 9 | GetByID | Vector CRUD | — |
+| 10 | ChunkText | Text processing | extract_chunks_from_documents |
+| 11 | ProcessTriplets | Graph processing | triplet dedup |
+| 12 | HashFiles | File I/O | file hashing |
+| 13 | ListDirectory | File I/O | directory walk |
+| 14 | AggregateSearch | Search | triplet ranking |
+| 15 | **SearchTriplets** | Search | brute_force_triplet_search |
+| 16 | **DeduplicateGraph** | Graph | deduplicate_nodes_and_edges |
+| 17 | **BatchEmbedAndIndex** | Write | index_data_points |
+| 18 | **BatchWriteGraph** | Write | Neo4j add_nodes/add_edges |
+| 19 | **ParallelWriteDataPoints** | Write | add_data_points (all-in-one) |
+| 20 | **SearchByText** | Search | embed + search |
+| 21 | **BatchSearchByText** | Search | batch embed + search |
+| 22 | **GraphRead** | Read | Neo4j graph projection (4 modes) |
+| 23 | **GraphCompletionSearch** | Search | TripletSearchContextProvider (full pipeline) |
 
 ### Критический путь (cognify write path):
 ```
@@ -242,7 +272,23 @@ extract_chunks  → extract_graph → dedup → write_nodes → write_edges → 
    100-400x        (bottleneck)   50-200x   30-100x       30-100x     50-200x
 ```
 
-**LLM extraction = 60-70% total cognify time** — не переписываемо, но всё вокруг оптимизировано в Go.
+### Критический путь (search):
+```
+embed_query → vector_search → graph_read → triplet_score → format_context → LLM
+  🟢 Go        🟢 Go           🟢 Go        🟢 Go           🟢 Go         🔴 Python
+  (embed-srv)   3ms             8-60ms        0ms             0ms          (LLM API)
+```
+
+**Весь search pipeline кроме LLM completion теперь в Go** через `GraphCompletionSearch`.
+
+### Оставшиеся 🟡 жёлтые (low ROI):
+
+| # | Компонент | Почему низкий ROI |
+|---|-----------|-------------------|
+| Y1 | file ingest | PDF/DOCX loaders = Python only, нет Go аналога |
+| Y2 | upsert PostgreSQL | Уже parallelized через asyncio.gather |
+| Y5/Y6 | RAG/SUMMARIES | Только Python adapter overhead, <5ms |
+| Y7 | LocalFileStorage | astore() уже добавлен |
 
 ### Ожидаемый эффект по pipeline:
 
@@ -253,5 +299,5 @@ extract_chunks  → extract_graph → dedup → write_nodes → write_edges → 
 | Graph write (Neo4j) | ~2s | **~200ms** | 10x |
 | Vector embed+index | ~1s | **~500ms** | 2x |
 | Triplet search 10K | ~500ms | **~5ms** | 100x |
+| **Full search** (excl LLM) | ~600ms | **~90ms** | **7x** |
 | **Total cognify** (excl LLM) | ~4s | **~700ms** | **6x** |
-| **Total cognify** (incl LLM) | ~30s | **~27s** | **1.1x** |
