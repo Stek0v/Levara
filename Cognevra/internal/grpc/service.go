@@ -18,6 +18,7 @@ import (
 	"github.com/rupamthxt/cognevra/pkg/bm25"
 	"github.com/rupamthxt/cognevra/pkg/graphdb"
 	"github.com/rupamthxt/cognevra/pkg/llmcache"
+	"github.com/rupamthxt/cognevra/pkg/orchestrator"
 	"github.com/rupamthxt/cognevra/pipeline"
 	pb "github.com/rupamthxt/cognevra/proto/pb"
 	"google.golang.org/grpc/codes"
@@ -1339,4 +1340,60 @@ func (s *Service) HybridSearch(ctx context.Context, req *pb.HybridSearchReq) (*p
 	}
 
 	return &pb.HybridSearchResp{Results: pbResults}, nil
+}
+
+// PipelineCognify runs the full cognify pipeline with streaming progress updates.
+// Stages: chunk → LLM extract → dedup → write (parallel Neo4j + vector).
+func (s *Service) PipelineCognify(req *pb.PipelineCognifyReq, stream pb.CognevraService_PipelineCognifyServer) error {
+	if len(req.Texts) == 0 {
+		return status.Errorf(codes.InvalidArgument, "texts required")
+	}
+
+	cfg := orchestrator.Config{
+		ChunkStrategy:   req.ChunkStrategy,
+		MinChunkChars:   int(req.MinChunkChars),
+		MaxChunkChars:   int(req.MaxChunkChars),
+		LLMEndpoint:     req.LlmEndpoint,
+		LLMModel:        req.LlmModel,
+		SystemPrompt:    req.ExtractionSystemPrompt,
+		Temperature:     req.LlmTemperature,
+		LLMConcurrency:  int(req.LlmConcurrency),
+		EmbedEndpoint:   req.EmbedEndpoint,
+		EmbedModel:      req.EmbedModel,
+		Neo4jURL:        req.Neo4JUrl,
+		Neo4jUser:       req.Neo4JUser,
+		Neo4jPassword:   req.Neo4JPassword,
+		Neo4jDatabase:   req.Neo4JDatabase,
+		Collection:      req.Collection,
+		Collections:     s.collections,
+		GenerateTriplets: req.GenerateTriplets,
+	}
+
+	progressCh := make(chan orchestrator.Progress, 100)
+
+	// Run pipeline in goroutine, stream progress
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- orchestrator.Run(stream.Context(), req.Texts, cfg, progressCh)
+	}()
+
+	// Stream progress to client
+	for p := range progressCh {
+		if err := stream.Send(&pb.PipelineCognifyProgress{
+			Stage:             p.Stage,
+			ItemsTotal:        int32(p.ItemsTotal),
+			ItemsProcessed:    int32(p.ItemsProcessed),
+			ChunksCreated:     int32(p.ChunksCreated),
+			EntitiesExtracted: int32(p.EntitiesExtracted),
+			EdgesExtracted:    int32(p.EdgesExtracted),
+			NodesWritten:      int32(p.NodesWritten),
+			EdgesWritten:      int32(p.EdgesWritten),
+			Message:           p.Message,
+			ElapsedMs:         p.ElapsedMs,
+		}); err != nil {
+			return err
+		}
+	}
+
+	return <-errCh
 }

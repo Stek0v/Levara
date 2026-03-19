@@ -43,6 +43,7 @@ const (
 	CognevraService_BatchSearchByText_FullMethodName       = "/cognevra.v1.CognevraService/BatchSearchByText"
 	CognevraService_GraphRead_FullMethodName               = "/cognevra.v1.CognevraService/GraphRead"
 	CognevraService_GraphCompletionSearch_FullMethodName   = "/cognevra.v1.CognevraService/GraphCompletionSearch"
+	CognevraService_PipelineCognify_FullMethodName         = "/cognevra.v1.CognevraService/PipelineCognify"
 	CognevraService_LLMCacheGet_FullMethodName             = "/cognevra.v1.CognevraService/LLMCacheGet"
 	CognevraService_LLMCachePut_FullMethodName             = "/cognevra.v1.CognevraService/LLMCachePut"
 	CognevraService_LLMCacheStats_FullMethodName           = "/cognevra.v1.CognevraService/LLMCacheStats"
@@ -96,6 +97,8 @@ type CognevraServiceClient interface {
 	GraphRead(ctx context.Context, in *GraphReadReq, opts ...grpc.CallOption) (*GraphReadResp, error)
 	// Full graph search: embed → vector search → Neo4j graph → triplet scoring → context
 	GraphCompletionSearch(ctx context.Context, in *GraphCompletionSearchReq, opts ...grpc.CallOption) (*GraphCompletionSearchResp, error)
+	// Pipeline orchestrator (server-side streaming)
+	PipelineCognify(ctx context.Context, in *PipelineCognifyReq, opts ...grpc.CallOption) (grpc.ServerStreamingClient[PipelineCognifyProgress], error)
 	// LLM response cache
 	LLMCacheGet(ctx context.Context, in *LLMCacheGetReq, opts ...grpc.CallOption) (*LLMCacheGetResp, error)
 	LLMCachePut(ctx context.Context, in *LLMCachePutReq, opts ...grpc.CallOption) (*StatusResp, error)
@@ -356,6 +359,25 @@ func (c *cognevraServiceClient) GraphCompletionSearch(ctx context.Context, in *G
 	return out, nil
 }
 
+func (c *cognevraServiceClient) PipelineCognify(ctx context.Context, in *PipelineCognifyReq, opts ...grpc.CallOption) (grpc.ServerStreamingClient[PipelineCognifyProgress], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &CognevraService_ServiceDesc.Streams[0], CognevraService_PipelineCognify_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[PipelineCognifyReq, PipelineCognifyProgress]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type CognevraService_PipelineCognifyClient = grpc.ServerStreamingClient[PipelineCognifyProgress]
+
 func (c *cognevraServiceClient) LLMCacheGet(ctx context.Context, in *LLMCacheGetReq, opts ...grpc.CallOption) (*LLMCacheGetResp, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(LLMCacheGetResp)
@@ -470,6 +492,8 @@ type CognevraServiceServer interface {
 	GraphRead(context.Context, *GraphReadReq) (*GraphReadResp, error)
 	// Full graph search: embed → vector search → Neo4j graph → triplet scoring → context
 	GraphCompletionSearch(context.Context, *GraphCompletionSearchReq) (*GraphCompletionSearchResp, error)
+	// Pipeline orchestrator (server-side streaming)
+	PipelineCognify(*PipelineCognifyReq, grpc.ServerStreamingServer[PipelineCognifyProgress]) error
 	// LLM response cache
 	LLMCacheGet(context.Context, *LLMCacheGetReq) (*LLMCacheGetResp, error)
 	LLMCachePut(context.Context, *LLMCachePutReq) (*StatusResp, error)
@@ -561,6 +585,9 @@ func (UnimplementedCognevraServiceServer) GraphRead(context.Context, *GraphReadR
 }
 func (UnimplementedCognevraServiceServer) GraphCompletionSearch(context.Context, *GraphCompletionSearchReq) (*GraphCompletionSearchResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method GraphCompletionSearch not implemented")
+}
+func (UnimplementedCognevraServiceServer) PipelineCognify(*PipelineCognifyReq, grpc.ServerStreamingServer[PipelineCognifyProgress]) error {
+	return status.Error(codes.Unimplemented, "method PipelineCognify not implemented")
 }
 func (UnimplementedCognevraServiceServer) LLMCacheGet(context.Context, *LLMCacheGetReq) (*LLMCacheGetResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method LLMCacheGet not implemented")
@@ -1036,6 +1063,17 @@ func _CognevraService_GraphCompletionSearch_Handler(srv interface{}, ctx context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _CognevraService_PipelineCognify_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(PipelineCognifyReq)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(CognevraServiceServer).PipelineCognify(m, &grpc.GenericServerStream[PipelineCognifyReq, PipelineCognifyProgress]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type CognevraService_PipelineCognifyServer = grpc.ServerStreamingServer[PipelineCognifyProgress]
+
 func _CognevraService_LLMCacheGet_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(LLMCacheGetReq)
 	if err := dec(in); err != nil {
@@ -1294,6 +1332,12 @@ var CognevraService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _CognevraService_Compact_Handler,
 		},
 	},
-	Streams:  []grpc.StreamDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "PipelineCognify",
+			Handler:       _CognevraService_PipelineCognify_Handler,
+			ServerStreams: true,
+		},
+	},
 	Metadata: "cognevra.proto",
 }
