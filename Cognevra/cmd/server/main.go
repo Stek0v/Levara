@@ -155,7 +155,9 @@ func main() {
 			if err != nil {
 				log.Fatalf("gRPC listen: %v", err)
 			}
-			grpcServer := grpc.NewServer()
+			grpcServer := grpc.NewServer(
+				grpc.UnaryInterceptor(vectorGrpc.MetricsUnaryInterceptor()),
+			)
 			pb.RegisterCognevraServiceServer(grpcServer, vectorGrpc.NewService(colManager, c, *dim))
 			log.Printf("gRPC server listening on port %d", *grpcPort)
 			if err := grpcServer.Serve(lis); err != nil {
