@@ -40,6 +40,9 @@ service CognevraService {
   // Graph deduplication + triplet generation
   rpc DeduplicateGraph(DeduplicateGraphReq) returns (DeduplicateGraphResp);
 
+  // Batch embed + index (embed texts → insert vectors into collections)
+  rpc BatchEmbedAndIndex(BatchEmbedAndIndexReq) returns (BatchEmbedAndIndexResp);
+
   // Maintenance
   rpc Compact(Empty) returns (CompactResp);
 }
@@ -354,4 +357,31 @@ message DeduplicateGraphResp {
   repeated TripletResult triplets = 3;
   int32 nodes_removed = 4;
   int32 edges_removed = 5;
+}
+
+// Batch embed + index
+message BatchEmbedAndIndexReq {
+  repeated IndexGroup groups = 1;
+  string embed_endpoint = 2;  // e.g. "http://localhost:9001/v1/embeddings"
+  string embed_model = 3;     // e.g. "pplx-embed-context-v1-0.6b"
+  int32 batch_size = 4;       // embedding batch size, default 16
+  int32 concurrency = 5;      // concurrent embed requests, default 3
+}
+
+message IndexGroup {
+  string collection = 1;  // e.g. "Entity_name", "DocumentChunk_text"
+  repeated IndexItem items = 2;
+}
+
+message IndexItem {
+  string id = 1;
+  string text = 2;            // text to embed
+  string metadata_json = 3;   // additional metadata
+}
+
+message BatchEmbedAndIndexResp {
+  int32 total_embedded = 1;
+  int32 total_indexed = 2;
+  int32 collections_created = 3;
+  repeated string errors = 4;
 }

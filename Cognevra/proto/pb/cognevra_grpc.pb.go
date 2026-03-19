@@ -19,24 +19,25 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	CognevraService_CreateCollection_FullMethodName = "/cognevra.v1.CognevraService/CreateCollection"
-	CognevraService_DropCollection_FullMethodName   = "/cognevra.v1.CognevraService/DropCollection"
-	CognevraService_ListCollections_FullMethodName  = "/cognevra.v1.CognevraService/ListCollections"
-	CognevraService_HasCollection_FullMethodName    = "/cognevra.v1.CognevraService/HasCollection"
-	CognevraService_Insert_FullMethodName           = "/cognevra.v1.CognevraService/Insert"
-	CognevraService_BatchInsert_FullMethodName      = "/cognevra.v1.CognevraService/BatchInsert"
-	CognevraService_Delete_FullMethodName           = "/cognevra.v1.CognevraService/Delete"
-	CognevraService_Search_FullMethodName           = "/cognevra.v1.CognevraService/Search"
-	CognevraService_ChunkText_FullMethodName        = "/cognevra.v1.CognevraService/ChunkText"
-	CognevraService_Info_FullMethodName             = "/cognevra.v1.CognevraService/Info"
-	CognevraService_GetByID_FullMethodName          = "/cognevra.v1.CognevraService/GetByID"
-	CognevraService_ProcessTriplets_FullMethodName  = "/cognevra.v1.CognevraService/ProcessTriplets"
-	CognevraService_HashFiles_FullMethodName        = "/cognevra.v1.CognevraService/HashFiles"
-	CognevraService_ListDirectory_FullMethodName    = "/cognevra.v1.CognevraService/ListDirectory"
-	CognevraService_AggregateSearch_FullMethodName  = "/cognevra.v1.CognevraService/AggregateSearch"
-	CognevraService_SearchTriplets_FullMethodName   = "/cognevra.v1.CognevraService/SearchTriplets"
-	CognevraService_DeduplicateGraph_FullMethodName = "/cognevra.v1.CognevraService/DeduplicateGraph"
-	CognevraService_Compact_FullMethodName          = "/cognevra.v1.CognevraService/Compact"
+	CognevraService_CreateCollection_FullMethodName   = "/cognevra.v1.CognevraService/CreateCollection"
+	CognevraService_DropCollection_FullMethodName     = "/cognevra.v1.CognevraService/DropCollection"
+	CognevraService_ListCollections_FullMethodName    = "/cognevra.v1.CognevraService/ListCollections"
+	CognevraService_HasCollection_FullMethodName      = "/cognevra.v1.CognevraService/HasCollection"
+	CognevraService_Insert_FullMethodName             = "/cognevra.v1.CognevraService/Insert"
+	CognevraService_BatchInsert_FullMethodName        = "/cognevra.v1.CognevraService/BatchInsert"
+	CognevraService_Delete_FullMethodName             = "/cognevra.v1.CognevraService/Delete"
+	CognevraService_Search_FullMethodName             = "/cognevra.v1.CognevraService/Search"
+	CognevraService_ChunkText_FullMethodName          = "/cognevra.v1.CognevraService/ChunkText"
+	CognevraService_Info_FullMethodName               = "/cognevra.v1.CognevraService/Info"
+	CognevraService_GetByID_FullMethodName            = "/cognevra.v1.CognevraService/GetByID"
+	CognevraService_ProcessTriplets_FullMethodName    = "/cognevra.v1.CognevraService/ProcessTriplets"
+	CognevraService_HashFiles_FullMethodName          = "/cognevra.v1.CognevraService/HashFiles"
+	CognevraService_ListDirectory_FullMethodName      = "/cognevra.v1.CognevraService/ListDirectory"
+	CognevraService_AggregateSearch_FullMethodName    = "/cognevra.v1.CognevraService/AggregateSearch"
+	CognevraService_SearchTriplets_FullMethodName     = "/cognevra.v1.CognevraService/SearchTriplets"
+	CognevraService_DeduplicateGraph_FullMethodName   = "/cognevra.v1.CognevraService/DeduplicateGraph"
+	CognevraService_BatchEmbedAndIndex_FullMethodName = "/cognevra.v1.CognevraService/BatchEmbedAndIndex"
+	CognevraService_Compact_FullMethodName            = "/cognevra.v1.CognevraService/Compact"
 )
 
 // CognevraServiceClient is the client API for CognevraService service.
@@ -70,6 +71,8 @@ type CognevraServiceClient interface {
 	SearchTriplets(ctx context.Context, in *SearchTripletsReq, opts ...grpc.CallOption) (*SearchTripletsResp, error)
 	// Graph deduplication + triplet generation
 	DeduplicateGraph(ctx context.Context, in *DeduplicateGraphReq, opts ...grpc.CallOption) (*DeduplicateGraphResp, error)
+	// Batch embed + index (embed texts → insert vectors into collections)
+	BatchEmbedAndIndex(ctx context.Context, in *BatchEmbedAndIndexReq, opts ...grpc.CallOption) (*BatchEmbedAndIndexResp, error)
 	// Maintenance
 	Compact(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*CompactResp, error)
 }
@@ -252,6 +255,16 @@ func (c *cognevraServiceClient) DeduplicateGraph(ctx context.Context, in *Dedupl
 	return out, nil
 }
 
+func (c *cognevraServiceClient) BatchEmbedAndIndex(ctx context.Context, in *BatchEmbedAndIndexReq, opts ...grpc.CallOption) (*BatchEmbedAndIndexResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(BatchEmbedAndIndexResp)
+	err := c.cc.Invoke(ctx, CognevraService_BatchEmbedAndIndex_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *cognevraServiceClient) Compact(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*CompactResp, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(CompactResp)
@@ -293,6 +306,8 @@ type CognevraServiceServer interface {
 	SearchTriplets(context.Context, *SearchTripletsReq) (*SearchTripletsResp, error)
 	// Graph deduplication + triplet generation
 	DeduplicateGraph(context.Context, *DeduplicateGraphReq) (*DeduplicateGraphResp, error)
+	// Batch embed + index (embed texts → insert vectors into collections)
+	BatchEmbedAndIndex(context.Context, *BatchEmbedAndIndexReq) (*BatchEmbedAndIndexResp, error)
 	// Maintenance
 	Compact(context.Context, *Empty) (*CompactResp, error)
 	mustEmbedUnimplementedCognevraServiceServer()
@@ -355,6 +370,9 @@ func (UnimplementedCognevraServiceServer) SearchTriplets(context.Context, *Searc
 }
 func (UnimplementedCognevraServiceServer) DeduplicateGraph(context.Context, *DeduplicateGraphReq) (*DeduplicateGraphResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeduplicateGraph not implemented")
+}
+func (UnimplementedCognevraServiceServer) BatchEmbedAndIndex(context.Context, *BatchEmbedAndIndexReq) (*BatchEmbedAndIndexResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method BatchEmbedAndIndex not implemented")
 }
 func (UnimplementedCognevraServiceServer) Compact(context.Context, *Empty) (*CompactResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method Compact not implemented")
@@ -686,6 +704,24 @@ func _CognevraService_DeduplicateGraph_Handler(srv interface{}, ctx context.Cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _CognevraService_BatchEmbedAndIndex_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BatchEmbedAndIndexReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CognevraServiceServer).BatchEmbedAndIndex(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CognevraService_BatchEmbedAndIndex_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CognevraServiceServer).BatchEmbedAndIndex(ctx, req.(*BatchEmbedAndIndexReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _CognevraService_Compact_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(Empty)
 	if err := dec(in); err != nil {
@@ -778,6 +814,10 @@ var CognevraService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DeduplicateGraph",
 			Handler:    _CognevraService_DeduplicateGraph_Handler,
+		},
+		{
+			MethodName: "BatchEmbedAndIndex",
+			Handler:    _CognevraService_BatchEmbedAndIndex_Handler,
 		},
 		{
 			MethodName: "Compact",
