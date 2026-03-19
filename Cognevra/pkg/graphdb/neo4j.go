@@ -253,3 +253,201 @@ func flattenEdgeProperties(props map[string]any) map[string]any {
 	}
 	return out
 }
+
+// GraphReadResult holds nodes and edges from a graph read query.
+type GraphReadResult struct {
+	Nodes []ReadNode
+	Edges []ReadEdge
+}
+
+// ReadNode is a node returned from a graph read query.
+type ReadNode struct {
+	ID         string
+	Label      string
+	Properties map[string]any
+}
+
+// ReadEdge is an edge returned from a graph read query.
+type ReadEdge struct {
+	SourceID         string
+	TargetID         string
+	RelationshipType string
+	Properties       map[string]any
+}
+
+// ReadFullGraph returns all nodes and edges. Mirrors Cognee's get_graph_data().
+func (w *Writer) ReadFullGraph(ctx context.Context) (GraphReadResult, error) {
+	session := w.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: w.database})
+	defer session.Close(ctx)
+
+	var result GraphReadResult
+
+	res, err := session.Run(ctx,
+		fmt.Sprintf("MATCH (n:`%s`) RETURN n.id AS id, labels(n) AS labels, properties(n) AS props", baseLabel), nil)
+	if err != nil {
+		return result, fmt.Errorf("read nodes: %w", err)
+	}
+	for res.Next(ctx) {
+		rec := res.Record()
+		id, _ := rec.Get("id")
+		labels, _ := rec.Get("labels")
+		props, _ := rec.Get("props")
+		label := ""
+		if ls, ok := labels.([]any); ok {
+			for _, l := range ls {
+				if s, ok := l.(string); ok && s != baseLabel {
+					label = s
+					break
+				}
+			}
+		}
+		result.Nodes = append(result.Nodes, ReadNode{
+			ID: fmt.Sprint(id), Label: label, Properties: toStringMap(props),
+		})
+	}
+
+	res, err = session.Run(ctx,
+		fmt.Sprintf("MATCH (n:`%s`)-[r]->(m:`%s`) RETURN n.id AS src, m.id AS tgt, TYPE(r) AS typ, properties(r) AS props",
+			baseLabel, baseLabel), nil)
+	if err != nil {
+		return result, fmt.Errorf("read edges: %w", err)
+	}
+	for res.Next(ctx) {
+		rec := res.Record()
+		src, _ := rec.Get("src")
+		tgt, _ := rec.Get("tgt")
+		typ, _ := rec.Get("typ")
+		props, _ := rec.Get("props")
+		result.Edges = append(result.Edges, ReadEdge{
+			SourceID: fmt.Sprint(src), TargetID: fmt.Sprint(tgt),
+			RelationshipType: fmt.Sprint(typ), Properties: toStringMap(props),
+		})
+	}
+
+	return result, nil
+}
+
+// ReadIDFiltered returns nodes/edges touching the given IDs.
+func (w *Writer) ReadIDFiltered(ctx context.Context, ids []string) (GraphReadResult, error) {
+	session := w.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: w.database})
+	defer session.Close(ctx)
+
+	var result GraphReadResult
+	query := fmt.Sprintf(`
+		MATCH (a:`+"`%s`"+`)-[r]-(b:`+"`%s`"+`)
+		WHERE a.id IN $ids OR b.id IN $ids
+		WITH DISTINCT r, startNode(r) AS a, endNode(r) AS b
+		RETURN properties(a) AS a_props, properties(b) AS b_props,
+		       TYPE(r) AS typ, properties(r) AS r_props
+	`, baseLabel, baseLabel)
+
+	res, err := session.Run(ctx, query, map[string]any{"ids": ids})
+	if err != nil {
+		return result, fmt.Errorf("id-filtered read: %w", err)
+	}
+
+	nodesSeen := make(map[string]bool)
+	for res.Next(ctx) {
+		rec := res.Record()
+		aProps, _ := rec.Get("a_props")
+		bProps, _ := rec.Get("b_props")
+		typ, _ := rec.Get("typ")
+		rProps, _ := rec.Get("r_props")
+
+		am := toStringMap(aProps)
+		bm := toStringMap(bProps)
+		aID := fmt.Sprint(am["id"])
+		bID := fmt.Sprint(bm["id"])
+
+		if !nodesSeen[aID] {
+			nodesSeen[aID] = true
+			result.Nodes = append(result.Nodes, ReadNode{ID: aID, Properties: am})
+		}
+		if !nodesSeen[bID] {
+			nodesSeen[bID] = true
+			result.Nodes = append(result.Nodes, ReadNode{ID: bID, Properties: bm})
+		}
+
+		result.Edges = append(result.Edges, ReadEdge{
+			SourceID: aID, TargetID: bID,
+			RelationshipType: fmt.Sprint(typ), Properties: toStringMap(rProps),
+		})
+	}
+
+	return result, nil
+}
+
+// ReadNeighbours returns direct neighbors of a node.
+func (w *Writer) ReadNeighbours(ctx context.Context, nodeID string) (GraphReadResult, error) {
+	return w.ReadIDFiltered(ctx, []string{nodeID})
+}
+
+// ReadSubgraph returns nodes matching label+names with their neighbors.
+func (w *Writer) ReadSubgraph(ctx context.Context, label string, names []string) (GraphReadResult, error) {
+	session := w.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: w.database})
+	defer session.Close(ctx)
+
+	var result GraphReadResult
+	query := fmt.Sprintf(`
+		UNWIND $names AS wantedName
+		MATCH (n:`+"`%s`"+`)
+		WHERE n.name = wantedName
+		WITH collect(DISTINCT n) AS primary
+		UNWIND primary AS p
+		OPTIONAL MATCH (p)--(nbr)
+		WITH primary, collect(DISTINCT nbr) AS nbrs
+		WITH primary + nbrs AS nodelist
+		UNWIND nodelist AS node
+		WITH collect(DISTINCT node) AS nodes
+		OPTIONAL MATCH (a)-[r]-(b)
+		WHERE a IN nodes AND b IN nodes
+		WITH nodes, collect(DISTINCT r) AS rels
+		RETURN
+		  [n IN nodes | {id: n.id, properties: properties(n)}] AS rawNodes,
+		  [r IN rels | {type: TYPE(r), properties: properties(r)}] AS rawRels
+	`, label)
+
+	res, err := session.Run(ctx, query, map[string]any{"names": names})
+	if err != nil {
+		return result, fmt.Errorf("subgraph read: %w", err)
+	}
+
+	if res.Next(ctx) {
+		rawNodes, _ := res.Record().Get("rawNodes")
+		rawRels, _ := res.Record().Get("rawRels")
+
+		if nodes, ok := rawNodes.([]any); ok {
+			for _, n := range nodes {
+				if nm, ok := n.(map[string]any); ok {
+					props := toStringMap(nm["properties"])
+					result.Nodes = append(result.Nodes, ReadNode{
+						ID: fmt.Sprint(nm["id"]), Properties: props,
+					})
+				}
+			}
+		}
+
+		if rels, ok := rawRels.([]any); ok {
+			for _, r := range rels {
+				if rm, ok := r.(map[string]any); ok {
+					props := toStringMap(rm["properties"])
+					srcID := fmt.Sprint(props["source_node_id"])
+					tgtID := fmt.Sprint(props["target_node_id"])
+					result.Edges = append(result.Edges, ReadEdge{
+						SourceID: srcID, TargetID: tgtID,
+						RelationshipType: fmt.Sprint(rm["type"]), Properties: props,
+					})
+				}
+			}
+		}
+	}
+
+	return result, nil
+}
+
+func toStringMap(v any) map[string]any {
+	if m, ok := v.(map[string]any); ok {
+		return m
+	}
+	return map[string]any{}
+}
