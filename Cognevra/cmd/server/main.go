@@ -47,6 +47,8 @@ import (
 	"github.com/rupamthxt/cognevra/internal/cluster"
 	vectorGrpc "github.com/rupamthxt/cognevra/internal/grpc"
 	"github.com/rupamthxt/cognevra/internal/store"
+	"github.com/rupamthxt/cognevra/pkg/llmcache"
+	"github.com/rupamthxt/cognevra/pkg/llmproxy"
 	pb "github.com/rupamthxt/cognevra/proto/pb"
 	"google.golang.org/grpc"
 
@@ -68,6 +70,10 @@ func main() {
 	hnswM := flag.Int("hnsw-m", 16, "HNSW M parameter: max neighbors per node")
 	hnswEfMult := flag.Int("hnsw-ef-mult", 8, "HNSW efSearch multiplier: efSearch = k * this value")
 	hnswEfMin := flag.Int("hnsw-ef-min", 64, "HNSW minimum efSearch value")
+	llmProxyPort := flag.Int("llm-proxy-port", 0, "LLM proxy port (0 to disable)")
+	llmUpstream := flag.String("llm-upstream", "", "LLM upstream URL (e.g. http://localhost:11434/v1)")
+	llmCacheSize := flag.Int("llm-cache-size", 10000, "LLM response cache max entries")
+	llmMaxInflight := flag.Int("llm-max-inflight", 10, "Max concurrent LLM requests")
 
 	flag.Parse()
 
@@ -156,6 +162,23 @@ func main() {
 				log.Fatalf("gRPC serve: %v", err)
 			}
 		}()
+	}
+
+	// Start LLM proxy (optional)
+	if *llmProxyPort > 0 && *llmUpstream != "" {
+		cache := llmcache.New(*llmCacheSize, 0)
+		stop, err := llmproxy.StartBackground(
+			fmt.Sprintf(":%d", *llmProxyPort),
+			llmproxy.Config{
+				UpstreamURL: *llmUpstream,
+				Cache:       cache,
+				MaxInFlight: *llmMaxInflight,
+			},
+		)
+		if err != nil {
+			log.Fatalf("LLM proxy: %v", err)
+		}
+		defer stop()
 	}
 
 	mode := "standalone/WAL"
