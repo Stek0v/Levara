@@ -1,3 +1,5 @@
+[Русская версия / Russian version](README_RU.md)
+
 # VectraDB — High-Performance Vector Database for AI Memory
 
 VectraDB is a Go-based HNSW vector database built as a high-performance backend for the Cognee AI memory platform. It exposes a gRPC API, persists vectors with a write-ahead log and memory-mapped arena, and achieves sub-3ms search latency at production scale. This repository contains the VectraDB server, a Python gRPC adapter that implements the Cognee `VectorDBInterface`, and a benchmark suite comparing VectraDB against LanceDB (Rust/Arrow) as alternative vector storage backends.
