@@ -1580,6 +1580,291 @@ func (x *ProcessTripletsResp) GetSkipped() int32 {
 	return 0
 }
 
+// File I/O acceleration
+type HashFilesReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	FilePaths     []string               `protobuf:"bytes,1,rep,name=file_paths,json=filePaths,proto3" json:"file_paths,omitempty"`
+	MaxConcurrent int32                  `protobuf:"varint,2,opt,name=max_concurrent,json=maxConcurrent,proto3" json:"max_concurrent,omitempty"` // goroutine pool size, default 8
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HashFilesReq) Reset() {
+	*x = HashFilesReq{}
+	mi := &file_proto_cognevra_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HashFilesReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HashFilesReq) ProtoMessage() {}
+
+func (x *HashFilesReq) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_cognevra_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HashFilesReq.ProtoReflect.Descriptor instead.
+func (*HashFilesReq) Descriptor() ([]byte, []int) {
+	return file_proto_cognevra_proto_rawDescGZIP(), []int{28}
+}
+
+func (x *HashFilesReq) GetFilePaths() []string {
+	if x != nil {
+		return x.FilePaths
+	}
+	return nil
+}
+
+func (x *HashFilesReq) GetMaxConcurrent() int32 {
+	if x != nil {
+		return x.MaxConcurrent
+	}
+	return 0
+}
+
+type FileHash struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	FilePath      string                 `protobuf:"bytes,1,opt,name=file_path,json=filePath,proto3" json:"file_path,omitempty"`
+	Sha256        string                 `protobuf:"bytes,2,opt,name=sha256,proto3" json:"sha256,omitempty"`
+	FileSize      int64                  `protobuf:"varint,3,opt,name=file_size,json=fileSize,proto3" json:"file_size,omitempty"`
+	MimeType      string                 `protobuf:"bytes,4,opt,name=mime_type,json=mimeType,proto3" json:"mime_type,omitempty"`
+	Error         string                 `protobuf:"bytes,5,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FileHash) Reset() {
+	*x = FileHash{}
+	mi := &file_proto_cognevra_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FileHash) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FileHash) ProtoMessage() {}
+
+func (x *FileHash) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_cognevra_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FileHash.ProtoReflect.Descriptor instead.
+func (*FileHash) Descriptor() ([]byte, []int) {
+	return file_proto_cognevra_proto_rawDescGZIP(), []int{29}
+}
+
+func (x *FileHash) GetFilePath() string {
+	if x != nil {
+		return x.FilePath
+	}
+	return ""
+}
+
+func (x *FileHash) GetSha256() string {
+	if x != nil {
+		return x.Sha256
+	}
+	return ""
+}
+
+func (x *FileHash) GetFileSize() int64 {
+	if x != nil {
+		return x.FileSize
+	}
+	return 0
+}
+
+func (x *FileHash) GetMimeType() string {
+	if x != nil {
+		return x.MimeType
+	}
+	return ""
+}
+
+func (x *FileHash) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+type HashFilesResp struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Results       []*FileHash            `protobuf:"bytes,1,rep,name=results,proto3" json:"results,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HashFilesResp) Reset() {
+	*x = HashFilesResp{}
+	mi := &file_proto_cognevra_proto_msgTypes[30]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HashFilesResp) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HashFilesResp) ProtoMessage() {}
+
+func (x *HashFilesResp) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_cognevra_proto_msgTypes[30]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HashFilesResp.ProtoReflect.Descriptor instead.
+func (*HashFilesResp) Descriptor() ([]byte, []int) {
+	return file_proto_cognevra_proto_rawDescGZIP(), []int{30}
+}
+
+func (x *HashFilesResp) GetResults() []*FileHash {
+	if x != nil {
+		return x.Results
+	}
+	return nil
+}
+
+type ListDirectoryReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RootPath      string                 `protobuf:"bytes,1,opt,name=root_path,json=rootPath,proto3" json:"root_path,omitempty"`
+	Recursive     bool                   `protobuf:"varint,2,opt,name=recursive,proto3" json:"recursive,omitempty"`
+	Extensions    []string               `protobuf:"bytes,3,rep,name=extensions,proto3" json:"extensions,omitempty"` // filter by extensions, empty = all
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListDirectoryReq) Reset() {
+	*x = ListDirectoryReq{}
+	mi := &file_proto_cognevra_proto_msgTypes[31]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListDirectoryReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListDirectoryReq) ProtoMessage() {}
+
+func (x *ListDirectoryReq) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_cognevra_proto_msgTypes[31]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListDirectoryReq.ProtoReflect.Descriptor instead.
+func (*ListDirectoryReq) Descriptor() ([]byte, []int) {
+	return file_proto_cognevra_proto_rawDescGZIP(), []int{31}
+}
+
+func (x *ListDirectoryReq) GetRootPath() string {
+	if x != nil {
+		return x.RootPath
+	}
+	return ""
+}
+
+func (x *ListDirectoryReq) GetRecursive() bool {
+	if x != nil {
+		return x.Recursive
+	}
+	return false
+}
+
+func (x *ListDirectoryReq) GetExtensions() []string {
+	if x != nil {
+		return x.Extensions
+	}
+	return nil
+}
+
+type ListDirectoryResp struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	FilePaths     []string               `protobuf:"bytes,1,rep,name=file_paths,json=filePaths,proto3" json:"file_paths,omitempty"`
+	Total         int32                  `protobuf:"varint,2,opt,name=total,proto3" json:"total,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListDirectoryResp) Reset() {
+	*x = ListDirectoryResp{}
+	mi := &file_proto_cognevra_proto_msgTypes[32]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListDirectoryResp) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListDirectoryResp) ProtoMessage() {}
+
+func (x *ListDirectoryResp) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_cognevra_proto_msgTypes[32]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListDirectoryResp.ProtoReflect.Descriptor instead.
+func (*ListDirectoryResp) Descriptor() ([]byte, []int) {
+	return file_proto_cognevra_proto_rawDescGZIP(), []int{32}
+}
+
+func (x *ListDirectoryResp) GetFilePaths() []string {
+	if x != nil {
+		return x.FilePaths
+	}
+	return nil
+}
+
+func (x *ListDirectoryResp) GetTotal() int32 {
+	if x != nil {
+		return x.Total
+	}
+	return 0
+}
+
 var File_proto_cognevra_proto protoreflect.FileDescriptor
 
 const file_proto_cognevra_proto_rawDesc = "" +
@@ -1698,7 +1983,29 @@ const file_proto_cognevra_proto_rawDesc = "" +
 	"\x13ProcessTripletsResp\x126\n" +
 	"\btriplets\x18\x01 \x03(\v2\x1a.cognevra.v1.TripletResultR\btriplets\x12\x18\n" +
 	"\acreated\x18\x02 \x01(\x05R\acreated\x12\x18\n" +
-	"\askipped\x18\x03 \x01(\x05R\askipped2\xca\x06\n" +
+	"\askipped\x18\x03 \x01(\x05R\askipped\"T\n" +
+	"\fHashFilesReq\x12\x1d\n" +
+	"\n" +
+	"file_paths\x18\x01 \x03(\tR\tfilePaths\x12%\n" +
+	"\x0emax_concurrent\x18\x02 \x01(\x05R\rmaxConcurrent\"\x8f\x01\n" +
+	"\bFileHash\x12\x1b\n" +
+	"\tfile_path\x18\x01 \x01(\tR\bfilePath\x12\x16\n" +
+	"\x06sha256\x18\x02 \x01(\tR\x06sha256\x12\x1b\n" +
+	"\tfile_size\x18\x03 \x01(\x03R\bfileSize\x12\x1b\n" +
+	"\tmime_type\x18\x04 \x01(\tR\bmimeType\x12\x14\n" +
+	"\x05error\x18\x05 \x01(\tR\x05error\"@\n" +
+	"\rHashFilesResp\x12/\n" +
+	"\aresults\x18\x01 \x03(\v2\x15.cognevra.v1.FileHashR\aresults\"m\n" +
+	"\x10ListDirectoryReq\x12\x1b\n" +
+	"\troot_path\x18\x01 \x01(\tR\brootPath\x12\x1c\n" +
+	"\trecursive\x18\x02 \x01(\bR\trecursive\x12\x1e\n" +
+	"\n" +
+	"extensions\x18\x03 \x03(\tR\n" +
+	"extensions\"H\n" +
+	"\x11ListDirectoryResp\x12\x1d\n" +
+	"\n" +
+	"file_paths\x18\x01 \x03(\tR\tfilePaths\x12\x14\n" +
+	"\x05total\x18\x02 \x01(\x05R\x05total2\xde\a\n" +
 	"\x0fCognevraService\x12M\n" +
 	"\x10CreateCollection\x12 .cognevra.v1.CreateCollectionReq\x1a\x17.cognevra.v1.StatusResp\x12I\n" +
 	"\x0eDropCollection\x12\x1e.cognevra.v1.DropCollectionReq\x1a\x17.cognevra.v1.StatusResp\x12G\n" +
@@ -1711,7 +2018,9 @@ const file_proto_cognevra_proto_rawDesc = "" +
 	"\tChunkText\x12\x19.cognevra.v1.ChunkTextReq\x1a\x1a.cognevra.v1.ChunkTextResp\x121\n" +
 	"\x04Info\x12\x12.cognevra.v1.Empty\x1a\x15.cognevra.v1.InfoResp\x12<\n" +
 	"\aGetByID\x12\x17.cognevra.v1.GetByIDReq\x1a\x18.cognevra.v1.GetByIDResp\x12T\n" +
-	"\x0fProcessTriplets\x12\x1f.cognevra.v1.ProcessTripletsReq\x1a .cognevra.v1.ProcessTripletsRespB(Z&github.com/rupamthxt/cognevra/proto/pbb\x06proto3"
+	"\x0fProcessTriplets\x12\x1f.cognevra.v1.ProcessTripletsReq\x1a .cognevra.v1.ProcessTripletsResp\x12B\n" +
+	"\tHashFiles\x12\x19.cognevra.v1.HashFilesReq\x1a\x1a.cognevra.v1.HashFilesResp\x12N\n" +
+	"\rListDirectory\x12\x1d.cognevra.v1.ListDirectoryReq\x1a\x1e.cognevra.v1.ListDirectoryRespB(Z&github.com/rupamthxt/cognevra/proto/pbb\x06proto3"
 
 var (
 	file_proto_cognevra_proto_rawDescOnce sync.Once
@@ -1725,7 +2034,7 @@ func file_proto_cognevra_proto_rawDescGZIP() []byte {
 	return file_proto_cognevra_proto_rawDescData
 }
 
-var file_proto_cognevra_proto_msgTypes = make([]protoimpl.MessageInfo, 28)
+var file_proto_cognevra_proto_msgTypes = make([]protoimpl.MessageInfo, 33)
 var file_proto_cognevra_proto_goTypes = []any{
 	(*Empty)(nil),               // 0: cognevra.v1.Empty
 	(*StatusResp)(nil),          // 1: cognevra.v1.StatusResp
@@ -1755,6 +2064,11 @@ var file_proto_cognevra_proto_goTypes = []any{
 	(*GraphEdge)(nil),           // 25: cognevra.v1.GraphEdge
 	(*TripletResult)(nil),       // 26: cognevra.v1.TripletResult
 	(*ProcessTripletsResp)(nil), // 27: cognevra.v1.ProcessTripletsResp
+	(*HashFilesReq)(nil),        // 28: cognevra.v1.HashFilesReq
+	(*FileHash)(nil),            // 29: cognevra.v1.FileHash
+	(*HashFilesResp)(nil),       // 30: cognevra.v1.HashFilesResp
+	(*ListDirectoryReq)(nil),    // 31: cognevra.v1.ListDirectoryReq
+	(*ListDirectoryResp)(nil),   // 32: cognevra.v1.ListDirectoryResp
 }
 var file_proto_cognevra_proto_depIdxs = []int32{
 	9,  // 0: cognevra.v1.BatchInsertReq.records:type_name -> cognevra.v1.InsertRecord
@@ -1764,35 +2078,40 @@ var file_proto_cognevra_proto_depIdxs = []int32{
 	24, // 4: cognevra.v1.ProcessTripletsReq.nodes:type_name -> cognevra.v1.GraphNode
 	25, // 5: cognevra.v1.ProcessTripletsReq.edges:type_name -> cognevra.v1.GraphEdge
 	26, // 6: cognevra.v1.ProcessTripletsResp.triplets:type_name -> cognevra.v1.TripletResult
-	2,  // 7: cognevra.v1.CognevraService.CreateCollection:input_type -> cognevra.v1.CreateCollectionReq
-	3,  // 8: cognevra.v1.CognevraService.DropCollection:input_type -> cognevra.v1.DropCollectionReq
-	0,  // 9: cognevra.v1.CognevraService.ListCollections:input_type -> cognevra.v1.Empty
-	5,  // 10: cognevra.v1.CognevraService.HasCollection:input_type -> cognevra.v1.HasCollectionReq
-	7,  // 11: cognevra.v1.CognevraService.Insert:input_type -> cognevra.v1.InsertReq
-	8,  // 12: cognevra.v1.CognevraService.BatchInsert:input_type -> cognevra.v1.BatchInsertReq
-	11, // 13: cognevra.v1.CognevraService.Delete:input_type -> cognevra.v1.DeleteReq
-	13, // 14: cognevra.v1.CognevraService.Search:input_type -> cognevra.v1.SearchReq
-	19, // 15: cognevra.v1.CognevraService.ChunkText:input_type -> cognevra.v1.ChunkTextReq
-	0,  // 16: cognevra.v1.CognevraService.Info:input_type -> cognevra.v1.Empty
-	16, // 17: cognevra.v1.CognevraService.GetByID:input_type -> cognevra.v1.GetByIDReq
-	23, // 18: cognevra.v1.CognevraService.ProcessTriplets:input_type -> cognevra.v1.ProcessTripletsReq
-	1,  // 19: cognevra.v1.CognevraService.CreateCollection:output_type -> cognevra.v1.StatusResp
-	1,  // 20: cognevra.v1.CognevraService.DropCollection:output_type -> cognevra.v1.StatusResp
-	4,  // 21: cognevra.v1.CognevraService.ListCollections:output_type -> cognevra.v1.ListCollectionsResp
-	6,  // 22: cognevra.v1.CognevraService.HasCollection:output_type -> cognevra.v1.HasCollectionResp
-	1,  // 23: cognevra.v1.CognevraService.Insert:output_type -> cognevra.v1.StatusResp
-	10, // 24: cognevra.v1.CognevraService.BatchInsert:output_type -> cognevra.v1.BatchInsertResp
-	12, // 25: cognevra.v1.CognevraService.Delete:output_type -> cognevra.v1.DeleteResp
-	14, // 26: cognevra.v1.CognevraService.Search:output_type -> cognevra.v1.SearchResp
-	20, // 27: cognevra.v1.CognevraService.ChunkText:output_type -> cognevra.v1.ChunkTextResp
-	22, // 28: cognevra.v1.CognevraService.Info:output_type -> cognevra.v1.InfoResp
-	17, // 29: cognevra.v1.CognevraService.GetByID:output_type -> cognevra.v1.GetByIDResp
-	27, // 30: cognevra.v1.CognevraService.ProcessTriplets:output_type -> cognevra.v1.ProcessTripletsResp
-	19, // [19:31] is the sub-list for method output_type
-	7,  // [7:19] is the sub-list for method input_type
-	7,  // [7:7] is the sub-list for extension type_name
-	7,  // [7:7] is the sub-list for extension extendee
-	0,  // [0:7] is the sub-list for field type_name
+	29, // 7: cognevra.v1.HashFilesResp.results:type_name -> cognevra.v1.FileHash
+	2,  // 8: cognevra.v1.CognevraService.CreateCollection:input_type -> cognevra.v1.CreateCollectionReq
+	3,  // 9: cognevra.v1.CognevraService.DropCollection:input_type -> cognevra.v1.DropCollectionReq
+	0,  // 10: cognevra.v1.CognevraService.ListCollections:input_type -> cognevra.v1.Empty
+	5,  // 11: cognevra.v1.CognevraService.HasCollection:input_type -> cognevra.v1.HasCollectionReq
+	7,  // 12: cognevra.v1.CognevraService.Insert:input_type -> cognevra.v1.InsertReq
+	8,  // 13: cognevra.v1.CognevraService.BatchInsert:input_type -> cognevra.v1.BatchInsertReq
+	11, // 14: cognevra.v1.CognevraService.Delete:input_type -> cognevra.v1.DeleteReq
+	13, // 15: cognevra.v1.CognevraService.Search:input_type -> cognevra.v1.SearchReq
+	19, // 16: cognevra.v1.CognevraService.ChunkText:input_type -> cognevra.v1.ChunkTextReq
+	0,  // 17: cognevra.v1.CognevraService.Info:input_type -> cognevra.v1.Empty
+	16, // 18: cognevra.v1.CognevraService.GetByID:input_type -> cognevra.v1.GetByIDReq
+	23, // 19: cognevra.v1.CognevraService.ProcessTriplets:input_type -> cognevra.v1.ProcessTripletsReq
+	28, // 20: cognevra.v1.CognevraService.HashFiles:input_type -> cognevra.v1.HashFilesReq
+	31, // 21: cognevra.v1.CognevraService.ListDirectory:input_type -> cognevra.v1.ListDirectoryReq
+	1,  // 22: cognevra.v1.CognevraService.CreateCollection:output_type -> cognevra.v1.StatusResp
+	1,  // 23: cognevra.v1.CognevraService.DropCollection:output_type -> cognevra.v1.StatusResp
+	4,  // 24: cognevra.v1.CognevraService.ListCollections:output_type -> cognevra.v1.ListCollectionsResp
+	6,  // 25: cognevra.v1.CognevraService.HasCollection:output_type -> cognevra.v1.HasCollectionResp
+	1,  // 26: cognevra.v1.CognevraService.Insert:output_type -> cognevra.v1.StatusResp
+	10, // 27: cognevra.v1.CognevraService.BatchInsert:output_type -> cognevra.v1.BatchInsertResp
+	12, // 28: cognevra.v1.CognevraService.Delete:output_type -> cognevra.v1.DeleteResp
+	14, // 29: cognevra.v1.CognevraService.Search:output_type -> cognevra.v1.SearchResp
+	20, // 30: cognevra.v1.CognevraService.ChunkText:output_type -> cognevra.v1.ChunkTextResp
+	22, // 31: cognevra.v1.CognevraService.Info:output_type -> cognevra.v1.InfoResp
+	17, // 32: cognevra.v1.CognevraService.GetByID:output_type -> cognevra.v1.GetByIDResp
+	27, // 33: cognevra.v1.CognevraService.ProcessTriplets:output_type -> cognevra.v1.ProcessTripletsResp
+	30, // 34: cognevra.v1.CognevraService.HashFiles:output_type -> cognevra.v1.HashFilesResp
+	32, // 35: cognevra.v1.CognevraService.ListDirectory:output_type -> cognevra.v1.ListDirectoryResp
+	22, // [22:36] is the sub-list for method output_type
+	8,  // [8:22] is the sub-list for method input_type
+	8,  // [8:8] is the sub-list for extension type_name
+	8,  // [8:8] is the sub-list for extension extendee
+	0,  // [0:8] is the sub-list for field type_name
 }
 
 func init() { file_proto_cognevra_proto_init() }
@@ -1806,7 +2125,7 @@ func file_proto_cognevra_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_cognevra_proto_rawDesc), len(file_proto_cognevra_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   28,
+			NumMessages:   33,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

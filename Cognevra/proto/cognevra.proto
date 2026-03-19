@@ -26,6 +26,10 @@ service CognevraService {
 
   // Triplet processing
   rpc ProcessTriplets(ProcessTripletsReq) returns (ProcessTripletsResp);
+
+  // File I/O acceleration
+  rpc HashFiles(HashFilesReq) returns (HashFilesResp);
+  rpc ListDirectory(ListDirectoryReq) returns (ListDirectoryResp);
 }
 
 // Common
@@ -184,4 +188,33 @@ message ProcessTripletsResp {
   repeated TripletResult triplets = 1;
   int32 created = 2;
   int32 skipped = 3;
+}
+
+// File I/O acceleration
+message HashFilesReq {
+  repeated string file_paths = 1;
+  int32 max_concurrent = 2;  // goroutine pool size, default 8
+}
+
+message FileHash {
+  string file_path = 1;
+  string sha256 = 2;
+  int64 file_size = 3;
+  string mime_type = 4;
+  string error = 5;
+}
+
+message HashFilesResp {
+  repeated FileHash results = 1;
+}
+
+message ListDirectoryReq {
+  string root_path = 1;
+  bool recursive = 2;
+  repeated string extensions = 3;  // filter by extensions, empty = all
+}
+
+message ListDirectoryResp {
+  repeated string file_paths = 1;
+  int32 total = 2;
 }

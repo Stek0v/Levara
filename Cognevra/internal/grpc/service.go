@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/rupamthxt/cognevra/internal/store"
 	"github.com/rupamthxt/cognevra/pkg/chunker"
+	"github.com/rupamthxt/cognevra/pkg/fileio"
 	pb "github.com/rupamthxt/cognevra/proto/pb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -274,5 +275,30 @@ func (s *Service) ProcessTriplets(_ context.Context, req *pb.ProcessTripletsReq)
 		Triplets: triplets,
 		Created:  int32(len(triplets)),
 		Skipped:  int32(skipped),
+	}, nil
+}
+
+func (s *Service) HashFiles(_ context.Context, req *pb.HashFilesReq) (*pb.HashFilesResp, error) {
+	maxConcurrent := int(req.MaxConcurrent)
+	results := fileio.HashFiles(req.FilePaths, maxConcurrent)
+
+	pbResults := make([]*pb.FileHash, len(results))
+	for i, r := range results {
+		pbResults[i] = &pb.FileHash{
+			FilePath: r.FilePath,
+			Sha256:   r.SHA256,
+			FileSize: r.FileSize,
+			MimeType: r.MimeType,
+			Error:    r.Error,
+		}
+	}
+	return &pb.HashFilesResp{Results: pbResults}, nil
+}
+
+func (s *Service) ListDirectory(_ context.Context, req *pb.ListDirectoryReq) (*pb.ListDirectoryResp, error) {
+	files := fileio.ListDirectory(req.RootPath, req.Recursive, req.Extensions)
+	return &pb.ListDirectoryResp{
+		FilePaths: files,
+		Total:     int32(len(files)),
 	}, nil
 }
