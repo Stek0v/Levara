@@ -30,10 +30,12 @@ type Service struct {
 	pb.UnimplementedCognevraServiceServer
 	collections *store.CollectionManager
 	cluster     *store.Cluster // legacy: for non-collection operations
-	dim         int
-	llmCache    *llmcache.Cache
-	bm25Indexes map[string]*bm25.Index
-	bm25Mu      sync.RWMutex
+	dim            int
+	llmCache       *llmcache.Cache
+	bm25Indexes    map[string]*bm25.Index
+	bm25Mu         sync.RWMutex
+	graphCaches    map[string]*graphdb.CachedWriter
+	graphCacheMu   sync.Mutex
 }
 
 // NewService creates a gRPC service backed by CollectionManager.
@@ -44,6 +46,7 @@ func NewService(collections *store.CollectionManager, cluster *store.Cluster, di
 		dim:         dim,
 		llmCache:    llmcache.New(10000, 0),
 		bm25Indexes: make(map[string]*bm25.Index),
+		graphCaches: make(map[string]*graphdb.CachedWriter),
 	}
 }
 
@@ -921,6 +924,24 @@ func (s *Service) BatchSearchByText(ctx context.Context, req *pb.BatchSearchByTe
 	return &pb.BatchSearchByTextResp{Results: groups}, nil
 }
 
+func (s *Service) getGraphCache(ctx context.Context, url, user, pass, db string) (*graphdb.CachedWriter, error) {
+	key := url + "|" + db
+	s.graphCacheMu.Lock()
+	defer s.graphCacheMu.Unlock()
+
+	if cw, ok := s.graphCaches[key]; ok {
+		return cw, nil
+	}
+
+	writer, err := graphdb.NewWriter(ctx, url, user, pass, db)
+	if err != nil {
+		return nil, err
+	}
+	cw := graphdb.NewCachedWriter(writer, 1000, 5*time.Minute)
+	s.graphCaches[key] = cw
+	return cw, nil
+}
+
 // GraphRead executes Neo4j read queries for search-time graph projection.
 // Replaces 4 separate Python→Neo4j queries with one Go gRPC call.
 func (s *Service) GraphRead(ctx context.Context, req *pb.GraphReadReq) (*pb.GraphReadResp, error) {
@@ -934,28 +955,27 @@ func (s *Service) GraphRead(ctx context.Context, req *pb.GraphReadReq) (*pb.Grap
 
 	start := time.Now()
 
-	writer, err := graphdb.NewWriter(ctx, req.Neo4JUrl, req.Neo4JUser, req.Neo4JPassword, dbName)
+	cw, err := s.getGraphCache(ctx, req.Neo4JUrl, req.Neo4JUser, req.Neo4JPassword, dbName)
 	if err != nil {
 		return nil, status.Errorf(codes.Unavailable, "neo4j: %v", err)
 	}
-	defer writer.Close(ctx)
 
 	var result graphdb.GraphReadResult
 
 	switch req.Mode {
 	case pb.GraphReadReq_FULL_GRAPH:
-		result, err = writer.ReadFullGraph(ctx)
+		result, err = cw.ReadFullGraph(ctx)
 	case pb.GraphReadReq_ID_FILTERED:
-		result, err = writer.ReadIDFiltered(ctx, req.NodeIds)
+		result, err = cw.ReadIDFiltered(ctx, req.NodeIds)
 	case pb.GraphReadReq_NEIGHBOURS:
 		if len(req.NodeIds) == 0 {
 			return nil, status.Errorf(codes.InvalidArgument, "node_ids required for NEIGHBOURS mode")
 		}
-		result, err = writer.ReadNeighbours(ctx, req.NodeIds[0])
+		result, err = cw.ReadNeighbours(ctx, req.NodeIds[0])
 	case pb.GraphReadReq_SUBGRAPH:
-		result, err = writer.ReadSubgraph(ctx, req.NodeLabel, req.NodeNames)
+		result, err = cw.ReadSubgraph(ctx, req.NodeLabel, req.NodeNames)
 	default:
-		result, err = writer.ReadFullGraph(ctx)
+		result, err = cw.ReadFullGraph(ctx)
 	}
 
 	if err != nil {
