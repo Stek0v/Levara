@@ -293,3 +293,52 @@ class CognevraAdapter(VectorDBInterface):
             for dp in data_points
         ]
         await self.create_data_points(collection_name, index_points)
+
+    # ------------------------------------------------------------------ chunking
+
+    async def chunk_text(
+        self,
+        text: str,
+        max_chunk_size: int = 600,
+        document_id: str = "",
+        strategy: str = "merged",
+        char_per_token: float = 4.0,
+    ) -> list:
+        """Chunk text using Go chunker via gRPC.
+
+        Args:
+            text: Input text to chunk
+            max_chunk_size: Maximum chunk size in TOKENS
+            document_id: Parent document UUID string (for deterministic chunk IDs)
+            strategy: "merged" (default), "paragraph", or "sentence"
+            char_per_token: Estimated characters per token (model-dependent)
+
+        Returns:
+            List of dicts with keys: id, text, chunk_size, chunk_index, cut_type
+            chunk_size is estimated from char count (actual token counting done by caller)
+        """
+        estimated_max_chars = int(max_chunk_size * char_per_token)
+
+        resp = await self._safe_call(
+            self._stub.ChunkText(pb.ChunkTextReq(
+                text=text,
+                strategy=strategy,
+                min_chunk_chars=80,
+                max_chunk_chars=estimated_max_chars,
+                document_id=document_id,
+            ))
+        )
+
+        cut_type_map = {"paragraph": "paragraph_end", "sentence": "sentence_cut"}
+
+        return [
+            {
+                "id": chunk.id,
+                "text": chunk.text,
+                "chunk_size": len(chunk.text.split()),  # word count estimate; caller should use tokenizer
+                "chunk_index": chunk.chunk_index,
+                "cut_type": cut_type_map.get(chunk.cut_type, "default"),
+                "chapter": chunk.chapter,
+            }
+            for chunk in resp.chunks
+        ]
