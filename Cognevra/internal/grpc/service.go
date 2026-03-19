@@ -15,6 +15,7 @@ import (
 	"github.com/stek0v/cognevra/pkg/embed"
 	"github.com/stek0v/cognevra/pkg/extract"
 	"github.com/stek0v/cognevra/pkg/ingest"
+	"github.com/stek0v/cognevra/pkg/temporal"
 	"github.com/stek0v/cognevra/pkg/fileio"
 	"github.com/stek0v/cognevra/pkg/graph"
 	"github.com/stek0v/cognevra/pkg/bm25"
@@ -1631,4 +1632,49 @@ func (s *Service) ExtractText(_ context.Context, req *pb.ExtractTextReq) (*pb.Ex
 		resp.Markdown = result.Markdown
 	}
 	return resp, nil
+}
+
+// TemporalSearch extracts timestamps from text and filters by date range.
+// Covers Cognee's TEMPORAL search type.
+func (s *Service) TemporalSearch(_ context.Context, req *pb.TemporalSearchReq) (*pb.TemporalSearchResp, error) {
+	if req.Text == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "text required")
+	}
+
+	events := temporal.ExtractTimestamps(req.Text, time.Now())
+	totalExtracted := len(events)
+
+	// Apply date range filter
+	if req.DateFrom != "" || req.DateTo != "" {
+		from := time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
+		to := time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC)
+		if req.DateFrom != "" {
+			if t, err := time.Parse("2006-01-02", req.DateFrom); err == nil {
+				from = t
+			}
+		}
+		if req.DateTo != "" {
+			if t, err := time.Parse("2006-01-02", req.DateTo); err == nil {
+				to = t
+			}
+		}
+		events = temporal.FilterByRange(events, from, to)
+	}
+
+	pbEvents := make([]*pb.TemporalEvent, len(events))
+	for i, e := range events {
+		pbEvents[i] = &pb.TemporalEvent{
+			Text:         e.Text,
+			Date:         e.Date.Format("2006-01-02"),
+			DateOriginal: e.DateStr,
+			Confidence:   e.Confidence,
+			NodeId:       e.NodeID,
+		}
+	}
+
+	return &pb.TemporalSearchResp{
+		Events:         pbEvents,
+		TotalExtracted: int32(totalExtracted),
+		InRange:        int32(len(events)),
+	}, nil
 }

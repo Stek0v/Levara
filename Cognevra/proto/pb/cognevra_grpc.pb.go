@@ -51,6 +51,7 @@ const (
 	CognevraService_MultiQuerySearch_FullMethodName        = "/cognevra.v1.CognevraService/MultiQuerySearch"
 	CognevraService_IngestData_FullMethodName              = "/cognevra.v1.CognevraService/IngestData"
 	CognevraService_ExtractText_FullMethodName             = "/cognevra.v1.CognevraService/ExtractText"
+	CognevraService_TemporalSearch_FullMethodName          = "/cognevra.v1.CognevraService/TemporalSearch"
 	CognevraService_BM25Index_FullMethodName               = "/cognevra.v1.CognevraService/BM25Index"
 	CognevraService_BM25Search_FullMethodName              = "/cognevra.v1.CognevraService/BM25Search"
 	CognevraService_HybridSearch_FullMethodName            = "/cognevra.v1.CognevraService/HybridSearch"
@@ -115,6 +116,8 @@ type CognevraServiceClient interface {
 	IngestData(ctx context.Context, in *IngestDataReq, opts ...grpc.CallOption) (*IngestDataResp, error)
 	// Text extraction from PDF/DOCX/TXT (pure Go)
 	ExtractText(ctx context.Context, in *ExtractTextReq, opts ...grpc.CallOption) (*ExtractTextResp, error)
+	// Temporal search: extract timestamps from text + range query
+	TemporalSearch(ctx context.Context, in *TemporalSearchReq, opts ...grpc.CallOption) (*TemporalSearchResp, error)
 	// BM25 lexical search + hybrid
 	BM25Index(ctx context.Context, in *BM25IndexReq, opts ...grpc.CallOption) (*StatusResp, error)
 	BM25Search(ctx context.Context, in *BM25SearchReq, opts ...grpc.CallOption) (*BM25SearchResp, error)
@@ -460,6 +463,16 @@ func (c *cognevraServiceClient) ExtractText(ctx context.Context, in *ExtractText
 	return out, nil
 }
 
+func (c *cognevraServiceClient) TemporalSearch(ctx context.Context, in *TemporalSearchReq, opts ...grpc.CallOption) (*TemporalSearchResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TemporalSearchResp)
+	err := c.cc.Invoke(ctx, CognevraService_TemporalSearch_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *cognevraServiceClient) BM25Index(ctx context.Context, in *BM25IndexReq, opts ...grpc.CallOption) (*StatusResp, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(StatusResp)
@@ -558,6 +571,8 @@ type CognevraServiceServer interface {
 	IngestData(context.Context, *IngestDataReq) (*IngestDataResp, error)
 	// Text extraction from PDF/DOCX/TXT (pure Go)
 	ExtractText(context.Context, *ExtractTextReq) (*ExtractTextResp, error)
+	// Temporal search: extract timestamps from text + range query
+	TemporalSearch(context.Context, *TemporalSearchReq) (*TemporalSearchResp, error)
 	// BM25 lexical search + hybrid
 	BM25Index(context.Context, *BM25IndexReq) (*StatusResp, error)
 	BM25Search(context.Context, *BM25SearchReq) (*BM25SearchResp, error)
@@ -669,6 +684,9 @@ func (UnimplementedCognevraServiceServer) IngestData(context.Context, *IngestDat
 }
 func (UnimplementedCognevraServiceServer) ExtractText(context.Context, *ExtractTextReq) (*ExtractTextResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method ExtractText not implemented")
+}
+func (UnimplementedCognevraServiceServer) TemporalSearch(context.Context, *TemporalSearchReq) (*TemporalSearchResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method TemporalSearch not implemented")
 }
 func (UnimplementedCognevraServiceServer) BM25Index(context.Context, *BM25IndexReq) (*StatusResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method BM25Index not implemented")
@@ -1272,6 +1290,24 @@ func _CognevraService_ExtractText_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _CognevraService_TemporalSearch_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TemporalSearchReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CognevraServiceServer).TemporalSearch(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CognevraService_TemporalSearch_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CognevraServiceServer).TemporalSearch(ctx, req.(*TemporalSearchReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _CognevraService_BM25Index_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(BM25IndexReq)
 	if err := dec(in); err != nil {
@@ -1474,6 +1510,10 @@ var CognevraService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ExtractText",
 			Handler:    _CognevraService_ExtractText_Handler,
+		},
+		{
+			MethodName: "TemporalSearch",
+			Handler:    _CognevraService_TemporalSearch_Handler,
 		},
 		{
 			MethodName: "BM25Index",
