@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
+	"github.com/google/uuid"
 	"github.com/rupamthxt/cognevra/internal/store"
 	"github.com/rupamthxt/cognevra/pkg/chunker"
 	pb "github.com/rupamthxt/cognevra/proto/pb"
@@ -208,5 +210,69 @@ func (s *Service) Info(_ context.Context, _ *pb.Empty) (*pb.InfoResp, error) {
 		Shards:      int32(s.cluster.NumShards()),
 		Status:      "ready",
 		Collections: s.collections.List(),
+	}, nil
+}
+
+func (s *Service) ProcessTriplets(_ context.Context, req *pb.ProcessTripletsReq) (*pb.ProcessTripletsResp, error) {
+	// Build node map
+	nodeMap := make(map[string]string, len(req.Nodes)) // id → text
+	for _, n := range req.Nodes {
+		if _, exists := nodeMap[n.Id]; !exists {
+			nodeMap[n.Id] = n.Text
+		}
+	}
+
+	seenIDs := make(map[string]bool)
+	var triplets []*pb.TripletResult
+	skipped := 0
+
+	for _, edge := range req.Edges {
+		sourceText, sourceOK := nodeMap[edge.SourceId]
+		targetText, targetOK := nodeMap[edge.TargetId]
+		if !sourceOK || !targetOK {
+			skipped++
+			continue
+		}
+		if edge.RelationshipName == "" {
+			skipped++
+			continue
+		}
+
+		// Relationship text: edge_text or fallback to relationship_name
+		relText := edge.EdgeText
+		if relText == "" {
+			relText = edge.RelationshipName
+		}
+
+		// Generate dedup key
+		dedupInput := edge.SourceId + edge.RelationshipName + edge.TargetId
+		dedupInput = strings.ToLower(dedupInput)
+		dedupInput = strings.ReplaceAll(dedupInput, " ", "_")
+		dedupInput = strings.ReplaceAll(dedupInput, "'", "")
+		tripletID := uuid.NewSHA1(uuid.NameSpaceOID, []byte(dedupInput)).String()
+
+		if seenIDs[tripletID] {
+			skipped++
+			continue
+		}
+		seenIDs[tripletID] = true
+
+		// Format embeddable text
+		embeddableText := strings.TrimSpace(
+			fmt.Sprintf("%s -› %s-›%s", sourceText, relText, targetText),
+		)
+
+		triplets = append(triplets, &pb.TripletResult{
+			Id:         tripletID,
+			FromNodeId: edge.SourceId,
+			ToNodeId:   edge.TargetId,
+			Text:       embeddableText,
+		})
+	}
+
+	return &pb.ProcessTripletsResp{
+		Triplets: triplets,
+		Created:  int32(len(triplets)),
+		Skipped:  int32(skipped),
 	}, nil
 }

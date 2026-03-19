@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -329,6 +330,66 @@ func TestSearchErrorHandling(t *testing.T) {
 	})
 	if err == nil {
 		t.Error("expected error for empty collection")
+	}
+}
+
+// setupService creates a Service instance directly (without gRPC transport) for unit tests.
+func setupService(t *testing.T) *Service {
+	t.Helper()
+	dir, _ := os.MkdirTemp("", "cognevra-svc-test-*")
+	t.Cleanup(func() { os.RemoveAll(dir) })
+
+	colMgr, err := store.NewCollectionManager(64, dir)
+	if err != nil {
+		t.Fatalf("NewCollectionManager: %v", err)
+	}
+	t.Cleanup(func() { colMgr.Close() })
+
+	os.MkdirAll(fmt.Sprintf("%s/dummy/shard_0", dir), 0755)
+	db, _ := store.NewCognevra(64, fmt.Sprintf("%s/dummy/shard_0/meta.bin", dir))
+	t.Cleanup(func() { db.Close() })
+	cluster := store.NewCluster([]store.ShardHandler{&dummyShard{db: db}})
+
+	return NewService(colMgr, cluster, 64)
+}
+
+func TestProcessTriplets(t *testing.T) {
+	svc := setupService(t)
+	ctx := context.Background()
+
+	resp, err := svc.ProcessTriplets(ctx, &pb.ProcessTripletsReq{
+		Nodes: []*pb.GraphNode{
+			{Id: "n1", Text: "Alice"},
+			{Id: "n2", Text: "Bob"},
+			{Id: "n3", Text: "Charlie"},
+		},
+		Edges: []*pb.GraphEdge{
+			{SourceId: "n1", TargetId: "n2", RelationshipName: "knows", EdgeText: "is friends with"},
+			{SourceId: "n2", TargetId: "n3", RelationshipName: "works_with"},
+			{SourceId: "n1", TargetId: "n2", RelationshipName: "knows"}, // duplicate
+			{SourceId: "n1", TargetId: "n999", RelationshipName: "missing"}, // missing node
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Created != 2 {
+		t.Errorf("expected 2 triplets, got %d", resp.Created)
+	}
+	if resp.Skipped != 2 {
+		t.Errorf("expected 2 skipped, got %d", resp.Skipped)
+	}
+	// Check first triplet text format
+	if !strings.Contains(resp.Triplets[0].Text, "Alice") || !strings.Contains(resp.Triplets[0].Text, "is friends with") {
+		t.Errorf("unexpected triplet text: %s", resp.Triplets[0].Text)
+	}
+	// Check dedup: edge_text preferred over relationship_name
+	if !strings.Contains(resp.Triplets[0].Text, "is friends with") {
+		t.Errorf("edge_text should be preferred: %s", resp.Triplets[0].Text)
+	}
+	// Check second triplet uses relationship_name as fallback
+	if !strings.Contains(resp.Triplets[1].Text, "works_with") {
+		t.Errorf("should fallback to relationship_name: %s", resp.Triplets[1].Text)
 	}
 }
 
