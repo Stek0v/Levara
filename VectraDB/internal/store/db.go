@@ -1,3 +1,11 @@
+// Package store implements VectraDB's storage engine: HNSW index, WAL, arena, and disk store.
+//
+// The main entry point is [NewVectraDB], which returns a [VectraDB] instance ready for
+// concurrent insert, search, and delete operations. Durability is provided by a
+// write-ahead log ([WAL]) with group-commit fsync, while hot vectors live in a
+// memory-mapped arena ([VectorArena]) and metadata is persisted in an append-only
+// file ([DiskStore]). HNSW graph construction happens asynchronously in the background
+// so that write latency is not gated on graph linking.
 package store
 
 import (
@@ -7,6 +15,9 @@ import (
 	"sync"
 )
 
+// VectroRecord is a single result returned by [VectraDB.Search].
+// Score is the cosine similarity (higher = more similar).
+// Data contains the raw JSON metadata stored at insert time.
 type VectroRecord struct {
 	ID    string
 	Score float32
@@ -20,6 +31,13 @@ type pendingItem struct {
 	idx    uint32
 }
 
+// VectraDB is the core storage engine combining an in-memory HNSW index with a
+// durable WAL and append-only metadata store. It is safe for concurrent use.
+//
+// Writes are two-phase: data is written durably (arena + disk + WAL) under db.mu,
+// then HNSW graph construction happens asynchronously via a background goroutine.
+// Searches over records not yet indexed fall back to a brute-force scan of the
+// pending queue so no results are missed.
 type VectraDB struct {
 	mu       sync.RWMutex
 	index    map[string]uint32
@@ -46,6 +64,15 @@ type VectraDB struct {
 	indexSignal chan struct{}
 }
 
+// NewVectraDB creates a new VectraDB instance.
+//
+// dim is the fixed vector dimension; all inserted vectors must match it.
+// storagePath is the path to the metadata file (meta.bin); sibling files (.wal) are created
+// automatically. An optional [HNSWConfig] may be provided to tune graph parameters;
+// [DefaultHNSWConfig] is used when omitted.
+//
+// On startup, NewVectraDB replays the WAL to restore all previously inserted records
+// and starts a background goroutine for async HNSW indexing.
 func NewVectraDB(dim int, storagePath string, cfg ...HNSWConfig) (*VectraDB, error) {
 	hnswCfg := DefaultHNSWConfig()
 	if len(cfg) > 0 {
@@ -149,6 +176,8 @@ func (db *VectraDB) signalIndexer() {
 	}
 }
 
+// Insert durably stores a single record (vector + JSON-serializable metadata) and
+// enqueues it for async HNSW indexing. It blocks until the WAL fsync completes.
 func (db *VectraDB) Insert(id string, vector []float32, data any) error {
 	db.mu.Lock()
 
@@ -221,6 +250,9 @@ func (db *VectraDB) insertInMemory(id string, vector []float32, loc FileLocation
 	return nil
 }
 
+// BatchInsert durably stores multiple records in a single group-commit WAL fsync.
+// Metadata marshalling is done outside the lock for parallelism. Returns a slice of
+// per-record errors (nil entries mean success); the slice is nil if all records succeeded.
 func (db *VectraDB) BatchInsert(records []BatchItem) []error {
 	// Phase 0: marshal metadata outside lock (CPU-bound, no db state needed).
 	type prepared struct {
@@ -285,6 +317,8 @@ func (db *VectraDB) BatchInsert(records []BatchItem) []error {
 	return errs
 }
 
+// Get returns the vector and raw JSON metadata for the record with the given id.
+// The third return value is false when the id is not found.
 func (db *VectraDB) Get(id string) ([]float32, []byte, bool) {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
@@ -303,6 +337,9 @@ func (db *VectraDB) Get(id string) ([]float32, []byte, bool) {
 	return vec, meta, true
 }
 
+// Search returns the topK nearest records to the query vector using HNSW beam search.
+// Records not yet indexed (pending async HNSW insert) are covered by a brute-force fallback.
+// Results are sorted by descending cosine similarity.
 func (db *VectraDB) Search(query []float32, topK int) []VectroRecord {
 	normQ := normalizeVec(query)
 

@@ -11,9 +11,10 @@ import (
 	"unsafe"
 )
 
+// WAL operation types stored as a single byte at the start of each entry.
 const (
-	OpInsert = 1
-	OpDelete = 2
+	OpInsert = 1 // OpInsert records a vector + metadata upsert.
+	OpDelete = 2 // OpDelete records a logical deletion by ID.
 )
 
 // flushRequest is sent by callers to the fsyncLoop goroutine.
@@ -21,6 +22,16 @@ type flushRequest struct {
 	done chan error
 }
 
+// WAL is a write-ahead log that provides crash recovery for VectraDB.
+//
+// Each insert or delete is buffered via [WAL.WriteEntryNoFlush], then durably
+// fsynced through a group-commit mechanism: multiple concurrent callers share
+// a single fsync via [WAL.FlushAsync], reducing per-operation disk latency.
+// On startup, [WAL.RecoverEx] replays all entries to rebuild in-memory state.
+//
+// The on-disk format is a sequence of length-prefixed binary records:
+//
+//	[4B size][1B op][4B idLen][id][4B vecLen][vec bytes][4B metaLen][meta][8B offset][4B length]
 type WAL struct {
 	file   *os.File
 	writer *bufio.Writer
@@ -32,7 +43,9 @@ type WAL struct {
 	syncCount uint64           // atomic counter for testing coalescing
 }
 
-// OpenWal creates a new Write Ahead Log and returns a WAL struct.
+// OpenWal opens (or creates) the WAL file at path and starts the background
+// fsyncLoop goroutine that coalesces flush requests. The WAL is ready for use
+// immediately after this call returns.
 func OpenWal(path string) (*WAL, error) {
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
@@ -226,19 +239,22 @@ func (w *WAL) Close() error {
 	return w.file.Close()
 }
 
-// Iterator function type
+// WALIterator is the callback signature for insert-only WAL replay via [WAL.Recover].
 type WALIterator func(id string, vector []float32, meta []byte, loc FileLocation)
 
-// WALIteratorEx receives the operation type so callers can handle deletes.
+// WALIteratorEx receives the operation type so callers can handle both inserts and deletes.
 type WALIteratorEx func(op byte, id string, vector []float32, meta []byte, loc FileLocation)
 
-// RecoverEx replays WAL entries with operation type awareness (insert + delete).
+// RecoverEx replays all WAL entries (inserts and deletes) in order, invoking fn for each.
+// Use this during startup to perform two-pass recovery that correctly handles deletions.
 func (wal *WAL) RecoverEx(fn WALIteratorEx) error {
 	return wal.recoverInternal(func(op byte, id string, vector []float32, meta []byte, loc FileLocation) {
 		fn(op, id, vector, meta, loc)
 	})
 }
 
+// Recover replays insert-only WAL entries, invoking fn for each. Delete entries are
+// silently skipped. Prefer [WAL.RecoverEx] when delete-awareness is needed.
 func (wal *WAL) Recover(fn WALIterator) error {
 	return wal.recoverInternal(func(op byte, id string, vector []float32, meta []byte, loc FileLocation) {
 		if op == OpInsert {
