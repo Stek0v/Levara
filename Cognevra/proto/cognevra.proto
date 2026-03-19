@@ -23,6 +23,9 @@ service CognevraService {
 
   // Record retrieval
   rpc GetByID(GetByIDReq) returns (GetByIDResp);
+
+  // Triplet processing
+  rpc ProcessTriplets(ProcessTripletsReq) returns (ProcessTripletsResp);
 }
 
 // Common
@@ -150,4 +153,35 @@ message InfoResp {
   int32 shards = 2;
   string status = 3;
   repeated string collections = 4;
+}
+
+// Triplet processing
+message ProcessTripletsReq {
+  repeated GraphNode nodes = 1;
+  repeated GraphEdge edges = 2;
+}
+
+message GraphNode {
+  string id = 1;
+  string text = 2;
+}
+
+message GraphEdge {
+  string source_id = 1;
+  string target_id = 2;
+  string relationship_name = 3;
+  string edge_text = 4;
+}
+
+message TripletResult {
+  string id = 1;
+  string from_node_id = 2;
+  string to_node_id = 3;
+  string text = 4;
+}
+
+message ProcessTripletsResp {
+  repeated TripletResult triplets = 1;
+  int32 created = 2;
+  int32 skipped = 3;
 }
