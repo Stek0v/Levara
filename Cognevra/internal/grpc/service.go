@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/rupamthxt/cognevra/internal/store"
@@ -607,4 +608,218 @@ func (s *Service) BatchWriteGraph(ctx context.Context, req *pb.BatchWriteGraphRe
 		EdgesWritten: int32(result.EdgesWritten),
 		Errors:       result.Errors,
 	}, nil
+}
+
+// ParallelWriteDataPoints performs dedup + Neo4j write + embed + vector index
+// in parallel goroutines. Replaces 8 sequential Python calls with 2 parallel phases.
+func (s *Service) ParallelWriteDataPoints(ctx context.Context, req *pb.ParallelWriteReq) (*pb.ParallelWriteResp, error) {
+	totalStart := time.Now()
+	resp := &pb.ParallelWriteResp{}
+
+	// --- Phase 0: Dedup ---
+	dedupStart := time.Now()
+	nodes := make([]graph.DedupNode, len(req.Nodes))
+	for i, n := range req.Nodes {
+		nodes[i] = graph.DedupNode{ID: n.Id, Name: n.Name, Description: n.Description, Type: n.Type, Text: n.Text}
+	}
+	edges := make([]graph.DedupEdge, len(req.Edges))
+	for i, e := range req.Edges {
+		edges[i] = graph.DedupEdge{SourceID: e.SourceId, TargetID: e.TargetId, RelationshipName: e.RelationshipName, EdgeText: e.EdgeText}
+	}
+
+	dedupResult := graph.Deduplicate(nodes, edges)
+	resp.NodesDeduped = int32(len(req.Nodes) - len(dedupResult.Nodes))
+	resp.EdgesDeduped = int32(len(req.Edges) - len(dedupResult.Edges))
+	resp.DedupMs = time.Since(dedupStart).Milliseconds()
+
+	// --- Prepare Neo4j writer (if configured) ---
+	var neo4jWriter *graphdb.Writer
+	if req.Neo4JUrl != "" {
+		dbName := req.Neo4JDatabase
+		if dbName == "" {
+			dbName = "neo4j"
+		}
+		w, err := graphdb.NewWriter(ctx, req.Neo4JUrl, req.Neo4JUser, req.Neo4JPassword, dbName)
+		if err != nil {
+			resp.Errors = append(resp.Errors, fmt.Sprintf("neo4j connect: %v", err))
+		} else {
+			neo4jWriter = w
+			defer w.Close(ctx)
+		}
+	}
+
+	// --- Prepare embed client (if configured) ---
+	var embedClient *embed.Client
+	if req.EmbedEndpoint != "" {
+		batchSize := int(req.EmbedBatchSize)
+		if batchSize <= 0 {
+			batchSize = 16
+		}
+		model := req.EmbedModel
+		if model == "" {
+			model = "text-embedding-3-small"
+		}
+		embedClient = embed.NewClient(req.EmbedEndpoint, model, batchSize, 3)
+	}
+
+	// --- Phase 1: Nodes (parallel: Neo4j + embed+index) ---
+	phase1Start := time.Now()
+	type phase1Result struct {
+		neo4jNodes int
+		neo4jErr   error
+		embedCount int
+		indexCount int
+		collsCreated int
+		embedErr   error
+	}
+	p1ch := make(chan phase1Result, 2)
+
+	// Goroutine 1: Neo4j nodes
+	go func() {
+		r := phase1Result{}
+		if neo4jWriter != nil {
+			neoNodes := make([]graphdb.NodeRecord, len(dedupResult.Nodes))
+			for i, n := range dedupResult.Nodes {
+				props := map[string]any{"name": n.Name, "description": n.Description, "type": n.Type, "text": n.Text}
+				neoNodes[i] = graphdb.NodeRecord{ID: n.ID, Label: n.Type, Properties: props}
+			}
+			res := neo4jWriter.BatchWrite(ctx, neoNodes, nil)
+			r.neo4jNodes = res.NodesWritten
+			if len(res.Errors) > 0 {
+				r.neo4jErr = fmt.Errorf("%s", strings.Join(res.Errors, "; "))
+			}
+		}
+		p1ch <- r
+	}()
+
+	// Goroutine 2: Embed + index nodes
+	go func() {
+		r := phase1Result{}
+		if embedClient != nil && len(req.IndexGroups) > 0 {
+			for _, grp := range req.IndexGroups {
+				if grp.Collection == "" || len(grp.Items) == 0 {
+					continue
+				}
+				if !s.collections.Has(grp.Collection) {
+					if err := s.collections.Create(grp.Collection); err != nil {
+						continue
+					}
+					r.collsCreated++
+				}
+				texts := make([]string, len(grp.Items))
+				for i, item := range grp.Items {
+					texts[i] = item.Text
+				}
+				vecs, err := embedClient.EmbedTexts(ctx, texts)
+				if err != nil {
+					r.embedErr = err
+					continue
+				}
+				r.embedCount += len(vecs)
+				for i, item := range grp.Items {
+					if i < len(vecs) {
+						meta := item.MetadataJson
+						if meta == "" {
+							meta = "{}"
+						}
+						if err := s.collections.Insert(grp.Collection, item.Id, vecs[i], meta); err == nil {
+							r.indexCount++
+						}
+					}
+				}
+			}
+		}
+		p1ch <- r
+	}()
+
+	// Collect Phase 1 results
+	var p1neo, p1embed phase1Result
+	for i := 0; i < 2; i++ {
+		r := <-p1ch
+		if r.neo4jNodes > 0 || r.neo4jErr != nil {
+			p1neo = r
+		} else {
+			p1embed = r
+		}
+	}
+
+	resp.Neo4JNodesWritten = int32(p1neo.neo4jNodes)
+	if p1neo.neo4jErr != nil {
+		resp.Errors = append(resp.Errors, fmt.Sprintf("neo4j nodes: %v", p1neo.neo4jErr))
+	}
+	resp.VectorsEmbedded = int32(p1embed.embedCount)
+	resp.VectorsIndexed = int32(p1embed.indexCount)
+	resp.CollectionsCreated = int32(p1embed.collsCreated)
+	if p1embed.embedErr != nil {
+		resp.Errors = append(resp.Errors, fmt.Sprintf("embed nodes: %v", p1embed.embedErr))
+	}
+	resp.Neo4JNodesMs = time.Since(phase1Start).Milliseconds()
+
+	// --- Phase 2: Edges (parallel: Neo4j + embed edge types) ---
+	phase2Start := time.Now()
+	type phase2Result struct {
+		neo4jEdges int
+		neo4jErr   error
+		triplets   int
+	}
+	p2ch := make(chan phase2Result, 1)
+
+	// Goroutine 3: Neo4j edges
+	go func() {
+		r := phase2Result{}
+		if neo4jWriter != nil && len(dedupResult.Edges) > 0 {
+			neoEdges := make([]graphdb.EdgeRecord, len(dedupResult.Edges))
+			for i, e := range dedupResult.Edges {
+				props := map[string]any{"edge_text": e.EdgeText}
+				neoEdges[i] = graphdb.EdgeRecord{
+					SourceID: e.SourceID, TargetID: e.TargetID,
+					RelationshipName: e.RelationshipName, Properties: props,
+				}
+			}
+			res := neo4jWriter.BatchWrite(ctx, nil, neoEdges)
+			r.neo4jEdges = res.EdgesWritten
+			if len(res.Errors) > 0 {
+				r.neo4jErr = fmt.Errorf("%s", strings.Join(res.Errors, "; "))
+			}
+		}
+		// Triplets
+		if req.GenerateTriplets {
+			r.triplets = len(dedupResult.Triplets)
+		}
+		p2ch <- r
+	}()
+
+	p2 := <-p2ch
+	resp.Neo4JEdgesWritten = int32(p2.neo4jEdges)
+	if p2.neo4jErr != nil {
+		resp.Errors = append(resp.Errors, fmt.Sprintf("neo4j edges: %v", p2.neo4jErr))
+	}
+	resp.TripletsGenerated = int32(p2.triplets)
+	resp.Neo4JEdgesMs = time.Since(phase2Start).Milliseconds()
+
+	// Embed+index triplets if requested
+	if req.GenerateTriplets && embedClient != nil && len(dedupResult.Triplets) > 0 {
+		tripletTexts := make([]string, len(dedupResult.Triplets))
+		for i, t := range dedupResult.Triplets {
+			tripletTexts[i] = t.Text
+		}
+		if !s.collections.Has("Triplet_text") {
+			s.collections.Create("Triplet_text")
+		}
+		if vecs, err := embedClient.EmbedTexts(ctx, tripletTexts); err == nil {
+			for i, t := range dedupResult.Triplets {
+				if i < len(vecs) {
+					meta := fmt.Sprintf(`{"from_node_id":"%s","to_node_id":"%s"}`, t.FromNodeID, t.ToNodeID)
+					s.collections.Insert("Triplet_text", t.ID, vecs[i], meta)
+				}
+			}
+			resp.VectorsEmbedded += int32(len(vecs))
+			resp.VectorsIndexed += int32(len(vecs))
+		}
+	}
+
+	resp.EmbedIndexMs = time.Since(phase1Start).Milliseconds()
+	resp.TotalMs = time.Since(totalStart).Milliseconds()
+
+	return resp, nil
 }

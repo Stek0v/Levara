@@ -3538,6 +3538,290 @@ func (x *BatchWriteGraphResp) GetErrors() []string {
 	return nil
 }
 
+// Parallel write: all-in-one insert
+type ParallelWriteReq struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Graph data (will be deduplicated)
+	Nodes []*DedupNodeMsg `protobuf:"bytes,1,rep,name=nodes,proto3" json:"nodes,omitempty"`
+	Edges []*DedupEdgeMsg `protobuf:"bytes,2,rep,name=edges,proto3" json:"edges,omitempty"`
+	// Neo4j connection
+	Neo4JUrl      string `protobuf:"bytes,3,opt,name=neo4j_url,json=neo4jUrl,proto3" json:"neo4j_url,omitempty"`
+	Neo4JUser     string `protobuf:"bytes,4,opt,name=neo4j_user,json=neo4jUser,proto3" json:"neo4j_user,omitempty"`
+	Neo4JPassword string `protobuf:"bytes,5,opt,name=neo4j_password,json=neo4jPassword,proto3" json:"neo4j_password,omitempty"`
+	Neo4JDatabase string `protobuf:"bytes,6,opt,name=neo4j_database,json=neo4jDatabase,proto3" json:"neo4j_database,omitempty"`
+	// Embedding config
+	EmbedEndpoint  string `protobuf:"bytes,7,opt,name=embed_endpoint,json=embedEndpoint,proto3" json:"embed_endpoint,omitempty"`
+	EmbedModel     string `protobuf:"bytes,8,opt,name=embed_model,json=embedModel,proto3" json:"embed_model,omitempty"`
+	EmbedBatchSize int32  `protobuf:"varint,9,opt,name=embed_batch_size,json=embedBatchSize,proto3" json:"embed_batch_size,omitempty"`
+	// Vector index groups (type_field collections)
+	IndexGroups []*IndexGroup `protobuf:"bytes,10,rep,name=index_groups,json=indexGroups,proto3" json:"index_groups,omitempty"`
+	// Options
+	GenerateTriplets bool `protobuf:"varint,11,opt,name=generate_triplets,json=generateTriplets,proto3" json:"generate_triplets,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *ParallelWriteReq) Reset() {
+	*x = ParallelWriteReq{}
+	mi := &file_cognevra_proto_msgTypes[57]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ParallelWriteReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ParallelWriteReq) ProtoMessage() {}
+
+func (x *ParallelWriteReq) ProtoReflect() protoreflect.Message {
+	mi := &file_cognevra_proto_msgTypes[57]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ParallelWriteReq.ProtoReflect.Descriptor instead.
+func (*ParallelWriteReq) Descriptor() ([]byte, []int) {
+	return file_cognevra_proto_rawDescGZIP(), []int{57}
+}
+
+func (x *ParallelWriteReq) GetNodes() []*DedupNodeMsg {
+	if x != nil {
+		return x.Nodes
+	}
+	return nil
+}
+
+func (x *ParallelWriteReq) GetEdges() []*DedupEdgeMsg {
+	if x != nil {
+		return x.Edges
+	}
+	return nil
+}
+
+func (x *ParallelWriteReq) GetNeo4JUrl() string {
+	if x != nil {
+		return x.Neo4JUrl
+	}
+	return ""
+}
+
+func (x *ParallelWriteReq) GetNeo4JUser() string {
+	if x != nil {
+		return x.Neo4JUser
+	}
+	return ""
+}
+
+func (x *ParallelWriteReq) GetNeo4JPassword() string {
+	if x != nil {
+		return x.Neo4JPassword
+	}
+	return ""
+}
+
+func (x *ParallelWriteReq) GetNeo4JDatabase() string {
+	if x != nil {
+		return x.Neo4JDatabase
+	}
+	return ""
+}
+
+func (x *ParallelWriteReq) GetEmbedEndpoint() string {
+	if x != nil {
+		return x.EmbedEndpoint
+	}
+	return ""
+}
+
+func (x *ParallelWriteReq) GetEmbedModel() string {
+	if x != nil {
+		return x.EmbedModel
+	}
+	return ""
+}
+
+func (x *ParallelWriteReq) GetEmbedBatchSize() int32 {
+	if x != nil {
+		return x.EmbedBatchSize
+	}
+	return 0
+}
+
+func (x *ParallelWriteReq) GetIndexGroups() []*IndexGroup {
+	if x != nil {
+		return x.IndexGroups
+	}
+	return nil
+}
+
+func (x *ParallelWriteReq) GetGenerateTriplets() bool {
+	if x != nil {
+		return x.GenerateTriplets
+	}
+	return false
+}
+
+type ParallelWriteResp struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Dedup results
+	NodesDeduped int32 `protobuf:"varint,1,opt,name=nodes_deduped,json=nodesDeduped,proto3" json:"nodes_deduped,omitempty"`
+	EdgesDeduped int32 `protobuf:"varint,2,opt,name=edges_deduped,json=edgesDeduped,proto3" json:"edges_deduped,omitempty"`
+	// Neo4j results
+	Neo4JNodesWritten int32 `protobuf:"varint,3,opt,name=neo4j_nodes_written,json=neo4jNodesWritten,proto3" json:"neo4j_nodes_written,omitempty"`
+	Neo4JEdgesWritten int32 `protobuf:"varint,4,opt,name=neo4j_edges_written,json=neo4jEdgesWritten,proto3" json:"neo4j_edges_written,omitempty"`
+	// Vector index results
+	VectorsEmbedded    int32 `protobuf:"varint,5,opt,name=vectors_embedded,json=vectorsEmbedded,proto3" json:"vectors_embedded,omitempty"`
+	VectorsIndexed     int32 `protobuf:"varint,6,opt,name=vectors_indexed,json=vectorsIndexed,proto3" json:"vectors_indexed,omitempty"`
+	CollectionsCreated int32 `protobuf:"varint,7,opt,name=collections_created,json=collectionsCreated,proto3" json:"collections_created,omitempty"`
+	// Triplets
+	TripletsGenerated int32 `protobuf:"varint,8,opt,name=triplets_generated,json=tripletsGenerated,proto3" json:"triplets_generated,omitempty"`
+	// Timing (ms)
+	DedupMs      int64 `protobuf:"varint,9,opt,name=dedup_ms,json=dedupMs,proto3" json:"dedup_ms,omitempty"`
+	Neo4JNodesMs int64 `protobuf:"varint,10,opt,name=neo4j_nodes_ms,json=neo4jNodesMs,proto3" json:"neo4j_nodes_ms,omitempty"`
+	Neo4JEdgesMs int64 `protobuf:"varint,11,opt,name=neo4j_edges_ms,json=neo4jEdgesMs,proto3" json:"neo4j_edges_ms,omitempty"`
+	EmbedIndexMs int64 `protobuf:"varint,12,opt,name=embed_index_ms,json=embedIndexMs,proto3" json:"embed_index_ms,omitempty"`
+	TotalMs      int64 `protobuf:"varint,13,opt,name=total_ms,json=totalMs,proto3" json:"total_ms,omitempty"`
+	// Errors
+	Errors        []string `protobuf:"bytes,14,rep,name=errors,proto3" json:"errors,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ParallelWriteResp) Reset() {
+	*x = ParallelWriteResp{}
+	mi := &file_cognevra_proto_msgTypes[58]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ParallelWriteResp) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ParallelWriteResp) ProtoMessage() {}
+
+func (x *ParallelWriteResp) ProtoReflect() protoreflect.Message {
+	mi := &file_cognevra_proto_msgTypes[58]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ParallelWriteResp.ProtoReflect.Descriptor instead.
+func (*ParallelWriteResp) Descriptor() ([]byte, []int) {
+	return file_cognevra_proto_rawDescGZIP(), []int{58}
+}
+
+func (x *ParallelWriteResp) GetNodesDeduped() int32 {
+	if x != nil {
+		return x.NodesDeduped
+	}
+	return 0
+}
+
+func (x *ParallelWriteResp) GetEdgesDeduped() int32 {
+	if x != nil {
+		return x.EdgesDeduped
+	}
+	return 0
+}
+
+func (x *ParallelWriteResp) GetNeo4JNodesWritten() int32 {
+	if x != nil {
+		return x.Neo4JNodesWritten
+	}
+	return 0
+}
+
+func (x *ParallelWriteResp) GetNeo4JEdgesWritten() int32 {
+	if x != nil {
+		return x.Neo4JEdgesWritten
+	}
+	return 0
+}
+
+func (x *ParallelWriteResp) GetVectorsEmbedded() int32 {
+	if x != nil {
+		return x.VectorsEmbedded
+	}
+	return 0
+}
+
+func (x *ParallelWriteResp) GetVectorsIndexed() int32 {
+	if x != nil {
+		return x.VectorsIndexed
+	}
+	return 0
+}
+
+func (x *ParallelWriteResp) GetCollectionsCreated() int32 {
+	if x != nil {
+		return x.CollectionsCreated
+	}
+	return 0
+}
+
+func (x *ParallelWriteResp) GetTripletsGenerated() int32 {
+	if x != nil {
+		return x.TripletsGenerated
+	}
+	return 0
+}
+
+func (x *ParallelWriteResp) GetDedupMs() int64 {
+	if x != nil {
+		return x.DedupMs
+	}
+	return 0
+}
+
+func (x *ParallelWriteResp) GetNeo4JNodesMs() int64 {
+	if x != nil {
+		return x.Neo4JNodesMs
+	}
+	return 0
+}
+
+func (x *ParallelWriteResp) GetNeo4JEdgesMs() int64 {
+	if x != nil {
+		return x.Neo4JEdgesMs
+	}
+	return 0
+}
+
+func (x *ParallelWriteResp) GetEmbedIndexMs() int64 {
+	if x != nil {
+		return x.EmbedIndexMs
+	}
+	return 0
+}
+
+func (x *ParallelWriteResp) GetTotalMs() int64 {
+	if x != nil {
+		return x.TotalMs
+	}
+	return 0
+}
+
+func (x *ParallelWriteResp) GetErrors() []string {
+	if x != nil {
+		return x.Errors
+	}
+	return nil
+}
+
 var File_cognevra_proto protoreflect.FileDescriptor
 
 const file_cognevra_proto_rawDesc = "" +
@@ -3820,7 +4104,38 @@ const file_cognevra_proto_rawDesc = "" +
 	"\x13BatchWriteGraphResp\x12#\n" +
 	"\rnodes_written\x18\x01 \x01(\x05R\fnodesWritten\x12#\n" +
 	"\redges_written\x18\x02 \x01(\x05R\fedgesWritten\x12\x16\n" +
-	"\x06errors\x18\x03 \x03(\tR\x06errors2\xce\v\n" +
+	"\x06errors\x18\x03 \x03(\tR\x06errors\"\xd9\x03\n" +
+	"\x10ParallelWriteReq\x12/\n" +
+	"\x05nodes\x18\x01 \x03(\v2\x19.cognevra.v1.DedupNodeMsgR\x05nodes\x12/\n" +
+	"\x05edges\x18\x02 \x03(\v2\x19.cognevra.v1.DedupEdgeMsgR\x05edges\x12\x1b\n" +
+	"\tneo4j_url\x18\x03 \x01(\tR\bneo4jUrl\x12\x1d\n" +
+	"\n" +
+	"neo4j_user\x18\x04 \x01(\tR\tneo4jUser\x12%\n" +
+	"\x0eneo4j_password\x18\x05 \x01(\tR\rneo4jPassword\x12%\n" +
+	"\x0eneo4j_database\x18\x06 \x01(\tR\rneo4jDatabase\x12%\n" +
+	"\x0eembed_endpoint\x18\a \x01(\tR\rembedEndpoint\x12\x1f\n" +
+	"\vembed_model\x18\b \x01(\tR\n" +
+	"embedModel\x12(\n" +
+	"\x10embed_batch_size\x18\t \x01(\x05R\x0eembedBatchSize\x12:\n" +
+	"\findex_groups\x18\n" +
+	" \x03(\v2\x17.cognevra.v1.IndexGroupR\vindexGroups\x12+\n" +
+	"\x11generate_triplets\x18\v \x01(\bR\x10generateTriplets\"\xb1\x04\n" +
+	"\x11ParallelWriteResp\x12#\n" +
+	"\rnodes_deduped\x18\x01 \x01(\x05R\fnodesDeduped\x12#\n" +
+	"\redges_deduped\x18\x02 \x01(\x05R\fedgesDeduped\x12.\n" +
+	"\x13neo4j_nodes_written\x18\x03 \x01(\x05R\x11neo4jNodesWritten\x12.\n" +
+	"\x13neo4j_edges_written\x18\x04 \x01(\x05R\x11neo4jEdgesWritten\x12)\n" +
+	"\x10vectors_embedded\x18\x05 \x01(\x05R\x0fvectorsEmbedded\x12'\n" +
+	"\x0fvectors_indexed\x18\x06 \x01(\x05R\x0evectorsIndexed\x12/\n" +
+	"\x13collections_created\x18\a \x01(\x05R\x12collectionsCreated\x12-\n" +
+	"\x12triplets_generated\x18\b \x01(\x05R\x11tripletsGenerated\x12\x19\n" +
+	"\bdedup_ms\x18\t \x01(\x03R\adedupMs\x12$\n" +
+	"\x0eneo4j_nodes_ms\x18\n" +
+	" \x01(\x03R\fneo4jNodesMs\x12$\n" +
+	"\x0eneo4j_edges_ms\x18\v \x01(\x03R\fneo4jEdgesMs\x12$\n" +
+	"\x0eembed_index_ms\x18\f \x01(\x03R\fembedIndexMs\x12\x19\n" +
+	"\btotal_ms\x18\r \x01(\x03R\atotalMs\x12\x16\n" +
+	"\x06errors\x18\x0e \x03(\tR\x06errors2\xa8\f\n" +
 	"\x0fCognevraService\x12M\n" +
 	"\x10CreateCollection\x12 .cognevra.v1.CreateCollectionReq\x1a\x17.cognevra.v1.StatusResp\x12I\n" +
 	"\x0eDropCollection\x12\x1e.cognevra.v1.DropCollectionReq\x1a\x17.cognevra.v1.StatusResp\x12G\n" +
@@ -3840,7 +4155,8 @@ const file_cognevra_proto_rawDesc = "" +
 	"\x0eSearchTriplets\x12\x1e.cognevra.v1.SearchTripletsReq\x1a\x1f.cognevra.v1.SearchTripletsResp\x12W\n" +
 	"\x10DeduplicateGraph\x12 .cognevra.v1.DeduplicateGraphReq\x1a!.cognevra.v1.DeduplicateGraphResp\x12]\n" +
 	"\x12BatchEmbedAndIndex\x12\".cognevra.v1.BatchEmbedAndIndexReq\x1a#.cognevra.v1.BatchEmbedAndIndexResp\x12T\n" +
-	"\x0fBatchWriteGraph\x12\x1f.cognevra.v1.BatchWriteGraphReq\x1a .cognevra.v1.BatchWriteGraphResp\x127\n" +
+	"\x0fBatchWriteGraph\x12\x1f.cognevra.v1.BatchWriteGraphReq\x1a .cognevra.v1.BatchWriteGraphResp\x12X\n" +
+	"\x17ParallelWriteDataPoints\x12\x1d.cognevra.v1.ParallelWriteReq\x1a\x1e.cognevra.v1.ParallelWriteResp\x127\n" +
 	"\aCompact\x12\x12.cognevra.v1.Empty\x1a\x18.cognevra.v1.CompactRespB(Z&github.com/rupamthxt/cognevra/proto/pbb\x06proto3"
 
 var (
@@ -3855,7 +4171,7 @@ func file_cognevra_proto_rawDescGZIP() []byte {
 	return file_cognevra_proto_rawDescData
 }
 
-var file_cognevra_proto_msgTypes = make([]protoimpl.MessageInfo, 57)
+var file_cognevra_proto_msgTypes = make([]protoimpl.MessageInfo, 59)
 var file_cognevra_proto_goTypes = []any{
 	(*Empty)(nil),                  // 0: cognevra.v1.Empty
 	(*StatusResp)(nil),             // 1: cognevra.v1.StatusResp
@@ -3914,6 +4230,8 @@ var file_cognevra_proto_goTypes = []any{
 	(*GraphNodeWrite)(nil),         // 54: cognevra.v1.GraphNodeWrite
 	(*GraphEdgeWrite)(nil),         // 55: cognevra.v1.GraphEdgeWrite
 	(*BatchWriteGraphResp)(nil),    // 56: cognevra.v1.BatchWriteGraphResp
+	(*ParallelWriteReq)(nil),       // 57: cognevra.v1.ParallelWriteReq
+	(*ParallelWriteResp)(nil),      // 58: cognevra.v1.ParallelWriteResp
 }
 var file_cognevra_proto_depIdxs = []int32{
 	9,  // 0: cognevra.v1.BatchInsertReq.records:type_name -> cognevra.v1.InsertRecord
@@ -3941,51 +4259,56 @@ var file_cognevra_proto_depIdxs = []int32{
 	51, // 22: cognevra.v1.IndexGroup.items:type_name -> cognevra.v1.IndexItem
 	54, // 23: cognevra.v1.BatchWriteGraphReq.nodes:type_name -> cognevra.v1.GraphNodeWrite
 	55, // 24: cognevra.v1.BatchWriteGraphReq.edges:type_name -> cognevra.v1.GraphEdgeWrite
-	2,  // 25: cognevra.v1.CognevraService.CreateCollection:input_type -> cognevra.v1.CreateCollectionReq
-	3,  // 26: cognevra.v1.CognevraService.DropCollection:input_type -> cognevra.v1.DropCollectionReq
-	0,  // 27: cognevra.v1.CognevraService.ListCollections:input_type -> cognevra.v1.Empty
-	5,  // 28: cognevra.v1.CognevraService.HasCollection:input_type -> cognevra.v1.HasCollectionReq
-	7,  // 29: cognevra.v1.CognevraService.Insert:input_type -> cognevra.v1.InsertReq
-	8,  // 30: cognevra.v1.CognevraService.BatchInsert:input_type -> cognevra.v1.BatchInsertReq
-	11, // 31: cognevra.v1.CognevraService.Delete:input_type -> cognevra.v1.DeleteReq
-	13, // 32: cognevra.v1.CognevraService.Search:input_type -> cognevra.v1.SearchReq
-	19, // 33: cognevra.v1.CognevraService.ChunkText:input_type -> cognevra.v1.ChunkTextReq
-	0,  // 34: cognevra.v1.CognevraService.Info:input_type -> cognevra.v1.Empty
-	16, // 35: cognevra.v1.CognevraService.GetByID:input_type -> cognevra.v1.GetByIDReq
-	23, // 36: cognevra.v1.CognevraService.ProcessTriplets:input_type -> cognevra.v1.ProcessTripletsReq
-	28, // 37: cognevra.v1.CognevraService.HashFiles:input_type -> cognevra.v1.HashFilesReq
-	31, // 38: cognevra.v1.CognevraService.ListDirectory:input_type -> cognevra.v1.ListDirectoryReq
-	34, // 39: cognevra.v1.CognevraService.AggregateSearch:input_type -> cognevra.v1.AggregateSearchReq
-	38, // 40: cognevra.v1.CognevraService.SearchTriplets:input_type -> cognevra.v1.SearchTripletsReq
-	45, // 41: cognevra.v1.CognevraService.DeduplicateGraph:input_type -> cognevra.v1.DeduplicateGraphReq
-	49, // 42: cognevra.v1.CognevraService.BatchEmbedAndIndex:input_type -> cognevra.v1.BatchEmbedAndIndexReq
-	53, // 43: cognevra.v1.CognevraService.BatchWriteGraph:input_type -> cognevra.v1.BatchWriteGraphReq
-	0,  // 44: cognevra.v1.CognevraService.Compact:input_type -> cognevra.v1.Empty
-	1,  // 45: cognevra.v1.CognevraService.CreateCollection:output_type -> cognevra.v1.StatusResp
-	1,  // 46: cognevra.v1.CognevraService.DropCollection:output_type -> cognevra.v1.StatusResp
-	4,  // 47: cognevra.v1.CognevraService.ListCollections:output_type -> cognevra.v1.ListCollectionsResp
-	6,  // 48: cognevra.v1.CognevraService.HasCollection:output_type -> cognevra.v1.HasCollectionResp
-	1,  // 49: cognevra.v1.CognevraService.Insert:output_type -> cognevra.v1.StatusResp
-	10, // 50: cognevra.v1.CognevraService.BatchInsert:output_type -> cognevra.v1.BatchInsertResp
-	12, // 51: cognevra.v1.CognevraService.Delete:output_type -> cognevra.v1.DeleteResp
-	14, // 52: cognevra.v1.CognevraService.Search:output_type -> cognevra.v1.SearchResp
-	20, // 53: cognevra.v1.CognevraService.ChunkText:output_type -> cognevra.v1.ChunkTextResp
-	22, // 54: cognevra.v1.CognevraService.Info:output_type -> cognevra.v1.InfoResp
-	17, // 55: cognevra.v1.CognevraService.GetByID:output_type -> cognevra.v1.GetByIDResp
-	27, // 56: cognevra.v1.CognevraService.ProcessTriplets:output_type -> cognevra.v1.ProcessTripletsResp
-	30, // 57: cognevra.v1.CognevraService.HashFiles:output_type -> cognevra.v1.HashFilesResp
-	32, // 58: cognevra.v1.CognevraService.ListDirectory:output_type -> cognevra.v1.ListDirectoryResp
-	36, // 59: cognevra.v1.CognevraService.AggregateSearch:output_type -> cognevra.v1.AggregateSearchResp
-	43, // 60: cognevra.v1.CognevraService.SearchTriplets:output_type -> cognevra.v1.SearchTripletsResp
-	48, // 61: cognevra.v1.CognevraService.DeduplicateGraph:output_type -> cognevra.v1.DeduplicateGraphResp
-	52, // 62: cognevra.v1.CognevraService.BatchEmbedAndIndex:output_type -> cognevra.v1.BatchEmbedAndIndexResp
-	56, // 63: cognevra.v1.CognevraService.BatchWriteGraph:output_type -> cognevra.v1.BatchWriteGraphResp
-	33, // 64: cognevra.v1.CognevraService.Compact:output_type -> cognevra.v1.CompactResp
-	45, // [45:65] is the sub-list for method output_type
-	25, // [25:45] is the sub-list for method input_type
-	25, // [25:25] is the sub-list for extension type_name
-	25, // [25:25] is the sub-list for extension extendee
-	0,  // [0:25] is the sub-list for field type_name
+	46, // 25: cognevra.v1.ParallelWriteReq.nodes:type_name -> cognevra.v1.DedupNodeMsg
+	47, // 26: cognevra.v1.ParallelWriteReq.edges:type_name -> cognevra.v1.DedupEdgeMsg
+	50, // 27: cognevra.v1.ParallelWriteReq.index_groups:type_name -> cognevra.v1.IndexGroup
+	2,  // 28: cognevra.v1.CognevraService.CreateCollection:input_type -> cognevra.v1.CreateCollectionReq
+	3,  // 29: cognevra.v1.CognevraService.DropCollection:input_type -> cognevra.v1.DropCollectionReq
+	0,  // 30: cognevra.v1.CognevraService.ListCollections:input_type -> cognevra.v1.Empty
+	5,  // 31: cognevra.v1.CognevraService.HasCollection:input_type -> cognevra.v1.HasCollectionReq
+	7,  // 32: cognevra.v1.CognevraService.Insert:input_type -> cognevra.v1.InsertReq
+	8,  // 33: cognevra.v1.CognevraService.BatchInsert:input_type -> cognevra.v1.BatchInsertReq
+	11, // 34: cognevra.v1.CognevraService.Delete:input_type -> cognevra.v1.DeleteReq
+	13, // 35: cognevra.v1.CognevraService.Search:input_type -> cognevra.v1.SearchReq
+	19, // 36: cognevra.v1.CognevraService.ChunkText:input_type -> cognevra.v1.ChunkTextReq
+	0,  // 37: cognevra.v1.CognevraService.Info:input_type -> cognevra.v1.Empty
+	16, // 38: cognevra.v1.CognevraService.GetByID:input_type -> cognevra.v1.GetByIDReq
+	23, // 39: cognevra.v1.CognevraService.ProcessTriplets:input_type -> cognevra.v1.ProcessTripletsReq
+	28, // 40: cognevra.v1.CognevraService.HashFiles:input_type -> cognevra.v1.HashFilesReq
+	31, // 41: cognevra.v1.CognevraService.ListDirectory:input_type -> cognevra.v1.ListDirectoryReq
+	34, // 42: cognevra.v1.CognevraService.AggregateSearch:input_type -> cognevra.v1.AggregateSearchReq
+	38, // 43: cognevra.v1.CognevraService.SearchTriplets:input_type -> cognevra.v1.SearchTripletsReq
+	45, // 44: cognevra.v1.CognevraService.DeduplicateGraph:input_type -> cognevra.v1.DeduplicateGraphReq
+	49, // 45: cognevra.v1.CognevraService.BatchEmbedAndIndex:input_type -> cognevra.v1.BatchEmbedAndIndexReq
+	53, // 46: cognevra.v1.CognevraService.BatchWriteGraph:input_type -> cognevra.v1.BatchWriteGraphReq
+	57, // 47: cognevra.v1.CognevraService.ParallelWriteDataPoints:input_type -> cognevra.v1.ParallelWriteReq
+	0,  // 48: cognevra.v1.CognevraService.Compact:input_type -> cognevra.v1.Empty
+	1,  // 49: cognevra.v1.CognevraService.CreateCollection:output_type -> cognevra.v1.StatusResp
+	1,  // 50: cognevra.v1.CognevraService.DropCollection:output_type -> cognevra.v1.StatusResp
+	4,  // 51: cognevra.v1.CognevraService.ListCollections:output_type -> cognevra.v1.ListCollectionsResp
+	6,  // 52: cognevra.v1.CognevraService.HasCollection:output_type -> cognevra.v1.HasCollectionResp
+	1,  // 53: cognevra.v1.CognevraService.Insert:output_type -> cognevra.v1.StatusResp
+	10, // 54: cognevra.v1.CognevraService.BatchInsert:output_type -> cognevra.v1.BatchInsertResp
+	12, // 55: cognevra.v1.CognevraService.Delete:output_type -> cognevra.v1.DeleteResp
+	14, // 56: cognevra.v1.CognevraService.Search:output_type -> cognevra.v1.SearchResp
+	20, // 57: cognevra.v1.CognevraService.ChunkText:output_type -> cognevra.v1.ChunkTextResp
+	22, // 58: cognevra.v1.CognevraService.Info:output_type -> cognevra.v1.InfoResp
+	17, // 59: cognevra.v1.CognevraService.GetByID:output_type -> cognevra.v1.GetByIDResp
+	27, // 60: cognevra.v1.CognevraService.ProcessTriplets:output_type -> cognevra.v1.ProcessTripletsResp
+	30, // 61: cognevra.v1.CognevraService.HashFiles:output_type -> cognevra.v1.HashFilesResp
+	32, // 62: cognevra.v1.CognevraService.ListDirectory:output_type -> cognevra.v1.ListDirectoryResp
+	36, // 63: cognevra.v1.CognevraService.AggregateSearch:output_type -> cognevra.v1.AggregateSearchResp
+	43, // 64: cognevra.v1.CognevraService.SearchTriplets:output_type -> cognevra.v1.SearchTripletsResp
+	48, // 65: cognevra.v1.CognevraService.DeduplicateGraph:output_type -> cognevra.v1.DeduplicateGraphResp
+	52, // 66: cognevra.v1.CognevraService.BatchEmbedAndIndex:output_type -> cognevra.v1.BatchEmbedAndIndexResp
+	56, // 67: cognevra.v1.CognevraService.BatchWriteGraph:output_type -> cognevra.v1.BatchWriteGraphResp
+	58, // 68: cognevra.v1.CognevraService.ParallelWriteDataPoints:output_type -> cognevra.v1.ParallelWriteResp
+	33, // 69: cognevra.v1.CognevraService.Compact:output_type -> cognevra.v1.CompactResp
+	49, // [49:70] is the sub-list for method output_type
+	28, // [28:49] is the sub-list for method input_type
+	28, // [28:28] is the sub-list for extension type_name
+	28, // [28:28] is the sub-list for extension extendee
+	0,  // [0:28] is the sub-list for field type_name
 }
 
 func init() { file_cognevra_proto_init() }
@@ -3999,7 +4322,7 @@ func file_cognevra_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_cognevra_proto_rawDesc), len(file_cognevra_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   57,
+			NumMessages:   59,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

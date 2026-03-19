@@ -46,6 +46,9 @@ service CognevraService {
   // Batch write nodes/edges to Neo4j
   rpc BatchWriteGraph(BatchWriteGraphReq) returns (BatchWriteGraphResp);
 
+  // Parallel write: dedup + Neo4j + embed + vector index in one call
+  rpc ParallelWriteDataPoints(ParallelWriteReq) returns (ParallelWriteResp);
+
   // Maintenance
   rpc Compact(Empty) returns (CompactResp);
 }
@@ -416,4 +419,47 @@ message BatchWriteGraphResp {
   int32 nodes_written = 1;
   int32 edges_written = 2;
   repeated string errors = 3;
+}
+
+// Parallel write: all-in-one insert
+message ParallelWriteReq {
+  // Graph data (will be deduplicated)
+  repeated DedupNodeMsg nodes = 1;
+  repeated DedupEdgeMsg edges = 2;
+  // Neo4j connection
+  string neo4j_url = 3;
+  string neo4j_user = 4;
+  string neo4j_password = 5;
+  string neo4j_database = 6;
+  // Embedding config
+  string embed_endpoint = 7;
+  string embed_model = 8;
+  int32 embed_batch_size = 9;
+  // Vector index groups (type_field collections)
+  repeated IndexGroup index_groups = 10;
+  // Options
+  bool generate_triplets = 11;
+}
+
+message ParallelWriteResp {
+  // Dedup results
+  int32 nodes_deduped = 1;
+  int32 edges_deduped = 2;
+  // Neo4j results
+  int32 neo4j_nodes_written = 3;
+  int32 neo4j_edges_written = 4;
+  // Vector index results
+  int32 vectors_embedded = 5;
+  int32 vectors_indexed = 6;
+  int32 collections_created = 7;
+  // Triplets
+  int32 triplets_generated = 8;
+  // Timing (ms)
+  int64 dedup_ms = 9;
+  int64 neo4j_nodes_ms = 10;
+  int64 neo4j_edges_ms = 11;
+  int64 embed_index_ms = 12;
+  int64 total_ms = 13;
+  // Errors
+  repeated string errors = 14;
 }
