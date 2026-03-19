@@ -31,6 +31,8 @@ const (
 	CognevraService_Info_FullMethodName             = "/cognevra.v1.CognevraService/Info"
 	CognevraService_GetByID_FullMethodName          = "/cognevra.v1.CognevraService/GetByID"
 	CognevraService_ProcessTriplets_FullMethodName  = "/cognevra.v1.CognevraService/ProcessTriplets"
+	CognevraService_HashFiles_FullMethodName        = "/cognevra.v1.CognevraService/HashFiles"
+	CognevraService_ListDirectory_FullMethodName    = "/cognevra.v1.CognevraService/ListDirectory"
 )
 
 // CognevraServiceClient is the client API for CognevraService service.
@@ -55,6 +57,9 @@ type CognevraServiceClient interface {
 	GetByID(ctx context.Context, in *GetByIDReq, opts ...grpc.CallOption) (*GetByIDResp, error)
 	// Triplet processing
 	ProcessTriplets(ctx context.Context, in *ProcessTripletsReq, opts ...grpc.CallOption) (*ProcessTripletsResp, error)
+	// File I/O acceleration
+	HashFiles(ctx context.Context, in *HashFilesReq, opts ...grpc.CallOption) (*HashFilesResp, error)
+	ListDirectory(ctx context.Context, in *ListDirectoryReq, opts ...grpc.CallOption) (*ListDirectoryResp, error)
 }
 
 type cognevraServiceClient struct {
@@ -185,6 +190,26 @@ func (c *cognevraServiceClient) ProcessTriplets(ctx context.Context, in *Process
 	return out, nil
 }
 
+func (c *cognevraServiceClient) HashFiles(ctx context.Context, in *HashFilesReq, opts ...grpc.CallOption) (*HashFilesResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(HashFilesResp)
+	err := c.cc.Invoke(ctx, CognevraService_HashFiles_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *cognevraServiceClient) ListDirectory(ctx context.Context, in *ListDirectoryReq, opts ...grpc.CallOption) (*ListDirectoryResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListDirectoryResp)
+	err := c.cc.Invoke(ctx, CognevraService_ListDirectory_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // CognevraServiceServer is the server API for CognevraService service.
 // All implementations must embed UnimplementedCognevraServiceServer
 // for forward compatibility.
@@ -207,6 +232,9 @@ type CognevraServiceServer interface {
 	GetByID(context.Context, *GetByIDReq) (*GetByIDResp, error)
 	// Triplet processing
 	ProcessTriplets(context.Context, *ProcessTripletsReq) (*ProcessTripletsResp, error)
+	// File I/O acceleration
+	HashFiles(context.Context, *HashFilesReq) (*HashFilesResp, error)
+	ListDirectory(context.Context, *ListDirectoryReq) (*ListDirectoryResp, error)
 	mustEmbedUnimplementedCognevraServiceServer()
 }
 
@@ -252,6 +280,12 @@ func (UnimplementedCognevraServiceServer) GetByID(context.Context, *GetByIDReq) 
 }
 func (UnimplementedCognevraServiceServer) ProcessTriplets(context.Context, *ProcessTripletsReq) (*ProcessTripletsResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method ProcessTriplets not implemented")
+}
+func (UnimplementedCognevraServiceServer) HashFiles(context.Context, *HashFilesReq) (*HashFilesResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method HashFiles not implemented")
+}
+func (UnimplementedCognevraServiceServer) ListDirectory(context.Context, *ListDirectoryReq) (*ListDirectoryResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListDirectory not implemented")
 }
 func (UnimplementedCognevraServiceServer) mustEmbedUnimplementedCognevraServiceServer() {}
 func (UnimplementedCognevraServiceServer) testEmbeddedByValue()                         {}
@@ -490,6 +524,42 @@ func _CognevraService_ProcessTriplets_Handler(srv interface{}, ctx context.Conte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _CognevraService_HashFiles_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(HashFilesReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CognevraServiceServer).HashFiles(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CognevraService_HashFiles_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CognevraServiceServer).HashFiles(ctx, req.(*HashFilesReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _CognevraService_ListDirectory_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListDirectoryReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CognevraServiceServer).ListDirectory(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CognevraService_ListDirectory_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CognevraServiceServer).ListDirectory(ctx, req.(*ListDirectoryReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // CognevraService_ServiceDesc is the grpc.ServiceDesc for CognevraService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -544,6 +614,14 @@ var CognevraService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ProcessTriplets",
 			Handler:    _CognevraService_ProcessTriplets_Handler,
+		},
+		{
+			MethodName: "HashFiles",
+			Handler:    _CognevraService_HashFiles_Handler,
+		},
+		{
+			MethodName: "ListDirectory",
+			Handler:    _CognevraService_ListDirectory_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
