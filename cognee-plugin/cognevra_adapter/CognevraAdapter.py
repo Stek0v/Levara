@@ -294,6 +294,53 @@ class CognevraAdapter(VectorDBInterface):
         ]
         await self.create_data_points(collection_name, index_points)
 
+    # ------------------------------------------------------------------ triplets
+
+    async def process_triplets(
+        self,
+        nodes: list[dict],
+        edges: list[dict],
+    ) -> list[dict]:
+        """Process graph edges into deduplicated triplets via Go gRPC.
+
+        Args:
+            nodes: List of dicts with keys: id, text
+            edges: List of dicts with keys: source_id, target_id, relationship_name, edge_text (optional)
+
+        Returns:
+            List of dicts with keys: id, from_node_id, to_node_id, text
+        """
+        pb_nodes = [
+            pb.GraphNode(id=str(n.get("id", "")), text=str(n.get("text", "")))
+            for n in nodes
+        ]
+        pb_edges = [
+            pb.GraphEdge(
+                source_id=str(e.get("source_id", "")),
+                target_id=str(e.get("target_id", "")),
+                relationship_name=str(e.get("relationship_name", "")),
+                edge_text=str(e.get("edge_text", "")),
+            )
+            for e in edges
+        ]
+
+        resp = await self._safe_call(
+            self._stub.ProcessTriplets(pb.ProcessTripletsReq(
+                nodes=pb_nodes,
+                edges=pb_edges,
+            ))
+        )
+
+        return [
+            {
+                "id": t.id,
+                "from_node_id": t.from_node_id,
+                "to_node_id": t.to_node_id,
+                "text": t.text,
+            }
+            for t in resp.triplets
+        ]
+
     # ------------------------------------------------------------------ chunking
 
     async def chunk_text(
