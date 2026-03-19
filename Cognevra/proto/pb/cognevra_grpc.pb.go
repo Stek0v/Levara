@@ -42,6 +42,7 @@ const (
 	CognevraService_SearchByText_FullMethodName            = "/cognevra.v1.CognevraService/SearchByText"
 	CognevraService_BatchSearchByText_FullMethodName       = "/cognevra.v1.CognevraService/BatchSearchByText"
 	CognevraService_GraphRead_FullMethodName               = "/cognevra.v1.CognevraService/GraphRead"
+	CognevraService_GraphCompletionSearch_FullMethodName   = "/cognevra.v1.CognevraService/GraphCompletionSearch"
 	CognevraService_Compact_FullMethodName                 = "/cognevra.v1.CognevraService/Compact"
 )
 
@@ -87,6 +88,8 @@ type CognevraServiceClient interface {
 	BatchSearchByText(ctx context.Context, in *BatchSearchByTextReq, opts ...grpc.CallOption) (*BatchSearchByTextResp, error)
 	// Neo4j graph read queries (search-time)
 	GraphRead(ctx context.Context, in *GraphReadReq, opts ...grpc.CallOption) (*GraphReadResp, error)
+	// Full graph search: embed → vector search → Neo4j graph → triplet scoring → context
+	GraphCompletionSearch(ctx context.Context, in *GraphCompletionSearchReq, opts ...grpc.CallOption) (*GraphCompletionSearchResp, error)
 	// Maintenance
 	Compact(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*CompactResp, error)
 }
@@ -329,6 +332,16 @@ func (c *cognevraServiceClient) GraphRead(ctx context.Context, in *GraphReadReq,
 	return out, nil
 }
 
+func (c *cognevraServiceClient) GraphCompletionSearch(ctx context.Context, in *GraphCompletionSearchReq, opts ...grpc.CallOption) (*GraphCompletionSearchResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GraphCompletionSearchResp)
+	err := c.cc.Invoke(ctx, CognevraService_GraphCompletionSearch_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *cognevraServiceClient) Compact(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*CompactResp, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(CompactResp)
@@ -381,6 +394,8 @@ type CognevraServiceServer interface {
 	BatchSearchByText(context.Context, *BatchSearchByTextReq) (*BatchSearchByTextResp, error)
 	// Neo4j graph read queries (search-time)
 	GraphRead(context.Context, *GraphReadReq) (*GraphReadResp, error)
+	// Full graph search: embed → vector search → Neo4j graph → triplet scoring → context
+	GraphCompletionSearch(context.Context, *GraphCompletionSearchReq) (*GraphCompletionSearchResp, error)
 	// Maintenance
 	Compact(context.Context, *Empty) (*CompactResp, error)
 	mustEmbedUnimplementedCognevraServiceServer()
@@ -461,6 +476,9 @@ func (UnimplementedCognevraServiceServer) BatchSearchByText(context.Context, *Ba
 }
 func (UnimplementedCognevraServiceServer) GraphRead(context.Context, *GraphReadReq) (*GraphReadResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method GraphRead not implemented")
+}
+func (UnimplementedCognevraServiceServer) GraphCompletionSearch(context.Context, *GraphCompletionSearchReq) (*GraphCompletionSearchResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method GraphCompletionSearch not implemented")
 }
 func (UnimplementedCognevraServiceServer) Compact(context.Context, *Empty) (*CompactResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method Compact not implemented")
@@ -900,6 +918,24 @@ func _CognevraService_GraphRead_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _CognevraService_GraphCompletionSearch_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GraphCompletionSearchReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CognevraServiceServer).GraphCompletionSearch(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CognevraService_GraphCompletionSearch_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CognevraServiceServer).GraphCompletionSearch(ctx, req.(*GraphCompletionSearchReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _CognevraService_Compact_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(Empty)
 	if err := dec(in); err != nil {
@@ -1016,6 +1052,10 @@ var CognevraService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GraphRead",
 			Handler:    _CognevraService_GraphRead_Handler,
+		},
+		{
+			MethodName: "GraphCompletionSearch",
+			Handler:    _CognevraService_GraphCompletionSearch_Handler,
 		},
 		{
 			MethodName: "Compact",
