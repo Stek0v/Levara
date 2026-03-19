@@ -1,7 +1,7 @@
 """
-VectraDB adapter for Cognee's VectorDBInterface.
+Cognevra adapter for Cognee's VectorDBInterface.
 
-Uses gRPC transport to communicate with VectraDB Go server (port 50051).
+Uses gRPC transport to communicate with Cognevra Go server (port 50051).
 Native collections, real delete (HNSW tombstone + WAL), binary protobuf encoding.
 """
 
@@ -23,8 +23,8 @@ from ..embeddings.EmbeddingEngine import EmbeddingEngine
 from ..models.ScoredResult import ScoredResult
 from ..vector_db_interface import VectorDBInterface
 
-from .generated import vectradb_pb2 as pb
-from .generated import vectradb_pb2_grpc as pb_grpc
+from .generated import cognevra_pb2 as pb
+from .generated import cognevra_pb2_grpc as pb_grpc
 
 logger = logging.getLogger(__name__)
 
@@ -55,16 +55,16 @@ class _IndexPoint(DataPoint):
     belongs_to_set: List[str] = []
 
 
-class VectraDBAdapter(VectorDBInterface):
+class CognevraAdapter(VectorDBInterface):
     """
-    Cognee VectorDBInterface adapter for VectraDB (gRPC, Go backend).
+    Cognee VectorDBInterface adapter for Cognevra (gRPC, Go backend).
 
     Configuration:
-        VECTOR_DB_PROVIDER=vectradb
+        VECTOR_DB_PROVIDER=cognevra
         VECTOR_DB_URL=localhost:50051   (gRPC address, no http://)
     """
 
-    name = "VectraDB"
+    name = "Cognevra"
 
     def __init__(
         self,
@@ -77,7 +77,7 @@ class VectraDBAdapter(VectorDBInterface):
         self.url = raw_url.replace("http://", "").replace("https://", "")
         self.embedding_engine = embedding_engine
         self._channel = grpc.aio.insecure_channel(self.url)
-        self._stub = pb_grpc.VectraDBServiceStub(self._channel)
+        self._stub = pb_grpc.CognevraServiceStub(self._channel)
         self._embedding_cache: Dict[str, List[float]] = {}
         self._embedding_cache_maxsize = 4096
 
@@ -90,10 +90,10 @@ class VectraDBAdapter(VectorDBInterface):
         except grpc.aio.AioRpcError as e:
             if e.code() in (grpc.StatusCode.UNAVAILABLE, grpc.StatusCode.DEADLINE_EXCEEDED):
                 raise ConnectionError(
-                    f"VectraDB unavailable at {self.url}: {e.details()}"
+                    f"Cognevra unavailable at {self.url}: {e.details()}"
                 ) from e
             raise RuntimeError(
-                f"VectraDB gRPC error ({e.code().name}): {e.details()}"
+                f"Cognevra gRPC error ({e.code().name}): {e.details()}"
             ) from e
 
     async def close(self) -> None:
@@ -134,7 +134,7 @@ class VectraDBAdapter(VectorDBInterface):
             self._stub.CreateCollection(pb.CreateCollectionReq(name=collection_name))
         )
         if not resp.ok:
-            raise RuntimeError(f"VectraDB CreateCollection failed: {resp.error}")
+            raise RuntimeError(f"Cognevra CreateCollection failed: {resp.error}")
 
     # ------------------------------------------------------------------ data points
 
@@ -161,7 +161,7 @@ class VectraDBAdapter(VectorDBInterface):
         )
         if resp.failed:
             raise RuntimeError(
-                f"VectraDB batch insert partial failure: "
+                f"Cognevra batch insert partial failure: "
                 f"{resp.failed} records failed. Errors: {list(resp.errors)}"
             )
 
