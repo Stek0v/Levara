@@ -13,6 +13,7 @@ import (
 	"github.com/rupamthxt/cognevra/pkg/aggregator"
 	"github.com/rupamthxt/cognevra/pkg/chunker"
 	"github.com/rupamthxt/cognevra/pkg/embed"
+	"github.com/rupamthxt/cognevra/pkg/ingest"
 	"github.com/rupamthxt/cognevra/pkg/fileio"
 	"github.com/rupamthxt/cognevra/pkg/graph"
 	"github.com/rupamthxt/cognevra/pkg/bm25"
@@ -1541,5 +1542,51 @@ func (s *Service) MultiQuerySearch(ctx context.Context, req *pb.MultiQuerySearch
 		SubQueries:  subQueries,
 		Results:     pbResults,
 		TotalUnique: int32(len(merged)),
+	}, nil
+}
+
+// IngestData performs fast data ingestion: hash + save + classify in one Go call.
+// Replaces Python's 3x MD5 + 2x disk write with single-pass SHA256 + 1 write.
+func (s *Service) IngestData(ctx context.Context, req *pb.IngestDataReq) (*pb.IngestDataResp, error) {
+	start := time.Now()
+
+	storagePath := req.StoragePath
+	if storagePath == "" {
+		storagePath = "data/ingested"
+	}
+
+	items := make([]ingest.Item, len(req.Items))
+	for i, it := range req.Items {
+		items[i] = ingest.Item{
+			ID:          it.Id,
+			Text:        it.Text,
+			FileData:    it.FileData,
+			Filename:    it.Filename,
+			DatasetName: it.DatasetName,
+		}
+	}
+
+	results, err := ingest.Ingest(items, storagePath)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "ingest: %v", err)
+	}
+
+	pbResults := make([]*pb.IngestResult, len(results))
+	for i, r := range results {
+		pbResults[i] = &pb.IngestResult{
+			Id:            r.ID,
+			ContentHash:   r.ContentHash,
+			FilePath:      r.FilePath,
+			MimeType:      r.MimeType,
+			Extension:     r.Extension,
+			FileSize:      r.FileSize,
+			Name:          r.Name,
+			AlreadyExists: r.AlreadyExists,
+		}
+	}
+
+	return &pb.IngestDataResp{
+		Results: pbResults,
+		TotalMs: time.Since(start).Milliseconds(),
 	}, nil
 }
