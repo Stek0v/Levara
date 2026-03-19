@@ -1,0 +1,152 @@
+syntax = "proto3";
+package cognevra.v1;
+option go_package = "github.com/rupamthxt/cognevra/proto/pb";
+
+service CognevraService {
+  // Collections
+  rpc CreateCollection(CreateCollectionReq) returns (StatusResp);
+  rpc DropCollection(DropCollectionReq) returns (StatusResp);
+  rpc ListCollections(Empty) returns (ListCollectionsResp);
+  rpc HasCollection(HasCollectionReq) returns (HasCollectionResp);
+
+  // Records
+  rpc Insert(InsertReq) returns (StatusResp);
+  rpc BatchInsert(BatchInsertReq) returns (BatchInsertResp);
+  rpc Delete(DeleteReq) returns (DeleteResp);
+  rpc Search(SearchReq) returns (SearchResp);
+
+  // Text processing
+  rpc ChunkText(ChunkTextReq) returns (ChunkTextResp);
+
+  // Info
+  rpc Info(Empty) returns (InfoResp);
+
+  // Record retrieval
+  rpc GetByID(GetByIDReq) returns (GetByIDResp);
+}
+
+// Common
+message Empty {}
+
+message StatusResp {
+  bool ok = 1;
+  string error = 2;
+}
+
+// Collections
+message CreateCollectionReq {
+  string name = 1;
+}
+
+message DropCollectionReq {
+  string name = 1;
+}
+
+message ListCollectionsResp {
+  repeated string collections = 1;
+}
+
+message HasCollectionReq {
+  string name = 1;
+}
+
+message HasCollectionResp {
+  bool exists = 1;
+}
+
+// Records
+message InsertReq {
+  string collection = 1;
+  string id = 2;
+  repeated float vector = 3;
+  string metadata_json = 4;
+}
+
+message BatchInsertReq {
+  string collection = 1;
+  repeated InsertRecord records = 2;
+}
+
+message InsertRecord {
+  string id = 1;
+  repeated float vector = 2;
+  string metadata_json = 3;
+}
+
+message BatchInsertResp {
+  int32 inserted = 1;
+  int32 failed = 2;
+  repeated string errors = 3;
+}
+
+message DeleteReq {
+  string collection = 1;
+  repeated string ids = 2;
+}
+
+message DeleteResp {
+  int32 deleted = 1;
+  int32 failed = 2;
+  repeated string errors = 3;
+}
+
+message SearchReq {
+  string collection = 1;
+  repeated float vector = 2;
+  int32 top_k = 3;
+}
+
+message SearchResp {
+  repeated SearchResult results = 1;
+}
+
+message SearchResult {
+  string id = 1;
+  float score = 2;
+  string metadata_json = 3;
+}
+
+// Record retrieval by ID
+message GetByIDReq {
+  string collection = 1;
+  repeated string ids = 2;
+}
+
+message GetByIDResp {
+  repeated RecordEntry records = 1;
+}
+
+message RecordEntry {
+  string id = 1;
+  string metadata_json = 2;
+  bool found = 3;
+  repeated float vector = 4;
+}
+
+// Text chunking
+message ChunkTextReq {
+  string text = 1;
+  string strategy = 2;    // "merged" (default), "paragraph", "sentence"
+  int32 min_chunk_chars = 3; // default: 80
+  int32 max_chunk_chars = 4; // default: 600
+}
+
+message ChunkTextResp {
+  repeated TextChunk chunks = 1;
+}
+
+message TextChunk {
+  string id = 1;
+  string text = 2;
+  int32 chapter = 3;
+  int32 chunk_index = 4;
+  string cut_type = 5;
+}
+
+// Info
+message InfoResp {
+  int32 dimension = 1;
+  int32 shards = 2;
+  string status = 3;
+  repeated string collections = 4;
+}
