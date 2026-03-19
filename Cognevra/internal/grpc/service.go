@@ -15,6 +15,7 @@ import (
 	"github.com/rupamthxt/cognevra/pkg/fileio"
 	"github.com/rupamthxt/cognevra/pkg/graph"
 	"github.com/rupamthxt/cognevra/pkg/graphdb"
+	"github.com/rupamthxt/cognevra/pipeline"
 	pb "github.com/rupamthxt/cognevra/proto/pb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -822,4 +823,91 @@ func (s *Service) ParallelWriteDataPoints(ctx context.Context, req *pb.ParallelW
 	resp.TotalMs = time.Since(totalStart).Milliseconds()
 
 	return resp, nil
+}
+
+// SearchByText embeds query text and searches in-process — no Python roundtrip.
+// Replaces: Python embed_data([query]) → gRPC Search → deserialize
+// With: single gRPC call → Go embed HTTP → in-process HNSW search
+func (s *Service) SearchByText(ctx context.Context, req *pb.SearchByTextReq) (*pb.SearchResp, error) {
+	if req.Collection == "" || req.QueryText == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "collection and query_text required")
+	}
+	if req.EmbedEndpoint == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "embed_endpoint required")
+	}
+
+	topK := int(req.TopK)
+	if topK <= 0 {
+		topK = 10
+	}
+	model := req.EmbedModel
+	if model == "" {
+		model = "text-embedding-3-small"
+	}
+
+	embedClient := embed.NewClient(req.EmbedEndpoint, model, 16, 1)
+	sp := pipeline.NewSearchPipeline(embedClient, s.collections)
+
+	results, err := sp.SearchByText(ctx, req.Collection, req.QueryText, topK)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "search: %v", err)
+	}
+
+	pbResults := make([]*pb.SearchResult, len(results))
+	for i, r := range results {
+		pbResults[i] = &pb.SearchResult{
+			Id:           r.ID,
+			Score:        r.Score,
+			MetadataJson: string(r.Metadata),
+		}
+	}
+
+	return &pb.SearchResp{Results: pbResults}, nil
+}
+
+// BatchSearchByText embeds multiple queries and searches — all in one gRPC call.
+func (s *Service) BatchSearchByText(ctx context.Context, req *pb.BatchSearchByTextReq) (*pb.BatchSearchByTextResp, error) {
+	if req.Collection == "" || len(req.Queries) == 0 {
+		return nil, status.Errorf(codes.InvalidArgument, "collection and queries required")
+	}
+	if req.EmbedEndpoint == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "embed_endpoint required")
+	}
+
+	topK := int(req.TopK)
+	if topK <= 0 {
+		topK = 10
+	}
+	model := req.EmbedModel
+	if model == "" {
+		model = "text-embedding-3-small"
+	}
+
+	embedClient := embed.NewClient(req.EmbedEndpoint, model, 16, 3)
+	sp := pipeline.NewSearchPipeline(embedClient, s.collections)
+
+	batchResults, err := sp.BatchSearchByText(ctx, req.Collection, req.Queries, topK)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "batch search: %v", err)
+	}
+
+	groups := make([]*pb.SearchResultGroup, len(req.Queries))
+	for i, query := range req.Queries {
+		results := make([]*pb.SearchResult, 0)
+		if i < len(batchResults) {
+			for _, r := range batchResults[i] {
+				results = append(results, &pb.SearchResult{
+					Id:           r.ID,
+					Score:        r.Score,
+					MetadataJson: string(r.Metadata),
+				})
+			}
+		}
+		groups[i] = &pb.SearchResultGroup{
+			Query:   query,
+			Results: results,
+		}
+	}
+
+	return &pb.BatchSearchByTextResp{Results: groups}, nil
 }
