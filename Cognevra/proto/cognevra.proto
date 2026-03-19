@@ -59,6 +59,11 @@ service CognevraService {
   // Full graph search: embed → vector search → Neo4j graph → triplet scoring → context
   rpc GraphCompletionSearch(GraphCompletionSearchReq) returns (GraphCompletionSearchResp);
 
+  // LLM response cache
+  rpc LLMCacheGet(LLMCacheGetReq) returns (LLMCacheGetResp);
+  rpc LLMCachePut(LLMCachePutReq) returns (StatusResp);
+  rpc LLMCacheStats(Empty) returns (LLMCacheStatsResp);
+
   // Maintenance
   rpc Compact(Empty) returns (CompactResp);
 }
@@ -568,6 +573,36 @@ message GraphCompletionSearchResp {
   int64 graph_read_ms = 8;
   int64 scoring_ms = 9;
   int64 total_ms = 10;
+}
+
+// LLM response cache
+message LLMCacheGetReq {
+  string model = 1;
+  string prompt = 2;
+  string system_prompt = 3;
+  float temperature = 4;
+}
+
+message LLMCacheGetResp {
+  bool hit = 1;
+  string response = 2;
+  string cache_key = 3;
+}
+
+message LLMCachePutReq {
+  string model = 1;
+  string prompt = 2;
+  string system_prompt = 3;
+  float temperature = 4;
+  string response = 5;
+}
+
+message LLMCacheStatsResp {
+  int32 size = 1;
+  int32 max_size = 2;
+  int64 hits = 3;
+  int64 misses = 4;
+  float hit_rate = 5;
 }
 
 message SearchResultGroup {

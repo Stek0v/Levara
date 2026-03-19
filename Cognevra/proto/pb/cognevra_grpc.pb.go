@@ -43,6 +43,9 @@ const (
 	CognevraService_BatchSearchByText_FullMethodName       = "/cognevra.v1.CognevraService/BatchSearchByText"
 	CognevraService_GraphRead_FullMethodName               = "/cognevra.v1.CognevraService/GraphRead"
 	CognevraService_GraphCompletionSearch_FullMethodName   = "/cognevra.v1.CognevraService/GraphCompletionSearch"
+	CognevraService_LLMCacheGet_FullMethodName             = "/cognevra.v1.CognevraService/LLMCacheGet"
+	CognevraService_LLMCachePut_FullMethodName             = "/cognevra.v1.CognevraService/LLMCachePut"
+	CognevraService_LLMCacheStats_FullMethodName           = "/cognevra.v1.CognevraService/LLMCacheStats"
 	CognevraService_Compact_FullMethodName                 = "/cognevra.v1.CognevraService/Compact"
 )
 
@@ -90,6 +93,10 @@ type CognevraServiceClient interface {
 	GraphRead(ctx context.Context, in *GraphReadReq, opts ...grpc.CallOption) (*GraphReadResp, error)
 	// Full graph search: embed → vector search → Neo4j graph → triplet scoring → context
 	GraphCompletionSearch(ctx context.Context, in *GraphCompletionSearchReq, opts ...grpc.CallOption) (*GraphCompletionSearchResp, error)
+	// LLM response cache
+	LLMCacheGet(ctx context.Context, in *LLMCacheGetReq, opts ...grpc.CallOption) (*LLMCacheGetResp, error)
+	LLMCachePut(ctx context.Context, in *LLMCachePutReq, opts ...grpc.CallOption) (*StatusResp, error)
+	LLMCacheStats(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*LLMCacheStatsResp, error)
 	// Maintenance
 	Compact(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*CompactResp, error)
 }
@@ -342,6 +349,36 @@ func (c *cognevraServiceClient) GraphCompletionSearch(ctx context.Context, in *G
 	return out, nil
 }
 
+func (c *cognevraServiceClient) LLMCacheGet(ctx context.Context, in *LLMCacheGetReq, opts ...grpc.CallOption) (*LLMCacheGetResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(LLMCacheGetResp)
+	err := c.cc.Invoke(ctx, CognevraService_LLMCacheGet_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *cognevraServiceClient) LLMCachePut(ctx context.Context, in *LLMCachePutReq, opts ...grpc.CallOption) (*StatusResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(StatusResp)
+	err := c.cc.Invoke(ctx, CognevraService_LLMCachePut_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *cognevraServiceClient) LLMCacheStats(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*LLMCacheStatsResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(LLMCacheStatsResp)
+	err := c.cc.Invoke(ctx, CognevraService_LLMCacheStats_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *cognevraServiceClient) Compact(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*CompactResp, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(CompactResp)
@@ -396,6 +433,10 @@ type CognevraServiceServer interface {
 	GraphRead(context.Context, *GraphReadReq) (*GraphReadResp, error)
 	// Full graph search: embed → vector search → Neo4j graph → triplet scoring → context
 	GraphCompletionSearch(context.Context, *GraphCompletionSearchReq) (*GraphCompletionSearchResp, error)
+	// LLM response cache
+	LLMCacheGet(context.Context, *LLMCacheGetReq) (*LLMCacheGetResp, error)
+	LLMCachePut(context.Context, *LLMCachePutReq) (*StatusResp, error)
+	LLMCacheStats(context.Context, *Empty) (*LLMCacheStatsResp, error)
 	// Maintenance
 	Compact(context.Context, *Empty) (*CompactResp, error)
 	mustEmbedUnimplementedCognevraServiceServer()
@@ -479,6 +520,15 @@ func (UnimplementedCognevraServiceServer) GraphRead(context.Context, *GraphReadR
 }
 func (UnimplementedCognevraServiceServer) GraphCompletionSearch(context.Context, *GraphCompletionSearchReq) (*GraphCompletionSearchResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method GraphCompletionSearch not implemented")
+}
+func (UnimplementedCognevraServiceServer) LLMCacheGet(context.Context, *LLMCacheGetReq) (*LLMCacheGetResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method LLMCacheGet not implemented")
+}
+func (UnimplementedCognevraServiceServer) LLMCachePut(context.Context, *LLMCachePutReq) (*StatusResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method LLMCachePut not implemented")
+}
+func (UnimplementedCognevraServiceServer) LLMCacheStats(context.Context, *Empty) (*LLMCacheStatsResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method LLMCacheStats not implemented")
 }
 func (UnimplementedCognevraServiceServer) Compact(context.Context, *Empty) (*CompactResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method Compact not implemented")
@@ -936,6 +986,60 @@ func _CognevraService_GraphCompletionSearch_Handler(srv interface{}, ctx context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _CognevraService_LLMCacheGet_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LLMCacheGetReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CognevraServiceServer).LLMCacheGet(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CognevraService_LLMCacheGet_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CognevraServiceServer).LLMCacheGet(ctx, req.(*LLMCacheGetReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _CognevraService_LLMCachePut_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LLMCachePutReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CognevraServiceServer).LLMCachePut(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CognevraService_LLMCachePut_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CognevraServiceServer).LLMCachePut(ctx, req.(*LLMCachePutReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _CognevraService_LLMCacheStats_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CognevraServiceServer).LLMCacheStats(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CognevraService_LLMCacheStats_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CognevraServiceServer).LLMCacheStats(ctx, req.(*Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _CognevraService_Compact_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(Empty)
 	if err := dec(in); err != nil {
@@ -1056,6 +1160,18 @@ var CognevraService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GraphCompletionSearch",
 			Handler:    _CognevraService_GraphCompletionSearch_Handler,
+		},
+		{
+			MethodName: "LLMCacheGet",
+			Handler:    _CognevraService_LLMCacheGet_Handler,
+		},
+		{
+			MethodName: "LLMCachePut",
+			Handler:    _CognevraService_LLMCachePut_Handler,
+		},
+		{
+			MethodName: "LLMCacheStats",
+			Handler:    _CognevraService_LLMCacheStats_Handler,
 		},
 		{
 			MethodName: "Compact",
