@@ -59,6 +59,9 @@ service CognevraService {
   // Full graph search: embed → vector search → Neo4j graph → triplet scoring → context
   rpc GraphCompletionSearch(GraphCompletionSearchReq) returns (GraphCompletionSearchResp);
 
+  // Pipeline orchestrator (server-side streaming)
+  rpc PipelineCognify(PipelineCognifyReq) returns (stream PipelineCognifyProgress);
+
   // LLM response cache
   rpc LLMCacheGet(LLMCacheGetReq) returns (LLMCacheGetResp);
   rpc LLMCachePut(LLMCachePutReq) returns (StatusResp);
@@ -592,6 +595,46 @@ message LLMCacheGetResp {
   bool hit = 1;
   string response = 2;
   string cache_key = 3;
+}
+
+// Pipeline orchestrator
+message PipelineCognifyReq {
+  // Input data
+  repeated string texts = 1;
+  // Chunking
+  string chunk_strategy = 2;       // "merged" (default), "paragraph", "sentence"
+  int32 min_chunk_chars = 3;
+  int32 max_chunk_chars = 4;
+  // LLM extraction
+  string llm_endpoint = 5;         // LLM API URL (e.g. LLM proxy or direct Ollama)
+  string llm_model = 6;
+  string extraction_system_prompt = 7;  // system prompt for entity extraction
+  float llm_temperature = 8;
+  // Embedding
+  string embed_endpoint = 9;
+  string embed_model = 10;
+  // Neo4j
+  string neo4j_url = 11;
+  string neo4j_user = 12;
+  string neo4j_password = 13;
+  string neo4j_database = 14;
+  // Pipeline params
+  int32 llm_concurrency = 15;     // max concurrent LLM calls (default 5)
+  string collection = 16;          // vector collection name
+  bool generate_triplets = 17;
+}
+
+message PipelineCognifyProgress {
+  string stage = 1;                // "chunking", "extracting", "writing", "complete", "error"
+  int32 items_total = 2;
+  int32 items_processed = 3;
+  int32 chunks_created = 4;
+  int32 entities_extracted = 5;
+  int32 edges_extracted = 6;
+  int32 nodes_written = 7;
+  int32 edges_written = 8;
+  string message = 9;
+  int64 elapsed_ms = 10;
 }
 
 message LLMCachePutReq {
