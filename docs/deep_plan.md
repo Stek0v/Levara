@@ -132,7 +132,8 @@
 │       │                                                              │
 │       ├── RAG_COMPLETION ──── 🟡 SearchByText + LLM                 │
 │       ├── SUMMARIES ────────── 🟡 SearchByText on summaries         │
-│       ├── CHUNKS_LEXICAL ──── 🔴 BM25 keyword search (Python)       │
+│       ├── CHUNKS_LEXICAL ──── 🟢 BM25Search RPC (Go inverted index) │
+│       ├── HYBRID ───────────── 🟢 HybridSearch RPC (vector+BM25)   │
 │       ├── NATURAL_LANGUAGE ── 🔴 NL→Cypher (LLM, Python)            │
 │       ├── CYPHER ───────────── 🔴 Raw Cypher query (Python)         │
 │       ├── TEMPORAL ─────────── 🔴 Time-aware graph (Python)          │
@@ -217,6 +218,12 @@
 │  🟢 SEARCH AGGREGATION (pkg/aggregator/)                            │
 │     AggregateSearch (triplet ranking + context formatting)           │
 │                                                                      │
+│  🟢 LLM CACHE (pkg/llmcache/)                                        │
+│     LLMCacheGet (0.18ms) | LLMCachePut | LLMCacheStats               │
+│                                                                      │
+│  🟢 BM25 LEXICAL SEARCH (pkg/bm25/)                                  │
+│     BM25Index | BM25Search (2.9ms/10K) | HybridSearch (vector+BM25)  │
+│                                                                      │
 │  🟢 MAINTENANCE                                                      │
 │     Info | Compact                                                    │
 │                                                                      │
@@ -225,45 +232,43 @@
 
 ---
 
-## Статистика покрытия (обновлено 2026-03-20)
+## Статистика покрытия (обновлено 2026-03-20, v2)
 
 | Категория | Всего | 🟢 Go | 🟡 Частично | 🔴 Python | Coverage |
 |-----------|-------|-------|-------------|-----------|----------|
 | **API endpoints** | 10 | 0 | 3 | 4 | 30% |
 | **Pipeline tasks** | 18 | 7 | 2 | 9 | **56%** |
 | **DB adapters** | 8 | 3 | 0 | 5 | **44%** |
-| **LLM/Embedding** | 9 | 1 | 0 | 8 | 11% |
-| **Retrieval** | 12 | 4 | 1 | 7 | **50%** |
+| **LLM/Embedding** | 9 | 2 | 0 | 7 | **22%** |
+| **Retrieval** | 12 | 6 | 1 | 5 | **58%** |
 | **File I/O** | 4 | 2 | 1 | 1 | 75% |
-| **gRPC RPCs** | **23** | **23** | 0 | 0 | **100%** |
+| **gRPC RPCs** | **29** | **29** | 0 | 0 | **100%** |
 
-### Все 23 Go gRPC RPCs:
+### Все 29 Go gRPC RPCs:
 
-| # | RPC | Категория | Заменяет |
-|---|-----|-----------|----------|
-| 1 | CreateCollection | Vector CRUD | — |
-| 2 | DropCollection | Vector CRUD | — |
-| 3 | ListCollections | Vector CRUD | — |
-| 4 | HasCollection | Vector CRUD | — |
-| 5 | Insert | Vector CRUD | — |
-| 6 | BatchInsert | Vector CRUD | — |
-| 7 | Delete | Vector CRUD | — |
-| 8 | Search | Vector CRUD | — |
-| 9 | GetByID | Vector CRUD | — |
-| 10 | ChunkText | Text processing | extract_chunks_from_documents |
-| 11 | ProcessTriplets | Graph processing | triplet dedup |
-| 12 | HashFiles | File I/O | file hashing |
-| 13 | ListDirectory | File I/O | directory walk |
-| 14 | AggregateSearch | Search | triplet ranking |
-| 15 | **SearchTriplets** | Search | brute_force_triplet_search |
-| 16 | **DeduplicateGraph** | Graph | deduplicate_nodes_and_edges |
-| 17 | **BatchEmbedAndIndex** | Write | index_data_points |
-| 18 | **BatchWriteGraph** | Write | Neo4j add_nodes/add_edges |
-| 19 | **ParallelWriteDataPoints** | Write | add_data_points (all-in-one) |
-| 20 | **SearchByText** | Search | embed + search |
-| 21 | **BatchSearchByText** | Search | batch embed + search |
-| 22 | **GraphRead** | Read | Neo4j graph projection (4 modes) |
-| 23 | **GraphCompletionSearch** | Search | TripletSearchContextProvider (full pipeline) |
+| # | RPC | Пакет | Заменяет |
+|---|-----|-------|----------|
+| 1-9 | Vector CRUD (9 RPCs) | internal/store | Collection management, insert/search/delete |
+| 10 | ChunkText | pkg/chunker | extract_chunks_from_documents |
+| 11 | ProcessTriplets | service.go | triplet dedup + UUID5 |
+| 12 | HashFiles | pkg/fileio | concurrent SHA256 + MIME |
+| 13 | ListDirectory | pkg/fileio | recursive walk + filter |
+| 14 | AggregateSearch | pkg/aggregator | triplet ranking + dedup |
+| 15 | **SearchTriplets** | pkg/graph | brute_force_triplet_search (22-112x) |
+| 16 | **DeduplicateGraph** | pkg/graph | deduplicate_nodes_and_edges (50-200x) |
+| 17 | **BatchEmbedAndIndex** | pkg/embed | embed + vector insert |
+| 18 | **BatchWriteGraph** | pkg/graphdb | Neo4j UNWIND+MERGE |
+| 19 | **ParallelWriteDataPoints** | all combined | dedup→Neo4j→embed→index (one call) |
+| 20 | **SearchByText** | pipeline/ | embed query + HNSW search |
+| 21 | **BatchSearchByText** | pipeline/ | batch embed + concurrent search |
+| 22 | **GraphRead** (4 modes) | pkg/graphdb | Neo4j graph projection |
+| 23 | **GraphCompletionSearch** | all combined | full search pipeline (one call) |
+| 24 | **LLMCacheGet** | pkg/llmcache | cached LLM response (0.18ms vs 5-30s) |
+| 25 | **LLMCachePut** | pkg/llmcache | store LLM response |
+| 26 | **LLMCacheStats** | pkg/llmcache | cache hit/miss statistics |
+| 27 | **BM25Index** | pkg/bm25 | lexical inverted index |
+| 28 | **BM25Search** | pkg/bm25 | keyword search (2.9ms/10K docs) |
+| 29 | **HybridSearch** | pkg/bm25 | vector + BM25 via RRF fusion |
 
 ### Критический путь (cognify write path):
 ```
@@ -299,5 +304,37 @@ embed_query → vector_search → graph_read → triplet_score → format_contex
 | Graph write (Neo4j) | ~2s | **~200ms** | 10x |
 | Vector embed+index | ~1s | **~500ms** | 2x |
 | Triplet search 10K | ~500ms | **~5ms** | 100x |
+| BM25 search 10K | N/A (Python) | **~3ms** | NEW |
+| Hybrid search | N/A | **~90ms** | NEW |
+| LLM cache hit | 5-30s | **~0.18ms** | **26K-160Kx** |
 | **Full search** (excl LLM) | ~600ms | **~90ms** | **7x** |
 | **Total cognify** (excl LLM) | ~4s | **~700ms** | **6x** |
+
+---
+
+## Следующие задачи по ROI
+
+### Tier A: Высокий ROI (новые возможности)
+
+| # | Задача | Effort | Impact | Описание |
+|---|--------|--------|--------|----------|
+| **N1** | Go Pipeline Orchestrator | 1-2 нед | Высокий | Go goroutine-based pipeline: inter-task streaming вместо sequential batch. Chunks → LLM (Python callback) → dedup → write параллельно |
+| **N2** | Persistent BM25 Index | 2-3 дня | Средний | BM25 index сохраняется на диск (сейчас in-memory, теряется при рестарте). WAL для BM25 аналогично vector WAL |
+| **N3** | LLM Cache persistence (Redis/disk) | 1-2 дня | Средний | Текущий кеш in-memory. Добавить Redis backend или disk persistence для выживания рестартов |
+| **N4** | Batch LLM proxy | 3-5 дней | Высокий | Go proxy перед LLM API: батчинг N запросов в один, дедупликация одинаковых промптов в полёте, rate limiting |
+
+### Tier B: Средний ROI (улучшение качества)
+
+| # | Задача | Effort | Impact | Описание |
+|---|--------|--------|--------|----------|
+| **N5** | Semantic dedup (vector-based) | 2-3 дня | Средний | Дедупликация чанков не только по ID, но по cosine similarity (>0.95 = duplicate). Уменьшает шум в retrieval |
+| **N6** | Graph index (in-memory) | 3-5 дней | Средний | Постоянный in-memory граф в Go (как BM25 index). Сейчас GraphRead идёт в Neo4j каждый раз — кеш графа ускорит search |
+| **N7** | Multi-query search | 1-2 дня | Средний | SearchByText с entity decomposition: "Кто такая Эмбер и как она связана с Лукасом?" → 2 sub-queries параллельно |
+
+### Tier C: Low ROI / Специализированные
+
+| # | Задача | Effort | Impact |
+|---|--------|--------|--------|
+| N8 | Streaming gRPC cognify progress | 2-3 дня | UX improvement |
+| N9 | Go PostgreSQL driver (upserts) | 2-3 дня | Минимальный (ORM overhead < 50ms) |
+| N10 | WASM embedding (local, no server) | 1-2 нед | Eliminates embed-server dependency |
