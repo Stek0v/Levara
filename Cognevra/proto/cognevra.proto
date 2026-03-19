@@ -129,6 +129,7 @@ message ChunkTextReq {
   string strategy = 2;    // "merged" (default), "paragraph", "sentence"
   int32 min_chunk_chars = 3; // default: 80
   int32 max_chunk_chars = 4; // default: 600
+  string document_id = 5;  // NEW: for deterministic UUID5 chunk IDs
 }
 
 message ChunkTextResp {

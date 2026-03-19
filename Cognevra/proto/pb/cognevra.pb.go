@@ -1020,6 +1020,7 @@ type ChunkTextReq struct {
 	Strategy      string                 `protobuf:"bytes,2,opt,name=strategy,proto3" json:"strategy,omitempty"`                                   // "merged" (default), "paragraph", "sentence"
 	MinChunkChars int32                  `protobuf:"varint,3,opt,name=min_chunk_chars,json=minChunkChars,proto3" json:"min_chunk_chars,omitempty"` // default: 80
 	MaxChunkChars int32                  `protobuf:"varint,4,opt,name=max_chunk_chars,json=maxChunkChars,proto3" json:"max_chunk_chars,omitempty"` // default: 600
+	DocumentId    string                 `protobuf:"bytes,5,opt,name=document_id,json=documentId,proto3" json:"document_id,omitempty"`             // NEW: for deterministic UUID5 chunk IDs
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1080,6 +1081,13 @@ func (x *ChunkTextReq) GetMaxChunkChars() int32 {
 		return x.MaxChunkChars
 	}
 	return 0
+}
+
+func (x *ChunkTextReq) GetDocumentId() string {
+	if x != nil {
+		return x.DocumentId
+	}
+	return ""
 }
 
 type ChunkTextResp struct {
@@ -1346,12 +1354,14 @@ const file_proto_cognevra_proto_rawDesc = "" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12#\n" +
 	"\rmetadata_json\x18\x02 \x01(\tR\fmetadataJson\x12\x14\n" +
 	"\x05found\x18\x03 \x01(\bR\x05found\x12\x16\n" +
-	"\x06vector\x18\x04 \x03(\x02R\x06vector\"\x8e\x01\n" +
+	"\x06vector\x18\x04 \x03(\x02R\x06vector\"\xaf\x01\n" +
 	"\fChunkTextReq\x12\x12\n" +
 	"\x04text\x18\x01 \x01(\tR\x04text\x12\x1a\n" +
 	"\bstrategy\x18\x02 \x01(\tR\bstrategy\x12&\n" +
 	"\x0fmin_chunk_chars\x18\x03 \x01(\x05R\rminChunkChars\x12&\n" +
-	"\x0fmax_chunk_chars\x18\x04 \x01(\x05R\rmaxChunkChars\"?\n" +
+	"\x0fmax_chunk_chars\x18\x04 \x01(\x05R\rmaxChunkChars\x12\x1f\n" +
+	"\vdocument_id\x18\x05 \x01(\tR\n" +
+	"documentId\"?\n" +
 	"\rChunkTextResp\x12.\n" +
 	"\x06chunks\x18\x01 \x03(\v2\x16.cognevra.v1.TextChunkR\x06chunks\"\x85\x01\n" +
 	"\tTextChunk\x12\x0e\n" +

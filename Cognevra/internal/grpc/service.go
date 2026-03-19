@@ -182,11 +182,11 @@ func (s *Service) ChunkText(_ context.Context, req *pb.ChunkTextReq) (*pb.ChunkT
 	var chunks []chunker.Chunk
 	switch req.Strategy {
 	case "paragraph":
-		chunks = chunker.ChunkByParagraphSimple(req.Text, minChars)
+		chunks = chunker.ChunkByParagraphSimple(req.Text, minChars, req.DocumentId)
 	case "sentence":
-		chunks = chunker.ChunkBySentence(req.Text, minChars, maxChars)
+		chunks = chunker.ChunkBySentence(req.Text, minChars, maxChars, req.DocumentId)
 	default: // "merged" or empty
-		chunks = chunker.ChunkByParagraphMerged(req.Text, minChars, maxChars)
+		chunks = chunker.ChunkByParagraphMerged(req.Text, minChars, maxChars, req.DocumentId)
 	}
 
 	pbChunks := make([]*pb.TextChunk, len(chunks))

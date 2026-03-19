@@ -4,8 +4,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-
-	"github.com/google/uuid"
 )
 
 // sentenceSplitter splits on sentence endings followed by whitespace.
@@ -14,7 +12,8 @@ var sentenceSplitter = regexp.MustCompile(`([.!?])\s+`)
 
 // ChunkBySentence splits text by sentence boundaries and merges
 // small sentences up to maxChunkChars. Matches Python chunk_by_sentence().
-func ChunkBySentence(text string, minChunkChars, maxChunkChars int) []Chunk {
+// When documentID is non-empty, chunk IDs are deterministic UUID5s.
+func ChunkBySentence(text string, minChunkChars, maxChunkChars int, documentID string) []Chunk {
 	// Split preserving the punctuation with the preceding text.
 	// The regex splits AFTER [.!?] + whitespace, but we need to keep
 	// the punctuation attached to the preceding sentence.
@@ -46,7 +45,7 @@ func ChunkBySentence(text string, minChunkChars, maxChunkChars int) []Chunk {
 		} else {
 			if bufLen >= minChunkChars {
 				chunks = append(chunks, Chunk{
-					ID:         uuid.New().String(),
+					ID:         chunkID(documentID, len(chunks)),
 					Text:       buffer.String(),
 					Chapter:    chapter,
 					ChunkIndex: len(chunks),
@@ -60,7 +59,7 @@ func ChunkBySentence(text string, minChunkChars, maxChunkChars int) []Chunk {
 
 	if buffer.Len() >= minChunkChars {
 		chunks = append(chunks, Chunk{
-			ID:         uuid.New().String(),
+			ID:         chunkID(documentID, len(chunks)),
 			Text:       buffer.String(),
 			Chapter:    chapter,
 			ChunkIndex: len(chunks),

@@ -4,6 +4,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 const testText = `Глава 1
@@ -21,7 +23,7 @@ const testText = `Глава 1
 Ещё один длинный параграф второй главы. Мы проверяем, что короткие параграфы отбрасываются. Тест тест тест.`
 
 func TestChunkByParagraphMerged(t *testing.T) {
-	chunks := ChunkByParagraphMerged(testText, DefaultMinChunkChars, DefaultMaxChunkChars)
+	chunks := ChunkByParagraphMerged(testText, DefaultMinChunkChars, DefaultMaxChunkChars, "")
 
 	if len(chunks) == 0 {
 		t.Fatal("Expected at least 1 chunk")
@@ -63,7 +65,7 @@ func TestChunkByParagraphMerged(t *testing.T) {
 }
 
 func TestChunkByParagraphSimple(t *testing.T) {
-	chunks := ChunkByParagraphSimple(testText, DefaultMinChunkChars)
+	chunks := ChunkByParagraphSimple(testText, DefaultMinChunkChars, "")
 
 	if len(chunks) == 0 {
 		t.Fatal("Expected at least 1 chunk")
@@ -88,7 +90,7 @@ func TestChunkBySentence(t *testing.T) {
 	text := "Первое предложение. Второе предложение! Третье? Четвёртое предложение. " +
 		"Пятое предложение здесь. Шестое предложение тоже длинное, чтобы пройти порог в 80 символов."
 
-	chunks := ChunkBySentence(text, DefaultMinChunkChars, DefaultMaxChunkChars)
+	chunks := ChunkBySentence(text, DefaultMinChunkChars, DefaultMaxChunkChars, "")
 
 	if len(chunks) == 0 {
 		t.Fatal("Expected at least 1 chunk")
@@ -110,7 +112,7 @@ func TestChunkBySentence(t *testing.T) {
 }
 
 func TestChunkEmptyText(t *testing.T) {
-	chunks := ChunkByParagraphMerged("", DefaultMinChunkChars, DefaultMaxChunkChars)
+	chunks := ChunkByParagraphMerged("", DefaultMinChunkChars, DefaultMaxChunkChars, "")
 	if len(chunks) != 0 {
 		t.Errorf("Empty text should return 0 chunks, got %d", len(chunks))
 	}
@@ -136,7 +138,7 @@ func TestChunkBookParity(t *testing.T) {
 	}
 
 	text := string(data)
-	chunks := ChunkByParagraphMerged(text, DefaultMinChunkChars, DefaultMaxChunkChars)
+	chunks := ChunkByParagraphMerged(text, DefaultMinChunkChars, DefaultMaxChunkChars, "")
 
 	// Python produces ~1430 chunks with these settings
 	if len(chunks) < 1000 || len(chunks) > 2000 {
@@ -164,6 +166,58 @@ func TestChunkBookParity(t *testing.T) {
 	t.Logf("Book chunked: %d chunks, max chapter=%d", len(chunks), maxChapter)
 }
 
+func TestUUID5MatchesPython(t *testing.T) {
+	// Python: uuid.uuid5(uuid.NAMESPACE_OID, "test-doc-0")
+	// Verify Go produces a non-empty deterministic UUID5 for this input.
+	got := uuid.NewSHA1(uuid.NameSpaceOID, []byte("test-doc-0")).String()
+	if got == "" {
+		t.Error("UUID5 generation failed")
+	}
+	// The expected value was computed with Python:
+	//   import uuid; str(uuid.uuid5(uuid.NAMESPACE_OID, "test-doc-0"))
+	// which yields "ff501e71-5b83-59e4-b2b7-77c20fcc0ab3"
+	const expected = "ff501e71-5b83-59e4-b2b7-77c20fcc0ab3"
+	if got != expected {
+		t.Errorf("UUID5 mismatch: got %s, want %s (Python parity check failed)", got, expected)
+	}
+	t.Logf("UUID5 for 'test-doc-0': %s", got)
+}
+
+func TestUUID5Deterministic(t *testing.T) {
+	id1 := uuid.NewSHA1(uuid.NameSpaceOID, []byte("doc-42-7")).String()
+	id2 := uuid.NewSHA1(uuid.NameSpaceOID, []byte("doc-42-7")).String()
+	if id1 != id2 {
+		t.Errorf("UUID5 not deterministic: %s != %s", id1, id2)
+	}
+	t.Logf("UUID5 for 'doc-42-7': %s", id1)
+}
+
+func TestChunkIDDeterministicWithDocumentID(t *testing.T) {
+	// With the same documentID, chunking should yield identical chunk IDs
+	chunks1 := ChunkByParagraphMerged(testText, DefaultMinChunkChars, DefaultMaxChunkChars, "my-doc-123")
+	chunks2 := ChunkByParagraphMerged(testText, DefaultMinChunkChars, DefaultMaxChunkChars, "my-doc-123")
+	if len(chunks1) != len(chunks2) {
+		t.Fatalf("Chunk counts differ: %d vs %d", len(chunks1), len(chunks2))
+	}
+	for i := range chunks1 {
+		if chunks1[i].ID != chunks2[i].ID {
+			t.Errorf("Chunk %d ID not deterministic: %s != %s", i, chunks1[i].ID, chunks2[i].ID)
+		}
+	}
+}
+
+func TestChunkIDUniqueAcrossDocuments(t *testing.T) {
+	// Different documentIDs should produce different chunk IDs for the same chunk index
+	chunks1 := ChunkByParagraphMerged(testText, DefaultMinChunkChars, DefaultMaxChunkChars, "doc-A")
+	chunks2 := ChunkByParagraphMerged(testText, DefaultMinChunkChars, DefaultMaxChunkChars, "doc-B")
+	if len(chunks1) == 0 || len(chunks2) == 0 {
+		t.Skip("No chunks produced")
+	}
+	if chunks1[0].ID == chunks2[0].ID {
+		t.Errorf("Different documents should produce different chunk IDs: both got %s", chunks1[0].ID)
+	}
+}
+
 func BenchmarkChunkBook(b *testing.B) {
 	paths := []string{
 		"../../../../Edvards_Dzanet_Uragan_r4_P61XH.txt",
@@ -184,6 +238,6 @@ func BenchmarkChunkBook(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		ChunkByParagraphMerged(text, DefaultMinChunkChars, DefaultMaxChunkChars)
+		ChunkByParagraphMerged(text, DefaultMinChunkChars, DefaultMaxChunkChars, "")
 	}
 }
