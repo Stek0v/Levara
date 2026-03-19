@@ -67,6 +67,9 @@ service CognevraService {
   rpc LLMCachePut(LLMCachePutReq) returns (StatusResp);
   rpc LLMCacheStats(Empty) returns (LLMCacheStatsResp);
 
+  // Semantic deduplication (vector cosine similarity)
+  rpc SemanticDedup(SemanticDedupReq) returns (SemanticDedupResp);
+
   // BM25 lexical search + hybrid
   rpc BM25Index(BM25IndexReq) returns (StatusResp);
   rpc BM25Search(BM25SearchReq) returns (BM25SearchResp);
@@ -635,6 +638,23 @@ message PipelineCognifyProgress {
   int32 edges_written = 8;
   string message = 9;
   int64 elapsed_ms = 10;
+}
+
+// Semantic dedup
+message SemanticDedupReq {
+  repeated VectorEntry vectors = 1;
+  float threshold = 2;  // cosine similarity threshold (default 0.95)
+}
+
+message VectorEntry {
+  string id = 1;
+  repeated float vector = 2;
+}
+
+message SemanticDedupResp {
+  repeated string kept_ids = 1;
+  repeated string removed_ids = 2;
+  int32 duplicates_found = 3;
 }
 
 message LLMCachePutReq {

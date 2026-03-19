@@ -1417,3 +1417,35 @@ func (s *Service) PipelineCognify(req *pb.PipelineCognifyReq, stream pb.Cognevra
 
 	return <-errCh
 }
+
+// SemanticDedup removes near-duplicate vectors by cosine similarity.
+func (s *Service) SemanticDedup(_ context.Context, req *pb.SemanticDedupReq) (*pb.SemanticDedupResp, error) {
+	threshold := req.Threshold
+	if threshold <= 0 {
+		threshold = 0.95
+	}
+
+	vectors := make([][]float32, len(req.Vectors))
+	ids := make([]string, len(req.Vectors))
+	for i, v := range req.Vectors {
+		vectors[i] = v.Vector
+		ids[i] = v.Id
+	}
+
+	result := graph.SemanticDedup(vectors, threshold)
+
+	keptIDs := make([]string, len(result.Kept))
+	for i, idx := range result.Kept {
+		keptIDs[i] = ids[idx]
+	}
+	removedIDs := make([]string, len(result.Removed))
+	for i, idx := range result.Removed {
+		removedIDs[i] = ids[idx]
+	}
+
+	return &pb.SemanticDedupResp{
+		KeptIds:         keptIDs,
+		RemovedIds:      removedIDs,
+		DuplicatesFound: int32(len(result.Removed)),
+	}, nil
+}
