@@ -217,3 +217,20 @@ func (cm *CollectionManager) Count() int {
 	defer cm.mu.RUnlock()
 	return len(cm.collections)
 }
+
+// Checkpoint compacts WAL for all collections.
+func (cm *CollectionManager) Checkpoint() error {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+
+	var errs []error
+	for name, db := range cm.collections {
+		if err := db.Checkpoint(); err != nil {
+			errs = append(errs, fmt.Errorf("collection %q: %w", name, err))
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("checkpoint errors: %v", errs)
+	}
+	return nil
+}

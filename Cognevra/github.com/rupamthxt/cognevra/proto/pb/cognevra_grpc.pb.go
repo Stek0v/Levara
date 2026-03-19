@@ -33,6 +33,8 @@ const (
 	CognevraService_ProcessTriplets_FullMethodName  = "/cognevra.v1.CognevraService/ProcessTriplets"
 	CognevraService_HashFiles_FullMethodName        = "/cognevra.v1.CognevraService/HashFiles"
 	CognevraService_ListDirectory_FullMethodName    = "/cognevra.v1.CognevraService/ListDirectory"
+	CognevraService_AggregateSearch_FullMethodName  = "/cognevra.v1.CognevraService/AggregateSearch"
+	CognevraService_Compact_FullMethodName          = "/cognevra.v1.CognevraService/Compact"
 )
 
 // CognevraServiceClient is the client API for CognevraService service.
@@ -60,6 +62,10 @@ type CognevraServiceClient interface {
 	// File I/O acceleration
 	HashFiles(ctx context.Context, in *HashFilesReq, opts ...grpc.CallOption) (*HashFilesResp, error)
 	ListDirectory(ctx context.Context, in *ListDirectoryReq, opts ...grpc.CallOption) (*ListDirectoryResp, error)
+	// Search aggregation
+	AggregateSearch(ctx context.Context, in *AggregateSearchReq, opts ...grpc.CallOption) (*AggregateSearchResp, error)
+	// Maintenance
+	Compact(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*CompactResp, error)
 }
 
 type cognevraServiceClient struct {
@@ -210,6 +216,26 @@ func (c *cognevraServiceClient) ListDirectory(ctx context.Context, in *ListDirec
 	return out, nil
 }
 
+func (c *cognevraServiceClient) AggregateSearch(ctx context.Context, in *AggregateSearchReq, opts ...grpc.CallOption) (*AggregateSearchResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AggregateSearchResp)
+	err := c.cc.Invoke(ctx, CognevraService_AggregateSearch_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *cognevraServiceClient) Compact(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*CompactResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CompactResp)
+	err := c.cc.Invoke(ctx, CognevraService_Compact_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // CognevraServiceServer is the server API for CognevraService service.
 // All implementations must embed UnimplementedCognevraServiceServer
 // for forward compatibility.
@@ -235,6 +261,10 @@ type CognevraServiceServer interface {
 	// File I/O acceleration
 	HashFiles(context.Context, *HashFilesReq) (*HashFilesResp, error)
 	ListDirectory(context.Context, *ListDirectoryReq) (*ListDirectoryResp, error)
+	// Search aggregation
+	AggregateSearch(context.Context, *AggregateSearchReq) (*AggregateSearchResp, error)
+	// Maintenance
+	Compact(context.Context, *Empty) (*CompactResp, error)
 	mustEmbedUnimplementedCognevraServiceServer()
 }
 
@@ -286,6 +316,12 @@ func (UnimplementedCognevraServiceServer) HashFiles(context.Context, *HashFilesR
 }
 func (UnimplementedCognevraServiceServer) ListDirectory(context.Context, *ListDirectoryReq) (*ListDirectoryResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListDirectory not implemented")
+}
+func (UnimplementedCognevraServiceServer) AggregateSearch(context.Context, *AggregateSearchReq) (*AggregateSearchResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method AggregateSearch not implemented")
+}
+func (UnimplementedCognevraServiceServer) Compact(context.Context, *Empty) (*CompactResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method Compact not implemented")
 }
 func (UnimplementedCognevraServiceServer) mustEmbedUnimplementedCognevraServiceServer() {}
 func (UnimplementedCognevraServiceServer) testEmbeddedByValue()                         {}
@@ -560,6 +596,42 @@ func _CognevraService_ListDirectory_Handler(srv interface{}, ctx context.Context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _CognevraService_AggregateSearch_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AggregateSearchReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CognevraServiceServer).AggregateSearch(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CognevraService_AggregateSearch_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CognevraServiceServer).AggregateSearch(ctx, req.(*AggregateSearchReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _CognevraService_Compact_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CognevraServiceServer).Compact(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CognevraService_Compact_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CognevraServiceServer).Compact(ctx, req.(*Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // CognevraService_ServiceDesc is the grpc.ServiceDesc for CognevraService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -622,6 +694,14 @@ var CognevraService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListDirectory",
 			Handler:    _CognevraService_ListDirectory_Handler,
+		},
+		{
+			MethodName: "AggregateSearch",
+			Handler:    _CognevraService_AggregateSearch_Handler,
+		},
+		{
+			MethodName: "Compact",
+			Handler:    _CognevraService_Compact_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

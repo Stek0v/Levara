@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/rupamthxt/cognevra/internal/store"
+	"github.com/rupamthxt/cognevra/pkg/aggregator"
 	"github.com/rupamthxt/cognevra/pkg/chunker"
 	"github.com/rupamthxt/cognevra/pkg/fileio"
 	pb "github.com/rupamthxt/cognevra/proto/pb"
@@ -301,4 +302,45 @@ func (s *Service) ListDirectory(_ context.Context, req *pb.ListDirectoryReq) (*p
 		FilePaths: files,
 		Total:     int32(len(files)),
 	}, nil
+}
+
+func (s *Service) AggregateSearch(_ context.Context, req *pb.AggregateSearchReq) (*pb.AggregateSearchResp, error) {
+	edges := make([]aggregator.ScoredEdge, len(req.Edges))
+	for i, e := range req.Edges {
+		edges[i] = aggregator.ScoredEdge{
+			SourceID: e.SourceId, SourceName: e.SourceName, SourceText: e.SourceText,
+			SourceDist:       e.SourceDistance,
+			TargetID:         e.TargetId,
+			TargetName:       e.TargetName,
+			TargetText:       e.TargetText,
+			TargetDist:       e.TargetDistance,
+			RelationshipName: e.RelationshipName,
+			EdgeDist:         e.EdgeDistance,
+		}
+	}
+
+	result := aggregator.Aggregate(edges, int(req.TopK))
+
+	resp := &pb.AggregateSearchResp{
+		FormattedContext: result.FormattedContext,
+		UniqueNodes:      int32(result.UniqueNodeCount),
+	}
+	for _, r := range result.RankedEdges {
+		resp.RankedEdges = append(resp.RankedEdges, &pb.RankedEdge{
+			SourceId: r.SourceID, SourceName: r.SourceName,
+			TargetId: r.TargetID, TargetName: r.TargetName,
+			RelationshipName: r.RelationshipName,
+			Score:            r.Score,
+		})
+	}
+	return resp, nil
+}
+
+func (s *Service) Compact(_ context.Context, _ *pb.Empty) (*pb.CompactResp, error) {
+	err := s.collections.Checkpoint()
+	resp := &pb.CompactResp{CollectionsCompacted: int32(len(s.collections.List()))}
+	if err != nil {
+		resp.Error = err.Error()
+	}
+	return resp, nil
 }

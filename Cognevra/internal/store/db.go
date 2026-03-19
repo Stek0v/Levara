@@ -9,8 +9,10 @@
 package store
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
 	"sync"
 )
@@ -451,4 +453,78 @@ func (db *Cognevra) Close() error {
 		return fmt.Errorf("wal close: %w", err)
 	}
 	return db.disk.Close()
+}
+
+// Checkpoint compacts the WAL by writing only live records to a fresh file.
+// This eliminates deleted entries and reduces recovery time.
+// Must be called when no writes are in progress (holds db.mu for full duration).
+func (db *Cognevra) Checkpoint() error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	walPath := db.wal.Path()
+	tmpPath := walPath + ".compact"
+
+	// Create new WAL file
+	tmpFile, err := os.Create(tmpPath)
+	if err != nil {
+		return fmt.Errorf("checkpoint: create tmp: %w", err)
+	}
+	writer := bufio.NewWriter(tmpFile)
+
+	// Write all live records
+	count := 0
+	for id, idx := range db.index {
+		vec, err := db.arena.Get(idx)
+		if err != nil || vec == nil {
+			continue
+		}
+		metaLoc, ok := db.metaLocs[idx]
+		if !ok {
+			continue
+		}
+		meta, err := db.disk.Read(metaLoc)
+		if err != nil {
+			meta = []byte("{}")
+		}
+
+		// Write entry to tmp WAL (same binary format)
+		if err := writeWALEntryTo(writer, OpInsert, id, vec, meta, metaLoc); err != nil {
+			tmpFile.Close()
+			os.Remove(tmpPath)
+			return fmt.Errorf("checkpoint: write entry %s: %w", id, err)
+		}
+		count++
+	}
+
+	// Flush and sync
+	if err := writer.Flush(); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("checkpoint: flush: %w", err)
+	}
+	if err := tmpFile.Sync(); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("checkpoint: sync: %w", err)
+	}
+	tmpFile.Close()
+
+	// Close current WAL
+	db.wal.Close()
+
+	// Atomic swap: rename tmp -> WAL
+	if err := os.Rename(tmpPath, walPath); err != nil {
+		return fmt.Errorf("checkpoint: rename: %w", err)
+	}
+
+	// Reopen WAL (starts fresh fsyncLoop)
+	newWal, err := OpenWal(walPath)
+	if err != nil {
+		return fmt.Errorf("checkpoint: reopen: %w", err)
+	}
+	db.wal = newWal
+
+	fmt.Printf("Checkpoint complete: %d live records written to compacted WAL\n", count)
+	return nil
 }
