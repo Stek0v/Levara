@@ -5429,9 +5429,14 @@ func (x *MultiQueryResult) GetMetadataJson() string {
 
 // Fast data ingestion
 type IngestDataReq struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Items         []*IngestItem          `protobuf:"bytes,1,rep,name=items,proto3" json:"items,omitempty"`
-	StoragePath   string                 `protobuf:"bytes,2,opt,name=storage_path,json=storagePath,proto3" json:"storage_path,omitempty"` // base directory for file storage
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Items       []*IngestItem          `protobuf:"bytes,1,rep,name=items,proto3" json:"items,omitempty"`
+	StoragePath string                 `protobuf:"bytes,2,opt,name=storage_path,json=storagePath,proto3" json:"storage_path,omitempty"` // base directory for file storage
+	// Optional: PostgreSQL for metadata persistence
+	PostgresDsn   string `protobuf:"bytes,3,opt,name=postgres_dsn,json=postgresDsn,proto3" json:"postgres_dsn,omitempty"` // e.g. "postgres://cognee:cognee@localhost:5433/cognee_db"
+	OwnerId       string `protobuf:"bytes,4,opt,name=owner_id,json=ownerId,proto3" json:"owner_id,omitempty"`             // user UUID
+	DatasetId     string `protobuf:"bytes,5,opt,name=dataset_id,json=datasetId,proto3" json:"dataset_id,omitempty"`       // dataset UUID
+	DatasetName   string `protobuf:"bytes,6,opt,name=dataset_name,json=datasetName,proto3" json:"dataset_name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -5476,6 +5481,34 @@ func (x *IngestDataReq) GetItems() []*IngestItem {
 func (x *IngestDataReq) GetStoragePath() string {
 	if x != nil {
 		return x.StoragePath
+	}
+	return ""
+}
+
+func (x *IngestDataReq) GetPostgresDsn() string {
+	if x != nil {
+		return x.PostgresDsn
+	}
+	return ""
+}
+
+func (x *IngestDataReq) GetOwnerId() string {
+	if x != nil {
+		return x.OwnerId
+	}
+	return ""
+}
+
+func (x *IngestDataReq) GetDatasetId() string {
+	if x != nil {
+		return x.DatasetId
+	}
+	return ""
+}
+
+func (x *IngestDataReq) GetDatasetName() string {
+	if x != nil {
+		return x.DatasetName
 	}
 	return ""
 }
@@ -5560,6 +5593,8 @@ type IngestDataResp struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Results       []*IngestResult        `protobuf:"bytes,1,rep,name=results,proto3" json:"results,omitempty"`
 	TotalMs       int64                  `protobuf:"varint,2,opt,name=total_ms,json=totalMs,proto3" json:"total_ms,omitempty"`
+	DbRowsWritten int32                  `protobuf:"varint,3,opt,name=db_rows_written,json=dbRowsWritten,proto3" json:"db_rows_written,omitempty"` // metadata rows written to PostgreSQL
+	DatasetId     string                 `protobuf:"bytes,4,opt,name=dataset_id,json=datasetId,proto3" json:"dataset_id,omitempty"`                // resolved dataset UUID
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -5606,6 +5641,20 @@ func (x *IngestDataResp) GetTotalMs() int64 {
 		return x.TotalMs
 	}
 	return 0
+}
+
+func (x *IngestDataResp) GetDbRowsWritten() int32 {
+	if x != nil {
+		return x.DbRowsWritten
+	}
+	return 0
+}
+
+func (x *IngestDataResp) GetDatasetId() string {
+	if x != nil {
+		return x.DatasetId
+	}
+	return ""
 }
 
 type IngestResult struct {
@@ -6838,20 +6887,28 @@ const file_cognevra_proto_rawDesc = "" +
 	"\vappearances\x18\x03 \x01(\x05R\vappearances\x12\x1f\n" +
 	"\vfused_score\x18\x04 \x01(\x01R\n" +
 	"fusedScore\x12#\n" +
-	"\rmetadata_json\x18\x05 \x01(\tR\fmetadataJson\"a\n" +
+	"\rmetadata_json\x18\x05 \x01(\tR\fmetadataJson\"\xe1\x01\n" +
 	"\rIngestDataReq\x12-\n" +
 	"\x05items\x18\x01 \x03(\v2\x17.cognevra.v1.IngestItemR\x05items\x12!\n" +
-	"\fstorage_path\x18\x02 \x01(\tR\vstoragePath\"\x8c\x01\n" +
+	"\fstorage_path\x18\x02 \x01(\tR\vstoragePath\x12!\n" +
+	"\fpostgres_dsn\x18\x03 \x01(\tR\vpostgresDsn\x12\x19\n" +
+	"\bowner_id\x18\x04 \x01(\tR\aownerId\x12\x1d\n" +
+	"\n" +
+	"dataset_id\x18\x05 \x01(\tR\tdatasetId\x12!\n" +
+	"\fdataset_name\x18\x06 \x01(\tR\vdatasetName\"\x8c\x01\n" +
 	"\n" +
 	"IngestItem\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04text\x18\x02 \x01(\tR\x04text\x12\x1b\n" +
 	"\tfile_data\x18\x03 \x01(\fR\bfileData\x12\x1a\n" +
 	"\bfilename\x18\x04 \x01(\tR\bfilename\x12!\n" +
-	"\fdataset_name\x18\x05 \x01(\tR\vdatasetName\"`\n" +
+	"\fdataset_name\x18\x05 \x01(\tR\vdatasetName\"\xa7\x01\n" +
 	"\x0eIngestDataResp\x123\n" +
 	"\aresults\x18\x01 \x03(\v2\x19.cognevra.v1.IngestResultR\aresults\x12\x19\n" +
-	"\btotal_ms\x18\x02 \x01(\x03R\atotalMs\"\xf1\x01\n" +
+	"\btotal_ms\x18\x02 \x01(\x03R\atotalMs\x12&\n" +
+	"\x0fdb_rows_written\x18\x03 \x01(\x05R\rdbRowsWritten\x12\x1d\n" +
+	"\n" +
+	"dataset_id\x18\x04 \x01(\tR\tdatasetId\"\xf1\x01\n" +
 	"\fIngestResult\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12!\n" +
 	"\fcontent_hash\x18\x02 \x01(\tR\vcontentHash\x12\x1b\n" +
