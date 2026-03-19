@@ -34,6 +34,9 @@ service CognevraService {
   // Search aggregation
   rpc AggregateSearch(AggregateSearchReq) returns (AggregateSearchResp);
 
+  // Triplet search (in-memory graph scoring)
+  rpc SearchTriplets(SearchTripletsReq) returns (SearchTripletsResp);
+
   // Maintenance
   rpc Compact(Empty) returns (CompactResp);
 }
@@ -263,4 +266,60 @@ message RankedEdge {
   string target_name = 4;
   string relationship_name = 5;
   float score = 6;
+}
+
+// In-memory triplet search
+message SearchTripletsReq {
+  // Graph structure (loaded from DB)
+  repeated TripletNode nodes = 1;
+  repeated TripletEdge edges = 2;
+  // Vector distances from vector DB search (per collection)
+  repeated CollectionDistances node_distances = 3;
+  repeated DistanceEntry edge_distances = 4;
+  // Parameters
+  int32 top_k = 5;             // default: 5
+  float distance_penalty = 6;  // default: 3.5 (penalty for unseen nodes/edges)
+}
+
+message TripletNode {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  string type = 4;
+  string text = 5;
+}
+
+message TripletEdge {
+  string node1_id = 1;
+  string node2_id = 2;
+  string relationship_type = 3;
+  string edge_text = 4;
+  string edge_type_id = 5;  // grouping key for edge distances
+}
+
+message CollectionDistances {
+  string collection_name = 1;
+  repeated DistanceEntry entries = 2;
+}
+
+message DistanceEntry {
+  string id = 1;      // node_id or edge_type_id
+  float distance = 2;
+}
+
+message SearchTripletsResp {
+  repeated ScoredTriplet triplets = 1;
+  string formatted_context = 2;
+}
+
+message ScoredTriplet {
+  string node1_id = 1;
+  string node1_name = 2;
+  string node1_description = 3;
+  string node2_id = 4;
+  string node2_name = 5;
+  string node2_description = 6;
+  string relationship_type = 7;
+  string edge_text = 8;
+  float score = 9;  // sum of node1_dist + edge_dist + node2_dist
 }
