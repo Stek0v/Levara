@@ -54,8 +54,34 @@
 
 ## Pipeline: COGNIFY (Knowledge Graph Construction)
 
+### Путь A: Go Pipeline Orchestrator (PipelineCognify RPC) 🔥
 ```
-┌──────────────────────────── COGNIFY PIPELINE ───────────────────────┐
+┌──────────────── GO COGNIFY PIPELINE (streaming gRPC) ───────────────┐
+│                                                                      │
+│  texts[] ──→ PipelineCognify RPC (server-side streaming)             │
+│       │                                                              │
+│       ├── Stage 1: 🟢 Chunk (Go, 4ms) ──── pkg/chunker/             │
+│       │                                                              │
+│       ├── Stage 2: 🟢 LLM Extract (concurrent goroutines)           │
+│       │    ├── N chunks × M concurrent calls (configurable)          │
+│       │    ├── Through LLM Proxy (cache + dedup + rate limit)        │
+│       │    └── JSON entity/relationship extraction                    │
+│       │                                                              │
+│       ├── Stage 3: 🟢 Dedup (Go, 0ms) ──── pkg/graph/dedup.go      │
+│       │                                                              │
+│       ├── Stage 4: 🟢 Write (PARALLEL goroutines)                   │
+│       │    ├── Neo4j MERGE (pkg/graphdb/) ───────── nodes + edges   │
+│       │    ├── Embed + Vector index (pkg/embed/) ── entities        │
+│       │    └── Triplet embed (optional) ─────────── triplet search  │
+│       │                                                              │
+│       └── Progress stream → client sees each stage in real-time      │
+│                                                                      │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+### Путь B: Python Pipeline (Cognee native, fallback)
+```
+┌──────────────── PYTHON COGNIFY PIPELINE (sequential) ───────────────┐
 │                                                                      │
 │  Dataset data items (from ADD)                                       │
 │       │                                                              │
@@ -224,6 +250,11 @@
 │  🟢 BM25 LEXICAL SEARCH (pkg/bm25/)                                  │
 │     BM25Index | BM25Search (2.9ms/10K) | HybridSearch (vector+BM25)  │
 │                                                                      │
+│  🟢 PIPELINE ORCHESTRATOR (pkg/orchestrator/) 🔥                      │
+│     PipelineCognify (streaming: chunk→LLM→dedup→Neo4j+vector)        │
+│     Concurrent LLM extraction via goroutines + proxy                  │
+│     Real-time progress streaming to client                            │
+│                                                                      │
 │  🟢 MAINTENANCE                                                      │
 │     Info | Compact                                                    │
 │                                                                      │
@@ -232,19 +263,21 @@
 
 ---
 
-## Статистика покрытия (обновлено 2026-03-20, v2)
+## Статистика покрытия (обновлено 2026-03-20, v3 — final)
 
 | Категория | Всего | 🟢 Go | 🟡 Частично | 🔴 Python | Coverage |
 |-----------|-------|-------|-------------|-----------|----------|
 | **API endpoints** | 10 | 0 | 3 | 4 | 30% |
-| **Pipeline tasks** | 18 | 7 | 2 | 9 | **56%** |
+| **Pipeline tasks** | 18 | 8 | 2 | 8 | **61%** |
 | **DB adapters** | 8 | 3 | 0 | 5 | **44%** |
-| **LLM/Embedding** | 9 | 2 | 0 | 7 | **22%** |
+| **LLM/Embedding** | 9 | 3 | 0 | 6 | **33%** |
 | **Retrieval** | 12 | 6 | 1 | 5 | **58%** |
 | **File I/O** | 4 | 2 | 1 | 1 | 75% |
-| **gRPC RPCs** | **29** | **29** | 0 | 0 | **100%** |
+| **gRPC RPCs** | **30** | **30** | 0 | 0 | **100%** |
+| **HTTP Proxy** | 1 | **1** | 0 | 0 | **100%** |
+| **Persistence** | 2 | **2** | 0 | 0 | **100%** |
 
-### Все 29 Go gRPC RPCs:
+### Все 30 Go gRPC RPCs:
 
 | # | RPC | Пакет | Заменяет |
 |---|-----|-------|----------|
@@ -269,6 +302,7 @@
 | 27 | **BM25Index** | pkg/bm25 | lexical inverted index |
 | 28 | **BM25Search** | pkg/bm25 | keyword search (2.9ms/10K docs) |
 | 29 | **HybridSearch** | pkg/bm25 | vector + BM25 via RRF fusion |
+| 30 | **PipelineCognify** 🔥 | pkg/orchestrator | **STREAMING** full cognify: chunk→LLM→dedup→write |
 
 ### + HTTP Proxy (port configurable):
 | # | Endpoint | Пакет | Что делает |
@@ -328,6 +362,7 @@ embed_query → vector_search → graph_read → triplet_score → format_contex
 
 | # | Задача | Статус | Результат |
 |---|--------|--------|-----------|
+| ~~N1~~ | **Pipeline Orchestrator** | ✅ Done | Go streaming cognify: chunk→LLM→dedup→write. 30th RPC |
 | ~~N2~~ | Persistent BM25 Index | ✅ Done | JSONL append-only, survives restart |
 | ~~N3~~ | LLM Cache persistence | ✅ Done | JSONL disk, loaded at startup |
 | ~~N4~~ | Batch LLM proxy | ✅ Done | HTTP proxy: cache 633x + dedup 5→1 |
@@ -340,9 +375,9 @@ embed_query → vector_search → graph_read → triplet_score → format_contex
 
 | # | Задача | Effort | Impact | Описание |
 |---|--------|--------|--------|----------|
-| **N1** | Go Pipeline Orchestrator | 1-2 нед | ⭐⭐⭐⭐⭐ | Go goroutine pipeline: inter-task streaming вместо sequential batch. Chunks потоком → LLM → dedup → write. Единственный способ ускорить LLM-bound cognify (pipeline parallelism, не task parallelism) |
-| **N6** | In-memory Graph Cache | 2-3 дня | ⭐⭐⭐⭐ | Кеш Neo4j графа в Go memory. GraphRead сейчас 60-120ms (Neo4j query). С кешем: ~0.1ms. Invalidation по TTL или при write. Ускоряет GraphCompletionSearch |
-| **N5** | Semantic Dedup (vector) | 2-3 дня | ⭐⭐⭐ | Deduplicate chunks по cosine similarity (>0.95 = same content, разный ID). Уменьшает LLM calls (меньше уникальных chunks) + cleaner retrieval |
+| **N6** | In-memory Graph Cache | 2-3 дня | ⭐⭐⭐⭐ | Кеш Neo4j графа в Go memory. GraphRead = 60-120ms → с кешем 0.1ms. TTL invalidation. Ускоряет GraphCompletionSearch |
+| **N11** | Embedding Cache (Go) | 1 день | ⭐⭐⭐ | LRU кеш text→vector. Повторный embed = 0ms вместо 80ms. Persist на диск |
+| **N5** | Semantic Dedup (vector) | 2-3 дня | ⭐⭐⭐ | Dedup chunks по cosine similarity (>0.95). Меньше LLM calls + cleaner retrieval |
 
 ### Tier B: Средний ROI
 
@@ -362,25 +397,36 @@ embed_query → vector_search → graph_read → triplet_score → format_contex
 | N13 | Graph visualization (Go WebSocket) | 3-5 дней | Dev tooling |
 | N14 | Prometheus metrics for all RPCs | 1 день | Observability |
 
-### ROI матрица:
+### ROI матрица (обновлено — N1,N2,N3,N4 выполнены):
 
 ```
 Impact ▲
        │
-  ⭐⭐⭐⭐⭐│  N1 Pipeline Orchestrator
-       │          (1-2 нед, LLM pipeline parallelism)
+  ⭐⭐⭐⭐⭐│  ✅ N1 Pipeline Orchestrator (DONE)
+       │  ✅ N4 LLM Proxy (DONE)
        │
-  ⭐⭐⭐⭐ │  N6 Graph Cache
-       │    (2-3 дня, search 0.1ms vs 60ms)
+  ⭐⭐⭐⭐ │  → N6 Graph Cache             (2-3 дня, search 0.1ms vs 60ms)
        │
-  ⭐⭐⭐  │  N5 Semantic Dedup     N7 Multi-query    N11 Embed Cache
-       │    (2-3 дня)              (1-2 дня)          (1 день)
+  ⭐⭐⭐  │  → N11 Embed Cache             (1 день, embed 0ms vs 80ms)
+       │  → N5 Semantic Dedup             (2-3 дня, fewer LLM calls)
+       │  → N7 Multi-query decomposition  (1-2 дня, better recall)
        │
-  ⭐⭐   │                        N12 Auto-index     N14 Metrics
-       │                          (2-3 дня)          (1 день)
+  ⭐⭐   │  N12 Auto-index  N14 Metrics
+       │   (2-3 дня)        (1 день)
        │
   ⭐    │  N8 Streaming    N9 PostgreSQL    N10 WASM
-       │   (2-3 дня)       (2-3 дня)       (1-2 нед)
+       │
        └──────────────────────────────────────────────► Effort
           1 день        2-3 дня       1-2 нед
 ```
+
+### Итого: Go Cognevra
+
+| Метрика | Значение |
+|---------|----------|
+| gRPC RPCs | **30** (вкл. 1 streaming) |
+| HTTP Proxy | **1** (LLM dedup+cache) |
+| Go пакетов | **10** (store, graph, graphdb, embed, chunker, fileio, aggregator, llmcache, bm25, orchestrator, llmproxy) |
+| Persistence | **2** (LLM cache JSONL + BM25 JSONL) |
+| Полный pipeline | ✅ PipelineCognify (chunk→LLM→dedup→write, streaming) |
+| Coverage критического пути | **100%** (всё кроме LLM inference API call) |
