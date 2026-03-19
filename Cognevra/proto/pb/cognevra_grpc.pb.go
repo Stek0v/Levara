@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.6.1
 // - protoc             v7.34.0
-// source: proto/cognevra.proto
+// source: cognevra.proto
 
 package pb
 
@@ -35,6 +35,7 @@ const (
 	CognevraService_ListDirectory_FullMethodName    = "/cognevra.v1.CognevraService/ListDirectory"
 	CognevraService_AggregateSearch_FullMethodName  = "/cognevra.v1.CognevraService/AggregateSearch"
 	CognevraService_SearchTriplets_FullMethodName   = "/cognevra.v1.CognevraService/SearchTriplets"
+	CognevraService_DeduplicateGraph_FullMethodName = "/cognevra.v1.CognevraService/DeduplicateGraph"
 	CognevraService_Compact_FullMethodName          = "/cognevra.v1.CognevraService/Compact"
 )
 
@@ -67,6 +68,8 @@ type CognevraServiceClient interface {
 	AggregateSearch(ctx context.Context, in *AggregateSearchReq, opts ...grpc.CallOption) (*AggregateSearchResp, error)
 	// Triplet search (in-memory graph scoring)
 	SearchTriplets(ctx context.Context, in *SearchTripletsReq, opts ...grpc.CallOption) (*SearchTripletsResp, error)
+	// Graph deduplication + triplet generation
+	DeduplicateGraph(ctx context.Context, in *DeduplicateGraphReq, opts ...grpc.CallOption) (*DeduplicateGraphResp, error)
 	// Maintenance
 	Compact(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*CompactResp, error)
 }
@@ -239,6 +242,16 @@ func (c *cognevraServiceClient) SearchTriplets(ctx context.Context, in *SearchTr
 	return out, nil
 }
 
+func (c *cognevraServiceClient) DeduplicateGraph(ctx context.Context, in *DeduplicateGraphReq, opts ...grpc.CallOption) (*DeduplicateGraphResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeduplicateGraphResp)
+	err := c.cc.Invoke(ctx, CognevraService_DeduplicateGraph_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *cognevraServiceClient) Compact(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*CompactResp, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(CompactResp)
@@ -278,6 +291,8 @@ type CognevraServiceServer interface {
 	AggregateSearch(context.Context, *AggregateSearchReq) (*AggregateSearchResp, error)
 	// Triplet search (in-memory graph scoring)
 	SearchTriplets(context.Context, *SearchTripletsReq) (*SearchTripletsResp, error)
+	// Graph deduplication + triplet generation
+	DeduplicateGraph(context.Context, *DeduplicateGraphReq) (*DeduplicateGraphResp, error)
 	// Maintenance
 	Compact(context.Context, *Empty) (*CompactResp, error)
 	mustEmbedUnimplementedCognevraServiceServer()
@@ -337,6 +352,9 @@ func (UnimplementedCognevraServiceServer) AggregateSearch(context.Context, *Aggr
 }
 func (UnimplementedCognevraServiceServer) SearchTriplets(context.Context, *SearchTripletsReq) (*SearchTripletsResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method SearchTriplets not implemented")
+}
+func (UnimplementedCognevraServiceServer) DeduplicateGraph(context.Context, *DeduplicateGraphReq) (*DeduplicateGraphResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeduplicateGraph not implemented")
 }
 func (UnimplementedCognevraServiceServer) Compact(context.Context, *Empty) (*CompactResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method Compact not implemented")
@@ -650,6 +668,24 @@ func _CognevraService_SearchTriplets_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _CognevraService_DeduplicateGraph_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeduplicateGraphReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CognevraServiceServer).DeduplicateGraph(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CognevraService_DeduplicateGraph_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CognevraServiceServer).DeduplicateGraph(ctx, req.(*DeduplicateGraphReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _CognevraService_Compact_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(Empty)
 	if err := dec(in); err != nil {
@@ -740,10 +776,14 @@ var CognevraService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _CognevraService_SearchTriplets_Handler,
 		},
 		{
+			MethodName: "DeduplicateGraph",
+			Handler:    _CognevraService_DeduplicateGraph_Handler,
+		},
+		{
 			MethodName: "Compact",
 			Handler:    _CognevraService_Compact_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "proto/cognevra.proto",
+	Metadata: "cognevra.proto",
 }
