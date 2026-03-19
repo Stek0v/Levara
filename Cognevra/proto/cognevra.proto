@@ -79,6 +79,9 @@ service CognevraService {
   // Text extraction from PDF/DOCX/TXT (pure Go)
   rpc ExtractText(ExtractTextReq) returns (ExtractTextResp);
 
+  // Temporal search: extract timestamps from text + range query
+  rpc TemporalSearch(TemporalSearchReq) returns (TemporalSearchResp);
+
   // BM25 lexical search + hybrid
   rpc BM25Index(BM25IndexReq) returns (StatusResp);
   rpc BM25Search(BM25SearchReq) returns (BM25SearchResp);
@@ -741,6 +744,32 @@ message ExtractTextResp {
   int32 pages = 4;
   int64 extract_ms = 5;
   repeated string warnings = 6;
+}
+
+// Temporal search
+message TemporalSearchReq {
+  string text = 1;                  // text to extract timestamps from
+  string date_from = 2;             // ISO 8601: "2024-01-01"
+  string date_to = 3;               // ISO 8601: "2024-12-31"
+  // Optional: search vector collection for matching chunks
+  string collection = 4;
+  string embed_endpoint = 5;
+  string embed_model = 6;
+  int32 top_k = 7;
+}
+
+message TemporalSearchResp {
+  repeated TemporalEvent events = 1;
+  int32 total_extracted = 2;
+  int32 in_range = 3;
+}
+
+message TemporalEvent {
+  string text = 1;          // context around the date
+  string date = 2;          // ISO 8601 date
+  string date_original = 3; // original date string
+  float confidence = 4;
+  string node_id = 5;
 }
 
 message LLMCachePutReq {
