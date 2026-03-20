@@ -82,6 +82,11 @@ func RegisterCogneeAPI(app fiber.Router, cfg APIConfig) {
 	app.Get("/settings", settingsGetHandler(cfg))
 	app.Put("/settings", settingsPutHandler(cfg))
 
+	// U11: Collections metadata
+	app.Get("/collections", collectionsListHandler(cfg))
+	app.Get("/collections/:name/meta", collectionMetaHandler(cfg))
+	app.Put("/collections/:name/meta", collectionMetaUpdateHandler(cfg))
+
 	// U10: RBAC — dataset sharing + permissions
 	RegisterRBACAPI(app, cfg)
 
