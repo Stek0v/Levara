@@ -5,6 +5,27 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
+func collectionCreateHandler(cfg APIConfig) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		if cfg.Collections == nil {
+			return c.Status(503).JSON(fiber.Map{"error": "collections not configured"})
+		}
+		var req struct {
+			Name           string `json:"name"`
+			EmbeddingModel string `json:"embedding_model"`
+			EmbeddingDim   int    `json:"embedding_dim"`
+			DistanceMetric string `json:"distance_metric"`
+		}
+		if err := c.BodyParser(&req); err != nil || req.Name == "" {
+			return c.Status(400).JSON(fiber.Map{"error": "name required"})
+		}
+		if err := cfg.Collections.CreateWithDim(req.Name, req.EmbeddingDim, req.EmbeddingModel, req.DistanceMetric); err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+		return c.Status(201).JSON(cfg.Collections.GetMeta(req.Name))
+	}
+}
+
 func collectionsListHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		if cfg.Collections == nil {

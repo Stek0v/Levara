@@ -84,6 +84,7 @@ func RegisterCogneeAPI(app fiber.Router, cfg APIConfig) {
 
 	// U11: Collections metadata
 	app.Get("/collections", collectionsListHandler(cfg))
+	app.Post("/collections", collectionCreateHandler(cfg))
 	app.Get("/collections/:name/meta", collectionMetaHandler(cfg))
 	app.Put("/collections/:name/meta", collectionMetaUpdateHandler(cfg))
 

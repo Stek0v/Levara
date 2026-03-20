@@ -89,21 +89,27 @@ func NewCollectionManager(dim int, basePath string, cfg ...HNSWConfig) (*Collect
 		if e.IsDir() {
 			name := e.Name()
 			colDir := filepath.Join(collectionsDir, name)
+
+			// Determine dimension: from meta.json if exists, otherwise global default
+			colDim := dim
+			meta, metaErr := loadCollectionMeta(colDir)
+			if metaErr == nil && meta.EmbeddingDim > 0 {
+				colDim = meta.EmbeddingDim
+			}
+
 			dbPath := filepath.Join(colDir, "meta.bin")
-			db, err := NewCognevra(dim, dbPath, hnswCfg)
+			db, err := NewCognevra(colDim, dbPath, hnswCfg)
 			if err != nil {
-				fmt.Printf("WARNING: failed to load collection %q: %v\n", name, err)
+				fmt.Printf("WARNING: failed to load collection %q (dim=%d): %v\n", name, colDim, err)
 				continue
 			}
 			cm.collections[name] = db
 
-			// Load or create collection metadata
-			meta, metaErr := loadCollectionMeta(colDir)
+			// Create metadata for legacy collections (no meta.json)
 			if metaErr != nil {
-				// Legacy collection — create metadata from what we know
 				meta = &CollectionMeta{
 					Name:           name,
-					EmbeddingDim:   dim,
+					EmbeddingDim:   colDim,
 					DistanceMetric: "cosine",
 					RecordCount:    len(db.index),
 					CreatedAt:      time.Now().UTC().Format(time.RFC3339),
@@ -118,6 +124,14 @@ func NewCollectionManager(dim int, basePath string, cfg ...HNSWConfig) (*Collect
 		}
 	}
 
+	// Startup validation: log dimension mismatches
+	for name, meta := range cm.metas {
+		if meta.EmbeddingDim != dim && meta.EmbeddingDim > 0 {
+			fmt.Printf("NOTE: collection %q has dim=%d (server default=%d) — per-collection dimension active\n",
+				name, meta.EmbeddingDim, dim)
+		}
+	}
+
 	return cm, nil
 }
 
@@ -128,11 +142,20 @@ func (cm *CollectionManager) Create(name string) error {
 
 // CreateWithMeta creates a collection with embedding model metadata.
 func (cm *CollectionManager) CreateWithMeta(name, embeddingModel, distanceMetric string) error {
+	return cm.CreateWithDim(name, cm.dim, embeddingModel, distanceMetric)
+}
+
+// CreateWithDim creates a collection with a specific dimension (can differ from global default).
+func (cm *CollectionManager) CreateWithDim(name string, dim int, embeddingModel, distanceMetric string) error {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 
 	if _, exists := cm.collections[name]; exists {
 		return nil // idempotent
+	}
+
+	if dim <= 0 {
+		dim = cm.dim
 	}
 
 	colDir := filepath.Join(cm.basePath, name)
@@ -141,7 +164,7 @@ func (cm *CollectionManager) CreateWithMeta(name, embeddingModel, distanceMetric
 	}
 
 	dbPath := filepath.Join(colDir, "meta.bin")
-	db, err := NewCognevra(cm.dim, dbPath, cm.hnswCfg)
+	db, err := NewCognevra(dim, dbPath, cm.hnswCfg)
 	if err != nil {
 		return fmt.Errorf("create collection %q: %w", name, err)
 	}
@@ -154,7 +177,7 @@ func (cm *CollectionManager) CreateWithMeta(name, embeddingModel, distanceMetric
 	meta := &CollectionMeta{
 		Name:           name,
 		EmbeddingModel: embeddingModel,
-		EmbeddingDim:   cm.dim,
+		EmbeddingDim:   dim,
 		DistanceMetric: distanceMetric,
 		CreatedAt:      time.Now().UTC().Format(time.RFC3339),
 	}
@@ -215,7 +238,7 @@ func (cm *CollectionManager) Get(name string) (*Cognevra, error) {
 	return db, nil
 }
 
-// getOrCreate returns existing collection or creates it.
+// getOrCreate returns existing collection or creates it with default dim.
 func (cm *CollectionManager) getOrCreate(name string) (*Cognevra, error) {
 	cm.mu.RLock()
 	db, exists := cm.collections[name]
@@ -225,11 +248,41 @@ func (cm *CollectionManager) getOrCreate(name string) (*Cognevra, error) {
 		return db, nil
 	}
 
-	// Need to create — upgrade to write lock
 	if err := cm.Create(name); err != nil {
 		return nil, err
 	}
 	return cm.Get(name)
+}
+
+// GetOrCreateWithDim returns existing collection or creates it with specific dim.
+func (cm *CollectionManager) GetOrCreateWithDim(name string, dim int, model string) (*Cognevra, error) {
+	cm.mu.RLock()
+	db, exists := cm.collections[name]
+	cm.mu.RUnlock()
+
+	if exists {
+		return db, nil
+	}
+
+	if err := cm.CreateWithDim(name, dim, model, "cosine"); err != nil {
+		return nil, err
+	}
+	return cm.Get(name)
+}
+
+// Dim returns the dimension of a specific collection (or global default).
+func (cm *CollectionManager) Dim(name string) int {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+	if meta, ok := cm.metas[name]; ok && meta.EmbeddingDim > 0 {
+		return meta.EmbeddingDim
+	}
+	return cm.dim
+}
+
+// DefaultDim returns the global default dimension.
+func (cm *CollectionManager) DefaultDim() int {
+	return cm.dim
 }
 
 // Insert inserts a record into a collection (auto-creates if not exists).
