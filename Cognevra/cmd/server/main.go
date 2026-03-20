@@ -34,6 +34,7 @@
 package main
 
 import (
+	"database/sql"
 	"flag"
 	"fmt"
 	"log"
@@ -41,8 +42,10 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/hashicorp/raft"
+	_ "github.com/lib/pq"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/stek0v/cognevra/internal/cluster"
 	vectorGrpc "github.com/stek0v/cognevra/internal/grpc"
@@ -54,6 +57,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/adaptor"
+	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/logger"
 
 	vectorHttp "github.com/stek0v/cognevra/internal/http"
@@ -78,6 +82,7 @@ func main() {
 	neo4jUser := flag.String("neo4j-user", "neo4j", "Neo4j username")
 	neo4jPassword := flag.String("neo4j-password", "", "Neo4j password")
 	neo4jDatabase := flag.String("neo4j-database", "neo4j", "Neo4j database name")
+	requireAuth := flag.Bool("require-auth", false, "Require JWT auth on protected endpoints (default: dev mode, no auth)")
 
 	flag.Parse()
 
@@ -134,27 +139,30 @@ func main() {
 	c := store.NewCluster(shards)
 
 	app := fiber.New()
+	app.Use(cors.New(cors.Config{
+		AllowOrigins: "*",
+		AllowMethods: "GET,POST,PUT,DELETE,OPTIONS",
+		AllowHeaders: "Origin,Content-Type,Accept,Authorization",
+	}))
 	app.Use(logger.New())
 
 	handler := vectorHttp.NewHandler(c, *dim)
 	app.Get("/metrics", adaptor.HTTPHandler(promhttp.Handler()))
 
 	api := app.Group("/api/v1")
-	api.Get("/info", handler.Info)
-	api.Post("/insert", handler.Insert)
-	api.Post("/batch_insert", handler.BatchInsert)
-	api.Post("/search", handler.Search)
-	api.Post("/delete", handler.Delete)
 
-	// Graph visualization endpoints (requires Neo4j)
+	// Graph visualization config (used by both public and protected routes)
 	vizCfg := vectorHttp.GraphVisualizationConfig{
 		Neo4jURL: *neo4jURL, Neo4jUser: *neo4jUser,
 		Neo4jPassword: *neo4jPassword, Neo4jDatabase: *neo4jDatabase,
 	}
-	api.Get("/datasets/:id/graph", vectorHttp.DatasetGraph(vizCfg))
-	api.Get("/visualize", vectorHttp.VisualizeHTML(vizCfg))
 
-	// (Cognee API registered below after CollectionManager init)
+	// Public routes (no auth required)
+	api.Get("/info", handler.Info)
+	api.Get("/health", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{"status": "ready", "health": "healthy", "version": "cognevra-go"})
+	})
+	api.Get("/visualize", vectorHttp.VisualizeHTML(vizCfg))
 
 	// Initialize CollectionManager for native collections (used by gRPC)
 	colManager, err := store.NewCollectionManager(*dim, *dataDir+"/"+nodeID, hnswCfg)
@@ -162,18 +170,63 @@ func main() {
 		log.Fatalf("Failed to init CollectionManager: %v", err)
 	}
 
-	// Register Cognee-compatible REST API
+	// PostgreSQL connection pool (shared across all HTTP handlers)
 	pgDSN := ""
+	var pgDB *sql.DB
 	if dbHost := os.Getenv("DB_HOST"); dbHost != "" {
 		dbUser := os.Getenv("DB_USERNAME"); if dbUser == "" { dbUser = "cognee" }
 		dbPass := os.Getenv("DB_PASSWORD"); if dbPass == "" { dbPass = "cognee" }
 		dbName := os.Getenv("DB_NAME"); if dbName == "" { dbName = "cognee_db" }
 		dbPort := os.Getenv("DB_PORT"); if dbPort == "" { dbPort = "5432" }
 		pgDSN = fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable", dbUser, dbPass, dbHost, dbPort, dbName)
+
+		var dbErr error
+		pgDB, dbErr = sql.Open("postgres", pgDSN)
+		if dbErr != nil {
+			log.Printf("PostgreSQL pool init warning: %v (running without DB)", dbErr)
+		} else {
+			pgDB.SetMaxOpenConns(25)
+			pgDB.SetMaxIdleConns(10)
+			pgDB.SetConnMaxLifetime(5 * time.Minute)
+			if err := pgDB.Ping(); err != nil {
+				log.Printf("PostgreSQL ping warning: %v (running without DB)", err)
+				pgDB.Close()
+				pgDB = nil
+			} else {
+				log.Printf("PostgreSQL connection pool ready (max_open=25, max_idle=10)")
+				if err := vectorHttp.MigrateSchema(pgDB); err != nil {
+					log.Printf("Schema migration warning: %v", err)
+				}
+			}
+		}
 	}
 	embedEndpoint := os.Getenv("EMBEDDING_ENDPOINT")
 	embedModel := os.Getenv("EMBEDDING_MODEL"); if embedModel == "" { embedModel = "text-embedding-3-small" }
 
+	// Auth endpoints (public — no JWT required)
+	jwtSecret := os.Getenv("JWT_SECRET")
+	authCfg := &vectorHttp.AuthConfig{
+		PostgresDSN: pgDSN,
+		JWTSecret:   jwtSecret,
+		DB:          pgDB,
+	}
+	vectorHttp.RegisterAuthAPI(api, authCfg) // may generate JWTSecret if empty
+
+	// JWT middleware on all protected routes below this point
+	// Uses authCfg.JWTSecret which is guaranteed non-empty after RegisterAuthAPI
+	api.Use(vectorHttp.JWTMiddleware(authCfg.JWTSecret, *requireAuth))
+
+	// Protected routes: vector ops
+	api.Post("/insert", handler.Insert)
+	api.Post("/batch_insert", handler.BatchInsert)
+	api.Post("/search", handler.Search)
+	api.Post("/delete", handler.Delete)
+	api.Get("/datasets/:id/graph", vectorHttp.DatasetGraph(vizCfg))
+
+	// Create gRPC service (shared between gRPC server and HTTP handlers for BM25 indexes)
+	grpcSvc := vectorGrpc.NewService(colManager, c, *dim)
+
+	// Protected routes: Cognee-compatible API (datasets, upload, cognify, search)
 	vectorHttp.RegisterCogneeAPI(api, vectorHttp.APIConfig{
 		PostgresDSN:   pgDSN,
 		StoragePath:   *dataDir + "/uploads",
@@ -181,13 +234,8 @@ func main() {
 		EmbedModel:    embedModel,
 		Collections:   colManager,
 		Neo4jCfg:      vizCfg,
-	})
-
-	// Auth endpoints
-	jwtSecret := os.Getenv("JWT_SECRET")
-	vectorHttp.RegisterAuthAPI(api, vectorHttp.AuthConfig{
-		PostgresDSN: pgDSN,
-		JWTSecret:   jwtSecret,
+		DB:            pgDB,
+		BM25Indexes:   grpcSvc.BM25Indexes(),
 	})
 
 	// Start gRPC server (parallel to HTTP)
@@ -200,7 +248,7 @@ func main() {
 			grpcServer := grpc.NewServer(
 				grpc.UnaryInterceptor(vectorGrpc.MetricsUnaryInterceptor()),
 			)
-			pb.RegisterCognevraServiceServer(grpcServer, vectorGrpc.NewService(colManager, c, *dim))
+			pb.RegisterCognevraServiceServer(grpcServer, grpcSvc)
 			log.Printf("gRPC server listening on port %d", *grpcPort)
 			if err := grpcServer.Serve(lis); err != nil {
 				log.Fatalf("gRPC serve: %v", err)
@@ -254,6 +302,9 @@ func main() {
 		}
 		if err := colManager.Close(); err != nil {
 			log.Printf("collection manager close: %v", err)
+		}
+		if pgDB != nil {
+			pgDB.Close()
 		}
 		log.Println("All shards flushed and closed")
 		app.Shutdown()
