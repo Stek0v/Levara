@@ -154,11 +154,34 @@ func main() {
 	api.Get("/datasets/:id/graph", vectorHttp.DatasetGraph(vizCfg))
 	api.Get("/visualize", vectorHttp.VisualizeHTML(vizCfg))
 
+	// (Cognee API registered below after CollectionManager init)
+
 	// Initialize CollectionManager for native collections (used by gRPC)
 	colManager, err := store.NewCollectionManager(*dim, *dataDir+"/"+nodeID, hnswCfg)
 	if err != nil {
 		log.Fatalf("Failed to init CollectionManager: %v", err)
 	}
+
+	// Register Cognee-compatible REST API
+	pgDSN := ""
+	if dbHost := os.Getenv("DB_HOST"); dbHost != "" {
+		dbUser := os.Getenv("DB_USERNAME"); if dbUser == "" { dbUser = "cognee" }
+		dbPass := os.Getenv("DB_PASSWORD"); if dbPass == "" { dbPass = "cognee" }
+		dbName := os.Getenv("DB_NAME"); if dbName == "" { dbName = "cognee_db" }
+		dbPort := os.Getenv("DB_PORT"); if dbPort == "" { dbPort = "5432" }
+		pgDSN = fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable", dbUser, dbPass, dbHost, dbPort, dbName)
+	}
+	embedEndpoint := os.Getenv("EMBEDDING_ENDPOINT")
+	embedModel := os.Getenv("EMBEDDING_MODEL"); if embedModel == "" { embedModel = "text-embedding-3-small" }
+
+	vectorHttp.RegisterCogneeAPI(api, vectorHttp.APIConfig{
+		PostgresDSN:   pgDSN,
+		StoragePath:   *dataDir + "/uploads",
+		EmbedEndpoint: embedEndpoint,
+		EmbedModel:    embedModel,
+		Collections:   colManager,
+		Neo4jCfg:      vizCfg,
+	})
 
 	// Start gRPC server (parallel to HTTP)
 	if *grpcPort > 0 {
