@@ -140,14 +140,33 @@ func main() {
 
 	app := fiber.New()
 	app.Use(cors.New(cors.Config{
-		AllowOrigins: "*",
-		AllowMethods: "GET,POST,PUT,DELETE,OPTIONS",
-		AllowHeaders: "Origin,Content-Type,Accept,Authorization",
+		AllowOrigins:     "http://localhost:3000,http://127.0.0.1:3000,http://localhost:8080",
+		AllowMethods:     "GET,POST,PUT,DELETE,PATCH,OPTIONS",
+		AllowHeaders:     "Origin,Content-Type,Accept,Authorization,X-Api-Key",
+		AllowCredentials: true,
 	}))
 	app.Use(logger.New())
 
 	handler := vectorHttp.NewHandler(c, *dim)
 	app.Get("/metrics", adaptor.HTTPHandler(promhttp.Handler()))
+
+	// Root-level health for frontend compatibility (Cognee frontend calls /health)
+	app.Get("/health", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{"status": "ready", "health": "healthy", "version": "cognevra-go"})
+	})
+
+	// Cloud API compatibility: /api/datasets → /api/v1/datasets (cloudFetch strips /v1)
+	cloudApi := app.Group("/api")
+	cloudApi.Get("/datasets", func(c *fiber.Ctx) error {
+		return c.Redirect("/api/v1/datasets", 307)
+	})
+	cloudApi.Get("/datasets/:id/data", func(c *fiber.Ctx) error {
+		return c.Redirect("/api/v1/datasets/"+c.Params("id")+"/data", 307)
+	})
+	cloudApi.Get("/health", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{"status": "ready", "health": "healthy", "version": "cognevra-go"})
+	})
+
 
 	api := app.Group("/api/v1")
 
@@ -161,6 +180,9 @@ func main() {
 	api.Get("/info", handler.Info)
 	api.Get("/health", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "ready", "health": "healthy", "version": "cognevra-go"})
+	})
+	api.Post("/checks/connection", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{"status": "connected"})
 	})
 	api.Get("/visualize", vectorHttp.VisualizeHTML(vizCfg))
 
@@ -237,6 +259,16 @@ func main() {
 		DB:            pgDB,
 		BM25Indexes:   grpcSvc.BM25Indexes(),
 	})
+
+	// MCP (Model Context Protocol) server — JSON-RPC 2.0 for AI agent integration
+	vectorHttp.RegisterMCPAPI(app, vectorHttp.APIConfig{
+		EmbedEndpoint: embedEndpoint,
+		EmbedModel:    embedModel,
+		Collections:   colManager,
+		DB:            pgDB,
+		BM25Indexes:   grpcSvc.BM25Indexes(),
+	})
+	log.Printf("MCP server registered at POST /mcp (7 tools)")
 
 	// Start gRPC server (parallel to HTTP)
 	if *grpcPort > 0 {
