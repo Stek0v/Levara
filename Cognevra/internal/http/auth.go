@@ -37,6 +37,9 @@ func RegisterAuthAPI(app fiber.Router, cfg *AuthConfig) {
 
 	app.Post("/auth/login", loginHandler(*cfg))
 	app.Post("/auth/register", registerHandler(*cfg))
+
+	// /auth/me — Cognee frontend calls this to check current user after login
+	app.Get("/auth/me", authMeHandler(*cfg))
 }
 
 // ── JWT helpers ──
@@ -142,6 +145,7 @@ func loginHandler(cfg AuthConfig) fiber.Handler {
 		if cfg.DB == nil {
 			// No DB — accept any credentials in dev mode
 			token := createJWT("dev-user", email, cfg.JWTSecret)
+			setAuthCookie(c, token)
 			return c.JSON(fiber.Map{"access_token": token, "token_type": "bearer"})
 		}
 
@@ -157,6 +161,7 @@ func loginHandler(cfg AuthConfig) fiber.Handler {
 		}
 
 		token := createJWT(userID, email, cfg.JWTSecret)
+		setAuthCookie(c, token)
 		return c.JSON(fiber.Map{"access_token": token, "token_type": "bearer"})
 	}
 }
@@ -211,20 +216,95 @@ func generateUUID() string {
 		hex.EncodeToString(b[6:8]) + "-" + hex.EncodeToString(b[8:10]) + "-" + hex.EncodeToString(b[10:])
 }
 
+// authMeHandler returns current user from JWT token.
+// GET /auth/me — called by Cognee frontend after login to verify session.
+func authMeHandler(cfg AuthConfig) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		token := ""
+		auth := c.Get("Authorization")
+		if auth != "" {
+			t := strings.TrimPrefix(auth, "Bearer ")
+			if t != "" && t != "null" && t != "undefined" {
+				token = t
+			}
+		}
+		if token == "" {
+			token = c.Cookies("auth_token")
+		}
+		if token == "" {
+			return c.Status(401).JSON(fiber.Map{"detail": "not authenticated"})
+		}
+		payload, valid := verifyJWT(token, cfg.JWTSecret)
+		if !valid {
+			return c.Status(401).JSON(fiber.Map{"detail": "invalid token"})
+		}
+
+		// If DB available, fetch full user record
+		if cfg.DB != nil {
+			var email string
+			var isActive, isSuperuser, isVerified bool
+			err := cfg.DB.QueryRowContext(c.Context(),
+				"SELECT email, is_active, is_superuser, is_verified FROM users WHERE id = $1",
+				payload.Sub).Scan(&email, &isActive, &isSuperuser, &isVerified)
+			if err == nil {
+				return c.JSON(fiber.Map{
+					"id":           payload.Sub,
+					"email":        email,
+					"is_active":    isActive,
+					"is_superuser": isSuperuser,
+					"is_verified":  isVerified,
+				})
+			}
+		}
+
+		return c.JSON(fiber.Map{
+			"id":    payload.Sub,
+			"email": payload.Email,
+		})
+	}
+}
+
+// setAuthCookie sets the JWT token as an HttpOnly cookie for browser sessions.
+func setAuthCookie(c *fiber.Ctx, token string) {
+	c.Cookie(&fiber.Cookie{
+		Name:     "auth_token",
+		Value:    token,
+		Path:     "/",
+		MaxAge:   86400, // 24 hours
+		HTTPOnly: true,
+		SameSite: "Lax",
+	})
+}
+
 // JWTMiddleware validates JWT token on protected routes.
+// Reads token from: 1) Authorization header, 2) auth_token cookie.
 // If requireAuth is true, requests without a token are rejected (401).
 // If false, unauthenticated requests pass through (dev mode).
 func JWTMiddleware(secret string, requireAuth bool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		// Try Authorization header first
+		token := ""
 		auth := c.Get("Authorization")
-		if auth == "" {
+		if auth != "" {
+			t := strings.TrimPrefix(auth, "Bearer ")
+			// Ignore "null", "undefined", empty Bearer values
+			if t != "" && t != "null" && t != "undefined" {
+				token = t
+			}
+		}
+
+		// Fallback: read from cookie
+		if token == "" {
+			token = c.Cookies("auth_token")
+		}
+
+		if token == "" {
 			if requireAuth {
 				return c.Status(401).JSON(fiber.Map{"detail": "authorization required"})
 			}
 			return c.Next() // dev mode: allow unauthenticated
 		}
 
-		token := strings.TrimPrefix(auth, "Bearer ")
 		payload, valid := verifyJWT(token, secret)
 		if !valid {
 			return c.Status(401).JSON(fiber.Map{"detail": "invalid token"})
