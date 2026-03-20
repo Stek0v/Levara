@@ -285,6 +285,7 @@ func datasetStatusHandler(cfg APIConfig) fiber.Handler {
 func addHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		datasetName := c.FormValue("datasetName")
+		datasetID := c.FormValue("datasetId")
 		if datasetName == "" {
 			datasetName = "default"
 		}
@@ -299,7 +300,16 @@ func addHandler(cfg APIConfig) fiber.Handler {
 				if err != nil {
 					return c.Status(500).JSON(fiber.Map{"detail": err.Error()})
 				}
-				return c.JSON(fiber.Map{"status": "ok", "items": len(results)})
+				txtDsID := datasetID
+				if txtDsID == "" {
+					txtDsID = uuid.New().String()
+				}
+				if cfg.DB != nil {
+					ownerID, _ := c.Locals("user_id").(string)
+					mw := ingest.NewMetadataWriterFromDB(cfg.DB)
+					mw.WriteMetadata(context.Background(), results, ownerID, txtDsID, datasetName)
+				}
+				return c.JSON(fiber.Map{"status": "ok", "items": len(results), "dataset_id": txtDsID, "dataset_name": datasetName})
 			}
 			return c.Status(400).JSON(fiber.Map{"detail": "no data provided"})
 		}
@@ -342,17 +352,22 @@ func addHandler(cfg APIConfig) fiber.Handler {
 		}
 
 		// Write metadata to PostgreSQL if configured
+		dsID := datasetID
+		if dsID == "" {
+			dsID = uuid.New().String()
+		}
 		if cfg.DB != nil {
-			dsID := uuid.New().String()
 			ownerID, _ := c.Locals("user_id").(string)
 			mw := ingest.NewMetadataWriterFromDB(cfg.DB)
 			mw.WriteMetadata(context.Background(), results, ownerID, dsID, datasetName)
 		}
 
 		return c.JSON(fiber.Map{
-			"status": "ok",
-			"items":  len(results),
-			"files":  len(files),
+			"status":       "ok",
+			"items":        len(results),
+			"files":        len(files),
+			"dataset_id":   dsID,
+			"dataset_name": datasetName,
 		})
 	}
 }
@@ -377,20 +392,25 @@ type pipelineRunStatus struct {
 func cognifyHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		var req struct {
-			Datasets  []string `json:"datasets"`
-			Texts     []string `json:"texts"`      // direct text input
-			LLMModel  string   `json:"llm_model"`   // optional LLM model override
-			Collection string  `json:"collection"`  // target collection
+			Datasets        []string `json:"datasets"`
+			DatasetIds      []string `json:"datasetIds"`      // Cognee frontend format
+			Texts           []string `json:"texts"`
+			LLMModel        string   `json:"llm_model"`
+			Collection      string   `json:"collection"`
+			RunInBackground bool     `json:"runInBackground"`
 		}
 		c.BodyParser(&req)
+
+		// Merge datasets and datasetIds
+		allDatasetIDs := append(req.Datasets, req.DatasetIds...)
 
 		// Collect texts: either from request body or from dataset files
 		var texts []string
 		if len(req.Texts) > 0 {
 			texts = req.Texts
-		} else if cfg.DB != nil && len(req.Datasets) > 0 {
+		} else if cfg.DB != nil && len(allDatasetIDs) > 0 {
 			// Load text from dataset files
-			for _, dsID := range req.Datasets {
+			for _, dsID := range allDatasetIDs {
 				rows, err := cfg.DB.QueryContext(c.Context(),
 					`SELECT d.raw_data_location FROM data d
 					 JOIN dataset_data dd ON d.id = dd.data_id
@@ -407,6 +427,26 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 					}
 				}
 				rows.Close()
+			}
+			// If no files found, check if data was stored as inline text (ingest stores to disk)
+			if len(texts) == 0 {
+				for _, dsID := range allDatasetIDs {
+					rows, err := cfg.DB.QueryContext(c.Context(),
+						`SELECT d.name FROM data d
+						 JOIN dataset_data dd ON d.id = dd.data_id
+						 WHERE dd.dataset_id = $1`, dsID)
+					if err != nil {
+						continue
+					}
+					for rows.Next() {
+						var name string
+						rows.Scan(&name)
+						if name != "" {
+							texts = append(texts, name)
+						}
+					}
+					rows.Close()
+				}
 			}
 		}
 
