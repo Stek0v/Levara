@@ -447,6 +447,24 @@ func (db *Cognevra) BatchDelete(ids []string) []error {
 }
 
 // Close flushes WAL and disk store, ensuring all data is persisted.
+// AllIDs returns all record IDs in the collection.
+func (db *Cognevra) AllIDs() []string {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	ids := make([]string, 0, len(db.index))
+	for id := range db.index {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+// Count returns the number of records.
+func (db *Cognevra) Count() int {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	return len(db.index)
+}
+
 func (db *Cognevra) Close() error {
 	if err := db.wal.Close(); err != nil {
 		db.disk.Close()

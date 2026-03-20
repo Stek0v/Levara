@@ -387,6 +387,25 @@ func (cm *CollectionManager) UpdateMeta(name string, model, distanceMetric, vers
 	return saveCollectionMeta(colDir, meta)
 }
 
+// AllRecords returns all (id, vector, metadata) from a collection. Used for re-embedding.
+func (cm *CollectionManager) AllRecords(collection string) ([]string, [][]float32, [][]byte, error) {
+	db, err := cm.Get(collection)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	ids := db.AllIDs()
+	vecs := make([][]float32, len(ids))
+	metas := make([][]byte, len(ids))
+	for i, id := range ids {
+		vec, meta, ok := db.Get(id)
+		if ok {
+			vecs[i] = vec
+			metas[i] = meta
+		}
+	}
+	return ids, vecs, metas, nil
+}
+
 // Close flushes and closes all collections.
 func (cm *CollectionManager) Close() error {
 	cm.mu.Lock()
