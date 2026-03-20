@@ -305,16 +305,22 @@ func main() {
 		}
 
 		if embedEndpoint != "" {
-			resp, err := http.Get(embedEndpoint + "/health")
-			if err == nil {
-				resp.Body.Close()
-				if resp.StatusCode == 200 {
-					services["embed"] = fiber.Map{"status": "connected", "endpoint": embedEndpoint, "model": embedModel}
-				} else {
-					services["embed"] = fiber.Map{"status": "error", "endpoint": embedEndpoint, "code": resp.StatusCode}
+			// Try multiple health paths (Ollama uses /api/tags, OpenAI uses /health)
+			embedOk := false
+			for _, path := range []string{"/api/tags", "/health", "/v1/models"} {
+				resp, err := http.Get(embedEndpoint + path)
+				if err == nil {
+					resp.Body.Close()
+					if resp.StatusCode == 200 {
+						embedOk = true
+						break
+					}
 				}
+			}
+			if embedOk {
+				services["embed"] = fiber.Map{"status": "connected", "endpoint": embedEndpoint, "model": embedModel}
 			} else {
-				services["embed"] = fiber.Map{"status": "unreachable", "endpoint": embedEndpoint}
+				services["embed"] = fiber.Map{"status": "unreachable", "endpoint": embedEndpoint, "model": embedModel}
 			}
 		} else {
 			services["embed"] = fiber.Map{"status": "not_configured"}
