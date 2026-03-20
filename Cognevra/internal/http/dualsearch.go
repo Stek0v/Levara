@@ -36,10 +36,10 @@ func dualSearchHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		var req dualSearchRequest
 		if err := c.BodyParser(&req); err != nil {
-			return c.Status(400).JSON(fiber.Map{"error": "invalid request"})
+			return c.Status(400).JSON(fiber.Map{"detail": "invalid request"})
 		}
 		if req.QueryText == "" {
-			return c.Status(400).JSON(fiber.Map{"error": "query_text required"})
+			return c.Status(400).JSON(fiber.Map{"detail": "query_text required"})
 		}
 		if req.TopK <= 0 {
 			req.TopK = 10

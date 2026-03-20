@@ -56,7 +56,7 @@ func memifyStatusHandler() fiber.Handler {
 		if val, ok := memifyRuns.Load(runID); ok {
 			return c.JSON(val)
 		}
-		return c.Status(404).JSON(fiber.Map{"error": "run not found"})
+		return c.Status(404).JSON(fiber.Map{"detail": "run not found"})
 	}
 }
 
@@ -65,7 +65,7 @@ func memifyStreamHandler() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		runID := c.Params("runId")
 		if _, ok := memifyRuns.Load(runID); !ok {
-			return c.Status(404).JSON(fiber.Map{"error": "run not found"})
+			return c.Status(404).JSON(fiber.Map{"detail": "run not found"})
 		}
 
 		c.Set("Content-Type", "text/event-stream")
@@ -116,7 +116,7 @@ func memifyHandler(cfg APIConfig) fiber.Handler {
 
 		// Verify Neo4j is configured (memify works on existing graph)
 		if cfg.Neo4jCfg.Neo4jURL == "" {
-			return c.Status(400).JSON(fiber.Map{"error": "Neo4j not configured — memify requires an existing knowledge graph"})
+			return c.Status(400).JSON(fiber.Map{"detail": "Neo4j not configured — memify requires an existing knowledge graph"})
 		}
 
 		runID := uuid.New().String()
