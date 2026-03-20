@@ -4,11 +4,13 @@ package http
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -556,8 +558,12 @@ func searchHandler(cfg APIConfig) fiber.Handler {
 		}
 
 		switch queryType {
-		case "CHUNKS", "RAG_COMPLETION", "SUMMARIES", "GRAPH_COMPLETION":
+		case "CHUNKS", "GRAPH_COMPLETION":
 			return chunksSearch(c, cfg, req)
+		case "RAG_COMPLETION":
+			return ragCompletionSearch(c, cfg, req)
+		case "SUMMARIES":
+			return summariesSearch(c, cfg, req)
 		case "CHUNKS_LEXICAL":
 			return bm25Search(c, cfg, req)
 		case "HYBRID":
@@ -699,6 +705,164 @@ func temporalSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error 
 		results = results[:req.TopK]
 	}
 	return c.JSON(results)
+}
+
+// ragCompletionSearch does vector search + LLM completion over results.
+// Returns both raw chunks and an LLM-generated answer.
+func ragCompletionSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
+	if cfg.EmbedEndpoint == "" || cfg.Collections == nil {
+		return c.JSON(fiber.Map{"chunks": []any{}, "answer": ""})
+	}
+
+	// Step 1: vector search (same as chunksSearch)
+	embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 1)
+	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections)
+
+	colls := cfg.Collections.List()
+	var chunks []fiber.Map
+
+	for _, coll := range colls {
+		results, err := sp.SearchByText(context.Background(), coll, req.QueryText, req.TopK)
+		if err != nil {
+			continue
+		}
+		for _, r := range results {
+			chunks = append(chunks, fiber.Map{
+				"id":         r.ID,
+				"score":      r.Score,
+				"collection": coll,
+				"metadata":   json.RawMessage(r.Metadata),
+			})
+		}
+	}
+	if len(chunks) > req.TopK {
+		chunks = chunks[:req.TopK]
+	}
+
+	// Step 2: LLM completion using retrieved chunks as context
+	llmEndpoint := os.Getenv("LLM_ENDPOINT")
+	llmModel := os.Getenv("LLM_MODEL")
+	answer := ""
+
+	if llmEndpoint != "" && llmModel != "" && len(chunks) > 0 {
+		// Build context from chunk metadata
+		var contextParts []string
+		for i, chunk := range chunks {
+			meta := ""
+			if raw, ok := chunk["metadata"].(json.RawMessage); ok {
+				meta = string(raw)
+			}
+			contextParts = append(contextParts, fmt.Sprintf("[%d] %s", i+1, meta))
+			if i >= 9 {
+				break
+			}
+		}
+
+		prompt := fmt.Sprintf("Based on the following context, answer the question.\n\nContext:\n%s\n\nQuestion: %s\n\nAnswer:",
+			strings.Join(contextParts, "\n"), req.QueryText)
+
+		answer = callLLMFromAPI(llmEndpoint, llmModel, prompt)
+	}
+
+	return c.JSON(fiber.Map{
+		"chunks": chunks,
+		"answer": answer,
+	})
+}
+
+// summariesSearch searches only in summary collections (TextSummary nodes from memify).
+func summariesSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
+	if cfg.EmbedEndpoint == "" || cfg.Collections == nil {
+		return c.JSON([]any{})
+	}
+
+	embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 1)
+	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections)
+
+	// Search only in summary/triplet collections
+	colls := cfg.Collections.List()
+	var allResults []fiber.Map
+
+	for _, coll := range colls {
+		// Filter: only collections that contain summaries or triplets
+		lower := strings.ToLower(coll)
+		if !strings.Contains(lower, "summary") && !strings.Contains(lower, "triplet") && !strings.Contains(lower, "memify") {
+			continue
+		}
+
+		results, err := sp.SearchByText(context.Background(), coll, req.QueryText, req.TopK)
+		if err != nil {
+			continue
+		}
+		for _, r := range results {
+			allResults = append(allResults, fiber.Map{
+				"id":         r.ID,
+				"score":      r.Score,
+				"collection": coll,
+				"metadata":   json.RawMessage(r.Metadata),
+			})
+		}
+	}
+
+	// Also check PostgreSQL graph_nodes for TextSummary type
+	if cfg.DB != nil {
+		rows, err := cfg.DB.QueryContext(c.Context(),
+			`SELECT id, name, description FROM graph_nodes
+			 WHERE type = 'TextSummary' AND (
+				 name ILIKE '%' || $1 || '%' OR description ILIKE '%' || $1 || '%'
+			 ) LIMIT $2`, req.QueryText, req.TopK)
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var id, name, desc string
+				rows.Scan(&id, &name, &desc)
+				allResults = append(allResults, fiber.Map{
+					"id":         id,
+					"score":      0.5, // SQL match, no vector score
+					"collection": "graph_nodes",
+					"metadata":   json.RawMessage(fmt.Sprintf(`{"name":%q,"description":%q,"type":"TextSummary"}`, name, desc)),
+				})
+			}
+		}
+	}
+
+	if len(allResults) > req.TopK {
+		allResults = allResults[:req.TopK]
+	}
+
+	return c.JSON(allResults)
+}
+
+// callLLMFromAPI is a standalone LLM call helper for search handlers.
+func callLLMFromAPI(endpoint, model, prompt string) string {
+	body := map[string]any{
+		"model": model,
+		"messages": []map[string]string{
+			{"role": "user", "content": prompt},
+		},
+		"temperature": 0.3,
+		"max_tokens":  2000,
+	}
+
+	jsonBody, _ := json.Marshal(body)
+	resp, err := http.Post(endpoint+"/chat/completions", "application/json", bytes.NewReader(jsonBody))
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	var result struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if json.Unmarshal(respBody, &result) == nil && len(result.Choices) > 0 {
+		return strings.TrimSpace(result.Choices[0].Message.Content)
+	}
+	return ""
 }
 
 // ── Helpers ──
