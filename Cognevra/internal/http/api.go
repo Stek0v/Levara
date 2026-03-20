@@ -71,6 +71,11 @@ func RegisterCogneeAPI(app fiber.Router, cfg APIConfig) {
 	app.Get("/memify/:runId/status", memifyStatusHandler())
 	app.Get("/memify/:runId/stream", memifyStreamHandler())
 
+	// U7: User management (protected)
+	app.Get("/users/me", userMeHandler(cfg))
+	app.Put("/users/me", userUpdateHandler(cfg))
+	app.Put("/users/me/password", userChangePasswordHandler(cfg))
+
 	// U5: Cognee-compatible search (separate from legacy vector /search)
 	app.Post("/search/text", searchHandler(cfg))
 }
