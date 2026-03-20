@@ -9,6 +9,7 @@
 package http
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -56,6 +57,51 @@ func memifyStatusHandler() fiber.Handler {
 			return c.JSON(val)
 		}
 		return c.Status(404).JSON(fiber.Map{"error": "run not found"})
+	}
+}
+
+// memifyStreamHandler streams memify progress via SSE.
+func memifyStreamHandler() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		runID := c.Params("runId")
+		if _, ok := memifyRuns.Load(runID); !ok {
+			return c.Status(404).JSON(fiber.Map{"error": "run not found"})
+		}
+
+		c.Set("Content-Type", "text/event-stream")
+		c.Set("Cache-Control", "no-cache")
+		c.Set("Connection", "keep-alive")
+		c.Set("X-Accel-Buffering", "no")
+
+		c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
+			lastStage := ""
+			for {
+				val, ok := memifyRuns.Load(runID)
+				if !ok {
+					fmt.Fprintf(w, "event: error\ndata: {\"error\":\"run not found\"}\n\n")
+					w.Flush()
+					return
+				}
+				status := val.(*memifyRunStatus)
+
+				if status.Stage != lastStage || status.Status != "RUNNING" {
+					data, _ := json.Marshal(status)
+					fmt.Fprintf(w, "event: progress\ndata: %s\n\n", data)
+					w.Flush()
+					lastStage = status.Stage
+				}
+
+				if status.Status != "RUNNING" {
+					data, _ := json.Marshal(status)
+					fmt.Fprintf(w, "event: done\ndata: %s\n\n", data)
+					w.Flush()
+					return
+				}
+
+				time.Sleep(500 * time.Millisecond)
+			}
+		})
+		return nil
 	}
 }
 

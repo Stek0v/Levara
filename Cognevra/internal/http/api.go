@@ -3,9 +3,11 @@
 package http
 
 import (
+	"bufio"
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -59,13 +61,15 @@ func RegisterCogneeAPI(app fiber.Router, cfg APIConfig) {
 	// U3: File upload (multipart)
 	app.Post("/add", addHandler(cfg))
 
-	// U4: Cognify trigger + status
+	// U4: Cognify trigger + status + SSE stream
 	app.Post("/cognify", cognifyHandler(cfg))
 	app.Get("/cognify/:runId/status", cognifyStatusHandler())
+	app.Get("/cognify/:runId/stream", cognifyStreamHandler())
 
-	// U6: Memify — post-cognify graph enrichment
+	// U6: Memify — post-cognify graph enrichment + SSE stream
 	app.Post("/memify", memifyHandler(cfg))
 	app.Get("/memify/:runId/status", memifyStatusHandler())
+	app.Get("/memify/:runId/stream", memifyStreamHandler())
 
 	// U5: Cognee-compatible search (separate from legacy vector /search)
 	app.Post("/search/text", searchHandler(cfg))
@@ -452,6 +456,53 @@ func cognifyStatusHandler() fiber.Handler {
 			return c.JSON(val)
 		}
 		return c.Status(404).JSON(fiber.Map{"error": "run not found"})
+	}
+}
+
+// cognifyStreamHandler streams pipeline progress via Server-Sent Events (SSE).
+// GET /cognify/:runId/stream
+// React frontend: const es = new EventSource("/api/v1/cognify/{runId}/stream")
+func cognifyStreamHandler() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		runID := c.Params("runId")
+		if _, ok := pipelineRuns.Load(runID); !ok {
+			return c.Status(404).JSON(fiber.Map{"error": "run not found"})
+		}
+
+		c.Set("Content-Type", "text/event-stream")
+		c.Set("Cache-Control", "no-cache")
+		c.Set("Connection", "keep-alive")
+		c.Set("X-Accel-Buffering", "no")
+
+		c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
+			lastStage := ""
+			for {
+				val, ok := pipelineRuns.Load(runID)
+				if !ok {
+					fmt.Fprintf(w, "event: error\ndata: {\"error\":\"run not found\"}\n\n")
+					w.Flush()
+					return
+				}
+				status := val.(*pipelineRunStatus)
+
+				// Send update if stage changed or terminal
+				if status.Stage != lastStage || status.Status != "RUNNING" {
+					data, _ := json.Marshal(status)
+					fmt.Fprintf(w, "event: progress\ndata: %s\n\n", data)
+					w.Flush()
+					lastStage = status.Stage
+				}
+
+				if status.Status != "RUNNING" {
+					fmt.Fprintf(w, "event: done\ndata: %s\n\n", func() string { d, _ := json.Marshal(status); return string(d) }())
+					w.Flush()
+					return
+				}
+
+				time.Sleep(500 * time.Millisecond)
+			}
+		})
+		return nil
 	}
 }
 

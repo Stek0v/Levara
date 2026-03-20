@@ -453,7 +453,7 @@ embed_query → vector_search → graph_read → triplet_score → format_contex
 | # | Задача | Effort | Impact | ROI | Описание |
 |---|--------|--------|--------|-----|----------|
 | ~~C1~~ | ~~/memify endpoint~~ | ✅ | — | — | 4 enrichment tasks: entity_consolidation, triplet_embeddings, rule_associations, summary_generation |
-| **C2** | SSE/WebSocket cognify progress | 1 день | ⭐⭐⭐ | **ВЫСОКИЙ** | Streaming progress в React вместо polling GET /status |
+| ~~C2~~ | ~~SSE cognify/memify progress~~ | ✅ | — | — | GET /cognify/:id/stream + GET /memify/:id/stream (text/event-stream) |
 | **C3** | User management endpoints | 1 день | ⭐⭐ | СРЕДНИЙ | GET /users/me, PUT /users/me, change password |
 | **C4** | Settings/config API | 1 день | ⭐⭐ | СРЕДНИЙ | GET/PUT /settings — LLM model, embed model, Neo4j config |
 | **C5** | Notebooks CRUD + execution | 3-5 дней | ⭐ | НИЗКИЙ | Interactive notebooks (Cognee advanced feature) |
