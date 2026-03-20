@@ -88,6 +88,9 @@ func RegisterCogneeAPI(app fiber.Router, cfg APIConfig) {
 	app.Get("/collections/:name/meta", collectionMetaHandler(cfg))
 	app.Put("/collections/:name/meta", collectionMetaUpdateHandler(cfg))
 
+	// U12: Re-embedding migration
+	RegisterReembedAPI(app, cfg)
+
 	// U10: RBAC — dataset sharing + permissions
 	RegisterRBACAPI(app, cfg)
 
