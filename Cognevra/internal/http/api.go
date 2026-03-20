@@ -91,6 +91,9 @@ func RegisterCogneeAPI(app fiber.Router, cfg APIConfig) {
 	// U12: Re-embedding migration
 	RegisterReembedAPI(app, cfg)
 
+	// U13: Dual-search across collections with different models/dims
+	RegisterDualSearchAPI(app, cfg)
+
 	// U10: RBAC — dataset sharing + permissions
 	RegisterRBACAPI(app, cfg)
 
