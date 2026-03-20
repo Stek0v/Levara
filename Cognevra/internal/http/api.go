@@ -63,6 +63,10 @@ func RegisterCogneeAPI(app fiber.Router, cfg APIConfig) {
 	app.Post("/cognify", cognifyHandler(cfg))
 	app.Get("/cognify/:runId/status", cognifyStatusHandler())
 
+	// U6: Memify — post-cognify graph enrichment
+	app.Post("/memify", memifyHandler(cfg))
+	app.Get("/memify/:runId/status", memifyStatusHandler())
+
 	// U5: Cognee-compatible search (separate from legacy vector /search)
 	app.Post("/search/text", searchHandler(cfg))
 }
