@@ -26,7 +26,7 @@ func MigrateSchema(db *sql.DB) error {
 		}
 	}
 
-	log.Printf("PostgreSQL schema migration complete (7 tables)")
+	log.Printf("PostgreSQL schema migration complete (8 tables)")
 	return nil
 }
 
@@ -84,6 +84,13 @@ var schemaStatements = []string{
 		dataset_id TEXT NOT NULL REFERENCES datasets(id) ON DELETE CASCADE,
 		data_id TEXT NOT NULL REFERENCES data(id) ON DELETE CASCADE,
 		PRIMARY KEY (dataset_id, data_id)
+	)`,
+
+	// User settings (per-user JSON config)
+	`CREATE TABLE IF NOT EXISTS user_settings (
+		user_id TEXT PRIMARY KEY,
+		settings JSONB NOT NULL DEFAULT '{}',
+		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 	)`,
 
 	// Graph nodes (PostgreSQL mirror of Neo4j for SQL queries)

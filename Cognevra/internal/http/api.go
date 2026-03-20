@@ -76,6 +76,10 @@ func RegisterCogneeAPI(app fiber.Router, cfg APIConfig) {
 	app.Put("/users/me", userUpdateHandler(cfg))
 	app.Put("/users/me/password", userChangePasswordHandler(cfg))
 
+	// U8: Settings API (protected)
+	app.Get("/settings", settingsGetHandler(cfg))
+	app.Put("/settings", settingsPutHandler(cfg))
+
 	// U5: Cognee-compatible search (separate from legacy vector /search)
 	app.Post("/search/text", searchHandler(cfg))
 }
