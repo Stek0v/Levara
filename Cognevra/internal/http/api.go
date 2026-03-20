@@ -400,6 +400,7 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 			Collection:      collection,
 			Collections:     cfg.Collections,
 			GenerateTriplets: true,
+			DB:              cfg.DB,
 		}
 		if req.LLMModel != "" {
 			pipeCfg.LLMModel = req.LLMModel
