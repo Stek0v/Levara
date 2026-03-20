@@ -183,6 +183,13 @@ func main() {
 		Neo4jCfg:      vizCfg,
 	})
 
+	// Auth endpoints
+	jwtSecret := os.Getenv("JWT_SECRET")
+	vectorHttp.RegisterAuthAPI(api, vectorHttp.AuthConfig{
+		PostgresDSN: pgDSN,
+		JWTSecret:   jwtSecret,
+	})
+
 	// Start gRPC server (parallel to HTTP)
 	if *grpcPort > 0 {
 		go func() {
