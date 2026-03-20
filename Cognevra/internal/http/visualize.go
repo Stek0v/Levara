@@ -68,10 +68,7 @@ func DatasetGraph(cfg GraphVisualizationConfig) fiber.Handler {
 		}
 
 		for i, n := range result.Nodes {
-			name, _ := n.Properties["name"].(string)
-			if name == "" {
-				name = n.ID
-			}
+			name := bestNodeLabel(n)
 			dto.Nodes[i] = GraphNodeDTO{
 				ID:         n.ID,
 				Label:      name,
@@ -128,13 +125,14 @@ func generateVisualizationHTML(result graphdb.GraphReadResult) string {
 		if i > 0 {
 			nodesJSON.WriteString(",")
 		}
-		name, _ := n.Properties["name"].(string)
-		if name == "" {
-			name = n.ID[:8]
-		}
+		name := bestNodeLabel(n)
 		nodeType := n.Label
 		if nodeType == "" {
-			nodeType = "Node"
+			if t, ok := n.Properties["type"].(string); ok && t != "" {
+				nodeType = t
+			} else {
+				nodeType = "Node"
+			}
 		}
 		fmt.Fprintf(&nodesJSON, `{"id":"%s","name":"%s","type":"%s"}`,
 			escapeJS(n.ID), escapeJS(name), escapeJS(nodeType))
@@ -156,6 +154,24 @@ func generateVisualizationHTML(result graphdb.GraphReadResult) string {
 	return fmt.Sprintf(htmlTemplate,
 		len(result.Nodes), len(result.Edges),
 		nodesJSON.String(), edgesJSON.String())
+}
+
+// bestNodeLabel extracts the best human-readable label from a node.
+func bestNodeLabel(n graphdb.ReadNode) string {
+	// Try common property names in priority order
+	for _, key := range []string{"name", "label", "title", "text", "description", "relationship_name"} {
+		if v, ok := n.Properties[key].(string); ok && v != "" {
+			if len(v) > 60 {
+				return v[:57] + "..."
+			}
+			return v
+		}
+	}
+	// Fallback: type + short ID
+	if n.Label != "" {
+		return n.Label + ":" + n.ID[:8]
+	}
+	return n.ID[:12]
 }
 
 func escapeJS(s string) string {
