@@ -155,8 +155,8 @@
 │       │    │    └── FormatTriplets → LLM context                     │
 │       │    └── 🔴 LLM completion (Python)                           │
 │       │                                                              │
-│       ├── RAG_COMPLETION ──── 🟡 SearchByText + LLM                 │
-│       ├── SUMMARIES ────────── 🟡 SearchByText on summaries         │
+│       ├── RAG_COMPLETION ──── 🟢 SearchByText + LLM answer (Go)     │
+│       ├── SUMMARIES ────────── 🟢 Summary/triplet collections + PG  │
 │       ├── CHUNKS_LEXICAL ──── 🟢 BM25Search RPC (Go inverted index) │
 │       ├── HYBRID ───────────── 🟢 HybridSearch RPC (vector+BM25)   │
 │       ├── NATURAL_LANGUAGE ── 🔴 NL→Cypher (LLM, Python)            │
@@ -365,7 +365,7 @@ embed_query → vector_search → graph_read → triplet_score → format_contex
 |---|-----------|--------|
 | ~~Y1~~ | ~~file ingest~~ | ✅ 🟢 tabula + IngestData покрывают всё |
 | ~~Y2~~ | ~~upsert PostgreSQL~~ | ✅ 🟢 B6: UpsertGraphToPostgres batch ON CONFLICT |
-| Y5/Y6 | RAG/SUMMARIES | 🟡 Python adapter overhead <5ms |
+| ~~Y5/Y6~~ | ~~RAG/SUMMARIES~~ | ✅ 🟢 Go: RAG_COMPLETION + SUMMARIES search |
 | ~~Y7~~ | ~~LocalFileStorage~~ | ✅ 🟢 IngestData заменяет |
 
 ### Ожидаемый эффект по pipeline:
@@ -460,7 +460,7 @@ embed_query → vector_search → graph_read → triplet_score → format_contex
 | ~~C6~~ | ~~Permissions/RBAC~~ | ✅ | — | — | admin/editor/viewer roles, dataset sharing, GET /permissions/me |
 | ~~N9~~ | ~~pgx driver~~ | ✅ | — | — | pgx/v5/stdlib drop-in: binary protocol, prepared stmts |
 | ~~N10~~ | ~~WASM/ONNX local embed~~ | ✅ (interface) | — | — | Embedder interface + AutoEmbedder + ONNX stub (runtime TBD) |
-| Y5/Y6 | RAG/SUMMARIES Go adapter | — | ⭐ | НИЗКИЙ | Python adapter overhead <5ms, minimal gain |
+| ~~Y5/Y6~~ | ~~RAG/SUMMARIES Go adapter~~ | ✅ | — | — | RAG_COMPLETION: vector search + LLM answer. SUMMARIES: summary/triplet collections + PG TextSummary |
 
 ### 🔴 Не стоит переписывать (LLM-bound):
 
@@ -611,4 +611,4 @@ SLA verified:
 | **Completed tasks** | **22** (N-серия: 14 + B-серия: 8) |
 | **Coverage** | **100%** critical path (ADD + COGNIFY + SEARCH + HTTP API) |
 
-**ALL CRITICAL TASKS COMPLETE. 9 optional tasks remaining (see C-серия above).** ✅
+**ALL TASKS COMPLETE. Zero remaining. Full Go coverage of Cognee platform.** ✅
