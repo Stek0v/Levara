@@ -124,11 +124,34 @@ func NewCollectionManager(dim int, basePath string, cfg ...HNSWConfig) (*Collect
 		}
 	}
 
-	// Startup validation: log dimension mismatches
+	// Startup validation summary
+	dimCounts := make(map[int]int)
+	modelCounts := make(map[string]int)
+	var warnings []string
 	for name, meta := range cm.metas {
+		dimCounts[meta.EmbeddingDim]++
+		if meta.EmbeddingModel != "" {
+			modelCounts[meta.EmbeddingModel]++
+		} else {
+			modelCounts["(unknown)"]++
+		}
 		if meta.EmbeddingDim != dim && meta.EmbeddingDim > 0 {
-			fmt.Printf("NOTE: collection %q has dim=%d (server default=%d) — per-collection dimension active\n",
-				name, meta.EmbeddingDim, dim)
+			warnings = append(warnings, fmt.Sprintf("  %s: dim=%d (server=%d)", name, meta.EmbeddingDim, dim))
+		}
+	}
+	if len(cm.metas) > 0 {
+		fmt.Printf("Collection summary: %d collections loaded\n", len(cm.metas))
+		for d, n := range dimCounts {
+			fmt.Printf("  dim=%d: %d collections\n", d, n)
+		}
+		for m, n := range modelCounts {
+			fmt.Printf("  model=%s: %d collections\n", m, n)
+		}
+		if len(warnings) > 0 {
+			fmt.Printf("WARNING: %d collections have non-default dimensions:\n", len(warnings))
+			for _, w := range warnings {
+				fmt.Println(w)
+			}
 		}
 	}
 
@@ -286,7 +309,17 @@ func (cm *CollectionManager) DefaultDim() int {
 }
 
 // Insert inserts a record into a collection (auto-creates if not exists).
+// Validates vector dimension against collection metadata before insert.
 func (cm *CollectionManager) Insert(collection, id string, vec []float32, meta interface{}) error {
+	// Pre-check dimension against collection metadata
+	cm.mu.RLock()
+	if m, ok := cm.metas[collection]; ok && m.EmbeddingDim > 0 && len(vec) != m.EmbeddingDim {
+		cm.mu.RUnlock()
+		return fmt.Errorf("dimension mismatch: vector dim=%d, collection %q expects dim=%d (model=%s)",
+			len(vec), collection, m.EmbeddingDim, m.EmbeddingModel)
+	}
+	cm.mu.RUnlock()
+
 	db, err := cm.getOrCreate(collection)
 	if err != nil {
 		return err
@@ -294,7 +327,6 @@ func (cm *CollectionManager) Insert(collection, id string, vec []float32, meta i
 	if err := db.Insert(id, vec, meta); err != nil {
 		return err
 	}
-	// Update record count in metadata
 	cm.mu.RLock()
 	if m, ok := cm.metas[collection]; ok {
 		m.RecordCount = len(db.index)
