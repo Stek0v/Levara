@@ -456,11 +456,11 @@ embed_query → vector_search → graph_read → triplet_score → format_contex
 | ~~C2~~ | ~~SSE cognify/memify progress~~ | ✅ | — | — | GET /cognify/:id/stream + GET /memify/:id/stream (text/event-stream) |
 | ~~C3~~ | ~~User management~~ | ✅ | — | — | GET/PUT /users/me + PUT /users/me/password (bcrypt verify) |
 | ~~C4~~ | ~~Settings/config API~~ | ✅ | — | — | GET/PUT /settings — per-user JSONB + in-memory cache |
-| **C5** | Notebooks CRUD + execution | 3-5 дней | ⭐ | НИЗКИЙ | Interactive notebooks (Cognee advanced feature) |
-| **C6** | Permissions/RBAC | 2-3 дня | ⭐ | НИЗКИЙ | Role-based access, dataset sharing between users |
-| N9 | Go pgx driver | 2-3 дня | ⭐ | НИЗКИЙ | Replace database/sql with pgx (<50ms gain) |
-| N10 | WASM/ONNX local embed | 1-2 нед | ⭐⭐ | НИЗКИЙ | Removes embed-server dependency |
-| Y5/Y6 | RAG/SUMMARIES Go adapter | 1 день | ⭐ | НИЗКИЙ | Python adapter overhead <5ms, minimal gain |
+| ~~C5~~ | ~~Notebooks CRUD + execution~~ | ✅ | — | — | 9 endpoints: CRUD + cell add/update/delete/run (search, code, cognify) |
+| ~~C6~~ | ~~Permissions/RBAC~~ | ✅ | — | — | admin/editor/viewer roles, dataset sharing, GET /permissions/me |
+| ~~N9~~ | ~~pgx driver~~ | ✅ | — | — | pgx/v5/stdlib drop-in: binary protocol, prepared stmts |
+| ~~N10~~ | ~~WASM/ONNX local embed~~ | ✅ (interface) | — | — | Embedder interface + AutoEmbedder + ONNX stub (runtime TBD) |
+| Y5/Y6 | RAG/SUMMARIES Go adapter | — | ⭐ | НИЗКИЙ | Python adapter overhead <5ms, minimal gain |
 
 ### 🔴 Не стоит переписывать (LLM-bound):
 

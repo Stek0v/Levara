@@ -26,7 +26,7 @@ func MigrateSchema(db *sql.DB) error {
 		}
 	}
 
-	log.Printf("PostgreSQL schema migration complete (8 tables)")
+	log.Printf("PostgreSQL schema migration complete (11 tables)")
 	return nil
 }
 
@@ -93,6 +93,38 @@ var schemaStatements = []string{
 		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 	)`,
 
+	// Dataset sharing / RBAC
+	`CREATE TABLE IF NOT EXISTS dataset_shares (
+		id TEXT PRIMARY KEY,
+		dataset_id TEXT NOT NULL REFERENCES datasets(id) ON DELETE CASCADE,
+		user_id TEXT NOT NULL,
+		role TEXT NOT NULL DEFAULT 'viewer',
+		granted_by TEXT NOT NULL DEFAULT '',
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		UNIQUE(dataset_id, user_id)
+	)`,
+
+	// Notebooks
+	`CREATE TABLE IF NOT EXISTS notebooks (
+		id TEXT PRIMARY KEY,
+		title TEXT NOT NULL DEFAULT 'Untitled',
+		owner_id TEXT NOT NULL DEFAULT '',
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	)`,
+
+	// Notebook cells
+	`CREATE TABLE IF NOT EXISTS notebook_cells (
+		id TEXT PRIMARY KEY,
+		notebook_id TEXT NOT NULL REFERENCES notebooks(id) ON DELETE CASCADE,
+		cell_type TEXT NOT NULL DEFAULT 'code',
+		source TEXT NOT NULL DEFAULT '',
+		output TEXT NOT NULL DEFAULT '',
+		position INTEGER NOT NULL DEFAULT 0,
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	)`,
+
 	// Graph nodes (PostgreSQL mirror of Neo4j for SQL queries)
 	`CREATE TABLE IF NOT EXISTS graph_nodes (
 		id TEXT PRIMARY KEY,
@@ -126,4 +158,6 @@ var schemaStatements = []string{
 	`CREATE INDEX IF NOT EXISTS idx_graph_edges_source ON graph_edges(source_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_graph_edges_target ON graph_edges(target_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_graph_edges_rel ON graph_edges(relationship_name)`,
+	`CREATE INDEX IF NOT EXISTS idx_notebooks_owner ON notebooks(owner_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_notebook_cells_notebook ON notebook_cells(notebook_id)`,
 }

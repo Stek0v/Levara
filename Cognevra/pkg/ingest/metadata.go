@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/lib/pq" // PostgreSQL driver
+	_ "github.com/jackc/pgx/v5/stdlib" // pgx via database/sql
 )
 
 // MetadataWriter writes ingestion metadata to PostgreSQL.
@@ -19,7 +19,7 @@ type MetadataWriter struct {
 
 // NewMetadataWriter connects to PostgreSQL.
 func NewMetadataWriter(dsn string) (*MetadataWriter, error) {
-	db, err := sql.Open("postgres", dsn)
+	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("postgres connect: %w", err)
 	}

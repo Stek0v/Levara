@@ -17,7 +17,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
-	_ "github.com/lib/pq"
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/stek0v/cognevra/internal/store"
 	"github.com/stek0v/cognevra/pkg/bm25"
 	"github.com/stek0v/cognevra/pkg/embed"
@@ -79,6 +79,20 @@ func RegisterCogneeAPI(app fiber.Router, cfg APIConfig) {
 	// U8: Settings API (protected)
 	app.Get("/settings", settingsGetHandler(cfg))
 	app.Put("/settings", settingsPutHandler(cfg))
+
+	// U10: RBAC — dataset sharing + permissions
+	RegisterRBACAPI(app, cfg)
+
+	// U9: Notebooks CRUD + cell execution
+	app.Get("/notebooks", notebooksListHandler(cfg))
+	app.Post("/notebooks", notebookCreateHandler(cfg))
+	app.Get("/notebooks/:id", notebookGetHandler(cfg))
+	app.Put("/notebooks/:id", notebookUpdateHandler(cfg))
+	app.Delete("/notebooks/:id", notebookDeleteHandler(cfg))
+	app.Post("/notebooks/:id/cells", cellAddHandler(cfg))
+	app.Put("/notebooks/:id/cells/:cellId", cellUpdateHandler(cfg))
+	app.Delete("/notebooks/:id/cells/:cellId", cellDeleteHandler(cfg))
+	app.Post("/notebooks/:id/cells/:cellId/run", cellRunHandler(cfg))
 
 	// U5: Cognee-compatible search (separate from legacy vector /search)
 	app.Post("/search/text", searchHandler(cfg))

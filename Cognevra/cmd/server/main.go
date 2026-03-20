@@ -45,7 +45,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/raft"
-	_ "github.com/lib/pq"
+	_ "github.com/jackc/pgx/v5/stdlib" // pgx via database/sql (binary protocol, prepared stmts)
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/stek0v/cognevra/internal/cluster"
 	vectorGrpc "github.com/stek0v/cognevra/internal/grpc"
@@ -181,7 +181,7 @@ func main() {
 		pgDSN = fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable", dbUser, dbPass, dbHost, dbPort, dbName)
 
 		var dbErr error
-		pgDB, dbErr = sql.Open("postgres", pgDSN)
+		pgDB, dbErr = sql.Open("pgx", pgDSN)
 		if dbErr != nil {
 			log.Printf("PostgreSQL pool init warning: %v (running without DB)", dbErr)
 		} else {
