@@ -74,6 +74,10 @@ func main() {
 	llmUpstream := flag.String("llm-upstream", "", "LLM upstream URL (e.g. http://localhost:11434/v1)")
 	llmCacheSize := flag.Int("llm-cache-size", 10000, "LLM response cache max entries")
 	llmMaxInflight := flag.Int("llm-max-inflight", 10, "Max concurrent LLM requests")
+	neo4jURL := flag.String("neo4j-url", "", "Neo4j bolt URL for graph visualization (e.g. bolt://localhost:7687)")
+	neo4jUser := flag.String("neo4j-user", "neo4j", "Neo4j username")
+	neo4jPassword := flag.String("neo4j-password", "", "Neo4j password")
+	neo4jDatabase := flag.String("neo4j-database", "neo4j", "Neo4j database name")
 
 	flag.Parse()
 
@@ -141,6 +145,14 @@ func main() {
 	api.Post("/batch_insert", handler.BatchInsert)
 	api.Post("/search", handler.Search)
 	api.Post("/delete", handler.Delete)
+
+	// Graph visualization endpoints (requires Neo4j)
+	vizCfg := vectorHttp.GraphVisualizationConfig{
+		Neo4jURL: *neo4jURL, Neo4jUser: *neo4jUser,
+		Neo4jPassword: *neo4jPassword, Neo4jDatabase: *neo4jDatabase,
+	}
+	api.Get("/datasets/:id/graph", vectorHttp.DatasetGraph(vizCfg))
+	api.Get("/visualize", vectorHttp.VisualizeHTML(vizCfg))
 
 	// Initialize CollectionManager for native collections (used by gRPC)
 	colManager, err := store.NewCollectionManager(*dim, *dataDir+"/"+nodeID, hnswCfg)
