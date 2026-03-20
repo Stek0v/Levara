@@ -151,9 +151,14 @@ func generateVisualizationHTML(result graphdb.GraphReadResult) string {
 	}
 	edgesJSON.WriteString("]")
 
-	return fmt.Sprintf(htmlTemplate,
-		len(result.Nodes), len(result.Edges),
-		nodesJSON.String(), edgesJSON.String())
+	nodeCount := fmt.Sprintf("%d", len(result.Nodes))
+	edgeCount := fmt.Sprintf("%d", len(result.Edges))
+
+	html := strings.ReplaceAll(htmlTemplate, "{{NODES_DATA}}", nodesJSON.String())
+	html = strings.ReplaceAll(html, "{{EDGES_DATA}}", edgesJSON.String())
+	html = strings.ReplaceAll(html, "{{NODE_COUNT}}", nodeCount)
+	html = strings.ReplaceAll(html, "{{EDGE_COUNT}}", edgeCount)
+	return html
 }
 
 // bestNodeLabel extracts the best human-readable label from a node.
@@ -190,81 +195,116 @@ func propsToJSON(props map[string]any) string {
 const htmlTemplate = `<!DOCTYPE html>
 <html><head>
 <meta charset="utf-8">
-<title>Cognevra Knowledge Graph (%d nodes, %d edges)</title>
+<title>Cognevra Knowledge Graph</title>
 <style>
-  body { margin: 0; font-family: -apple-system, sans-serif; background: #0a0a0a; color: #eee; overflow: hidden; }
-  #info { position: absolute; top: 16px; left: 16px; background: rgba(0,0,0,0.8); padding: 12px 16px; border-radius: 8px; font-size: 13px; z-index: 10; }
-  #info h3 { margin: 0 0 8px 0; color: #7c3aed; }
-  #selected { position: absolute; top: 16px; right: 16px; width: 300px; background: rgba(0,0,0,0.85); padding: 16px; border-radius: 8px; font-size: 12px; max-height: 80vh; overflow-y: auto; display: none; z-index: 10; }
-  #selected h4 { margin: 0 0 8px; color: #7c3aed; }
-  #selected .prop { margin: 4px 0; }
-  #selected .key { color: #888; }
-  svg { width: 100vw; height: 100vh; }
-  .node { cursor: pointer; }
-  .link { stroke: #333; stroke-opacity: 0.6; }
-  .label { font-size: 10px; fill: #aaa; pointer-events: none; }
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0f0f14;color:#e2e8f0;overflow:hidden}
+svg{width:100vw;height:100vh;display:block}
+.link{stroke:#2d2d3d;stroke-opacity:0.5}
+.link:hover{stroke:#7c3aed;stroke-opacity:1}
+.node{cursor:pointer;stroke:#1a1a2e;stroke-width:1.5}
+.node:hover{stroke:#fff;stroke-width:2}
+.label{font-size:11px;fill:#94a3b8;pointer-events:none;font-weight:500}
+#panel{position:fixed;top:20px;left:20px;background:rgba(15,15,20,0.92);border:1px solid #2d2d3d;border-radius:12px;padding:16px 20px;z-index:10;min-width:200px;backdrop-filter:blur(12px)}
+#panel h2{font-size:16px;color:#a78bfa;margin-bottom:8px;font-weight:600}
+#panel .stat{font-size:13px;color:#64748b;margin:2px 0}
+#panel .stat b{color:#e2e8f0}
+#detail{position:fixed;top:20px;right:20px;width:320px;max-height:80vh;background:rgba(15,15,20,0.95);border:1px solid #2d2d3d;border-radius:12px;padding:20px;z-index:10;display:none;overflow-y:auto;backdrop-filter:blur(12px)}
+#detail h3{font-size:15px;color:#a78bfa;margin-bottom:12px;word-break:break-word}
+#detail .row{display:flex;margin:6px 0;font-size:12px}
+#detail .key{color:#64748b;min-width:80px;flex-shrink:0}
+#detail .val{color:#e2e8f0;word-break:break-word}
+#legend{position:fixed;bottom:20px;left:20px;background:rgba(15,15,20,0.9);border:1px solid #2d2d3d;border-radius:10px;padding:12px 16px;z-index:10;display:flex;gap:12px;flex-wrap:wrap;max-width:600px}
+.leg-item{display:flex;align-items:center;gap:5px;font-size:11px;color:#94a3b8}
+.leg-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+#hint{position:fixed;bottom:20px;right:20px;font-size:11px;color:#475569;z-index:10}
 </style>
 </head><body>
-<div id="info">
-  <h3>🧠 Cognevra Graph</h3>
-  <div>Nodes: <b>%d</b> | Edges: <b>%d</b></div>
-  <div style="margin-top:8px;font-size:11px;color:#666">Drag to pan, scroll to zoom, click nodes</div>
+<div id="panel">
+  <h2>🧠 Cognevra Graph</h2>
+  <div class="stat">Nodes: <b>{{NODE_COUNT}}</b></div>
+  <div class="stat">Edges: <b>{{EDGE_COUNT}}</b></div>
 </div>
-<div id="selected"></div>
+<div id="detail"></div>
+<div id="legend"></div>
+<div id="hint">Drag to pan · Scroll to zoom · Click nodes</div>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script>
-const nodes = %s;
-const links = %s;
+const nodes = {{NODES_DATA}};
+const links = {{EDGES_DATA}};
 
-const typeColors = {
-  Entity: "#8b5cf6", DocumentChunk: "#22c55e", TextSummary: "#06b6d4",
-  EntityType: "#f59e0b", Character: "#ec4899", Location: "#10b981",
-  Chapter: "#6366f1", GoEntity: "#a855f7", Node: "#6b7280"
+const TC = {
+  Entity:"#8b5cf6",DocumentChunk:"#22c55e",TextSummary:"#06b6d4",
+  EntityType:"#eab308",Character:"#ec4899",Location:"#10b981",
+  Chapter:"#6366f1",GoEntity:"#a855f7",Database:"#f97316",
+  Algorithm:"#14b8a6",Feature:"#f472b6",Technology:"#38bdf8",
+  TextDocument:"#84cc16",Node:"#64748b"
 };
-function getColor(type) { return typeColors[type] || "#" + ((Math.abs(hashStr(type)) & 0xFFFFFF).toString(16)).padStart(6,"0"); }
-function hashStr(s) { let h=0; for(let i=0;i<s.length;i++) h=((h<<5)-h)+s.charCodeAt(i); return h; }
+function color(t){return TC[t]||"#"+((Math.abs(hash(t))&0xFFFFFF).toString(16)).padStart(6,"0")}
+function hash(s){let h=0;for(let i=0;i<s.length;i++)h=((h<<5)-h)+s.charCodeAt(i);return h}
 
-const width = window.innerWidth, height = window.innerHeight;
-const svg = d3.select("body").append("svg").attr("viewBox", [0,0,width,height]);
+// Build legend
+const types={};nodes.forEach(n=>{types[n.type]=(types[n.type]||0)+1});
+const leg=document.getElementById("legend");
+Object.entries(types).sort((a,b)=>b[1]-a[1]).forEach(([t,c])=>{
+  const d=document.createElement("div");d.className="leg-item";
+  d.innerHTML='<div class="leg-dot" style="background:'+color(t)+'"></div>'+t+' ('+c+')';
+  leg.appendChild(d);
+});
 
-const g = svg.append("g");
-svg.call(d3.zoom().scaleExtent([0.1, 8]).on("zoom", e => g.attr("transform", e.transform)));
+const W=window.innerWidth,H=window.innerHeight;
+const svg=d3.select("body").append("svg").attr("viewBox",[0,0,W,H]);
+const g=svg.append("g");
+svg.call(d3.zoom().scaleExtent([0.05,10]).on("zoom",e=>g.attr("transform",e.transform)));
 
-const simulation = d3.forceSimulation(nodes)
-  .force("link", d3.forceLink(links).id(d=>d.id).distance(80))
-  .force("charge", d3.forceManyBody().strength(-200))
-  .force("center", d3.forceCenter(width/2, height/2))
-  .force("collision", d3.forceCollide(15));
+// Compute degree for sizing
+const deg={};links.forEach(l=>{deg[l.source]=(deg[l.source]||0)+1;deg[l.target]=(deg[l.target]||0)+1});
+const maxDeg=Math.max(...Object.values(deg),1);
 
-const link = g.append("g").selectAll("line").data(links).join("line")
-  .attr("class","link").attr("stroke-width",1);
+const sim=d3.forceSimulation(nodes)
+  .force("link",d3.forceLink(links).id(d=>d.id).distance(100).strength(0.3))
+  .force("charge",d3.forceManyBody().strength(-300))
+  .force("center",d3.forceCenter(W/2,H/2))
+  .force("collision",d3.forceCollide().radius(d=>nodeR(d)+4));
 
-const node = g.append("g").selectAll("circle").data(nodes).join("circle")
-  .attr("class","node").attr("r", d => 5 + Math.sqrt((links.filter(l=>l.source===d||l.target===d||l.source.id===d.id||l.target.id===d.id).length||1))*2)
-  .attr("fill", d => getColor(d.type))
-  .call(d3.drag().on("start",dragStart).on("drag",dragged).on("end",dragEnd))
-  .on("click", (e,d) => {
-    const sel = document.getElementById("selected");
-    sel.style.display = "block";
-    sel.innerHTML = "<h4>" + d.name + "</h4><div class='prop'><span class='key'>Type:</span> " + d.type +
-      "</div><div class='prop'><span class='key'>ID:</span> " + d.id + "</div>" +
-      "<div class='prop'><span class='key'>Connections:</span> " +
-      links.filter(l=>l.source.id===d.id||l.target.id===d.id).length + "</div>";
+function nodeR(d){return 4+Math.sqrt((deg[d.id]||1)/maxDeg)*14}
+
+const link=g.append("g").selectAll("line").data(links).join("line")
+  .attr("class","link").attr("stroke-width",d=>1);
+
+const node=g.append("g").selectAll("circle").data(nodes).join("circle")
+  .attr("class","node").attr("r",d=>nodeR(d)).attr("fill",d=>color(d.type))
+  .call(d3.drag().on("start",(e,d)=>{if(!e.active)sim.alphaTarget(0.3).restart();d.fx=d.x;d.fy=d.y})
+    .on("drag",(e,d)=>{d.fx=e.x;d.fy=e.y})
+    .on("end",(e,d)=>{if(!e.active)sim.alphaTarget(0);d.fx=null;d.fy=null}))
+  .on("click",(e,d)=>{
+    const det=document.getElementById("detail");det.style.display="block";
+    const conns=links.filter(l=>l.source.id===d.id||l.target.id===d.id);
+    let h='<h3>'+d.name+'</h3>';
+    h+='<div class="row"><div class="key">Type</div><div class="val" style="color:'+color(d.type)+'">'+d.type+'</div></div>';
+    h+='<div class="row"><div class="key">ID</div><div class="val" style="font-size:10px;color:#475569">'+d.id+'</div></div>';
+    h+='<div class="row"><div class="key">Connections</div><div class="val">'+conns.length+'</div></div>';
+    if(conns.length>0){
+      h+='<div style="margin-top:10px;font-size:11px;color:#64748b">Relationships:</div>';
+      conns.slice(0,10).forEach(l=>{
+        const other=l.source.id===d.id?l.target:l.source;
+        h+='<div class="row"><div class="key" style="color:'+color(other.type)+'">'+l.label+'</div><div class="val">'+other.name+'</div></div>';
+      });
+      if(conns.length>10)h+='<div style="font-size:10px;color:#475569;margin-top:4px">...and '+(conns.length-10)+' more</div>';
+    }
+    det.innerHTML=h;
   });
 
-node.append("title").text(d => d.name + " (" + d.type + ")");
+node.append("title").text(d=>d.name+" ("+d.type+")");
 
-const label = g.append("g").selectAll("text").data(nodes).join("text")
-  .attr("class","label").text(d => d.name.length>20 ? d.name.slice(0,20)+"…" : d.name)
-  .attr("dx",8).attr("dy",3);
+const label=g.append("g").selectAll("text").data(nodes.filter(d=>(deg[d.id]||0)>=2||nodes.length<30))
+  .join("text").attr("class","label")
+  .text(d=>d.name.length>25?d.name.slice(0,22)+"…":d.name)
+  .attr("dx",d=>nodeR(d)+4).attr("dy",3);
 
-simulation.on("tick", () => {
+sim.on("tick",()=>{
   link.attr("x1",d=>d.source.x).attr("y1",d=>d.source.y).attr("x2",d=>d.target.x).attr("y2",d=>d.target.y);
   node.attr("cx",d=>d.x).attr("cy",d=>d.y);
   label.attr("x",d=>d.x).attr("y",d=>d.y);
 });
-
-function dragStart(e,d){if(!e.active)simulation.alphaTarget(0.3).restart();d.fx=d.x;d.fy=d.y;}
-function dragged(e,d){d.fx=e.x;d.fy=e.y;}
-function dragEnd(e,d){if(!e.active)simulation.alphaTarget(0);d.fx=null;d.fy=null;}
 </script></body></html>`
