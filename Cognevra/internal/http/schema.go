@@ -26,7 +26,7 @@ func MigrateSchema(db *sql.DB) error {
 		}
 	}
 
-	log.Printf("PostgreSQL schema migration complete (5 tables)")
+	log.Printf("PostgreSQL schema migration complete (7 tables)")
 	return nil
 }
 
@@ -86,10 +86,37 @@ var schemaStatements = []string{
 		PRIMARY KEY (dataset_id, data_id)
 	)`,
 
+	// Graph nodes (PostgreSQL mirror of Neo4j for SQL queries)
+	`CREATE TABLE IF NOT EXISTS graph_nodes (
+		id TEXT PRIMARY KEY,
+		name TEXT NOT NULL DEFAULT '',
+		type TEXT NOT NULL DEFAULT '',
+		description TEXT NOT NULL DEFAULT '',
+		properties JSONB NOT NULL DEFAULT '{}',
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	)`,
+
+	// Graph edges (PostgreSQL mirror of Neo4j)
+	`CREATE TABLE IF NOT EXISTS graph_edges (
+		id TEXT PRIMARY KEY,
+		source_id TEXT NOT NULL,
+		target_id TEXT NOT NULL,
+		relationship_name TEXT NOT NULL DEFAULT '',
+		properties JSONB NOT NULL DEFAULT '{}',
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	)`,
+
 	// Indexes for common queries
 	`CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)`,
 	`CREATE INDEX IF NOT EXISTS idx_datasets_name ON datasets(name)`,
 	`CREATE INDEX IF NOT EXISTS idx_datasets_owner ON datasets(owner_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_data_content_hash ON data(content_hash)`,
 	`CREATE INDEX IF NOT EXISTS idx_dataset_data_dataset ON dataset_data(dataset_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_graph_nodes_type ON graph_nodes(type)`,
+	`CREATE INDEX IF NOT EXISTS idx_graph_nodes_name ON graph_nodes(name)`,
+	`CREATE INDEX IF NOT EXISTS idx_graph_edges_source ON graph_edges(source_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_graph_edges_target ON graph_edges(target_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_graph_edges_rel ON graph_edges(relationship_name)`,
 }

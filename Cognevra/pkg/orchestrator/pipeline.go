@@ -15,6 +15,7 @@ package orchestrator
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -56,6 +57,8 @@ type Config struct {
 	Collection       string
 	Collections      *store.CollectionManager
 	GenerateTriplets bool
+	// PostgreSQL (for graph node/edge upsert)
+	DB *sql.DB
 }
 
 // Progress reports pipeline status.
@@ -292,6 +295,20 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 						}
 					}
 				}
+			}
+		}()
+	}
+
+	// PostgreSQL graph upsert (goroutine, parallel with Neo4j + vector)
+	if cfg.DB != nil {
+		writeWg.Add(1)
+		go func() {
+			defer writeWg.Done()
+			nw, ew, err := UpsertGraphToPostgres(ctx, cfg.DB, dedupResult.Nodes, dedupResult.Edges)
+			if err != nil {
+				log.Printf("[pipeline] pg upsert: %v", err)
+			} else {
+				log.Printf("[pipeline] pg upsert: %d nodes, %d edges", nw, ew)
 			}
 		}()
 	}
