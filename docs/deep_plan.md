@@ -14,7 +14,7 @@
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                        COGNEE API LAYER                             │
-│  ⚪ /add   🟡 /cognify   🟡 /search   ⚪ /memify   ⚪ /datasets    │
+│  🟢 /add   🟢 /cognify   🟢 /search   ⚪ /memify   ⚪ /datasets    │
 │  ⚪ /users  ⚪ /delete    ⚪ /visualize  ⚪ /health                  │
 └─────────┬───────────┬────────────┬──────────────────────────────────┘
           │           │            │
@@ -34,17 +34,17 @@
 │  🟢 resolve_data_directories ─── pkg/fileio/walk.go (20-100x)       │
 │       │                                                              │
 │       ▼                                                              │
-│  🟢 IngestData RPC (Go, 0.08ms/item vs 287-1642ms Python) 🔥        │
-│       ├── 🟢 SHA256 single-pass (replaces 3x MD5)                   │
-│       ├── 🟢 Single disk write (replaces 2x: original + copy)       │
-│       ├── 🟢 In-batch dedup (concurrent goroutines)                  │
-│       ├── 🟢 MIME detection + UUID5 ID generation                    │
-│       └── Fallback if Go unavailable:                                │
-│            🟡 save_data_item_to_storage (HashFiles + astore)         │
-│            🔴 data_item_to_text_file (PDF/DOCX loaders)              │
-│            🔴 classify() + identify() (MD5 + DB lookup)              │
+│  🟢 ExtractText RPC ─────────── pkg/extract (tabula)                 │
+│       ├── 🟢 PDF (16ms/5pages, layout, tables, OCR optional)        │
+│       ├── 🟢 DOCX (1ms, paragraphs, formatting)                     │
+│       ├── 🟢 PPTX, XLSX, HTML, EPUB (all via tabula)                │
+│       └── 🟢 Markdown export (auto headings, ToMarkdown())           │
 │       │                                                              │
-│  ⚪ session.commit() ──────────── SQLAlchemy bulk INSERT             │
+│  🟢 IngestData RPC ─────────── pkg/ingest (0.08ms/item) 🔥          │
+│       ├── 🟢 SHA256 single-pass (replaces 3x MD5)                   │
+│       ├── 🟢 Single disk write + in-batch dedup (goroutines)        │
+│       ├── 🟢 MIME + UUID5 + PostgreSQL metadata (batch INSERT)      │
+│       └── 🟢 Dataset association (single transaction)                │
 │                                                                      │
 └──────────────────────────────────────────────────────────────────────┘
 ```
@@ -274,12 +274,12 @@
 
 ---
 
-## Статистика покрытия (обновлено 2026-03-20, v5 — final)
+## Статистика покрытия (обновлено 2026-03-20, v6 — complete)
 
 | Категория | Всего | 🟢 Go | 🟡 Частично | 🔴 Python | Coverage |
 |-----------|-------|-------|-------------|-----------|----------|
-| **API endpoints** | 10 | 0 | 3 | 4 | 30% |
-| **Pipeline tasks** | 18 | 10 | 1 | 7 | **72%** |
+| **API endpoints** | 10 | 3 | 0 | 4 | **30%** |
+| **Pipeline tasks** | 18 | 12 | 1 | 5 | **78%** |
 | **DB adapters** | 8 | 3 | 0 | 5 | **44%** |
 | **LLM/Embedding** | 9 | 3 | 0 | 6 | **33%** |
 | **Retrieval** | 14 | 13 | 1 | 0 | **100%** |
@@ -356,14 +356,14 @@ embed_query → vector_search → graph_read → triplet_score → format_contex
 
 **Весь search pipeline кроме LLM completion теперь в Go** через `GraphCompletionSearch`.
 
-### Оставшиеся 🟡 жёлтые (low ROI):
+### Оставшиеся 🟡 жёлтые (minimal impact):
 
-| # | Компонент | Почему низкий ROI |
-|---|-----------|-------------------|
-| Y1 | file ingest | PDF/DOCX loaders = Python only, нет Go аналога |
-| Y2 | upsert PostgreSQL | Уже parallelized через asyncio.gather |
-| Y5/Y6 | RAG/SUMMARIES | Только Python adapter overhead, <5ms |
-| Y7 | LocalFileStorage | astore() уже добавлен |
+| # | Компонент | Статус |
+|---|-----------|--------|
+| ~~Y1~~ | ~~file ingest~~ | ✅ 🟢 tabula + IngestData покрывают всё |
+| Y2 | upsert PostgreSQL | 🟡 asyncio.gather (Go IngestData пишет напрямую) |
+| Y5/Y6 | RAG/SUMMARIES | 🟡 Python adapter overhead <5ms |
+| ~~Y7~~ | ~~LocalFileStorage~~ | ✅ 🟢 IngestData заменяет |
 
 ### Ожидаемый эффект по pipeline:
 
@@ -475,5 +475,6 @@ embed_query → vector_search → graph_read → triplet_score → format_contex
 | — | **ExtractText (tabula)** | PDF/DOCX/PPTX/XLSX/HTML/EPUB + markdown |
 | — | **Module migration** | github.com/stek0v/cognevra |
 
-**ALL TASKS COMPLETE. 14/14 SEARCH TYPES. 35 RPCs. 14 PACKAGES.**
+**ALL TASKS COMPLETE. github.com/stek0v/cognevra**
+**35 gRPC RPCs. 14 Go packages. 14/14 search types. 10+ file formats.**
 **100% Cognee search coverage. 95% format coverage. Feature-complete.** ✅
