@@ -21,11 +21,13 @@ import (
 // AuthConfig holds auth settings.
 type AuthConfig struct {
 	PostgresDSN string
-	JWTSecret   string // random secret for signing tokens
+	JWTSecret   string  // random secret for signing tokens
+	DB          *sql.DB // shared connection pool (nil if no PostgresDSN)
 }
 
 // RegisterAuthAPI registers /auth/login and /auth/register.
-func RegisterAuthAPI(app fiber.Router, cfg AuthConfig) {
+// It mutates cfg.JWTSecret in-place if empty (generates random secret).
+func RegisterAuthAPI(app fiber.Router, cfg *AuthConfig) {
 	if cfg.JWTSecret == "" {
 		// Generate random secret if not provided
 		b := make([]byte, 32)
@@ -33,8 +35,8 @@ func RegisterAuthAPI(app fiber.Router, cfg AuthConfig) {
 		cfg.JWTSecret = hex.EncodeToString(b)
 	}
 
-	app.Post("/auth/login", loginHandler(cfg))
-	app.Post("/auth/register", registerHandler(cfg))
+	app.Post("/auth/login", loginHandler(*cfg))
+	app.Post("/auth/register", registerHandler(*cfg))
 }
 
 // ── JWT helpers ──
@@ -137,20 +139,14 @@ func loginHandler(cfg AuthConfig) fiber.Handler {
 			return c.Status(400).JSON(fiber.Map{"detail": "email and password required"})
 		}
 
-		if cfg.PostgresDSN == "" {
+		if cfg.DB == nil {
 			// No DB — accept any credentials in dev mode
 			token := createJWT("dev-user", email, cfg.JWTSecret)
 			return c.JSON(fiber.Map{"access_token": token, "token_type": "bearer"})
 		}
 
-		db, err := sql.Open("postgres", cfg.PostgresDSN)
-		if err != nil {
-			return c.Status(500).JSON(fiber.Map{"detail": "db error"})
-		}
-		defer db.Close()
-
 		var userID, hashedPassword string
-		err = db.QueryRowContext(c.Context(),
+		err := cfg.DB.QueryRowContext(c.Context(),
 			"SELECT id, hashed_password FROM users WHERE email = $1", email).Scan(&userID, &hashedPassword)
 		if err != nil {
 			return c.Status(401).JSON(fiber.Map{"detail": "invalid credentials"})
@@ -182,18 +178,12 @@ func registerHandler(cfg AuthConfig) fiber.Handler {
 
 		userID := generateUUID()
 
-		if cfg.PostgresDSN != "" {
-			db, err := sql.Open("postgres", cfg.PostgresDSN)
-			if err != nil {
-				return c.Status(500).JSON(fiber.Map{"detail": "db error"})
-			}
-			defer db.Close()
-
+		if cfg.DB != nil {
 			// Insert into principals first (FK requirement)
-			_, _ = db.ExecContext(c.Context(),
+			_, _ = cfg.DB.ExecContext(c.Context(),
 				"INSERT INTO principals (id, type) VALUES ($1, 'user') ON CONFLICT DO NOTHING", userID)
 
-			_, err = db.ExecContext(c.Context(),
+			_, err = cfg.DB.ExecContext(c.Context(),
 				`INSERT INTO users (id, email, hashed_password, is_active, is_superuser, is_verified)
 				 VALUES ($1, $2, $3, true, false, false)`,
 				userID, req.Email, string(hashedPw))
@@ -222,11 +212,16 @@ func generateUUID() string {
 }
 
 // JWTMiddleware validates JWT token on protected routes.
-func JWTMiddleware(secret string) fiber.Handler {
+// If requireAuth is true, requests without a token are rejected (401).
+// If false, unauthenticated requests pass through (dev mode).
+func JWTMiddleware(secret string, requireAuth bool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		auth := c.Get("Authorization")
 		if auth == "" {
-			return c.Next() // allow unauthenticated in dev mode
+			if requireAuth {
+				return c.Status(401).JSON(fiber.Map{"detail": "authorization required"})
+			}
+			return c.Next() // dev mode: allow unauthenticated
 		}
 
 		token := strings.TrimPrefix(auth, "Bearer ")

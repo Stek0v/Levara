@@ -53,6 +53,11 @@ func NewService(collections *store.CollectionManager, cluster *store.Cluster, di
 	}
 }
 
+// BM25Indexes returns the shared BM25 index map for HTTP handlers.
+func (s *Service) BM25Indexes() map[string]*bm25.Index {
+	return s.bm25Indexes
+}
+
 func (s *Service) CreateCollection(_ context.Context, req *pb.CreateCollectionReq) (*pb.StatusResp, error) {
 	if req.Name == "" {
 		return &pb.StatusResp{Ok: false, Error: "name is required"}, nil

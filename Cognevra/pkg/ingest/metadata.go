@@ -13,7 +13,8 @@ import (
 // MetadataWriter writes ingestion metadata to PostgreSQL.
 // Replaces Python's 6 separate SQLAlchemy round-trips with 1-2 batch INSERTs.
 type MetadataWriter struct {
-	db *sql.DB
+	db    *sql.DB
+	owned bool // true if we created the connection and should close it
 }
 
 // NewMetadataWriter connects to PostgreSQL.
@@ -30,12 +31,20 @@ func NewMetadataWriter(dsn string) (*MetadataWriter, error) {
 		db.Close()
 		return nil, fmt.Errorf("postgres ping: %w", err)
 	}
-	return &MetadataWriter{db: db}, nil
+	return &MetadataWriter{db: db, owned: true}, nil
 }
 
-// Close the connection.
+// NewMetadataWriterFromDB wraps an existing connection pool (no Close needed).
+func NewMetadataWriterFromDB(db *sql.DB) *MetadataWriter {
+	return &MetadataWriter{db: db, owned: false}
+}
+
+// Close the connection (only if we own it).
 func (w *MetadataWriter) Close() error {
-	return w.db.Close()
+	if w.owned {
+		return w.db.Close()
+	}
+	return nil
 }
 
 // WriteMetadata writes Data records + dataset association in a single transaction.
