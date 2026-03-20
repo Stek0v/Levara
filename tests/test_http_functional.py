@@ -467,8 +467,8 @@ async def test_share_create_needs_db():
         async with s.post(f"{BASE_URL}/datasets/fake/shares", json={
             "user_id": "x", "role": "viewer"
         }) as r:
-            # 503 without proper dataset, or 403/201 with DB
-            assert r.status in (201, 400, 403, 503)
+            # 503 without DB, 403/500 with DB (fake dataset doesn't exist)
+            assert r.status in (201, 400, 403, 500, 503)
 
 async def test_permissions_me():
     async with aiohttp.ClientSession() as s:

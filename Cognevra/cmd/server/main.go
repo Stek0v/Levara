@@ -34,11 +34,13 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"flag"
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -50,6 +52,7 @@ import (
 	"github.com/stek0v/cognevra/internal/cluster"
 	vectorGrpc "github.com/stek0v/cognevra/internal/grpc"
 	"github.com/stek0v/cognevra/internal/store"
+	"github.com/stek0v/cognevra/pkg/graphdb"
 	"github.com/stek0v/cognevra/pkg/llmcache"
 	"github.com/stek0v/cognevra/pkg/llmproxy"
 	pb "github.com/stek0v/cognevra/proto/pb"
@@ -150,10 +153,11 @@ func main() {
 	handler := vectorHttp.NewHandler(c, *dim)
 	app.Get("/metrics", adaptor.HTTPHandler(promhttp.Handler()))
 
-	// Root-level health for frontend compatibility (Cognee frontend calls /health)
+	// Root-level health for frontend compatibility
 	app.Get("/health", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "ready", "health": "healthy", "version": "cognevra-go"})
 	})
+
 
 	// Cloud API compatibility: /api/datasets → /api/v1/datasets (cloudFetch strips /v1)
 	cloudApi := app.Group("/api")
@@ -269,6 +273,72 @@ func main() {
 		BM25Indexes:   grpcSvc.BM25Indexes(),
 	})
 	log.Printf("MCP server registered at POST /mcp (7 tools)")
+
+	// Detailed health endpoint — checks all dependencies (registered after all inits)
+	app.Get("/health/details", func(ctx *fiber.Ctx) error {
+		services := fiber.Map{}
+		services["backend"] = fiber.Map{"status": "connected", "version": "cognevra-go", "port": *port}
+
+		if pgDB != nil {
+			if err := pgDB.Ping(); err == nil {
+				services["postgres"] = fiber.Map{"status": "connected"}
+			} else {
+				services["postgres"] = fiber.Map{"status": "error", "error": err.Error()}
+			}
+		} else {
+			services["postgres"] = fiber.Map{"status": "not_configured"}
+		}
+
+		if *neo4jURL != "" {
+			// Actually try to connect
+			neoCtx, neoCancel := context.WithTimeout(context.Background(), 3*time.Second)
+			w, neoErr := graphdb.NewWriter(neoCtx, *neo4jURL, *neo4jUser, *neo4jPassword, *neo4jDatabase)
+			if neoErr == nil {
+				w.Close(neoCtx)
+				services["neo4j"] = fiber.Map{"status": "connected", "url": *neo4jURL}
+			} else {
+				services["neo4j"] = fiber.Map{"status": "unreachable", "url": *neo4jURL, "error": neoErr.Error()}
+			}
+			neoCancel()
+		} else {
+			services["neo4j"] = fiber.Map{"status": "not_configured"}
+		}
+
+		if embedEndpoint != "" {
+			resp, err := http.Get(embedEndpoint + "/health")
+			if err == nil {
+				resp.Body.Close()
+				if resp.StatusCode == 200 {
+					services["embed"] = fiber.Map{"status": "connected", "endpoint": embedEndpoint, "model": embedModel}
+				} else {
+					services["embed"] = fiber.Map{"status": "error", "endpoint": embedEndpoint, "code": resp.StatusCode}
+				}
+			} else {
+				services["embed"] = fiber.Map{"status": "unreachable", "endpoint": embedEndpoint}
+			}
+		} else {
+			services["embed"] = fiber.Map{"status": "not_configured"}
+		}
+
+		llmEP := os.Getenv("LLM_ENDPOINT")
+		llmMD := os.Getenv("LLM_MODEL")
+		if llmEP != "" {
+			resp, err := http.Get(llmEP + "/models")
+			if err == nil {
+				resp.Body.Close()
+				services["llm"] = fiber.Map{"status": "connected", "endpoint": llmEP, "model": llmMD}
+			} else {
+				services["llm"] = fiber.Map{"status": "unreachable", "endpoint": llmEP, "model": llmMD}
+			}
+		} else {
+			services["llm"] = fiber.Map{"status": "not_configured"}
+		}
+
+		services["collections"] = fiber.Map{"status": "ready", "count": len(colManager.List()), "dimension": *dim}
+		services["grpc"] = fiber.Map{"status": "listening", "port": *grpcPort}
+
+		return ctx.JSON(fiber.Map{"services": services})
+	})
 
 	// Start gRPC server (parallel to HTTP)
 	if *grpcPort > 0 {
