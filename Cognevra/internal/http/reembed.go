@@ -49,19 +49,19 @@ func reembedHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		var req reembedRequest
 		if err := c.BodyParser(&req); err != nil {
-			return c.Status(400).JSON(fiber.Map{"error": "invalid request"})
+			return c.Status(400).JSON(fiber.Map{"detail": "invalid request"})
 		}
 		if req.SourceCollection == "" || req.TargetCollection == "" {
-			return c.Status(400).JSON(fiber.Map{"error": "source_collection and target_collection required"})
+			return c.Status(400).JSON(fiber.Map{"detail": "source_collection and target_collection required"})
 		}
 		if req.SourceCollection == req.TargetCollection {
-			return c.Status(400).JSON(fiber.Map{"error": "source and target must be different"})
+			return c.Status(400).JSON(fiber.Map{"detail": "source and target must be different"})
 		}
 		if cfg.Collections == nil {
-			return c.Status(503).JSON(fiber.Map{"error": "collections not configured"})
+			return c.Status(503).JSON(fiber.Map{"detail": "collections not configured"})
 		}
 		if !cfg.Collections.Has(req.SourceCollection) {
-			return c.Status(404).JSON(fiber.Map{"error": fmt.Sprintf("source collection %q not found", req.SourceCollection)})
+			return c.Status(404).JSON(fiber.Map{"detail": fmt.Sprintf("source collection %q not found", req.SourceCollection)})
 		}
 
 		// Defaults
@@ -74,7 +74,7 @@ func reembedHandler(cfg APIConfig) fiber.Handler {
 			model = cfg.EmbedModel
 		}
 		if endpoint == "" || model == "" {
-			return c.Status(400).JSON(fiber.Map{"error": "target_model and embedding endpoint required"})
+			return c.Status(400).JSON(fiber.Map{"detail": "target_model and embedding endpoint required"})
 		}
 		if req.BatchSize <= 0 {
 			req.BatchSize = 50
@@ -213,7 +213,7 @@ func reembedStatusHandler() fiber.Handler {
 		if val, ok := reembedRuns.Load(runID); ok {
 			return c.JSON(val)
 		}
-		return c.Status(404).JSON(fiber.Map{"error": "run not found"})
+		return c.Status(404).JSON(fiber.Map{"detail": "run not found"})
 	}
 }
 

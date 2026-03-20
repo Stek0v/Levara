@@ -168,7 +168,7 @@ func datasetCreateHandler(cfg APIConfig) fiber.Handler {
 			Name string `json:"name"`
 		}
 		if err := c.BodyParser(&req); err != nil || req.Name == "" {
-			return c.Status(400).JSON(fiber.Map{"error": "name required"})
+			return c.Status(400).JSON(fiber.Map{"detail": "name required"})
 		}
 
 		id := uuid.New().String()
@@ -260,13 +260,13 @@ func datasetDataRawHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		dataID := c.Params("dataId")
 		if cfg.DB == nil {
-			return c.Status(404).JSON(fiber.Map{"error": "not found"})
+			return c.Status(404).JSON(fiber.Map{"detail": "not found"})
 		}
 
 		var location string
 		cfg.DB.QueryRowContext(c.Context(), "SELECT raw_data_location FROM data WHERE id = $1", dataID).Scan(&location)
 		if location == "" {
-			return c.Status(404).JSON(fiber.Map{"error": "not found"})
+			return c.Status(404).JSON(fiber.Map{"detail": "not found"})
 		}
 		// Convert file:// URI to path
 		path := strings.TrimPrefix(location, "file://")
@@ -297,16 +297,16 @@ func addHandler(cfg APIConfig) fiber.Handler {
 				items := []ingest.Item{{Text: string(body), DatasetName: datasetName}}
 				results, err := ingest.Ingest(items, cfg.StoragePath)
 				if err != nil {
-					return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+					return c.Status(500).JSON(fiber.Map{"detail": err.Error()})
 				}
 				return c.JSON(fiber.Map{"status": "ok", "items": len(results)})
 			}
-			return c.Status(400).JSON(fiber.Map{"error": "no data provided"})
+			return c.Status(400).JSON(fiber.Map{"detail": "no data provided"})
 		}
 
 		files := form.File["data"]
 		if len(files) == 0 {
-			return c.Status(400).JSON(fiber.Map{"error": "no files uploaded"})
+			return c.Status(400).JSON(fiber.Map{"detail": "no files uploaded"})
 		}
 
 		var items []ingest.Item
@@ -338,7 +338,7 @@ func addHandler(cfg APIConfig) fiber.Handler {
 
 		results, err := ingest.Ingest(items, cfg.StoragePath)
 		if err != nil {
-			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+			return c.Status(500).JSON(fiber.Map{"detail": err.Error()})
 		}
 
 		// Write metadata to PostgreSQL if configured
@@ -411,7 +411,7 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 		}
 
 		if len(texts) == 0 {
-			return c.Status(400).JSON(fiber.Map{"error": "no texts to cognify (provide texts[] or datasets[])"})
+			return c.Status(400).JSON(fiber.Map{"detail": "no texts to cognify (provide texts[] or datasets[])"})
 		}
 
 		runID := uuid.New().String()
@@ -492,7 +492,7 @@ func cognifyStatusHandler() fiber.Handler {
 		if val, ok := pipelineRuns.Load(runID); ok {
 			return c.JSON(val)
 		}
-		return c.Status(404).JSON(fiber.Map{"error": "run not found"})
+		return c.Status(404).JSON(fiber.Map{"detail": "run not found"})
 	}
 }
 
@@ -503,7 +503,7 @@ func cognifyStreamHandler() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		runID := c.Params("runId")
 		if _, ok := pipelineRuns.Load(runID); !ok {
-			return c.Status(404).JSON(fiber.Map{"error": "run not found"})
+			return c.Status(404).JSON(fiber.Map{"detail": "run not found"})
 		}
 
 		c.Set("Content-Type", "text/event-stream")
@@ -555,10 +555,10 @@ func searchHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		var req CogneeSearchRequest
 		if err := c.BodyParser(&req); err != nil {
-			return c.Status(400).JSON(fiber.Map{"error": "invalid request"})
+			return c.Status(400).JSON(fiber.Map{"detail": "invalid request"})
 		}
 		if req.QueryText == "" {
-			return c.Status(400).JSON(fiber.Map{"error": "query_text required"})
+			return c.Status(400).JSON(fiber.Map{"detail": "query_text required"})
 		}
 		if req.TopK <= 0 {
 			req.TopK = 10

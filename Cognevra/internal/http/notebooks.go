@@ -87,13 +87,13 @@ func notebookGetHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		id := c.Params("id")
 		if cfg.DB == nil {
-			return c.Status(404).JSON(fiber.Map{"error": "not found"})
+			return c.Status(404).JSON(fiber.Map{"detail": "not found"})
 		}
 		var name, owner string
 		err := cfg.DB.QueryRowContext(c.Context(),
 			`SELECT id, title, owner_id FROM notebooks WHERE id = $1`, id).Scan(&id, &name, &owner)
 		if err != nil {
-			return c.Status(404).JSON(fiber.Map{"error": "not found"})
+			return c.Status(404).JSON(fiber.Map{"detail": "not found"})
 		}
 		nb := NotebookDTO{ID: id, Name: name, Cells: []CellDTO{}, Deletable: true}
 		rows, err := cfg.DB.QueryContext(c.Context(),
@@ -244,7 +244,7 @@ func cellRunHandler(cfg APIConfig) fiber.Handler {
 		if req.Type != "" { cellType = req.Type }
 
 		if content == "" {
-			return c.Status(400).JSON(fiber.Map{"error": "empty cell"})
+			return c.Status(400).JSON(fiber.Map{"detail": "empty cell"})
 		}
 
 		var output string

@@ -8,7 +8,7 @@ import (
 func collectionCreateHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		if cfg.Collections == nil {
-			return c.Status(503).JSON(fiber.Map{"error": "collections not configured"})
+			return c.Status(503).JSON(fiber.Map{"detail": "collections not configured"})
 		}
 		var req struct {
 			Name           string `json:"name"`
@@ -17,10 +17,10 @@ func collectionCreateHandler(cfg APIConfig) fiber.Handler {
 			DistanceMetric string `json:"distance_metric"`
 		}
 		if err := c.BodyParser(&req); err != nil || req.Name == "" {
-			return c.Status(400).JSON(fiber.Map{"error": "name required"})
+			return c.Status(400).JSON(fiber.Map{"detail": "name required"})
 		}
 		if err := cfg.Collections.CreateWithDim(req.Name, req.EmbeddingDim, req.EmbeddingModel, req.DistanceMetric); err != nil {
-			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+			return c.Status(500).JSON(fiber.Map{"detail": err.Error()})
 		}
 		return c.Status(201).JSON(cfg.Collections.GetMeta(req.Name))
 	}
@@ -39,11 +39,11 @@ func collectionMetaHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		name := c.Params("name")
 		if cfg.Collections == nil {
-			return c.Status(404).JSON(fiber.Map{"error": "collections not configured"})
+			return c.Status(404).JSON(fiber.Map{"detail": "collections not configured"})
 		}
 		meta := cfg.Collections.GetMeta(name)
 		if meta == nil {
-			return c.Status(404).JSON(fiber.Map{"error": "collection not found"})
+			return c.Status(404).JSON(fiber.Map{"detail": "collection not found"})
 		}
 		return c.JSON(meta)
 	}
@@ -53,7 +53,7 @@ func collectionMetaUpdateHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		name := c.Params("name")
 		if cfg.Collections == nil {
-			return c.Status(404).JSON(fiber.Map{"error": "collections not configured"})
+			return c.Status(404).JSON(fiber.Map{"detail": "collections not configured"})
 		}
 
 		var req struct {
@@ -64,7 +64,7 @@ func collectionMetaUpdateHandler(cfg APIConfig) fiber.Handler {
 		c.BodyParser(&req)
 
 		if err := cfg.Collections.UpdateMeta(name, req.EmbeddingModel, req.DistanceMetric, req.EmbeddingVersion); err != nil {
-			return c.Status(404).JSON(fiber.Map{"error": err.Error()})
+			return c.Status(404).JSON(fiber.Map{"detail": err.Error()})
 		}
 
 		return c.JSON(cfg.Collections.GetMeta(name))

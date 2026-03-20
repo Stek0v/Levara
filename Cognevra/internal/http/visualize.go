@@ -45,7 +45,7 @@ type GraphDTO struct {
 func DatasetGraph(cfg GraphVisualizationConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		if cfg.Neo4jURL == "" {
-			return c.Status(503).JSON(fiber.Map{"error": "Neo4j not configured"})
+			return c.Status(503).JSON(fiber.Map{"detail": "Neo4j not configured"})
 		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -53,13 +53,13 @@ func DatasetGraph(cfg GraphVisualizationConfig) fiber.Handler {
 
 		writer, err := graphdb.NewWriter(ctx, cfg.Neo4jURL, cfg.Neo4jUser, cfg.Neo4jPassword, cfg.Neo4jDatabase)
 		if err != nil {
-			return c.Status(503).JSON(fiber.Map{"error": fmt.Sprintf("neo4j: %v", err)})
+			return c.Status(503).JSON(fiber.Map{"detail": fmt.Sprintf("neo4j: %v", err)})
 		}
 		defer writer.Close(ctx)
 
 		result, err := writer.ReadFullGraph(ctx)
 		if err != nil {
-			return c.Status(500).JSON(fiber.Map{"error": fmt.Sprintf("read graph: %v", err)})
+			return c.Status(500).JSON(fiber.Map{"detail": fmt.Sprintf("read graph: %v", err)})
 		}
 
 		dto := GraphDTO{
