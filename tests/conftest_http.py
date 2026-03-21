@@ -143,7 +143,24 @@ def vid():
     return unique_id()
 
 
+_server_dim = None
+
+def get_server_dim():
+    """Detect server vector dimension from /info endpoint."""
+    global _server_dim
+    if _server_dim is not None:
+        return _server_dim
+    import urllib.request, json
+    try:
+        with urllib.request.urlopen(f"{BASE_URL}/info", timeout=3) as r:
+            data = json.loads(r.read())
+            _server_dim = data.get("dimension", 128)
+    except Exception:
+        _server_dim = 128
+    return _server_dim
+
+
 @pytest.fixture
 def vec():
-    """Random 128-dim vector."""
-    return sample_vector(128)
+    """Random vector matching server dimension."""
+    return sample_vector(get_server_dim())

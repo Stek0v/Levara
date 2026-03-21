@@ -6,7 +6,7 @@ import aiohttp
 from conftest_http import BASE_URL, sample_vector, unique_id
 
 pytestmark = pytest.mark.asyncio
-DIM = 1024
+from conftest_http import get_server_dim; DIM = get_server_dim()
 
 
 async def test_concurrent_health():
