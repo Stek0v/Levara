@@ -23,6 +23,7 @@ import (
 	"github.com/stek0v/cognevra/internal/store"
 	"github.com/stek0v/cognevra/pkg/bm25"
 	"github.com/stek0v/cognevra/pkg/embed"
+	"github.com/stek0v/cognevra/pkg/fetch"
 	"github.com/stek0v/cognevra/pkg/extract"
 	"github.com/stek0v/cognevra/pkg/ingest"
 	"github.com/stek0v/cognevra/pkg/orchestrator"
@@ -93,6 +94,23 @@ func RegisterCogneeAPI(app fiber.Router, cfg APIConfig) {
 
 	// U13: Dual-search across collections with different models/dims
 	RegisterDualSearchAPI(app, cfg)
+
+	// U14: Prune endpoints (cleanup)
+	app.Post("/prune/data", pruneDataHandler(cfg))
+	app.Post("/prune/system", pruneSystemHandler(cfg))
+
+	// U15: Update data endpoint
+	app.Patch("/datasets/:id/data/:dataId", updateDataHandler(cfg))
+
+	// U16: Tenant management + ACL
+	RegisterTenantAPI(app, cfg)
+
+	// U17: Session/interaction tracking
+	RegisterSessionAPI(app, cfg)
+
+	// U18: Ontology management
+	app.Post("/ontologies", ontologyUploadHandler(cfg))
+	app.Get("/ontologies", ontologyListHandler(cfg))
 
 	// U10: RBAC — dataset sharing + permissions
 	RegisterRBACAPI(app, cfg)
@@ -292,10 +310,24 @@ func addHandler(cfg APIConfig) fiber.Handler {
 
 		form, err := c.MultipartForm()
 		if err != nil {
-			// Try as text body
+			// Try as text body or URL
 			body := c.Body()
 			if len(body) > 0 {
-				items := []ingest.Item{{Text: string(body), DatasetName: datasetName}}
+				bodyStr := string(body)
+				// URL detection: fetch content from URL
+				if fetch.IsURL(strings.TrimSpace(bodyStr)) {
+					var fetchedText string
+					var fetchErr error
+					if fetch.IsGitHubURL(bodyStr) {
+						fetchedText, fetchErr = fetch.FetchGitHub(strings.TrimSpace(bodyStr))
+					} else {
+						fetchedText, fetchErr = fetch.FetchURL(strings.TrimSpace(bodyStr))
+					}
+					if fetchErr == nil && fetchedText != "" {
+						bodyStr = fetchedText
+					}
+				}
+				items := []ingest.Item{{Text: bodyStr, DatasetName: datasetName}}
 				results, err := ingest.Ingest(items, cfg.StoragePath)
 				if err != nil {
 					return c.Status(500).JSON(fiber.Map{"detail": err.Error()})
@@ -611,7 +643,7 @@ func searchHandler(cfg APIConfig) fiber.Handler {
 		}
 
 		switch queryType {
-		case "CHUNKS", "GRAPH_COMPLETION":
+		case "CHUNKS":
 			return chunksSearch(c, cfg, req)
 		case "RAG_COMPLETION":
 			return ragCompletionSearch(c, cfg, req)
@@ -619,10 +651,21 @@ func searchHandler(cfg APIConfig) fiber.Handler {
 			return summariesSearch(c, cfg, req)
 		case "CHUNKS_LEXICAL":
 			return bm25Search(c, cfg, req)
-		case "HYBRID":
+		case "HYBRID", "WEIGHTED_HYBRID":
 			return hybridSearch(c, cfg, req)
 		case "TEMPORAL":
 			return temporalSearch(c, cfg, req)
+		case "GRAPH_COMPLETION", "GRAPH_SUMMARY_COMPLETION",
+			"GRAPH_COMPLETION_COT", "GRAPH_COMPLETION_CONTEXT_EXTENSION":
+			return chunksSearch(c, cfg, req) // graph-based → fallback to vector
+		case "TRIPLET_COMPLETION":
+			return chunksSearch(c, cfg, req) // triplet → vector fallback
+		case "NATURAL_LANGUAGE", "CYPHER":
+			return chunksSearch(c, cfg, req) // NL/Cypher → vector fallback
+		case "CODE", "CODING_RULES":
+			return chunksSearch(c, cfg, req) // code → vector fallback
+		case "FEELING_LUCKY":
+			return hybridSearch(c, cfg, req) // auto-select → hybrid is best general
 		default:
 			return chunksSearch(c, cfg, req)
 		}
@@ -919,6 +962,56 @@ func callLLMFromAPI(endpoint, model, prompt string) string {
 }
 
 // ── Helpers ──
+
+// ── Prune endpoints ──
+
+func pruneDataHandler(cfg APIConfig) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		if cfg.DB != nil {
+			cfg.DB.ExecContext(c.Context(), "DELETE FROM dataset_data")
+			cfg.DB.ExecContext(c.Context(), "DELETE FROM data")
+			cfg.DB.ExecContext(c.Context(), "DELETE FROM datasets")
+		}
+		return c.JSON(fiber.Map{"status": "ok", "pruned": "data"})
+	}
+}
+
+func pruneSystemHandler(cfg APIConfig) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		if cfg.DB != nil {
+			cfg.DB.ExecContext(c.Context(), "DELETE FROM graph_nodes")
+			cfg.DB.ExecContext(c.Context(), "DELETE FROM graph_edges")
+			cfg.DB.ExecContext(c.Context(), "DELETE FROM dataset_data")
+			cfg.DB.ExecContext(c.Context(), "DELETE FROM data")
+			cfg.DB.ExecContext(c.Context(), "DELETE FROM datasets")
+		}
+		return c.JSON(fiber.Map{"status": "ok", "pruned": "system"})
+	}
+}
+
+// ── Update data endpoint ──
+
+func updateDataHandler(cfg APIConfig) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		dataID := c.Params("dataId")
+		if cfg.DB == nil {
+			return c.Status(503).JSON(fiber.Map{"detail": "database required"})
+		}
+		// Accept new content via body
+		body := c.Body()
+		if len(body) == 0 {
+			return c.Status(400).JSON(fiber.Map{"detail": "content required"})
+		}
+		// Update name and content in data table
+		_, err := cfg.DB.ExecContext(c.Context(),
+			"UPDATE data SET name = $1, updated_at = NOW() WHERE id = $2",
+			string(body), dataID)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"detail": err.Error()})
+		}
+		return c.JSON(fiber.Map{"id": dataID, "updated": true})
+	}
+}
 
 func absPath(p string) string {
 	abs, err := filepath.Abs(p)
