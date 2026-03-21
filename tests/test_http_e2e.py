@@ -146,8 +146,8 @@ async def test_notebook_cell_execution():
         }) as r:
             assert r.status == 200
             data = await r.json()
-            assert "output" in data
-            assert "collections" in data["output"]
+            assert "result" in data
+            assert "collections" in data["result"]
 
         # Cleanup
         await s.delete(f"{BASE_URL}/notebooks/{nb_id}")

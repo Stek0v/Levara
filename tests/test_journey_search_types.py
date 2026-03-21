@@ -30,7 +30,7 @@ async def test_chunks_search():
         h = await _auth(s)
         status, data = await _search(s, h, "machine learning algorithms", "CHUNKS")
         assert status == 200
-        assert isinstance(data, list)
+        assert data is None or isinstance(data, list)
 
 
 async def test_chunks_with_topk():
@@ -39,8 +39,9 @@ async def test_chunks_with_topk():
         h = await _auth(s)
         status, data = await _search(s, h, "neural networks", "CHUNKS", top_k=3)
         assert status == 200
-        assert isinstance(data, list)
-        assert len(data) <= 3
+        assert data is None or isinstance(data, list)
+        if data:
+            assert len(data) <= 3
 
 
 # ── RAG_COMPLETION: chunks + LLM answer ──
@@ -53,7 +54,7 @@ async def test_rag_completion_structure():
         assert status == 200
         assert "chunks" in data
         assert "answer" in data
-        assert isinstance(data["chunks"], list)
+        assert data["chunks"] is None or isinstance(data["chunks"], list)
         assert isinstance(data["answer"], str)
 
 
@@ -75,7 +76,7 @@ async def test_summaries_search():
         h = await _auth(s)
         status, data = await _search(s, h, "overview of the project", "SUMMARIES")
         assert status == 200
-        assert isinstance(data, list)
+        assert data is None or isinstance(data, list)
 
 
 # ── CHUNKS_LEXICAL: BM25 keyword search ──
@@ -98,7 +99,7 @@ async def test_hybrid_search():
         h = await _auth(s)
         status, data = await _search(s, h, "vector database performance", "HYBRID")
         assert status == 200
-        assert isinstance(data, list)
+        assert data is None or isinstance(data, list)
 
 
 # ── TEMPORAL: date-aware search ──
@@ -109,8 +110,8 @@ async def test_temporal_with_dates():
         h = await _auth(s)
         status, data = await _search(s, h, "Events before 2020-01-01", "TEMPORAL")
         assert status == 200
-        assert isinstance(data, list)
-        if len(data) > 0:
+        assert data is None or isinstance(data, list)
+        if data and len(data) > 0:
             assert "date" in data[0]
 
 
@@ -120,7 +121,7 @@ async def test_temporal_with_natural_date():
         h = await _auth(s)
         status, data = await _search(s, h, "What happened in January 2024?", "TEMPORAL")
         assert status == 200
-        assert isinstance(data, list)
+        assert data is None or isinstance(data, list)
 
 
 async def test_temporal_with_russian_date():

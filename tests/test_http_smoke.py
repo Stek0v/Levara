@@ -3,9 +3,10 @@ Requires only the Go server running, no PostgreSQL/Neo4j/embed-server.
 """
 import pytest
 import aiohttp
-from conftest_http import BASE_URL, sample_vector, unique_id
+from conftest_http import BASE_URL, sample_vector, unique_id, get_server_dim
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.smoke]
+DIM = get_server_dim()
 
 
 # ── Public endpoints ──
