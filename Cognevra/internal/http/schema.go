@@ -160,4 +160,69 @@ var schemaStatements = []string{
 	`CREATE INDEX IF NOT EXISTS idx_graph_edges_rel ON graph_edges(relationship_name)`,
 	`CREATE INDEX IF NOT EXISTS idx_notebooks_owner ON notebooks(owner_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_notebook_cells_notebook ON notebook_cells(notebook_id)`,
+
+	// Tenants
+	`CREATE TABLE IF NOT EXISTS tenants (
+		id TEXT PRIMARY KEY,
+		name TEXT NOT NULL UNIQUE,
+		owner_id TEXT NOT NULL DEFAULT '',
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	)`,
+
+	// User-Tenant junction
+	`CREATE TABLE IF NOT EXISTS user_tenant (
+		user_id TEXT NOT NULL,
+		tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+		PRIMARY KEY (user_id, tenant_id)
+	)`,
+
+	// Roles
+	`CREATE TABLE IF NOT EXISTS roles (
+		id TEXT PRIMARY KEY,
+		name TEXT NOT NULL,
+		tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	)`,
+
+	// User-Role junction
+	`CREATE TABLE IF NOT EXISTS user_role (
+		user_id TEXT NOT NULL,
+		role_id TEXT NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+		PRIMARY KEY (user_id, role_id)
+	)`,
+
+	// ACL (Access Control List)
+	`CREATE TABLE IF NOT EXISTS acl (
+		id TEXT PRIMARY KEY,
+		principal_id TEXT NOT NULL,
+		dataset_id TEXT NOT NULL,
+		permission_type TEXT NOT NULL DEFAULT 'read',
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		UNIQUE(principal_id, dataset_id, permission_type)
+	)`,
+
+	// Interactions (session tracking)
+	`CREATE TABLE IF NOT EXISTS interactions (
+		id TEXT PRIMARY KEY,
+		session_id TEXT NOT NULL DEFAULT '',
+		user_id TEXT NOT NULL DEFAULT '',
+		query TEXT NOT NULL DEFAULT '',
+		response TEXT NOT NULL DEFAULT '',
+		search_type TEXT NOT NULL DEFAULT '',
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	)`,
+
+	// Ontologies
+	`CREATE TABLE IF NOT EXISTS ontologies (
+		id TEXT PRIMARY KEY,
+		name TEXT NOT NULL UNIQUE,
+		file_path TEXT NOT NULL DEFAULT '',
+		format TEXT NOT NULL DEFAULT 'rdf/xml',
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS idx_acl_principal ON acl(principal_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_acl_dataset ON acl(dataset_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_interactions_session ON interactions(session_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_user_tenant_user ON user_tenant(user_id)`,
 }
