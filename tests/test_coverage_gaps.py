@@ -726,3 +726,305 @@ async def test_metrics_endpoint():
             assert r.status == 200
             text = await r.text()
             assert "cognevra" in text.lower() or "go_" in text or "process_" in text
+
+
+# ═══════════════════════════════════════════════════════════
+# NEW FEATURES: URL/GitHub Ingestion
+# Docs: https://docs.cognee.ai/core-concepts/main-operations/add
+# ═══════════════════════════════════════════════════════════
+
+async def test_add_url():
+    """POST /add with HTTP URL → fetch page → ingest text."""
+    async with aiohttp.ClientSession() as s:
+        h, _ = await _auth(s)
+        async with s.post(f"{BASE_URL}/add",
+            data="https://docs.cognee.ai/",
+            headers={**h, "Content-Type": "text/plain"}) as r:
+            assert r.status == 200
+            data = await r.json()
+            assert data["status"] == "ok"
+            assert data["items"] >= 1
+
+
+async def test_add_github_url():
+    """POST /add with GitHub URL → fetch README."""
+    async with aiohttp.ClientSession() as s:
+        h, _ = await _auth(s)
+        async with s.post(f"{BASE_URL}/add",
+            data="https://github.com/topoteretes/cognee",
+            headers={**h, "Content-Type": "text/plain"}) as r:
+            assert r.status == 200
+
+
+async def test_add_invalid_url():
+    """POST /add with broken URL → fallback to raw text."""
+    async with aiohttp.ClientSession() as s:
+        h, _ = await _auth(s)
+        async with s.post(f"{BASE_URL}/add",
+            data="http://nonexistent-domain-xyz-12345.invalid/page",
+            headers={**h, "Content-Type": "text/plain"}) as r:
+            # Should still succeed — fallback to raw URL string as text
+            assert r.status == 200
+
+
+async def test_add_url_returns_dataset():
+    """URL upload returns dataset_id."""
+    async with aiohttp.ClientSession() as s:
+        h, _ = await _auth(s)
+        async with s.post(f"{BASE_URL}/add",
+            data="https://example.com",
+            headers={**h, "Content-Type": "text/plain"}) as r:
+            assert r.status == 200
+            data = await r.json()
+            assert "dataset_id" in data
+
+
+# ═══════════════════════════════════════════════════════════
+# NEW FEATURES: Prune endpoints
+# Docs: https://docs.cognee.ai/core-concepts/main-operations/add
+# ═══════════════════════════════════════════════════════════
+
+async def test_prune_data():
+    """POST /prune/data → clears datasets and data."""
+    async with aiohttp.ClientSession() as s:
+        h, _ = await _auth(s)
+        async with s.post(f"{BASE_URL}/prune/data", headers=h) as r:
+            assert r.status == 200
+            data = await r.json()
+            assert data["pruned"] == "data"
+
+
+async def test_prune_system():
+    """POST /prune/system → clears graph + vector + data."""
+    async with aiohttp.ClientSession() as s:
+        h, _ = await _auth(s)
+        async with s.post(f"{BASE_URL}/prune/system", headers=h) as r:
+            assert r.status == 200
+            assert (await r.json())["pruned"] == "system"
+
+
+# ═══════════════════════════════════════════════════════════
+# NEW FEATURES: Update data endpoint
+# ═══════════════════════════════════════════════════════════
+
+async def test_update_data():
+    """PATCH /datasets/:id/data/:dataId → update content."""
+    async with aiohttp.ClientSession() as s:
+        h, _ = await _auth(s)
+        async with s.patch(f"{BASE_URL}/datasets/fake-ds/data/fake-data",
+            data="Updated content",
+            headers={**h, "Content-Type": "text/plain"}) as r:
+            # May return 200 (updated) or 500 (no such data_id)
+            assert r.status in (200, 500)
+
+
+async def test_update_data_empty_body():
+    """PATCH with empty body → 400."""
+    async with aiohttp.ClientSession() as s:
+        h, _ = await _auth(s)
+        async with s.patch(f"{BASE_URL}/datasets/fake/data/fake",
+            data=b"",
+            headers={**h, "Content-Type": "text/plain"}) as r:
+            assert r.status == 400
+
+
+# ═══════════════════════════════════════════════════════════
+# NEW FEATURES: Tenant management
+# Docs: https://docs.cognee.ai/core-concepts/multi-user-mode/permissions-system/overview
+# ═══════════════════════════════════════════════════════════
+
+async def test_create_tenant():
+    """POST /tenants {name} → 201."""
+    async with aiohttp.ClientSession() as s:
+        h, _ = await _auth(s)
+        async with s.post(f"{BASE_URL}/tenants", json={
+            "name": f"tenant_{unique_id()}"
+        }, headers=h) as r:
+            assert r.status == 201
+            data = await r.json()
+            assert "id" in data
+            assert "name" in data
+
+
+async def test_list_tenants():
+    """GET /tenants → array."""
+    async with aiohttp.ClientSession() as s:
+        h, _ = await _auth(s)
+        async with s.get(f"{BASE_URL}/tenants", headers=h) as r:
+            assert r.status == 200
+            assert isinstance(await r.json(), list)
+
+
+async def test_add_user_to_tenant():
+    """POST /tenants/:id/users → add user."""
+    async with aiohttp.ClientSession() as s:
+        h, _ = await _auth(s)
+        # Create tenant
+        async with s.post(f"{BASE_URL}/tenants", json={"name": f"t_{unique_id()}"}, headers=h) as r:
+            tid = (await r.json())["id"]
+        # Add user
+        async with s.post(f"{BASE_URL}/tenants/{tid}/users", json={
+            "user_id": "test-user-123"
+        }, headers=h) as r:
+            assert r.status == 201
+            assert (await r.json())["added"] == True
+
+
+async def test_remove_user_from_tenant():
+    """DELETE /tenants/:id/users/:uid → remove user."""
+    async with aiohttp.ClientSession() as s:
+        h, _ = await _auth(s)
+        async with s.delete(f"{BASE_URL}/tenants/fake/users/fake-user", headers=h) as r:
+            assert r.status == 200
+            assert (await r.json())["removed"] == True
+
+
+async def test_acl_grant_and_check():
+    """POST /acl → grant, GET /acl/check → verify."""
+    async with aiohttp.ClientSession() as s:
+        h, _ = await _auth(s)
+        # Grant
+        async with s.post(f"{BASE_URL}/acl", json={
+            "principal_id": "user-123",
+            "dataset_id": "ds-456",
+            "permission_type": "read",
+        }, headers=h) as r:
+            assert r.status == 201
+        # Check
+        async with s.get(f"{BASE_URL}/acl/check?user_id=user-123&dataset_id=ds-456", headers=h) as r:
+            assert r.status == 200
+            data = await r.json()
+            assert data["permissions"]["read"] == True
+
+
+async def test_acl_invalid_permission():
+    """POST /acl with invalid permission_type → 400."""
+    async with aiohttp.ClientSession() as s:
+        h, _ = await _auth(s)
+        async with s.post(f"{BASE_URL}/acl", json={
+            "principal_id": "x", "dataset_id": "y", "permission_type": "superadmin",
+        }, headers=h) as r:
+            assert r.status == 400
+
+
+# ═══════════════════════════════════════════════════════════
+# NEW FEATURES: Session/Interaction tracking
+# Docs: https://docs.cognee.ai/core-concepts/main-operations/search
+# ═══════════════════════════════════════════════════════════
+
+async def test_save_interaction():
+    """POST /interactions → save query+response."""
+    async with aiohttp.ClientSession() as s:
+        h, _ = await _auth(s)
+        async with s.post(f"{BASE_URL}/interactions", json={
+            "session_id": f"sess_{unique_id()}",
+            "query": "What is HNSW?",
+            "response": "HNSW is a graph-based ANN algorithm.",
+            "search_type": "CHUNKS",
+        }, headers=h) as r:
+            assert r.status == 201
+            data = await r.json()
+            assert data["saved"] == True
+            assert "session_id" in data
+
+
+async def test_list_interactions():
+    """GET /interactions → array of user's history."""
+    async with aiohttp.ClientSession() as s:
+        h, _ = await _auth(s)
+        async with s.get(f"{BASE_URL}/interactions", headers=h) as r:
+            assert r.status == 200
+            assert isinstance(await r.json(), list)
+
+
+async def test_get_session_history():
+    """GET /interactions/:sessionId → session entries."""
+    async with aiohttp.ClientSession() as s:
+        h, _ = await _auth(s)
+        sid = f"hist_{unique_id()}"
+        # Save two interactions
+        await s.post(f"{BASE_URL}/interactions", json={"session_id": sid, "query": "Q1", "response": "A1"}, headers=h)
+        await s.post(f"{BASE_URL}/interactions", json={"session_id": sid, "query": "Q2", "response": "A2"}, headers=h)
+        # Get session
+        async with s.get(f"{BASE_URL}/interactions/{sid}", headers=h) as r:
+            assert r.status == 200
+            items = await r.json()
+            assert len(items) >= 2
+
+
+async def test_interaction_auto_session():
+    """POST /interactions without session_id → auto-generated."""
+    async with aiohttp.ClientSession() as s:
+        h, _ = await _auth(s)
+        async with s.post(f"{BASE_URL}/interactions", json={
+            "query": "auto session test",
+        }, headers=h) as r:
+            assert r.status == 201
+            data = await r.json()
+            assert "session_id" in data
+            assert len(data["session_id"]) > 10
+
+
+# ═══════════════════════════════════════════════════════════
+# NEW FEATURES: Ontology management
+# Docs: https://docs.cognee.ai/core-concepts/main-operations/cognify
+# ═══════════════════════════════════════════════════════════
+
+async def test_upload_ontology():
+    """POST /ontologies → upload .owl file."""
+    owl_content = b"""<?xml version="1.0"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+         xmlns:owl="http://www.w3.org/2002/07/owl#"
+         xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#">
+  <owl:Class rdf:about="#Database">
+    <rdfs:label>Database</rdfs:label>
+    <rdfs:comment>A system for storing data</rdfs:comment>
+  </owl:Class>
+  <owl:Class rdf:about="#VectorDatabase">
+    <rdfs:label>Vector Database</rdfs:label>
+    <rdfs:subClassOf rdf:resource="#Database"/>
+  </owl:Class>
+</rdf:RDF>"""
+    async with aiohttp.ClientSession() as s:
+        h, _ = await _auth(s)
+        form = aiohttp.FormData()
+        form.add_field("file", owl_content, filename="test.owl", content_type="application/rdf+xml")
+        form.add_field("name", "test_ontology")
+        async with s.post(f"{BASE_URL}/ontologies", data=form, headers=h) as r:
+            assert r.status == 201
+            data = await r.json()
+            assert data["name"] == "test_ontology"
+            assert data["format"] == "rdf/xml"
+
+
+async def test_list_ontologies():
+    """GET /ontologies → array."""
+    async with aiohttp.ClientSession() as s:
+        h, _ = await _auth(s)
+        async with s.get(f"{BASE_URL}/ontologies", headers=h) as r:
+            assert r.status == 200
+            assert isinstance(await r.json(), list)
+
+
+# ═══════════════════════════════════════════════════════════
+# NEW FEATURES: All 15 search types
+# Docs: https://docs.cognee.ai/core-concepts/main-operations/search
+# ═══════════════════════════════════════════════════════════
+
+async def test_all_15_search_types():
+    """Every documented Cognee search type returns 200."""
+    all_types = [
+        "CHUNKS", "RAG_COMPLETION", "SUMMARIES", "CHUNKS_LEXICAL",
+        "HYBRID", "WEIGHTED_HYBRID", "TEMPORAL",
+        "GRAPH_COMPLETION", "GRAPH_SUMMARY_COMPLETION",
+        "GRAPH_COMPLETION_COT", "GRAPH_COMPLETION_CONTEXT_EXTENSION",
+        "TRIPLET_COMPLETION", "NATURAL_LANGUAGE", "CYPHER",
+        "CODE", "CODING_RULES", "FEELING_LUCKY",
+    ]
+    async with aiohttp.ClientSession() as s:
+        h, _ = await _auth(s)
+        for qt in all_types:
+            async with s.post(f"{BASE_URL}/search/text", json={
+                "query_text": "test", "query_type": qt, "top_k": 3,
+            }, headers=h) as r:
+                assert r.status == 200, f"{qt} returned {r.status}"
