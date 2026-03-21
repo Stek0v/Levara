@@ -48,6 +48,8 @@ func DatasetGraph(cfg GraphVisualizationConfig) fiber.Handler {
 			return c.Status(503).JSON(fiber.Map{"detail": "Neo4j not configured"})
 		}
 
+		datasetID := c.Params("id")
+
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
@@ -62,12 +64,32 @@ func DatasetGraph(cfg GraphVisualizationConfig) fiber.Handler {
 			return c.Status(500).JSON(fiber.Map{"detail": fmt.Sprintf("read graph: %v", err)})
 		}
 
-		dto := GraphDTO{
-			Nodes: make([]GraphNodeDTO, len(result.Nodes)),
-			Edges: make([]GraphEdgeDTO, len(result.Edges)),
+		// Filter nodes by dataset_id if present
+		var filteredNodes []graphdb.ReadNode
+		nodeIDSet := make(map[string]bool)
+		for _, n := range result.Nodes {
+			dsID, _ := n.Properties["dataset_id"].(string)
+			if dsID == "" || dsID == datasetID {
+				filteredNodes = append(filteredNodes, n)
+				nodeIDSet[n.ID] = true
+			}
 		}
 
-		for i, n := range result.Nodes {
+		// Filter edges — only keep edges where both source and target are in filtered nodes
+		var filteredEdges []graphdb.ReadEdge
+		for _, e := range result.Edges {
+			dsID, _ := e.Properties["dataset_id"].(string)
+			if (dsID == "" || dsID == datasetID) && nodeIDSet[e.SourceID] && nodeIDSet[e.TargetID] {
+				filteredEdges = append(filteredEdges, e)
+			}
+		}
+
+		dto := GraphDTO{
+			Nodes: make([]GraphNodeDTO, len(filteredNodes)),
+			Edges: make([]GraphEdgeDTO, len(filteredEdges)),
+		}
+
+		for i, n := range filteredNodes {
 			name := bestNodeLabel(n)
 			dto.Nodes[i] = GraphNodeDTO{
 				ID:         n.ID,
@@ -77,7 +99,7 @@ func DatasetGraph(cfg GraphVisualizationConfig) fiber.Handler {
 			}
 		}
 
-		for i, e := range result.Edges {
+		for i, e := range filteredEdges {
 			dto.Edges[i] = GraphEdgeDTO{
 				Source: e.SourceID,
 				Target: e.TargetID,
