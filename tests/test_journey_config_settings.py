@@ -155,12 +155,12 @@ async def test_notebook_create():
     async with aiohttp.ClientSession() as s:
         h = await _auth(s)
         async with s.post(f"{BASE_URL}/notebooks", json={
-            "title": f"My Research {unique_id()}"
+            "name": f"My Research {unique_id()}"
         }, headers=h) as r:
             assert r.status == 201
             data = await r.json()
             assert "id" in data
-            assert "title" in data
+            assert "name" in data
 
 
 async def test_notebook_list():
@@ -176,7 +176,7 @@ async def test_notebook_add_cell():
     """User adds a cell to a notebook."""
     async with aiohttp.ClientSession() as s:
         h = await _auth(s)
-        async with s.post(f"{BASE_URL}/notebooks", json={"title": "CellTest"}, headers=h) as r:
+        async with s.post(f"{BASE_URL}/notebooks", json={"name": "CellTest"}, headers=h) as r:
             nb_id = (await r.json())["id"]
 
         async with s.post(f"{BASE_URL}/notebooks/{nb_id}/cells", json={
@@ -184,14 +184,14 @@ async def test_notebook_add_cell():
         }, headers=h) as r:
             assert r.status == 201
             data = await r.json()
-            assert data["cell_type"] == "code"
+            assert data["type"] == "code"
 
 
 async def test_notebook_run_code_cell():
     """User runs a code cell with 'stats' command."""
     async with aiohttp.ClientSession() as s:
         h = await _auth(s)
-        async with s.post(f"{BASE_URL}/notebooks", json={"title": "RunTest"}, headers=h) as r:
+        async with s.post(f"{BASE_URL}/notebooks", json={"name": "RunTest"}, headers=h) as r:
             nb_id = (await r.json())["id"]
         async with s.post(f"{BASE_URL}/notebooks/{nb_id}/cells", json={
             "cell_type": "code", "source": "stats"
@@ -202,15 +202,15 @@ async def test_notebook_run_code_cell():
             json={"cell_type": "code", "source": "stats"}, headers=h) as r:
             assert r.status == 200
             data = await r.json()
-            assert "output" in data
-            assert "collections" in data["output"]
+            assert "result" in data
+            assert "collections" in data["result"]
 
 
 async def test_notebook_run_collections_cell():
     """User runs a cell to list collections."""
     async with aiohttp.ClientSession() as s:
         h = await _auth(s)
-        async with s.post(f"{BASE_URL}/notebooks", json={"title": "CollTest"}, headers=h) as r:
+        async with s.post(f"{BASE_URL}/notebooks", json={"name": "CollTest"}, headers=h) as r:
             nb_id = (await r.json())["id"]
         async with s.post(f"{BASE_URL}/notebooks/{nb_id}/cells", json={
             "cell_type": "code", "source": "collections"
@@ -220,7 +220,7 @@ async def test_notebook_run_collections_cell():
         async with s.post(f"{BASE_URL}/notebooks/{nb_id}/cells/{cell_id}/run",
             json={"cell_type": "code", "source": "collections"}, headers=h) as r:
             assert r.status == 200
-            output = (await r.json())["output"]
+            output = (await r.json())["result"]
             assert "[" in output  # JSON array
 
 
@@ -228,7 +228,7 @@ async def test_notebook_run_env_cell():
     """User runs a cell to check environment."""
     async with aiohttp.ClientSession() as s:
         h = await _auth(s)
-        async with s.post(f"{BASE_URL}/notebooks", json={"title": "EnvTest"}, headers=h) as r:
+        async with s.post(f"{BASE_URL}/notebooks", json={"name": "EnvTest"}, headers=h) as r:
             nb_id = (await r.json())["id"]
         async with s.post(f"{BASE_URL}/notebooks/{nb_id}/cells", json={
             "cell_type": "code", "source": "env"
@@ -238,7 +238,7 @@ async def test_notebook_run_env_cell():
         async with s.post(f"{BASE_URL}/notebooks/{nb_id}/cells/{cell_id}/run",
             json={"cell_type": "code", "source": "env"}, headers=h) as r:
             assert r.status == 200
-            output = (await r.json())["output"]
+            output = (await r.json())["result"]
             assert "LLM_ENDPOINT" in output
 
 
@@ -246,9 +246,9 @@ async def test_notebook_update_title():
     """User renames a notebook."""
     async with aiohttp.ClientSession() as s:
         h = await _auth(s)
-        async with s.post(f"{BASE_URL}/notebooks", json={"title": "OldTitle"}, headers=h) as r:
+        async with s.post(f"{BASE_URL}/notebooks", json={"name": "OldTitle"}, headers=h) as r:
             nb_id = (await r.json())["id"]
-        async with s.put(f"{BASE_URL}/notebooks/{nb_id}", json={"title": "NewTitle"}, headers=h) as r:
+        async with s.put(f"{BASE_URL}/notebooks/{nb_id}", json={"name": "NewTitle"}, headers=h) as r:
             assert r.status == 200
 
 
@@ -256,7 +256,7 @@ async def test_notebook_delete():
     """User deletes a notebook."""
     async with aiohttp.ClientSession() as s:
         h = await _auth(s)
-        async with s.post(f"{BASE_URL}/notebooks", json={"title": "ToDelete"}, headers=h) as r:
+        async with s.post(f"{BASE_URL}/notebooks", json={"name": "ToDelete"}, headers=h) as r:
             nb_id = (await r.json())["id"]
         async with s.delete(f"{BASE_URL}/notebooks/{nb_id}", headers=h) as r:
             assert r.status == 200
@@ -267,7 +267,7 @@ async def test_notebook_markdown_cell():
     """Markdown cells pass through source as output."""
     async with aiohttp.ClientSession() as s:
         h = await _auth(s)
-        async with s.post(f"{BASE_URL}/notebooks", json={"title": "MdTest"}, headers=h) as r:
+        async with s.post(f"{BASE_URL}/notebooks", json={"name": "MdTest"}, headers=h) as r:
             nb_id = (await r.json())["id"]
         async with s.post(f"{BASE_URL}/notebooks/{nb_id}/cells", json={
             "cell_type": "markdown", "source": "# Hello World"
@@ -277,4 +277,4 @@ async def test_notebook_markdown_cell():
         async with s.post(f"{BASE_URL}/notebooks/{nb_id}/cells/{cell_id}/run",
             json={"cell_type": "markdown", "source": "# Hello World"}, headers=h) as r:
             assert r.status == 200
-            assert (await r.json())["output"] == "# Hello World"
+            assert (await r.json())["result"] == "# Hello World"

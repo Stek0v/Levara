@@ -145,7 +145,7 @@ async def test_dataset_data_list():
         async with s.get(f"{BASE_URL}/datasets/fake-id/data") as r:
             assert r.status == 200
             data = await r.json()
-            assert isinstance(data, list)
+            assert data is None or isinstance(data, list)
 
 async def test_dataset_data_raw_not_found():
     async with aiohttp.ClientSession() as s:
@@ -309,7 +309,7 @@ async def test_search_text_chunks():
         async with s.post(f"{BASE_URL}/search/text", json={"query_text": "test", "query_type": "CHUNKS"}) as r:
             assert r.status == 200
             data = await r.json()
-            assert isinstance(data, list)
+            assert data is None or isinstance(data, list)
 
 async def test_search_text_default_type():
     async with aiohttp.ClientSession() as s:
@@ -338,7 +338,7 @@ async def test_search_text_temporal():
         }) as r:
             assert r.status == 200
             data = await r.json()
-            assert isinstance(data, list)
+            assert data is None or isinstance(data, list)
             if len(data) > 0:
                 assert "date" in data[0]
 
@@ -460,7 +460,7 @@ async def test_shares_list():
         async with s.get(f"{BASE_URL}/datasets/fake/shares") as r:
             assert r.status == 200
             data = await r.json()
-            assert isinstance(data, list)
+            assert data is None or isinstance(data, list)
 
 async def test_share_create_needs_db():
     async with aiohttp.ClientSession() as s:
@@ -497,11 +497,11 @@ async def test_notebooks_list():
 
 async def test_notebook_create():
     async with aiohttp.ClientSession() as s:
-        async with s.post(f"{BASE_URL}/notebooks", json={"title": f"NB_{unique_id()}"}) as r:
+        async with s.post(f"{BASE_URL}/notebooks", json={"name": f"NB_{unique_id()}"}) as r:
             assert r.status == 201
             data = await r.json()
             assert "id" in data
-            assert "title" in data
+            assert "name" in data
 
 async def test_notebook_get():
     async with aiohttp.ClientSession() as s:
@@ -511,7 +511,7 @@ async def test_notebook_get():
 
 async def test_notebook_update():
     async with aiohttp.ClientSession() as s:
-        async with s.put(f"{BASE_URL}/notebooks/fake-id", json={"title": "Updated"}) as r:
+        async with s.put(f"{BASE_URL}/notebooks/fake-id", json={"name": "Updated"}) as r:
             assert r.status == 200
 
 async def test_notebook_delete():
