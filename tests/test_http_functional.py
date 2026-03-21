@@ -6,7 +6,7 @@ import aiohttp
 from conftest_http import BASE_URL, sample_vector, unique_id
 
 pytestmark = pytest.mark.asyncio
-DIM = 1024
+from conftest_http import get_server_dim; DIM = get_server_dim()
 
 # Helper: get auth token
 async def _get_token(s, email=None, password="funcpass123"):

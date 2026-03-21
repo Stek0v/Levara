@@ -80,7 +80,7 @@ async def test_login():
 
 async def test_insert_and_search():
     vid = unique_id("smoke")
-    vec = sample_vector(1024)
+    vec = sample_vector(DIM)
     async with aiohttp.ClientSession() as s:
         # Insert
         async with s.post(f"{BASE_URL}/insert", json={
@@ -104,7 +104,7 @@ async def test_insert_and_search():
 
 async def test_batch_insert():
     ids = [unique_id("smoke_batch") for _ in range(3)]
-    records = [{"id": i, "vector": sample_vector(1024), "data": "{}"} for i in ids]
+    records = [{"id": i, "vector": sample_vector(DIM), "data": "{}"} for i in ids]
     async with aiohttp.ClientSession() as s:
         async with s.post(f"{BASE_URL}/batch_insert", json={"records": records}) as r:
             assert r.status == 200
@@ -117,7 +117,7 @@ async def test_batch_insert():
 
 async def test_delete():
     vid = unique_id("smoke_del")
-    vec = sample_vector(1024)
+    vec = sample_vector(DIM)
     async with aiohttp.ClientSession() as s:
         await s.post(f"{BASE_URL}/insert", json={"id": vid, "vector": vec, "data": "{}"})
         async with s.post(f"{BASE_URL}/delete", json={"ids": [vid]}) as r:
