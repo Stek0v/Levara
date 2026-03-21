@@ -134,7 +134,7 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 		edgeCount atomic.Int32
 	)
 
-	httpClient := &http.Client{Timeout: 120 * time.Second}
+	httpClient := &http.Client{Timeout: 300 * time.Second}
 
 	sem := make(chan struct{}, cfg.LLMConcurrency)
 	var wg sync.WaitGroup

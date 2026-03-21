@@ -471,7 +471,7 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 		// Build orchestrator config from server config + request overrides
 		pipeCfg := orchestrator.Config{
 			ChunkStrategy:   "merged",
-			MinChunkChars:   200,
+			MinChunkChars:   50,
 			MaxChunkChars:   2000,
 			LLMEndpoint:     os.Getenv("LLM_ENDPOINT"),
 			LLMModel:        os.Getenv("LLM_MODEL"),
