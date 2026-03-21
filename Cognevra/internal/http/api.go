@@ -475,7 +475,7 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 			MaxChunkChars:   2000,
 			LLMEndpoint:     os.Getenv("LLM_ENDPOINT"),
 			LLMModel:        os.Getenv("LLM_MODEL"),
-			LLMConcurrency:  4,
+			LLMConcurrency:  1,
 			EmbedEndpoint:   cfg.EmbedEndpoint,
 			EmbedModel:      cfg.EmbedModel,
 			Neo4jURL:        cfg.Neo4jCfg.Neo4jURL,
