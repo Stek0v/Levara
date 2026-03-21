@@ -57,6 +57,8 @@ type Config struct {
 	Collection       string
 	Collections      *store.CollectionManager
 	GenerateTriplets bool
+	// Dataset tracking
+	DatasetID string
 	// PostgreSQL (for graph node/edge upsert)
 	DB *sql.DB
 }
@@ -220,7 +222,7 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 			for i, n := range dedupResult.Nodes {
 				neoNodes[i] = graphdb.NodeRecord{
 					ID: n.ID, Label: n.Type,
-					Properties: map[string]any{"name": n.Name, "description": n.Description, "type": n.Type},
+					Properties: map[string]any{"name": n.Name, "description": n.Description, "type": n.Type, "dataset_id": cfg.DatasetID},
 				}
 			}
 			neoEdges := make([]graphdb.EdgeRecord, len(dedupResult.Edges))
@@ -228,7 +230,7 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 				neoEdges[i] = graphdb.EdgeRecord{
 					SourceID: e.SourceID, TargetID: e.TargetID,
 					RelationshipName: e.RelationshipName,
-					Properties:       map[string]any{"edge_text": e.EdgeText},
+					Properties:       map[string]any{"edge_text": e.EdgeText, "dataset_id": cfg.DatasetID},
 				}
 			}
 

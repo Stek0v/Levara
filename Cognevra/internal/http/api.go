@@ -485,6 +485,7 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 			Collection:      collection,
 			Collections:     cfg.Collections,
 			GenerateTriplets: true,
+			DatasetID:       func() string { if len(allDatasetIDs) > 0 { return allDatasetIDs[0] }; return runID }(),
 			DB:              cfg.DB,
 		}
 		if req.LLMModel != "" {
