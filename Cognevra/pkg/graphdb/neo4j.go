@@ -445,6 +445,32 @@ func (w *Writer) ReadSubgraph(ctx context.Context, label string, names []string)
 	return result, nil
 }
 
+// Query executes an arbitrary Cypher query and returns rows as []map[string]any.
+func (w *Writer) Query(ctx context.Context, cypher string, params map[string]any) ([]map[string]any, error) {
+	session := w.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: w.database})
+	defer session.Close(ctx)
+
+	res, err := session.Run(ctx, cypher, params)
+	if err != nil {
+		return nil, fmt.Errorf("cypher query: %w", err)
+	}
+
+	var rows []map[string]any
+	for res.Next(ctx) {
+		rec := res.Record()
+		row := make(map[string]any, len(rec.Keys))
+		for _, key := range rec.Keys {
+			val, _ := rec.Get(key)
+			row[key] = val
+		}
+		rows = append(rows, row)
+	}
+	if err := res.Err(); err != nil {
+		return rows, fmt.Errorf("cypher iterate: %w", err)
+	}
+	return rows, nil
+}
+
 func toStringMap(v any) map[string]any {
 	if m, ok := v.(map[string]any); ok {
 		return m

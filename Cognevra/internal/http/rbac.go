@@ -3,6 +3,7 @@
 package http
 
 import (
+	"context"
 	"database/sql"
 	"time"
 
@@ -214,6 +215,38 @@ func permissionsMeHandler(cfg APIConfig) fiber.Handler {
 			"shares":       shares,
 		})
 	}
+}
+
+// GetAllowedDatasetIDs returns all dataset IDs that the user owns or has been shared.
+// Returns nil if db is nil or userID is empty (dev mode = no filtering).
+// Superusers (is_superuser=true) get nil (= see everything).
+func GetAllowedDatasetIDs(db *sql.DB, ctx context.Context, userID string) []string {
+	if db == nil || userID == "" {
+		return nil // nil = no filtering (dev mode)
+	}
+
+	// Superuser bypass: see all datasets
+	var isSuperuser bool
+	db.QueryRowContext(ctx, "SELECT COALESCE(is_superuser, false) FROM users WHERE id = $1", userID).Scan(&isSuperuser)
+	if isSuperuser {
+		return nil // nil = no filtering
+	}
+
+	rows, err := db.QueryContext(ctx,
+		`SELECT DISTINCT d.id FROM datasets d
+		 LEFT JOIN dataset_shares s ON s.dataset_id = d.id AND s.user_id = $1
+		 WHERE d.owner_id = $1 OR d.owner_id = '' OR d.owner_id IS NULL OR s.id IS NOT NULL`, userID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		rows.Scan(&id)
+		ids = append(ids, id)
+	}
+	return ids
 }
 
 // CheckDatasetAccess verifies the user can access a dataset (owner, shared, or no-auth mode).

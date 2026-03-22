@@ -7,12 +7,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/stek0v/cognevra/pkg/embed"
+	"github.com/stek0v/cognevra/pkg/ingest"
+	"github.com/stek0v/cognevra/pkg/orchestrator"
 	"github.com/stek0v/cognevra/pipeline"
 )
 
@@ -258,13 +261,70 @@ func (h *mcpHandler) toolCognify(ctx context.Context, args map[string]any) mcpTo
 	}
 	pipelineRuns.Store(runID, status)
 
-	// Run in background
+	// Validate that embedding service is configured
+	if h.cfg.EmbedEndpoint == "" {
+		status.Status = "FAILED"
+		status.Message = "Embedding service not configured (EMBED_ENDPOINT)"
+		return mcpToolResult{
+			Content: []mcpContent{{Type: "text", Text: "Error: embedding service not configured"}},
+			IsError: true,
+		}
+	}
+
+	// Collect texts: from data arg, or from dataset files via DB
+	texts := []string{data}
+
+	// Build orchestrator config (mirrors cognifyHandler in api.go)
+	pipeCfg := orchestrator.Config{
+		ChunkStrategy:    "merged",
+		MinChunkChars:    50,
+		MaxChunkChars:    2000,
+		LLMEndpoint:      os.Getenv("LLM_ENDPOINT"),
+		LLMModel:         os.Getenv("LLM_MODEL"),
+		LLMConcurrency:   1,
+		EmbedEndpoint:    h.cfg.EmbedEndpoint,
+		EmbedModel:       h.cfg.EmbedModel,
+		Neo4jURL:         h.cfg.Neo4jCfg.Neo4jURL,
+		Neo4jUser:        h.cfg.Neo4jCfg.Neo4jUser,
+		Neo4jPassword:    h.cfg.Neo4jCfg.Neo4jPassword,
+		Neo4jDatabase:    h.cfg.Neo4jCfg.Neo4jDatabase,
+		Collection:       collection,
+		Collections:      h.cfg.Collections,
+		GenerateTriplets: true,
+		DatasetID:        runID,
+		DB:               h.cfg.DB,
+		LLMCache:            h.cfg.LLMCache,
+		UseStructuredOutput: func() *bool { b := true; return &b }(),
+	}
+	if cp, _ := args["custom_prompt"].(string); cp != "" {
+		pipeCfg.SystemPrompt = cp
+	}
+
+	// Run pipeline in background
 	go func() {
-		// Simple: just store status, actual pipeline needs LLM/embed
-		time.Sleep(100 * time.Millisecond)
-		status.Status = "COMPLETED"
-		status.Stage = "complete"
-		status.Message = "Cognify completed"
+		progressCh := make(chan orchestrator.Progress, 100)
+		errCh := make(chan error, 1)
+
+		go func() {
+			errCh <- orchestrator.Run(context.Background(), texts, pipeCfg, progressCh)
+		}()
+
+		// Track progress
+		for p := range progressCh {
+			status.Stage = p.Stage
+			status.Message = p.Message
+			status.Chunks = p.ChunksCreated
+			status.Entities = p.EntitiesExtracted
+			status.Edges = p.EdgesExtracted
+			status.ElapsedMs = p.ElapsedMs
+		}
+
+		if err := <-errCh; err != nil {
+			status.Status = "FAILED"
+			status.Message = err.Error()
+		} else {
+			status.Status = "COMPLETED"
+		}
 		status.ElapsedMs = time.Since(status.StartedAt).Milliseconds()
 	}()
 
@@ -405,19 +465,32 @@ func (h *mcpHandler) toolAdd(ctx context.Context, args map[string]any) mcpToolRe
 		datasetName = "default"
 	}
 
-	// Use ingest package
-	items := []ingestItem{{text: data, datasetName: datasetName}}
-	_ = items // placeholder: actual ingest would go through pkg/ingest
+	// Ingest data to disk via pkg/ingest
+	storagePath := h.cfg.StoragePath
+	if storagePath == "" {
+		storagePath = "data/uploads"
+	}
+
+	items := []ingest.Item{{Text: data, DatasetName: datasetName}}
+	results, err := ingest.Ingest(items, storagePath)
+	if err != nil {
+		return mcpToolResult{
+			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("Ingest error: %s", err.Error())}},
+			IsError: true,
+		}
+	}
+
+	// Write metadata to PostgreSQL if configured
+	dsID := uuid.New().String()
+	if h.cfg.DB != nil {
+		mw := ingest.NewMetadataWriterFromDB(h.cfg.DB)
+		mw.WriteMetadata(context.Background(), results, "" /* ownerID */, dsID, datasetName)
+	}
 
 	return mcpToolResult{Content: []mcpContent{{
 		Type: "text",
-		Text: fmt.Sprintf("Data ingested into dataset '%s'. Use 'cognify' tool to build knowledge graph.", datasetName),
+		Text: fmt.Sprintf("Data ingested into dataset '%s' (dataset_id: %s, items: %d). Use 'cognify' tool to build knowledge graph.", datasetName, dsID, len(results)),
 	}}}
-}
-
-type ingestItem struct {
-	text        string
-	datasetName string
 }
 
 // handleSSE is a placeholder for SSE transport.

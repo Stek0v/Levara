@@ -49,6 +49,17 @@ func collectionMetaHandler(cfg APIConfig) fiber.Handler {
 	}
 }
 
+func collectionDeleteHandler(cfg APIConfig) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		name := c.Params("name")
+		if cfg.Collections == nil {
+			return c.SendStatus(204)
+		}
+		cfg.Collections.Drop(name)
+		return c.SendStatus(204)
+	}
+}
+
 func collectionMetaUpdateHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		name := c.Params("name")

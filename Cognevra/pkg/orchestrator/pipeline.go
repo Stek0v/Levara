@@ -27,8 +27,12 @@ import (
 	"time"
 
 	"github.com/stek0v/cognevra/pkg/chunker"
+	"github.com/stek0v/cognevra/pkg/classify"
 	"github.com/stek0v/cognevra/pkg/graph"
 	"github.com/stek0v/cognevra/pkg/graphdb"
+	"github.com/stek0v/cognevra/pkg/llm"
+	"github.com/stek0v/cognevra/pkg/llmcache"
+	"github.com/stek0v/cognevra/pkg/temporal"
 	"github.com/stek0v/cognevra/internal/store"
 	"github.com/stek0v/cognevra/pkg/embed"
 )
@@ -36,7 +40,7 @@ import (
 // Config for the pipeline.
 type Config struct {
 	// Chunking
-	ChunkStrategy string // "merged", "paragraph", "sentence"
+	ChunkStrategy string // "merged", "paragraph", "sentence", "row", "auto"
 	MinChunkChars int
 	MaxChunkChars int
 	// LLM
@@ -61,6 +65,14 @@ type Config struct {
 	DatasetID string
 	// PostgreSQL (for graph node/edge upsert)
 	DB *sql.DB
+	// LLM response cache (optional, nil = no caching)
+	LLMCache llmcache.LLMCacher
+	// UseStructuredOutput enables JSON Schema mode for LLM extraction (default: true)
+	UseStructuredOutput *bool
+	// LLMProvider (optional): multi-provider abstraction (OpenAI, Anthropic, etc.)
+	// If set, extractEntities uses Provider.ChatCompletion instead of raw HTTP.
+	// If nil, falls back to existing raw HTTP logic (backward compatible).
+	LLMProvider llm.Provider
 }
 
 // Progress reports pipeline status.
@@ -81,6 +93,52 @@ type Progress struct {
 type ExtractedGraph struct {
 	Nodes []graph.DedupNode
 	Edges []graph.DedupEdge
+}
+
+// TextItem carries text content along with its source filename for classification.
+type TextItem struct {
+	Text     string
+	Filename string // optional: used by "auto" chunk strategy for extension-based classification
+}
+
+// RunWithItems executes the pipeline with filename metadata for auto-classification.
+// When ChunkStrategy is "auto", each item is classified by filename extension and
+// content heuristics, then chunked with the appropriate strategy.
+// For non-auto strategies, delegates directly to Run.
+func RunWithItems(ctx context.Context, items []TextItem, cfg Config, progressCh chan<- Progress) error {
+	if cfg.ChunkStrategy != "auto" {
+		texts := make([]string, len(items))
+		for i, it := range items {
+			texts[i] = it.Text
+		}
+		return Run(ctx, texts, cfg, progressCh)
+	}
+
+	// Auto mode with filenames: pre-chunk each item using classification,
+	// then pass pre-chunked texts to Run with permissive limits so they pass through as-is.
+	var preChunked []string
+	for i, item := range items {
+		docID := fmt.Sprintf("doc-%d", i)
+		cr := classify.Classify(item.Filename, []byte(item.Text))
+		var chunks []chunker.Chunk
+		switch cr.RecommendedChunker {
+		case "row":
+			chunks = chunker.ChunkByRow(item.Text, 20, docID)
+		case "sentence":
+			chunks = chunker.ChunkBySentence(item.Text, cr.MinChunkChars, cr.MaxChunkChars, docID)
+		default:
+			chunks = chunker.ChunkByParagraphMerged(item.Text, cr.MinChunkChars, cr.MaxChunkChars, docID)
+		}
+		for _, c := range chunks {
+			preChunked = append(preChunked, c.Text)
+		}
+	}
+
+	// Run with merged strategy + permissive limits so pre-chunked texts pass through.
+	cfg.ChunkStrategy = "merged"
+	cfg.MinChunkChars = 1
+	cfg.MaxChunkChars = 999999
+	return Run(ctx, preChunked, cfg, progressCh)
 }
 
 // Run executes the full cognify pipeline and sends progress updates.
@@ -112,7 +170,29 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 
 	var allChunks []indexedChunk
 	for i, text := range texts {
-		chunks := chunker.ChunkByParagraphMerged(text, cfg.MinChunkChars, cfg.MaxChunkChars, fmt.Sprintf("doc-%d", i))
+		docID := fmt.Sprintf("doc-%d", i)
+		var chunks []chunker.Chunk
+
+		switch cfg.ChunkStrategy {
+		case "auto":
+			// Content-based classification (no filename available, use heuristics only)
+			cr := classify.Classify("", []byte(text))
+			switch cr.RecommendedChunker {
+			case "row":
+				chunks = chunker.ChunkByRow(text, 20, docID)
+			case "sentence":
+				chunks = chunker.ChunkBySentence(text, cr.MinChunkChars, cr.MaxChunkChars, docID)
+			default:
+				chunks = chunker.ChunkByParagraphMerged(text, cr.MinChunkChars, cr.MaxChunkChars, docID)
+			}
+		case "sentence":
+			chunks = chunker.ChunkBySentence(text, cfg.MinChunkChars, cfg.MaxChunkChars, docID)
+		case "row":
+			chunks = chunker.ChunkByRow(text, 20, docID)
+		default: // "merged", "paragraph"
+			chunks = chunker.ChunkByParagraphMerged(text, cfg.MinChunkChars, cfg.MaxChunkChars, docID)
+		}
+
 		for _, c := range chunks {
 			allChunks = append(allChunks, indexedChunk{id: c.ID, text: c.Text, idx: i})
 		}
@@ -200,6 +280,63 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 		ElapsedMs: ms(start),
 	}
 
+	// --- Stage 3b: Temporal extraction (optional, fast, no LLM) ---
+	// For each chunk, extract timestamps and link them to entities found in that chunk.
+	temporalNodesAdded := 0
+	temporalEdgesAdded := 0
+	{
+		// Build a map: chunk index → entity IDs extracted from that chunk.
+		// Since extraction is concurrent and we don't track per-chunk results,
+		// we do temporal extraction on the full text of each original document
+		// and link to ALL deduped entities (conservative approach).
+		now := time.Now()
+		existingNodeIDs := make([]string, len(dedupResult.Nodes))
+		for i, n := range dedupResult.Nodes {
+			existingNodeIDs[i] = n.ID
+		}
+
+		temporalNodesSeen := make(map[string]bool)
+		for _, chunk := range allChunks {
+			events := temporal.ExtractTimestamps(chunk.text, now)
+			if len(events) == 0 {
+				continue
+			}
+
+			// Find entity IDs that were extracted from this chunk's parent document.
+			// Since we can't track per-chunk entity mapping (concurrent extraction),
+			// use all entities for now. This creates more edges but ensures coverage.
+			tNodes, tEdges := temporal.LinkEventsToEntities(events, existingNodeIDs)
+
+			for _, tn := range tNodes {
+				if temporalNodesSeen[tn.ID] {
+					continue
+				}
+				temporalNodesSeen[tn.ID] = true
+				dedupResult.Nodes = append(dedupResult.Nodes, graph.DedupNode{
+					ID:          tn.ID,
+					Name:        tn.Name,
+					Type:        tn.Type,
+					Description: tn.Description,
+					Properties:  map[string]string{"date": tn.DateISO},
+				})
+				temporalNodesAdded++
+			}
+			for _, te := range tEdges {
+				dedupResult.Edges = append(dedupResult.Edges, graph.DedupEdge{
+					SourceID:         te.SourceID,
+					TargetID:         te.TargetID,
+					RelationshipName: te.RelationshipName,
+					EdgeText:         te.EdgeText,
+				})
+				temporalEdgesAdded++
+			}
+		}
+
+		if temporalNodesAdded > 0 {
+			log.Printf("[pipeline] temporal: %d temporal nodes, %d HAPPENED_AT edges", temporalNodesAdded, temporalEdgesAdded)
+		}
+	}
+
 	// --- Stage 4: Write to DBs (parallel: Neo4j + vector) ---
 	progressCh <- Progress{Stage: "writing", ElapsedMs: ms(start)}
 
@@ -220,9 +357,16 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 
 			neoNodes := make([]graphdb.NodeRecord, len(dedupResult.Nodes))
 			for i, n := range dedupResult.Nodes {
+				props := map[string]any{"name": n.Name, "description": n.Description, "type": n.Type, "dataset_id": cfg.DatasetID}
+				// Add date property for TemporalEvent nodes
+				if n.Type == "TemporalEvent" && n.Properties != nil {
+					if dateStr, ok := n.Properties["date"]; ok && dateStr != "" {
+						props["date"] = dateStr
+					}
+				}
 				neoNodes[i] = graphdb.NodeRecord{
 					ID: n.ID, Label: n.Type,
-					Properties: map[string]any{"name": n.Name, "description": n.Description, "type": n.Type, "dataset_id": cfg.DatasetID},
+					Properties: props,
 				}
 			}
 			neoEdges := make([]graphdb.EdgeRecord, len(dedupResult.Edges))
@@ -273,7 +417,7 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 				}
 				for i, n := range dedupResult.Nodes {
 					if i < len(vecs) {
-						meta := fmt.Sprintf(`{"name":"%s","type":"%s"}`, n.Name, n.Type)
+						meta := fmt.Sprintf(`{"name":"%s","type":"%s","dataset_id":"%s"}`, n.Name, n.Type, cfg.DatasetID)
 						cfg.Collections.Insert(coll, n.ID, vecs[i], meta)
 					}
 				}
@@ -292,7 +436,7 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 				if tvecs, err := embedClient.EmbedTexts(ctx, tripletTexts); err == nil {
 					for i, t := range dedupResult.Triplets {
 						if i < len(tvecs) {
-							meta := fmt.Sprintf(`{"from":"%s","to":"%s"}`, t.FromNodeID, t.ToNodeID)
+							meta := fmt.Sprintf(`{"from":"%s","to":"%s","dataset_id":"%s"}`, t.FromNodeID, t.ToNodeID, cfg.DatasetID)
 							cfg.Collections.Insert(tripletColl, t.ID, tvecs[i], meta)
 						}
 					}
@@ -330,13 +474,81 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 	return nil
 }
 
+// useStructuredOutput returns whether structured output mode is enabled.
+// Defaults to true if UseStructuredOutput is nil.
+func useStructuredOutput(cfg Config) bool {
+	if cfg.UseStructuredOutput == nil {
+		return true
+	}
+	return *cfg.UseStructuredOutput
+}
+
 // extractEntities calls LLM to extract entities and relationships from text.
+// Uses LLMCache if configured — cache hit avoids HTTP call entirely.
+// When structured output is enabled (default), tries JSON Schema mode first,
+// then falls back to regex parsing on failure.
 func extractEntities(ctx context.Context, client *http.Client, cfg Config, text string) ([]graph.DedupNode, []graph.DedupEdge, error) {
 	sysPrompt := cfg.SystemPrompt
 	if sysPrompt == "" {
 		sysPrompt = defaultExtractionPrompt
 	}
 
+	// --- LLM Cache: check before HTTP call ---
+	var cacheKey string
+	if cfg.LLMCache != nil {
+		cacheKey = llmcache.Key(cfg.LLMModel, text, sysPrompt, cfg.Temperature)
+		if cached, ok := cfg.LLMCache.Get(cacheKey); ok {
+			return parseEntities(cached)
+		}
+	}
+
+	// --- Structured output: try JSON Schema mode first ---
+	if useStructuredOutput(cfg) && cfg.LLMEndpoint != "" && cfg.LLMModel != "" {
+		result, err := llm.StructuredCall(ctx, llm.StructuredRequest{
+			Endpoint:       cfg.LLMEndpoint,
+			Model:          cfg.LLMModel,
+			SystemPrompt:   sysPrompt,
+			UserPrompt:     text,
+			Temperature:    cfg.Temperature,
+			ResponseSchema: llm.KnowledgeGraphSchema,
+			MaxRetries:     3,
+			Client:         client,
+			Provider:       cfg.LLMProvider, // nil = legacy HTTP, non-nil = use provider
+		})
+		if err == nil {
+			// Cache the structured result
+			if cfg.LLMCache != nil && cacheKey != "" {
+				cfg.LLMCache.Put(cacheKey, result, cfg.LLMModel)
+			}
+			return parseEntities(result)
+		}
+		log.Printf("[pipeline] structured output failed, fallback to regex: %v", err)
+		// Fall through to regular call
+	}
+
+	// --- Fallback: regular LLM call without response_format ---
+
+	// If provider is available, use it for the fallback path too.
+	if cfg.LLMProvider != nil {
+		provResp, provErr := cfg.LLMProvider.ChatCompletion(ctx, llm.CompletionRequest{
+			Model: cfg.LLMModel,
+			Messages: []llm.Message{
+				{Role: "system", Content: sysPrompt},
+				{Role: "user", Content: text},
+			},
+			Temperature: cfg.Temperature,
+		})
+		if provErr != nil {
+			return nil, nil, fmt.Errorf("LLM provider call: %w", provErr)
+		}
+		content := provResp.Content
+		if cfg.LLMCache != nil && cacheKey != "" {
+			cfg.LLMCache.Put(cacheKey, content, cfg.LLMModel)
+		}
+		return parseEntities(content)
+	}
+
+	// Legacy raw HTTP path (no provider set).
 	reqBody, _ := json.Marshal(map[string]any{
 		"model": cfg.LLMModel,
 		"messages": []map[string]string{
@@ -382,6 +594,12 @@ func extractEntities(ctx context.Context, client *http.Client, cfg Config, text 
 	}
 
 	content := llmResp.Choices[0].Message.Content
+
+	// --- LLM Cache: store successful response ---
+	if cfg.LLMCache != nil && cacheKey != "" {
+		cfg.LLMCache.Put(cacheKey, content, cfg.LLMModel)
+	}
+
 	return parseEntities(content)
 }
 
@@ -396,10 +614,11 @@ func parseEntities(content string) ([]graph.DedupNode, []graph.DedupEdge, error)
 			Description string `json:"description"`
 		} `json:"nodes"`
 		Edges []struct {
-			Source       string `json:"source"`
-			Target       string `json:"target"`
-			Relationship string `json:"relationship"`
-			EdgeText     string `json:"edge_text"`
+			Source           string `json:"source"`
+			Target           string `json:"target"`
+			Relationship     string `json:"relationship"`
+			RelationshipName string `json:"relationship_name"`
+			EdgeText         string `json:"edge_text"`
 		} `json:"edges"`
 	}
 
@@ -424,9 +643,13 @@ func parseEntities(content string) ([]graph.DedupNode, []graph.DedupEdge, error)
 
 	edges := make([]graph.DedupEdge, len(kg.Edges))
 	for i, e := range kg.Edges {
+		relName := e.Relationship
+		if relName == "" {
+			relName = e.RelationshipName
+		}
 		edges[i] = graph.DedupEdge{
 			SourceID: e.Source, TargetID: e.Target,
-			RelationshipName: e.Relationship, EdgeText: e.EdgeText,
+			RelationshipName: relName, EdgeText: e.EdgeText,
 		}
 	}
 

@@ -24,8 +24,11 @@ import (
 	"github.com/stek0v/cognevra/pkg/bm25"
 	"github.com/stek0v/cognevra/pkg/embed"
 	"github.com/stek0v/cognevra/pkg/fetch"
+	"github.com/stek0v/cognevra/pkg/graphdb"
 	"github.com/stek0v/cognevra/pkg/extract"
 	"github.com/stek0v/cognevra/pkg/ingest"
+	"github.com/stek0v/cognevra/pkg/llm"
+	"github.com/stek0v/cognevra/pkg/llmcache"
 	"github.com/stek0v/cognevra/pkg/orchestrator"
 	"github.com/stek0v/cognevra/pkg/temporal"
 	"github.com/stek0v/cognevra/pipeline"
@@ -41,6 +44,8 @@ type APIConfig struct {
 	Neo4jCfg      GraphVisualizationConfig
 	DB            *sql.DB // shared connection pool (nil if no PostgresDSN)
 	BM25Indexes   map[string]*bm25.Index // shared BM25 indexes (same as gRPC service)
+	LLMCache      llmcache.LLMCacher // shared LLM response cache (nil = no caching)
+	LLMProvider   llm.Provider // multi-provider LLM abstraction (nil = legacy raw HTTP)
 }
 
 // RegisterCogneeAPI registers all Cognee-compatible endpoints on the Fiber app.
@@ -86,6 +91,7 @@ func RegisterCogneeAPI(app fiber.Router, cfg APIConfig) {
 	// U11: Collections metadata
 	app.Get("/collections", collectionsListHandler(cfg))
 	app.Post("/collections", collectionCreateHandler(cfg))
+	app.Delete("/collections/:name", collectionDeleteHandler(cfg))
 	app.Get("/collections/:name/meta", collectionMetaHandler(cfg))
 	app.Put("/collections/:name/meta", collectionMetaUpdateHandler(cfg))
 
@@ -111,6 +117,7 @@ func RegisterCogneeAPI(app fiber.Router, cfg APIConfig) {
 	// U18: Ontology management
 	app.Post("/ontologies", ontologyUploadHandler(cfg))
 	app.Get("/ontologies", ontologyListHandler(cfg))
+	app.Delete("/ontologies/:id", ontologyDeleteHandler(cfg))
 
 	// U10: RBAC — dataset sharing + permissions
 	RegisterRBACAPI(app, cfg)
@@ -153,12 +160,23 @@ func datasetsListHandler(cfg APIConfig) fiber.Handler {
 
 		var rows *sql.Rows
 		var err error
-		if userID != "" {
-			rows, err = cfg.DB.QueryContext(c.Context(),
-				"SELECT id, name, created_at, COALESCE(owner_id,'') FROM datasets WHERE owner_id = $1 OR owner_id = '' OR owner_id IS NULL ORDER BY created_at DESC", userID)
-		} else {
+		showAll := userID == ""
+		if !showAll && userID != "" {
+			// Check superuser — sees everything
+			var isSuperuser bool
+			cfg.DB.QueryRowContext(c.Context(), "SELECT COALESCE(is_superuser, false) FROM users WHERE id = $1", userID).Scan(&isSuperuser)
+			showAll = isSuperuser
+		}
+		if showAll {
 			rows, err = cfg.DB.QueryContext(c.Context(),
 				"SELECT id, name, created_at, COALESCE(owner_id,'') FROM datasets ORDER BY created_at DESC")
+		} else {
+			rows, err = cfg.DB.QueryContext(c.Context(),
+				`SELECT DISTINCT d.id, d.name, d.created_at, COALESCE(d.owner_id,'')
+				 FROM datasets d
+				 LEFT JOIN dataset_shares s ON s.dataset_id = d.id AND s.user_id = $1
+				 WHERE d.owner_id = $1 OR d.owner_id = '' OR d.owner_id IS NULL OR s.id IS NOT NULL
+				 ORDER BY d.created_at DESC`, userID)
 		}
 		if err != nil {
 			return c.JSON([]DatasetDTO{})
@@ -519,6 +537,9 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 			GenerateTriplets: true,
 			DatasetID:       func() string { if len(allDatasetIDs) > 0 { return allDatasetIDs[0] }; return runID }(),
 			DB:              cfg.DB,
+			LLMCache:            cfg.LLMCache,
+			LLMProvider:         cfg.LLMProvider,
+			UseStructuredOutput: func() *bool { b := true; return &b }(),
 		}
 		if req.LLMModel != "" {
 			pipeCfg.LLMModel = req.LLMModel
@@ -619,9 +640,52 @@ func cognifyStreamHandler() fiber.Handler {
 // ── U5: Cognee-compatible Search ──
 
 type CogneeSearchRequest struct {
-	QueryText string `json:"query_text"`
-	QueryType string `json:"query_type"` // CHUNKS, GRAPH_COMPLETION, etc.
-	TopK      int    `json:"top_k"`
+	QueryText         string   `json:"query_text"`
+	QueryType         string   `json:"query_type"` // CHUNKS, GRAPH_COMPLETION, etc.
+	TopK              int      `json:"top_k"`
+	CypherQuery       string   `json:"cypher_query"` // Raw Cypher for CYPHER search type
+	AllowedDatasetIDs []string `json:"-"`             // RBAC: nil = no filtering (dev mode)
+}
+
+// filterByAllowedDatasets post-filters search results by allowed dataset IDs.
+// If allowedIDs is nil, no filtering is applied (dev mode / backward compat).
+func filterByAllowedDatasets(results []fiber.Map, allowedIDs []string) []fiber.Map {
+	if allowedIDs == nil {
+		return results
+	}
+	allowed := make(map[string]bool, len(allowedIDs))
+	for _, id := range allowedIDs {
+		allowed[id] = true
+	}
+	var filtered []fiber.Map
+	for _, r := range results {
+		dsID := extractDatasetID(r)
+		if dsID == "" || allowed[dsID] {
+			filtered = append(filtered, r)
+		}
+	}
+	return filtered
+}
+
+// extractDatasetID extracts dataset_id from a result's metadata field.
+func extractDatasetID(r fiber.Map) string {
+	meta, ok := r["metadata"]
+	if !ok {
+		return ""
+	}
+	var m map[string]any
+	switch v := meta.(type) {
+	case json.RawMessage:
+		json.Unmarshal(v, &m)
+	case []byte:
+		json.Unmarshal(v, &m)
+	case string:
+		json.Unmarshal([]byte(v), &m)
+	case map[string]any:
+		m = v
+	}
+	dsID, _ := m["dataset_id"].(string)
+	return dsID
 }
 
 func searchHandler(cfg APIConfig) fiber.Handler {
@@ -636,6 +700,10 @@ func searchHandler(cfg APIConfig) fiber.Handler {
 		if req.TopK <= 0 {
 			req.TopK = 10
 		}
+
+		// RBAC: resolve allowed dataset IDs for this user
+		userID, _ := c.Locals("user_id").(string)
+		req.AllowedDatasetIDs = GetAllowedDatasetIDs(cfg.DB, c.Context(), userID)
 
 		queryType := strings.ToUpper(req.QueryType)
 		if queryType == "" {
@@ -657,11 +725,13 @@ func searchHandler(cfg APIConfig) fiber.Handler {
 			return temporalSearch(c, cfg, req)
 		case "GRAPH_COMPLETION", "GRAPH_SUMMARY_COMPLETION",
 			"GRAPH_COMPLETION_COT", "GRAPH_COMPLETION_CONTEXT_EXTENSION":
-			return chunksSearch(c, cfg, req) // graph-based → fallback to vector
+			return graphCompletionSearch(c, cfg, req)
 		case "TRIPLET_COMPLETION":
-			return chunksSearch(c, cfg, req) // triplet → vector fallback
-		case "NATURAL_LANGUAGE", "CYPHER":
-			return chunksSearch(c, cfg, req) // NL/Cypher → vector fallback
+			return tripletCompletionSearch(c, cfg, req)
+		case "NATURAL_LANGUAGE":
+			return naturalLanguageSearch(c, cfg, req)
+		case "CYPHER":
+			return cypherSearch(c, cfg, req)
 		case "CODE", "CODING_RULES":
 			return chunksSearch(c, cfg, req) // code → vector fallback
 		case "FEELING_LUCKY":
@@ -700,6 +770,9 @@ func chunksSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
 		}
 	}
 
+	// RBAC post-filter by allowed datasets
+	allResults = filterByAllowedDatasets(allResults, req.AllowedDatasetIDs)
+
 	// Sort by score (lower = better for cosine distance)
 	if len(allResults) > req.TopK {
 		allResults = allResults[:req.TopK]
@@ -725,6 +798,9 @@ func bm25Search(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
 			})
 		}
 	}
+
+	// RBAC post-filter
+	allResults = filterByAllowedDatasets(allResults, req.AllowedDatasetIDs)
 
 	if len(allResults) > req.TopK {
 		allResults = allResults[:req.TopK]
@@ -778,6 +854,9 @@ func hybridSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
 		}
 	}
 
+	// RBAC post-filter
+	allResults = filterByAllowedDatasets(allResults, req.AllowedDatasetIDs)
+
 	if len(allResults) > req.TopK {
 		allResults = allResults[:req.TopK]
 	}
@@ -785,22 +864,185 @@ func hybridSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
 }
 
 func temporalSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
-	// Extract timestamps from query text
+	// Step 1: Extract dates from query text
 	events := temporal.ExtractTimestamps(req.QueryText, time.Now())
-	results := make([]fiber.Map, 0, len(events))
+
+	var temporalResults []fiber.Map
+
+	if len(events) > 0 {
+		from, to, ok := temporal.DateRangeFromEvents(events)
+		if ok {
+			// Step 2: Try Neo4j temporal query
+			if cfg.Neo4jCfg.Neo4jURL != "" {
+				temporalResults = temporalSearchNeo4j(c.Context(), cfg, from, to, req.TopK)
+			}
+
+			// Step 3: Fallback to PostgreSQL if Neo4j returned nothing
+			if len(temporalResults) == 0 && cfg.DB != nil {
+				temporalResults = temporalSearchPostgres(c.Context(), cfg, from, to, req.TopK)
+			}
+		}
+	}
+
+	// Step 4: Also do vector search for temporal context if we have embed
+	var vectorResults []fiber.Map
+	if cfg.EmbedEndpoint != "" && cfg.Collections != nil {
+		embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 1)
+		sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections)
+
+		colls := cfg.Collections.List()
+		for _, coll := range colls {
+			results, err := sp.SearchByText(context.Background(), coll, req.QueryText, req.TopK)
+			if err != nil {
+				continue
+			}
+			for _, r := range results {
+				vectorResults = append(vectorResults, fiber.Map{
+					"id":         r.ID,
+					"score":      r.Score,
+					"collection": coll,
+					"metadata":   json.RawMessage(r.Metadata),
+					"source":     "vector",
+				})
+			}
+		}
+	}
+
+	// RBAC post-filter
+	vectorResults = filterByAllowedDatasets(vectorResults, req.AllowedDatasetIDs)
+
+	// Combine: temporal results first, then vector results
+	combined := make([]fiber.Map, 0, len(temporalResults)+len(vectorResults))
+	combined = append(combined, temporalResults...)
+	combined = append(combined, vectorResults...)
+
+	if len(combined) > req.TopK {
+		combined = combined[:req.TopK]
+	}
+
+	// Include extracted dates for transparency
+	extractedDates := make([]fiber.Map, 0, len(events))
 	for _, e := range events {
-		results = append(results, fiber.Map{
+		extractedDates = append(extractedDates, fiber.Map{
 			"date":       e.Date.Format(time.RFC3339),
 			"date_str":   e.DateStr,
-			"text":       e.Text,
 			"confidence": e.Confidence,
-			"node_id":    e.NodeID,
 		})
 	}
-	if len(results) > req.TopK {
-		results = results[:req.TopK]
+
+	return c.JSON(fiber.Map{
+		"results":         combined,
+		"extracted_dates": extractedDates,
+		"search_type":     "TEMPORAL",
+	})
+}
+
+// temporalSearchNeo4j queries Neo4j for entities linked to TemporalEvent nodes in a date range.
+func temporalSearchNeo4j(ctx context.Context, cfg APIConfig, from, to time.Time, limit int) []fiber.Map {
+	// Use a timeout context for Neo4j query (5 seconds max)
+	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	writer, err := graphdb.NewWriter(queryCtx, cfg.Neo4jCfg.Neo4jURL, cfg.Neo4jCfg.Neo4jUser,
+		cfg.Neo4jCfg.Neo4jPassword, cfg.Neo4jCfg.Neo4jDatabase)
+	if err != nil {
+		return nil
 	}
-	return c.JSON(results)
+	defer writer.Close(queryCtx)
+
+	cypher := `MATCH (e:` + "`__Node__`" + `)-[:HAPPENED_AT]->(t:` + "`__Node__`" + `)
+		WHERE t.type = 'TemporalEvent'
+		AND t.date >= $from AND t.date <= $to
+		RETURN e.id AS entity_id, e.name AS entity_name, e.type AS entity_type,
+		       e.description AS entity_desc, t.date AS date, t.name AS date_str
+		LIMIT $limit`
+
+	rows, err := writer.Query(queryCtx, cypher, map[string]any{
+		"from":  from.Format("2006-01-02"),
+		"to":    to.Format("2006-01-02"),
+		"limit": int64(limit),
+	})
+	if err != nil {
+		return nil
+	}
+
+	var results []fiber.Map
+	for _, row := range rows {
+		name, _ := row["entity_name"].(string)
+		typ, _ := row["entity_type"].(string)
+		desc, _ := row["entity_desc"].(string)
+		date, _ := row["date"].(string)
+		dateStr, _ := row["date_str"].(string)
+		entityID, _ := row["entity_id"].(string)
+
+		results = append(results, fiber.Map{
+			"id":         entityID,
+			"name":       name,
+			"type":       typ,
+			"description": desc,
+			"date":       date,
+			"date_str":   dateStr,
+			"source":     "neo4j_temporal",
+		})
+	}
+	return results
+}
+
+// temporalSearchPostgres queries PostgreSQL for TemporalEvent nodes in a date range.
+func temporalSearchPostgres(ctx context.Context, cfg APIConfig, from, to time.Time, limit int) []fiber.Map {
+	if cfg.DB == nil {
+		return nil
+	}
+
+	// Query temporal nodes and their connected entities via edges
+	query := `
+		SELECT gn.id, gn.name, gn.type, gn.description,
+		       gn.properties::jsonb->>'date' AS date,
+		       ge.source_id AS entity_id,
+		       en.name AS entity_name, en.type AS entity_type, en.description AS entity_desc
+		FROM graph_nodes gn
+		LEFT JOIN graph_edges ge ON ge.target_id = gn.id AND ge.relationship_name = 'HAPPENED_AT'
+		LEFT JOIN graph_nodes en ON en.id = ge.source_id
+		WHERE gn.type = 'TemporalEvent'
+		AND gn.properties::jsonb->>'date' >= $1
+		AND gn.properties::jsonb->>'date' <= $2
+		LIMIT $3`
+
+	rows, err := cfg.DB.QueryContext(ctx, query, from.Format("2006-01-02"), to.Format("2006-01-02"), limit)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var results []fiber.Map
+	for rows.Next() {
+		var id, name, typ, desc string
+		var date, entityID, entityName, entityType, entityDesc sql.NullString
+		rows.Scan(&id, &name, &typ, &desc, &date, &entityID, &entityName, &entityType, &entityDesc)
+
+		if entityID.Valid && entityName.Valid {
+			results = append(results, fiber.Map{
+				"id":          entityID.String,
+				"name":        entityName.String,
+				"type":        entityType.String,
+				"description": entityDesc.String,
+				"date":        date.String,
+				"date_str":    name,
+				"source":      "postgres_temporal",
+			})
+		} else {
+			// No linked entity, return the temporal node itself
+			results = append(results, fiber.Map{
+				"id":          id,
+				"name":        name,
+				"type":        typ,
+				"description": desc,
+				"date":        date.String,
+				"source":      "postgres_temporal",
+			})
+		}
+	}
+	return results
 }
 
 // ragCompletionSearch does vector search + LLM completion over results.
@@ -831,6 +1073,9 @@ func ragCompletionSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) e
 			})
 		}
 	}
+	// RBAC post-filter
+	chunks = filterByAllowedDatasets(chunks, req.AllowedDatasetIDs)
+
 	if len(chunks) > req.TopK {
 		chunks = chunks[:req.TopK]
 	}
@@ -857,7 +1102,7 @@ func ragCompletionSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) e
 		prompt := fmt.Sprintf("Based on the following context, answer the question.\n\nContext:\n%s\n\nQuestion: %s\n\nAnswer:",
 			strings.Join(contextParts, "\n"), req.QueryText)
 
-		answer = callLLMFromAPI(llmEndpoint, llmModel, prompt)
+		answer = callLLMFromAPI(llmEndpoint, llmModel, prompt, cfg.LLMProvider)
 	}
 
 	return c.JSON(fiber.Map{
@@ -902,11 +1147,29 @@ func summariesSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error
 
 	// Also check PostgreSQL graph_nodes for TextSummary type
 	if cfg.DB != nil {
-		rows, err := cfg.DB.QueryContext(c.Context(),
-			`SELECT id, name, description FROM graph_nodes
+		var sqlQuery string
+		var sqlArgs []any
+		if req.AllowedDatasetIDs != nil {
+			// Build dataset_id filter placeholders starting at $3
+			dsPlaceholders := make([]string, len(req.AllowedDatasetIDs))
+			sqlArgs = append(sqlArgs, req.QueryText, req.TopK)
+			for i, id := range req.AllowedDatasetIDs {
+				dsPlaceholders[i] = fmt.Sprintf("$%d", i+3)
+				sqlArgs = append(sqlArgs, id)
+			}
+			sqlQuery = fmt.Sprintf(`SELECT id, name, description FROM graph_nodes
+			 WHERE type = 'TextSummary' AND (
+				 name ILIKE '%%' || $1 || '%%' OR description ILIKE '%%' || $1 || '%%'
+			 ) AND (dataset_id IS NULL OR dataset_id = '' OR dataset_id IN (%s))
+			 LIMIT $2`, strings.Join(dsPlaceholders, ","))
+		} else {
+			sqlQuery = `SELECT id, name, description FROM graph_nodes
 			 WHERE type = 'TextSummary' AND (
 				 name ILIKE '%' || $1 || '%' OR description ILIKE '%' || $1 || '%'
-			 ) LIMIT $2`, req.QueryText, req.TopK)
+			 ) LIMIT $2`
+			sqlArgs = []any{req.QueryText, req.TopK}
+		}
+		rows, err := cfg.DB.QueryContext(c.Context(), sqlQuery, sqlArgs...)
 		if err == nil {
 			defer rows.Close()
 			for rows.Next() {
@@ -922,6 +1185,9 @@ func summariesSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error
 		}
 	}
 
+	// RBAC post-filter
+	allResults = filterByAllowedDatasets(allResults, req.AllowedDatasetIDs)
+
 	if len(allResults) > req.TopK {
 		allResults = allResults[:req.TopK]
 	}
@@ -930,7 +1196,24 @@ func summariesSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error
 }
 
 // callLLMFromAPI is a standalone LLM call helper for search handlers.
-func callLLMFromAPI(endpoint, model, prompt string) string {
+// If provider is non-nil, uses the provider abstraction (supports Anthropic, etc.).
+// Otherwise falls back to raw HTTP POST to OpenAI-compatible endpoint.
+func callLLMFromAPI(endpoint, model, prompt string, provider ...llm.Provider) string {
+	// Provider path: use abstraction if available.
+	if len(provider) > 0 && provider[0] != nil {
+		resp, err := provider[0].ChatCompletion(context.Background(), llm.CompletionRequest{
+			Model:       model,
+			Messages:    []llm.Message{{Role: "user", Content: prompt}},
+			Temperature: 0.3,
+			MaxTokens:   2000,
+		})
+		if err != nil {
+			return ""
+		}
+		return strings.TrimSpace(resp.Content)
+	}
+
+	// Legacy raw HTTP path.
 	body := map[string]any{
 		"model": model,
 		"messages": []map[string]string{

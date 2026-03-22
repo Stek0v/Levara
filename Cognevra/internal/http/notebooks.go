@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -291,21 +292,143 @@ func runCodeCell(ctx context.Context, cfg APIConfig, source string) (string, err
 	source = strings.TrimSpace(source)
 	switch {
 	case strings.HasPrefix(source, "collections"):
-		if cfg.Collections == nil { return "[]", nil }
+		if cfg.Collections == nil {
+			return "[]", nil
+		}
 		out, _ := json.MarshalIndent(cfg.Collections.List(), "", "  ")
 		return string(out), nil
+
+	case strings.HasPrefix(source, "datasets"):
+		if cfg.DB == nil {
+			return "[]", nil
+		}
+		rows, err := cfg.DB.QueryContext(ctx, "SELECT id, name FROM datasets ORDER BY created_at DESC LIMIT 20")
+		if err != nil {
+			return "[]", nil
+		}
+		defer rows.Close()
+		var items []map[string]string
+		for rows.Next() {
+			var id, name string
+			rows.Scan(&id, &name)
+			items = append(items, map[string]string{"id": id, "name": name})
+		}
+		if items == nil {
+			items = []map[string]string{}
+		}
+		out, _ := json.MarshalIndent(items, "", "  ")
+		return string(out), nil
+
 	case strings.HasPrefix(source, "stats"):
 		stats := map[string]any{"collections": 0, "embed_model": cfg.EmbedModel, "neo4j": cfg.Neo4jCfg.Neo4jURL != "", "postgres": cfg.DB != nil}
-		if cfg.Collections != nil { stats["collections"] = len(cfg.Collections.List()) }
+		if cfg.Collections != nil {
+			stats["collections"] = len(cfg.Collections.List())
+		}
 		out, _ := json.MarshalIndent(stats, "", "  ")
 		return string(out), nil
+
 	case strings.HasPrefix(source, "env"):
 		envs := map[string]string{"LLM_ENDPOINT": os.Getenv("LLM_ENDPOINT"), "LLM_MODEL": os.Getenv("LLM_MODEL"), "EMBEDDING_ENDPOINT": os.Getenv("EMBEDDING_ENDPOINT"), "EMBEDDING_MODEL": os.Getenv("EMBEDDING_MODEL")}
 		out, _ := json.MarshalIndent(envs, "", "  ")
 		return string(out), nil
+
 	case strings.HasPrefix(source, "search "):
 		return runSearchCell(ctx, cfg, strings.TrimPrefix(source, "search "))
+
+	case strings.HasPrefix(source, "graph "):
+		query := strings.TrimPrefix(source, "graph ")
+		if cfg.DB == nil {
+			return "[]", nil
+		}
+		rows, err := cfg.DB.QueryContext(ctx,
+			"SELECT id, name, type, description FROM graph_nodes WHERE name ILIKE $1 OR description ILIKE $1 LIMIT 10",
+			"%"+query+"%")
+		if err != nil {
+			return "[]", nil
+		}
+		defer rows.Close()
+		var items []map[string]string
+		for rows.Next() {
+			var id, name, nodeType, desc string
+			rows.Scan(&id, &name, &nodeType, &desc)
+			items = append(items, map[string]string{"id": id, "name": name, "type": nodeType, "description": desc})
+		}
+		if items == nil {
+			items = []map[string]string{}
+		}
+		out, _ := json.MarshalIndent(items, "", "  ")
+		return string(out), nil
+
+	case strings.HasPrefix(source, "embed "):
+		text := strings.TrimPrefix(source, "embed ")
+		if cfg.EmbedEndpoint == "" {
+			return "", fmt.Errorf("embed-server not configured (EMBEDDING_ENDPOINT not set)")
+		}
+		embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 1)
+		vecs, err := embedClient.EmbedTexts(ctx, []string{text})
+		if err != nil {
+			return "", fmt.Errorf("embed error: %w", err)
+		}
+		if len(vecs) == 0 {
+			return "[]", nil
+		}
+		result := map[string]any{"text": text, "dim": len(vecs[0]), "vector": vecs[0]}
+		out, _ := json.MarshalIndent(result, "", "  ")
+		return string(out), nil
+
+	case strings.HasPrefix(source, "count "):
+		collName := strings.TrimPrefix(source, "count ")
+		if cfg.Collections == nil {
+			return "0", nil
+		}
+		db, err := cfg.Collections.Get(collName)
+		if err != nil {
+			return "0", fmt.Errorf("collection %q not found", collName)
+		}
+		return fmt.Sprintf("%d", db.Count()), nil
+
+	case source == "info":
+		info := map[string]any{
+			"version":        "cognevra/1.0",
+			"uptime":         time.Since(serverStartTime).String(),
+			"embed_endpoint": cfg.EmbedEndpoint,
+			"embed_model":    cfg.EmbedModel,
+			"neo4j":          cfg.Neo4jCfg.Neo4jURL != "",
+			"postgres":       cfg.DB != nil,
+		}
+		if cfg.Collections != nil {
+			info["collections_count"] = len(cfg.Collections.List())
+		}
+		// Check embed-server health
+		if cfg.EmbedEndpoint != "" {
+			resp, err := http.Get(cfg.EmbedEndpoint + "/health")
+			if err == nil {
+				resp.Body.Close()
+				info["embed_status"] = resp.StatusCode == 200
+			} else {
+				info["embed_status"] = false
+			}
+		}
+		out, _ := json.MarshalIndent(info, "", "  ")
+		return string(out), nil
+
+	case source == "help" || source == "?":
+		return "Available commands:\n" +
+			"  collections          — list vector collections\n" +
+			"  datasets             — list datasets from PostgreSQL\n" +
+			"  stats                — system statistics\n" +
+			"  env                  — environment variables\n" +
+			"  search <query>       — vector search across collections\n" +
+			"  graph <query>        — search graph nodes by name/description\n" +
+			"  embed <text>         — get embedding vector for text\n" +
+			"  count <collection>   — record count in collection\n" +
+			"  info                 — server info (version, uptime, services)\n" +
+			"  help                 — this message", nil
+
 	default:
-		return fmt.Sprintf("Unknown command: %s\n\nAvailable: collections, stats, env, search <query>", source), nil
+		return fmt.Sprintf("Unknown command: %s\n\nType 'help' to see available commands.", source), nil
 	}
 }
+
+// serverStartTime tracks when the server was initialized (used by info command).
+var serverStartTime = time.Now()

@@ -53,6 +53,7 @@ import (
 	vectorGrpc "github.com/stek0v/cognevra/internal/grpc"
 	"github.com/stek0v/cognevra/internal/store"
 	"github.com/stek0v/cognevra/pkg/graphdb"
+	"github.com/stek0v/cognevra/pkg/llm"
 	"github.com/stek0v/cognevra/pkg/llmcache"
 	"github.com/stek0v/cognevra/pkg/llmproxy"
 	pb "github.com/stek0v/cognevra/proto/pb"
@@ -252,6 +253,38 @@ func main() {
 	// Create gRPC service (shared between gRPC server and HTTP handlers for BM25 indexes)
 	grpcSvc := vectorGrpc.NewService(colManager, c, *dim)
 
+	// LLM response cache — eliminates redundant LLM calls for identical inputs
+	// PersistentCache: survives restarts via append-only JSONL file
+	cachePath := *dataDir + "/llm_cache.jsonl"
+	var llmCache llmcache.LLMCacher
+	if pc, err := llmcache.NewPersistent(10000, cachePath); err != nil {
+		log.Printf("LLM cache persistence failed (%v), using in-memory only", err)
+		llmCache = llmcache.New(10000, 0)
+	} else {
+		llmCache = pc
+		defer pc.Close()
+	}
+
+	// LLM multi-provider abstraction: supports OpenAI, Ollama, Anthropic via env vars.
+	// LLM_PROVIDER: "openai" (default), "ollama", "anthropic"
+	// LLM_ENDPOINT: required for openai/ollama (e.g. http://localhost:11434/v1)
+	// LLM_API_KEY:  required for anthropic, optional for openai
+	var llmProvider llm.Provider
+	{
+		providerName := os.Getenv("LLM_PROVIDER")
+		llmEndpoint := os.Getenv("LLM_ENDPOINT")
+		llmAPIKey := os.Getenv("LLM_API_KEY")
+		if providerName != "" || llmEndpoint != "" {
+			p, err := llm.NewProvider(providerName, llmEndpoint, llmAPIKey)
+			if err != nil {
+				log.Printf("LLM provider init warning: %v (using legacy HTTP)", err)
+			} else {
+				llmProvider = p
+				log.Printf("LLM provider: %s (model=%s)", p.Name(), os.Getenv("LLM_MODEL"))
+			}
+		}
+	}
+
 	// Protected routes: Cognee-compatible API (datasets, upload, cognify, search)
 	vectorHttp.RegisterCogneeAPI(api, vectorHttp.APIConfig{
 		PostgresDSN:   pgDSN,
@@ -262,6 +295,8 @@ func main() {
 		Neo4jCfg:      vizCfg,
 		DB:            pgDB,
 		BM25Indexes:   grpcSvc.BM25Indexes(),
+		LLMCache:      llmCache,
+		LLMProvider:   llmProvider,
 	})
 
 	// MCP (Model Context Protocol) server — JSON-RPC 2.0 for AI agent integration
@@ -271,6 +306,12 @@ func main() {
 		Collections:   colManager,
 		DB:            pgDB,
 		BM25Indexes:   grpcSvc.BM25Indexes(),
+		LLMCache:      llmCache,
+	})
+
+	// Cache stats endpoint
+	api.Get("/cache/stats", func(c *fiber.Ctx) error {
+		return c.JSON(llmCache.Stats())
 	})
 	log.Printf("MCP server registered at POST /mcp (7 tools)")
 
