@@ -218,8 +218,14 @@ var schemaStatements = []string{
 		name TEXT NOT NULL UNIQUE,
 		file_path TEXT NOT NULL DEFAULT '',
 		format TEXT NOT NULL DEFAULT 'rdf/xml',
+		classes_count INTEGER NOT NULL DEFAULT 0,
+		individuals_count INTEGER NOT NULL DEFAULT 0,
 		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 	)`,
+
+	// Migration: add columns if table already exists without them
+	`ALTER TABLE ontologies ADD COLUMN IF NOT EXISTS classes_count INTEGER NOT NULL DEFAULT 0`,
+	`ALTER TABLE ontologies ADD COLUMN IF NOT EXISTS individuals_count INTEGER NOT NULL DEFAULT 0`,
 
 	`CREATE INDEX IF NOT EXISTS idx_acl_principal ON acl(principal_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_acl_dataset ON acl(dataset_id)`,

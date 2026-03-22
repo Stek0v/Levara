@@ -7,6 +7,7 @@
 package temporal
 
 import (
+	"fmt"
 	"regexp"
 	"sort"
 	"strconv"
@@ -82,6 +83,28 @@ func ExtractTimestamps(text string, referenceDate time.Time) []Event {
 		}
 	}
 
+	// Standalone year: "in 1905", "1905 year", "год 1905" etc.
+	// Only match years not already captured by ISO/slash/month patterns.
+	for _, m := range yearOnlyRe.FindAllStringIndex(text, -1) {
+		yearStr := strings.TrimSpace(text[m[0]:m[1]])
+		// Extract just the 4-digit number
+		digits := yearDigitRe.FindString(yearStr)
+		if digits == "" {
+			continue
+		}
+		y, err := strconv.Atoi(digits)
+		if err != nil || y < 1000 || y > 2100 {
+			continue
+		}
+		t := time.Date(y, 1, 1, 0, 0, 0, 0, time.UTC)
+		events = append(events, Event{
+			Text:       contextAround(text, m[0], m[1], 80),
+			Date:       t,
+			DateStr:    digits,
+			Confidence: 0.7,
+		})
+	}
+
 	// Dedup by date (keep highest confidence)
 	events = dedupEvents(events)
 
@@ -126,6 +149,11 @@ var (
 
 	ruDateRe = regexp.MustCompile(`(?i)(\d{1,2}\s+)?(январ[яьи]?|феврал[яьи]?|март[аеу]?|апрел[яьи]?|ма[яйю]|июн[яьи]?|июл[яьи]?|август[аеу]?|сентябр[яьи]?|октябр[яьи]?|ноябр[яьи]?|декабр[яьи]?)(\s+\d{4})?`)
 	enDateRe = regexp.MustCompile(`(?i)((?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*)\s+(\d{1,2})(?:,?\s+(\d{4}))?|(\d{1,2})\s+((?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*)(?:\s+(\d{4}))?`)
+
+	// Standalone year: matches "in 1905", "1905 year", "в 1905", "год 1905"
+	// Negative lookbehind/lookahead for dash/slash to avoid matching ISO/slash dates.
+	yearOnlyRe = regexp.MustCompile(`(?:^|[^\d/.\-])(\d{4})(?:[^\d/.\-]|$)`)
+	yearDigitRe = regexp.MustCompile(`\d{4}`)
 )
 
 func parseRussianDate(s string, ref time.Time) (time.Time, bool) {
@@ -281,4 +309,88 @@ func dedupEvents(events []Event) []Event {
 		}
 	}
 	return result
+}
+
+// TemporalNode represents a temporal event node to be added to the graph.
+type TemporalNode struct {
+	ID          string
+	Name        string // date string
+	Type        string // "TemporalEvent"
+	Description string // context text around the date
+	DateISO     string // ISO 8601 date string for Neo4j property
+}
+
+// TemporalEdge represents a HAPPENED_AT edge linking an entity to a temporal node.
+type TemporalEdge struct {
+	SourceID         string // entity node ID
+	TargetID         string // temporal node ID
+	RelationshipName string // "HAPPENED_AT"
+	EdgeText         string // context
+}
+
+// LinkEventsToEntities creates temporal nodes from events and HAPPENED_AT edges
+// linking each provided entity node ID to temporal events extracted from the same chunk.
+// entityIDs are the IDs of entities extracted from the same text chunk.
+// Returns temporal nodes and edges to add to the dedup result.
+func LinkEventsToEntities(events []Event, entityIDs []string) ([]TemporalNode, []TemporalEdge) {
+	if len(events) == 0 || len(entityIDs) == 0 {
+		return nil, nil
+	}
+
+	var nodes []TemporalNode
+	var edges []TemporalEdge
+	seenNodes := make(map[string]bool)
+
+	for _, ev := range events {
+		nodeID := fmt.Sprintf("temporal_%s", ev.Date.Format("2006-01-02"))
+
+		if !seenNodes[nodeID] {
+			seenNodes[nodeID] = true
+			nodes = append(nodes, TemporalNode{
+				ID:          nodeID,
+				Name:        ev.DateStr,
+				Type:        "TemporalEvent",
+				Description: ev.Text,
+				DateISO:     ev.Date.Format("2006-01-02"),
+			})
+		}
+
+		for _, entID := range entityIDs {
+			edges = append(edges, TemporalEdge{
+				SourceID:         entID,
+				TargetID:         nodeID,
+				RelationshipName: "HAPPENED_AT",
+				EdgeText:         fmt.Sprintf("%s happened at %s", entID, ev.DateStr),
+			})
+		}
+	}
+
+	return nodes, edges
+}
+
+// DateRangeFromEvents computes the min/max date range from extracted events.
+// If only one event, returns that date as both from and to (with to = end of year for year-only).
+func DateRangeFromEvents(events []Event) (from, to time.Time, ok bool) {
+	if len(events) == 0 {
+		return time.Time{}, time.Time{}, false
+	}
+
+	from = events[0].Date
+	to = events[0].Date
+
+	for _, e := range events[1:] {
+		if e.Date.Before(from) {
+			from = e.Date
+		}
+		if e.Date.After(to) {
+			to = e.Date
+		}
+	}
+
+	// If from == to and it's Jan 1 (year-only match), expand to full year
+	if from.Equal(to) && from.Month() == time.January && from.Day() == 1 {
+		to = time.Date(from.Year(), 12, 31, 23, 59, 59, 0, time.UTC)
+	}
+
+	return from, to, true
 }

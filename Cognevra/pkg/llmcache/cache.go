@@ -13,6 +13,14 @@ import (
 	"time"
 )
 
+// LLMCacher is the interface used by orchestrator pipeline.
+// Both Cache and PersistentCache implement it.
+type LLMCacher interface {
+	Get(key string) (string, bool)
+	Put(key, response, model string)
+	Stats() Stats
+}
+
 // Entry is a cached LLM response.
 type Entry struct {
 	Response  string
