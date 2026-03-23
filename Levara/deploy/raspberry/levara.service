@@ -1,0 +1,53 @@
+[Unit]
+Description=Levara Memory Server
+Documentation=https://github.com/stek0v/levara
+After=network-online.target ollama.service
+Wants=network-online.target
+Requires=ollama.service
+
+[Service]
+Type=simple
+User=levara
+Group=levara
+
+EnvironmentFile=/etc/levara/levara.env
+
+ExecStart=/usr/local/bin/levara \
+    -standalone=true \
+    -dim=768 \
+    -shards=1 \
+    -port=8080 \
+    -grpc-port=0 \
+    -data-dir=/var/lib/levara/data
+
+ExecStartPost=/bin/sh -c 'sleep 3 && curl -sf http://localhost:8080/health > /dev/null || exit 1'
+
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# Watchdog
+WatchdogSec=30
+
+# Resource limits
+MemoryMax=2G
+MemoryHigh=1536M
+CPUQuota=300%
+LimitNOFILE=65536
+
+# Security hardening
+WorkingDirectory=/var/lib/levara
+ReadWritePaths=/var/lib/levara /var/log/levara
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=levara
+
+[Install]
+WantedBy=multi-user.target
