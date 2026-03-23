@@ -191,6 +191,91 @@ func NewAnthropicProvider(apiKey string) *AnthropicProvider {
 
 func (p *AnthropicProvider) Name() string { return "anthropic" }
 
+// ──────────────────────────────────────────────
+// TracedProvider — wraps any Provider with Langfuse tracing
+// ──────────────────────────────────────────────
+
+// Tracer is the interface for LLM call tracing (implemented by observe.LangfuseTracer).
+type Tracer interface {
+	TraceGeneration(ctx context.Context, trace TracerData) error
+	Enabled() bool
+}
+
+// TracerData mirrors observe.TraceData to avoid circular imports.
+type TracerData struct {
+	TraceID   string
+	Name      string
+	Model     string
+	Input     string
+	Output    string
+	LatencyMs int64
+	TokensIn  int
+	TokensOut int
+	Status    string
+	Metadata  map[string]any
+}
+
+// TracedProvider wraps a Provider with LLM call tracing.
+type TracedProvider struct {
+	provider Provider
+	tracer   Tracer
+}
+
+// NewTracedProvider wraps provider with tracing. If tracer is nil or disabled,
+// returns the original provider unwrapped.
+func NewTracedProvider(provider Provider, tracer Tracer) Provider {
+	if tracer == nil || !tracer.Enabled() {
+		return provider
+	}
+	return &TracedProvider{provider: provider, tracer: tracer}
+}
+
+func (tp *TracedProvider) Name() string {
+	return "traced:" + tp.provider.Name()
+}
+
+func (tp *TracedProvider) ChatCompletion(ctx context.Context, req CompletionRequest) (*CompletionResponse, error) {
+	start := time.Now()
+	resp, err := tp.provider.ChatCompletion(ctx, req)
+	latency := time.Since(start).Milliseconds()
+
+	status := "success"
+	output := ""
+	tokensIn, tokensOut := 0, 0
+	if err != nil {
+		status = "error"
+		output = err.Error()
+	} else if resp != nil {
+		output = resp.Content
+		tokensIn = resp.Usage.PromptTokens
+		tokensOut = resp.Usage.CompletionTokens
+	}
+
+	// Build input summary from messages
+	var inputParts []string
+	for _, m := range req.Messages {
+		inputParts = append(inputParts, fmt.Sprintf("[%s] %s", m.Role, m.Content))
+	}
+	inputStr := strings.Join(inputParts, "\n")
+
+	// Trace asynchronously — don't block the caller on Langfuse latency
+	traceData := TracerData{
+		TraceID:   fmt.Sprintf("gen-%d", start.UnixNano()),
+		Name:      "chat_completion",
+		Model:     req.Model,
+		Input:     inputStr,
+		Output:    output,
+		LatencyMs: latency,
+		TokensIn:  tokensIn,
+		TokensOut: tokensOut,
+		Status:    status,
+		Metadata:  map[string]any{"provider": tp.provider.Name()},
+	}
+	go tp.tracer.TraceGeneration(context.Background(), traceData)
+
+	return resp, err
+}
+
 func (p *AnthropicProvider) ChatCompletion(ctx context.Context, req CompletionRequest) (*CompletionResponse, error) {
 	// Anthropic format: separate system from user/assistant messages
 	var systemPrompt string
