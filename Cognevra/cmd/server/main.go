@@ -57,6 +57,8 @@ import (
 	"github.com/stek0v/cognevra/pkg/llm"
 	"github.com/stek0v/cognevra/pkg/llmcache"
 	"github.com/stek0v/cognevra/pkg/llmproxy"
+	"github.com/stek0v/cognevra/pkg/observe"
+	"github.com/stek0v/cognevra/pkg/storage"
 	pb "github.com/stek0v/cognevra/proto/pb"
 	"google.golang.org/grpc"
 
@@ -90,6 +92,22 @@ func main() {
 	requireAuth := flag.Bool("require-auth", false, "Require JWT auth on protected endpoints (default: dev mode, no auth)")
 
 	flag.Parse()
+
+	// ---------------------------------------------------------------
+	// Structured logging + error tracker (P3.4)
+	// ---------------------------------------------------------------
+	srvLog := observe.NewLogger("server")
+	errTracker := observe.NewErrorTracker(200)
+
+	// ---------------------------------------------------------------
+	// Storage backend (P3.5): STORAGE_BACKEND=local|s3
+	// ---------------------------------------------------------------
+	storagePath := *dataDir + "/uploads"
+	fileStore, storeErr := storage.NewFromEnv(storagePath)
+	if storeErr != nil {
+		log.Fatalf("storage init: %v", storeErr)
+	}
+	srvLog.Info("storage backend ready", map[string]any{"backend": os.Getenv("STORAGE_BACKEND"), "path": storagePath})
 
 	hnswCfg := store.HNSWConfig{
 		M:            *hnswM,
@@ -191,6 +209,19 @@ func main() {
 		return c.JSON(fiber.Map{"status": "connected"})
 	})
 	api.Get("/visualize", vectorHttp.VisualizeHTML(vizCfg))
+
+	// Error tracking endpoint (P3.4 observability)
+	api.Get("/errors", func(c *fiber.Ctx) error {
+		limit := c.QueryInt("limit", 50)
+		return c.JSON(fiber.Map{
+			"errors": errTracker.Recent(limit),
+			"total":  errTracker.Count(),
+		})
+	})
+	api.Delete("/errors", func(c *fiber.Ctx) error {
+		errTracker.Clear()
+		return c.JSON(fiber.Map{"cleared": true})
+	})
 
 	// Initialize CollectionManager for native collections (used by gRPC)
 	colManager, err := store.NewCollectionManager(*dim, *dataDir+"/"+nodeID, hnswCfg)
@@ -311,6 +342,9 @@ func main() {
 		BM25Indexes:   grpcSvc.BM25Indexes(),
 		LLMCache:      llmCache,
 		LLMProvider:   llmProvider,
+		ErrorTracker:  errTracker,
+		FileStorage:   fileStore,
+		Logger:        srvLog,
 	})
 
 	// MCP (Model Context Protocol) server — JSON-RPC 2.0 for AI agent integration

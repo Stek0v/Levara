@@ -29,7 +29,9 @@ import (
 	"github.com/stek0v/cognevra/pkg/ingest"
 	"github.com/stek0v/cognevra/pkg/llm"
 	"github.com/stek0v/cognevra/pkg/llmcache"
+	"github.com/stek0v/cognevra/pkg/observe"
 	"github.com/stek0v/cognevra/pkg/orchestrator"
+	"github.com/stek0v/cognevra/pkg/storage"
 	"github.com/stek0v/cognevra/pkg/temporal"
 	"github.com/stek0v/cognevra/pipeline"
 )
@@ -46,6 +48,9 @@ type APIConfig struct {
 	BM25Indexes   map[string]*bm25.Index // shared BM25 indexes (same as gRPC service)
 	LLMCache      llmcache.LLMCacher // shared LLM response cache (nil = no caching)
 	LLMProvider   llm.Provider // multi-provider LLM abstraction (nil = legacy raw HTTP)
+	ErrorTracker  *observe.ErrorTracker // error tracking (nil = disabled)
+	FileStorage   storage.Storage // file storage backend (nil = use os.WriteFile fallback)
+	Logger        *observe.Logger // structured logger (nil = use log.Printf fallback)
 }
 
 // RegisterCogneeAPI registers all Cognee-compatible endpoints on the Fiber app.
