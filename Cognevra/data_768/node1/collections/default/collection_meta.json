@@ -1,0 +1,10 @@
+{
+  "name": "default",
+  "embedding_model": "nomic-embed-text-v2-moe",
+  "embedding_dim": 768,
+  "distance_metric": "cosine",
+  "embedding_version": "v2",
+  "record_count": 0,
+  "created_at": "2026-03-20T17:02:30Z",
+  "updated_at": "2026-03-20T17:02:45Z"
+}

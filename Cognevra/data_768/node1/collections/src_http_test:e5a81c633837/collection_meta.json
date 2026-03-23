@@ -1,0 +1,9 @@
+{
+  "name": "src_http_test:e5a81c633837",
+  "embedding_model": "",
+  "embedding_dim": 768,
+  "distance_metric": "cosine",
+  "record_count": 0,
+  "created_at": "2026-03-21T15:18:40Z",
+  "updated_at": "2026-03-21T15:18:40Z"
+}

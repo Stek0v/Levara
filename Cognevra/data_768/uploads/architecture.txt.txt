@@ -1,0 +1,7 @@
+Chapter 1: Introduction
+
+Cognevra is a vector database that combines HNSW indexing with WAL durability. It supports both HTTP and gRPC APIs.
+
+Chapter 2: Architecture
+
+The system uses sharded HNSW indexes with memory-mapped arenas for efficient vector storage.

@@ -12,8 +12,8 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
-	"github.com/stek0v/levara/pkg/embed"
-	"github.com/stek0v/levara/pipeline"
+	"github.com/stek0v/cognevra/pkg/embed"
+	"github.com/stek0v/cognevra/pipeline"
 )
 
 // DTOs match frontend types exactly: Notebook{id, name, cells[], deletable}, Cell{id, name, type, content}

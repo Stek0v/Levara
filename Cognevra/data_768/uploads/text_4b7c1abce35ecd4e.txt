@@ -1,0 +1,1 @@
+Neural networks consist of layers of interconnected nodes.

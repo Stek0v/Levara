@@ -69,7 +69,9 @@ func DatasetGraph(cfg GraphVisualizationConfig) fiber.Handler {
 		nodeIDSet := make(map[string]bool)
 		for _, n := range result.Nodes {
 			dsID, _ := n.Properties["dataset_id"].(string)
-			if dsID == "" || dsID == datasetID {
+			// Strict filter: only include nodes that explicitly match this dataset_id
+			// Nodes without dataset_id are excluded (they are residue from old operations)
+			if dsID == datasetID && dsID != "" {
 				filteredNodes = append(filteredNodes, n)
 				nodeIDSet[n.ID] = true
 			}
@@ -79,7 +81,7 @@ func DatasetGraph(cfg GraphVisualizationConfig) fiber.Handler {
 		var filteredEdges []graphdb.ReadEdge
 		for _, e := range result.Edges {
 			dsID, _ := e.Properties["dataset_id"].(string)
-			if (dsID == "" || dsID == datasetID) && nodeIDSet[e.SourceID] && nodeIDSet[e.TargetID] {
+			if dsID == datasetID && dsID != "" && nodeIDSet[e.SourceID] && nodeIDSet[e.TargetID] {
 				filteredEdges = append(filteredEdges, e)
 			}
 		}

@@ -1,0 +1,9 @@
+{
+  "name": "test__e5large__1024",
+  "embedding_model": "e5-large-v2",
+  "embedding_dim": 1024,
+  "distance_metric": "cosine",
+  "record_count": 0,
+  "created_at": "2026-03-20T17:07:45Z",
+  "updated_at": "2026-03-20T17:07:45Z"
+}

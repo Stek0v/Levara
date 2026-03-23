@@ -11,9 +11,9 @@ import (
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/stek0v/levara/pkg/embed"
-	"github.com/stek0v/levara/pkg/graphdb"
-	"github.com/stek0v/levara/pipeline"
+	"github.com/stek0v/cognevra/pkg/embed"
+	"github.com/stek0v/cognevra/pkg/graphdb"
+	"github.com/stek0v/cognevra/pipeline"
 )
 
 // graphCompletionSearch performs vector search → extract entities → graph context → LLM answer.

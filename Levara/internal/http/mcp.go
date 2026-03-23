@@ -14,11 +14,11 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
-	"github.com/stek0v/levara/pkg/embed"
-	"github.com/stek0v/levara/pkg/git"
-	"github.com/stek0v/levara/pkg/ingest"
-	"github.com/stek0v/levara/pkg/orchestrator"
-	"github.com/stek0v/levara/pipeline"
+	"github.com/stek0v/cognevra/pkg/embed"
+	"github.com/stek0v/cognevra/pkg/git"
+	"github.com/stek0v/cognevra/pkg/ingest"
+	"github.com/stek0v/cognevra/pkg/orchestrator"
+	"github.com/stek0v/cognevra/pipeline"
 )
 
 // ── JSON-RPC 2.0 types ──

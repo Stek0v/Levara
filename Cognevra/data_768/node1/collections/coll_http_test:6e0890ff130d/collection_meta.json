@@ -1,0 +1,9 @@
+{
+  "name": "coll_http_test:6e0890ff130d",
+  "embedding_model": "test-model",
+  "embedding_dim": 384,
+  "distance_metric": "cosine",
+  "record_count": 0,
+  "created_at": "2026-03-21T14:26:18Z",
+  "updated_at": "2026-03-21T14:26:18Z"
+}

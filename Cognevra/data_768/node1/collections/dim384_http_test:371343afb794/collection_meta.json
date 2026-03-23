@@ -1,0 +1,9 @@
+{
+  "name": "dim384_http_test:371343afb794",
+  "embedding_model": "miniLM",
+  "embedding_dim": 384,
+  "distance_metric": "cosine",
+  "record_count": 0,
+  "created_at": "2026-03-21T16:25:25Z",
+  "updated_at": "2026-03-21T16:25:25Z"
+}

@@ -1,4 +1,4 @@
-module github.com/stek0v/levara
+module github.com/stek0v/cognevra
 
 go 1.26.0
 

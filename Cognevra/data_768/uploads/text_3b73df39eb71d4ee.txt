@@ -1,0 +1,1 @@
+Cognevra uses HNSW for fast approximate nearest neighbor search. It supports WAL durability.

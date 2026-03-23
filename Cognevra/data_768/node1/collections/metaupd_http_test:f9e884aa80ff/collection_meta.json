@@ -1,0 +1,10 @@
+{
+  "name": "metaupd_http_test:f9e884aa80ff",
+  "embedding_model": "v2-model",
+  "embedding_dim": 256,
+  "distance_metric": "cosine",
+  "embedding_version": "v2.1",
+  "record_count": 0,
+  "created_at": "2026-03-21T16:25:25Z",
+  "updated_at": "2026-03-21T16:25:25Z"
+}

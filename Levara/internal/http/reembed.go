@@ -12,7 +12,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
-	"github.com/stek0v/levara/pkg/embed"
+	"github.com/stek0v/cognevra/pkg/embed"
 )
 
 type reembedRequest struct {
