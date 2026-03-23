@@ -94,6 +94,8 @@ func main() {
 		cmdDatasets(args)
 	case "cache":
 		cmdCache(args)
+	case "git":
+		cmdGit(args)
 	case "help", "--help", "-h":
 		printUsage()
 	default:
@@ -536,6 +538,136 @@ func cmdCache(args []string) {
 	fmt.Println()
 }
 
+// ── git ─────────────────────────────────────────────────────────────────────
+
+func cmdGit(args []string) {
+	if len(args) == 0 {
+		fatalf("usage: cognevra git [analyze|search] ...")
+	}
+
+	sub := args[0]
+	args = args[1:]
+
+	switch sub {
+	case "analyze":
+		cmdGitAnalyze(args)
+	case "search":
+		cmdGitSearch(args)
+	default:
+		fatalf("unknown git subcommand: %s\nUsage: cognevra git [analyze|search]", sub)
+	}
+}
+
+func cmdGitAnalyze(args []string) {
+	repo := flagValue(args, "--repo", ".")
+	since := flagValue(args, "--since", "")
+	limit := flagValue(args, "--limit", "100")
+
+	payload := map[string]any{
+		"name":      "analyze_commits",
+		"arguments": map[string]any{
+			"repo_path": repo,
+			"since":     since,
+			"limit":     jsonNumber(limit),
+		},
+	}
+
+	// Call MCP tools/call endpoint
+	mcpURL := strings.TrimSuffix(baseURL, "/api/v1") + "/mcp"
+	rpcPayload := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "tools/call",
+		"params":  payload,
+	}
+
+	data, _ := json.Marshal(rpcPayload)
+	req, _ := http.NewRequest("POST", mcpURL, bytes.NewReader(data))
+	req.Header.Set("Content-Type", "application/json")
+	applyAuth(req)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		fatalf("connection failed: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	var result map[string]any
+	json.Unmarshal(body, &result)
+
+	if errObj, ok := result["error"]; ok {
+		fatalf("MCP error: %v", errObj)
+	}
+
+	// Extract text from result.content[0].text
+	if res, ok := result["result"].(map[string]any); ok {
+		if content, ok := res["content"].([]any); ok && len(content) > 0 {
+			if item, ok := content[0].(map[string]any); ok {
+				text, _ := item["text"].(string)
+				fmt.Println(text)
+				return
+			}
+		}
+	}
+
+	fmt.Printf("%s\n", body)
+}
+
+func cmdGitSearch(args []string) {
+	positional := positionalArgs(args)
+	if len(positional) == 0 {
+		fatalf("usage: cognevra git search <query>")
+	}
+	query := strings.Join(positional, " ")
+
+	payload := map[string]any{
+		"name":      "git_search",
+		"arguments": map[string]any{
+			"query": query,
+		},
+	}
+
+	mcpURL := strings.TrimSuffix(baseURL, "/api/v1") + "/mcp"
+	rpcPayload := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "tools/call",
+		"params":  payload,
+	}
+
+	data, _ := json.Marshal(rpcPayload)
+	req, _ := http.NewRequest("POST", mcpURL, bytes.NewReader(data))
+	req.Header.Set("Content-Type", "application/json")
+	applyAuth(req)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		fatalf("connection failed: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	var result map[string]any
+	json.Unmarshal(body, &result)
+
+	if errObj, ok := result["error"]; ok {
+		fatalf("MCP error: %v", errObj)
+	}
+
+	if res, ok := result["result"].(map[string]any); ok {
+		if content, ok := res["content"].([]any); ok && len(content) > 0 {
+			if item, ok := content[0].(map[string]any); ok {
+				text, _ := item["text"].(string)
+				fmt.Println(text)
+				return
+			}
+		}
+	}
+
+	fmt.Printf("%s\n", body)
+}
+
 // ── HTTP helpers ────────────────────────────────────────────────────────────
 
 func doGet(url string) ([]byte, int) {
@@ -646,6 +778,8 @@ Commands:
   search   <query> [--type=CHUNKS] [--top-k=10]           Semantic search
   datasets [list|create <name>|delete <id>]  Manage datasets
   cache    stats                             LLM cache statistics
+  git      analyze [--repo=.] [--since=...] [--limit=100]  Analyze git commits
+  git      search <query>                    Search analyzed commits
 
 Global flags:
   --url=<url>      API base URL (default: $COGNEVRA_URL or http://localhost:8080/api/v1)
