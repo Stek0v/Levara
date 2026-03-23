@@ -750,9 +750,10 @@ func searchHandler(cfg APIConfig) fiber.Handler {
 			return hybridSearch(c, cfg, req)
 		case "TEMPORAL":
 			return temporalSearch(c, cfg, req)
-		case "GRAPH_COMPLETION", "GRAPH_SUMMARY_COMPLETION",
-			"GRAPH_COMPLETION_CONTEXT_EXTENSION":
+		case "GRAPH_COMPLETION", "GRAPH_SUMMARY_COMPLETION":
 			return graphCompletionSearch(c, cfg, req)
+		case "GRAPH_COMPLETION_CONTEXT_EXTENSION":
+			return contextExtensionSearch(c, cfg, req)
 		case "GRAPH_COMPLETION_COT":
 			return cotSearch(c, cfg, req)
 		case "TRIPLET_COMPLETION":
