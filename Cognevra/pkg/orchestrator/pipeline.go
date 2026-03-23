@@ -122,6 +122,8 @@ func RunWithItems(ctx context.Context, items []TextItem, cfg Config, progressCh 
 		cr := classify.Classify(item.Filename, []byte(item.Text))
 		var chunks []chunker.Chunk
 		switch cr.RecommendedChunker {
+		case "code":
+			chunks = chunker.ChunkByFunction(item.Text, cr.MaxChunkChars, docID)
 		case "row":
 			chunks = chunker.ChunkByRow(item.Text, 20, docID)
 		case "sentence":
@@ -178,6 +180,8 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 			// Content-based classification (no filename available, use heuristics only)
 			cr := classify.Classify("", []byte(text))
 			switch cr.RecommendedChunker {
+			case "code":
+				chunks = chunker.ChunkByFunction(text, cr.MaxChunkChars, docID)
 			case "row":
 				chunks = chunker.ChunkByRow(text, 20, docID)
 			case "sentence":
@@ -185,6 +189,8 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 			default:
 				chunks = chunker.ChunkByParagraphMerged(text, cr.MinChunkChars, cr.MaxChunkChars, docID)
 			}
+		case "code":
+			chunks = chunker.ChunkByFunction(text, cfg.MaxChunkChars, docID)
 		case "sentence":
 			chunks = chunker.ChunkBySentence(text, cfg.MinChunkChars, cfg.MaxChunkChars, docID)
 		case "row":

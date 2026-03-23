@@ -43,6 +43,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -285,6 +286,19 @@ func main() {
 		}
 	}
 
+	// Rate limiting (optional): LLM_RATE_LIMIT_REQUESTS + LLM_RATE_LIMIT_INTERVAL
+	if rlReqs := os.Getenv("LLM_RATE_LIMIT_REQUESTS"); rlReqs != "" {
+		maxReqs, _ := strconv.Atoi(rlReqs)
+		intervalSec, _ := strconv.Atoi(os.Getenv("LLM_RATE_LIMIT_INTERVAL"))
+		if intervalSec <= 0 {
+			intervalSec = 60
+		}
+		if maxReqs > 0 && llmProvider != nil {
+			llmProvider = llm.NewRateLimiter(llmProvider, maxReqs, time.Duration(intervalSec)*time.Second)
+			log.Printf("LLM rate limit: %d requests per %ds", maxReqs, intervalSec)
+		}
+	}
+
 	// Protected routes: Cognee-compatible API (datasets, upload, cognify, search)
 	vectorHttp.RegisterCogneeAPI(api, vectorHttp.APIConfig{
 		PostgresDSN:   pgDSN,
@@ -379,6 +393,16 @@ func main() {
 			}
 		} else {
 			services["llm"] = fiber.Map{"status": "not_configured"}
+		}
+
+		// Rate limiter status
+		if rl, ok := llmProvider.(*llm.RateLimiter); ok {
+			services["llm_rate_limit"] = fiber.Map{
+				"status":           "active",
+				"available_tokens": rl.AvailableTokens(),
+				"max_requests":     rl.MaxRequests(),
+				"interval_seconds": int(rl.Interval().Seconds()),
+			}
 		}
 
 		services["collections"] = fiber.Map{"status": "ready", "count": len(colManager.List()), "dimension": *dim}

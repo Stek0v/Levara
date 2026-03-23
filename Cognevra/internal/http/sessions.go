@@ -2,11 +2,54 @@
 package http
 
 import (
+	"context"
+	"database/sql"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 )
+
+// GetSessionContext loads the last `limit` interactions for a session and formats
+// them as a conversational context string for LLM prompts.
+// Returns empty string if db is nil, sessionID is empty, or no interactions found.
+func GetSessionContext(db *sql.DB, ctx context.Context, sessionID string, limit int) string {
+	if db == nil || sessionID == "" {
+		return ""
+	}
+	if limit <= 0 {
+		limit = 5
+	}
+
+	rows, err := db.QueryContext(ctx,
+		`SELECT query, response FROM interactions
+		 WHERE session_id = $1 ORDER BY created_at DESC LIMIT $2`, sessionID, limit)
+	if err != nil {
+		return ""
+	}
+	defer rows.Close()
+
+	var parts []string
+	for rows.Next() {
+		var query, response string
+		if err := rows.Scan(&query, &response); err != nil {
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("User: %s\nAssistant: %s", query, response))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+
+	// Reverse so oldest is first (rows come DESC)
+	for i, j := 0, len(parts)-1; i < j; i, j = i+1, j-1 {
+		parts[i], parts[j] = parts[j], parts[i]
+	}
+
+	return "Previous conversation context:\n" + strings.Join(parts, "\n---\n")
+}
 
 func RegisterSessionAPI(app fiber.Router, cfg APIConfig) {
 	app.Post("/interactions", saveInteractionHandler(cfg))
