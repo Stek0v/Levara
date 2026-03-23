@@ -1,6 +1,6 @@
 module github.com/stek0v/cognevra
 
-go 1.25.5
+go 1.26.0
 
 require (
 	github.com/gofiber/fiber/v2 v2.52.10
@@ -41,6 +41,9 @@ require (
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mattn/go-runewidth v0.0.19 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
+	github.com/ncruces/go-sqlite3 v0.33.0 // indirect
+	github.com/ncruces/go-sqlite3-wasm v1.0.1-0.20260321101821-261d0f98d39c // indirect
+	github.com/ncruces/julianday v1.0.0 // indirect
 	github.com/neo4j/neo4j-go-driver/v5 v5.28.4 // indirect
 	github.com/otiai10/gosseract/v2 v2.4.1 // indirect
 	github.com/pdfcpu/pdfcpu v0.11.1 // indirect

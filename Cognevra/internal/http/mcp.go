@@ -399,7 +399,7 @@ func (h *mcpHandler) toolListData(ctx context.Context) mcpToolResult {
 
 	// Also list datasets from DB
 	if h.cfg.DB != nil {
-		rows, err := h.cfg.DB.QueryContext(ctx, "SELECT id, name FROM datasets ORDER BY created_at DESC LIMIT 100")
+		rows, err := h.cfg.DB.QueryContext(ctx, Q("SELECT id, name FROM datasets ORDER BY created_at DESC LIMIT 100"))
 		if err == nil {
 			defer rows.Close()
 			for rows.Next() {
@@ -421,7 +421,7 @@ func (h *mcpHandler) toolDelete(ctx context.Context, args map[string]any) mcpToo
 	}
 
 	if h.cfg.DB != nil {
-		h.cfg.DB.ExecContext(ctx, "DELETE FROM datasets WHERE id = $1", dsID)
+		h.cfg.DB.ExecContext(ctx, Q("DELETE FROM datasets WHERE id = $1"), dsID)
 	}
 
 	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("Dataset %s deleted.", dsID)}}}

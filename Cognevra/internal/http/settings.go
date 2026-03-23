@@ -47,7 +47,7 @@ func settingsGetHandler(cfg APIConfig) fiber.Handler {
 		if cfg.DB != nil && userID != "" {
 			var data string
 			err := cfg.DB.QueryRowContext(c.Context(),
-				"SELECT settings FROM user_settings WHERE user_id = $1", userID).Scan(&data)
+				Q("SELECT settings FROM user_settings WHERE user_id = $1"), userID).Scan(&data)
 			if err == nil && data != "" {
 				var s SettingsDTO
 				if json.Unmarshal([]byte(data), &s) == nil {
@@ -103,11 +103,11 @@ func settingsPutHandler(cfg APIConfig) fiber.Handler {
 		// Persist to DB if available
 		if cfg.DB != nil && userID != "" {
 			data, _ := json.Marshal(req)
-			cfg.DB.ExecContext(c.Context(),
-				`INSERT INTO user_settings (user_id, settings, updated_at)
+			upsertSQL, upsertArgs := QArgs(`INSERT INTO user_settings (user_id, settings, updated_at)
 				 VALUES ($1, $2, NOW())
 				 ON CONFLICT (user_id) DO UPDATE SET settings = $2, updated_at = NOW()`,
 				userID, string(data))
+			cfg.DB.ExecContext(c.Context(), upsertSQL, upsertArgs...)
 		}
 
 		return c.JSON(req)

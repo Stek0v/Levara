@@ -169,19 +169,19 @@ func datasetsListHandler(cfg APIConfig) fiber.Handler {
 		if !showAll && userID != "" {
 			// Check superuser — sees everything
 			var isSuperuser bool
-			cfg.DB.QueryRowContext(c.Context(), "SELECT COALESCE(is_superuser, false) FROM users WHERE id = $1", userID).Scan(&isSuperuser)
+			cfg.DB.QueryRowContext(c.Context(), Q("SELECT COALESCE(is_superuser, false) FROM users WHERE id = $1"), userID).Scan(&isSuperuser)
 			showAll = isSuperuser
 		}
 		if showAll {
 			rows, err = cfg.DB.QueryContext(c.Context(),
-				"SELECT id, name, created_at, COALESCE(owner_id,'') FROM datasets ORDER BY created_at DESC")
+				Q("SELECT id, name, created_at, COALESCE(owner_id,'') FROM datasets ORDER BY created_at DESC"))
 		} else {
-			rows, err = cfg.DB.QueryContext(c.Context(),
-				`SELECT DISTINCT d.id, d.name, d.created_at, COALESCE(d.owner_id,'')
+			dsSQL, dsArgs := QArgs(`SELECT DISTINCT d.id, d.name, d.created_at, COALESCE(d.owner_id,'')
 				 FROM datasets d
 				 LEFT JOIN dataset_shares s ON s.dataset_id = d.id AND s.user_id = $1
 				 WHERE d.owner_id = $1 OR d.owner_id = '' OR d.owner_id IS NULL OR s.id IS NOT NULL
 				 ORDER BY d.created_at DESC`, userID)
+			rows, err = cfg.DB.QueryContext(c.Context(), dsSQL, dsArgs...)
 		}
 		if err != nil {
 			return c.JSON([]DatasetDTO{})
@@ -218,7 +218,7 @@ func datasetCreateHandler(cfg APIConfig) fiber.Handler {
 
 		if cfg.DB != nil {
 			cfg.DB.ExecContext(c.Context(),
-				"INSERT INTO datasets (id, name, owner_id, created_at, updated_at) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (name) DO NOTHING",
+				Q("INSERT INTO datasets (id, name, owner_id, created_at, updated_at) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (name) DO NOTHING"),
 				id, req.Name, ownerID, now, now)
 		}
 
@@ -234,9 +234,9 @@ func datasetDeleteHandler(cfg APIConfig) fiber.Handler {
 		if cfg.DB != nil {
 			userID, _ := c.Locals("user_id").(string)
 			if userID != "" {
-				cfg.DB.ExecContext(c.Context(), "DELETE FROM datasets WHERE id = $1 AND (owner_id = $2 OR owner_id = '' OR owner_id IS NULL)", id, userID)
+				cfg.DB.ExecContext(c.Context(), Q("DELETE FROM datasets WHERE id = $1 AND (owner_id = $2 OR owner_id = '' OR owner_id IS NULL)"), id, userID)
 			} else {
-				cfg.DB.ExecContext(c.Context(), "DELETE FROM datasets WHERE id = $1", id)
+				cfg.DB.ExecContext(c.Context(), Q("DELETE FROM datasets WHERE id = $1"), id)
 			}
 		}
 		return c.JSON(fiber.Map{"deleted": true})
@@ -261,10 +261,10 @@ func datasetDataHandler(cfg APIConfig) fiber.Handler {
 		}
 
 		rows, err := cfg.DB.QueryContext(c.Context(),
-			`SELECT d.id, d.name, d.extension, d.mime_type, d.raw_data_location,
+			Q(`SELECT d.id, d.name, d.extension, d.mime_type, d.raw_data_location,
 			 COALESCE(d.data_size, 0), d.created_at
 			 FROM data d JOIN dataset_data dd ON d.id = dd.data_id
-			 WHERE dd.dataset_id = $1 ORDER BY d.created_at DESC`, dsID)
+			 WHERE dd.dataset_id = $1 ORDER BY d.created_at DESC`), dsID)
 		if err != nil {
 			return c.JSON([]DataDTO{})
 		}
@@ -290,8 +290,8 @@ func datasetDataDeleteHandler(cfg APIConfig) fiber.Handler {
 		dataID := c.Params("dataId")
 		dsID := c.Params("id")
 		if cfg.DB != nil {
-			cfg.DB.ExecContext(c.Context(), "DELETE FROM dataset_data WHERE dataset_id = $1 AND data_id = $2", dsID, dataID)
-			cfg.DB.ExecContext(c.Context(), "DELETE FROM data WHERE id = $1", dataID)
+			cfg.DB.ExecContext(c.Context(), Q("DELETE FROM dataset_data WHERE dataset_id = $1 AND data_id = $2"), dsID, dataID)
+			cfg.DB.ExecContext(c.Context(), Q("DELETE FROM data WHERE id = $1"), dataID)
 		}
 		return c.JSON(fiber.Map{"deleted": true})
 	}
@@ -305,7 +305,7 @@ func datasetDataRawHandler(cfg APIConfig) fiber.Handler {
 		}
 
 		var location string
-		cfg.DB.QueryRowContext(c.Context(), "SELECT raw_data_location FROM data WHERE id = $1", dataID).Scan(&location)
+		cfg.DB.QueryRowContext(c.Context(), Q("SELECT raw_data_location FROM data WHERE id = $1"), dataID).Scan(&location)
 		if location == "" {
 			return c.Status(404).JSON(fiber.Map{"detail": "not found"})
 		}
@@ -468,9 +468,9 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 			// Load text from dataset files
 			for _, dsID := range allDatasetIDs {
 				rows, err := cfg.DB.QueryContext(c.Context(),
-					`SELECT d.raw_data_location FROM data d
+					Q(`SELECT d.raw_data_location FROM data d
 					 JOIN dataset_data dd ON d.id = dd.data_id
-					 WHERE dd.dataset_id = $1`, dsID)
+					 WHERE dd.dataset_id = $1`), dsID)
 				if err != nil {
 					continue
 				}
@@ -488,9 +488,9 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 			if len(texts) == 0 {
 				for _, dsID := range allDatasetIDs {
 					rows, err := cfg.DB.QueryContext(c.Context(),
-						`SELECT d.name FROM data d
+						Q(`SELECT d.name FROM data d
 						 JOIN dataset_data dd ON d.id = dd.data_id
-						 WHERE dd.dataset_id = $1`, dsID)
+						 WHERE dd.dataset_id = $1`), dsID)
 					if err != nil {
 						continue
 					}
@@ -593,8 +593,8 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 			if sessionID != "" && cfg.DB != nil {
 				entityCount := runStatus.Entities
 				cfg.DB.ExecContext(context.Background(),
-					`INSERT INTO interactions (id, session_id, user_id, query, response, search_type, created_at)
-					 VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+					Q(`INSERT INTO interactions (id, session_id, user_id, query, response, search_type, created_at)
+					 VALUES ($1, $2, $3, $4, $5, $6, NOW())`),
 					uuid.New().String(), sessionID, userID, strings.Join(texts, " "),
 					fmt.Sprintf("%d entities extracted", entityCount), "cognify")
 			}
@@ -1025,7 +1025,7 @@ func temporalSearchPostgres(ctx context.Context, cfg APIConfig, from, to time.Ti
 	}
 
 	// Query temporal nodes and their connected entities via edges
-	query := `
+	query := Q(`
 		SELECT gn.id, gn.name, gn.type, gn.description,
 		       gn.properties::jsonb->>'date' AS date,
 		       ge.source_id AS entity_id,
@@ -1036,7 +1036,7 @@ func temporalSearchPostgres(ctx context.Context, cfg APIConfig, from, to time.Ti
 		WHERE gn.type = 'TemporalEvent'
 		AND gn.properties::jsonb->>'date' >= $1
 		AND gn.properties::jsonb->>'date' <= $2
-		LIMIT $3`
+		LIMIT $3`)
 
 	rows, err := cfg.DB.QueryContext(ctx, query, from.Format("2006-01-02"), to.Format("2006-01-02"), limit)
 	if err != nil {
@@ -1182,22 +1182,21 @@ func summariesSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error
 		if req.AllowedDatasetIDs != nil {
 			// Build dataset_id filter placeholders starting at $3
 			dsPlaceholders := make([]string, len(req.AllowedDatasetIDs))
-			sqlArgs = append(sqlArgs, req.QueryText, req.TopK)
+			pgArgs := []any{req.QueryText, req.TopK}
 			for i, id := range req.AllowedDatasetIDs {
 				dsPlaceholders[i] = fmt.Sprintf("$%d", i+3)
-				sqlArgs = append(sqlArgs, id)
+				pgArgs = append(pgArgs, id)
 			}
-			sqlQuery = fmt.Sprintf(`SELECT id, name, description FROM graph_nodes
+			sqlQuery, sqlArgs = QArgs(fmt.Sprintf(`SELECT id, name, description FROM graph_nodes
 			 WHERE type = 'TextSummary' AND (
 				 name ILIKE '%%' || $1 || '%%' OR description ILIKE '%%' || $1 || '%%'
 			 ) AND (dataset_id IS NULL OR dataset_id = '' OR dataset_id IN (%s))
-			 LIMIT $2`, strings.Join(dsPlaceholders, ","))
+			 LIMIT $2`, strings.Join(dsPlaceholders, ",")), pgArgs...)
 		} else {
-			sqlQuery = `SELECT id, name, description FROM graph_nodes
+			sqlQuery, sqlArgs = QArgs(`SELECT id, name, description FROM graph_nodes
 			 WHERE type = 'TextSummary' AND (
 				 name ILIKE '%' || $1 || '%' OR description ILIKE '%' || $1 || '%'
-			 ) LIMIT $2`
-			sqlArgs = []any{req.QueryText, req.TopK}
+			 ) LIMIT $2`, req.QueryText, req.TopK)
 		}
 		rows, err := cfg.DB.QueryContext(c.Context(), sqlQuery, sqlArgs...)
 		if err == nil {
@@ -1317,7 +1316,7 @@ func updateDataHandler(cfg APIConfig) fiber.Handler {
 		}
 		// Update name and content in data table
 		_, err := cfg.DB.ExecContext(c.Context(),
-			"UPDATE data SET name = $1, updated_at = NOW() WHERE id = $2",
+			Q("UPDATE data SET name = $1, updated_at = NOW() WHERE id = $2"),
 			string(body), dataID)
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"detail": err.Error()})

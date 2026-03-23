@@ -58,11 +58,11 @@ func ontologyUploadHandler(cfg APIConfig) fiber.Handler {
 		}
 
 		if cfg.DB != nil {
-			cfg.DB.ExecContext(c.Context(),
-				`INSERT INTO ontologies (id, name, file_path, format, classes_count, individuals_count, created_at)
+			upsertSQL, upsertArgs := QArgs(`INSERT INTO ontologies (id, name, file_path, format, classes_count, individuals_count, created_at)
 				 VALUES ($1, $2, $3, $4, $5, $6, $7)
 				 ON CONFLICT (name) DO UPDATE SET file_path = $3, format = $4, classes_count = $5, individuals_count = $6`,
 				id, name, savePath, format, classesCount, individualsCount, time.Now().UTC())
+			cfg.DB.ExecContext(c.Context(), upsertSQL, upsertArgs...)
 		}
 
 		return c.Status(201).JSON(fiber.Map{
@@ -81,11 +81,11 @@ func ontologyDeleteHandler(cfg APIConfig) fiber.Handler {
 		id := c.Params("id")
 		if cfg.DB != nil {
 			var fp string
-			cfg.DB.QueryRowContext(c.Context(), "SELECT file_path FROM ontologies WHERE id = $1", id).Scan(&fp)
+			cfg.DB.QueryRowContext(c.Context(), Q("SELECT file_path FROM ontologies WHERE id = $1"), id).Scan(&fp)
 			if fp != "" {
 				os.Remove(fp)
 			}
-			cfg.DB.ExecContext(c.Context(), "DELETE FROM ontologies WHERE id = $1", id)
+			cfg.DB.ExecContext(c.Context(), Q("DELETE FROM ontologies WHERE id = $1"), id)
 		}
 		return c.SendStatus(204)
 	}
@@ -97,7 +97,7 @@ func ontologyListHandler(cfg APIConfig) fiber.Handler {
 			return c.JSON([]any{})
 		}
 		rows, err := cfg.DB.QueryContext(c.Context(),
-			"SELECT id, name, file_path, format, COALESCE(classes_count,0), COALESCE(individuals_count,0), created_at FROM ontologies ORDER BY created_at")
+			Q("SELECT id, name, file_path, format, COALESCE(classes_count,0), COALESCE(individuals_count,0), created_at FROM ontologies ORDER BY created_at"))
 		if err != nil {
 			return c.JSON([]any{})
 		}
