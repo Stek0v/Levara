@@ -1,0 +1,40 @@
+# Binaries
+levara
+levara-server
+levara-arm64
+cli
+server
+*.exe
+
+# Data
+data/
+data_768/
+*.db
+*.db-wal
+*.db-shm
+*.jsonl
+*.snap
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build
+vendor/
+bin/
+
+# Test
+*.test
+*.out
+coverage.html
+
+# Proto generated (rebuild with make proto)
+*_pb2.py
+*_pb2_grpc.py

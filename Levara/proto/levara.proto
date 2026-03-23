@@ -1,0 +1,841 @@
+syntax = "proto3";
+package levara.v1;
+option go_package = "github.com/stek0v/levara/proto/pb";
+
+service LevaraService {
+  // Collections
+  rpc CreateCollection(CreateCollectionReq) returns (StatusResp);
+  rpc DropCollection(DropCollectionReq) returns (StatusResp);
+  rpc ListCollections(Empty) returns (ListCollectionsResp);
+  rpc HasCollection(HasCollectionReq) returns (HasCollectionResp);
+
+  // Records
+  rpc Insert(InsertReq) returns (StatusResp);
+  rpc BatchInsert(BatchInsertReq) returns (BatchInsertResp);
+  rpc Delete(DeleteReq) returns (DeleteResp);
+  rpc Search(SearchReq) returns (SearchResp);
+
+  // Text processing
+  rpc ChunkText(ChunkTextReq) returns (ChunkTextResp);
+
+  // Info
+  rpc Info(Empty) returns (InfoResp);
+
+  // Record retrieval
+  rpc GetByID(GetByIDReq) returns (GetByIDResp);
+
+  // Triplet processing
+  rpc ProcessTriplets(ProcessTripletsReq) returns (ProcessTripletsResp);
+
+  // File I/O acceleration
+  rpc HashFiles(HashFilesReq) returns (HashFilesResp);
+  rpc ListDirectory(ListDirectoryReq) returns (ListDirectoryResp);
+
+  // Search aggregation
+  rpc AggregateSearch(AggregateSearchReq) returns (AggregateSearchResp);
+
+  // Triplet search (in-memory graph scoring)
+  rpc SearchTriplets(SearchTripletsReq) returns (SearchTripletsResp);
+
+  // Graph deduplication + triplet generation
+  rpc DeduplicateGraph(DeduplicateGraphReq) returns (DeduplicateGraphResp);
+
+  // Batch embed + index (embed texts → insert vectors into collections)
+  rpc BatchEmbedAndIndex(BatchEmbedAndIndexReq) returns (BatchEmbedAndIndexResp);
+
+  // Batch write nodes/edges to Neo4j
+  rpc BatchWriteGraph(BatchWriteGraphReq) returns (BatchWriteGraphResp);
+
+  // Parallel write: dedup + Neo4j + embed + vector index in one call
+  rpc ParallelWriteDataPoints(ParallelWriteReq) returns (ParallelWriteResp);
+
+  // End-to-end text search: embed query + vector search in one call (no Python roundtrip)
+  rpc SearchByText(SearchByTextReq) returns (SearchResp);
+  rpc BatchSearchByText(BatchSearchByTextReq) returns (BatchSearchByTextResp);
+
+  // Neo4j graph read queries (search-time)
+  rpc GraphRead(GraphReadReq) returns (GraphReadResp);
+
+  // Full graph search: embed → vector search → Neo4j graph → triplet scoring → context
+  rpc GraphCompletionSearch(GraphCompletionSearchReq) returns (GraphCompletionSearchResp);
+
+  // Pipeline orchestrator (server-side streaming)
+  rpc PipelineCognify(PipelineCognifyReq) returns (stream PipelineCognifyProgress);
+
+  // LLM response cache
+  rpc LLMCacheGet(LLMCacheGetReq) returns (LLMCacheGetResp);
+  rpc LLMCachePut(LLMCachePutReq) returns (StatusResp);
+  rpc LLMCacheStats(Empty) returns (LLMCacheStatsResp);
+
+  // Semantic deduplication (vector cosine similarity)
+  rpc SemanticDedup(SemanticDedupReq) returns (SemanticDedupResp);
+
+  // Multi-query search: decompose → parallel search → merge
+  rpc MultiQuerySearch(MultiQuerySearchReq) returns (MultiQuerySearchResp);
+
+  // Fast data ingestion: hash + save + classify in one Go call
+  rpc IngestData(IngestDataReq) returns (IngestDataResp);
+
+  // Text extraction from PDF/DOCX/TXT (pure Go)
+  rpc ExtractText(ExtractTextReq) returns (ExtractTextResp);
+
+  // Temporal search: extract timestamps from text + range query
+  rpc TemporalSearch(TemporalSearchReq) returns (TemporalSearchResp);
+
+  // BM25 lexical search + hybrid
+  rpc BM25Index(BM25IndexReq) returns (StatusResp);
+  rpc BM25Search(BM25SearchReq) returns (BM25SearchResp);
+  rpc HybridSearch(HybridSearchReq) returns (HybridSearchResp);
+
+  // Maintenance
+  rpc Compact(Empty) returns (CompactResp);
+}
+
+// Common
+message Empty {}
+
+message StatusResp {
+  bool ok = 1;
+  string error = 2;
+}
+
+// Collections
+message CreateCollectionReq {
+  string name = 1;
+}
+
+message DropCollectionReq {
+  string name = 1;
+}
+
+message ListCollectionsResp {
+  repeated string collections = 1;
+}
+
+message HasCollectionReq {
+  string name = 1;
+}
+
+message HasCollectionResp {
+  bool exists = 1;
+}
+
+// Records
+message InsertReq {
+  string collection = 1;
+  string id = 2;
+  repeated float vector = 3;
+  string metadata_json = 4;
+}
+
+message BatchInsertReq {
+  string collection = 1;
+  repeated InsertRecord records = 2;
+}
+
+message InsertRecord {
+  string id = 1;
+  repeated float vector = 2;
+  string metadata_json = 3;
+}
+
+message BatchInsertResp {
+  int32 inserted = 1;
+  int32 failed = 2;
+  repeated string errors = 3;
+}
+
+message DeleteReq {
+  string collection = 1;
+  repeated string ids = 2;
+}
+
+message DeleteResp {
+  int32 deleted = 1;
+  int32 failed = 2;
+  repeated string errors = 3;
+}
+
+message SearchReq {
+  string collection = 1;
+  repeated float vector = 2;
+  int32 top_k = 3;
+}
+
+message SearchResp {
+  repeated SearchResult results = 1;
+}
+
+message SearchResult {
+  string id = 1;
+  float score = 2;
+  string metadata_json = 3;
+}
+
+// Record retrieval by ID
+message GetByIDReq {
+  string collection = 1;
+  repeated string ids = 2;
+}
+
+message GetByIDResp {
+  repeated RecordEntry records = 1;
+}
+
+message RecordEntry {
+  string id = 1;
+  string metadata_json = 2;
+  bool found = 3;
+  repeated float vector = 4;
+}
+
+// Text chunking
+message ChunkTextReq {
+  string text = 1;
+  string strategy = 2;    // "merged" (default), "paragraph", "sentence"
+  int32 min_chunk_chars = 3; // default: 80
+  int32 max_chunk_chars = 4; // default: 600
+  string document_id = 5;  // NEW: for deterministic UUID5 chunk IDs
+}
+
+message ChunkTextResp {
+  repeated TextChunk chunks = 1;
+}
+
+message TextChunk {
+  string id = 1;
+  string text = 2;
+  int32 chapter = 3;
+  int32 chunk_index = 4;
+  string cut_type = 5;
+}
+
+// Info
+message InfoResp {
+  int32 dimension = 1;
+  int32 shards = 2;
+  string status = 3;
+  repeated string collections = 4;
+}
+
+// Triplet processing
+message ProcessTripletsReq {
+  repeated GraphNode nodes = 1;
+  repeated GraphEdge edges = 2;
+}
+
+message GraphNode {
+  string id = 1;
+  string text = 2;
+}
+
+message GraphEdge {
+  string source_id = 1;
+  string target_id = 2;
+  string relationship_name = 3;
+  string edge_text = 4;
+}
+
+message TripletResult {
+  string id = 1;
+  string from_node_id = 2;
+  string to_node_id = 3;
+  string text = 4;
+}
+
+message ProcessTripletsResp {
+  repeated TripletResult triplets = 1;
+  int32 created = 2;
+  int32 skipped = 3;
+}
+
+// File I/O acceleration
+message HashFilesReq {
+  repeated string file_paths = 1;
+  int32 max_concurrent = 2;  // goroutine pool size, default 8
+}
+
+message FileHash {
+  string file_path = 1;
+  string sha256 = 2;
+  int64 file_size = 3;
+  string mime_type = 4;
+  string error = 5;
+}
+
+message HashFilesResp {
+  repeated FileHash results = 1;
+}
+
+message ListDirectoryReq {
+  string root_path = 1;
+  bool recursive = 2;
+  repeated string extensions = 3;  // filter by extensions, empty = all
+}
+
+message ListDirectoryResp {
+  repeated string file_paths = 1;
+  int32 total = 2;
+}
+
+// Maintenance
+message CompactResp {
+  int32 collections_compacted = 1;
+  string error = 2;
+}
+
+// Search aggregation
+message AggregateSearchReq {
+  repeated ScoredEdge edges = 1;
+  int32 top_k = 2;
+}
+
+message ScoredEdge {
+  string source_id = 1;
+  string source_name = 2;
+  string source_text = 3;
+  float source_distance = 4;
+  string target_id = 5;
+  string target_name = 6;
+  string target_text = 7;
+  float target_distance = 8;
+  string relationship_name = 9;
+  float edge_distance = 10;
+}
+
+message AggregateSearchResp {
+  repeated RankedEdge ranked_edges = 1;
+  string formatted_context = 2;
+  int32 unique_nodes = 3;
+}
+
+message RankedEdge {
+  string source_id = 1;
+  string source_name = 2;
+  string target_id = 3;
+  string target_name = 4;
+  string relationship_name = 5;
+  float score = 6;
+}
+
+// In-memory triplet search
+message SearchTripletsReq {
+  // Graph structure (loaded from DB)
+  repeated TripletNode nodes = 1;
+  repeated TripletEdge edges = 2;
+  // Vector distances from vector DB search (per collection)
+  repeated CollectionDistances node_distances = 3;
+  repeated DistanceEntry edge_distances = 4;
+  // Parameters
+  int32 top_k = 5;             // default: 5
+  float distance_penalty = 6;  // default: 3.5 (penalty for unseen nodes/edges)
+}
+
+message TripletNode {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  string type = 4;
+  string text = 5;
+}
+
+message TripletEdge {
+  string node1_id = 1;
+  string node2_id = 2;
+  string relationship_type = 3;
+  string edge_text = 4;
+  string edge_type_id = 5;  // grouping key for edge distances
+}
+
+message CollectionDistances {
+  string collection_name = 1;
+  repeated DistanceEntry entries = 2;
+}
+
+message DistanceEntry {
+  string id = 1;      // node_id or edge_type_id
+  float distance = 2;
+}
+
+message SearchTripletsResp {
+  repeated ScoredTriplet triplets = 1;
+  string formatted_context = 2;
+}
+
+message ScoredTriplet {
+  string node1_id = 1;
+  string node1_name = 2;
+  string node1_description = 3;
+  string node2_id = 4;
+  string node2_name = 5;
+  string node2_description = 6;
+  string relationship_type = 7;
+  string edge_text = 8;
+  float score = 9;  // sum of node1_dist + edge_dist + node2_dist
+}
+
+// Graph deduplication
+message DeduplicateGraphReq {
+  repeated DedupNodeMsg nodes = 1;
+  repeated DedupEdgeMsg edges = 2;
+}
+
+message DedupNodeMsg {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  string type = 4;
+  string text = 5;
+}
+
+message DedupEdgeMsg {
+  string source_id = 1;
+  string target_id = 2;
+  string relationship_name = 3;
+  string edge_text = 4;
+}
+
+message DeduplicateGraphResp {
+  repeated DedupNodeMsg nodes = 1;
+  repeated DedupEdgeMsg edges = 2;
+  repeated TripletResult triplets = 3;
+  int32 nodes_removed = 4;
+  int32 edges_removed = 5;
+}
+
+// Batch embed + index
+message BatchEmbedAndIndexReq {
+  repeated IndexGroup groups = 1;
+  string embed_endpoint = 2;  // e.g. "http://localhost:9001/v1/embeddings"
+  string embed_model = 3;     // e.g. "pplx-embed-context-v1-0.6b"
+  int32 batch_size = 4;       // embedding batch size, default 16
+  int32 concurrency = 5;      // concurrent embed requests, default 3
+}
+
+message IndexGroup {
+  string collection = 1;  // e.g. "Entity_name", "DocumentChunk_text"
+  repeated IndexItem items = 2;
+}
+
+message IndexItem {
+  string id = 1;
+  string text = 2;            // text to embed
+  string metadata_json = 3;   // additional metadata
+}
+
+message BatchEmbedAndIndexResp {
+  int32 total_embedded = 1;
+  int32 total_indexed = 2;
+  int32 collections_created = 3;
+  repeated string errors = 4;
+}
+
+// Batch write to Neo4j
+message BatchWriteGraphReq {
+  string neo4j_url = 1;       // bolt://host:7687
+  string neo4j_user = 2;
+  string neo4j_password = 3;
+  string neo4j_database = 4;  // default: "neo4j"
+  repeated GraphNodeWrite nodes = 5;
+  repeated GraphEdgeWrite edges = 6;
+}
+
+message GraphNodeWrite {
+  string id = 1;
+  string label = 2;           // dynamic label (class name)
+  string properties_json = 3; // JSON-serialized properties
+}
+
+message GraphEdgeWrite {
+  string source_id = 1;
+  string target_id = 2;
+  string relationship_name = 3;
+  string properties_json = 4; // JSON-serialized edge properties
+}
+
+message BatchWriteGraphResp {
+  int32 nodes_written = 1;
+  int32 edges_written = 2;
+  repeated string errors = 3;
+}
+
+// Parallel write: all-in-one insert
+message ParallelWriteReq {
+  // Graph data (will be deduplicated)
+  repeated DedupNodeMsg nodes = 1;
+  repeated DedupEdgeMsg edges = 2;
+  // Neo4j connection
+  string neo4j_url = 3;
+  string neo4j_user = 4;
+  string neo4j_password = 5;
+  string neo4j_database = 6;
+  // Embedding config
+  string embed_endpoint = 7;
+  string embed_model = 8;
+  int32 embed_batch_size = 9;
+  // Vector index groups (type_field collections)
+  repeated IndexGroup index_groups = 10;
+  // Options
+  bool generate_triplets = 11;
+}
+
+message ParallelWriteResp {
+  // Dedup results
+  int32 nodes_deduped = 1;
+  int32 edges_deduped = 2;
+  // Neo4j results
+  int32 neo4j_nodes_written = 3;
+  int32 neo4j_edges_written = 4;
+  // Vector index results
+  int32 vectors_embedded = 5;
+  int32 vectors_indexed = 6;
+  int32 collections_created = 7;
+  // Triplets
+  int32 triplets_generated = 8;
+  // Timing (ms)
+  int64 dedup_ms = 9;
+  int64 neo4j_nodes_ms = 10;
+  int64 neo4j_edges_ms = 11;
+  int64 embed_index_ms = 12;
+  int64 total_ms = 13;
+  // Errors
+  repeated string errors = 14;
+}
+
+// End-to-end text search
+message SearchByTextReq {
+  string collection = 1;
+  string query_text = 2;
+  int32 top_k = 3;
+  string embed_endpoint = 4;  // e.g. "http://localhost:9001/v1/embeddings"
+  string embed_model = 5;
+}
+
+message BatchSearchByTextReq {
+  string collection = 1;
+  repeated string queries = 2;
+  int32 top_k = 3;
+  string embed_endpoint = 4;
+  string embed_model = 5;
+}
+
+message BatchSearchByTextResp {
+  repeated SearchResultGroup results = 1;
+}
+
+// Neo4j graph read
+message GraphReadReq {
+  string neo4j_url = 1;
+  string neo4j_user = 2;
+  string neo4j_password = 3;
+  string neo4j_database = 4;
+  // Query mode
+  enum Mode {
+    FULL_GRAPH = 0;           // All nodes + edges
+    ID_FILTERED = 1;          // Nodes/edges touching given IDs
+    NEIGHBOURS = 2;           // Direct neighbors of node_id
+    SUBGRAPH = 3;             // Nodes by label + name, with neighbors
+  }
+  Mode mode = 5;
+  // Parameters (used based on mode)
+  repeated string node_ids = 6;          // for ID_FILTERED, NEIGHBOURS
+  string node_label = 7;                 // for SUBGRAPH (e.g. "Entity")
+  repeated string node_names = 8;        // for SUBGRAPH
+  repeated string properties_to_project = 9; // which node props to return
+}
+
+message GraphReadResp {
+  repeated GraphReadNode nodes = 1;
+  repeated GraphReadEdge edges = 2;
+  int64 query_ms = 3;
+}
+
+message GraphReadNode {
+  string id = 1;
+  string label = 2;
+  string properties_json = 3;
+}
+
+message GraphReadEdge {
+  string source_id = 1;
+  string target_id = 2;
+  string relationship_type = 3;
+  string properties_json = 4;
+}
+
+// Full graph completion search (end-to-end)
+message GraphCompletionSearchReq {
+  string query_text = 1;
+  // Collections to search for node distances
+  repeated string node_collections = 2;  // e.g. ["Entity_name", "TextSummary_text"]
+  // Collection for edge distances
+  string edge_collection = 3;            // e.g. "EdgeType_relationship_name"
+  int32 vector_top_k = 4;               // limit per collection vector search (default 100)
+  int32 triplet_top_k = 5;              // final triplet results (default 5)
+  // Embedding config
+  string embed_endpoint = 6;
+  string embed_model = 7;
+  // Neo4j config
+  string neo4j_url = 8;
+  string neo4j_user = 9;
+  string neo4j_password = 10;
+  string neo4j_database = 11;
+  // Distance penalty for unseen nodes/edges
+  float distance_penalty = 12;          // default 3.5
+}
+
+message GraphCompletionSearchResp {
+  repeated ScoredTriplet triplets = 1;
+  string formatted_context = 2;
+  // Diagnostics
+  int32 graph_nodes = 3;
+  int32 graph_edges = 4;
+  int32 vector_results = 5;
+  int64 embed_ms = 6;
+  int64 vector_search_ms = 7;
+  int64 graph_read_ms = 8;
+  int64 scoring_ms = 9;
+  int64 total_ms = 10;
+}
+
+// LLM response cache
+message LLMCacheGetReq {
+  string model = 1;
+  string prompt = 2;
+  string system_prompt = 3;
+  float temperature = 4;
+}
+
+message LLMCacheGetResp {
+  bool hit = 1;
+  string response = 2;
+  string cache_key = 3;
+}
+
+// Pipeline orchestrator
+message PipelineCognifyReq {
+  // Input data
+  repeated string texts = 1;
+  // Chunking
+  string chunk_strategy = 2;       // "merged" (default), "paragraph", "sentence"
+  int32 min_chunk_chars = 3;
+  int32 max_chunk_chars = 4;
+  // LLM extraction
+  string llm_endpoint = 5;         // LLM API URL (e.g. LLM proxy or direct Ollama)
+  string llm_model = 6;
+  string extraction_system_prompt = 7;  // system prompt for entity extraction
+  float llm_temperature = 8;
+  // Embedding
+  string embed_endpoint = 9;
+  string embed_model = 10;
+  // Neo4j
+  string neo4j_url = 11;
+  string neo4j_user = 12;
+  string neo4j_password = 13;
+  string neo4j_database = 14;
+  // Pipeline params
+  int32 llm_concurrency = 15;     // max concurrent LLM calls (default 5)
+  string collection = 16;          // vector collection name
+  bool generate_triplets = 17;
+}
+
+message PipelineCognifyProgress {
+  string stage = 1;                // "chunking", "extracting", "writing", "complete", "error"
+  int32 items_total = 2;
+  int32 items_processed = 3;
+  int32 chunks_created = 4;
+  int32 entities_extracted = 5;
+  int32 edges_extracted = 6;
+  int32 nodes_written = 7;
+  int32 edges_written = 8;
+  string message = 9;
+  int64 elapsed_ms = 10;
+}
+
+// Semantic dedup
+message SemanticDedupReq {
+  repeated VectorEntry vectors = 1;
+  float threshold = 2;  // cosine similarity threshold (default 0.95)
+}
+
+message VectorEntry {
+  string id = 1;
+  repeated float vector = 2;
+}
+
+message SemanticDedupResp {
+  repeated string kept_ids = 1;
+  repeated string removed_ids = 2;
+  int32 duplicates_found = 3;
+}
+
+// Multi-query search
+message MultiQuerySearchReq {
+  string query_text = 1;          // complex query to decompose
+  string collection = 2;
+  int32 top_k = 3;
+  string embed_endpoint = 4;
+  string embed_model = 5;
+}
+
+message MultiQuerySearchResp {
+  repeated string sub_queries = 1;
+  repeated MultiQueryResult results = 2;
+  int32 total_unique = 3;
+}
+
+message MultiQueryResult {
+  string id = 1;
+  float best_score = 2;
+  int32 appearances = 3;
+  double fused_score = 4;
+  string metadata_json = 5;
+}
+
+// Fast data ingestion
+message IngestDataReq {
+  repeated IngestItem items = 1;
+  string storage_path = 2;  // base directory for file storage
+  // Optional: PostgreSQL for metadata persistence
+  string postgres_dsn = 3;  // e.g. "postgres://cognee:cognee@localhost:5433/cognee_db"
+  string owner_id = 4;      // user UUID
+  string dataset_id = 5;    // dataset UUID
+  string dataset_name = 6;
+}
+
+message IngestItem {
+  string id = 1;              // optional — generated from hash if empty
+  string text = 2;            // text content (for string input)
+  bytes file_data = 3;        // binary file content (for file upload)
+  string filename = 4;        // original filename
+  string dataset_name = 5;
+}
+
+message IngestDataResp {
+  repeated IngestResult results = 1;
+  int64 total_ms = 2;
+  int32 db_rows_written = 3;  // metadata rows written to PostgreSQL
+  string dataset_id = 4;      // resolved dataset UUID
+}
+
+message IngestResult {
+  string id = 1;              // generated UUID5(hash + dataset)
+  string content_hash = 2;    // SHA256 of content
+  string file_path = 3;       // file:// URI where stored
+  string mime_type = 4;
+  string extension = 5;
+  int64 file_size = 6;
+  string name = 7;
+  bool already_exists = 8;    // true if hash already seen (dedup)
+}
+
+// Text extraction (tabula: PDF, DOCX, PPTX, XLSX, HTML, EPUB)
+message ExtractTextReq {
+  bytes file_data = 1;
+  string filename = 2;
+  string mime_type = 3;
+  bool include_markdown = 4;  // also return markdown version
+}
+
+message ExtractTextResp {
+  string text = 1;
+  string markdown = 2;        // markdown-formatted version (if requested)
+  string format = 3;
+  int32 pages = 4;
+  int64 extract_ms = 5;
+  repeated string warnings = 6;
+}
+
+// Temporal search
+message TemporalSearchReq {
+  string text = 1;                  // text to extract timestamps from
+  string date_from = 2;             // ISO 8601: "2024-01-01"
+  string date_to = 3;               // ISO 8601: "2024-12-31"
+  // Optional: search vector collection for matching chunks
+  string collection = 4;
+  string embed_endpoint = 5;
+  string embed_model = 6;
+  int32 top_k = 7;
+}
+
+message TemporalSearchResp {
+  repeated TemporalEvent events = 1;
+  int32 total_extracted = 2;
+  int32 in_range = 3;
+}
+
+message TemporalEvent {
+  string text = 1;          // context around the date
+  string date = 2;          // ISO 8601 date
+  string date_original = 3; // original date string
+  float confidence = 4;
+  string node_id = 5;
+}
+
+message LLMCachePutReq {
+  string model = 1;
+  string prompt = 2;
+  string system_prompt = 3;
+  float temperature = 4;
+  string response = 5;
+}
+
+message LLMCacheStatsResp {
+  int32 size = 1;
+  int32 max_size = 2;
+  int64 hits = 3;
+  int64 misses = 4;
+  float hit_rate = 5;
+}
+
+// BM25 lexical search
+message BM25IndexReq {
+  string collection = 1;  // BM25 index name (parallel to vector collection)
+  repeated IndexItem items = 2;
+}
+
+message BM25SearchReq {
+  string collection = 1;
+  string query = 2;
+  int32 top_k = 3;
+}
+
+message BM25SearchResp {
+  repeated BM25Result results = 1;
+}
+
+message BM25Result {
+  string id = 1;
+  double score = 2;
+  string metadata_json = 3;
+}
+
+// Hybrid search (vector + BM25 via RRF)
+message HybridSearchReq {
+  string collection = 1;         // same name for both vector + BM25
+  string query_text = 2;
+  int32 top_k = 3;
+  string embed_endpoint = 4;
+  string embed_model = 5;
+  float vector_weight = 6;       // RRF weight for vector (default 1.0)
+  float bm25_weight = 7;         // RRF weight for BM25 (default 1.0)
+}
+
+message HybridSearchResp {
+  repeated HybridResult results = 1;
+}
+
+message HybridResult {
+  string id = 1;
+  float vector_score = 2;
+  double bm25_score = 3;
+  double fused_score = 4;
+  int32 vector_rank = 5;
+  int32 bm25_rank = 6;
+  string metadata_json = 7;
+}
+
+message SearchResultGroup {
+  string query = 1;
+  repeated SearchResult results = 2;
+}
