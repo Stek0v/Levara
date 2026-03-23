@@ -116,6 +116,177 @@ func graphCompletionSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest)
 	})
 }
 
+// contextExtensionSearch performs 2-hop graph traversal for richer context.
+// Unlike graphCompletionSearch (1-hop: entity→neighbours), this extends to
+// entity→neighbours→THEIR neighbours, gathering a wider knowledge context.
+func contextExtensionSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
+	if cfg.EmbedEndpoint == "" || cfg.Collections == nil {
+		return c.JSON(fiber.Map{"answer": "", "context": []any{}, "search_type": "GRAPH_COMPLETION_CONTEXT_EXTENSION"})
+	}
+
+	ctx := c.Context()
+
+	// Step 1: Vector search — same as graphCompletionSearch
+	embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 1)
+	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections)
+
+	colls := cfg.Collections.List()
+	var entityNames []string
+	var vectorChunks []fiber.Map
+
+	for _, coll := range colls {
+		results, err := sp.SearchByText(context.Background(), coll, req.QueryText, req.TopK)
+		if err != nil {
+			continue
+		}
+		for _, r := range results {
+			meta := string(r.Metadata)
+			vectorChunks = append(vectorChunks, fiber.Map{
+				"id": r.ID, "score": r.Score, "collection": coll,
+				"metadata": json.RawMessage(meta),
+			})
+			var metaMap map[string]any
+			if json.Unmarshal([]byte(meta), &metaMap) == nil {
+				if name, ok := metaMap["name"].(string); ok && name != "" {
+					entityNames = append(entityNames, name)
+				}
+			}
+		}
+	}
+	vectorChunks = filterByAllowedDatasets(vectorChunks, req.AllowedDatasetIDs)
+	if len(vectorChunks) > req.TopK {
+		vectorChunks = vectorChunks[:req.TopK]
+	}
+	entityNames = dedup(entityNames)
+
+	// Step 2: 1st hop — direct neighbours (same as GRAPH_COMPLETION)
+	var hop1Context []string
+	var hop1TargetNames []string
+
+	if cfg.Neo4jCfg.Neo4jURL != "" && len(entityNames) > 0 {
+		hop1Context, hop1TargetNames = graphContextWithTargetsNeo4j(ctx, cfg, entityNames, req.AllowedDatasetIDs)
+	} else if cfg.DB != nil && len(entityNames) > 0 {
+		hop1Context = graphContextFromPostgres(ctx, cfg, entityNames, req.AllowedDatasetIDs)
+	}
+
+	// Step 3: 2nd hop — neighbours of neighbours (EXTENSION)
+	var hop2Context []string
+	newTargets := dedup(hop1TargetNames)
+	// Remove entities we already know about
+	seen := make(map[string]bool)
+	for _, n := range entityNames {
+		seen[n] = true
+	}
+	var extendedNames []string
+	for _, t := range newTargets {
+		if !seen[t] {
+			extendedNames = append(extendedNames, t)
+			seen[t] = true
+		}
+	}
+
+	if len(extendedNames) > 0 {
+		// Cap at 10 to avoid explosion
+		if len(extendedNames) > 10 {
+			extendedNames = extendedNames[:10]
+		}
+		if cfg.Neo4jCfg.Neo4jURL != "" {
+			hop2Context, _ = graphContextWithTargetsNeo4j(ctx, cfg, extendedNames, req.AllowedDatasetIDs)
+		} else if cfg.DB != nil {
+			hop2Context = graphContextFromPostgres(ctx, cfg, extendedNames, req.AllowedDatasetIDs)
+		}
+	}
+
+	// Merge all context
+	allContext := append(hop1Context, hop2Context...)
+
+	// Step 4: LLM completion with extended context
+	llmEndpoint := os.Getenv("LLM_ENDPOINT")
+	llmModel := os.Getenv("LLM_MODEL")
+	answer := ""
+
+	if llmEndpoint != "" && llmModel != "" && (len(allContext) > 0 || len(vectorChunks) > 0) {
+		var contextStr string
+		if len(hop1Context) > 0 {
+			contextStr = "Direct relationships (1-hop):\n" + strings.Join(hop1Context, "\n")
+		}
+		if len(hop2Context) > 0 {
+			contextStr += "\n\nExtended relationships (2-hop):\n" + strings.Join(hop2Context, "\n")
+		}
+
+		if len(vectorChunks) > 0 {
+			var chunkTexts []string
+			for i, chunk := range vectorChunks {
+				if raw, ok := chunk["metadata"].(json.RawMessage); ok {
+					chunkTexts = append(chunkTexts, fmt.Sprintf("[%d] %s", i+1, string(raw)))
+				}
+				if i >= 4 {
+					break
+				}
+			}
+			if contextStr != "" {
+				contextStr += "\n\nVector search results:\n" + strings.Join(chunkTexts, "\n")
+			} else {
+				contextStr = "Vector search results:\n" + strings.Join(chunkTexts, "\n")
+			}
+		}
+
+		prompt := fmt.Sprintf(
+			"Answer the question using the extended knowledge graph context below. "+
+				"The context includes both direct (1-hop) and extended (2-hop) relationships.\n\n"+
+				"%s\n\nQuestion: %s\n\nAnswer:", contextStr, req.QueryText)
+		answer = callLLMFromAPI(llmEndpoint, llmModel, prompt, cfg.LLMProvider)
+	}
+
+	return c.JSON(fiber.Map{
+		"answer":       answer,
+		"context_hop1": hop1Context,
+		"context_hop2": hop2Context,
+		"chunks":       vectorChunks,
+		"hops":         2,
+		"search_type":  "GRAPH_COMPLETION_CONTEXT_EXTENSION",
+	})
+}
+
+// graphContextWithTargetsNeo4j returns context strings AND target entity names (for 2nd hop).
+func graphContextWithTargetsNeo4j(ctx context.Context, cfg APIConfig, names []string, allowedDatasetIDs []string) ([]string, []string) {
+	writer, err := graphdb.NewWriter(ctx, cfg.Neo4jCfg.Neo4jURL, cfg.Neo4jCfg.Neo4jUser,
+		cfg.Neo4jCfg.Neo4jPassword, cfg.Neo4jCfg.Neo4jDatabase)
+	if err != nil {
+		log.Printf("[context-extension] neo4j connect: %v", err)
+		return nil, nil
+	}
+	defer writer.Close(ctx)
+
+	var cypher string
+	params := map[string]any{"names": names}
+	if allowedDatasetIDs != nil {
+		cypher = "MATCH (n:`__Node__`)-[r]-(m:`__Node__`) WHERE n.name IN $names AND (n.dataset_id IS NULL OR n.dataset_id IN $allowedIDs) RETURN n.name AS source, TYPE(r) AS rel, m.name AS target LIMIT 50"
+		params["allowedIDs"] = allowedDatasetIDs
+	} else {
+		cypher = "MATCH (n:`__Node__`)-[r]-(m:`__Node__`) WHERE n.name IN $names RETURN n.name AS source, TYPE(r) AS rel, m.name AS target LIMIT 50"
+	}
+
+	rows, err := writer.Query(ctx, cypher, params)
+	if err != nil {
+		log.Printf("[context-extension] neo4j query: %v", err)
+		return nil, nil
+	}
+
+	var contextLines []string
+	var targetNames []string
+	for _, row := range rows {
+		src, _ := row["source"].(string)
+		rel, _ := row["rel"].(string)
+		tgt, _ := row["target"].(string)
+		if src != "" && tgt != "" {
+			contextLines = append(contextLines, fmt.Sprintf("%s is related to %s via %s", src, tgt, rel))
+			targetNames = append(targetNames, tgt)
+		}
+	}
+	return contextLines, targetNames
+}
+
 // cotSearch performs multi-step Chain-of-Thought search:
 // Step 1: LLM decomposes query into sub-questions.
 // Step 2: Each sub-question runs graph search (vector + graph traversal).
