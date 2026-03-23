@@ -449,6 +449,22 @@ func main() {
 			}
 		}
 
+		if whisperEndpoint := os.Getenv("WHISPER_ENDPOINT"); whisperEndpoint != "" {
+			resp, err := http.Get(whisperEndpoint + "/health")
+			if err == nil {
+				resp.Body.Close()
+				if resp.StatusCode == 200 {
+					services["whisper"] = fiber.Map{"status": "connected", "endpoint": whisperEndpoint}
+				} else {
+					services["whisper"] = fiber.Map{"status": "unreachable", "endpoint": whisperEndpoint}
+				}
+			} else {
+				services["whisper"] = fiber.Map{"status": "unreachable", "endpoint": whisperEndpoint}
+			}
+		} else {
+			services["whisper"] = fiber.Map{"status": "not_configured"}
+		}
+
 		services["collections"] = fiber.Map{"status": "ready", "count": len(colManager.List()), "dimension": *dim}
 		services["grpc"] = fiber.Map{"status": "listening", "port": *grpcPort}
 

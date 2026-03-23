@@ -17,6 +17,7 @@ const (
 	TypeMarkdown     DocType = "markdown"       // .md (separate from text because structured)
 	TypeEmail        DocType = "email"          // .eml
 	TypeLogFile      DocType = "log_file"       // .log
+	TypeAudioFile    DocType = "audio_file"    // .mp3, .wav, .m4a, .ogg, .flac, .webm, .mp4
 	TypeUnknown      DocType = "unknown"
 )
 
@@ -47,6 +48,8 @@ func Classify(filename string, content []byte) ClassifyResult {
 		return ClassifyResult{Type: TypeLogFile, RecommendedChunker: "sentence", MinChunkChars: 50, MaxChunkChars: 1000}
 	case ".eml":
 		return ClassifyResult{Type: TypeEmail, RecommendedChunker: "paragraph", MinChunkChars: 50, MaxChunkChars: 2000}
+	case ".mp3", ".wav", ".m4a", ".ogg", ".flac", ".webm", ".mp4", ".mpeg", ".mpga":
+		return ClassifyResult{Type: TypeAudioFile, RecommendedChunker: "sentence", MinChunkChars: 50, MaxChunkChars: 2000}
 	default:
 		// Content-based heuristics
 		if looksLikeCSV(content) {

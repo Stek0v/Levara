@@ -7,12 +7,14 @@
 package extract
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/stek0v/cognevra/pkg/audio"
 	"github.com/tsawler/tabula"
 )
 
@@ -31,6 +33,25 @@ func Extract(data []byte, filename, mimeType string) (Result, error) {
 	start := time.Now()
 
 	format := detectFormat(data, filename, mimeType)
+
+	// Audio formats — transcribe via Whisper API
+	if isAudioFormat(filename) {
+		whisperEndpoint := os.Getenv("WHISPER_ENDPOINT")
+		if whisperEndpoint == "" {
+			return Result{}, fmt.Errorf("audio file detected but WHISPER_ENDPOINT not configured")
+		}
+		client := audio.NewWhisperClient(whisperEndpoint, os.Getenv("WHISPER_API_KEY"), os.Getenv("WHISPER_MODEL"))
+		text, err := client.Transcribe(context.Background(), data, filename)
+		if err != nil {
+			return Result{}, fmt.Errorf("whisper transcription: %w", err)
+		}
+		return Result{
+			Text:      text,
+			Format:    "audio_transcript",
+			Pages:     1,
+			ExtractMs: time.Since(start).Milliseconds(),
+		}, nil
+	}
 
 	// Plain text formats — direct passthrough (no temp file needed)
 	if isTextFormat(format) {
@@ -224,4 +245,9 @@ func isTextFormat(format string) bool {
 		return true
 	}
 	return false
+}
+
+// isAudioFormat checks if file extension is a supported audio format.
+func isAudioFormat(filename string) bool {
+	return audio.IsSupported(filename)
 }
