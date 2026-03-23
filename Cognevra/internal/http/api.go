@@ -751,8 +751,10 @@ func searchHandler(cfg APIConfig) fiber.Handler {
 		case "TEMPORAL":
 			return temporalSearch(c, cfg, req)
 		case "GRAPH_COMPLETION", "GRAPH_SUMMARY_COMPLETION",
-			"GRAPH_COMPLETION_COT", "GRAPH_COMPLETION_CONTEXT_EXTENSION":
+			"GRAPH_COMPLETION_CONTEXT_EXTENSION":
 			return graphCompletionSearch(c, cfg, req)
+		case "GRAPH_COMPLETION_COT":
+			return cotSearch(c, cfg, req)
 		case "TRIPLET_COMPLETION":
 			return tripletCompletionSearch(c, cfg, req)
 		case "NATURAL_LANGUAGE":
@@ -760,7 +762,7 @@ func searchHandler(cfg APIConfig) fiber.Handler {
 		case "CYPHER":
 			return cypherSearch(c, cfg, req)
 		case "CODE", "CODING_RULES":
-			return chunksSearch(c, cfg, req) // code → vector fallback
+			return codingRulesSearch(c, cfg, req)
 		case "FEELING_LUCKY":
 			return hybridSearch(c, cfg, req) // auto-select → hybrid is best general
 		default:

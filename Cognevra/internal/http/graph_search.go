@@ -1,5 +1,5 @@
 // graph_search.go — Graph-based search handlers for Cognee-compatible search API.
-// Implements: GRAPH_COMPLETION, TRIPLET_COMPLETION, CYPHER, NATURAL_LANGUAGE.
+// Implements: GRAPH_COMPLETION, GRAPH_COMPLETION_COT, TRIPLET_COMPLETION, CYPHER, NATURAL_LANGUAGE, CODING_RULES.
 package http
 
 import (
@@ -114,6 +114,407 @@ func graphCompletionSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest)
 		"chunks":      vectorChunks,
 		"search_type": "GRAPH_COMPLETION",
 	})
+}
+
+// cotSearch performs multi-step Chain-of-Thought search:
+// Step 1: LLM decomposes query into sub-questions.
+// Step 2: Each sub-question runs graph search (vector + graph traversal).
+// Step 3: LLM synthesizes a final answer from all gathered context.
+func cotSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
+	llmEndpoint := os.Getenv("LLM_ENDPOINT")
+	llmModel := os.Getenv("LLM_MODEL")
+
+	// If no LLM configured, fall back to single-step graph completion.
+	if llmEndpoint == "" || llmModel == "" {
+		return graphCompletionSearch(c, cfg, req)
+	}
+	if cfg.EmbedEndpoint == "" || cfg.Collections == nil {
+		return c.JSON(fiber.Map{"answer": "", "reasoning_steps": []any{}, "search_type": "GRAPH_COMPLETION_COT"})
+	}
+
+	ctx := c.Context()
+
+	// ── Step 1: Decompose query into sub-questions via LLM ──
+	decomposePrompt := fmt.Sprintf(
+		"Break the following question into 2-3 independent sub-questions that each need a knowledge-graph lookup. "+
+			"Return ONLY a JSON array of strings, no explanation.\n\nQuestion: %s\n\nSub-questions:", req.QueryText)
+	rawSubs := callLLMFromAPI(llmEndpoint, llmModel, decomposePrompt, cfg.LLMProvider)
+
+	subQuestions := parseJSONStringArray(rawSubs)
+	if len(subQuestions) == 0 {
+		// Fallback: use the original query as the sole sub-question.
+		subQuestions = []string{req.QueryText}
+	}
+	// Cap at 5 to avoid runaway costs.
+	if len(subQuestions) > 5 {
+		subQuestions = subQuestions[:5]
+	}
+
+	// ── Step 2: For each sub-question, run vector search + graph traversal ──
+	embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 1)
+	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections)
+	colls := cfg.Collections.List()
+
+	type reasoningStep struct {
+		Step         int    `json:"step"`
+		SubQuestion  string `json:"sub_question"`
+		ContextFound string `json:"context_found"`
+	}
+
+	var steps []reasoningStep
+	var allContext []string
+
+	for i, sub := range subQuestions {
+		var entityNames []string
+
+		for _, coll := range colls {
+			results, err := sp.SearchByText(context.Background(), coll, sub, req.TopK)
+			if err != nil {
+				continue
+			}
+			for _, r := range results {
+				var metaMap map[string]any
+				if json.Unmarshal(r.Metadata, &metaMap) == nil {
+					if name, ok := metaMap["name"].(string); ok && name != "" {
+						entityNames = append(entityNames, name)
+					}
+				}
+			}
+		}
+		entityNames = dedup(entityNames)
+
+		// Graph traversal for discovered entities.
+		var graphCtx []string
+		if cfg.Neo4jCfg.Neo4jURL != "" && len(entityNames) > 0 {
+			graphCtx = graphContextFromNeo4j(ctx, cfg, entityNames, req.AllowedDatasetIDs)
+		} else if cfg.DB != nil && len(entityNames) > 0 {
+			graphCtx = graphContextFromPostgres(ctx, cfg, entityNames, req.AllowedDatasetIDs)
+		}
+
+		stepContext := strings.Join(graphCtx, "; ")
+		if stepContext == "" && len(entityNames) > 0 {
+			stepContext = "Entities found: " + strings.Join(entityNames, ", ")
+		}
+		if stepContext == "" {
+			stepContext = "(no relevant context found)"
+		}
+
+		steps = append(steps, reasoningStep{
+			Step:         i + 1,
+			SubQuestion:  sub,
+			ContextFound: stepContext,
+		})
+		allContext = append(allContext, graphCtx...)
+	}
+
+	// ── Step 3: Synthesize final answer ──
+	answer := ""
+	if len(allContext) > 0 {
+		var stepSummary string
+		for _, s := range steps {
+			stepSummary += fmt.Sprintf("Step %d — %s\nContext: %s\n\n", s.Step, s.SubQuestion, s.ContextFound)
+		}
+
+		synthesizePrompt := fmt.Sprintf(
+			"Given this multi-step research:\n\n%s\nAnswer the original question: %s", stepSummary, req.QueryText)
+		answer = callLLMFromAPI(llmEndpoint, llmModel, synthesizePrompt, cfg.LLMProvider)
+	}
+
+	// Build JSON-serialisable steps slice.
+	stepsJSON := make([]fiber.Map, len(steps))
+	for i, s := range steps {
+		stepsJSON[i] = fiber.Map{
+			"step":          s.Step,
+			"sub_question":  s.SubQuestion,
+			"context_found": s.ContextFound,
+		}
+	}
+
+	return c.JSON(fiber.Map{
+		"answer":          answer,
+		"reasoning_steps": stepsJSON,
+		"search_type":     "GRAPH_COMPLETION_COT",
+	})
+}
+
+// parseJSONStringArray tries to extract a []string from an LLM response that should be a JSON array.
+func parseJSONStringArray(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	// Strip markdown code fences if present.
+	if idx := strings.Index(raw, "```"); idx >= 0 {
+		start := idx + 3
+		if nl := strings.Index(raw[start:], "\n"); nl >= 0 {
+			start += nl + 1
+		}
+		if end := strings.Index(raw[start:], "```"); end >= 0 {
+			raw = strings.TrimSpace(raw[start : start+end])
+		}
+	}
+	// Find the first '[' and last ']' to be lenient with surrounding text.
+	lbracket := strings.Index(raw, "[")
+	rbracket := strings.LastIndex(raw, "]")
+	if lbracket >= 0 && rbracket > lbracket {
+		raw = raw[lbracket : rbracket+1]
+	}
+	var arr []string
+	if json.Unmarshal([]byte(raw), &arr) == nil {
+		return arr
+	}
+	return nil
+}
+
+// codingRulesSearch searches for code-related entities (Function, Class, Module, Method, Import)
+// and returns their relationships formatted as coding rules.
+func codingRulesSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
+	if cfg.EmbedEndpoint == "" || cfg.Collections == nil {
+		return c.JSON(fiber.Map{"rules": []any{}, "entities": []any{}, "search_type": "CODING_RULES"})
+	}
+
+	ctx := c.Context()
+
+	// Code-related entity types to filter on.
+	codeTypes := map[string]bool{
+		"function": true, "class": true, "module": true,
+		"method": true, "import": true,
+	}
+
+	// Step 1: Vector search across all collections, filter to code entities.
+	embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 1)
+	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections)
+	colls := cfg.Collections.List()
+
+	var codeEntities []fiber.Map
+	var entityNames []string
+
+	for _, coll := range colls {
+		results, err := sp.SearchByText(context.Background(), coll, req.QueryText, req.TopK*2)
+		if err != nil {
+			continue
+		}
+		for _, r := range results {
+			meta := string(r.Metadata)
+			var metaMap map[string]any
+			if json.Unmarshal([]byte(meta), &metaMap) != nil {
+				continue
+			}
+			nodeType, _ := metaMap["type"].(string)
+			if nodeType != "" && !codeTypes[strings.ToLower(nodeType)] {
+				continue
+			}
+			// Accept entities without type too — they may still be code-related based on collection name.
+			if nodeType == "" {
+				lower := strings.ToLower(coll)
+				if !strings.Contains(lower, "code") && !strings.Contains(lower, "function") && !strings.Contains(lower, "class") {
+					continue
+				}
+			}
+
+			codeEntities = append(codeEntities, fiber.Map{
+				"id":         r.ID,
+				"score":      r.Score,
+				"collection": coll,
+				"metadata":   json.RawMessage(meta),
+			})
+			if name, ok := metaMap["name"].(string); ok && name != "" {
+				entityNames = append(entityNames, name)
+			}
+		}
+	}
+
+	// RBAC post-filter.
+	codeEntities = filterByAllowedDatasets(codeEntities, req.AllowedDatasetIDs)
+	if len(codeEntities) > req.TopK {
+		codeEntities = codeEntities[:req.TopK]
+	}
+	entityNames = dedup(entityNames)
+
+	// Step 2: Graph traversal to find relationships between code entities.
+	var rules []string
+
+	if cfg.Neo4jCfg.Neo4jURL != "" && len(entityNames) > 0 {
+		rules = codeGraphContextFromNeo4j(ctx, cfg, entityNames, req.AllowedDatasetIDs)
+	} else if cfg.DB != nil && len(entityNames) > 0 {
+		rules = codeGraphContextFromPostgres(ctx, cfg, entityNames, req.AllowedDatasetIDs)
+	}
+
+	// Fallback: if no graph rules found, generate rules from the entities themselves.
+	if len(rules) == 0 {
+		for _, ent := range codeEntities {
+			if raw, ok := ent["metadata"].(json.RawMessage); ok {
+				var m map[string]any
+				if json.Unmarshal(raw, &m) == nil {
+					name, _ := m["name"].(string)
+					typ, _ := m["type"].(string)
+					desc, _ := m["description"].(string)
+					if name != "" {
+						rule := name
+						if typ != "" {
+							rule = fmt.Sprintf("[%s] %s", typ, name)
+						}
+						if desc != "" {
+							rule += ": " + desc
+						}
+						rules = append(rules, rule)
+					}
+				}
+			}
+		}
+	}
+
+	return c.JSON(fiber.Map{
+		"rules":       rules,
+		"entities":    codeEntities,
+		"search_type": "CODING_RULES",
+	})
+}
+
+// codeGraphContextFromNeo4j queries Neo4j for code-entity relationships, formatted as rules.
+func codeGraphContextFromNeo4j(ctx context.Context, cfg APIConfig, names []string, allowedDatasetIDs []string) []string {
+	writer, err := graphdb.NewWriter(ctx, cfg.Neo4jCfg.Neo4jURL, cfg.Neo4jCfg.Neo4jUser,
+		cfg.Neo4jCfg.Neo4jPassword, cfg.Neo4jCfg.Neo4jDatabase)
+	if err != nil {
+		log.Printf("[coding-rules] neo4j connect: %v", err)
+		return nil
+	}
+	defer writer.Close(ctx)
+
+	params := map[string]any{"names": names}
+	var cypher string
+	if allowedDatasetIDs != nil {
+		cypher = `MATCH (n:` + "`__Node__`" + `)-[r]-(m:` + "`__Node__`" + `)
+		 WHERE n.name IN $names AND (n.dataset_id IS NULL OR n.dataset_id IN $allowedIDs)
+		 RETURN n.name AS source, n.type AS source_type, TYPE(r) AS rel, m.name AS target, m.type AS target_type
+		 LIMIT 100`
+		params["allowedIDs"] = allowedDatasetIDs
+	} else {
+		cypher = `MATCH (n:` + "`__Node__`" + `)-[r]-(m:` + "`__Node__`" + `)
+		 WHERE n.name IN $names
+		 RETURN n.name AS source, n.type AS source_type, TYPE(r) AS rel, m.name AS target, m.type AS target_type
+		 LIMIT 100`
+	}
+
+	rows, err := writer.Query(ctx, cypher, params)
+	if err != nil {
+		log.Printf("[coding-rules] neo4j query: %v", err)
+		return nil
+	}
+
+	return formatCodeRules(rows)
+}
+
+// codeGraphContextFromPostgres queries PostgreSQL for code-entity relationships, formatted as rules.
+func codeGraphContextFromPostgres(ctx context.Context, cfg APIConfig, names []string, allowedDatasetIDs []string) []string {
+	if cfg.DB == nil {
+		return nil
+	}
+
+	placeholders := make([]string, len(names))
+	args := make([]any, len(names))
+	for i, name := range names {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		args[i] = name
+	}
+
+	var dsFilter string
+	if allowedDatasetIDs != nil {
+		dsPlaceholders := make([]string, len(allowedDatasetIDs))
+		for i, id := range allowedDatasetIDs {
+			idx := len(names) + i + 1
+			dsPlaceholders[i] = fmt.Sprintf("$%d", idx)
+			args = append(args, id)
+		}
+		dsFilter = fmt.Sprintf(" AND (gn.dataset_id IS NULL OR gn.dataset_id = '' OR gn.dataset_id IN (%s))", strings.Join(dsPlaceholders, ","))
+	}
+
+	limitIdx := len(args) + 1
+	args = append(args, 100)
+
+	query := fmt.Sprintf(`
+		SELECT gn.name AS source, gn.type AS source_type,
+		       ge.relationship_name AS rel,
+		       gn2.name AS target, gn2.type AS target_type
+		FROM graph_edges ge
+		JOIN graph_nodes gn ON ge.source_id = gn.id
+		JOIN graph_nodes gn2 ON ge.target_id = gn2.id
+		WHERE gn.name = ANY(ARRAY[%s])%s
+		LIMIT $%d`, strings.Join(placeholders, ","), dsFilter, limitIdx)
+
+	rows, err := cfg.DB.QueryContext(ctx, query, args...)
+	if err != nil {
+		log.Printf("[coding-rules] postgres query: %v", err)
+		return nil
+	}
+	defer rows.Close()
+
+	var rowMaps []map[string]any
+	for rows.Next() {
+		var src, srcType, rel, tgt, tgtType string
+		rows.Scan(&src, &srcType, &rel, &tgt, &tgtType)
+		rowMaps = append(rowMaps, map[string]any{
+			"source": src, "source_type": srcType,
+			"rel": rel, "target": tgt, "target_type": tgtType,
+		})
+	}
+	return formatCodeRules(rowMaps)
+}
+
+// formatCodeRules converts raw relationship rows into human-readable coding rules.
+func formatCodeRules(rows []map[string]any) []string {
+	// Map relationship types to human-readable verbs.
+	verbMap := map[string]string{
+		"CALLS":        "calls",
+		"IMPORTS":      "imports",
+		"INHERITS":     "inherits from",
+		"EXTENDS":      "extends",
+		"IMPLEMENTS":   "implements",
+		"CONTAINS":     "contains",
+		"HAS_PART":     "contains",
+		"DEPENDS_ON":   "depends on",
+		"RELATES_TO":   "is related to",
+		"USES":         "uses",
+		"RETURNS":      "returns",
+		"ACCEPTS":      "accepts",
+		"DEFINES":      "defines",
+		"OVERRIDES":    "overrides",
+	}
+
+	var rules []string
+	seen := make(map[string]bool)
+
+	for _, row := range rows {
+		src, _ := row["source"].(string)
+		rel, _ := row["rel"].(string)
+		tgt, _ := row["target"].(string)
+		if src == "" || tgt == "" {
+			continue
+		}
+
+		key := src + "|" + rel + "|" + tgt
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+
+		verb := verbMap[strings.ToUpper(rel)]
+		if verb == "" {
+			verb = strings.ToLower(strings.ReplaceAll(rel, "_", " "))
+		}
+
+		// Include type annotations when available.
+		srcType, _ := row["source_type"].(string)
+		tgtType, _ := row["target_type"].(string)
+		srcLabel := src
+		tgtLabel := tgt
+		if srcType != "" {
+			srcLabel = fmt.Sprintf("%s (%s)", src, srcType)
+		}
+		if tgtType != "" {
+			tgtLabel = fmt.Sprintf("%s (%s)", tgt, tgtType)
+		}
+
+		rules = append(rules, fmt.Sprintf("%s %s %s", srcLabel, verb, tgtLabel))
+	}
+	return rules
 }
 
 // tripletCompletionSearch searches triplet collections and uses triplet context for LLM.

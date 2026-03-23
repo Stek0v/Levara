@@ -317,6 +317,16 @@ func main() {
 		}
 	}
 
+	// Langfuse LLM tracing (optional): wrap provider if LANGFUSE_PUBLIC_KEY is set
+	if lfPubKey := os.Getenv("LANGFUSE_PUBLIC_KEY"); lfPubKey != "" && llmProvider != nil {
+		lfSecKey := os.Getenv("LANGFUSE_SECRET_KEY")
+		lfEndpoint := os.Getenv("LANGFUSE_ENDPOINT")
+		tracer := observe.NewLangfuseTracer(lfEndpoint, lfPubKey, lfSecKey)
+		adapter := llm.NewLangfuseAdapter(tracer)
+		llmProvider = llm.NewTracedProvider(llmProvider, adapter)
+		log.Printf("Langfuse tracing enabled (endpoint=%s)", tracer.Endpoint())
+	}
+
 	// Rate limiting (optional): LLM_RATE_LIMIT_REQUESTS + LLM_RATE_LIMIT_INTERVAL
 	if rlReqs := os.Getenv("LLM_RATE_LIMIT_REQUESTS"); rlReqs != "" {
 		maxReqs, _ := strconv.Atoi(rlReqs)
