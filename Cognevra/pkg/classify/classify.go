@@ -36,7 +36,7 @@ func Classify(filename string, content []byte) ClassifyResult {
 	case ".csv", ".tsv":
 		return ClassifyResult{Type: TypeTabularData, RecommendedChunker: "row", MinChunkChars: 20, MaxChunkChars: 5000}
 	case ".py", ".js", ".ts", ".go", ".java", ".rs", ".c", ".cpp", ".h", ".rb", ".php", ".swift", ".kt":
-		return ClassifyResult{Type: TypeCodeFile, RecommendedChunker: "paragraph", MinChunkChars: 50, MaxChunkChars: 3000}
+		return ClassifyResult{Type: TypeCodeFile, RecommendedChunker: "code", MinChunkChars: 50, MaxChunkChars: 3000}
 	case ".pptx":
 		return ClassifyResult{Type: TypePresentation, RecommendedChunker: "paragraph", MinChunkChars: 30, MaxChunkChars: 1500}
 	case ".xlsx", ".xls":
@@ -53,7 +53,7 @@ func Classify(filename string, content []byte) ClassifyResult {
 			return ClassifyResult{Type: TypeTabularData, RecommendedChunker: "row", MinChunkChars: 20, MaxChunkChars: 5000}
 		}
 		if looksLikeCode(content) {
-			return ClassifyResult{Type: TypeCodeFile, RecommendedChunker: "paragraph", MinChunkChars: 50, MaxChunkChars: 3000}
+			return ClassifyResult{Type: TypeCodeFile, RecommendedChunker: "code", MinChunkChars: 50, MaxChunkChars: 3000}
 		}
 		return ClassifyResult{Type: TypeTextDocument, RecommendedChunker: "paragraph", MinChunkChars: 50, MaxChunkChars: 2000}
 	}

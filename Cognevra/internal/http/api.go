@@ -448,6 +448,7 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 			LLMModel        string   `json:"llm_model"`
 			Collection      string   `json:"collection"`
 			RunInBackground bool     `json:"runInBackground"`
+			SessionID       string   `json:"session_id"`
 		}
 		c.BodyParser(&req)
 
@@ -518,6 +519,13 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 		}
 		pipelineRuns.Store(runID, runStatus)
 
+		// P2.1: Load session context if session_id provided
+		var sessionContext string
+		if req.SessionID != "" && cfg.DB != nil {
+			sessionContext = GetSessionContext(cfg.DB, c.Context(), req.SessionID, 5)
+		}
+		userID, _ := c.Locals("user_id").(string)
+
 		// Build orchestrator config from server config + request overrides
 		pipeCfg := orchestrator.Config{
 			ChunkStrategy:   "merged",
@@ -535,6 +543,7 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 			Collection:      collection,
 			Collections:     cfg.Collections,
 			GenerateTriplets: true,
+			SystemPrompt:    sessionContext,
 			DatasetID:       func() string { if len(allDatasetIDs) > 0 { return allDatasetIDs[0] }; return runID }(),
 			DB:              cfg.DB,
 			LLMCache:            cfg.LLMCache,
@@ -544,6 +553,9 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 		if req.LLMModel != "" {
 			pipeCfg.LLMModel = req.LLMModel
 		}
+
+		// Capture for background goroutine
+		sessionID := req.SessionID
 
 		// Run pipeline in background
 		go func() {
@@ -571,6 +583,16 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 				runStatus.Status = "COMPLETED"
 			}
 			runStatus.ElapsedMs = time.Since(runStatus.StartedAt).Milliseconds()
+
+			// P2.1: Save interaction to session history after pipeline completes
+			if sessionID != "" && cfg.DB != nil {
+				entityCount := runStatus.Entities
+				cfg.DB.ExecContext(context.Background(),
+					`INSERT INTO interactions (id, session_id, user_id, query, response, search_type, created_at)
+					 VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+					uuid.New().String(), sessionID, userID, strings.Join(texts, " "),
+					fmt.Sprintf("%d entities extracted", entityCount), "cognify")
+			}
 		}()
 
 		return c.JSON(fiber.Map{
