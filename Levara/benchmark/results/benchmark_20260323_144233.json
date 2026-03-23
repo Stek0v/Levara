@@ -1,0 +1,269 @@
+{
+  "meta": {
+    "timestamp": "2026-03-23T14:42:29.274479",
+    "host": "10.23.0.53",
+    "port": 8080,
+    "iterations": 10,
+    "concurrency_levels": [
+      1,
+      3
+    ],
+    "scenarios": [
+      "memory",
+      "chat",
+      "knowledge",
+      "git"
+    ],
+    "duration_s": 4.1
+  },
+  "scenarios": {
+    "memory": {
+      "save_count": 10,
+      "recall_count": 10,
+      "list_count": 5,
+      "hit_rate": 0.0,
+      "errors": 0
+    },
+    "chat": {
+      "save_count": 10,
+      "recall_count": 10,
+      "search_count": 5,
+      "hit_rate": 0.0,
+      "errors": 0
+    },
+    "knowledge": {
+      "add_text_count": 10,
+      "cognify_count": 10,
+      "search_count": 5,
+      "errors": 0
+    },
+    "git": {
+      "analyze_count": 1,
+      "search_count": 5,
+      "errors": 0
+    }
+  },
+  "tools": {
+    "add_text": {
+      "p50": 3.05,
+      "p95": 3.86,
+      "p99": 3.9,
+      "mean": 3.06,
+      "min": 2.42,
+      "max": 3.91,
+      "calls": 10,
+      "errors": 0,
+      "qps": 191.96
+    },
+    "analyze_commits": {
+      "p50": 3.28,
+      "p95": 3.28,
+      "p99": 3.28,
+      "mean": 3.28,
+      "min": 3.28,
+      "max": 3.28,
+      "calls": 1,
+      "errors": 0,
+      "qps": 0
+    },
+    "cognify": {
+      "p50": 2.5,
+      "p95": 3.61,
+      "p99": 3.77,
+      "mean": 2.74,
+      "min": 2.38,
+      "max": 3.81,
+      "calls": 10,
+      "errors": 0,
+      "qps": 193.66
+    },
+    "delete_memory": {
+      "p50": 3.11,
+      "p95": 5.48,
+      "p99": 6.58,
+      "mean": 3.45,
+      "min": 2.62,
+      "max": 6.86,
+      "calls": 10,
+      "errors": 0,
+      "qps": 312.1
+    },
+    "list_memories": {
+      "p50": 3.55,
+      "p95": 3.75,
+      "p99": 3.79,
+      "mean": 3.37,
+      "min": 2.76,
+      "max": 3.8,
+      "calls": 5,
+      "errors": 0,
+      "qps": 372.83
+    },
+    "recall_chat": {
+      "p50": 3.4,
+      "p95": 6.45,
+      "p99": 7.94,
+      "mean": 3.77,
+      "min": 2.61,
+      "max": 8.31,
+      "calls": 10,
+      "errors": 0,
+      "qps": 150.77
+    },
+    "recall_memory": {
+      "p50": 3.45,
+      "p95": 15.27,
+      "p99": 153.0,
+      "mean": 12.05,
+      "min": 2.6,
+      "max": 209.24,
+      "calls": 30,
+      "errors": 0,
+      "qps": 11.35
+    },
+    "save_chat": {
+      "p50": 3.36,
+      "p95": 4.63,
+      "p99": 5.03,
+      "mean": 3.49,
+      "min": 2.61,
+      "max": 5.12,
+      "calls": 10,
+      "errors": 0,
+      "qps": 148.53
+    },
+    "save_memory": {
+      "p50": 3.14,
+      "p95": 7.92,
+      "p99": 10.38,
+      "mean": 3.9,
+      "min": 2.24,
+      "max": 11.0,
+      "calls": 10,
+      "errors": 0,
+      "qps": 132.19
+    },
+    "search": {
+      "p50": 2.87,
+      "p95": 5.95,
+      "p99": 21.52,
+      "mean": 3.95,
+      "min": 1.87,
+      "max": 26.27,
+      "calls": 25,
+      "errors": 0,
+      "qps": 69.15
+    },
+    "search_chats": {
+      "p50": 4.77,
+      "p95": 10.26,
+      "p99": 11.26,
+      "mean": 5.69,
+      "min": 3.09,
+      "max": 11.5,
+      "calls": 5,
+      "errors": 0,
+      "qps": 210.11
+    },
+    "search_commits": {
+      "p50": 2.54,
+      "p95": 4.03,
+      "p99": 4.25,
+      "mean": 2.92,
+      "min": 2.43,
+      "max": 4.31,
+      "calls": 5,
+      "errors": 0,
+      "qps": 410.63
+    }
+  },
+  "quality": {
+    "memory_hit_rate": 0.0,
+    "chat_hit_rate": 0.0
+  },
+  "concurrency": {
+    "1": {
+      "recall_memory": {
+        "effective_qps": 180.91,
+        "wall_time_ms": 55.28,
+        "errors": 0,
+        "iterations": 10,
+        "latencies": [
+          2.66,
+          3.16,
+          2.98,
+          14.41,
+          2.6,
+          3.38,
+          15.22,
+          3.31,
+          3.49,
+          3.47
+        ]
+      },
+      "search": {
+        "effective_qps": 198.35,
+        "wall_time_ms": 50.41,
+        "errors": 0,
+        "iterations": 10,
+        "latencies": [
+          2.66,
+          2.52,
+          26.27,
+          2.53,
+          2.92,
+          3.21,
+          2.51,
+          2.39,
+          2.43,
+          2.43
+        ]
+      }
+    },
+    "3": {
+      "recall_memory": {
+        "effective_qps": 47.76,
+        "wall_time_ms": 209.4,
+        "errors": 0,
+        "iterations": 10,
+        "latencies": [
+          14.83,
+          15.3,
+          2.74,
+          2.77,
+          3.23,
+          3.45,
+          2.85,
+          3.2,
+          2.98,
+          209.24
+        ]
+      },
+      "search": {
+        "effective_qps": 652.3,
+        "wall_time_ms": 15.33,
+        "errors": 0,
+        "iterations": 10,
+        "latencies": [
+          2.83,
+          3.27,
+          3.25,
+          2.98,
+          3.36,
+          3.66,
+          2.45,
+          1.95,
+          1.87,
+          6.46
+        ]
+      }
+    }
+  },
+  "resources": {
+    "cpu_percent": -1,
+    "rss_mb": -1,
+    "temp_c": 44.6,
+    "sqlite_size_mb": -1,
+    "uptime": "up 1 week, 3 days, 21 hours, 13 minutes"
+  }
+}
