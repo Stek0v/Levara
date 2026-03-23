@@ -24,8 +24,8 @@ func GetSessionContext(db *sql.DB, ctx context.Context, sessionID string, limit 
 	}
 
 	rows, err := db.QueryContext(ctx,
-		`SELECT query, response FROM interactions
-		 WHERE session_id = $1 ORDER BY created_at DESC LIMIT $2`, sessionID, limit)
+		Q(`SELECT query, response FROM interactions
+		 WHERE session_id = $1 ORDER BY created_at DESC LIMIT $2`), sessionID, limit)
 	if err != nil {
 		return ""
 	}
@@ -76,8 +76,8 @@ func saveInteractionHandler(cfg APIConfig) fiber.Handler {
 		}
 		if cfg.DB != nil {
 			cfg.DB.ExecContext(c.Context(),
-				`INSERT INTO interactions (id, session_id, user_id, query, response, search_type, created_at)
-				 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+				Q(`INSERT INTO interactions (id, session_id, user_id, query, response, search_type, created_at)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7)`),
 				id, req.SessionID, userID, req.Query, req.Response, req.SearchType, time.Now().UTC())
 		}
 		return c.Status(201).JSON(fiber.Map{
@@ -93,8 +93,8 @@ func listInteractionsHandler(cfg APIConfig) fiber.Handler {
 		}
 		userID, _ := c.Locals("user_id").(string)
 		rows, err := cfg.DB.QueryContext(c.Context(),
-			`SELECT id, session_id, query, response, search_type, created_at
-			 FROM interactions WHERE user_id = $1 ORDER BY created_at DESC LIMIT 50`, userID)
+			Q(`SELECT id, session_id, query, response, search_type, created_at
+			 FROM interactions WHERE user_id = $1 ORDER BY created_at DESC LIMIT 50`), userID)
 		if err != nil {
 			return c.JSON([]any{})
 		}
@@ -123,8 +123,8 @@ func getSessionHandler(cfg APIConfig) fiber.Handler {
 			return c.JSON([]any{})
 		}
 		rows, err := cfg.DB.QueryContext(c.Context(),
-			`SELECT id, query, response, search_type, created_at
-			 FROM interactions WHERE session_id = $1 ORDER BY created_at LIMIT 10`, sessionID)
+			Q(`SELECT id, query, response, search_type, created_at
+			 FROM interactions WHERE session_id = $1 ORDER BY created_at LIMIT 10`), sessionID)
 		if err != nil {
 			return c.JSON([]any{})
 		}

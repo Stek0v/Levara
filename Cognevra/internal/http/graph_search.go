@@ -600,15 +600,16 @@ func codeGraphContextFromPostgres(ctx context.Context, cfg APIConfig, names []st
 	limitIdx := len(args) + 1
 	args = append(args, 100)
 
-	query := fmt.Sprintf(`
+	nameFilter := InPlaceholders(len(names), 1)
+	query := Q(fmt.Sprintf(`
 		SELECT gn.name AS source, gn.type AS source_type,
 		       ge.relationship_name AS rel,
 		       gn2.name AS target, gn2.type AS target_type
 		FROM graph_edges ge
 		JOIN graph_nodes gn ON ge.source_id = gn.id
 		JOIN graph_nodes gn2 ON ge.target_id = gn2.id
-		WHERE gn.name = ANY(ARRAY[%s])%s
-		LIMIT $%d`, strings.Join(placeholders, ","), dsFilter, limitIdx)
+		WHERE gn.name %s%s
+		LIMIT $%d`, nameFilter, dsFilter, limitIdx))
 
 	rows, err := cfg.DB.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -962,13 +963,14 @@ func graphContextFromPostgres(ctx context.Context, cfg APIConfig, names []string
 	limitIdx := len(args) + 1
 	args = append(args, 50)
 
-	query := fmt.Sprintf(`
+	nameFilter := InPlaceholders(len(names), 1)
+	query := Q(fmt.Sprintf(`
 		SELECT gn.name AS source, ge.relationship_name AS rel, gn2.name AS target
 		FROM graph_edges ge
 		JOIN graph_nodes gn ON ge.source_id = gn.id
 		JOIN graph_nodes gn2 ON ge.target_id = gn2.id
-		WHERE gn.name = ANY(ARRAY[%s])%s
-		LIMIT $%d`, strings.Join(placeholders, ","), dsFilter, limitIdx)
+		WHERE gn.name %s%s
+		LIMIT $%d`, nameFilter, dsFilter, limitIdx))
 
 	rows, err := cfg.DB.QueryContext(ctx, query, args...)
 	if err != nil {

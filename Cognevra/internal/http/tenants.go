@@ -29,7 +29,7 @@ func tenantCreateHandler(cfg APIConfig) fiber.Handler {
 		ownerID, _ := c.Locals("user_id").(string)
 		if cfg.DB != nil {
 			cfg.DB.ExecContext(c.Context(),
-				"INSERT INTO tenants (id, name, owner_id, created_at) VALUES ($1, $2, $3, $4) ON CONFLICT (name) DO NOTHING",
+				Q("INSERT INTO tenants (id, name, owner_id, created_at) VALUES ($1, $2, $3, $4) ON CONFLICT (name) DO NOTHING"),
 				id, req.Name, ownerID, time.Now().UTC())
 		}
 		return c.Status(201).JSON(fiber.Map{"id": id, "name": req.Name, "owner_id": ownerID})
@@ -41,7 +41,7 @@ func tenantListHandler(cfg APIConfig) fiber.Handler {
 		if cfg.DB == nil {
 			return c.JSON([]any{})
 		}
-		rows, err := cfg.DB.QueryContext(c.Context(), "SELECT id, name, owner_id, created_at FROM tenants ORDER BY created_at")
+		rows, err := cfg.DB.QueryContext(c.Context(), Q("SELECT id, name, owner_id, created_at FROM tenants ORDER BY created_at"))
 		if err != nil {
 			return c.JSON([]any{})
 		}
@@ -72,7 +72,7 @@ func tenantAddUserHandler(cfg APIConfig) fiber.Handler {
 		}
 		if cfg.DB != nil {
 			cfg.DB.ExecContext(c.Context(),
-				"INSERT INTO user_tenant (user_id, tenant_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+				Q("INSERT INTO user_tenant (user_id, tenant_id) VALUES ($1, $2) ON CONFLICT DO NOTHING"),
 				req.UserID, tenantID)
 		}
 		return c.Status(201).JSON(fiber.Map{"user_id": req.UserID, "tenant_id": tenantID, "added": true})
@@ -84,7 +84,7 @@ func tenantRemoveUserHandler(cfg APIConfig) fiber.Handler {
 		tenantID := c.Params("id")
 		userID := c.Params("uid")
 		if cfg.DB != nil {
-			cfg.DB.ExecContext(c.Context(), "DELETE FROM user_tenant WHERE user_id = $1 AND tenant_id = $2", userID, tenantID)
+			cfg.DB.ExecContext(c.Context(), Q("DELETE FROM user_tenant WHERE user_id = $1 AND tenant_id = $2"), userID, tenantID)
 		}
 		return c.JSON(fiber.Map{"removed": true})
 	}
@@ -108,8 +108,8 @@ func aclGrantHandler(cfg APIConfig) fiber.Handler {
 		id := uuid.New().String()
 		if cfg.DB != nil {
 			cfg.DB.ExecContext(c.Context(),
-				`INSERT INTO acl (id, principal_id, dataset_id, permission_type) VALUES ($1, $2, $3, $4)
-				 ON CONFLICT (principal_id, dataset_id, permission_type) DO NOTHING`,
+				Q(`INSERT INTO acl (id, principal_id, dataset_id, permission_type) VALUES ($1, $2, $3, $4)
+				 ON CONFLICT (principal_id, dataset_id, permission_type) DO NOTHING`),
 				id, req.PrincipalID, req.DatasetID, req.PermissionType)
 		}
 		return c.Status(201).JSON(fiber.Map{"id": id, "granted": true})
@@ -126,7 +126,7 @@ func aclCheckHandler(cfg APIConfig) fiber.Handler {
 		perms := map[string]bool{"read": false, "write": false, "delete": false, "share": false}
 		if cfg.DB != nil {
 			rows, err := cfg.DB.QueryContext(c.Context(),
-				"SELECT permission_type FROM acl WHERE principal_id = $1 AND dataset_id = $2", userID, datasetID)
+				Q("SELECT permission_type FROM acl WHERE principal_id = $1 AND dataset_id = $2"), userID, datasetID)
 			if err == nil {
 				defer rows.Close()
 				for rows.Next() {

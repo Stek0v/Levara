@@ -47,8 +47,11 @@ import (
 	"syscall"
 	"time"
 
+	"path/filepath"
+
 	"github.com/hashicorp/raft"
-	_ "github.com/jackc/pgx/v5/stdlib" // pgx via database/sql (binary protocol, prepared stmts)
+	_ "github.com/jackc/pgx/v5/stdlib"  // pgx via database/sql (binary protocol, prepared stmts)
+	_ "github.com/ncruces/go-sqlite3/driver" // pure-Go SQLite driver (no CGO, ARM64 ready)
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/stek0v/cognevra/internal/cluster"
 	vectorGrpc "github.com/stek0v/cognevra/internal/grpc"
@@ -229,10 +232,43 @@ func main() {
 		log.Fatalf("Failed to init CollectionManager: %v", err)
 	}
 
-	// PostgreSQL connection pool (shared across all HTTP handlers)
+	// Database connection pool (shared across all HTTP handlers)
+	// DB_PROVIDER: "sqlite" (embedded, no external server) or "postgres" (default)
 	pgDSN := ""
 	var pgDB *sql.DB
-	if dbHost := os.Getenv("DB_HOST"); dbHost != "" {
+	dbProvider := os.Getenv("DB_PROVIDER")
+
+	if dbProvider == "sqlite" {
+		// SQLite mode: pure-Go, no CGO, ARM64 ready (Raspberry Pi)
+		vectorHttp.SetDBProvider(vectorHttp.DBSQLite)
+		dbPath := os.Getenv("DB_PATH")
+		if dbPath == "" {
+			dbPath = filepath.Join(*dataDir, "cognevra.db")
+		}
+		// Ensure parent directory exists
+		os.MkdirAll(filepath.Dir(dbPath), 0755)
+
+		var dbErr error
+		pgDB, dbErr = sql.Open("sqlite3", dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
+		if dbErr != nil {
+			log.Printf("SQLite init warning: %v (running without DB)", dbErr)
+		} else {
+			pgDB.SetMaxOpenConns(1) // SQLite: single writer
+			pgDB.SetMaxIdleConns(1)
+			if err := pgDB.Ping(); err != nil {
+				log.Printf("SQLite ping warning: %v (running without DB)", err)
+				pgDB.Close()
+				pgDB = nil
+			} else {
+				log.Printf("SQLite database ready: %s", dbPath)
+				if err := vectorHttp.MigrateSchema(pgDB); err != nil {
+					log.Printf("Schema migration warning: %v", err)
+				}
+			}
+		}
+	} else if dbHost := os.Getenv("DB_HOST"); dbHost != "" {
+		// PostgreSQL mode (default)
+		vectorHttp.SetDBProvider(vectorHttp.DBPostgres)
 		dbUser := os.Getenv("DB_USERNAME"); if dbUser == "" { dbUser = "cognee" }
 		dbPass := os.Getenv("DB_PASSWORD"); if dbPass == "" { dbPass = "cognee" }
 		dbName := os.Getenv("DB_NAME"); if dbName == "" { dbName = "cognee_db" }

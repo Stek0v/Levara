@@ -41,8 +41,8 @@ func userMeHandler(cfg APIConfig) fiber.Handler {
 		var updatedAt *time.Time
 
 		err := cfg.DB.QueryRowContext(c.Context(),
-			`SELECT id, email, is_active, is_superuser, is_verified, created_at, updated_at
-			 FROM users WHERE id = $1`, userID).Scan(
+			Q(`SELECT id, email, is_active, is_superuser, is_verified, created_at, updated_at
+			 FROM users WHERE id = $1`), userID).Scan(
 			&u.ID, &u.Email, &u.IsActive, &u.IsSuperuser, &u.IsVerified, &createdAt, &updatedAt)
 		if err != nil {
 			return c.Status(404).JSON(fiber.Map{"detail": "user not found"})
@@ -77,7 +77,7 @@ func userUpdateHandler(cfg APIConfig) fiber.Handler {
 		}
 
 		_, err := cfg.DB.ExecContext(c.Context(),
-			"UPDATE users SET email = $1, updated_at = NOW() WHERE id = $2",
+			Q("UPDATE users SET email = $1, updated_at = NOW() WHERE id = $2"),
 			req.Email, userID)
 		if err != nil {
 			return c.Status(409).JSON(fiber.Map{"detail": "email already in use or db error"})
@@ -113,7 +113,7 @@ func userChangePasswordHandler(cfg APIConfig) fiber.Handler {
 		// Verify current password
 		var hashedPassword string
 		err := cfg.DB.QueryRowContext(c.Context(),
-			"SELECT hashed_password FROM users WHERE id = $1", userID).Scan(&hashedPassword)
+			Q("SELECT hashed_password FROM users WHERE id = $1"), userID).Scan(&hashedPassword)
 		if err != nil {
 			return c.Status(404).JSON(fiber.Map{"detail": "user not found"})
 		}
@@ -129,7 +129,7 @@ func userChangePasswordHandler(cfg APIConfig) fiber.Handler {
 		}
 
 		_, err = cfg.DB.ExecContext(c.Context(),
-			"UPDATE users SET hashed_password = $1, updated_at = NOW() WHERE id = $2",
+			Q("UPDATE users SET hashed_password = $1, updated_at = NOW() WHERE id = $2"),
 			string(newHash), userID)
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"detail": "update failed"})
