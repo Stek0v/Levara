@@ -9,28 +9,28 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/stek0v/levara/internal/store"
-	"github.com/stek0v/levara/pkg/aggregator"
-	"github.com/stek0v/levara/pkg/chunker"
-	"github.com/stek0v/levara/pkg/embed"
-	"github.com/stek0v/levara/pkg/extract"
-	"github.com/stek0v/levara/pkg/ingest"
-	"github.com/stek0v/levara/pkg/temporal"
-	"github.com/stek0v/levara/pkg/fileio"
-	"github.com/stek0v/levara/pkg/graph"
-	"github.com/stek0v/levara/pkg/bm25"
-	"github.com/stek0v/levara/pkg/graphdb"
-	"github.com/stek0v/levara/pkg/llmcache"
-	"github.com/stek0v/levara/pkg/orchestrator"
-	"github.com/stek0v/levara/pipeline"
-	pb "github.com/stek0v/levara/proto/pb"
+	"github.com/stek0v/cognevra/internal/store"
+	"github.com/stek0v/cognevra/pkg/aggregator"
+	"github.com/stek0v/cognevra/pkg/chunker"
+	"github.com/stek0v/cognevra/pkg/embed"
+	"github.com/stek0v/cognevra/pkg/extract"
+	"github.com/stek0v/cognevra/pkg/ingest"
+	"github.com/stek0v/cognevra/pkg/temporal"
+	"github.com/stek0v/cognevra/pkg/fileio"
+	"github.com/stek0v/cognevra/pkg/graph"
+	"github.com/stek0v/cognevra/pkg/bm25"
+	"github.com/stek0v/cognevra/pkg/graphdb"
+	"github.com/stek0v/cognevra/pkg/llmcache"
+	"github.com/stek0v/cognevra/pkg/orchestrator"
+	"github.com/stek0v/cognevra/pipeline"
+	pb "github.com/stek0v/cognevra/proto/pb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
 // Service implements the LevaraService gRPC server.
 type Service struct {
-	pb.UnimplementedLevaraServiceServer
+	pb.UnimplementedCognevraServiceServer
 	collections *store.CollectionManager
 	cluster     *store.Cluster // legacy: for non-collection operations
 	dim            int
@@ -1392,7 +1392,7 @@ func (s *Service) HybridSearch(ctx context.Context, req *pb.HybridSearchReq) (*p
 
 // PipelineCognify runs the full cognify pipeline with streaming progress updates.
 // Stages: chunk → LLM extract → dedup → write (parallel Neo4j + vector).
-func (s *Service) PipelineCognify(req *pb.PipelineCognifyReq, stream pb.LevaraService_PipelineCognifyServer) error {
+func (s *Service) PipelineCognify(req *pb.PipelineCognifyReq, stream pb.CognevraService_PipelineCognifyServer) error {
 	if len(req.Texts) == 0 {
 		return status.Errorf(codes.InvalidArgument, "texts required")
 	}

@@ -9,7 +9,7 @@ import (
 	"sync"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/stek0v/levara/pkg/embed"
+	"github.com/stek0v/cognevra/pkg/embed"
 )
 
 type dualSearchRequest struct {

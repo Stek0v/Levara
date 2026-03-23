@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/stek0v/levara/internal/store"
-	"github.com/stek0v/levara/pkg/embed"
+	"github.com/stek0v/cognevra/internal/store"
+	"github.com/stek0v/cognevra/pkg/embed"
 )
 
 // SearchPipeline orchestrates the full search path:

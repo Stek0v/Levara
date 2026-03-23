@@ -26,15 +26,15 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/stek0v/levara/pkg/chunker"
-	"github.com/stek0v/levara/pkg/classify"
-	"github.com/stek0v/levara/pkg/graph"
-	"github.com/stek0v/levara/pkg/graphdb"
-	"github.com/stek0v/levara/pkg/llm"
-	"github.com/stek0v/levara/pkg/llmcache"
-	"github.com/stek0v/levara/pkg/temporal"
-	"github.com/stek0v/levara/internal/store"
-	"github.com/stek0v/levara/pkg/embed"
+	"github.com/stek0v/cognevra/pkg/chunker"
+	"github.com/stek0v/cognevra/pkg/classify"
+	"github.com/stek0v/cognevra/pkg/graph"
+	"github.com/stek0v/cognevra/pkg/graphdb"
+	"github.com/stek0v/cognevra/pkg/llm"
+	"github.com/stek0v/cognevra/pkg/llmcache"
+	"github.com/stek0v/cognevra/pkg/temporal"
+	"github.com/stek0v/cognevra/internal/store"
+	"github.com/stek0v/cognevra/pkg/embed"
 )
 
 // Config for the pipeline.

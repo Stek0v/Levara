@@ -24,10 +24,10 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
-	"github.com/stek0v/levara/pkg/embed"
-	"github.com/stek0v/levara/pkg/graph"
-	"github.com/stek0v/levara/pkg/graphdb"
-	"github.com/stek0v/levara/pkg/orchestrator"
+	"github.com/stek0v/cognevra/pkg/embed"
+	"github.com/stek0v/cognevra/pkg/graph"
+	"github.com/stek0v/cognevra/pkg/graphdb"
+	"github.com/stek0v/cognevra/pkg/orchestrator"
 )
 
 type memifyRequest struct {

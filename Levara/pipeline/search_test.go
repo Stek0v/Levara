@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stek0v/levara/internal/store"
-	"github.com/stek0v/levara/pkg/embed"
+	"github.com/stek0v/cognevra/internal/store"
+	"github.com/stek0v/cognevra/pkg/embed"
 )
 
 func randomVec(dim int) []float32 {

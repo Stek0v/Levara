@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/stek0v/levara/pkg/graphdb"
+	"github.com/stek0v/cognevra/pkg/graphdb"
 )
 
 // GraphVisualizationConfig holds Neo4j connection for graph visualization.

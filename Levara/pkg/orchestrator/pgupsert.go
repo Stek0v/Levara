@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/stek0v/levara/pkg/graph"
+	"github.com/stek0v/cognevra/pkg/graph"
 )
 
 // UpsertGraphToPostgres writes deduped nodes and edges to PostgreSQL in a single transaction.
