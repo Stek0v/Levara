@@ -119,6 +119,9 @@ func RegisterCogneeAPI(app fiber.Router, cfg APIConfig) {
 	// U17: Session/interaction tracking
 	RegisterSessionAPI(app, cfg)
 
+	// U19: Project memory store
+	RegisterMemoryAPI(app, cfg)
+
 	// U18: Ontology management
 	app.Post("/ontologies", ontologyUploadHandler(cfg))
 	app.Get("/ontologies", ontologyListHandler(cfg))

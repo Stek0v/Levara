@@ -238,6 +238,18 @@ var schemaStatements = []string{
 	`ALTER TABLE ontologies ADD COLUMN IF NOT EXISTS classes_count INTEGER NOT NULL DEFAULT 0`,
 	`ALTER TABLE ontologies ADD COLUMN IF NOT EXISTS individuals_count INTEGER NOT NULL DEFAULT 0`,
 
+	// Memories (project/user memory store)
+	`CREATE TABLE IF NOT EXISTS memories (
+		id TEXT PRIMARY KEY,
+		key TEXT NOT NULL,
+		value TEXT NOT NULL,
+		type TEXT NOT NULL DEFAULT 'project',
+		owner_id TEXT NOT NULL DEFAULT '',
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	)`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_key_owner ON memories(key, owner_id)`,
+
 	`CREATE INDEX IF NOT EXISTS idx_acl_principal ON acl(principal_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_acl_dataset ON acl(dataset_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_interactions_session ON interactions(session_id)`,
@@ -428,6 +440,18 @@ var schemaSQLiteStatements = []string{
 		individuals_count INTEGER NOT NULL DEFAULT 0,
 		created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 	)`,
+
+	// Memories (project/user memory store)
+	`CREATE TABLE IF NOT EXISTS memories (
+		id TEXT PRIMARY KEY,
+		key TEXT NOT NULL,
+		value TEXT NOT NULL,
+		type TEXT NOT NULL DEFAULT 'project',
+		owner_id TEXT NOT NULL DEFAULT '',
+		created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+	)`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_key_owner ON memories(key, owner_id)`,
 
 	`CREATE INDEX IF NOT EXISTS idx_acl_principal ON acl(principal_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_acl_dataset ON acl(dataset_id)`,
