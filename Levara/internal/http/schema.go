@@ -245,6 +245,7 @@ var schemaStatements = []string{
 		value TEXT NOT NULL,
 		type TEXT NOT NULL DEFAULT 'project',
 		owner_id TEXT NOT NULL DEFAULT '',
+		collection_name TEXT NOT NULL DEFAULT '',
 		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 	)`,
@@ -448,6 +449,7 @@ var schemaSQLiteStatements = []string{
 		value TEXT NOT NULL,
 		type TEXT NOT NULL DEFAULT 'project',
 		owner_id TEXT NOT NULL DEFAULT '',
+		collection_name TEXT NOT NULL DEFAULT '',
 		created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 	)`,
