@@ -391,6 +391,12 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 	}
 
 	// Vector embed + index (goroutine)
+	if cfg.EmbedEndpoint == "" {
+		log.Printf("[pipeline] WARNING: EmbedEndpoint not configured — vector indexing SKIPPED")
+	}
+	if cfg.Collections == nil {
+		log.Printf("[pipeline] WARNING: Collections not configured — vector indexing SKIPPED")
+	}
 	if cfg.EmbedEndpoint != "" && cfg.Collections != nil {
 		writeWg.Add(1)
 		go func() {
@@ -402,7 +408,9 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 				coll = "PipelineEntity_name"
 			}
 			if !cfg.Collections.Has(coll) {
-				cfg.Collections.Create(coll)
+				if err := cfg.Collections.Create(coll); err != nil {
+					log.Printf("[pipeline] collection create %q: %v", coll, err)
+				}
 			}
 
 			// Embed node names/descriptions
@@ -415,17 +423,24 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 				texts[i] = t
 			}
 
+			inserted := 0
 			if len(texts) > 0 {
 				vecs, err := embedClient.EmbedTexts(ctx, texts)
 				if err != nil {
-					log.Printf("[pipeline] embed: %v", err)
-					return
-				}
-				for i, n := range dedupResult.Nodes {
-					if i < len(vecs) {
-						meta := fmt.Sprintf(`{"name":"%s","type":"%s","dataset_id":"%s"}`, n.Name, n.Type, cfg.DatasetID)
-						cfg.Collections.Insert(coll, n.ID, vecs[i], meta)
+					log.Printf("[pipeline] embed FAILED (%d texts): %v", len(texts), err)
+					// Don't return — continue to triplets which may use different texts
+				} else {
+					for i, n := range dedupResult.Nodes {
+						if i < len(vecs) {
+							meta := fmt.Sprintf(`{"name":"%s","type":"%s","dataset_id":"%s"}`, n.Name, n.Type, cfg.DatasetID)
+							if err := cfg.Collections.Insert(coll, n.ID, vecs[i], meta); err != nil {
+								log.Printf("[pipeline] vector insert %q error: %v", n.Name, err)
+							} else {
+								inserted++
+							}
+						}
 					}
+					log.Printf("[pipeline] vector write: %d/%d entities embedded into %q", inserted, len(texts), coll)
 				}
 			}
 
@@ -433,19 +448,29 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 			if cfg.GenerateTriplets && len(dedupResult.Triplets) > 0 {
 				tripletColl := "Triplet_text"
 				if !cfg.Collections.Has(tripletColl) {
-					cfg.Collections.Create(tripletColl)
+					if err := cfg.Collections.Create(tripletColl); err != nil {
+						log.Printf("[pipeline] collection create %q: %v", tripletColl, err)
+					}
 				}
 				tripletTexts := make([]string, len(dedupResult.Triplets))
 				for i, t := range dedupResult.Triplets {
 					tripletTexts[i] = t.Text
 				}
-				if tvecs, err := embedClient.EmbedTexts(ctx, tripletTexts); err == nil {
+				if tvecs, err := embedClient.EmbedTexts(ctx, tripletTexts); err != nil {
+					log.Printf("[pipeline] triplet embed FAILED: %v", err)
+				} else {
+					tripletInserted := 0
 					for i, t := range dedupResult.Triplets {
 						if i < len(tvecs) {
 							meta := fmt.Sprintf(`{"from":"%s","to":"%s","dataset_id":"%s"}`, t.FromNodeID, t.ToNodeID, cfg.DatasetID)
-							cfg.Collections.Insert(tripletColl, t.ID, tvecs[i], meta)
+							if err := cfg.Collections.Insert(tripletColl, t.ID, tvecs[i], meta); err != nil {
+								log.Printf("[pipeline] triplet insert error: %v", err)
+							} else {
+								tripletInserted++
+							}
 						}
 					}
+					log.Printf("[pipeline] triplet write: %d/%d triplets into %q", tripletInserted, len(tripletTexts), tripletColl)
 				}
 			}
 		}()
