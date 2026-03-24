@@ -673,8 +673,18 @@ type CogneeSearchRequest struct {
 	QueryText         string   `json:"query_text"`
 	QueryType         string   `json:"query_type"` // CHUNKS, GRAPH_COMPLETION, etc.
 	TopK              int      `json:"top_k"`
-	CypherQuery       string   `json:"cypher_query"` // Raw Cypher for CYPHER search type
-	AllowedDatasetIDs []string `json:"-"`             // RBAC: nil = no filtering (dev mode)
+	CypherQuery       string   `json:"cypher_query"`  // Raw Cypher for CYPHER search type
+	Collection        string   `json:"collection"`    // Filter search to one collection (empty = all)
+	AllowedDatasetIDs []string `json:"-"`              // RBAC: nil = no filtering (dev mode)
+}
+
+// resolveCollections returns the list of collections to search.
+// If req.Collection is set, only that collection is searched; otherwise all collections are listed.
+func resolveCollections(cfg APIConfig, req CogneeSearchRequest) []string {
+	if req.Collection != "" {
+		return []string{req.Collection}
+	}
+	return cfg.Collections.List()
 }
 
 // filterByAllowedDatasets post-filters search results by allowed dataset IDs.
@@ -783,8 +793,8 @@ func chunksSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
 	embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 1)
 	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections)
 
-	// Search across all collections
-	colls := cfg.Collections.List()
+	// Search across collections (or single collection if specified)
+	colls := resolveCollections(cfg, req)
 	var allResults []fiber.Map
 
 	for _, coll := range colls {
@@ -821,6 +831,9 @@ func bm25Search(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
 
 	var allResults []fiber.Map
 	for collection, idx := range cfg.BM25Indexes {
+		if req.Collection != "" && collection != req.Collection {
+			continue
+		}
 		results := idx.Search(req.QueryText, req.TopK)
 		for _, r := range results {
 			allResults = append(allResults, fiber.Map{
@@ -849,7 +862,7 @@ func hybridSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
 	embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 1)
 	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections)
 
-	colls := cfg.Collections.List()
+	colls := resolveCollections(cfg, req)
 	var allResults []fiber.Map
 
 	for _, coll := range colls {
@@ -923,7 +936,7 @@ func temporalSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error 
 		embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 1)
 		sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections)
 
-		colls := cfg.Collections.List()
+		colls := resolveCollections(cfg, req)
 		for _, coll := range colls {
 			results, err := sp.SearchByText(context.Background(), coll, req.QueryText, req.TopK)
 			if err != nil {
@@ -1089,7 +1102,7 @@ func ragCompletionSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) e
 	embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 1)
 	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections)
 
-	colls := cfg.Collections.List()
+	colls := resolveCollections(cfg, req)
 	var chunks []fiber.Map
 
 	for _, coll := range colls {
@@ -1154,7 +1167,7 @@ func summariesSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error
 	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections)
 
 	// Search only in summary/triplet collections
-	colls := cfg.Collections.List()
+	colls := resolveCollections(cfg, req)
 	var allResults []fiber.Map
 
 	for _, coll := range colls {

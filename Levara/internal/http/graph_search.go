@@ -28,7 +28,7 @@ func graphCompletionSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest)
 	embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 1)
 	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections)
 
-	colls := cfg.Collections.List()
+	colls := resolveCollections(cfg, req)
 	var entityNames []string
 	var vectorChunks []fiber.Map
 
@@ -130,7 +130,7 @@ func contextExtensionSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest
 	embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 1)
 	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections)
 
-	colls := cfg.Collections.List()
+	colls := resolveCollections(cfg, req)
 	var entityNames []string
 	var vectorChunks []fiber.Map
 
@@ -324,7 +324,7 @@ func cotSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
 	// ── Step 2: For each sub-question, run vector search + graph traversal ──
 	embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 1)
 	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections)
-	colls := cfg.Collections.List()
+	colls := resolveCollections(cfg, req)
 
 	type reasoningStep struct {
 		Step         int    `json:"step"`
@@ -449,10 +449,10 @@ func codingRulesSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) err
 		"method": true, "import": true,
 	}
 
-	// Step 1: Vector search across all collections, filter to code entities.
+	// Step 1: Vector search across collections, filter to code entities.
 	embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 1)
 	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections)
-	colls := cfg.Collections.List()
+	colls := resolveCollections(cfg, req)
 
 	var codeEntities []fiber.Map
 	var entityNames []string
@@ -699,7 +699,7 @@ func tripletCompletionSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchReques
 	embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 1)
 	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections)
 
-	colls := cfg.Collections.List()
+	colls := resolveCollections(cfg, req)
 	var tripletColls []string
 	for _, coll := range colls {
 		lower := strings.ToLower(coll)

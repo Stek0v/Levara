@@ -85,6 +85,7 @@ var mcpTools = []mcpTool{
 				"search_query": map[string]any{"type": "string", "description": "Natural language search query"},
 				"search_type":  map[string]any{"type": "string", "description": "Search strategy: CHUNKS, RAG_COMPLETION, GRAPH_COMPLETION, HYBRID, TEMPORAL, SUMMARIES, CHUNKS_LEXICAL", "default": "CHUNKS"},
 				"top_k":        map[string]any{"type": "integer", "description": "Number of results to return", "default": 10},
+				"collection":   map[string]any{"type": "string", "description": "Project collection name to search in. Leave empty to search all."},
 			},
 			"required": []string{"search_query"},
 		},
@@ -135,6 +136,7 @@ var mcpTools = []mcpTool{
 			"properties": map[string]any{
 				"data":         map[string]any{"type": "string", "description": "Text content to ingest"},
 				"dataset_name": map[string]any{"type": "string", "description": "Dataset name (default: 'default')"},
+				"collection":   map[string]any{"type": "string", "description": "Collection to associate with added data."},
 			},
 			"required": []string{"data"},
 		},
@@ -173,9 +175,10 @@ var mcpTools = []mcpTool{
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"key":   map[string]any{"type": "string", "description": "Memory key"},
-				"value": map[string]any{"type": "string", "description": "Memory value"},
-				"type":  map[string]any{"type": "string", "description": "Memory type: user, project, feedback"},
+				"key":        map[string]any{"type": "string", "description": "Memory key"},
+				"value":      map[string]any{"type": "string", "description": "Memory value"},
+				"type":       map[string]any{"type": "string", "description": "Memory type: user, project, feedback"},
+				"collection": map[string]any{"type": "string", "description": "Collection name to scope memory to."},
 			},
 			"required": []string{"key", "value"},
 		},
@@ -186,7 +189,8 @@ var mcpTools = []mcpTool{
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"query": map[string]any{"type": "string", "description": "Search query for memories"},
+				"query":      map[string]any{"type": "string", "description": "Search query for memories"},
+				"collection": map[string]any{"type": "string", "description": "Collection name to filter memories."},
 			},
 			"required": []string{"query"},
 		},
@@ -197,7 +201,8 @@ var mcpTools = []mcpTool{
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"type": map[string]any{"type": "string", "description": "Optional filter: user, project, feedback"},
+				"type":       map[string]any{"type": "string", "description": "Optional filter: user, project, feedback"},
+				"collection": map[string]any{"type": "string", "description": "Collection name to filter memories."},
 			},
 		},
 	},
@@ -210,6 +215,7 @@ var mcpTools = []mcpTool{
 			"type": "object",
 			"properties": map[string]any{
 				"session_id": map[string]any{"type": "string", "description": "Chat session ID"},
+				"collection": map[string]any{"type": "string", "description": "Collection to associate with chat session."},
 				"messages": map[string]any{
 					"type": "array",
 					"items": map[string]any{
@@ -232,6 +238,7 @@ var mcpTools = []mcpTool{
 			"type": "object",
 			"properties": map[string]any{
 				"session_id": map[string]any{"type": "string", "description": "Chat session ID to recall"},
+				"collection": map[string]any{"type": "string", "description": "Collection to filter chat recall."},
 			},
 			"required": []string{"session_id"},
 		},
@@ -242,7 +249,8 @@ var mcpTools = []mcpTool{
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"query": map[string]any{"type": "string", "description": "Search query across chat history"},
+				"query":      map[string]any{"type": "string", "description": "Search query across chat history"},
+				"collection": map[string]any{"type": "string", "description": "Collection to filter chat search."},
 			},
 			"required": []string{"query"},
 		},
@@ -478,6 +486,8 @@ func (h *mcpHandler) toolSearch(ctx context.Context, args map[string]any) mcpToo
 		topK = int(tk)
 	}
 
+	collection, _ := args["collection"].(string)
+
 	// Execute search
 	if h.cfg.EmbedEndpoint == "" || h.cfg.Collections == nil {
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "No results (embedding service not configured)"}}}
@@ -486,7 +496,12 @@ func (h *mcpHandler) toolSearch(ctx context.Context, args map[string]any) mcpToo
 	embedClient := embed.NewClient(h.cfg.EmbedEndpoint, h.cfg.EmbedModel, 16, 1)
 	sp := pipeline.NewSearchPipeline(embedClient, h.cfg.Collections)
 
-	colls := h.cfg.Collections.List()
+	var colls []string
+	if collection != "" {
+		colls = []string{collection}
+	} else {
+		colls = h.cfg.Collections.List()
+	}
 	var results []map[string]any
 
 	for _, coll := range colls {
@@ -758,6 +773,7 @@ func (h *mcpHandler) toolSaveMemory(ctx context.Context, args map[string]any) mc
 	if memType == "" {
 		memType = "project"
 	}
+	collectionName, _ := args["collection"].(string)
 
 	if h.cfg.DB == nil {
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: database not configured"}}, IsError: true}
@@ -769,16 +785,16 @@ func (h *mcpHandler) toolSaveMemory(ctx context.Context, args map[string]any) mc
 
 	if activeDBProvider == DBSQLite {
 		h.cfg.DB.ExecContext(ctx,
-			Q(`INSERT INTO memories (id, key, value, type, owner_id, created_at, updated_at)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7)
-			 ON CONFLICT(key, owner_id) DO UPDATE SET value = $3, type = $4, updated_at = $7`),
-			id, key, value, memType, ownerID, now, now)
+			Q(`INSERT INTO memories (id, key, value, type, owner_id, collection_name, created_at, updated_at)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			 ON CONFLICT(key, owner_id) DO UPDATE SET value = $3, type = $4, collection_name = $6, updated_at = $8`),
+			id, key, value, memType, ownerID, collectionName, now, now)
 	} else {
 		h.cfg.DB.ExecContext(ctx,
-			Q(`INSERT INTO memories (id, key, value, type, owner_id, created_at, updated_at)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7)
-			 ON CONFLICT(key, owner_id) DO UPDATE SET value = EXCLUDED.value, type = EXCLUDED.type, updated_at = EXCLUDED.updated_at`),
-			id, key, value, memType, ownerID, now, now)
+			Q(`INSERT INTO memories (id, key, value, type, owner_id, collection_name, created_at, updated_at)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			 ON CONFLICT(key, owner_id) DO UPDATE SET value = EXCLUDED.value, type = EXCLUDED.type, collection_name = EXCLUDED.collection_name, updated_at = EXCLUDED.updated_at`),
+			id, key, value, memType, ownerID, collectionName, now, now)
 	}
 
 	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("Memory saved: %s = %s (type: %s)", key, truncate(value, 100), memType)}}}
@@ -789,6 +805,7 @@ func (h *mcpHandler) toolRecallMemory(ctx context.Context, args map[string]any) 
 	if query == "" {
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: 'query' required"}}, IsError: true}
 	}
+	collectionName, _ := args["collection"].(string)
 
 	if h.cfg.DB == nil {
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "[]"}}}
@@ -796,10 +813,19 @@ func (h *mcpHandler) toolRecallMemory(ctx context.Context, args map[string]any) 
 
 	// Search memories by key and value LIKE match
 	pattern := "%" + query + "%"
-	rows, err := h.cfg.DB.QueryContext(ctx,
-		Q(`SELECT id, key, value, type, owner_id, created_at, updated_at
-		 FROM memories WHERE key LIKE $1 OR value LIKE $2
-		 ORDER BY updated_at DESC LIMIT 20`), pattern, pattern)
+	var rows *sql.Rows
+	var err error
+	if collectionName != "" {
+		rows, err = h.cfg.DB.QueryContext(ctx,
+			Q(`SELECT id, key, value, type, owner_id, created_at, updated_at
+			 FROM memories WHERE (key LIKE $1 OR value LIKE $2) AND collection_name = $3
+			 ORDER BY updated_at DESC LIMIT 20`), pattern, pattern, collectionName)
+	} else {
+		rows, err = h.cfg.DB.QueryContext(ctx,
+			Q(`SELECT id, key, value, type, owner_id, created_at, updated_at
+			 FROM memories WHERE key LIKE $1 OR value LIKE $2
+			 ORDER BY updated_at DESC LIMIT 20`), pattern, pattern)
+	}
 	if err != nil {
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("Error: %s", err.Error())}}, IsError: true}
 	}
@@ -830,13 +856,22 @@ func (h *mcpHandler) toolListMemories(ctx context.Context, args map[string]any) 
 	}
 
 	filterType, _ := args["type"].(string)
+	collectionName, _ := args["collection"].(string)
 	var rows *sql.Rows
 	var err error
 
-	if filterType != "" {
+	if filterType != "" && collectionName != "" {
+		rows, err = h.cfg.DB.QueryContext(ctx,
+			Q(`SELECT id, key, value, type, owner_id, created_at, updated_at
+			 FROM memories WHERE type = $1 AND collection_name = $2 ORDER BY updated_at DESC LIMIT 100`), filterType, collectionName)
+	} else if filterType != "" {
 		rows, err = h.cfg.DB.QueryContext(ctx,
 			Q(`SELECT id, key, value, type, owner_id, created_at, updated_at
 			 FROM memories WHERE type = $1 ORDER BY updated_at DESC LIMIT 100`), filterType)
+	} else if collectionName != "" {
+		rows, err = h.cfg.DB.QueryContext(ctx,
+			Q(`SELECT id, key, value, type, owner_id, created_at, updated_at
+			 FROM memories WHERE collection_name = $1 ORDER BY updated_at DESC LIMIT 100`), collectionName)
 	} else {
 		rows, err = h.cfg.DB.QueryContext(ctx,
 			Q(`SELECT id, key, value, type, owner_id, created_at, updated_at
