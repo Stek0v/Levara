@@ -17,6 +17,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"strings"
 	"sync"
@@ -276,9 +277,35 @@ var mcpTools = []mcpTool{
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"collection": map[string]any{"type": "string", "description": "Project collection name"},
+				"collection":      map[string]any{"type": "string", "description": "Project collection name"},
+				"include_related": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Additional project collections to include compact summaries for"},
 			},
 			"required": []string{"collection"},
+		},
+	},
+	{
+		Name:        "set_context",
+		Description: "Set the default project collection for this MCP session. All subsequent tool calls will use this collection unless explicitly overridden. Call this at session start or when switching projects.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"collection": map[string]any{"type": "string", "description": "Project collection name to set as default"},
+			},
+			"required": []string{"collection"},
+		},
+	},
+	{
+		Name:        "cross_search",
+		Description: "Search across multiple project collections simultaneously. Results are tagged with their source collection. Use this to find information across projects without switching context. Max 5 collections.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"search_query":     map[string]any{"type": "string", "description": "Natural language search query"},
+				"collections":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "List of collection names to search (max 5)"},
+				"top_k":            map[string]any{"type": "integer", "description": "Results per collection", "default": 5},
+				"include_memories": map[string]any{"type": "boolean", "description": "Also search memories in these collections", "default": true},
+			},
+			"required": []string{"search_query", "collections"},
 		},
 	},
 }
@@ -300,10 +327,11 @@ func RegisterMCPAPI(app fiber.Router, cfg APIConfig) {
 
 // mcpSession tracks a connected MCP client session.
 type mcpSession struct {
-	id        string
-	userID    string    // from Authorization header (JWT), empty for anonymous
-	createdAt time.Time
-	sseCh     chan []byte // buffered channel for server-initiated SSE messages
+	id                string
+	userID            string    // from Authorization header (JWT), empty for anonymous
+	createdAt         time.Time
+	sseCh             chan []byte // buffered channel for server-initiated SSE messages
+	defaultCollection string     // session-scoped default project collection (set via set_context tool)
 }
 
 type mcpHandler struct {
@@ -435,6 +463,21 @@ func (h *mcpHandler) handleRPC(c *fiber.Ctx) error {
 	}
 }
 
+// resolveCollection returns the collection to use for a tool call.
+// Priority: 1) explicit arg, 2) session default, 3) "default" for writes, "" for reads (= all).
+func (h *mcpHandler) resolveCollection(sess *mcpSession, args map[string]any, forWrite bool) string {
+	if coll, _ := args["collection"].(string); coll != "" {
+		return coll
+	}
+	if sess != nil && sess.defaultCollection != "" {
+		return sess.defaultCollection
+	}
+	if forWrite {
+		return "default"
+	}
+	return ""
+}
+
 func (h *mcpHandler) handleToolCall(c *fiber.Ctx, req jsonRPCRequest) error {
 	var params struct {
 		Name      string         `json:"name"`
@@ -450,17 +493,32 @@ func (h *mcpHandler) handleToolCall(c *fiber.Ctx, req jsonRPCRequest) error {
 	// Inject user ID from session for isolation
 	toolCtx := context.Background()
 	sessionID := c.Get("Mcp-Session-Id")
-	if sess := h.getOrValidateSession(sessionID); sess != nil && sess.userID != "" {
+	sess := h.getOrValidateSession(sessionID)
+	if sess != nil && sess.userID != "" {
 		toolCtx = context.WithValue(toolCtx, mcpUserIDKey, sess.userID)
 	}
 
-	result := h.executeTool(toolCtx, params.Name, params.Arguments)
+	result := h.executeTool(toolCtx, sess, params.Name, params.Arguments)
 	return c.JSON(jsonRPCResponse{
 		JSONRPC: "2.0", ID: req.ID, Result: result,
 	})
 }
 
-func (h *mcpHandler) executeTool(ctx context.Context, name string, args map[string]any) mcpToolResult {
+func (h *mcpHandler) executeTool(ctx context.Context, sess *mcpSession, name string, args map[string]any) mcpToolResult {
+	// Inject session default collection into args if not explicitly set (for collection-aware tools)
+	switch name {
+	case "cognify", "add", "save_memory", "save_chat":
+		if _, ok := args["collection"]; !ok || args["collection"] == "" {
+			args["collection"] = h.resolveCollection(sess, args, true)
+		}
+	case "search", "recall_memory", "list_memories", "recall_chat", "search_chats", "get_project_context":
+		if _, ok := args["collection"]; !ok || args["collection"] == "" {
+			if resolved := h.resolveCollection(sess, args, false); resolved != "" {
+				args["collection"] = resolved
+			}
+		}
+	}
+
 	switch name {
 	case "cognify":
 		return h.toolCognify(ctx, args)
@@ -494,6 +552,10 @@ func (h *mcpHandler) executeTool(ctx context.Context, name string, args map[stri
 		return h.toolSearchChats(ctx, args)
 	case "get_project_context":
 		return h.toolGetProjectContext(ctx, args)
+	case "set_context":
+		return h.toolSetContext(sess, args)
+	case "cross_search":
+		return h.toolCrossSearch(ctx, args)
 	default:
 		return mcpToolResult{
 			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("Unknown tool: %s", name)}},
@@ -1406,6 +1468,138 @@ func (h *mcpHandler) resourceMemories(ctx context.Context, memType, collName str
 
 // ── Tool: get_project_context ─────────────────────────────────────────────
 
+// ── Cross-Project Tools ──
+
+func (h *mcpHandler) toolSetContext(sess *mcpSession, args map[string]any) mcpToolResult {
+	collection, _ := args["collection"].(string)
+	if collection == "" {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: 'collection' required"}}, IsError: true}
+	}
+	if sess == nil {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: no active session (send initialize first)"}}, IsError: true}
+	}
+	// Validate collection exists (or allow setting for future use)
+	exists := h.cfg.Collections != nil && h.cfg.Collections.Has(collection)
+	sess.defaultCollection = collection
+
+	status := "set"
+	if !exists {
+		status = "set (collection not yet created — will be used when data is added)"
+	}
+	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("Context %s: default collection = '%s'", status, collection)}}}
+}
+
+var sensitiveKeyPatterns = []string{"api_key", "apikey", "password", "passwd", "secret", "token", "credential", "private_key"}
+
+func isSensitiveKey(key string) bool {
+	lower := strings.ToLower(key)
+	for _, p := range sensitiveKeyPatterns {
+		if strings.Contains(lower, p) {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *mcpHandler) toolCrossSearch(ctx context.Context, args map[string]any) mcpToolResult {
+	query, _ := args["search_query"].(string)
+	if query == "" {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: 'search_query' required"}}, IsError: true}
+	}
+
+	collectionsRaw, _ := args["collections"].([]any)
+	if len(collectionsRaw) == 0 {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: 'collections' array required"}}, IsError: true}
+	}
+	if len(collectionsRaw) > 5 {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: max 5 collections per cross-search"}}, IsError: true}
+	}
+
+	var collections []string
+	for _, c := range collectionsRaw {
+		if s, ok := c.(string); ok && s != "" {
+			collections = append(collections, s)
+		}
+	}
+
+	topK := 5
+	if tk, ok := args["top_k"].(float64); ok && tk > 0 {
+		topK = int(tk)
+	}
+	includeMemories := true
+	if im, ok := args["include_memories"].(bool); ok {
+		includeMemories = im
+	}
+
+	if h.cfg.EmbedEndpoint == "" || h.cfg.Collections == nil {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "No results (embedding service not configured)"}}}
+	}
+
+	embedClient := embed.NewClient(h.cfg.EmbedEndpoint, h.cfg.EmbedModel, 16, 1)
+	sp := pipeline.NewSearchPipeline(embedClient, h.cfg.Collections)
+
+	type collResult struct {
+		Collection string         `json:"collection"`
+		Vectors    []map[string]any `json:"vectors,omitempty"`
+		Memories   []map[string]any `json:"memories,omitempty"`
+	}
+
+	var results []collResult
+	for _, coll := range collections {
+		cr := collResult{Collection: coll}
+
+		// Vector search
+		res, err := sp.SearchByText(ctx, coll, query, topK)
+		if err == nil {
+			for _, r := range res {
+				cr.Vectors = append(cr.Vectors, map[string]any{
+					"id": r.ID, "score": r.Score, "metadata": string(r.Metadata),
+				})
+			}
+		}
+
+		// Memory search (SQL LIKE)
+		if includeMemories && h.cfg.DB != nil {
+			pattern := "%" + query + "%"
+			ownerID := ""
+			if uid, ok := ctx.Value(mcpUserIDKey).(string); ok {
+				ownerID = uid
+			}
+			rows, err := h.cfg.DB.QueryContext(ctx,
+				Q(`SELECT key, value, type FROM memories
+				 WHERE (key LIKE $1 OR value LIKE $2)
+				 AND (collection_name = $3 OR collection_name = '')
+				 AND (owner_id = $4 OR owner_id = '')
+				 ORDER BY updated_at DESC LIMIT $5`),
+				pattern, pattern, coll, ownerID, topK)
+			if err == nil {
+				defer rows.Close()
+				for rows.Next() {
+					var key, value, typ string
+					rows.Scan(&key, &value, &typ)
+					if isSensitiveKey(key) {
+						continue // skip sensitive data in cross-project results
+					}
+					cr.Memories = append(cr.Memories, map[string]any{
+						"key": key, "value": truncate(value, 200), "type": typ,
+					})
+				}
+			}
+		}
+
+		results = append(results, cr)
+	}
+
+	log.Printf("[cross-project] searched %d collections for query: %s", len(collections), truncate(query, 50))
+
+	out, _ := json.MarshalIndent(map[string]any{
+		"results":     results,
+		"collections": collections,
+		"query":       query,
+	}, "", "  ")
+	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(out)}}}
+}
+
 func (h *mcpHandler) toolGetProjectContext(ctx context.Context, args map[string]any) mcpToolResult {
 	collection, _ := args["collection"].(string)
 	if collection == "" {
@@ -1487,6 +1681,37 @@ func (h *mcpHandler) toolGetProjectContext(ctx context.Context, args map[string]
 			}
 			if count == 0 {
 				sb.WriteString("- (no interactions recorded)\n")
+			}
+		}
+	}
+
+	// 5. Related projects (compact summaries)
+	if related, ok := args["include_related"].([]any); ok && len(related) > 0 {
+		sb.WriteString("\n## Related Projects\n")
+		for _, r := range related {
+			relColl, ok := r.(string)
+			if !ok || relColl == "" {
+				continue
+			}
+			sb.WriteString(fmt.Sprintf("\n### %s\n", relColl))
+			if h.cfg.Collections != nil {
+				if meta := h.cfg.Collections.GetMeta(relColl); meta != nil {
+					sb.WriteString(fmt.Sprintf("- Records: %d, Dim: %d\n", meta.RecordCount, meta.EmbeddingDim))
+				} else {
+					sb.WriteString("- (no vectors)\n")
+				}
+			}
+			if h.cfg.DB != nil {
+				rows, err := h.cfg.DB.QueryContext(ctx,
+					Q(`SELECT key, value FROM memories WHERE collection_name = $1 ORDER BY updated_at DESC LIMIT 3`), relColl)
+				if err == nil {
+					defer rows.Close()
+					for rows.Next() {
+						var key, value string
+						rows.Scan(&key, &value)
+						sb.WriteString(fmt.Sprintf("- %s: %s\n", key, truncate(value, 100)))
+					}
+				}
 			}
 		}
 	}
