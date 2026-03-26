@@ -27,14 +27,15 @@ class TestProtocol:
         assert fresh_mcp.session_id is not None
         assert len(fresh_mcp.session_id) > 10
 
-    async def test_tools_list_returns_16(self, mcp):
-        """S1.1b — tools/list returns all 16 tools."""
+    async def test_tools_list_returns_19(self, mcp):
+        """S1.1b — tools/list returns all 19 tools."""
         tools = await mcp.tools_list()
         names = [t["name"] for t in tools]
-        assert len(tools) >= 16, f"Expected 16+ tools, got {len(tools)}: {names}"
+        assert len(tools) >= 19, f"Expected 19+ tools, got {len(tools)}: {names}"
         # Check critical tools exist
         for required in ["cognify", "search", "save_memory", "recall_memory",
-                         "get_project_context", "analyze_commits"]:
+                         "get_project_context", "analyze_commits",
+                         "set_context", "cross_search", "sync"]:
             assert required in names, f"Missing tool: {required}"
 
     async def test_notification_returns_202(self, mcp):
