@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"strings"
 	"sync"
@@ -308,6 +309,20 @@ var mcpTools = []mcpTool{
 			"required": []string{"search_query", "collections"},
 		},
 	},
+	{
+		Name:        "sync",
+		Description: "Synchronize data with a remote Levara instance. Syncs memories, interactions, and graph (text-only, no vectors). Handles different embedding dimensions automatically.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"remote_url": map[string]any{"type": "string", "description": "Remote Levara API URL (e.g., http://10.23.0.53:8080/api/v1)"},
+				"direction":  map[string]any{"type": "string", "description": "pull (fetch from remote) or push (send to remote)", "default": "pull"},
+				"types":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Data types to sync: memories, interactions, graph. Empty = all.", "default": []string{"memories", "interactions", "graph"}},
+				"since":      map[string]any{"type": "string", "description": "Incremental sync: only records updated after this RFC3339 timestamp"},
+			},
+			"required": []string{"remote_url"},
+		},
+	},
 }
 
 // RegisterMCPAPI registers MCP Streamable HTTP endpoint (spec 2025-03-26).
@@ -556,6 +571,8 @@ func (h *mcpHandler) executeTool(ctx context.Context, sess *mcpSession, name str
 		return h.toolSetContext(sess, args)
 	case "cross_search":
 		return h.toolCrossSearch(ctx, args)
+	case "sync":
+		return h.toolSync(ctx, args)
 	default:
 		return mcpToolResult{
 			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("Unknown tool: %s", name)}},
@@ -1598,6 +1615,138 @@ func (h *mcpHandler) toolCrossSearch(ctx context.Context, args map[string]any) m
 		"query":       query,
 	}, "", "  ")
 	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(out)}}}
+}
+
+func (h *mcpHandler) toolSync(ctx context.Context, args map[string]any) mcpToolResult {
+	remoteURL, _ := args["remote_url"].(string)
+	if remoteURL == "" {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: 'remote_url' required (e.g., http://10.23.0.53:8080/api/v1)"}}, IsError: true}
+	}
+	direction, _ := args["direction"].(string)
+	if direction == "" {
+		direction = "pull"
+	}
+	since, _ := args["since"].(string)
+
+	var types []string
+	if typesRaw, ok := args["types"].([]any); ok {
+		for _, t := range typesRaw {
+			if s, ok := t.(string); ok {
+				types = append(types, s)
+			}
+		}
+	}
+
+	if h.cfg.DB == nil {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: database not configured"}}, IsError: true}
+	}
+
+	// First, get remote manifest
+	manifest, err := SyncManifestFromRemote(remoteURL)
+	if err != nil {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: " + err.Error()}}, IsError: true}
+	}
+
+	if direction == "pull" {
+		result := SyncPull(h.cfg, remoteURL, types, since)
+		result["remote_manifest"] = manifest
+		out, _ := json.MarshalIndent(result, "", "  ")
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(out)}}}
+	}
+
+	// Push: export local data, POST to remote
+	result := syncPush(ctx, h.cfg, remoteURL, types, since)
+	result["remote_manifest"] = manifest
+	out, _ := json.MarshalIndent(result, "", "  ")
+	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(out)}}}
+}
+
+func syncPush(ctx context.Context, cfg APIConfig, remoteURL string, types []string, since string) map[string]any {
+	results := map[string]any{}
+	client := &http.Client{Timeout: 30 * time.Second}
+
+	shouldSync := func(t string) bool {
+		if len(types) == 0 {
+			return true
+		}
+		for _, tt := range types {
+			if tt == t {
+				return true
+			}
+		}
+		return false
+	}
+
+	if shouldSync("memories") && cfg.DB != nil {
+		var memories []syncMemory
+		query := Q(`SELECT id, key, value, type, owner_id, collection_name, created_at, updated_at FROM memories ORDER BY updated_at`)
+		args := []any{}
+		if since != "" {
+			query = Q(`SELECT id, key, value, type, owner_id, collection_name, created_at, updated_at FROM memories WHERE updated_at > $1 ORDER BY updated_at`)
+			args = []any{since}
+		}
+		rows, err := cfg.DB.QueryContext(ctx, query, args...)
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var m syncMemory
+				rows.Scan(&m.ID, &m.Key, &m.Value, &m.Type, &m.OwnerID, &m.CollectionName, &m.CreatedAt, &m.UpdatedAt)
+				memories = append(memories, m)
+			}
+		}
+		if len(memories) > 0 {
+			body, _ := json.Marshal(memories)
+			resp, err := client.Post(remoteURL+"/sync/import/memories", "application/json", strings.NewReader(string(body)))
+			if err != nil {
+				results["memories_error"] = err.Error()
+			} else {
+				defer resp.Body.Close()
+				var r map[string]any
+				json.NewDecoder(resp.Body).Decode(&r)
+				results["memories"] = r
+			}
+		} else {
+			results["memories"] = "no data to push"
+		}
+	}
+
+	if shouldSync("graph") && cfg.DB != nil {
+		var g syncGraph
+		nodeRows, err := cfg.DB.QueryContext(ctx, Q(`SELECT id, name, type, description, properties FROM graph_nodes`))
+		if err == nil {
+			defer nodeRows.Close()
+			for nodeRows.Next() {
+				var n syncGraphNode
+				nodeRows.Scan(&n.ID, &n.Name, &n.Type, &n.Description, &n.Properties)
+				g.Nodes = append(g.Nodes, n)
+			}
+		}
+		edgeRows, err := cfg.DB.QueryContext(ctx, Q(`SELECT id, source_id, target_id, relationship_name, properties FROM graph_edges`))
+		if err == nil {
+			defer edgeRows.Close()
+			for edgeRows.Next() {
+				var e syncGraphEdge
+				edgeRows.Scan(&e.ID, &e.SourceID, &e.TargetID, &e.RelationshipName, &e.Properties)
+				g.Edges = append(g.Edges, e)
+			}
+		}
+		if len(g.Nodes) > 0 || len(g.Edges) > 0 {
+			body, _ := json.Marshal(g)
+			resp, err := client.Post(remoteURL+"/sync/import/graph", "application/json", strings.NewReader(string(body)))
+			if err != nil {
+				results["graph_error"] = err.Error()
+			} else {
+				defer resp.Body.Close()
+				var r map[string]any
+				json.NewDecoder(resp.Body).Decode(&r)
+				results["graph"] = r
+			}
+		} else {
+			results["graph"] = "no data to push"
+		}
+	}
+
+	return results
 }
 
 func (h *mcpHandler) toolGetProjectContext(ctx context.Context, args map[string]any) mcpToolResult {
