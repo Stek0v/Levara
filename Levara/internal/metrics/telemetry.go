@@ -40,4 +40,16 @@ var (
 		Name: "levara_raft_state",
 		Help: "Current Raft state (0=Follower, 1=Candidate, 2=Leader)",
 	})
+
+	// 4. Search routing
+	SearchRequestsByType = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "levara_search_requests_by_type_total",
+		Help: "Search requests by type and source (explicit vs routed)",
+	}, []string{"search_type", "source"})
+
+	RouterDecisionDuration = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name:    "levara_router_decision_seconds",
+		Help:    "Time taken for search router to select strategy",
+		Buckets: []float64{.00005, .0001, .0005, .001, .005},
+	})
 )

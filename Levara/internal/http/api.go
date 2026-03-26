@@ -20,6 +20,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/stek0v/cognevra/internal/metrics"
 	"github.com/stek0v/cognevra/internal/store"
 	"github.com/stek0v/cognevra/pkg/bm25"
 	"github.com/stek0v/cognevra/pkg/embed"
@@ -31,6 +32,7 @@ import (
 	"github.com/stek0v/cognevra/pkg/llmcache"
 	"github.com/stek0v/cognevra/pkg/observe"
 	"github.com/stek0v/cognevra/pkg/orchestrator"
+	"github.com/stek0v/cognevra/pkg/router"
 	"github.com/stek0v/cognevra/pkg/storage"
 	"github.com/stek0v/cognevra/pkg/temporal"
 	"github.com/stek0v/cognevra/pipeline"
@@ -746,8 +748,25 @@ func searchHandler(cfg APIConfig) fiber.Handler {
 		req.AllowedDatasetIDs = GetAllowedDatasetIDs(cfg.DB, c.Context(), userID)
 
 		queryType := strings.ToUpper(req.QueryType)
-		if queryType == "" {
-			queryType = "CHUNKS"
+
+		// Smart routing: AUTO, FEELING_LUCKY, or empty → heuristic router
+		var routingDecision *router.Decision
+		source := "explicit"
+		if queryType == "" || queryType == "AUTO" || queryType == "FEELING_LUCKY" {
+			source = "routed"
+			routeStart := time.Now()
+			caps := capabilitiesFromConfig(cfg)
+			d := router.Route(req.QueryText, caps)
+			metrics.RouterDecisionDuration.Observe(time.Since(routeStart).Seconds())
+			routingDecision = &d
+			queryType = d.SearchType
+		}
+
+		metrics.SearchRequestsByType.WithLabelValues(queryType, source).Inc()
+
+		// Store routing metadata for response enrichment
+		if routingDecision != nil {
+			c.Locals("routing_decision", routingDecision)
 		}
 
 		switch queryType {
@@ -777,11 +796,21 @@ func searchHandler(cfg APIConfig) fiber.Handler {
 			return cypherSearch(c, cfg, req)
 		case "CODE", "CODING_RULES":
 			return codingRulesSearch(c, cfg, req)
-		case "FEELING_LUCKY":
-			return hybridSearch(c, cfg, req) // auto-select → hybrid is best general
 		default:
 			return chunksSearch(c, cfg, req)
 		}
+	}
+}
+
+// capabilitiesFromConfig derives router.Capabilities from the current APIConfig.
+func capabilitiesFromConfig(cfg APIConfig) router.Capabilities {
+	return router.Capabilities{
+		HasEmbedding: cfg.EmbedEndpoint != "" && cfg.Collections != nil,
+		HasBM25:      len(cfg.BM25Indexes) > 0,
+		HasNeo4j:     cfg.Neo4jCfg.Neo4jURL != "",
+		HasLLM:       cfg.LLMProvider != nil,
+		HasPostgres:  cfg.DB != nil,
+		AllowCypher:  os.Getenv("ALLOW_CYPHER_QUERY") == "true",
 	}
 }
 
