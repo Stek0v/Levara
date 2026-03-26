@@ -1,9 +1,8 @@
-# Binaries
-levara
-levara-server
-levara-arm64
-cli
-server
+# Binaries (root-level only, not cmd/ directories)
+/levara
+/levara-server
+/levara-arm64
+/cli
 *.exe
 
 # Data

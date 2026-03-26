@@ -18,6 +18,18 @@ const (
 	RaftTimeout = 500 * time.Millisecond
 )
 
+// RaftOption configures RaftNode creation.
+type RaftOption func(*raftOptions)
+
+type raftOptions struct {
+	bindAddr string // IP address Raft listens on (default "127.0.0.1")
+}
+
+// WithBindAddr sets the Raft bind address (e.g. "0.0.0.0" or "10.23.0.53").
+func WithBindAddr(addr string) RaftOption {
+	return func(o *raftOptions) { o.bindAddr = addr }
+}
+
 type RaftNode struct {
 	Raft *raft.Raft
 	FSM  *FSM
@@ -25,7 +37,12 @@ type RaftNode struct {
 	DB *store.Levara
 }
 
-func NewRaftNode(shardID int, nodeID string, baseDir string, raftPort int, db *store.Levara) (*RaftNode, error) {
+func NewRaftNode(shardID int, nodeID string, baseDir string, raftPort int, db *store.Levara, opts ...RaftOption) (*RaftNode, error) {
+	cfg := raftOptions{bindAddr: "127.0.0.1"}
+	for _, o := range opts {
+		o(&cfg)
+	}
+
 	fsm := NewFSM(db)
 
 	raftDir := filepath.Join(baseDir, fmt.Sprintf("shard_%d", shardID), "raft")
@@ -38,7 +55,7 @@ func NewRaftNode(shardID int, nodeID string, baseDir string, raftPort int, db *s
 	config.CommitTimeout = 10 * time.Millisecond
 	config.SnapshotThreshold = 65536
 
-	addr := fmt.Sprintf("127.0.0.1:%d", raftPort)
+	addr := fmt.Sprintf("%s:%d", cfg.bindAddr, raftPort)
 	tcpAddr, err := net.ResolveTCPAddr("tcp", addr)
 	if err != nil {
 		return nil, err
@@ -197,9 +214,41 @@ func (rn *RaftNode) Search(query []float32, topK int) []store.VectroRecord {
 }
 
 func (rn *RaftNode) Delete(id string) error {
-	return rn.DB.Delete(id)
+	if rn.Raft.State() != raft.Leader {
+		return fmt.Errorf("not the leader of this shard")
+	}
+	cmd := Command{Op: "delete", Id: id}
+	b, err := json.Marshal(cmd)
+	if err != nil {
+		return err
+	}
+	future := rn.Raft.Apply(b, RaftTimeout)
+	if err := future.Error(); err != nil {
+		return err
+	}
+	if fsmErr, ok := future.Response().(error); ok {
+		return fsmErr
+	}
+	return nil
 }
 
 func (rn *RaftNode) BatchDelete(ids []string) []error {
-	return rn.DB.BatchDelete(ids)
+	if rn.Raft.State() != raft.Leader {
+		return []error{fmt.Errorf("not the leader of this shard")}
+	}
+	cmd := Command{Op: "batch_delete", IDs: ids}
+	b, err := json.Marshal(cmd)
+	if err != nil {
+		return []error{err}
+	}
+	future := rn.Raft.Apply(b, RaftTimeout)
+	if err := future.Error(); err != nil {
+		return []error{err}
+	}
+	if resp := future.Response(); resp != nil {
+		if errs, ok := resp.([]error); ok {
+			return errs
+		}
+	}
+	return nil
 }
