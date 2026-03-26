@@ -28,6 +28,7 @@ import (
 	"github.com/stek0v/cognevra/pkg/git"
 	"github.com/stek0v/cognevra/pkg/ingest"
 	"github.com/stek0v/cognevra/pkg/orchestrator"
+	"github.com/stek0v/cognevra/pkg/router"
 	"github.com/stek0v/cognevra/pipeline"
 )
 
@@ -92,12 +93,12 @@ var mcpTools = []mcpTool{
 	},
 	{
 		Name:        "search",
-		Description: "Search the knowledge graph using various strategies: CHUNKS (vector), RAG_COMPLETION (vector+LLM), GRAPH_COMPLETION, HYBRID (vector+BM25), TEMPORAL, SUMMARIES, CHUNKS_LEXICAL (BM25).",
+		Description: "Search the knowledge graph using various strategies. Use AUTO (default) for intelligent routing that analyzes your query and selects the best strategy automatically.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"search_query": map[string]any{"type": "string", "description": "Natural language search query"},
-				"search_type":  map[string]any{"type": "string", "description": "Search strategy: CHUNKS, RAG_COMPLETION, GRAPH_COMPLETION, HYBRID, TEMPORAL, SUMMARIES, CHUNKS_LEXICAL", "default": "CHUNKS"},
+				"search_type":  map[string]any{"type": "string", "description": "Search strategy: AUTO (intelligent routing), CHUNKS (vector), HYBRID (vector+BM25), RAG_COMPLETION (vector+LLM answer), GRAPH_COMPLETION (graph traversal+LLM), TEMPORAL (date-aware), SUMMARIES, CHUNKS_LEXICAL (BM25), CODING_RULES (code entities)", "default": "AUTO"},
 				"top_k":        map[string]any{"type": "integer", "description": "Number of results to return", "default": 10},
 				"collection":   map[string]any{"type": "string", "description": "Project collection name to search in. Leave empty to search all."},
 			},
@@ -601,7 +602,7 @@ func (h *mcpHandler) toolSearch(ctx context.Context, args map[string]any) mcpToo
 
 	searchType, _ := args["search_type"].(string)
 	if searchType == "" {
-		searchType = "CHUNKS"
+		searchType = "AUTO"
 	}
 
 	topK := 10
@@ -610,6 +611,16 @@ func (h *mcpHandler) toolSearch(ctx context.Context, args map[string]any) mcpToo
 	}
 
 	collection, _ := args["collection"].(string)
+
+	// Smart routing: AUTO → heuristic router selects best strategy
+	var routingInfo *router.Decision
+	upperType := strings.ToUpper(searchType)
+	if upperType == "AUTO" || upperType == "FEELING_LUCKY" {
+		caps := capabilitiesFromConfig(h.cfg)
+		d := router.Route(query, caps)
+		routingInfo = &d
+		searchType = d.SearchType
+	}
 
 	// Execute search
 	if h.cfg.EmbedEndpoint == "" || h.cfg.Collections == nil {
@@ -642,11 +653,26 @@ func (h *mcpHandler) toolSearch(ctx context.Context, args map[string]any) mcpToo
 		}
 	}
 
-	if len(results) == 0 {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "No results found."}}}
+	// Build response with routing metadata
+	response := map[string]any{
+		"results":     results,
+		"search_type": searchType,
+	}
+	if routingInfo != nil {
+		response["routing"] = map[string]any{
+			"selected_type": routingInfo.SearchType,
+			"reason":        routingInfo.Reason,
+			"confidence":    routingInfo.Confidence,
+			"alternatives":  routingInfo.Alternatives,
+			"source":        "routed",
+		}
 	}
 
-	out, _ := json.MarshalIndent(results, "", "  ")
+	if len(results) == 0 {
+		response["results"] = []any{}
+	}
+
+	out, _ := json.MarshalIndent(response, "", "  ")
 	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(out)}}}
 }
 
