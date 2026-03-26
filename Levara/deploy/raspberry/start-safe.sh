@@ -12,7 +12,7 @@ sleep 2
 
 export OLLAMA_MAX_LOADED_MODELS=2   # CRITICAL: both models in RAM simultaneously
 export OLLAMA_NUM_PARALLEL=1
-export OLLAMA_KEEP_ALIVE=30m
+export OLLAMA_KEEP_ALIVE=24h     # Levara pings every 10min, keep models loaded
 nohup ollama serve > /tmp/ollama.log 2>&1 &
 sleep 5
 

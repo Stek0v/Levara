@@ -4,7 +4,9 @@ package git
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -20,7 +22,20 @@ type Commit struct {
 }
 
 // ParseLog runs git log and returns structured commits.
+// Returns a clear error if repoPath is not a valid git repository.
 func ParseLog(repoPath string, since string, limit int) ([]Commit, error) {
+	// Validate repo path exists and is a git repository
+	info, err := os.Stat(repoPath)
+	if err != nil {
+		return nil, fmt.Errorf("repo path %q: %w", repoPath, err)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("repo path %q: not a directory", repoPath)
+	}
+	if _, err := os.Stat(filepath.Join(repoPath, ".git")); err != nil {
+		return nil, fmt.Errorf("repo path %q: not a git repository (.git not found)", repoPath)
+	}
+
 	if limit <= 0 {
 		limit = 100
 	}
