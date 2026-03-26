@@ -57,7 +57,8 @@ type Levara struct {
 
 	wal *WAL
 
-	hnsw *HNSWIndex
+	hnsw    *HNSWIndex
+	hnswCfg HNSWConfig
 
 	// Async HNSW indexing: records land here after durable write,
 	// background goroutine drains them into hnsw.Add().
@@ -101,6 +102,7 @@ func NewLevara(dim int, storagePath string, cfg ...HNSWConfig) (*Levara, error) 
 		dim:         dim,
 		wal:         wal,
 		hnsw:        NewHNSWIndex(localArena, hnswCfg),
+		hnswCfg:     hnswCfg,
 		indexSignal: make(chan struct{}, 1),
 	}
 
@@ -463,6 +465,48 @@ func (db *Levara) Count() int {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 	return len(db.index)
+}
+
+// SnapshotRecord holds one entry for Raft snapshot serialization.
+type SnapshotRecord struct {
+	ID     string          `json:"id"`
+	Vector []float32       `json:"vector"`
+	Data   json.RawMessage `json:"data"`
+}
+
+// AllRecords returns all records for Raft snapshot. Thread-safe.
+func (db *Levara) AllRecords() []SnapshotRecord {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	records := make([]SnapshotRecord, 0, len(db.index))
+	for id, idx := range db.index {
+		vec, _ := db.arena.Get(idx)
+		metaLoc := db.metaLocs[idx]
+		meta, _ := db.disk.Read(metaLoc)
+		vecCopy := make([]float32, len(vec))
+		copy(vecCopy, vec)
+		records = append(records, SnapshotRecord{
+			ID:     id,
+			Vector: vecCopy,
+			Data:   json.RawMessage(meta),
+		})
+	}
+	return records
+}
+
+// Clear removes all in-memory data. Used during Raft snapshot restore.
+func (db *Levara) Clear() {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	// Delete all existing records
+	for id := range db.index {
+		delete(db.index, id)
+	}
+	db.index = make(map[string]uint32)
+	db.revIndex = make([]string, 0, 10000)
+	db.metaLocs = make(map[uint32]FileLocation)
+	db.arena = NewVectorArena(db.dim)
+	db.hnsw = NewHNSWIndex(db.arena, db.hnswCfg)
 }
 
 func (db *Levara) Close() error {
