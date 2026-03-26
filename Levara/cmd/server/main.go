@@ -57,6 +57,7 @@ import (
 	"github.com/stek0v/cognevra/internal/cluster"
 	vectorGrpc "github.com/stek0v/cognevra/internal/grpc"
 	"github.com/stek0v/cognevra/internal/store"
+	"github.com/stek0v/cognevra/pkg/embed"
 	"github.com/stek0v/cognevra/pkg/graphdb"
 	"github.com/stek0v/cognevra/pkg/llm"
 	"github.com/stek0v/cognevra/pkg/llmcache"
@@ -304,7 +305,12 @@ func main() {
 		os.MkdirAll(filepath.Dir(dbPath), 0755)
 
 		var dbErr error
-		pgDB, dbErr = sql.Open("sqlite3", dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
+		pgDB, dbErr = sql.Open("sqlite3", dbPath+
+			"?_pragma=journal_mode(WAL)"+
+			"&_pragma=busy_timeout(5000)"+
+			"&_pragma=synchronous(NORMAL)"+
+			"&_pragma=cache_size(-10000)"+
+			"&_pragma=temp_store(MEMORY)")
 		if dbErr != nil {
 			log.Printf("SQLite init warning: %v (running without DB)", dbErr)
 		} else {
@@ -657,6 +663,24 @@ func main() {
 		log.Println("All shards flushed and closed")
 		app.Shutdown()
 	}()
+
+	// Background keep-alive ping for Ollama models (prevents model eviction)
+	if embedEndpoint != "" {
+		go func() {
+			embedClient := embed.NewClient(embedEndpoint, embedModel, 1, 1)
+			ticker := time.NewTicker(10 * time.Minute)
+			defer ticker.Stop()
+			for range ticker.C {
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				_, err := embedClient.EmbedSingle(ctx, "keepalive")
+				if err != nil {
+					log.Printf("[keepalive] embed ping failed: %v", err)
+				}
+				cancel()
+			}
+		}()
+		log.Printf("Embed keep-alive started (ping every 10min)")
+	}
 
 	log.Fatal(app.Listen(addr))
 }

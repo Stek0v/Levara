@@ -1,15 +1,25 @@
-// mcp.go — Model Context Protocol (MCP) server for AI agent integration.
-// Implements JSON-RPC 2.0 over HTTP with Cognee-compatible tool set.
-// Compatible with Claude Desktop, Cursor, Cline via MCP protocol.
+// mcp.go — Model Context Protocol (MCP) Streamable HTTP server (spec 2025-03-26).
+// Implements JSON-RPC 2.0 with session management, SSE streaming, and 15 tools.
+// Compatible with Claude Code, Cursor, Cline, and any MCP client.
+//
+// Transport: Streamable HTTP (preferred)
+//   POST /mcp — JSON-RPC requests + notifications
+//   GET  /mcp — SSE stream for server-initiated messages
+//   DELETE /mcp — terminate session
+//
+// Session management via Mcp-Session-Id header.
 package http
 
 import (
+	"bufio"
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -43,6 +53,10 @@ type rpcError struct {
 }
 
 // ── MCP types ──
+
+// mcpUserIDKey is the context key for user isolation in MCP tools.
+type contextKey string
+const mcpUserIDKey contextKey = "mcp_user_id"
 
 type mcpTool struct {
 	Name        string         `json:"name"`
@@ -255,45 +269,143 @@ var mcpTools = []mcpTool{
 			"required": []string{"query"},
 		},
 	},
+	{
+		Name:        "get_project_context",
+		Description: "Get full project context: memories, collection stats, key entities, recent interactions. Call at session start for maximum context awareness.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"collection": map[string]any{"type": "string", "description": "Project collection name"},
+			},
+			"required": []string{"collection"},
+		},
+	},
 }
 
-// RegisterMCPAPI registers MCP JSON-RPC endpoint.
+// RegisterMCPAPI registers MCP Streamable HTTP endpoint (spec 2025-03-26).
+// POST /mcp — JSON-RPC requests + notifications
+// GET  /mcp — SSE stream for server-initiated messages
+// DELETE /mcp — terminate session
 func RegisterMCPAPI(app fiber.Router, cfg APIConfig) {
-	handler := &mcpHandler{cfg: cfg}
+	handler := &mcpHandler{
+		cfg:      cfg,
+		sessions: make(map[string]*mcpSession),
+	}
 	app.Post("/mcp", handler.handleRPC)
-	app.Get("/mcp", handler.handleSSE) // SSE transport placeholder
+	app.Get("/mcp", handler.handleSSEStream)
+	app.Delete("/mcp", handler.handleDeleteSession)
+	go handler.sessionCleanupLoop()
+}
+
+// mcpSession tracks a connected MCP client session.
+type mcpSession struct {
+	id        string
+	userID    string    // from Authorization header (JWT), empty for anonymous
+	createdAt time.Time
+	sseCh     chan []byte // buffered channel for server-initiated SSE messages
 }
 
 type mcpHandler struct {
-	cfg APIConfig
+	cfg      APIConfig
+	mu       sync.RWMutex
+	sessions map[string]*mcpSession
+}
+
+// getOrValidateSession returns the session for the given ID, or nil if invalid.
+func (h *mcpHandler) getOrValidateSession(sessionID string) *mcpSession {
+	if sessionID == "" {
+		return nil
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.sessions[sessionID]
+}
+
+// createSession creates a new MCP session and returns its ID.
+func (h *mcpHandler) createSession() string {
+	id := fmt.Sprintf("mcp-%d-%s", time.Now().UnixNano(), randomHex(8))
+	h.mu.Lock()
+	h.sessions[id] = &mcpSession{
+		id:        id,
+		createdAt: time.Now(),
+		sseCh:     make(chan []byte, 100),
+	}
+	h.mu.Unlock()
+	return id
+}
+
+// deleteSession removes a session.
+func (h *mcpHandler) deleteSession(id string) {
+	h.mu.Lock()
+	if s, ok := h.sessions[id]; ok {
+		close(s.sseCh)
+		delete(h.sessions, id)
+	}
+	h.mu.Unlock()
+}
+
+// randomHex returns n random hex characters.
+func randomHex(n int) string {
+	b := make([]byte, n/2+1)
+	rand.Read(b)
+	return fmt.Sprintf("%x", b)[:n]
 }
 
 func (h *mcpHandler) handleRPC(c *fiber.Ctx) error {
 	var req jsonRPCRequest
 	if err := c.BodyParser(&req); err != nil {
-		return c.JSON(jsonRPCResponse{
+		return c.Status(400).JSON(jsonRPCResponse{
 			JSONRPC: "2.0",
 			ID:      req.ID,
 			Error:   &rpcError{Code: -32700, Message: "Parse error"},
 		})
 	}
 
+	// Notifications (no "id") → 202 Accepted, no body
+	if req.ID == nil || string(req.ID) == "null" {
+		// Handle known notifications silently
+		switch req.Method {
+		case "notifications/initialized", "notifications/cancelled":
+			// acknowledged
+		}
+		return c.SendStatus(202)
+	}
+
+	// Session validation for non-initialize requests
+	sessionID := c.Get("Mcp-Session-Id")
+	if req.Method != "initialize" && sessionID != "" {
+		if h.getOrValidateSession(sessionID) == nil {
+			return c.SendStatus(404) // invalid session → client should re-initialize
+		}
+	}
+
+	// Set session header on all responses
+	if sessionID != "" {
+		c.Set("Mcp-Session-Id", sessionID)
+	}
+
 	switch req.Method {
 	case "initialize":
+		sid := h.createSession()
+		c.Set("Mcp-Session-Id", sid)
 		return c.JSON(jsonRPCResponse{
 			JSONRPC: "2.0",
 			ID:      req.ID,
 			Result: map[string]any{
-				"protocolVersion": "2024-11-05",
+				"protocolVersion": "2025-03-26",
 				"capabilities": map[string]any{
-					"tools": map[string]any{"listChanged": false},
+					"tools":     map[string]any{},
+					"resources": map[string]any{"subscribe": false, "listChanged": false},
 				},
 				"serverInfo": map[string]any{
-					"name":    "Levara",
+					"name":    "levara",
 					"version": "1.0.0",
 				},
 			},
 		})
+
+	case "ping":
+		return c.JSON(jsonRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{}})
 
 	case "tools/list":
 		return c.JSON(jsonRPCResponse{
@@ -307,9 +419,11 @@ func (h *mcpHandler) handleRPC(c *fiber.Ctx) error {
 	case "tools/call":
 		return h.handleToolCall(c, req)
 
-	case "notifications/initialized":
-		// Client acknowledgment, no response needed
-		return c.JSON(jsonRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{}})
+	case "resources/list":
+		return h.handleResourcesList(c, req)
+
+	case "resources/read":
+		return h.handleResourcesRead(c, req)
 
 	default:
 		return c.JSON(jsonRPCResponse{
@@ -332,7 +446,14 @@ func (h *mcpHandler) handleToolCall(c *fiber.Ctx, req jsonRPCRequest) error {
 		})
 	}
 
-	result := h.executeTool(c.Context(), params.Name, params.Arguments)
+	// Inject user ID from session for isolation
+	toolCtx := context.Background()
+	sessionID := c.Get("Mcp-Session-Id")
+	if sess := h.getOrValidateSession(sessionID); sess != nil && sess.userID != "" {
+		toolCtx = context.WithValue(toolCtx, mcpUserIDKey, sess.userID)
+	}
+
+	result := h.executeTool(toolCtx, params.Name, params.Arguments)
 	return c.JSON(jsonRPCResponse{
 		JSONRPC: "2.0", ID: req.ID, Result: result,
 	})
@@ -370,6 +491,8 @@ func (h *mcpHandler) executeTool(ctx context.Context, name string, args map[stri
 		return h.toolRecallChat(ctx, args)
 	case "search_chats":
 		return h.toolSearchChats(ctx, args)
+	case "get_project_context":
+		return h.toolGetProjectContext(ctx, args)
 	default:
 		return mcpToolResult{
 			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("Unknown tool: %s", name)}},
@@ -781,7 +904,12 @@ func (h *mcpHandler) toolSaveMemory(ctx context.Context, args map[string]any) mc
 
 	id := uuid.New().String()
 	now := time.Now().UTC().Format(time.RFC3339)
+
+	// User isolation: extract ownerID from context (set by handleToolCall)
 	ownerID := ""
+	if uid, ok := ctx.Value(mcpUserIDKey).(string); ok {
+		ownerID = uid
+	}
 
 	if activeDBProvider == DBSQLite {
 		h.cfg.DB.ExecContext(ctx,
@@ -797,6 +925,27 @@ func (h *mcpHandler) toolSaveMemory(ctx context.Context, args map[string]any) mc
 			id, key, value, memType, ownerID, collectionName, now, now)
 	}
 
+	// Vector-index the memory for semantic recall
+	if h.cfg.EmbedEndpoint != "" && h.cfg.Collections != nil {
+		go func() {
+			embedClient := embed.NewClient(h.cfg.EmbedEndpoint, h.cfg.EmbedModel, 1, 1)
+			embedCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			vec, err := embedClient.EmbedSingle(embedCtx, key+" "+value)
+			if err == nil {
+				memColl := "_memories"
+				if collectionName != "" {
+					memColl = "_memories_" + collectionName
+				}
+				meta, _ := json.Marshal(map[string]string{
+					"key": key, "value": value, "type": memType,
+					"collection": collectionName, "memory_id": id,
+				})
+				h.cfg.Collections.Insert(memColl, id, vec, meta)
+			}
+		}()
+	}
+
 	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("Memory saved: %s = %s (type: %s)", key, truncate(value, 100), memType)}}}
 }
 
@@ -807,11 +956,43 @@ func (h *mcpHandler) toolRecallMemory(ctx context.Context, args map[string]any) 
 	}
 	collectionName, _ := args["collection"].(string)
 
+	// User isolation
+	ownerID := ""
+	if uid, ok := ctx.Value(mcpUserIDKey).(string); ok {
+		ownerID = uid
+	}
+
+	// Strategy 1: Vector semantic search (if embed configured)
+	if h.cfg.EmbedEndpoint != "" && h.cfg.Collections != nil {
+		embedClient := embed.NewClient(h.cfg.EmbedEndpoint, h.cfg.EmbedModel, 1, 1)
+		vec, err := embedClient.EmbedSingle(ctx, query)
+		if err == nil {
+			memColl := "_memories"
+			if collectionName != "" {
+				memColl = "_memories_" + collectionName
+			}
+			results, err := h.cfg.Collections.Search(memColl, vec, 10)
+			if err == nil && len(results) > 0 {
+				var items []map[string]string
+				for _, r := range results {
+					var meta map[string]string
+					if err := json.Unmarshal(r.Data, &meta); err == nil {
+						items = append(items, meta)
+					}
+				}
+				if len(items) > 0 {
+					data, _ := json.MarshalIndent(items, "", "  ")
+					return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(data)}}}
+				}
+			}
+		}
+	}
+
+	// Strategy 2: Fallback to LIKE search
 	if h.cfg.DB == nil {
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "[]"}}}
 	}
 
-	// Search memories by key and value LIKE match
 	pattern := "%" + query + "%"
 	var rows *sql.Rows
 	var err error
@@ -819,12 +1000,14 @@ func (h *mcpHandler) toolRecallMemory(ctx context.Context, args map[string]any) 
 		rows, err = h.cfg.DB.QueryContext(ctx,
 			Q(`SELECT id, key, value, type, owner_id, created_at, updated_at
 			 FROM memories WHERE (key LIKE $1 OR value LIKE $2) AND collection_name = $3
-			 ORDER BY updated_at DESC LIMIT 20`), pattern, pattern, collectionName)
+			 AND (owner_id = $4 OR owner_id = '')
+			 ORDER BY updated_at DESC LIMIT 20`), pattern, pattern, collectionName, ownerID)
 	} else {
 		rows, err = h.cfg.DB.QueryContext(ctx,
 			Q(`SELECT id, key, value, type, owner_id, created_at, updated_at
-			 FROM memories WHERE key LIKE $1 OR value LIKE $2
-			 ORDER BY updated_at DESC LIMIT 20`), pattern, pattern)
+			 FROM memories WHERE (key LIKE $1 OR value LIKE $2)
+			 AND (owner_id = $3 OR owner_id = '')
+			 ORDER BY updated_at DESC LIMIT 20`), pattern, pattern, ownerID)
 	}
 	if err != nil {
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("Error: %s", err.Error())}}, IsError: true}
@@ -833,13 +1016,13 @@ func (h *mcpHandler) toolRecallMemory(ctx context.Context, args map[string]any) 
 
 	var results []map[string]any
 	for rows.Next() {
-		var id, key, value, typ, ownerID, ca, ua string
-		if err := rows.Scan(&id, &key, &value, &typ, &ownerID, &ca, &ua); err != nil {
+		var id, key, value, typ, oid, ca, ua string
+		if err := rows.Scan(&id, &key, &value, &typ, &oid, &ca, &ua); err != nil {
 			continue
 		}
 		results = append(results, map[string]any{
 			"id": id, "key": key, "value": value, "type": typ,
-			"owner_id": ownerID, "created_at": ca, "updated_at": ua,
+			"owner_id": oid, "created_at": ca, "updated_at": ua,
 		})
 	}
 
@@ -1040,13 +1223,321 @@ func truncate(s string, maxLen int) string {
 	return s[:maxLen-3] + "..."
 }
 
-// handleSSE is a placeholder for SSE transport.
-func (h *mcpHandler) handleSSE(c *fiber.Ctx) error {
-	return c.JSON(fiber.Map{
-		"status":  "MCP SSE transport available",
-		"message": "Use POST /mcp for JSON-RPC requests",
-		"tools":   len(mcpTools),
+// ── MCP Resources API ──────────────────────────────────────────────────────
+
+func (h *mcpHandler) handleResourcesList(c *fiber.Ctx, req jsonRPCRequest) error {
+	resources := []map[string]any{
+		{
+			"uri":         "levara://collections",
+			"name":        "Collections",
+			"description": "List of all knowledge collections with record counts and dimensions",
+			"mimeType":    "application/json",
+		},
+		{
+			"uri":         "levara://memories/project",
+			"name":        "Project Memories",
+			"description": "Project-level stored memories (tech stack, decisions, conventions)",
+			"mimeType":    "application/json",
+		},
+		{
+			"uri":         "levara://memories/user",
+			"name":        "User Memories",
+			"description": "User-level stored preferences and settings",
+			"mimeType":    "application/json",
+		},
+		{
+			"uri":         "levara://memories/feedback",
+			"name":        "Feedback Memories",
+			"description": "Stored feedback and corrections",
+			"mimeType":    "application/json",
+		},
+	}
+
+	// Add per-collection resources dynamically
+	if h.cfg.Collections != nil {
+		for _, name := range h.cfg.Collections.List() {
+			resources = append(resources, map[string]any{
+				"uri":         fmt.Sprintf("levara://collections/%s", name),
+				"name":        fmt.Sprintf("Collection: %s", name),
+				"description": fmt.Sprintf("Knowledge collection '%s' — vectors, entities, triplets", name),
+				"mimeType":    "application/json",
+			})
+		}
+	}
+
+	return c.JSON(jsonRPCResponse{
+		JSONRPC: "2.0", ID: req.ID,
+		Result: map[string]any{"resources": resources},
 	})
+}
+
+func (h *mcpHandler) handleResourcesRead(c *fiber.Ctx, req jsonRPCRequest) error {
+	var params struct {
+		URI string `json:"uri"`
+	}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return c.JSON(jsonRPCResponse{JSONRPC: "2.0", ID: req.ID,
+			Error: &rpcError{Code: -32602, Message: "Invalid params: uri required"}})
+	}
+
+	uri := params.URI
+	var content string
+	var mimeType = "application/json"
+
+	switch {
+	case uri == "levara://collections":
+		content = h.resourceCollections()
+
+	case strings.HasPrefix(uri, "levara://collections/"):
+		name := strings.TrimPrefix(uri, "levara://collections/")
+		content = h.resourceCollectionDetail(name)
+
+	case strings.HasPrefix(uri, "levara://memories/"):
+		parts := strings.TrimPrefix(uri, "levara://memories/")
+		// parts can be "project" or "project/collectionName"
+		segments := strings.SplitN(parts, "/", 2)
+		memType := segments[0]
+		collName := ""
+		if len(segments) > 1 {
+			collName = segments[1]
+		}
+		content = h.resourceMemories(c.Context(), memType, collName)
+
+	default:
+		return c.JSON(jsonRPCResponse{JSONRPC: "2.0", ID: req.ID,
+			Error: &rpcError{Code: -32602, Message: fmt.Sprintf("Unknown resource URI: %s", uri)}})
+	}
+
+	return c.JSON(jsonRPCResponse{
+		JSONRPC: "2.0", ID: req.ID,
+		Result: map[string]any{
+			"contents": []map[string]any{
+				{"uri": uri, "mimeType": mimeType, "text": content},
+			},
+		},
+	})
+}
+
+func (h *mcpHandler) resourceCollections() string {
+	if h.cfg.Collections == nil {
+		return "[]"
+	}
+	var colls []map[string]any
+	for _, name := range h.cfg.Collections.List() {
+		meta := h.cfg.Collections.GetMeta(name)
+		entry := map[string]any{"name": name}
+		if meta != nil {
+			entry["record_count"] = meta.RecordCount
+			entry["embedding_dim"] = meta.EmbeddingDim
+			entry["distance_metric"] = meta.DistanceMetric
+		}
+		colls = append(colls, entry)
+	}
+	data, _ := json.Marshal(colls)
+	return string(data)
+}
+
+func (h *mcpHandler) resourceCollectionDetail(name string) string {
+	if h.cfg.Collections == nil {
+		return "{}"
+	}
+	meta := h.cfg.Collections.GetMeta(name)
+	if meta == nil {
+		return fmt.Sprintf("{\"error\": \"collection '%s' not found\"}", name)
+	}
+	data, _ := json.Marshal(meta)
+	return string(data)
+}
+
+func (h *mcpHandler) resourceMemories(ctx context.Context, memType, collName string) string {
+	if h.cfg.DB == nil {
+		return "[]"
+	}
+	var rows *sql.Rows
+	var err error
+	if collName != "" {
+		rows, err = h.cfg.DB.QueryContext(ctx,
+			Q(`SELECT key, value, type, collection_name, updated_at FROM memories
+			 WHERE type = $1 AND collection_name = $2 ORDER BY updated_at DESC LIMIT 50`),
+			memType, collName)
+	} else {
+		rows, err = h.cfg.DB.QueryContext(ctx,
+			Q(`SELECT key, value, type, collection_name, updated_at FROM memories
+			 WHERE type = $1 ORDER BY updated_at DESC LIMIT 50`), memType)
+	}
+	if err != nil {
+		return "[]"
+	}
+	defer rows.Close()
+
+	var items []map[string]string
+	for rows.Next() {
+		var key, value, typ, coll, updated string
+		rows.Scan(&key, &value, &typ, &coll, &updated)
+		items = append(items, map[string]string{
+			"key": key, "value": value, "type": typ, "collection": coll, "updated_at": updated,
+		})
+	}
+	data, _ := json.Marshal(items)
+	return string(data)
+}
+
+// ── Tool: get_project_context ─────────────────────────────────────────────
+
+func (h *mcpHandler) toolGetProjectContext(ctx context.Context, args map[string]any) mcpToolResult {
+	collection, _ := args["collection"].(string)
+	if collection == "" {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: 'collection' required"}}, IsError: true}
+	}
+
+	var sb strings.Builder
+
+	// 1. Collection stats
+	sb.WriteString("## Collection Stats\n")
+	if h.cfg.Collections != nil {
+		meta := h.cfg.Collections.GetMeta(collection)
+		if meta != nil {
+			sb.WriteString(fmt.Sprintf("- Name: %s\n- Records: %d\n- Dimension: %d\n- Metric: %s\n\n",
+				meta.Name, meta.RecordCount, meta.EmbeddingDim, meta.DistanceMetric))
+		} else {
+			sb.WriteString(fmt.Sprintf("- Collection '%s' not found (no vectors indexed yet)\n\n", collection))
+		}
+	}
+
+	// 2. Memories
+	sb.WriteString("## Project Memories\n")
+	if h.cfg.DB != nil {
+		rows, err := h.cfg.DB.QueryContext(ctx,
+			Q(`SELECT key, value, type FROM memories
+			 WHERE collection_name = $1 ORDER BY updated_at DESC LIMIT 20`), collection)
+		if err == nil {
+			defer rows.Close()
+			count := 0
+			for rows.Next() {
+				var key, value, typ string
+				rows.Scan(&key, &value, &typ)
+				sb.WriteString(fmt.Sprintf("- [%s] %s: %s\n", typ, key, truncate(value, 200)))
+				count++
+			}
+			if count == 0 {
+				sb.WriteString("- (no memories saved for this collection)\n")
+			}
+			sb.WriteString("\n")
+		}
+	}
+
+	// 3. Graph entities (top types)
+	sb.WriteString("## Key Entity Types\n")
+	if h.cfg.DB != nil {
+		rows, err := h.cfg.DB.QueryContext(ctx,
+			Q(`SELECT type, COUNT(*) as cnt FROM graph_nodes GROUP BY type ORDER BY cnt DESC LIMIT 10`))
+		if err == nil {
+			defer rows.Close()
+			count := 0
+			for rows.Next() {
+				var typ string
+				var cnt int
+				rows.Scan(&typ, &cnt)
+				sb.WriteString(fmt.Sprintf("- %s: %d entities\n", typ, cnt))
+				count++
+			}
+			if count == 0 {
+				sb.WriteString("- (no entities extracted yet)\n")
+			}
+			sb.WriteString("\n")
+		}
+	}
+
+	// 4. Recent interactions
+	sb.WriteString("## Recent Interactions\n")
+	if h.cfg.DB != nil {
+		rows, err := h.cfg.DB.QueryContext(ctx,
+			Q(`SELECT query, response, created_at FROM interactions
+			 ORDER BY created_at DESC LIMIT 5`))
+		if err == nil {
+			defer rows.Close()
+			count := 0
+			for rows.Next() {
+				var query, response, createdAt string
+				rows.Scan(&query, &response, &createdAt)
+				sb.WriteString(fmt.Sprintf("- Q: %s\n  A: %s\n", truncate(query, 100), truncate(response, 150)))
+				count++
+			}
+			if count == 0 {
+				sb.WriteString("- (no interactions recorded)\n")
+			}
+		}
+	}
+
+	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: sb.String()}}}
+}
+
+// ── Session Cleanup ───────────────────────────────────────────────────────
+
+func (h *mcpHandler) sessionCleanupLoop() {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	for range ticker.C {
+		h.mu.Lock()
+		now := time.Now()
+		for id, s := range h.sessions {
+			if now.Sub(s.createdAt) > time.Hour {
+				close(s.sseCh)
+				delete(h.sessions, id)
+			}
+		}
+		h.mu.Unlock()
+	}
+}
+
+// handleSSEStream implements GET /mcp for server-initiated SSE messages.
+// Clients open this to receive notifications (e.g. tools/list_changed, progress).
+func (h *mcpHandler) handleSSEStream(c *fiber.Ctx) error {
+	sessionID := c.Get("Mcp-Session-Id")
+	if sessionID == "" {
+		return c.SendStatus(400)
+	}
+	sess := h.getOrValidateSession(sessionID)
+	if sess == nil {
+		return c.SendStatus(404)
+	}
+
+	c.Set("Content-Type", "text/event-stream")
+	c.Set("Cache-Control", "no-cache")
+	c.Set("Connection", "keep-alive")
+	c.Set("Mcp-Session-Id", sessionID)
+
+	c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
+		// Send initial keepalive
+		fmt.Fprintf(w, ": keepalive\n\n")
+		w.Flush()
+
+		for {
+			select {
+			case msg, ok := <-sess.sseCh:
+				if !ok {
+					return // session closed
+				}
+				fmt.Fprintf(w, "event: message\ndata: %s\n\n", msg)
+				w.Flush()
+			case <-time.After(30 * time.Second):
+				// Send keepalive comment every 30s
+				fmt.Fprintf(w, ": keepalive\n\n")
+				w.Flush()
+			}
+		}
+	})
+	return nil
+}
+
+// handleDeleteSession implements DELETE /mcp to terminate a session.
+func (h *mcpHandler) handleDeleteSession(c *fiber.Ctx) error {
+	sessionID := c.Get("Mcp-Session-Id")
+	if sessionID == "" {
+		return c.SendStatus(400)
+	}
+	h.deleteSession(sessionID)
+	return c.SendStatus(204)
 }
 
 // MCPHealthHandler returns MCP-specific health info.
