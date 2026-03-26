@@ -937,18 +937,14 @@ func (h *mcpHandler) toolSaveMemory(ctx context.Context, args map[string]any) mc
 		ownerID = uid
 	}
 
-	if activeDBProvider == DBSQLite {
-		h.cfg.DB.ExecContext(ctx,
-			Q(`INSERT INTO memories (id, key, value, type, owner_id, collection_name, created_at, updated_at)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-			 ON CONFLICT(key, owner_id) DO UPDATE SET value = $3, type = $4, collection_name = $6, updated_at = $8`),
-			id, key, value, memType, ownerID, collectionName, now, now)
-	} else {
-		h.cfg.DB.ExecContext(ctx,
-			Q(`INSERT INTO memories (id, key, value, type, owner_id, collection_name, created_at, updated_at)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-			 ON CONFLICT(key, owner_id) DO UPDATE SET value = EXCLUDED.value, type = EXCLUDED.type, collection_name = EXCLUDED.collection_name, updated_at = EXCLUDED.updated_at`),
-			id, key, value, memType, ownerID, collectionName, now, now)
+	upsertSQL := `INSERT INTO memories (id, key, value, type, owner_id, collection_name, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		 ON CONFLICT(key, owner_id) DO UPDATE SET value = $3, type = $4, collection_name = $6, updated_at = $8`
+	q, qargs := QArgs(upsertSQL, id, key, value, memType, ownerID, collectionName, now, now)
+	if _, err := h.cfg.DB.ExecContext(ctx, q, qargs...); err != nil {
+		if h.cfg.Logger != nil {
+			h.cfg.Logger.Error("save_memory SQL failed", err, map[string]any{"key": key})
+		}
 	}
 
 	// Vector-index the memory for semantic recall
