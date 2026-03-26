@@ -8,10 +8,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/stek0v/cognevra/pkg/embed"
 )
 
 // RegisterSyncAPI registers sync export/import endpoints.
@@ -26,6 +29,10 @@ func RegisterSyncAPI(app fiber.Router, cfg APIConfig) {
 
 	app.Get("/sync/export/graph", syncExportGraphHandler(cfg))
 	app.Post("/sync/import/graph", syncImportGraphHandler(cfg))
+
+	app.Get("/sync/export/collection/:name", syncExportCollectionHandler(cfg))
+	app.Post("/sync/import/collection", syncImportCollectionHandler(cfg))
+	app.Get("/sync/import/collection/:runId/status", syncImportCollectionStatusHandler())
 }
 
 // ── Manifest ──
@@ -337,6 +344,215 @@ func syncImportGraphHandler(cfg APIConfig) fiber.Handler {
 			"nodes_imported": nodesImported, "edges_imported": edgesImported,
 			"nodes_total":    len(g.Nodes), "edges_total": len(g.Edges),
 		})
+	}
+}
+
+// ── Collection Sync (vectors via re-embedding) ──
+
+type syncCollectionExport struct {
+	Collection  string               `json:"collection"`
+	SourceModel string               `json:"source_model"`
+	SourceDim   int                  `json:"source_dim"`
+	Records     []syncCollectionRecord `json:"records"`
+}
+
+type syncCollectionRecord struct {
+	ID       string          `json:"id"`
+	Text     string          `json:"text"`
+	Metadata json.RawMessage `json:"metadata"`
+}
+
+// textFromMetadata extracts readable text from vector metadata JSON.
+// Tries common fields: text, name, description, content, value, key.
+func textFromMetadata(meta []byte) string {
+	var m map[string]any
+	if json.Unmarshal(meta, &m) != nil {
+		return string(meta)
+	}
+	for _, key := range []string{"text", "name", "description", "content", "value", "key"} {
+		if v, ok := m[key].(string); ok && v != "" {
+			return v
+		}
+	}
+	return string(meta)
+}
+
+func syncExportCollectionHandler(cfg APIConfig) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		name := c.Params("name")
+		if cfg.Collections == nil || !cfg.Collections.Has(name) {
+			return c.Status(404).JSON(fiber.Map{"detail": fmt.Sprintf("collection %q not found", name)})
+		}
+
+		ids, _, metas, err := cfg.Collections.AllRecords(name)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"detail": err.Error()})
+		}
+
+		meta := cfg.Collections.GetMeta(name)
+		export := syncCollectionExport{
+			Collection: name,
+		}
+		if meta != nil {
+			export.SourceModel = meta.EmbeddingModel
+			export.SourceDim = meta.EmbeddingDim
+		}
+
+		for i, id := range ids {
+			text := textFromMetadata(metas[i])
+			export.Records = append(export.Records, syncCollectionRecord{
+				ID:       id,
+				Text:     text,
+				Metadata: json.RawMessage(metas[i]),
+			})
+		}
+		if export.Records == nil {
+			export.Records = []syncCollectionRecord{}
+		}
+
+		return c.JSON(export)
+	}
+}
+
+type syncCollectionImportStatus struct {
+	RunID      string `json:"run_id"`
+	Status     string `json:"status"` // RUNNING, COMPLETED, FAILED
+	Collection string `json:"collection"`
+	Total      int    `json:"total"`
+	Processed  int    `json:"processed"`
+	Failed     int    `json:"failed"`
+	Skipped    int    `json:"skipped"`
+	ElapsedMs  int64  `json:"elapsed_ms"`
+	Message    string `json:"message"`
+}
+
+var syncImportRuns syncMap
+
+type syncMap struct {
+	m sync.Map
+}
+
+func (s *syncMap) Store(k string, v *syncCollectionImportStatus) { s.m.Store(k, v) }
+func (s *syncMap) Load(k string) (*syncCollectionImportStatus, bool) {
+	v, ok := s.m.Load(k)
+	if !ok {
+		return nil, false
+	}
+	return v.(*syncCollectionImportStatus), true
+}
+
+func syncImportCollectionHandler(cfg APIConfig) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		var export syncCollectionExport
+		if err := c.BodyParser(&export); err != nil {
+			return c.Status(400).JSON(fiber.Map{"detail": "invalid JSON"})
+		}
+		if export.Collection == "" {
+			return c.Status(400).JSON(fiber.Map{"detail": "collection name required"})
+		}
+		if len(export.Records) == 0 {
+			return c.JSON(fiber.Map{"status": "empty", "message": "no records to import"})
+		}
+		if cfg.EmbedEndpoint == "" || cfg.Collections == nil {
+			return c.Status(503).JSON(fiber.Map{"detail": "embedding service or collections not configured"})
+		}
+
+		runID := fmt.Sprintf("sync-%d", time.Now().UnixNano())
+		status := &syncCollectionImportStatus{
+			RunID:      runID,
+			Status:     "RUNNING",
+			Collection: export.Collection,
+			Total:      len(export.Records),
+		}
+		syncImportRuns.Store(runID, status)
+
+		batchSize := 50
+
+		go func() {
+			start := time.Now()
+			ctx := context.Background()
+
+			embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, batchSize, 3)
+
+			// Auto-detect target dimension
+			testVecs, err := embedClient.EmbedTexts(ctx, []string{export.Records[0].Text})
+			if err != nil || len(testVecs) == 0 {
+				status.Status = "FAILED"
+				status.Message = fmt.Sprintf("embed test failed: %v", err)
+				return
+			}
+			targetDim := len(testVecs[0])
+
+			// Create collection if not exists
+			if !cfg.Collections.Has(export.Collection) {
+				if err := cfg.Collections.CreateWithDim(export.Collection, targetDim, cfg.EmbedModel, "cosine"); err != nil {
+					status.Status = "FAILED"
+					status.Message = fmt.Sprintf("create collection: %v", err)
+					return
+				}
+			}
+
+			log.Printf("[sync-import] %s: %d records, source=%s/%d → target=%s/%d",
+				export.Collection, len(export.Records), export.SourceModel, export.SourceDim, cfg.EmbedModel, targetDim)
+
+			// Process in batches
+			for i := 0; i < len(export.Records); i += batchSize {
+				end := i + batchSize
+				if end > len(export.Records) {
+					end = len(export.Records)
+				}
+				batch := export.Records[i:end]
+
+				texts := make([]string, len(batch))
+				for j, r := range batch {
+					texts[j] = r.Text
+				}
+
+				vecs, err := embedClient.EmbedTexts(ctx, texts)
+				if err != nil {
+					log.Printf("[sync-import] batch %d-%d embed error: %v", i, end, err)
+					status.Failed += len(batch)
+					continue
+				}
+
+				for j, vec := range vecs {
+					if j < len(batch) {
+						if err := cfg.Collections.Insert(export.Collection, batch[j].ID, vec, batch[j].Metadata); err != nil {
+							status.Failed++
+						} else {
+							status.Processed++
+						}
+					}
+				}
+
+				status.ElapsedMs = time.Since(start).Milliseconds()
+			}
+
+			status.Status = "COMPLETED"
+			status.ElapsedMs = time.Since(start).Milliseconds()
+			status.Message = fmt.Sprintf("imported %d/%d records (%s dim=%d → %s dim=%d) in %dms",
+				status.Processed, status.Total, export.SourceModel, export.SourceDim, cfg.EmbedModel, targetDim, status.ElapsedMs)
+			log.Printf("[sync-import] %s", status.Message)
+		}()
+
+		return c.JSON(fiber.Map{
+			"status": "started",
+			"run_id": runID,
+			"collection": export.Collection,
+			"records":    len(export.Records),
+			"source":     fmt.Sprintf("%s (dim=%d)", export.SourceModel, export.SourceDim),
+			"target":     fmt.Sprintf("%s (dim=auto)", cfg.EmbedModel),
+		})
+	}
+}
+
+func syncImportCollectionStatusHandler() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		runID := c.Params("runId")
+		if status, ok := syncImportRuns.Load(runID); ok {
+			return c.JSON(status)
+		}
+		return c.Status(404).JSON(fiber.Map{"detail": "run not found"})
 	}
 }
 

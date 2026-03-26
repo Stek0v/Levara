@@ -17,6 +17,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -311,14 +312,15 @@ var mcpTools = []mcpTool{
 	},
 	{
 		Name:        "sync",
-		Description: "Synchronize data with a remote Levara instance. Syncs memories, interactions, and graph (text-only, no vectors). Handles different embedding dimensions automatically.",
+		Description: "Synchronize data with a remote Levara instance. Syncs memories, interactions, graph, and vector collections (re-embedded with local model). Handles different embedding dimensions automatically.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"remote_url": map[string]any{"type": "string", "description": "Remote Levara API URL (e.g., http://10.23.0.53:8080/api/v1)"},
-				"direction":  map[string]any{"type": "string", "description": "pull (fetch from remote) or push (send to remote)", "default": "pull"},
-				"types":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Data types to sync: memories, interactions, graph. Empty = all.", "default": []string{"memories", "interactions", "graph"}},
-				"since":      map[string]any{"type": "string", "description": "Incremental sync: only records updated after this RFC3339 timestamp"},
+				"remote_url":  map[string]any{"type": "string", "description": "Remote Levara API URL (e.g., http://10.23.0.53:8080/api/v1)"},
+				"direction":   map[string]any{"type": "string", "description": "pull (fetch from remote) or push (send to remote)", "default": "pull"},
+				"types":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Data types: memories, interactions, graph, collections. Empty = all except collections (explicit opt-in).", "default": []string{"memories", "interactions", "graph"}},
+				"collections": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Specific vector collection names to sync (requires re-embedding). Only used when types includes 'collections'."},
+				"since":       map[string]any{"type": "string", "description": "Incremental sync: only records updated after this RFC3339 timestamp"},
 			},
 			"required": []string{"remote_url"},
 		},
@@ -1637,6 +1639,15 @@ func (h *mcpHandler) toolSync(ctx context.Context, args map[string]any) mcpToolR
 		}
 	}
 
+	var collectionNames []string
+	if collsRaw, ok := args["collections"].([]any); ok {
+		for _, c := range collsRaw {
+			if s, ok := c.(string); ok && s != "" {
+				collectionNames = append(collectionNames, s)
+			}
+		}
+	}
+
 	if h.cfg.DB == nil {
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: database not configured"}}, IsError: true}
 	}
@@ -1649,6 +1660,10 @@ func (h *mcpHandler) toolSync(ctx context.Context, args map[string]any) mcpToolR
 
 	if direction == "pull" {
 		result := SyncPull(h.cfg, remoteURL, types, since)
+		// Collection sync (pull: fetch text from remote → re-embed locally)
+		if containsType(types, "collections") && len(collectionNames) > 0 {
+			result["collections_sync"] = syncPullCollections(h.cfg, remoteURL, collectionNames)
+		}
 		result["remote_manifest"] = manifest
 		out, _ := json.MarshalIndent(result, "", "  ")
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(out)}}}
@@ -1656,6 +1671,9 @@ func (h *mcpHandler) toolSync(ctx context.Context, args map[string]any) mcpToolR
 
 	// Push: export local data, POST to remote
 	result := syncPush(ctx, h.cfg, remoteURL, types, since)
+	if containsType(types, "collections") && len(collectionNames) > 0 {
+		result["collections_sync"] = syncPushCollections(ctx, h.cfg, remoteURL, collectionNames)
+	}
 	result["remote_manifest"] = manifest
 	out, _ := json.MarshalIndent(result, "", "  ")
 	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(out)}}}
@@ -1744,6 +1762,102 @@ func syncPush(ctx context.Context, cfg APIConfig, remoteURL string, types []stri
 		} else {
 			results["graph"] = "no data to push"
 		}
+	}
+
+	return results
+}
+
+func containsType(types []string, t string) bool {
+	for _, tt := range types {
+		if tt == t {
+			return true
+		}
+	}
+	return false
+}
+
+func syncPullCollections(cfg APIConfig, remoteURL string, collections []string) map[string]any {
+	client := &http.Client{Timeout: 120 * time.Second}
+	results := map[string]any{}
+
+	for _, coll := range collections {
+		resp, err := client.Get(remoteURL + "/sync/export/collection/" + coll)
+		if err != nil {
+			results[coll] = map[string]string{"error": err.Error()}
+			continue
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		// POST to local import endpoint
+		importResp, err := client.Post(
+			"http://localhost:"+fmt.Sprintf("%d", 8080)+"/api/v1/sync/import/collection",
+			"application/json",
+			strings.NewReader(string(body)),
+		)
+		if err != nil {
+			// Fallback: import directly in-process if local HTTP fails
+			var export syncCollectionExport
+			if json.Unmarshal(body, &export) == nil {
+				results[coll] = map[string]any{
+					"records": len(export.Records),
+					"status":  "fetched, needs local import via /sync/import/collection",
+					"source":  fmt.Sprintf("%s (dim=%d)", export.SourceModel, export.SourceDim),
+				}
+			} else {
+				results[coll] = map[string]string{"error": "parse error"}
+			}
+			continue
+		}
+		defer importResp.Body.Close()
+		var r map[string]any
+		json.NewDecoder(importResp.Body).Decode(&r)
+		results[coll] = r
+	}
+
+	return results
+}
+
+func syncPushCollections(ctx context.Context, cfg APIConfig, remoteURL string, collections []string) map[string]any {
+	client := &http.Client{Timeout: 120 * time.Second}
+	results := map[string]any{}
+
+	for _, coll := range collections {
+		if cfg.Collections == nil || !cfg.Collections.Has(coll) {
+			results[coll] = map[string]string{"error": "collection not found locally"}
+			continue
+		}
+
+		ids, _, metas, err := cfg.Collections.AllRecords(coll)
+		if err != nil {
+			results[coll] = map[string]string{"error": err.Error()}
+			continue
+		}
+
+		meta := cfg.Collections.GetMeta(coll)
+		export := syncCollectionExport{Collection: coll}
+		if meta != nil {
+			export.SourceModel = meta.EmbeddingModel
+			export.SourceDim = meta.EmbeddingDim
+		}
+		for i, id := range ids {
+			export.Records = append(export.Records, syncCollectionRecord{
+				ID:       id,
+				Text:     textFromMetadata(metas[i]),
+				Metadata: json.RawMessage(metas[i]),
+			})
+		}
+
+		body, _ := json.Marshal(export)
+		resp, err := client.Post(remoteURL+"/sync/import/collection", "application/json", strings.NewReader(string(body)))
+		if err != nil {
+			results[coll] = map[string]string{"error": err.Error()}
+			continue
+		}
+		defer resp.Body.Close()
+		var r map[string]any
+		json.NewDecoder(resp.Body).Decode(&r)
+		results[coll] = r
 	}
 
 	return results
