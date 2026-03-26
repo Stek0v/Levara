@@ -45,18 +45,12 @@ func saveMemoryHandler(cfg APIConfig) fiber.Handler {
 		now := time.Now().UTC().Format(time.RFC3339)
 
 		// Upsert: try insert, on conflict update value+type+updated_at
-		if activeDBProvider == DBSQLite {
-			cfg.DB.ExecContext(c.Context(),
-				Q(`INSERT INTO memories (id, key, value, type, owner_id, created_at, updated_at)
-				 VALUES ($1, $2, $3, $4, $5, $6, $7)
-				 ON CONFLICT(key, owner_id) DO UPDATE SET value = $3, type = $4, updated_at = $7`),
-				id, req.Key, req.Value, req.Type, req.OwnerID, now, now)
-		} else {
-			cfg.DB.ExecContext(c.Context(),
-				Q(`INSERT INTO memories (id, key, value, type, owner_id, created_at, updated_at)
-				 VALUES ($1, $2, $3, $4, $5, $6, $7)
-				 ON CONFLICT(key, owner_id) DO UPDATE SET value = EXCLUDED.value, type = EXCLUDED.type, updated_at = EXCLUDED.updated_at`),
-				id, req.Key, req.Value, req.Type, req.OwnerID, now, now)
+		upsertSQL := `INSERT INTO memories (id, key, value, type, owner_id, created_at, updated_at)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7)
+			 ON CONFLICT(key, owner_id) DO UPDATE SET value = $3, type = $4, updated_at = $7`
+		q, qargs := QArgs(upsertSQL, id, req.Key, req.Value, req.Type, req.OwnerID, now, now)
+		if _, err := cfg.DB.ExecContext(c.Context(), q, qargs...); err != nil {
+			return c.Status(500).JSON(fiber.Map{"detail": "save failed: " + err.Error()})
 		}
 
 		return c.Status(201).JSON(fiber.Map{
