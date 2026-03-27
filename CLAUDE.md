@@ -97,3 +97,27 @@ Key shared components (duplicated across test files):
 - Cognevra supports native collections via `CollectionManager` — each collection is an independent HNSW+Arena+WAL stack. No prefix hacks needed.
 - NDCG/Recall metrics can be misleadingly low when multiple tests insert data with different prefixes — run in clean state (`docker compose down -v`) for accurate quality metrics.
 - Remote llama.cpp at `10.23.0.64:9004` is not always reachable. Use local Ollama at `127.0.0.1:11434`.
+
+## Levara MCP Memory
+
+Levara MCP подключена и содержит проектный контекст. Используй её проактивно:
+
+**При старте работы:**
+- Контекст загружается автоматически через SessionStart hook
+- Если нужна конкретная информация — `recall_memory(query="тема")`
+
+**Во время работы:**
+- Перед исследованием незнакомой области — `recall_memory` или `search` по Levara
+- Для поиска по нескольким проектам — `cross_search(collections=[...])`
+- Для переключения контекста — `set_context(collection="project_name")`
+
+**После завершения значимой задачи:**
+- Сохрани ключевые решения и результаты: `save_memory(key="...", value="...", type="project")`
+- Не сохраняй: код, пути к файлам, git history — это доступно через git/grep
+
+**Синхронизация:**
+- Mac (localhost:8081) ↔ Pi (10.23.0.53:8080)
+- `sync(remote_url="http://10.23.0.53:8080/api/v1", direction="pull")`
+- CLI: `sync_levara` / `man_levara`
+
+**19 MCP tools:** cognify, search, list_data, delete, prune, cognify_status, add, analyze_commits, git_search, save_memory, recall_memory, list_memories, save_chat, recall_chat, search_chats, get_project_context, set_context, cross_search, sync
