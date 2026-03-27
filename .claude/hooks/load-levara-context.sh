@@ -1,40 +1,52 @@
 #!/bin/bash
 # Auto-load Levara project context at session start
-# Fetches memories and manifest from local Levara MCP
+# Detects project collection from: .levara-collection file > directory name
+# Fetches only THIS project's memories, not all
 
 LEVARA_URL="${LEVARA_URL:-http://localhost:8081}"
 
 # Check if Levara is running
 if ! curl -s --max-time 2 "$LEVARA_URL/health" >/dev/null 2>&1; then
-    echo "[levara] Local instance not reachable at $LEVARA_URL"
     exit 0
 fi
 
-# Fetch manifest
-MANIFEST=$(curl -s --max-time 3 "$LEVARA_URL/api/v1/sync/manifest" 2>/dev/null)
-if [ -z "$MANIFEST" ]; then
-    exit 0
+# Detect collection name for this project
+if [ -f ".levara-collection" ]; then
+    COLLECTION=$(cat .levara-collection | tr -d '[:space:]')
+elif [ -f "../.levara-collection" ]; then
+    COLLECTION=$(cat ../.levara-collection | tr -d '[:space:]')
+else
+    COLLECTION=$(basename "$(pwd)")
 fi
 
-MEM_COUNT=$(echo "$MANIFEST" | python3 -c "import sys,json; print(json.load(sys.stdin)['memories']['count'])" 2>/dev/null)
-EMBED_MODEL=$(echo "$MANIFEST" | python3 -c "import sys,json; print(json.load(sys.stdin)['embed_model'])" 2>/dev/null)
-
-# Fetch project memories (compact format)
+# Fetch project-scoped memories
 MEMORIES=$(curl -s --max-time 3 "$LEVARA_URL/api/v1/memories" 2>/dev/null | python3 -c "
 import sys,json
 try:
     mems = json.load(sys.stdin)
-    for m in mems[:15]:
-        print(f'- [{m[\"type\"]}] {m[\"key\"]}: {m[\"value\"][:120]}')
+    coll = '$COLLECTION'
+    # Filter: project memories matching this collection, or global (no collection)
+    filtered = [m for m in mems if m.get('collection_name','') in (coll, '')]
+    if not filtered:
+        filtered = mems  # fallback: show all if no project-specific found
+    for m in filtered[:15]:
+        cn = m.get('collection_name','')
+        prefix = f'[{m[\"type\"]}]'
+        if cn and cn != coll:
+            prefix += f' ({cn})'
+        print(f'- {prefix} {m[\"key\"]}: {m[\"value\"][:120]}')
+    if not filtered:
+        print('- (no memories for this project)')
 except: pass
 " 2>/dev/null)
 
-cat <<EOF
-[Levara MCP Context — auto-loaded]
-Instance: $LEVARA_URL | Model: $EMBED_MODEL | Memories: $MEM_COUNT
-Use recall_memory/save_memory/search to interact with project knowledge.
-Use sync tool to sync with Pi (http://10.23.0.53:8080/api/v1).
+MEM_LINES=$(echo "$MEMORIES" | wc -l | tr -d ' ')
 
-Project memories:
+cat <<EOF
+[Levara Context: $COLLECTION]
+Instance: $LEVARA_URL | Project: $COLLECTION | Memories: $MEM_LINES
+Use set_context(collection="$COLLECTION") to scope all tools to this project.
+Use recall_memory(query="...") for project knowledge, save_memory after tasks.
+
 $MEMORIES
 EOF
