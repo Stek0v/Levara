@@ -10,6 +10,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/stek0v/cognevra/internal/metrics"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -174,16 +175,22 @@ func (c *Client) embedBatch(ctx context.Context, texts []string) ([][]float32, e
 	}
 	req.Header.Set("Content-Type", "application/json")
 
+	embedStart := time.Now()
 	resp, err := c.httpClient.Do(req)
+	embedDur := time.Since(embedStart).Seconds()
+	metrics.EmbedDuration.Observe(embedDur)
 	if err != nil {
+		metrics.EmbedRequests.WithLabelValues(c.model, "error").Inc()
 		return nil, fmt.Errorf("http request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		metrics.EmbedRequests.WithLabelValues(c.model, "error").Inc()
 		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("embed API status %d: %s", resp.StatusCode, string(body))
 	}
+	metrics.EmbedRequests.WithLabelValues(c.model, "ok").Inc()
 
 	var result embeddingResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
