@@ -2001,6 +2001,9 @@ func (h *mcpHandler) toolGetProjectContext(ctx context.Context, args map[string]
 // ── Session Cleanup ───────────────────────────────────────────────────────
 
 func (h *mcpHandler) sessionCleanupLoop() {
+	// Update data metrics on startup
+	h.updateDataMetrics()
+
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
 	for range ticker.C {
@@ -2014,6 +2017,27 @@ func (h *mcpHandler) sessionCleanupLoop() {
 		}
 		metrics.MCPSessionsActive.Set(float64(len(h.sessions)))
 		h.mu.Unlock()
+
+		h.updateDataMetrics()
+	}
+}
+
+func (h *mcpHandler) updateDataMetrics() {
+	// Collection records
+	totalVectors := 0
+	if h.cfg.Collections != nil {
+		for _, meta := range h.cfg.Collections.ListWithMeta() {
+			metrics.CollectionRecords.WithLabelValues(meta.Name).Set(float64(meta.RecordCount))
+			totalVectors += meta.RecordCount
+		}
+	}
+	metrics.TotalVectors.Set(float64(totalVectors))
+
+	// Memories count
+	if h.cfg.DB != nil {
+		var count int
+		h.cfg.DB.QueryRow(Q(`SELECT COUNT(*) FROM memories`)).Scan(&count)
+		metrics.MemoriesTotal.Set(float64(count))
 	}
 }
 
