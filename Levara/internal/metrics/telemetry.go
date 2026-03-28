@@ -105,4 +105,9 @@ var (
 		Name: "levara_memories_total",
 		Help: "Current number of memories in SQL",
 	})
+
+	CollectionRecords = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "levara_collection_records_total",
+		Help: "Number of records per collection",
+	}, []string{"collection"})
 )
