@@ -21,6 +21,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/stek0v/cognevra/internal/metrics"
 )
 
 // Message is a chat message (role + content).
@@ -98,6 +100,10 @@ func NewOpenAIProvider(endpoint, apiKey string) *OpenAIProvider {
 func (p *OpenAIProvider) Name() string { return "openai" }
 
 func (p *OpenAIProvider) ChatCompletion(ctx context.Context, req CompletionRequest) (*CompletionResponse, error) {
+	llmStart := time.Now()
+	defer func() {
+		metrics.LLMDuration.Observe(time.Since(llmStart).Seconds())
+	}()
 	url := p.endpoint
 	if !strings.HasSuffix(url, "/chat/completions") {
 		url = url + "/chat/completions"
@@ -132,12 +138,14 @@ func (p *OpenAIProvider) ChatCompletion(ctx context.Context, req CompletionReque
 
 	resp, err := p.client.Do(httpReq)
 	if err != nil {
+		metrics.LLMRequests.WithLabelValues(req.Model, "error").Inc()
 		return nil, fmt.Errorf("HTTP call: %w", err)
 	}
 	defer resp.Body.Close()
 
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 200 {
+		metrics.LLMRequests.WithLabelValues(req.Model, "error").Inc()
 		return nil, fmt.Errorf("OpenAI status %d: %s", resp.StatusCode, truncate(string(respBody), 300))
 	}
 
@@ -166,6 +174,7 @@ func (p *OpenAIProvider) ChatCompletion(ctx context.Context, req CompletionReque
 	}
 	out.Usage.PromptTokens = oaiResp.Usage.PromptTokens
 	out.Usage.CompletionTokens = oaiResp.Usage.CompletionTokens
+	metrics.LLMRequests.WithLabelValues(req.Model, "ok").Inc()
 	return out, nil
 }
 
@@ -277,6 +286,10 @@ func (tp *TracedProvider) ChatCompletion(ctx context.Context, req CompletionRequ
 }
 
 func (p *AnthropicProvider) ChatCompletion(ctx context.Context, req CompletionRequest) (*CompletionResponse, error) {
+	llmStart := time.Now()
+	defer func() {
+		metrics.LLMDuration.Observe(time.Since(llmStart).Seconds())
+	}()
 	// Anthropic format: separate system from user/assistant messages
 	var systemPrompt string
 	var messages []map[string]string
@@ -329,12 +342,14 @@ func (p *AnthropicProvider) ChatCompletion(ctx context.Context, req CompletionRe
 
 	resp, err := p.client.Do(httpReq)
 	if err != nil {
+		metrics.LLMRequests.WithLabelValues(req.Model, "error").Inc()
 		return nil, fmt.Errorf("HTTP call: %w", err)
 	}
 	defer resp.Body.Close()
 
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 200 {
+		metrics.LLMRequests.WithLabelValues(req.Model, "error").Inc()
 		return nil, fmt.Errorf("Anthropic status %d: %s", resp.StatusCode, truncate(string(respBody), 300))
 	}
 
@@ -370,5 +385,6 @@ func (p *AnthropicProvider) ChatCompletion(ctx context.Context, req CompletionRe
 	}
 	out.Usage.PromptTokens = antResp.Usage.InputTokens
 	out.Usage.CompletionTokens = antResp.Usage.OutputTokens
+	metrics.LLMRequests.WithLabelValues(req.Model, "ok").Inc()
 	return out, nil
 }

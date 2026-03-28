@@ -52,4 +52,57 @@ var (
 		Help:    "Time taken for search router to select strategy",
 		Buckets: []float64{.00005, .0001, .0005, .001, .005},
 	})
+
+	// 5. MCP tool metrics
+	MCPToolDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "levara_mcp_tool_duration_seconds",
+		Help:    "MCP tool call latency by tool name",
+		Buckets: []float64{.005, .01, .05, .1, .25, .5, 1, 2.5, 5, 10, 30},
+	}, []string{"tool"})
+
+	MCPToolRequests = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "levara_mcp_tool_requests_total",
+		Help: "MCP tool calls by tool name and status (ok/error)",
+	}, []string{"tool", "status"})
+
+	MCPSessionsActive = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "levara_mcp_sessions_active",
+		Help: "Number of active MCP sessions",
+	})
+
+	// 6. Embedding metrics
+	EmbedDuration = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name:    "levara_embed_duration_seconds",
+		Help:    "Embedding API call latency",
+		Buckets: []float64{.01, .05, .1, .25, .5, 1, 2.5, 5, 10},
+	})
+
+	EmbedRequests = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "levara_embed_requests_total",
+		Help: "Embedding API calls by model and status",
+	}, []string{"model", "status"})
+
+	// 7. LLM metrics
+	LLMDuration = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name:    "levara_llm_duration_seconds",
+		Help:    "LLM completion call latency",
+		Buckets: []float64{.1, .25, .5, 1, 2.5, 5, 10, 30, 60},
+	})
+
+	LLMRequests = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "levara_llm_requests_total",
+		Help: "LLM completion calls by model and status",
+	}, []string{"model", "status"})
+
+	// 8. Sync metrics
+	SyncOperations = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "levara_sync_operations_total",
+		Help: "Sync operations by direction, data type, and status",
+	}, []string{"direction", "type", "status"})
+
+	// 9. Data state
+	MemoriesTotal = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "levara_memories_total",
+		Help: "Current number of memories in SQL",
+	})
 )

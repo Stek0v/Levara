@@ -27,6 +27,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
+	"github.com/stek0v/cognevra/internal/metrics"
 	"github.com/stek0v/cognevra/pkg/embed"
 	"github.com/stek0v/cognevra/pkg/git"
 	"github.com/stek0v/cognevra/pkg/ingest"
@@ -377,6 +378,7 @@ func (h *mcpHandler) createSession() string {
 		sseCh:     make(chan []byte, 100),
 	}
 	h.mu.Unlock()
+	metrics.MCPSessionsActive.Set(float64(len(h.sessions)))
 	return id
 }
 
@@ -522,6 +524,20 @@ func (h *mcpHandler) handleToolCall(c *fiber.Ctx, req jsonRPCRequest) error {
 }
 
 func (h *mcpHandler) executeTool(ctx context.Context, sess *mcpSession, name string, args map[string]any) mcpToolResult {
+	toolStart := time.Now()
+	result := h.executeToolInner(ctx, sess, name, args)
+	duration := time.Since(toolStart).Seconds()
+	metrics.MCPToolDuration.WithLabelValues(name).Observe(duration)
+	status := "ok"
+	if result.IsError {
+		status = "error"
+	}
+	metrics.MCPToolRequests.WithLabelValues(name, status).Inc()
+	return result
+}
+
+func (h *mcpHandler) executeToolInner(ctx context.Context, sess *mcpSession, name string, args map[string]any) mcpToolResult {
+
 	// Inject session default collection into args if not explicitly set (for collection-aware tools)
 	switch name {
 	case "cognify", "add", "save_memory", "save_chat":
@@ -1996,6 +2012,7 @@ func (h *mcpHandler) sessionCleanupLoop() {
 				delete(h.sessions, id)
 			}
 		}
+		metrics.MCPSessionsActive.Set(float64(len(h.sessions)))
 		h.mu.Unlock()
 	}
 }

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/stek0v/cognevra/internal/metrics"
 	"github.com/stek0v/cognevra/pkg/embed"
 )
 
@@ -166,6 +167,7 @@ func syncImportMemoriesHandler(cfg APIConfig) fiber.Handler {
 			}
 		}
 
+		metrics.SyncOperations.WithLabelValues("import", "memories", "ok").Add(float64(imported))
 		return c.JSON(fiber.Map{"imported": imported, "skipped": skipped, "total": len(memories)})
 	}
 }
