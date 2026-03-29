@@ -636,6 +636,7 @@ func (h *mcpHandler) toolCognify(ctx context.Context, args map[string]any) mcpTo
 		MaxChunkChars:    2000,
 		LLMEndpoint:      os.Getenv("LLM_ENDPOINT"),
 		LLMModel:         os.Getenv("LLM_MODEL"),
+		LLMProvider:      h.cfg.LLMProvider, // multi-provider abstraction (was MISSING — caused cognify to silently fail)
 		LLMConcurrency:   1,
 		EmbedEndpoint:    h.cfg.EmbedEndpoint,
 		EmbedModel:       h.cfg.EmbedModel,
