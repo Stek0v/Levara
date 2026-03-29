@@ -417,6 +417,41 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 				}
 			}
 
+			// --- Embed raw text chunks (for full-text search) ---
+			chunkInserted := 0
+			chunkTexts := make([]string, 0, len(allChunks))
+			chunkIDs := make([]string, 0, len(allChunks))
+			for _, ch := range allChunks {
+				if len(ch.text) > 30 { // skip tiny fragments
+					chunkTexts = append(chunkTexts, ch.text)
+					chunkIDs = append(chunkIDs, ch.id)
+				}
+			}
+			if len(chunkTexts) > 0 {
+				chunkVecs, err := embedClient.EmbedTexts(ctx, chunkTexts)
+				if err != nil {
+					log.Printf("[pipeline] chunk embed FAILED (%d chunks): %v", len(chunkTexts), err)
+				} else {
+					for i, vec := range chunkVecs {
+						if i < len(chunkIDs) {
+							meta := fmt.Sprintf(`{"text":%s,"dataset_id":"%s"}`,
+								mustJSON(chunkTexts[i]), cfg.DatasetID)
+							if err := cfg.Collections.Insert(coll, chunkIDs[i], vec, meta); err != nil {
+								log.Printf("[pipeline] chunk insert error: %v", err)
+							} else {
+								chunkInserted++
+								if cfg.BM25Indexes != nil {
+									if idx, ok := cfg.BM25Indexes[coll]; ok {
+										idx.Add(chunkIDs[i], chunkTexts[i], meta)
+									}
+								}
+							}
+						}
+					}
+					log.Printf("[pipeline] chunk write: %d/%d raw chunks embedded into %q", chunkInserted, len(chunkTexts), coll)
+				}
+			}
+
 			// Embed node names/descriptions
 			texts := make([]string, len(dedupResult.Nodes))
 			for i, n := range dedupResult.Nodes {
@@ -729,6 +764,15 @@ func extractJSON(s string) string {
 
 func ms(start time.Time) int64 {
 	return time.Since(start).Milliseconds()
+}
+
+// mustJSON returns s as a JSON-safe quoted string.
+func mustJSON(s string) string {
+	b, err := json.Marshal(s)
+	if err != nil {
+		return `""`
+	}
+	return string(b)
 }
 
 const defaultExtractionPrompt = `Extract entities and relationships from the following text.
