@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/stek0v/cognevra/pkg/chunker"
+	"github.com/stek0v/cognevra/pkg/bm25"
 	"github.com/stek0v/cognevra/pkg/classify"
 	"github.com/stek0v/cognevra/pkg/graph"
 	"github.com/stek0v/cognevra/pkg/graphdb"
@@ -73,6 +74,9 @@ type Config struct {
 	// If set, extractEntities uses Provider.ChatCompletion instead of raw HTTP.
 	// If nil, falls back to existing raw HTTP logic (backward compatible).
 	LLMProvider llm.Provider
+	// BM25Indexes (optional): shared BM25 indexes for lexical search.
+	// If set, pipeline updates BM25 index when inserting vectors.
+	BM25Indexes map[string]*bm25.Index
 }
 
 // Progress reports pipeline status.
@@ -437,6 +441,12 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 								log.Printf("[pipeline] vector insert %q error: %v", n.Name, err)
 							} else {
 								inserted++
+								// Update BM25 index for lexical search
+								if cfg.BM25Indexes != nil {
+									if idx, ok := cfg.BM25Indexes[coll]; ok {
+										idx.Add(n.ID, texts[i], meta)
+									}
+								}
 							}
 						}
 					}
