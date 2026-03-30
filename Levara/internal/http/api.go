@@ -24,6 +24,7 @@ import (
 	"github.com/stek0v/cognevra/internal/store"
 	"github.com/stek0v/cognevra/pkg/bm25"
 	"github.com/stek0v/cognevra/pkg/embed"
+	"github.com/stek0v/cognevra/pkg/graph"
 	"github.com/stek0v/cognevra/pkg/fetch"
 	"github.com/stek0v/cognevra/pkg/graphdb"
 	"github.com/stek0v/cognevra/pkg/extract"
@@ -830,31 +831,41 @@ func chunksSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
 
 	embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 1)
 	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections)
-
-	// Search across collections (or single collection if specified)
 	colls := resolveCollections(cfg, req)
-	var allResults []fiber.Map
 
-	for _, coll := range colls {
-		results, err := sp.SearchByText(context.Background(), coll, req.QueryText, req.TopK)
-		if err != nil {
-			continue
-		}
-		for _, r := range results {
-			meta := string(r.Metadata)
-			allResults = append(allResults, fiber.Map{
-				"id":         r.ID,
-				"score":      r.Score,
-				"collection": coll,
-				"metadata":   json.RawMessage(meta),
-			})
+	// Multi-query: decompose complex queries and merge results
+	subQueries := graph.DecomposeQuery(req.QueryText)
+	if len(subQueries) <= 1 {
+		subQueries = []string{req.QueryText}
+	}
+
+	var allResults []fiber.Map
+	seen := map[string]bool{}
+
+	for _, sq := range subQueries {
+		for _, coll := range colls {
+			results, err := sp.SearchByText(context.Background(), coll, sq, req.TopK)
+			if err != nil {
+				continue
+			}
+			for _, r := range results {
+				if seen[r.ID] {
+					continue // dedup across sub-queries
+				}
+				seen[r.ID] = true
+				allResults = append(allResults, fiber.Map{
+					"id":         r.ID,
+					"score":      r.Score,
+					"collection": coll,
+					"metadata":   json.RawMessage(r.Metadata),
+				})
+			}
 		}
 	}
 
 	// RBAC post-filter by allowed datasets
 	allResults = filterByAllowedDatasets(allResults, req.AllowedDatasetIDs)
 
-	// Sort by score (lower = better for cosine distance)
 	if len(allResults) > req.TopK {
 		allResults = allResults[:req.TopK]
 	}
