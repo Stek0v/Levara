@@ -1,7 +1,8 @@
-// tenants.go — Multi-tenant management and ACL endpoints.
+// tenants.go — Multi-tenant management, ACL endpoints, and tenant isolation middleware.
 package http
 
 import (
+	"database/sql"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -11,10 +12,122 @@ import (
 func RegisterTenantAPI(app fiber.Router, cfg APIConfig) {
 	app.Post("/tenants", tenantCreateHandler(cfg))
 	app.Get("/tenants", tenantListHandler(cfg))
+	app.Get("/tenants/mine", tenantMyTenantsHandler(cfg))
+	app.Post("/tenants/select", tenantSelectHandler(cfg))
 	app.Post("/tenants/:id/users", tenantAddUserHandler(cfg))
 	app.Delete("/tenants/:id/users/:uid", tenantRemoveUserHandler(cfg))
 	app.Post("/acl", aclGrantHandler(cfg))
 	app.Get("/acl/check", aclCheckHandler(cfg))
+}
+
+// TenantMiddleware resolves the active tenant for the current user.
+// Priority: X-Tenant-Id header > user's single tenant > empty (no isolation).
+// Sets c.Locals("tenant_id") for downstream handlers.
+func TenantMiddleware(db *sql.DB) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		// 1. Explicit header
+		tenantID := c.Get("X-Tenant-Id")
+		if tenantID != "" {
+			c.Locals("tenant_id", tenantID)
+			return c.Next()
+		}
+
+		// 2. Resolve from user's tenant memberships
+		userID, _ := c.Locals("user_id").(string)
+		if userID != "" && db != nil {
+			var tid string
+			// If user belongs to exactly one tenant, auto-select it
+			err := db.QueryRowContext(c.Context(),
+				Q(`SELECT tenant_id FROM user_tenant WHERE user_id = $1 LIMIT 1`), userID,
+			).Scan(&tid)
+			if err == nil && tid != "" {
+				c.Locals("tenant_id", tid)
+			}
+		}
+
+		// 3. No tenant = no isolation (dev mode / single-user)
+		return c.Next()
+	}
+}
+
+// ResolveTenantID returns the active tenant_id from context, or "".
+func ResolveTenantID(c *fiber.Ctx) string {
+	tid, _ := c.Locals("tenant_id").(string)
+	return tid
+}
+
+// TenantFilter returns SQL WHERE clause for tenant isolation.
+// If tenant_id is set: filters by owner's tenant membership.
+// If empty: no filtering (dev mode / single-user).
+func TenantFilter(tenantID string) string {
+	if tenantID == "" {
+		return ""
+	}
+	// Filter datasets/data to users belonging to the same tenant
+	return " AND owner_id IN (SELECT user_id FROM user_tenant WHERE tenant_id = '" + tenantID + "')"
+}
+
+// CollectionPrefix returns the tenant-scoped collection name.
+// If tenant_id is set: "{tenant_id}/{collection}".
+// If empty: collection as-is (backward compatible).
+func CollectionPrefix(tenantID, collection string) string {
+	if tenantID == "" {
+		return collection
+	}
+	return tenantID + "/" + collection
+}
+
+// tenantSelectHandler lets user pick their active tenant (for multi-tenant users).
+func tenantSelectHandler(cfg APIConfig) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		var req struct {
+			TenantID string `json:"tenant_id"`
+		}
+		c.BodyParser(&req)
+		if req.TenantID == "" {
+			return c.Status(400).JSON(fiber.Map{"detail": "tenant_id required"})
+		}
+		// Verify user belongs to this tenant
+		userID, _ := c.Locals("user_id").(string)
+		if cfg.DB != nil && userID != "" {
+			var exists int
+			cfg.DB.QueryRowContext(c.Context(),
+				Q(`SELECT COUNT(*) FROM user_tenant WHERE user_id = $1 AND tenant_id = $2`),
+				userID, req.TenantID).Scan(&exists)
+			if exists == 0 {
+				return c.Status(403).JSON(fiber.Map{"detail": "not a member of this tenant"})
+			}
+		}
+		return c.JSON(fiber.Map{"tenant_id": req.TenantID, "selected": true})
+	}
+}
+
+// tenantMyTenantsHandler lists tenants the current user belongs to.
+func tenantMyTenantsHandler(cfg APIConfig) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		userID, _ := c.Locals("user_id").(string)
+		if cfg.DB == nil || userID == "" {
+			return c.JSON([]any{})
+		}
+		rows, err := cfg.DB.QueryContext(c.Context(),
+			Q(`SELECT t.id, t.name, t.owner_id FROM tenants t
+			   JOIN user_tenant ut ON ut.tenant_id = t.id
+			   WHERE ut.user_id = $1`), userID)
+		if err != nil {
+			return c.JSON([]any{})
+		}
+		defer rows.Close()
+		var tenants []fiber.Map
+		for rows.Next() {
+			var id, name, ownerID string
+			rows.Scan(&id, &name, &ownerID)
+			tenants = append(tenants, fiber.Map{"id": id, "name": name, "owner_id": ownerID})
+		}
+		if tenants == nil {
+			tenants = []fiber.Map{}
+		}
+		return c.JSON(tenants)
+	}
 }
 
 func tenantCreateHandler(cfg APIConfig) fiber.Handler {
@@ -31,6 +144,12 @@ func tenantCreateHandler(cfg APIConfig) fiber.Handler {
 			cfg.DB.ExecContext(c.Context(),
 				Q("INSERT INTO tenants (id, name, owner_id, created_at) VALUES ($1, $2, $3, $4) ON CONFLICT (name) DO NOTHING"),
 				id, req.Name, ownerID, time.Now().UTC())
+			// Auto-add creator to tenant
+			if ownerID != "" {
+				cfg.DB.ExecContext(c.Context(),
+					Q("INSERT INTO user_tenant (user_id, tenant_id) VALUES ($1, $2) ON CONFLICT DO NOTHING"),
+					ownerID, id)
+			}
 		}
 		return c.Status(201).JSON(fiber.Map{"id": id, "name": req.Name, "owner_id": ownerID})
 	}
@@ -48,10 +167,9 @@ func tenantListHandler(cfg APIConfig) fiber.Handler {
 		defer rows.Close()
 		var tenants []fiber.Map
 		for rows.Next() {
-			var id, name, ownerID string
-			var ca time.Time
+			var id, name, ownerID, ca string
 			rows.Scan(&id, &name, &ownerID, &ca)
-			tenants = append(tenants, fiber.Map{"id": id, "name": name, "owner_id": ownerID, "created_at": ca.Format(time.RFC3339)})
+			tenants = append(tenants, fiber.Map{"id": id, "name": name, "owner_id": ownerID, "created_at": ca})
 		}
 		if tenants == nil {
 			tenants = []fiber.Map{}
