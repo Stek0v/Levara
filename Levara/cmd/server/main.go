@@ -268,7 +268,7 @@ func main() {
 	api.Post("/checks/connection", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "connected"})
 	})
-	api.Get("/visualize", vectorHttp.VisualizeHTML(vizCfg))
+	// api.Get("/visualize", ...) — moved below after DB init to include cfg.DB
 
 	// Error tracking endpoint (P3.4 observability)
 	api.Get("/errors", func(c *fiber.Ctx) error {
@@ -358,6 +358,10 @@ func main() {
 		}
 	}
 	vizCfg.DB = pgDB // PostgreSQL/SQLite fallback for graph visualization
+	api.Get("/visualize", vectorHttp.VisualizeHTML(&vizCfg))
+	if pgDB != nil {
+		log.Printf("Graph visualization: SQL fallback enabled")
+	}
 	embedEndpoint := os.Getenv("EMBEDDING_ENDPOINT")
 	embedModel := os.Getenv("EMBEDDING_MODEL"); if embedModel == "" { embedModel = "text-embedding-3-small" }
 

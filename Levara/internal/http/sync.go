@@ -279,12 +279,14 @@ func syncExportGraphHandler(cfg APIConfig) fiber.Handler {
 		g := syncGraph{}
 
 		nodeRows, err := cfg.DB.QueryContext(c.Context(),
-			Q(`SELECT id, name, type, description, properties FROM graph_nodes`))
+			Q(`SELECT id, name, type, COALESCE(description,''), COALESCE(properties,'{}') FROM graph_nodes`))
 		if err == nil {
 			defer nodeRows.Close()
 			for nodeRows.Next() {
 				var n syncGraphNode
-				nodeRows.Scan(&n.ID, &n.Name, &n.Type, &n.Description, &n.Properties)
+				if err := nodeRows.Scan(&n.ID, &n.Name, &n.Type, &n.Description, &n.Properties); err != nil {
+					continue
+				}
 				g.Nodes = append(g.Nodes, n)
 			}
 		}
@@ -293,12 +295,14 @@ func syncExportGraphHandler(cfg APIConfig) fiber.Handler {
 		}
 
 		edgeRows, err := cfg.DB.QueryContext(c.Context(),
-			Q(`SELECT id, source_id, target_id, relationship_name, properties FROM graph_edges`))
+			Q(`SELECT id, source_id, target_id, relationship_name, COALESCE(properties,'{}') FROM graph_edges`))
 		if err == nil {
 			defer edgeRows.Close()
 			for edgeRows.Next() {
 				var e syncGraphEdge
-				edgeRows.Scan(&e.ID, &e.SourceID, &e.TargetID, &e.RelationshipName, &e.Properties)
+				if err := edgeRows.Scan(&e.ID, &e.SourceID, &e.TargetID, &e.RelationshipName, &e.Properties); err != nil {
+					continue
+				}
 				g.Edges = append(g.Edges, e)
 			}
 		}
