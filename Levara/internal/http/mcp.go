@@ -326,6 +326,32 @@ var mcpTools = []mcpTool{
 			"required": []string{"remote_url"},
 		},
 	},
+	{
+		Name:        "add_feedback",
+		Description: "Submit feedback on a search result to help improve search quality. Rate results 1-5.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"query":       map[string]any{"type": "string", "description": "The search query that was used"},
+				"result_id":   map[string]any{"type": "string", "description": "ID of the result being rated"},
+				"collection":  map[string]any{"type": "string", "description": "Collection that was searched"},
+				"search_type": map[string]any{"type": "string", "description": "Search type used (CHUNKS, HYBRID, etc.)"},
+				"rating":      map[string]any{"type": "integer", "description": "Rating 1-5 (1=irrelevant, 5=perfect)"},
+				"comment":     map[string]any{"type": "string", "description": "Optional comment on why this rating"},
+			},
+			"required": []string{"query", "rating"},
+		},
+	},
+	{
+		Name:        "get_feedback_stats",
+		Description: "Get aggregated feedback statistics: average rating, total count, worst queries.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"collection": map[string]any{"type": "string", "description": "Filter stats by collection (optional)"},
+			},
+		},
+	},
 }
 
 // RegisterMCPAPI registers MCP Streamable HTTP endpoint (spec 2025-03-26).
@@ -600,6 +626,10 @@ func (h *mcpHandler) executeToolInner(ctx context.Context, sess *mcpSession, nam
 		return h.toolCrossSearch(ctx, args)
 	case "sync":
 		return h.toolSync(ctx, args)
+	case "add_feedback":
+		return h.toolAddFeedback(ctx, args)
+	case "get_feedback_stats":
+		return h.toolGetFeedbackStats(ctx, args)
 	default:
 		return mcpToolResult{
 			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("Unknown tool: %s", name)}},
@@ -1515,6 +1545,68 @@ func (h *mcpHandler) resourceMemories(ctx context.Context, memType, collName str
 // ── Tool: get_project_context ─────────────────────────────────────────────
 
 // ── Cross-Project Tools ──
+
+func (h *mcpHandler) toolAddFeedback(ctx context.Context, args map[string]any) mcpToolResult {
+	query, _ := args["query"].(string)
+	if query == "" {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: 'query' required"}}, IsError: true}
+	}
+	rating := 0
+	if r, ok := args["rating"].(float64); ok {
+		rating = int(r)
+	}
+	if rating < 1 || rating > 5 {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: 'rating' must be 1-5"}}, IsError: true}
+	}
+	if h.cfg.DB == nil {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: database not configured"}}, IsError: true}
+	}
+
+	resultID, _ := args["result_id"].(string)
+	collection, _ := args["collection"].(string)
+	searchType, _ := args["search_type"].(string)
+	comment, _ := args["comment"].(string)
+	userID := ""
+	if uid, ok := ctx.Value(mcpUserIDKey).(string); ok {
+		userID = uid
+	}
+
+	id := uuid.New().String()
+	h.cfg.DB.ExecContext(ctx,
+		Q(`INSERT INTO search_feedback (id, query, result_id, collection, search_type, rating, comment, user_id)
+		   VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`),
+		id, query, resultID, collection, searchType, rating, comment, userID)
+
+	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("Feedback saved: rating=%d for query '%s'", rating, truncate(query, 50))}}}
+}
+
+func (h *mcpHandler) toolGetFeedbackStats(ctx context.Context, args map[string]any) mcpToolResult {
+	if h.cfg.DB == nil {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: `{"total":0}`}}}
+	}
+	collection, _ := args["collection"].(string)
+
+	var total int
+	var avgRating float64
+	var worstQuery string
+
+	if collection != "" {
+		h.cfg.DB.QueryRowContext(ctx,
+			Q(`SELECT COUNT(*), COALESCE(AVG(rating),0) FROM search_feedback WHERE collection = $1`), collection).Scan(&total, &avgRating)
+		h.cfg.DB.QueryRowContext(ctx,
+			Q(`SELECT COALESCE(query,'') FROM search_feedback WHERE collection = $1 ORDER BY rating ASC LIMIT 1`), collection).Scan(&worstQuery)
+	} else {
+		h.cfg.DB.QueryRowContext(ctx,
+			Q(`SELECT COUNT(*), COALESCE(AVG(rating),0) FROM search_feedback`)).Scan(&total, &avgRating)
+		h.cfg.DB.QueryRowContext(ctx,
+			Q(`SELECT COALESCE(query,'') FROM search_feedback ORDER BY rating ASC LIMIT 1`)).Scan(&worstQuery)
+	}
+
+	out, _ := json.MarshalIndent(map[string]any{
+		"total": total, "avg_rating": avgRating, "worst_query": worstQuery, "collection": collection,
+	}, "", "  ")
+	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(out)}}}
+}
 
 func (h *mcpHandler) toolSetContext(sess *mcpSession, args map[string]any) mcpToolResult {
 	collection, _ := args["collection"].(string)

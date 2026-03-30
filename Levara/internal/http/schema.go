@@ -256,6 +256,20 @@ var schemaStatements = []string{
 	`CREATE INDEX IF NOT EXISTS idx_interactions_session ON interactions(session_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_user_tenant_user ON user_tenant(user_id)`,
 
+	// Search feedback (user ratings on search results)
+	`CREATE TABLE IF NOT EXISTS search_feedback (
+		id TEXT PRIMARY KEY,
+		query TEXT NOT NULL,
+		result_id TEXT NOT NULL DEFAULT '',
+		collection TEXT NOT NULL DEFAULT '',
+		search_type TEXT NOT NULL DEFAULT '',
+		rating INTEGER NOT NULL DEFAULT 0,
+		comment TEXT NOT NULL DEFAULT '',
+		user_id TEXT NOT NULL DEFAULT '',
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_feedback_collection ON search_feedback(collection)`,
+
 	// API Keys (programmatic access without JWT login)
 	`CREATE TABLE IF NOT EXISTS api_keys (
 		id TEXT PRIMARY KEY,
@@ -473,6 +487,20 @@ var schemaSQLiteStatements = []string{
 	`CREATE INDEX IF NOT EXISTS idx_acl_dataset ON acl(dataset_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_interactions_session ON interactions(session_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_user_tenant_user ON user_tenant(user_id)`,
+
+	// Search feedback
+	`CREATE TABLE IF NOT EXISTS search_feedback (
+		id TEXT PRIMARY KEY,
+		query TEXT NOT NULL,
+		result_id TEXT NOT NULL DEFAULT '',
+		collection TEXT NOT NULL DEFAULT '',
+		search_type TEXT NOT NULL DEFAULT '',
+		rating INTEGER NOT NULL DEFAULT 0,
+		comment TEXT NOT NULL DEFAULT '',
+		user_id TEXT NOT NULL DEFAULT '',
+		created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_feedback_collection ON search_feedback(collection)`,
 
 	// API Keys
 	`CREATE TABLE IF NOT EXISTS api_keys (
