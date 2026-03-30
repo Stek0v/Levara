@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -17,6 +18,7 @@ type GraphVisualizationConfig struct {
 	Neo4jUser     string
 	Neo4jPassword string
 	Neo4jDatabase string
+	DB            *sql.DB // PostgreSQL/SQLite fallback for graph visualization
 }
 
 // GraphNodeDTO matches Cognee's frontend expected format.
@@ -117,28 +119,79 @@ func DatasetGraph(cfg GraphVisualizationConfig) fiber.Handler {
 // GET /api/v1/visualize
 func VisualizeHTML(cfg GraphVisualizationConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		if cfg.Neo4jURL == "" {
-			return c.Status(503).SendString("Neo4j not configured")
+		var result graphdb.GraphReadResult
+
+		if cfg.Neo4jURL != "" {
+			// Try Neo4j first
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+
+			writer, err := graphdb.NewWriter(ctx, cfg.Neo4jURL, cfg.Neo4jUser, cfg.Neo4jPassword, cfg.Neo4jDatabase)
+			if err == nil {
+				defer writer.Close(ctx)
+				r, err := writer.ReadFullGraph(ctx)
+				if err == nil {
+					result = r
+				}
+			}
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-
-		writer, err := graphdb.NewWriter(ctx, cfg.Neo4jURL, cfg.Neo4jUser, cfg.Neo4jPassword, cfg.Neo4jDatabase)
-		if err != nil {
-			return c.Status(503).SendString(fmt.Sprintf("Neo4j: %v", err))
+		// Fallback: read from PostgreSQL/SQLite graph_nodes + graph_edges
+		if len(result.Nodes) == 0 && cfg.DB != nil {
+			result = readGraphFromSQL(c.Context(), cfg.DB)
 		}
-		defer writer.Close(ctx)
 
-		result, err := writer.ReadFullGraph(ctx)
-		if err != nil {
-			return c.Status(500).SendString(fmt.Sprintf("Read graph: %v", err))
+		if len(result.Nodes) == 0 {
+			return c.Status(200).SendString(generateVisualizationHTML(result)) // empty graph page
 		}
 
 		html := generateVisualizationHTML(result)
 		c.Set("Content-Type", "text/html; charset=utf-8")
 		return c.SendString(html)
 	}
+}
+
+// readGraphFromSQL reads graph nodes and edges from PostgreSQL/SQLite tables.
+func readGraphFromSQL(ctx context.Context, db *sql.DB) graphdb.GraphReadResult {
+	var result graphdb.GraphReadResult
+
+	// Nodes
+	rows, err := db.QueryContext(ctx,
+		Q("SELECT id, name, type, description FROM graph_nodes LIMIT 500"))
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var id, name, typ, desc string
+			rows.Scan(&id, &name, &typ, &desc)
+			result.Nodes = append(result.Nodes, graphdb.ReadNode{
+				ID:    id,
+				Label: typ,
+				Properties: map[string]any{
+					"name":        name,
+					"type":        typ,
+					"description": desc,
+				},
+			})
+		}
+	}
+
+	// Edges
+	erows, err := db.QueryContext(ctx,
+		Q("SELECT source_id, target_id, relationship_name FROM graph_edges LIMIT 1000"))
+	if err == nil {
+		defer erows.Close()
+		for erows.Next() {
+			var src, tgt, rel string
+			erows.Scan(&src, &tgt, &rel)
+			result.Edges = append(result.Edges, graphdb.ReadEdge{
+				SourceID:         src,
+				TargetID:         tgt,
+				RelationshipType: rel,
+			})
+		}
+	}
+
+	return result
 }
 
 func generateVisualizationHTML(result graphdb.GraphReadResult) string {
