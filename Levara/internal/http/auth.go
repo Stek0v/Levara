@@ -282,18 +282,34 @@ func setAuthCookie(c *fiber.Ctx, token string) {
 // If false, unauthenticated requests pass through (dev mode).
 func JWTMiddleware(secret string, requireAuth bool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		// Try Authorization header first
+		// 1. Try X-API-Key or X-Api-Key header (programmatic access)
+		apiKey := c.Get("X-API-Key")
+		if apiKey == "" {
+			apiKey = c.Get("X-Api-Key")
+		}
+		if apiKey != "" {
+			if db, ok := c.Locals("auth_db").(*sql.DB); ok && db != nil {
+				userID, perms := verifyAPIKey(db, apiKey)
+				if userID != "" {
+					c.Locals("user_id", userID)
+					c.Locals("api_key_permissions", perms)
+					return c.Next()
+				}
+			}
+			return c.Status(401).JSON(fiber.Map{"detail": "invalid API key"})
+		}
+
+		// 2. Try Authorization: Bearer <JWT>
 		token := ""
 		auth := c.Get("Authorization")
 		if auth != "" {
 			t := strings.TrimPrefix(auth, "Bearer ")
-			// Ignore "null", "undefined", empty Bearer values
 			if t != "" && t != "null" && t != "undefined" {
 				token = t
 			}
 		}
 
-		// Fallback: read from cookie
+		// 3. Fallback: cookie
 		if token == "" {
 			token = c.Cookies("auth_token")
 		}
@@ -302,7 +318,7 @@ func JWTMiddleware(secret string, requireAuth bool) fiber.Handler {
 			if requireAuth {
 				return c.Status(401).JSON(fiber.Map{"detail": "authorization required"})
 			}
-			return c.Next() // dev mode: allow unauthenticated
+			return c.Next()
 		}
 
 		payload, valid := verifyJWT(token, secret)
@@ -313,5 +329,130 @@ func JWTMiddleware(secret string, requireAuth bool) fiber.Handler {
 		c.Locals("user_id", payload.Sub)
 		c.Locals("email", payload.Email)
 		return c.Next()
+	}
+}
+
+// verifyAPIKey checks X-API-Key against api_keys table.
+// Returns (user_id, permissions) if valid, ("", "") if not.
+func verifyAPIKey(db *sql.DB, key string) (string, string) {
+	h := sha256Hash(key)
+	var userID, permissions string
+	err := db.QueryRow(
+		Q(`SELECT user_id, permissions FROM api_keys WHERE key_hash = $1 AND revoked = FALSE`), h,
+	).Scan(&userID, &permissions)
+	if err != nil {
+		return "", ""
+	}
+	// Update last_used
+	db.Exec(Q(`UPDATE api_keys SET last_used = $1 WHERE key_hash = $2`),
+		time.Now().UTC().Format(time.RFC3339), h)
+	return userID, permissions
+}
+
+func sha256Hash(s string) string {
+	h := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(h[:])
+}
+
+// RegisterAPIKeyEndpoints registers API key management endpoints.
+func RegisterAPIKeyEndpoints(app fiber.Router, cfg AuthConfig) {
+	app.Post("/auth/keys", createAPIKeyHandler(cfg))
+	app.Get("/auth/keys", listAPIKeysHandler(cfg))
+	app.Delete("/auth/keys/:id", revokeAPIKeyHandler(cfg))
+}
+
+func createAPIKeyHandler(cfg AuthConfig) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		userID, _ := c.Locals("user_id").(string)
+		if userID == "" {
+			return c.Status(401).JSON(fiber.Map{"detail": "authentication required to create API key"})
+		}
+		if cfg.DB == nil {
+			return c.Status(503).JSON(fiber.Map{"detail": "database not configured"})
+		}
+
+		var req struct {
+			Name        string `json:"name"`
+			Permissions string `json:"permissions"`
+		}
+		c.BodyParser(&req)
+		if req.Name == "" {
+			req.Name = "default"
+		}
+		if req.Permissions == "" {
+			req.Permissions = "read-write"
+		}
+
+		// Generate random key
+		keyBytes := make([]byte, 32)
+		rand.Read(keyBytes)
+		plainKey := "lk_" + hex.EncodeToString(keyBytes)
+		keyHash := sha256Hash(plainKey)
+		id := generateUUID()
+
+		_, err := cfg.DB.Exec(
+			Q(`INSERT INTO api_keys (id, key_hash, user_id, name, permissions, created_at)
+			   VALUES ($1, $2, $3, $4, $5, $6)`),
+			id, keyHash, userID, req.Name, req.Permissions,
+			time.Now().UTC().Format(time.RFC3339))
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"detail": "failed to create key: " + err.Error()})
+		}
+
+		return c.Status(201).JSON(fiber.Map{
+			"id":          id,
+			"key":         plainKey, // shown only once!
+			"name":        req.Name,
+			"permissions": req.Permissions,
+			"message":     "Save this key — it will not be shown again",
+		})
+	}
+}
+
+func listAPIKeysHandler(cfg AuthConfig) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		userID, _ := c.Locals("user_id").(string)
+		if cfg.DB == nil {
+			return c.JSON([]any{})
+		}
+
+		rows, err := cfg.DB.Query(
+			Q(`SELECT id, name, permissions, created_at, last_used, revoked
+			   FROM api_keys WHERE user_id = $1 ORDER BY created_at DESC`), userID)
+		if err != nil {
+			return c.JSON([]any{})
+		}
+		defer rows.Close()
+
+		var keys []fiber.Map
+		for rows.Next() {
+			var id, name, perms, created string
+			var lastUsed sql.NullString
+			var revoked bool
+			rows.Scan(&id, &name, &perms, &created, &lastUsed, &revoked)
+			keys = append(keys, fiber.Map{
+				"id": id, "name": name, "permissions": perms,
+				"created_at": created, "last_used": lastUsed.String,
+				"revoked": revoked,
+			})
+		}
+		if keys == nil {
+			keys = []fiber.Map{}
+		}
+		return c.JSON(keys)
+	}
+}
+
+func revokeAPIKeyHandler(cfg AuthConfig) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		keyID := c.Params("id")
+		userID, _ := c.Locals("user_id").(string)
+		if cfg.DB == nil {
+			return c.JSON(fiber.Map{"revoked": false})
+		}
+		cfg.DB.Exec(
+			Q(`UPDATE api_keys SET revoked = TRUE WHERE id = $1 AND user_id = $2`),
+			keyID, userID)
+		return c.JSON(fiber.Map{"revoked": true})
 	}
 }

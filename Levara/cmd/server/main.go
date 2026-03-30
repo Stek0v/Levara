@@ -368,9 +368,17 @@ func main() {
 	}
 	vectorHttp.RegisterAuthAPI(api, authCfg) // may generate JWTSecret if empty
 
-	// JWT middleware on all protected routes below this point
-	// Uses authCfg.JWTSecret which is guaranteed non-empty after RegisterAuthAPI
+	// Inject DB for API key verification (used by JWTMiddleware)
+	api.Use(func(c *fiber.Ctx) error {
+		c.Locals("auth_db", pgDB)
+		return c.Next()
+	})
+
+	// JWT + API Key middleware on all protected routes below this point
 	api.Use(vectorHttp.JWTMiddleware(authCfg.JWTSecret, *requireAuth))
+
+	// API key management (requires auth)
+	vectorHttp.RegisterAPIKeyEndpoints(api, *authCfg)
 
 	// Protected routes: vector ops
 	api.Post("/insert", handler.Insert)
