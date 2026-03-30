@@ -377,6 +377,9 @@ func main() {
 	// JWT + API Key middleware on all protected routes below this point
 	api.Use(vectorHttp.JWTMiddleware(authCfg.JWTSecret, *requireAuth))
 
+	// Tenant isolation middleware (resolves tenant from user or X-Tenant-Id header)
+	api.Use(vectorHttp.TenantMiddleware(pgDB))
+
 	// API key management (requires auth)
 	vectorHttp.RegisterAPIKeyEndpoints(api, *authCfg)
 
