@@ -130,6 +130,8 @@ func RegisterCogneeAPI(app fiber.Router, cfg APIConfig) {
 	// U21: Search feedback
 	RegisterFeedbackAPI(app, cfg)
 
+	// U22: Ontology upload (already registered via RegisterCogneeAPI for ontology list/upload)
+
 	// U18: Ontology management
 	app.Post("/ontologies", ontologyUploadHandler(cfg))
 	app.Get("/ontologies", ontologyListHandler(cfg))

@@ -5,11 +5,19 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/stek0v/cognevra/pkg/ontology"
+)
+
+// In-memory ontology cache for cognify prompt injection
+var (
+	ontologyCache   = map[string]*ontology.Ontology{}
+	ontologyCacheMu sync.RWMutex
 )
 
 func ontologyUploadHandler(cfg APIConfig) fiber.Handler {
@@ -48,6 +56,10 @@ func ontologyUploadHandler(cfg APIConfig) fiber.Handler {
 		if parseErr == nil && parsed != nil {
 			classesCount = len(parsed.Classes)
 			individualsCount = len(parsed.Individuals)
+			// Cache for cognify prompt injection
+			ontologyCacheMu.Lock()
+			ontologyCache[name] = parsed
+			ontologyCacheMu.Unlock()
 		}
 
 		// Store in PostgreSQL
@@ -119,4 +131,20 @@ func ontologyListHandler(cfg APIConfig) fiber.Handler {
 		}
 		return c.JSON(items)
 	}
+}
+
+// GetOntologyPromptSuffix returns an LLM prompt addition for ontology-guided extraction.
+// If ontology loaded for this collection → constrains entity types.
+// If not → returns "" (no constraint).
+func GetOntologyPromptSuffix(collection string) string {
+	ontologyCacheMu.RLock()
+	ont := ontologyCache[collection]
+	ontologyCacheMu.RUnlock()
+
+	if ont == nil || len(ont.Classes) == 0 {
+		return ""
+	}
+	return "\n\nIMPORTANT: Only extract entities of these types: " +
+		strings.Join(ont.ListClasses(), ", ") +
+		". Ignore all other entity types."
 }
