@@ -281,6 +281,49 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 
 	dedupResult := graph.Deduplicate(allNodes, allEdges)
 
+	// --- Stage 3a: Semantic dedup (merge similar entities by name embedding) ---
+	if cfg.EmbedEndpoint != "" && len(dedupResult.Nodes) > 1 {
+		embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 3)
+		names := make([]string, len(dedupResult.Nodes))
+		for i, n := range dedupResult.Nodes {
+			names[i] = n.Name
+			if n.Description != "" {
+				names[i] += ": " + n.Description
+			}
+		}
+		nameVecs, err := embedClient.EmbedTexts(ctx, names)
+		if err == nil && len(nameVecs) == len(dedupResult.Nodes) {
+			semResult := graph.SemanticDedup(nameVecs, 0.95)
+			if len(semResult.Removed) > 0 {
+				// Build ID remap: removed node ID → kept node ID
+				idRemap := make(map[string]string)
+				for _, pair := range semResult.Pairs {
+					removedID := dedupResult.Nodes[pair.RemovedIdx].ID
+					keptID := dedupResult.Nodes[pair.KeptIdx].ID
+					idRemap[removedID] = keptID
+				}
+				// Filter nodes to kept only
+				var keptNodes []graph.DedupNode
+				for _, idx := range semResult.Kept {
+					keptNodes = append(keptNodes, dedupResult.Nodes[idx])
+				}
+				// Remap edges
+				for i := range dedupResult.Edges {
+					if newID, ok := idRemap[dedupResult.Edges[i].SourceID]; ok {
+						dedupResult.Edges[i].SourceID = newID
+					}
+					if newID, ok := idRemap[dedupResult.Edges[i].TargetID]; ok {
+						dedupResult.Edges[i].TargetID = newID
+					}
+				}
+				dedupResult.Nodes = keptNodes
+				log.Printf("[pipeline] semantic dedup: merged %d entities (threshold 0.95, kept %d)",
+					len(semResult.Removed), len(semResult.Kept))
+				// Metric tracked via log; Prometheus in calling code
+			}
+		}
+	}
+
 	progressCh <- Progress{
 		Stage: "deduplicating",
 		EntitiesExtracted: len(dedupResult.Nodes),
