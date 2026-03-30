@@ -245,6 +245,12 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 				extracted.Add(1)
 				return
 			}
+			// Set provenance on extracted entities
+			docID := fmt.Sprintf("doc-%d", chunk.idx)
+			for i := range nodes {
+				nodes[i].SourceChunkID = chunk.id
+				nodes[i].SourceDocID = docID
+			}
 
 			nodesMu.Lock()
 			allNodes = append(allNodes, nodes...)
@@ -410,7 +416,12 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 
 			neoNodes := make([]graphdb.NodeRecord, len(dedupResult.Nodes))
 			for i, n := range dedupResult.Nodes {
-				props := map[string]any{"name": n.Name, "description": n.Description, "type": n.Type, "dataset_id": cfg.DatasetID}
+				props := map[string]any{
+					"name": n.Name, "description": n.Description, "type": n.Type,
+					"dataset_id": cfg.DatasetID, "confidence": n.Confidence,
+					"source_chunk": n.SourceChunkID, "source_doc": n.SourceDocID,
+					"extracted_at": n.ExtractedAt,
+				}
 				// Add date property for TemporalEvent nodes
 				if n.Type == "TemporalEvent" && n.Properties != nil {
 					if dateStr, ok := n.Properties["date"]; ok && dateStr != "" {
@@ -757,7 +768,11 @@ func parseEntities(content string) ([]graph.DedupNode, []graph.DedupEdge, error)
 		if id == "" {
 			id = graph.GenerateNodeID(n.Name)
 		}
-		nodes[i] = graph.DedupNode{ID: id, Name: n.Name, Type: n.Type, Description: n.Description}
+		nodes[i] = graph.DedupNode{
+			ID: id, Name: n.Name, Type: n.Type, Description: n.Description,
+			Confidence: 1.0, // default; could parse from LLM if model supports it
+			ExtractedAt: time.Now().UTC().Format(time.RFC3339),
+		}
 	}
 
 	edges := make([]graph.DedupEdge, len(kg.Edges))
