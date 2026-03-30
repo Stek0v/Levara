@@ -127,6 +127,9 @@ func RegisterCogneeAPI(app fiber.Router, cfg APIConfig) {
 	// U20: Cross-instance sync
 	RegisterSyncAPI(app, cfg)
 
+	// U21: Search feedback
+	RegisterFeedbackAPI(app, cfg)
+
 	// U18: Ontology management
 	app.Post("/ontologies", ontologyUploadHandler(cfg))
 	app.Get("/ontologies", ontologyListHandler(cfg))
