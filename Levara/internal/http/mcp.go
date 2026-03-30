@@ -695,6 +695,10 @@ func (h *mcpHandler) toolCognify(ctx context.Context, args map[string]any) mcpTo
 	if cp, _ := args["custom_prompt"].(string); cp != "" {
 		pipeCfg.SystemPrompt = cp
 	}
+	// Ontology-guided extraction: append allowed entity types to prompt
+	if ontologySuffix := GetOntologyPromptSuffix(collection); ontologySuffix != "" {
+		pipeCfg.SystemPrompt += ontologySuffix
+	}
 
 	// Run pipeline in background
 	go func() {
