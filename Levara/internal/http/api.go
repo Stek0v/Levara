@@ -685,6 +685,7 @@ type CogneeSearchRequest struct {
 	TopK              int      `json:"top_k"`
 	CypherQuery       string   `json:"cypher_query"`  // Raw Cypher for CYPHER search type
 	Collection        string   `json:"collection"`    // Filter search to one collection (empty = all)
+	SessionID         string   `json:"session_id"`    // Conversational memory: load prior interactions
 	AllowedDatasetIDs []string `json:"-"`              // RBAC: nil = no filtering (dev mode)
 }
 
@@ -1182,10 +1183,42 @@ func ragCompletionSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) e
 			}
 		}
 
-		prompt := fmt.Sprintf("Based on the following context, answer the question.\n\nContext:\n%s\n\nQuestion: %s\n\nAnswer:",
-			strings.Join(contextParts, "\n"), req.QueryText)
+		// Load conversation history if session_id provided
+		var historySection string
+		if req.SessionID != "" && cfg.DB != nil {
+			rows, err := cfg.DB.QueryContext(c.Context(),
+				Q(`SELECT query, response FROM interactions
+				   WHERE session_id = $1 ORDER BY created_at DESC LIMIT 5`), req.SessionID)
+			if err == nil {
+				defer rows.Close()
+				var turns []string
+				for rows.Next() {
+					var q, r string
+					rows.Scan(&q, &r)
+					turns = append(turns, fmt.Sprintf("User: %s\nAssistant: %s", truncate(q, 200), truncate(r, 300)))
+				}
+				if len(turns) > 0 {
+					// Reverse order (oldest first)
+					for i, j := 0, len(turns)-1; i < j; i, j = i+1, j-1 {
+						turns[i], turns[j] = turns[j], turns[i]
+					}
+					historySection = "\n\nPrevious conversation:\n" + strings.Join(turns, "\n\n")
+				}
+			}
+		}
+
+		prompt := fmt.Sprintf("Based on the following context, answer the question.%s\n\nContext:\n%s\n\nQuestion: %s\n\nAnswer:",
+			historySection, strings.Join(contextParts, "\n"), req.QueryText)
 
 		answer = callLLMFromAPI(llmEndpoint, llmModel, prompt, cfg.LLMProvider)
+
+		// Save this interaction for future conversational context
+		if req.SessionID != "" && cfg.DB != nil {
+			cfg.DB.ExecContext(c.Context(),
+				Q(`INSERT INTO interactions (id, session_id, user_id, query, response, search_type, created_at)
+				   VALUES ($1, $2, $3, $4, $5, $6, NOW())`),
+				uuid.New().String(), req.SessionID, "", req.QueryText, truncate(answer, 500), "RAG_COMPLETION")
+		}
 	}
 
 	return c.JSON(fiber.Map{
