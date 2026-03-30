@@ -2,6 +2,19 @@
 # Auto-load Levara project context at session start
 # Detects project collection from: .levara-collection file > directory name
 # Fetches only THIS project's memories, not all
+#
+# IMPORTANT: Skips on resume to prevent API 400 concurrency error.
+# SessionStart hook fires on: startup, resume, compact, clear.
+# On resume, Claude has pending tool calls — injecting stdout conflicts.
+
+# Read event JSON from stdin to detect resume
+EVENT=$(cat)
+SESSION_TYPE=$(echo "$EVENT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('type',''))" 2>/dev/null)
+
+# Skip on resume — prevents API 400 "tool use concurrency" error
+if [ "$SESSION_TYPE" = "resume" ]; then
+    exit 0
+fi
 
 LEVARA_URL="${LEVARA_URL:-http://localhost:8081}"
 
