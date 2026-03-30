@@ -257,6 +257,7 @@ func main() {
 	vizCfg := vectorHttp.GraphVisualizationConfig{
 		Neo4jURL: *neo4jURL, Neo4jUser: *neo4jUser,
 		Neo4jPassword: *neo4jPassword, Neo4jDatabase: *neo4jDatabase,
+		// DB set after pgDB init below
 	}
 
 	// Public routes (no auth required)
@@ -356,6 +357,7 @@ func main() {
 			}
 		}
 	}
+	vizCfg.DB = pgDB // PostgreSQL/SQLite fallback for graph visualization
 	embedEndpoint := os.Getenv("EMBEDDING_ENDPOINT")
 	embedModel := os.Getenv("EMBEDDING_MODEL"); if embedModel == "" { embedModel = "text-embedding-3-small" }
 
