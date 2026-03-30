@@ -540,11 +540,20 @@ func (h *mcpHandler) executeToolInner(ctx context.Context, sess *mcpSession, nam
 
 	// Inject session default collection into args if not explicitly set (for collection-aware tools)
 	switch name {
-	case "cognify", "add", "save_memory", "save_chat":
+	case "cognify", "add", "save_chat":
 		if _, ok := args["collection"]; !ok || args["collection"] == "" {
 			args["collection"] = h.resolveCollection(sess, args, true)
 		}
-	case "search", "recall_memory", "list_memories", "recall_chat", "search_chats", "get_project_context":
+	case "save_memory", "recall_memory", "list_memories":
+		// Memory tools: only inject session default, NOT "default" fallback.
+		// Empty collection → global _memories (backward compatible with Pi data).
+		if _, ok := args["collection"]; !ok || args["collection"] == "" {
+			if sess != nil && sess.defaultCollection != "" {
+				args["collection"] = sess.defaultCollection
+			}
+			// else: leave empty → _memories (global, no suffix)
+		}
+	case "search", "recall_chat", "search_chats", "get_project_context":
 		if _, ok := args["collection"]; !ok || args["collection"] == "" {
 			if resolved := h.resolveCollection(sess, args, false); resolved != "" {
 				args["collection"] = resolved
