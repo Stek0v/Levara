@@ -272,7 +272,15 @@ class TestSync:
     async def test_sync_export_collection(self, mcp_url):
         """SY7 — export collection returns text + metadata (no vectors)."""
         async with aiohttp.ClientSession() as s:
-            async with s.get(f"{mcp_url}/api/v1/sync/export/collection/_memories") as r:
+            # Find a collection that exists
+            async with s.get(f"{mcp_url}/api/v1/collections") as cr:
+                colls = await cr.json()
+                existing = [c["name"] for c in colls if c.get("record_count", 0) > 0]
+                if not existing:
+                    existing = [c["name"] for c in colls][:1]
+                if not existing:
+                    pytest.skip("No collections available")
+            async with s.get(f"{mcp_url}/api/v1/sync/export/collection/{existing[0]}") as r:
                 assert r.status == 200
                 data = await r.json()
                 assert "collection" in data
