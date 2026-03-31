@@ -2,6 +2,7 @@
 package http
 
 import (
+	"context"
 	"database/sql"
 	"time"
 
@@ -37,7 +38,7 @@ func TenantMiddleware(db *sql.DB) fiber.Handler {
 		if userID != "" && db != nil {
 			var tid string
 			// If user belongs to exactly one tenant, auto-select it
-			err := db.QueryRowContext(c.Context(),
+			err := db.QueryRowContext(context.Background(),
 				Q(`SELECT tenant_id FROM user_tenant WHERE user_id = $1 LIMIT 1`), userID,
 			).Scan(&tid)
 			if err == nil && tid != "" {
@@ -91,7 +92,7 @@ func tenantSelectHandler(cfg APIConfig) fiber.Handler {
 		userID, _ := c.Locals("user_id").(string)
 		if cfg.DB != nil && userID != "" {
 			var exists int
-			cfg.DB.QueryRowContext(c.Context(),
+			cfg.DB.QueryRowContext(context.Background(),
 				Q(`SELECT COUNT(*) FROM user_tenant WHERE user_id = $1 AND tenant_id = $2`),
 				userID, req.TenantID).Scan(&exists)
 			if exists == 0 {
@@ -109,7 +110,7 @@ func tenantMyTenantsHandler(cfg APIConfig) fiber.Handler {
 		if cfg.DB == nil || userID == "" {
 			return c.JSON([]any{})
 		}
-		rows, err := cfg.DB.QueryContext(c.Context(),
+		rows, err := cfg.DB.QueryContext(context.Background(),
 			Q(`SELECT t.id, t.name, t.owner_id FROM tenants t
 			   JOIN user_tenant ut ON ut.tenant_id = t.id
 			   WHERE ut.user_id = $1`), userID)
@@ -141,12 +142,12 @@ func tenantCreateHandler(cfg APIConfig) fiber.Handler {
 		id := uuid.New().String()
 		ownerID, _ := c.Locals("user_id").(string)
 		if cfg.DB != nil {
-			cfg.DB.ExecContext(c.Context(),
+			cfg.DB.ExecContext(context.Background(),
 				Q("INSERT INTO tenants (id, name, owner_id, created_at) VALUES ($1, $2, $3, $4) ON CONFLICT (name) DO NOTHING"),
 				id, req.Name, ownerID, time.Now().UTC())
 			// Auto-add creator to tenant
 			if ownerID != "" {
-				cfg.DB.ExecContext(c.Context(),
+				cfg.DB.ExecContext(context.Background(),
 					Q("INSERT INTO user_tenant (user_id, tenant_id) VALUES ($1, $2) ON CONFLICT DO NOTHING"),
 					ownerID, id)
 			}
@@ -160,7 +161,7 @@ func tenantListHandler(cfg APIConfig) fiber.Handler {
 		if cfg.DB == nil {
 			return c.JSON([]any{})
 		}
-		rows, err := cfg.DB.QueryContext(c.Context(), Q("SELECT id, name, owner_id, created_at FROM tenants ORDER BY created_at"))
+		rows, err := cfg.DB.QueryContext(context.Background(), Q("SELECT id, name, owner_id, created_at FROM tenants ORDER BY created_at"))
 		if err != nil {
 			return c.JSON([]any{})
 		}
@@ -189,7 +190,7 @@ func tenantAddUserHandler(cfg APIConfig) fiber.Handler {
 			return c.Status(400).JSON(fiber.Map{"detail": "user_id required"})
 		}
 		if cfg.DB != nil {
-			cfg.DB.ExecContext(c.Context(),
+			cfg.DB.ExecContext(context.Background(),
 				Q("INSERT INTO user_tenant (user_id, tenant_id) VALUES ($1, $2) ON CONFLICT DO NOTHING"),
 				req.UserID, tenantID)
 		}
@@ -202,7 +203,7 @@ func tenantRemoveUserHandler(cfg APIConfig) fiber.Handler {
 		tenantID := c.Params("id")
 		userID := c.Params("uid")
 		if cfg.DB != nil {
-			cfg.DB.ExecContext(c.Context(), Q("DELETE FROM user_tenant WHERE user_id = $1 AND tenant_id = $2"), userID, tenantID)
+			cfg.DB.ExecContext(context.Background(), Q("DELETE FROM user_tenant WHERE user_id = $1 AND tenant_id = $2"), userID, tenantID)
 		}
 		return c.JSON(fiber.Map{"removed": true})
 	}
@@ -225,7 +226,7 @@ func aclGrantHandler(cfg APIConfig) fiber.Handler {
 		}
 		id := uuid.New().String()
 		if cfg.DB != nil {
-			cfg.DB.ExecContext(c.Context(),
+			cfg.DB.ExecContext(context.Background(),
 				Q(`INSERT INTO acl (id, principal_id, dataset_id, permission_type) VALUES ($1, $2, $3, $4)
 				 ON CONFLICT (principal_id, dataset_id, permission_type) DO NOTHING`),
 				id, req.PrincipalID, req.DatasetID, req.PermissionType)
@@ -243,7 +244,7 @@ func aclCheckHandler(cfg APIConfig) fiber.Handler {
 		}
 		perms := map[string]bool{"read": false, "write": false, "delete": false, "share": false}
 		if cfg.DB != nil {
-			rows, err := cfg.DB.QueryContext(c.Context(),
+			rows, err := cfg.DB.QueryContext(context.Background(),
 				Q("SELECT permission_type FROM acl WHERE principal_id = $1 AND dataset_id = $2"), userID, datasetID)
 			if err == nil {
 				defer rows.Close()

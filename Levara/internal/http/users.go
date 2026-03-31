@@ -5,6 +5,7 @@
 package http
 
 import (
+	"context"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -31,7 +32,7 @@ func userLookupHandler(cfg APIConfig) fiber.Handler {
 			return c.JSON([]UserDTO{})
 		}
 		var u UserDTO
-		err := cfg.DB.QueryRowContext(c.Context(),
+		err := cfg.DB.QueryRowContext(context.Background(),
 			Q("SELECT id, email, COALESCE(is_superuser,false), created_at FROM users WHERE email = $1"), email,
 		).Scan(&u.ID, &u.Email, &u.IsSuperuser, &u.CreatedAt)
 		if err != nil {
@@ -60,7 +61,7 @@ func userMeHandler(cfg APIConfig) fiber.Handler {
 		var createdAt time.Time
 		var updatedAt *time.Time
 
-		err := cfg.DB.QueryRowContext(c.Context(),
+		err := cfg.DB.QueryRowContext(context.Background(),
 			Q(`SELECT id, email, is_active, is_superuser, is_verified, created_at, updated_at
 			 FROM users WHERE id = $1`), userID).Scan(
 			&u.ID, &u.Email, &u.IsActive, &u.IsSuperuser, &u.IsVerified, &createdAt, &updatedAt)
@@ -96,7 +97,7 @@ func userUpdateHandler(cfg APIConfig) fiber.Handler {
 			return c.JSON(fiber.Map{"id": userID, "email": req.Email, "updated": true})
 		}
 
-		_, err := cfg.DB.ExecContext(c.Context(),
+		_, err := cfg.DB.ExecContext(context.Background(),
 			Q("UPDATE users SET email = $1, updated_at = NOW() WHERE id = $2"),
 			req.Email, userID)
 		if err != nil {
@@ -132,7 +133,7 @@ func userChangePasswordHandler(cfg APIConfig) fiber.Handler {
 
 		// Verify current password
 		var hashedPassword string
-		err := cfg.DB.QueryRowContext(c.Context(),
+		err := cfg.DB.QueryRowContext(context.Background(),
 			Q("SELECT hashed_password FROM users WHERE id = $1"), userID).Scan(&hashedPassword)
 		if err != nil {
 			return c.Status(404).JSON(fiber.Map{"detail": "user not found"})
@@ -148,7 +149,7 @@ func userChangePasswordHandler(cfg APIConfig) fiber.Handler {
 			return c.Status(500).JSON(fiber.Map{"detail": "hash error"})
 		}
 
-		_, err = cfg.DB.ExecContext(c.Context(),
+		_, err = cfg.DB.ExecContext(context.Background(),
 			Q("UPDATE users SET hashed_password = $1, updated_at = NOW() WHERE id = $2"),
 			string(newHash), userID)
 		if err != nil {

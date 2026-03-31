@@ -187,11 +187,11 @@ func datasetsListHandler(cfg APIConfig) fiber.Handler {
 		if !showAll && userID != "" {
 			// Check superuser — sees everything
 			var isSuperuser bool
-			cfg.DB.QueryRowContext(c.Context(), Q("SELECT COALESCE(is_superuser, false) FROM users WHERE id = $1"), userID).Scan(&isSuperuser)
+			cfg.DB.QueryRowContext(context.Background(), Q("SELECT COALESCE(is_superuser, false) FROM users WHERE id = $1"), userID).Scan(&isSuperuser)
 			showAll = isSuperuser
 		}
 		if showAll {
-			rows, err = cfg.DB.QueryContext(c.Context(),
+			rows, err = cfg.DB.QueryContext(context.Background(),
 				Q("SELECT id, name, created_at, COALESCE(owner_id,'') FROM datasets ORDER BY created_at DESC"))
 		} else {
 			dsSQL, dsArgs := QArgs(`SELECT DISTINCT d.id, d.name, d.created_at, COALESCE(d.owner_id,'')
@@ -199,7 +199,7 @@ func datasetsListHandler(cfg APIConfig) fiber.Handler {
 				 LEFT JOIN dataset_shares s ON s.dataset_id = d.id AND s.user_id = $1
 				 WHERE d.owner_id = $1 OR d.owner_id = '' OR d.owner_id IS NULL OR s.id IS NOT NULL
 				 ORDER BY d.created_at DESC`, userID)
-			rows, err = cfg.DB.QueryContext(c.Context(), dsSQL, dsArgs...)
+			rows, err = cfg.DB.QueryContext(context.Background(), dsSQL, dsArgs...)
 		}
 		if err != nil {
 			return c.JSON([]DatasetDTO{})
@@ -235,7 +235,7 @@ func datasetCreateHandler(cfg APIConfig) fiber.Handler {
 		ownerID, _ := c.Locals("user_id").(string)
 
 		if cfg.DB != nil {
-			cfg.DB.ExecContext(c.Context(),
+			cfg.DB.ExecContext(context.Background(),
 				Q("INSERT INTO datasets (id, name, owner_id, created_at, updated_at) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (name) DO NOTHING"),
 				id, req.Name, ownerID, now, now)
 		}
@@ -252,9 +252,9 @@ func datasetDeleteHandler(cfg APIConfig) fiber.Handler {
 		if cfg.DB != nil {
 			userID, _ := c.Locals("user_id").(string)
 			if userID != "" {
-				cfg.DB.ExecContext(c.Context(), Q("DELETE FROM datasets WHERE id = $1 AND (owner_id = $2 OR owner_id = '' OR owner_id IS NULL)"), id, userID)
+				cfg.DB.ExecContext(context.Background(), Q("DELETE FROM datasets WHERE id = $1 AND (owner_id = $2 OR owner_id = '' OR owner_id IS NULL)"), id, userID)
 			} else {
-				cfg.DB.ExecContext(c.Context(), Q("DELETE FROM datasets WHERE id = $1"), id)
+				cfg.DB.ExecContext(context.Background(), Q("DELETE FROM datasets WHERE id = $1"), id)
 			}
 		}
 		return c.JSON(fiber.Map{"deleted": true})
@@ -278,7 +278,7 @@ func datasetDataHandler(cfg APIConfig) fiber.Handler {
 			return c.JSON([]DataDTO{})
 		}
 
-		rows, err := cfg.DB.QueryContext(c.Context(),
+		rows, err := cfg.DB.QueryContext(context.Background(),
 			Q(`SELECT d.id, d.name, d.extension, d.mime_type, d.raw_data_location,
 			 COALESCE(d.data_size, 0), d.created_at
 			 FROM data d JOIN dataset_data dd ON d.id = dd.data_id
@@ -308,8 +308,8 @@ func datasetDataDeleteHandler(cfg APIConfig) fiber.Handler {
 		dataID := c.Params("dataId")
 		dsID := c.Params("id")
 		if cfg.DB != nil {
-			cfg.DB.ExecContext(c.Context(), Q("DELETE FROM dataset_data WHERE dataset_id = $1 AND data_id = $2"), dsID, dataID)
-			cfg.DB.ExecContext(c.Context(), Q("DELETE FROM data WHERE id = $1"), dataID)
+			cfg.DB.ExecContext(context.Background(), Q("DELETE FROM dataset_data WHERE dataset_id = $1 AND data_id = $2"), dsID, dataID)
+			cfg.DB.ExecContext(context.Background(), Q("DELETE FROM data WHERE id = $1"), dataID)
 		}
 		return c.JSON(fiber.Map{"deleted": true})
 	}
@@ -323,7 +323,7 @@ func datasetDataRawHandler(cfg APIConfig) fiber.Handler {
 		}
 
 		var location string
-		cfg.DB.QueryRowContext(c.Context(), Q("SELECT raw_data_location FROM data WHERE id = $1"), dataID).Scan(&location)
+		cfg.DB.QueryRowContext(context.Background(), Q("SELECT raw_data_location FROM data WHERE id = $1"), dataID).Scan(&location)
 		if location == "" {
 			return c.Status(404).JSON(fiber.Map{"detail": "not found"})
 		}
@@ -485,7 +485,7 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 		} else if cfg.DB != nil && len(allDatasetIDs) > 0 {
 			// Load text from dataset files
 			for _, dsID := range allDatasetIDs {
-				rows, err := cfg.DB.QueryContext(c.Context(),
+				rows, err := cfg.DB.QueryContext(context.Background(),
 					Q(`SELECT d.raw_data_location FROM data d
 					 JOIN dataset_data dd ON d.id = dd.data_id
 					 WHERE dd.dataset_id = $1`), dsID)
@@ -505,7 +505,7 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 			// If no files found, check if data was stored as inline text (ingest stores to disk)
 			if len(texts) == 0 {
 				for _, dsID := range allDatasetIDs {
-					rows, err := cfg.DB.QueryContext(c.Context(),
+					rows, err := cfg.DB.QueryContext(context.Background(),
 						Q(`SELECT d.name FROM data d
 						 JOIN dataset_data dd ON d.id = dd.data_id
 						 WHERE dd.dataset_id = $1`), dsID)
@@ -545,7 +545,7 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 		// P2.1: Load session context if session_id provided
 		var sessionContext string
 		if req.SessionID != "" && cfg.DB != nil {
-			sessionContext = GetSessionContext(cfg.DB, c.Context(), req.SessionID, 5)
+			sessionContext = GetSessionContext(cfg.DB, context.Background(), req.SessionID, 5)
 		}
 		userID, _ := c.Locals("user_id").(string)
 
@@ -759,7 +759,7 @@ func searchHandler(cfg APIConfig) fiber.Handler {
 
 		// RBAC: resolve allowed dataset IDs for this user
 		userID, _ := c.Locals("user_id").(string)
-		req.AllowedDatasetIDs = GetAllowedDatasetIDs(cfg.DB, c.Context(), userID)
+		req.AllowedDatasetIDs = GetAllowedDatasetIDs(cfg.DB, context.Background(), userID)
 
 		queryType := strings.ToUpper(req.QueryType)
 
@@ -973,12 +973,12 @@ func temporalSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error 
 		if ok {
 			// Step 2: Try Neo4j temporal query
 			if cfg.Neo4jCfg.Neo4jURL != "" {
-				temporalResults = temporalSearchNeo4j(c.Context(), cfg, from, to, req.TopK)
+				temporalResults = temporalSearchNeo4j(context.Background(), cfg, from, to, req.TopK)
 			}
 
 			// Step 3: Fallback to PostgreSQL if Neo4j returned nothing
 			if len(temporalResults) == 0 && cfg.DB != nil {
-				temporalResults = temporalSearchPostgres(c.Context(), cfg, from, to, req.TopK)
+				temporalResults = temporalSearchPostgres(context.Background(), cfg, from, to, req.TopK)
 			}
 		}
 	}
@@ -1201,7 +1201,7 @@ func ragCompletionSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) e
 		// Load conversation history if session_id provided
 		var historySection string
 		if req.SessionID != "" && cfg.DB != nil {
-			rows, err := cfg.DB.QueryContext(c.Context(),
+			rows, err := cfg.DB.QueryContext(context.Background(),
 				Q(`SELECT query, response FROM interactions
 				   WHERE session_id = $1 ORDER BY created_at DESC LIMIT 5`), req.SessionID)
 			if err == nil {
@@ -1229,7 +1229,7 @@ func ragCompletionSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) e
 
 		// Save this interaction for future conversational context
 		if req.SessionID != "" && cfg.DB != nil {
-			cfg.DB.ExecContext(c.Context(),
+			cfg.DB.ExecContext(context.Background(),
 				Q(`INSERT INTO interactions (id, session_id, user_id, query, response, search_type, created_at)
 				   VALUES ($1, $2, $3, $4, $5, $6, NOW())`),
 				uuid.New().String(), req.SessionID, "", req.QueryText, truncate(answer, 500), "RAG_COMPLETION")
@@ -1299,7 +1299,7 @@ func summariesSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error
 				 name ILIKE '%' || $1 || '%' OR description ILIKE '%' || $1 || '%'
 			 ) LIMIT $2`, req.QueryText, req.TopK)
 		}
-		rows, err := cfg.DB.QueryContext(c.Context(), sqlQuery, sqlArgs...)
+		rows, err := cfg.DB.QueryContext(context.Background(), sqlQuery, sqlArgs...)
 		if err == nil {
 			defer rows.Close()
 			for rows.Next() {
@@ -1381,9 +1381,9 @@ func callLLMFromAPI(endpoint, model, prompt string, provider ...llm.Provider) st
 func pruneDataHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		if cfg.DB != nil {
-			cfg.DB.ExecContext(c.Context(), "DELETE FROM dataset_data")
-			cfg.DB.ExecContext(c.Context(), "DELETE FROM data")
-			cfg.DB.ExecContext(c.Context(), "DELETE FROM datasets")
+			cfg.DB.ExecContext(context.Background(), "DELETE FROM dataset_data")
+			cfg.DB.ExecContext(context.Background(), "DELETE FROM data")
+			cfg.DB.ExecContext(context.Background(), "DELETE FROM datasets")
 		}
 		return c.JSON(fiber.Map{"status": "ok", "pruned": "data"})
 	}
@@ -1392,11 +1392,11 @@ func pruneDataHandler(cfg APIConfig) fiber.Handler {
 func pruneSystemHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		if cfg.DB != nil {
-			cfg.DB.ExecContext(c.Context(), "DELETE FROM graph_nodes")
-			cfg.DB.ExecContext(c.Context(), "DELETE FROM graph_edges")
-			cfg.DB.ExecContext(c.Context(), "DELETE FROM dataset_data")
-			cfg.DB.ExecContext(c.Context(), "DELETE FROM data")
-			cfg.DB.ExecContext(c.Context(), "DELETE FROM datasets")
+			cfg.DB.ExecContext(context.Background(), "DELETE FROM graph_nodes")
+			cfg.DB.ExecContext(context.Background(), "DELETE FROM graph_edges")
+			cfg.DB.ExecContext(context.Background(), "DELETE FROM dataset_data")
+			cfg.DB.ExecContext(context.Background(), "DELETE FROM data")
+			cfg.DB.ExecContext(context.Background(), "DELETE FROM datasets")
 		}
 		return c.JSON(fiber.Map{"status": "ok", "pruned": "system"})
 	}
@@ -1416,7 +1416,7 @@ func updateDataHandler(cfg APIConfig) fiber.Handler {
 			return c.Status(400).JSON(fiber.Map{"detail": "content required"})
 		}
 		// Update name and content in data table
-		_, err := cfg.DB.ExecContext(c.Context(),
+		_, err := cfg.DB.ExecContext(context.Background(),
 			Q("UPDATE data SET name = $1, updated_at = NOW() WHERE id = $2"),
 			string(body), dataID)
 		if err != nil {

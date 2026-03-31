@@ -1,0 +1,48 @@
+[
+  {
+    "test": "vector_latency",
+    "category": "performance",
+    "latency_ms": 144.33,
+    "passed": true,
+    "meta": {
+      "p50": 144.3,
+      "p99": 166.0,
+      "n": 50
+    },
+    "ts": 1774843208.637471
+  },
+  {
+    "test": "hybrid_latency",
+    "category": "performance",
+    "latency_ms": 145.11,
+    "passed": true,
+    "meta": {
+      "p50": 145.1,
+      "p99": 330.3
+    },
+    "ts": 1774843217.0041862
+  },
+  {
+    "test": "bm25_latency",
+    "category": "performance",
+    "latency_ms": 146.25,
+    "passed": false,
+    "meta": {
+      "p50": 146.3,
+      "p99": 166.7
+    },
+    "ts": 1774843224.372789
+  },
+  {
+    "test": "concurrent_qps",
+    "category": "performance",
+    "latency_ms": 4602.19,
+    "passed": false,
+    "meta": {
+      "qps": 10.9,
+      "total": 50,
+      "workers": 5
+    },
+    "ts": 1774843228.976856
+  }
+]

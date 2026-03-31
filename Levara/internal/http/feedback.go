@@ -2,6 +2,7 @@
 package http
 
 import (
+	"context"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 )
@@ -39,7 +40,7 @@ func feedbackSubmitHandler(cfg APIConfig) fiber.Handler {
 		id := uuid.New().String()
 		userID, _ := c.Locals("user_id").(string)
 
-		cfg.DB.ExecContext(c.Context(),
+		cfg.DB.ExecContext(context.Background(),
 			Q(`INSERT INTO search_feedback (id, query, result_id, collection, search_type, rating, comment, user_id)
 			   VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`),
 			id, req.Query, req.ResultID, req.Collection, req.SearchType, req.Rating, req.Comment, userID)
@@ -59,16 +60,16 @@ func feedbackStatsHandler(cfg APIConfig) fiber.Handler {
 		var worstQuery string
 
 		if collection != "" {
-			cfg.DB.QueryRowContext(c.Context(),
+			cfg.DB.QueryRowContext(context.Background(),
 				Q(`SELECT COUNT(*), COALESCE(AVG(rating),0) FROM search_feedback WHERE collection = $1`),
 				collection).Scan(&total, &avgRating)
-			cfg.DB.QueryRowContext(c.Context(),
+			cfg.DB.QueryRowContext(context.Background(),
 				Q(`SELECT query FROM search_feedback WHERE collection = $1 ORDER BY rating ASC LIMIT 1`),
 				collection).Scan(&worstQuery)
 		} else {
-			cfg.DB.QueryRowContext(c.Context(),
+			cfg.DB.QueryRowContext(context.Background(),
 				Q(`SELECT COUNT(*), COALESCE(AVG(rating),0) FROM search_feedback`)).Scan(&total, &avgRating)
-			cfg.DB.QueryRowContext(c.Context(),
+			cfg.DB.QueryRowContext(context.Background(),
 				Q(`SELECT query FROM search_feedback ORDER BY rating ASC LIMIT 1`)).Scan(&worstQuery)
 		}
 
@@ -92,12 +93,12 @@ func feedbackListHandler(cfg APIConfig) fiber.Handler {
 		var rows interface{ Next() bool; Scan(...any) error; Close() error }
 		var err error
 		if collection != "" {
-			rows, err = cfg.DB.QueryContext(c.Context(),
+			rows, err = cfg.DB.QueryContext(context.Background(),
 				Q(`SELECT id, query, result_id, collection, search_type, rating, comment, user_id, created_at
 				   FROM search_feedback WHERE collection = $1 ORDER BY created_at DESC LIMIT $2`),
 				collection, limit)
 		} else {
-			rows, err = cfg.DB.QueryContext(c.Context(),
+			rows, err = cfg.DB.QueryContext(context.Background(),
 				Q(`SELECT id, query, result_id, collection, search_type, rating, comment, user_id, created_at
 				   FROM search_feedback ORDER BY created_at DESC LIMIT $1`), limit)
 		}

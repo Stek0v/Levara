@@ -140,7 +140,7 @@ func VisualizeHTML(cfg *GraphVisualizationConfig) fiber.Handler {
 		// Fallback: read from PostgreSQL/SQLite graph_nodes + graph_edges
 		if len(result.Nodes) == 0 && cfg.DB != nil {
 			log.Printf("[visualize] falling back to SQL (neo4j=%q, db=%v)", cfg.Neo4jURL, cfg.DB != nil)
-			result = readGraphFromSQL(c.Context(), cfg.DB)
+			result = readGraphFromSQL(context.Background(), cfg.DB)
 			log.Printf("[visualize] SQL fallback returned %d nodes, %d edges", len(result.Nodes), len(result.Edges))
 		} else if cfg.DB == nil {
 			log.Printf("[visualize] WARNING: cfg.DB is nil, cannot use SQL fallback")

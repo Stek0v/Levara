@@ -2,6 +2,7 @@
 package http
 
 import (
+	"context"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -49,7 +50,7 @@ func saveMemoryHandler(cfg APIConfig) fiber.Handler {
 			 VALUES ($1, $2, $3, $4, $5, $6, $7)
 			 ON CONFLICT(key, owner_id) DO UPDATE SET value = $3, type = $4, updated_at = $7`
 		q, qargs := QArgs(upsertSQL, id, req.Key, req.Value, req.Type, req.OwnerID, now, now)
-		if _, err := cfg.DB.ExecContext(c.Context(), q, qargs...); err != nil {
+		if _, err := cfg.DB.ExecContext(context.Background(), q, qargs...); err != nil {
 			return c.Status(500).JSON(fiber.Map{"detail": "save failed: " + err.Error()})
 		}
 
@@ -69,7 +70,7 @@ func listMemoriesHandler(cfg APIConfig) fiber.Handler {
 
 		var items []fiber.Map
 		if filterType != "" {
-			rows, err := cfg.DB.QueryContext(c.Context(),
+			rows, err := cfg.DB.QueryContext(context.Background(),
 				Q(`SELECT id, key, value, type, owner_id, created_at, updated_at
 				 FROM memories WHERE type = $1 AND (owner_id = $2 OR owner_id = '')
 				 ORDER BY updated_at DESC LIMIT 100`), filterType, ownerID)
@@ -79,7 +80,7 @@ func listMemoriesHandler(cfg APIConfig) fiber.Handler {
 			defer rows.Close()
 			items = scanMemoryRows(rows)
 		} else {
-			rows, err := cfg.DB.QueryContext(c.Context(),
+			rows, err := cfg.DB.QueryContext(context.Background(),
 				Q(`SELECT id, key, value, type, owner_id, created_at, updated_at
 				 FROM memories WHERE owner_id = $1 OR owner_id = ''
 				 ORDER BY updated_at DESC LIMIT 100`), ownerID)
@@ -105,7 +106,7 @@ func getMemoryHandler(cfg APIConfig) fiber.Handler {
 		}
 		ownerID, _ := c.Locals("user_id").(string)
 
-		row := cfg.DB.QueryRowContext(c.Context(),
+		row := cfg.DB.QueryRowContext(context.Background(),
 			Q(`SELECT id, key, value, type, owner_id, created_at, updated_at
 			 FROM memories WHERE key = $1 AND (owner_id = $2 OR owner_id = '') LIMIT 1`), key, ownerID)
 
@@ -128,7 +129,7 @@ func deleteMemoryHandler(cfg APIConfig) fiber.Handler {
 		}
 		ownerID, _ := c.Locals("user_id").(string)
 
-		cfg.DB.ExecContext(c.Context(),
+		cfg.DB.ExecContext(context.Background(),
 			Q(`DELETE FROM memories WHERE key = $1 AND (owner_id = $2 OR owner_id = '')`), key, ownerID)
 
 		return c.JSON(fiber.Map{"deleted": true, "key": key})

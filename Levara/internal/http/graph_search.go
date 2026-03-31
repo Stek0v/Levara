@@ -22,7 +22,7 @@ func graphCompletionSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest)
 		return c.JSON(fiber.Map{"answer": "", "context": []any{}, "search_type": "GRAPH_COMPLETION"})
 	}
 
-	ctx := c.Context()
+	ctx := context.Background()
 
 	// Step 1: Vector search across entity collections
 	embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 1)
@@ -124,7 +124,7 @@ func contextExtensionSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest
 		return c.JSON(fiber.Map{"answer": "", "context": []any{}, "search_type": "GRAPH_COMPLETION_CONTEXT_EXTENSION"})
 	}
 
-	ctx := c.Context()
+	ctx := context.Background()
 
 	// Step 1: Vector search — same as graphCompletionSearch
 	embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 1)
@@ -303,7 +303,7 @@ func cotSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
 		return c.JSON(fiber.Map{"answer": "", "reasoning_steps": []any{}, "search_type": "GRAPH_COMPLETION_COT"})
 	}
 
-	ctx := c.Context()
+	ctx := context.Background()
 
 	// ── Step 1: Decompose query into sub-questions via LLM ──
 	decomposePrompt := fmt.Sprintf(
@@ -441,7 +441,7 @@ func codingRulesSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) err
 		return c.JSON(fiber.Map{"rules": []any{}, "entities": []any{}, "search_type": "CODING_RULES"})
 	}
 
-	ctx := c.Context()
+	ctx := context.Background()
 
 	// Code-related entity types to filter on.
 	codeTypes := map[string]bool{
@@ -791,7 +791,7 @@ func cypherSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
 		}
 	}
 
-	ctx := c.Context()
+	ctx := context.Background()
 	writer, err := graphdb.NewWriter(ctx, cfg.Neo4jCfg.Neo4jURL, cfg.Neo4jCfg.Neo4jUser,
 		cfg.Neo4jCfg.Neo4jPassword, cfg.Neo4jCfg.Neo4jDatabase)
 	if err != nil {
@@ -825,7 +825,7 @@ func naturalLanguageSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest)
 		return graphCompletionSearch(c, cfg, req)
 	}
 
-	ctx := c.Context()
+	ctx := context.Background()
 
 	// Step 1: Get schema info from Neo4j (labels + relationship types)
 	writer, err := graphdb.NewWriter(ctx, cfg.Neo4jCfg.Neo4jURL, cfg.Neo4jCfg.Neo4jUser,

@@ -8,7 +8,6 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
-	"time"
 )
 
 // MigrateSchema creates all required tables if they don't exist.
@@ -19,8 +18,9 @@ func MigrateSchema(db *sql.DB) error {
 		return nil
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
+	// Use background context (no timeout) — canceling a context closes the
+	// DB connection, which kills the entire pool for SQLite (MaxOpenConns=1).
+	ctx := context.Background()
 
 	stmts := schemaStatements
 	if activeDBProvider == DBSQLite {
