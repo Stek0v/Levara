@@ -380,9 +380,13 @@ func main() {
 	}
 	vectorHttp.RegisterAuthAPI(api, authCfg) // may generate JWTSecret if empty
 
-	// Inject DB for API key verification (used by JWTMiddleware)
+	// Inject DB for API key verification (used by JWTMiddleware).
+	// IMPORTANT: Wrap in DBRef to prevent fasthttp from calling Close() on it.
+	// fasthttp calls io.Closer.Close() on all c.Locals values when the request
+	// context is recycled — storing *sql.DB directly kills the connection pool.
+	authDB := &vectorHttp.DBRef{DB: pgDB}
 	api.Use(func(c *fiber.Ctx) error {
-		c.Locals("auth_db", pgDB)
+		c.Locals("auth_db", authDB)
 		return c.Next()
 	})
 

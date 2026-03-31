@@ -289,8 +289,10 @@ func JWTMiddleware(secret string, requireAuth bool) fiber.Handler {
 			apiKey = c.Get("X-Api-Key")
 		}
 		if apiKey != "" {
-			if db, ok := c.Locals("auth_db").(*sql.DB); ok && db != nil {
-				userID, perms := verifyAPIKey(db, apiKey)
+			// auth_db may be wrapped in a struct (to prevent fasthttp io.Closer auto-close)
+			authDB := extractAuthDB(c)
+			if authDB != nil {
+				userID, perms := verifyAPIKey(authDB, apiKey)
 				if userID != "" {
 					c.Locals("user_id", userID)
 					c.Locals("api_key_permissions", perms)
