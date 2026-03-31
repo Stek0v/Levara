@@ -168,7 +168,37 @@ func syncImportMemoriesHandler(cfg APIConfig) fiber.Handler {
 		}
 
 		metrics.SyncOperations.WithLabelValues("import", "memories", "ok").Add(float64(imported))
-		return c.JSON(fiber.Map{"imported": imported, "skipped": skipped, "total": len(memories)})
+
+		// Auto re-embed imported memories into _memories vector collection
+		embedded := 0
+		if imported > 0 && cfg.EmbedEndpoint != "" && cfg.Collections != nil {
+			go func() {
+				embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 3)
+				ctx := context.Background()
+
+				for _, m := range memories {
+					text := m.Key + " " + m.Value
+					vec, err := embedClient.EmbedSingle(ctx, text)
+					if err != nil {
+						continue
+					}
+					memColl := "_memories"
+					if m.CollectionName != "" {
+						memColl = "_memories_" + m.CollectionName
+					}
+					meta, _ := json.Marshal(map[string]string{
+						"key": m.Key, "value": m.Value, "type": m.Type,
+						"collection": m.CollectionName, "memory_id": m.ID,
+					})
+					if err := cfg.Collections.Insert(memColl, m.ID, vec, meta); err == nil {
+						embedded++
+					}
+				}
+				log.Printf("[sync] auto re-embed: %d/%d memories embedded into vector index", embedded, len(memories))
+			}()
+		}
+
+		return c.JSON(fiber.Map{"imported": imported, "skipped": skipped, "total": len(memories), "embedding": imported > 0})
 	}
 }
 
