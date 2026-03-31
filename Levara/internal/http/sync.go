@@ -77,12 +77,12 @@ func syncManifestHandler(cfg APIConfig) fiber.Handler {
 			}
 		}
 		if cfg.DB != nil {
-			cfg.DB.QueryRowContext(c.Context(), Q(`SELECT COUNT(*) FROM memories`)).Scan(&m.Memories.Count)
-			cfg.DB.QueryRowContext(c.Context(), Q(`SELECT COALESCE(MAX(updated_at),'') FROM memories`)).Scan(&m.Memories.LatestUpdated)
-			cfg.DB.QueryRowContext(c.Context(), Q(`SELECT COUNT(*) FROM interactions`)).Scan(&m.Interactions.Count)
-			cfg.DB.QueryRowContext(c.Context(), Q(`SELECT COALESCE(MAX(created_at),'') FROM interactions`)).Scan(&m.Interactions.LatestUpdated)
-			cfg.DB.QueryRowContext(c.Context(), Q(`SELECT COUNT(*) FROM graph_nodes`)).Scan(&m.GraphNodes.Count)
-			cfg.DB.QueryRowContext(c.Context(), Q(`SELECT COUNT(*) FROM graph_edges`)).Scan(&m.GraphEdges.Count)
+			cfg.DB.QueryRowContext(context.Background(), Q(`SELECT COUNT(*) FROM memories`)).Scan(&m.Memories.Count)
+			cfg.DB.QueryRowContext(context.Background(), Q(`SELECT COALESCE(MAX(updated_at),'') FROM memories`)).Scan(&m.Memories.LatestUpdated)
+			cfg.DB.QueryRowContext(context.Background(), Q(`SELECT COUNT(*) FROM interactions`)).Scan(&m.Interactions.Count)
+			cfg.DB.QueryRowContext(context.Background(), Q(`SELECT COALESCE(MAX(created_at),'') FROM interactions`)).Scan(&m.Interactions.LatestUpdated)
+			cfg.DB.QueryRowContext(context.Background(), Q(`SELECT COUNT(*) FROM graph_nodes`)).Scan(&m.GraphNodes.Count)
+			cfg.DB.QueryRowContext(context.Background(), Q(`SELECT COUNT(*) FROM graph_edges`)).Scan(&m.GraphEdges.Count)
 		}
 		return c.JSON(m)
 	}
@@ -110,11 +110,11 @@ func syncExportMemoriesHandler(cfg APIConfig) fiber.Handler {
 		var rows interface{ Next() bool; Scan(...any) error; Close() error }
 		var err error
 		if since != "" {
-			rows, err = cfg.DB.QueryContext(c.Context(),
+			rows, err = cfg.DB.QueryContext(context.Background(),
 				Q(`SELECT id, key, value, type, owner_id, collection_name, created_at, updated_at
 				 FROM memories WHERE updated_at > $1 ORDER BY updated_at`), since)
 		} else {
-			rows, err = cfg.DB.QueryContext(c.Context(),
+			rows, err = cfg.DB.QueryContext(context.Background(),
 				Q(`SELECT id, key, value, type, owner_id, collection_name, created_at, updated_at
 				 FROM memories ORDER BY updated_at`))
 		}
@@ -149,7 +149,7 @@ func syncImportMemoriesHandler(cfg APIConfig) fiber.Handler {
 		for _, m := range memories {
 			// Last-writer-wins: check if existing record is newer
 			var existingUpdated string
-			cfg.DB.QueryRowContext(c.Context(),
+			cfg.DB.QueryRowContext(context.Background(),
 				Q(`SELECT updated_at FROM memories WHERE key = $1 AND owner_id = $2`),
 				m.Key, m.OwnerID).Scan(&existingUpdated)
 
@@ -162,7 +162,7 @@ func syncImportMemoriesHandler(cfg APIConfig) fiber.Handler {
 				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 				 ON CONFLICT(key, owner_id) DO UPDATE SET value = $3, type = $4, collection_name = $6, updated_at = $8`,
 				m.ID, m.Key, m.Value, m.Type, m.OwnerID, m.CollectionName, m.CreatedAt, m.UpdatedAt)
-			if _, err := cfg.DB.ExecContext(c.Context(), q, qargs...); err == nil {
+			if _, err := cfg.DB.ExecContext(context.Background(), q, qargs...); err == nil {
 				imported++
 			}
 		}
@@ -223,11 +223,11 @@ func syncExportInteractionsHandler(cfg APIConfig) fiber.Handler {
 		var rows interface{ Next() bool; Scan(...any) error; Close() error }
 		var err error
 		if since != "" {
-			rows, err = cfg.DB.QueryContext(c.Context(),
+			rows, err = cfg.DB.QueryContext(context.Background(),
 				Q(`SELECT id, session_id, user_id, query, response, search_type, created_at
 				 FROM interactions WHERE created_at > $1 ORDER BY created_at`), since)
 		} else {
-			rows, err = cfg.DB.QueryContext(c.Context(),
+			rows, err = cfg.DB.QueryContext(context.Background(),
 				Q(`SELECT id, session_id, user_id, query, response, search_type, created_at
 				 FROM interactions ORDER BY created_at`))
 		}
@@ -264,7 +264,7 @@ func syncImportInteractionsHandler(cfg APIConfig) fiber.Handler {
 				 VALUES ($1, $2, $3, $4, $5, $6, $7)
 				 ON CONFLICT(id) DO NOTHING`,
 				i.ID, i.SessionID, i.UserID, i.Query, i.Response, i.SearchType, i.CreatedAt)
-			res, err := cfg.DB.ExecContext(c.Context(), q, qargs...)
+			res, err := cfg.DB.ExecContext(context.Background(), q, qargs...)
 			if err == nil {
 				if n, _ := res.RowsAffected(); n > 0 {
 					imported++
@@ -308,7 +308,7 @@ func syncExportGraphHandler(cfg APIConfig) fiber.Handler {
 		}
 		g := syncGraph{}
 
-		nodeRows, err := cfg.DB.QueryContext(c.Context(),
+		nodeRows, err := cfg.DB.QueryContext(context.Background(),
 			Q(`SELECT id, name, type, COALESCE(description,''), COALESCE(properties,'{}') FROM graph_nodes`))
 		if err == nil {
 			defer nodeRows.Close()
@@ -324,7 +324,7 @@ func syncExportGraphHandler(cfg APIConfig) fiber.Handler {
 			g.Nodes = []syncGraphNode{}
 		}
 
-		edgeRows, err := cfg.DB.QueryContext(c.Context(),
+		edgeRows, err := cfg.DB.QueryContext(context.Background(),
 			Q(`SELECT id, source_id, target_id, relationship_name, COALESCE(properties,'{}') FROM graph_edges`))
 		if err == nil {
 			defer edgeRows.Close()
@@ -361,7 +361,7 @@ func syncImportGraphHandler(cfg APIConfig) fiber.Handler {
 				 VALUES ($1, $2, $3, $4, $5)
 				 ON CONFLICT(id) DO UPDATE SET name = $2, type = $3, description = $4, properties = $5`,
 				n.ID, n.Name, n.Type, n.Description, n.Properties)
-			if _, err := cfg.DB.ExecContext(c.Context(), q, qargs...); err == nil {
+			if _, err := cfg.DB.ExecContext(context.Background(), q, qargs...); err == nil {
 				nodesImported++
 			}
 		}
@@ -371,7 +371,7 @@ func syncImportGraphHandler(cfg APIConfig) fiber.Handler {
 				 VALUES ($1, $2, $3, $4, $5)
 				 ON CONFLICT(id) DO UPDATE SET source_id = $2, target_id = $3, relationship_name = $4, properties = $5`,
 				e.ID, e.SourceID, e.TargetID, e.RelationshipName, e.Properties)
-			if _, err := cfg.DB.ExecContext(c.Context(), q, qargs...); err == nil {
+			if _, err := cfg.DB.ExecContext(context.Background(), q, qargs...); err == nil {
 				edgesImported++
 			}
 		}

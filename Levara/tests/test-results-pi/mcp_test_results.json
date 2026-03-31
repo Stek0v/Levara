@@ -1,0 +1,137 @@
+[
+  {
+    "test": "test_full_workflow",
+    "category": "e2e/developer_day",
+    "latency_ms": 15030.97,
+    "passed": true,
+    "meta": {
+      "collection": "e2e_day_270898"
+    },
+    "ts": 1774539508.3404522
+  },
+  {
+    "test": "test_new_dev_questions",
+    "category": "e2e/onboarding",
+    "latency_ms": 0,
+    "passed": true,
+    "meta": {},
+    "ts": 1774539518.3738508
+  },
+  {
+    "test": "test_two_projects_isolated",
+    "category": "e2e/multi_project",
+    "latency_ms": 0,
+    "passed": true,
+    "meta": {},
+    "ts": 1774539518.40452
+  },
+  {
+    "test": "test_cross_project_no_leakage",
+    "category": "e2e/security",
+    "latency_ms": 0,
+    "passed": true,
+    "meta": {},
+    "ts": 1774539518.4121852
+  },
+  {
+    "test": "test_full_session_lifecycle",
+    "category": "e2e/protocol",
+    "latency_ms": 0,
+    "passed": true,
+    "meta": {},
+    "ts": 1774539518.439701
+  },
+  {
+    "test": "test_memory_survives",
+    "category": "e2e/disaster_recovery",
+    "latency_ms": 0,
+    "passed": true,
+    "meta": {},
+    "ts": 1774539518.44704
+  },
+  {
+    "test": "test_search_latency",
+    "category": "stress/latency",
+    "latency_ms": 2.86,
+    "passed": true,
+    "meta": {
+      "p50": 2.8589165303856134,
+      "p95": 3.906106937211008,
+      "p99": 5.341302031883969,
+      "n": 200
+    },
+    "ts": 1774539519.0499551
+  },
+  {
+    "test": "test_memory_save_latency",
+    "category": "stress/memory",
+    "latency_ms": 3.07,
+    "passed": true,
+    "meta": {
+      "p95": 5.546287528704851
+    },
+    "ts": 1774539519.7536168
+  },
+  {
+    "test": "test_memory_recall_latency",
+    "category": "stress/memory",
+    "latency_ms": 3.4,
+    "passed": true,
+    "meta": {
+      "p95": 4.781462537357584
+    },
+    "ts": 1774539519.753626
+  },
+  {
+    "test": "test_concurrent_searches",
+    "category": "stress/concurrency",
+    "latency_ms": 4.67,
+    "passed": true,
+    "meta": {
+      "concurrency": 10,
+      "total": 200,
+      "qps": 1698.0,
+      "p99": 8.804798795608804,
+      "errors": 0,
+      "wall_ms": 118
+    },
+    "ts": 1774539519.874044
+  },
+  {
+    "test": "test_concurrent_sessions",
+    "category": "stress/sessions",
+    "latency_ms": 32.31,
+    "passed": true,
+    "meta": {
+      "sessions": 20,
+      "successes": 20,
+      "failures": 0,
+      "p50_ms": 32.31468750163913,
+      "all_have_16_tools": true
+    },
+    "ts": 1774539519.9126248
+  },
+  {
+    "test": "test_large_cognify",
+    "category": "stress/payload",
+    "latency_ms": 6.39,
+    "passed": true,
+    "meta": {
+      "size_bytes": 27000
+    },
+    "ts": 1774539519.920259
+  },
+  {
+    "test": "test_many_memories",
+    "category": "stress/bulk",
+    "latency_ms": 1597.36,
+    "passed": true,
+    "meta": {
+      "count": 500,
+      "save_ms": 1597,
+      "list_ms": 3,
+      "save_per_sec": 313
+    },
+    "ts": 1774539521.521644
+  }
+]

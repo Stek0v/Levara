@@ -75,7 +75,7 @@ func saveInteractionHandler(cfg APIConfig) fiber.Handler {
 			req.SessionID = uuid.New().String()
 		}
 		if cfg.DB != nil {
-			cfg.DB.ExecContext(c.Context(),
+			cfg.DB.ExecContext(context.Background(),
 				Q(`INSERT INTO interactions (id, session_id, user_id, query, response, search_type, created_at)
 				 VALUES ($1, $2, $3, $4, $5, $6, $7)`),
 				id, req.SessionID, userID, req.Query, req.Response, req.SearchType, time.Now().UTC())
@@ -92,7 +92,7 @@ func listInteractionsHandler(cfg APIConfig) fiber.Handler {
 			return c.JSON([]any{})
 		}
 		userID, _ := c.Locals("user_id").(string)
-		rows, err := cfg.DB.QueryContext(c.Context(),
+		rows, err := cfg.DB.QueryContext(context.Background(),
 			Q(`SELECT id, session_id, query, response, search_type, created_at
 			 FROM interactions WHERE user_id = $1 ORDER BY created_at DESC LIMIT 50`), userID)
 		if err != nil {
@@ -122,7 +122,7 @@ func getSessionHandler(cfg APIConfig) fiber.Handler {
 		if cfg.DB == nil {
 			return c.JSON([]any{})
 		}
-		rows, err := cfg.DB.QueryContext(c.Context(),
+		rows, err := cfg.DB.QueryContext(context.Background(),
 			Q(`SELECT id, query, response, search_type, created_at
 			 FROM interactions WHERE session_id = $1 ORDER BY created_at LIMIT 10`), sessionID)
 		if err != nil {

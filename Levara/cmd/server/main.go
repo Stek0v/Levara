@@ -306,17 +306,23 @@ func main() {
 		os.MkdirAll(filepath.Dir(dbPath), 0755)
 
 		var dbErr error
-		pgDB, dbErr = sql.Open("sqlite3", dbPath+
-			"?_pragma=journal_mode(WAL)"+
-			"&_pragma=busy_timeout(5000)"+
-			"&_pragma=synchronous(NORMAL)"+
-			"&_pragma=cache_size(-10000)"+
-			"&_pragma=temp_store(MEMORY)")
+		// ncruces/go-sqlite3: connection string with pragma query params
+		// ncruces/go-sqlite3: pragma params become part of filename — this is by design.
+		// Use simple WAL pragma only to keep filename manageable.
+		// ncruces/go-sqlite3: use file: URI with pragmas (file: prefix prevents
+		// pragma params from becoming part of the literal filename on disk)
+		dsn := "file:" + dbPath + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
+		pgDB, dbErr = sql.Open("sqlite3", dsn)
+		log.Printf("SQLite DSN: %s", dsn)
 		if dbErr != nil {
 			log.Printf("SQLite init warning: %v (running without DB)", dbErr)
 		} else {
-			pgDB.SetMaxOpenConns(1) // SQLite: single writer
-			pgDB.SetMaxIdleConns(1)
+			// Allow multiple connections — ncruces driver may close connections
+			// after use; pool needs room to create replacements
+			pgDB.SetMaxOpenConns(4)
+			pgDB.SetMaxIdleConns(4)
+			pgDB.SetConnMaxLifetime(0)
+			pgDB.SetConnMaxIdleTime(0)
 			if err := pgDB.Ping(); err != nil {
 				log.Printf("SQLite ping warning: %v (running without DB)", err)
 				pgDB.Close()

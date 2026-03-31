@@ -1,4 +1,4 @@
-# Gap Tasks: Cognee → Levara
+# Gap Tasks: Cognee → Levara (ВСЕ ЗАКРЫТЫ 2026-03-30)
 
 ## Приоритеты
 

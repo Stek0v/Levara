@@ -3,6 +3,7 @@
 package http
 
 import (
+	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
@@ -150,7 +151,7 @@ func loginHandler(cfg AuthConfig) fiber.Handler {
 		}
 
 		var userID, hashedPassword string
-		err := cfg.DB.QueryRowContext(c.Context(),
+		err := cfg.DB.QueryRowContext(context.Background(),
 			Q("SELECT id, hashed_password FROM users WHERE email = $1"), email).Scan(&userID, &hashedPassword)
 		if err != nil {
 			return c.Status(401).JSON(fiber.Map{"detail": "invalid credentials"})
@@ -185,10 +186,10 @@ func registerHandler(cfg AuthConfig) fiber.Handler {
 
 		if cfg.DB != nil {
 			// Insert into principals first (FK requirement)
-			_, _ = cfg.DB.ExecContext(c.Context(),
+			_, _ = cfg.DB.ExecContext(context.Background(),
 				Q("INSERT INTO principals (id, type) VALUES ($1, 'user') ON CONFLICT DO NOTHING"), userID)
 
-			_, err = cfg.DB.ExecContext(c.Context(),
+			_, err = cfg.DB.ExecContext(context.Background(),
 				Q(`INSERT INTO users (id, email, hashed_password, is_active, is_superuser, is_verified)
 				 VALUES ($1, $2, $3, true, false, false)`),
 				userID, req.Email, string(hashedPw))
@@ -243,7 +244,7 @@ func authMeHandler(cfg AuthConfig) fiber.Handler {
 		if cfg.DB != nil {
 			var email string
 			var isActive, isSuperuser, isVerified bool
-			err := cfg.DB.QueryRowContext(c.Context(),
+			err := cfg.DB.QueryRowContext(context.Background(),
 				Q("SELECT email, is_active, is_superuser, is_verified FROM users WHERE id = $1"),
 				payload.Sub).Scan(&email, &isActive, &isSuperuser, &isVerified)
 			if err == nil {

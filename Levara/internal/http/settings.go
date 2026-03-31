@@ -4,6 +4,7 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"sync"
@@ -46,7 +47,7 @@ func settingsGetHandler(cfg APIConfig) fiber.Handler {
 		// Check DB for persisted settings
 		if cfg.DB != nil && userID != "" {
 			var data string
-			err := cfg.DB.QueryRowContext(c.Context(),
+			err := cfg.DB.QueryRowContext(context.Background(),
 				Q("SELECT settings FROM user_settings WHERE user_id = $1"), userID).Scan(&data)
 			if err == nil && data != "" {
 				var s SettingsDTO
@@ -107,7 +108,7 @@ func settingsPutHandler(cfg APIConfig) fiber.Handler {
 				 VALUES ($1, $2, NOW())
 				 ON CONFLICT (user_id) DO UPDATE SET settings = $2, updated_at = NOW()`,
 				userID, string(data))
-			cfg.DB.ExecContext(c.Context(), upsertSQL, upsertArgs...)
+			cfg.DB.ExecContext(context.Background(), upsertSQL, upsertArgs...)
 		}
 
 		return c.JSON(req)
