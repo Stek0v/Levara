@@ -252,13 +252,13 @@ func cellRunHandler(cfg APIConfig) fiber.Handler {
 		var err error
 		switch cellType {
 		case "search":
-			output, err = runSearchCell(c.Context(), cfg, content)
+			output, err = runSearchCell(context.Background(), cfg, content)
 		case "cognify":
 			output = fmt.Sprintf("Cognify triggered for: %s", content)
 		case "markdown":
 			output = content
 		default:
-			output, err = runCodeCell(c.Context(), cfg, content)
+			output, err = runCodeCell(context.Background(), cfg, content)
 		}
 		if err != nil {
 			return c.JSON(fiber.Map{"id": cellID, "result": nil, "error": err.Error()})

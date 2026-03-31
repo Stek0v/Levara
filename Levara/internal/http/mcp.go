@@ -1481,7 +1481,7 @@ func (h *mcpHandler) handleResourcesRead(c *fiber.Ctx, req jsonRPCRequest) error
 		if len(segments) > 1 {
 			collName = segments[1]
 		}
-		content = h.resourceMemories(c.Context(), memType, collName)
+		content = h.resourceMemories(context.Background(), memType, collName)
 
 	default:
 		return c.JSON(jsonRPCResponse{JSONRPC: "2.0", ID: req.ID,

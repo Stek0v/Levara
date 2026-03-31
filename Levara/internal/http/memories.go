@@ -45,12 +45,13 @@ func saveMemoryHandler(cfg APIConfig) fiber.Handler {
 		id := uuid.New().String()
 		now := time.Now().UTC().Format(time.RFC3339)
 
-		// Upsert: try insert, on conflict update value+type+updated_at
+		// Upsert: insert or update value+type+updated_at on conflict
 		upsertSQL := `INSERT INTO memories (id, key, value, type, owner_id, created_at, updated_at)
 			 VALUES ($1, $2, $3, $4, $5, $6, $7)
 			 ON CONFLICT(key, owner_id) DO UPDATE SET value = $3, type = $4, updated_at = $7`
 		q, qargs := QArgs(upsertSQL, id, req.Key, req.Value, req.Type, req.OwnerID, now, now)
-		if _, err := cfg.DB.ExecContext(context.Background(), q, qargs...); err != nil {
+		_, err := cfg.DB.ExecContext(context.Background(), q, qargs...)
+		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"detail": "save failed: " + err.Error()})
 		}
 

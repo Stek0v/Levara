@@ -3,10 +3,35 @@
 package http
 
 import (
+	"database/sql"
 	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/gofiber/fiber/v2"
 )
+
+// DBRef wraps *sql.DB to prevent fasthttp from calling Close() on it.
+// fasthttp calls io.Closer.Close() on all values stored via c.Locals()
+// when the request context is recycled. Storing *sql.DB directly in
+// c.Locals kills the connection pool after the first request.
+type DBRef struct{ DB *sql.DB }
+
+// extractAuthDB retrieves the auth DB from c.Locals, handling both
+// wrapped (DBRef) and unwrapped (*sql.DB) storage.
+func extractAuthDB(c *fiber.Ctx) *sql.DB {
+	v := c.Locals("auth_db")
+	if v == nil {
+		return nil
+	}
+	if ref, ok := v.(*DBRef); ok && ref != nil {
+		return ref.DB
+	}
+	if db, ok := v.(*sql.DB); ok {
+		return db
+	}
+	return nil
+}
 
 // DBProvider tracks which SQL dialect to use.
 type DBProvider string
