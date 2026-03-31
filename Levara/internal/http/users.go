@@ -21,6 +21,26 @@ type UserDTO struct {
 	UpdatedAt  *string `json:"updated_at"`
 }
 
+func userLookupHandler(cfg APIConfig) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		email := c.Query("email")
+		if email == "" {
+			return c.Status(400).JSON(fiber.Map{"detail": "email query parameter required"})
+		}
+		if cfg.DB == nil {
+			return c.JSON([]UserDTO{})
+		}
+		var u UserDTO
+		err := cfg.DB.QueryRowContext(c.Context(),
+			Q("SELECT id, email, COALESCE(is_superuser,false), created_at FROM users WHERE email = $1"), email,
+		).Scan(&u.ID, &u.Email, &u.IsSuperuser, &u.CreatedAt)
+		if err != nil {
+			return c.JSON([]UserDTO{})
+		}
+		return c.JSON([]UserDTO{u})
+	}
+}
+
 func userMeHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		userID, _ := c.Locals("user_id").(string)
