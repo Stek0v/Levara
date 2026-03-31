@@ -89,6 +89,7 @@ func RegisterCogneeAPI(app fiber.Router, cfg APIConfig) {
 
 	// U7: User management (protected)
 	app.Get("/users/me", userMeHandler(cfg))
+	app.Get("/users", userLookupHandler(cfg)) // lookup by ?email=
 	app.Put("/users/me", userUpdateHandler(cfg))
 	app.Put("/users/me/password", userChangePasswordHandler(cfg))
 
@@ -151,9 +152,12 @@ func RegisterCogneeAPI(app fiber.Router, cfg APIConfig) {
 	app.Put("/notebooks/:id/cells/:cellId", cellUpdateHandler(cfg))
 	app.Delete("/notebooks/:id/cells/:cellId", cellDeleteHandler(cfg))
 	app.Post("/notebooks/:id/cells/:cellId/run", cellRunHandler(cfg))
+	app.Post("/notebooks/:id/:cellId/run", cellRunHandler(cfg)) // Cognee frontend compat
 
 	// U5: Cognee-compatible search (separate from legacy vector /search)
 	app.Post("/search/text", searchHandler(cfg))
+	app.Post("/search/", searchHandler(cfg)) // Cognee frontend compat alias
+	app.Post("/search", searchHandler(cfg))  // without trailing slash
 }
 
 // ── U1: Health ──
