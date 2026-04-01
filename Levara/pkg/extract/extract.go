@@ -8,7 +8,10 @@ package extract
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,6 +36,20 @@ func Extract(data []byte, filename, mimeType string) (Result, error) {
 	start := time.Now()
 
 	format := detectFormat(data, filename, mimeType)
+
+	// Image formats — OCR via vision model (Ollama or remote endpoint)
+	if isImageFormat(format) {
+		text, err := extractImage(data, filename)
+		if err != nil {
+			return Result{}, err
+		}
+		return Result{
+			Text:      text,
+			Format:    "image_ocr",
+			Pages:     1,
+			ExtractMs: time.Since(start).Milliseconds(),
+		}, nil
+	}
 
 	// Audio formats — transcribe via Whisper API
 	if isAudioFormat(filename) {
@@ -207,6 +224,26 @@ func detectFormat(data []byte, filename, mimeType string) string {
 			return "csv"
 		case ".log":
 			return "log"
+		case ".png":
+			return "png"
+		case ".jpg", ".jpeg":
+			return "jpg"
+		case ".gif":
+			return "gif"
+		case ".webp":
+			return "webp"
+		case ".bmp":
+			return "bmp"
+		case ".tiff", ".tif":
+			return "tiff"
+		case ".ico":
+			return "ico"
+		case ".heic":
+			return "heic"
+		case ".avif":
+			return "avif"
+		case ".svg":
+			return "svg"
 		}
 	}
 
@@ -245,6 +282,106 @@ func isTextFormat(format string) bool {
 		return true
 	}
 	return false
+}
+
+func isImageFormat(format string) bool {
+	switch format {
+	case "png", "jpg", "jpeg", "gif", "webp", "bmp", "tiff", "ico", "heic", "avif", "svg":
+		return true
+	}
+	return false
+}
+
+// extractImage sends image to a vision model for OCR text extraction.
+// Uses VISION_MODEL via Ollama, or VISION_ENDPOINT for remote OCR.
+func extractImage(data []byte, filename string) (string, error) {
+	visionEndpoint := os.Getenv("VISION_ENDPOINT")
+	if visionEndpoint != "" {
+		// Remote OCR: POST image to external endpoint
+		return extractImageRemote(data, filename, visionEndpoint)
+	}
+
+	// Local OCR via Ollama
+	ollamaURL := os.Getenv("LLM_ENDPOINT")
+	if ollamaURL == "" {
+		ollamaURL = "http://localhost:11434/v1"
+	}
+	// Strip /v1 suffix to get base URL
+	baseURL := strings.TrimSuffix(ollamaURL, "/v1")
+	baseURL = strings.TrimSuffix(baseURL, "/")
+
+	visionModel := os.Getenv("VISION_MODEL")
+	if visionModel == "" {
+		visionModel = "minicpm-v:8b"
+	}
+
+	return extractImageOllama(data, baseURL, visionModel)
+}
+
+func extractImageOllama(data []byte, baseURL, model string) (string, error) {
+	imgB64 := base64Encode(data)
+
+	body := fmt.Sprintf(`{
+		"model": %q,
+		"messages": [{"role":"user","content":"Extract ALL text from this image exactly as written. Preserve structure, tables, lists. Include all numbers, names, dates.","images":[%q]}],
+		"stream": false,
+		"options": {"num_predict": 2000}
+	}`, model, imgB64)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, "POST", baseURL+"/api/chat", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("vision model request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Message struct {
+			Content string `json:"content"`
+		} `json:"message"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("vision model decode: %w", err)
+	}
+	if result.Message.Content == "" {
+		return "", fmt.Errorf("vision model returned empty response")
+	}
+	return result.Message.Content, nil
+}
+
+func extractImageRemote(data []byte, filename, endpoint string) (string, error) {
+	imgB64 := base64Encode(data)
+
+	body := fmt.Sprintf(`{"image":"%s","filename":%q}`, imgB64, filename)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, "POST", endpoint, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("remote OCR request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Text string `json:"text"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("remote OCR decode: %w", err)
+	}
+	return result.Text, nil
+}
+
+func base64Encode(data []byte) string {
+	return base64.StdEncoding.EncodeToString(data)
 }
 
 // isAudioFormat checks if file extension is a supported audio format.
