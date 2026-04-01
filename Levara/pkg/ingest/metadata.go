@@ -109,20 +109,25 @@ func (w *MetadataWriter) WriteMetadata(ctx context.Context, results []Result, ow
 
 	for _, r := range results {
 		if !r.AlreadyExists {
+			tags := r.Tags
+			if tags == "" {
+				tags = "[]"
+			}
 			_, err = tx.ExecContext(ctx, q(`
 				INSERT INTO data (id, name, extension, mime_type, raw_data_location,
 					original_data_location, content_hash, raw_content_hash, owner_id,
-					loader_engine, pipeline_status, token_count, data_size, created_at, updated_at)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+					loader_engine, pipeline_status, tags, token_count, data_size, created_at, updated_at)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 				ON CONFLICT (id) DO UPDATE SET
 					name = EXCLUDED.name,
 					content_hash = EXCLUDED.content_hash,
 					raw_data_location = EXCLUDED.raw_data_location,
 					data_size = EXCLUDED.data_size,
+					tags = EXCLUDED.tags,
 				updated_at = EXCLUDED.updated_at
 		`), r.ID, r.Name, r.Extension, r.MimeType, r.FilePath,
 				r.FilePath, r.ContentHash, r.ContentHash, ownerID,
-				"go_ingest", "{}", -1, r.FileSize, now, now)
+				"go_ingest", "{}", tags, -1, r.FileSize, now, now)
 			if err != nil {
 				return written, fmt.Errorf("insert data %s: %w", r.ID, err)
 			}
