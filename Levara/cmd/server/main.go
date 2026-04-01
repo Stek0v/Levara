@@ -58,6 +58,7 @@ import (
 	vectorGrpc "github.com/stek0v/cognevra/internal/grpc"
 	"github.com/stek0v/cognevra/internal/store"
 	"github.com/stek0v/cognevra/pkg/embed"
+	"github.com/stek0v/cognevra/pkg/ingest"
 	"github.com/stek0v/cognevra/pkg/graphdb"
 	"github.com/stek0v/cognevra/pkg/llm"
 	"github.com/stek0v/cognevra/pkg/llmcache"
@@ -298,6 +299,7 @@ func main() {
 	if dbProvider == "sqlite" {
 		// SQLite mode: pure-Go, no CGO, ARM64 ready (Raspberry Pi)
 		vectorHttp.SetDBProvider(vectorHttp.DBSQLite)
+		ingest.SetSQLiteMode(true)
 		dbPath := os.Getenv("DB_PATH")
 		if dbPath == "" {
 			dbPath = filepath.Join(*dataDir, "levara.db")
