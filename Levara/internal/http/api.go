@@ -345,16 +345,37 @@ func addHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		datasetName := c.FormValue("datasetName")
 		datasetID := c.FormValue("datasetId")
-		if datasetName == "" {
-			datasetName = "default"
-		}
 
 		form, err := c.MultipartForm()
 		if err != nil {
-			// Try as text body or URL
+			// Try as JSON or text body
 			body := c.Body()
 			if len(body) > 0 {
 				bodyStr := string(body)
+
+				// Parse JSON body for dataset_name
+				if c.Get("Content-Type") == "application/json" {
+					var jsonBody struct {
+						Data        string `json:"data"`
+						DatasetName string `json:"dataset_name"`
+						DatasetID   string `json:"dataset_id"`
+					}
+					if c.BodyParser(&jsonBody) == nil {
+						if jsonBody.Data != "" {
+							bodyStr = jsonBody.Data
+						}
+						if jsonBody.DatasetName != "" {
+							datasetName = jsonBody.DatasetName
+						}
+						if jsonBody.DatasetID != "" {
+							datasetID = jsonBody.DatasetID
+						}
+					}
+				}
+
+				if datasetName == "" {
+					datasetName = "default"
+				}
 				// URL detection: fetch content from URL
 				if fetch.IsURL(strings.TrimSpace(bodyStr)) {
 					var fetchedText string
@@ -387,6 +408,9 @@ func addHandler(cfg APIConfig) fiber.Handler {
 			return c.Status(400).JSON(fiber.Map{"detail": "no data provided"})
 		}
 
+		if datasetName == "" {
+			datasetName = "default"
+		}
 		files := form.File["data"]
 		if len(files) == 0 {
 			return c.Status(400).JSON(fiber.Map{"detail": "no files uploaded"})

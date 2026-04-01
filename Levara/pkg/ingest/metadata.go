@@ -4,11 +4,41 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib" // pgx via database/sql
 )
+
+// sqlQ translates PostgreSQL placeholders to SQLite when needed.
+// Mirrors internal/http/sqlcompat.go Q() but avoids circular import.
+var sqliteMode bool
+
+func SetSQLiteMode(v bool) { sqliteMode = v }
+
+func q(query string) string {
+	if !sqliteMode {
+		return query
+	}
+	// Replace $N with ?
+	result := make([]byte, 0, len(query))
+	for i := 0; i < len(query); i++ {
+		if query[i] == '$' && i+1 < len(query) && query[i+1] >= '1' && query[i+1] <= '9' {
+			result = append(result, '?')
+			i++ // skip digit
+			for i+1 < len(query) && query[i+1] >= '0' && query[i+1] <= '9' {
+				i++ // skip multi-digit
+			}
+		} else {
+			result = append(result, query[i])
+		}
+	}
+	s := string(result)
+	s = strings.ReplaceAll(s, "NOW()", "CURRENT_TIMESTAMP")
+	s = strings.ReplaceAll(s, "now()", "CURRENT_TIMESTAMP")
+	return s
+}
 
 // MetadataWriter writes ingestion metadata to PostgreSQL.
 // Replaces Python's 6 separate SQLAlchemy round-trips with 1-2 batch INSERTs.
@@ -62,12 +92,13 @@ func (w *MetadataWriter) WriteMetadata(ctx context.Context, results []Result, ow
 
 	// Ensure dataset exists
 	if datasetID != "" && datasetName != "" {
-		_, err = tx.ExecContext(ctx, `
+		_, err = tx.ExecContext(ctx, q(`
 			INSERT INTO datasets (id, name, owner_id, created_at, updated_at)
 			VALUES ($1, $2, $3, NOW(), NOW())
 			ON CONFLICT (id) DO NOTHING
-		`, datasetID, datasetName, ownerID)
+		`), datasetID, datasetName, ownerID)
 		if err != nil {
+			log.Printf("[ingest] upsert dataset error: %v", err)
 			return 0, fmt.Errorf("upsert dataset: %w", err)
 		}
 	}
@@ -81,7 +112,7 @@ func (w *MetadataWriter) WriteMetadata(ctx context.Context, results []Result, ow
 			continue // skip duplicates
 		}
 
-		_, err = tx.ExecContext(ctx, `
+		_, err = tx.ExecContext(ctx, q(`
 			INSERT INTO data (id, name, extension, mime_type, raw_data_location,
 				original_data_location, content_hash, raw_content_hash, owner_id,
 				loader_engine, pipeline_status, token_count, data_size, created_at, updated_at)
@@ -92,7 +123,7 @@ func (w *MetadataWriter) WriteMetadata(ctx context.Context, results []Result, ow
 				raw_data_location = EXCLUDED.raw_data_location,
 				data_size = EXCLUDED.data_size,
 				updated_at = EXCLUDED.updated_at
-		`, r.ID, r.Name, r.Extension, r.MimeType, r.FilePath,
+		`), r.ID, r.Name, r.Extension, r.MimeType, r.FilePath,
 			r.FilePath, r.ContentHash, r.ContentHash, ownerID,
 			"go_ingest", "{}", -1, r.FileSize, now, now)
 		if err != nil {
@@ -102,11 +133,11 @@ func (w *MetadataWriter) WriteMetadata(ctx context.Context, results []Result, ow
 
 		// Link to dataset
 		if datasetID != "" {
-			_, _ = tx.ExecContext(ctx, `
+			_, _ = tx.ExecContext(ctx, q(`
 				INSERT INTO dataset_data (dataset_id, data_id)
 				VALUES ($1, $2)
 				ON CONFLICT DO NOTHING
-			`, datasetID, r.ID)
+			`), datasetID, r.ID)
 		}
 	}
 
