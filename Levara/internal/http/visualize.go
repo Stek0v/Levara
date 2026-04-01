@@ -226,20 +226,46 @@ func generateVisualizationHTML(result graphdb.GraphReadResult) string {
 	}
 	nodesJSON.WriteString("]")
 
-	// Build edges JSON
+	// Build edges JSON — resolve source/target to valid node IDs.
+	// graph_edges may store names instead of UUIDs; map name→id as fallback.
+	nodeIDs := make(map[string]bool, len(result.Nodes))
+	nameToID := make(map[string]string, len(result.Nodes))
+	for _, n := range result.Nodes {
+		nodeIDs[n.ID] = true
+		if name, ok := n.Properties["name"].(string); ok && name != "" {
+			nameToID[name] = n.ID
+		}
+	}
+	resolveID := func(ref string) (string, bool) {
+		if nodeIDs[ref] {
+			return ref, true
+		}
+		if id, ok := nameToID[ref]; ok {
+			return id, true
+		}
+		return "", false
+	}
+
 	var edgesJSON strings.Builder
 	edgesJSON.WriteString("[")
-	for i, e := range result.Edges {
-		if i > 0 {
+	validEdges := 0
+	for _, e := range result.Edges {
+		srcID, srcOK := resolveID(e.SourceID)
+		tgtID, tgtOK := resolveID(e.TargetID)
+		if !srcOK || !tgtOK || srcID == tgtID {
+			continue
+		}
+		if validEdges > 0 {
 			edgesJSON.WriteString(",")
 		}
 		fmt.Fprintf(&edgesJSON, `{"source":"%s","target":"%s","label":"%s"}`,
-			escapeJS(e.SourceID), escapeJS(e.TargetID), escapeJS(e.RelationshipType))
+			escapeJS(srcID), escapeJS(tgtID), escapeJS(e.RelationshipType))
+		validEdges++
 	}
 	edgesJSON.WriteString("]")
 
 	nodeCount := fmt.Sprintf("%d", len(result.Nodes))
-	edgeCount := fmt.Sprintf("%d", len(result.Edges))
+	edgeCount := fmt.Sprintf("%d", validEdges)
 
 	html := strings.ReplaceAll(htmlTemplate, "{{NODES_DATA}}", nodesJSON.String())
 	html = strings.ReplaceAll(html, "{{EDGES_DATA}}", edgesJSON.String())
