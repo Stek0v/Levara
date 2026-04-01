@@ -328,7 +328,10 @@ svg{width:100vw;height:100vh;display:block}
 #detail .key{color:#64748b;min-width:80px;flex-shrink:0}
 #detail .val{color:#e2e8f0;word-break:break-word}
 #legend{position:fixed;bottom:20px;left:20px;background:rgba(15,15,20,0.9);border:1px solid #2d2d3d;border-radius:10px;padding:12px 16px;z-index:10;display:flex;gap:12px;flex-wrap:wrap;max-width:600px}
-.leg-item{display:flex;align-items:center;gap:5px;font-size:11px;color:#94a3b8}
+.leg-item{display:flex;align-items:center;gap:5px;font-size:11px;color:#94a3b8;cursor:pointer;padding:2px 6px;border-radius:6px;transition:all 0.2s}
+.leg-item:hover{background:rgba(255,255,255,0.1)}
+.leg-item.active{background:rgba(139,92,246,0.25);color:#e2e8f0}
+.leg-item.dimmed{opacity:0.3}
 .leg-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
 #hint{position:fixed;bottom:20px;right:20px;font-size:11px;color:#475569;z-index:10}
 </style>
@@ -356,14 +359,36 @@ const TC = {
 function color(t){return TC[t]||"#"+((Math.abs(hash(t))&0xFFFFFF).toString(16)).padStart(6,"0")}
 function hash(s){let h=0;for(let i=0;i<s.length;i++)h=((h<<5)-h)+s.charCodeAt(i);return h}
 
-// Build legend
+// Build legend with click-to-filter
 const types={};nodes.forEach(n=>{types[n.type]=(types[n.type]||0)+1});
 const leg=document.getElementById("legend");
+let activeFilter=null;
+const legItems=[];
 Object.entries(types).sort((a,b)=>b[1]-a[1]).forEach(([t,c])=>{
-  const d=document.createElement("div");d.className="leg-item";
+  const d=document.createElement("div");d.className="leg-item";d.dataset.type=t;
   d.innerHTML='<div class="leg-dot" style="background:'+color(t)+'"></div>'+t+' ('+c+')';
-  leg.appendChild(d);
+  d.onclick=()=>{
+    if(activeFilter===t){activeFilter=null}else{activeFilter=t}
+    applyFilter();
+  };
+  leg.appendChild(d);legItems.push(d);
 });
+function applyFilter(){
+  legItems.forEach(li=>{
+    li.classList.remove("active","dimmed");
+    if(activeFilter){li.classList.add(li.dataset.type===activeFilter?"active":"dimmed")}
+  });
+  if(typeof node!=="undefined"){
+    node.attr("opacity",d=>!activeFilter||d.type===activeFilter?1:0.08);
+    label.attr("opacity",d=>!activeFilter||d.type===activeFilter?1:0.05);
+    link.attr("opacity",l=>{
+      if(!activeFilter)return 0.5;
+      const s=typeof l.source==="object"?l.source:nodes.find(n=>n.id===l.source);
+      const t=typeof l.target==="object"?l.target:nodes.find(n=>n.id===l.target);
+      return(s&&s.type===activeFilter)||(t&&t.type===activeFilter)?0.8:0.03;
+    });
+  }
+}
 
 const W=window.innerWidth,H=window.innerHeight;
 const svg=d3.select("body").append("svg").attr("viewBox",[0,0,W,H]);
