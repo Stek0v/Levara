@@ -1,0 +1,23 @@
+{
+  "test_id": "A3_search_llava_mac",
+  "model": "llava:7b",
+  "model_name": "llava",
+  "platform": "mac",
+  "test_type": "vision_ocr",
+  "image": "A3_search.png",
+  "image_size_bytes": 150091,
+  "timestamp": "2026-04-01T12:02:00.064549+00:00",
+  "timing": {
+    "total_seconds": 85.89
+  },
+  "memory": {
+    "before_mb": 0,
+    "after_mb": 0
+  },
+  "result": {
+    "extracted_text": " The image displays a computer screen with a Discord server interface. The visible text is too small to read clearly, but I can provide the general layout and content of the displayed elements:\n\n- There are user profile icons on the left side, indicating different users participating in the conversation or channels within the server.\n- The central area shows messages from various users, each with a name, timestamp, message text, and reactions (such as likes and mentions).\n- Some of the visible messages include:\n  - \"JOHN\" followed by a message that is too small to read clearly, with a reaction count indicating more than 10 reactions.\n  - Other user names like \"ABC,\" \"XYZ,\" \"JANE DOE,\" and \"KATIE,\" followed by messages that are not entirely legible due to the size of the text.\n- The right side of the screen contains a list of channels within the server, with visible channel names like \"#general\" and \"#announcements.\"\n- There is also a search bar at the top center of the interface, which allows users to search for specific messages or members.\n- At the bottom of the screen, there are buttons that likely represent other features such as settings, emojis, or user profiles.\n\nThe overall structure suggests a chat interface where members can communicate within different channels, with threaded conversations, reactions, and moderation tools accessible to the server owner or moderators. The image does not contain any clear text that can be transcribed accurately due to its small size in the image provided. ",
+    "text_length": 1523,
+    "word_count": 252,
+    "is_error": false
+  }
+}

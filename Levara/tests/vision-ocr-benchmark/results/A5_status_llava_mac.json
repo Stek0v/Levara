@@ -1,0 +1,23 @@
+{
+  "test_id": "A5_status_llava_mac",
+  "model": "llava:7b",
+  "model_name": "llava",
+  "platform": "mac",
+  "test_type": "vision_ocr",
+  "image": "A5_status.png",
+  "image_size_bytes": 119819,
+  "timestamp": "2026-04-01T12:03:31.542416+00:00",
+  "timing": {
+    "total_seconds": 52.64
+  },
+  "memory": {
+    "before_mb": 0,
+    "after_mb": 0
+  },
+  "result": {
+    "extracted_text": " The image appears to be a screenshot of a web interface showing a list of status updates or service tickets with various fields and information. Here is the extracted text in a structured format:\n\n**Table 1: Ticket List**\n\n| Status          | Category       | Assigned To      | Resolution Status |\n|-----------------|----------------|-----------------|--------------------|\n| Completed         | Service Request   | John Doe       | Completed        |\n| In Progress     | Bug Report       | Jane Smith    | In Progress     |\n| Open              | Maintenance Request   | Alex Johnson  | Not Started      |\n| Open              | Feature Request   | Tom Williams   | Under Review      |\n\nPlease note that the image is blurry, and some details are not clear enough to accurately transcribe. Additionally, there is a watermark in the top right corner, but it's too small to read. The text \"123456789\" appears at the bottom of the interface, which could be part of a login or serial number system within the application. ",
+    "text_length": 1018,
+    "word_count": 155,
+    "is_error": false
+  }
+}

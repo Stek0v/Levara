@@ -1,0 +1,23 @@
+{
+  "test_id": "A1_dashboard_minicpm-v_mac",
+  "model": "minicpm-v:8b",
+  "model_name": "minicpm-v",
+  "platform": "mac",
+  "test_type": "vision_ocr",
+  "image": "A1_dashboard.png",
+  "image_size_bytes": 104755,
+  "timestamp": "2026-04-01T12:10:47.058265+00:00",
+  "timing": {
+    "total_seconds": 88.61
+  },
+  "memory": {
+    "before_mb": 0,
+    "after_mb": 0
+  },
+  "result": {
+    "extracted_text": "Title: Levara Dashboard\n\nSubtitle: Levara Knowledge Graph Engine overview\n\nSection Headers:\n- Explorer\n  - Dataset\n    - tagged-docs (1)\n      - dedup-Y (1)\n        - collections: Tripletext_test, _memories, _memories_qvant, _memories_qvqant, pipeline-test-col, pipeline-test-col-2, pipeline-test-col-3\n      - dedup-X (0)\n    - dedup-A (1)\n\nCollection:\n  - Books (1): test-webui-upload\n\nCollection:\n  - Books (1): books\n\nCollection:\n  - Books (1): pipeline-test\n\nCollection:\n  - Books (6): books\n\nCollection:\n  - Books: _memories_qvqant, _memories_qvqant-2, pipeline-test-col-3\n\nCollection Count:\n  - Collections: Tripletext_test: _memories, _memories_qvant, _memories_qvqant, _memories_qvqant-2, pipeline-test-col, pipeline-test-col-1\n    Total Records: records\n    Dimension: dimension\n    Model: model\n\nCollection Count:\n  - Collections: books\n    Total Records: total records\n    Dimension: dimension\n    Model: model\n\nCollection Count:\n  - Collections: Books (6)\n    Total Records: records\n    Dimension: dimension\n    Model: model\n\nCollection Count:\n  - Collections: Books: _memories_qvqant, _memories_qvqant-2, pipeline-test-col-3\n    Total Records: total records\n    Dimension: dimension\n    Model: model\n\nSection Headers:\n- Dashboard\n- Memory\n- Collection (7)\n- Session (60)\n\nStatistics Summary:\n- Dataset count: 141 (19 unique datasets)\n- Memory Count: 97 (85 unique memories, including deleted ones)\n- Collection Count: 7 (collections created for a single dataset can be seen under Collections by collection names)\n- Session Count: 60\n\nFooter Navigation Tabs:\n- Search\n- Graph\n- Collections\n- Status",
+    "text_length": 1611,
+    "word_count": 186,
+    "is_error": false
+  }
+}

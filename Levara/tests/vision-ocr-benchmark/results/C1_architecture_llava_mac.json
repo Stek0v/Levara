@@ -1,0 +1,23 @@
+{
+  "test_id": "C1_architecture_llava_mac",
+  "model": "llava:7b",
+  "model_name": "llava",
+  "platform": "mac",
+  "test_type": "vision_ocr",
+  "image": "C1_architecture.png",
+  "image_size_bytes": 26115,
+  "timestamp": "2026-04-01T12:08:50.622584+00:00",
+  "timing": {
+    "total_seconds": 74.0
+  },
+  "memory": {
+    "before_mb": 0,
+    "after_mb": 0
+  },
+  "result": {
+    "extracted_text": " The image displays a graphic with various elements that appear to represent a data or information structure. At the top left, there is a label that reads \"LEVERS SYSTEM ARCHITECTURE.\" Below this, in the center of the image, there are six boxes connected by arrows, suggesting a flow or relationship between different components. The boxes contain the following text:\n\n- On the far left, there's a box with \"API_1\" written on it.\n- Next to it, there is another box labeled \"API_2.\"\n- In the middle, there is a box that says \"HTTP/APP.\"\n- The fourth box in the sequence reads \"SSO.\"\n- Following SSO, there's a box labeled \"SQLite.\"\n- The last box on the right contains \"Docker + Kubernetes\" written on it.\n\nThe arrows suggest a flow or sequence of operations from API_1 through Docker and Kubernetes. On the right side of the image, there are additional details:\n\n- Underneath the SQLite box, there is an arrow pointing down to another box labeled \"MYSQL.\"\n- To the left of the SQLite box, a label reads \"HTTP/APP.\"\n- Below the HTTP/APP label, there are two boxes. The one on the right says \"NGINX,\" and the one on the left says \"Docker + Kubernetes.\"\n- To the left of the Docker + Kubernetes box, there's a box labeled \"API_1.\"\n- Next to it, there is another box that says \"API_2.\"\n\nThe background of the graphic is beige with text boxes on top. The image has a light brown border and the overall style appears to be a simple, diagrammatic representation commonly used in IT or software development to illustrate system architecture. ",
+    "text_length": 1534,
+    "word_count": 271,
+    "is_error": false
+  }
+}

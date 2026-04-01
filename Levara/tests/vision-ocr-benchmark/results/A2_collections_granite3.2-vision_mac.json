@@ -1,0 +1,23 @@
+{
+  "test_id": "A2_collections_granite3.2-vision_mac",
+  "model": "granite3.2-vision:2b",
+  "model_name": "granite3.2-vision",
+  "platform": "mac",
+  "test_type": "vision_ocr",
+  "image": "A2_collections.png",
+  "image_size_bytes": 93580,
+  "timestamp": "2026-04-01T11:37:40.857022+00:00",
+  "timing": {
+    "total_seconds": 69.41
+  },
+  "memory": {
+    "before_mb": 0,
+    "after_mb": 0
+  },
+  "result": {
+    "extracted_text": "\n<tool_call>[{\"arguments\": {\"include\": \"NAME,RECORDS,DIMENSION,MODEL\", \"exclude\": \"DIMENSION,MODEL\"}, \"name\": \"table_rows\"}]",
+    "text_length": 124,
+    "word_count": 7,
+    "is_error": false
+  }
+}

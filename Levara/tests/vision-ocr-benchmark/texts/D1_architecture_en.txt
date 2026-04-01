@@ -1,0 +1,1 @@
+Levara is a knowledge graph engine built in Go. It uses HNSW indexing with WAL durability for vector search. The system supports 22 MCP tools and runs on both Mac (M2 Air) and Raspberry Pi 5. The embedding model is nomic-embed-text-v2-moe (768 dimensions), and entity extraction uses Qwen3 0.6b via Ollama.

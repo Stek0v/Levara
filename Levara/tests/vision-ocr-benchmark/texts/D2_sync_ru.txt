@@ -1,0 +1,1 @@
+Синхронизация между нодами Levara выполняется через REST API endpoints export/import. Mac (localhost:8081) экспортирует memories, interactions и graph данные, а Pi (10.23.0.53:8080) импортирует их. После импорта автоматически запускается re-embedding через nomic-embed-text-v2-moe для обновления векторных индексов.

@@ -1,0 +1,19 @@
+{
+  "test_id": "D1_architecture_en_qwen3-0.6b_mac",
+  "model": "qwen3:0.6b",
+  "model_name": "qwen3-0.6b",
+  "platform": "mac",
+  "test_type": "entity_extraction",
+  "text_file": "D1_architecture_en.txt",
+  "source_text_length": 307,
+  "timestamp": "2026-04-01T12:31:11.332504+00:00",
+  "timing": {
+    "total_seconds": 28.22
+  },
+  "result": {
+    "response": "```json\n{\n  \"entities\": [\n    {\n      \"name\": \". Levara\",\n      \"type\": \"knowledge graph engine\"\n    }\n  ],\n  \"relationships\": [\n    {\n      \"from\": \". Levara\",\n      \"to\": \"HNSW indexing\",\n      \"type\": \"features\"\n    },\n    {\n      \"from\": \". Levara\",\n      \"to\": \"WAL durability\",\n      \"type\": \"features\"\n    },\n    {\n      \"from\": \". Levara\",\n      \"to\": \"22 MCP tools\",\n      \"type\": \"features\"\n    },\n    {\n      \"from\": \". Levara\",\n      \"to\": \"Mac (M2 Air)\",\n      \"type\": \"hardware\"\n    },\n    {\n      \"from\": \". Levara\",\n      \"to\": \"Raspberry Pi 5\",\n      \"type\": \"hardware\"\n    },\n    {\n      \"from\": \". Levara\",\n      \"to\": \"nomic-embed-text-v2-moe\",\n      \"type\": \"embedding model\"\n    },\n    {\n      \"from\": \". Levara\",\n      \"to\": \"Qwen3 0.6b\",\n      \"type\": \"entity extraction\"\n    }\n  ]\n}\n```",
+    "json_valid": true,
+    "entities_count": 1,
+    "relationships_count": 7
+  }
+}

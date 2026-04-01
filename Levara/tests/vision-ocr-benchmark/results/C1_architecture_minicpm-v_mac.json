@@ -1,0 +1,23 @@
+{
+  "test_id": "C1_architecture_minicpm-v_mac",
+  "model": "minicpm-v:8b",
+  "model_name": "minicpm-v",
+  "platform": "mac",
+  "test_type": "vision_ocr",
+  "image": "C1_architecture.png",
+  "image_size_bytes": 26115,
+  "timestamp": "2026-04-01T12:17:58.097028+00:00",
+  "timing": {
+    "total_seconds": 48.74
+  },
+  "memory": {
+    "before_mb": 0,
+    "after_mb": 0
+  },
+  "result": {
+    "extracted_text": "**Title:**\nLevara System Architecture\n\n---\n\n**Section 1:**\n\n- **HTTP API**\n  - Fiber v2 Port 8081\n\n- -> \n\n- **HNSW Engine**\n  - 3 Shards\n  - dim=768\n\n->\n\n- **SQLite**\n  - WAL mode Metadata\n\n---\n\n**Section 2:**\n\n- **Ollama**\n  - nomic-embed + qwen3 (in purple box)\n\n- -> \n\n- **MCP Server**\n  - 22 tools\n  - in pink box with magenta and blue colors\n\n-> \n\n- **Sync**\n  - Mac ⬅️ P1 (in cyan arrow pointing to the right)",
+    "text_length": 415,
+    "word_count": 75,
+    "is_error": false
+  }
+}

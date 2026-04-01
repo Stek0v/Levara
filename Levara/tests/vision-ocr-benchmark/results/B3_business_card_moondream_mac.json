@@ -1,0 +1,23 @@
+{
+  "test_id": "B3_business_card_moondream_mac",
+  "model": "moondream:1.8b",
+  "model_name": "moondream",
+  "platform": "mac",
+  "test_type": "vision_ocr",
+  "image": "B3_business_card.png",
+  "image_size_bytes": 44143,
+  "timestamp": "2026-04-01T11:23:35.639921+00:00",
+  "timing": {
+    "total_seconds": 4.92
+  },
+  "memory": {
+    "before_mb": 0,
+    "after_mb": 0
+  },
+  "result": {
+    "extracted_text": "\nLEVANA SYSTEMS",
+    "text_length": 15,
+    "word_count": 2,
+    "is_error": false
+  }
+}

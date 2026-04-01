@@ -1,0 +1,209 @@
+[
+  {
+    "test_id": "A1_dashboard_minicpm-v_mac",
+    "model": "minicpm-v:8b",
+    "model_name": "minicpm-v",
+    "platform": "mac",
+    "test_type": "vision_ocr",
+    "image": "A1_dashboard.png",
+    "image_size_bytes": 104755,
+    "timestamp": "2026-04-01T12:10:47.058265+00:00",
+    "timing": {
+      "total_seconds": 88.61
+    },
+    "memory": {
+      "before_mb": 0,
+      "after_mb": 0
+    },
+    "result": {
+      "extracted_text": "Title: Levara Dashboard\n\nSubtitle: Levara Knowledge Graph Engine overview\n\nSection Headers:\n- Explorer\n  - Dataset\n    - tagged-docs (1)\n      - dedup-Y (1)\n        - collections: Tripletext_test, _memories, _memories_qvant, _memories_qvqant, pipeline-test-col, pipeline-test-col-2, pipeline-test-col-3\n      - dedup-X (0)\n    - dedup-A (1)\n\nCollection:\n  - Books (1): test-webui-upload\n\nCollection:\n  - Books (1): books\n\nCollection:\n  - Books (1): pipeline-test\n\nCollection:\n  - Books (6): books\n\nCollection:\n  - Books: _memories_qvqant, _memories_qvqant-2, pipeline-test-col-3\n\nCollection Count:\n  - Collections: Tripletext_test: _memories, _memories_qvant, _memories_qvqant, _memories_qvqant-2, pipeline-test-col, pipeline-test-col-1\n    Total Records: records\n    Dimension: dimension\n    Model: model\n\nCollection Count:\n  - Collections: books\n    Total Records: total records\n    Dimension: dimension\n    Model: model\n\nCollection Count:\n  - Collections: Books (6)\n    Total Records: records\n    Dimension: dimension\n    Model: model\n\nCollection Count:\n  - Collections: Books: _memories_qvqant, _memories_qvqant-2, pipeline-test-col-3\n    Total Records: total records\n    Dimension: dimension\n    Model: model\n\nSection Headers:\n- Dashboard\n- Memory\n- Collection (7)\n- Session (60)\n\nStatistics Summary:\n- Dataset count: 141 (19 unique datasets)\n- Memory Count: 97 (85 unique memories, including deleted ones)\n- Collection Count: 7 (collections created for a single dataset can be seen under Collections by collection names)\n- Session Count: 60\n\nFooter Navigation Tabs:\n- Search\n- Graph\n- Collections\n- Status",
+      "text_length": 1611,
+      "word_count": 186,
+      "is_error": false
+    }
+  },
+  {
+    "test_id": "A2_collections_minicpm-v_mac",
+    "model": "minicpm-v:8b",
+    "model_name": "minicpm-v",
+    "platform": "mac",
+    "test_type": "vision_ocr",
+    "image": "A2_collections.png",
+    "image_size_bytes": 93580,
+    "timestamp": "2026-04-01T12:11:43.239379+00:00",
+    "timing": {
+      "total_seconds": 56.15
+    },
+    "memory": {
+      "before_mb": 0,
+      "after_mb": 0
+    },
+    "result": {
+      "extracted_text": "**Title:**\nLevara\n\n**Menu:**\n- Dashboard\n- Search\n- Graph\n- Collections (selected)\n- Status\n\n**Tabs:**\nExplorer\n- DATASETS 9\n- tagged-dup-Y (1)\n- dedup-WY (1)\n- dedup-XZ (0)\n- dedup-WX (1)\n- pipeline-test_xxx (1)\n- books_xxxx (1)\n- test-webui-upload_xx (8)\n- levara-docs_xxxx (1)\n\n**Main Content:**\nCollections\nManage vector collections in Levara\n\n| NAME                | RECORDS | DIMENSION | MODEL   |\n|---------------------|---------|-----------|---------|\n| Triplet_text        | 4       | 768       | ---     |\n| _memories           | 97      | 768       | ---     |\n| _memories_default   | 18      | 768       | ---     |\n| _memories_qvant     | 8       | 768       | ---     |\n| _memories Humboldt   | ?       | ?         | ---     |\n\n**Actions:**\n- Delete (button)\n",
+      "text_length": 773,
+      "word_count": 111,
+      "is_error": false
+    }
+  },
+  {
+    "test_id": "A3_search_minicpm-v_mac",
+    "model": "minicpm-v:8b",
+    "model_name": "minicpm-v",
+    "platform": "mac",
+    "test_type": "vision_ocr",
+    "image": "A3_search.png",
+    "image_size_bytes": 150091,
+    "timestamp": "2026-04-01T12:13:23.889904+00:00",
+    "timing": {
+      "total_seconds": 100.62
+    },
+    "memory": {
+      "before_mb": 0,
+      "after_mb": 0
+    },
+    "result": {
+      "extracted_text": "**Title:**\nLevara\n\n**Menu Tabs:**\n- Dashboard\n- Search\n- Graph\n- Collections\n- Status\n\n**User Information Section:**\n- Explorer\n  - Datasets: 9\n    - tagged-docs (1)\n    - dedup-Y (0)\n    - dedup-C (1)\n    - dedup-B (0)\n    - dedup-A (1)\n    - pipeline-test (2)\n    - books (4)\n    - test-webui-upload (3)\n    - levara-docs (1)\n  - Collections: 7\n    - Tripletext_test (6)\n    _memories (95) \n    _memories_default (18)\n    _memories_qvont (20)\n    _memories_ub (2)\n    pipeline-test-col (3)\n- Knowledge Graph\n\n**Sidebar Filters:**\n- AUTO | Low relevance - 24%\n- Collection\n- Project + Collection\n- Knowledge Graph Relationship: project -> collection\n\n**Search Results Section:**\n- Found 5 results in 1.28 sec.\n  **Knowledge Graph**\n    - User Profile [Low relevance]\n      - Knownledge Graph, Project → Collection (1)\n        - Collection → Project\n          - Embedded Server → Cognegra\n            - Knowledge Graph Relationship: project -> collection\n\n**Highlighted Results:**\n- Low relevance - 24%\n  - Knownledge Graph Relationship: project + collection\n    - Knowledge Graph relationship: collection —> project\n\n**User Profile Section:**\n- **Knowledge Graph Relationship: Collection » Project**\n\n**Profile Summary:** \n- Senior developer building Levara (ex-Cogenvra) | production vector DB combining Go HNSW with Cognee AI platform. Comfortable with Go, Python, gRPC, Docker.\n  - Prefers: Russian for communication, fast iteration (approve and build), parallel subagent execution, benchmark-driven development...\n- Low relevance –17%\n  **Clear Data » Collection**\n    - Relationship: clear_data → collection\n\n**Profile Details:** \n- Developer\n  - Name: Levara ex-Cogenvra | production vector DB combining Go HNSW with Cognee AI platform.\n  - Comfortable with Go, Python, gRPC, Docker. Prefers: Russian for communication, fast iteration (approve and build), parallel subagent execution, benchmark-driven development...\n- **Graph**\n  - Low relevance –17%\n    - Knowledge Graph Relationship: clear_data → collection\n- **Collection:** \n  - Low relevance –33%\n\n**Profile Status:**\n- User Profile\n\n**Search Bar Placeholder:**\n- Search your knowledge graph...\n\n(Note: The text is transcribed as it appears in the image, including any potential errors or inconsistencies.)",
+      "text_length": 2270,
+      "word_count": 303,
+      "is_error": false
+    }
+  },
+  {
+    "test_id": "A4_graph_minicpm-v_mac",
+    "model": "minicpm-v:8b",
+    "model_name": "minicpm-v",
+    "platform": "mac",
+    "test_type": "vision_ocr",
+    "image": "A4_graph.png",
+    "image_size_bytes": 63148,
+    "timestamp": "2026-04-01T12:14:15.051370+00:00",
+    "timing": {
+      "total_seconds": 51.13
+    },
+    "memory": {
+      "before_mb": 0,
+      "after_mb": 0
+    },
+    "result": {
+      "extracted_text": "**Title:**\nLevara Graph\n\n**Body Text:**\nNodes: 97  \nEdges: 41  \n\n**Graph Nodes and Edges:**\n\n- levara\n- deploy-stage.yml\n- deploy-prod.yml\n- compare-databases.sh\n- switch-blue-green.sh\n- telegramNotify.sh\n\n**Legend/Color Key (Entity Types):**\n- Entity Type (59)\n- component (6)\n- function (4)\n- collection (4)\n- Component (3)\n\n**Entity Types:**\n- project (3)\n- GPU (2)\n- Service (2)\n- AI assistant platformrm\n- Digital Assistant (1)\n- TemporalEvent (1)\n- Unit (1)\n- string (1)\n- array (1)\n- dict (1)\n- product (1)\n- score_model (1)\n- Entity (1)\n- script (1)\n- configuration (1)\n- commands (1)\n- document (1)\n\n**Navigation Menu:**\nDrag to pan • Scroll to zoom • Click nodes\n\n**Footer Text:**\nmonitor.sh",
+      "text_length": 701,
+      "word_count": 115,
+      "is_error": false
+    }
+  },
+  {
+    "test_id": "A5_status_minicpm-v_mac",
+    "model": "minicpm-v:8b",
+    "model_name": "minicpm-v",
+    "platform": "mac",
+    "test_type": "vision_ocr",
+    "image": "A5_status.png",
+    "image_size_bytes": 119819,
+    "timestamp": "2026-04-01T12:15:25.078988+00:00",
+    "timing": {
+      "total_seconds": 69.97
+    },
+    "memory": {
+      "before_mb": 0,
+      "after_mb": 0
+    },
+    "result": {
+      "extracted_text": "Title: Levara\n\nSection Title: Service Status\nSubtitle: Health of all of Levara platform form services (auto-refresh 15s)\n\nTable:\n- Column Headers: NAME, STATUS, Status Description\n- Rows:\n  - name: Levana Backend,\n    status: Connected,\n    description: Go HNSW + WAL engine\n    \n  - name: collections,\n    status: Ready,\n    \n  - name: Embedded Server\n    model: pplx-embed-context-v1 (dim=1024)\n    status: Connected,\n    description: Model: nomic-embed-text-v2-moe http://localhost:11434/v1/embeddings\n    \n  - name: grpc,\n    status: Listening,\n    \n  - name: LLM (Ollama),\n    model: Qwen 3.5 local inference\n    qwen:3.0.6b,\n    status: Connected,\n    description: http://localhost:11434/v1\n    \n  - name: Neo4j,\n    model: Graph database\n    status: Not_configured,\n    \n- Other Section Headers:\n  - Explorer\n  - Dashboards\n  - Search\n  - Graph\n  - Collections\n  - Status\n\nSidebar Menu (Left):\n- Dataset count: 9 datasets, tagged docs: 1 doc., dedup-Y (0), dedup-X (1), dedup-Z (1)\n- Collection counts:\n  - Books: collections, pipeline-test,\n    - pipeline-test-default: status Connected\n    - _memorRIES_test-col2_1: not connected\n    \n- Collection types and numbers:\n  - N: Dataset count for each type\n\nFooter:\nNetwork logo with the word \"N\" inside a circular network icon.",
+      "text_length": 1282,
+      "word_count": 157,
+      "is_error": false
+    }
+  },
+  {
+    "test_id": "B1_book_page_minicpm-v_mac",
+    "model": "minicpm-v:8b",
+    "model_name": "minicpm-v",
+    "platform": "mac",
+    "test_type": "vision_ocr",
+    "image": "B1_book_page.png",
+    "image_size_bytes": 59560,
+    "timestamp": "2026-04-01T12:16:02.796422+00:00",
+    "timing": {
+      "total_seconds": 37.69
+    },
+    "memory": {
+      "before_mb": 0,
+      "after_mb": 0
+    },
+    "result": {
+      "extracted_text": "**Title:**\nГлава 3. Архитектура системы\n\n**Body Text:**\nЛевара предполагает собойâu графду санзнии, realizeванный на йжце Го. Отличные комponенты системею включоя HNSW-индекс для дляektного посика, WAL (Write-Ahead Log) для обеспечения устойчивости данных, such как SQLite для хранения медаллынгих.\n\nСервер поддержкрав 22 инстрментов MCP ((Model Context Protocol)), ofereчая интер 页面 со сразумыними LLM-показателем через единый интер 页面.\n\n**Page Number:**\n47",
+      "text_length": 458,
+      "word_count": 58,
+      "is_error": false
+    }
+  },
+  {
+    "test_id": "B3_business_card_minicpm-v_mac",
+    "model": "minicpm-v:8b",
+    "model_name": "minicpm-v",
+    "platform": "mac",
+    "test_type": "vision_ocr",
+    "image": "B3_business_card.png",
+    "image_size_bytes": 44143,
+    "timestamp": "2026-04-01T12:16:25.988924+00:00",
+    "timing": {
+      "total_seconds": 23.17
+    },
+    "memory": {
+      "before_mb": 0,
+      "after_mb": 0
+    },
+    "result": {
+      "extracted_text": "**Company Logo:**\nLEVARA SYSTEMS\n\n**Name and Title:**\nАлексей Стеков  \nLead Developer & Architect\n\n**Contact Information:**\nalex@levara.dev  \n+7 (999) 123-45-67  \n\ngithub.com/stejk0v",
+      "text_length": 182,
+      "word_count": 20,
+      "is_error": false
+    }
+  },
+  {
+    "test_id": "B4_receipt_minicpm-v_mac",
+    "model": "minicpm-v:8b",
+    "model_name": "minicpm-v",
+    "platform": "mac",
+    "test_type": "vision_ocr",
+    "image": "B4_receipt.png",
+    "image_size_bytes": 27663,
+    "timestamp": "2026-04-01T12:17:09.254453+00:00",
+    "timing": {
+      "total_seconds": 43.18
+    },
+    "memory": {
+      "before_mb": 0,
+      "after_mb": 0
+    },
+    "result": {
+      "extracted_text": "```\nTitle: \nOOО \"ТЕХНО-СЕРВИС\"\n\nAddress:\nИНН 7707123456\n\nDate and Time:\nДата: 01.04.2026 14:32\nЧек №: 00847\n\nProduct List:\n\nSSD 1TB NVMe                - 8,490.00\nRAM DDR5 32GB                 - 12,350.00\nКабель USB-C 2m               - 890.00\n\nSummary:\nИТОГО: 21 730.00 руб\n\nBreakdown:\n\nВ чек. сроки НДС: 20% = 621,67 руб\n\nPayment Note:\nСпасибо за покупки!\n```",
+      "text_length": 361,
+      "word_count": 53,
+      "is_error": false
+    }
+  },
+  {
+    "test_id": "C1_architecture_minicpm-v_mac",
+    "model": "minicpm-v:8b",
+    "model_name": "minicpm-v",
+    "platform": "mac",
+    "test_type": "vision_ocr",
+    "image": "C1_architecture.png",
+    "image_size_bytes": 26115,
+    "timestamp": "2026-04-01T12:17:58.097028+00:00",
+    "timing": {
+      "total_seconds": 48.74
+    },
+    "memory": {
+      "before_mb": 0,
+      "after_mb": 0
+    },
+    "result": {
+      "extracted_text": "**Title:**\nLevara System Architecture\n\n---\n\n**Section 1:**\n\n- **HTTP API**\n  - Fiber v2 Port 8081\n\n- -> \n\n- **HNSW Engine**\n  - 3 Shards\n  - dim=768\n\n->\n\n- **SQLite**\n  - WAL mode Metadata\n\n---\n\n**Section 2:**\n\n- **Ollama**\n  - nomic-embed + qwen3 (in purple box)\n\n- -> \n\n- **MCP Server**\n  - 22 tools\n  - in pink box with magenta and blue colors\n\n-> \n\n- **Sync**\n  - Mac ⬅️ P1 (in cyan arrow pointing to the right)",
+      "text_length": 415,
+      "word_count": 75,
+      "is_error": false
+    }
+  }
+]

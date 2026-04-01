@@ -1,0 +1,2 @@
+v0.7.0 (2026-04-01): Fixed SQLite database pool death caused by fasthttp io.Closer auto-close on c.Locals. Added pipeline_status persistence, content dedup by hash+user, tags/node_set support. WebUI: upload zone, expandable datasets, Google-style search with filters.
+v0.6.0 (2026-03-28): Streamable HTTP MCP server, 16 tools, resources API, vector recall. Cross-project search with set_context and cross_search. Smart search router with 7 signal detectors.

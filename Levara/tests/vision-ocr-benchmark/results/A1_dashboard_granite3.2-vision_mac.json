@@ -1,0 +1,23 @@
+{
+  "test_id": "A1_dashboard_granite3.2-vision_mac",
+  "model": "granite3.2-vision:2b",
+  "model_name": "granite3.2-vision",
+  "platform": "mac",
+  "test_type": "vision_ocr",
+  "image": "A1_dashboard.png",
+  "image_size_bytes": 104755,
+  "timestamp": "2026-04-01T11:36:31.354214+00:00",
+  "timing": {
+    "total_seconds": 180.1
+  },
+  "memory": {
+    "before_mb": 0,
+    "after_mb": 0
+  },
+  "result": {
+    "extracted_text": "ERROR: timed out",
+    "text_length": 16,
+    "word_count": 0,
+    "is_error": true
+  }
+}
