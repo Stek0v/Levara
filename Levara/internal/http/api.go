@@ -166,11 +166,12 @@ func RegisterCogneeAPI(app fiber.Router, cfg APIConfig) {
 // ── U2: Datasets ──
 
 type DatasetDTO struct {
-	ID        string  `json:"id"`
-	Name      string  `json:"name"`
-	CreatedAt string  `json:"created_at"`
-	UpdatedAt *string `json:"updated_at"`
-	OwnerID   string  `json:"owner_id"`
+	ID          string  `json:"id"`
+	Name        string  `json:"name"`
+	CreatedAt   string  `json:"created_at"`
+	UpdatedAt   *string `json:"updated_at"`
+	OwnerID     string  `json:"owner_id"`
+	RecordCount int     `json:"record_count"`
 }
 
 func datasetsListHandler(cfg APIConfig) fiber.Handler {
@@ -192,13 +193,16 @@ func datasetsListHandler(cfg APIConfig) fiber.Handler {
 		}
 		if showAll {
 			rows, err = cfg.DB.QueryContext(context.Background(),
-				Q("SELECT id, name, created_at, COALESCE(owner_id,'') FROM datasets ORDER BY created_at DESC"))
+				Q(`SELECT d.id, d.name, d.created_at, COALESCE(d.owner_id,''), COUNT(dd.data_id)
+				 FROM datasets d LEFT JOIN dataset_data dd ON dd.dataset_id = d.id
+				 GROUP BY d.id ORDER BY d.created_at DESC`))
 		} else {
-			dsSQL, dsArgs := QArgs(`SELECT DISTINCT d.id, d.name, d.created_at, COALESCE(d.owner_id,'')
+			dsSQL, dsArgs := QArgs(`SELECT DISTINCT d.id, d.name, d.created_at, COALESCE(d.owner_id,''), COUNT(dd.data_id)
 				 FROM datasets d
 				 LEFT JOIN dataset_shares s ON s.dataset_id = d.id AND s.user_id = $1
+				 LEFT JOIN dataset_data dd ON dd.dataset_id = d.id
 				 WHERE d.owner_id = $1 OR d.owner_id = '' OR d.owner_id IS NULL OR s.id IS NOT NULL
-				 ORDER BY d.created_at DESC`, userID)
+				 GROUP BY d.id ORDER BY d.created_at DESC`, userID)
 			rows, err = cfg.DB.QueryContext(context.Background(), dsSQL, dsArgs...)
 		}
 		if err != nil {
@@ -209,9 +213,11 @@ func datasetsListHandler(cfg APIConfig) fiber.Handler {
 		var datasets []DatasetDTO
 		for rows.Next() {
 			var d DatasetDTO
-			var createdAt time.Time
-			rows.Scan(&d.ID, &d.Name, &createdAt, &d.OwnerID)
-			d.CreatedAt = createdAt.Format(time.RFC3339)
+			var createdAt string
+			if err := rows.Scan(&d.ID, &d.Name, &createdAt, &d.OwnerID, &d.RecordCount); err != nil {
+				continue
+			}
+			d.CreatedAt = createdAt
 			datasets = append(datasets, d)
 		}
 		if datasets == nil {
