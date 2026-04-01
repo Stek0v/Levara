@@ -276,6 +276,7 @@ type DataDTO struct {
 	RawDataLocation string `json:"raw_data_location"`
 	DataSize        int64  `json:"data_size"`
 	PipelineStatus  string `json:"pipeline_status"`
+	Tags            string `json:"tags"`
 	CreatedAt       string `json:"created_at"`
 }
 
@@ -288,7 +289,7 @@ func datasetDataHandler(cfg APIConfig) fiber.Handler {
 
 		rows, err := cfg.DB.QueryContext(context.Background(),
 			Q(`SELECT d.id, d.name, d.extension, d.mime_type, d.raw_data_location,
-			 COALESCE(d.data_size, 0), COALESCE(d.pipeline_status, '{}'), d.created_at
+			 COALESCE(d.data_size, 0), COALESCE(d.pipeline_status, '{}'), COALESCE(d.tags, '[]'), d.created_at
 			 FROM data d JOIN dataset_data dd ON d.id = dd.data_id
 			 WHERE dd.dataset_id = $1 ORDER BY d.created_at DESC`), dsID)
 		if err != nil {
@@ -300,7 +301,7 @@ func datasetDataHandler(cfg APIConfig) fiber.Handler {
 		for rows.Next() {
 			var d DataDTO
 			var createdAt string
-			rows.Scan(&d.ID, &d.Name, &d.Extension, &d.MimeType, &d.RawDataLocation, &d.DataSize, &d.PipelineStatus, &createdAt)
+			rows.Scan(&d.ID, &d.Name, &d.Extension, &d.MimeType, &d.RawDataLocation, &d.DataSize, &d.PipelineStatus, &d.Tags, &createdAt)
 			d.CreatedAt = createdAt
 			items = append(items, d)
 		}
@@ -362,11 +363,13 @@ func addHandler(cfg APIConfig) fiber.Handler {
 				bodyStr := string(body)
 
 				// Parse JSON body for dataset_name
+				var tags []string
 				if c.Get("Content-Type") == "application/json" {
 					var jsonBody struct {
-						Data        string `json:"data"`
-						DatasetName string `json:"dataset_name"`
-						DatasetID   string `json:"dataset_id"`
+						Data        string   `json:"data"`
+						DatasetName string   `json:"dataset_name"`
+						DatasetID   string   `json:"dataset_id"`
+						Tags        []string `json:"tags"`
 					}
 					if c.BodyParser(&jsonBody) == nil {
 						if jsonBody.Data != "" {
@@ -378,6 +381,7 @@ func addHandler(cfg APIConfig) fiber.Handler {
 						if jsonBody.DatasetID != "" {
 							datasetID = jsonBody.DatasetID
 						}
+						tags = jsonBody.Tags
 					}
 				}
 
@@ -398,7 +402,7 @@ func addHandler(cfg APIConfig) fiber.Handler {
 					}
 				}
 				ownerID, _ := c.Locals("user_id").(string)
-				items := []ingest.Item{{Text: bodyStr, DatasetName: datasetName, OwnerID: ownerID}}
+				items := []ingest.Item{{Text: bodyStr, DatasetName: datasetName, OwnerID: ownerID, Tags: tags}}
 				results, err := ingest.Ingest(items, cfg.StoragePath)
 				if err != nil {
 					return c.Status(500).JSON(fiber.Map{"detail": err.Error()})

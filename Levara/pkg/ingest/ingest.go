@@ -32,22 +32,24 @@ var namespaceOID = uuid.MustParse("6ba7b812-9dad-11d1-80b4-00c04fd430c8")
 // Item is input to ingest.
 type Item struct {
 	ID          string
-	Text        string // for text input
-	FileData    []byte // for binary file input
+	Text        string   // for text input
+	FileData    []byte   // for binary file input
 	Filename    string
 	DatasetName string
-	OwnerID     string // user who uploaded (for dedup scoping)
+	OwnerID     string   // user who uploaded (for dedup scoping)
+	Tags        []string // semantic tags for grouping (node_set equivalent)
 }
 
 // Result is the output of ingesting one item.
 type Result struct {
-	ID          string
-	ContentHash string
-	FilePath    string // file:// URI
-	MimeType    string
-	Extension   string
-	FileSize    int64
-	Name        string
+	ID            string
+	ContentHash   string
+	FilePath      string // file:// URI
+	MimeType      string
+	Extension     string
+	FileSize      int64
+	Name          string
+	Tags          string // JSON array string, e.g. '["backend","api"]'
 	AlreadyExists bool
 }
 
@@ -161,6 +163,16 @@ func ingestOne(item Item, storagePath string, seen *sync.Map) (Result, error) {
 	absPath, _ := filepath.Abs(fullPath)
 	fileURI := "file://" + absPath
 
+	// Serialize tags
+	tagsJSON := "[]"
+	if len(item.Tags) > 0 {
+		parts := make([]string, len(item.Tags))
+		for i, t := range item.Tags {
+			parts[i] = `"` + strings.ReplaceAll(t, `"`, `\"`) + `"`
+		}
+		tagsJSON = "[" + strings.Join(parts, ",") + "]"
+	}
+
 	return Result{
 		ID:            id,
 		ContentHash:   contentHash,
@@ -169,6 +181,7 @@ func ingestOne(item Item, storagePath string, seen *sync.Map) (Result, error) {
 		Extension:     ext,
 		FileSize:      int64(len(content)),
 		Name:          name,
+		Tags:          tagsJSON,
 		AlreadyExists: alreadyExists,
 	}, nil
 }

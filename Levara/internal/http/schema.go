@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"strings"
 )
 
 // MigrateSchema creates all required tables if they don't exist.
@@ -29,6 +30,10 @@ func MigrateSchema(db *sql.DB) error {
 
 	for _, stmt := range stmts {
 		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			// ALTER TABLE may fail on SQLite if column already exists — safe to ignore
+			if strings.Contains(stmt, "ALTER TABLE") {
+				continue
+			}
 			return fmt.Errorf("migrate: %w\nSQL: %s", err, stmt[:min(len(stmt), 80)])
 		}
 	}
@@ -84,6 +89,7 @@ var schemaStatements = []string{
 		owner_id TEXT NOT NULL DEFAULT '',
 		loader_engine TEXT NOT NULL DEFAULT 'go_ingest',
 		pipeline_status TEXT NOT NULL DEFAULT '{}',
+		tags TEXT NOT NULL DEFAULT '[]',
 		token_count INTEGER NOT NULL DEFAULT -1,
 		data_size BIGINT NOT NULL DEFAULT 0,
 		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -237,6 +243,7 @@ var schemaStatements = []string{
 	// Migration: add columns if table already exists without them
 	`ALTER TABLE ontologies ADD COLUMN IF NOT EXISTS classes_count INTEGER NOT NULL DEFAULT 0`,
 	`ALTER TABLE ontologies ADD COLUMN IF NOT EXISTS individuals_count INTEGER NOT NULL DEFAULT 0`,
+	`ALTER TABLE data ADD COLUMN IF NOT EXISTS tags TEXT NOT NULL DEFAULT '[]'`,
 
 	// Memories (project/user memory store)
 	`CREATE TABLE IF NOT EXISTS memories (
@@ -335,6 +342,7 @@ var schemaSQLiteStatements = []string{
 		owner_id TEXT NOT NULL DEFAULT '',
 		loader_engine TEXT NOT NULL DEFAULT 'go_ingest',
 		pipeline_status TEXT NOT NULL DEFAULT '{}',
+		tags TEXT NOT NULL DEFAULT '[]',
 		token_count INTEGER NOT NULL DEFAULT -1,
 		data_size INTEGER NOT NULL DEFAULT 0,
 		created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -515,4 +523,7 @@ var schemaSQLiteStatements = []string{
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash)`,
 	`CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id)`,
+
+	// Migrations for existing SQLite databases (ALTER errors ignored)
+	`ALTER TABLE data ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'`,
 }
