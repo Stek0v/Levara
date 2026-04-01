@@ -1,0 +1,23 @@
+{
+  "test_id": "A2_collections_llava_mac",
+  "model": "llava:7b",
+  "model_name": "llava",
+  "platform": "mac",
+  "test_type": "vision_ocr",
+  "image": "A2_collections.png",
+  "image_size_bytes": 93580,
+  "timestamp": "2026-04-01T12:00:34.144022+00:00",
+  "timing": {
+    "total_seconds": 180.01
+  },
+  "memory": {
+    "before_mb": 0,
+    "after_mb": 0
+  },
+  "result": {
+    "extracted_text": "ERROR: timed out",
+    "text_length": 16,
+    "word_count": 0,
+    "is_error": true
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "test_id": "A4_graph_minicpm-v_mac",
+  "model": "minicpm-v:8b",
+  "model_name": "minicpm-v",
+  "platform": "mac",
+  "test_type": "vision_ocr",
+  "image": "A4_graph.png",
+  "image_size_bytes": 63148,
+  "timestamp": "2026-04-01T12:14:15.051370+00:00",
+  "timing": {
+    "total_seconds": 51.13
+  },
+  "memory": {
+    "before_mb": 0,
+    "after_mb": 0
+  },
+  "result": {
+    "extracted_text": "**Title:**\nLevara Graph\n\n**Body Text:**\nNodes: 97  \nEdges: 41  \n\n**Graph Nodes and Edges:**\n\n- levara\n- deploy-stage.yml\n- deploy-prod.yml\n- compare-databases.sh\n- switch-blue-green.sh\n- telegramNotify.sh\n\n**Legend/Color Key (Entity Types):**\n- Entity Type (59)\n- component (6)\n- function (4)\n- collection (4)\n- Component (3)\n\n**Entity Types:**\n- project (3)\n- GPU (2)\n- Service (2)\n- AI assistant platformrm\n- Digital Assistant (1)\n- TemporalEvent (1)\n- Unit (1)\n- string (1)\n- array (1)\n- dict (1)\n- product (1)\n- score_model (1)\n- Entity (1)\n- script (1)\n- configuration (1)\n- commands (1)\n- document (1)\n\n**Navigation Menu:**\nDrag to pan • Scroll to zoom • Click nodes\n\n**Footer Text:**\nmonitor.sh",
+    "text_length": 701,
+    "word_count": 115,
+    "is_error": false
+  }
+}

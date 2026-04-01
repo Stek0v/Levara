@@ -1,0 +1,23 @@
+{
+  "test_id": "B3_business_card_llava_mac",
+  "model": "llava:7b",
+  "model_name": "llava",
+  "platform": "mac",
+  "test_type": "vision_ocr",
+  "image": "B3_business_card.png",
+  "image_size_bytes": 44143,
+  "timestamp": "2026-04-01T12:06:15.302801+00:00",
+  "timing": {
+    "total_seconds": 45.27
+  },
+  "memory": {
+    "before_mb": 0,
+    "after_mb": 0
+  },
+  "result": {
+    "extracted_text": " The image appears to be a screenshot of a computer screen showing a web browser with an address bar displaying text in Russian. The visible part of the address bar reads \"Веерсайт, вебсайт о проекте идеям\". Below this, there is an icon or logo that is not fully visible, but it seems to be part of a social media platform or a similar service.\n\nThe address in the address bar suggests that the website is named \"Веерсайт,\" which may refer to a project or initiative related to ideas and projects. The text is truncated, so it's not possible to determine the full context or purpose of the site without seeing more of the image or accessing the actual web page.\n\nPlease note that without the ability to interact with the content or to understand the specific context of the webpage, I can only provide a description based on the visible elements in the image. ",
+    "text_length": 860,
+    "word_count": 154,
+    "is_error": false
+  }
+}

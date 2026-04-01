@@ -1,0 +1,23 @@
+{
+  "test_id": "B1_book_page_granite3.2-vision_mac",
+  "model": "granite3.2-vision:2b",
+  "model_name": "granite3.2-vision",
+  "platform": "mac",
+  "test_type": "vision_ocr",
+  "image": "B1_book_page.png",
+  "image_size_bytes": 59560,
+  "timestamp": "2026-04-01T11:42:55.607249+00:00",
+  "timing": {
+    "total_seconds": 56.85
+  },
+  "memory": {
+    "before_mb": 0,
+    "after_mb": 0
+  },
+  "result": {
+    "extracted_text": "\n<doc> Цава 3. Архитектура системы \n Levara представляет собой движок графа знаний, реализованный \n на языке Go. Основные компоненты системы включают экспортного поляска, WAL (Write-Ahead Log) для \n отображения данных, а также SQLite для хранения метаданных. \n Сервер поддерживает 22 инструмента MCP (Model Context и через единый интерфейс. \n — 47 — </doc>",
+    "text_length": 356,
+    "word_count": 48,
+    "is_error": false
+  }
+}

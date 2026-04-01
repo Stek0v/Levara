@@ -1,0 +1,19 @@
+{
+  "test_id": "D5_bug_report_qwen3-0.6b_mac",
+  "model": "qwen3:0.6b",
+  "model_name": "qwen3-0.6b",
+  "platform": "mac",
+  "test_type": "entity_extraction",
+  "text_file": "D5_bug_report.txt",
+  "source_text_length": 446,
+  "timestamp": "2026-04-01T12:31:44.149694+00:00",
+  "timing": {
+    "total_seconds": 7.91
+  },
+  "result": {
+    "response": "{\"entities\": [{\"name\": \"...\", \"type\": \"...\"}], \"relationships\": [{\"from\": \"...\", \"to\": \"...\", \"type\": \"...\"}]}",
+    "json_valid": true,
+    "entities_count": 1,
+    "relationships_count": 1
+  }
+}

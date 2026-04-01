@@ -1,0 +1,209 @@
+[
+  {
+    "test_id": "A1_dashboard_granite3.2-vision_mac",
+    "model": "granite3.2-vision:2b",
+    "model_name": "granite3.2-vision",
+    "platform": "mac",
+    "test_type": "vision_ocr",
+    "image": "A1_dashboard.png",
+    "image_size_bytes": 104755,
+    "timestamp": "2026-04-01T11:36:31.354214+00:00",
+    "timing": {
+      "total_seconds": 180.1
+    },
+    "memory": {
+      "before_mb": 0,
+      "after_mb": 0
+    },
+    "result": {
+      "extracted_text": "ERROR: timed out",
+      "text_length": 16,
+      "word_count": 0,
+      "is_error": true
+    }
+  },
+  {
+    "test_id": "A2_collections_granite3.2-vision_mac",
+    "model": "granite3.2-vision:2b",
+    "model_name": "granite3.2-vision",
+    "platform": "mac",
+    "test_type": "vision_ocr",
+    "image": "A2_collections.png",
+    "image_size_bytes": 93580,
+    "timestamp": "2026-04-01T11:37:40.857022+00:00",
+    "timing": {
+      "total_seconds": 69.41
+    },
+    "memory": {
+      "before_mb": 0,
+      "after_mb": 0
+    },
+    "result": {
+      "extracted_text": "\n<tool_call>[{\"arguments\": {\"include\": \"NAME,RECORDS,DIMENSION,MODEL\", \"exclude\": \"DIMENSION,MODEL\"}, \"name\": \"table_rows\"}]",
+      "text_length": 124,
+      "word_count": 7,
+      "is_error": false
+    }
+  },
+  {
+    "test_id": "A3_search_granite3.2-vision_mac",
+    "model": "granite3.2-vision:2b",
+    "model_name": "granite3.2-vision",
+    "platform": "mac",
+    "test_type": "vision_ocr",
+    "image": "A3_search.png",
+    "image_size_bytes": 150091,
+    "timestamp": "2026-04-01T11:38:43.482500+00:00",
+    "timing": {
+      "total_seconds": 62.6
+    },
+    "memory": {
+      "before_mb": 0,
+      "after_mb": 0
+    },
+    "result": {
+      "extracted_text": "\n<doc>    \n    \n    \n    \n    \n    \n    \n    \n    \n    \n    \n    \n    \n    \n    \n    \n    \n    \n    \n    \n    \n    \n    \n    \n    \n    \n    \n    \n    \n    \n    ",
+      "text_length": 160,
+      "word_count": 1,
+      "is_error": false
+    }
+  },
+  {
+    "test_id": "A4_graph_granite3.2-vision_mac",
+    "model": "granite3.2-vision:2b",
+    "model_name": "granite3.2-vision",
+    "platform": "mac",
+    "test_type": "vision_ocr",
+    "image": "A4_graph.png",
+    "image_size_bytes": 63148,
+    "timestamp": "2026-04-01T11:40:00.312509+00:00",
+    "timing": {
+      "total_seconds": 76.84
+    },
+    "memory": {
+      "before_mb": 0,
+      "after_mb": 0
+    },
+    "result": {
+      "extracted_text": "\n```json\n{\n  \"Levara Graph\",\n  \"Nodes: 97\",\n  \"Edges: 41\"\n}\n```",
+      "text_length": 63,
+      "word_count": 10,
+      "is_error": false
+    }
+  },
+  {
+    "test_id": "A5_status_granite3.2-vision_mac",
+    "model": "granite3.2-vision:2b",
+    "model_name": "granite3.2-vision",
+    "platform": "mac",
+    "test_type": "vision_ocr",
+    "image": "A5_status.png",
+    "image_size_bytes": 119819,
+    "timestamp": "2026-04-01T11:41:58.731250+00:00",
+    "timing": {
+      "total_seconds": 118.39
+    },
+    "memory": {
+      "before_mb": 0,
+      "after_mb": 0
+    },
+    "result": {
+      "extracted_text": "\n<doc>    \n     Levara \n     EXPLORER \n     tagged-docs (1) \n     dedup-Y (1) \n     dedup-X (1) \n     dedup-A (1) \n     pipeline-test (1) \n     books (1) \n     test-webhook-upload.1) \n     Dashboard Search \n     Service Status \n     Health of all Levara platform services (auto-refresh 15s) \n     Levara Backend \n     Go HNSW + WAL engine \n     Status: Connected \n     grpc \n     Graph Collections    Status \n     collections \n     ppix-emp \n     Status: Ready \n     Status: C \n     Model: n \n     http://loc \n     Embed \n     Status: C \n     Status: O \n     Model: n \n     Ne4j \n     Owen 3.5 local inference \n     Graph data \n     LLM (Ollama) \n     Degraded    Refresh \n     Server \n     Connected \n     med-context-v1 (dim=1024) \n     omic-embed-text-v2-moe \n     alhost:11434/v1/embeddings \n     tabase \n     levara-docs (1) \n     COLLECTIONS 7 \n     Triplet.text (4) \n     memories (97) \n     _memories_default (18) \n     _memories_qvan (8) \n     pipeline-test-col (6) \n     pipeline-test-col-2 (6) \n     NRIES \n     Status: Listening \n     PostgreSQL \n     Relational store \n     Status: Connected \n     Services: 8 configured \n     http://localhost:11434/v1 \n     whisper \n     Status: Not.configured \n     Status: C \n     Model: qwen3:0.6b </doc>",
+      "text_length": 1255,
+      "word_count": 111,
+      "is_error": false
+    }
+  },
+  {
+    "test_id": "B1_book_page_granite3.2-vision_mac",
+    "model": "granite3.2-vision:2b",
+    "model_name": "granite3.2-vision",
+    "platform": "mac",
+    "test_type": "vision_ocr",
+    "image": "B1_book_page.png",
+    "image_size_bytes": 59560,
+    "timestamp": "2026-04-01T11:42:55.607249+00:00",
+    "timing": {
+      "total_seconds": 56.85
+    },
+    "memory": {
+      "before_mb": 0,
+      "after_mb": 0
+    },
+    "result": {
+      "extracted_text": "\n<doc> Цава 3. Архитектура системы \n Levara представляет собой движок графа знаний, реализованный \n на языке Go. Основные компоненты системы включают экспортного поляска, WAL (Write-Ahead Log) для \n отображения данных, а также SQLite для хранения метаданных. \n Сервер поддерживает 22 инструмента MCP (Model Context и через единый интерфейс. \n — 47 — </doc>",
+      "text_length": 356,
+      "word_count": 48,
+      "is_error": false
+    }
+  },
+  {
+    "test_id": "B3_business_card_granite3.2-vision_mac",
+    "model": "granite3.2-vision:2b",
+    "model_name": "granite3.2-vision",
+    "platform": "mac",
+    "test_type": "vision_ocr",
+    "image": "B3_business_card.png",
+    "image_size_bytes": 44143,
+    "timestamp": "2026-04-01T11:43:36.995657+00:00",
+    "timing": {
+      "total_seconds": 41.37
+    },
+    "memory": {
+      "before_mb": 0,
+      "after_mb": 0
+    },
+    "result": {
+      "extracted_text": "\nLEVARA SYSTEMS\nAlexei Ctekov\nLead Developer & Architect",
+      "text_length": 56,
+      "word_count": 8,
+      "is_error": false
+    }
+  },
+  {
+    "test_id": "B4_receipt_granite3.2-vision_mac",
+    "model": "granite3.2-vision:2b",
+    "model_name": "granite3.2-vision",
+    "platform": "mac",
+    "test_type": "vision_ocr",
+    "image": "B4_receipt.png",
+    "image_size_bytes": 27663,
+    "timestamp": "2026-04-01T11:44:30.515904+00:00",
+    "timing": {
+      "total_seconds": 53.5
+    },
+    "memory": {
+      "before_mb": 0,
+      "after_mb": 0
+    },
+    "result": {
+      "extracted_text": "\n```markdown\n# ООО \"ТЕХНО-СЕРВИС\"\n\n## КНН 7707123456\n\n---\n\n**Акт №: 00847**\n\n**SD 1TB, M/Me**\n\n8 490.00\n\n**ВКл 2026 14:32**\n\n**Екз.№: 00847**\n\n---\n\n**НОГО: 21 730.00 руб**\n\n**У. НДС 208: 3 621.67**\n\n**Спасибо за покупку!**\n```",
+      "text_length": 226,
+      "word_count": 35,
+      "is_error": false
+    }
+  },
+  {
+    "test_id": "C1_architecture_granite3.2-vision_mac",
+    "model": "granite3.2-vision:2b",
+    "model_name": "granite3.2-vision",
+    "platform": "mac",
+    "test_type": "vision_ocr",
+    "image": "C1_architecture.png",
+    "image_size_bytes": 26115,
+    "timestamp": "2026-04-01T11:45:22.168819+00:00",
+    "timing": {
+      "total_seconds": 51.62
+    },
+    "memory": {
+      "before_mb": 0,
+      "after_mb": 0
+    },
+    "result": {
+      "extracted_text": "\n<doc> Levara System Architecture \n HTTP API \n Fiber V2 \n Port 8081 \n Ollama \n nomic-embed + qwen3 \n HNSW Engine \n 3 Shards \n dim=768 \n MCP Server \n 22 tools \n SQLite \n SQLite \n WAL mode Metadata \n Sync \n Mac ++ Pl </doc>",
+      "text_length": 221,
+      "word_count": 33,
+      "is_error": false
+    }
+  }
+]

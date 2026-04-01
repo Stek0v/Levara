@@ -1,0 +1,23 @@
+{
+  "test_id": "A4_graph_moondream_mac",
+  "model": "moondream:1.8b",
+  "model_name": "moondream",
+  "platform": "mac",
+  "test_type": "vision_ocr",
+  "image": "A4_graph.png",
+  "image_size_bytes": 63148,
+  "timestamp": "2026-04-01T11:23:20.872344+00:00",
+  "timing": {
+    "total_seconds": 4.82
+  },
+  "memory": {
+    "before_mb": 0,
+    "after_mb": 0
+  },
+  "result": {
+    "extracted_text": "",
+    "text_length": 0,
+    "word_count": 0,
+    "is_error": false
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "test_id": "B4_receipt_granite3.2-vision_mac",
+  "model": "granite3.2-vision:2b",
+  "model_name": "granite3.2-vision",
+  "platform": "mac",
+  "test_type": "vision_ocr",
+  "image": "B4_receipt.png",
+  "image_size_bytes": 27663,
+  "timestamp": "2026-04-01T11:44:30.515904+00:00",
+  "timing": {
+    "total_seconds": 53.5
+  },
+  "memory": {
+    "before_mb": 0,
+    "after_mb": 0
+  },
+  "result": {
+    "extracted_text": "\n```markdown\n# ООО \"ТЕХНО-СЕРВИС\"\n\n## КНН 7707123456\n\n---\n\n**Акт №: 00847**\n\n**SD 1TB, M/Me**\n\n8 490.00\n\n**ВКл 2026 14:32**\n\n**Екз.№: 00847**\n\n---\n\n**НОГО: 21 730.00 руб**\n\n**У. НДС 208: 3 621.67**\n\n**Спасибо за покупку!**\n```",
+    "text_length": 226,
+    "word_count": 35,
+    "is_error": false
+  }
+}
