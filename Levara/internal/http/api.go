@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -25,10 +26,10 @@ import (
 	"github.com/stek0v/cognevra/internal/store"
 	"github.com/stek0v/cognevra/pkg/bm25"
 	"github.com/stek0v/cognevra/pkg/embed"
+	"github.com/stek0v/cognevra/pkg/extract"
 	"github.com/stek0v/cognevra/pkg/graph"
 	"github.com/stek0v/cognevra/pkg/fetch"
 	"github.com/stek0v/cognevra/pkg/graphdb"
-	"github.com/stek0v/cognevra/pkg/extract"
 	"github.com/stek0v/cognevra/pkg/ingest"
 	"github.com/stek0v/cognevra/pkg/llm"
 	"github.com/stek0v/cognevra/pkg/llmcache"
@@ -77,6 +78,9 @@ func RegisterCogneeAPI(app fiber.Router, cfg APIConfig) {
 
 	// U3: File upload (multipart)
 	app.Post("/add", addHandler(cfg))
+
+	// OCR endpoint: extract text from image via vision model
+	app.Post("/ocr", ocrHandler(cfg))
 
 	// U4: Cognify trigger + status + SSE stream
 	app.Post("/cognify", cognifyHandler(cfg))
@@ -551,6 +555,64 @@ func CheckPipelineStatus(db *sql.DB, datasetID, collection string) bool {
 		return false
 	}
 	return collStatus["status"] == "COMPLETED"
+}
+
+func ocrHandler(cfg APIConfig) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		// Accept JSON with base64 image or multipart file
+		var imgData []byte
+		var filename string
+
+		form, err := c.MultipartForm()
+		if err == nil {
+			files := form.File["image"]
+			if len(files) == 0 {
+				files = form.File["data"]
+			}
+			if len(files) > 0 {
+				f, err := files[0].Open()
+				if err == nil {
+					imgData, _ = io.ReadAll(f)
+					f.Close()
+					filename = files[0].Filename
+				}
+			}
+		}
+
+		if len(imgData) == 0 {
+			var req struct {
+				Image    string `json:"image"`    // base64
+				Filename string `json:"filename"`
+			}
+			if c.BodyParser(&req) == nil && req.Image != "" {
+				decoded, decErr := base64Decode(req.Image)
+				if decErr != nil {
+					return c.Status(400).JSON(fiber.Map{"detail": "invalid base64 image"})
+				}
+				imgData = decoded
+				filename = req.Filename
+			}
+		}
+
+		if len(imgData) == 0 {
+			return c.Status(400).JSON(fiber.Map{"detail": "no image provided (use 'image' field with base64 or multipart 'image'/'data')"})
+		}
+
+		result, err := extract.Extract(imgData, filename, "")
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"detail": err.Error()})
+		}
+
+		return c.JSON(fiber.Map{
+			"text":       result.Text,
+			"format":     result.Format,
+			"extract_ms": result.ExtractMs,
+		})
+	}
+}
+
+func base64Decode(s string) ([]byte, error) {
+	return base64.StdEncoding.DecodeString(s)
 }
 
 func cognifyHandler(cfg APIConfig) fiber.Handler {
