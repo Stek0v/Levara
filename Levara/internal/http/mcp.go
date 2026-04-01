@@ -742,6 +742,10 @@ func (h *mcpHandler) toolCognify(ctx context.Context, args map[string]any) mcpTo
 			status.Status = "COMPLETED"
 		}
 		status.ElapsedMs = time.Since(status.StartedAt).Milliseconds()
+
+		// Persist pipeline status to data table
+		PersistPipelineStatus(h.cfg.DB, runID, collection,
+			status.Status, status.Chunks, status.Entities, status.Edges, status.ElapsedMs)
 	}()
 
 	return mcpToolResult{
