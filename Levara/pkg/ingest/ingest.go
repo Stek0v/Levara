@@ -36,6 +36,7 @@ type Item struct {
 	FileData    []byte // for binary file input
 	Filename    string
 	DatasetName string
+	OwnerID     string // user who uploaded (for dedup scoping)
 }
 
 // Result is the output of ingesting one item.
@@ -111,10 +112,12 @@ func ingestOne(item Item, storagePath string, seen *sync.Map) (Result, error) {
 	// Generate ID if not provided
 	id := item.ID
 	if id == "" {
-		// UUID5(NAMESPACE_OID, hash + dataset_name) — matches Python logic
+		// UUID5(NAMESPACE_OID, hash + owner_id) — scoped per user, NOT per dataset.
+		// Same file uploaded by same user = same ID regardless of dataset.
+		// Same file uploaded by different users = different IDs (isolated).
 		input := contentHash
-		if item.DatasetName != "" {
-			input += item.DatasetName
+		if item.OwnerID != "" {
+			input += item.OwnerID
 		}
 		normalized := strings.ToLower(strings.ReplaceAll(input, " ", "_"))
 		id = uuid.NewSHA1(namespaceOID, []byte(normalized)).String()
@@ -138,13 +141,19 @@ func ingestOne(item Item, storagePath string, seen *sync.Map) (Result, error) {
 		mimeType = http.DetectContentType(content)
 	}
 
-	// Single disk write (replaces Python's 2x write: original + text copy)
+	// Single disk write — skip if file already exists (cross-request dedup)
 	filename := name + ext
 	fullPath := filepath.Join(storagePath, filename)
 
 	if !alreadyExists {
-		if err := os.WriteFile(fullPath, content, 0644); err != nil {
-			return Result{}, fmt.Errorf("write %s: %w", fullPath, err)
+		if _, err := os.Stat(fullPath); err != nil {
+			// File doesn't exist — write it
+			if err := os.WriteFile(fullPath, content, 0644); err != nil {
+				return Result{}, fmt.Errorf("write %s: %w", fullPath, err)
+			}
+		} else {
+			// File already on disk from a previous request
+			alreadyExists = true
 		}
 	}
 

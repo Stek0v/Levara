@@ -397,7 +397,8 @@ func addHandler(cfg APIConfig) fiber.Handler {
 						bodyStr = fetchedText
 					}
 				}
-				items := []ingest.Item{{Text: bodyStr, DatasetName: datasetName}}
+				ownerID, _ := c.Locals("user_id").(string)
+				items := []ingest.Item{{Text: bodyStr, DatasetName: datasetName, OwnerID: ownerID}}
 				results, err := ingest.Ingest(items, cfg.StoragePath)
 				if err != nil {
 					return c.Status(500).JSON(fiber.Map{"detail": err.Error()})
@@ -407,7 +408,6 @@ func addHandler(cfg APIConfig) fiber.Handler {
 					txtDsID = uuid.New().String()
 				}
 				if cfg.DB != nil {
-					ownerID, _ := c.Locals("user_id").(string)
 					mw := ingest.NewMetadataWriterFromDB(cfg.DB)
 					mw.WriteMetadata(context.Background(), results, ownerID, txtDsID, datasetName)
 				}
@@ -424,6 +424,7 @@ func addHandler(cfg APIConfig) fiber.Handler {
 			return c.Status(400).JSON(fiber.Map{"detail": "no files uploaded"})
 		}
 
+		ownerID, _ := c.Locals("user_id").(string)
 		var items []ingest.Item
 		for _, file := range files {
 			f, err := file.Open()
@@ -440,6 +441,7 @@ func addHandler(cfg APIConfig) fiber.Handler {
 					Text:        result.Text,
 					Filename:    file.Filename,
 					DatasetName: datasetName,
+					OwnerID:     ownerID,
 				})
 			} else {
 				// Fallback: raw content as text
@@ -447,6 +449,7 @@ func addHandler(cfg APIConfig) fiber.Handler {
 					Text:        string(data),
 					Filename:    file.Filename,
 					DatasetName: datasetName,
+					OwnerID:     ownerID,
 				})
 			}
 		}
