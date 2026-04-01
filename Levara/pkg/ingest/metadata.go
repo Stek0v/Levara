@@ -108,30 +108,28 @@ func (w *MetadataWriter) WriteMetadata(ctx context.Context, results []Result, ow
 	written := 0
 
 	for _, r := range results {
-		if r.AlreadyExists {
-			continue // skip duplicates
-		}
-
-		_, err = tx.ExecContext(ctx, q(`
-			INSERT INTO data (id, name, extension, mime_type, raw_data_location,
-				original_data_location, content_hash, raw_content_hash, owner_id,
-				loader_engine, pipeline_status, token_count, data_size, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-			ON CONFLICT (id) DO UPDATE SET
-				name = EXCLUDED.name,
-				content_hash = EXCLUDED.content_hash,
-				raw_data_location = EXCLUDED.raw_data_location,
-				data_size = EXCLUDED.data_size,
+		if !r.AlreadyExists {
+			_, err = tx.ExecContext(ctx, q(`
+				INSERT INTO data (id, name, extension, mime_type, raw_data_location,
+					original_data_location, content_hash, raw_content_hash, owner_id,
+					loader_engine, pipeline_status, token_count, data_size, created_at, updated_at)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+				ON CONFLICT (id) DO UPDATE SET
+					name = EXCLUDED.name,
+					content_hash = EXCLUDED.content_hash,
+					raw_data_location = EXCLUDED.raw_data_location,
+					data_size = EXCLUDED.data_size,
 				updated_at = EXCLUDED.updated_at
 		`), r.ID, r.Name, r.Extension, r.MimeType, r.FilePath,
-			r.FilePath, r.ContentHash, r.ContentHash, ownerID,
-			"go_ingest", "{}", -1, r.FileSize, now, now)
-		if err != nil {
-			return written, fmt.Errorf("insert data %s: %w", r.ID, err)
+				r.FilePath, r.ContentHash, r.ContentHash, ownerID,
+				"go_ingest", "{}", -1, r.FileSize, now, now)
+			if err != nil {
+				return written, fmt.Errorf("insert data %s: %w", r.ID, err)
+			}
+			written++
 		}
-		written++
 
-		// Link to dataset
+		// Link to dataset — always, even for duplicates (same file in multiple datasets)
 		if datasetID != "" {
 			_, _ = tx.ExecContext(ctx, q(`
 				INSERT INTO dataset_data (dataset_id, data_id)

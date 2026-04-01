@@ -923,7 +923,8 @@ func (h *mcpHandler) toolAdd(ctx context.Context, args map[string]any) mcpToolRe
 		storagePath = "data/uploads"
 	}
 
-	items := []ingest.Item{{Text: data, DatasetName: datasetName}}
+	ownerID := "" // MCP tools run without user context for now
+	items := []ingest.Item{{Text: data, DatasetName: datasetName, OwnerID: ownerID}}
 	results, err := ingest.Ingest(items, storagePath)
 	if err != nil {
 		return mcpToolResult{
@@ -932,11 +933,11 @@ func (h *mcpHandler) toolAdd(ctx context.Context, args map[string]any) mcpToolRe
 		}
 	}
 
-	// Write metadata to PostgreSQL if configured
+	// Write metadata to DB
 	dsID := uuid.New().String()
 	if h.cfg.DB != nil {
 		mw := ingest.NewMetadataWriterFromDB(h.cfg.DB)
-		mw.WriteMetadata(context.Background(), results, "" /* ownerID */, dsID, datasetName)
+		mw.WriteMetadata(context.Background(), results, ownerID, dsID, datasetName)
 	}
 
 	return mcpToolResult{Content: []mcpContent{{
