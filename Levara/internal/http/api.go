@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -274,6 +275,7 @@ type DataDTO struct {
 	MimeType        string `json:"mime_type"`
 	RawDataLocation string `json:"raw_data_location"`
 	DataSize        int64  `json:"data_size"`
+	PipelineStatus  string `json:"pipeline_status"`
 	CreatedAt       string `json:"created_at"`
 }
 
@@ -286,7 +288,7 @@ func datasetDataHandler(cfg APIConfig) fiber.Handler {
 
 		rows, err := cfg.DB.QueryContext(context.Background(),
 			Q(`SELECT d.id, d.name, d.extension, d.mime_type, d.raw_data_location,
-			 COALESCE(d.data_size, 0), d.created_at
+			 COALESCE(d.data_size, 0), COALESCE(d.pipeline_status, '{}'), d.created_at
 			 FROM data d JOIN dataset_data dd ON d.id = dd.data_id
 			 WHERE dd.dataset_id = $1 ORDER BY d.created_at DESC`), dsID)
 		if err != nil {
@@ -297,9 +299,9 @@ func datasetDataHandler(cfg APIConfig) fiber.Handler {
 		var items []DataDTO
 		for rows.Next() {
 			var d DataDTO
-			var createdAt time.Time
-			rows.Scan(&d.ID, &d.Name, &d.Extension, &d.MimeType, &d.RawDataLocation, &d.DataSize, &createdAt)
-			d.CreatedAt = createdAt.Format(time.RFC3339)
+			var createdAt string
+			rows.Scan(&d.ID, &d.Name, &d.Extension, &d.MimeType, &d.RawDataLocation, &d.DataSize, &d.PipelineStatus, &createdAt)
+			d.CreatedAt = createdAt
 			items = append(items, d)
 		}
 		if items == nil {
@@ -492,6 +494,58 @@ type pipelineRunStatus struct {
 	StartedAt time.Time `json:"started_at"`
 }
 
+// PersistPipelineStatus writes pipeline completion status to the data table.
+// Called after cognify finishes (success or failure) to enable skip-if-done.
+// statusJSON format: {"<collection>": {"status": "COMPLETED", "chunks": N, ...}}
+func PersistPipelineStatus(db *sql.DB, datasetID, collection, status string, chunks, entities, edges int, elapsedMs int64) {
+	if db == nil || datasetID == "" {
+		return
+	}
+	statusObj := map[string]any{
+		"status":   status,
+		"chunks":   chunks,
+		"entities": entities,
+		"edges":    edges,
+		"elapsed":  elapsedMs,
+		"at":       time.Now().UTC().Format(time.RFC3339),
+	}
+	statusJSON, _ := json.Marshal(map[string]any{collection: statusObj})
+
+	// Update all data items in this dataset
+	_, err := db.ExecContext(context.Background(), Q(`
+		UPDATE data SET pipeline_status = $1, updated_at = NOW()
+		WHERE id IN (SELECT data_id FROM dataset_data WHERE dataset_id = $2)
+	`), string(statusJSON), datasetID)
+	if err != nil {
+		log.Printf("[pipeline] persist status error: %v", err)
+	}
+}
+
+// CheckPipelineStatus returns true if all data items in dataset are already processed for this collection.
+func CheckPipelineStatus(db *sql.DB, datasetID, collection string) bool {
+	if db == nil || datasetID == "" {
+		return false
+	}
+	var statusStr string
+	err := db.QueryRowContext(context.Background(), Q(`
+		SELECT pipeline_status FROM data
+		WHERE id IN (SELECT data_id FROM dataset_data WHERE dataset_id = $1)
+		LIMIT 1
+	`), datasetID).Scan(&statusStr)
+	if err != nil || statusStr == "" || statusStr == "{}" {
+		return false
+	}
+	var statuses map[string]map[string]any
+	if json.Unmarshal([]byte(statusStr), &statuses) != nil {
+		return false
+	}
+	collStatus, ok := statuses[collection]
+	if !ok {
+		return false
+	}
+	return collStatus["status"] == "COMPLETED"
+}
+
 func cognifyHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		var req struct {
@@ -562,6 +616,14 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 		collection := req.Collection
 		if collection == "" {
 			collection = "default"
+		}
+
+		// Skip if already processed (check pipeline_status in data table)
+		if len(allDatasetIDs) > 0 && CheckPipelineStatus(cfg.DB, allDatasetIDs[0], collection) {
+			return c.JSON(fiber.Map{
+				"status":  "already_processed",
+				"message": fmt.Sprintf("Dataset already cognified for collection %q. Delete pipeline_status to re-process.", collection),
+			})
 		}
 
 		runStatus := &pipelineRunStatus{
@@ -636,6 +698,10 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 				runStatus.Status = "COMPLETED"
 			}
 			runStatus.ElapsedMs = time.Since(runStatus.StartedAt).Milliseconds()
+
+			// Persist pipeline status to data table
+			PersistPipelineStatus(cfg.DB, pipeCfg.DatasetID, collection,
+				runStatus.Status, runStatus.Chunks, runStatus.Entities, runStatus.Edges, runStatus.ElapsedMs)
 
 			// P2.1: Save interaction to session history after pipeline completes
 			if sessionID != "" && cfg.DB != nil {
