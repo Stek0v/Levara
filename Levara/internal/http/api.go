@@ -413,7 +413,14 @@ func addHandler(cfg APIConfig) fiber.Handler {
 				}
 				txtDsID := datasetID
 				if txtDsID == "" {
-					txtDsID = uuid.New().String()
+					// Look up existing dataset by name before creating new
+					if cfg.DB != nil && datasetName != "" {
+						cfg.DB.QueryRowContext(context.Background(),
+							Q("SELECT id FROM datasets WHERE name = $1 LIMIT 1"), datasetName).Scan(&txtDsID)
+					}
+					if txtDsID == "" {
+						txtDsID = uuid.New().String()
+					}
 				}
 				if cfg.DB != nil {
 					mw := ingest.NewMetadataWriterFromDB(cfg.DB)
@@ -467,10 +474,16 @@ func addHandler(cfg APIConfig) fiber.Handler {
 			return c.Status(500).JSON(fiber.Map{"detail": err.Error()})
 		}
 
-		// Write metadata to PostgreSQL if configured
+		// Write metadata — reuse existing dataset by name
 		dsID := datasetID
 		if dsID == "" {
-			dsID = uuid.New().String()
+			if cfg.DB != nil && datasetName != "" {
+				cfg.DB.QueryRowContext(context.Background(),
+					Q("SELECT id FROM datasets WHERE name = $1 LIMIT 1"), datasetName).Scan(&dsID)
+			}
+			if dsID == "" {
+				dsID = uuid.New().String()
+			}
 		}
 		if cfg.DB != nil {
 			ownerID, _ := c.Locals("user_id").(string)
@@ -532,18 +545,30 @@ func PersistPipelineStatus(db *sql.DB, datasetID, collection, status string, chu
 	}
 }
 
-// CheckPipelineStatus returns true if all data items in dataset are already processed for this collection.
+// CheckPipelineStatus returns true if ALL data items in dataset are already processed for this collection.
+// Returns false if any item has empty pipeline_status or missing collection entry.
 func CheckPipelineStatus(db *sql.DB, datasetID, collection string) bool {
 	if db == nil || datasetID == "" {
 		return false
 	}
-	var statusStr string
+	// Count items with empty/missing pipeline_status for this collection
+	var unprocessed int
 	err := db.QueryRowContext(context.Background(), Q(`
+		SELECT COUNT(*) FROM data
+		WHERE id IN (SELECT data_id FROM dataset_data WHERE dataset_id = $1)
+		AND (pipeline_status = '{}' OR pipeline_status = '' OR pipeline_status IS NULL)
+	`), datasetID).Scan(&unprocessed)
+	if err != nil || unprocessed > 0 {
+		return false // has unprocessed items
+	}
+	// Check first processed item for this specific collection
+	var statusStr string
+	err = db.QueryRowContext(context.Background(), Q(`
 		SELECT pipeline_status FROM data
 		WHERE id IN (SELECT data_id FROM dataset_data WHERE dataset_id = $1)
-		LIMIT 1
+		AND pipeline_status != '{}' LIMIT 1
 	`), datasetID).Scan(&statusStr)
-	if err != nil || statusStr == "" || statusStr == "{}" {
+	if err != nil || statusStr == "" {
 		return false
 	}
 	var statuses map[string]map[string]any
