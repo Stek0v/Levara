@@ -144,7 +144,11 @@ func ingestOne(item Item, storagePath string, seen *sync.Map) (Result, error) {
 	}
 
 	// Single disk write — skip if file already exists (cross-request dedup)
-	filename := name + ext
+	// Avoid double extension: "test.pdf" + ".pdf" → "test.pdf" not "test.pdf.pdf"
+	filename := name
+	if !strings.HasSuffix(strings.ToLower(name), strings.ToLower(ext)) {
+		filename = name + ext
+	}
 	fullPath := filepath.Join(storagePath, filename)
 
 	if !alreadyExists {
