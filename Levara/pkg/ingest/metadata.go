@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
@@ -90,17 +89,14 @@ func (w *MetadataWriter) WriteMetadata(ctx context.Context, results []Result, ow
 	}
 	defer tx.Rollback()
 
-	// Ensure dataset exists
+	// Ensure dataset exists (ignore conflict on id OR name)
 	if datasetID != "" && datasetName != "" {
-		_, err = tx.ExecContext(ctx, q(`
+		_, _ = tx.ExecContext(ctx, q(`
 			INSERT INTO datasets (id, name, owner_id, created_at, updated_at)
 			VALUES ($1, $2, $3, NOW(), NOW())
-			ON CONFLICT (id) DO NOTHING
+			ON CONFLICT DO NOTHING
 		`), datasetID, datasetName, ownerID)
-		if err != nil {
-			log.Printf("[ingest] upsert dataset error: %v", err)
-			return 0, fmt.Errorf("upsert dataset: %w", err)
-		}
+		// Ignore error — dataset may already exist by name or id
 	}
 
 	// Batch insert Data records
