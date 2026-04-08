@@ -85,20 +85,22 @@ type mcpToolResult struct {
 var mcpTools = []mcpTool{
 	{
 		Name:        "cognify",
-		Description: "Transform text data into a structured knowledge graph. Extracts entities, relationships, and builds searchable graph.",
+		Description: "Transform text data into a structured knowledge graph. Extracts entities, relationships, and builds searchable graph. Optional room/tags propagate to chunk metadata for filtered search.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"data":          map[string]any{"type": "string", "description": "Text data to process into knowledge graph"},
 				"collection":    map[string]any{"type": "string", "description": "Target collection name (default: 'default')"},
 				"custom_prompt": map[string]any{"type": "string", "description": "Custom LLM prompt for entity extraction"},
+				"room":          map[string]any{"type": "string", "description": "Sub-topic label attached to every chunk for filtered retrieval (auth, deploy, ocr-bench)."},
+				"tags":          map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Tags attached to every chunk."},
 			},
 			"required": []string{"data"},
 		},
 	},
 	{
 		Name:        "search",
-		Description: "Search the knowledge graph using various strategies. Use AUTO (default) for intelligent routing that analyzes your query and selects the best strategy automatically.",
+		Description: "Search the knowledge graph using various strategies. Use AUTO (default) for intelligent routing that analyzes your query and selects the best strategy automatically. Optional room/tags filters narrow chunk results by metadata (overfetched ×3 then post-filtered).",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -106,16 +108,21 @@ var mcpTools = []mcpTool{
 				"search_type":  map[string]any{"type": "string", "description": "Search strategy: AUTO (intelligent routing), CHUNKS (vector), HYBRID (vector+BM25), RAG_COMPLETION (vector+LLM answer), GRAPH_COMPLETION (graph traversal+LLM), TEMPORAL (date-aware), SUMMARIES, CHUNKS_LEXICAL (BM25), CODING_RULES (code entities)", "default": "AUTO"},
 				"top_k":        map[string]any{"type": "integer", "description": "Number of results to return", "default": 10},
 				"collection":   map[string]any{"type": "string", "description": "Project collection name to search in. Leave empty to search all."},
+				"room":         map[string]any{"type": "string", "description": "Filter chunks by room (sub-topic) attached during cognify."},
+				"tags":         map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Filter chunks by tags (any-match)."},
 			},
 			"required": []string{"search_query"},
 		},
 	},
 	{
 		Name:        "list_data",
-		Description: "List all datasets and their data items in the knowledge base.",
+		Description: "List all datasets and their data items in the knowledge base. Optional tag/room filters narrow the result.",
 		InputSchema: map[string]any{
-			"type":       "object",
-			"properties": map[string]any{},
+			"type": "object",
+			"properties": map[string]any{
+				"tags": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Return only data items with at least one of these tags."},
+				"room": map[string]any{"type": "string", "description": "Return only data items in this room (sub-topic)."},
+			},
 		},
 	},
 	{
@@ -150,13 +157,15 @@ var mcpTools = []mcpTool{
 	},
 	{
 		Name:        "add",
-		Description: "Ingest text data into the knowledge base for later cognification.",
+		Description: "Ingest text data into the knowledge base for later cognification. Optional tags/room metadata enable filtered retrieval via list_data.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"data":         map[string]any{"type": "string", "description": "Text content to ingest"},
 				"dataset_name": map[string]any{"type": "string", "description": "Dataset name (default: 'default')"},
 				"collection":   map[string]any{"type": "string", "description": "Collection to associate with added data."},
+				"tags":         map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Tags attached to the data record."},
+				"room":         map[string]any{"type": "string", "description": "Room (sub-topic) for the data record."},
 			},
 			"required": []string{"data"},
 		},
@@ -191,39 +200,122 @@ var mcpTools = []mcpTool{
 	// ── Project Memory tools ──
 	{
 		Name:        "save_memory",
-		Description: "Save project/user memory key-value pair.",
+		Description: "Save project/user memory key-value pair. Optional room (sub-topic within collection, e.g. auth/deploy/ocr) and hall (memory genre) enable structured retrieval.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"key":        map[string]any{"type": "string", "description": "Memory key"},
-				"value":      map[string]any{"type": "string", "description": "Memory value"},
-				"type":       map[string]any{"type": "string", "description": "Memory type: user, project, feedback"},
-				"collection": map[string]any{"type": "string", "description": "Collection name to scope memory to."},
+				"key":          map[string]any{"type": "string", "description": "Memory key"},
+				"value":        map[string]any{"type": "string", "description": "Memory value"},
+				"type":         map[string]any{"type": "string", "description": "Memory type: user, project, feedback"},
+				"collection":   map[string]any{"type": "string", "description": "Collection name to scope memory to."},
+				"room":         map[string]any{"type": "string", "description": "Sub-topic within collection (auth, deploy, mcp, ocr-bench)."},
+				"hall":         map[string]any{"type": "string", "description": "Memory genre (controlled vocab): fact, event, decision, preference, advice, discovery."},
+				"pin":          map[string]any{"type": "boolean", "description": "Pin as critical fact for wake_up. Default false."},
+				"pin_priority": map[string]any{"type": "integer", "description": "Higher priority loaded first by wake_up. Default 0."},
 			},
 			"required": []string{"key", "value"},
 		},
 	},
 	{
 		Name:        "recall_memory",
-		Description: "Search memories by query.",
+		Description: "Search memories by query, optionally filtered by room/hall for higher precision.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"query":      map[string]any{"type": "string", "description": "Search query for memories"},
 				"collection": map[string]any{"type": "string", "description": "Collection name to filter memories."},
+				"room":       map[string]any{"type": "string", "description": "Optional room filter (sub-topic)."},
+				"hall":       map[string]any{"type": "string", "description": "Optional hall filter (fact|event|decision|preference|advice|discovery)."},
 			},
 			"required": []string{"query"},
 		},
 	},
 	{
 		Name:        "list_memories",
-		Description: "List all memories, optionally filtered by type.",
+		Description: "List all memories, optionally filtered by type/room/hall.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"type":       map[string]any{"type": "string", "description": "Optional filter: user, project, feedback"},
 				"collection": map[string]any{"type": "string", "description": "Collection name to filter memories."},
+				"room":       map[string]any{"type": "string", "description": "Optional room filter."},
+				"hall":       map[string]any{"type": "string", "description": "Optional hall filter."},
 			},
+		},
+	},
+	{
+		Name:        "wake_up",
+		Description: "Load critical context at session start: pinned memories (priority-ordered) + top entities from knowledge graph (active edges only). Token budget enforced (~200 by default). Cheap alternative to get_project_context.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"collection":  map[string]any{"type": "string", "description": "Collection to wake up. Defaults to session context."},
+				"max_tokens":  map[string]any{"type": "integer", "description": "Approximate token budget (chars/4). Default 200."},
+				"top_entities": map[string]any{"type": "integer", "description": "How many top graph entities to include. Default 5."},
+			},
+		},
+	},
+	{
+		Name:        "pin_memory",
+		Description: "Mark a memory as pinned (critical fact). It will be returned by wake_up. Optional priority for ordering.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"key":      map[string]any{"type": "string", "description": "Memory key to pin"},
+				"priority": map[string]any{"type": "integer", "description": "Higher = loaded first. Default 1."},
+			},
+			"required": []string{"key"},
+		},
+	},
+	{
+		Name:        "unpin_memory",
+		Description: "Remove a memory from the pinned set (it stays in storage).",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"key": map[string]any{"type": "string", "description": "Memory key to unpin"},
+			},
+			"required": []string{"key"},
+		},
+	},
+	{
+		Name:        "query_entity",
+		Description: "Query all knowledge-graph facts about an entity. By default returns only currently-valid edges. Optional as_of returns the snapshot at a past time.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"name":  map[string]any{"type": "string", "description": "Entity name to query"},
+				"as_of": map[string]any{"type": "string", "description": "RFC3339 timestamp. If omitted, returns currently-valid edges."},
+				"limit": map[string]any{"type": "integer", "description": "Max edges to return. Default 50."},
+			},
+			"required": []string{"name"},
+		},
+	},
+	{
+		Name:        "diary_write",
+		Description: "Append an entry to a per-agent diary (isolated memory namespace under owner_id=agent:<name>). Use for specialized agents (reviewer, architect, oncall) to keep their own notes without polluting project memory.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"agent":      map[string]any{"type": "string", "description": "Agent name (reviewer, architect, oncall, ...)"},
+				"key":        map[string]any{"type": "string", "description": "Diary entry key"},
+				"value":      map[string]any{"type": "string", "description": "Diary entry content"},
+				"collection": map[string]any{"type": "string", "description": "Optional collection scope"},
+			},
+			"required": []string{"agent", "key", "value"},
+		},
+	},
+	{
+		Name:        "diary_read",
+		Description: "Read entries from a per-agent diary, optionally filtered by query.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"agent":      map[string]any{"type": "string", "description": "Agent name"},
+				"query":      map[string]any{"type": "string", "description": "Optional substring to filter on. Empty = all."},
+				"collection": map[string]any{"type": "string", "description": "Optional collection scope"},
+			},
+			"required": []string{"agent"},
 		},
 	},
 
@@ -584,7 +676,9 @@ func (h *mcpHandler) executeToolInner(ctx context.Context, sess *mcpSession, nam
 		if _, ok := args["collection"]; !ok || args["collection"] == "" {
 			args["collection"] = h.resolveCollection(sess, args, true)
 		}
-	case "save_memory", "recall_memory", "list_memories":
+	case "save_memory", "recall_memory", "list_memories",
+		"wake_up", "pin_memory", "unpin_memory",
+		"diary_write", "diary_read":
 		// Memory tools: only inject session default, NOT "default" fallback.
 		// Empty collection → global _memories (backward compatible with Pi data).
 		if _, ok := args["collection"]; !ok || args["collection"] == "" {
@@ -607,7 +701,7 @@ func (h *mcpHandler) executeToolInner(ctx context.Context, sess *mcpSession, nam
 	case "search":
 		return h.toolSearch(ctx, args)
 	case "list_data":
-		return h.toolListData(ctx)
+		return h.toolListData(ctx, args)
 	case "delete":
 		return h.toolDelete(ctx, args)
 	case "prune":
@@ -646,6 +740,18 @@ func (h *mcpHandler) executeToolInner(ctx context.Context, sess *mcpSession, nam
 		return h.toolGetFeedbackStats(ctx, args)
 	case "codify":
 		return h.toolCodify(ctx, args)
+	case "wake_up":
+		return h.toolWakeUp(ctx, args)
+	case "pin_memory":
+		return h.toolPinMemory(ctx, args)
+	case "unpin_memory":
+		return h.toolUnpinMemory(ctx, args)
+	case "query_entity":
+		return h.toolQueryEntity(ctx, args)
+	case "diary_write":
+		return h.toolDiaryWrite(ctx, args)
+	case "diary_read":
+		return h.toolDiaryRead(ctx, args)
 	default:
 		return mcpToolResult{
 			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("Unknown tool: %s", name)}},
@@ -711,6 +817,17 @@ func (h *mcpHandler) toolCognify(ctx context.Context, args map[string]any) mcpTo
 	if cp, _ := args["custom_prompt"].(string); cp != "" {
 		pipeCfg.SystemPrompt = cp
 	}
+	// Optional room + tags propagated to chunk metadata for filtered search.
+	if room, _ := args["room"].(string); room != "" {
+		pipeCfg.Room = room
+	}
+	if rawTags, ok := args["tags"].([]any); ok {
+		for _, t := range rawTags {
+			if s, ok := t.(string); ok && s != "" {
+				pipeCfg.Tags = append(pipeCfg.Tags, s)
+			}
+		}
+	}
 	// Ontology-guided extraction: append allowed entity types to prompt
 	if ontologySuffix := GetOntologyPromptSuffix(collection); ontologySuffix != "" {
 		pipeCfg.SystemPrompt += ontologySuffix
@@ -774,6 +891,18 @@ func (h *mcpHandler) toolSearch(ctx context.Context, args map[string]any) mcpToo
 
 	collection, _ := args["collection"].(string)
 
+	// Optional metadata filters (room + tags). When set, we overfetch and post-filter.
+	roomFilter, _ := args["room"].(string)
+	var tagFilters []string
+	if rawTags, ok := args["tags"].([]any); ok {
+		for _, t := range rawTags {
+			if s, ok := t.(string); ok && s != "" {
+				tagFilters = append(tagFilters, s)
+			}
+		}
+	}
+	hasMetaFilter := roomFilter != "" || len(tagFilters) > 0
+
 	// Smart routing: AUTO → heuristic router selects best strategy
 	var routingInfo *router.Decision
 	upperType := strings.ToUpper(searchType)
@@ -798,17 +927,29 @@ func (h *mcpHandler) toolSearch(ctx context.Context, args map[string]any) mcpToo
 	} else {
 		colls = h.cfg.Collections.List()
 	}
+	// Overfetch when metadata filtering is requested so post-filter still
+	// returns enough results.
+	fetchK := topK
+	if hasMetaFilter {
+		fetchK = topK * 3
+	}
 	var results []map[string]any
 
 	for _, coll := range colls {
-		res, err := sp.SearchByText(ctx, coll, query, topK)
+		res, err := sp.SearchByText(ctx, coll, query, fetchK)
 		if err != nil {
 			continue
 		}
 		for _, r := range res {
+			if hasMetaFilter && !chunkMetaMatches(r.Metadata, roomFilter, tagFilters) {
+				continue
+			}
 			results = append(results, map[string]any{
 				"id": r.ID, "score": r.Score, "collection": coll, "metadata": string(r.Metadata),
 			})
+			if len(results) >= topK {
+				break
+			}
 		}
 		if len(results) >= topK {
 			break
@@ -838,26 +979,76 @@ func (h *mcpHandler) toolSearch(ctx context.Context, args map[string]any) mcpToo
 	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(out)}}}
 }
 
-func (h *mcpHandler) toolListData(ctx context.Context) mcpToolResult {
+func (h *mcpHandler) toolListData(ctx context.Context, args map[string]any) mcpToolResult {
 	if h.cfg.Collections == nil {
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "[]"}}}
 	}
 
-	colls := h.cfg.Collections.List()
+	// Optional filters
+	var wantTags []string
+	if rawTags, ok := args["tags"].([]any); ok {
+		for _, t := range rawTags {
+			if s, ok := t.(string); ok && s != "" {
+				wantTags = append(wantTags, s)
+			}
+		}
+	}
+	roomFilter, _ := args["room"].(string)
+	hasFilter := len(wantTags) > 0 || roomFilter != ""
+
 	var items []map[string]any
-	for _, c := range colls {
-		items = append(items, map[string]any{"collection": c, "type": "vector_collection"})
+	if !hasFilter {
+		colls := h.cfg.Collections.List()
+		for _, c := range colls {
+			items = append(items, map[string]any{"collection": c, "type": "vector_collection"})
+		}
 	}
 
-	// Also list datasets from DB
+	// Also list datasets / data items from DB
 	if h.cfg.DB != nil {
-		rows, err := h.cfg.DB.QueryContext(ctx, Q("SELECT id, name FROM datasets ORDER BY created_at DESC LIMIT 100"))
-		if err == nil {
-			defer rows.Close()
-			for rows.Next() {
-				var id, name string
-				rows.Scan(&id, &name)
-				items = append(items, map[string]any{"id": id, "name": name, "type": "dataset"})
+		if hasFilter {
+			// Tag/room filter operates on the data table directly.
+			var conds []string
+			var qargs []any
+			pos := 1
+			if roomFilter != "" {
+				conds = append(conds, fmt.Sprintf("room = $%d", pos))
+				qargs = append(qargs, roomFilter)
+				pos++
+			}
+			for _, t := range wantTags {
+				// JSON tag list is stored as a string like ["a","b"]; LIKE works on both PG/SQLite.
+				conds = append(conds, fmt.Sprintf("tags LIKE $%d", pos))
+				qargs = append(qargs, "%\""+t+"\"%")
+				pos++
+			}
+			sqlStr := `SELECT id, name, extension, room, tags FROM data`
+			if len(conds) > 0 {
+				sqlStr += " WHERE " + strings.Join(conds, " AND ")
+			}
+			sqlStr += " ORDER BY created_at DESC LIMIT 200"
+			rows, err := h.cfg.DB.QueryContext(ctx, Q(sqlStr), qargs...)
+			if err == nil {
+				defer rows.Close()
+				for rows.Next() {
+					var id, name, ext, rm, tg string
+					rows.Scan(&id, &name, &ext, &rm, &tg)
+					items = append(items, map[string]any{
+						"id": id, "name": name, "extension": ext,
+						"room": rm, "tags": json.RawMessage(tg),
+						"type": "data",
+					})
+				}
+			}
+		} else {
+			rows, err := h.cfg.DB.QueryContext(ctx, Q("SELECT id, name FROM datasets ORDER BY created_at DESC LIMIT 100"))
+			if err == nil {
+				defer rows.Close()
+				for rows.Next() {
+					var id, name string
+					rows.Scan(&id, &name)
+					items = append(items, map[string]any{"id": id, "name": name, "type": "dataset"})
+				}
 			}
 		}
 	}
@@ -924,7 +1115,19 @@ func (h *mcpHandler) toolAdd(ctx context.Context, args map[string]any) mcpToolRe
 	}
 
 	ownerID := "" // MCP tools run without user context for now
-	items := []ingest.Item{{Text: data, DatasetName: datasetName, OwnerID: ownerID}}
+
+	// Optional metadata: tags + room
+	var tags []string
+	if rawTags, ok := args["tags"].([]any); ok {
+		for _, t := range rawTags {
+			if s, ok := t.(string); ok && s != "" {
+				tags = append(tags, s)
+			}
+		}
+	}
+	room, _ := args["room"].(string)
+
+	items := []ingest.Item{{Text: data, DatasetName: datasetName, OwnerID: ownerID, Tags: tags, Room: room}}
 	results, err := ingest.Ingest(items, storagePath)
 	if err != nil {
 		return mcpToolResult{
@@ -1086,6 +1289,16 @@ func (h *mcpHandler) toolSaveMemory(ctx context.Context, args map[string]any) mc
 		memType = "project"
 	}
 	collectionName, _ := args["collection"].(string)
+	room, _ := args["room"].(string)
+	hall, _ := args["hall"].(string)
+	if hall != "" && !isValidHall(hall) {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("Error: invalid hall '%s'. Valid values: %s", hall, strings.Join(validHalls(), ", "))}}, IsError: true}
+	}
+	pin, _ := args["pin"].(bool)
+	pinPriority := 0
+	if pp, ok := args["pin_priority"].(float64); ok {
+		pinPriority = int(pp)
+	}
 
 	if h.cfg.DB == nil {
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: database not configured"}}, IsError: true}
@@ -1100,10 +1313,14 @@ func (h *mcpHandler) toolSaveMemory(ctx context.Context, args map[string]any) mc
 		ownerID = uid
 	}
 
-	upsertSQL := `INSERT INTO memories (id, key, value, type, owner_id, collection_name, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		 ON CONFLICT(key, owner_id) DO UPDATE SET value = $3, type = $4, collection_name = $6, updated_at = $8`
-	q, qargs := QArgs(upsertSQL, id, key, value, memType, ownerID, collectionName, now, now)
+	pinInt := 0
+	if pin {
+		pinInt = 1
+	}
+	upsertSQL := `INSERT INTO memories (id, key, value, type, owner_id, collection_name, room, hall, is_pinned, pin_priority, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		 ON CONFLICT(key, owner_id) DO UPDATE SET value = $3, type = $4, collection_name = $6, room = $7, hall = $8, is_pinned = $9, pin_priority = $10, updated_at = $12`
+	q, qargs := QArgs(upsertSQL, id, key, value, memType, ownerID, collectionName, room, hall, pinInt, pinPriority, now, now)
 	if _, err := h.cfg.DB.ExecContext(ctx, q, qargs...); err != nil {
 		if h.cfg.Logger != nil {
 			h.cfg.Logger.Error("save_memory SQL failed", err, map[string]any{"key": key})
@@ -1140,6 +1357,8 @@ func (h *mcpHandler) toolRecallMemory(ctx context.Context, args map[string]any) 
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: 'query' required"}}, IsError: true}
 	}
 	collectionName, _ := args["collection"].(string)
+	room, _ := args["room"].(string)
+	hall, _ := args["hall"].(string)
 
 	// User isolation
 	ownerID := ""
@@ -1147,8 +1366,15 @@ func (h *mcpHandler) toolRecallMemory(ctx context.Context, args map[string]any) 
 		ownerID = uid
 	}
 
-	// Strategy 1: Vector semantic search (if embed configured)
-	if h.cfg.EmbedEndpoint != "" && h.cfg.Collections != nil {
+	// SQL fallback path is the source of truth for room/hall filtering since
+	// historical vector metadata may not include these fields. Vector path is
+	// kept for fast semantic recall when no structural filters are provided.
+	if h.cfg.DB == nil {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "[]"}}}
+	}
+
+	// Strategy 1: Vector semantic search (only when no structural filter — keeps it cheap)
+	if room == "" && hall == "" && h.cfg.EmbedEndpoint != "" && h.cfg.Collections != nil {
 		embedClient := embed.NewClient(h.cfg.EmbedEndpoint, h.cfg.EmbedModel, 1, 1)
 		vec, err := embedClient.EmbedSingle(ctx, query)
 		if err == nil {
@@ -1173,27 +1399,36 @@ func (h *mcpHandler) toolRecallMemory(ctx context.Context, args map[string]any) 
 		}
 	}
 
-	// Strategy 2: Fallback to LIKE search
-	if h.cfg.DB == nil {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "[]"}}}
-	}
-
+	// Strategy 2: SQL LIKE search with room/hall filters
 	pattern := "%" + query + "%"
-	var rows *sql.Rows
-	var err error
+	var conds []string
+	var qargs []any
+	pos := 1
+	conds = append(conds, fmt.Sprintf("(key LIKE $%d OR value LIKE $%d)", pos, pos+1))
+	qargs = append(qargs, pattern, pattern)
+	pos += 2
+	conds = append(conds, fmt.Sprintf("(owner_id = $%d OR owner_id = '')", pos))
+	qargs = append(qargs, ownerID)
+	pos++
 	if collectionName != "" {
-		rows, err = h.cfg.DB.QueryContext(ctx,
-			Q(`SELECT id, key, value, type, owner_id, created_at, updated_at
-			 FROM memories WHERE (key LIKE $1 OR value LIKE $2) AND collection_name = $3
-			 AND (owner_id = $4 OR owner_id = '')
-			 ORDER BY updated_at DESC LIMIT 20`), pattern, pattern, collectionName, ownerID)
-	} else {
-		rows, err = h.cfg.DB.QueryContext(ctx,
-			Q(`SELECT id, key, value, type, owner_id, created_at, updated_at
-			 FROM memories WHERE (key LIKE $1 OR value LIKE $2)
-			 AND (owner_id = $3 OR owner_id = '')
-			 ORDER BY updated_at DESC LIMIT 20`), pattern, pattern, ownerID)
+		conds = append(conds, fmt.Sprintf("collection_name = $%d", pos))
+		qargs = append(qargs, collectionName)
+		pos++
 	}
+	if room != "" {
+		conds = append(conds, fmt.Sprintf("room = $%d", pos))
+		qargs = append(qargs, room)
+		pos++
+	}
+	if hall != "" {
+		conds = append(conds, fmt.Sprintf("hall = $%d", pos))
+		qargs = append(qargs, hall)
+		pos++
+	}
+	sqlStr := `SELECT id, key, value, type, owner_id, room, hall, created_at, updated_at
+			 FROM memories WHERE ` + strings.Join(conds, " AND ") +
+		` ORDER BY updated_at DESC LIMIT 20`
+	rows, err := h.cfg.DB.QueryContext(ctx, Q(sqlStr), qargs...)
 	if err != nil {
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("Error: %s", err.Error())}}, IsError: true}
 	}
@@ -1201,13 +1436,14 @@ func (h *mcpHandler) toolRecallMemory(ctx context.Context, args map[string]any) 
 
 	var results []map[string]any
 	for rows.Next() {
-		var id, key, value, typ, oid, ca, ua string
-		if err := rows.Scan(&id, &key, &value, &typ, &oid, &ca, &ua); err != nil {
+		var id, key, value, typ, oid, rm, hl, ca, ua string
+		if err := rows.Scan(&id, &key, &value, &typ, &oid, &rm, &hl, &ca, &ua); err != nil {
 			continue
 		}
 		results = append(results, map[string]any{
 			"id": id, "key": key, "value": value, "type": typ,
-			"owner_id": oid, "created_at": ca, "updated_at": ua,
+			"owner_id": oid, "room": rm, "hall": hl,
+			"created_at": ca, "updated_at": ua,
 		})
 	}
 
@@ -1225,26 +1461,39 @@ func (h *mcpHandler) toolListMemories(ctx context.Context, args map[string]any) 
 
 	filterType, _ := args["type"].(string)
 	collectionName, _ := args["collection"].(string)
-	var rows *sql.Rows
-	var err error
+	room, _ := args["room"].(string)
+	hall, _ := args["hall"].(string)
 
-	if filterType != "" && collectionName != "" {
-		rows, err = h.cfg.DB.QueryContext(ctx,
-			Q(`SELECT id, key, value, type, owner_id, created_at, updated_at
-			 FROM memories WHERE type = $1 AND collection_name = $2 ORDER BY updated_at DESC LIMIT 100`), filterType, collectionName)
-	} else if filterType != "" {
-		rows, err = h.cfg.DB.QueryContext(ctx,
-			Q(`SELECT id, key, value, type, owner_id, created_at, updated_at
-			 FROM memories WHERE type = $1 ORDER BY updated_at DESC LIMIT 100`), filterType)
-	} else if collectionName != "" {
-		rows, err = h.cfg.DB.QueryContext(ctx,
-			Q(`SELECT id, key, value, type, owner_id, created_at, updated_at
-			 FROM memories WHERE collection_name = $1 ORDER BY updated_at DESC LIMIT 100`), collectionName)
-	} else {
-		rows, err = h.cfg.DB.QueryContext(ctx,
-			Q(`SELECT id, key, value, type, owner_id, created_at, updated_at
-			 FROM memories ORDER BY updated_at DESC LIMIT 100`))
+	var conds []string
+	var qargs []any
+	pos := 1
+	if filterType != "" {
+		conds = append(conds, fmt.Sprintf("type = $%d", pos))
+		qargs = append(qargs, filterType)
+		pos++
 	}
+	if collectionName != "" {
+		conds = append(conds, fmt.Sprintf("collection_name = $%d", pos))
+		qargs = append(qargs, collectionName)
+		pos++
+	}
+	if room != "" {
+		conds = append(conds, fmt.Sprintf("room = $%d", pos))
+		qargs = append(qargs, room)
+		pos++
+	}
+	if hall != "" {
+		conds = append(conds, fmt.Sprintf("hall = $%d", pos))
+		qargs = append(qargs, hall)
+		pos++
+	}
+	sqlStr := `SELECT id, key, value, type, owner_id, room, hall, is_pinned, pin_priority, created_at, updated_at FROM memories`
+	if len(conds) > 0 {
+		sqlStr += " WHERE " + strings.Join(conds, " AND ")
+	}
+	sqlStr += " ORDER BY updated_at DESC LIMIT 100"
+
+	rows, err := h.cfg.DB.QueryContext(ctx, Q(sqlStr), qargs...)
 	if err != nil {
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "[]"}}}
 	}
@@ -1252,13 +1501,16 @@ func (h *mcpHandler) toolListMemories(ctx context.Context, args map[string]any) 
 
 	var results []map[string]any
 	for rows.Next() {
-		var id, key, value, typ, ownerID, ca, ua string
-		if err := rows.Scan(&id, &key, &value, &typ, &ownerID, &ca, &ua); err != nil {
+		var id, key, value, typ, ownerID, rm, hl, ca, ua string
+		var pinned, prio int
+		if err := rows.Scan(&id, &key, &value, &typ, &ownerID, &rm, &hl, &pinned, &prio, &ca, &ua); err != nil {
 			continue
 		}
 		results = append(results, map[string]any{
 			"id": id, "key": key, "value": value, "type": typ,
-			"owner_id": ownerID, "created_at": ca, "updated_at": ua,
+			"owner_id": ownerID, "room": rm, "hall": hl,
+			"is_pinned": pinned == 1, "pin_priority": prio,
+			"created_at": ca, "updated_at": ua,
 		})
 	}
 

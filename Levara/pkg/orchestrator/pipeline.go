@@ -64,6 +64,10 @@ type Config struct {
 	GenerateTriplets bool
 	// Dataset tracking
 	DatasetID string
+	// Room: sub-topic label propagated to chunk metadata for filtered search.
+	Room string
+	// Tags: semantic tags propagated to chunk metadata for filtered search.
+	Tags []string
 	// PostgreSQL (for graph node/edge upsert)
 	DB *sql.DB
 	// LLM response cache (optional, nil = no caching)
@@ -486,10 +490,17 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 				if err != nil {
 					log.Printf("[pipeline] chunk embed FAILED (%d chunks): %v", len(chunkTexts), err)
 				} else {
+					tagsJSON := "[]"
+					if len(cfg.Tags) > 0 {
+						if b, err := json.Marshal(cfg.Tags); err == nil {
+							tagsJSON = string(b)
+						}
+					}
 					for i, vec := range chunkVecs {
 						if i < len(chunkIDs) {
-							meta := fmt.Sprintf(`{"text":%s,"dataset_id":"%s"}`,
-								mustJSON(chunkTexts[i]), cfg.DatasetID)
+							meta := fmt.Sprintf(`{"text":%s,"dataset_id":"%s","room":%s,"tags":%s}`,
+								mustJSON(chunkTexts[i]), cfg.DatasetID,
+								mustJSON(cfg.Room), tagsJSON)
 							if err := cfg.Collections.Insert(coll, chunkIDs[i], vec, meta); err != nil {
 								log.Printf("[pipeline] chunk insert error: %v", err)
 							} else {
