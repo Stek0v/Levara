@@ -90,6 +90,7 @@ var schemaStatements = []string{
 		loader_engine TEXT NOT NULL DEFAULT 'go_ingest',
 		pipeline_status TEXT NOT NULL DEFAULT '{}',
 		tags TEXT NOT NULL DEFAULT '[]',
+		room TEXT NOT NULL DEFAULT '',
 		token_count INTEGER NOT NULL DEFAULT -1,
 		data_size BIGINT NOT NULL DEFAULT 0,
 		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -154,12 +155,19 @@ var schemaStatements = []string{
 	)`,
 
 	// Graph edges (PostgreSQL mirror of Neo4j)
+	// Temporal validity: valid_from/valid_until track when an edge was true.
+	// superseded_by stores edge ID that replaced this one (for non-overlapping
+	// exclusive relationships like assigned_to, role_is, status_is).
 	`CREATE TABLE IF NOT EXISTS graph_edges (
 		id TEXT PRIMARY KEY,
 		source_id TEXT NOT NULL,
 		target_id TEXT NOT NULL,
 		relationship_name TEXT NOT NULL DEFAULT '',
 		properties JSONB NOT NULL DEFAULT '{}',
+		valid_from TIMESTAMPTZ,
+		valid_until TIMESTAMPTZ,
+		superseded_by TEXT NOT NULL DEFAULT '',
+		confidence REAL NOT NULL DEFAULT 1.0,
 		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 	)`,
@@ -246,6 +254,9 @@ var schemaStatements = []string{
 	`ALTER TABLE data ADD COLUMN IF NOT EXISTS tags TEXT NOT NULL DEFAULT '[]'`,
 
 	// Memories (project/user memory store)
+	// room    — narrow topic within collection (auth, deploy, mcp, ocr-bench)
+	// hall    — controlled memory genre: fact|event|decision|preference|advice|discovery
+	// is_pinned/pin_priority — wake_up critical-facts mechanism
 	`CREATE TABLE IF NOT EXISTS memories (
 		id TEXT PRIMARY KEY,
 		key TEXT NOT NULL,
@@ -253,10 +264,32 @@ var schemaStatements = []string{
 		type TEXT NOT NULL DEFAULT 'project',
 		owner_id TEXT NOT NULL DEFAULT '',
 		collection_name TEXT NOT NULL DEFAULT '',
+		room TEXT NOT NULL DEFAULT '',
+		hall TEXT NOT NULL DEFAULT '',
+		is_pinned BOOLEAN NOT NULL DEFAULT FALSE,
+		pin_priority INTEGER NOT NULL DEFAULT 0,
 		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 	)`,
 	`CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_key_owner ON memories(key, owner_id)`,
+	// Migrations for existing PG databases. ALTER TABLE must run BEFORE the
+	// dependent CREATE INDEX statements below — otherwise on an old DB the
+	// indexes reference columns that haven't been added yet, the migration
+	// errors out, and the ALTERs are never reached.
+	`ALTER TABLE memories ADD COLUMN IF NOT EXISTS room TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE memories ADD COLUMN IF NOT EXISTS hall TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE memories ADD COLUMN IF NOT EXISTS is_pinned BOOLEAN NOT NULL DEFAULT FALSE`,
+	`ALTER TABLE memories ADD COLUMN IF NOT EXISTS pin_priority INTEGER NOT NULL DEFAULT 0`,
+	`ALTER TABLE data ADD COLUMN IF NOT EXISTS room TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE graph_edges ADD COLUMN IF NOT EXISTS valid_from TIMESTAMPTZ`,
+	`ALTER TABLE graph_edges ADD COLUMN IF NOT EXISTS valid_until TIMESTAMPTZ`,
+	`ALTER TABLE graph_edges ADD COLUMN IF NOT EXISTS superseded_by TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE graph_edges ADD COLUMN IF NOT EXISTS confidence REAL NOT NULL DEFAULT 1.0`,
+	// Indexes that depend on the columns added by the ALTERs above.
+	`CREATE INDEX IF NOT EXISTS idx_memories_room ON memories(collection_name, room)`,
+	`CREATE INDEX IF NOT EXISTS idx_memories_hall ON memories(hall)`,
+	`CREATE INDEX IF NOT EXISTS idx_memories_pinned ON memories(is_pinned, pin_priority DESC)`,
+	`CREATE INDEX IF NOT EXISTS idx_graph_edges_validity ON graph_edges(source_id, relationship_name, valid_until)`,
 
 	`CREATE INDEX IF NOT EXISTS idx_acl_principal ON acl(principal_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_acl_dataset ON acl(dataset_id)`,
@@ -343,6 +376,7 @@ var schemaSQLiteStatements = []string{
 		loader_engine TEXT NOT NULL DEFAULT 'go_ingest',
 		pipeline_status TEXT NOT NULL DEFAULT '{}',
 		tags TEXT NOT NULL DEFAULT '[]',
+		room TEXT NOT NULL DEFAULT '',
 		token_count INTEGER NOT NULL DEFAULT -1,
 		data_size INTEGER NOT NULL DEFAULT 0,
 		created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -406,6 +440,10 @@ var schemaSQLiteStatements = []string{
 		target_id TEXT NOT NULL,
 		relationship_name TEXT NOT NULL DEFAULT '',
 		properties TEXT NOT NULL DEFAULT '{}',
+		valid_from TEXT,
+		valid_until TEXT,
+		superseded_by TEXT NOT NULL DEFAULT '',
+		confidence REAL NOT NULL DEFAULT 1.0,
 		created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 	)`,
@@ -486,10 +524,17 @@ var schemaSQLiteStatements = []string{
 		type TEXT NOT NULL DEFAULT 'project',
 		owner_id TEXT NOT NULL DEFAULT '',
 		collection_name TEXT NOT NULL DEFAULT '',
+		room TEXT NOT NULL DEFAULT '',
+		hall TEXT NOT NULL DEFAULT '',
+		is_pinned INTEGER NOT NULL DEFAULT 0,
+		pin_priority INTEGER NOT NULL DEFAULT 0,
 		created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 	)`,
 	`CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_key_owner ON memories(key, owner_id)`,
+	// idx_memories_room/hall/pinned are created at the end of the
+	// schemaSQLiteStatements list, after the ALTER TABLE migrations that
+	// add the columns those indexes depend on.
 
 	`CREATE INDEX IF NOT EXISTS idx_acl_principal ON acl(principal_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_acl_dataset ON acl(dataset_id)`,
@@ -524,6 +569,22 @@ var schemaSQLiteStatements = []string{
 	`CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash)`,
 	`CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id)`,
 
-	// Migrations for existing SQLite databases (ALTER errors ignored)
+	// Migrations for existing SQLite databases (ALTER errors ignored).
+	// Order matters: ALTERs come BEFORE the dependent CREATE INDEX statements
+	// so old DBs receive the new columns first.
 	`ALTER TABLE data ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'`,
+	`ALTER TABLE data ADD COLUMN room TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE memories ADD COLUMN room TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE memories ADD COLUMN hall TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE memories ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0`,
+	`ALTER TABLE memories ADD COLUMN pin_priority INTEGER NOT NULL DEFAULT 0`,
+	`ALTER TABLE graph_edges ADD COLUMN valid_from TEXT`,
+	`ALTER TABLE graph_edges ADD COLUMN valid_until TEXT`,
+	`ALTER TABLE graph_edges ADD COLUMN superseded_by TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE graph_edges ADD COLUMN confidence REAL NOT NULL DEFAULT 1.0`,
+	// Indexes that depend on the columns added above.
+	`CREATE INDEX IF NOT EXISTS idx_memories_room ON memories(collection_name, room)`,
+	`CREATE INDEX IF NOT EXISTS idx_memories_hall ON memories(hall)`,
+	`CREATE INDEX IF NOT EXISTS idx_memories_pinned ON memories(is_pinned, pin_priority DESC)`,
+	`CREATE INDEX IF NOT EXISTS idx_graph_edges_validity ON graph_edges(source_id, relationship_name, valid_until)`,
 }

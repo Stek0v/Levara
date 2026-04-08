@@ -98,26 +98,117 @@ Key shared components (duplicated across test files):
 - NDCG/Recall metrics can be misleadingly low when multiple tests insert data with different prefixes — run in clean state (`docker compose down -v`) for accurate quality metrics.
 - Remote llama.cpp at `10.23.0.64:9004` is not always reachable. Use local Ollama at `127.0.0.1:11434`.
 
-## Levara MCP Memory
+## Levara MCP Memory — usage guide for Claude
 
-Levara MCP подключена и содержит проектный контекст. Используй её проактивно:
+Levara MCP — это твой постоянный memory layer. Используй проактивно: цель — чтобы ничего из принятых решений и найденных проблем не терялось между сессиями.
 
-**При старте работы:**
-- Контекст загружается автоматически через SessionStart hook
-- Если нужна конкретная информация — `recall_memory(query="тема")`
+### Session start
 
-**Во время работы:**
-- Перед исследованием незнакомой области — `recall_memory` или `search` по Levara
-- Для поиска по нескольким проектам — `cross_search(collections=[...])`
-- Для переключения контекста — `set_context(collection="project_name")`
+1. `set_context(collection="levara")` — установить рабочий проект для всей сессии (один раз).
+2. `wake_up(max_tokens=300)` — загрузить запиненные критические факты + top entities графа. Это **дешевле** чем `get_project_context` (~300 vs ~2K токенов) и хватает в 80% случаев.
+3. Если задача в незнакомой области — `recall_memory(query="тема")` или `recall_memory(query="...", room="...", hall="decision")` чтобы поднять уже принятые решения.
 
-**После завершения значимой задачи:**
-- Сохрани ключевые решения и результаты: `save_memory(key="...", value="...", type="project")`
-- Не сохраняй: код, пути к файлам, git history — это доступно через git/grep
+### Mental model: room × hall
 
-**Синхронизация:**
-- Mac (localhost:8081) ↔ Pi (10.23.0.53:8080)
+Каждая память имеет две независимые оси. **Заполняй обе всегда когда сохраняешь** — пустые поля резко снижают полезность recall.
+
+| Ось | Что значит | Контролируется |
+|---|---|---|
+| `room` | *О чём* память: подсистема/тема внутри проекта | Свободная строка (auth, deploy, mcp, ocr-bench, kg-temporal, ...) |
+| `hall` | *Что это за* память: жанр факта | Контролируемый словарь (см. ниже) |
+
+**Hall vocabulary** (на неизвестном значении `save_memory` вернёт ошибку):
+
+| hall | когда использовать |
+|---|---|
+| `fact` | Объективная характеристика: версия, размерность, IP, путь, число. «Levara HNSW dim=1024» |
+| `event` | Что-то произошло в конкретный момент: deploy, merge, инцидент, бенчмарк. Всегда с датой в value. |
+| `decision` | Архитектурный/проектный выбор: «решили X вместо Y потому что Z». Будущему тебе важно знать **почему**. |
+| `preference` | Предпочтение пользователя: стиль, тон, инструменты, флаги. Кросс-проектное обычно. |
+| `advice` | Практическое правило: «перед X сделай Y». Reusable рекомендация. |
+| `discovery` | Найденный non-obvious инсайт/баг/гетча, который ты бы хотел вспомнить через полгода. |
+
+### Decision rules — когда Claude должен сохранять (без просьбы)
+
+Вот триггеры. На каждом — **немедленно** вызывай `save_memory` с правильным hall. Не жди завершения разговора.
+
+| Триггер | Что делать |
+|---|---|
+| Пользователь принял архитектурное решение («давай X, не Y», «оставляем sqlite») | `save_memory(hall="decision", room="<подсистема>")` с **why** в value |
+| Ты нашёл root cause бага после расследования | `save_memory(hall="discovery", room="<подсистема>")` с симптомом + причиной + фиксом |
+| Пользователь поправил твой подход или дал стилевое указание | `save_memory(hall="preference")`, `pin_memory(priority=10)` если глобально |
+| Появился новый сервис/endpoint/IP/порт | `save_memory(hall="fact")` + `pin_memory` если критическое |
+| Завершён значимый этап работы (фича, рефакторинг, релиз) | `save_memory(hall="event")` с датой в value, перечислением изменений |
+| Ты дал пользователю reusable рекомендацию которая может пригодиться снова | `save_memory(hall="advice")` |
+| Пользователь упомянул дедлайн, мерж-фриз, чужую зависимость | `save_memory(hall="event")` с абсолютной датой |
+
+**НЕ сохраняй:**
+- Код, пути к файлам, имена функций — это есть в git/grep, и при ренейме станет stale.
+- Git history, кто что коммитил — `git log` авторитетен.
+- Промежуточные шаги текущей задачи — это для TaskCreate, не memory.
+- Дублирующее то что уже есть в auto-memory CLAUDE.md (стиль ответов, no_skip_tests, и т.п.).
+
+### Pin policy
+
+`pin_memory(key, priority)` помечает запись как «всегда возвращай в `wake_up`». Используй экономно — wake_up обрезается по бюджету.
+
+| priority | для чего |
+|---|---|
+| **10** | Глобальные предпочтения пользователя (стиль, язык, ключевые правила) |
+| **8** | Критическая инфраструктура (endpoints, IPs, порты, версии) |
+| **5** | Текущие активные решения по основным подсистемам |
+| **1-3** | Опциональный контекст |
+
+Если в `wake_up` стало слишком много шума — `unpin_memory(key)` для устаревших.
+
+### Recall patterns
+
+| Сценарий | Команда |
+|---|---|
+| «Что мы решили по auth?» | `recall_memory(query="auth", hall="decision")` |
+| «Все мои стилевые предпочтения» | `list_memories(hall="preference")` |
+| «Какие баги мы находили в migrations?» | `recall_memory(query="migration", hall="discovery")` |
+| «Что есть по теме deploy?» | `list_memories(room="deploy")` |
+| «Через несколько проектов» | `cross_search(collections=["levara","other"])` |
+
+### Knowledge graph + temporal validity
+
+Когда `cognify` обработал текст — в графе появились entities/edges с временными окнами:
+- `query_entity(name="X")` — текущее состояние entity (только активные edges).
+- `query_entity(name="X", as_of="2026-01-01")` — снапшот на конкретную дату.
+- Edges с relation из whitelist (`assigned_to`, `role_is`, `status_is`, `located_in`, `lives_in`, `works_at`, `owns`, `reports_to`, `current_state`, `is_a`) автоматически супершедятся при добавлении нового — старые помечаются `valid_until=now, superseded_by=<new>`.
+
+### Per-agent diaries
+
+При запуске специализированных subagents (Explore, Plan, code-review):
+- `diary_write(agent="reviewer", key="...", value="...")` — запись в изолированный namespace `owner_id="agent:reviewer"`.
+- `diary_read(agent="reviewer", query="...")` — читает только свои записи, не загрязняет project memory.
+
+Используй когда subagent делает повторяющуюся работу (review, monitoring, planning) и хочет вести свой контекст между запусками.
+
+### Search с фильтром по metadata
+
+`search` теперь принимает `room` и `tags`. При наличии фильтра HNSW делает overfetch ×3 и отсеивает по chunk metadata. Используй когда коллекция большая и без фильтра вылезают результаты из других контекстов:
+```
+search(search_query="...", room="auth", tags=["security"])
+```
+
+`add` и `cognify` принимают те же `room`/`tags` чтобы chunks несли эту metadata.
+
+### Sync (Mac ↔ Pi)
+
+- Mac (`localhost:8081`) ↔ Pi (`10.23.0.53:8080`)
 - `sync(remote_url="http://10.23.0.53:8080/api/v1", direction="pull")`
 - CLI: `sync_levara` / `man_levara`
 
-**19 MCP tools:** cognify, search, list_data, delete, prune, cognify_status, add, analyze_commits, git_search, save_memory, recall_memory, list_memories, save_chat, recall_chat, search_chats, get_project_context, set_context, cross_search, sync
+### Полный список MCP tools (25)
+
+**Knowledge graph & search:** `cognify`, `cognify_status`, `search`, `cross_search`, `query_entity`, `analyze_commits`, `git_search`, `codify`
+
+**Data:** `add`, `list_data`, `delete`, `prune`
+
+**Memory (palace):** `save_memory`, `recall_memory`, `list_memories`, `pin_memory`, `unpin_memory`, `wake_up`, `diary_write`, `diary_read`
+
+**Chat history:** `save_chat`, `recall_chat`, `search_chats`
+
+**Context & sync:** `set_context`, `get_project_context`, `sync`, `add_feedback`, `get_feedback_stats`

@@ -38,6 +38,7 @@ type Item struct {
 	DatasetName string
 	OwnerID     string   // user who uploaded (for dedup scoping)
 	Tags        []string // semantic tags for grouping (node_set equivalent)
+	Room        string   // sub-topic within collection (auth, deploy, ocr-bench)
 }
 
 // Result is the output of ingesting one item.
@@ -50,6 +51,7 @@ type Result struct {
 	FileSize      int64
 	Name          string
 	Tags          string // JSON array string, e.g. '["backend","api"]'
+	Room          string // sub-topic, propagated from Item
 	AlreadyExists bool
 }
 
@@ -186,6 +188,7 @@ func ingestOne(item Item, storagePath string, seen *sync.Map) (Result, error) {
 		FileSize:      int64(len(content)),
 		Name:          name,
 		Tags:          tagsJSON,
+		Room:          item.Room,
 		AlreadyExists: alreadyExists,
 	}, nil
 }
