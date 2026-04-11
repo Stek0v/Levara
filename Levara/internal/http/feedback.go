@@ -45,6 +45,11 @@ func feedbackSubmitHandler(cfg APIConfig) fiber.Handler {
 			   VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`),
 			id, req.Query, req.ResultID, req.Collection, req.SearchType, req.Rating, req.Comment, userID)
 
+		// Feed back to adaptive router weights
+		if cfg.AdaptiveWeights != nil && req.SearchType != "" {
+			cfg.AdaptiveWeights.RecordFeedback(req.SearchType, req.Rating)
+		}
+
 		return c.Status(201).JSON(fiber.Map{"id": id, "saved": true})
 	}
 }
