@@ -1090,7 +1090,8 @@ func (h *mcpHandler) toolSearch(ctx context.Context, args map[string]any) mcpToo
 				for i, r := range res {
 					grRes[i] = graphrank.ScoredResult{ID: r.ID, Score: r.Score, Metadata: r.Metadata}
 				}
-				grReranked := graphrank.RerankWithGraph(ctx, h.cfg.DB, nil, grRes, graphrank.DefaultConfig())
+				queryEntities := extractQueryEntities(ctx, h.cfg.DB, query)
+				grReranked := graphrank.RerankWithGraph(ctx, h.cfg.DB, queryEntities, grRes, graphrank.DefaultConfig())
 				for i, r := range grReranked {
 					res[i] = pipeline.ScoredResult{ID: r.ID, Score: r.Score, Metadata: r.Metadata}
 				}
