@@ -34,6 +34,7 @@ import (
 	"github.com/stek0v/cognevra/pkg/llm"
 	"github.com/stek0v/cognevra/pkg/llmcache"
 	"github.com/stek0v/cognevra/pkg/observe"
+	"github.com/stek0v/cognevra/pkg/graphrank"
 	"github.com/stek0v/cognevra/pkg/orchestrator"
 	"github.com/stek0v/cognevra/pkg/rerank"
 	"github.com/stek0v/cognevra/pkg/router"
@@ -887,17 +888,109 @@ type CogneeSearchRequest struct {
 	TopK              int      `json:"top_k"`
 	CypherQuery       string   `json:"cypher_query"`  // Raw Cypher for CYPHER search type
 	Collection        string   `json:"collection"`    // Filter search to one collection (empty = all)
+	Domain            string   `json:"domain"`         // Optional: filter to collections tagged with this domain
 	SessionID         string   `json:"session_id"`    // Conversational memory: load prior interactions
 	Tags              []string `json:"tags"`           // Optional: filter results by metadata tags
 	Rerank            bool     `json:"rerank"`         // Optional: rerank results via cross-encoder
 	AllowedDatasetIDs []string `json:"-"`              // RBAC: nil = no filtering (dev mode)
 }
 
+// extractQueryEntities finds graph entity names that match query terms.
+// Used by graphrank to compute proximity between query entities and result entities.
+func extractQueryEntities(ctx context.Context, db *sql.DB, query string) []string {
+	if db == nil || query == "" {
+		return nil
+	}
+	words := strings.Fields(strings.ToLower(query))
+	var conditions []string
+	var args []any
+	for i, w := range words {
+		cleaned := strings.TrimFunc(w, func(r rune) bool { return !('a' <= r && r <= 'z') && !('0' <= r && r <= '9') })
+		if len(cleaned) > 2 {
+			conditions = append(conditions, fmt.Sprintf("LOWER(name) LIKE $%d", i+1))
+			args = append(args, "%"+cleaned+"%")
+		}
+	}
+	if len(conditions) == 0 {
+		return nil
+	}
+	rows, err := db.QueryContext(ctx,
+		Q(fmt.Sprintf("SELECT name FROM graph_nodes WHERE %s LIMIT 10", strings.Join(conditions, " OR "))), args...)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var names []string
+	for rows.Next() {
+		var n string
+		if rows.Scan(&n) == nil { names = append(names, n) }
+	}
+	return names
+}
+
+// expandQueryFromGraph looks up query terms in graph_nodes and returns related entity names.
+// This helps BM25 find documents containing synonyms/related terms not in the original query.
+// Returns space-separated additional terms, or empty string if no expansion found.
+func expandQueryFromGraph(ctx context.Context, db *sql.DB, query string) string {
+	if db == nil || query == "" {
+		return ""
+	}
+	// Extract meaningful words (>3 chars) as potential entity name fragments
+	words := strings.Fields(strings.ToLower(query))
+	var searchTerms []string
+	for _, w := range words {
+		cleaned := strings.TrimFunc(w, func(r rune) bool { return !('a' <= r && r <= 'z') && !('0' <= r && r <= '9') })
+		if len(cleaned) > 3 {
+			searchTerms = append(searchTerms, cleaned)
+		}
+	}
+	if len(searchTerms) == 0 {
+		return ""
+	}
+
+	// Search graph_nodes for entities matching query words
+	var conditions []string
+	var args []any
+	for i, term := range searchTerms {
+		conditions = append(conditions, fmt.Sprintf("LOWER(name) LIKE $%d", i+1))
+		args = append(args, "%"+term+"%")
+	}
+
+	rows, err := db.QueryContext(ctx,
+		Q(fmt.Sprintf(`SELECT DISTINCT gn2.name FROM graph_edges ge
+			JOIN graph_nodes gn ON ge.source_id = gn.id
+			JOIN graph_nodes gn2 ON ge.target_id = gn2.id
+			WHERE (%s) AND ge.relationship_name <> 'HAPPENED_AT'
+			AND (gn2.type IS NULL OR gn2.type <> 'TemporalEvent')
+			LIMIT 5`, strings.Join(conditions, " OR "))),
+		args...)
+	if err != nil {
+		return ""
+	}
+	defer rows.Close()
+
+	var expanded []string
+	seen := make(map[string]bool)
+	for rows.Next() {
+		var name string
+		if rows.Scan(&name) == nil && !seen[strings.ToLower(name)] {
+			seen[strings.ToLower(name)] = true
+			expanded = append(expanded, name)
+		}
+	}
+	return strings.Join(expanded, " ")
+}
+
 // resolveCollections returns the list of collections to search.
-// If req.Collection is set, only that collection is searched; otherwise all collections are listed.
+// If req.Collection is set, only that collection is searched.
+// If req.Domain is set, only collections matching that domain are searched.
+// Otherwise all collections are listed.
 func resolveCollections(cfg APIConfig, req CogneeSearchRequest) []string {
 	if req.Collection != "" {
 		return []string{req.Collection}
+	}
+	if req.Domain != "" {
+		return cfg.Collections.ListByDomain(req.Domain)
 	}
 	return cfg.Collections.List()
 }
@@ -1147,6 +1240,28 @@ func chunksSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
 		}
 	}
 
+	// Graph-aware reranking: boost results that are graph-neighbors of query entities
+	if cfg.DB != nil && len(allResults) > 1 {
+		queryEntityNames := extractQueryEntities(context.Background(), cfg.DB, req.QueryText)
+		if len(queryEntityNames) > 0 {
+			grResults := make([]graphrank.ScoredResult, len(allResults))
+			for i, r := range allResults {
+				score, _ := r["score"].(float32)
+				if score == 0 {
+					if fs, ok := r["fused_score"].(float64); ok { score = float32(fs) }
+				}
+				meta, _ := r["metadata"].(json.RawMessage)
+				grResults[i] = graphrank.ScoredResult{ID: r["id"].(string), Score: score, Metadata: meta}
+			}
+			reranked := graphrank.RerankWithGraph(context.Background(), cfg.DB, queryEntityNames, grResults, graphrank.DefaultConfig())
+			for i, r := range reranked {
+				allResults[i]["id"] = r.ID
+				allResults[i]["score"] = r.Score
+				allResults[i]["metadata"] = r.Metadata
+			}
+		}
+	}
+
 	// RBAC post-filter by allowed datasets
 	allResults = filterByAllowedDatasets(allResults, req.AllowedDatasetIDs)
 
@@ -1219,11 +1334,17 @@ func hybridSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
 			})
 		}
 
-		// BM25 search
+		// BM25 search with optional graph-based query expansion
+		bm25Query := req.QueryText
+		if cfg.DB != nil {
+			if expanded := expandQueryFromGraph(context.Background(), cfg.DB, req.QueryText); expanded != "" {
+				bm25Query = req.QueryText + " " + expanded
+			}
+		}
 		var br []bm25.Result
 		if cfg.BM25Indexes != nil {
 			if idx, ok := cfg.BM25Indexes[coll]; ok {
-				br = idx.Search(req.QueryText, req.TopK*2)
+				br = idx.Search(bm25Query, req.TopK*2)
 			}
 		}
 

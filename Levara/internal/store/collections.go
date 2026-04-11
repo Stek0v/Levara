@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -18,6 +19,7 @@ type CollectionMeta struct {
 	EmbeddingDim     int    `json:"embedding_dim"`
 	DistanceMetric   string `json:"distance_metric"` // cosine, l2, dot
 	EmbeddingVersion string `json:"embedding_version,omitempty"`
+	Domain           string `json:"domain,omitempty"` // optional domain tag for routing (e.g., "medical", "scientific", "legal")
 	RecordCount      int    `json:"record_count"`
 	CreatedAt        string `json:"created_at"`
 	UpdatedAt        string `json:"updated_at"`
@@ -239,6 +241,38 @@ func (cm *CollectionManager) List() []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// ListByDomain returns collections matching a domain tag. Empty domain returns all.
+func (cm *CollectionManager) ListByDomain(domain string) []string {
+	if domain == "" {
+		return cm.List()
+	}
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+	domain = strings.ToLower(domain)
+	var names []string
+	for name := range cm.collections {
+		if m, ok := cm.metas[name]; ok && strings.ToLower(m.Domain) == domain {
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 {
+		return cm.List() // fallback: return all if no domain match
+	}
+	sort.Strings(names)
+	return names
+}
+
+// SetDomain updates the domain tag for a collection.
+func (cm *CollectionManager) SetDomain(name, domain string) {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	if m, ok := cm.metas[name]; ok {
+		m.Domain = domain
+		colDir := filepath.Join(cm.basePath, name)
+		saveCollectionMeta(colDir, m)
+	}
 }
 
 // Has checks if a collection exists.
