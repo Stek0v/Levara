@@ -28,11 +28,14 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/stek0v/cognevra/internal/metrics"
+	"github.com/stek0v/cognevra/pkg/community"
 	"github.com/stek0v/cognevra/pkg/embed"
+	"github.com/stek0v/cognevra/pkg/graphrank"
 	"github.com/stek0v/cognevra/pkg/extract"
 	"github.com/stek0v/cognevra/pkg/git"
 	"github.com/stek0v/cognevra/pkg/ingest"
 	"github.com/stek0v/cognevra/pkg/orchestrator"
+	"github.com/stek0v/cognevra/pkg/rerank"
 	"github.com/stek0v/cognevra/pkg/router"
 	"github.com/stek0v/cognevra/pipeline"
 )
@@ -85,15 +88,26 @@ type mcpToolResult struct {
 var mcpTools = []mcpTool{
 	{
 		Name:        "cognify",
-		Description: "Transform text data into a structured knowledge graph. Extracts entities, relationships, and builds searchable graph. Optional room/tags propagate to chunk metadata for filtered search.",
+		Description: "Transform text data into a structured knowledge graph, or ingest in RAG mode (chunk+embed only, no LLM). Optional room/tags propagate to chunk metadata for filtered search.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"data":          map[string]any{"type": "string", "description": "Text data to process into knowledge graph"},
-				"collection":    map[string]any{"type": "string", "description": "Target collection name (default: 'default')"},
-				"custom_prompt": map[string]any{"type": "string", "description": "Custom LLM prompt for entity extraction"},
-				"room":          map[string]any{"type": "string", "description": "Sub-topic label attached to every chunk for filtered retrieval (auth, deploy, ocr-bench)."},
-				"tags":          map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Tags attached to every chunk."},
+				"data":           map[string]any{"type": "string", "description": "Text data to process into knowledge graph"},
+				"collection":     map[string]any{"type": "string", "description": "Target collection name (default: 'default')"},
+				"custom_prompt":  map[string]any{"type": "string", "description": "Custom LLM prompt for entity extraction (ignored in rag mode)"},
+				"room":           map[string]any{"type": "string", "description": "Sub-topic label attached to every chunk for filtered retrieval (auth, deploy, ocr-bench)."},
+				"tags":           map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Tags attached to every chunk."},
+				"mode":           map[string]any{"type": "string", "enum": []string{"rag", "full"}, "default": "full", "description": "Pipeline mode. 'rag': chunk+embed only (no LLM, no graph). 'full': complete pipeline with entity extraction."},
+				"chunk_strategy": map[string]any{"type": "string", "enum": []string{"merged", "paragraph", "sentence", "row", "code", "sliding", "auto"}, "default": "merged", "description": "Chunking strategy. 'sliding' enables fixed-window with overlap."},
+				"overlap_chars":      map[string]any{"type": "integer", "description": "Overlap in characters for sliding window chunking. Default: 20% of max_chunk_chars."},
+				"snap_to_sentence":  map[string]any{"type": "boolean", "default": true, "description": "Snap sliding window boundaries to sentence/word ends (avoids cutting words)."},
+				"parent_child":      map[string]any{"type": "boolean", "default": false, "description": "Enable parent-child chunking. Small chunks for search precision, large chunks for context."},
+				"document_title":        map[string]any{"type": "string", "description": "Document title for attribution. Prepended as contextual header to chunk embeddings."},
+				"document_id":           map[string]any{"type": "string", "description": "Stable document ID for metadata tracking."},
+				"community_resolution":  map[string]any{"type": "number", "default": 1.0, "description": "Louvain resolution (γ). >1=finer, <1=coarser. Presets: 0.5=coarse, 1.0=medium, 2.0=fine."},
+				"dedup_threshold":       map[string]any{"type": "number", "default": 0.95, "description": "Semantic entity dedup threshold (0.5-1.0). Higher=stricter."},
+				"min_chunk_chars":       map[string]any{"type": "integer", "default": 80, "description": "Min chunk size in characters."},
+				"max_chunk_chars":       map[string]any{"type": "integer", "default": 600, "description": "Max chunk size in characters."},
 			},
 			"required": []string{"data"},
 		},
@@ -110,8 +124,34 @@ var mcpTools = []mcpTool{
 				"collection":   map[string]any{"type": "string", "description": "Project collection name to search in. Leave empty to search all."},
 				"room":         map[string]any{"type": "string", "description": "Filter chunks by room (sub-topic) attached during cognify."},
 				"tags":         map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Filter chunks by tags (any-match)."},
+				"rerank":       map[string]any{"type": "boolean", "default": false, "description": "Apply cross-encoder reranking to results. Requires RERANK_ENDPOINT configured."},
+				"parent_child": map[string]any{"type": "boolean", "default": false, "description": "Search child chunks for precision, return parent chunks for context."},
+				"multi_query":  map[string]any{"type": "boolean", "default": false, "description": "Generate query variants via LLM for broader retrieval. Requires LLM."},
+				"dedup":        map[string]any{"type": "boolean", "default": true, "description": "Deduplicate overlapping results (useful for sliding window chunks)."},
+				"mode":         map[string]any{"type": "string", "enum": []string{"rag", "graph", "full", "auto"}, "default": "auto", "description": "Search mode. rag: vector only. graph: graph traversal only. full: all backends. auto: router decides."},
+				"graph_rerank": map[string]any{"type": "boolean", "default": false, "description": "Rerank results using graph proximity (entity hop distance)."},
 			},
 			"required": []string{"search_query"},
+		},
+	},
+	{
+		Name:        "check_drift",
+		Description: "Check for embedding model drift across collections. Reports collections where the configured model/dimension doesn't match stored data.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{},
+		},
+	},
+	{
+		Name:        "prune_graph",
+		Description: "Clean up old superseded graph edges and optionally orphaned nodes.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"max_age_days":         map[string]any{"type": "integer", "default": 90, "description": "Delete superseded edges older than N days."},
+				"dry_run":              map[string]any{"type": "boolean", "default": true, "description": "Report what would be deleted without deleting."},
+				"include_orphan_nodes": map[string]any{"type": "boolean", "default": false, "description": "Also delete orphaned nodes with no edges."},
+			},
 		},
 	},
 	{
@@ -153,6 +193,18 @@ var mcpTools = []mcpTool{
 				"run_id": map[string]any{"type": "string", "description": "Pipeline run ID returned by cognify"},
 			},
 			"required": []string{"run_id"},
+		},
+	},
+	{
+		Name:        "list_communities",
+		Description: "List detected communities (entity clusters) with summaries. Communities are detected by Louvain algorithm during cognify full mode.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"level":       map[string]any{"type": "integer", "description": "Hierarchy level (0=finest). Omit for all levels."},
+				"min_members": map[string]any{"type": "integer", "default": 2, "description": "Minimum member count"},
+				"limit":       map[string]any{"type": "integer", "default": 20, "description": "Max communities to return"},
+			},
 		},
 	},
 	{
@@ -708,6 +760,12 @@ func (h *mcpHandler) executeToolInner(ctx context.Context, sess *mcpSession, nam
 		return h.toolPrune(ctx)
 	case "cognify_status":
 		return h.toolCognifyStatus(args)
+	case "list_communities":
+		return h.toolListCommunities(ctx, args)
+	case "check_drift":
+		return h.toolCheckDrift(ctx, args)
+	case "prune_graph":
+		return h.toolPruneGraph(ctx, args)
 	case "add":
 		return h.toolAdd(ctx, args)
 	case "analyze_commits":
@@ -814,6 +872,46 @@ func (h *mcpHandler) toolCognify(ctx context.Context, args map[string]any) mcpTo
 		LLMCache:            h.cfg.LLMCache,
 		UseStructuredOutput: func() *bool { b := true; return &b }(),
 	}
+	// RAG mode: skip graph extraction (chunk+embed only, no LLM needed)
+	if mode, _ := args["mode"].(string); mode == "rag" {
+		pipeCfg.SkipGraph = true
+		pipeCfg.GenerateTriplets = false
+	}
+	// Custom chunking strategy
+	if cs, _ := args["chunk_strategy"].(string); cs != "" {
+		pipeCfg.ChunkStrategy = cs
+	}
+	// Overlap for sliding window chunking
+	if oc, ok := args["overlap_chars"].(float64); ok && oc > 0 {
+		pipeCfg.OverlapChars = int(oc)
+	}
+	// Snap to sentence boundary (default true)
+	if snap, ok := args["snap_to_sentence"].(bool); ok {
+		pipeCfg.SnapToSentence = &snap
+	}
+	// Parent-child chunking
+	if pc, ok := args["parent_child"].(bool); ok && pc {
+		pipeCfg.ParentChild = true
+	}
+	// Document metadata
+	if dt, _ := args["document_title"].(string); dt != "" {
+		pipeCfg.DocumentTitle = dt
+	}
+	if di, _ := args["document_id"].(string); di != "" {
+		pipeCfg.DocumentID = di
+	}
+	if cr, ok := args["community_resolution"].(float64); ok && cr > 0 {
+		pipeCfg.CommunityResolution = cr
+	}
+	if dt, ok := args["dedup_threshold"].(float64); ok && dt > 0 {
+		pipeCfg.DedupThreshold = dt
+	}
+	if minC, ok := args["min_chunk_chars"].(float64); ok && minC > 0 {
+		pipeCfg.MinChunkChars = int(minC)
+	}
+	if maxC, ok := args["max_chunk_chars"].(float64); ok && maxC > 0 {
+		pipeCfg.MaxChunkChars = int(maxC)
+	}
 	if cp, _ := args["custom_prompt"].(string); cp != "" {
 		pipeCfg.SystemPrompt = cp
 	}
@@ -902,12 +1000,38 @@ func (h *mcpHandler) toolSearch(ctx context.Context, args map[string]any) mcpToo
 		}
 	}
 	hasMetaFilter := roomFilter != "" || len(tagFilters) > 0
+	doRerank, _ := args["rerank"].(bool)
+	doParentChild, _ := args["parent_child"].(bool)
+	doMultiQuery, _ := args["multi_query"].(bool)
+	doDedup := true // default: dedup enabled
+	if dd, ok := args["dedup"].(bool); ok {
+		doDedup = dd
+	}
+	doGraphRerank, _ := args["graph_rerank"].(bool)
+	searchMode, _ := args["mode"].(string)
+	if searchMode == "" {
+		searchMode = "auto"
+	}
+
+	// Mode gating: restrict search types based on mode
+	if searchMode == "rag" || searchMode == "graph" {
+		allowed := searchTypesForMode(searchMode)
+		if allowed != nil && !allowed[strings.ToUpper(searchType)] && searchType != "AUTO" && searchType != "" {
+			searchType = defaultTypeForMode(searchMode)
+		}
+	}
 
 	// Smart routing: AUTO → heuristic router selects best strategy
 	var routingInfo *router.Decision
 	upperType := strings.ToUpper(searchType)
 	if upperType == "AUTO" || upperType == "FEELING_LUCKY" {
 		caps := capabilitiesFromConfig(h.cfg)
+		// Mode-aware: suppress graph capabilities in rag mode
+		if searchMode == "rag" {
+			caps.HasNeo4j = false
+			caps.HasPostgres = false
+			caps.HasCommunities = false
+		}
 		d := router.Route(query, caps)
 		routingInfo = &d
 		searchType = d.SearchType
@@ -919,7 +1043,13 @@ func (h *mcpHandler) toolSearch(ctx context.Context, args map[string]any) mcpToo
 	}
 
 	embedClient := embed.NewClient(h.cfg.EmbedEndpoint, h.cfg.EmbedModel, 16, 1)
-	sp := pipeline.NewSearchPipeline(embedClient, h.cfg.Collections)
+
+	// Build reranker client if requested
+	var rerankClient *rerank.Client
+	if doRerank {
+		rerankClient = rerank.NewClient(h.cfg.RerankEndpoint, h.cfg.RerankModel, 0, h.cfg.RerankTimeoutMs)
+	}
+	sp := pipeline.NewSearchPipeline(embedClient, h.cfg.Collections, rerankClient)
 
 	var colls []string
 	if collection != "" {
@@ -934,12 +1064,49 @@ func (h *mcpHandler) toolSearch(ctx context.Context, args map[string]any) mcpToo
 		fetchK = topK * 3
 	}
 	var results []map[string]any
+	wasReranked := false
 
 	for _, coll := range colls {
-		res, err := sp.SearchByText(ctx, coll, query, fetchK)
+		var res []pipeline.ScoredResult
+		var err error
+
+		switch {
+		case doParentChild:
+			res, err = sp.SearchByTextParentChild(ctx, coll, query, fetchK)
+		case doMultiQuery && h.cfg.LLMProvider != nil:
+			res, err = sp.SearchByTextMultiQuery(ctx, coll, query, fetchK,
+				h.cfg.LLMProvider, os.Getenv("LLM_MODEL"), 3)
+		case doRerank && rerankClient.Enabled():
+			var reranked bool
+			res, reranked, err = sp.SearchByTextWithRerank(ctx, coll, query, fetchK)
+			if reranked {
+				wasReranked = true
+			}
+		case doGraphRerank && h.cfg.DB != nil:
+			res, err = sp.SearchByText(ctx, coll, query, fetchK)
+			if err == nil && len(res) > 0 {
+				// Convert to graphrank.ScoredResult, rerank, convert back
+				grRes := make([]graphrank.ScoredResult, len(res))
+				for i, r := range res {
+					grRes[i] = graphrank.ScoredResult{ID: r.ID, Score: r.Score, Metadata: r.Metadata}
+				}
+				grReranked := graphrank.RerankWithGraph(ctx, h.cfg.DB, nil, grRes, graphrank.DefaultConfig())
+				for i, r := range grReranked {
+					res[i] = pipeline.ScoredResult{ID: r.ID, Score: r.Score, Metadata: r.Metadata}
+				}
+			}
+		default:
+			res, err = sp.SearchByText(ctx, coll, query, fetchK)
+		}
 		if err != nil {
 			continue
 		}
+
+		// Dedup overlapping results (enabled by default)
+		if doDedup && len(res) > 1 {
+			res = pipeline.DeduplicateResults(res, 0.85)
+		}
+
 		for _, r := range res {
 			if hasMetaFilter && !chunkMetaMatches(r.Metadata, roomFilter, tagFilters) {
 				continue
@@ -960,6 +1127,7 @@ func (h *mcpHandler) toolSearch(ctx context.Context, args map[string]any) mcpToo
 	response := map[string]any{
 		"results":     results,
 		"search_type": searchType,
+		"reranked":    wasReranked,
 	}
 	if routingInfo != nil {
 		response["routing"] = map[string]any{
@@ -1255,7 +1423,7 @@ func (h *mcpHandler) toolGitSearch(ctx context.Context, args map[string]any) mcp
 	}
 
 	embedClient := embed.NewClient(h.cfg.EmbedEndpoint, h.cfg.EmbedModel, 16, 1)
-	sp := pipeline.NewSearchPipeline(embedClient, h.cfg.Collections)
+	sp := pipeline.NewSearchPipeline(embedClient, h.cfg.Collections, nil)
 
 	res, err := sp.SearchByText(ctx, "git_commits", query, 10)
 	if err != nil {
@@ -2015,7 +2183,7 @@ func (h *mcpHandler) toolCrossSearch(ctx context.Context, args map[string]any) m
 	}
 
 	embedClient := embed.NewClient(h.cfg.EmbedEndpoint, h.cfg.EmbedModel, 16, 1)
-	sp := pipeline.NewSearchPipeline(embedClient, h.cfg.Collections)
+	sp := pipeline.NewSearchPipeline(embedClient, h.cfg.Collections, nil)
 
 	type collResult struct {
 		Collection string         `json:"collection"`
@@ -2555,4 +2723,144 @@ func strIn(s string, list []string) bool {
 		}
 	}
 	return false
+}
+
+// toolListCommunities returns detected communities from graph_communities table.
+func (h *mcpHandler) toolListCommunities(ctx context.Context, args map[string]any) mcpToolResult {
+	if h.cfg.DB == nil {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "[]"}}}
+	}
+
+	limit := 20
+	if lim, ok := args["limit"].(float64); ok && lim > 0 {
+		limit = int(lim)
+	}
+	minMembers := 2
+	if mm, ok := args["min_members"].(float64); ok {
+		minMembers = int(mm)
+	}
+
+	query := "SELECT id, level, parent_id, member_count, summary FROM graph_communities WHERE member_count >= ? ORDER BY level ASC, member_count DESC LIMIT ?"
+	queryArgs := []any{minMembers, limit}
+
+	if levelVal, ok := args["level"].(float64); ok {
+		query = "SELECT id, level, parent_id, member_count, summary FROM graph_communities WHERE member_count >= ? AND level = ? ORDER BY member_count DESC LIMIT ?"
+		queryArgs = []any{minMembers, int(levelVal), limit}
+	}
+
+	rows, err := h.cfg.DB.QueryContext(ctx, query, queryArgs...)
+	if err != nil {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "[]"}}}
+	}
+	defer rows.Close()
+
+	var communities []map[string]any
+	for rows.Next() {
+		var id, parentID, summary string
+		var level, memberCount int
+		if rows.Scan(&id, &level, &parentID, &memberCount, &summary) != nil {
+			continue
+		}
+		communities = append(communities, map[string]any{
+			"id": id, "level": level, "parent_id": parentID,
+			"member_count": memberCount, "summary": summary,
+		})
+	}
+
+	if communities == nil {
+		communities = []map[string]any{}
+	}
+
+	out, _ := json.MarshalIndent(communities, "", "  ")
+	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(out)}}}
+}
+
+// searchTypesForMode returns allowed search types for a given mode.
+// Returns nil (= all allowed) for "full" and "auto".
+func searchTypesForMode(mode string) map[string]bool {
+	switch mode {
+	case "rag":
+		return map[string]bool{
+			"CHUNKS": true, "HYBRID": true, "CHUNKS_LEXICAL": true,
+			"RAG_COMPLETION": true, "SUMMARIES": true, "WEIGHTED_HYBRID": true,
+		}
+	case "graph":
+		return map[string]bool{
+			"GRAPH_COMPLETION": true, "GRAPH_COMPLETION_COT": true,
+			"GRAPH_COMPLETION_CONTEXT_EXTENSION": true, "GRAPH_SUMMARY_COMPLETION": true,
+			"COMMUNITY_LOCAL": true, "COMMUNITY_GLOBAL": true,
+			"CYPHER": true, "TRIPLET_COMPLETION": true, "TEMPORAL": true,
+		}
+	default:
+		return nil
+	}
+}
+
+func defaultTypeForMode(mode string) string {
+	switch mode {
+	case "rag":
+		return "CHUNKS"
+	case "graph":
+		return "GRAPH_COMPLETION"
+	default:
+		return "AUTO"
+	}
+}
+
+// toolCheckDrift reports embedding model drift across collections.
+func (h *mcpHandler) toolCheckDrift(ctx context.Context, args map[string]any) mcpToolResult {
+	drifted := embed.CheckDrift(h.cfg.Collections, h.cfg.EmbedModel, 0)
+	// Try to get actual dim from first collection
+	dim := 0
+	if h.cfg.Collections != nil {
+		for _, name := range h.cfg.Collections.List() {
+			m := h.cfg.Collections.GetMeta(name)
+			if m.EmbeddingDim > 0 {
+				dim = m.EmbeddingDim
+				break
+			}
+		}
+	}
+	if dim > 0 {
+		drifted = embed.CheckDrift(h.cfg.Collections, h.cfg.EmbedModel, dim)
+	}
+
+	if drifted == nil {
+		drifted = []embed.DriftCheckResult{}
+	}
+	out, _ := json.MarshalIndent(drifted, "", "  ")
+	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(out)}}}
+}
+
+// toolPruneGraph cleans up old superseded graph edges.
+func (h *mcpHandler) toolPruneGraph(ctx context.Context, args map[string]any) mcpToolResult {
+	if h.cfg.DB == nil {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: `{"edges_deleted":0}`}}}
+	}
+
+	cfg := community.PruneConfig{
+		MaxAgeDays:      90,
+		KeepSuperseding: true,
+		DryRun:          true,
+	}
+	if days, ok := args["max_age_days"].(float64); ok && days > 0 {
+		cfg.MaxAgeDays = int(days)
+	}
+	if dr, ok := args["dry_run"].(bool); ok {
+		cfg.DryRun = dr
+	}
+	if io, ok := args["include_orphan_nodes"].(bool); ok {
+		cfg.IncludeOrphans = io
+	}
+
+	result, err := community.PruneGraph(ctx, h.cfg.DB, cfg)
+	if err != nil {
+		return mcpToolResult{
+			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("Error: %v", err)}},
+			IsError: true,
+		}
+	}
+
+	out, _ := json.MarshalIndent(result, "", "  ")
+	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(out)}}}
 }

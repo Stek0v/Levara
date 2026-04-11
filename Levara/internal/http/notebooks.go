@@ -273,7 +273,7 @@ func cellRunHandler(cfg APIConfig) fiber.Handler {
 func runSearchCell(ctx context.Context, cfg APIConfig, query string) (string, error) {
 	if cfg.EmbedEndpoint == "" || cfg.Collections == nil { return "[]", nil }
 	embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 1)
-	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections)
+	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections, nil)
 	colls := cfg.Collections.List()
 	var results []map[string]any
 	for _, coll := range colls {

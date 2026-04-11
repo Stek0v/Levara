@@ -29,6 +29,7 @@ import (
 	"github.com/stek0v/cognevra/pkg/chunker"
 	"github.com/stek0v/cognevra/pkg/bm25"
 	"github.com/stek0v/cognevra/pkg/classify"
+	"github.com/stek0v/cognevra/pkg/community"
 	"github.com/stek0v/cognevra/pkg/graph"
 	"github.com/stek0v/cognevra/pkg/graphdb"
 	"github.com/stek0v/cognevra/pkg/llm"
@@ -81,6 +82,30 @@ type Config struct {
 	// BM25Indexes (optional): shared BM25 indexes for lexical search.
 	// If set, pipeline updates BM25 index when inserting vectors.
 	BM25Indexes map[string]*bm25.Index
+	// SkipGraph when true skips LLM entity extraction (Stage 2),
+	// deduplication (Stage 3), temporal extraction (Stage 3b),
+	// Neo4j write (Stage 4a), and PostgreSQL graph upsert (Stage 4c).
+	// Only chunking (Stage 1) and vector embedding (Stage 4b-chunks) execute.
+	// This is the "RAG mode" — fastest ingestion, no LLM calls needed.
+	SkipGraph bool
+	// OverlapChars for sliding window chunking. Default: MaxChunkChars/5.
+	OverlapChars int
+	// SnapToSentence for sliding window: snap boundaries to sentence/word ends. Default: true.
+	SnapToSentence *bool
+	// ParentChild enables dual-level chunking: large parents + small children.
+	ParentChild bool
+	// ParentMaxChars for parent chunks in parent-child mode. Default: 2000.
+	ParentMaxChars int
+	// ChildMaxChars for child chunks in parent-child mode. Default: 256.
+	ChildMaxChars int
+	// DocumentTitle for contextual chunk headers (prepended before embedding).
+	DocumentTitle string
+	// DocumentID stable document identifier for metadata.
+	DocumentID string
+	// CommunityResolution (γ) for Louvain. >1=finer, <1=coarser. Default 1.0.
+	CommunityResolution float64
+	// DedupThreshold for semantic entity dedup. Default 0.95.
+	DedupThreshold float64
 }
 
 // Progress reports pipeline status.
@@ -173,51 +198,132 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 	progressCh <- Progress{Stage: "chunking", ItemsTotal: len(texts), ElapsedMs: ms(start)}
 
 	type indexedChunk struct {
-		id   string
-		text string
-		idx  int
+		id       string
+		text     string // original text (stored in metadata)
+		embedTxt string // text for embedding (with contextual headers)
+		idx      int    // source document index
+		parentID string // for parent-child mode: parent chunk ID
+		section  string // detected section header
 	}
+
+	snapSentence := cfg.SnapToSentence == nil || *cfg.SnapToSentence // default true
 
 	var allChunks []indexedChunk
+	var allParentChunks []indexedChunk // parent chunks for parent-child mode
 	for i, text := range texts {
-		docID := fmt.Sprintf("doc-%d", i)
-		var chunks []chunker.Chunk
-
-		switch cfg.ChunkStrategy {
-		case "auto":
-			// Content-based classification (no filename available, use heuristics only)
-			cr := classify.Classify("", []byte(text))
-			switch cr.RecommendedChunker {
-			case "code":
-				chunks = chunker.ChunkByFunction(text, cr.MaxChunkChars, docID)
-			case "row":
-				chunks = chunker.ChunkByRow(text, 20, docID)
-			case "sentence":
-				chunks = chunker.ChunkBySentence(text, cr.MinChunkChars, cr.MaxChunkChars, docID)
-			default:
-				chunks = chunker.ChunkByParagraphMerged(text, cr.MinChunkChars, cr.MaxChunkChars, docID)
-			}
-		case "code":
-			chunks = chunker.ChunkByFunction(text, cfg.MaxChunkChars, docID)
-		case "sentence":
-			chunks = chunker.ChunkBySentence(text, cfg.MinChunkChars, cfg.MaxChunkChars, docID)
-		case "row":
-			chunks = chunker.ChunkByRow(text, 20, docID)
-		default: // "merged", "paragraph"
-			chunks = chunker.ChunkByParagraphMerged(text, cfg.MinChunkChars, cfg.MaxChunkChars, docID)
+		docID := cfg.DocumentID
+		if docID == "" {
+			docID = fmt.Sprintf("doc-%d", i)
 		}
 
-		for _, c := range chunks {
-			allChunks = append(allChunks, indexedChunk{id: c.ID, text: c.Text, idx: i})
+		// Detect sections in source text
+		sections := chunker.DetectSections(text)
+
+		var chunks []chunker.Chunk
+
+		if cfg.ParentChild {
+			// Parent-child mode: parents + children
+			parentMax := cfg.ParentMaxChars
+			if parentMax <= 0 {
+				parentMax = 2000
+			}
+			childMax := cfg.ChildMaxChars
+			if childMax <= 0 {
+				childMax = 256
+			}
+			parents, children := chunker.ChunkParentChild(text, parentMax, childMax, docID)
+
+			// Assign sections and document metadata to parents
+			for pi := range parents {
+				parents[pi].DocumentID = docID
+				parents[pi].DocumentTitle = cfg.DocumentTitle
+				parents[pi].Section = chunker.FindSectionForOffset(sections, parents[pi].ChunkIndex*cfg.MaxChunkChars)
+			}
+
+			// Store parents separately for embedding into main collection
+			for _, p := range parents {
+				allParentChunks = append(allParentChunks, indexedChunk{
+					id: p.ID, text: p.Text,
+					embedTxt: buildEmbedText(p.Text, cfg.DocumentTitle, p.Section),
+					idx: i, section: p.Section,
+				})
+			}
+
+			// Children → allChunks (will be embedded into _child collection)
+			for _, c := range children {
+				parentSection := ""
+				for _, p := range parents {
+					if p.ID == c.ParentID {
+						parentSection = p.Section
+						break
+					}
+				}
+				allChunks = append(allChunks, indexedChunk{
+					id: c.ID, text: c.Text,
+					embedTxt: buildEmbedText(c.Text, cfg.DocumentTitle, parentSection),
+					idx: i, parentID: c.ParentID, section: parentSection,
+				})
+			}
+		} else {
+			// Regular chunking
+			switch cfg.ChunkStrategy {
+			case "auto":
+				cr := classify.Classify("", []byte(text))
+				switch cr.RecommendedChunker {
+				case "code":
+					chunks = chunker.ChunkByFunction(text, cr.MaxChunkChars, docID)
+				case "row":
+					chunks = chunker.ChunkByRow(text, 20, docID)
+				case "sentence":
+					chunks = chunker.ChunkBySentence(text, cr.MinChunkChars, cr.MaxChunkChars, docID)
+				default:
+					chunks = chunker.ChunkByParagraphMerged(text, cr.MinChunkChars, cr.MaxChunkChars, docID)
+				}
+			case "sliding":
+				overlap := cfg.OverlapChars
+				if overlap <= 0 {
+					overlap = cfg.MaxChunkChars / 5
+				}
+				chunks = chunker.ChunkBySlidingOpts(text, cfg.MaxChunkChars, overlap, snapSentence, docID)
+			case "code":
+				chunks = chunker.ChunkByFunction(text, cfg.MaxChunkChars, docID)
+			case "sentence":
+				chunks = chunker.ChunkBySentence(text, cfg.MinChunkChars, cfg.MaxChunkChars, docID)
+			case "row":
+				chunks = chunker.ChunkByRow(text, 20, docID)
+			default:
+				chunks = chunker.ChunkByParagraphMerged(text, cfg.MinChunkChars, cfg.MaxChunkChars, docID)
+			}
+
+			// Assign sections and build embed text
+			for _, c := range chunks {
+				sec := chunker.FindSectionForOffset(sections, c.ChunkIndex*cfg.MaxChunkChars)
+				allChunks = append(allChunks, indexedChunk{
+					id: c.ID, text: c.Text,
+					embedTxt: buildEmbedText(c.Text, cfg.DocumentTitle, sec),
+					idx: i, section: sec,
+				})
+			}
 		}
 	}
 
+	totalChunks := len(allChunks) + len(allParentChunks)
 	progressCh <- Progress{
 		Stage: "chunking", ItemsTotal: len(texts), ItemsProcessed: len(texts),
-		ChunksCreated: len(allChunks), Message: fmt.Sprintf("%d chunks from %d texts", len(allChunks), len(texts)),
+		ChunksCreated: totalChunks, Message: fmt.Sprintf("%d chunks from %d texts", totalChunks, len(texts)),
 		ElapsedMs: ms(start),
 	}
 
+	// --- Stages 2-3: Graph extraction (skipped in RAG mode) ---
+	var dedupResult graph.DeduplicateResult
+
+	if cfg.SkipGraph {
+		progressCh <- Progress{
+			Stage: "embedding", ChunksCreated: len(allChunks),
+			Message: "RAG mode: skipping entity extraction, proceeding to embedding",
+			ElapsedMs: ms(start),
+		}
+	} else {
 	// --- Stage 2: LLM extraction (concurrent, through channels) ---
 	progressCh <- Progress{Stage: "extracting", ChunksCreated: len(allChunks), ElapsedMs: ms(start)}
 
@@ -289,7 +395,7 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 	// --- Stage 3: Dedup ---
 	progressCh <- Progress{Stage: "deduplicating", ElapsedMs: ms(start)}
 
-	dedupResult := graph.Deduplicate(allNodes, allEdges)
+	dedupResult = graph.Deduplicate(allNodes, allEdges)
 
 	// --- Stage 3a: Semantic dedup (merge similar entities by name embedding) ---
 	if cfg.EmbedEndpoint != "" && len(dedupResult.Nodes) > 1 {
@@ -303,7 +409,11 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 		}
 		nameVecs, err := embedClient.EmbedTexts(ctx, names)
 		if err == nil && len(nameVecs) == len(dedupResult.Nodes) {
-			semResult := graph.SemanticDedup(nameVecs, 0.95)
+			dedupThresh := cfg.DedupThreshold
+			if dedupThresh <= 0 || dedupThresh > 1 {
+				dedupThresh = 0.95
+			}
+			semResult := graph.SemanticDedup(nameVecs, float32(dedupThresh))
 			if len(semResult.Removed) > 0 {
 				// Build ID remap: removed node ID → kept node ID
 				idRemap := make(map[string]string)
@@ -399,15 +509,21 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 			log.Printf("[pipeline] temporal: %d temporal nodes, %d HAPPENED_AT edges", temporalNodesAdded, temporalEdgesAdded)
 		}
 	}
+	} // end if !cfg.SkipGraph
+
+	// Force-disable triplets in RAG mode (no entities to form triplets from)
+	if cfg.SkipGraph {
+		cfg.GenerateTriplets = false
+	}
 
 	// --- Stage 4: Write to DBs (parallel: Neo4j + vector) ---
-	progressCh <- Progress{Stage: "writing", ElapsedMs: ms(start)}
+	progressCh <- Progress{Stage: "writing", EntitiesExtracted: len(dedupResult.Nodes), EdgesExtracted: len(dedupResult.Edges), ElapsedMs: ms(start)}
 
 	var writeWg sync.WaitGroup
 	var nodesWritten, edgesWritten atomic.Int32
 
-	// Neo4j write (goroutine)
-	if cfg.Neo4jURL != "" {
+	// Neo4j write (goroutine) — skipped in RAG mode
+	if cfg.Neo4jURL != "" && !cfg.SkipGraph {
 		writeWg.Add(1)
 		go func() {
 			defer writeWg.Done()
@@ -449,6 +565,10 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 			res := writer.BatchWrite(ctx, neoNodes, neoEdges)
 			nodesWritten.Add(int32(res.NodesWritten))
 			edgesWritten.Add(int32(res.EdgesWritten))
+			if len(res.Errors) > 0 {
+				log.Printf("[pipeline] neo4j write errors: %v", res.Errors)
+			}
+			log.Printf("[pipeline] neo4j write: %d nodes, %d edges written", res.NodesWritten, res.EdgesWritten)
 		}()
 	}
 
@@ -476,48 +596,125 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 			}
 
 			// --- Embed raw text chunks (for full-text search) ---
-			chunkInserted := 0
-			chunkTexts := make([]string, 0, len(allChunks))
-			chunkIDs := make([]string, 0, len(allChunks))
-			for _, ch := range allChunks {
-				if len(ch.text) > 30 { // skip tiny fragments
-					chunkTexts = append(chunkTexts, ch.text)
-					chunkIDs = append(chunkIDs, ch.id)
+			tagsJSON := "[]"
+			if len(cfg.Tags) > 0 {
+				if b, err := json.Marshal(cfg.Tags); err == nil {
+					tagsJSON = string(b)
 				}
 			}
-			if len(chunkTexts) > 0 {
-				chunkVecs, err := embedClient.EmbedTexts(ctx, chunkTexts)
-				if err != nil {
-					log.Printf("[pipeline] chunk embed FAILED (%d chunks): %v", len(chunkTexts), err)
-				} else {
-					tagsJSON := "[]"
-					if len(cfg.Tags) > 0 {
-						if b, err := json.Marshal(cfg.Tags); err == nil {
-							tagsJSON = string(b)
-						}
+
+			// Helper to build chunk metadata JSON
+			buildChunkMeta := func(ch indexedChunk) string {
+				meta := fmt.Sprintf(`{"text":%s,"dataset_id":"%s","room":%s,"tags":%s`,
+					mustJSON(ch.text), cfg.DatasetID,
+					mustJSON(cfg.Room), tagsJSON)
+				if cfg.DocumentID != "" {
+					meta += `,"document_id":` + mustJSON(cfg.DocumentID)
+				}
+				if cfg.DocumentTitle != "" {
+					meta += `,"document_title":` + mustJSON(cfg.DocumentTitle)
+				}
+				if ch.section != "" {
+					meta += `,"section":` + mustJSON(ch.section)
+				}
+				if ch.parentID != "" {
+					meta += `,"parent_id":` + mustJSON(ch.parentID)
+				}
+				meta += "}"
+				return meta
+			}
+
+			// Determine target collection for chunks
+			chunkColl := coll
+			if cfg.ParentChild {
+				// In parent-child mode: children go to _child collection
+				chunkColl = coll + "_child"
+				if !cfg.Collections.Has(chunkColl) {
+					if err := cfg.Collections.Create(chunkColl); err != nil {
+						log.Printf("[pipeline] collection create %q: %v", chunkColl, err)
 					}
+				}
+			}
+
+			chunkInserted := 0
+			// Collect embed texts (with contextual headers) and original texts
+			embedTexts := make([]string, 0, len(allChunks))
+			chunkIDs := make([]string, 0, len(allChunks))
+			chunkMetas := make([]indexedChunk, 0, len(allChunks))
+			for _, ch := range allChunks {
+				if len(ch.text) > 30 { // skip tiny fragments
+					et := ch.embedTxt
+					if et == "" {
+						et = ch.text
+					}
+					embedTexts = append(embedTexts, et)
+					chunkIDs = append(chunkIDs, ch.id)
+					chunkMetas = append(chunkMetas, ch)
+				}
+			}
+			if len(embedTexts) > 0 {
+				chunkVecs, err := embedClient.EmbedTexts(ctx, embedTexts)
+				if err != nil {
+					log.Printf("[pipeline] chunk embed FAILED (%d chunks): %v", len(embedTexts), err)
+				} else {
 					for i, vec := range chunkVecs {
 						if i < len(chunkIDs) {
-							meta := fmt.Sprintf(`{"text":%s,"dataset_id":"%s","room":%s,"tags":%s}`,
-								mustJSON(chunkTexts[i]), cfg.DatasetID,
-								mustJSON(cfg.Room), tagsJSON)
-							if err := cfg.Collections.Insert(coll, chunkIDs[i], vec, meta); err != nil {
+							meta := buildChunkMeta(chunkMetas[i])
+							if err := cfg.Collections.Insert(chunkColl, chunkIDs[i], vec, meta); err != nil {
 								log.Printf("[pipeline] chunk insert error: %v", err)
 							} else {
 								chunkInserted++
 								if cfg.BM25Indexes != nil {
-									if idx, ok := cfg.BM25Indexes[coll]; ok {
-										idx.Add(chunkIDs[i], chunkTexts[i], meta)
+									if idx, ok := cfg.BM25Indexes[chunkColl]; ok {
+										idx.Add(chunkIDs[i], chunkMetas[i].text, meta)
 									}
 								}
 							}
 						}
 					}
-					log.Printf("[pipeline] chunk write: %d/%d raw chunks embedded into %q", chunkInserted, len(chunkTexts), coll)
+					log.Printf("[pipeline] chunk write: %d/%d raw chunks embedded into %q", chunkInserted, len(embedTexts), chunkColl)
 				}
 			}
 
-			// Embed node names/descriptions
+			// Embed parent chunks for parent-child mode (into main collection)
+			if cfg.ParentChild && len(allParentChunks) > 0 {
+				parentEmbedTexts := make([]string, 0, len(allParentChunks))
+				parentIDs := make([]string, 0, len(allParentChunks))
+				parentMetas := make([]indexedChunk, 0, len(allParentChunks))
+				for _, ch := range allParentChunks {
+					if len(ch.text) > 30 {
+						et := ch.embedTxt
+						if et == "" {
+							et = ch.text
+						}
+						parentEmbedTexts = append(parentEmbedTexts, et)
+						parentIDs = append(parentIDs, ch.id)
+						parentMetas = append(parentMetas, ch)
+					}
+				}
+				if len(parentEmbedTexts) > 0 {
+					pVecs, err := embedClient.EmbedTexts(ctx, parentEmbedTexts)
+					if err != nil {
+						log.Printf("[pipeline] parent embed FAILED: %v", err)
+					} else {
+						parentInserted := 0
+						for i, vec := range pVecs {
+							if i < len(parentIDs) {
+								meta := buildChunkMeta(parentMetas[i])
+								if err := cfg.Collections.Insert(coll, parentIDs[i], vec, meta); err != nil {
+									log.Printf("[pipeline] parent insert error: %v", err)
+								} else {
+									parentInserted++
+								}
+							}
+						}
+						log.Printf("[pipeline] parent write: %d/%d parent chunks embedded into %q", parentInserted, len(parentEmbedTexts), coll)
+					}
+				}
+			}
+
+			// Embed node names/descriptions (skipped in RAG mode — no entities)
+			if !cfg.SkipGraph {
 			texts := make([]string, len(dedupResult.Nodes))
 			for i, n := range dedupResult.Nodes {
 				t := n.Name
@@ -583,11 +780,12 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 					log.Printf("[pipeline] triplet write: %d/%d triplets into %q", tripletInserted, len(tripletTexts), tripletColl)
 				}
 			}
+			} // end if !cfg.SkipGraph (entity + triplet embedding)
 		}()
 	}
 
-	// PostgreSQL graph upsert (goroutine, parallel with Neo4j + vector)
-	if cfg.DB != nil {
+	// PostgreSQL graph upsert (goroutine, parallel with Neo4j + vector) — skipped in RAG mode
+	if cfg.DB != nil && !cfg.SkipGraph {
 		writeWg.Add(1)
 		go func() {
 			defer writeWg.Done()
@@ -601,6 +799,70 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 	}
 
 	writeWg.Wait()
+
+	// --- Stage 5: Community Detection + Hierarchical Summarization ---
+	// Runs on FULL graph (not per-dataset) to capture cross-document relationships.
+	// Skipped in RAG mode (no graph) or when DB is nil.
+	communitiesDetected := 0
+	if !cfg.SkipGraph && cfg.DB != nil && len(dedupResult.Nodes) >= 3 {
+		progressCh <- Progress{Stage: "communities", Message: "detecting communities", ElapsedMs: ms(start)}
+
+		g, gErr := community.BuildGraphFromSQL(ctx, cfg.DB)
+		if gErr != nil {
+			log.Printf("[pipeline] community graph build: %v", gErr)
+		} else if g.NodeCount() >= 3 {
+			commCfg := community.DefaultConfig()
+			if cfg.CommunityResolution > 0 {
+				commCfg.Resolution = cfg.CommunityResolution
+			}
+			var dendro *community.Dendrogram
+
+			// Try incremental first, falls back to full compute internally
+			d, iErr := community.IncrementalUpdate(ctx, cfg.DB, g, commCfg)
+			if iErr != nil {
+				log.Printf("[pipeline] community detect: %v", iErr)
+			} else if d != nil {
+				dendro = d
+			}
+
+			if dendro != nil {
+				if len(dendro.Levels) > 0 {
+					log.Printf("[pipeline] communities: %d levels, %d leaf communities (Q=%.4f, %d iterations)",
+						dendro.MaxLevel+1, len(dendro.Levels[0]), dendro.Modularity[0], dendro.Iterations)
+				}
+
+				if err := community.ReplaceCommunities(ctx, cfg.DB, *dendro); err != nil {
+					log.Printf("[pipeline] community write: %v", err)
+				} else {
+					for _, level := range dendro.Levels {
+						communitiesDetected += len(level)
+					}
+				}
+
+				// Hierarchical summarization (optional, needs LLM + embed)
+				if cfg.LLMProvider != nil && cfg.EmbedEndpoint != "" {
+					progressCh <- Progress{
+						Stage:   "communities",
+						Message: fmt.Sprintf("summarizing %d communities", communitiesDetected),
+						ElapsedMs: ms(start),
+					}
+					sumCfg := community.SummarizeConfig{
+						LLMProvider: cfg.LLMProvider,
+						EmbedClient: embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 3),
+						Collections: cfg.Collections,
+						DB:          cfg.DB,
+						LLMCache:    cfg.LLMCache,
+						Concurrency: 3,
+						MinMembers:  3,
+						MaxContext:   50,
+					}
+					if err := community.SummarizeHierarchy(ctx, *dendro, g, sumCfg); err != nil {
+						log.Printf("[pipeline] community summarize: %v", err)
+					}
+				}
+			}
+		}
+	}
 
 	// --- Done ---
 	progressCh <- Progress{
@@ -836,6 +1098,20 @@ func ms(start time.Time) int64 {
 }
 
 // mustJSON returns s as a JSON-safe quoted string.
+// buildEmbedText prepends contextual headers to chunk text for better embedding.
+// The embedding will capture document/section context, improving retrieval relevance.
+// Original text is stored separately in metadata for display.
+func buildEmbedText(text, documentTitle, section string) string {
+	var prefix string
+	if documentTitle != "" {
+		prefix += "[Document: " + documentTitle + "]\n"
+	}
+	if section != "" {
+		prefix += "[Section: " + section + "]\n"
+	}
+	return prefix + text
+}
+
 func mustJSON(s string) string {
 	b, err := json.Marshal(s)
 	if err != nil {

@@ -35,7 +35,7 @@ func setupTestPipeline(t *testing.T, dim int) (*SearchPipeline, *store.Collectio
 		1,
 	)
 
-	pipeline := NewSearchPipeline(embedClient, cm)
+	pipeline := NewSearchPipeline(embedClient, cm, nil)
 
 	cleanup := func() {
 		cm.Close()
@@ -133,7 +133,7 @@ func BenchmarkSearchByVector(b *testing.B) {
 	defer cm.Close()
 
 	embedClient := embed.NewClient("http://localhost:9001/v1/embeddings", "test", 16, 1)
-	p := NewSearchPipeline(embedClient, cm)
+	p := NewSearchPipeline(embedClient, cm, nil)
 
 	// Insert 500 vectors
 	cm.Create("bench")

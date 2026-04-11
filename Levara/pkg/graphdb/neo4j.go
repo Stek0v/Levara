@@ -154,6 +154,9 @@ func (w *Writer) writeNodes(ctx context.Context, nodes []NodeRecord) (int, error
 			return int(c), nil
 		}
 	}
+	if err := res.Err(); err != nil {
+		return 0, fmt.Errorf("write nodes cypher: %w", err)
+	}
 	return len(nodes), nil
 }
 
@@ -199,6 +202,9 @@ func (w *Writer) writeEdges(ctx context.Context, edges []EdgeRecord) (int, error
 		if c, ok := cnt.(int64); ok {
 			return int(c), nil
 		}
+	}
+	if err := res.Err(); err != nil {
+		return 0, fmt.Errorf("write edges cypher: %w", err)
 	}
 	return len(edges), nil
 }
