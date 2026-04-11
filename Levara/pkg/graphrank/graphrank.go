@@ -13,9 +13,11 @@ import (
 )
 
 // ProximityConfig controls graph proximity scoring.
+// Formula: combined = Alpha*vectorScore + Beta*graphProximity + Gamma*rerankScore
 type ProximityConfig struct {
-	Alpha       float64 // weight for vector score, default 0.7
-	Beta        float64 // weight for graph proximity, default 0.3
+	Alpha       float64 // weight for vector score, default 0.6
+	Beta        float64 // weight for graph proximity, default 0.2
+	Gamma       float64 // weight for rerank score, default 0.2 (0 = no rerank influence)
 	MaxHops     int     // max hops to search, default 2
 	DecayFactor float64 // score decay per hop, default 0.5
 }
@@ -23,15 +25,16 @@ type ProximityConfig struct {
 // DefaultConfig returns sensible defaults.
 func DefaultConfig() ProximityConfig {
 	return ProximityConfig{
-		Alpha: 0.7, Beta: 0.3,
+		Alpha: 0.6, Beta: 0.2, Gamma: 0.2,
 		MaxHops: 2, DecayFactor: 0.5,
 	}
 }
 
 // ScoredResult mirrors pipeline.ScoredResult to avoid circular imports.
 type ScoredResult struct {
-	ID       string
-	Score    float32
+	ID          string
+	Score       float32
+	RerankScore float64 // 0 = not reranked
 	Metadata json.RawMessage
 }
 
@@ -184,7 +187,8 @@ func RerankWithGraph(ctx context.Context, db *sql.DB, queryEntityIDs []string, r
 		}
 
 		vectorScore := float64(r.Score)
-		combined := cfg.Alpha*vectorScore + cfg.Beta*proximity
+		rerankScore := r.RerankScore
+		combined := cfg.Alpha*vectorScore + cfg.Beta*proximity + cfg.Gamma*rerankScore
 		entries[i] = scored{idx: i, combined: combined}
 	}
 

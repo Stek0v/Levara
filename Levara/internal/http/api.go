@@ -1115,6 +1115,26 @@ func searchHandler(cfg APIConfig) fiber.Handler {
 			caps := capabilitiesFromConfig(cfg)
 			d := router.Route(req.QueryText, caps)
 			metrics.RouterDecisionDuration.Observe(time.Since(routeStart).Seconds())
+
+			// Apply adaptive weight adjustments from feedback history
+			if cfg.AdaptiveWeights != nil && len(d.Alternatives) > 0 {
+				bestType := d.SearchType
+				bestScore := cfg.AdaptiveWeights.AdjustScore(d.SearchType, float64(d.Confidence))
+				for _, alt := range d.Alternatives {
+					adjusted := cfg.AdaptiveWeights.AdjustScore(alt.SearchType, float64(alt.Score))
+					if adjusted > bestScore {
+						bestScore = adjusted
+						bestType = alt.SearchType
+					}
+				}
+				if bestType != d.SearchType {
+					log.Printf("[router] adaptive override: %s (%.2f) → %s (%.2f)", d.SearchType, d.Confidence, bestType, bestScore)
+					d.SearchType = bestType
+					d.Confidence = float32(bestScore)
+					d.Reason = "adaptive: " + d.Reason
+				}
+			}
+
 			routingDecision = &d
 			queryType = d.SearchType
 		}
