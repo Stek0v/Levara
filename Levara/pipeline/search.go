@@ -2,10 +2,13 @@ package pipeline
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"log"
 
 	"github.com/stek0v/cognevra/internal/store"
 	"github.com/stek0v/cognevra/pkg/embed"
+	"github.com/stek0v/cognevra/pkg/rerank"
 )
 
 // SearchPipeline orchestrates the full search path:
@@ -15,13 +18,16 @@ import (
 type SearchPipeline struct {
 	embedClient *embed.Client
 	collections *store.CollectionManager
+	reranker    *rerank.Client // nil = no reranking
 }
 
 // NewSearchPipeline creates a pipeline backed by CollectionManager + embed client.
-func NewSearchPipeline(embedClient *embed.Client, collections *store.CollectionManager) *SearchPipeline {
+// reranker is optional (nil = disabled).
+func NewSearchPipeline(embedClient *embed.Client, collections *store.CollectionManager, reranker *rerank.Client) *SearchPipeline {
 	return &SearchPipeline{
 		embedClient: embedClient,
 		collections: collections,
+		reranker:    reranker,
 	}
 }
 
@@ -60,6 +66,92 @@ func (p *SearchPipeline) SearchByVector(collection string, vector []float32, lim
 		}
 	}
 	return scored, nil
+}
+
+// SearchByTextWithRerank performs vector search, then reranks results using
+// a cross-encoder reranker. If reranker is nil or not enabled, falls back to
+// SearchByText (vector order).
+//
+// Overfetches 3x candidates from HNSW, reranks, returns top limit.
+// On reranker error (timeout, 5xx, malformed response), logs warning and
+// returns results in original vector order (graceful degradation).
+func (p *SearchPipeline) SearchByTextWithRerank(ctx context.Context, collection, queryText string, limit int) (results []ScoredResult, reranked bool, err error) {
+	if !p.reranker.Enabled() {
+		res, err := p.SearchByText(ctx, collection, queryText, limit)
+		return res, false, err
+	}
+
+	// Overfetch 3x for reranking headroom
+	overfetch := limit * 3
+	if overfetch < 10 {
+		overfetch = 10
+	}
+	candidates, err := p.SearchByText(ctx, collection, queryText, overfetch)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(candidates) == 0 {
+		return candidates, false, nil
+	}
+
+	// Extract text from metadata for reranking
+	docs := make([]string, len(candidates))
+	hasText := false
+	for i, c := range candidates {
+		docs[i] = extractText(c.Metadata)
+		if docs[i] != "" {
+			hasText = true
+		}
+	}
+
+	// If no text to rerank, return vector order
+	if !hasText {
+		if len(candidates) > limit {
+			candidates = candidates[:limit]
+		}
+		return candidates, false, nil
+	}
+
+	rerankedResults, rerankErr := p.reranker.Rerank(ctx, queryText, docs)
+	if rerankErr != nil {
+		log.Printf("[search] reranker failed, falling back to vector order: %v", rerankErr)
+		if len(candidates) > limit {
+			candidates = candidates[:limit]
+		}
+		return candidates, false, nil
+	}
+
+	// Reorder candidates by rerank score
+	out := make([]ScoredResult, 0, limit)
+	for _, r := range rerankedResults {
+		if r.Index >= 0 && r.Index < len(candidates) {
+			out = append(out, candidates[r.Index])
+		}
+		if len(out) >= limit {
+			break
+		}
+	}
+
+	return out, true, nil
+}
+
+// extractText pulls the "text" field from metadata JSON.
+func extractText(metadata json.RawMessage) string {
+	if len(metadata) == 0 {
+		return ""
+	}
+	var m map[string]any
+	if err := json.Unmarshal(metadata, &m); err != nil {
+		return ""
+	}
+	if text, ok := m["text"].(string); ok {
+		return text
+	}
+	// Fallback: try "name" field (entity metadata)
+	if name, ok := m["name"].(string); ok {
+		return name
+	}
+	return ""
 }
 
 // BatchSearchByText embeds multiple queries and searches concurrently.

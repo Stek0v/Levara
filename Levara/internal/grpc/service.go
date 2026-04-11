@@ -886,7 +886,7 @@ func (s *Service) SearchByText(ctx context.Context, req *pb.SearchByTextReq) (*p
 	}
 
 	embedClient := embed.NewClient(req.EmbedEndpoint, model, 16, 1)
-	sp := pipeline.NewSearchPipeline(embedClient, s.collections)
+	sp := pipeline.NewSearchPipeline(embedClient, s.collections, nil)
 
 	results, err := sp.SearchByText(ctx, req.Collection, req.QueryText, topK)
 	if err != nil {
@@ -924,7 +924,7 @@ func (s *Service) BatchSearchByText(ctx context.Context, req *pb.BatchSearchByTe
 	}
 
 	embedClient := embed.NewClient(req.EmbedEndpoint, model, 16, 3)
-	sp := pipeline.NewSearchPipeline(embedClient, s.collections)
+	sp := pipeline.NewSearchPipeline(embedClient, s.collections, nil)
 
 	batchResults, err := sp.BatchSearchByText(ctx, req.Collection, req.Queries, topK)
 	if err != nil {
@@ -1504,7 +1504,7 @@ func (s *Service) MultiQuerySearch(ctx context.Context, req *pb.MultiQuerySearch
 
 	// Parallel search for each sub-query
 	embedClient := embed.NewClient(req.EmbedEndpoint, model, 16, len(subQueries))
-	sp := pipeline.NewSearchPipeline(embedClient, s.collections)
+	sp := pipeline.NewSearchPipeline(embedClient, s.collections, nil)
 
 	type searchOut struct {
 		idx     int

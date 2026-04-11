@@ -35,6 +35,7 @@ import (
 	"github.com/stek0v/cognevra/pkg/llmcache"
 	"github.com/stek0v/cognevra/pkg/observe"
 	"github.com/stek0v/cognevra/pkg/orchestrator"
+	"github.com/stek0v/cognevra/pkg/rerank"
 	"github.com/stek0v/cognevra/pkg/router"
 	"github.com/stek0v/cognevra/pkg/storage"
 	"github.com/stek0v/cognevra/pkg/temporal"
@@ -56,6 +57,10 @@ type APIConfig struct {
 	ErrorTracker  *observe.ErrorTracker // error tracking (nil = disabled)
 	FileStorage   storage.Storage // file storage backend (nil = use os.WriteFile fallback)
 	Logger        *observe.Logger // structured logger (nil = use log.Printf fallback)
+	// Reranker configuration (optional, all empty = disabled)
+	RerankEndpoint string // e.g., "http://localhost:8787/rerank"
+	RerankModel    string // e.g., "bge-reranker-v2-m3"
+	RerankTimeoutMs int   // HTTP timeout in ms, 0 = default 5000ms
 }
 
 // RegisterCogneeAPI registers all Cognee-compatible endpoints on the Fiber app.
@@ -881,6 +886,8 @@ type CogneeSearchRequest struct {
 	CypherQuery       string   `json:"cypher_query"`  // Raw Cypher for CYPHER search type
 	Collection        string   `json:"collection"`    // Filter search to one collection (empty = all)
 	SessionID         string   `json:"session_id"`    // Conversational memory: load prior interactions
+	Tags              []string `json:"tags"`           // Optional: filter results by metadata tags
+	Rerank            bool     `json:"rerank"`         // Optional: rerank results via cross-encoder
 	AllowedDatasetIDs []string `json:"-"`              // RBAC: nil = no filtering (dev mode)
 }
 
@@ -891,6 +898,57 @@ func resolveCollections(cfg APIConfig, req CogneeSearchRequest) []string {
 		return []string{req.Collection}
 	}
 	return cfg.Collections.List()
+}
+
+// filterByTags post-filters search results by metadata tags.
+// If tags is empty, no filtering is applied.
+func filterByTags(results []fiber.Map, tags []string) []fiber.Map {
+	if len(tags) == 0 {
+		return results
+	}
+	wantTags := make(map[string]bool, len(tags))
+	for _, t := range tags {
+		wantTags[strings.ToLower(t)] = true
+	}
+	var filtered []fiber.Map
+	for _, r := range results {
+		meta, ok := r["metadata"]
+		if !ok {
+			continue
+		}
+		var metaMap map[string]any
+		switch m := meta.(type) {
+		case map[string]any:
+			metaMap = m
+		case json.RawMessage:
+			json.Unmarshal(m, &metaMap)
+		}
+		if metaMap == nil {
+			continue
+		}
+		// Check tags field in metadata
+		if tagsVal, ok := metaMap["tags"]; ok {
+			if tagsList, ok := tagsVal.([]any); ok {
+				for _, t := range tagsList {
+					if ts, ok := t.(string); ok && wantTags[strings.ToLower(ts)] {
+						filtered = append(filtered, r)
+						goto next
+					}
+				}
+			}
+		}
+		// Check key field (for LongMemEval-style facts)
+		if key, ok := metaMap["key"]; ok {
+			if ks, ok := key.(string); ok && wantTags[strings.ToLower(ks)] {
+				filtered = append(filtered, r)
+			}
+		}
+	next:
+	}
+	if len(filtered) == 0 {
+		return results // fallback: return unfiltered if no matches
+	}
+	return filtered
 }
 
 // filterByAllowedDatasets post-filters search results by allowed dataset IDs.
@@ -1000,6 +1058,10 @@ func searchHandler(cfg APIConfig) fiber.Handler {
 			return cypherSearch(c, cfg, req)
 		case "CODE", "CODING_RULES":
 			return codingRulesSearch(c, cfg, req)
+		case "COMMUNITY_LOCAL":
+			return communityLocalSearch(c, cfg, req)
+		case "COMMUNITY_GLOBAL":
+			return communityGlobalSearch(c, cfg, req)
 		default:
 			return chunksSearch(c, cfg, req)
 		}
@@ -1008,13 +1070,21 @@ func searchHandler(cfg APIConfig) fiber.Handler {
 
 // capabilitiesFromConfig derives router.Capabilities from the current APIConfig.
 func capabilitiesFromConfig(cfg APIConfig) router.Capabilities {
+	hasCommunities := false
+	if cfg.DB != nil {
+		var count int
+		if err := cfg.DB.QueryRow("SELECT COUNT(*) FROM graph_communities LIMIT 1").Scan(&count); err == nil {
+			hasCommunities = count > 0
+		}
+	}
 	return router.Capabilities{
-		HasEmbedding: cfg.EmbedEndpoint != "" && cfg.Collections != nil,
-		HasBM25:      len(cfg.BM25Indexes) > 0,
-		HasNeo4j:     cfg.Neo4jCfg.Neo4jURL != "",
-		HasLLM:       cfg.LLMProvider != nil,
-		HasPostgres:  cfg.DB != nil,
-		AllowCypher:  os.Getenv("ALLOW_CYPHER_QUERY") == "true",
+		HasEmbedding:   cfg.EmbedEndpoint != "" && cfg.Collections != nil,
+		HasBM25:        len(cfg.BM25Indexes) > 0,
+		HasNeo4j:       cfg.Neo4jCfg.Neo4jURL != "",
+		HasLLM:         cfg.LLMProvider != nil,
+		HasPostgres:    cfg.DB != nil,
+		AllowCypher:    os.Getenv("ALLOW_CYPHER_QUERY") == "true",
+		HasCommunities: hasCommunities,
 	}
 }
 
@@ -1023,8 +1093,14 @@ func chunksSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
 		return c.JSON([]any{})
 	}
 
+	// Create reranker if requested and endpoint configured
+	var rerankClient *rerank.Client
+	if req.Rerank && cfg.RerankEndpoint != "" {
+		rerankClient = rerank.NewClient(cfg.RerankEndpoint, cfg.RerankModel, 0, cfg.RerankTimeoutMs)
+	}
+
 	embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 1)
-	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections)
+	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections, rerankClient)
 	colls := resolveCollections(cfg, req)
 
 	// Multi-query: decompose complex queries and merge results
@@ -1035,10 +1111,21 @@ func chunksSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
 
 	var allResults []fiber.Map
 	seen := map[string]bool{}
+	wasReranked := false
 
 	for _, sq := range subQueries {
 		for _, coll := range colls {
-			results, err := sp.SearchByText(context.Background(), coll, sq, req.TopK)
+			var results []pipeline.ScoredResult
+			var err error
+			if rerankClient != nil && rerankClient.Enabled() {
+				var reranked bool
+				results, reranked, err = sp.SearchByTextWithRerank(context.Background(), coll, sq, req.TopK)
+				if reranked {
+					wasReranked = true
+				}
+			} else {
+				results, err = sp.SearchByText(context.Background(), coll, sq, req.TopK)
+			}
 			if err != nil {
 				continue
 			}
@@ -1052,6 +1139,7 @@ func chunksSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
 					"score":      r.Score,
 					"collection": coll,
 					"metadata":   json.RawMessage(r.Metadata),
+					"reranked":   wasReranked,
 				})
 			}
 		}
@@ -1059,6 +1147,9 @@ func chunksSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
 
 	// RBAC post-filter by allowed datasets
 	allResults = filterByAllowedDatasets(allResults, req.AllowedDatasetIDs)
+
+	// Tag-based post-filter
+	allResults = filterByTags(allResults, req.Tags)
 
 	if len(allResults) > req.TopK {
 		allResults = allResults[:req.TopK]
@@ -1102,8 +1193,13 @@ func hybridSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
 		return c.JSON([]any{})
 	}
 
+	var rerankClient *rerank.Client
+	if req.Rerank && cfg.RerankEndpoint != "" {
+		rerankClient = rerank.NewClient(cfg.RerankEndpoint, cfg.RerankModel, 0, cfg.RerankTimeoutMs)
+	}
+
 	embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 1)
-	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections)
+	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections, rerankClient)
 
 	colls := resolveCollections(cfg, req)
 	var allResults []fiber.Map
@@ -1146,6 +1242,9 @@ func hybridSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
 	// RBAC post-filter
 	allResults = filterByAllowedDatasets(allResults, req.AllowedDatasetIDs)
 
+	// Tag-based post-filter
+	allResults = filterByTags(allResults, req.Tags)
+
 	if len(allResults) > req.TopK {
 		allResults = allResults[:req.TopK]
 	}
@@ -1177,7 +1276,7 @@ func temporalSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error 
 	var vectorResults []fiber.Map
 	if cfg.EmbedEndpoint != "" && cfg.Collections != nil {
 		embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 1)
-		sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections)
+		sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections, nil)
 
 		colls := resolveCollections(cfg, req)
 		for _, coll := range colls {
@@ -1343,7 +1442,7 @@ func ragCompletionSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) e
 
 	// Step 1: vector search (same as chunksSearch)
 	embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 1)
-	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections)
+	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections, nil)
 
 	colls := resolveCollections(cfg, req)
 	var chunks []fiber.Map
@@ -1439,7 +1538,7 @@ func summariesSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error
 	}
 
 	embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 1)
-	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections)
+	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections, nil)
 
 	// Search only in summary/triplet collections
 	colls := resolveCollections(cfg, req)

@@ -185,7 +185,24 @@ func (db *Levara) signalIndexer() {
 func (db *Levara) Insert(id string, vector []float32, data any) error {
 	db.mu.Lock()
 
-	bytes, err := json.Marshal(data)
+	var bytes []byte
+	var err error
+	switch v := data.(type) {
+	case json.RawMessage:
+		bytes = v
+	case []byte:
+		bytes = v
+	case string:
+		// If the string is already valid JSON, store it directly.
+		// This prevents double-encoding (e.g., `"{\"key\":\"val\"}"` → `"\"{ ... }\""`).
+		if len(v) > 0 && (v[0] == '{' || v[0] == '[') {
+			bytes = []byte(v)
+		} else {
+			bytes, err = json.Marshal(v)
+		}
+	default:
+		bytes, err = json.Marshal(data)
+	}
 	if err != nil {
 		db.mu.Unlock()
 		return fmt.Errorf("Failed to marshal metadata: %w", err)

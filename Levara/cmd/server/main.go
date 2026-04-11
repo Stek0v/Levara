@@ -485,12 +485,14 @@ func main() {
 
 	// MCP (Model Context Protocol) server — JSON-RPC 2.0 for AI agent integration
 	vectorHttp.RegisterMCPAPI(app, vectorHttp.APIConfig{
-		EmbedEndpoint: embedEndpoint,
-		EmbedModel:    embedModel,
-		Collections:   colManager,
-		DB:            pgDB,
-		BM25Indexes:   grpcSvc.BM25Indexes(),
-		LLMCache:      llmCache,
+		EmbedEndpoint:   embedEndpoint,
+		EmbedModel:      embedModel,
+		Collections:     colManager,
+		DB:              pgDB,
+		BM25Indexes:     grpcSvc.BM25Indexes(),
+		LLMCache:        llmCache,
+		RerankEndpoint:  os.Getenv("RERANK_ENDPOINT"),
+		RerankModel:     os.Getenv("RERANK_MODEL"),
 	})
 
 	// Cache stats endpoint

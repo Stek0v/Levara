@@ -16,12 +16,13 @@ import (
 
 // Capabilities describes which backends are available for search.
 type Capabilities struct {
-	HasEmbedding bool
-	HasBM25      bool
-	HasNeo4j     bool
-	HasLLM       bool
-	HasPostgres  bool
-	AllowCypher  bool
+	HasEmbedding    bool
+	HasBM25         bool
+	HasNeo4j        bool
+	HasLLM          bool
+	HasPostgres     bool
+	AllowCypher     bool
+	HasCommunities  bool // graph_communities table has data
 }
 
 // Alternative is a candidate search type that was considered but not selected.
@@ -88,6 +89,16 @@ func Route(query string, caps Capabilities) Decision {
 	// Signal 5: Summary request
 	if wantsSummary(qLower) && caps.HasEmbedding {
 		candidates = append(candidates, candidate{"SUMMARIES", 0.85, "query requests a summary"})
+	}
+
+	// Signal 5b: Overview/global query with communities → COMMUNITY_GLOBAL
+	if wantsSummary(qLower) && caps.HasCommunities && caps.HasLLM && caps.HasEmbedding {
+		candidates = append(candidates, candidate{"COMMUNITY_GLOBAL", 0.88, "overview query with community summaries available"})
+	}
+
+	// Signal 5c: Relational query with communities → COMMUNITY_LOCAL
+	if isRelational(qLower) && caps.HasCommunities && caps.HasLLM && caps.HasEmbedding {
+		candidates = append(candidates, candidate{"COMMUNITY_LOCAL", 0.82, "relational query with community context"})
 	}
 
 	// Signal 6: Question → RAG completion (needs LLM)

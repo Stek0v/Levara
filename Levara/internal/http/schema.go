@@ -323,6 +323,43 @@ var schemaStatements = []string{
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash)`,
 	`CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id)`,
+
+	// Graph communities (Louvain multi-level)
+	`CREATE TABLE IF NOT EXISTS graph_communities (
+		id TEXT PRIMARY KEY,
+		level INTEGER NOT NULL DEFAULT 0,
+		parent_id TEXT NOT NULL DEFAULT '',
+		member_node_ids JSONB NOT NULL DEFAULT '[]',
+		member_count INTEGER NOT NULL DEFAULT 0,
+		internal_weight REAL NOT NULL DEFAULT 0,
+		summary TEXT NOT NULL DEFAULT '',
+		summary_embedding_id TEXT NOT NULL DEFAULT '',
+		modularity REAL NOT NULL DEFAULT 0,
+		resolution REAL NOT NULL DEFAULT 1.0,
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_communities_level ON graph_communities(level)`,
+	`CREATE INDEX IF NOT EXISTS idx_communities_parent ON graph_communities(parent_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_communities_member_count ON graph_communities(member_count DESC)`,
+
+	// Community members join table (fast node→community lookup)
+	`CREATE TABLE IF NOT EXISTS community_members (
+		community_id TEXT NOT NULL,
+		node_id TEXT NOT NULL,
+		level INTEGER NOT NULL DEFAULT 0,
+		PRIMARY KEY (community_id, node_id)
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_community_members_node ON community_members(node_id, level)`,
+
+	// Adaptive routing weights (feedback-driven)
+	`CREATE TABLE IF NOT EXISTS routing_weights (
+		search_type TEXT PRIMARY KEY,
+		weight REAL NOT NULL DEFAULT 1.0,
+		success_count INTEGER NOT NULL DEFAULT 0,
+		total_count INTEGER NOT NULL DEFAULT 0,
+		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	)`,
 }
 
 // schemaSQLiteStatements — SQLite-compatible DDL.
@@ -587,4 +624,41 @@ var schemaSQLiteStatements = []string{
 	`CREATE INDEX IF NOT EXISTS idx_memories_hall ON memories(hall)`,
 	`CREATE INDEX IF NOT EXISTS idx_memories_pinned ON memories(is_pinned, pin_priority DESC)`,
 	`CREATE INDEX IF NOT EXISTS idx_graph_edges_validity ON graph_edges(source_id, relationship_name, valid_until)`,
+
+	// Graph communities (Louvain multi-level) — SQLite
+	`CREATE TABLE IF NOT EXISTS graph_communities (
+		id TEXT PRIMARY KEY,
+		level INTEGER NOT NULL DEFAULT 0,
+		parent_id TEXT NOT NULL DEFAULT '',
+		member_node_ids TEXT NOT NULL DEFAULT '[]',
+		member_count INTEGER NOT NULL DEFAULT 0,
+		internal_weight REAL NOT NULL DEFAULT 0,
+		summary TEXT NOT NULL DEFAULT '',
+		summary_embedding_id TEXT NOT NULL DEFAULT '',
+		modularity REAL NOT NULL DEFAULT 0,
+		resolution REAL NOT NULL DEFAULT 1.0,
+		created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_communities_level ON graph_communities(level)`,
+	`CREATE INDEX IF NOT EXISTS idx_communities_parent ON graph_communities(parent_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_communities_member_count ON graph_communities(member_count DESC)`,
+
+	// Community members join table — SQLite
+	`CREATE TABLE IF NOT EXISTS community_members (
+		community_id TEXT NOT NULL,
+		node_id TEXT NOT NULL,
+		level INTEGER NOT NULL DEFAULT 0,
+		PRIMARY KEY (community_id, node_id)
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_community_members_node ON community_members(node_id, level)`,
+
+	// Adaptive routing weights — SQLite
+	`CREATE TABLE IF NOT EXISTS routing_weights (
+		search_type TEXT PRIMARY KEY,
+		weight REAL NOT NULL DEFAULT 1.0,
+		success_count INTEGER NOT NULL DEFAULT 0,
+		total_count INTEGER NOT NULL DEFAULT 0,
+		updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+	)`,
 }

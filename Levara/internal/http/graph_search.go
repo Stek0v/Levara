@@ -9,8 +9,10 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/stek0v/cognevra/pkg/community"
 	"github.com/stek0v/cognevra/pkg/embed"
 	"github.com/stek0v/cognevra/pkg/graphdb"
 	"github.com/stek0v/cognevra/pipeline"
@@ -26,7 +28,7 @@ func graphCompletionSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest)
 
 	// Step 1: Vector search across entity collections
 	embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 1)
-	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections)
+	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections, nil)
 
 	colls := resolveCollections(cfg, req)
 	var entityNames []string
@@ -128,7 +130,7 @@ func contextExtensionSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest
 
 	// Step 1: Vector search — same as graphCompletionSearch
 	embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 1)
-	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections)
+	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections, nil)
 
 	colls := resolveCollections(cfg, req)
 	var entityNames []string
@@ -261,10 +263,10 @@ func graphContextWithTargetsNeo4j(ctx context.Context, cfg APIConfig, names []st
 	var cypher string
 	params := map[string]any{"names": names}
 	if allowedDatasetIDs != nil {
-		cypher = "MATCH (n:`__Node__`)-[r]-(m:`__Node__`) WHERE n.name IN $names AND (n.dataset_id IS NULL OR n.dataset_id IN $allowedIDs) RETURN n.name AS source, TYPE(r) AS rel, m.name AS target LIMIT 50"
+		cypher = "MATCH (n:`__Node__`)-[r]-(m:`__Node__`) WHERE n.name IN $names AND TYPE(r) <> 'HAPPENED_AT' AND (m.type IS NULL OR m.type <> 'TemporalEvent') AND (n.dataset_id IS NULL OR n.dataset_id IN $allowedIDs) RETURN n.name AS source, TYPE(r) AS rel, m.name AS target LIMIT 50"
 		params["allowedIDs"] = allowedDatasetIDs
 	} else {
-		cypher = "MATCH (n:`__Node__`)-[r]-(m:`__Node__`) WHERE n.name IN $names RETURN n.name AS source, TYPE(r) AS rel, m.name AS target LIMIT 50"
+		cypher = "MATCH (n:`__Node__`)-[r]-(m:`__Node__`) WHERE n.name IN $names AND TYPE(r) <> 'HAPPENED_AT' AND (m.type IS NULL OR m.type <> 'TemporalEvent') RETURN n.name AS source, TYPE(r) AS rel, m.name AS target LIMIT 50"
 	}
 
 	rows, err := writer.Query(ctx, cypher, params)
@@ -323,7 +325,7 @@ func cotSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
 
 	// ── Step 2: For each sub-question, run vector search + graph traversal ──
 	embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 1)
-	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections)
+	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections, nil)
 	colls := resolveCollections(cfg, req)
 
 	type reasoningStep struct {
@@ -451,7 +453,7 @@ func codingRulesSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) err
 
 	// Step 1: Vector search across collections, filter to code entities.
 	embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 1)
-	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections)
+	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections, nil)
 	colls := resolveCollections(cfg, req)
 
 	var codeEntities []fiber.Map
@@ -697,7 +699,7 @@ func tripletCompletionSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchReques
 
 	// Search only triplet collections
 	embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 1)
-	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections)
+	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections, nil)
 
 	colls := resolveCollections(cfg, req)
 	var tripletColls []string
@@ -969,7 +971,7 @@ func graphContextFromPostgres(ctx context.Context, cfg APIConfig, names []string
 		FROM graph_edges ge
 		JOIN graph_nodes gn ON ge.source_id = gn.id
 		JOIN graph_nodes gn2 ON ge.target_id = gn2.id
-		WHERE gn.name %s%s
+		WHERE gn.name %s AND ge.relationship_name <> 'HAPPENED_AT' AND (gn2.type IS NULL OR gn2.type <> 'TemporalEvent')%s
 		LIMIT $%d`, nameFilter, dsFilter, limitIdx))
 
 	rows, err := cfg.DB.QueryContext(ctx, query, args...)
@@ -1066,4 +1068,233 @@ func dedup(ss []string) []string {
 		}
 	}
 	return out
+}
+
+// --- Community-based search ---
+
+// communityLocalSearch: find entity's community → enrich context from community members → LLM answer.
+func communityLocalSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
+	llmEndpoint := os.Getenv("LLM_ENDPOINT")
+	llmModel := os.Getenv("LLM_MODEL")
+
+	if cfg.EmbedEndpoint == "" || cfg.Collections == nil {
+		return c.JSON(fiber.Map{"answer": "", "search_type": "COMMUNITY_LOCAL"})
+	}
+
+	ctx := context.Background()
+	embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 1)
+	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections, nil)
+	colls := resolveCollections(cfg, req)
+
+	// Step 1: Vector search → entity names
+	var entityNames []string
+	for _, coll := range colls {
+		results, err := sp.SearchByText(ctx, coll, req.QueryText, req.TopK)
+		if err != nil {
+			continue
+		}
+		for _, r := range results {
+			var meta map[string]any
+			if json.Unmarshal(r.Metadata, &meta) == nil {
+				if name, ok := meta["name"].(string); ok && name != "" {
+					entityNames = append(entityNames, name)
+				}
+			}
+		}
+	}
+	entityNames = dedup(entityNames)
+
+	if len(entityNames) == 0 || cfg.DB == nil {
+		// Fallback to regular graph completion
+		return graphCompletionSearch(c, cfg, req)
+	}
+
+	// Step 2: Find communities for these entities
+	// Need to convert entity names to IDs first
+	var nodeIDs []string
+	for _, name := range entityNames {
+		var id string
+		err := cfg.DB.QueryRowContext(ctx, "SELECT id FROM graph_nodes WHERE name = ? LIMIT 1", name).Scan(&id)
+		if err == nil {
+			nodeIDs = append(nodeIDs, id)
+		}
+	}
+
+	commIDs, err := community.LookupCommunities(ctx, cfg.DB, nodeIDs, 0)
+	if err != nil || len(commIDs) == 0 {
+		return graphCompletionSearch(c, cfg, req)
+	}
+
+	// Step 3: Load community context
+	var communityContexts []string
+	for _, commID := range commIDs {
+		var summary string
+		cfg.DB.QueryRowContext(ctx, "SELECT summary FROM graph_communities WHERE id = ?", commID).Scan(&summary)
+
+		// Load community members and edges for richer context
+		graphCtx := graphContextFromPostgres(ctx, cfg, entityNames, req.AllowedDatasetIDs)
+		context := ""
+		if summary != "" {
+			context = "Community summary: " + summary + "\n"
+		}
+		if len(graphCtx) > 0 {
+			context += "Relationships: " + strings.Join(graphCtx, "; ")
+		}
+		if context != "" {
+			communityContexts = append(communityContexts, context)
+		}
+	}
+
+	// Step 4: LLM answer
+	answer := ""
+	if len(communityContexts) > 0 && (llmEndpoint != "" || cfg.LLMProvider != nil) {
+		prompt := fmt.Sprintf(
+			"Answer based on these knowledge graph communities:\n\n%s\n\nQuestion: %s\n\nAnswer:",
+			strings.Join(communityContexts, "\n---\n"), req.QueryText)
+		answer = callLLMFromAPI(llmEndpoint, llmModel, prompt, cfg.LLMProvider)
+	}
+
+	return c.JSON(fiber.Map{
+		"answer":           answer,
+		"communities_used": commIDs,
+		"entity_names":     entityNames,
+		"search_type":      "COMMUNITY_LOCAL",
+	})
+}
+
+// communityGlobalSearch: map-reduce across community summaries.
+// Step 1: vector search _community_summaries → top-K communities.
+// Step 2: per-community partial answers via LLM.
+// Step 3: synthesize final answer.
+func communityGlobalSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
+	llmEndpoint := os.Getenv("LLM_ENDPOINT")
+	llmModel := os.Getenv("LLM_MODEL")
+
+	if cfg.EmbedEndpoint == "" || cfg.Collections == nil {
+		return c.JSON(fiber.Map{"answer": "", "search_type": "COMMUNITY_GLOBAL"})
+	}
+	if (llmEndpoint == "" && cfg.LLMProvider == nil) {
+		// No LLM → fallback to CHUNKS
+		return chunksSearch(c, cfg, req)
+	}
+
+	ctx := context.Background()
+	embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 1)
+	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections, nil)
+
+	// Step 1: Search community summaries
+	summaryCollName := "_community_summaries"
+	if !cfg.Collections.Has(summaryCollName) {
+		return graphCompletionSearch(c, cfg, req)
+	}
+
+	summaryResults, err := sp.SearchByText(ctx, summaryCollName, req.QueryText, 5)
+	if err != nil || len(summaryResults) == 0 {
+		return graphCompletionSearch(c, cfg, req)
+	}
+
+	// Extract community info
+	type communityHit struct {
+		ID          string
+		Summary     string
+		MemberCount int
+		Level       int
+	}
+	var hits []communityHit
+	for _, r := range summaryResults {
+		var meta map[string]any
+		if json.Unmarshal(r.Metadata, &meta) != nil {
+			continue
+		}
+		hit := communityHit{
+			ID: fmt.Sprintf("%v", meta["community_id"]),
+		}
+		if text, ok := meta["text"].(string); ok {
+			hit.Summary = text
+		}
+		if mc, ok := meta["member_count"].(float64); ok {
+			hit.MemberCount = int(mc)
+		}
+		if lv, ok := meta["level"].(float64); ok {
+			hit.Level = int(lv)
+		}
+		if hit.Summary != "" {
+			hits = append(hits, hit)
+		}
+	}
+
+	if len(hits) == 0 {
+		return graphCompletionSearch(c, cfg, req)
+	}
+
+	// Step 2: Map — partial answers per community (concurrent)
+	type mapResult struct {
+		CommunityID   string `json:"community_id"`
+		Summary       string `json:"summary"`
+		MemberCount   int    `json:"member_count"`
+		Level         int    `json:"level"`
+		PartialAnswer string `json:"partial_answer"`
+	}
+	var partials []mapResult
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 3)
+
+	for _, hit := range hits {
+		wg.Add(1)
+		hit := hit
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			prompt := fmt.Sprintf(
+				"A knowledge graph community contains these related topics:\n\n%s\n\n"+
+					"Based on this community's knowledge, provide relevant information for: %s\n"+
+					"If this community has no relevant information, respond with 'NOT_RELEVANT'.",
+				hit.Summary, req.QueryText)
+			partial := callLLMFromAPI(llmEndpoint, llmModel, prompt, cfg.LLMProvider)
+
+			if !strings.Contains(partial, "NOT_RELEVANT") && partial != "" {
+				mu.Lock()
+				partials = append(partials, mapResult{
+					CommunityID:   hit.ID,
+					Summary:       hit.Summary,
+					MemberCount:   hit.MemberCount,
+					Level:         hit.Level,
+					PartialAnswer: partial,
+				})
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+
+	// Step 3: Reduce — synthesize
+	answer := ""
+	if len(partials) == 0 {
+		answer = "No relevant communities found for this query."
+	} else if len(partials) == 1 {
+		answer = partials[0].PartialAnswer
+	} else {
+		var partialTexts []string
+		for i, p := range partials {
+			partialTexts = append(partialTexts, fmt.Sprintf(
+				"Community %d (%d entities, level %d):\n%s",
+				i+1, p.MemberCount, p.Level, p.PartialAnswer))
+		}
+		synthesizePrompt := fmt.Sprintf(
+			"Multiple knowledge communities provided these perspectives on '%s':\n\n%s\n\n"+
+				"Synthesize a comprehensive answer combining all relevant perspectives. "+
+				"Resolve any contradictions. Be thorough but concise.",
+			req.QueryText, strings.Join(partialTexts, "\n\n---\n\n"))
+		answer = callLLMFromAPI(llmEndpoint, llmModel, synthesizePrompt, cfg.LLMProvider)
+	}
+
+	return c.JSON(fiber.Map{
+		"answer":                   answer,
+		"communities_used":         partials,
+		"total_communities_searched": len(hits),
+		"search_type":              "COMMUNITY_GLOBAL",
+	})
 }
