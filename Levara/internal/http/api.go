@@ -58,9 +58,11 @@ type APIConfig struct {
 	FileStorage   storage.Storage // file storage backend (nil = use os.WriteFile fallback)
 	Logger        *observe.Logger // structured logger (nil = use log.Printf fallback)
 	// Reranker configuration (optional, all empty = disabled)
-	RerankEndpoint string // e.g., "http://localhost:8787/rerank"
-	RerankModel    string // e.g., "bge-reranker-v2-m3"
-	RerankTimeoutMs int   // HTTP timeout in ms, 0 = default 5000ms
+	RerankEndpoint  string // e.g., "http://localhost:8787/rerank"
+	RerankModel     string // e.g., "bge-reranker-v2-m3"
+	RerankTimeoutMs int    // HTTP timeout in ms, 0 = default 5000ms
+	// Adaptive router (feedback-driven weight learning)
+	AdaptiveWeights *router.AdaptiveWeights // nil = no adaptive routing
 }
 
 // RegisterCogneeAPI registers all Cognee-compatible endpoints on the Fiber app.

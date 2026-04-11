@@ -48,14 +48,23 @@ type Index struct {
 	b        float64
 }
 
-// NewIndex creates an empty BM25 index.
+// NewIndex creates an empty BM25 index with default parameters (k1=1.2, b=0.75).
 func NewIndex() *Index {
+	return NewIndexWithParams(defaultK1, defaultB)
+}
+
+// NewIndexWithParams creates a BM25 index with custom k1 and b parameters.
+// k1 controls term frequency saturation (higher = more weight to term freq, typical 1.2-2.0).
+// b controls length normalization (0 = no normalization, 1 = full normalization, typical 0.75).
+func NewIndexWithParams(k1, b float64) *Index {
+	if k1 <= 0 { k1 = defaultK1 }
+	if b < 0 || b > 1 { b = defaultB }
 	return &Index{
 		docs:     make(map[string]*Document),
 		inverted: make(map[string]map[string]int),
 		docLen:   make(map[string]int),
-		k1:       defaultK1,
-		b:        defaultB,
+		k1:       k1,
+		b:        b,
 	}
 }
 

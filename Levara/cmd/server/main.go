@@ -64,6 +64,7 @@ import (
 	"github.com/stek0v/cognevra/pkg/llmcache"
 	"github.com/stek0v/cognevra/pkg/llmproxy"
 	"github.com/stek0v/cognevra/pkg/observe"
+	"github.com/stek0v/cognevra/pkg/router"
 	"github.com/stek0v/cognevra/pkg/storage"
 	pb "github.com/stek0v/cognevra/proto/pb"
 	"google.golang.org/grpc"
@@ -466,21 +467,25 @@ func main() {
 		}
 	}
 
+	// Adaptive router weights (feedback-driven learning)
+	adaptiveWeights := router.NewAdaptiveWeights(pgDB, 0.1)
+
 	// Protected routes: Cognee-compatible API (datasets, upload, cognify, search)
 	vectorHttp.RegisterCogneeAPI(api, vectorHttp.APIConfig{
-		PostgresDSN:   pgDSN,
-		StoragePath:   *dataDir + "/uploads",
-		EmbedEndpoint: embedEndpoint,
-		EmbedModel:    embedModel,
-		Collections:   colManager,
-		Neo4jCfg:      vizCfg,
-		DB:            pgDB,
-		BM25Indexes:   grpcSvc.BM25Indexes(),
-		LLMCache:      llmCache,
-		LLMProvider:   llmProvider,
-		ErrorTracker:  errTracker,
-		FileStorage:   fileStore,
-		Logger:        srvLog,
+		PostgresDSN:     pgDSN,
+		StoragePath:     *dataDir + "/uploads",
+		EmbedEndpoint:   embedEndpoint,
+		EmbedModel:      embedModel,
+		Collections:     colManager,
+		Neo4jCfg:        vizCfg,
+		DB:              pgDB,
+		BM25Indexes:     grpcSvc.BM25Indexes(),
+		LLMCache:        llmCache,
+		LLMProvider:     llmProvider,
+		ErrorTracker:    errTracker,
+		FileStorage:     fileStore,
+		Logger:          srvLog,
+		AdaptiveWeights: adaptiveWeights,
 	})
 
 	// MCP (Model Context Protocol) server — JSON-RPC 2.0 for AI agent integration
