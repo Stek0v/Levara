@@ -65,7 +65,11 @@ export default function DatasetsPage() {
       if (dsId) {
         try {
           const cognifyRes = await cognifyMutation.mutateAsync({ dataset_id: dsId, collection: actualDsName })
-          const runId = cognifyRes.pipeline_run_id
+          const runId = cognifyRes?.pipeline_run_id
+          if (!runId) {
+            setUploadedFiles((prev) => prev.map((f) => f.status === 'processing' ? { ...f, status: 'ready' as const } : f))
+            return
+          }
           setActiveCognifyRunId(runId)
 
           // Poll for completion (SSE provides live updates, polling is backup)
