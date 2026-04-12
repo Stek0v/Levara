@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { levara } from '@/lib/api'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Database, HardDrive, Cpu, Activity, Search, Brain } from 'lucide-react'
+import { Database, FolderOpen, HardDrive, Cpu, Activity, Search, Brain } from 'lucide-react'
 
 interface HealthData {
   status: string
@@ -54,21 +54,21 @@ export default function DashboardPage() {
       badge: info?.status === 'ready' ? 'success' : 'warning',
     },
     {
-      title: 'Collections',
-      value: stats?.collections ?? '—',
+      title: 'Datasets',
+      value: stats?.datasets ?? '—',
       icon: Database,
       badge: 'info',
+    },
+    {
+      title: 'Collections',
+      value: stats?.collections ?? '—',
+      icon: FolderOpen,
+      badge: 'default',
     },
     {
       title: 'Dimension',
       value: info?.dimension ?? '—',
       icon: Cpu,
-      badge: 'default',
-    },
-    {
-      title: 'Shards',
-      value: info?.shards ?? '—',
-      icon: HardDrive,
       badge: 'default',
     },
   ]
