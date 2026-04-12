@@ -18,6 +18,7 @@ export default function DatasetsPage() {
   const [showCreate, setShowCreate] = useState(false)
   const [cognifyRunning, setCognifyRunning] = useState<string | null>(null)
   const [uploadResult, setUploadResult] = useState<{ files: number; dataset: string } | null>(null)
+  const [uploadedFiles, setUploadedFiles] = useState<{ name: string; dataset: string; time: string }[]>([])
 
   const fetchDatasets = useCallback(async () => {
     try {
@@ -41,7 +42,12 @@ export default function DatasetsPage() {
     setUploadResult(null)
     try {
       const res = await levara.upload(fileArr)
-      setUploadResult({ files: fileArr.length, dataset: (res as Record<string, unknown>).dataset_name as string || 'default' })
+      const dsName = (res as Record<string, unknown>).dataset_name as string || 'default'
+      setUploadResult({ files: fileArr.length, dataset: dsName })
+      setUploadedFiles((prev) => [
+        ...fileArr.map((f) => ({ name: f.name, dataset: dsName, time: new Date().toLocaleTimeString() })),
+        ...prev,
+      ])
       await fetchDatasets()
     } catch (err) {
       console.error('Upload failed:', err)
@@ -169,15 +175,34 @@ export default function DatasetsPage() {
         </div>
       )}
 
+      {/* Uploaded files (when no DB) */}
+      {uploadedFiles.length > 0 && datasets.length === 0 && (
+        <div className="mb-4">
+          <h2 className="text-sm font-medium text-gray-500 mb-2">Uploaded Files</h2>
+          <div className="space-y-2">
+            {uploadedFiles.map((f, i) => (
+              <div key={i} className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-3 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Database className="h-4 w-4 text-gray-400" />
+                  <span className="font-medium text-sm">{f.name}</span>
+                  <Badge variant="success">uploaded</Badge>
+                </div>
+                <span className="text-xs text-gray-400">{f.time}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Dataset list */}
-      {datasets.length === 0 ? (
+      {datasets.length === 0 && uploadedFiles.length === 0 ? (
         <EmptyState
           icon={Database}
           title="No datasets yet"
           description="Upload files or create a new dataset to get started"
           action={{ label: 'Upload Files', onClick: () => document.querySelector<HTMLInputElement>('input[type=file]')?.click() }}
         />
-      ) : (
+      ) : datasets.length === 0 ? null : (
         <div className="space-y-3">
           {datasets.map((ds) => (
             <div
