@@ -665,9 +665,12 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 							} else {
 								chunkInserted++
 								if cfg.BM25Indexes != nil {
-									if idx, ok := cfg.BM25Indexes[chunkColl]; ok {
-										idx.Add(chunkIDs[i], chunkMetas[i].text, meta)
+									idx, ok := cfg.BM25Indexes[chunkColl]
+									if !ok {
+										idx = bm25.NewIndex()
+										cfg.BM25Indexes[chunkColl] = idx
 									}
+									idx.Add(chunkIDs[i], chunkMetas[i].text, meta)
 								}
 							}
 						}
