@@ -31,12 +31,19 @@ async function handleResponse<T>(res: Response): Promise<T> {
 
 export async function api<T>(path: string, options?: RequestInit): Promise<T> {
   const traceId = crypto.randomUUID()
+  const isFormData = options?.body instanceof FormData
+  const headers: Record<string, string> = {
+    'X-Trace-ID': traceId,
+  }
+  // Don't set Content-Type for FormData — browser sets it with boundary
+  if (!isFormData) {
+    headers['Content-Type'] = 'application/json'
+  }
   const res = await fetch(`${API_BASE}${path}`, {
     credentials: 'include',
     ...options,
     headers: {
-      'Content-Type': 'application/json',
-      'X-Trace-ID': traceId,
+      ...headers,
       ...options?.headers,
     },
   })
