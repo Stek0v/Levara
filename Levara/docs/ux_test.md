@@ -343,94 +343,94 @@
 ## Тесты для немедленного прогона (79 тестов)
 
 ### Категория A: Сборка и инфраструктура (7 тестов)
-- [ ] **BUILD-1**: `npm run build` succeeds без ошибок
-- [ ] **BUILD-2**: TypeScript `tsc --noEmit` проходит
-- [ ] **BUILD-3**: 12 маршрутов в build output
-- [ ] **BUILD-4**: .prettierrc + .editorconfig + eslint.config.mjs exist
-- [ ] **BUILD-5**: package.json: react-query, d3, lucide-react в dependencies
-- [ ] **BUILD-6**: Inter + JetBrains Mono fonts loaded (layout.tsx)
-- [ ] **BUILD-7**: Providers wrap app (QueryClient + ToastProvider)
+- [x] **BUILD-1**: `npm run build` succeeds без ошибок
+- [x] **BUILD-2**: TypeScript `tsc --noEmit` проходит
+- [x] **BUILD-3**: 12 маршрутов в build output
+- [x] **BUILD-4**: .prettierrc + .editorconfig + eslint.config.mjs exist
+- [x] **BUILD-5**: package.json: react-query, d3, lucide-react в dependencies
+- [x] **BUILD-6**: Inter + JetBrains Mono fonts loaded (layout.tsx)
+- [x] **BUILD-7**: Providers wrap app (QueryClient + ToastProvider)
 
 ### Категория B: Компоненты UI (12 тестов)
-- [ ] **COMP-1**: Button renders with 4 variants × 3 sizes
-- [ ] **COMP-2**: Button loading → Loader2 spinner + disabled
-- [ ] **COMP-3**: Input label → htmlFor link
-- [ ] **COMP-4**: Input error → aria-invalid + aria-describedby + red border
-- [ ] **COMP-5**: Badge 5 variants render with correct colors
-- [ ] **COMP-6**: Skeleton animate-pulse class
-- [ ] **COMP-7**: EmptyState icon + title + description + action CTA
-- [ ] **COMP-8**: Toast success/error/warning/info variants
-- [ ] **COMP-9**: Toast auto-dismiss after duration
-- [ ] **COMP-10**: Toast action button callback
-- [ ] **COMP-11**: Modal open/close + Escape + backdrop click
-- [ ] **COMP-12**: ConfirmModal cancel/confirm buttons
+- [x] **COMP-1**: Button renders with 4 variants × 3 sizes
+- [x] **COMP-2**: Button loading → Loader2 spinner + disabled
+- [x] **COMP-3**: Input label → htmlFor link
+- [x] **COMP-4**: Input error → aria-invalid + aria-describedby + red border
+- [x] **COMP-5**: Badge 5 variants render with correct colors
+- [x] **COMP-6**: Skeleton animate-pulse class
+- [x] **COMP-7**: EmptyState icon + title + description + action CTA
+- [x] **COMP-8**: Toast success/error/warning/info variants
+- [x] **COMP-9**: Toast auto-dismiss after duration
+- [x] **COMP-10**: Toast action button callback
+- [x] **COMP-11**: Modal open/close + Escape + backdrop click
+- [x] **COMP-12**: ConfirmModal cancel/confirm buttons
 
 ### Категория C: Страницы (25 тестов)
-- [ ] **PAGE-1**: Dashboard: 4 widgets render (status, collections, dim, shards)
-- [ ] **PAGE-2**: Dashboard: 3 quick action cards with links
-- [ ] **PAGE-3**: Datasets: EmptyState when no datasets
-- [ ] **PAGE-4**: Datasets: drag-drop zone visible
-- [ ] **PAGE-5**: Datasets: create dataset form (name input + Create button)
-- [ ] **PAGE-6**: Datasets: dataset card with name, record count, date
-- [ ] **PAGE-7**: Datasets: click card → navigate to /datasets/[id]
-- [ ] **PAGE-8**: Dataset detail: records table with ID, Content, Title columns
-- [ ] **PAGE-9**: Dataset detail: pagination Prev/Next
-- [ ] **PAGE-10**: Dataset detail: checkbox select + bulk delete
-- [ ] **PAGE-11**: Search: 6 mode buttons render
-- [ ] **PAGE-12**: Search: input + Enter → triggers search
-- [ ] **PAGE-13**: Search: results with score, collection, metadata.text
-- [ ] **PAGE-14**: Search: feedback stars (1-5) on each result
-- [ ] **PAGE-15**: Search: RAG mode → AI Answer box
-- [ ] **PAGE-16**: Chat: empty state "Ask a question"
-- [ ] **PAGE-17**: Chat: send message → user bubble + typing → assistant bubble
-- [ ] **PAGE-18**: Chat: sources section in assistant message
-- [ ] **PAGE-19**: Chat: RAG/COT mode toggle
-- [ ] **PAGE-20**: Graph: dataset selector dropdown
-- [ ] **PAGE-21**: Graph: D3 SVG canvas renders
-- [ ] **PAGE-22**: Graph: node type filter badges
-- [ ] **PAGE-23**: Graph: click node → detail panel
-- [ ] **PAGE-24**: Collections: cards with name, records, dim, model, domain
-- [ ] **PAGE-25**: Memories: type filter badges + list items with key/value/type
+- [x] **PAGE-1**: Dashboard: 4 widgets render (status, collections, dim, shards)
+- [x] **PAGE-2**: Dashboard: 3 quick action cards with links
+- [x] **PAGE-3**: Datasets: EmptyState when no datasets
+- [x] **PAGE-4**: Datasets: drag-drop zone visible
+- [x] **PAGE-5**: Datasets: create dataset form (name input + Create button)
+- [x] **PAGE-6**: Datasets: dataset card with name, record count, date
+- [x] **PAGE-7**: Datasets: click card → navigate to /datasets/[id]
+- [x] **PAGE-8**: Dataset detail: records table with ID, Content, Title columns
+- [x] **PAGE-9**: Dataset detail: pagination Prev/Next
+- [x] **PAGE-10**: Dataset detail: checkbox select + bulk delete
+- [x] **PAGE-11**: Search: 6 mode buttons render
+- [x] **PAGE-12**: Search: input + Enter → triggers search
+- [x] **PAGE-13**: Search: results with score, collection, metadata.text
+- [x] **PAGE-14**: Search: feedback stars (1-5) on each result
+- [x] **PAGE-15**: Search: RAG mode → AI Answer box
+- [x] **PAGE-16**: Chat: empty state "Ask a question"
+- [x] **PAGE-17**: Chat: send message → user bubble + typing → assistant bubble
+- [x] **PAGE-18**: Chat: sources section in assistant message
+- [x] **PAGE-19**: Chat: RAG/COT mode toggle
+- [x] **PAGE-20**: Graph: dataset selector dropdown
+- [x] **PAGE-21**: Graph: D3 SVG canvas renders
+- [x] **PAGE-22**: Graph: node type filter badges
+- [x] **PAGE-23**: Graph: click node → detail panel
+- [x] **PAGE-24**: Collections: cards with name, records, dim, model, domain
+- [x] **PAGE-25**: Memories: type filter badges + list items with key/value/type
 
 ### Категория D: Навигация и Layout (8 тестов)
-- [ ] **NAV-1**: Sidebar: 10 nav items visible
-- [ ] **NAV-2**: Sidebar: active item highlighted based on pathname
-- [ ] **NAV-3**: Sidebar: collapse button works
-- [ ] **NAV-4**: Sidebar: Levara logo + brand
-- [ ] **NAV-5**: Login page: no sidebar
-- [ ] **NAV-6**: Settings: theme toggle (light/dark/system)
-- [ ] **NAV-7**: Settings: language selector (ru/en)
-- [ ] **NAV-8**: Analytics: auto-refresh badge visible
+- [x] **NAV-1**: Sidebar: 10 nav items visible
+- [x] **NAV-2**: Sidebar: active item highlighted based on pathname
+- [x] **NAV-3**: Sidebar: collapse button works
+- [x] **NAV-4**: Sidebar: Levara logo + brand
+- [x] **NAV-5**: Login page: no sidebar
+- [x] **NAV-6**: Settings: theme toggle (light/dark/system)
+- [x] **NAV-7**: Settings: language selector (ru/en)
+- [x] **NAV-8**: Analytics: auto-refresh badge visible
 
 ### Категория E: API Client (8 тестов)
-- [ ] **API-1**: X-Trace-ID header generated (UUID format)
-- [ ] **API-2**: credentials='include' on every request
-- [ ] **API-3**: ApiError: status, code, message, traceId, retryable fields
-- [ ] **API-4**: levara.health() → GET /health
-- [ ] **API-5**: levara.search() → POST /api/v1/search/text
-- [ ] **API-6**: levara.datasets() → GET /api/v1/datasets
-- [ ] **API-7**: levara.cognify() → POST /api/v1/cognify
-- [ ] **API-8**: levara.submitFeedback() → POST /api/v1/feedback
+- [x] **API-1**: X-Trace-ID header generated (UUID format)
+- [x] **API-2**: credentials='include' on every request
+- [x] **API-3**: ApiError: status, code, message, traceId, retryable fields
+- [x] **API-4**: levara.health() → GET /health
+- [x] **API-5**: levara.search() → POST /api/v1/search/text
+- [x] **API-6**: levara.datasets() → GET /api/v1/datasets
+- [x] **API-7**: levara.cognify() → POST /api/v1/cognify
+- [x] **API-8**: levara.submitFeedback() → POST /api/v1/feedback
 
 ### Категория F: SSE (5 тестов)
-- [ ] **SSE-1**: useSSE connects to URL
-- [ ] **SSE-2**: useSSE status: connecting → connected
-- [ ] **SSE-3**: useSSE error → reconnecting with backoff
-- [ ] **SSE-4**: useSSE max retries → status=error
-- [ ] **SSE-5**: useCognifyProgress typed interface
+- [x] **SSE-1**: useSSE connects to URL
+- [x] **SSE-2**: useSSE status: connecting → connected
+- [x] **SSE-3**: useSSE error → reconnecting with backoff
+- [x] **SSE-4**: useSSE max retries → status=error
+- [x] **SSE-5**: useCognifyProgress typed interface
 
 ### Категория G: Специфичные экраны (14 тестов)
-- [ ] **SPEC-1**: Analytics: system status widget
-- [ ] **SPEC-2**: Analytics: LLM cache hit rate bar
-- [ ] **SPEC-3**: Analytics: feedback insights (avg rating stars)
-- [ ] **SPEC-4**: Analytics: recent errors list
-- [ ] **SPEC-5**: Notebooks: add code cell
-- [ ] **SPEC-6**: Notebooks: add markdown cell
-- [ ] **SPEC-7**: Notebooks: run code cell → output appears
-- [ ] **SPEC-8**: Notebooks: cell status (idle/running/done/error)
-- [ ] **SPEC-9**: Notebooks: delete cell
-- [ ] **SPEC-10**: Notebooks: Ctrl+Enter runs cell
-- [ ] **SPEC-11**: Login: email + password fields
-- [ ] **SPEC-12**: Login: toggle sign in / register
-- [ ] **SPEC-13**: Login: error display on failed auth
-- [ ] **SPEC-14**: Login: submit → redirect to /
+- [x] **SPEC-1**: Analytics: system status widget
+- [x] **SPEC-2**: Analytics: LLM cache hit rate bar
+- [x] **SPEC-3**: Analytics: feedback insights (avg rating stars)
+- [x] **SPEC-4**: Analytics: recent errors list
+- [x] **SPEC-5**: Notebooks: add code cell
+- [x] **SPEC-6**: Notebooks: add markdown cell
+- [x] **SPEC-7**: Notebooks: run code cell → output appears
+- [x] **SPEC-8**: Notebooks: cell status (idle/running/done/error)
+- [x] **SPEC-9**: Notebooks: delete cell
+- [x] **SPEC-10**: Notebooks: Ctrl+Enter runs cell
+- [x] **SPEC-11**: Login: email + password fields
+- [x] **SPEC-12**: Login: toggle sign in / register
+- [x] **SPEC-13**: Login: error display on failed auth
+- [x] **SPEC-14**: Login: submit → redirect to /
