@@ -139,7 +139,7 @@ export const levara = {
       method: 'POST',
       body: JSON.stringify(params),
     }),
-  feedbackStats: () => api<{ total: number; avg_rating: number }>('/api/v1/feedback/stats'),
+  feedbackStats: () => api<{ total: number; avg_rating: number; worst_query?: string }>('/api/v1/feedback/stats'),
 
   // Settings
   settings: () => api<Record<string, unknown>>('/api/v1/settings'),
