@@ -783,6 +783,7 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 			Neo4jDatabase:   cfg.Neo4jCfg.Neo4jDatabase,
 			Collection:      collection,
 			Collections:     cfg.Collections,
+			BM25Indexes:     cfg.BM25Indexes,
 			GenerateTriplets: true,
 			SystemPrompt:    sessionContext,
 			DatasetID:       func() string { if len(allDatasetIDs) > 0 { return allDatasetIDs[0] }; return runID }(),
