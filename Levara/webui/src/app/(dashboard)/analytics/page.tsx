@@ -10,7 +10,7 @@ interface Stats {
   health: { status: string } | null
   info: { dimension: number; shards: number; status: string; collections?: string[] } | null
   feedback: { total: number; avg_rating: number; worst_query?: string } | null
-  cache: { size?: number; max_size?: number; hits?: number; misses?: number; hit_rate?: number } | null
+  cache: { size?: number; max_size?: number; hits?: number; misses?: number; hit_rate?: number; Size?: number; MaxSize?: number; Hits?: number; Misses?: number; HitRate?: number } | null
   collections: number
   errors: { message: string; timestamp: string }[]
 }
@@ -33,7 +33,16 @@ export default function AnalyticsPage() {
         health: health.status === 'fulfilled' ? health.value : null,
         info: info.status === 'fulfilled' ? info.value : null,
         feedback: feedback.status === 'fulfilled' ? feedback.value : null,
-        cache: cache.status === 'fulfilled' ? cache.value : null,
+        cache: cache.status === 'fulfilled' ? (() => {
+          const c = cache.value as Record<string, unknown>
+          return {
+            size: (c.size ?? c.Size ?? 0) as number,
+            max_size: (c.max_size ?? c.MaxSize ?? 0) as number,
+            hits: (c.hits ?? c.Hits ?? 0) as number,
+            misses: (c.misses ?? c.Misses ?? 0) as number,
+            hit_rate: (c.hit_rate ?? c.HitRate ?? 0) as number,
+          }
+        })() : null,
         collections: colls.status === 'fulfilled' ? colls.value.length : 0,
         errors: errors.status === 'fulfilled' ? (Array.isArray(errors.value) ? errors.value : []) : [],
       })
