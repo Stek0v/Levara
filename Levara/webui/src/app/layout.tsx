@@ -11,9 +11,15 @@ export const metadata: Metadata = {
   description: 'Knowledge memory system — search, graph, RAG',
 }
 
+// Inline script to apply theme before first paint (prevents FOUC)
+const themeScript = `(function(){try{var t=localStorage.getItem('levara-theme');if(t==='dark'||(t!=='light'&&matchMedia('(prefers-color-scheme:dark)').matches))document.documentElement.classList.add('dark');var l=localStorage.getItem('levara-locale');if(l)document.documentElement.lang=l}catch(e){}})()`
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="ru" className={`${inter.variable} ${mono.variable} h-full`}>
+    <html lang="ru" className={`${inter.variable} ${mono.variable} h-full`} suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
+      </head>
       <body className="min-h-full font-sans antialiased bg-gray-50 dark:bg-gray-950 text-gray-900 dark:text-gray-100">
         <Providers>{children}</Providers>
       </body>

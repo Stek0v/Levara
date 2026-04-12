@@ -41,7 +41,9 @@ export default function MemoriesPage() {
       setNewValue('')
       setShowAdd(false)
       await fetchMemories()
-    } catch {}
+    } catch (err) {
+      alert(`Failed to save: ${err instanceof Error ? err.message : 'Unknown error'}`)
+    }
   }
 
   const typeBadge = (type?: string) => {
