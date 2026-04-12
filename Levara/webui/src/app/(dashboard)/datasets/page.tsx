@@ -17,6 +17,7 @@ export default function DatasetsPage() {
   const [newName, setNewName] = useState('')
   const [showCreate, setShowCreate] = useState(false)
   const [cognifyRunning, setCognifyRunning] = useState<string | null>(null)
+  const [uploadResult, setUploadResult] = useState<{ files: number; dataset: string } | null>(null)
 
   const fetchDatasets = useCallback(async () => {
     try {
@@ -37,11 +38,14 @@ export default function DatasetsPage() {
 
     // Dedup check: compute hash (simplified — check by name for now)
     setUploading(true)
+    setUploadResult(null)
     try {
-      await levara.upload(fileArr)
+      const res = await levara.upload(fileArr)
+      setUploadResult({ files: fileArr.length, dataset: (res as Record<string, unknown>).dataset_name as string || 'default' })
       await fetchDatasets()
     } catch (err) {
       console.error('Upload failed:', err)
+      setUploadResult(null)
     } finally {
       setUploading(false)
     }
@@ -154,6 +158,16 @@ export default function DatasetsPage() {
           {uploading ? 'Uploading...' : 'Drag & drop files here (PDF, DOCX, PPTX, XLSX, HTML, EPUB, TXT, MD, CSV)'}
         </p>
       </div>
+
+      {/* Upload result */}
+      {uploadResult && (
+        <div className="mb-4 p-3 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg flex items-center justify-between">
+          <p className="text-sm text-green-800 dark:text-green-300">
+            ✓ {uploadResult.files} file(s) uploaded to dataset &quot;{uploadResult.dataset}&quot;
+          </p>
+          <button onClick={() => setUploadResult(null)} className="text-green-600 hover:text-green-800 text-sm">×</button>
+        </div>
+      )}
 
       {/* Dataset list */}
       {datasets.length === 0 ? (
