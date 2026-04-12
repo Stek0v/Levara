@@ -73,7 +73,7 @@ export const levara = {
   // Upload
   upload: (files: File[], datasetName?: string) => {
     const form = new FormData()
-    files.forEach((f) => form.append('files', f))
+    files.forEach((f) => form.append('data', f))
     if (datasetName) form.append('dataset_name', datasetName)
     return api<{ status: string; items: unknown[]; dataset_id: string }>('/api/v1/add', {
       method: 'POST',

@@ -24,7 +24,7 @@ const nav = [
 
 export function Sidebar() {
   const pathname = usePathname()
-  const [collapsed, setCollapsed] = useState(false)
+  const [collapsed, setCollapsed] = useState(true) // default collapsed on mobile
 
   return (
     <>
