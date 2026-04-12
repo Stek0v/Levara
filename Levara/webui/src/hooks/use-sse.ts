@@ -119,7 +119,7 @@ export interface CognifyProgress {
 
 export function useCognifyProgress(runId: string | null) {
   const url = runId
-    ? `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'}/api/v1/cognify/${runId}/stream`
+    ? `${process.env.NEXT_PUBLIC_API_URL || ''}/api/v1/cognify/${runId}/stream`
     : null
 
   return useSSE(url, { enabled: !!runId }) as {
