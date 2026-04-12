@@ -22,10 +22,19 @@ const SEARCH_MODES = [
 export default function SearchPage() {
   const [query, setQuery] = useState('')
   const [mode, setMode] = useState('AUTO')
+  const [collection, setCollection] = useState('')
   const [results, setResults] = useState<SearchResult[]>([])
   const [ragAnswer, setRagAnswer] = useState<string | null>(null)
   const [searched, setSearched] = useState(false)
   const [timing, setTiming] = useState<number | null>(null)
+  const [collections, setCollections] = useState<string[]>([])
+
+  // Load collections
+  useState(() => {
+    import('@/lib/api').then(({ levara }) =>
+      levara.collections().then((c) => setCollections(c.filter((x) => !x.name.startsWith('_') && x.name !== 'Triplet_text').map((x) => x.name)))
+    ).catch(() => {})
+  })
 
   const searchMutation = useSearch()
   const feedbackMutation = useSubmitFeedback()
@@ -36,7 +45,7 @@ export default function SearchPage() {
     setRagAnswer(null)
     const t0 = performance.now()
     try {
-      const params: SearchRequest = { query_text: query, query_type: mode, top_k: 20 }
+      const params: SearchRequest = { query_text: query, query_type: mode, top_k: 20, collection: collection || undefined }
       const data = await searchMutation.mutateAsync(params)
       setTiming(Math.round(performance.now() - t0))
 
@@ -74,6 +83,15 @@ export default function SearchPage() {
             onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
           />
         </div>
+        <select
+          value={collection}
+          onChange={(e) => setCollection(e.target.value)}
+          className="h-9 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-3 text-sm"
+          aria-label="Collection"
+        >
+          <option value="">All collections</option>
+          {collections.map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
         <select
           value={mode}
           onChange={(e) => setMode(e.target.value)}

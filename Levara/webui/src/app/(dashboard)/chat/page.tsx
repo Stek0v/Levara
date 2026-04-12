@@ -20,12 +20,23 @@ export default function ChatPage() {
   const [loading, setLoading] = useState(false)
   const [sessionId] = useState(() => crypto.randomUUID())
   const [mode, setMode] = useState<'RAG_COMPLETION' | 'GRAPH_COMPLETION_COT'>('RAG_COMPLETION')
+  const [collection, setCollection] = useState('')
+  const [collections, setCollections] = useState<string[]>([])
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  // Load collections for selector (exclude internal ones)
+  useEffect(() => {
+    levara.collections().then((c) => {
+      const names = c.filter((x) => !x.name.startsWith('_') && x.name !== 'Triplet_text').map((x) => x.name)
+      setCollections(names)
+      if (names.length === 1) setCollection(names[0]) // auto-select if only one
+    }).catch(() => {})
+  }, [])
 
   const handleSend = async () => {
     const q = input.trim()
@@ -42,6 +53,7 @@ export default function ChatPage() {
         query_type: mode,
         top_k: 5,
         session_id: sessionId,
+        collection: collection || undefined,
       }
       const data = await levara.search(params)
 
@@ -103,6 +115,14 @@ export default function ChatPage() {
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-2xl font-bold">Chat</h1>
         <div className="flex items-center gap-2">
+          <select
+            value={collection}
+            onChange={(e) => setCollection(e.target.value)}
+            className="h-8 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-2 text-sm"
+            aria-label="Collection">
+            <option value="">All collections</option>
+            {collections.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
           <select
             value={mode}
             onChange={(e) => setMode(e.target.value as typeof mode)}
