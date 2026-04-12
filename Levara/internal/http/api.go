@@ -1616,7 +1616,10 @@ func ragCompletionSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) e
 	var chunks []fiber.Map
 
 	for _, coll := range colls {
-		results, err := sp.SearchByText(context.Background(), coll, req.QueryText, req.TopK)
+		// Overfetch: entities don't have text, need more results to find chunks
+		fetchK := req.TopK * 3
+		if fetchK < 20 { fetchK = 20 }
+		results, err := sp.SearchByText(context.Background(), coll, req.QueryText, fetchK)
 		if err != nil {
 			continue
 		}
@@ -1632,25 +1635,36 @@ func ragCompletionSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) e
 	// RBAC post-filter
 	chunks = filterByAllowedDatasets(chunks, req.AllowedDatasetIDs)
 
-	if len(chunks) > req.TopK {
-		chunks = chunks[:req.TopK]
-	}
-
 	// Step 2: LLM completion using retrieved chunks as context
 	llmEndpoint := os.Getenv("LLM_ENDPOINT")
 	llmModel := os.Getenv("LLM_MODEL")
 	answer := ""
 
 	if llmEndpoint != "" && llmModel != "" && len(chunks) > 0 {
-		// Build context from chunk metadata
+		// Build context from chunk metadata — extract "text" field, skip entities without text
 		var contextParts []string
-		for i, chunk := range chunks {
-			meta := ""
+		for _, chunk := range chunks {
 			if raw, ok := chunk["metadata"].(json.RawMessage); ok {
-				meta = string(raw)
+				var meta map[string]any
+				if json.Unmarshal(raw, &meta) == nil {
+					text, _ := meta["text"].(string)
+					if text == "" {
+						// Entity without text — use name + description as fallback
+						name, _ := meta["name"].(string)
+						desc, _ := meta["description"].(string)
+						if name != "" {
+							text = name
+							if desc != "" {
+								text += ": " + desc
+							}
+						}
+					}
+					if len(text) > 20 { // skip tiny stubs
+						contextParts = append(contextParts, fmt.Sprintf("[%d] %s", len(contextParts)+1, text))
+					}
+				}
 			}
-			contextParts = append(contextParts, fmt.Sprintf("[%d] %s", i+1, meta))
-			if i >= 9 {
+			if len(contextParts) >= 10 {
 				break
 			}
 		}
