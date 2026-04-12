@@ -51,7 +51,7 @@ export default function ChatPage() {
       const params: SearchRequest = {
         query_text: q,
         query_type: mode,
-        top_k: 5,
+        top_k: 15, // overfetch — entities may lack text, need enough chunks
         session_id: sessionId,
         collection: collection || undefined,
       }
@@ -62,10 +62,15 @@ export default function ChatPage() {
 
       if (Array.isArray(data)) {
         answer = 'Found results but no AI answer. Try RAG mode.'
-        sources = data.slice(0, 3).map((r) => ({
+        // Filter to results with actual text content (skip entities without text)
+        const withText = data.filter((r) => {
+          const t = (r.metadata?.text as string) || (r.metadata?.name as string) || ''
+          return t.length > 20
+        })
+        sources = (withText.length > 0 ? withText : data).slice(0, 5).map((r) => ({
           id: r.id,
           score: r.score,
-          text: ((r.metadata?.text as string) || '').slice(0, 200),
+          text: ((r.metadata?.text as string) || (r.metadata?.name as string) || '').slice(0, 200),
           collection: r.collection,
         }))
       } else {
