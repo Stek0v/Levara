@@ -1,7 +1,8 @@
 'use client'
 
 import { useState } from 'react'
-import { levara, type SearchResult, type SearchRequest } from '@/lib/api'
+import { type SearchResult, type SearchRequest } from '@/lib/api'
+import { useSearch, useSubmitFeedback } from '@/hooks/use-levara'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -23,40 +24,40 @@ export default function SearchPage() {
   const [mode, setMode] = useState('AUTO')
   const [results, setResults] = useState<SearchResult[]>([])
   const [ragAnswer, setRagAnswer] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
   const [searched, setSearched] = useState(false)
   const [timing, setTiming] = useState<number | null>(null)
 
+  const searchMutation = useSearch()
+  const feedbackMutation = useSubmitFeedback()
+  const loading = searchMutation.isPending
+
   const handleSearch = async () => {
     if (!query.trim()) return
-    setLoading(true)
     setRagAnswer(null)
     const t0 = performance.now()
     try {
       const params: SearchRequest = { query_text: query, query_type: mode, top_k: 20 }
-      const data = await levara.search(params)
+      const data = await searchMutation.mutateAsync(params)
       setTiming(Math.round(performance.now() - t0))
 
       if (Array.isArray(data)) {
-        setResults(data)
-      } else if (typeof data === 'object' && 'answer' in (data as Record<string, unknown>)) {
+        setResults(data as SearchResult[])
+      } else if (typeof data === 'object' && data && 'answer' in data) {
         const d = data as Record<string, unknown>
         setRagAnswer(d.answer as string)
         setResults((d.chunks as SearchResult[]) || [])
+      } else {
+        setResults([])
       }
-    } catch (err) {
-      console.error('Search failed:', err)
+    } catch {
       setResults([])
     } finally {
-      setLoading(false)
       setSearched(true)
     }
   }
 
-  const handleFeedback = async (resultId: string, rating: number) => {
-    try {
-      await levara.submitFeedback({ query, result_id: resultId, rating, search_type: mode })
-    } catch {}
+  const handleFeedback = (resultId: string, rating: number) => {
+    feedbackMutation.mutate({ query, result_id: resultId, rating, search_type: mode })
   }
 
   return (
