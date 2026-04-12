@@ -26,7 +26,8 @@ async function handleResponse<T>(res: Response): Promise<T> {
     )
   }
   const text = await res.text()
-  return text ? JSON.parse(text) : ({} as T)
+  if (!text || text === 'null') return ([] as unknown) as T
+  return JSON.parse(text)
 }
 
 export async function api<T>(path: string, options?: RequestInit): Promise<T> {
@@ -70,8 +71,12 @@ export const levara = {
   me: () => api<{ id: string; email: string; username: string }>('/api/v1/auth/me'),
 
   // Datasets
-  datasets: (page = 1, limit = 20) =>
-    api<{ data: Dataset[]; pagination: Pagination }>(`/api/v1/datasets?page=${page}&limit=${limit}`),
+  datasets: async (page = 1, limit = 20) => {
+    const res = await api<Dataset[] | { data: Dataset[]; pagination: Pagination }>(`/api/v1/datasets?page=${page}&limit=${limit}`)
+    // Backend returns plain array or {data, pagination} depending on version
+    if (Array.isArray(res)) return { data: res, pagination: { page, limit, total: res.length, total_pages: 1 } }
+    return res
+  },
   createDataset: (name: string) =>
     api<Dataset>('/api/v1/datasets', { method: 'POST', body: JSON.stringify({ name }) }),
   deleteDataset: (id: string) =>
@@ -90,11 +95,15 @@ export const levara = {
   },
 
   // Search
-  search: (params: SearchRequest) =>
-    api<SearchResult[]>('/api/v1/search/text', {
+  search: async (params: SearchRequest) => {
+    const res = await api<SearchResult[] | Record<string, unknown> | null>('/api/v1/search/text', {
       method: 'POST',
       body: JSON.stringify(params),
-    }),
+    })
+    if (res === null || res === undefined) return []
+    if (Array.isArray(res)) return res
+    return res // RAG/Graph returns {answer, chunks, ...}
+  },
 
   // Collections
   collections: () => api<CollectionMeta[]>('/api/v1/collections'),
@@ -109,11 +118,18 @@ export const levara = {
     }),
 
   // Cognify
-  cognify: (params: { texts?: string[]; dataset_id?: string; collection?: string; mode?: string }) =>
-    api<{ status: string; pipeline_run_id: string }>('/api/v1/cognify', {
+  cognify: (params: { texts?: string[]; dataset_id?: string; datasets?: string[]; collection?: string; mode?: string }) => {
+    // Backend expects datasets[] array, not dataset_id string
+    const body: Record<string, unknown> = { ...params }
+    if (params.dataset_id && !params.datasets) {
+      body.datasets = [params.dataset_id]
+      delete body.dataset_id
+    }
+    return api<{ status: string; pipeline_run_id: string }>('/api/v1/cognify', {
       method: 'POST',
-      body: JSON.stringify(params),
-    }),
+      body: JSON.stringify(body),
+    })
+  },
   cognifyStatus: (runId: string) =>
     api<CognifyStatus>(`/api/v1/cognify/${runId}/status`),
 
