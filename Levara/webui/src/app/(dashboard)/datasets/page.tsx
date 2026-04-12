@@ -18,7 +18,7 @@ export default function DatasetsPage() {
   const [showCreate, setShowCreate] = useState(false)
   const [cognifyRunning, setCognifyRunning] = useState<string | null>(null)
   const [uploadResult, setUploadResult] = useState<{ files: number; dataset: string } | null>(null)
-  const [uploadedFiles, setUploadedFiles] = useState<{ name: string; dataset: string; time: string }[]>([])
+  const [uploadedFiles, setUploadedFiles] = useState<{ name: string; dataset: string; time: string; status: 'processing' | 'ready' | 'error' }[]>([])
 
   const fetchDatasets = useCallback(async () => {
     try {
@@ -37,18 +37,42 @@ export default function DatasetsPage() {
     const fileArr = Array.from(files)
     if (!fileArr.length) return
 
-    // Dedup check: compute hash (simplified — check by name for now)
     setUploading(true)
     setUploadResult(null)
     try {
       const res = await levara.upload(fileArr)
-      const dsName = (res as Record<string, unknown>).dataset_name as string || 'default'
+      const r = res as Record<string, unknown>
+      const dsName = r.dataset_name as string || 'default'
+      const dsId = r.dataset_id as string || ''
       setUploadResult({ files: fileArr.length, dataset: dsName })
       setUploadedFiles((prev) => [
-        ...fileArr.map((f) => ({ name: f.name, dataset: dsName, time: new Date().toLocaleTimeString() })),
+        ...fileArr.map((f) => ({ name: f.name, dataset: dsName, time: new Date().toLocaleTimeString(), status: 'processing' as const })),
         ...prev,
       ])
       await fetchDatasets()
+
+      // Auto-cognify: start processing pipeline after upload
+      if (dsId) {
+        setCognifyRunning(dsId)
+        try {
+          const cognifyRes = await levara.cognify({ dataset_id: dsId, collection: dsName })
+          const runId = cognifyRes.pipeline_run_id
+          // Poll for completion
+          const poll = setInterval(async () => {
+            try {
+              const status = await levara.cognifyStatus(runId)
+              if (['COMPLETED', 'FAILED', 'completed', 'failed'].includes(status.status)) {
+                clearInterval(poll)
+                setCognifyRunning(null)
+                setUploadedFiles((prev) =>
+                  prev.map((f) => f.dataset === dsName ? { ...f, status: status.status.toLowerCase().includes('complete') ? 'ready' as const : 'error' as const } : f)
+                )
+                await fetchDatasets()
+              }
+            } catch { clearInterval(poll); setCognifyRunning(null) }
+          }, 2000)
+        } catch { setCognifyRunning(null) }
+      }
     } catch (err) {
       console.error('Upload failed:', err)
       setUploadResult(null)
@@ -70,7 +94,9 @@ export default function DatasetsPage() {
       setNewName('')
       setShowCreate(false)
       await fetchDatasets()
-    } catch {}
+    } catch (err) {
+      alert(`Failed to create: ${err instanceof Error ? err.message : 'Unknown error'}`)
+    }
   }
 
   const handleDelete = async (id: string, name: string) => {
@@ -78,7 +104,9 @@ export default function DatasetsPage() {
     try {
       await levara.deleteDataset(id)
       await fetchDatasets()
-    } catch {}
+    } catch (err) {
+      alert(`Failed to delete: ${err instanceof Error ? err.message : 'Unknown error'}`)
+    }
   }
 
   const handleCognify = async (datasetId: string) => {
@@ -185,7 +213,9 @@ export default function DatasetsPage() {
                 <div className="flex items-center gap-2">
                   <Database className="h-4 w-4 text-gray-400" />
                   <span className="font-medium text-sm">{f.name}</span>
-                  <Badge variant="success">uploaded</Badge>
+                  <Badge variant={f.status === 'ready' ? 'success' : f.status === 'error' ? 'error' : 'warning'}>
+                    {f.status === 'processing' ? '⏳ processing...' : f.status === 'ready' ? '✓ ready' : '✗ error'}
+                  </Badge>
                 </div>
                 <span className="text-xs text-gray-400">{f.time}</span>
               </div>

@@ -1,16 +1,21 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Settings, Globe, Palette, Key, Shield } from 'lucide-react'
 
 export default function SettingsPage() {
-  const [theme, setTheme] = useState<'light' | 'dark' | 'system'>('system')
-  const [locale, setLocale] = useState('ru')
+  const [theme, setTheme] = useState<'light' | 'dark' | 'system'>(() => {
+    if (typeof window !== 'undefined') return (localStorage.getItem('levara-theme') as 'light' | 'dark' | 'system') || 'system'
+    return 'system'
+  })
+  const [locale, setLocale] = useState(() => {
+    if (typeof window !== 'undefined') return localStorage.getItem('levara-locale') || 'ru'
+    return 'ru'
+  })
 
-  const handleTheme = (t: typeof theme) => {
-    setTheme(t)
+  const applyTheme = (t: string) => {
     if (t === 'dark') document.documentElement.classList.add('dark')
     else if (t === 'light') document.documentElement.classList.remove('dark')
     else {
@@ -18,6 +23,21 @@ export default function SettingsPage() {
         document.documentElement.classList.add('dark')
       else document.documentElement.classList.remove('dark')
     }
+  }
+
+  // Apply theme on mount
+  useEffect(() => { applyTheme(theme) }, [])
+
+  const handleTheme = (t: typeof theme) => {
+    setTheme(t)
+    localStorage.setItem('levara-theme', t)
+    applyTheme(t)
+  }
+
+  const handleLocale = (l: string) => {
+    setLocale(l)
+    localStorage.setItem('levara-locale', l)
+    document.documentElement.lang = l
   }
 
   return (
@@ -56,7 +76,7 @@ export default function SettingsPage() {
           </div>
           <select
             value={locale}
-            onChange={(e) => setLocale(e.target.value)}
+            onChange={(e) => handleLocale(e.target.value)}
             className="h-9 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-3 text-sm"
           >
             <option value="ru">Русский</option>
