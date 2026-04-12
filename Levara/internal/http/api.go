@@ -187,10 +187,20 @@ type DatasetDTO struct {
 	RecordCount int     `json:"record_count"`
 }
 
+// In-memory dataset store (fallback when no PostgreSQL)
+var memDatasets = struct {
+	mu   sync.Mutex
+	data []DatasetDTO
+}{}
+
 func datasetsListHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		if cfg.DB == nil {
-			return c.JSON([]DatasetDTO{})
+			memDatasets.mu.Lock()
+			ds := make([]DatasetDTO, len(memDatasets.data))
+			copy(ds, memDatasets.data)
+			memDatasets.mu.Unlock()
+			return c.JSON(ds)
 		}
 
 		userID, _ := c.Locals("user_id").(string)
@@ -253,15 +263,21 @@ func datasetCreateHandler(cfg APIConfig) fiber.Handler {
 		now := time.Now().UTC()
 		ownerID, _ := c.Locals("user_id").(string)
 
+		dto := DatasetDTO{
+			ID: id, Name: req.Name, CreatedAt: now.Format(time.RFC3339), OwnerID: ownerID,
+		}
+
 		if cfg.DB != nil {
 			cfg.DB.ExecContext(context.Background(),
 				Q("INSERT INTO datasets (id, name, owner_id, created_at, updated_at) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (name) DO NOTHING"),
 				id, req.Name, ownerID, now, now)
+		} else {
+			memDatasets.mu.Lock()
+			memDatasets.data = append(memDatasets.data, dto)
+			memDatasets.mu.Unlock()
 		}
 
-		return c.Status(201).JSON(DatasetDTO{
-			ID: id, Name: req.Name, CreatedAt: now.Format(time.RFC3339), OwnerID: ownerID,
-		})
+		return c.Status(201).JSON(dto)
 	}
 }
 
@@ -275,6 +291,14 @@ func datasetDeleteHandler(cfg APIConfig) fiber.Handler {
 			} else {
 				cfg.DB.ExecContext(context.Background(), Q("DELETE FROM datasets WHERE id = $1"), id)
 			}
+		} else {
+			memDatasets.mu.Lock()
+			filtered := memDatasets.data[:0]
+			for _, d := range memDatasets.data {
+				if d.ID != id { filtered = append(filtered, d) }
+			}
+			memDatasets.data = filtered
+			memDatasets.mu.Unlock()
 		}
 		return c.JSON(fiber.Map{"deleted": true})
 	}
