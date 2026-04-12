@@ -28,7 +28,8 @@ export default function DashboardPage() {
     Promise.allSettled([
       levara.health().then(setHealth),
       levara.info().then(setInfo),
-      levara.collections().then((c) => setStats({ collections: c.length, datasets: 0 })),
+      Promise.all([levara.collections(), levara.datasets().catch(() => ({ data: [] }))]).then(([c, d]) =>
+        setStats({ collections: c.length, datasets: (d.data || []).length })),
     ]).finally(() => setLoading(false))
   }, [])
 
