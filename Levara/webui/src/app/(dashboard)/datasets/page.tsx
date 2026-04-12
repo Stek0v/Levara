@@ -168,7 +168,8 @@ export default function DatasetsPage() {
           {datasets.map((ds) => (
             <div
               key={ds.id}
-              className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-4 flex items-center justify-between"
+              className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-4 flex items-center justify-between cursor-pointer hover:border-blue-300 dark:hover:border-blue-700 transition-colors"
+              onClick={() => window.location.href = `/datasets/${ds.id}`}
             >
               <div>
                 <div className="flex items-center gap-2">
