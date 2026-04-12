@@ -116,7 +116,7 @@ export default function DatasetsPage() {
               multiple
               className="hidden"
               onChange={(e) => e.target.files && handleUpload(e.target.files)}
-              accept=".pdf,.docx,.txt,.csv,.xlsx,.md,.json"
+              accept=".pdf,.docx,.pptx,.xlsx,.html,.htm,.epub,.odt,.txt,.md,.csv,.json"
             />
           </label>
         </div>
@@ -151,7 +151,7 @@ export default function DatasetsPage() {
       >
         <Upload className="h-8 w-8 mx-auto text-gray-400 mb-2" />
         <p className="text-sm text-gray-500">
-          {uploading ? 'Uploading...' : 'Drag & drop files here (PDF, DOCX, TXT, CSV)'}
+          {uploading ? 'Uploading...' : 'Drag & drop files here (PDF, DOCX, PPTX, XLSX, HTML, EPUB, TXT, MD, CSV)'}
         </p>
       </div>
 
