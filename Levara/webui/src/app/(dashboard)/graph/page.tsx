@@ -35,7 +35,7 @@ export default function GraphPage() {
   const load = async (id: string) => {
     setDsId(id); setLoading(true); setSelected(null)
     try {
-      const url = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'}/api/v1/datasets/${id}/graph`
+      const url = `${process.env.NEXT_PUBLIC_API_URL || ''}/api/v1/datasets/${id}/graph`
       const d = await fetch(url, { credentials: 'include' }).then((r) => r.json())
       setNodes(d.nodes || []); setEdges(d.edges || [])
     } catch { setNodes([]); setEdges([]) }

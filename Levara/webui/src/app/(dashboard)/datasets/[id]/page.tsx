@@ -39,7 +39,7 @@ export default function DatasetDetailPage() {
         const dataset = ds.data?.find((d) => d.id === datasetId)
         if (dataset) setName(dataset.name)
 
-        const url = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'}/api/v1/datasets/${datasetId}/data?page=${page}&limit=${limit}`
+        const url = `${process.env.NEXT_PUBLIC_API_URL || ''}/api/v1/datasets/${datasetId}/data?page=${page}&limit=${limit}`
         const res = await fetch(url, { credentials: 'include' }).then((r) => r.json())
         setRecords(res.data || res || [])
         setTotal(res.pagination?.total || (Array.isArray(res) ? res.length : 0))
@@ -72,7 +72,7 @@ export default function DatasetDetailPage() {
   const handleDelete = async (recordId: string) => {
     try {
       await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'}/api/v1/datasets/${datasetId}/data/${recordId}`,
+        `${process.env.NEXT_PUBLIC_API_URL || ''}/api/v1/datasets/${datasetId}/data/${recordId}`,
         { method: 'DELETE', credentials: 'include' },
       )
       setRecords(records.filter((r) => r.id !== recordId))

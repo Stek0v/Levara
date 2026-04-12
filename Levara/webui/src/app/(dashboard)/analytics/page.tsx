@@ -25,9 +25,9 @@ export default function AnalyticsPage() {
         levara.health(),
         levara.info(),
         levara.feedbackStats(),
-        fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'}/api/v1/cache/stats`, { credentials: 'include' }).then((r) => r.json()),
+        fetch(`${process.env.NEXT_PUBLIC_API_URL || ''}/api/v1/cache/stats`, { credentials: 'include' }).then((r) => r.json()),
         levara.collections(),
-        fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'}/api/v1/errors?limit=10`, { credentials: 'include' }).then((r) => r.json()),
+        fetch(`${process.env.NEXT_PUBLIC_API_URL || ''}/api/v1/errors?limit=10`, { credentials: 'include' }).then((r) => r.json()),
       ])
       setStats({
         health: health.status === 'fulfilled' ? health.value : null,

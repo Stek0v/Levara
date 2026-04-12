@@ -74,7 +74,7 @@ export default function SettingsPage() {
             <div className="flex items-center justify-between">
               <span className="text-gray-500">Endpoint</span>
               <code className="text-xs bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded">
-                {process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'}
+                {process.env.NEXT_PUBLIC_API_URL || ''}
               </code>
             </div>
             <div className="flex items-center justify-between">
