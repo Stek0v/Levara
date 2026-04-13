@@ -171,6 +171,9 @@ func RegisterCogneeAPI(app fiber.Router, cfg APIConfig) {
 	app.Post("/search/text", searchHandler(cfg))
 	app.Post("/search/", searchHandler(cfg)) // Cognee frontend compat alias
 	app.Post("/search", searchHandler(cfg))  // without trailing slash
+
+	// U6: Heartbeat event log (system activity history)
+	app.Get("/heartbeats", heartbeatsHandler(cfg))
 }
 
 // ── U1: Health ──
@@ -1903,4 +1906,53 @@ func absPath(p string) string {
 		return p
 	}
 	return abs
+}
+
+// ── U6: Heartbeat event log ──
+
+func heartbeatsHandler(cfg APIConfig) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		if cfg.DB == nil {
+			return c.JSON([]any{})
+		}
+		eventType := c.Query("type", "")
+		limit := c.QueryInt("limit", 20)
+		if limit > 100 {
+			limit = 100
+		}
+
+		var rows *sql.Rows
+		var err error
+		if eventType != "" {
+			q, a := QArgs(`SELECT id, event_type, payload, created_at FROM heartbeats WHERE event_type = $1 ORDER BY created_at DESC LIMIT $2`, eventType, limit)
+			rows, err = cfg.DB.QueryContext(c.Context(), q, a...)
+		} else {
+			rows, err = cfg.DB.QueryContext(c.Context(), Q(`SELECT id, event_type, payload, created_at FROM heartbeats ORDER BY created_at DESC LIMIT $1`), limit)
+		}
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+		defer rows.Close()
+
+		type hbEntry struct {
+			ID        string          `json:"id"`
+			EventType string          `json:"event_type"`
+			Payload   json.RawMessage `json:"payload"`
+			CreatedAt string          `json:"created_at"`
+		}
+		var events []hbEntry
+		for rows.Next() {
+			var e hbEntry
+			var payload string
+			if err := rows.Scan(&e.ID, &e.EventType, &payload, &e.CreatedAt); err != nil {
+				continue
+			}
+			e.Payload = json.RawMessage(payload)
+			events = append(events, e)
+		}
+		if events == nil {
+			events = []hbEntry{}
+		}
+		return c.JSON(events)
+	}
 }
