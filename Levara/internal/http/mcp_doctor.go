@@ -1,0 +1,488 @@
+// mcp_doctor.go — System health diagnostics MCP tool ("doctor").
+// Aggregates service connectivity, embedding coverage, BM25 coverage,
+// graph connectivity, and memory staleness into a structured report
+// that agents can act on programmatically.
+package http
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"os"
+	"strings"
+	"time"
+)
+
+// ── Doctor check types ──
+
+type doctorCheck struct {
+	Name        string `json:"name"`
+	Status      string `json:"status"` // "ok", "warn", "fail"
+	Message     string `json:"message"`
+	Remediation string `json:"remediation,omitempty"`
+}
+
+type doctorReport struct {
+	Status  string        `json:"status"` // worst of all checks
+	Checks  []doctorCheck `json:"checks"`
+	Summary string        `json:"summary"`
+}
+
+// toolDoctor runs all health checks and returns a structured report.
+func (h *mcpHandler) toolDoctor(ctx context.Context, args map[string]any) mcpToolResult {
+	verbose, _ := args["verbose"].(bool)
+
+	var checks []doctorCheck
+
+	// 1. PostgreSQL
+	checks = append(checks, h.checkPostgres(ctx))
+
+	// 2. Embedding service
+	checks = append(checks, h.checkEmbedService())
+
+	// 3. LLM service
+	checks = append(checks, h.checkLLM())
+
+	// 4. Neo4j (optional)
+	if h.cfg.Neo4jCfg.Neo4jURL != "" {
+		checks = append(checks, h.checkNeo4j(ctx))
+	}
+
+	// 5. Embedding coverage
+	checks = append(checks, h.checkEmbeddingCoverage(ctx, verbose)...)
+
+	// 6. BM25 coverage
+	checks = append(checks, h.checkBM25Coverage(verbose))
+
+	// 7. Graph connectivity
+	checks = append(checks, h.checkGraphConnectivity(ctx))
+
+	// 8. Memory staleness
+	checks = append(checks, h.checkMemoryStaleness(ctx))
+
+	// Compute overall status
+	okCount, warnCount, failCount := 0, 0, 0
+	for _, c := range checks {
+		switch c.Status {
+		case "fail":
+			failCount++
+		case "warn":
+			warnCount++
+		default:
+			okCount++
+		}
+	}
+
+	overall := "ok"
+	if failCount > 0 {
+		overall = "fail"
+	} else if warnCount > 0 {
+		overall = "warn"
+	}
+
+	report := doctorReport{
+		Status:  overall,
+		Checks:  checks,
+		Summary: fmt.Sprintf("%d/%d ok, %d warn, %d fail", okCount, len(checks), warnCount, failCount),
+	}
+
+	// Log heartbeat if DB available
+	h.logHeartbeat("doctor", report)
+
+	data, _ := json.MarshalIndent(report, "", "  ")
+	return mcpToolResult{
+		Content: []mcpContent{{Type: "text", Text: string(data)}},
+	}
+}
+
+// ── Individual checks ──
+
+func (h *mcpHandler) checkPostgres(ctx context.Context) doctorCheck {
+	if h.cfg.DB == nil {
+		return doctorCheck{
+			Name:        "postgres",
+			Status:      "warn",
+			Message:     "Not configured (no DB_DSN)",
+			Remediation: "Set DB_DSN environment variable to enable PostgreSQL",
+		}
+	}
+	if err := h.cfg.DB.PingContext(ctx); err != nil {
+		return doctorCheck{
+			Name:        "postgres",
+			Status:      "fail",
+			Message:     fmt.Sprintf("Connection error: %v", err),
+			Remediation: "Check DB_DSN and PostgreSQL service status",
+		}
+	}
+	return doctorCheck{Name: "postgres", Status: "ok", Message: "Connected"}
+}
+
+func (h *mcpHandler) checkEmbedService() doctorCheck {
+	ep := h.cfg.EmbedEndpoint
+	if ep == "" {
+		return doctorCheck{
+			Name:        "embed_service",
+			Status:      "warn",
+			Message:     "Not configured (no EMBED_ENDPOINT)",
+			Remediation: "Set EMBED_ENDPOINT to enable vector embeddings",
+		}
+	}
+
+	// Derive base URL
+	base := ep
+	for _, suffix := range []string{"/v1/embeddings", "/v1/embed", "/api/embed", "/api/embeddings", "/embeddings"} {
+		if strings.HasSuffix(base, suffix) {
+			base = strings.TrimSuffix(base, suffix)
+			break
+		}
+	}
+
+	client := &http.Client{Timeout: 3 * time.Second}
+	for _, path := range []string{"/api/tags", "/health", "/v1/models", ""} {
+		resp, err := client.Get(base + path)
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == 200 {
+				return doctorCheck{
+					Name:    "embed_service",
+					Status:  "ok",
+					Message: fmt.Sprintf("Connected (%s, model: %s)", ep, h.cfg.EmbedModel),
+				}
+			}
+		}
+	}
+	return doctorCheck{
+		Name:        "embed_service",
+		Status:      "fail",
+		Message:     fmt.Sprintf("Unreachable: %s", ep),
+		Remediation: "Start embedding server or verify EMBED_ENDPOINT URL",
+	}
+}
+
+func (h *mcpHandler) checkLLM() doctorCheck {
+	ep := os.Getenv("LLM_ENDPOINT")
+	model := os.Getenv("LLM_MODEL")
+	if ep == "" {
+		return doctorCheck{
+			Name:        "llm",
+			Status:      "warn",
+			Message:     "Not configured (no LLM_ENDPOINT)",
+			Remediation: "Set LLM_ENDPOINT and LLM_MODEL for cognify and RAG features",
+		}
+	}
+
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get(ep + "/models")
+	if err == nil {
+		resp.Body.Close()
+		if resp.StatusCode == 200 {
+			return doctorCheck{
+				Name:    "llm",
+				Status:  "ok",
+				Message: fmt.Sprintf("Connected (%s, model: %s)", ep, model),
+			}
+		}
+	}
+	return doctorCheck{
+		Name:        "llm",
+		Status:      "fail",
+		Message:     fmt.Sprintf("Unreachable: %s", ep),
+		Remediation: "Start LLM server (Ollama/DeepSeek) or verify LLM_ENDPOINT",
+	}
+}
+
+func (h *mcpHandler) checkNeo4j(ctx context.Context) doctorCheck {
+	url := h.cfg.Neo4jCfg.Neo4jURL
+	// Simple TCP check — full driver connection is expensive
+	client := &http.Client{Timeout: 3 * time.Second}
+	// Neo4j HTTP API is typically on port 7474
+	httpURL := strings.Replace(url, "bolt://", "http://", 1)
+	httpURL = strings.Replace(httpURL, "neo4j://", "http://", 1)
+	httpURL = strings.Replace(httpURL, ":7687", ":7474", 1)
+	resp, err := client.Get(httpURL)
+	if err == nil {
+		resp.Body.Close()
+		return doctorCheck{Name: "neo4j", Status: "ok", Message: fmt.Sprintf("Connected (%s)", url)}
+	}
+	return doctorCheck{
+		Name:        "neo4j",
+		Status:      "warn",
+		Message:     fmt.Sprintf("Unreachable: %s", url),
+		Remediation: "Check Neo4j service or remove NEO4J_URL if not needed",
+	}
+}
+
+func (h *mcpHandler) checkEmbeddingCoverage(ctx context.Context, verbose bool) []doctorCheck {
+	if h.cfg.Collections == nil {
+		return []doctorCheck{{Name: "embedding_coverage", Status: "warn", Message: "No collection manager"}}
+	}
+
+	collections := h.cfg.Collections.List()
+	if len(collections) == 0 {
+		return []doctorCheck{{Name: "embedding_coverage", Status: "ok", Message: "No collections yet"}}
+	}
+
+	totalRecords := 0
+	emptyCollections := 0
+	var details []string
+
+	for _, name := range collections {
+		meta := h.cfg.Collections.GetMeta(name)
+		if meta == nil {
+			continue
+		}
+		totalRecords += meta.RecordCount
+		if meta.RecordCount == 0 {
+			emptyCollections++
+			if verbose {
+				details = append(details, fmt.Sprintf("  %s: 0 records", name))
+			}
+		} else if verbose {
+			details = append(details, fmt.Sprintf("  %s: %d records", name, meta.RecordCount))
+		}
+	}
+
+	if verbose && len(details) > 0 {
+		checks := []doctorCheck{}
+		status := "ok"
+		msg := fmt.Sprintf("%d collections, %d records total, %d empty", len(collections), totalRecords, emptyCollections)
+		if emptyCollections > 0 && float64(emptyCollections)/float64(len(collections)) > 0.5 {
+			status = "warn"
+		}
+		checks = append(checks, doctorCheck{
+			Name:        "embedding_coverage",
+			Status:      status,
+			Message:     msg + "\n" + strings.Join(details, "\n"),
+			Remediation: condStr(status == "warn", "Run cognify on datasets to populate empty collections", ""),
+		})
+		return checks
+	}
+
+	status := "ok"
+	msg := fmt.Sprintf("%d collections, %d records total", len(collections), totalRecords)
+	if emptyCollections > len(collections)/2 && len(collections) > 1 {
+		status = "warn"
+		msg = fmt.Sprintf("%d collections (%d empty), %d records total", len(collections), emptyCollections, totalRecords)
+	}
+	return []doctorCheck{{
+		Name:        "embedding_coverage",
+		Status:      status,
+		Message:     msg,
+		Remediation: condStr(status == "warn", "Run cognify on datasets to populate empty collections", ""),
+	}}
+}
+
+func (h *mcpHandler) checkBM25Coverage(verbose bool) doctorCheck {
+	if h.cfg.Collections == nil {
+		return doctorCheck{Name: "bm25_coverage", Status: "warn", Message: "No collection manager"}
+	}
+
+	collections := h.cfg.Collections.List()
+	indexed := 0
+	missing := []string{}
+	for _, name := range collections {
+		// Skip internal collections
+		if strings.HasPrefix(name, "Triplet_") || strings.HasSuffix(name, "_community_summaries") {
+			continue
+		}
+		if h.cfg.BM25Indexes != nil {
+			if _, ok := h.cfg.BM25Indexes[name]; ok {
+				indexed++
+				continue
+			}
+		}
+		missing = append(missing, name)
+	}
+
+	if len(missing) == 0 {
+		return doctorCheck{Name: "bm25_coverage", Status: "ok", Message: fmt.Sprintf("All %d user collections indexed", indexed)}
+	}
+
+	msg := fmt.Sprintf("%d/%d user collections have BM25 index", indexed, indexed+len(missing))
+	if verbose {
+		msg += "\n  Missing: " + strings.Join(missing, ", ")
+	}
+	return doctorCheck{
+		Name:        "bm25_coverage",
+		Status:      "warn",
+		Message:     msg,
+		Remediation: fmt.Sprintf("Re-cognify collections to build BM25: %s", strings.Join(missing, ", ")),
+	}
+}
+
+func (h *mcpHandler) checkGraphConnectivity(ctx context.Context) doctorCheck {
+	if h.cfg.DB == nil {
+		return doctorCheck{Name: "graph_connectivity", Status: "warn", Message: "No database configured"}
+	}
+
+	var totalNodes, orphanNodes int
+	err := h.cfg.DB.QueryRowContext(ctx, Q(`SELECT COUNT(*) FROM graph_nodes`)).Scan(&totalNodes)
+	if err != nil {
+		return doctorCheck{Name: "graph_connectivity", Status: "warn", Message: fmt.Sprintf("Query error: %v", err)}
+	}
+
+	if totalNodes == 0 {
+		return doctorCheck{Name: "graph_connectivity", Status: "ok", Message: "No graph nodes yet"}
+	}
+
+	err = h.cfg.DB.QueryRowContext(ctx, Q(`
+		SELECT COUNT(*) FROM graph_nodes gn
+		WHERE NOT EXISTS (SELECT 1 FROM graph_edges ge WHERE ge.source_id = gn.id OR ge.target_id = gn.id)
+	`)).Scan(&orphanNodes)
+	if err != nil {
+		return doctorCheck{Name: "graph_connectivity", Status: "warn", Message: fmt.Sprintf("Orphan query error: %v", err)}
+	}
+
+	orphanPct := float64(orphanNodes) / float64(totalNodes) * 100
+	msg := fmt.Sprintf("%d nodes, %d orphans (%.0f%%)", totalNodes, orphanNodes, orphanPct)
+
+	if orphanPct > 20 {
+		return doctorCheck{
+			Name:        "graph_connectivity",
+			Status:      "warn",
+			Message:     msg,
+			Remediation: "Run prune_graph with include_orphan_nodes=true to clean up",
+		}
+	}
+	return doctorCheck{Name: "graph_connectivity", Status: "ok", Message: msg}
+}
+
+func (h *mcpHandler) checkMemoryStaleness(ctx context.Context) doctorCheck {
+	if h.cfg.DB == nil {
+		return doctorCheck{Name: "memory_staleness", Status: "warn", Message: "No database configured"}
+	}
+
+	rows, err := h.cfg.DB.QueryContext(ctx, Q(`
+		SELECT COALESCE(room, 'unset') as room, MIN(updated_at) as oldest, COUNT(*) as cnt
+		FROM memories
+		GROUP BY room
+		ORDER BY oldest ASC
+		LIMIT 10
+	`))
+	if err != nil {
+		return doctorCheck{Name: "memory_staleness", Status: "warn", Message: fmt.Sprintf("Query error: %v", err)}
+	}
+	defer rows.Close()
+
+	var staleRooms []string
+	totalMemories := 0
+	threshold := time.Now().AddDate(0, 0, -30) // 30 days
+
+	for rows.Next() {
+		var room, oldest string
+		var cnt int
+		if err := rows.Scan(&room, &oldest, &cnt); err != nil {
+			continue
+		}
+		totalMemories += cnt
+
+		// Parse timestamp
+		t, parseErr := time.Parse(time.RFC3339, oldest)
+		if parseErr != nil {
+			t, parseErr = time.Parse("2006-01-02T15:04:05Z", oldest)
+		}
+		if parseErr != nil {
+			t, parseErr = time.Parse("2006-01-02 15:04:05", oldest)
+		}
+		if parseErr == nil && t.Before(threshold) {
+			staleRooms = append(staleRooms, fmt.Sprintf("%s (since %s)", room, t.Format("2006-01-02")))
+		}
+	}
+
+	if totalMemories == 0 {
+		return doctorCheck{Name: "memory_staleness", Status: "ok", Message: "No memories stored yet"}
+	}
+
+	if len(staleRooms) > 0 {
+		return doctorCheck{
+			Name:        "memory_staleness",
+			Status:      "warn",
+			Message:     fmt.Sprintf("%d memories total; stale rooms: %s", totalMemories, strings.Join(staleRooms, ", ")),
+			Remediation: "Review and update memories in stale rooms with recall_memory + save_memory",
+		}
+	}
+
+	return doctorCheck{
+		Name:    "memory_staleness",
+		Status:  "ok",
+		Message: fmt.Sprintf("%d memories total, all updated within 30 days", totalMemories),
+	}
+}
+
+// ── Heartbeat logger ──
+
+// logHeartbeat records an event to the heartbeats table (if DB is available).
+func (h *mcpHandler) logHeartbeat(eventType string, payload any) {
+	if h.cfg.DB == nil {
+		return
+	}
+	data, _ := json.Marshal(payload)
+	id := fmt.Sprintf("hb-%s", time.Now().UTC().Format("20060102T150405.000"))
+	_, _ = h.cfg.DB.ExecContext(context.Background(),
+		Q(`INSERT INTO heartbeats (id, event_type, payload, created_at) VALUES ($1, $2, $3, $4)`),
+		id, eventType, string(data), time.Now().UTC().Format(time.RFC3339))
+}
+
+// toolHeartbeat queries recent heartbeat events.
+func (h *mcpHandler) toolHeartbeat(ctx context.Context, args map[string]any) mcpToolResult {
+	if h.cfg.DB == nil {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: `{"error":"no database configured"}`}}, IsError: true}
+	}
+
+	eventType, _ := args["event_type"].(string)
+	limit := 10
+	if v, ok := args["limit"].(float64); ok && v > 0 {
+		limit = int(v)
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	var rows *sql.Rows
+	var err error
+	if eventType != "" {
+		q, a := QArgs(`SELECT id, event_type, payload, created_at FROM heartbeats WHERE event_type = $1 ORDER BY created_at DESC LIMIT $2`, eventType, limit)
+		rows, err = h.cfg.DB.QueryContext(ctx, q, a...)
+	} else {
+		rows, err = h.cfg.DB.QueryContext(ctx, Q(`SELECT id, event_type, payload, created_at FROM heartbeats ORDER BY created_at DESC LIMIT $1`), limit)
+	}
+	if err != nil {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf(`{"error":"%s"}`, err)}}, IsError: true}
+	}
+	defer rows.Close()
+
+	type hbEntry struct {
+		ID        string          `json:"id"`
+		EventType string          `json:"event_type"`
+		Payload   json.RawMessage `json:"payload"`
+		CreatedAt string          `json:"created_at"`
+	}
+
+	var events []hbEntry
+	for rows.Next() {
+		var e hbEntry
+		var payload string
+		if err := rows.Scan(&e.ID, &e.EventType, &payload, &e.CreatedAt); err != nil {
+			continue
+		}
+		e.Payload = json.RawMessage(payload)
+		events = append(events, e)
+	}
+
+	data, _ := json.MarshalIndent(map[string]any{
+		"count":  len(events),
+		"events": events,
+	}, "", "  ")
+	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(data)}}}
+}
+
+// ── Helpers ──
+
+func condStr(cond bool, t, f string) string {
+	if cond {
+		return t
+	}
+	return f
+}

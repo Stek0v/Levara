@@ -360,6 +360,15 @@ var schemaStatements = []string{
 		total_count INTEGER NOT NULL DEFAULT 0,
 		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 	)`,
+
+	// Heartbeat event log (doctor, sync, cognify, prune)
+	`CREATE TABLE IF NOT EXISTS heartbeats (
+		id TEXT PRIMARY KEY,
+		event_type TEXT NOT NULL,
+		payload JSONB NOT NULL DEFAULT '{}',
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_heartbeats_type_time ON heartbeats(event_type, created_at DESC)`,
 }
 
 // schemaSQLiteStatements — SQLite-compatible DDL.
@@ -661,4 +670,13 @@ var schemaSQLiteStatements = []string{
 		total_count INTEGER NOT NULL DEFAULT 0,
 		updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 	)`,
+
+	// Heartbeat event log — SQLite
+	`CREATE TABLE IF NOT EXISTS heartbeats (
+		id TEXT PRIMARY KEY,
+		event_type TEXT NOT NULL,
+		payload TEXT NOT NULL DEFAULT '{}',
+		created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_heartbeats_type_time ON heartbeats(event_type, created_at DESC)`,
 }
