@@ -60,7 +60,7 @@ func startTestServer(t *testing.T, dim int) (pb.CognevraServiceClient, func()) {
 		t.Fatalf("dial: %v", err)
 	}
 
-	client := pb.NewLevaraServiceClient(conn)
+	client := pb.NewCognevraServiceClient(conn)
 
 	cleanup := func() {
 		conn.Close()
@@ -415,7 +415,7 @@ func BenchmarkGRPCSearch(b *testing.B) {
 	conn, _ := grpc.NewClient(lis.Addr().String(),
 		grpc.WithTransportCredentials(insecure.NewCredentials()))
 	defer conn.Close()
-	client := pb.NewLevaraServiceClient(conn)
+	client := pb.NewCognevraServiceClient(conn)
 	ctx := context.Background()
 
 	// Setup: create collection + insert 500 vectors
