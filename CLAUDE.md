@@ -8,26 +8,36 @@ Cognevra benchmark and testing project: production-optimized vector database com
 
 | Component | Port | Description |
 |-----------|------|-------------|
-| Cognevra | 8080 | Go HNSW + WAL, standalone mode, 3 shards, dim=1024 |
-| embed-server | 9001 | pplx-embed-context-v1-0.6b (dim=1024, FP16, CUDA) |
-| Ollama | 11434 | Qwen 3.5 (9.7B/27B), local LLM for RAG tests |
-| Prometheus | 9090 | Cognevra metrics |
-| LanceDB | in-process | Rust/Python Arrow, used in tests directly |
+| Levara server | 8080 (HTTP), 50051 (gRPC) | Go HNSW + BM25 + WAL, 118 endpoints, 25+ MCP tools |
+| WebUI | 3001 | Next.js 15, 12 routes, React Query, Playwright tests |
+| Ollama | 11434 | nomic-embed-text-v2-moe (768-dim), gemma3:4b |
+| DeepSeek V3.2 | API | LLM for cognify extraction + RAG answers |
+| PostgreSQL | 5433 | Metadata, datasets, memories, graph, feedback |
+| Neo4j | 7687 | Knowledge graph (optional, on test server) |
+| Prometheus | 9090 | Levara metrics |
 
 ## Project Structure
 
 ```
 new_db/
-  Cognevra/           # Go source (HNSW server)
-    cmd/server/       # main.go entry point
-    internal/store/   # db.go, wal.go, hnsw.go, arena.go, disk.go
-    internal/http/    # handler.go (Fiber HTTP)
-    internal/cluster/ # shard.go, node.go, fsm.go (Raft)
-  tests/              # Python test suite (143 tests)
-  cognee/             # Cognee platform (external, not committed)
-  BENCHMARK_RESULTS.md # Comparison findings
-  cases.md            # RAG test case specifications
-  docker-compose.yml  # Cognevra + Prometheus
+  Levara/              # Go source (main project)
+    cmd/server/        # main.go entry point (HTTP + gRPC)
+    cmd/backup/        # levara-backup CLI (backup/restore)
+    internal/store/    # db.go, wal.go, hnsw.go, arena.go, collections.go
+    internal/http/     # api.go (118 endpoints), graph_search.go, mcp.go
+    internal/grpc/     # service.go (47 RPCs)
+    pkg/orchestrator/  # cognify pipeline (chunk→extract→dedup→embed→write)
+    pkg/bm25/          # BM25 inverted index + hybrid RRF
+    pkg/graphrank/     # graph-aware reranking (α*vector + β*graph + γ*rerank)
+    pkg/rerank/        # cross-encoder reranking (Cohere-compatible)
+    pkg/router/        # smart search routing + adaptive weights
+    pkg/community/     # Louvain community detection
+    pkg/backup/        # backup/restore library
+    proto/             # cognevra.proto (gRPC definitions)
+    webui/             # Next.js 15 WebUI (12 routes, 61 E2E tests)
+    docs/              # WEBUI_REQUIREMENTS.md, WEBUI_DOD.md, ux_test.md, fix.md
+  posttests/bier/      # BEIR benchmark suite (6 datasets)
+  tests/               # Python test suite
 ```
 
 ## Development Commands
