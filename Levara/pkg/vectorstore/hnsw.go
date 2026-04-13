@@ -29,7 +29,7 @@ func (h *HNSWStore) Search(collection string, queryVec []float32, topK int) ([]S
 		out = append(out, SearchResult{
 			ID:       r.ID,
 			Score:    r.Score,
-			Metadata: r.Metadata,
+			Metadata: []byte(r.Data),
 		})
 	}
 	return out, nil

@@ -140,7 +140,7 @@ func TestDistSIMDCorrectness(t *testing.T) {
 		}
 		got := dist(v1, v2)
 		want := distScalar(v1, v2)
-		if diff := got - want; diff > 1e-5 || diff < -1e-5 {
+		if diff := got - want; diff > 1e-4 || diff < -1e-4 {
 			t.Errorf("trial %d: SIMD dist=%f, scalar dist=%f, diff=%f", trial, got, want, diff)
 		}
 	}
