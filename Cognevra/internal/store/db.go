@@ -64,6 +64,7 @@ type Cognevra struct {
 	pendingMu   sync.RWMutex
 	pendingVecs []pendingItem
 	indexSignal chan struct{}
+	closeOnce   sync.Once
 }
 
 // NewCognevra creates a new Cognevra instance.
@@ -181,13 +182,28 @@ func (db *Cognevra) signalIndexer() {
 // Insert durably stores a single record (vector + JSON-serializable metadata) and
 // enqueues it for async HNSW indexing. It blocks until the WAL fsync completes.
 func (db *Cognevra) Insert(id string, vector []float32, data any) error {
-	db.mu.Lock()
-
-	bytes, err := json.Marshal(data)
+	// Marshal metadata outside the lock (pure computation, no dependency on locked state).
+	var bytes []byte
+	var err error
+	switch v := data.(type) {
+	case json.RawMessage:
+		bytes = v
+	case []byte:
+		bytes = v
+	case string:
+		if len(v) > 0 && (v[0] == '{' || v[0] == '[') {
+			bytes = []byte(v)
+		} else {
+			bytes, err = json.Marshal(v)
+		}
+	default:
+		bytes, err = json.Marshal(data)
+	}
 	if err != nil {
-		db.mu.Unlock()
 		return fmt.Errorf("Failed to marshal metadata: %w", err)
 	}
+
+	db.mu.Lock()
 
 	idx, err := db.arena.Add(vector)
 	if err != nil {
@@ -466,6 +482,9 @@ func (db *Cognevra) Count() int {
 }
 
 func (db *Cognevra) Close() error {
+	db.closeOnce.Do(func() {
+		close(db.indexSignal)
+	})
 	if err := db.wal.Close(); err != nil {
 		db.disk.Close()
 		return fmt.Errorf("wal close: %w", err)

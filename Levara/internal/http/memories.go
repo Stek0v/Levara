@@ -34,6 +34,14 @@ func saveMemoryHandler(cfg APIConfig) fiber.Handler {
 		if req.Type == "" {
 			req.Type = "project"
 		}
+		allowedTypes := map[string]bool{
+			"fact": true, "event": true, "decision": true, "preference": true,
+			"advice": true, "discovery": true, "project": true, "user": true,
+			"feedback": true, "reference": true,
+		}
+		if !allowedTypes[req.Type] {
+			return c.Status(400).JSON(fiber.Map{"detail": "invalid memory type: " + req.Type})
+		}
 		if req.OwnerID == "" {
 			req.OwnerID, _ = c.Locals("user_id").(string)
 		}
@@ -130,8 +138,10 @@ func deleteMemoryHandler(cfg APIConfig) fiber.Handler {
 		}
 		ownerID, _ := c.Locals("user_id").(string)
 
-		cfg.DB.ExecContext(context.Background(),
-			Q(`DELETE FROM memories WHERE key = $1 AND (owner_id = $2 OR owner_id = '')`), key, ownerID)
+		if _, err := cfg.DB.ExecContext(context.Background(),
+			Q(`DELETE FROM memories WHERE key = $1 AND (owner_id = $2 OR owner_id = '')`), key, ownerID); err != nil {
+			return c.Status(500).JSON(fiber.Map{"detail": "delete failed: " + err.Error()})
+		}
 
 		return c.JSON(fiber.Map{"deleted": true, "key": key})
 	}
