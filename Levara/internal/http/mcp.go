@@ -579,7 +579,9 @@ func (h *mcpHandler) deleteSession(id string) {
 // randomHex returns n random hex characters.
 func randomHex(n int) string {
 	b := make([]byte, n/2+1)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		panic("crypto/rand failed: " + err.Error())
+	}
 	return fmt.Sprintf("%x", b)[:n]
 }
 
@@ -1035,6 +1037,20 @@ func (h *mcpHandler) toolSearch(ctx context.Context, args map[string]any) mcpToo
 		d := router.Route(query, caps)
 		routingInfo = &d
 		searchType = d.SearchType
+	}
+
+	// Map search_type to feature flags (unless already set explicitly via args).
+	switch strings.ToUpper(searchType) {
+	case "PARENT_CHILD":
+		doParentChild = true
+	case "MULTI_QUERY":
+		doMultiQuery = true
+	case "RERANK":
+		doRerank = true
+	case "GRAPH_RERANK":
+		doGraphRerank = true
+	case "BASIC", "CHUNKS", "AUTO", "":
+		// default vector search — no flag override
 	}
 
 	// Execute search

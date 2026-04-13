@@ -50,27 +50,54 @@ type Result struct {
 	AlreadyExists bool
 }
 
+// ingestPrep holds the pre-computed data from Phase 1 (sequential).
+type ingestPrep struct {
+	content       []byte
+	contentHash   string
+	alreadyExists bool
+	id            string
+	name          string
+	ext           string
+	mimeType      string
+	filename      string
+	fullPath      string
+}
+
 // Ingest processes multiple items: hash + save + classify in one pass.
 // storagePath is the base directory for file storage.
 // Returns one Result per item. Concurrent-safe for multiple items.
+//
+// Two-phase design for deterministic dedup:
+//   - Phase 1 (sequential): compute hash and dedup in input order.
+//   - Phase 2 (parallel): disk I/O for non-duplicate items.
 func Ingest(items []Item, storagePath string) ([]Result, error) {
 	if storagePath == "" {
 		storagePath = "data"
 	}
 	os.MkdirAll(storagePath, 0755)
 
-	results := make([]Result, len(items))
-	seen := &sync.Map{} // hash → true for dedup within batch
+	// Phase 1: sequential hash + dedup (deterministic: first occurrence wins).
+	seen := make(map[string]bool) // hash → true
+	preps := make([]ingestPrep, len(items))
+	for i, item := range items {
+		p, err := prepareItem(item, storagePath, seen)
+		if err != nil {
+			return nil, err
+		}
+		preps[i] = p
+	}
 
+	// Phase 2: parallel disk I/O for non-duplicate items.
+	results := make([]Result, len(items))
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var firstErr error
 
-	for i, item := range items {
+	for i := range preps {
 		wg.Add(1)
-		go func(idx int, it Item) {
+		go func(idx int) {
 			defer wg.Done()
-			r, err := ingestOne(it, storagePath, seen)
+			r, err := finalizeItem(&preps[idx])
 			if err != nil {
 				mu.Lock()
 				if firstErr == nil {
@@ -80,38 +107,33 @@ func Ingest(items []Item, storagePath string) ([]Result, error) {
 				return
 			}
 			results[idx] = r
-		}(i, item)
+		}(i)
 	}
 
 	wg.Wait()
 	return results, firstErr
 }
 
-func ingestOne(item Item, storagePath string, seen *sync.Map) (Result, error) {
-	// Determine content
+// prepareItem does Phase 1 work: content extraction, hash, dedup check, ID generation.
+// Must be called sequentially to ensure deterministic dedup ordering.
+func prepareItem(item Item, storagePath string, seen map[string]bool) (ingestPrep, error) {
 	var content []byte
 	if item.Text != "" {
 		content = []byte(item.Text)
 	} else if len(item.FileData) > 0 {
 		content = item.FileData
 	} else {
-		return Result{}, fmt.Errorf("item has no text or file_data")
+		return ingestPrep{}, fmt.Errorf("item has no text or file_data")
 	}
 
-	// Single-pass SHA256 (replaces Python's 3x MD5)
 	hash := sha256.Sum256(content)
 	contentHash := hex.EncodeToString(hash[:])
 
-	// Dedup within batch
-	alreadyExists := false
-	if _, loaded := seen.LoadOrStore(contentHash, true); loaded {
-		alreadyExists = true
-	}
+	alreadyExists := seen[contentHash]
+	seen[contentHash] = true
 
-	// Generate ID if not provided
 	id := item.ID
 	if id == "" {
-		// UUID5(NAMESPACE_OID, hash + dataset_name) — matches Python logic
 		input := contentHash
 		if item.DatasetName != "" {
 			input += item.DatasetName
@@ -120,7 +142,6 @@ func ingestOne(item Item, storagePath string, seen *sync.Map) (Result, error) {
 		id = uuid.NewSHA1(namespaceOID, []byte(normalized)).String()
 	}
 
-	// Determine filename
 	name := item.Filename
 	ext := ".txt"
 	mimeType := "text/plain"
@@ -134,32 +155,51 @@ func ingestOne(item Item, storagePath string, seen *sync.Map) (Result, error) {
 		if ext == "" {
 			ext = ".txt"
 		}
-		// Detect MIME from content
 		mimeType = http.DetectContentType(content)
 	}
 
-	// Single disk write (replaces Python's 2x write: original + text copy)
 	filename := name + ext
 	fullPath := filepath.Join(storagePath, filename)
 
+	return ingestPrep{
+		content:       content,
+		contentHash:   contentHash,
+		alreadyExists: alreadyExists,
+		id:            id,
+		name:          name,
+		ext:           ext,
+		mimeType:      mimeType,
+		filename:      filename,
+		fullPath:      fullPath,
+	}, nil
+}
+
+// finalizeItem does Phase 2 work: disk write (if needed) + result assembly.
+// Safe for concurrent execution.
+func finalizeItem(p *ingestPrep) (Result, error) {
+	alreadyExists := p.alreadyExists
+
 	if !alreadyExists {
-		if err := os.WriteFile(fullPath, content, 0644); err != nil {
-			return Result{}, fmt.Errorf("write %s: %w", fullPath, err)
+		if _, err := os.Stat(p.fullPath); err != nil {
+			if err := os.WriteFile(p.fullPath, p.content, 0644); err != nil {
+				return Result{}, fmt.Errorf("write %s: %w", p.fullPath, err)
+			}
+		} else {
+			alreadyExists = true
 		}
 	}
 
-	// Build file URI
-	absPath, _ := filepath.Abs(fullPath)
+	absPath, _ := filepath.Abs(p.fullPath)
 	fileURI := "file://" + absPath
 
 	return Result{
-		ID:            id,
-		ContentHash:   contentHash,
+		ID:            p.id,
+		ContentHash:   p.contentHash,
 		FilePath:      fileURI,
-		MimeType:      mimeType,
-		Extension:     ext,
-		FileSize:      int64(len(content)),
-		Name:          name,
+		MimeType:      p.mimeType,
+		Extension:     p.ext,
+		FileSize:      int64(len(p.content)),
+		Name:          p.name,
 		AlreadyExists: alreadyExists,
 	}, nil
 }

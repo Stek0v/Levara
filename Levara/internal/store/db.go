@@ -65,6 +65,7 @@ type Levara struct {
 	pendingMu   sync.RWMutex
 	pendingVecs []pendingItem
 	indexSignal chan struct{}
+	closeOnce   sync.Once
 }
 
 // NewLevara creates a new Levara instance.
@@ -183,8 +184,7 @@ func (db *Levara) signalIndexer() {
 // Insert durably stores a single record (vector + JSON-serializable metadata) and
 // enqueues it for async HNSW indexing. It blocks until the WAL fsync completes.
 func (db *Levara) Insert(id string, vector []float32, data any) error {
-	db.mu.Lock()
-
+	// Marshal metadata outside the lock (pure computation, no dependency on locked state).
 	var bytes []byte
 	var err error
 	switch v := data.(type) {
@@ -204,9 +204,10 @@ func (db *Levara) Insert(id string, vector []float32, data any) error {
 		bytes, err = json.Marshal(data)
 	}
 	if err != nil {
-		db.mu.Unlock()
 		return fmt.Errorf("Failed to marshal metadata: %w", err)
 	}
+
+	db.mu.Lock()
 
 	idx, err := db.arena.Add(vector)
 	if err != nil {
@@ -527,6 +528,9 @@ func (db *Levara) Clear() {
 }
 
 func (db *Levara) Close() error {
+	db.closeOnce.Do(func() {
+		close(db.indexSignal)
+	})
 	if err := db.wal.Close(); err != nil {
 		db.disk.Close()
 		return fmt.Errorf("wal close: %w", err)

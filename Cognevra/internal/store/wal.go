@@ -3,6 +3,7 @@ package store
 import (
 	"bufio"
 	"encoding/binary"
+	"errors"
 	"io"
 	"os"
 	"sync"
@@ -10,6 +11,9 @@ import (
 	"time"
 	"unsafe"
 )
+
+// ErrClosed is returned by FlushAsync when the WAL has been closed.
+var ErrClosed = errors.New("wal: closed")
 
 // WAL operation types stored as a single byte at the start of each entry.
 const (
@@ -41,6 +45,8 @@ type WAL struct {
 	closeCh   chan struct{}     // signal fsyncLoop to stop
 	closeOnce sync.Once        // ensure single close
 	syncCount uint64           // atomic counter for testing coalescing
+	closed    atomic.Bool      // set on Close, checked by FlushAsync
+	loopDone  chan struct{}     // closed when fsyncLoop exits
 }
 
 // OpenWal opens (or creates) the WAL file at path and starts the background
@@ -52,10 +58,11 @@ func OpenWal(path string) (*WAL, error) {
 		return nil, err
 	}
 	wal := &WAL{
-		file:    f,
-		writer:  bufio.NewWriter(f),
-		flushCh: make(chan flushRequest, 64),
-		closeCh: make(chan struct{}),
+		file:     f,
+		writer:   bufio.NewWriter(f),
+		flushCh:  make(chan flushRequest, 64),
+		closeCh:  make(chan struct{}),
+		loopDone: make(chan struct{}),
 	}
 	go wal.fsyncLoop()
 	return wal, nil
@@ -63,6 +70,7 @@ func OpenWal(path string) (*WAL, error) {
 
 // fsyncLoop is the background goroutine that coalesces flush requests.
 func (wal *WAL) fsyncLoop() {
+	defer close(wal.loopDone)
 	const maxWait = 2 * time.Millisecond
 	const maxPending = 16
 
@@ -133,9 +141,16 @@ func (wal *WAL) flushSync() error {
 // FlushAsync sends a flush request to fsyncLoop and blocks until completion.
 // Multiple concurrent callers share a single fsync via group commit.
 func (wal *WAL) FlushAsync() error {
+	if wal.closed.Load() {
+		return ErrClosed
+	}
 	done := make(chan error, 1)
-	wal.flushCh <- flushRequest{done: done}
-	return <-done
+	select {
+	case wal.flushCh <- flushRequest{done: done}:
+		return <-done
+	case <-wal.loopDone:
+		return ErrClosed
+	}
 }
 
 // WriteEntry saves an operation in the WAL with immediate flush (inline).
@@ -186,21 +201,33 @@ func writeWALEntryTo(w *bufio.Writer, op byte, id string, vector []float32, meta
 	}
 
 	// Write ID
-	binary.Write(w, binary.LittleEndian, idLen)
-	w.Write(idBytes)
+	if err := binary.Write(w, binary.LittleEndian, idLen); err != nil {
+		return err
+	}
+	if _, err := w.Write(idBytes); err != nil {
+		return err
+	}
 
 	// Write Vector (bulk unsafe write — 1 call instead of dim calls)
-	binary.Write(w, binary.LittleEndian, vectorLen)
+	if err := binary.Write(w, binary.LittleEndian, vectorLen); err != nil {
+		return err
+	}
 	if vectorLen > 0 {
 		vecPtr := unsafe.Pointer(&vector[0])
 		vecBytes := unsafe.Slice((*byte)(vecPtr), len(vector)*4)
-		w.Write(vecBytes)
+		if _, err := w.Write(vecBytes); err != nil {
+			return err
+		}
 	}
 
 	// Write Metadata
-	binary.Write(w, binary.LittleEndian, metadataLen)
+	if err := binary.Write(w, binary.LittleEndian, metadataLen); err != nil {
+		return err
+	}
 	if metadataLen > 0 {
-		w.Write(metadata)
+		if _, err := w.Write(metadata); err != nil {
+			return err
+		}
 	}
 
 	// Write Offset (8 bytes)
@@ -229,13 +256,12 @@ func (wal *WAL) SyncCount() uint64 {
 
 // Close ensures everything is written to disk and synced.
 func (w *WAL) Close() error {
+	w.closed.Store(true)
 	w.closeOnce.Do(func() {
 		close(w.closeCh)
 	})
-	// Give fsyncLoop time to drain pending flushes.
-	// The closeCh signal causes fsyncLoop to drain flushCh and exit.
-	// We wait briefly then do final flush under lock.
-	time.Sleep(5 * time.Millisecond)
+	// Wait for fsyncLoop to drain pending flushes and exit.
+	<-w.loopDone
 
 	w.mu.Lock()
 	defer w.mu.Unlock()

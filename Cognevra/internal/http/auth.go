@@ -3,19 +3,20 @@
 package http
 
 import (
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
+	"log"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"golang.org/x/crypto/bcrypt"
-
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/json"
 )
 
 // AuthConfig holds auth settings.
@@ -31,7 +32,9 @@ func RegisterAuthAPI(app fiber.Router, cfg *AuthConfig) {
 	if cfg.JWTSecret == "" {
 		// Generate random secret if not provided
 		b := make([]byte, 32)
-		rand.Read(b)
+		if _, err := rand.Read(b); err != nil {
+			panic("crypto/rand failed: " + err.Error())
+		}
 		cfg.JWTSecret = hex.EncodeToString(b)
 	}
 
@@ -143,7 +146,11 @@ func loginHandler(cfg AuthConfig) fiber.Handler {
 		}
 
 		if cfg.DB == nil {
+			if os.Getenv("ENV") == "production" {
+				return c.Status(500).JSON(fiber.Map{"detail": "database required in production mode"})
+			}
 			// No DB — accept any credentials in dev mode
+			log.Printf("[WARN] dev-mode login: accepting any credentials for %s", email)
 			token := createJWT("dev-user", email, cfg.JWTSecret)
 			setAuthCookie(c, token)
 			return c.JSON(fiber.Map{"access_token": token, "token_type": "bearer"})
@@ -209,7 +216,9 @@ func registerHandler(cfg AuthConfig) fiber.Handler {
 
 func generateUUID() string {
 	b := make([]byte, 16)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		panic("crypto/rand failed: " + err.Error())
+	}
 	b[6] = (b[6] & 0x0f) | 0x40 // version 4
 	b[8] = (b[8] & 0x3f) | 0x80 // variant
 	return hex.EncodeToString(b[:4]) + "-" + hex.EncodeToString(b[4:6]) + "-" +
@@ -273,6 +282,7 @@ func setAuthCookie(c *fiber.Ctx, token string) {
 		MaxAge:   86400, // 24 hours
 		HTTPOnly: true,
 		SameSite: "Lax",
+		Secure:   c.Protocol() == "https",
 	})
 }
 
