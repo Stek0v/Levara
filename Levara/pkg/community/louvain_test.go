@@ -243,6 +243,9 @@ func TestLouvain_WeightedEdges(t *testing.T) {
 }
 
 func TestLouvain_1K_Performance(t *testing.T) {
+	if testing.Short() || raceEnabled {
+		t.Skip("perf thresholds calibrated for non-race non-short runs")
+	}
 	n := 1000
 	nodes := make([]string, n)
 	for i := range nodes {
@@ -272,6 +275,9 @@ func TestLouvain_1K_Performance(t *testing.T) {
 }
 
 func TestLouvain_10K_Performance(t *testing.T) {
+	if testing.Short() || raceEnabled {
+		t.Skip("perf thresholds calibrated for non-race non-short runs")
+	}
 	n := 10000
 	nodes := make([]string, n)
 	for i := range nodes {

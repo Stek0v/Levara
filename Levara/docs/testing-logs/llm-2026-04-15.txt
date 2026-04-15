@@ -1,0 +1,11 @@
+=== RUN   TestRateLimiter_ConcurrentAcquire_NoRace
+--- PASS: TestRateLimiter_ConcurrentAcquire_NoRace (0.30s)
+=== RUN   TestRateLimiter_CtxCancelReleasesWaiter
+--- PASS: TestRateLimiter_CtxCancelReleasesWaiter (0.05s)
+=== RUN   TestRateLimiter_CloseIdempotent
+--- PASS: TestRateLimiter_CloseIdempotent (0.00s)
+=== RUN   TestRateLimiter_ConcurrentClose
+--- PASS: TestRateLimiter_ConcurrentClose (0.00s)
+PASS
+ok  	github.com/stek0v/cognevra/pkg/llm	2.109s
+?   	github.com/stek0v/cognevra/pkg/llm/mock	[no test files]

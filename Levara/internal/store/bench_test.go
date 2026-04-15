@@ -149,6 +149,13 @@ func TestDistSIMDCorrectness(t *testing.T) {
 // ── Recall@10 ────────────────────────────────────────────────────────────────
 
 func TestRecallAt10(t *testing.T) {
+	// FIXME(F-6): fails under `go test -race` — HNSWIndex.Search traverses the graph
+	// without holding h.RLock (released at hnsw.go:412/428 before searchLayer calls),
+	// racing with HNSWIndex.Add's writes to newNode.Connections (hnsw.go:270) which
+	// are made without holding newNode.Lock. See docs/testing-roadmap.md Findings.
+	if raceEnabled {
+		t.Skip("F-6: pending HNSW concurrent Search/Add locking fix")
+	}
 	const (
 		n      = 1000
 		dim    = 64

@@ -1,5 +1,10 @@
 // Package graphstore provides a pluggable interface for graph storage backends.
 // Supports: Neo4j (external), PostgreSQL (recursive CTE for multi-hop).
+//
+// TODO(ADR-001): this interface is NOT yet wired into handlers (internal/http,
+// internal/grpc import pkg/graphdb directly). See docs/adr/001-graph-layering.md
+// for activation plan: make graphdb.Neo4jClient implement GraphStore and switch
+// by config. Until then, treat graphstore as dormant code.
 package graphstore
 
 import "context"
