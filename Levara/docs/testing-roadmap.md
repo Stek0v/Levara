@@ -34,7 +34,7 @@ Live-документ. Каждая задача фиксирует статус
 | T-3a | `pkg/orchestrator.parseEntities` + `extractJSON` | pure-fn golden | ⬜ | — |
 | T-4 | `pkg/llm` | Mock provider + ratelimit race + Close race | ⬜ | — |
 | T-2 | `pkg/orchestrator` integration | pipeline end-to-end с mock LLM | ⬜ | — |
-| T-1 | `internal/store` | concurrent write+snapshot, WAL crash replay | ⬜ | — |
+| T-1 | `internal/store` | concurrent Insert+Search, Insert+Delete, WAL replay, Checkpoint-under-load | ✅ done | `2026-04-15-t1-final.txt` |
 | T-5 | `internal/http` | contract-тесты критичных endpoints | ⬜ (после F-4) | — |
 | T-6 | `internal/cluster` | property/chaos sync | ⬜ | — |
 | T-7 | `pkg/community` | Louvain регрессия (Zachary karate) | ⬜ | — |

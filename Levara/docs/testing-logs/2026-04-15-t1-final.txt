@@ -1,0 +1,42 @@
+?   	github.com/stek0v/cognevra/cmd/backup	[no test files]
+?   	github.com/stek0v/cognevra/cmd/benchmark	[no test files]
+?   	github.com/stek0v/cognevra/cmd/cli	[no test files]
+?   	github.com/stek0v/cognevra/cmd/loadtest	[no test files]
+?   	github.com/stek0v/cognevra/cmd/server	[no test files]
+?   	github.com/stek0v/cognevra/internal/cluster	[no test files]
+ok  	github.com/stek0v/cognevra/internal/grpc	2.989s
+?   	github.com/stek0v/cognevra/internal/http	[no test files]
+?   	github.com/stek0v/cognevra/internal/metrics	[no test files]
+ok  	github.com/stek0v/cognevra/internal/store	57.798s
+ok  	github.com/stek0v/cognevra/pipeline	4.527s
+ok  	github.com/stek0v/cognevra/pkg/aggregator	4.918s
+?   	github.com/stek0v/cognevra/pkg/audio	[no test files]
+?   	github.com/stek0v/cognevra/pkg/backup	[no test files]
+ok  	github.com/stek0v/cognevra/pkg/bm25	5.653s
+ok  	github.com/stek0v/cognevra/pkg/chunker	6.419s
+?   	github.com/stek0v/cognevra/pkg/classify	[no test files]
+ok  	github.com/stek0v/cognevra/pkg/community	4.147s
+ok  	github.com/stek0v/cognevra/pkg/embed	7.259s
+?   	github.com/stek0v/cognevra/pkg/extract	[no test files]
+?   	github.com/stek0v/cognevra/pkg/fetch	[no test files]
+ok  	github.com/stek0v/cognevra/pkg/fileio	5.857s
+?   	github.com/stek0v/cognevra/pkg/git	[no test files]
+ok  	github.com/stek0v/cognevra/pkg/graph	7.038s
+ok  	github.com/stek0v/cognevra/pkg/graphdb	6.416s
+ok  	github.com/stek0v/cognevra/pkg/graphrank	8.385s
+?   	github.com/stek0v/cognevra/pkg/graphstore	[no test files]
+ok  	github.com/stek0v/cognevra/pkg/ingest	8.678s
+ok  	github.com/stek0v/cognevra/pkg/llm	9.464s
+ok  	github.com/stek0v/cognevra/pkg/llm/mock	9.106s
+ok  	github.com/stek0v/cognevra/pkg/llmcache	8.586s
+?   	github.com/stek0v/cognevra/pkg/llmproxy	[no test files]
+?   	github.com/stek0v/cognevra/pkg/observe	[no test files]
+?   	github.com/stek0v/cognevra/pkg/ontology	[no test files]
+ok  	github.com/stek0v/cognevra/pkg/orchestrator	7.398s
+ok  	github.com/stek0v/cognevra/pkg/rerank	8.377s
+ok  	github.com/stek0v/cognevra/pkg/router	7.615s
+?   	github.com/stek0v/cognevra/pkg/storage	[no test files]
+ok  	github.com/stek0v/cognevra/pkg/temporal	8.710s
+?   	github.com/stek0v/cognevra/pkg/vectorstore	[no test files]
+?   	github.com/stek0v/cognevra/proto	[no test files]
+?   	github.com/stek0v/cognevra/proto/pb	[no test files]
