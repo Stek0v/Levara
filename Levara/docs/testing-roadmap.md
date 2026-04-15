@@ -40,7 +40,7 @@ Live-документ. Каждая задача фиксирует статус
 | T-6 | `internal/cluster` | property/chaos sync | ⬜ | — |
 | T-7 | `pkg/community` | Louvain ground-truth (Zachary karate, faction purity 0.9706) | ✅ done | `2026-04-15-t7-t8.txt` |
 | T-8 | `pkg/ontology` | OWL parsing golden (FOAF-like + schema.org-like) — **2 parser bugs fixed** | ✅ done | `2026-04-15-t7-t8.txt` |
-| T-9 | `pkg/llmproxy`, `pkg/storage`, `pkg/observe` | smoke | ⬜ | — |
+| T-9 | `pkg/llmproxy`, `pkg/storage`, `pkg/observe` | smoke — dedup/cache paths, LocalStorage CRUD, AWS Sig V4 vector, ErrorTracker, Langfuse basic-auth | ✅ done | `2026-04-15-t9-final.txt` |
 
 ## Findings журнал
 
