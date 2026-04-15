@@ -402,14 +402,26 @@ func (h *HNSWIndex) isDeleted(arenaOffset uint32) bool {
 }
 
 // Search finds and returns the k closest nodes to the query vector.
+//
+// Locking: holds h.RLock for the entire traversal. Previous implementation
+// released h.RLock before searchLayer/searchLayerTopK, letting concurrent
+// Add mutate nodesByIdx, EntryNodeID, and existing nodes' Connections
+// (newNode.Connections in Add was even modified without newNode.Lock).
+// That was a real data race flagged by -race in TestRecallAt10; see F-6 in
+// docs/testing-roadmap.md. Holding RLock serialises writers against readers
+// — writers (Add) block while any Search is running, readers run concurrently
+// with each other. Fine-grained unlock is possible but requires Add to also
+// lock newNode during its link-up phase; deferred until there's a measured
+// throughput need.
 func (h *HNSWIndex) Search(query []float32, k int) []VectroRecord {
 	// Normalize query so dot-product distance works correctly.
 	normQ := normalizeVec(query)
 
 	h.RLock()
+	defer h.RUnlock()
+
 	entryID := h.EntryNodeID
 	maxL := h.MaxLayer
-	h.RUnlock()
 
 	if entryID == "" {
 		return nil
@@ -423,9 +435,7 @@ func (h *HNSWIndex) Search(query []float32, k int) []VectroRecord {
 	query = normQ
 	getVec := h.vecUnsafe
 
-	h.RLock()
 	curr := h.Nodes[entryID]
-	h.RUnlock()
 
 	for l := maxL; l > 0; l-- {
 		curr = h.searchLayer(query, curr, l, getVec)

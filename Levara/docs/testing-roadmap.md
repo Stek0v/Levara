@@ -25,7 +25,7 @@ Live-документ. Каждая задача фиксирует статус
 | F-3 | Решить судьбу `pkg/graphstore` (unused abstraction) | ⬜ deferred → см. ADR-001 | — |
 | F-4 | Вынос MCP из `internal/http` в `pkg/mcp` | ⬜ deferred (4375 LOC) — requires plan | — |
 | F-5 | Слияние мелких pkg (`git`/`fetch` → `ingest`, `classify` → `extract`) | ⬜ pending | — |
-| **F-6** | 🔴 **HNSW data race**: `Search` traverses graph без `h.RLock`; `Add` пишет `newNode.Connections` без `newNode.Lock`. Воспроизводится `TestRecallAt10` под `-race`. Затрагивает прод при concurrent search+ingest. | ⬜ **urgent** | — |
+| **F-6** | 🔴 **HNSW data race** (FIXED): Search теперь держит `h.RLock` весь traversal. Регрессия: `TestHNSW_ConcurrentSearchAdd_NoRace` гоняет 2 writers × 8 readers × 300ms под `-race`. `TestRecallAt10` разблокирован. | ✅ done | this batch |
 
 ## Wave 2 — TEST
 
@@ -52,5 +52,5 @@ Live-документ. Каждая задача фиксирует статус
   - Writer: `HNSWIndex.Add` пишет `newNode.Connections[l] = append(...)` на `hnsw.go:270` **без** `newNode.Lock()` (хотя для соседей `sr.node` лок берётся на :272).
   - Reader: `HNSWIndex.Search` берёт `h.RLock` дважды кратко (`hnsw.go:409`/`:426`), но **отпускает до** `searchLayer`/`searchLayerTopK` — т.е. весь traversal идёт без глобального лока.
   - Результат: одновременный search во время ingest читает частично записанные slice-хедеры Connections. В проде видно не будет — это UB, проявится как segfault/wrong result при высокой конкурентности.
-  - **F-6** в плане Wave-1. Нужен тест-кейс, затем либо (а) держать `h.RLock` весь Search (конкурентный throughput просядет), либо (б) полноценный fine-grained: `newNode.Lock` на весь Add-link-phase + search-traversal под h.RLock.
+  - **F-6 FIXED (2026-04-15)**: выбран вариант (а) — Search теперь держит `h.RLock` весь traversal через `defer h.RUnlock()`. Добавлен `TestHNSW_ConcurrentSearchAdd_NoRace`: 2 writer × 8 reader горутины × 300ms под `-race` → 0 races, 200+ searches + 20+ inserts проходят. Вариант (б) (fine-grained newNode.Lock + оставить Search без глобального лока) отложен до появления измеренной throughput-проблемы — сейчас writers в Levara редки по сравнению с readers, поэтому блокировка Search'ей во время Add не критична.
 - **2026-04-15** — Louvain-perf тесты (`TestLouvain_1K/10K_Performance`) и `TestChunkBySliding_LargeText` имеют захардкоженные пороги (`< 50ms`, `< 2s`, `< 100ms`), которые валятся под `-race` из-за 5-10× overhead детектора. Обёрнуты через `raceEnabled` + build-tag файлы `race_on/off_test.go`.
