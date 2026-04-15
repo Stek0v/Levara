@@ -49,14 +49,20 @@ func LoadFromFile(path string) (*Ontology, error) {
 func Parse(r io.Reader, name string) (*Ontology, error) {
 	decoder := xml.NewDecoder(r)
 	ont := &Ontology{
-		Name:     name,
-		classMap: make(map[string]*OntologyClass),
+		Name: name,
 	}
 
-	var currentElement string
-	var currentAbout string
-	var currentLabel string
-	var currentSubClassOf string
+	// Parser state — nested-element-aware.
+	// currentClassIdx >= 0 means we're inside <owl:Class>...</owl:Class>;
+	// any <subClassOf>/<label>/<comment> we see belongs to that class.
+	// Using an index (not a *OntologyClass pointer) avoids the classic
+	// "slice reallocation on append invalidates pointer" footgun — classMap
+	// is rebuilt after parsing completes.
+	var (
+		currentElement  string
+		currentClassIdx = -1
+		inIndividual    bool
+	)
 
 	for {
 		token, err := decoder.Token()
@@ -72,61 +78,80 @@ func Parse(r io.Reader, name string) (*Ontology, error) {
 			localName := t.Name.Local
 			currentElement = localName
 
-			// Get rdf:about attribute
+			// Extract rdf:about / rdf:ID for Class or NamedIndividual declarations.
+			var about string
+			var resource string
 			for _, attr := range t.Attr {
-				if attr.Name.Local == "about" || attr.Name.Local == "ID" {
-					currentAbout = attr.Value
-				}
-				if attr.Name.Local == "resource" && localName == "subClassOf" {
-					currentSubClassOf = attr.Value
+				switch attr.Name.Local {
+				case "about", "ID":
+					about = attr.Value
+				case "resource":
+					resource = attr.Value
 				}
 			}
 
-			if localName == "Class" && currentAbout != "" {
+			switch localName {
+			case "Class":
+				if about == "" {
+					// Anonymous class (blank node) — ignore; we don't model them.
+					continue
+				}
 				cls := OntologyClass{
-					URI:       currentAbout,
-					Name:      uriToName(currentAbout),
-					ParentURI: currentSubClassOf,
+					URI:  about,
+					Name: uriToName(about),
 				}
 				ont.Classes = append(ont.Classes, cls)
-				ont.classMap[strings.ToLower(cls.Name)] = &ont.Classes[len(ont.Classes)-1]
-				currentSubClassOf = ""
-			}
+				currentClassIdx = len(ont.Classes) - 1
 
-			if localName == "NamedIndividual" && currentAbout != "" {
-				ind := OntologyIndividual{
-					URI:  currentAbout,
-					Name: uriToName(currentAbout),
+			case "NamedIndividual":
+				if about == "" {
+					continue
 				}
-				ont.Individuals = append(ont.Individuals, ind)
+				ont.Individuals = append(ont.Individuals, OntologyIndividual{
+					URI:  about,
+					Name: uriToName(about),
+				})
+				inIndividual = true
+
+			case "subClassOf":
+				// Only meaningful when nested inside an <owl:Class>.
+				if currentClassIdx >= 0 && resource != "" {
+					ont.Classes[currentClassIdx].ParentURI = resource
+				}
 			}
 
 		case xml.CharData:
+			if currentClassIdx < 0 {
+				continue
+			}
 			text := strings.TrimSpace(string(t))
 			if text == "" {
 				continue
 			}
-			if currentElement == "label" && currentAbout != "" {
-				currentLabel = text
-				// Update class name with rdfs:label
-				if cls, ok := ont.classMap[strings.ToLower(uriToName(currentAbout))]; ok {
-					cls.Name = currentLabel
-				}
-			}
-			if currentElement == "comment" && currentAbout != "" {
-				if cls, ok := ont.classMap[strings.ToLower(uriToName(currentAbout))]; ok {
-					cls.Description = text
-				}
+			switch currentElement {
+			case "label":
+				ont.Classes[currentClassIdx].Name = text
+			case "comment":
+				ont.Classes[currentClassIdx].Description = text
 			}
 
 		case xml.EndElement:
-			if t.Name.Local == "Class" || t.Name.Local == "NamedIndividual" {
-				currentAbout = ""
-				currentLabel = ""
+			switch t.Name.Local {
+			case "Class":
+				currentClassIdx = -1
+			case "NamedIndividual":
+				inIndividual = false
 			}
 		}
 	}
 
+	// Rebuild classMap after all appends complete so pointers are stable.
+	ont.classMap = make(map[string]*OntologyClass, len(ont.Classes))
+	for i := range ont.Classes {
+		ont.classMap[strings.ToLower(ont.Classes[i].Name)] = &ont.Classes[i]
+	}
+
+	_ = inIndividual // reserved for future individual-level annotation parsing
 	return ont, nil
 }
 

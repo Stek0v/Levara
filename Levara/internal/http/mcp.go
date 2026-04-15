@@ -510,6 +510,29 @@ var mcpTools = []mcpTool{
 			"required": []string{"code", "filename"},
 		},
 	},
+
+	// ── System diagnostics tools ──
+	{
+		Name:        "doctor",
+		Description: "Self-diagnose system health: service connectivity (postgres, embed, LLM, neo4j), embedding coverage, BM25 index coverage, graph connectivity, memory staleness. Returns structured checks with actionable remediation advice.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"verbose": map[string]any{"type": "boolean", "default": false, "description": "Include per-collection breakdown in coverage checks."},
+			},
+		},
+	},
+	{
+		Name:        "heartbeat",
+		Description: "Query recent system heartbeat events (doctor runs, sync, cognify completions, prune). Useful to understand system activity history and detect degradation patterns.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"event_type": map[string]any{"type": "string", "description": "Filter by event type: doctor, sync, cognify, prune. Empty = all."},
+				"limit":      map[string]any{"type": "integer", "default": 10, "description": "Max events to return (1-100)."},
+			},
+		},
+	},
 }
 
 // RegisterMCPAPI registers MCP Streamable HTTP endpoint (spec 2025-03-26).
@@ -812,6 +835,10 @@ func (h *mcpHandler) executeToolInner(ctx context.Context, sess *mcpSession, nam
 		return h.toolDiaryWrite(ctx, args)
 	case "diary_read":
 		return h.toolDiaryRead(ctx, args)
+	case "doctor":
+		return h.toolDoctor(ctx, args)
+	case "heartbeat":
+		return h.toolHeartbeat(ctx, args)
 	default:
 		return mcpToolResult{
 			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("Unknown tool: %s", name)}},
@@ -963,6 +990,16 @@ func (h *mcpHandler) toolCognify(ctx context.Context, args map[string]any) mcpTo
 		// Persist pipeline status to data table
 		PersistPipelineStatus(h.cfg.DB, runID, collection,
 			status.Status, status.Chunks, status.Entities, status.Edges, status.ElapsedMs)
+
+		// Log heartbeat
+		h.logHeartbeat("cognify", map[string]any{
+			"run_id":     runID,
+			"collection": collection,
+			"status":     status.Status,
+			"chunks":     status.Chunks,
+			"entities":   status.Entities,
+			"elapsed_ms": status.ElapsedMs,
+		})
 	}()
 
 	return mcpToolResult{
@@ -2310,6 +2347,7 @@ func (h *mcpHandler) toolSync(ctx context.Context, args map[string]any) mcpToolR
 			result["collections_sync"] = syncPullCollections(h.cfg, remoteURL, collectionNames)
 		}
 		result["remote_manifest"] = manifest
+		h.logHeartbeat("sync", map[string]any{"direction": "pull", "remote": remoteURL, "types": types})
 		out, _ := json.MarshalIndent(result, "", "  ")
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(out)}}}
 	}
@@ -2320,6 +2358,7 @@ func (h *mcpHandler) toolSync(ctx context.Context, args map[string]any) mcpToolR
 		result["collections_sync"] = syncPushCollections(ctx, h.cfg, remoteURL, collectionNames)
 	}
 	result["remote_manifest"] = manifest
+	h.logHeartbeat("sync", map[string]any{"direction": "push", "remote": remoteURL, "types": types})
 	out, _ := json.MarshalIndent(result, "", "  ")
 	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(out)}}}
 }
@@ -2878,6 +2917,7 @@ func (h *mcpHandler) toolPruneGraph(ctx context.Context, args map[string]any) mc
 		}
 	}
 
+	h.logHeartbeat("prune", result)
 	out, _ := json.MarshalIndent(result, "", "  ")
 	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(out)}}}
 }
