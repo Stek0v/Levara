@@ -154,6 +154,15 @@ func NewLevara(dim int, storagePath string, cfg ...HNSWConfig) (*Levara, error) 
 }
 
 // indexerLoop drains pendingVecs into hnsw.Add in the background.
+//
+// Locking: reading db.hnsw without a lock is a data race with Clear() which
+// atomically-but-not-really swaps db.hnsw and db.arena (see fsm.Restore caller).
+// We snapshot the current hnsw pointer under db.mu.RLock() per batch, then
+// release the lock before calling hnsw.Add. If Clear runs concurrently and
+// swaps the pointer, the old hnsw captured here will absorb the batch — those
+// entries become orphaned but not corrupted (old arena + old hnsw stay alive
+// via our local reference until the batch drains). Consistency is preserved
+// because each hnsw owns its own arena reference.
 func (db *Levara) indexerLoop() {
 	for range db.indexSignal {
 		for {
@@ -166,8 +175,12 @@ func (db *Levara) indexerLoop() {
 			db.pendingVecs = nil
 			db.pendingMu.Unlock()
 
+			db.mu.RLock()
+			hnsw := db.hnsw
+			db.mu.RUnlock()
+
 			for _, p := range batch {
-				db.hnsw.Add(p.vector, p.id, p.idx)
+				hnsw.Add(p.vector, p.id, p.idx)
 			}
 		}
 	}
