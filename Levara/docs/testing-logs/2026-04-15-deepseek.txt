@@ -1,0 +1,14 @@
+=== RUN   TestPipeline_DeepSeek_ExtractsGraph
+2026/04/15 17:04:43 [pipeline] temporal: 2 temporal nodes, 12 HAPPENED_AT edges
+2026/04/15 17:04:43 [pipeline] WARNING: EmbedEndpoint not configured — vector indexing SKIPPED
+2026/04/15 17:04:43 [pipeline] WARNING: Collections not configured — vector indexing SKIPPED
+    pipeline_deepseek_test.go:105: DeepSeek produced: 8 entities, 19 edges, 1 chunks, elapsed=19115ms
+--- PASS: TestPipeline_DeepSeek_ExtractsGraph (19.12s)
+=== RUN   TestPipeline_DeepSeek_StructuredOutput
+2026/04/15 17:04:43 [llm] structured via openai: initial call failed: OpenAI status 400: {"error":{"message":"This response_format type is unavailable now","type":"invalid_request_error","param":null,"code":"invalid_request_error"}}
+2026/04/15 17:04:49 [llm] structured via openai: got valid JSON on retry 1/3
+2026/04/15 17:04:49 [pipeline] WARNING: EmbedEndpoint not configured — vector indexing SKIPPED
+2026/04/15 17:04:49 [pipeline] WARNING: Collections not configured — vector indexing SKIPPED
+--- PASS: TestPipeline_DeepSeek_StructuredOutput (5.83s)
+PASS
+ok  	github.com/stek0v/cognevra/pkg/orchestrator	25.363s

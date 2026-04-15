@@ -99,6 +99,11 @@ func NewOpenAIProvider(endpoint, apiKey string) *OpenAIProvider {
 
 func (p *OpenAIProvider) Name() string { return "openai" }
 
+// Endpoint returns the configured base URL. Exposed so StructuredCall can
+// decide whether json_schema response_format is worth attempting (e.g.
+// DeepSeek returns HTTP 400 for it — see llm/structured.go).
+func (p *OpenAIProvider) Endpoint() string { return p.endpoint }
+
 func (p *OpenAIProvider) ChatCompletion(ctx context.Context, req CompletionRequest) (*CompletionResponse, error) {
 	llmStart := time.Now()
 	defer func() {

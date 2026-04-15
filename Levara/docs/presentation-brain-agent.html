@@ -1,0 +1,855 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Levara Brain-Agent Layer</title>
+<style>
+  :root {
+    --bg: #0a0e17;
+    --bg2: #111827;
+    --accent: #6366f1;
+    --accent2: #818cf8;
+    --green: #34d399;
+    --yellow: #fbbf24;
+    --red: #f87171;
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+    --card: #1e293b;
+    --border: #334155;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    overflow: hidden;
+    height: 100vh;
+  }
+
+  /* ── Slide container ── */
+  .deck { position: relative; width: 100vw; height: 100vh; }
+
+  .slide {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    padding: 3rem 6rem;
+    opacity: 0;
+    pointer-events: none;
+    transform: translateX(60px);
+    transition: opacity 0.5s ease, transform 0.5s ease;
+  }
+  .slide.active {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateX(0);
+  }
+  .slide.prev {
+    transform: translateX(-60px);
+  }
+
+  /* ── Typography ── */
+  h1 { font-size: 3rem; font-weight: 800; line-height: 1.1; margin-bottom: 1rem; }
+  h2 { font-size: 2.2rem; font-weight: 700; margin-bottom: 1.5rem; }
+  h3 { font-size: 1.4rem; font-weight: 600; margin-bottom: 0.75rem; color: var(--accent2); }
+  p, li { font-size: 1.1rem; line-height: 1.7; color: var(--muted); }
+  .subtitle { font-size: 1.3rem; color: var(--muted); margin-bottom: 2rem; }
+
+  .gradient-text {
+    background: linear-gradient(135deg, var(--accent), var(--green));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  /* ── Grid layouts ── */
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; width: 100%; max-width: 1200px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1.5rem; width: 100%; max-width: 1200px; }
+  .grid-4 { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 1.2rem; width: 100%; max-width: 1200px; }
+
+  /* ── Cards ── */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.5rem;
+    transition: border-color 0.3s;
+  }
+  .card:hover { border-color: var(--accent); }
+  .card h3 { margin-bottom: 0.5rem; }
+  .card p { font-size: 0.95rem; }
+  .card .icon { font-size: 2rem; margin-bottom: 0.75rem; display: block; }
+
+  .card-accent {
+    border-left: 3px solid var(--accent);
+  }
+  .card-green { border-left: 3px solid var(--green); }
+  .card-yellow { border-left: 3px solid var(--yellow); }
+  .card-red { border-left: 3px solid var(--red); }
+
+  /* ── Code blocks ── */
+  .code-block {
+    background: #0d1117;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.2rem 1.5rem;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 0.85rem;
+    line-height: 1.6;
+    color: #c9d1d9;
+    overflow-x: auto;
+    white-space: pre;
+    width: 100%;
+    max-width: 800px;
+  }
+  .code-block .kw { color: #ff7b72; }
+  .code-block .str { color: #a5d6ff; }
+  .code-block .cmt { color: #8b949e; }
+  .code-block .fn { color: #d2a8ff; }
+  .code-block .num { color: #79c0ff; }
+
+  /* ── Status badges ── */
+  .badge {
+    display: inline-block;
+    padding: 0.2rem 0.6rem;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .badge-ok { background: rgba(52,211,153,0.15); color: var(--green); }
+  .badge-warn { background: rgba(251,191,36,0.15); color: var(--yellow); }
+  .badge-fail { background: rgba(248,113,113,0.15); color: var(--red); }
+  .badge-new { background: rgba(99,102,241,0.15); color: var(--accent2); }
+
+  /* ── Flow diagram ── */
+  .flow {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    justify-content: center;
+    margin: 1.5rem 0;
+  }
+  .flow-step {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.6rem 1rem;
+    font-size: 0.9rem;
+    font-weight: 500;
+  }
+  .flow-arrow { color: var(--accent); font-size: 1.2rem; }
+
+  /* ── Table ── */
+  table {
+    width: 100%;
+    max-width: 1000px;
+    border-collapse: collapse;
+    margin: 1rem 0;
+  }
+  th, td {
+    padding: 0.7rem 1rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.95rem;
+  }
+  th { color: var(--accent2); font-weight: 600; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em; }
+  td { color: var(--muted); }
+  tr:hover td { color: var(--text); }
+
+  /* ── Pros/Cons ── */
+  .pros-cons { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; width: 100%; max-width: 1000px; }
+  .pros-cons ul { list-style: none; padding: 0; }
+  .pros-cons li { padding: 0.5rem 0; padding-left: 1.5rem; position: relative; }
+  .pros-cons li::before { position: absolute; left: 0; font-weight: bold; }
+  .pros li::before { content: "+"; color: var(--green); }
+  .cons li::before { content: "-"; color: var(--red); }
+
+  /* ── Navigation ── */
+  .nav {
+    position: fixed;
+    bottom: 2rem;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    z-index: 100;
+    background: rgba(17,24,39,0.9);
+    backdrop-filter: blur(8px);
+    padding: 0.5rem 1.2rem;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+  }
+  .nav button {
+    background: none;
+    border: none;
+    color: var(--muted);
+    font-size: 1.3rem;
+    cursor: pointer;
+    padding: 0.3rem 0.6rem;
+    border-radius: 6px;
+    transition: all 0.2s;
+  }
+  .nav button:hover { color: var(--text); background: var(--card); }
+  .nav .counter { font-size: 0.85rem; color: var(--muted); min-width: 4rem; text-align: center; }
+
+  /* ── Progress bar ── */
+  .progress {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 3px;
+    background: linear-gradient(90deg, var(--accent), var(--green));
+    transition: width 0.4s ease;
+    z-index: 100;
+  }
+
+  /* ── Slide-specific ── */
+  .title-slide { text-align: center; }
+  .title-slide h1 { font-size: 3.5rem; margin-bottom: 0.5rem; }
+
+  .metric-row {
+    display: flex;
+    gap: 2rem;
+    justify-content: center;
+    margin: 1.5rem 0;
+    flex-wrap: wrap;
+  }
+  .metric {
+    text-align: center;
+    padding: 1rem 1.5rem;
+    background: var(--card);
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    min-width: 140px;
+  }
+  .metric .value { font-size: 2rem; font-weight: 800; color: var(--accent2); }
+  .metric .label { font-size: 0.8rem; color: var(--muted); margin-top: 0.3rem; text-transform: uppercase; letter-spacing: 0.05em; }
+
+  .tag-list { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.5rem; }
+  .tag {
+    padding: 0.2rem 0.5rem;
+    background: rgba(99,102,241,0.1);
+    border: 1px solid rgba(99,102,241,0.3);
+    border-radius: 4px;
+    font-size: 0.75rem;
+    color: var(--accent2);
+  }
+
+  .left-align { align-items: flex-start; text-align: left; }
+
+  ul.feature-list { list-style: none; padding: 0; max-width: 800px; }
+  ul.feature-list li {
+    padding: 0.6rem 0;
+    padding-left: 2rem;
+    position: relative;
+    border-bottom: 1px solid rgba(51,65,85,0.5);
+  }
+  ul.feature-list li::before {
+    content: ">";
+    position: absolute;
+    left: 0;
+    color: var(--accent);
+    font-weight: bold;
+  }
+
+  .wide { max-width: 1200px; width: 100%; }
+
+  @media (max-width: 900px) {
+    .slide { padding: 2rem; }
+    h1 { font-size: 2rem; }
+    h2 { font-size: 1.6rem; }
+    .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
+    .pros-cons { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<div class="progress" id="progress"></div>
+
+<div class="deck" id="deck">
+
+<!-- ══════════════════════════════════════════════════════════ SLIDE 1: Title -->
+<div class="slide title-slide active">
+  <p style="font-size:0.9rem; color:var(--muted); letter-spacing:0.15em; text-transform:uppercase; margin-bottom:1rem;">Levara Update / April 2026</p>
+  <h1><span class="gradient-text">Brain-Agent Layer</span></h1>
+  <p class="subtitle">Диагностика, heartbeat-мониторинг, агентный протокол и рецепты интеграций</p>
+
+  <div class="metric-row">
+    <div class="metric"><div class="value">2</div><div class="label">Новых MCP tools</div></div>
+    <div class="metric"><div class="value">8</div><div class="label">Health checks</div></div>
+    <div class="metric"><div class="value">6</div><div class="label">Документов</div></div>
+    <div class="metric"><div class="value">33</div><div class="label">Всего MCP tools</div></div>
+  </div>
+
+  <p style="color:var(--muted); font-size:0.85rem; margin-top:2rem;">Навигация: <kbd style="background:var(--card); padding:0.15rem 0.5rem; border-radius:4px; border:1px solid var(--border);">←</kbd> <kbd style="background:var(--card); padding:0.15rem 0.5rem; border-radius:4px; border:1px solid var(--border);">→</kbd> или клик по стрелкам</p>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════ SLIDE 2: Problem -->
+<div class="slide">
+  <h2>Проблема: инструменты есть, <span class="gradient-text">дисциплины нет</span></h2>
+  <p class="subtitle">31 MCP-инструмент, но агенты не знают как и когда их использовать</p>
+
+  <div class="grid-3">
+    <div class="card card-red">
+      <h3>Нет диагностики</h3>
+      <p>Агент не может проверить здоровье системы программно. /health возвращает "ok" даже если embedding-сервер лежит.</p>
+    </div>
+    <div class="card card-red">
+      <h3>Нет истории</h3>
+      <p>Никакого лога событий. Невозможно понять: "когда последний раз прошёл sync?" или "сколько cognify упало за день?"</p>
+    </div>
+    <div class="card card-red">
+      <h3>Нет протокола</h3>
+      <p>Каждая сессия начинается с нуля. Агент не знает что читать перед ответом и что сохранять после.</p>
+    </div>
+  </div>
+
+  <div style="margin-top:2rem;">
+    <p style="text-align:center; color:var(--yellow);">Вдохновение: <strong>gbrain</strong> (github.com/garrytan/gbrain) — brain-first workflow для персональных агентов</p>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════ SLIDE 3: Solution overview -->
+<div class="slide">
+  <h2>Решение: <span class="gradient-text">Brain-Agent Layer</span></h2>
+  <p class="subtitle">Не меняем ядро хранения. Добавляем слой дисциплины поверх.</p>
+
+  <div class="flow">
+    <div class="flow-step"><strong>doctor</strong><br><span style="font-size:0.8rem;color:var(--muted)">диагностика</span></div>
+    <div class="flow-arrow">&rarr;</div>
+    <div class="flow-step"><strong>heartbeat</strong><br><span style="font-size:0.8rem;color:var(--muted)">мониторинг</span></div>
+    <div class="flow-arrow">&rarr;</div>
+    <div class="flow-step"><strong>playbook</strong><br><span style="font-size:0.8rem;color:var(--muted)">протокол</span></div>
+    <div class="flow-arrow">&rarr;</div>
+    <div class="flow-step"><strong>schema</strong><br><span style="font-size:0.8rem;color:var(--muted)">структура</span></div>
+    <div class="flow-arrow">&rarr;</div>
+    <div class="flow-step"><strong>recipes</strong><br><span style="font-size:0.8rem;color:var(--muted)">интеграции</span></div>
+    <div class="flow-arrow">&rarr;</div>
+    <div class="flow-step"><strong>cron</strong><br><span style="font-size:0.8rem;color:var(--muted)">автоматизация</span></div>
+  </div>
+
+  <div class="grid-2" style="margin-top:1.5rem;">
+    <div class="card card-accent">
+      <h3>Код (Go)</h3>
+      <p><code>mcp_doctor.go</code> &mdash; doctor + heartbeat MCP tools, heartbeat logger, heartbeats DB table, REST endpoint. Инструментирование cognify, sync, prune.</p>
+    </div>
+    <div class="card card-accent">
+      <h3>Документация (RU)</h3>
+      <p>Brain Playbook, Brain Schema, Cron Profiles, 3 integration recipes. Всё на русском.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════ SLIDE 4: Doctor tool -->
+<div class="slide left-align">
+  <h2><span class="badge badge-new">NEW</span> MCP Tool: <span class="gradient-text">doctor</span></h2>
+  <p class="subtitle">Агрегированная диагностика системы в одном вызове</p>
+
+  <div class="grid-2 wide">
+    <div>
+      <table>
+        <thead><tr><th>Проверка</th><th>Что смотрит</th><th>Warn если</th></tr></thead>
+        <tbody>
+          <tr><td>postgres</td><td>DB.Ping()</td><td>connection error</td></tr>
+          <tr><td>embed_service</td><td>HTTP GET base/health</td><td>unreachable</td></tr>
+          <tr><td>llm</td><td>HTTP GET /models</td><td>unreachable</td></tr>
+          <tr><td>neo4j</td><td>HTTP ping :7474</td><td>unreachable</td></tr>
+          <tr><td>embedding_coverage</td><td>RecordCount per coll</td><td>&gt;50% пустых</td></tr>
+          <tr><td>bm25_coverage</td><td>BM25Indexes vs colls</td><td>missing indexes</td></tr>
+          <tr><td>graph_connectivity</td><td>orphan nodes %</td><td>&gt;20% orphans</td></tr>
+          <tr><td>memory_staleness</td><td>MIN(updated_at)</td><td>&gt;30 дней</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div>
+      <div class="code-block"><span class="cmt">// Вызов</span>
+<span class="fn">doctor</span>(<span class="str">verbose</span>: <span class="kw">true</span>)
+
+<span class="cmt">// Ответ</span>
+{
+  <span class="str">"status"</span>: <span class="str">"warn"</span>,
+  <span class="str">"checks"</span>: [
+    {<span class="str">"name"</span>: <span class="str">"postgres"</span>,
+     <span class="str">"status"</span>: <span class="str">"ok"</span>,
+     <span class="str">"message"</span>: <span class="str">"Connected"</span>},
+    {<span class="str">"name"</span>: <span class="str">"bm25_coverage"</span>,
+     <span class="str">"status"</span>: <span class="str">"warn"</span>,
+     <span class="str">"message"</span>: <span class="str">"2/4 indexed"</span>,
+     <span class="str">"remediation"</span>:
+       <span class="str">"Re-cognify: docs, notes"</span>}
+  ],
+  <span class="str">"summary"</span>: <span class="str">"7/8 ok, 1 warn"</span>
+}</div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════ SLIDE 5: Heartbeat -->
+<div class="slide">
+  <h2><span class="badge badge-new">NEW</span> MCP Tool: <span class="gradient-text">heartbeat</span></h2>
+  <p class="subtitle">Append-only лог системных событий для анализа трендов</p>
+
+  <div class="grid-2 wide">
+    <div>
+      <h3>Что логируется автоматически</h3>
+      <ul class="feature-list">
+        <li><span class="badge badge-ok">doctor</span> &mdash; результат каждой диагностики</li>
+        <li><span class="badge badge-ok">cognify</span> &mdash; завершение пайплайна (статус, chunks, entities, время)</li>
+        <li><span class="badge badge-ok">sync</span> &mdash; направление, remote URL, типы данных</li>
+        <li><span class="badge badge-ok">prune</span> &mdash; результат очистки графа</li>
+      </ul>
+
+      <h3 style="margin-top:1.5rem;">Хранение</h3>
+      <ul class="feature-list">
+        <li>Таблица <code>heartbeats</code> (PostgreSQL + SQLite)</li>
+        <li>Индекс по <code>(event_type, created_at DESC)</code></li>
+        <li>REST: <code>GET /api/v1/heartbeats?type=doctor&limit=10</code></li>
+      </ul>
+    </div>
+    <div>
+      <div class="code-block"><span class="cmt">// Запрос последних событий</span>
+<span class="fn">heartbeat</span>(
+  <span class="str">event_type</span>: <span class="str">"cognify"</span>,
+  <span class="str">limit</span>: <span class="num">5</span>
+)
+
+<span class="cmt">// Ответ</span>
+{
+  <span class="str">"count"</span>: <span class="num">3</span>,
+  <span class="str">"events"</span>: [
+    {
+      <span class="str">"event_type"</span>: <span class="str">"cognify"</span>,
+      <span class="str">"payload"</span>: {
+        <span class="str">"collection"</span>: <span class="str">"docs"</span>,
+        <span class="str">"status"</span>: <span class="str">"COMPLETED"</span>,
+        <span class="str">"chunks"</span>: <span class="num">42</span>,
+        <span class="str">"entities"</span>: <span class="num">18</span>,
+        <span class="str">"elapsed_ms"</span>: <span class="num">12340</span>
+      },
+      <span class="str">"created_at"</span>: <span class="str">"2026-04-14T..."</span>
+    }
+  ]
+}</div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════ SLIDE 6: Brain Playbook -->
+<div class="slide">
+  <h2>Brain Playbook: <span class="gradient-text">протокол агента</span></h2>
+  <p class="subtitle">Чёткие правила когда читать, когда писать, когда проверять</p>
+
+  <div class="grid-3 wide">
+    <div class="card card-green">
+      <span class="icon">1</span>
+      <h3>Ритуал старта</h3>
+      <p><code>set_context</code> &rarr; <code>wake_up</code> &rarr; <code>doctor</code></p>
+      <p style="margin-top:0.5rem;">Каждая сессия начинается с загрузки контекста и проверки здоровья</p>
+    </div>
+    <div class="card card-green">
+      <span class="icon">2</span>
+      <h3>Читай-перед-ответом</h3>
+      <p><code>recall_memory</code> &rarr; <code>search</code> &rarr; <code>query_entity</code></p>
+      <p style="margin-top:0.5rem;">Проверь существующие знания до использования общих данных</p>
+    </div>
+    <div class="card card-green">
+      <span class="icon">3</span>
+      <h3>Пиши-после-обучения</h3>
+      <p><code>save_memory(room, hall)</code></p>
+      <p style="margin-top:0.5rem;">Немедленно сохраняй факты, решения, инсайты с правильной классификацией</p>
+    </div>
+  </div>
+
+  <div style="margin-top:2rem;">
+    <h3>Правила-триггеры</h3>
+    <table style="max-width:900px;">
+      <thead><tr><th>Триггер</th><th>Действие</th></tr></thead>
+      <tbody>
+        <tr><td>Принято архитектурное решение</td><td><code>save_memory(hall="decision")</code> с <strong>почему</strong></td></tr>
+        <tr><td>Найден root cause бага</td><td><code>save_memory(hall="discovery")</code></td></tr>
+        <tr><td>Новый сервис/endpoint/порт</td><td><code>save_memory(hall="fact")</code> + <code>pin</code></td></tr>
+        <tr><td>Завершена значимая работа</td><td><code>save_memory(hall="event")</code> с датой</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════ SLIDE 7: Brain Schema -->
+<div class="slide">
+  <h2>Brain Schema: <span class="gradient-text">структура знаний</span></h2>
+  <p class="subtitle">MECE-организация: Коллекция &rarr; Room &rarr; Hall &rarr; Tags</p>
+
+  <div class="grid-2 wide">
+    <div>
+      <h3>Rooms (подтемы)</h3>
+      <table>
+        <tbody>
+          <tr><td><code>people</code></td><td>Информация о людях</td></tr>
+          <tr><td><code>companies</code></td><td>Компании, продукты</td></tr>
+          <tr><td><code>decisions</code></td><td>Архитектурные решения</td></tr>
+          <tr><td><code>infrastructure</code></td><td>Серверы, порты, деплой</td></tr>
+          <tr><td><code>bugs</code></td><td>Root causes, фиксы</td></tr>
+          <tr><td><code>ideas</code></td><td>Планы, исследования</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div>
+      <h3>Halls (жанры памяти)</h3>
+      <div style="display:flex; flex-direction:column; gap:0.5rem;">
+        <div class="card" style="padding:0.7rem 1rem;"><code style="color:var(--green)">fact</code> &mdash; версия, IP, путь, число</div>
+        <div class="card" style="padding:0.7rem 1rem;"><code style="color:var(--yellow)">event</code> &mdash; что-то произошло (+ дата)</div>
+        <div class="card" style="padding:0.7rem 1rem;"><code style="color:var(--accent2)">decision</code> &mdash; выбор X вместо Y (+ почему)</div>
+        <div class="card" style="padding:0.7rem 1rem;"><code style="color:#f472b6">preference</code> &mdash; стиль пользователя</div>
+        <div class="card" style="padding:0.7rem 1rem;"><code style="color:#22d3ee">advice</code> &mdash; переиспользуемая рекомендация</div>
+        <div class="card" style="padding:0.7rem 1rem;"><code style="color:#fb923c">discovery</code> &mdash; неочевидный инсайт, gotcha</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="margin-top:1.5rem;">
+    <h3>Pin-приоритеты</h3>
+    <div class="flow">
+      <div class="flow-step" style="border-left:3px solid var(--red);"><strong>10</strong> глобальные preferences</div>
+      <div class="flow-step" style="border-left:3px solid var(--yellow);"><strong>8</strong> критическая инфра</div>
+      <div class="flow-step" style="border-left:3px solid var(--accent);"><strong>5</strong> активные решения</div>
+      <div class="flow-step" style="border-left:3px solid var(--muted);"><strong>1-3</strong> контекст</div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════ SLIDE 8: Recipes -->
+<div class="slide">
+  <h2>Integration Recipes: <span class="gradient-text">рецепты загрузки</span></h2>
+  <p class="subtitle">Воспроизводимые пошаговые инструкции с smoke-тестами и откатом</p>
+
+  <div class="grid-3 wide">
+    <div class="card card-accent">
+      <h3>TEMPLATE.md</h3>
+      <p>Стандартная структура рецепта:</p>
+      <div style="margin-top:0.5rem;">
+        <div class="tag-list">
+          <span class="tag">Назначение</span>
+          <span class="tag">Требования</span>
+          <span class="tag">Шаги</span>
+          <span class="tag">Smoke-тест</span>
+          <span class="tag">Откат</span>
+          <span class="tag">Заметки</span>
+        </div>
+      </div>
+    </div>
+    <div class="card card-green">
+      <h3>Git &rarr; Brain</h3>
+      <p>Анализ истории коммитов через <code>analyze_commits</code>. Извлекает авторов, файлы, связи.</p>
+      <div class="code-block" style="margin-top:0.5rem; font-size:0.75rem; padding:0.7rem;">analyze_commits(
+  repo_path="/path",
+  since="2026-01-01",
+  limit=100
+)</div>
+    </div>
+    <div class="card card-green">
+      <h3>Markdown &rarr; Brain</h3>
+      <p>Два режима: RAG (быстрый, без LLM) и Full (граф + entities).</p>
+      <div class="code-block" style="margin-top:0.5rem; font-size:0.75rem; padding:0.7rem;">cognify(
+  data="...",
+  mode="rag",
+  room="docs",
+  tags=["reference"]
+)</div>
+    </div>
+  </div>
+
+  <div style="margin-top:2rem; text-align:center;">
+    <p style="color:var(--muted);">Будущие рецепты: <span class="tag">email &rarr; brain</span> <span class="tag">calendar &rarr; brain</span> <span class="tag">Slack &rarr; brain</span> <span class="tag">voice &rarr; brain</span></p>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════ SLIDE 9: Cron -->
+<div class="slide">
+  <h2>Cron-профили: <span class="gradient-text">автоматическое обслуживание</span></h2>
+  <p class="subtitle">Внешний cron вызывает MCP-инструменты по расписанию</p>
+
+  <div class="grid-2 wide">
+    <div class="card">
+      <h3>Легковесный (dev)</h3>
+      <table>
+        <tbody>
+          <tr><td><code>*/15 * * * *</code></td><td><code>doctor</code></td><td>Проверка здоровья</td></tr>
+          <tr><td><code>0 3 * * *</code></td><td><code>prune_graph</code></td><td>Dry run очистки</td></tr>
+          <tr><td><code>0 2 * * 0</code></td><td><code>check_drift</code></td><td>Дрифт эмбеддингов</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="card">
+      <h3>Продакшн (сервер)</h3>
+      <table>
+        <tbody>
+          <tr><td><code>*/5 * * * *</code></td><td><code>doctor</code></td><td>+ алерт при fail</td></tr>
+          <tr><td><code>*/15 * * * *</code></td><td><code>sync</code></td><td>Mac &harr; Pi pull</td></tr>
+          <tr><td><code>0 3 * * 0</code></td><td><code>prune_graph</code></td><td>Реальное удаление</td></tr>
+          <tr><td><code>0 2 * * 0</code></td><td><code>check_drift</code></td><td>Дрифт эмбеддингов</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div style="margin-top:1.5rem; max-width:800px;">
+    <div class="code-block"><span class="cmt"># Все MCP tools вызываются единообразно через JSON-RPC</span>
+curl -s -X POST http://localhost:8080/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call",
+       "params":{"name":"<span class="fn">doctor</span>","arguments":{}}}'</div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════ SLIDE 10: Use cases -->
+<div class="slide">
+  <h2>Кейсы использования</h2>
+  <p class="subtitle">Реальные сценарии, где brain-agent layer даёт прирост</p>
+
+  <div class="grid-2 wide">
+    <div class="card card-green">
+      <h3>1. Onboarding нового разработчика</h3>
+      <p>Загрузить docs + README через рецепт <strong>markdown &rarr; brain</strong>. Загрузить git-историю через <strong>git &rarr; brain</strong>. Агент отвечает на вопросы о проекте с цитатами из документации и коммитов.</p>
+    </div>
+    <div class="card card-green">
+      <h3>2. Мониторинг деградации</h3>
+      <p>Cron запускает <code>doctor</code> каждые 15 мин. Если embedding-сервис упал &mdash; <code>heartbeat</code> покажет тренд. Алерт до того, как пользователь заметит пустые ответы.</p>
+    </div>
+    <div class="card card-green">
+      <h3>3. Кросс-проектный контекст</h3>
+      <p>Каждый проект в своей коллекции с rooms. <code>cross_search</code> ищет по всем. Brain schema гарантирует единообразную структуру для фильтрации.</p>
+    </div>
+    <div class="card card-green">
+      <h3>4. Audit trail решений</h3>
+      <p>Все <code>hall="decision"</code> записи доступны через <code>recall_memory(hall="decision")</code>. Через полгода можно восстановить <strong>почему</strong> выбрали JWT вместо sessions.</p>
+    </div>
+    <div class="card card-green">
+      <h3>5. Автоматическая синхронизация</h3>
+      <p>Cron-профиль "продакшн": Mac и Pi синхронизируют memories и interactions каждые 15 минут. <code>heartbeat</code> логирует каждый sync.</p>
+    </div>
+    <div class="card card-green">
+      <h3>6. Диагностика перед деплоем</h3>
+      <p><code>doctor(verbose=true)</code> перед деплоем новой версии. Проверяет что все зависимости на месте, BM25 индексы актуальны, граф не засорён orphans.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════ SLIDE 11: Best practices -->
+<div class="slide">
+  <h2>Лучшие практики</h2>
+
+  <div class="grid-2 wide">
+    <div>
+      <h3>Memory hygiene</h3>
+      <ul class="feature-list">
+        <li>Всегда заполняй <code>room</code> + <code>hall</code> при save_memory</li>
+        <li>Пустые поля снижают полезность recall на ~40%</li>
+        <li>Пиней экономно: wake_up обрезается по бюджету токенов</li>
+        <li>Откреплять устаревшие записи через <code>unpin_memory</code></li>
+        <li>НЕ сохранять пути к файлам &mdash; они stale через неделю</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Doctor workflow</h3>
+      <ul class="feature-list">
+        <li>Запускай <code>doctor</code> в начале длинных сессий</li>
+        <li>Реагируй на <code>remediation</code> до начала работы</li>
+        <li>После крупного ingestion: <code>doctor(verbose=true)</code></li>
+        <li>Мониторь тренды через <code>heartbeat</code></li>
+        <li>В cron: алерт только на <code>"status": "fail"</code></li>
+      </ul>
+    </div>
+  </div>
+
+  <div style="margin-top:2rem;">
+    <h3>Рецепты</h3>
+    <div class="grid-3 wide">
+      <div class="card" style="padding:1rem;">
+        <p style="color:var(--green);font-weight:600;">DO</p>
+        <p>Начинай с RAG-режима. Добавляй full mode только для важных документов.</p>
+      </div>
+      <div class="card" style="padding:1rem;">
+        <p style="color:var(--green);font-weight:600;">DO</p>
+        <p>Устанавливай room/tags при ingestion. Фильтрованный поиск в 3x точнее.</p>
+      </div>
+      <div class="card" style="padding:1rem;">
+        <p style="color:var(--red);font-weight:600;">DON'T</p>
+        <p>Не загружай >50KB за один вызов cognify. Разбивай на секции.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════ SLIDE 12: Pros/Cons -->
+<div class="slide">
+  <h2>Плюсы и минусы</h2>
+
+  <div class="pros-cons">
+    <div class="pros">
+      <h3 style="color:var(--green);">Плюсы</h3>
+      <ul>
+        <li>Агент может программно проверить здоровье всей системы за один вызов</li>
+        <li>Heartbeat даёт audit trail всех операций (cognify, sync, prune)</li>
+        <li>Playbook устраняет "холодный старт" &mdash; агент знает что делать</li>
+        <li>Brain schema обеспечивает единообразие между проектами и коллекциями</li>
+        <li>Cron-профили позволяют обнаружить деградацию до жалобы пользователя</li>
+        <li>Рецепты снижают порог входа для новых источников данных</li>
+        <li>Всё обратно совместимо &mdash; ядро хранения не затронуто</li>
+        <li>Doctor remediation на русском &mdash; actionable, не просто "check failed"</li>
+      </ul>
+    </div>
+    <div class="cons">
+      <h3 style="color:var(--red);">Минусы / ограничения</h3>
+      <ul>
+        <li>Doctor не в realtime &mdash; это snapshot на момент вызова</li>
+        <li>Heartbeat растёт бесконечно (нет auto-cleanup пока)</li>
+        <li>Cron внешний &mdash; нет встроенного scheduler в Levara</li>
+        <li>Нет push-уведомлений &mdash; только pull через heartbeat</li>
+        <li>Рецепты пока только 2 (git, markdown), нет email/calendar</li>
+        <li>Neo4j check через HTTP ping :7474, не полноценный driver test</li>
+        <li>Memory staleness считает по room, не по отдельным записям</li>
+        <li>Playbook &mdash; это документ, не enforce (агент может проигнорировать)</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════ SLIDE 13: Architecture -->
+<div class="slide">
+  <h2>Архитектура изменений</h2>
+
+  <div class="grid-2 wide">
+    <div>
+      <h3>Новые файлы</h3>
+      <table>
+        <tbody>
+          <tr><td><code>mcp_doctor.go</code></td><td>Doctor + heartbeat tools, logger</td></tr>
+          <tr><td><code>LEVARA_BRAIN_PLAYBOOK.md</code></td><td>Протокол агента</td></tr>
+          <tr><td><code>brain-schema.md</code></td><td>Структура знаний</td></tr>
+          <tr><td><code>cron-profiles.md</code></td><td>Расписания обслуживания</td></tr>
+          <tr><td><code>recipes/TEMPLATE.md</code></td><td>Шаблон рецепта</td></tr>
+          <tr><td><code>recipes/git-*.md</code></td><td>Git &rarr; Brain рецепт</td></tr>
+          <tr><td><code>recipes/markdown-*.md</code></td><td>Markdown &rarr; Brain рецепт</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div>
+      <h3>Изменённые файлы</h3>
+      <table>
+        <tbody>
+          <tr><td><code>mcp.go</code></td><td>+2 tool defs, +2 dispatch cases, +3 heartbeat calls</td></tr>
+          <tr><td><code>schema.go</code></td><td>+heartbeats table (PG + SQLite)</td></tr>
+          <tr><td><code>api.go</code></td><td>+GET /api/v1/heartbeats</td></tr>
+        </tbody>
+      </table>
+
+      <h3 style="margin-top:1.5rem;">Метрики</h3>
+      <div class="metric-row" style="justify-content:flex-start;">
+        <div class="metric"><div class="value">+1147</div><div class="label">строк кода</div></div>
+        <div class="metric"><div class="value">10</div><div class="label">файлов</div></div>
+        <div class="metric"><div class="value">0</div><div class="label">breaking changes</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════ SLIDE 14: What's next -->
+<div class="slide title-slide">
+  <h2>Что дальше</h2>
+
+  <div class="grid-3 wide" style="margin-top:1.5rem;">
+    <div class="card card-yellow">
+      <h3>Ближайшее</h3>
+      <ul class="feature-list">
+        <li>Heartbeat auto-cleanup (TTL 30 дней)</li>
+        <li>WebUI: dashboard с doctor status</li>
+        <li>WebUI: heartbeat timeline</li>
+      </ul>
+    </div>
+    <div class="card card-accent">
+      <h3>Следующая итерация</h3>
+      <ul class="feature-list">
+        <li>Рецепт: email &rarr; brain</li>
+        <li>Рецепт: calendar &rarr; brain</li>
+        <li>Push-уведомления (webhook)</li>
+        <li>Встроенный scheduler</li>
+      </ul>
+    </div>
+    <div class="card card-green">
+      <h3>Перспектива</h3>
+      <ul class="feature-list">
+        <li>Memory consolidation loop</li>
+        <li>Автоматический decay/summarize</li>
+        <li>Multi-agent coordination</li>
+        <li>Feedback &rarr; rerank tuning</li>
+      </ul>
+    </div>
+  </div>
+
+  <div style="margin-top:3rem;">
+    <p class="subtitle">Brain-agent layer: инструменты + дисциплина = качественная память</p>
+  </div>
+</div>
+
+</div><!-- /deck -->
+
+<!-- Navigation -->
+<div class="nav">
+  <button id="prev" onclick="navigate(-1)">&larr;</button>
+  <span class="counter" id="counter">1 / 14</span>
+  <button id="next" onclick="navigate(1)">&rarr;</button>
+</div>
+
+<script>
+  let current = 0;
+  const slides = document.querySelectorAll('.slide');
+  const total = slides.length;
+  const counter = document.getElementById('counter');
+  const progress = document.getElementById('progress');
+
+  function show(idx) {
+    slides.forEach((s, i) => {
+      s.classList.remove('active', 'prev');
+      if (i === idx) s.classList.add('active');
+      else if (i < idx) s.classList.add('prev');
+    });
+    counter.textContent = `${idx + 1} / ${total}`;
+    progress.style.width = `${((idx + 1) / total) * 100}%`;
+  }
+
+  function navigate(dir) {
+    current = Math.max(0, Math.min(total - 1, current + dir));
+    show(current);
+  }
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); navigate(1); }
+    if (e.key === 'ArrowLeft') { e.preventDefault(); navigate(-1); }
+    if (e.key === 'Home') { current = 0; show(current); }
+    if (e.key === 'End') { current = total - 1; show(current); }
+  });
+
+  // Touch support
+  let touchStartX = 0;
+  document.addEventListener('touchstart', (e) => { touchStartX = e.touches[0].clientX; });
+  document.addEventListener('touchend', (e) => {
+    const diff = touchStartX - e.changedTouches[0].clientX;
+    if (Math.abs(diff) > 50) navigate(diff > 0 ? 1 : -1);
+  });
+
+  show(0);
+</script>
+
+</body>
+</html>

@@ -1,0 +1,14 @@
+=== RUN   TestMock_SubstringMatchWinsOverAny
+--- PASS: TestMock_SubstringMatchWinsOverAny (0.00s)
+=== RUN   TestMock_OnAnyFallback
+--- PASS: TestMock_OnAnyFallback (0.00s)
+=== RUN   TestMock_UnmatchedReturnsErrorNotZero
+--- PASS: TestMock_UnmatchedReturnsErrorNotZero (0.00s)
+=== RUN   TestMock_FailRuleReturnsErr
+--- PASS: TestMock_FailRuleReturnsErr (0.00s)
+=== RUN   TestMock_CallsRecorded
+--- PASS: TestMock_CallsRecorded (0.00s)
+=== RUN   TestMock_CtxCancelled
+--- PASS: TestMock_CtxCancelled (0.00s)
+PASS
+ok  	github.com/stek0v/cognevra/pkg/llm/mock	1.751s

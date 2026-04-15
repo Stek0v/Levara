@@ -185,6 +185,9 @@ func TestChunkBySliding_SmallWindowFiltered(t *testing.T) {
 }
 
 func TestChunkBySliding_LargeText(t *testing.T) {
+	if testing.Short() || raceEnabled {
+		t.Skip("perf threshold (100ms for 1MB) calibrated for non-race non-short runs")
+	}
 	// 1MB of text — should complete in < 100ms
 	text := strings.Repeat("Lorem ipsum dolor sit amet. ", 40000) // ~1.1MB
 	start := time.Now()

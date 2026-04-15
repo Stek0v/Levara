@@ -1,0 +1,7 @@
+=== RUN   TestPipeline_DeepSeek_StructuredOutput
+2026/04/15 17:35:24 [llm] structured plain via openai: ok on attempt 1/3
+2026/04/15 17:35:24 [pipeline] WARNING: EmbedEndpoint not configured — vector indexing SKIPPED
+2026/04/15 17:35:24 [pipeline] WARNING: Collections not configured — vector indexing SKIPPED
+--- PASS: TestPipeline_DeepSeek_StructuredOutput (5.83s)
+PASS
+ok  	github.com/stek0v/cognevra/pkg/orchestrator	6.358s

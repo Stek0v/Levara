@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -17,6 +18,7 @@ type RateLimiter struct {
 	maxRequests int
 	available   atomic.Int32 // exported for health endpoint
 	stopRefill  chan struct{}
+	closeOnce   sync.Once
 }
 
 // NewRateLimiter wraps provider with rate limiting.
@@ -94,7 +96,7 @@ func (rl *RateLimiter) Interval() time.Duration {
 	return rl.interval
 }
 
-// Close stops the background refill goroutine.
+// Close stops the background refill goroutine. Safe to call multiple times.
 func (rl *RateLimiter) Close() {
-	close(rl.stopRefill)
+	rl.closeOnce.Do(func() { close(rl.stopRefill) })
 }
