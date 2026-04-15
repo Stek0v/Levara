@@ -10,8 +10,74 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
+
+// schemaUnsupportedEndpoints remembers endpoints that rejected json_schema
+// response_format so we don't waste another round-trip next time. Populated
+// when the first schema attempt returns HTTP 400 with a response_format-shaped
+// error message. Seeded with known offenders below.
+var schemaUnsupportedEndpoints sync.Map
+
+func init() {
+	// DeepSeek: api.deepseek.com returns HTTP 400 with
+	//   "This response_format type is unavailable now"
+	// for json_schema. Plain json_object works, but plain fallback works too.
+	schemaUnsupportedEndpoints.Store("api.deepseek.com", struct{}{})
+}
+
+// endpointSkipsJSONSchema reports whether the provider's endpoint is known to
+// reject response_format: json_schema. Matches by substring on the endpoint
+// host so any path suffix (/v1, /v2/...) works. Only inspects providers that
+// expose an Endpoint() string method.
+func endpointSkipsJSONSchema(p Provider) bool {
+	ep, ok := providerEndpoint(p)
+	if !ok {
+		return false
+	}
+	hit := false
+	schemaUnsupportedEndpoints.Range(func(k, _ any) bool {
+		if host, ok := k.(string); ok && strings.Contains(ep, host) {
+			hit = true
+			return false
+		}
+		return true
+	})
+	return hit
+}
+
+// rememberEndpointUnsupportsSchema records that this endpoint rejected
+// json_schema. Idempotent; safe to call from concurrent goroutines.
+func rememberEndpointUnsupportsSchema(p Provider) {
+	if ep, ok := providerEndpoint(p); ok && ep != "" {
+		schemaUnsupportedEndpoints.Store(ep, struct{}{})
+	}
+}
+
+// providerEndpoint pulls the endpoint URL out of providers that expose it.
+func providerEndpoint(p Provider) (string, bool) {
+	type endpointer interface{ Endpoint() string }
+	if e, ok := p.(endpointer); ok {
+		return e.Endpoint(), true
+	}
+	return "", false
+}
+
+// looksLikeResponseFormatReject heuristically detects an HTTP-400 response
+// that complains about response_format. We look for either the OpenAI-style
+// "Invalid parameter: response_format" or DeepSeek's wording.
+func looksLikeResponseFormatReject(errMsg string) bool {
+	s := strings.ToLower(errMsg)
+	if !strings.Contains(s, "status 400") && !strings.Contains(s, "400") {
+		return false
+	}
+	return strings.Contains(s, "response_format") ||
+		strings.Contains(s, "response format") ||
+		strings.Contains(s, "json_schema") ||
+		strings.Contains(s, "json schema") ||
+		strings.Contains(s, "unavailable now")
+}
 
 // StructuredRequest configures a structured output LLM call.
 type StructuredRequest struct {
@@ -141,7 +207,16 @@ func StructuredCall(ctx context.Context, req StructuredRequest) (string, error) 
 
 // structuredCallViaProvider uses the Provider interface for structured calls.
 // First tries with ResponseFormat (json_schema), then retries with plain JSON instruction.
+//
+// Fast path: if the provider's endpoint is in schemaUnsupportedEndpoints
+// (known offender like DeepSeek, or one that rejected schema earlier in the
+// process) we skip the wasted schema attempt and go straight to plain JSON.
 func structuredCallViaProvider(ctx context.Context, req StructuredRequest) (string, error) {
+	// Fast path: skip schema entirely for known-unsupporting endpoints.
+	if endpointSkipsJSONSchema(req.Provider) {
+		return structuredCallPlainJSON(ctx, req)
+	}
+
 	msgs := []Message{
 		{Role: "system", Content: req.SystemPrompt},
 		{Role: "user", Content: req.UserPrompt},
@@ -169,6 +244,12 @@ func structuredCallViaProvider(ctx context.Context, req StructuredRequest) (stri
 		log.Printf("[llm] structured via %s: invalid JSON, retrying plain mode", req.Provider.Name())
 	} else {
 		log.Printf("[llm] structured via %s: initial call failed: %v", req.Provider.Name(), err)
+		// Learn: if this looks like a response_format rejection, remember it
+		// so the next call for this endpoint skips the schema attempt.
+		if looksLikeResponseFormatReject(err.Error()) {
+			rememberEndpointUnsupportsSchema(req.Provider)
+			log.Printf("[llm] structured: memoized endpoint as schema-unsupported")
+		}
 	}
 
 	// Retry loop: without response_format, append JSON instruction
@@ -202,6 +283,40 @@ func structuredCallViaProvider(ctx context.Context, req StructuredRequest) (stri
 	}
 
 	return "", fmt.Errorf("structured call via %s failed after %d retries: %w", req.Provider.Name(), req.MaxRetries, lastErr)
+}
+
+// structuredCallPlainJSON is the fast path for providers that don't accept
+// response_format: json_schema. Appends a "respond with valid JSON only"
+// instruction and retries up to MaxRetries on parse failure. No schema attempt
+// is made at all — use this only when you're sure schema is unsupported.
+func structuredCallPlainJSON(ctx context.Context, req StructuredRequest) (string, error) {
+	var lastErr error
+	for attempt := 1; attempt <= req.MaxRetries; attempt++ {
+		cr := CompletionRequest{
+			Model: req.Model,
+			Messages: []Message{
+				{Role: "system", Content: req.SystemPrompt},
+				{Role: "user", Content: req.UserPrompt + "\n\nPlease respond with valid JSON only."},
+			},
+			Temperature: req.Temperature,
+		}
+		resp, err := req.Provider.ChatCompletion(ctx, cr)
+		if err != nil {
+			lastErr = fmt.Errorf("attempt %d: %w", attempt, err)
+			log.Printf("[llm] structured plain via %s: attempt %d/%d failed: %v",
+				req.Provider.Name(), attempt, req.MaxRetries, err)
+			continue
+		}
+		extracted := extractJSONFromResponse(resp.Content)
+		if extracted != "" && isValidJSON(extracted) {
+			log.Printf("[llm] structured plain via %s: ok on attempt %d/%d",
+				req.Provider.Name(), attempt, req.MaxRetries)
+			return extracted, nil
+		}
+		lastErr = fmt.Errorf("attempt %d: response is not valid JSON", attempt)
+	}
+	return "", fmt.Errorf("structured plain via %s failed after %d retries: %w",
+		req.Provider.Name(), req.MaxRetries, lastErr)
 }
 
 // doStructuredCall makes a single LLM HTTP call, optionally with response_format.
