@@ -65,6 +65,7 @@ import (
 	"github.com/stek0v/cognevra/pkg/llmproxy"
 	"github.com/stek0v/cognevra/pkg/observe"
 	"github.com/stek0v/cognevra/pkg/router"
+	"github.com/stek0v/cognevra/pkg/runreg"
 	"github.com/stek0v/cognevra/pkg/storage"
 	pb "github.com/stek0v/cognevra/proto/pb"
 	"google.golang.org/grpc"
@@ -470,6 +471,11 @@ func main() {
 	// Adaptive router weights (feedback-driven learning)
 	adaptiveWeights := router.NewAdaptiveWeights(pgDB, 0.1)
 
+	// Shared background-pipeline registry. Must be the same *runreg.Registry
+	// for both REST and MCP so a cognify run started via /api/v1/cognify is
+	// visible to MCP's cognify_status, and vice versa.
+	runs := runreg.New()
+
 	// Protected routes: Cognee-compatible API (datasets, upload, cognify, search)
 	vectorHttp.RegisterCogneeAPI(api, vectorHttp.APIConfig{
 		PostgresDSN:     pgDSN,
@@ -486,18 +492,20 @@ func main() {
 		FileStorage:     fileStore,
 		Logger:          srvLog,
 		AdaptiveWeights: adaptiveWeights,
+		Runs:            runs,
 	})
 
 	// MCP (Model Context Protocol) server — JSON-RPC 2.0 for AI agent integration
 	vectorHttp.RegisterMCPAPI(app, vectorHttp.APIConfig{
-		EmbedEndpoint:   embedEndpoint,
-		EmbedModel:      embedModel,
-		Collections:     colManager,
-		DB:              pgDB,
-		BM25Indexes:     grpcSvc.BM25Indexes(),
-		LLMCache:        llmCache,
-		RerankEndpoint:  os.Getenv("RERANK_ENDPOINT"),
-		RerankModel:     os.Getenv("RERANK_MODEL"),
+		EmbedEndpoint:  embedEndpoint,
+		EmbedModel:     embedModel,
+		Collections:    colManager,
+		DB:             pgDB,
+		BM25Indexes:    grpcSvc.BM25Indexes(),
+		LLMCache:       llmCache,
+		RerankEndpoint: os.Getenv("RERANK_ENDPOINT"),
+		RerankModel:    os.Getenv("RERANK_MODEL"),
+		Runs:           runs,
 	})
 
 	// Cache stats endpoint

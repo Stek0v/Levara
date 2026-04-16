@@ -35,6 +35,7 @@ import (
 	"github.com/stek0v/cognevra/pkg/orchestrator"
 	"github.com/stek0v/cognevra/pkg/rerank"
 	"github.com/stek0v/cognevra/pkg/router"
+	"github.com/stek0v/cognevra/pkg/runreg"
 	"github.com/stek0v/cognevra/pipeline"
 )
 
@@ -429,10 +430,10 @@ func (h *mcpHandler) toolCognify(ctx context.Context, args map[string]any) mcpTo
 		collection = "default"
 	}
 
-	status := &pipelineRunStatus{
+	status := &runreg.Status{
 		RunID: runID, Status: "RUNNING", Stage: "starting", StartedAt: time.Now(),
 	}
-	pipelineRuns.Store(runID, status)
+	h.cfg.Runs.Store(runID, status)
 
 	// Validate that embedding service is configured
 	if h.cfg.EmbedEndpoint == "" {
@@ -798,7 +799,7 @@ func (h *mcpHandler) toolCognifyStatus(args map[string]any) mcpToolResult {
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: 'run_id' required"}}, IsError: true}
 	}
 
-	val, ok := pipelineRuns.Load(runID)
+	val, ok := h.cfg.Runs.Load(runID)
 	if !ok {
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("Run %s not found.", runID)}}, IsError: true}
 	}
@@ -845,10 +846,10 @@ func (h *mcpHandler) toolAnalyzeCommits(ctx context.Context, args map[string]any
 		runID := uuid.New().String()
 		collection := "git_commits"
 
-		status := &pipelineRunStatus{
+		status := &runreg.Status{
 			RunID: runID, Status: "RUNNING", Stage: "starting", StartedAt: time.Now(),
 		}
-		pipelineRuns.Store(runID, status)
+		h.cfg.Runs.Store(runID, status)
 
 		pipeCfg := orchestrator.Config{
 			ChunkStrategy:  "merged",
