@@ -141,3 +141,125 @@ func TestToolDelete_MissingRowNoError(t *testing.T) {
 		t.Fatalf("IsError = true, want false on missing row")
 	}
 }
+
+// setupPruneTestDB builds a sqlite DB with every table ToolPrune touches
+// (see pruneTables). Rows are pre-seeded so the happy-path test can
+// assert post-prune counts.
+func setupPruneTestDB(t *testing.T) *fakeDeps {
+	t.Helper()
+	f, _ := os.CreateTemp("", "mcp-prune-test-*.db")
+	path := f.Name()
+	f.Close()
+
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() {
+		db.Close()
+		os.Remove(path)
+	})
+
+	// Same column lists used by the real schema; only the bits ToolPrune
+	// reads (table existence) matter here, so minimal schemas are fine.
+	stmts := []string{
+		`CREATE TABLE dataset_data (dataset_id TEXT, data_id TEXT)`,
+		`CREATE TABLE data (id TEXT PRIMARY KEY)`,
+		`CREATE TABLE datasets (id TEXT PRIMARY KEY)`,
+		`CREATE TABLE graph_nodes (id TEXT PRIMARY KEY)`,
+		`CREATE TABLE graph_edges (id TEXT PRIMARY KEY)`,
+	}
+	for _, s := range stmts {
+		if _, err := db.Exec(s); err != nil {
+			t.Fatalf("create: %v", err)
+		}
+	}
+
+	// Seed one row per table so the post-prune count=0 assertion is
+	// meaningful (counting empty tables would pass trivially).
+	seeds := []string{
+		`INSERT INTO dataset_data (dataset_id, data_id) VALUES ('ds1', 'd1')`,
+		`INSERT INTO data (id) VALUES ('d1')`,
+		`INSERT INTO datasets (id) VALUES ('ds1')`,
+		`INSERT INTO graph_nodes (id) VALUES ('n1')`,
+		`INSERT INTO graph_edges (id) VALUES ('e1')`,
+	}
+	for _, s := range seeds {
+		if _, err := db.Exec(s); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+	return &fakeDeps{db: db}
+}
+
+func TestToolPrune_NilDBNoPanic(t *testing.T) {
+	// nil DB path mirrors ToolDelete: silent no-op, success message.
+	got := ToolPrune(context.Background(), nilDBDeps{})
+	if got.IsError {
+		t.Fatalf("IsError = true, want false (nil DB should be a silent no-op)")
+	}
+	if len(got.Content) == 0 || !strings.Contains(got.Content[0].Text, "pruned") {
+		t.Fatalf("content = %+v, want 'pruned' message", got.Content)
+	}
+}
+
+func TestToolPrune_ClearsEveryKnownTable(t *testing.T) {
+	// End-to-end: with one row per prune target, a single ToolPrune call
+	// must leave each table empty. This is the regression net against
+	// future pruneTables edits that forget to add a new table.
+	deps := setupPruneTestDB(t)
+
+	got := ToolPrune(context.Background(), deps)
+	if got.IsError {
+		t.Fatalf("IsError = true, want false; content=%+v", got.Content)
+	}
+
+	for _, table := range pruneTables {
+		var n int
+		if err := deps.db.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&n); err != nil {
+			t.Fatalf("count %s: %v", table, err)
+		}
+		if n != 0 {
+			t.Errorf("table %s: count = %d after prune, want 0", table, n)
+		}
+	}
+}
+
+func TestToolPrune_MissingTableIsBestEffort(t *testing.T) {
+	// If a table is missing (e.g. schema drift in a minority deployment),
+	// ToolPrune must still succeed for the tables that do exist. This
+	// locks in the "errors are swallowed" contract from pre-refactor.
+	f, _ := os.CreateTemp("", "mcp-prune-partial-*.db")
+	path := f.Name()
+	f.Close()
+
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() {
+		db.Close()
+		os.Remove(path)
+	})
+
+	// Only datasets exists; the other four pruneTables are absent.
+	if _, err := db.Exec(`CREATE TABLE datasets (id TEXT PRIMARY KEY)`); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO datasets (id) VALUES ('x')`); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	got := ToolPrune(context.Background(), &fakeDeps{db: db})
+	if got.IsError {
+		t.Fatalf("IsError = true, want false on partial schema")
+	}
+
+	var n int
+	if err := db.QueryRow("SELECT COUNT(*) FROM datasets").Scan(&n); err != nil {
+		t.Fatalf("count datasets: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("datasets count = %d after prune, want 0 even when other tables are missing", n)
+	}
+}
