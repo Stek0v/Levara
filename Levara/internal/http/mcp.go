@@ -783,16 +783,11 @@ func (h *mcpHandler) toolDelete(ctx context.Context, args map[string]any) mcpToo
 	return mcp.ToolDelete(ctx, h, args)
 }
 
+// toolPrune is a thin shim over mcp.ToolPrune. F-4 wave 3b moved the
+// body into pkg/mcp; the full table list lives in pkg/mcp/deps.go's
+// pruneTables.
 func (h *mcpHandler) toolPrune(ctx context.Context) mcpToolResult {
-	if h.cfg.DB != nil {
-		h.cfg.DB.ExecContext(ctx, "DELETE FROM dataset_data")
-		h.cfg.DB.ExecContext(ctx, "DELETE FROM data")
-		h.cfg.DB.ExecContext(ctx, "DELETE FROM datasets")
-		h.cfg.DB.ExecContext(ctx, "DELETE FROM graph_nodes")
-		h.cfg.DB.ExecContext(ctx, "DELETE FROM graph_edges")
-	}
-
-	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "All data pruned."}}}
+	return mcp.ToolPrune(ctx, h)
 }
 
 func (h *mcpHandler) toolCognifyStatus(args map[string]any) mcpToolResult {
