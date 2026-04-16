@@ -38,6 +38,7 @@ import (
 	"github.com/stek0v/cognevra/pkg/orchestrator"
 	"github.com/stek0v/cognevra/pkg/rerank"
 	"github.com/stek0v/cognevra/pkg/router"
+	"github.com/stek0v/cognevra/pkg/runreg"
 	"github.com/stek0v/cognevra/pkg/storage"
 	"github.com/stek0v/cognevra/pkg/temporal"
 	"github.com/stek0v/cognevra/pipeline"
@@ -64,6 +65,10 @@ type APIConfig struct {
 	RerankTimeoutMs int    // HTTP timeout in ms, 0 = default 5000ms
 	// Adaptive router (feedback-driven weight learning)
 	AdaptiveWeights *router.AdaptiveWeights // nil = no adaptive routing
+	// Runs tracks background cognify / analyze-commits pipelines. Must be
+	// the same *runreg.Registry as the one passed to RegisterMCPAPI so that
+	// MCP clients can poll REST-initiated runs and vice versa.
+	Runs *runreg.Registry
 }
 
 // RegisterCogneeAPI registers all Cognee-compatible endpoints on the Fiber app.
@@ -92,8 +97,8 @@ func RegisterCogneeAPI(app fiber.Router, cfg APIConfig) {
 
 	// U4: Cognify trigger + status + SSE stream
 	app.Post("/cognify", cognifyHandler(cfg))
-	app.Get("/cognify/:runId/status", cognifyStatusHandler())
-	app.Get("/cognify/:runId/stream", cognifyStreamHandler())
+	app.Get("/cognify/:runId/status", cognifyStatusHandler(cfg))
+	app.Get("/cognify/:runId/stream", cognifyStreamHandler(cfg))
 
 	// U6: Memify — post-cognify graph enrichment + SSE stream
 	app.Post("/memify", memifyHandler(cfg))
@@ -537,21 +542,10 @@ func addHandler(cfg APIConfig) fiber.Handler {
 }
 
 // ── U4: Cognify ──
-
-// pipelineRuns tracks background cognify pipeline statuses.
-var pipelineRuns sync.Map // runID → *pipelineRunStatus
-
-type pipelineRunStatus struct {
-	RunID     string    `json:"pipeline_run_id"`
-	Status    string    `json:"status"` // RUNNING, COMPLETED, FAILED
-	Stage     string    `json:"stage"`
-	Message   string    `json:"message"`
-	Chunks    int       `json:"chunks_created"`
-	Entities  int       `json:"entities_extracted"`
-	Edges     int       `json:"edges_extracted"`
-	ElapsedMs int64     `json:"elapsed_ms"`
-	StartedAt time.Time `json:"started_at"`
-}
+//
+// Background run status lives in pkg/runreg. F-4 wave 3j-prep moved the
+// package-level sync.Map + pipelineRunStatus type into that package so the
+// cognify tools in pkg/mcp can share it without importing internal/http.
 
 // PersistPipelineStatus writes pipeline completion status to the data table.
 // Called after cognify finishes (success or failure) to enable skip-if-done.
@@ -755,13 +749,13 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 			})
 		}
 
-		runStatus := &pipelineRunStatus{
+		runStatus := &runreg.Status{
 			RunID:     runID,
 			Status:    "RUNNING",
 			Stage:     "starting",
 			StartedAt: time.Now(),
 		}
-		pipelineRuns.Store(runID, runStatus)
+		cfg.Runs.Store(runID, runStatus)
 
 		// P2.1: Load session context if session_id provided
 		var sessionContext string
@@ -851,10 +845,10 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 	}
 }
 
-func cognifyStatusHandler() fiber.Handler {
+func cognifyStatusHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		runID := c.Params("runId")
-		if val, ok := pipelineRuns.Load(runID); ok {
+		if val, ok := cfg.Runs.Load(runID); ok {
 			return c.JSON(val)
 		}
 		return c.Status(404).JSON(fiber.Map{"detail": "run not found"})
@@ -864,10 +858,10 @@ func cognifyStatusHandler() fiber.Handler {
 // cognifyStreamHandler streams pipeline progress via Server-Sent Events (SSE).
 // GET /cognify/:runId/stream
 // React frontend: const es = new EventSource("/api/v1/cognify/{runId}/stream")
-func cognifyStreamHandler() fiber.Handler {
+func cognifyStreamHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		runID := c.Params("runId")
-		if _, ok := pipelineRuns.Load(runID); !ok {
+		if _, ok := cfg.Runs.Load(runID); !ok {
 			return c.Status(404).JSON(fiber.Map{"detail": "run not found"})
 		}
 
@@ -879,13 +873,12 @@ func cognifyStreamHandler() fiber.Handler {
 		c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
 			lastStage := ""
 			for {
-				val, ok := pipelineRuns.Load(runID)
+				status, ok := cfg.Runs.Load(runID)
 				if !ok {
 					fmt.Fprintf(w, "event: error\ndata: {\"error\":\"run not found\"}\n\n")
 					w.Flush()
 					return
 				}
-				status := val.(*pipelineRunStatus)
 
 				// Send update if stage changed or terminal
 				if status.Stage != lastStage || status.Status != "RUNNING" {
