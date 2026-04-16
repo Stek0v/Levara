@@ -87,6 +87,15 @@ type mcpHandler struct {
 	sessions *mcp.SessionStore
 }
 
+// DB implements mcp.Deps: exposes the shared *sql.DB to tool functions
+// that have migrated into pkg/mcp. May return nil when no PostgresDSN
+// is configured.
+func (h *mcpHandler) DB() *sql.DB { return h.cfg.DB }
+
+// Q implements mcp.Deps: forwards to the package-level Q() so tools in
+// pkg/mcp stay agnostic of internal/http's sqlcompat state.
+func (h *mcpHandler) Q(query string) string { return Q(query) }
+
 // getOrValidateSession returns the session for the given ID, or nil if invalid.
 func (h *mcpHandler) getOrValidateSession(sessionID string) *mcpSession {
 	return h.sessions.Get(sessionID)
@@ -767,17 +776,11 @@ func (h *mcpHandler) toolListData(ctx context.Context, args map[string]any) mcpT
 	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(out)}}}
 }
 
+// toolDelete is a thin shim over mcp.ToolDelete. F-4 wave 3a moved the
+// body into pkg/mcp to establish the Deps-interface pattern; this wrapper
+// stays until the handler itself migrates.
 func (h *mcpHandler) toolDelete(ctx context.Context, args map[string]any) mcpToolResult {
-	dsID, _ := args["dataset_id"].(string)
-	if dsID == "" {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: 'dataset_id' required"}}, IsError: true}
-	}
-
-	if h.cfg.DB != nil {
-		h.cfg.DB.ExecContext(ctx, Q("DELETE FROM datasets WHERE id = $1"), dsID)
-	}
-
-	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("Dataset %s deleted.", dsID)}}}
+	return mcp.ToolDelete(ctx, h, args)
 }
 
 func (h *mcpHandler) toolPrune(ctx context.Context) mcpToolResult {
