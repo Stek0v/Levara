@@ -20,7 +20,7 @@ Live-документ. Каждая задача фиксирует статус
 
 | ID | Задача | Статус | Commit |
 |---|---|---|---|
-| F-1 | Развязка `db.mu` (WAL fsync + JSON marshal вне лока) | ⬜ pending | — |
+| F-1 | Развязка `db.mu` — benchmarked + disk.Write moved outside lock. Bottleneck (fsync) was already decoupled via group commit. Lock scope ~15μs. +4-5% throughput. CLAUDE.md updated. | ✅ done | PR #3 |
 | F-2 | ADR: три слоя графа (`graph` / `graphdb` / `graphstore`) | ✅ done | this batch |
 | F-3 | Решить судьбу `pkg/graphstore` (unused abstraction) | ⬜ deferred → см. ADR-001 | — |
 | F-4 | Вынос MCP из `internal/http` в `pkg/mcp` | ⬜ deferred (4375 LOC) — requires plan | — |

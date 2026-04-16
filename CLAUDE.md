@@ -88,11 +88,25 @@ Key shared components (duplicated across test files):
 - `LanceRecord/LancePayload` — LanceDB Pydantic schema (dim=1024)
 - `QUERIES[]` — 15 semantic queries with expected keywords
 
-## Cognevra Write Bottlenecks
+## Cognevra Write Path
 
-1. **WAL fsync** (~10-30ms/batch) — `wal.go:115 file.Sync()`
-2. **db.mu lock scope** (~20-70ms) — JSON marshal + arena + disk under one mutex (`db.go:199-236`)
-3. **HTTP round-trip** (~2-5ms/batch) — microservice architecture tax
+Insert throughput with group-commit WAL (measured 2026-04-16):
+
+| Workers | inserts/sec | Scaling |
+|---------|-------------|---------|
+| 1       | 188         | 1.0×    |
+| 4       | 816         | 4.3×    |
+| 8       | 1616        | 8.6×    |
+
+db.mu hold time is ~15μs per Insert (arena.Add + WAL buffer + map updates).
+JSON marshal and disk.Write are both outside the lock. WAL fsync (~5ms) is
+decoupled via group commit (fsyncLoop coalesces up to 16 requests or 2ms
+window). Concurrent writers scale linearly thanks to this.
+
+Remaining write-path costs:
+1. **WAL fsync** (~5ms amortized) — the dominant cost at single-writer
+2. **HTTP round-trip** (~2-5ms/batch) — microservice architecture tax
+3. **HNSW indexing** — async via indexerLoop, doesn't affect Insert latency
 
 ## Conventions
 
