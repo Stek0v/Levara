@@ -1069,71 +1069,9 @@ func (h *mcpHandler) toolRecallMemory(ctx context.Context, args map[string]any) 
 	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(out)}}}
 }
 
+// toolListMemories is a thin shim over mcp.ToolListMemories (F-4 wave 3f).
 func (h *mcpHandler) toolListMemories(ctx context.Context, args map[string]any) mcpToolResult {
-	if h.cfg.DB == nil {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "[]"}}}
-	}
-
-	filterType, _ := args["type"].(string)
-	collectionName, _ := args["collection"].(string)
-	room, _ := args["room"].(string)
-	hall, _ := args["hall"].(string)
-
-	var conds []string
-	var qargs []any
-	pos := 1
-	if filterType != "" {
-		conds = append(conds, fmt.Sprintf("type = $%d", pos))
-		qargs = append(qargs, filterType)
-		pos++
-	}
-	if collectionName != "" {
-		conds = append(conds, fmt.Sprintf("collection_name = $%d", pos))
-		qargs = append(qargs, collectionName)
-		pos++
-	}
-	if room != "" {
-		conds = append(conds, fmt.Sprintf("room = $%d", pos))
-		qargs = append(qargs, room)
-		pos++
-	}
-	if hall != "" {
-		conds = append(conds, fmt.Sprintf("hall = $%d", pos))
-		qargs = append(qargs, hall)
-		pos++
-	}
-	sqlStr := `SELECT id, key, value, type, owner_id, room, hall, is_pinned, pin_priority, created_at, updated_at FROM memories`
-	if len(conds) > 0 {
-		sqlStr += " WHERE " + strings.Join(conds, " AND ")
-	}
-	sqlStr += " ORDER BY updated_at DESC LIMIT 100"
-
-	rows, err := h.cfg.DB.QueryContext(ctx, Q(sqlStr), qargs...)
-	if err != nil {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "[]"}}}
-	}
-	defer rows.Close()
-
-	var results []map[string]any
-	for rows.Next() {
-		var id, key, value, typ, ownerID, rm, hl, ca, ua string
-		var pinned, prio int
-		if err := rows.Scan(&id, &key, &value, &typ, &ownerID, &rm, &hl, &pinned, &prio, &ca, &ua); err != nil {
-			continue
-		}
-		results = append(results, map[string]any{
-			"id": id, "key": key, "value": value, "type": typ,
-			"owner_id": ownerID, "room": rm, "hall": hl,
-			"is_pinned": pinned == 1, "pin_priority": prio,
-			"created_at": ca, "updated_at": ua,
-		})
-	}
-
-	if results == nil {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "[]"}}}
-	}
-	out, _ := json.MarshalIndent(results, "", "  ")
-	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(out)}}}
+	return mcp.ToolListMemories(ctx, h, args)
 }
 
 // ── Chat History handlers ──

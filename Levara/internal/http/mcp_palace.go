@@ -23,154 +23,20 @@ import (
 
 // ── wake_up ──
 
-// toolWakeUp returns a small bundle of critical context for session start:
-//   - all pinned memories in the requested collection (priority-ordered)
-//   - top-N currently-active graph entities (highest edge degree)
-// The result is capped at max_tokens (approximated as chars/4).
+// toolWakeUp is a thin shim over mcp.ToolWakeUp (F-4 wave 3f).
 func (h *mcpHandler) toolWakeUp(ctx context.Context, args map[string]any) mcpToolResult {
-	if h.cfg.DB == nil {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: database not configured"}}, IsError: true}
-	}
-	collectionName, _ := args["collection"].(string)
-	maxTokens := 200
-	if mt, ok := args["max_tokens"].(float64); ok && mt > 0 {
-		maxTokens = int(mt)
-	}
-	topEntities := 5
-	if te, ok := args["top_entities"].(float64); ok && te > 0 {
-		topEntities = int(te)
-	}
-	maxChars := maxTokens * 4
-
-	ownerID := ""
-	if uid, ok := ctx.Value(mcpUserIDKey).(string); ok {
-		ownerID = uid
-	}
-
-	// 1. Pinned memories — pin_priority DESC, updated_at DESC
-	var pinned []map[string]any
-	pinnedSQL := `SELECT key, value, hall, room, pin_priority FROM memories
-		WHERE is_pinned = 1 AND (owner_id = $1 OR owner_id = '')`
-	pinnedArgs := []any{ownerID}
-	if collectionName != "" {
-		pinnedSQL += " AND collection_name = $2"
-		pinnedArgs = append(pinnedArgs, collectionName)
-	}
-	pinnedSQL += " ORDER BY pin_priority DESC, updated_at DESC LIMIT 50"
-	if rows, err := h.cfg.DB.QueryContext(ctx, Q(pinnedSQL), pinnedArgs...); err == nil {
-		defer rows.Close()
-		for rows.Next() {
-			var k, v, hl, rm string
-			var prio int
-			if err := rows.Scan(&k, &v, &hl, &rm, &prio); err != nil {
-				continue
-			}
-			pinned = append(pinned, map[string]any{
-				"key": k, "value": v, "hall": hl, "room": rm, "priority": prio,
-			})
-		}
-	}
-
-	// 2. Top entities by active-edge degree
-	var entities []map[string]any
-	entSQL := `SELECT n.name, n.type, COUNT(e.id) AS deg
-		FROM graph_nodes n
-		LEFT JOIN graph_edges e ON (e.source_id = n.id OR e.target_id = n.id)
-			AND (e.valid_until IS NULL OR e.valid_until > $1)
-		GROUP BY n.id, n.name, n.type
-		ORDER BY deg DESC, n.updated_at DESC
-		LIMIT $2`
-	now := time.Now().UTC().Format(time.RFC3339)
-	if rows, err := h.cfg.DB.QueryContext(ctx, Q(entSQL), now, topEntities); err == nil {
-		defer rows.Close()
-		for rows.Next() {
-			var name, typ string
-			var deg int
-			if err := rows.Scan(&name, &typ, &deg); err != nil {
-				continue
-			}
-			if name == "" {
-				continue
-			}
-			entities = append(entities, map[string]any{
-				"name": name, "type": typ, "degree": deg,
-			})
-		}
-	}
-
-	// 3. Trim to budget — pinned first, then entities.
-	bundle := map[string]any{
-		"collection":   collectionName,
-		"max_tokens":   maxTokens,
-		"pinned":       pinned,
-		"top_entities": entities,
-	}
-	out, _ := json.MarshalIndent(bundle, "", "  ")
-	if len(out) > maxChars {
-		// Drop entities first, then trim pinned to fit
-		bundle["top_entities"] = []any{}
-		out, _ = json.MarshalIndent(bundle, "", "  ")
-		for len(out) > maxChars && len(pinned) > 0 {
-			pinned = pinned[:len(pinned)-1]
-			bundle["pinned"] = pinned
-			out, _ = json.MarshalIndent(bundle, "", "  ")
-		}
-	}
-
-	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(out)}}}
+	return mcp.ToolWakeUp(ctx, h, args)
 }
 
 // ── pin / unpin ──
 
+// toolPinMemory / toolUnpinMemory are thin shims over pkg/mcp (F-4 wave 3f).
 func (h *mcpHandler) toolPinMemory(ctx context.Context, args map[string]any) mcpToolResult {
-	if h.cfg.DB == nil {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: database not configured"}}, IsError: true}
-	}
-	key, _ := args["key"].(string)
-	if key == "" {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: 'key' required"}}, IsError: true}
-	}
-	priority := 1
-	if p, ok := args["priority"].(float64); ok {
-		priority = int(p)
-	}
-	ownerID := ""
-	if uid, ok := ctx.Value(mcpUserIDKey).(string); ok {
-		ownerID = uid
-	}
-	q, qargs := QArgs(`UPDATE memories SET is_pinned = 1, pin_priority = $1, updated_at = $2
-		WHERE key = $3 AND (owner_id = $4 OR owner_id = '')`,
-		priority, time.Now().UTC().Format(time.RFC3339), key, ownerID)
-	res, err := h.cfg.DB.ExecContext(ctx, q, qargs...)
-	if err != nil {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: " + err.Error()}}, IsError: true}
-	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "No memory matched key " + key}}, IsError: true}
-	}
-	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("Pinned %s (priority=%d)", key, priority)}}}
+	return mcp.ToolPinMemory(ctx, h, args)
 }
 
 func (h *mcpHandler) toolUnpinMemory(ctx context.Context, args map[string]any) mcpToolResult {
-	if h.cfg.DB == nil {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: database not configured"}}, IsError: true}
-	}
-	key, _ := args["key"].(string)
-	if key == "" {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: 'key' required"}}, IsError: true}
-	}
-	ownerID := ""
-	if uid, ok := ctx.Value(mcpUserIDKey).(string); ok {
-		ownerID = uid
-	}
-	q, qargs := QArgs(`UPDATE memories SET is_pinned = 0, pin_priority = 0, updated_at = $1
-		WHERE key = $2 AND (owner_id = $3 OR owner_id = '')`,
-		time.Now().UTC().Format(time.RFC3339), key, ownerID)
-	if _, err := h.cfg.DB.ExecContext(ctx, q, qargs...); err != nil {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: " + err.Error()}}, IsError: true}
-	}
-	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Unpinned " + key}}}
+	return mcp.ToolUnpinMemory(ctx, h, args)
 }
 
 // ── query_entity ──
