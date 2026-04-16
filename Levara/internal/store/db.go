@@ -220,15 +220,18 @@ func (db *Levara) Insert(id string, vector []float32, data any) error {
 		return fmt.Errorf("Failed to marshal metadata: %w", err)
 	}
 
-	db.mu.Lock()
-
-	idx, err := db.arena.Add(vector)
+	// Write metadata to disk outside db.mu — DiskStore has its own internal
+	// mutex, and the returned FileLocation is an immutable (offset, length)
+	// pair that doesn't depend on db state. Moving it here reduces db.mu hold
+	// time by ~5μs per Insert (buffered file.Write latency).
+	loc, err := db.disk.Write(bytes)
 	if err != nil {
-		db.mu.Unlock()
 		return err
 	}
 
-	loc, err := db.disk.Write(bytes)
+	db.mu.Lock()
+
+	idx, err := db.arena.Add(vector)
 	if err != nil {
 		db.mu.Unlock()
 		return err
@@ -305,34 +308,47 @@ func (db *Levara) BatchInsert(records []BatchItem) []error {
 		prepped = append(prepped, prepared{rec: rec, bytes: bytes})
 	}
 
-	// Phase 1: durable write (arena + disk + WAL + index maps) under db.mu.
-	db.mu.Lock()
-	toIndex := make([]pendingItem, 0, len(prepped))
-
+	// Phase 0b: write metadata to disk outside db.mu — DiskStore has its own
+	// internal mutex. For a batch of 50 items this saves ~250μs of lock time
+	// (50 × ~5μs per buffered Write).
+	type diskPrep struct {
+		rec   BatchItem
+		bytes []byte
+		loc   FileLocation
+	}
+	diskPrepped := make([]diskPrep, 0, len(prepped))
 	for _, p := range prepped {
-		idx, err := db.arena.Add(p.rec.Vector)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("%s: arena: %w", p.rec.ID, err))
-			continue
-		}
 		loc, err := db.disk.Write(p.bytes)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: disk: %w", p.rec.ID, err))
 			continue
 		}
-		if err := db.wal.WriteEntryNoFlush(OpInsert, p.rec.ID, p.rec.Vector, p.bytes, loc); err != nil {
-			errs = append(errs, fmt.Errorf("%s: wal: %w", p.rec.ID, err))
+		diskPrepped = append(diskPrepped, diskPrep{rec: p.rec, bytes: p.bytes, loc: loc})
+	}
+
+	// Phase 1: arena + WAL + index maps under db.mu.
+	db.mu.Lock()
+	toIndex := make([]pendingItem, 0, len(diskPrepped))
+
+	for _, d := range diskPrepped {
+		idx, err := db.arena.Add(d.rec.Vector)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s: arena: %w", d.rec.ID, err))
 			continue
 		}
-		db.index[p.rec.ID] = idx
+		if err := db.wal.WriteEntryNoFlush(OpInsert, d.rec.ID, d.rec.Vector, d.bytes, d.loc); err != nil {
+			errs = append(errs, fmt.Errorf("%s: wal: %w", d.rec.ID, err))
+			continue
+		}
+		db.index[d.rec.ID] = idx
 		if int(idx) >= len(db.revIndex) {
 			ns := make([]string, int(idx)+1024)
 			copy(ns, db.revIndex)
 			db.revIndex = ns
 		}
-		db.revIndex[idx] = p.rec.ID
-		db.metaLocs[idx] = loc
-		toIndex = append(toIndex, pendingItem{vector: p.rec.Vector, id: p.rec.ID, idx: idx})
+		db.revIndex[idx] = d.rec.ID
+		db.metaLocs[idx] = d.loc
+		toIndex = append(toIndex, pendingItem{vector: d.rec.Vector, id: d.rec.ID, idx: idx})
 	}
 	db.mu.Unlock()
 
