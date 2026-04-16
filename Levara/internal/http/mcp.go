@@ -170,6 +170,68 @@ func (h *mcpHandler) CollectionSearch(collection string, query []float32, topK i
 	return out, nil
 }
 
+// Runs implements mcp.Deps: returns the shared pipeline-run registry.
+// Configured in cmd/server/main.go; a single *runreg.Registry is handed
+// to both RegisterCogneeAPI and RegisterMCPAPI so MCP-initiated runs and
+// REST-initiated runs share the same map.
+func (h *mcpHandler) Runs() *runreg.Registry { return h.cfg.Runs }
+
+// BaseCognifyConfig implements mcp.Deps: builds an orchestrator.Config
+// pre-populated with every deployment-level field the cognify pipeline
+// needs. The MCP tool body then overrides per-call fields (Collection,
+// DatasetID, Room, Tags, SystemPrompt, SkipGraph, chunking knobs) before
+// passing the result to RunPipeline.
+func (h *mcpHandler) BaseCognifyConfig() orchestrator.Config {
+	return orchestrator.Config{
+		ChunkStrategy:  "merged",
+		MinChunkChars:  50,
+		MaxChunkChars:  2000,
+		LLMEndpoint:    os.Getenv("LLM_ENDPOINT"),
+		LLMModel:       os.Getenv("LLM_MODEL"),
+		LLMProvider:    h.cfg.LLMProvider,
+		BM25Indexes:    h.cfg.BM25Indexes,
+		LLMConcurrency: 1,
+		EmbedEndpoint:  h.cfg.EmbedEndpoint,
+		EmbedModel:     h.cfg.EmbedModel,
+		Neo4jURL:       h.cfg.Neo4jCfg.Neo4jURL,
+		Neo4jUser:      h.cfg.Neo4jCfg.Neo4jUser,
+		Neo4jPassword:  h.cfg.Neo4jCfg.Neo4jPassword,
+		Neo4jDatabase:  h.cfg.Neo4jCfg.Neo4jDatabase,
+		Collections:    h.cfg.Collections,
+		DB:             h.cfg.DB,
+		LLMCache:       h.cfg.LLMCache,
+	}
+}
+
+// OntologyPromptSuffix implements mcp.Deps: forwards to the package-level
+// helper in ontologies.go. Empty string when the collection has no
+// ontology configured — tool code concatenates unconditionally.
+func (h *mcpHandler) OntologyPromptSuffix(collection string) string {
+	return GetOntologyPromptSuffix(collection)
+}
+
+// PersistPipelineStatus implements mcp.Deps: forwards to the package-level
+// helper in api.go so REST and MCP share the same skip-if-done logic.
+// DB may be nil — the helper no-ops in that case.
+func (h *mcpHandler) PersistPipelineStatus(datasetID, collection, status string, chunks, entities, edges int, elapsedMs int64) {
+	PersistPipelineStatus(h.cfg.DB, datasetID, collection, status, chunks, entities, edges, elapsedMs)
+}
+
+// LogHeartbeat implements mcp.Deps: forwards to the handler's own
+// heartbeat logger (in mcp_doctor.go). Defined on *mcpHandler to reach
+// the DB through cfg.
+func (h *mcpHandler) LogHeartbeat(eventType string, payload any) {
+	h.logHeartbeat(eventType, payload)
+}
+
+// RunPipeline implements mcp.Deps: production wiring simply delegates to
+// orchestrator.Run. The seam exists so tests in pkg/mcp can exercise the
+// cognify goroutine's post-run bookkeeping without spinning up the real
+// LLM + embed stack.
+func (h *mcpHandler) RunPipeline(ctx context.Context, texts []string, cfg orchestrator.Config, progress chan<- orchestrator.Progress) error {
+	return orchestrator.Run(ctx, texts, cfg, progress)
+}
+
 // getOrValidateSession returns the session for the given ID, or nil if invalid.
 func (h *mcpHandler) getOrValidateSession(sessionID string) *mcpSession {
 	return h.sessions.Get(sessionID)
@@ -418,167 +480,13 @@ func (h *mcpHandler) executeToolInner(ctx context.Context, sess *mcpSession, nam
 	}
 }
 
+// toolCognify is a thin shim over mcp.ToolCognify. F-4 wave 3j moved the
+// body (argument parsing, pipeline goroutine, post-run bookkeeping) into
+// pkg/mcp — *mcpHandler satisfies the enlarged Deps interface via the
+// wave-3j forwarders (Runs, BaseCognifyConfig, OntologyPromptSuffix,
+// PersistPipelineStatus, LogHeartbeat, RunPipeline) defined above.
 func (h *mcpHandler) toolCognify(ctx context.Context, args map[string]any) mcpToolResult {
-	data, _ := args["data"].(string)
-	if data == "" {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: 'data' parameter required"}}, IsError: true}
-	}
-
-	runID := uuid.New().String()
-	collection, _ := args["collection"].(string)
-	if collection == "" {
-		collection = "default"
-	}
-
-	status := &runreg.Status{
-		RunID: runID, Status: "RUNNING", Stage: "starting", StartedAt: time.Now(),
-	}
-	h.cfg.Runs.Store(runID, status)
-
-	// Validate that embedding service is configured
-	if h.cfg.EmbedEndpoint == "" {
-		status.Status = "FAILED"
-		status.Message = "Embedding service not configured (EMBED_ENDPOINT)"
-		return mcpToolResult{
-			Content: []mcpContent{{Type: "text", Text: "Error: embedding service not configured"}},
-			IsError: true,
-		}
-	}
-
-	// Collect texts: from data arg, or from dataset files via DB
-	texts := []string{data}
-
-	// Build orchestrator config (mirrors cognifyHandler in api.go)
-	pipeCfg := orchestrator.Config{
-		ChunkStrategy:    "merged",
-		MinChunkChars:    50,
-		MaxChunkChars:    2000,
-		LLMEndpoint:      os.Getenv("LLM_ENDPOINT"),
-		LLMModel:         os.Getenv("LLM_MODEL"),
-		LLMProvider:      h.cfg.LLMProvider,
-		BM25Indexes:      h.cfg.BM25Indexes,
-		LLMConcurrency:   1,
-		EmbedEndpoint:    h.cfg.EmbedEndpoint,
-		EmbedModel:       h.cfg.EmbedModel,
-		Neo4jURL:         h.cfg.Neo4jCfg.Neo4jURL,
-		Neo4jUser:        h.cfg.Neo4jCfg.Neo4jUser,
-		Neo4jPassword:    h.cfg.Neo4jCfg.Neo4jPassword,
-		Neo4jDatabase:    h.cfg.Neo4jCfg.Neo4jDatabase,
-		Collection:       collection,
-		Collections:      h.cfg.Collections,
-		GenerateTriplets: true,
-		DatasetID:        runID,
-		DB:               h.cfg.DB,
-		LLMCache:            h.cfg.LLMCache,
-		UseStructuredOutput: func() *bool { b := true; return &b }(),
-	}
-	// RAG mode: skip graph extraction (chunk+embed only, no LLM needed)
-	if mode, _ := args["mode"].(string); mode == "rag" {
-		pipeCfg.SkipGraph = true
-		pipeCfg.GenerateTriplets = false
-	}
-	// Custom chunking strategy
-	if cs, _ := args["chunk_strategy"].(string); cs != "" {
-		pipeCfg.ChunkStrategy = cs
-	}
-	// Overlap for sliding window chunking
-	if oc, ok := args["overlap_chars"].(float64); ok && oc > 0 {
-		pipeCfg.OverlapChars = int(oc)
-	}
-	// Snap to sentence boundary (default true)
-	if snap, ok := args["snap_to_sentence"].(bool); ok {
-		pipeCfg.SnapToSentence = &snap
-	}
-	// Parent-child chunking
-	if pc, ok := args["parent_child"].(bool); ok && pc {
-		pipeCfg.ParentChild = true
-	}
-	// Document metadata
-	if dt, _ := args["document_title"].(string); dt != "" {
-		pipeCfg.DocumentTitle = dt
-	}
-	if di, _ := args["document_id"].(string); di != "" {
-		pipeCfg.DocumentID = di
-	}
-	if cr, ok := args["community_resolution"].(float64); ok && cr > 0 {
-		pipeCfg.CommunityResolution = cr
-	}
-	if dt, ok := args["dedup_threshold"].(float64); ok && dt > 0 {
-		pipeCfg.DedupThreshold = dt
-	}
-	if minC, ok := args["min_chunk_chars"].(float64); ok && minC > 0 {
-		pipeCfg.MinChunkChars = int(minC)
-	}
-	if maxC, ok := args["max_chunk_chars"].(float64); ok && maxC > 0 {
-		pipeCfg.MaxChunkChars = int(maxC)
-	}
-	if cp, _ := args["custom_prompt"].(string); cp != "" {
-		pipeCfg.SystemPrompt = cp
-	}
-	// Optional room + tags propagated to chunk metadata for filtered search.
-	if room, _ := args["room"].(string); room != "" {
-		pipeCfg.Room = room
-	}
-	if rawTags, ok := args["tags"].([]any); ok {
-		for _, t := range rawTags {
-			if s, ok := t.(string); ok && s != "" {
-				pipeCfg.Tags = append(pipeCfg.Tags, s)
-			}
-		}
-	}
-	// Ontology-guided extraction: append allowed entity types to prompt
-	if ontologySuffix := GetOntologyPromptSuffix(collection); ontologySuffix != "" {
-		pipeCfg.SystemPrompt += ontologySuffix
-	}
-
-	// Run pipeline in background
-	go func() {
-		progressCh := make(chan orchestrator.Progress, 100)
-		errCh := make(chan error, 1)
-
-		go func() {
-			errCh <- orchestrator.Run(context.Background(), texts, pipeCfg, progressCh)
-		}()
-
-		// Track progress
-		for p := range progressCh {
-			status.Stage = p.Stage
-			status.Message = p.Message
-			status.Chunks = p.ChunksCreated
-			status.Entities = p.EntitiesExtracted
-			status.Edges = p.EdgesExtracted
-			status.ElapsedMs = p.ElapsedMs
-		}
-
-		if err := <-errCh; err != nil {
-			status.Status = "FAILED"
-			status.Message = err.Error()
-		} else {
-			status.Status = "COMPLETED"
-		}
-		status.ElapsedMs = time.Since(status.StartedAt).Milliseconds()
-
-		// Persist pipeline status to data table
-		PersistPipelineStatus(h.cfg.DB, runID, collection,
-			status.Status, status.Chunks, status.Entities, status.Edges, status.ElapsedMs)
-
-		// Log heartbeat
-		h.logHeartbeat("cognify", map[string]any{
-			"run_id":     runID,
-			"collection": collection,
-			"status":     status.Status,
-			"chunks":     status.Chunks,
-			"entities":   status.Entities,
-			"elapsed_ms": status.ElapsedMs,
-		})
-	}()
-
-	return mcpToolResult{
-		Content: []mcpContent{{
-			Type: "text",
-			Text: fmt.Sprintf("Cognify pipeline started. Run ID: %s. Use cognify_status tool to check progress.", runID),
-		}},
-	}
+	return mcp.ToolCognify(ctx, h, args)
 }
 
 func (h *mcpHandler) toolSearch(ctx context.Context, args map[string]any) mcpToolResult {
@@ -793,19 +701,9 @@ func (h *mcpHandler) toolPrune(ctx context.Context) mcpToolResult {
 	return mcp.ToolPrune(ctx, h)
 }
 
+// toolCognifyStatus is a thin shim over mcp.ToolCognifyStatus. F-4 wave 3j.
 func (h *mcpHandler) toolCognifyStatus(args map[string]any) mcpToolResult {
-	runID, _ := args["run_id"].(string)
-	if runID == "" {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: 'run_id' required"}}, IsError: true}
-	}
-
-	val, ok := h.cfg.Runs.Load(runID)
-	if !ok {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("Run %s not found.", runID)}}, IsError: true}
-	}
-
-	out, _ := json.MarshalIndent(val, "", "  ")
-	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(out)}}}
+	return mcp.ToolCognifyStatus(h, args)
 }
 
 // toolAdd is a thin shim over mcp.ToolAdd. F-4 wave 3d moved the body

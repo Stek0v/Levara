@@ -12,6 +12,8 @@ import (
 
 	_ "github.com/ncruces/go-sqlite3/driver"
 	"github.com/stek0v/cognevra/pkg/ingest"
+	"github.com/stek0v/cognevra/pkg/orchestrator"
+	"github.com/stek0v/cognevra/pkg/runreg"
 )
 
 // fakeDeps is the minimum Deps implementation for unit-testing tool
@@ -37,6 +39,22 @@ type fakeDeps struct {
 	// writes via a goroutine; tests that read it must use getInserted.
 	insertedMu   sync.Mutex
 	insertedRows []insertedRow
+
+	// Cognify stubs. Tests that exercise ToolCognify install:
+	//   runs        — a *runreg.Registry to observe status transitions
+	//   baseCfg     — the orchestrator.Config returned by BaseCognifyConfig
+	//                 (zero value is fine when tests just check registry state)
+	//   ontologyFn  — override for OntologyPromptSuffix
+	//   persistFn   — observe PersistPipelineStatus calls
+	//   heartbeatFn — observe LogHeartbeat calls
+	//   pipelineFn  — stub for RunPipeline; when nil the default emits one
+	//                 Progress event, closes progressCh, and returns nil.
+	runs        *runreg.Registry
+	baseCfg     orchestrator.Config
+	ontologyFn  func(collection string) string
+	persistFn   func(datasetID, collection, status string, chunks, entities, edges int, elapsedMs int64)
+	heartbeatFn func(eventType string, payload any)
+	pipelineFn  func(ctx context.Context, texts []string, cfg orchestrator.Config, progress chan<- orchestrator.Progress) error
 }
 
 // insertedRow records a single CollectionInsert call so tests can
@@ -112,6 +130,52 @@ func (f *fakeDeps) CollectionSearch(collection string, q []float32, k int) ([]Se
 	return nil, nil
 }
 
+// Runs lazily initializes a real *runreg.Registry on first access so
+// tests that touch the cognify path don't have to construct one
+// explicitly. Registry is goroutine-safe.
+func (f *fakeDeps) Runs() *runreg.Registry {
+	if f.runs == nil {
+		f.runs = runreg.New()
+	}
+	return f.runs
+}
+
+func (f *fakeDeps) BaseCognifyConfig() orchestrator.Config { return f.baseCfg }
+
+func (f *fakeDeps) OntologyPromptSuffix(collection string) string {
+	if f.ontologyFn != nil {
+		return f.ontologyFn(collection)
+	}
+	return ""
+}
+
+func (f *fakeDeps) PersistPipelineStatus(datasetID, collection, status string, chunks, entities, edges int, elapsedMs int64) {
+	if f.persistFn != nil {
+		f.persistFn(datasetID, collection, status, chunks, entities, edges, elapsedMs)
+	}
+}
+
+func (f *fakeDeps) LogHeartbeat(eventType string, payload any) {
+	if f.heartbeatFn != nil {
+		f.heartbeatFn(eventType, payload)
+	}
+}
+
+func (f *fakeDeps) RunPipeline(ctx context.Context, texts []string, cfg orchestrator.Config, progress chan<- orchestrator.Progress) error {
+	if f.pipelineFn != nil {
+		return f.pipelineFn(ctx, texts, cfg, progress)
+	}
+	// Default: one progress event, then clean close. Emulates a trivial
+	// "chunking done" pipeline so status progresses to COMPLETED without
+	// hitting any real service.
+	progress <- orchestrator.Progress{
+		Stage:   "done",
+		Message: "stub pipeline",
+	}
+	close(progress)
+	return nil
+}
+
 // nilDBDeps returns nil for DB() — exercises the guard branch.
 // HasCollections defaults to false, matching an unconfigured deployment.
 type nilDBDeps struct{}
@@ -127,6 +191,14 @@ func (nilDBDeps) Embed(context.Context, string) ([]float32, error)             {
 func (nilDBDeps) CollectionInsert(string, string, []float32, any) error        { return nil }
 func (nilDBDeps) CollectionSearch(string, []float32, int) ([]SearchResult, error) {
 	return nil, nil
+}
+func (nilDBDeps) Runs() *runreg.Registry                { return runreg.New() }
+func (nilDBDeps) BaseCognifyConfig() orchestrator.Config { return orchestrator.Config{} }
+func (nilDBDeps) OntologyPromptSuffix(string) string     { return "" }
+func (nilDBDeps) PersistPipelineStatus(string, string, string, int, int, int, int64) {}
+func (nilDBDeps) LogHeartbeat(string, any)                                           {}
+func (nilDBDeps) RunPipeline(context.Context, []string, orchestrator.Config, chan<- orchestrator.Progress) error {
+	return nil
 }
 
 func setupDepsTestDB(t *testing.T) *fakeDeps {

@@ -10,6 +10,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stek0v/cognevra/pkg/ingest"
+	"github.com/stek0v/cognevra/pkg/orchestrator"
+	"github.com/stek0v/cognevra/pkg/runreg"
 )
 
 // Deps is the narrow application-state surface that MCP tool
@@ -28,6 +30,13 @@ import (
 //              (toolSaveMemory + toolRecallMemory) — first AI seam. Types
 //              stay small ([]float32 and SearchResult) so pkg/mcp doesn't
 //              import pkg/embed or internal/store.
+//   - wave 3j: + Runs + BaseCognifyConfig + OntologyPromptSuffix +
+//              PersistPipelineStatus + LogHeartbeat + RunPipeline
+//              (toolCognify + toolCognifyStatus). BaseCognifyConfig brings
+//              in pkg/orchestrator as a new pkg/mcp import; Runs brings in
+//              pkg/runreg. RunPipeline abstracts orchestrator.Run so the
+//              cognify goroutine is testable without the real LLM/embed
+//              stack.
 type Deps interface {
 	// DB returns the shared *sql.DB used for palace / datasets / graph
 	// tables. May be nil when no PostgresDSN is configured — tool
@@ -75,6 +84,40 @@ type Deps interface {
 	// collection. Returns an empty slice + nil error when no matches
 	// (caller distinguishes "no hits" from "error" via the err return).
 	CollectionSearch(collection string, query []float32, topK int) ([]SearchResult, error)
+	// Runs returns the shared pipeline-run registry. Cognify stores a
+	// *runreg.Status here so cognify_status (and the REST SSE stream in
+	// internal/http) can read progress updates. The concrete pointer is
+	// shared across the whole server — MCP-initiated and REST-initiated
+	// runs coexist in the same map.
+	Runs() *runreg.Registry
+	// BaseCognifyConfig returns an orchestrator.Config pre-populated with
+	// deployment-level settings: embed endpoint/model, LLM endpoint/model,
+	// LLM provider + cache, Neo4j credentials, collection manager, BM25
+	// indexes, DB handle. Tool-level fields (Collection, DatasetID, Room,
+	// Tags, SystemPrompt, SkipGraph, chunking overrides, ...) are the
+	// caller's responsibility and override the returned base.
+	BaseCognifyConfig() orchestrator.Config
+	// OntologyPromptSuffix returns the ontology-guided extraction text to
+	// append to the system prompt for a given collection. Returns empty
+	// string when no ontology is configured for the collection. Harmless
+	// to concatenate unconditionally.
+	OntologyPromptSuffix(collection string) string
+	// PersistPipelineStatus writes terminal pipeline state to the data
+	// table so subsequent /cognify calls can skip already-processed
+	// datasets. Best-effort — errors are swallowed to match the
+	// pre-refactor signature which takes no error return.
+	PersistPipelineStatus(datasetID, collection, status string, chunks, entities, edges int, elapsedMs int64)
+	// LogHeartbeat records an event (arbitrary payload) into the
+	// heartbeats table when DB is configured, no-op otherwise. Used by
+	// long-running tools (cognify, sync, prune) for observability.
+	LogHeartbeat(eventType string, payload any)
+	// RunPipeline runs the cognify orchestrator end-to-end against texts
+	// with the given config, emitting Progress on progressCh and closing
+	// it when done. Production wiring calls orchestrator.Run; tests can
+	// substitute a stub that closes the channel immediately to exercise
+	// the post-run bookkeeping (status transition, persist, heartbeat)
+	// without the real LLM + embed stack.
+	RunPipeline(ctx context.Context, texts []string, cfg orchestrator.Config, progress chan<- orchestrator.Progress) error
 }
 
 // SearchResult is one entry returned by CollectionSearch. Kept small
@@ -1521,5 +1564,189 @@ func recallViaSQLLike(ctx context.Context, db *sql.DB, rewrite func(string) stri
 		return ToolResult{Content: []Content{{Type: "text", Text: "No memories found matching query."}}}
 	}
 	out, _ := json.MarshalIndent(results, "", "  ")
+	return ToolResult{Content: []Content{{Type: "text", Text: string(out)}}}
+}
+
+// cognifyProgressBufSize matches the pre-refactor channel capacity on
+// internal/http/mcp.go. 100 is enough slack that orchestrator stages
+// never block emitting progress while the tool goroutine's reader loop
+// is running a map update.
+const cognifyProgressBufSize = 100
+
+// cognifyDefaultCollection is the collection name used when the caller
+// does not supply one. Must match the REST default in api.go so both
+// paths converge on the same vector store.
+const cognifyDefaultCollection = "default"
+
+// ToolCognify starts a background cognify pipeline run.
+//
+// Returns immediately with a RUNNING status entry in the registry; the
+// caller polls via cognify_status (or subscribes to the REST SSE stream)
+// to observe progress. The pipeline goroutine runs under
+// context.Background so an MCP client disconnect during ingestion does
+// not cancel the work mid-way.
+//
+// Error branches that produce IsError=true:
+//   - Missing 'data' arg.
+//   - EmbedEndpoint not configured (registry gets FAILED state first).
+//
+// Successful start returns a human-readable RunID pointer; the caller
+// feeds that ID back into cognify_status.
+func ToolCognify(ctx context.Context, deps Deps, args map[string]any) ToolResult {
+	data, _ := args["data"].(string)
+	if data == "" {
+		return ToolResult{Content: []Content{{Type: "text", Text: "Error: 'data' parameter required"}}, IsError: true}
+	}
+
+	runID := uuid.New().String()
+	collection, _ := args["collection"].(string)
+	if collection == "" {
+		collection = cognifyDefaultCollection
+	}
+
+	status := &runreg.Status{
+		RunID: runID, Status: "RUNNING", Stage: "starting", StartedAt: time.Now(),
+	}
+	deps.Runs().Store(runID, status)
+
+	pipeCfg := deps.BaseCognifyConfig()
+	if pipeCfg.EmbedEndpoint == "" {
+		status.Status = "FAILED"
+		status.Message = "Embedding service not configured (EMBED_ENDPOINT)"
+		return ToolResult{
+			Content: []Content{{Type: "text", Text: "Error: embedding service not configured"}},
+			IsError: true,
+		}
+	}
+
+	pipeCfg.Collection = collection
+	pipeCfg.DatasetID = runID
+	pipeCfg.GenerateTriplets = true
+	trueVal := true
+	pipeCfg.UseStructuredOutput = &trueVal
+
+	// RAG mode: skip graph extraction (chunk+embed only, no LLM needed)
+	if mode, _ := args["mode"].(string); mode == "rag" {
+		pipeCfg.SkipGraph = true
+		pipeCfg.GenerateTriplets = false
+	}
+	if cs, _ := args["chunk_strategy"].(string); cs != "" {
+		pipeCfg.ChunkStrategy = cs
+	}
+	if oc, ok := args["overlap_chars"].(float64); ok && oc > 0 {
+		pipeCfg.OverlapChars = int(oc)
+	}
+	if snap, ok := args["snap_to_sentence"].(bool); ok {
+		pipeCfg.SnapToSentence = &snap
+	}
+	if pc, ok := args["parent_child"].(bool); ok && pc {
+		pipeCfg.ParentChild = true
+	}
+	if dt, _ := args["document_title"].(string); dt != "" {
+		pipeCfg.DocumentTitle = dt
+	}
+	if di, _ := args["document_id"].(string); di != "" {
+		pipeCfg.DocumentID = di
+	}
+	if cr, ok := args["community_resolution"].(float64); ok && cr > 0 {
+		pipeCfg.CommunityResolution = cr
+	}
+	if dt, ok := args["dedup_threshold"].(float64); ok && dt > 0 {
+		pipeCfg.DedupThreshold = dt
+	}
+	if minC, ok := args["min_chunk_chars"].(float64); ok && minC > 0 {
+		pipeCfg.MinChunkChars = int(minC)
+	}
+	if maxC, ok := args["max_chunk_chars"].(float64); ok && maxC > 0 {
+		pipeCfg.MaxChunkChars = int(maxC)
+	}
+	if cp, _ := args["custom_prompt"].(string); cp != "" {
+		pipeCfg.SystemPrompt = cp
+	}
+	if room, _ := args["room"].(string); room != "" {
+		pipeCfg.Room = room
+	}
+	if rawTags, ok := args["tags"].([]any); ok {
+		for _, t := range rawTags {
+			if s, ok := t.(string); ok && s != "" {
+				pipeCfg.Tags = append(pipeCfg.Tags, s)
+			}
+		}
+	}
+	if suffix := deps.OntologyPromptSuffix(collection); suffix != "" {
+		pipeCfg.SystemPrompt += suffix
+	}
+
+	texts := []string{data}
+
+	go runCognifyPipeline(deps, runID, collection, texts, pipeCfg, status)
+
+	return ToolResult{
+		Content: []Content{{
+			Type: "text",
+			Text: fmt.Sprintf("Cognify pipeline started. Run ID: %s. Use cognify_status tool to check progress.", runID),
+		}},
+	}
+}
+
+// runCognifyPipeline drives the orchestrator to completion and performs
+// post-run bookkeeping: final status update, PersistPipelineStatus,
+// heartbeat log. Extracted into its own function so the tool body stays
+// readable and so tests that install a pipelineFn can also verify the
+// bookkeeping runs after the stub finishes.
+func runCognifyPipeline(deps Deps, runID, collection string, texts []string, pipeCfg orchestrator.Config, status *runreg.Status) {
+	progressCh := make(chan orchestrator.Progress, cognifyProgressBufSize)
+	errCh := make(chan error, 1)
+
+	go func() {
+		errCh <- deps.RunPipeline(context.Background(), texts, pipeCfg, progressCh)
+	}()
+
+	for p := range progressCh {
+		status.Stage = p.Stage
+		status.Message = p.Message
+		status.Chunks = p.ChunksCreated
+		status.Entities = p.EntitiesExtracted
+		status.Edges = p.EdgesExtracted
+		status.ElapsedMs = p.ElapsedMs
+	}
+
+	if err := <-errCh; err != nil {
+		status.Status = "FAILED"
+		status.Message = err.Error()
+	} else {
+		status.Status = "COMPLETED"
+	}
+	status.ElapsedMs = time.Since(status.StartedAt).Milliseconds()
+
+	deps.PersistPipelineStatus(runID, collection,
+		status.Status, status.Chunks, status.Entities, status.Edges, status.ElapsedMs)
+
+	deps.LogHeartbeat("cognify", map[string]any{
+		"run_id":     runID,
+		"collection": collection,
+		"status":     status.Status,
+		"chunks":     status.Chunks,
+		"entities":   status.Entities,
+		"elapsed_ms": status.ElapsedMs,
+	})
+}
+
+// ToolCognifyStatus returns the current state of a pipeline run as
+// pretty-printed JSON. IsError=true when run_id is missing or unknown.
+// Successful lookup returns the Status struct JSON so the caller can see
+// stage, progress counters, and message fields.
+func ToolCognifyStatus(deps Deps, args map[string]any) ToolResult {
+	runID, _ := args["run_id"].(string)
+	if runID == "" {
+		return ToolResult{Content: []Content{{Type: "text", Text: "Error: 'run_id' required"}}, IsError: true}
+	}
+
+	val, ok := deps.Runs().Load(runID)
+	if !ok {
+		return ToolResult{Content: []Content{{Type: "text", Text: fmt.Sprintf("Run %s not found.", runID)}}, IsError: true}
+	}
+
+	out, _ := json.MarshalIndent(val, "", "  ")
 	return ToolResult{Content: []Content{{Type: "text", Text: string(out)}}}
 }
