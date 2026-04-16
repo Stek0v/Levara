@@ -15,74 +15,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/stek0v/cognevra/pkg/mcp"
 )
 
-// ── Hall vocabulary ──
-
-// Controlled vocabulary for the "hall" field on a memory record. Extending the
-// list is a deliberate code change so that downstream consumers (search filters,
-// dashboards) stay in sync.
-var hallVocab = []string{
-	"fact",
-	"event",
-	"decision",
-	"preference",
-	"advice",
-	"discovery",
-}
-
-func validHalls() []string { return hallVocab }
-
-// chunkMetaMatches returns true when the chunk metadata blob (JSON, as written
-// by orchestrator pipeline) satisfies the room and tag filters. An empty
-// roomFilter or empty tagFilters slice means "no filter on that dimension".
-// Tag filtering is OR-semantics: a chunk matches if it has ANY of the wanted
-// tags. This makes recall easier and matches user expectation when listing
-// related topics.
-func chunkMetaMatches(raw []byte, roomFilter string, tagFilters []string) bool {
-	if roomFilter == "" && len(tagFilters) == 0 {
-		return true
-	}
-	var meta struct {
-		Room string   `json:"room"`
-		Tags []string `json:"tags"`
-	}
-	if err := json.Unmarshal(raw, &meta); err != nil {
-		// Older chunks without room/tags metadata: keep them only when no
-		// filter is requested. Since we know hasMetaFilter is true, drop.
-		return false
-	}
-	if roomFilter != "" && meta.Room != roomFilter {
-		return false
-	}
-	if len(tagFilters) > 0 {
-		hit := false
-		for _, want := range tagFilters {
-			for _, have := range meta.Tags {
-				if want == have {
-					hit = true
-					break
-				}
-			}
-			if hit {
-				break
-			}
-		}
-		if !hit {
-			return false
-		}
-	}
-	return true
-}
-
-func isValidHall(h string) bool {
-	for _, v := range hallVocab {
-		if v == h {
-			return true
-		}
-	}
-	return false
-}
+// Hall vocabulary, ChunkMetaMatches, and IsValidHall live in pkg/mcp now
+// (F-4 wave 1a) — see pkg/mcp/hall.go.
 
 // ── wake_up ──
 
@@ -345,11 +282,7 @@ func (h *mcpHandler) toolQueryEntity(ctx context.Context, args map[string]any) m
 
 // ── Agent diaries ──
 
-const diaryOwnerPrefix = "agent:"
-
-func diaryOwner(agent string) string {
-	return diaryOwnerPrefix + strings.TrimSpace(agent)
-}
+// DiaryOwnerPrefix and DiaryOwner moved to pkg/mcp/util.go.
 
 func (h *mcpHandler) toolDiaryWrite(ctx context.Context, args map[string]any) mcpToolResult {
 	if h.cfg.DB == nil {
@@ -362,7 +295,7 @@ func (h *mcpHandler) toolDiaryWrite(ctx context.Context, args map[string]any) mc
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: 'agent', 'key', 'value' required"}}, IsError: true}
 	}
 	collectionName, _ := args["collection"].(string)
-	owner := diaryOwner(agent)
+	owner := mcp.DiaryOwner(agent)
 	id := uuid.New().String()
 	now := time.Now().UTC().Format(time.RFC3339)
 	q, qargs := QArgs(`INSERT INTO memories (id, key, value, type, owner_id, collection_name, room, hall, is_pinned, pin_priority, created_at, updated_at)
@@ -383,7 +316,7 @@ func (h *mcpHandler) toolDiaryRead(ctx context.Context, args map[string]any) mcp
 	if agent == "" {
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: 'agent' required"}}, IsError: true}
 	}
-	owner := diaryOwner(agent)
+	owner := mcp.DiaryOwner(agent)
 	queryStr, _ := args["query"].(string)
 	collectionName, _ := args["collection"].(string)
 

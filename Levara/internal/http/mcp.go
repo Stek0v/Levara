@@ -13,7 +13,6 @@ package http
 import (
 	"bufio"
 	"context"
-	"crypto/rand"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -30,10 +29,11 @@ import (
 	"github.com/stek0v/cognevra/internal/metrics"
 	"github.com/stek0v/cognevra/pkg/community"
 	"github.com/stek0v/cognevra/pkg/embed"
-	"github.com/stek0v/cognevra/pkg/graphrank"
 	"github.com/stek0v/cognevra/pkg/extract"
 	"github.com/stek0v/cognevra/pkg/git"
+	"github.com/stek0v/cognevra/pkg/graphrank"
 	"github.com/stek0v/cognevra/pkg/ingest"
+	"github.com/stek0v/cognevra/pkg/mcp"
 	"github.com/stek0v/cognevra/pkg/orchestrator"
 	"github.com/stek0v/cognevra/pkg/rerank"
 	"github.com/stek0v/cognevra/pkg/router"
@@ -577,7 +577,7 @@ func (h *mcpHandler) getOrValidateSession(sessionID string) *mcpSession {
 
 // createSession creates a new MCP session and returns its ID.
 func (h *mcpHandler) createSession() string {
-	id := fmt.Sprintf("mcp-%d-%s", time.Now().UnixNano(), randomHex(8))
+	id := fmt.Sprintf("mcp-%d-%s", time.Now().UnixNano(), mcp.RandomHex(8))
 	h.mu.Lock()
 	h.sessions[id] = &mcpSession{
 		id:        id,
@@ -599,14 +599,7 @@ func (h *mcpHandler) deleteSession(id string) {
 	h.mu.Unlock()
 }
 
-// randomHex returns n random hex characters.
-func randomHex(n int) string {
-	b := make([]byte, n/2+1)
-	if _, err := rand.Read(b); err != nil {
-		panic("crypto/rand failed: " + err.Error())
-	}
-	return fmt.Sprintf("%x", b)[:n]
-}
+// randomHex moved to pkg/mcp.RandomHex.
 
 func (h *mcpHandler) handleRPC(c *fiber.Ctx) error {
 	var req jsonRPCRequest
@@ -1162,7 +1155,7 @@ func (h *mcpHandler) toolSearch(ctx context.Context, args map[string]any) mcpToo
 		}
 
 		for _, r := range res {
-			if hasMetaFilter && !chunkMetaMatches(r.Metadata, roomFilter, tagFilters) {
+			if hasMetaFilter && !mcp.ChunkMetaMatches(r.Metadata, roomFilter, tagFilters) {
 				continue
 			}
 			results = append(results, map[string]any{
@@ -1513,8 +1506,8 @@ func (h *mcpHandler) toolSaveMemory(ctx context.Context, args map[string]any) mc
 	collectionName, _ := args["collection"].(string)
 	room, _ := args["room"].(string)
 	hall, _ := args["hall"].(string)
-	if hall != "" && !isValidHall(hall) {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("Error: invalid hall '%s'. Valid values: %s", hall, strings.Join(validHalls(), ", "))}}, IsError: true}
+	if hall != "" && !mcp.IsValidHall(hall) {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("Error: invalid hall '%s'. Valid values: %s", hall, strings.Join(mcp.ValidHalls(), ", "))}}, IsError: true}
 	}
 	pin, _ := args["pin"].(bool)
 	pinPriority := 0
