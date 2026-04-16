@@ -21,7 +21,6 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -513,9 +512,13 @@ var mcpTools = []mcpTool{
 // GET  /mcp — SSE stream for server-initiated messages
 // DELETE /mcp — terminate session
 func RegisterMCPAPI(app fiber.Router, cfg APIConfig) {
+	store := mcp.NewSessionStore()
+	store.OnCountChange = func(n int) {
+		metrics.MCPSessionsActive.Set(float64(n))
+	}
 	handler := &mcpHandler{
 		cfg:      cfg,
-		sessions: make(map[string]*mcpSession),
+		sessions: store,
 	}
 	app.Post("/mcp", handler.handleRPC)
 	app.Get("/mcp", handler.handleSSEStream)
@@ -523,53 +526,28 @@ func RegisterMCPAPI(app fiber.Router, cfg APIConfig) {
 	go handler.sessionCleanupLoop()
 }
 
-// mcpSession tracks a connected MCP client session.
-type mcpSession struct {
-	id                string
-	userID            string    // from Authorization header (JWT), empty for anonymous
-	createdAt         time.Time
-	sseCh             chan []byte // buffered channel for server-initiated SSE messages
-	defaultCollection string     // session-scoped default project collection (set via set_context tool)
-}
+// mcpSession is a type alias for the canonical mcp.Session — all session
+// state and lifecycle now lives in pkg/mcp (F-4 wave 2). See pkg/mcp/session.go.
+type mcpSession = mcp.Session
 
 type mcpHandler struct {
 	cfg      APIConfig
-	mu       sync.RWMutex
-	sessions map[string]*mcpSession
+	sessions *mcp.SessionStore
 }
 
 // getOrValidateSession returns the session for the given ID, or nil if invalid.
 func (h *mcpHandler) getOrValidateSession(sessionID string) *mcpSession {
-	if sessionID == "" {
-		return nil
-	}
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	return h.sessions[sessionID]
+	return h.sessions.Get(sessionID)
 }
 
 // createSession creates a new MCP session and returns its ID.
 func (h *mcpHandler) createSession() string {
-	id := fmt.Sprintf("mcp-%d-%s", time.Now().UnixNano(), mcp.RandomHex(8))
-	h.mu.Lock()
-	h.sessions[id] = &mcpSession{
-		id:        id,
-		createdAt: time.Now(),
-		sseCh:     make(chan []byte, 100),
-	}
-	h.mu.Unlock()
-	metrics.MCPSessionsActive.Set(float64(len(h.sessions)))
-	return id
+	return h.sessions.Create().ID
 }
 
 // deleteSession removes a session.
 func (h *mcpHandler) deleteSession(id string) {
-	h.mu.Lock()
-	if s, ok := h.sessions[id]; ok {
-		close(s.sseCh)
-		delete(h.sessions, id)
-	}
-	h.mu.Unlock()
+	h.sessions.Delete(id)
 }
 
 // randomHex moved to pkg/mcp.RandomHex.
@@ -663,8 +641,8 @@ func (h *mcpHandler) resolveCollection(sess *mcpSession, args map[string]any, fo
 	if coll, _ := args["collection"].(string); coll != "" {
 		return coll
 	}
-	if sess != nil && sess.defaultCollection != "" {
-		return sess.defaultCollection
+	if sess != nil && sess.DefaultCollection != "" {
+		return sess.DefaultCollection
 	}
 	if forWrite {
 		return "default"
@@ -688,8 +666,8 @@ func (h *mcpHandler) handleToolCall(c *fiber.Ctx, req jsonRPCRequest) error {
 	toolCtx := context.Background()
 	sessionID := c.Get("Mcp-Session-Id")
 	sess := h.getOrValidateSession(sessionID)
-	if sess != nil && sess.userID != "" {
-		toolCtx = context.WithValue(toolCtx, mcpUserIDKey, sess.userID)
+	if sess != nil && sess.UserID != "" {
+		toolCtx = context.WithValue(toolCtx, mcpUserIDKey, sess.UserID)
 	}
 
 	result := h.executeTool(toolCtx, sess, params.Name, params.Arguments)
@@ -725,8 +703,8 @@ func (h *mcpHandler) executeToolInner(ctx context.Context, sess *mcpSession, nam
 		// Memory tools: only inject session default, NOT "default" fallback.
 		// Empty collection → global _memories (backward compatible with Pi data).
 		if _, ok := args["collection"]; !ok || args["collection"] == "" {
-			if sess != nil && sess.defaultCollection != "" {
-				args["collection"] = sess.defaultCollection
+			if sess != nil && sess.DefaultCollection != "" {
+				args["collection"] = sess.DefaultCollection
 			}
 			// else: leave empty → _memories (global, no suffix)
 		}
@@ -2147,7 +2125,7 @@ func (h *mcpHandler) toolSetContext(sess *mcpSession, args map[string]any) mcpTo
 	}
 	// Validate collection exists (or allow setting for future use)
 	exists := h.cfg.Collections != nil && h.cfg.Collections.Has(collection)
-	sess.defaultCollection = collection
+	sess.DefaultCollection = collection
 
 	status := "set"
 	if !exists {
@@ -2641,17 +2619,9 @@ func (h *mcpHandler) sessionCleanupLoop() {
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
 	for range ticker.C {
-		h.mu.Lock()
-		now := time.Now()
-		for id, s := range h.sessions {
-			if now.Sub(s.createdAt) > time.Hour {
-				close(s.sseCh)
-				delete(h.sessions, id)
-			}
-		}
-		metrics.MCPSessionsActive.Set(float64(len(h.sessions)))
-		h.mu.Unlock()
-
+		// SessionStore.CleanupIdle fires OnCountChange which updates the
+		// MCPSessionsActive gauge for us — no explicit metrics.Set here.
+		h.sessions.CleanupIdle(time.Hour)
 		h.updateDataMetrics()
 	}
 }
@@ -2699,7 +2669,7 @@ func (h *mcpHandler) handleSSEStream(c *fiber.Ctx) error {
 
 		for {
 			select {
-			case msg, ok := <-sess.sseCh:
+			case msg, ok := <-sess.SSECh:
 				if !ok {
 					return // session closed
 				}
