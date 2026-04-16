@@ -12,9 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
 
-	"github.com/google/uuid"
 	"github.com/stek0v/cognevra/pkg/mcp"
 )
 
@@ -150,81 +148,12 @@ func (h *mcpHandler) toolQueryEntity(ctx context.Context, args map[string]any) m
 
 // DiaryOwnerPrefix and DiaryOwner moved to pkg/mcp/util.go.
 
+// toolDiaryWrite / toolDiaryRead are thin shims over pkg/mcp (F-4 wave 3g).
 func (h *mcpHandler) toolDiaryWrite(ctx context.Context, args map[string]any) mcpToolResult {
-	if h.cfg.DB == nil {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: database not configured"}}, IsError: true}
-	}
-	agent, _ := args["agent"].(string)
-	key, _ := args["key"].(string)
-	value, _ := args["value"].(string)
-	if agent == "" || key == "" || value == "" {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: 'agent', 'key', 'value' required"}}, IsError: true}
-	}
-	collectionName, _ := args["collection"].(string)
-	owner := mcp.DiaryOwner(agent)
-	id := uuid.New().String()
-	now := time.Now().UTC().Format(time.RFC3339)
-	q, qargs := QArgs(`INSERT INTO memories (id, key, value, type, owner_id, collection_name, room, hall, is_pinned, pin_priority, created_at, updated_at)
-		VALUES ($1, $2, $3, 'diary', $4, $5, '', '', 0, 0, $6, $7)
-		ON CONFLICT(key, owner_id) DO UPDATE SET value = $3, collection_name = $5, updated_at = $7`,
-		id, key, value, owner, collectionName, now, now)
-	if _, err := h.cfg.DB.ExecContext(ctx, q, qargs...); err != nil {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: " + err.Error()}}, IsError: true}
-	}
-	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("Diary[%s] wrote %s", agent, key)}}}
+	return mcp.ToolDiaryWrite(ctx, h, args)
 }
 
 func (h *mcpHandler) toolDiaryRead(ctx context.Context, args map[string]any) mcpToolResult {
-	if h.cfg.DB == nil {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "[]"}}}
-	}
-	agent, _ := args["agent"].(string)
-	if agent == "" {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: 'agent' required"}}, IsError: true}
-	}
-	owner := mcp.DiaryOwner(agent)
-	queryStr, _ := args["query"].(string)
-	collectionName, _ := args["collection"].(string)
-
-	var conds []string
-	var qargs []any
-	pos := 1
-	conds = append(conds, fmt.Sprintf("owner_id = $%d", pos))
-	qargs = append(qargs, owner)
-	pos++
-	if queryStr != "" {
-		pat := "%" + queryStr + "%"
-		conds = append(conds, fmt.Sprintf("(key LIKE $%d OR value LIKE $%d)", pos, pos+1))
-		qargs = append(qargs, pat, pat)
-		pos += 2
-	}
-	if collectionName != "" {
-		conds = append(conds, fmt.Sprintf("collection_name = $%d", pos))
-		qargs = append(qargs, collectionName)
-		pos++
-	}
-	sqlStr := `SELECT key, value, created_at, updated_at FROM memories WHERE ` +
-		strings.Join(conds, " AND ") + ` ORDER BY updated_at DESC LIMIT 100`
-
-	rows, err := h.cfg.DB.QueryContext(ctx, Q(sqlStr), qargs...)
-	if err != nil {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: " + err.Error()}}, IsError: true}
-	}
-	defer rows.Close()
-	var entries []map[string]any
-	for rows.Next() {
-		var k, v, ca, ua string
-		if err := rows.Scan(&k, &v, &ca, &ua); err != nil {
-			continue
-		}
-		entries = append(entries, map[string]any{
-			"key": k, "value": v, "created_at": ca, "updated_at": ua,
-		})
-	}
-	if entries == nil {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("Diary[%s] is empty", agent)}}}
-	}
-	out, _ := json.MarshalIndent(entries, "", "  ")
-	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(out)}}}
+	return mcp.ToolDiaryRead(ctx, h, args)
 }
 
