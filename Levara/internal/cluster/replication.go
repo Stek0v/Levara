@@ -17,6 +17,7 @@ import (
 	"math"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -33,14 +34,19 @@ type WALEntry struct {
 }
 
 // ReplicationServer streams WAL entries to replicas.
+//
+// seq uses atomic.Uint64 rather than living under mu because Broadcast holds
+// only mu.RLock — concurrent Broadcasts would otherwise race on the sequence
+// increment and produce duplicate Seq values, breaking replicas' gap
+// detection. See TestReplicationServer_Broadcast_ConcurrentNoLostSeq.
 type ReplicationServer struct {
-	mu        sync.RWMutex
-	wal       *store.WAL
-	db        *store.Levara
-	listeners map[string]chan WALEntry // replicaID → entry channel
-	seq       uint64
-	nodeID    string
-	role      string // "primary" or "replica"
+	mu          sync.RWMutex
+	wal         *store.WAL
+	db          *store.Levara
+	listeners   map[string]chan WALEntry // replicaID → entry channel
+	seq         atomic.Uint64
+	nodeID      string
+	role        string // "primary" or "replica"
 	primaryAddr string // for replicas: address of primary
 }
 
@@ -85,10 +91,9 @@ func (rs *ReplicationServer) SetPrimaryAddr(addr string) {
 
 // Broadcast sends a WAL entry to all connected replicas.
 func (rs *ReplicationServer) Broadcast(entry WALEntry) {
+	entry.Seq = rs.seq.Add(1)
 	rs.mu.RLock()
 	defer rs.mu.RUnlock()
-	rs.seq++
-	entry.Seq = rs.seq
 	for rid, ch := range rs.listeners {
 		select {
 		case ch <- entry:
@@ -193,7 +198,7 @@ func (rs *ReplicationServer) HandleClusterState(w http.ResponseWriter, r *http.R
 		"primary_addr":  rs.PrimaryAddr(),
 		"replicas":      replicas,
 		"replica_count": len(replicas),
-		"wal_seq":       rs.seq,
+		"wal_seq":       rs.seq.Load(),
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(state)
