@@ -7,6 +7,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 
 	_ "github.com/ncruces/go-sqlite3/driver"
@@ -23,6 +24,28 @@ type fakeDeps struct {
 	collections []string // nil → HasCollections() false (not configured)
 	hasColls    bool     // explicit flag so empty-but-configured is possible
 	storagePath string   // empty → tool applies its own default
+
+	// Embedding + vector-store stubs for tests that exercise the AI
+	// path. All zero-valued by default — EmbedAvailable() returns false
+	// unless embedAvailable is explicitly set, so tests that don't need
+	// vector behavior stay on the SQL fallback path.
+	embedAvailable bool
+	embedFn        func(ctx context.Context, text string) ([]float32, error)
+	searchFn       func(collection string, q []float32, k int) ([]SearchResult, error)
+
+	// insertedRows is guarded by insertedMu because ToolSaveMemory
+	// writes via a goroutine; tests that read it must use getInserted.
+	insertedMu   sync.Mutex
+	insertedRows []insertedRow
+}
+
+// insertedRow records a single CollectionInsert call so tests can
+// assert on the fire-and-forget side effect.
+type insertedRow struct {
+	collection string
+	id         string
+	vec        []float32
+	meta       any
 }
 
 func (f *fakeDeps) DB() *sql.DB { return f.db }
@@ -51,16 +74,60 @@ func (f *fakeDeps) CollectionExists(name string) bool {
 	return false
 }
 
+func (f *fakeDeps) EmbedAvailable() bool { return f.embedAvailable }
+
+func (f *fakeDeps) Embed(ctx context.Context, text string) ([]float32, error) {
+	if f.embedFn != nil {
+		return f.embedFn(ctx, text)
+	}
+	// Default stub: a tiny vector derived from text length so different
+	// strings produce different vectors — lets search tests pair queries
+	// to seeded inserts without needing a real embedder.
+	return []float32{float32(len(text)), 0.5, -0.5}, nil
+}
+
+func (f *fakeDeps) CollectionInsert(collection, id string, vec []float32, meta any) error {
+	f.insertedMu.Lock()
+	defer f.insertedMu.Unlock()
+	f.insertedRows = append(f.insertedRows, insertedRow{collection, id, vec, meta})
+	return nil
+}
+
+// getInserted returns a snapshot of observed CollectionInsert calls.
+// Tests that exercise the async index-path MUST read through this
+// helper — direct access to insertedRows would race with the
+// goroutine writing via CollectionInsert.
+func (f *fakeDeps) getInserted() []insertedRow {
+	f.insertedMu.Lock()
+	defer f.insertedMu.Unlock()
+	out := make([]insertedRow, len(f.insertedRows))
+	copy(out, f.insertedRows)
+	return out
+}
+
+func (f *fakeDeps) CollectionSearch(collection string, q []float32, k int) ([]SearchResult, error) {
+	if f.searchFn != nil {
+		return f.searchFn(collection, q, k)
+	}
+	return nil, nil
+}
+
 // nilDBDeps returns nil for DB() — exercises the guard branch.
 // HasCollections defaults to false, matching an unconfigured deployment.
 type nilDBDeps struct{}
 
-func (nilDBDeps) DB() *sql.DB                    { return nil }
-func (nilDBDeps) Q(q string) string              { return q }
-func (nilDBDeps) HasCollections() bool           { return false }
-func (nilDBDeps) ListCollections() []string      { return nil }
-func (nilDBDeps) StoragePath() string            { return "" }
-func (nilDBDeps) CollectionExists(string) bool   { return false }
+func (nilDBDeps) DB() *sql.DB                                                  { return nil }
+func (nilDBDeps) Q(q string) string                                            { return q }
+func (nilDBDeps) HasCollections() bool                                         { return false }
+func (nilDBDeps) ListCollections() []string                                    { return nil }
+func (nilDBDeps) StoragePath() string                                          { return "" }
+func (nilDBDeps) CollectionExists(string) bool                                 { return false }
+func (nilDBDeps) EmbedAvailable() bool                                         { return false }
+func (nilDBDeps) Embed(context.Context, string) ([]float32, error)             { return nil, nil }
+func (nilDBDeps) CollectionInsert(string, string, []float32, any) error        { return nil }
+func (nilDBDeps) CollectionSearch(string, []float32, int) ([]SearchResult, error) {
+	return nil, nil
+}
 
 func setupDepsTestDB(t *testing.T) *fakeDeps {
 	t.Helper()

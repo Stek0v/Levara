@@ -120,6 +120,55 @@ func (h *mcpHandler) CollectionExists(name string) bool {
 	return h.cfg.Collections != nil && h.cfg.Collections.Has(name)
 }
 
+// EmbedAvailable implements mcp.Deps: true iff both the embed service
+// URL and the CollectionManager are configured. Memory tools gate
+// their vector-index path on this check.
+func (h *mcpHandler) EmbedAvailable() bool {
+	return h.cfg.EmbedEndpoint != "" && h.cfg.Collections != nil
+}
+
+// Embed implements mcp.Deps: single-text embedding via the configured
+// embed service. Batch + concurrency are 1 since MCP tool calls drive
+// one vector at a time.
+func (h *mcpHandler) Embed(ctx context.Context, text string) ([]float32, error) {
+	client := embed.NewClient(h.cfg.EmbedEndpoint, h.cfg.EmbedModel, 1, 1)
+	return client.EmbedSingle(ctx, text)
+}
+
+// CollectionInsert implements mcp.Deps: forwards to the shared
+// CollectionManager. Callers are expected to have guarded on
+// EmbedAvailable(); we still return an error rather than panicking
+// to keep the surface honest.
+func (h *mcpHandler) CollectionInsert(collection, id string, vec []float32, meta any) error {
+	if h.cfg.Collections == nil {
+		return fmt.Errorf("collections not configured")
+	}
+	return h.cfg.Collections.Insert(collection, id, vec, meta)
+}
+
+// CollectionSearch implements mcp.Deps: forwards to the shared
+// CollectionManager and adapts the internal VectroRecord type to
+// pkg/mcp.SearchResult so tool bodies don't need to import
+// internal/store.
+func (h *mcpHandler) CollectionSearch(collection string, query []float32, topK int) ([]mcp.SearchResult, error) {
+	if h.cfg.Collections == nil {
+		return nil, fmt.Errorf("collections not configured")
+	}
+	records, err := h.cfg.Collections.Search(collection, query, topK)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]mcp.SearchResult, 0, len(records))
+	for _, r := range records {
+		out = append(out, mcp.SearchResult{
+			ID:    r.ID,
+			Score: r.Score,
+			Data:  []byte(r.Data),
+		})
+	}
+	return out, nil
+}
+
 // getOrValidateSession returns the session for the given ID, or nil if invalid.
 func (h *mcpHandler) getOrValidateSession(sessionID string) *mcpSession {
 	return h.sessions.Get(sessionID)
@@ -893,180 +942,15 @@ func (h *mcpHandler) toolGitSearch(ctx context.Context, args map[string]any) mcp
 
 // ── Project Memory handlers ──
 
+// toolSaveMemory / toolRecallMemory are thin shims over pkg/mcp (F-4 wave 3i).
+// First AI-seam tools: vector indexing (save) + semantic recall with SQL
+// fallback (recall), both gated on EmbedAvailable() via Deps.
 func (h *mcpHandler) toolSaveMemory(ctx context.Context, args map[string]any) mcpToolResult {
-	key, _ := args["key"].(string)
-	value, _ := args["value"].(string)
-	if key == "" || value == "" {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: 'key' and 'value' required"}}, IsError: true}
-	}
-	memType, _ := args["type"].(string)
-	if memType == "" {
-		memType = "project"
-	}
-	collectionName, _ := args["collection"].(string)
-	room, _ := args["room"].(string)
-	hall, _ := args["hall"].(string)
-	if hall != "" && !mcp.IsValidHall(hall) {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("Error: invalid hall '%s'. Valid values: %s", hall, strings.Join(mcp.ValidHalls(), ", "))}}, IsError: true}
-	}
-	pin, _ := args["pin"].(bool)
-	pinPriority := 0
-	if pp, ok := args["pin_priority"].(float64); ok {
-		pinPriority = int(pp)
-	}
-
-	if h.cfg.DB == nil {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: database not configured"}}, IsError: true}
-	}
-
-	id := uuid.New().String()
-	now := time.Now().UTC().Format(time.RFC3339)
-
-	// User isolation: extract ownerID from context (set by handleToolCall)
-	ownerID := ""
-	if uid, ok := ctx.Value(mcpUserIDKey).(string); ok {
-		ownerID = uid
-	}
-
-	pinInt := 0
-	if pin {
-		pinInt = 1
-	}
-	upsertSQL := `INSERT INTO memories (id, key, value, type, owner_id, collection_name, room, hall, is_pinned, pin_priority, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-		 ON CONFLICT(key, owner_id) DO UPDATE SET value = $3, type = $4, collection_name = $6, room = $7, hall = $8, is_pinned = $9, pin_priority = $10, updated_at = $12`
-	q, qargs := QArgs(upsertSQL, id, key, value, memType, ownerID, collectionName, room, hall, pinInt, pinPriority, now, now)
-	if _, err := h.cfg.DB.ExecContext(ctx, q, qargs...); err != nil {
-		if h.cfg.Logger != nil {
-			h.cfg.Logger.Error("save_memory SQL failed", err, map[string]any{"key": key})
-		}
-	}
-
-	// Vector-index the memory for semantic recall
-	if h.cfg.EmbedEndpoint != "" && h.cfg.Collections != nil {
-		go func() {
-			embedClient := embed.NewClient(h.cfg.EmbedEndpoint, h.cfg.EmbedModel, 1, 1)
-			embedCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			vec, err := embedClient.EmbedSingle(embedCtx, key+" "+value)
-			if err == nil {
-				memColl := "_memories"
-				if collectionName != "" {
-					memColl = "_memories_" + collectionName
-				}
-				meta, _ := json.Marshal(map[string]string{
-					"key": key, "value": value, "type": memType,
-					"collection": collectionName, "memory_id": id,
-				})
-				h.cfg.Collections.Insert(memColl, id, vec, meta)
-			}
-		}()
-	}
-
-	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("Memory saved: %s = %s (type: %s)", key, truncate(value, 100), memType)}}}
+	return mcp.ToolSaveMemory(ctx, h, args)
 }
 
 func (h *mcpHandler) toolRecallMemory(ctx context.Context, args map[string]any) mcpToolResult {
-	query, _ := args["query"].(string)
-	if query == "" {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: 'query' required"}}, IsError: true}
-	}
-	collectionName, _ := args["collection"].(string)
-	room, _ := args["room"].(string)
-	hall, _ := args["hall"].(string)
-
-	// User isolation
-	ownerID := ""
-	if uid, ok := ctx.Value(mcpUserIDKey).(string); ok {
-		ownerID = uid
-	}
-
-	// SQL fallback path is the source of truth for room/hall filtering since
-	// historical vector metadata may not include these fields. Vector path is
-	// kept for fast semantic recall when no structural filters are provided.
-	if h.cfg.DB == nil {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "[]"}}}
-	}
-
-	// Strategy 1: Vector semantic search (only when no structural filter — keeps it cheap)
-	if room == "" && hall == "" && h.cfg.EmbedEndpoint != "" && h.cfg.Collections != nil {
-		embedClient := embed.NewClient(h.cfg.EmbedEndpoint, h.cfg.EmbedModel, 1, 1)
-		vec, err := embedClient.EmbedSingle(ctx, query)
-		if err == nil {
-			memColl := "_memories"
-			if collectionName != "" {
-				memColl = "_memories_" + collectionName
-			}
-			results, err := h.cfg.Collections.Search(memColl, vec, 10)
-			if err == nil && len(results) > 0 {
-				var items []map[string]string
-				for _, r := range results {
-					var meta map[string]string
-					if err := json.Unmarshal(r.Data, &meta); err == nil {
-						items = append(items, meta)
-					}
-				}
-				if len(items) > 0 {
-					data, _ := json.MarshalIndent(items, "", "  ")
-					return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(data)}}}
-				}
-			}
-		}
-	}
-
-	// Strategy 2: SQL LIKE search with room/hall filters
-	pattern := "%" + query + "%"
-	var conds []string
-	var qargs []any
-	pos := 1
-	conds = append(conds, fmt.Sprintf("(key LIKE $%d OR value LIKE $%d)", pos, pos+1))
-	qargs = append(qargs, pattern, pattern)
-	pos += 2
-	conds = append(conds, fmt.Sprintf("(owner_id = $%d OR owner_id = '')", pos))
-	qargs = append(qargs, ownerID)
-	pos++
-	if collectionName != "" {
-		conds = append(conds, fmt.Sprintf("collection_name = $%d", pos))
-		qargs = append(qargs, collectionName)
-		pos++
-	}
-	if room != "" {
-		conds = append(conds, fmt.Sprintf("room = $%d", pos))
-		qargs = append(qargs, room)
-		pos++
-	}
-	if hall != "" {
-		conds = append(conds, fmt.Sprintf("hall = $%d", pos))
-		qargs = append(qargs, hall)
-		pos++
-	}
-	sqlStr := `SELECT id, key, value, type, owner_id, room, hall, created_at, updated_at
-			 FROM memories WHERE ` + strings.Join(conds, " AND ") +
-		` ORDER BY updated_at DESC LIMIT 20`
-	rows, err := h.cfg.DB.QueryContext(ctx, Q(sqlStr), qargs...)
-	if err != nil {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("Error: %s", err.Error())}}, IsError: true}
-	}
-	defer rows.Close()
-
-	var results []map[string]any
-	for rows.Next() {
-		var id, key, value, typ, oid, rm, hl, ca, ua string
-		if err := rows.Scan(&id, &key, &value, &typ, &oid, &rm, &hl, &ca, &ua); err != nil {
-			continue
-		}
-		results = append(results, map[string]any{
-			"id": id, "key": key, "value": value, "type": typ,
-			"owner_id": oid, "room": rm, "hall": hl,
-			"created_at": ca, "updated_at": ua,
-		})
-	}
-
-	if len(results) == 0 {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "No memories found matching query."}}}
-	}
-	out, _ := json.MarshalIndent(results, "", "  ")
-	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(out)}}}
+	return mcp.ToolRecallMemory(ctx, h, args)
 }
 
 // toolListMemories is a thin shim over mcp.ToolListMemories (F-4 wave 3f).
