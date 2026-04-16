@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/google/uuid"
+	"github.com/stek0v/cognevra/pkg/ingest"
 )
 
 // Deps is the narrow application-state surface that MCP tool
@@ -18,6 +21,7 @@ import (
 //   - wave 3a: DB + Q (toolDelete)
 //   - wave 3b: no growth (toolPrune reused DB)
 //   - wave 3c: + HasCollections + ListCollections (toolListData)
+//   - wave 3d: + StoragePath (toolAdd)
 type Deps interface {
 	// DB returns the shared *sql.DB used for palace / datasets / graph
 	// tables. May be nil when no PostgresDSN is configured — tool
@@ -37,6 +41,10 @@ type Deps interface {
 	// nil when HasCollections() is false. The slice is safe to iterate
 	// but must not be mutated.
 	ListCollections() []string
+	// StoragePath returns the on-disk directory where ingested files
+	// are written. An empty string is treated as the legacy default
+	// "data/uploads" by tools that need a path.
+	StoragePath() string
 }
 
 // ToolDelete deletes a dataset row by id.
@@ -205,4 +213,87 @@ func listDataUnfiltered(ctx context.Context, db *sql.DB, rewrite func(string) st
 		out = append(out, map[string]any{"id": id, "name": name, "type": "dataset"})
 	}
 	return out
+}
+
+// defaultStoragePath is used when Deps.StoragePath() returns empty.
+// Matches the pre-refactor fallback in internal/http.
+const defaultStoragePath = "data/uploads"
+
+// mcpToolAddOwnerID is the owner ID stamped on records produced by the
+// MCP add tool. Empty today because MCP tool calls run without user
+// context; callers that need attribution should use the HTTP /add
+// endpoint which reads the authenticated user from the JWT.
+const mcpToolAddOwnerID = ""
+
+// ToolAdd ingests raw text into a named dataset.
+//
+// Two side effects in order:
+//  1. ingest.Ingest writes the raw bytes to disk under Deps.StoragePath
+//     and returns Result rows with hashes + file paths.
+//  2. When Deps.DB() is configured, ingest.MetadataWriter commits a
+//     transaction inserting the dataset row (if new) and one data +
+//     dataset_data link per result.
+//
+// DB metadata failures are silently swallowed to match pre-refactor
+// behavior — the filesystem ingest is the authoritative side effect.
+// Ingest failures, however, surface as IsError results because they
+// indicate the data was not persisted at all.
+func ToolAdd(ctx context.Context, deps Deps, args map[string]any) ToolResult {
+	data, _ := args["data"].(string)
+	if data == "" {
+		return ToolResult{
+			Content: []Content{{Type: "text", Text: "Error: 'data' required"}},
+			IsError: true,
+		}
+	}
+
+	datasetName, _ := args["dataset_name"].(string)
+	if datasetName == "" {
+		datasetName = "default"
+	}
+
+	storagePath := deps.StoragePath()
+	if storagePath == "" {
+		storagePath = defaultStoragePath
+	}
+
+	var tags []string
+	if rawTags, ok := args["tags"].([]any); ok {
+		for _, t := range rawTags {
+			if s, ok := t.(string); ok && s != "" {
+				tags = append(tags, s)
+			}
+		}
+	}
+	room, _ := args["room"].(string)
+
+	items := []ingest.Item{{
+		Text:        data,
+		DatasetName: datasetName,
+		OwnerID:     mcpToolAddOwnerID,
+		Tags:        tags,
+		Room:        room,
+	}}
+	results, err := ingest.Ingest(items, storagePath)
+	if err != nil {
+		return ToolResult{
+			Content: []Content{{Type: "text", Text: fmt.Sprintf("Ingest error: %s", err.Error())}},
+			IsError: true,
+		}
+	}
+
+	dsID := uuid.New().String()
+	if db := deps.DB(); db != nil {
+		mw := ingest.NewMetadataWriterFromDB(db)
+		// Pre-refactor used context.Background() here rather than the
+		// tool's ctx. Preserved for byte-for-byte parity — the metadata
+		// write must not be cancelled if the MCP client disconnects
+		// mid-call, since the filesystem side has already committed.
+		mw.WriteMetadata(context.Background(), results, mcpToolAddOwnerID, dsID, datasetName)
+	}
+
+	return ToolResult{Content: []Content{{
+		Type: "text",
+		Text: fmt.Sprintf("Data ingested into dataset '%s' (dataset_id: %s, items: %d). Use 'cognify' tool to build knowledge graph.", datasetName, dsID, len(results)),
+	}}}
 }

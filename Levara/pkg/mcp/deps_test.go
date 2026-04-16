@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	_ "github.com/ncruces/go-sqlite3/driver"
+	"github.com/stek0v/cognevra/pkg/ingest"
 )
 
 // fakeDeps is the minimum Deps implementation for unit-testing tool
@@ -21,6 +22,7 @@ type fakeDeps struct {
 	db          *sql.DB
 	collections []string // nil → HasCollections() false (not configured)
 	hasColls    bool     // explicit flag so empty-but-configured is possible
+	storagePath string   // empty → tool applies its own default
 }
 
 func (f *fakeDeps) DB() *sql.DB { return f.db }
@@ -33,17 +35,19 @@ func (f *fakeDeps) Q(query string) string {
 	return pgPlaceholderRe.ReplaceAllString(query, "?")
 }
 
-func (f *fakeDeps) HasCollections() bool     { return f.hasColls }
+func (f *fakeDeps) HasCollections() bool      { return f.hasColls }
 func (f *fakeDeps) ListCollections() []string { return f.collections }
+func (f *fakeDeps) StoragePath() string        { return f.storagePath }
 
 // nilDBDeps returns nil for DB() — exercises the guard branch.
 // HasCollections defaults to false, matching an unconfigured deployment.
 type nilDBDeps struct{}
 
-func (nilDBDeps) DB() *sql.DB              { return nil }
-func (nilDBDeps) Q(q string) string        { return q }
-func (nilDBDeps) HasCollections() bool     { return false }
+func (nilDBDeps) DB() *sql.DB               { return nil }
+func (nilDBDeps) Q(q string) string         { return q }
+func (nilDBDeps) HasCollections() bool      { return false }
 func (nilDBDeps) ListCollections() []string { return nil }
+func (nilDBDeps) StoragePath() string        { return "" }
 
 func setupDepsTestDB(t *testing.T) *fakeDeps {
 	t.Helper()
@@ -456,6 +460,215 @@ func TestToolListData_EmptyTagStringsIgnored(t *testing.T) {
 	// Should match unfiltered output: 1 collection + 2 datasets = 3.
 	if len(items) != 3 {
 		t.Fatalf("got %d items with empty-tag filter, want 3 (same as unfiltered)", len(items))
+	}
+}
+
+// setupAddTestDB builds the full schema ingest.MetadataWriter writes
+// to. Returns a fake Deps with the DB plus a tempdir StoragePath so the
+// ingest side can actually write files.
+func setupAddTestDB(t *testing.T) *fakeDeps {
+	t.Helper()
+	f, _ := os.CreateTemp("", "mcp-add-test-*.db")
+	path := f.Name()
+	f.Close()
+
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() {
+		db.Close()
+		os.Remove(path)
+	})
+
+	// Flip pkg/ingest into SQLite mode so its $N placeholders and NOW()
+	// calls get rewritten. Reset on cleanup — other tests may run in
+	// Postgres mode.
+	ingest.SetSQLiteMode(true)
+	t.Cleanup(func() { ingest.SetSQLiteMode(false) })
+
+	// Schema must carry every column MetadataWriter references. Extra
+	// columns (e.g. content_hash, raw_content_hash) matter because the
+	// ON CONFLICT DO UPDATE clause reads EXCLUDED.* on conflict.
+	stmts := []string{
+		`CREATE TABLE datasets (
+			id TEXT PRIMARY KEY, name TEXT, owner_id TEXT,
+			created_at TEXT, updated_at TEXT
+		)`,
+		`CREATE TABLE data (
+			id TEXT PRIMARY KEY, name TEXT, extension TEXT, mime_type TEXT,
+			raw_data_location TEXT, original_data_location TEXT,
+			content_hash TEXT, raw_content_hash TEXT, owner_id TEXT,
+			loader_engine TEXT, pipeline_status TEXT, tags TEXT, room TEXT,
+			token_count INTEGER, data_size INTEGER,
+			created_at TEXT, updated_at TEXT
+		)`,
+		`CREATE TABLE dataset_data (dataset_id TEXT, data_id TEXT, PRIMARY KEY (dataset_id, data_id))`,
+	}
+	for _, s := range stmts {
+		if _, err := db.Exec(s); err != nil {
+			t.Fatalf("create: %v", err)
+		}
+	}
+
+	return &fakeDeps{
+		db:          db,
+		storagePath: t.TempDir(),
+		hasColls:    true, // not strictly needed for ToolAdd, but consistent
+	}
+}
+
+func TestToolAdd_MissingDataIsError(t *testing.T) {
+	// 'data' is required; no 'data' key or an empty string → IsError.
+	// Must not touch the filesystem either — exit before any ingest call.
+	deps := &fakeDeps{storagePath: t.TempDir()}
+
+	got := ToolAdd(context.Background(), deps, map[string]any{})
+	if !got.IsError {
+		t.Fatalf("IsError = false, want true for missing data")
+	}
+	if len(got.Content) == 0 || !strings.Contains(got.Content[0].Text, "'data' required") {
+		t.Fatalf("content = %+v, want error mentioning 'data' required", got.Content)
+	}
+
+	got = ToolAdd(context.Background(), deps, map[string]any{"data": ""})
+	if !got.IsError {
+		t.Fatalf("empty data: IsError = false, want true")
+	}
+}
+
+func TestToolAdd_WrongTypeDataIsError(t *testing.T) {
+	// Non-string 'data' (e.g. JSON number) → treated as empty → error.
+	deps := &fakeDeps{storagePath: t.TempDir()}
+
+	got := ToolAdd(context.Background(), deps, map[string]any{"data": 42})
+	if !got.IsError {
+		t.Fatalf("int data: IsError = false, want true")
+	}
+}
+
+func TestToolAdd_IngestSucceedsWithNilDB(t *testing.T) {
+	// Nil DB path: ingest writes to disk, metadata phase is skipped,
+	// success message mentions the dataset name and item count.
+	deps := &fakeDeps{storagePath: t.TempDir()}
+
+	got := ToolAdd(context.Background(), deps, map[string]any{
+		"data":         "hello world",
+		"dataset_name": "notes",
+	})
+
+	if got.IsError {
+		t.Fatalf("IsError = true, want false; content=%+v", got.Content)
+	}
+	if len(got.Content) == 0 {
+		t.Fatalf("empty content")
+	}
+	text := got.Content[0].Text
+	if !strings.Contains(text, "dataset 'notes'") {
+		t.Errorf("content = %q, want dataset name 'notes'", text)
+	}
+	if !strings.Contains(text, "items: 1") {
+		t.Errorf("content = %q, want 'items: 1'", text)
+	}
+	if !strings.Contains(text, "dataset_id:") {
+		t.Errorf("content = %q, want dataset_id to be mentioned", text)
+	}
+}
+
+func TestToolAdd_DefaultDatasetName(t *testing.T) {
+	// When 'dataset_name' is missing, the tool substitutes 'default'.
+	// Verified via the success message, which embeds the name.
+	deps := &fakeDeps{storagePath: t.TempDir()}
+
+	got := ToolAdd(context.Background(), deps, map[string]any{"data": "x"})
+	if got.IsError {
+		t.Fatalf("IsError = true, want false")
+	}
+	if !strings.Contains(got.Content[0].Text, "dataset 'default'") {
+		t.Errorf("content = %q, want dataset 'default'", got.Content[0].Text)
+	}
+}
+
+func TestToolAdd_MetadataWriteCommitsToDB(t *testing.T) {
+	// End-to-end happy path: a configured DB means ToolAdd must write
+	// both a datasets row (matching dataset_name) and a data row
+	// (matching the ingest hash).
+	deps := setupAddTestDB(t)
+
+	got := ToolAdd(context.Background(), deps, map[string]any{
+		"data":         "integration-test payload",
+		"dataset_name": "intg",
+		"room":         "testroom",
+		"tags":         []any{"smoke"},
+	})
+
+	if got.IsError {
+		t.Fatalf("IsError = true, want false; content=%+v", got.Content)
+	}
+
+	var datasetName string
+	if err := deps.db.QueryRow("SELECT name FROM datasets WHERE name = 'intg'").Scan(&datasetName); err != nil {
+		t.Fatalf("dataset row not found: %v", err)
+	}
+
+	var dataCount int
+	if err := deps.db.QueryRow("SELECT COUNT(*) FROM data").Scan(&dataCount); err != nil {
+		t.Fatalf("count data: %v", err)
+	}
+	if dataCount != 1 {
+		t.Fatalf("data count = %d, want 1", dataCount)
+	}
+
+	var linkCount int
+	if err := deps.db.QueryRow("SELECT COUNT(*) FROM dataset_data").Scan(&linkCount); err != nil {
+		t.Fatalf("count dataset_data: %v", err)
+	}
+	if linkCount != 1 {
+		t.Errorf("dataset_data link count = %d, want 1", linkCount)
+	}
+
+	// Tags stored as JSON list in the text column.
+	var tagsText string
+	if err := deps.db.QueryRow("SELECT tags FROM data").Scan(&tagsText); err != nil {
+		t.Fatalf("select tags: %v", err)
+	}
+	if !strings.Contains(tagsText, "smoke") {
+		t.Errorf("tags = %q, want to contain 'smoke'", tagsText)
+	}
+}
+
+func TestToolAdd_MetadataErrorIsSwallowed(t *testing.T) {
+	// Partial schema (no data table) → MetadataWriter returns an error
+	// deep inside the transaction. The tool must still return success
+	// because the filesystem ingest has already committed — this locks
+	// in the pre-refactor "DB write is best-effort" contract.
+	f, _ := os.CreateTemp("", "mcp-add-brokendb-*.db")
+	path := f.Name()
+	f.Close()
+
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() {
+		db.Close()
+		os.Remove(path)
+	})
+
+	ingest.SetSQLiteMode(true)
+	t.Cleanup(func() { ingest.SetSQLiteMode(false) })
+
+	// Only datasets exists; data + dataset_data missing so the inner
+	// INSERT fails.
+	if _, err := db.Exec(`CREATE TABLE datasets (id TEXT, name TEXT, owner_id TEXT, created_at TEXT, updated_at TEXT)`); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	deps := &fakeDeps{db: db, storagePath: t.TempDir()}
+
+	got := ToolAdd(context.Background(), deps, map[string]any{"data": "x"})
+	if got.IsError {
+		t.Errorf("IsError = true, want false (metadata failure should be swallowed); content=%+v", got.Content)
 	}
 }
 

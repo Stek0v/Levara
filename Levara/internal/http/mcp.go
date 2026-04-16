@@ -31,7 +31,6 @@ import (
 	"github.com/stek0v/cognevra/pkg/extract"
 	"github.com/stek0v/cognevra/pkg/git"
 	"github.com/stek0v/cognevra/pkg/graphrank"
-	"github.com/stek0v/cognevra/pkg/ingest"
 	"github.com/stek0v/cognevra/pkg/mcp"
 	"github.com/stek0v/cognevra/pkg/orchestrator"
 	"github.com/stek0v/cognevra/pkg/rerank"
@@ -108,6 +107,11 @@ func (h *mcpHandler) ListCollections() []string {
 	}
 	return h.cfg.Collections.List()
 }
+
+// StoragePath implements mcp.Deps: returns the on-disk directory for
+// ingested files. Empty string is returned as-is; the tool layer
+// applies the legacy "data/uploads" default.
+func (h *mcpHandler) StoragePath() string { return h.cfg.StoragePath }
 
 // getOrValidateSession returns the session for the given ID, or nil if invalid.
 func (h *mcpHandler) getOrValidateSession(sessionID string) *mcpSession {
@@ -747,56 +751,10 @@ func (h *mcpHandler) toolCognifyStatus(args map[string]any) mcpToolResult {
 	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(out)}}}
 }
 
+// toolAdd is a thin shim over mcp.ToolAdd. F-4 wave 3d moved the body
+// into pkg/mcp; the ingest + metadata-write orchestration lives there.
 func (h *mcpHandler) toolAdd(ctx context.Context, args map[string]any) mcpToolResult {
-	data, _ := args["data"].(string)
-	if data == "" {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: 'data' required"}}, IsError: true}
-	}
-
-	datasetName, _ := args["dataset_name"].(string)
-	if datasetName == "" {
-		datasetName = "default"
-	}
-
-	// Ingest data to disk via pkg/ingest
-	storagePath := h.cfg.StoragePath
-	if storagePath == "" {
-		storagePath = "data/uploads"
-	}
-
-	ownerID := "" // MCP tools run without user context for now
-
-	// Optional metadata: tags + room
-	var tags []string
-	if rawTags, ok := args["tags"].([]any); ok {
-		for _, t := range rawTags {
-			if s, ok := t.(string); ok && s != "" {
-				tags = append(tags, s)
-			}
-		}
-	}
-	room, _ := args["room"].(string)
-
-	items := []ingest.Item{{Text: data, DatasetName: datasetName, OwnerID: ownerID, Tags: tags, Room: room}}
-	results, err := ingest.Ingest(items, storagePath)
-	if err != nil {
-		return mcpToolResult{
-			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("Ingest error: %s", err.Error())}},
-			IsError: true,
-		}
-	}
-
-	// Write metadata to DB
-	dsID := uuid.New().String()
-	if h.cfg.DB != nil {
-		mw := ingest.NewMetadataWriterFromDB(h.cfg.DB)
-		mw.WriteMetadata(context.Background(), results, ownerID, dsID, datasetName)
-	}
-
-	return mcpToolResult{Content: []mcpContent{{
-		Type: "text",
-		Text: fmt.Sprintf("Data ingested into dataset '%s' (dataset_id: %s, items: %d). Use 'cognify' tool to build knowledge graph.", datasetName, dsID, len(results)),
-	}}}
+	return mcp.ToolAdd(ctx, h, args)
 }
 
 // ── Git Commit Analyzer handlers ──
