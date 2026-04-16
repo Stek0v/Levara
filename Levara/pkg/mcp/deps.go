@@ -47,3 +47,30 @@ func ToolDelete(ctx context.Context, deps Deps, args map[string]any) ToolResult 
 
 	return ToolResult{Content: []Content{{Type: "text", Text: fmt.Sprintf("Dataset %s deleted.", dsID)}}}
 }
+
+// pruneTables lists every table cleared by ToolPrune, in the order the
+// DELETEs are issued. Child tables come first so a future FK constraint
+// wouldn't block the parent delete — today the schema has no cross-table
+// FKs enforced, but the order is cheap to keep correct.
+var pruneTables = []string{
+	"dataset_data",
+	"data",
+	"datasets",
+	"graph_nodes",
+	"graph_edges",
+}
+
+// ToolPrune clears all dataset, document, and graph rows.
+//
+// Like ToolDelete, each DELETE is best-effort: SQL errors are swallowed
+// to match pre-refactor behavior. The queries are static (no placeholders),
+// so Deps.Q is not needed — a plain ExecContext is fine on both Postgres
+// and SQLite. nil DB is a silent no-op.
+func ToolPrune(ctx context.Context, deps Deps) ToolResult {
+	if db := deps.DB(); db != nil {
+		for _, table := range pruneTables {
+			db.ExecContext(ctx, "DELETE FROM "+table)
+		}
+	}
+	return ToolResult{Content: []Content{{Type: "text", Text: "All data pruned."}}}
+}
