@@ -19,6 +19,27 @@ type Session struct {
 	DefaultCollection string      // set via the set_context tool
 }
 
+// ResolveCollection picks the collection for a tool call. Priority:
+//  1. explicit "collection" argument on the call
+//  2. session default (set via set_context)
+//  3. "default" for writes; empty string for reads (which means "all")
+//
+// Returning empty for reads is intentional: downstream search code treats it
+// as "no filter" and scans every collection, which is the right fallback for
+// an unscoped MCP client that hasn't called set_context yet.
+func ResolveCollection(sess *Session, args map[string]any, forWrite bool) string {
+	if coll, _ := args["collection"].(string); coll != "" {
+		return coll
+	}
+	if sess != nil && sess.DefaultCollection != "" {
+		return sess.DefaultCollection
+	}
+	if forWrite {
+		return "default"
+	}
+	return ""
+}
+
 // SessionStore is the thread-safe registry of active MCP sessions. Create /
 // Get / Delete are all O(1) under a single RWMutex. CleanupIdle sweeps stale
 // entries older than the given maxAge and returns how many were evicted —

@@ -187,19 +187,11 @@ func (h *mcpHandler) handleRPC(c *fiber.Ctx) error {
 	}
 }
 
-// resolveCollection returns the collection to use for a tool call.
-// Priority: 1) explicit arg, 2) session default, 3) "default" for writes, "" for reads (= all).
+// resolveCollection is a thin shim around mcp.ResolveCollection kept here so
+// existing call-sites inside this package don't need to change. The real
+// logic lives in pkg/mcp/session.go now (F-4 wave).
 func (h *mcpHandler) resolveCollection(sess *mcpSession, args map[string]any, forWrite bool) string {
-	if coll, _ := args["collection"].(string); coll != "" {
-		return coll
-	}
-	if sess != nil && sess.DefaultCollection != "" {
-		return sess.DefaultCollection
-	}
-	if forWrite {
-		return "default"
-	}
-	return ""
+	return mcp.ResolveCollection(sess, args, forWrite)
 }
 
 func (h *mcpHandler) handleToolCall(c *fiber.Ctx, req jsonRPCRequest) error {
