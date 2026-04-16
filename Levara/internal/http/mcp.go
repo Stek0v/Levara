@@ -96,6 +96,19 @@ func (h *mcpHandler) DB() *sql.DB { return h.cfg.DB }
 // pkg/mcp stay agnostic of internal/http's sqlcompat state.
 func (h *mcpHandler) Q(query string) string { return Q(query) }
 
+// HasCollections implements mcp.Deps: true iff a vector-collection
+// manager is configured on this handler's APIConfig.
+func (h *mcpHandler) HasCollections() bool { return h.cfg.Collections != nil }
+
+// ListCollections implements mcp.Deps: returns the registered
+// collection names, or nil if no manager is configured.
+func (h *mcpHandler) ListCollections() []string {
+	if h.cfg.Collections == nil {
+		return nil
+	}
+	return h.cfg.Collections.List()
+}
+
 // getOrValidateSession returns the session for the given ID, or nil if invalid.
 func (h *mcpHandler) getOrValidateSession(sessionID string) *mcpSession {
 	return h.sessions.Get(sessionID)
@@ -698,82 +711,11 @@ func (h *mcpHandler) toolSearch(ctx context.Context, args map[string]any) mcpToo
 	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(out)}}}
 }
 
+// toolListData is a thin shim over mcp.ToolListData. F-4 wave 3c moved
+// the body into pkg/mcp; the filter parsing and SQL live in
+// pkg/mcp/deps.go's listDataFiltered / listDataUnfiltered helpers.
 func (h *mcpHandler) toolListData(ctx context.Context, args map[string]any) mcpToolResult {
-	if h.cfg.Collections == nil {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "[]"}}}
-	}
-
-	// Optional filters
-	var wantTags []string
-	if rawTags, ok := args["tags"].([]any); ok {
-		for _, t := range rawTags {
-			if s, ok := t.(string); ok && s != "" {
-				wantTags = append(wantTags, s)
-			}
-		}
-	}
-	roomFilter, _ := args["room"].(string)
-	hasFilter := len(wantTags) > 0 || roomFilter != ""
-
-	var items []map[string]any
-	if !hasFilter {
-		colls := h.cfg.Collections.List()
-		for _, c := range colls {
-			items = append(items, map[string]any{"collection": c, "type": "vector_collection"})
-		}
-	}
-
-	// Also list datasets / data items from DB
-	if h.cfg.DB != nil {
-		if hasFilter {
-			// Tag/room filter operates on the data table directly.
-			var conds []string
-			var qargs []any
-			pos := 1
-			if roomFilter != "" {
-				conds = append(conds, fmt.Sprintf("room = $%d", pos))
-				qargs = append(qargs, roomFilter)
-				pos++
-			}
-			for _, t := range wantTags {
-				// JSON tag list is stored as a string like ["a","b"]; LIKE works on both PG/SQLite.
-				conds = append(conds, fmt.Sprintf("tags LIKE $%d", pos))
-				qargs = append(qargs, "%\""+t+"\"%")
-				pos++
-			}
-			sqlStr := `SELECT id, name, extension, room, tags FROM data`
-			if len(conds) > 0 {
-				sqlStr += " WHERE " + strings.Join(conds, " AND ")
-			}
-			sqlStr += " ORDER BY created_at DESC LIMIT 200"
-			rows, err := h.cfg.DB.QueryContext(ctx, Q(sqlStr), qargs...)
-			if err == nil {
-				defer rows.Close()
-				for rows.Next() {
-					var id, name, ext, rm, tg string
-					rows.Scan(&id, &name, &ext, &rm, &tg)
-					items = append(items, map[string]any{
-						"id": id, "name": name, "extension": ext,
-						"room": rm, "tags": json.RawMessage(tg),
-						"type": "data",
-					})
-				}
-			}
-		} else {
-			rows, err := h.cfg.DB.QueryContext(ctx, Q("SELECT id, name FROM datasets ORDER BY created_at DESC LIMIT 100"))
-			if err == nil {
-				defer rows.Close()
-				for rows.Next() {
-					var id, name string
-					rows.Scan(&id, &name)
-					items = append(items, map[string]any{"id": id, "name": name, "type": "dataset"})
-				}
-			}
-		}
-	}
-
-	out, _ := json.MarshalIndent(items, "", "  ")
-	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(out)}}}
+	return mcp.ToolListData(ctx, h, args)
 }
 
 // toolDelete is a thin shim over mcp.ToolDelete. F-4 wave 3a moved the
