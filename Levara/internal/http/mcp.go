@@ -113,6 +113,13 @@ func (h *mcpHandler) ListCollections() []string {
 // applies the legacy "data/uploads" default.
 func (h *mcpHandler) StoragePath() string { return h.cfg.StoragePath }
 
+// CollectionExists implements mcp.Deps: true iff a collection with
+// the given name is registered in the CollectionManager. Always false
+// when no manager is configured.
+func (h *mcpHandler) CollectionExists(name string) bool {
+	return h.cfg.Collections != nil && h.cfg.Collections.Has(name)
+}
+
 // getOrValidateSession returns the session for the given ID, or nil if invalid.
 func (h *mcpHandler) getOrValidateSession(sessionID string) *mcpSession {
 	return h.sessions.Get(sessionID)
@@ -1261,12 +1268,10 @@ func (h *mcpHandler) toolSearchChats(ctx context.Context, args map[string]any) m
 }
 
 // truncate cuts a string to maxLen and adds "..." if truncated.
-func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen-3] + "..."
-}
+// truncate is a shim over mcp.Truncate kept so the surviving in-http
+// tool bodies (analyzeCommits, saveMemory, crossSearch, ...) don't need
+// to be edited in this wave. Removed once those tools migrate too.
+func truncate(s string, maxLen int) string { return mcp.Truncate(s, maxLen) }
 
 // ── MCP Resources API ──────────────────────────────────────────────────────
 
@@ -1495,85 +1500,18 @@ func (h *mcpHandler) toolCodify(ctx context.Context, args map[string]any) mcpToo
 	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(out)}}}
 }
 
+// toolAddFeedback / toolGetFeedbackStats / toolSetContext are thin
+// shims over their pkg/mcp counterparts. F-4 wave 3e moved the bodies.
 func (h *mcpHandler) toolAddFeedback(ctx context.Context, args map[string]any) mcpToolResult {
-	query, _ := args["query"].(string)
-	if query == "" {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: 'query' required"}}, IsError: true}
-	}
-	rating := 0
-	if r, ok := args["rating"].(float64); ok {
-		rating = int(r)
-	}
-	if rating < 1 || rating > 5 {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: 'rating' must be 1-5"}}, IsError: true}
-	}
-	if h.cfg.DB == nil {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: database not configured"}}, IsError: true}
-	}
-
-	resultID, _ := args["result_id"].(string)
-	collection, _ := args["collection"].(string)
-	searchType, _ := args["search_type"].(string)
-	comment, _ := args["comment"].(string)
-	userID := ""
-	if uid, ok := ctx.Value(mcpUserIDKey).(string); ok {
-		userID = uid
-	}
-
-	id := uuid.New().String()
-	h.cfg.DB.ExecContext(ctx,
-		Q(`INSERT INTO search_feedback (id, query, result_id, collection, search_type, rating, comment, user_id)
-		   VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`),
-		id, query, resultID, collection, searchType, rating, comment, userID)
-
-	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("Feedback saved: rating=%d for query '%s'", rating, truncate(query, 50))}}}
+	return mcp.ToolAddFeedback(ctx, h, args)
 }
 
 func (h *mcpHandler) toolGetFeedbackStats(ctx context.Context, args map[string]any) mcpToolResult {
-	if h.cfg.DB == nil {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: `{"total":0}`}}}
-	}
-	collection, _ := args["collection"].(string)
-
-	var total int
-	var avgRating float64
-	var worstQuery string
-
-	if collection != "" {
-		h.cfg.DB.QueryRowContext(ctx,
-			Q(`SELECT COUNT(*), COALESCE(AVG(rating),0) FROM search_feedback WHERE collection = $1`), collection).Scan(&total, &avgRating)
-		h.cfg.DB.QueryRowContext(ctx,
-			Q(`SELECT COALESCE(query,'') FROM search_feedback WHERE collection = $1 ORDER BY rating ASC LIMIT 1`), collection).Scan(&worstQuery)
-	} else {
-		h.cfg.DB.QueryRowContext(ctx,
-			Q(`SELECT COUNT(*), COALESCE(AVG(rating),0) FROM search_feedback`)).Scan(&total, &avgRating)
-		h.cfg.DB.QueryRowContext(ctx,
-			Q(`SELECT COALESCE(query,'') FROM search_feedback ORDER BY rating ASC LIMIT 1`)).Scan(&worstQuery)
-	}
-
-	out, _ := json.MarshalIndent(map[string]any{
-		"total": total, "avg_rating": avgRating, "worst_query": worstQuery, "collection": collection,
-	}, "", "  ")
-	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(out)}}}
+	return mcp.ToolGetFeedbackStats(ctx, h, args)
 }
 
 func (h *mcpHandler) toolSetContext(sess *mcpSession, args map[string]any) mcpToolResult {
-	collection, _ := args["collection"].(string)
-	if collection == "" {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: 'collection' required"}}, IsError: true}
-	}
-	if sess == nil {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: no active session (send initialize first)"}}, IsError: true}
-	}
-	// Validate collection exists (or allow setting for future use)
-	exists := h.cfg.Collections != nil && h.cfg.Collections.Has(collection)
-	sess.DefaultCollection = collection
-
-	status := "set"
-	if !exists {
-		status = "set (collection not yet created — will be used when data is added)"
-	}
-	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("Context %s: default collection = '%s'", status, collection)}}}
+	return mcp.ToolSetContext(sess, h, args)
 }
 
 var sensitiveKeyPatterns = []string{"api_key", "apikey", "password", "passwd", "secret", "token", "credential", "private_key"}

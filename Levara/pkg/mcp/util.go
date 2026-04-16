@@ -29,3 +29,14 @@ const DiaryOwnerPrefix = "agent:"
 func DiaryOwner(agent string) string {
 	return DiaryOwnerPrefix + strings.TrimSpace(agent)
 }
+
+// Truncate shortens s to at most maxLen runes, replacing the tail with
+// "..." (3 bytes) when the cut happens. Used by tool implementations
+// to keep log/message echoes bounded. Operates on bytes, not runes —
+// acceptable for the short ASCII-heavy strings the tools emit.
+func Truncate(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen-3] + "..."
+}
