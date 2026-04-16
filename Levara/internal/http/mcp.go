@@ -40,48 +40,21 @@ import (
 	"github.com/stek0v/cognevra/pipeline"
 )
 
-// ── JSON-RPC 2.0 types ──
+// F-4 wave 1b: the canonical type definitions live in pkg/mcp now. Local
+// names below are type aliases that preserve every existing call-site inside
+// this package unchanged while the handler migration continues in later
+// waves. When the handler itself moves to pkg/mcp the aliases can be dropped.
+type (
+	jsonRPCRequest  = mcp.JSONRPCRequest
+	jsonRPCResponse = mcp.JSONRPCResponse
+	rpcError        = mcp.RPCError
+	contextKey      = mcp.ContextKey
+	mcpTool         = mcp.Tool
+	mcpContent      = mcp.Content
+	mcpToolResult   = mcp.ToolResult
+)
 
-type jsonRPCRequest struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      json.RawMessage `json:"id"`
-	Method  string          `json:"method"`
-	Params  json.RawMessage `json:"params,omitempty"`
-}
-
-type jsonRPCResponse struct {
-	JSONRPC string      `json:"jsonrpc"`
-	ID      json.RawMessage `json:"id"`
-	Result  any         `json:"result,omitempty"`
-	Error   *rpcError   `json:"error,omitempty"`
-}
-
-type rpcError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-}
-
-// ── MCP types ──
-
-// mcpUserIDKey is the context key for user isolation in MCP tools.
-type contextKey string
-const mcpUserIDKey contextKey = "mcp_user_id"
-
-type mcpTool struct {
-	Name        string         `json:"name"`
-	Description string         `json:"description"`
-	InputSchema map[string]any `json:"inputSchema"`
-}
-
-type mcpContent struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
-}
-
-type mcpToolResult struct {
-	Content []mcpContent `json:"content"`
-	IsError bool         `json:"isError,omitempty"`
-}
+const mcpUserIDKey = mcp.UserIDKey
 
 // ── Tool definitions ──
 
