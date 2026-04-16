@@ -56,3 +56,28 @@ func TestDiaryOwnerPrefix_StableConst(t *testing.T) {
 		t.Errorf("DiaryOwnerPrefix changed to %q — external consumers may break", DiaryOwnerPrefix)
 	}
 }
+
+func TestTruncate(t *testing.T) {
+	cases := []struct {
+		name   string
+		in     string
+		maxLen int
+		want   string
+	}{
+		{"shorter returned as-is", "hello", 10, "hello"},
+		{"exact length returned as-is", "hello", 5, "hello"},
+		{"longer is truncated with ellipsis", "hello world", 8, "hello..."},
+		{"empty string stays empty", "", 5, ""},
+		// maxLen=3 is the degenerate case — result is just "..." (len 3),
+		// consistent with "the ellipsis replaces the last 3 chars of the
+		// kept prefix."
+		{"maxLen=3 yields just ellipsis for any input over 3 chars", "abcdef", 3, "..."},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := Truncate(c.in, c.maxLen); got != c.want {
+				t.Errorf("Truncate(%q, %d) = %q, want %q", c.in, c.maxLen, got, c.want)
+			}
+		})
+	}
+}

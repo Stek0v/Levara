@@ -37,17 +37,30 @@ func (f *fakeDeps) Q(query string) string {
 
 func (f *fakeDeps) HasCollections() bool      { return f.hasColls }
 func (f *fakeDeps) ListCollections() []string { return f.collections }
-func (f *fakeDeps) StoragePath() string        { return f.storagePath }
+func (f *fakeDeps) StoragePath() string       { return f.storagePath }
+
+func (f *fakeDeps) CollectionExists(name string) bool {
+	if !f.hasColls {
+		return false
+	}
+	for _, c := range f.collections {
+		if c == name {
+			return true
+		}
+	}
+	return false
+}
 
 // nilDBDeps returns nil for DB() — exercises the guard branch.
 // HasCollections defaults to false, matching an unconfigured deployment.
 type nilDBDeps struct{}
 
-func (nilDBDeps) DB() *sql.DB               { return nil }
-func (nilDBDeps) Q(q string) string         { return q }
-func (nilDBDeps) HasCollections() bool      { return false }
-func (nilDBDeps) ListCollections() []string { return nil }
-func (nilDBDeps) StoragePath() string        { return "" }
+func (nilDBDeps) DB() *sql.DB                    { return nil }
+func (nilDBDeps) Q(q string) string              { return q }
+func (nilDBDeps) HasCollections() bool           { return false }
+func (nilDBDeps) ListCollections() []string      { return nil }
+func (nilDBDeps) StoragePath() string            { return "" }
+func (nilDBDeps) CollectionExists(string) bool   { return false }
 
 func setupDepsTestDB(t *testing.T) *fakeDeps {
 	t.Helper()
@@ -690,5 +703,262 @@ func TestToolListData_CollectionsConfiguredButEmpty(t *testing.T) {
 		if it["type"] != "dataset" {
 			t.Errorf("item type = %v, want dataset", it["type"])
 		}
+	}
+}
+
+// setupFeedbackTestDB builds the search_feedback schema. Columns match
+// the real production schema's shape; only the ones ToolAddFeedback
+// writes and ToolGetFeedbackStats reads matter for these tests.
+func setupFeedbackTestDB(t *testing.T) *fakeDeps {
+	t.Helper()
+	f, _ := os.CreateTemp("", "mcp-feedback-test-*.db")
+	path := f.Name()
+	f.Close()
+
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() {
+		db.Close()
+		os.Remove(path)
+	})
+
+	stmt := `CREATE TABLE search_feedback (
+		id TEXT PRIMARY KEY, query TEXT, result_id TEXT, collection TEXT,
+		search_type TEXT, rating INTEGER, comment TEXT, user_id TEXT
+	)`
+	if _, err := db.Exec(stmt); err != nil {
+		t.Fatalf("create search_feedback: %v", err)
+	}
+	return &fakeDeps{db: db}
+}
+
+func TestToolAddFeedback_MissingQueryIsError(t *testing.T) {
+	// 'query' is required — missing or empty → IsError with specific message.
+	deps := setupFeedbackTestDB(t)
+
+	got := ToolAddFeedback(context.Background(), deps, map[string]any{"rating": float64(3)})
+	if !got.IsError {
+		t.Fatalf("missing query: IsError = false, want true")
+	}
+	if !strings.Contains(got.Content[0].Text, "'query' required") {
+		t.Errorf("content = %q, want error mentioning 'query' required", got.Content[0].Text)
+	}
+}
+
+func TestToolAddFeedback_InvalidRatingRange(t *testing.T) {
+	// Rating must be 1..5 inclusive. Zero (missing / unparseable), negative,
+	// and >5 all reject with the same error.
+	deps := setupFeedbackTestDB(t)
+	bad := []any{nil, float64(0), float64(6), float64(-1), "three"}
+	for _, r := range bad {
+		args := map[string]any{"query": "q"}
+		if r != nil {
+			args["rating"] = r
+		}
+		got := ToolAddFeedback(context.Background(), deps, args)
+		if !got.IsError {
+			t.Errorf("rating=%v: IsError = false, want true", r)
+			continue
+		}
+		if !strings.Contains(got.Content[0].Text, "'rating' must be 1-5") {
+			t.Errorf("rating=%v: content = %q, want 1-5 error", r, got.Content[0].Text)
+		}
+	}
+}
+
+func TestToolAddFeedback_NilDBIsError(t *testing.T) {
+	// Unlike other tools, feedback treats a missing DB as a hard error —
+	// there's no useful degraded mode when the feedback table is
+	// unreachable.
+	got := ToolAddFeedback(context.Background(), nilDBDeps{}, map[string]any{
+		"query":  "q",
+		"rating": float64(3),
+	})
+	if !got.IsError {
+		t.Fatalf("nil DB: IsError = false, want true")
+	}
+	if !strings.Contains(got.Content[0].Text, "database not configured") {
+		t.Errorf("content = %q, want 'database not configured'", got.Content[0].Text)
+	}
+}
+
+func TestToolAddFeedback_HappyPathWritesRow(t *testing.T) {
+	// Valid input → row inserted, success message echoes rating + query
+	// (truncated for long queries).
+	deps := setupFeedbackTestDB(t)
+
+	got := ToolAddFeedback(context.Background(), deps, map[string]any{
+		"query":       "why is search slow",
+		"rating":      float64(4),
+		"result_id":   "res-1",
+		"collection":  "levara",
+		"search_type": "hybrid",
+		"comment":     "took 2s",
+	})
+	if got.IsError {
+		t.Fatalf("IsError = true, want false; content=%+v", got.Content)
+	}
+	if !strings.Contains(got.Content[0].Text, "rating=4") {
+		t.Errorf("content = %q, want 'rating=4'", got.Content[0].Text)
+	}
+
+	var count int
+	if err := deps.db.QueryRow("SELECT COUNT(*) FROM search_feedback WHERE rating = 4").Scan(&count); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("row count = %d, want 1", count)
+	}
+}
+
+func TestToolAddFeedback_LongQueryTruncatedInMessage(t *testing.T) {
+	// Messages echo the query text, truncated at feedbackQueryLogMaxLen.
+	// DB row still carries the full query (not asserted here — owned by
+	// pkg/ingest tests); we only verify the user-visible echo is bounded.
+	deps := setupFeedbackTestDB(t)
+
+	long := strings.Repeat("a", 200)
+	got := ToolAddFeedback(context.Background(), deps, map[string]any{
+		"query":  long,
+		"rating": float64(1),
+	})
+	if got.IsError {
+		t.Fatalf("IsError = true, want false")
+	}
+	if strings.Contains(got.Content[0].Text, long) {
+		t.Errorf("success message contains full 200-char query; expected Truncate to kick in")
+	}
+	if !strings.Contains(got.Content[0].Text, "...") {
+		t.Errorf("success message missing ellipsis; content = %q", got.Content[0].Text)
+	}
+}
+
+func TestToolGetFeedbackStats_NilDBReturnsZero(t *testing.T) {
+	// Absent DB → return a concrete `{"total":0}` payload, not an error.
+	// This matches pre-refactor behavior that lets feedback be optional
+	// in downstream clients.
+	got := ToolGetFeedbackStats(context.Background(), nilDBDeps{}, map[string]any{})
+	if got.IsError {
+		t.Fatalf("IsError = true, want false")
+	}
+	if got.Content[0].Text != `{"total":0}` {
+		t.Errorf("content = %q, want `{\"total\":0}`", got.Content[0].Text)
+	}
+}
+
+func TestToolGetFeedbackStats_AggregatesAll(t *testing.T) {
+	// Seed 3 feedback rows (ratings 1, 3, 5) → total=3, avg=3, worst
+	// query is the rating=1 row.
+	deps := setupFeedbackTestDB(t)
+	rows := []struct{ id, q string; r int }{
+		{"f1", "bad search", 1},
+		{"f2", "ok search", 3},
+		{"f3", "great search", 5},
+	}
+	for _, r := range rows {
+		deps.db.Exec("INSERT INTO search_feedback (id, query, rating, collection) VALUES (?,?,?,?)",
+			r.id, r.q, r.r, "levara")
+	}
+
+	res := ToolGetFeedbackStats(context.Background(), deps, map[string]any{})
+	if res.IsError {
+		t.Fatalf("IsError = true, want false")
+	}
+	var stats map[string]any
+	if err := json.Unmarshal([]byte(res.Content[0].Text), &stats); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if int(stats["total"].(float64)) != 3 {
+		t.Errorf("total = %v, want 3", stats["total"])
+	}
+	if stats["avg_rating"].(float64) != 3.0 {
+		t.Errorf("avg_rating = %v, want 3.0", stats["avg_rating"])
+	}
+	if stats["worst_query"] != "bad search" {
+		t.Errorf("worst_query = %v, want 'bad search'", stats["worst_query"])
+	}
+}
+
+func TestToolGetFeedbackStats_CollectionFilterScopes(t *testing.T) {
+	// With a "collection" filter, stats are scoped to that collection.
+	// Rows in other collections must not contribute.
+	deps := setupFeedbackTestDB(t)
+	deps.db.Exec("INSERT INTO search_feedback (id, query, rating, collection) VALUES ('a','x',5,'levara')")
+	deps.db.Exec("INSERT INTO search_feedback (id, query, rating, collection) VALUES ('b','y',1,'other')")
+
+	res := ToolGetFeedbackStats(context.Background(), deps, map[string]any{"collection": "levara"})
+	var stats map[string]any
+	json.Unmarshal([]byte(res.Content[0].Text), &stats)
+	if int(stats["total"].(float64)) != 1 {
+		t.Errorf("total = %v, want 1 (filtered)", stats["total"])
+	}
+	if stats["avg_rating"].(float64) != 5.0 {
+		t.Errorf("avg_rating = %v, want 5.0", stats["avg_rating"])
+	}
+}
+
+func TestToolSetContext_MissingCollectionIsError(t *testing.T) {
+	// 'collection' arg is required.
+	sess := &Session{}
+	got := ToolSetContext(sess, nilDBDeps{}, map[string]any{})
+	if !got.IsError {
+		t.Fatalf("missing collection: IsError = false, want true")
+	}
+	if !strings.Contains(got.Content[0].Text, "'collection' required") {
+		t.Errorf("content = %q, want error", got.Content[0].Text)
+	}
+	if sess.DefaultCollection != "" {
+		t.Errorf("DefaultCollection mutated to %q on error path", sess.DefaultCollection)
+	}
+}
+
+func TestToolSetContext_NilSessionIsError(t *testing.T) {
+	// No session → caller forgot to send initialize; return a specific
+	// error rather than panicking.
+	got := ToolSetContext(nil, nilDBDeps{}, map[string]any{"collection": "levara"})
+	if !got.IsError {
+		t.Fatalf("nil session: IsError = false, want true")
+	}
+	if !strings.Contains(got.Content[0].Text, "no active session") {
+		t.Errorf("content = %q, want session error", got.Content[0].Text)
+	}
+}
+
+func TestToolSetContext_ExistingCollection(t *testing.T) {
+	// Collection registered → session gets the default, message says "set".
+	sess := &Session{}
+	deps := &fakeDeps{hasColls: true, collections: []string{"levara", "other"}}
+
+	got := ToolSetContext(sess, deps, map[string]any{"collection": "levara"})
+	if got.IsError {
+		t.Fatalf("IsError = true, want false")
+	}
+	if sess.DefaultCollection != "levara" {
+		t.Errorf("DefaultCollection = %q, want levara", sess.DefaultCollection)
+	}
+	// "set" but NOT the "not yet created" tail.
+	if strings.Contains(got.Content[0].Text, "not yet created") {
+		t.Errorf("content = %q, should not mention 'not yet created' for existing coll", got.Content[0].Text)
+	}
+}
+
+func TestToolSetContext_UnknownCollectionIsAllowed(t *testing.T) {
+	// Unknown collection → session still updated, but message flags
+	// "will be created when data is added." This lets clients pre-set
+	// a context before the first write.
+	sess := &Session{}
+	deps := &fakeDeps{hasColls: true, collections: []string{"levara"}}
+
+	got := ToolSetContext(sess, deps, map[string]any{"collection": "new-coll"})
+	if got.IsError {
+		t.Fatalf("IsError = true, want false for unknown coll")
+	}
+	if sess.DefaultCollection != "new-coll" {
+		t.Errorf("DefaultCollection = %q, want new-coll (session updated even for unknown)", sess.DefaultCollection)
+	}
+	if !strings.Contains(got.Content[0].Text, "not yet created") {
+		t.Errorf("content = %q, want 'not yet created' warning", got.Content[0].Text)
 	}
 }
