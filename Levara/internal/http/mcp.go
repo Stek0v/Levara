@@ -1076,133 +1076,18 @@ func (h *mcpHandler) toolListMemories(ctx context.Context, args map[string]any) 
 
 // ── Chat History handlers ──
 
+// toolSaveChat / toolRecallChat / toolSearchChats are thin shims over
+// their pkg/mcp counterparts (F-4 wave 3g).
 func (h *mcpHandler) toolSaveChat(ctx context.Context, args map[string]any) mcpToolResult {
-	sessionID, _ := args["session_id"].(string)
-	if sessionID == "" {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: 'session_id' required"}}, IsError: true}
-	}
-
-	messagesRaw, ok := args["messages"].([]any)
-	if !ok || len(messagesRaw) == 0 {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: 'messages' array required"}}, IsError: true}
-	}
-
-	if h.cfg.DB == nil {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: database not configured"}}, IsError: true}
-	}
-
-	saved := 0
-	for _, msgRaw := range messagesRaw {
-		msg, ok := msgRaw.(map[string]any)
-		if !ok {
-			continue
-		}
-		role, _ := msg["role"].(string)
-		content, _ := msg["content"].(string)
-		if role == "" || content == "" {
-			continue
-		}
-
-		id := uuid.New().String()
-		now := time.Now().UTC()
-
-		// Map role to query/response fields
-		query := ""
-		response := ""
-		if role == "user" {
-			query = content
-		} else {
-			response = content
-		}
-
-		h.cfg.DB.ExecContext(ctx,
-			Q(`INSERT INTO interactions (id, session_id, user_id, query, response, search_type, created_at)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7)`),
-			id, sessionID, "", query, response, "chat", now)
-		saved++
-	}
-
-	return mcpToolResult{Content: []mcpContent{{
-		Type: "text",
-		Text: fmt.Sprintf("Saved %d messages to session %s", saved, sessionID),
-	}}}
+	return mcp.ToolSaveChat(ctx, h, args)
 }
 
 func (h *mcpHandler) toolRecallChat(ctx context.Context, args map[string]any) mcpToolResult {
-	sessionID, _ := args["session_id"].(string)
-	if sessionID == "" {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: 'session_id' required"}}, IsError: true}
-	}
-
-	if h.cfg.DB == nil {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "[]"}}}
-	}
-
-	rows, err := h.cfg.DB.QueryContext(ctx,
-		Q(`SELECT id, query, response, created_at FROM interactions
-		 WHERE session_id = $1 ORDER BY created_at LIMIT 100`), sessionID)
-	if err != nil {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "[]"}}}
-	}
-	defer rows.Close()
-
-	var messages []map[string]any
-	for rows.Next() {
-		var id, query, response, ca string
-		if err := rows.Scan(&id, &query, &response, &ca); err != nil {
-			continue
-		}
-		if query != "" {
-			messages = append(messages, map[string]any{"role": "user", "content": query, "created_at": ca})
-		}
-		if response != "" {
-			messages = append(messages, map[string]any{"role": "assistant", "content": response, "created_at": ca})
-		}
-	}
-
-	if len(messages) == 0 {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "No messages found for session."}}}
-	}
-	out, _ := json.MarshalIndent(messages, "", "  ")
-	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(out)}}}
+	return mcp.ToolRecallChat(ctx, h, args)
 }
 
 func (h *mcpHandler) toolSearchChats(ctx context.Context, args map[string]any) mcpToolResult {
-	query, _ := args["query"].(string)
-	if query == "" {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: 'query' required"}}, IsError: true}
-	}
-
-	if h.cfg.DB == nil {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "[]"}}}
-	}
-
-	pattern := "%" + query + "%"
-	rows, err := h.cfg.DB.QueryContext(ctx,
-		Q(`SELECT id, session_id, query, response, created_at FROM interactions
-		 WHERE query LIKE $1 OR response LIKE $2
-		 ORDER BY created_at DESC LIMIT 20`), pattern, pattern)
-	if err != nil {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "[]"}}}
-	}
-	defer rows.Close()
-
-	var results []map[string]any
-	for rows.Next() {
-		var id, sid, q, r, ca string
-		if err := rows.Scan(&id, &sid, &q, &r, &ca); err != nil {
-			continue
-		}
-		results = append(results, map[string]any{
-			"id": id, "session_id": sid, "query": q, "response": r, "created_at": ca,
-		})
-	}
-
-	if len(results) == 0 {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "No matching chats found."}}}
-	}
-	out, _ := json.MarshalIndent(results, "", "  ")
-	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(out)}}}
+	return mcp.ToolSearchChats(ctx, h, args)
 }
 
 // truncate cuts a string to maxLen and adds "..." if truncated.
