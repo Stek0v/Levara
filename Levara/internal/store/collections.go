@@ -361,11 +361,7 @@ func (cm *CollectionManager) Insert(collection, id string, vec []float32, meta i
 	if err := db.Insert(id, vec, meta); err != nil {
 		return err
 	}
-	cm.mu.RLock()
-	if m, ok := cm.metas[collection]; ok {
-		m.RecordCount = len(db.index)
-	}
-	cm.mu.RUnlock()
+	cm.refreshRecordCount(collection, db)
 	return nil
 }
 
@@ -375,7 +371,21 @@ func (cm *CollectionManager) BatchInsert(collection string, records []BatchItem)
 	if err != nil {
 		return []error{err}
 	}
-	return db.BatchInsert(records)
+	errs := db.BatchInsert(records)
+	cm.refreshRecordCount(collection, db)
+	return errs
+}
+
+// refreshRecordCount updates the cached RecordCount on the collection's meta
+// after a write. Uses db.Count() which is thread-safe (holds db.mu.RLock
+// internally) instead of reading len(db.index) racily. Without this, GetMeta
+// returns stale counts after Delete/BatchInsert/BatchDelete.
+func (cm *CollectionManager) refreshRecordCount(collection string, db *Levara) {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+	if m, ok := cm.metas[collection]; ok {
+		m.RecordCount = db.Count()
+	}
 }
 
 // Search searches within a specific collection.
@@ -393,7 +403,11 @@ func (cm *CollectionManager) Delete(collection, id string) error {
 	if err != nil {
 		return err
 	}
-	return db.Delete(id)
+	if err := db.Delete(id); err != nil {
+		return err
+	}
+	cm.refreshRecordCount(collection, db)
+	return nil
 }
 
 // BatchDelete removes multiple records from a collection.
@@ -402,7 +416,9 @@ func (cm *CollectionManager) BatchDelete(collection string, ids []string) []erro
 	if err != nil {
 		return []error{err}
 	}
-	return db.BatchDelete(ids)
+	errs := db.BatchDelete(ids)
+	cm.refreshRecordCount(collection, db)
+	return errs
 }
 
 // GetMeta returns metadata for a collection.
