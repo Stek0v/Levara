@@ -39,12 +39,39 @@ type reembedStatus struct {
 	Message          string     `json:"message"`
 }
 
+// reembedStatusSnapshot is a lock-free copy of reembedStatus suitable for
+// JSON serialization. Decoupling it from the live status prevents the
+// copylocks warning that firing from copying reembedStatus (which holds a
+// sync.Mutex).
+type reembedStatusSnapshot struct {
+	RunID            string `json:"run_id"`
+	Status           string `json:"status"`
+	SourceCollection string `json:"source_collection"`
+	TargetCollection string `json:"target_collection"`
+	TargetModel      string `json:"target_model"`
+	TotalRecords     int    `json:"total_records"`
+	Processed        int    `json:"processed"`
+	Failed           int    `json:"failed"`
+	ElapsedMs        int64  `json:"elapsed_ms"`
+	Message          string `json:"message"`
+}
+
 // snapshot returns a copy of the status safe for JSON serialization.
-func (s *reembedStatus) snapshot() reembedStatus {
+func (s *reembedStatus) snapshot() reembedStatusSnapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	cp := *s
-	return cp
+	return reembedStatusSnapshot{
+		RunID:            s.RunID,
+		Status:           s.Status,
+		SourceCollection: s.SourceCollection,
+		TargetCollection: s.TargetCollection,
+		TargetModel:      s.TargetModel,
+		TotalRecords:     s.TotalRecords,
+		Processed:        s.Processed,
+		Failed:           s.Failed,
+		ElapsedMs:        s.ElapsedMs,
+		Message:          s.Message,
+	}
 }
 
 var reembedRuns sync.Map
