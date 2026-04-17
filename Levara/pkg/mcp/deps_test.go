@@ -11,8 +11,11 @@ import (
 	"testing"
 
 	_ "github.com/ncruces/go-sqlite3/driver"
+	"github.com/stek0v/cognevra/pipeline"
 	"github.com/stek0v/cognevra/pkg/ingest"
+	"github.com/stek0v/cognevra/pkg/llm"
 	"github.com/stek0v/cognevra/pkg/orchestrator"
+	"github.com/stek0v/cognevra/pkg/router"
 	"github.com/stek0v/cognevra/pkg/runreg"
 )
 
@@ -55,6 +58,16 @@ type fakeDeps struct {
 	persistFn   func(datasetID, collection, status string, chunks, entities, edges int, elapsedMs int64)
 	heartbeatFn func(eventType string, payload any)
 	pipelineFn  func(ctx context.Context, texts []string, cfg orchestrator.Config, progress chan<- orchestrator.Progress) error
+
+	// Search stubs.
+	//   searchPipelineFn — returns the SearchPipeline (or nil). Tests
+	//     that exercise ToolSearch install a fakeSearchPipeline here.
+	//   llmProvider / llmModel — returned by LLMProvider / LLMModel.
+	//   capabilities          — returned by SearchCapabilities.
+	searchPipelineFn func(doRerank bool) SearchPipeline
+	llmProvider      llm.Provider
+	llmModel         string
+	capabilities     router.Capabilities
 }
 
 // insertedRow records a single CollectionInsert call so tests can
@@ -176,6 +189,59 @@ func (f *fakeDeps) RunPipeline(ctx context.Context, texts []string, cfg orchestr
 	return nil
 }
 
+func (f *fakeDeps) NewSearchPipeline(doRerank bool) SearchPipeline {
+	if f.searchPipelineFn != nil {
+		return f.searchPipelineFn(doRerank)
+	}
+	return nil
+}
+
+func (f *fakeDeps) LLMProvider() llm.Provider         { return f.llmProvider }
+func (f *fakeDeps) LLMModel() string                  { return f.llmModel }
+func (f *fakeDeps) SearchCapabilities() router.Capabilities { return f.capabilities }
+
+// fakeSearchPipeline is a programmable SearchPipeline stub. Each method
+// consults a matching function field; when nil, returns empty results
+// and nil error. Tests that only need to exercise one branch leave the
+// rest as no-ops.
+type fakeSearchPipeline struct {
+	byText            func(ctx context.Context, coll, query string, topK int) ([]pipeline.ScoredResult, error)
+	byTextParentChild func(ctx context.Context, coll, query string, topK int) ([]pipeline.ScoredResult, error)
+	byTextMultiQuery  func(ctx context.Context, coll, query string, topK int, p llm.Provider, model string, n int) ([]pipeline.ScoredResult, error)
+	byTextWithRerank  func(ctx context.Context, coll, query string, topK int) ([]pipeline.ScoredResult, bool, error)
+	rerankEnabled     bool
+}
+
+func (p *fakeSearchPipeline) SearchByText(ctx context.Context, coll, query string, topK int) ([]pipeline.ScoredResult, error) {
+	if p.byText != nil {
+		return p.byText(ctx, coll, query, topK)
+	}
+	return nil, nil
+}
+
+func (p *fakeSearchPipeline) SearchByTextParentChild(ctx context.Context, coll, query string, topK int) ([]pipeline.ScoredResult, error) {
+	if p.byTextParentChild != nil {
+		return p.byTextParentChild(ctx, coll, query, topK)
+	}
+	return nil, nil
+}
+
+func (p *fakeSearchPipeline) SearchByTextMultiQuery(ctx context.Context, coll, query string, topK int, provider llm.Provider, model string, n int) ([]pipeline.ScoredResult, error) {
+	if p.byTextMultiQuery != nil {
+		return p.byTextMultiQuery(ctx, coll, query, topK, provider, model, n)
+	}
+	return nil, nil
+}
+
+func (p *fakeSearchPipeline) SearchByTextWithRerank(ctx context.Context, coll, query string, topK int) ([]pipeline.ScoredResult, bool, error) {
+	if p.byTextWithRerank != nil {
+		return p.byTextWithRerank(ctx, coll, query, topK)
+	}
+	return nil, false, nil
+}
+
+func (p *fakeSearchPipeline) RerankEnabled() bool { return p.rerankEnabled }
+
 // nilDBDeps returns nil for DB() — exercises the guard branch.
 // HasCollections defaults to false, matching an unconfigured deployment.
 type nilDBDeps struct{}
@@ -200,6 +266,10 @@ func (nilDBDeps) LogHeartbeat(string, any)                                      
 func (nilDBDeps) RunPipeline(context.Context, []string, orchestrator.Config, chan<- orchestrator.Progress) error {
 	return nil
 }
+func (nilDBDeps) NewSearchPipeline(bool) SearchPipeline     { return nil }
+func (nilDBDeps) LLMProvider() llm.Provider                 { return nil }
+func (nilDBDeps) LLMModel() string                          { return "" }
+func (nilDBDeps) SearchCapabilities() router.Capabilities   { return router.Capabilities{} }
 
 func setupDepsTestDB(t *testing.T) *fakeDeps {
 	t.Helper()
