@@ -51,6 +51,34 @@ func GetSessionContext(db *sql.DB, ctx context.Context, sessionID string, limit 
 	return "Previous conversation context:\n" + strings.Join(parts, "\n---\n")
 }
 
+// prependSessionContext returns prompt with prior interactions prepended when
+// a session_id is supplied; otherwise returns prompt unchanged. Failures in
+// context loading fall through silently — the base prompt is always returned.
+func prependSessionContext(cfg APIConfig, sessionID, prompt string) string {
+	if sessionID == "" || cfg.DB == nil {
+		return prompt
+	}
+	sctx := GetSessionContext(cfg.DB, context.Background(), sessionID, 5)
+	if sctx == "" {
+		return prompt
+	}
+	return sctx + "\n\n" + prompt
+}
+
+// recordInteraction persists a query/answer turn so subsequent requests on the
+// same session_id see it via prependSessionContext. No-op when session_id is
+// empty or DB unavailable; errors are swallowed (observability layer is the
+// right place to surface them if needed).
+func recordInteraction(cfg APIConfig, sessionID, userID, query, answer, searchType string) {
+	if sessionID == "" || cfg.DB == nil || answer == "" {
+		return
+	}
+	cfg.DB.ExecContext(context.Background(),
+		Q(`INSERT INTO interactions (id, session_id, user_id, query, response, search_type, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)`),
+		uuid.New().String(), sessionID, userID, query, answer, searchType, time.Now().UTC())
+}
+
 func RegisterSessionAPI(app fiber.Router, cfg APIConfig) {
 	app.Post("/interactions", saveInteractionHandler(cfg))
 	app.Get("/interactions", listInteractionsHandler(cfg))
