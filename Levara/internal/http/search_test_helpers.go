@@ -25,6 +25,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"testing"
 
@@ -102,9 +103,10 @@ func newEmbedServer(t testing.TB, fixedVec []float32) *httptest.Server {
 	}))
 }
 
-// graphSchemaSQL creates the subset of tables graphContextFromPostgres and
-// the triplet/community paths read. Mirrors schema.go graph_nodes/edges but
-// adds dataset_id column used by RBAC filters.
+// graphSchemaSQL creates the subset of tables graphContextFromPostgres,
+// community*, and RBAC paths query against. Mirrors the relevant shape of
+// schema.go + the community/RBAC tables defined elsewhere. `dataset_id`
+// on graph_nodes is the RBAC post-filter key.
 const graphSchemaSQL = `
 CREATE TABLE graph_nodes (
 	id TEXT PRIMARY KEY,
@@ -126,6 +128,36 @@ CREATE TABLE graph_edges (
 	valid_until TEXT,
 	superseded_by TEXT NOT NULL DEFAULT '',
 	confidence REAL NOT NULL DEFAULT 1.0
+);
+CREATE TABLE graph_communities (
+	id TEXT PRIMARY KEY,
+	level INTEGER NOT NULL DEFAULT 0,
+	parent_id TEXT NOT NULL DEFAULT '',
+	member_count INTEGER NOT NULL DEFAULT 0,
+	summary TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE community_members (
+	id TEXT PRIMARY KEY,
+	community_id TEXT NOT NULL,
+	node_id TEXT NOT NULL,
+	level INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE users (
+	id TEXT PRIMARY KEY,
+	email TEXT,
+	is_superuser INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE datasets (
+	id TEXT PRIMARY KEY,
+	owner_id TEXT
+);
+CREATE TABLE dataset_shares (
+	id TEXT PRIMARY KEY,
+	dataset_id TEXT NOT NULL,
+	user_id TEXT NOT NULL,
+	role TEXT NOT NULL DEFAULT 'viewer',
+	granted_by TEXT,
+	created_at TEXT
 );
 `
 
@@ -209,6 +241,84 @@ func (e *searchTestEnv) start() {
 	app := fiber.New(fiber.Config{DisableStartupMessage: true})
 	app.Post("/search/text", searchHandler(e.cfg))
 	e.app = app
+}
+
+// startWithUser is the same as start() but injects a middleware that sets
+// Locals("user_id") = userID before the handler. Use for RBAC tests that
+// depend on GetAllowedDatasetIDs resolving to a concrete user.
+func (e *searchTestEnv) startWithUser(userID string) {
+	app := fiber.New(fiber.Config{DisableStartupMessage: true})
+	app.Use(func(c *fiber.Ctx) error {
+		c.Locals("user_id", userID)
+		return c.Next()
+	})
+	app.Post("/search/text", searchHandler(e.cfg))
+	e.app = app
+}
+
+// insertUser seeds the users table. isSuperuser=true grants the dataset-
+// filter bypass inside GetAllowedDatasetIDs.
+func (e *searchTestEnv) insertUser(id, email string, isSuperuser bool) {
+	e.t.Helper()
+	su := 0
+	if isSuperuser {
+		su = 1
+	}
+	_, err := e.db.Exec(
+		`INSERT INTO users(id, email, is_superuser) VALUES (?, ?, ?)`,
+		id, email, su,
+	)
+	if err != nil {
+		e.t.Fatalf("insert user %q: %v", id, err)
+	}
+}
+
+// insertDataset seeds datasets.
+func (e *searchTestEnv) insertDataset(id, ownerID string) {
+	e.t.Helper()
+	_, err := e.db.Exec(
+		`INSERT INTO datasets(id, owner_id) VALUES (?, ?)`,
+		id, ownerID,
+	)
+	if err != nil {
+		e.t.Fatalf("insert dataset %q: %v", id, err)
+	}
+}
+
+// shareDataset grants userID read access to datasetID via dataset_shares.
+func (e *searchTestEnv) shareDataset(datasetID, userID, role string) {
+	e.t.Helper()
+	_, err := e.db.Exec(
+		`INSERT INTO dataset_shares(id, dataset_id, user_id, role, granted_by, created_at)
+		 VALUES (?, ?, ?, ?, '', '')`,
+		"share-"+datasetID+"-"+userID, datasetID, userID, role,
+	)
+	if err != nil {
+		e.t.Fatalf("share dataset %q→%q: %v", datasetID, userID, err)
+	}
+}
+
+// insertCommunity seeds graph_communities + community_members for a single
+// community at the given level.
+func (e *searchTestEnv) insertCommunity(commID string, level int, summary string, memberNodeIDs []string) {
+	e.t.Helper()
+	_, err := e.db.Exec(
+		`INSERT INTO graph_communities(id, level, parent_id, member_count, summary)
+		 VALUES (?, ?, '', ?, ?)`,
+		commID, level, len(memberNodeIDs), summary,
+	)
+	if err != nil {
+		e.t.Fatalf("insert community %q: %v", commID, err)
+	}
+	for i, nodeID := range memberNodeIDs {
+		_, err := e.db.Exec(
+			`INSERT INTO community_members(id, community_id, node_id, level) VALUES (?, ?, ?, ?)`,
+			commID+"-m"+strconv.Itoa(i), commID, nodeID, level,
+		)
+		if err != nil {
+			e.t.Fatalf("insert community member: %v", err)
+		}
+	}
 }
 
 func (e *searchTestEnv) cleanup() {
