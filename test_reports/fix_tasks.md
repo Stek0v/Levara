@@ -40,16 +40,22 @@ Post-F-4 coverage push. `internal/http` оставался самым больш
 
 ### P1 — внешние сервисы / side-paths
 
-- **FIX-6 (cluster sync).** `internal/cluster` — 810 LOC, тесты есть на
-  DirectNode, но property/chaos-тесты на Mac↔Pi sync отсутствуют.
-  Тесты: mock peer + property-test на конвергенцию; chaos — разрыв на
-  N ms в середине sync.
-- **FIX-7 (graph architecture ADR).** `graph` / `graphdb` / `graphstore`
-  — три пакета без чёткого разделения ответственности. Нужен короткий
-  ADR: что где живёт. Предложение: `graphstore` → в `graph` как
-  interface, `graphdb` — Neo4j adapter.
-- **FIX-9 (llmproxy contract tests).** 321 LOC, тестов нет. Нужны
-  golden-запросы из openai-python SDK → expected responses.
+- ~~**FIX-6 (cluster sync).**~~ **Done** — 5 chaos/convergence
+  тестов в `internal/cluster/replication_chaos_test.go`:
+  real `*store.Levara` на обеих сторонах + `httptest.Server`, без моков.
+  Покрывает snapshot-bootstrap, post-snapshot WAL-handoff, property-style
+  random insert/delete convergence, flaky listener gap + reconnect,
+  exponential backoff на HTTP 500. Мастер-пакет проходит `-race`.
+- ~~**FIX-7 (graph architecture ADR).**~~ **Done** — см.
+  `Levara/docs/adr/001-graph-layering.md` (accepted 2026-04-15).
+  Фиксирует роли: `graph` = алгоритмы без persistence, `graphdb` = Neo4j
+  backend, `graphstore` = dormant Postgres backend + interface, ждёт
+  активации. `pkg/graphstore/store.go` помечен `TODO(ADR-001)`.
+- ~~**FIX-9 (llmproxy contract tests).**~~ **Done** — 10 contract
+  тестов в `pkg/llmproxy/proxy_contract_test.go` (byte-verbatim
+  forwarding, auth header, error-not-cached, 502 на unreachable,
+  temperature/model/order → разные cache keys, non-POST passthrough,
+  MaxInFlight bound). В сумме с существующими smoke-тестами — 16/16.
 
 ### P2 — средние
 
