@@ -827,15 +827,8 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 			PersistPipelineStatus(cfg.DB, pipeCfg.DatasetID, collection,
 				runStatus.Status, runStatus.Chunks, runStatus.Entities, runStatus.Edges, runStatus.ElapsedMs)
 
-			// P2.1: Save interaction to session history after pipeline completes
-			if sessionID != "" && cfg.DB != nil {
-				entityCount := runStatus.Entities
-				cfg.DB.ExecContext(context.Background(),
-					Q(`INSERT INTO interactions (id, session_id, user_id, query, response, search_type, created_at)
-					 VALUES ($1, $2, $3, $4, $5, $6, NOW())`),
-					uuid.New().String(), sessionID, userID, strings.Join(texts, " "),
-					fmt.Sprintf("%d entities extracted", entityCount), "cognify")
-			}
+			recordInteraction(cfg, sessionID, userID, strings.Join(texts, " "),
+				fmt.Sprintf("%d entities extracted", runStatus.Entities), "cognify")
 		}()
 
 		return c.JSON(fiber.Map{
