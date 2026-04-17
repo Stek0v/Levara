@@ -17,7 +17,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -1001,115 +1000,12 @@ func (h *mcpHandler) toolSetContext(sess *mcpSession, args map[string]any) mcpTo
 	return mcp.ToolSetContext(sess, h, args)
 }
 
-var sensitiveKeyPatterns = []string{"api_key", "apikey", "password", "passwd", "secret", "token", "credential", "private_key"}
-
-func isSensitiveKey(key string) bool {
-	lower := strings.ToLower(key)
-	for _, p := range sensitiveKeyPatterns {
-		if strings.Contains(lower, p) {
-			return true
-		}
-	}
-	return false
-}
-
+// toolCrossSearch is a thin shim over mcp.ToolCrossSearch. F-4 wave 3l
+// moved the body (plus the sensitiveKeyPatterns list and
+// isSensitiveKey helper) into pkg/mcp. No Deps growth — reuses
+// NewSearchPipeline + DB + Q + extractOwnerID added in earlier waves.
 func (h *mcpHandler) toolCrossSearch(ctx context.Context, args map[string]any) mcpToolResult {
-	query, _ := args["search_query"].(string)
-	if query == "" {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: 'search_query' required"}}, IsError: true}
-	}
-
-	collectionsRaw, _ := args["collections"].([]any)
-	if len(collectionsRaw) == 0 {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: 'collections' array required"}}, IsError: true}
-	}
-	if len(collectionsRaw) > 5 {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: max 5 collections per cross-search"}}, IsError: true}
-	}
-
-	var collections []string
-	for _, c := range collectionsRaw {
-		if s, ok := c.(string); ok && s != "" {
-			collections = append(collections, s)
-		}
-	}
-
-	topK := 5
-	if tk, ok := args["top_k"].(float64); ok && tk > 0 {
-		topK = int(tk)
-	}
-	includeMemories := true
-	if im, ok := args["include_memories"].(bool); ok {
-		includeMemories = im
-	}
-
-	if h.cfg.EmbedEndpoint == "" || h.cfg.Collections == nil {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "No results (embedding service not configured)"}}}
-	}
-
-	embedClient := embed.NewClient(h.cfg.EmbedEndpoint, h.cfg.EmbedModel, 16, 1)
-	sp := pipeline.NewSearchPipeline(embedClient, h.cfg.Collections, nil)
-
-	type collResult struct {
-		Collection string         `json:"collection"`
-		Vectors    []map[string]any `json:"vectors,omitempty"`
-		Memories   []map[string]any `json:"memories,omitempty"`
-	}
-
-	var results []collResult
-	for _, coll := range collections {
-		cr := collResult{Collection: coll}
-
-		// Vector search
-		res, err := sp.SearchByText(ctx, coll, query, topK)
-		if err == nil {
-			for _, r := range res {
-				cr.Vectors = append(cr.Vectors, map[string]any{
-					"id": r.ID, "score": r.Score, "metadata": string(r.Metadata),
-				})
-			}
-		}
-
-		// Memory search (SQL LIKE)
-		if includeMemories && h.cfg.DB != nil {
-			pattern := "%" + query + "%"
-			ownerID := ""
-			if uid, ok := ctx.Value(mcpUserIDKey).(string); ok {
-				ownerID = uid
-			}
-			rows, err := h.cfg.DB.QueryContext(ctx,
-				Q(`SELECT key, value, type FROM memories
-				 WHERE (key LIKE $1 OR value LIKE $2)
-				 AND (collection_name = $3 OR collection_name = '')
-				 AND (owner_id = $4 OR owner_id = '')
-				 ORDER BY updated_at DESC LIMIT $5`),
-				pattern, pattern, coll, ownerID, topK)
-			if err == nil {
-				defer rows.Close()
-				for rows.Next() {
-					var key, value, typ string
-					rows.Scan(&key, &value, &typ)
-					if isSensitiveKey(key) {
-						continue // skip sensitive data in cross-project results
-					}
-					cr.Memories = append(cr.Memories, map[string]any{
-						"key": key, "value": truncate(value, 200), "type": typ,
-					})
-				}
-			}
-		}
-
-		results = append(results, cr)
-	}
-
-	log.Printf("[cross-project] searched %d collections for query: %s", len(collections), truncate(query, 50))
-
-	out, _ := json.MarshalIndent(map[string]any{
-		"results":     results,
-		"collections": collections,
-		"query":       query,
-	}, "", "  ")
-	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(out)}}}
+	return mcp.ToolCrossSearch(ctx, h, args)
 }
 
 func (h *mcpHandler) toolSync(ctx context.Context, args map[string]any) mcpToolResult {
