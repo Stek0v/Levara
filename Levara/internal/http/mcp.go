@@ -23,10 +23,8 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/google/uuid"
 	"github.com/stek0v/cognevra/internal/metrics"
 	"github.com/stek0v/cognevra/pkg/embed"
-	"github.com/stek0v/cognevra/pkg/extract"
 	"github.com/stek0v/cognevra/pkg/llm"
 	"github.com/stek0v/cognevra/pkg/mcp"
 	"github.com/stek0v/cognevra/pkg/orchestrator"
@@ -832,68 +830,13 @@ func (h *mcpHandler) resourceMemories(ctx context.Context, memType, collName str
 
 // ── Cross-Project Tools ──
 
+// toolCodify is a thin shim over mcp.ToolCodify. F-4 wave 3p moved the
+// body (extract.AnalyzeCode + graph upserts + optional embed) into
+// pkg/mcp. The pre-refactor QArgs call for ON CONFLICT parameter reuse
+// was replaced by excluded.* syntax (SQLite 3.24+ / PostgreSQL 9.5+) so
+// no QArgs method is needed on Deps.
 func (h *mcpHandler) toolCodify(ctx context.Context, args map[string]any) mcpToolResult {
-	code, _ := args["code"].(string)
-	filename, _ := args["filename"].(string)
-	if code == "" || filename == "" {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: 'code' and 'filename' required"}}, IsError: true}
-	}
-
-	analysis := extract.AnalyzeCode(code, filename)
-
-	// Store entities in graph if DB available
-	if h.cfg.DB != nil {
-		for _, e := range analysis.Entities {
-			props := fmt.Sprintf(`{"file":"%s","line":%d}`, e.File, e.Line)
-			if e.Parent != "" {
-				props = fmt.Sprintf(`{"file":"%s","line":%d,"parent":"%s"}`, e.File, e.Line, e.Parent)
-			}
-			q, qargs := QArgs(`INSERT INTO graph_nodes (id, name, type, description, properties)
-				VALUES ($1, $2, $3, $4, $5)
-				ON CONFLICT(id) DO UPDATE SET name = $2, type = $3, properties = $5`,
-				uuid.NewSHA1(uuid.NameSpaceOID, []byte(e.Name+e.Type+e.File)).String(),
-				e.Name, e.Type, filename, props)
-			h.cfg.DB.ExecContext(ctx, q, qargs...)
-		}
-		for _, r := range analysis.Relations {
-			srcID := uuid.NewSHA1(uuid.NameSpaceOID, []byte(r.Source)).String()
-			tgtID := uuid.NewSHA1(uuid.NameSpaceOID, []byte(r.Target)).String()
-			edgeID := uuid.NewSHA1(uuid.NameSpaceOID, []byte(r.Source+r.Relationship+r.Target)).String()
-			q, qargs := QArgs(`INSERT INTO graph_edges (id, source_id, target_id, relationship_name, properties)
-				VALUES ($1, $2, $3, $4, '{}')
-				ON CONFLICT(id) DO NOTHING`,
-				edgeID, srcID, tgtID, r.Relationship)
-			h.cfg.DB.ExecContext(ctx, q, qargs...)
-		}
-	}
-
-	// Embed code entities into collection if configured
-	collection, _ := args["collection"].(string)
-	if collection != "" && h.cfg.EmbedEndpoint != "" && h.cfg.Collections != nil {
-		embedClient := embed.NewClient(h.cfg.EmbedEndpoint, h.cfg.EmbedModel, 16, 3)
-		var texts []string
-		var ids []string
-		for _, e := range analysis.Entities {
-			texts = append(texts, e.Name+": "+e.Type+" in "+e.File)
-			ids = append(ids, uuid.NewSHA1(uuid.NameSpaceOID, []byte(e.Name+e.Type+e.File)).String())
-		}
-		if len(texts) > 0 {
-			if vecs, err := embedClient.EmbedTexts(ctx, texts); err == nil {
-				for i, vec := range vecs {
-					meta := fmt.Sprintf(`{"name":"%s","type":"%s","file":"%s"}`, analysis.Entities[i].Name, analysis.Entities[i].Type, analysis.Entities[i].File)
-					h.cfg.Collections.Insert(collection, ids[i], vec, meta)
-				}
-			}
-		}
-	}
-
-	out, _ := json.MarshalIndent(map[string]any{
-		"language":  analysis.Language,
-		"entities":  len(analysis.Entities),
-		"relations": len(analysis.Relations),
-		"details":   analysis,
-	}, "", "  ")
-	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(out)}}}
+	return mcp.ToolCodify(ctx, h, args)
 }
 
 // toolAddFeedback / toolGetFeedbackStats / toolSetContext are thin
