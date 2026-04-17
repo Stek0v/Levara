@@ -84,8 +84,32 @@ Post-F-4 coverage push. `internal/http` оставался самым больш
   (temperature — часть ключа), BM25 index+search (ранжирование +
   InvalidArgument guards), SearchTriplets scoring, ExtractText
   plain-text. Симметрично HTTP wave-coverage, без embed-server/graphdb.
-- **FIX-14** — слияние `git` + `fetch` → `ingest`, `classify` → `extract`
-  (архитектурное, не тестовое — вне scope этого testing-push'а).
+- ~~**FIX-14 (merge mini-packages).**~~ **Won't do** (решение
+  2026-04-17). Задумывалось: `git` + `fetch` → `ingest`,
+  `classify` → `extract`. После аудита (5 пакетов, 7 production-сайтов,
+  ~1000 LOC тестов) — отказ. Причины:
+  1. **Dependency bloat.** `fetch` тянет `goquery` (HTML DOM). Merge в
+     `ingest` → все 4 caller'а (`cmd/server`, `grpc`, `http`, `mcp
+     tool_data`) транзитивно линкуют goquery, хотя MCP-тул считает только
+     SHA+диск. `extract` тянет `tabula` + `pkg/audio` (Whisper);
+     `classify` — чистый stdlib. Merge → `pkg/orchestrator` (единственный
+     caller classify, использует его только для выбора chunker'а) начнёт
+     линковать document-parser. Это регресс.
+  2. **SRP чище как есть.** `classify` — pure dispatcher
+     `(filename, content) → {Type, Chunker, Min/Max}`. `extract` —
+     трансформация байтов в текст. Разные сигнатуры, разные концерны.
+     `git.ParseLog` — local git reader; имя `ingest.ParseGitLog()`
+     читалось бы как "запись git-истории". `fetch` — URL/HTML text
+     extraction с единственным use-case (HTTP `/add` детектит URL в
+     body), обобщать нечего.
+  3. **Нет измеримого выигрыша, есть риск.** Переименование тронет 3
+     test-suite'а и 7 production-сайтов. Все пакеты уже покрыты тестами.
+     FIX-14 — единственный в списке пункт без конкретной дыры
+     (coverage/concurrency/security). Aesthetic refactor без sign-off
+     закрывается как won't-do.
+
+  Если в будущем dependency graphs сойдутся (например, `goquery` уйдёт
+  из `fetch`), вопрос можно пересмотреть.
 
 ### P3 — наблюдать
 
