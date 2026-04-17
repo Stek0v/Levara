@@ -25,7 +25,6 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/stek0v/cognevra/internal/metrics"
-	"github.com/stek0v/cognevra/pkg/community"
 	"github.com/stek0v/cognevra/pkg/embed"
 	"github.com/stek0v/cognevra/pkg/extract"
 	"github.com/stek0v/cognevra/pkg/llm"
@@ -1369,87 +1368,13 @@ func strIn(s string, list []string) bool {
 	return false
 }
 
-// toolListCommunities returns detected communities from graph_communities table.
+// toolListCommunities is a thin shim over mcp.ToolListCommunities. F-4
+// wave 3n moved the body (SQL query + JSON marshal) into pkg/mcp. No
+// new Deps methods — DB() and Q() were already in the interface.
 func (h *mcpHandler) toolListCommunities(ctx context.Context, args map[string]any) mcpToolResult {
-	if h.cfg.DB == nil {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "[]"}}}
-	}
-
-	limit := 20
-	if lim, ok := args["limit"].(float64); ok && lim > 0 {
-		limit = int(lim)
-	}
-	minMembers := 2
-	if mm, ok := args["min_members"].(float64); ok {
-		minMembers = int(mm)
-	}
-
-	query := "SELECT id, level, parent_id, member_count, summary FROM graph_communities WHERE member_count >= ? ORDER BY level ASC, member_count DESC LIMIT ?"
-	queryArgs := []any{minMembers, limit}
-
-	if levelVal, ok := args["level"].(float64); ok {
-		query = "SELECT id, level, parent_id, member_count, summary FROM graph_communities WHERE member_count >= ? AND level = ? ORDER BY member_count DESC LIMIT ?"
-		queryArgs = []any{minMembers, int(levelVal), limit}
-	}
-
-	rows, err := h.cfg.DB.QueryContext(ctx, query, queryArgs...)
-	if err != nil {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "[]"}}}
-	}
-	defer rows.Close()
-
-	var communities []map[string]any
-	for rows.Next() {
-		var id, parentID, summary string
-		var level, memberCount int
-		if rows.Scan(&id, &level, &parentID, &memberCount, &summary) != nil {
-			continue
-		}
-		communities = append(communities, map[string]any{
-			"id": id, "level": level, "parent_id": parentID,
-			"member_count": memberCount, "summary": summary,
-		})
-	}
-
-	if communities == nil {
-		communities = []map[string]any{}
-	}
-
-	out, _ := json.MarshalIndent(communities, "", "  ")
-	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(out)}}}
+	return mcp.ToolListCommunities(ctx, h, args)
 }
 
-// searchTypesForMode returns allowed search types for a given mode.
-// Returns nil (= all allowed) for "full" and "auto".
-func searchTypesForMode(mode string) map[string]bool {
-	switch mode {
-	case "rag":
-		return map[string]bool{
-			"CHUNKS": true, "HYBRID": true, "CHUNKS_LEXICAL": true,
-			"RAG_COMPLETION": true, "SUMMARIES": true, "WEIGHTED_HYBRID": true,
-		}
-	case "graph":
-		return map[string]bool{
-			"GRAPH_COMPLETION": true, "GRAPH_COMPLETION_COT": true,
-			"GRAPH_COMPLETION_CONTEXT_EXTENSION": true, "GRAPH_SUMMARY_COMPLETION": true,
-			"COMMUNITY_LOCAL": true, "COMMUNITY_GLOBAL": true,
-			"CYPHER": true, "TRIPLET_COMPLETION": true, "TEMPORAL": true,
-		}
-	default:
-		return nil
-	}
-}
-
-func defaultTypeForMode(mode string) string {
-	switch mode {
-	case "rag":
-		return "CHUNKS"
-	case "graph":
-		return "GRAPH_COMPLETION"
-	default:
-		return "AUTO"
-	}
-}
 
 // toolCheckDrift reports embedding model drift across collections.
 func (h *mcpHandler) toolCheckDrift(ctx context.Context, args map[string]any) mcpToolResult {
@@ -1476,36 +1401,9 @@ func (h *mcpHandler) toolCheckDrift(ctx context.Context, args map[string]any) mc
 	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(out)}}}
 }
 
-// toolPruneGraph cleans up old superseded graph edges.
+// toolPruneGraph is a thin shim over mcp.ToolPruneGraph. F-4 wave 3n
+// moved the body (community.PruneGraph + LogHeartbeat) into pkg/mcp.
+// No new Deps methods — DB() and LogHeartbeat() already in interface.
 func (h *mcpHandler) toolPruneGraph(ctx context.Context, args map[string]any) mcpToolResult {
-	if h.cfg.DB == nil {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: `{"edges_deleted":0}`}}}
-	}
-
-	cfg := community.PruneConfig{
-		MaxAgeDays:      90,
-		KeepSuperseding: true,
-		DryRun:          true,
-	}
-	if days, ok := args["max_age_days"].(float64); ok && days > 0 {
-		cfg.MaxAgeDays = int(days)
-	}
-	if dr, ok := args["dry_run"].(bool); ok {
-		cfg.DryRun = dr
-	}
-	if io, ok := args["include_orphan_nodes"].(bool); ok {
-		cfg.IncludeOrphans = io
-	}
-
-	result, err := community.PruneGraph(ctx, h.cfg.DB, cfg)
-	if err != nil {
-		return mcpToolResult{
-			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("Error: %v", err)}},
-			IsError: true,
-		}
-	}
-
-	h.logHeartbeat("prune", result)
-	out, _ := json.MarshalIndent(result, "", "  ")
-	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(out)}}}
+	return mcp.ToolPruneGraph(ctx, h, args)
 }
