@@ -30,7 +30,7 @@ import (
 	"github.com/stek0v/cognevra/pkg/embed"
 	"github.com/stek0v/cognevra/pkg/extract"
 	"github.com/stek0v/cognevra/pkg/git"
-	"github.com/stek0v/cognevra/pkg/graphrank"
+	"github.com/stek0v/cognevra/pkg/llm"
 	"github.com/stek0v/cognevra/pkg/mcp"
 	"github.com/stek0v/cognevra/pkg/orchestrator"
 	"github.com/stek0v/cognevra/pkg/rerank"
@@ -230,6 +230,68 @@ func (h *mcpHandler) LogHeartbeat(eventType string, payload any) {
 // LLM + embed stack.
 func (h *mcpHandler) RunPipeline(ctx context.Context, texts []string, cfg orchestrator.Config, progress chan<- orchestrator.Progress) error {
 	return orchestrator.Run(ctx, texts, cfg, progress)
+}
+
+// searchPipelineAdapter wraps the concrete *pipeline.SearchPipeline
+// plus its optional *rerank.Client into the mcp.SearchPipeline seam.
+// Production NewSearchPipeline returns one of these; tests bypass it.
+type searchPipelineAdapter struct {
+	sp           *pipeline.SearchPipeline
+	rerankClient *rerank.Client
+}
+
+func (a *searchPipelineAdapter) SearchByText(ctx context.Context, coll, query string, topK int) ([]pipeline.ScoredResult, error) {
+	return a.sp.SearchByText(ctx, coll, query, topK)
+}
+
+func (a *searchPipelineAdapter) SearchByTextParentChild(ctx context.Context, coll, query string, topK int) ([]pipeline.ScoredResult, error) {
+	return a.sp.SearchByTextParentChild(ctx, coll, query, topK)
+}
+
+func (a *searchPipelineAdapter) SearchByTextMultiQuery(ctx context.Context, coll, query string, topK int, provider llm.Provider, model string, n int) ([]pipeline.ScoredResult, error) {
+	return a.sp.SearchByTextMultiQuery(ctx, coll, query, topK, provider, model, n)
+}
+
+func (a *searchPipelineAdapter) SearchByTextWithRerank(ctx context.Context, coll, query string, topK int) ([]pipeline.ScoredResult, bool, error) {
+	return a.sp.SearchByTextWithRerank(ctx, coll, query, topK)
+}
+
+func (a *searchPipelineAdapter) RerankEnabled() bool {
+	return a.rerankClient != nil && a.rerankClient.Enabled()
+}
+
+// NewSearchPipeline implements mcp.Deps: builds embed + rerank clients
+// and the *pipeline.SearchPipeline, wraps them in the adapter. Returns
+// nil when the embed service or collection manager is unconfigured —
+// tool code treats nil as "no results (embedding service not
+// configured)".
+func (h *mcpHandler) NewSearchPipeline(doRerank bool) mcp.SearchPipeline {
+	if h.cfg.EmbedEndpoint == "" || h.cfg.Collections == nil {
+		return nil
+	}
+	embedClient := embed.NewClient(h.cfg.EmbedEndpoint, h.cfg.EmbedModel, 16, 1)
+	var rerankClient *rerank.Client
+	if doRerank {
+		rerankClient = rerank.NewClient(h.cfg.RerankEndpoint, h.cfg.RerankModel, 0, h.cfg.RerankTimeoutMs)
+	}
+	sp := pipeline.NewSearchPipeline(embedClient, h.cfg.Collections, rerankClient)
+	return &searchPipelineAdapter{sp: sp, rerankClient: rerankClient}
+}
+
+// LLMProvider implements mcp.Deps: forwards the cfg field for the
+// multi-query search branch. Nil is acceptable — callers gate on it.
+func (h *mcpHandler) LLMProvider() llm.Provider { return h.cfg.LLMProvider }
+
+// LLMModel implements mcp.Deps: returns the active LLM model name
+// from the environment (matching REST's cognify). Empty when unset.
+func (h *mcpHandler) LLMModel() string { return os.Getenv("LLM_MODEL") }
+
+// SearchCapabilities implements mcp.Deps: forwards to the package-level
+// capabilitiesFromConfig helper in api.go. Potentially issues a DB
+// query to detect communities; kept as a separate method so tool code
+// can cache the result when it uses it multiple times.
+func (h *mcpHandler) SearchCapabilities() router.Capabilities {
+	return capabilitiesFromConfig(h.cfg)
 }
 
 // getOrValidateSession returns the session for the given ID, or nil if invalid.
@@ -489,195 +551,14 @@ func (h *mcpHandler) toolCognify(ctx context.Context, args map[string]any) mcpTo
 	return mcp.ToolCognify(ctx, h, args)
 }
 
+// toolSearch is a thin shim over mcp.ToolSearch. F-4 wave 3k moved the
+// body (arg parsing, mode gating, AUTO routing, pipeline dispatch,
+// dedup, metadata filter, topK cap, response marshal) into pkg/mcp.
+// *mcpHandler satisfies the enlarged Deps interface via the wave-3k
+// forwarders (NewSearchPipeline, LLMProvider, LLMModel,
+// SearchCapabilities) defined above.
 func (h *mcpHandler) toolSearch(ctx context.Context, args map[string]any) mcpToolResult {
-	query, _ := args["search_query"].(string)
-	if query == "" {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: 'search_query' required"}}, IsError: true}
-	}
-
-	searchType, _ := args["search_type"].(string)
-	if searchType == "" {
-		searchType = "AUTO"
-	}
-
-	topK := 10
-	if tk, ok := args["top_k"].(float64); ok {
-		topK = int(tk)
-	}
-
-	collection, _ := args["collection"].(string)
-
-	// Optional metadata filters (room + tags). When set, we overfetch and post-filter.
-	roomFilter, _ := args["room"].(string)
-	var tagFilters []string
-	if rawTags, ok := args["tags"].([]any); ok {
-		for _, t := range rawTags {
-			if s, ok := t.(string); ok && s != "" {
-				tagFilters = append(tagFilters, s)
-			}
-		}
-	}
-	hasMetaFilter := roomFilter != "" || len(tagFilters) > 0
-	doRerank, _ := args["rerank"].(bool)
-	doParentChild, _ := args["parent_child"].(bool)
-	doMultiQuery, _ := args["multi_query"].(bool)
-	doDedup := true // default: dedup enabled
-	if dd, ok := args["dedup"].(bool); ok {
-		doDedup = dd
-	}
-	doGraphRerank, _ := args["graph_rerank"].(bool)
-	searchMode, _ := args["mode"].(string)
-	if searchMode == "" {
-		searchMode = "auto"
-	}
-
-	// Mode gating: restrict search types based on mode
-	if searchMode == "rag" || searchMode == "graph" {
-		allowed := searchTypesForMode(searchMode)
-		if allowed != nil && !allowed[strings.ToUpper(searchType)] && searchType != "AUTO" && searchType != "" {
-			searchType = defaultTypeForMode(searchMode)
-		}
-	}
-
-	// Smart routing: AUTO → heuristic router selects best strategy
-	var routingInfo *router.Decision
-	upperType := strings.ToUpper(searchType)
-	if upperType == "AUTO" || upperType == "FEELING_LUCKY" {
-		caps := capabilitiesFromConfig(h.cfg)
-		// Mode-aware: suppress graph capabilities in rag mode
-		if searchMode == "rag" {
-			caps.HasNeo4j = false
-			caps.HasPostgres = false
-			caps.HasCommunities = false
-		}
-		d := router.Route(query, caps)
-		routingInfo = &d
-		searchType = d.SearchType
-	}
-
-	// Map search_type to feature flags (unless already set explicitly via args).
-	switch strings.ToUpper(searchType) {
-	case "PARENT_CHILD":
-		doParentChild = true
-	case "MULTI_QUERY":
-		doMultiQuery = true
-	case "RERANK":
-		doRerank = true
-	case "GRAPH_RERANK":
-		doGraphRerank = true
-	case "BASIC", "CHUNKS", "AUTO", "":
-		// default vector search — no flag override
-	}
-
-	// Execute search
-	if h.cfg.EmbedEndpoint == "" || h.cfg.Collections == nil {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "No results (embedding service not configured)"}}}
-	}
-
-	embedClient := embed.NewClient(h.cfg.EmbedEndpoint, h.cfg.EmbedModel, 16, 1)
-
-	// Build reranker client if requested
-	var rerankClient *rerank.Client
-	if doRerank {
-		rerankClient = rerank.NewClient(h.cfg.RerankEndpoint, h.cfg.RerankModel, 0, h.cfg.RerankTimeoutMs)
-	}
-	sp := pipeline.NewSearchPipeline(embedClient, h.cfg.Collections, rerankClient)
-
-	var colls []string
-	if collection != "" {
-		colls = []string{collection}
-	} else {
-		colls = h.cfg.Collections.List()
-	}
-	// Overfetch when metadata filtering is requested so post-filter still
-	// returns enough results.
-	fetchK := topK
-	if hasMetaFilter {
-		fetchK = topK * 3
-	}
-	var results []map[string]any
-	wasReranked := false
-
-	for _, coll := range colls {
-		var res []pipeline.ScoredResult
-		var err error
-
-		switch {
-		case doParentChild:
-			res, err = sp.SearchByTextParentChild(ctx, coll, query, fetchK)
-		case doMultiQuery && h.cfg.LLMProvider != nil:
-			res, err = sp.SearchByTextMultiQuery(ctx, coll, query, fetchK,
-				h.cfg.LLMProvider, os.Getenv("LLM_MODEL"), 3)
-		case doRerank && rerankClient.Enabled():
-			var reranked bool
-			res, reranked, err = sp.SearchByTextWithRerank(ctx, coll, query, fetchK)
-			if reranked {
-				wasReranked = true
-			}
-		case doGraphRerank && h.cfg.DB != nil:
-			res, err = sp.SearchByText(ctx, coll, query, fetchK)
-			if err == nil && len(res) > 0 {
-				// Convert to graphrank.ScoredResult, rerank, convert back
-				grRes := make([]graphrank.ScoredResult, len(res))
-				for i, r := range res {
-					grRes[i] = graphrank.ScoredResult{ID: r.ID, Score: r.Score, Metadata: r.Metadata}
-				}
-				queryEntities := extractQueryEntities(ctx, h.cfg.DB, query)
-				grReranked := graphrank.RerankWithGraph(ctx, h.cfg.DB, queryEntities, grRes, graphrank.DefaultConfig())
-				for i, r := range grReranked {
-					res[i] = pipeline.ScoredResult{ID: r.ID, Score: r.Score, Metadata: r.Metadata}
-				}
-			}
-		default:
-			res, err = sp.SearchByText(ctx, coll, query, fetchK)
-		}
-		if err != nil {
-			continue
-		}
-
-		// Dedup overlapping results (enabled by default)
-		if doDedup && len(res) > 1 {
-			res = pipeline.DeduplicateResults(res, 0.85)
-		}
-
-		for _, r := range res {
-			if hasMetaFilter && !mcp.ChunkMetaMatches(r.Metadata, roomFilter, tagFilters) {
-				continue
-			}
-			results = append(results, map[string]any{
-				"id": r.ID, "score": r.Score, "collection": coll, "metadata": string(r.Metadata),
-			})
-			if len(results) >= topK {
-				break
-			}
-		}
-		if len(results) >= topK {
-			break
-		}
-	}
-
-	// Build response with routing metadata
-	response := map[string]any{
-		"results":     results,
-		"search_type": searchType,
-		"reranked":    wasReranked,
-	}
-	if routingInfo != nil {
-		response["routing"] = map[string]any{
-			"selected_type": routingInfo.SearchType,
-			"reason":        routingInfo.Reason,
-			"confidence":    routingInfo.Confidence,
-			"alternatives":  routingInfo.Alternatives,
-			"source":        "routed",
-		}
-	}
-
-	if len(results) == 0 {
-		response["results"] = []any{}
-	}
-
-	out, _ := json.MarshalIndent(response, "", "  ")
-	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(out)}}}
+	return mcp.ToolSearch(ctx, h, args)
 }
 
 // toolListData is a thin shim over mcp.ToolListData. F-4 wave 3c moved

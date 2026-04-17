@@ -10,7 +10,10 @@ import (
 	"context"
 	"database/sql"
 
+	"github.com/stek0v/cognevra/pipeline"
+	"github.com/stek0v/cognevra/pkg/llm"
 	"github.com/stek0v/cognevra/pkg/orchestrator"
+	"github.com/stek0v/cognevra/pkg/router"
 	"github.com/stek0v/cognevra/pkg/runreg"
 )
 
@@ -37,6 +40,13 @@ import (
 //              pkg/runreg. RunPipeline abstracts orchestrator.Run so the
 //              cognify goroutine is testable without the real LLM/embed
 //              stack.
+//   - wave 3k: + NewSearchPipeline + LLMProvider + LLMModel +
+//              SearchCapabilities (toolSearch). NewSearchPipeline returns
+//              a SearchPipeline interface (defined in this package) so
+//              production wraps *pipeline.SearchPipeline while tests
+//              supply a stub. Pkg/mcp now imports pipeline + router +
+//              llm; graphrank stays inside tool_search.go (used only
+//              there).
 type Deps interface {
 	// DB returns the shared *sql.DB used for palace / datasets / graph
 	// tables. May be nil when no PostgresDSN is configured — tool
@@ -118,6 +128,49 @@ type Deps interface {
 	// the post-run bookkeeping (status transition, persist, heartbeat)
 	// without the real LLM + embed stack.
 	RunPipeline(ctx context.Context, texts []string, cfg orchestrator.Config, progress chan<- orchestrator.Progress) error
+	// NewSearchPipeline returns a configured SearchPipeline (embed +
+	// collections + optional reranker) or nil when the embed service /
+	// collection manager isn't configured. doRerank tells the builder
+	// whether to construct a rerank client; callers should still gate
+	// rerank-only branches on SearchPipeline.RerankEnabled().
+	NewSearchPipeline(doRerank bool) SearchPipeline
+	// LLMProvider returns the multi-provider LLM abstraction, or nil
+	// when no provider is configured. Used by the multi-query search
+	// branch.
+	LLMProvider() llm.Provider
+	// LLMModel returns the configured LLM model name (from env var in
+	// the current wiring). Empty string when unset. The multi-query
+	// search branch forwards this to the provider.
+	LLMModel() string
+	// SearchCapabilities returns the router.Capabilities used by
+	// smart-routing (AUTO / FEELING_LUCKY search types). May be a
+	// relatively expensive call — the production implementation hits
+	// the DB to detect communities.
+	SearchCapabilities() router.Capabilities
+}
+
+// SearchPipeline is the narrow interface toolSearch calls into. The
+// production implementation in internal/http is a thin adapter over
+// *pipeline.SearchPipeline plus the optional *rerank.Client. Tests
+// supply their own stub so the dispatch logic can be exercised
+// without a live embed/rerank service.
+type SearchPipeline interface {
+	// SearchByText runs the default vector similarity search.
+	SearchByText(ctx context.Context, collection, query string, topK int) ([]pipeline.ScoredResult, error)
+	// SearchByTextParentChild uses the parent-child hierarchical
+	// chunking strategy.
+	SearchByTextParentChild(ctx context.Context, collection, query string, topK int) ([]pipeline.ScoredResult, error)
+	// SearchByTextMultiQuery generates n rewritten queries via the
+	// given provider/model and merges their results.
+	SearchByTextMultiQuery(ctx context.Context, collection, query string, topK int, provider llm.Provider, model string, n int) ([]pipeline.ScoredResult, error)
+	// SearchByTextWithRerank runs vector search then cross-encoder
+	// rerank when RerankEnabled() is true. The reranked bool in the
+	// return tells the caller whether rerank actually ran (it may be
+	// skipped when the endpoint is unreachable).
+	SearchByTextWithRerank(ctx context.Context, collection, query string, topK int) (results []pipeline.ScoredResult, reranked bool, err error)
+	// RerankEnabled reports whether the underlying rerank client is
+	// configured + reachable. Callers gate the rerank branch on this.
+	RerankEnabled() bool
 }
 
 // SearchResult is one entry returned by CollectionSearch. Kept small
