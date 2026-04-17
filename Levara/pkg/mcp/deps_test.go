@@ -72,6 +72,10 @@ type fakeDeps struct {
 	// collectionMetas is keyed by collection name. Tests that exercise
 	// toolGetProjectContext or toolCheckDrift populate this map.
 	collectionMetas map[string]CollectionInfo
+
+	// doSyncFn stubs DoSync. When nil, returns empty result + empty
+	// manifest + nil error (happy-path default).
+	doSyncFn func(ctx context.Context, remoteURL, direction string, types []string, since string, collections []string) (map[string]any, map[string]any, error)
 }
 
 // insertedRow records a single CollectionInsert call so tests can
@@ -209,6 +213,12 @@ func (f *fakeDeps) CollectionMeta(name string) CollectionInfo {
 	}
 	return f.collectionMetas[name]
 }
+func (f *fakeDeps) DoSync(ctx context.Context, remoteURL, direction string, types []string, since string, collections []string) (map[string]any, map[string]any, error) {
+	if f.doSyncFn != nil {
+		return f.doSyncFn(ctx, remoteURL, direction, types, since, collections)
+	}
+	return map[string]any{}, map[string]any{}, nil
+}
 
 // fakeSearchPipeline is a programmable SearchPipeline stub. Each method
 // consults a matching function field; when nil, returns empty results
@@ -276,11 +286,14 @@ func (nilDBDeps) LogHeartbeat(string, any)                                      
 func (nilDBDeps) RunPipeline(context.Context, []string, orchestrator.Config, chan<- orchestrator.Progress) error {
 	return nil
 }
-func (nilDBDeps) NewSearchPipeline(bool) SearchPipeline          { return nil }
-func (nilDBDeps) LLMProvider() llm.Provider                      { return nil }
-func (nilDBDeps) LLMModel() string                               { return "" }
-func (nilDBDeps) SearchCapabilities() router.Capabilities        { return router.Capabilities{} }
-func (nilDBDeps) CollectionMeta(string) CollectionInfo           { return CollectionInfo{} }
+func (nilDBDeps) NewSearchPipeline(bool) SearchPipeline   { return nil }
+func (nilDBDeps) LLMProvider() llm.Provider               { return nil }
+func (nilDBDeps) LLMModel() string                        { return "" }
+func (nilDBDeps) SearchCapabilities() router.Capabilities { return router.Capabilities{} }
+func (nilDBDeps) CollectionMeta(string) CollectionInfo    { return CollectionInfo{} }
+func (nilDBDeps) DoSync(context.Context, string, string, []string, string, []string) (map[string]any, map[string]any, error) {
+	return map[string]any{}, map[string]any{}, nil
+}
 
 func setupDepsTestDB(t *testing.T) *fakeDeps {
 	t.Helper()
