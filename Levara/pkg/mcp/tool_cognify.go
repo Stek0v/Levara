@@ -136,12 +136,13 @@ func ToolCognify(ctx context.Context, deps Deps, args map[string]any) ToolResult
 	}
 }
 
-// runCognifyPipeline drives the orchestrator to completion and performs
-// post-run bookkeeping: final status update, PersistPipelineStatus,
-// heartbeat log. Extracted into its own function so the tool body stays
-// readable and so tests that install a pipelineFn can also verify the
-// bookkeeping runs after the stub finishes.
-func runCognifyPipeline(deps Deps, runID, collection string, texts []string, pipeCfg orchestrator.Config, status *runreg.Status) {
+// runPipelineWithStatus drives the orchestrator to completion and
+// updates status fields: per-progress-event stage/message/counters,
+// and terminal Status ("COMPLETED" or "FAILED" + err message). Runs
+// synchronously; callers wrap in a goroutine for fire-and-forget.
+// Shared between cognify (adds Persist + Heartbeat after) and
+// analyze_commits (bare-bones — see tool_git.go).
+func runPipelineWithStatus(deps Deps, texts []string, pipeCfg orchestrator.Config, status *runreg.Status) {
 	progressCh := make(chan orchestrator.Progress, cognifyProgressBufSize)
 	errCh := make(chan error, 1)
 
@@ -165,6 +166,14 @@ func runCognifyPipeline(deps Deps, runID, collection string, texts []string, pip
 		status.Status = "COMPLETED"
 	}
 	status.ElapsedMs = time.Since(status.StartedAt).Milliseconds()
+}
+
+// runCognifyPipeline wraps runPipelineWithStatus with cognify-specific
+// post-run bookkeeping: PersistPipelineStatus (skip-if-done) and
+// heartbeat log. Analyze_commits and other pipeline-driving tools
+// either call the helper directly or add their own post-run hooks.
+func runCognifyPipeline(deps Deps, runID, collection string, texts []string, pipeCfg orchestrator.Config, status *runreg.Status) {
+	runPipelineWithStatus(deps, texts, pipeCfg, status)
 
 	deps.PersistPipelineStatus(runID, collection,
 		status.Status, status.Chunks, status.Entities, status.Edges, status.ElapsedMs)
