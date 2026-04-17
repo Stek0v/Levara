@@ -59,12 +59,33 @@ Post-F-4 coverage push. `internal/http` оставался самым больш
 
 ### P2 — средние
 
-- **FIX-10** — `pkg/storage` S3 backend через MinIO container.
-- **FIX-11** — `pkg/observe` базовые тесты метрик/трассировки.
-- **FIX-12** — `pkg/ontology` golden-тесты RDF/OWL на 2-3 публичных онтологиях.
-- **FIX-13** — `internal/grpc` contract-тесты, симметричные HTTP.
+- ~~**FIX-10 (S3 backend).**~~ **Done** — 6 тестов в
+  `pkg/storage/s3_mock_test.go`: in-memory S3-compatible httptest-сервер
+  покрывает PUT/GET/HEAD/DELETE + list-type=2, round-trip содержимого,
+  sig-v4 зависимость подписи от payload, 404→error на Load и 503→error на
+  Save, идемпотентность повторного Delete. MinIO-контейнер не нужен —
+  контракт тот же, тесты < 1 секунды.
+- ~~**FIX-11 (observe edge).**~~ **Done** — 3 edge-теста в
+  `pkg/observe/observe_edge_test.go` поверх существующих 10:
+  LOG_LEVEL=ERROR/DEBUG/TRACE → minLevel, Langfuse full-payload fields
+  (Metadata+Status+usage), ErrorTracker post-eviction dedup index
+  consistency (регрессия на переиндексацию кольцевого буфера).
+- ~~**FIX-12 (ontology golden).**~~ **Done** — уже покрыт.
+  `pkg/ontology/ontology_test.go` содержит 20 тестов с FOAF-like RDF
+  фикстурой (классы + subClassOf + individuals) и schema.org-like
+  иерархией (Organization → Corporation, fuzzy-поиск на вложенные
+  классы). Публичная онтология моделируется inline-фикстурой, чтобы не
+  тянуть внешние файлы в вендор.
+- ~~**FIX-13 (gRPC contracts).**~~ **Done** — 9 contract-тестов в
+  `internal/grpc/service_contract_test.go` поверх существующих 8:
+  ChunkText (paragraph/sentence/merged/default), HashFiles round-trip,
+  ListDirectory с фильтром по расширению и recursive, Compact,
+  AggregateSearch (пере-дача в pkg/aggregator), LLMCache put/get/stats
+  (temperature — часть ключа), BM25 index+search (ранжирование +
+  InvalidArgument guards), SearchTriplets scoring, ExtractText
+  plain-text. Симметрично HTTP wave-coverage, без embed-server/graphdb.
 - **FIX-14** — слияние `git` + `fetch` → `ingest`, `classify` → `extract`
-  (архитектурное, не тестовое).
+  (архитектурное, не тестовое — вне scope этого testing-push'а).
 
 ### P3 — наблюдать
 
