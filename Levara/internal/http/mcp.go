@@ -28,7 +28,6 @@ import (
 	"github.com/stek0v/cognevra/pkg/community"
 	"github.com/stek0v/cognevra/pkg/embed"
 	"github.com/stek0v/cognevra/pkg/extract"
-	"github.com/stek0v/cognevra/pkg/git"
 	"github.com/stek0v/cognevra/pkg/llm"
 	"github.com/stek0v/cognevra/pkg/mcp"
 	"github.com/stek0v/cognevra/pkg/orchestrator"
@@ -594,129 +593,19 @@ func (h *mcpHandler) toolAdd(ctx context.Context, args map[string]any) mcpToolRe
 
 // ── Git Commit Analyzer handlers ──
 
+// toolAnalyzeCommits is a thin shim over mcp.ToolAnalyzeCommits. F-4
+// wave 3m moved the body (git.ParseLog + optional cognify pipeline
+// goroutine) into pkg/mcp. Reuses Runs/BaseCognifyConfig/LogHeartbeat
+// from wave 3j; no new Deps methods.
 func (h *mcpHandler) toolAnalyzeCommits(ctx context.Context, args map[string]any) mcpToolResult {
-	repoPath, _ := args["repo_path"].(string)
-	if repoPath == "" {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: 'repo_path' required"}}, IsError: true}
-	}
-	since, _ := args["since"].(string)
-	limit := 100
-	if l, ok := args["limit"].(float64); ok {
-		limit = int(l)
-	}
-
-	commits, err := git.ParseLog(repoPath, since, limit)
-	if err != nil {
-		return mcpToolResult{
-			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("Error parsing git log: %s", err.Error())}},
-			IsError: true,
-		}
-	}
-
-	if len(commits) == 0 {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "No commits found."}}}
-	}
-
-	text := git.CommitsToText(commits)
-
-	// If orchestrator is available, cognify the commit text
-	if h.cfg.EmbedEndpoint != "" {
-		runID := uuid.New().String()
-		collection := "git_commits"
-
-		status := &runreg.Status{
-			RunID: runID, Status: "RUNNING", Stage: "starting", StartedAt: time.Now(),
-		}
-		h.cfg.Runs.Store(runID, status)
-
-		pipeCfg := orchestrator.Config{
-			ChunkStrategy:  "merged",
-			MinChunkChars:  50,
-			MaxChunkChars:  2000,
-			LLMEndpoint:    os.Getenv("LLM_ENDPOINT"),
-			LLMModel:       os.Getenv("LLM_MODEL"),
-			LLMConcurrency: 1,
-			EmbedEndpoint:  h.cfg.EmbedEndpoint,
-			EmbedModel:     h.cfg.EmbedModel,
-			Neo4jURL:       h.cfg.Neo4jCfg.Neo4jURL,
-			Neo4jUser:      h.cfg.Neo4jCfg.Neo4jUser,
-			Neo4jPassword:  h.cfg.Neo4jCfg.Neo4jPassword,
-			Neo4jDatabase:  h.cfg.Neo4jCfg.Neo4jDatabase,
-			Collection:     collection,
-			Collections:    h.cfg.Collections,
-			GenerateTriplets: true,
-			DatasetID:      runID,
-			DB:             h.cfg.DB,
-			LLMCache:       h.cfg.LLMCache,
-		}
-
-		go func() {
-			progressCh := make(chan orchestrator.Progress, 100)
-			errCh := make(chan error, 1)
-			go func() {
-				errCh <- orchestrator.Run(context.Background(), []string{text}, pipeCfg, progressCh)
-			}()
-			for p := range progressCh {
-				status.Stage = p.Stage
-				status.Message = p.Message
-				status.Chunks = p.ChunksCreated
-				status.Entities = p.EntitiesExtracted
-				status.Edges = p.EdgesExtracted
-				status.ElapsedMs = p.ElapsedMs
-			}
-			if err := <-errCh; err != nil {
-				status.Status = "FAILED"
-				status.Message = err.Error()
-			} else {
-				status.Status = "COMPLETED"
-			}
-			status.ElapsedMs = time.Since(status.StartedAt).Milliseconds()
-		}()
-
-		return mcpToolResult{Content: []mcpContent{{
-			Type: "text",
-			Text: fmt.Sprintf("Analyzed %d commits. Cognify pipeline started (run_id: %s). Use cognify_status to track.\n\nPreview:\n%s",
-				len(commits), runID, truncate(text, 2000)),
-		}}}
-	}
-
-	return mcpToolResult{Content: []mcpContent{{
-		Type: "text",
-		Text: fmt.Sprintf("Analyzed %d commits (no embedding service — text only):\n%s", len(commits), truncate(text, 4000)),
-	}}}
+	return mcp.ToolAnalyzeCommits(ctx, h, args)
 }
 
+// toolGitSearch is a thin shim over mcp.ToolGitSearch. F-4 wave 3m.
+// Reuses NewSearchPipeline from wave 3k; hardcoded topK=10 against
+// the git_commits collection lives in pkg/mcp.
 func (h *mcpHandler) toolGitSearch(ctx context.Context, args map[string]any) mcpToolResult {
-	query, _ := args["query"].(string)
-	if query == "" {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: 'query' required"}}, IsError: true}
-	}
-
-	// Search in the git_commits collection
-	if h.cfg.EmbedEndpoint == "" || h.cfg.Collections == nil {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "No results (embedding service not configured)"}}}
-	}
-
-	embedClient := embed.NewClient(h.cfg.EmbedEndpoint, h.cfg.EmbedModel, 16, 1)
-	sp := pipeline.NewSearchPipeline(embedClient, h.cfg.Collections, nil)
-
-	res, err := sp.SearchByText(ctx, "git_commits", query, 10)
-	if err != nil {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("Search error: %s", err.Error())}}, IsError: true}
-	}
-
-	if len(res) == 0 {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "No matching commits found."}}}
-	}
-
-	var results []map[string]any
-	for _, r := range res {
-		results = append(results, map[string]any{
-			"id": r.ID, "score": r.Score, "metadata": string(r.Metadata),
-		})
-	}
-	out, _ := json.MarshalIndent(results, "", "  ")
-	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(out)}}}
+	return mcp.ToolGitSearch(ctx, h, args)
 }
 
 // ── Project Memory handlers ──
