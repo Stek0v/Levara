@@ -47,6 +47,9 @@ import (
 //              supply a stub. Pkg/mcp now imports pipeline + router +
 //              llm; graphrank stays inside tool_search.go (used only
 //              there).
+//   - wave 3o: + CollectionMeta (toolGetProjectContext + toolCheckDrift).
+//              Returns CollectionInfo value type so pkg/mcp stays free of
+//              internal/store.CollectionMeta pointer.
 type Deps interface {
 	// DB returns the shared *sql.DB used for palace / datasets / graph
 	// tables. May be nil when no PostgresDSN is configured — tool
@@ -147,6 +150,12 @@ type Deps interface {
 	// relatively expensive call — the production implementation hits
 	// the DB to detect communities.
 	SearchCapabilities() router.Capabilities
+	// CollectionMeta returns observable metadata for a named collection.
+	// Returns zero CollectionInfo when the collection doesn't exist or
+	// HasCollections() is false. Used by toolGetProjectContext and
+	// toolCheckDrift to read per-collection stats without leaking the
+	// internal/store.CollectionMeta pointer into pkg/mcp.
+	CollectionMeta(name string) CollectionInfo
 }
 
 // SearchPipeline is the narrow interface toolSearch calls into. The
@@ -181,4 +190,15 @@ type SearchResult struct {
 	ID    string
 	Score float32
 	Data  []byte
+}
+
+// CollectionInfo is the observable metadata for a single collection
+// returned by Deps.CollectionMeta. It is a plain value type — no
+// internal/store pointers — so pkg/mcp stays free of that import.
+type CollectionInfo struct {
+	Name       string
+	Records    int
+	Dim        int
+	Metric     string
+	EmbedModel string
 }
