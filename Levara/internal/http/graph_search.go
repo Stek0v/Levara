@@ -107,8 +107,11 @@ func graphCompletionSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest)
 		}
 
 		prompt := fmt.Sprintf("Answer the question based on the following knowledge graph and search context.\n\n%s\n\nQuestion: %s\n\nAnswer:", contextStr, req.QueryText)
+		prompt = prependSessionContext(cfg, req.SessionID, prompt)
 		answer = callLLMFromAPI(llmEndpoint, llmModel, prompt, cfg.LLMProvider)
 	}
+
+	recordInteraction(cfg, req.SessionID, "", req.QueryText, answer, "GRAPH_COMPLETION")
 
 	return c.JSON(fiber.Map{
 		"answer":      answer,
@@ -237,8 +240,11 @@ func contextExtensionSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest
 			"Answer the question using the extended knowledge graph context below. "+
 				"The context includes both direct (1-hop) and extended (2-hop) relationships.\n\n"+
 				"%s\n\nQuestion: %s\n\nAnswer:", contextStr, req.QueryText)
+		prompt = prependSessionContext(cfg, req.SessionID, prompt)
 		answer = callLLMFromAPI(llmEndpoint, llmModel, prompt, cfg.LLMProvider)
 	}
+
+	recordInteraction(cfg, req.SessionID, "", req.QueryText, answer, "GRAPH_COMPLETION_CONTEXT_EXTENSION")
 
 	return c.JSON(fiber.Map{
 		"answer":       answer,
@@ -390,6 +396,7 @@ func cotSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
 
 		synthesizePrompt := fmt.Sprintf(
 			"Given this multi-step research:\n\n%s\nAnswer the original question: %s", stepSummary, req.QueryText)
+		synthesizePrompt = prependSessionContext(cfg, req.SessionID, synthesizePrompt)
 		answer = callLLMFromAPI(llmEndpoint, llmModel, synthesizePrompt, cfg.LLMProvider)
 	}
 
@@ -402,6 +409,8 @@ func cotSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
 			"context_found": s.ContextFound,
 		}
 	}
+
+	recordInteraction(cfg, req.SessionID, "", req.QueryText, answer, "GRAPH_COMPLETION_COT")
 
 	return c.JSON(fiber.Map{
 		"answer":          answer,
@@ -759,8 +768,11 @@ func tripletCompletionSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchReques
 	if llmEndpoint != "" && llmModel != "" && len(tripletTexts) > 0 {
 		contextStr := "Knowledge graph triplets (Subject -> Predicate -> Object):\n" + strings.Join(tripletTexts, "\n")
 		prompt := fmt.Sprintf("Answer the question based on the following knowledge graph triplets.\n\n%s\n\nQuestion: %s\n\nAnswer:", contextStr, req.QueryText)
+		prompt = prependSessionContext(cfg, req.SessionID, prompt)
 		answer = callLLMFromAPI(llmEndpoint, llmModel, prompt, cfg.LLMProvider)
 	}
+
+	recordInteraction(cfg, req.SessionID, "", req.QueryText, answer, "TRIPLET_COMPLETION")
 
 	return c.JSON(fiber.Map{
 		"answer":      answer,
@@ -1151,8 +1163,11 @@ func communityLocalSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) 
 		prompt := fmt.Sprintf(
 			"Answer based on these knowledge graph communities:\n\n%s\n\nQuestion: %s\n\nAnswer:",
 			strings.Join(communityContexts, "\n---\n"), req.QueryText)
+		prompt = prependSessionContext(cfg, req.SessionID, prompt)
 		answer = callLLMFromAPI(llmEndpoint, llmModel, prompt, cfg.LLMProvider)
 	}
+
+	recordInteraction(cfg, req.SessionID, "", req.QueryText, answer, "COMMUNITY_LOCAL")
 
 	return c.JSON(fiber.Map{
 		"answer":           answer,
@@ -1288,8 +1303,11 @@ func communityGlobalSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest)
 				"Synthesize a comprehensive answer combining all relevant perspectives. "+
 				"Resolve any contradictions. Be thorough but concise.",
 			req.QueryText, strings.Join(partialTexts, "\n\n---\n\n"))
+		synthesizePrompt = prependSessionContext(cfg, req.SessionID, synthesizePrompt)
 		answer = callLLMFromAPI(llmEndpoint, llmModel, synthesizePrompt, cfg.LLMProvider)
 	}
+
+	recordInteraction(cfg, req.SessionID, "", req.QueryText, answer, "COMMUNITY_GLOBAL")
 
 	return c.JSON(fiber.Map{
 		"answer":                   answer,

@@ -1,8 +1,11 @@
 // code.go — Source code analysis: extract functions, classes, imports, and call relationships.
-// Supports Go and Python via regex-based parsing (no external AST tools).
+// Go uses go/ast (stdlib); Python uses regex (no external deps).
 package extract
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"regexp"
 	"strings"
 )
@@ -57,73 +60,91 @@ func detectLanguage(filename string) string {
 	return "unknown"
 }
 
-// ── Go Analysis ──
-
-var (
-	goFuncRe   = regexp.MustCompile(`(?m)^func\s+(?:\((\w+)\s+\*?(\w+)\)\s+)?(\w+)\s*\(`)
-	goImportRe = regexp.MustCompile(`(?m)^\s*"([^"]+)"`)
-	goCallRe   = regexp.MustCompile(`\b(\w+)\.([\w]+)\s*\(`)
-	goStructRe = regexp.MustCompile(`(?m)^type\s+(\w+)\s+struct\s*\{`)
-	goIfaceRe  = regexp.MustCompile(`(?m)^type\s+(\w+)\s+interface\s*\{`)
-)
+// ── Go Analysis (AST-based) ──
 
 func analyzeGo(source, filename string) CodeAnalysis {
 	a := CodeAnalysis{Language: "go"}
-	lines := strings.Split(source, "\n")
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, filename, source, parser.AllErrors)
+	if err != nil && f == nil {
+		return a
+	}
 
-	// Extract functions and methods
-	for i, line := range lines {
-		if m := goFuncRe.FindStringSubmatch(line); m != nil {
-			receiver := m[2]
-			funcName := m[3]
-			e := CodeEntity{Name: funcName, Type: "function", File: filename, Line: i + 1}
-			if receiver != "" {
-				e.Type = "method"
-				e.Parent = receiver
+	for _, decl := range f.Decls {
+		switch d := decl.(type) {
+		case *ast.FuncDecl:
+			line := fset.Position(d.Pos()).Line
+			e := CodeEntity{Name: d.Name.Name, Type: "function", File: filename, Line: line}
+			if d.Recv != nil && len(d.Recv.List) > 0 {
+				if rt := receiverTypeName(d.Recv.List[0].Type); rt != "" {
+					e.Type = "method"
+					e.Parent = rt
+				}
 			}
 			a.Entities = append(a.Entities, e)
-		}
-	}
-
-	// Extract structs and interfaces
-	for i, line := range lines {
-		if m := goStructRe.FindStringSubmatch(line); m != nil {
-			a.Entities = append(a.Entities, CodeEntity{Name: m[1], Type: "class", File: filename, Line: i + 1})
-		}
-		if m := goIfaceRe.FindStringSubmatch(line); m != nil {
-			a.Entities = append(a.Entities, CodeEntity{Name: m[1], Type: "interface", File: filename, Line: i + 1})
-		}
-	}
-
-	// Extract imports
-	inImport := false
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "import (" {
-			inImport = true
-			continue
-		}
-		if inImport && trimmed == ")" {
-			inImport = false
-			continue
-		}
-		if inImport {
-			if m := goImportRe.FindStringSubmatch(line); m != nil {
-				pkg := m[1]
-				parts := strings.Split(pkg, "/")
-				name := parts[len(parts)-1]
-				a.Entities = append(a.Entities, CodeEntity{Name: name, Type: "import", File: filename})
-				a.Relations = append(a.Relations, CodeRelation{Source: filename, Target: pkg, Relationship: "IMPORTS"})
+		case *ast.GenDecl:
+			for _, spec := range d.Specs {
+				ts, ok := spec.(*ast.TypeSpec)
+				if !ok {
+					continue
+				}
+				line := fset.Position(ts.Pos()).Line
+				switch ts.Type.(type) {
+				case *ast.StructType:
+					a.Entities = append(a.Entities, CodeEntity{Name: ts.Name.Name, Type: "class", File: filename, Line: line})
+				case *ast.InterfaceType:
+					a.Entities = append(a.Entities, CodeEntity{Name: ts.Name.Name, Type: "interface", File: filename, Line: line})
+				}
 			}
 		}
 	}
 
-	// Extract function calls (method calls: obj.Method())
-	for _, m := range goCallRe.FindAllStringSubmatch(source, -1) {
-		a.Relations = append(a.Relations, CodeRelation{Source: filename, Target: m[1] + "." + m[2], Relationship: "CALLS"})
+	for _, imp := range f.Imports {
+		path := strings.Trim(imp.Path.Value, `"`)
+		parts := strings.Split(path, "/")
+		name := parts[len(parts)-1]
+		a.Entities = append(a.Entities, CodeEntity{Name: name, Type: "import", File: filename})
+		a.Relations = append(a.Relations, CodeRelation{Source: filename, Target: path, Relationship: "IMPORTS"})
 	}
 
+	ast.Inspect(f, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		x, ok := sel.X.(*ast.Ident)
+		if !ok {
+			return true
+		}
+		a.Relations = append(a.Relations, CodeRelation{
+			Source:       filename,
+			Target:       x.Name + "." + sel.Sel.Name,
+			Relationship: "CALLS",
+		})
+		return true
+	})
+
 	return a
+}
+
+// receiverTypeName extracts the bare type name from a method receiver,
+// unwrapping pointers and generic type parameters.
+func receiverTypeName(expr ast.Expr) string {
+	switch t := expr.(type) {
+	case *ast.StarExpr:
+		return receiverTypeName(t.X)
+	case *ast.Ident:
+		return t.Name
+	case *ast.IndexExpr:
+		return receiverTypeName(t.X)
+	case *ast.IndexListExpr:
+		return receiverTypeName(t.X)
+	}
+	return ""
 }
 
 // ── Python Analysis ──
