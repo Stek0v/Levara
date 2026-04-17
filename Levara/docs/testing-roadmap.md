@@ -24,7 +24,7 @@ Live-документ. Каждая задача фиксирует статус
 | F-2 | ADR: три слоя графа (`graph` / `graphdb` / `graphstore`) | ✅ done | this batch |
 | F-3 | Решить судьбу `pkg/graphstore` (unused abstraction) | ⬜ deferred → см. ADR-001 | — |
 | F-4 | Вынос MCP из `internal/http` в `pkg/mcp` | ⬜ deferred (4375 LOC) — requires plan | — |
-| F-5 | Слияние мелких pkg (`git`/`fetch` → `ingest`, `classify` → `extract`) | ⬜ pending | — |
+| F-5 | Слияние мелких pkg (`git`/`fetch` → `ingest`, `classify` → `extract`) | ❌ won't do (2026-04-17) | см. `test_reports/fix_tasks.md` FIX-14 |
 | **F-6** | 🔴 **HNSW data race** (FIXED): Search теперь держит `h.RLock` весь traversal. Регрессия: `TestHNSW_ConcurrentSearchAdd_NoRace` гоняет 2 writers × 8 readers × 300ms под `-race`. `TestRecallAt10` разблокирован. | ✅ done | this batch |
 
 ## Wave 2 — TEST
