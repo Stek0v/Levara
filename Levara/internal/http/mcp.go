@@ -291,6 +291,28 @@ func (h *mcpHandler) SearchCapabilities() router.Capabilities {
 	return capabilitiesFromConfig(h.cfg)
 }
 
+// CollectionMeta implements mcp.Deps: returns observable metadata for the
+// named collection without exposing the internal/store.CollectionMeta pointer
+// to pkg/mcp. Returns zero CollectionInfo when the collection manager is nil
+// or the collection doesn't exist. Added in F-4 wave 3o for
+// toolGetProjectContext and toolCheckDrift.
+func (h *mcpHandler) CollectionMeta(name string) mcp.CollectionInfo {
+	if h.cfg.Collections == nil {
+		return mcp.CollectionInfo{}
+	}
+	m := h.cfg.Collections.GetMeta(name)
+	if m == nil {
+		return mcp.CollectionInfo{}
+	}
+	return mcp.CollectionInfo{
+		Name:       m.Name,
+		Records:    m.RecordCount,
+		Dim:        m.EmbeddingDim,
+		Metric:     m.DistanceMetric,
+		EmbedModel: m.EmbeddingModel,
+	}
+}
+
 // getOrValidateSession returns the session for the given ID, or nil if invalid.
 func (h *mcpHandler) getOrValidateSession(sessionID string) *mcpSession {
 	return h.sessions.Get(sessionID)
@@ -1142,123 +1164,13 @@ func syncPushCollections(ctx context.Context, cfg APIConfig, remoteURL string, c
 	return results
 }
 
+// toolGetProjectContext is a thin shim over mcp.ToolGetProjectContext.
+// F-4 wave 3o moved the body (collection stats + memories + graph
+// entities + interactions + related projects) into pkg/mcp. Uses the
+// new CollectionMeta Deps method for vector stats so pkg/mcp stays free
+// of internal/store pointers.
 func (h *mcpHandler) toolGetProjectContext(ctx context.Context, args map[string]any) mcpToolResult {
-	collection, _ := args["collection"].(string)
-	if collection == "" {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: 'collection' required"}}, IsError: true}
-	}
-
-	var sb strings.Builder
-
-	// 1. Collection stats
-	sb.WriteString("## Collection Stats\n")
-	if h.cfg.Collections != nil {
-		meta := h.cfg.Collections.GetMeta(collection)
-		if meta != nil {
-			sb.WriteString(fmt.Sprintf("- Name: %s\n- Records: %d\n- Dimension: %d\n- Metric: %s\n\n",
-				meta.Name, meta.RecordCount, meta.EmbeddingDim, meta.DistanceMetric))
-		} else {
-			sb.WriteString(fmt.Sprintf("- Collection '%s' not found (no vectors indexed yet)\n\n", collection))
-		}
-	}
-
-	// 2. Memories
-	sb.WriteString("## Project Memories\n")
-	if h.cfg.DB != nil {
-		rows, err := h.cfg.DB.QueryContext(ctx,
-			Q(`SELECT key, value, type FROM memories
-			 WHERE collection_name = $1 ORDER BY updated_at DESC LIMIT 20`), collection)
-		if err == nil {
-			defer rows.Close()
-			count := 0
-			for rows.Next() {
-				var key, value, typ string
-				rows.Scan(&key, &value, &typ)
-				sb.WriteString(fmt.Sprintf("- [%s] %s: %s\n", typ, key, truncate(value, 200)))
-				count++
-			}
-			if count == 0 {
-				sb.WriteString("- (no memories saved for this collection)\n")
-			}
-			sb.WriteString("\n")
-		}
-	}
-
-	// 3. Graph entities (top types)
-	sb.WriteString("## Key Entity Types\n")
-	if h.cfg.DB != nil {
-		rows, err := h.cfg.DB.QueryContext(ctx,
-			Q(`SELECT type, COUNT(*) as cnt FROM graph_nodes GROUP BY type ORDER BY cnt DESC LIMIT 10`))
-		if err == nil {
-			defer rows.Close()
-			count := 0
-			for rows.Next() {
-				var typ string
-				var cnt int
-				rows.Scan(&typ, &cnt)
-				sb.WriteString(fmt.Sprintf("- %s: %d entities\n", typ, cnt))
-				count++
-			}
-			if count == 0 {
-				sb.WriteString("- (no entities extracted yet)\n")
-			}
-			sb.WriteString("\n")
-		}
-	}
-
-	// 4. Recent interactions
-	sb.WriteString("## Recent Interactions\n")
-	if h.cfg.DB != nil {
-		rows, err := h.cfg.DB.QueryContext(ctx,
-			Q(`SELECT query, response, created_at FROM interactions
-			 ORDER BY created_at DESC LIMIT 5`))
-		if err == nil {
-			defer rows.Close()
-			count := 0
-			for rows.Next() {
-				var query, response, createdAt string
-				rows.Scan(&query, &response, &createdAt)
-				sb.WriteString(fmt.Sprintf("- Q: %s\n  A: %s\n", truncate(query, 100), truncate(response, 150)))
-				count++
-			}
-			if count == 0 {
-				sb.WriteString("- (no interactions recorded)\n")
-			}
-		}
-	}
-
-	// 5. Related projects (compact summaries)
-	if related, ok := args["include_related"].([]any); ok && len(related) > 0 {
-		sb.WriteString("\n## Related Projects\n")
-		for _, r := range related {
-			relColl, ok := r.(string)
-			if !ok || relColl == "" {
-				continue
-			}
-			sb.WriteString(fmt.Sprintf("\n### %s\n", relColl))
-			if h.cfg.Collections != nil {
-				if meta := h.cfg.Collections.GetMeta(relColl); meta != nil {
-					sb.WriteString(fmt.Sprintf("- Records: %d, Dim: %d\n", meta.RecordCount, meta.EmbeddingDim))
-				} else {
-					sb.WriteString("- (no vectors)\n")
-				}
-			}
-			if h.cfg.DB != nil {
-				rows, err := h.cfg.DB.QueryContext(ctx,
-					Q(`SELECT key, value FROM memories WHERE collection_name = $1 ORDER BY updated_at DESC LIMIT 3`), relColl)
-				if err == nil {
-					defer rows.Close()
-					for rows.Next() {
-						var key, value string
-						rows.Scan(&key, &value)
-						sb.WriteString(fmt.Sprintf("- %s: %s\n", key, truncate(value, 100)))
-					}
-				}
-			}
-		}
-	}
-
-	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: sb.String()}}}
+	return mcp.ToolGetProjectContext(ctx, h, args)
 }
 
 // ── Session Cleanup ───────────────────────────────────────────────────────
@@ -1376,29 +1288,12 @@ func (h *mcpHandler) toolListCommunities(ctx context.Context, args map[string]an
 }
 
 
-// toolCheckDrift reports embedding model drift across collections.
+// toolCheckDrift is a thin shim over mcp.ToolCheckDrift. F-4 wave 3o
+// moved the body into pkg/mcp using CollectionMeta so pkg/mcp stays free
+// of the *store.CollectionManager pointer. The embedded drift logic
+// (iterate → skip empty/"_" → compare model+dim) is inlined there.
 func (h *mcpHandler) toolCheckDrift(ctx context.Context, args map[string]any) mcpToolResult {
-	drifted := embed.CheckDrift(h.cfg.Collections, h.cfg.EmbedModel, 0)
-	// Try to get actual dim from first collection
-	dim := 0
-	if h.cfg.Collections != nil {
-		for _, name := range h.cfg.Collections.List() {
-			m := h.cfg.Collections.GetMeta(name)
-			if m.EmbeddingDim > 0 {
-				dim = m.EmbeddingDim
-				break
-			}
-		}
-	}
-	if dim > 0 {
-		drifted = embed.CheckDrift(h.cfg.Collections, h.cfg.EmbedModel, dim)
-	}
-
-	if drifted == nil {
-		drifted = []embed.DriftCheckResult{}
-	}
-	out, _ := json.MarshalIndent(drifted, "", "  ")
-	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(out)}}}
+	return mcp.ToolCheckDrift(ctx, h, args)
 }
 
 // toolPruneGraph is a thin shim over mcp.ToolPruneGraph. F-4 wave 3n
