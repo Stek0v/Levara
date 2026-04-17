@@ -50,6 +50,10 @@ import (
 //   - wave 3o: + CollectionMeta (toolGetProjectContext + toolCheckDrift).
 //              Returns CollectionInfo value type so pkg/mcp stays free of
 //              internal/store.CollectionMeta pointer.
+//   - wave 3q: + DoSync (toolSync). One high-level method absorbs all
+//              internal/http sync helpers (SyncPull, syncPush,
+//              syncPullCollections, syncPushCollections) so pkg/mcp doesn't
+//              need to know about APIConfig or *store.CollectionManager.
 type Deps interface {
 	// DB returns the shared *sql.DB used for palace / datasets / graph
 	// tables. May be nil when no PostgresDSN is configured — tool
@@ -156,6 +160,16 @@ type Deps interface {
 	// toolCheckDrift to read per-collection stats without leaking the
 	// internal/store.CollectionMeta pointer into pkg/mcp.
 	CollectionMeta(name string) CollectionInfo
+	// DoSync orchestrates a bidirectional sync operation with a remote
+	// Levara instance. It returns the per-type sync result map and the
+	// remote manifest map. The caller is responsible for adding
+	// remote_manifest to result and calling LogHeartbeat. error is
+	// returned only for connectivity failures (manifest fetch); per-type
+	// sync errors are folded into the result map under "<type>_error"
+	// keys, matching the pre-refactor behaviour. One method absorbs all
+	// internal/http sync helpers so pkg/mcp doesn't need APIConfig or
+	// *store.CollectionManager.
+	DoSync(ctx context.Context, remoteURL, direction string, types []string, since string, collections []string) (result, manifest map[string]any, err error)
 }
 
 // SearchPipeline is the narrow interface toolSearch calls into. The

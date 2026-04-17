@@ -289,6 +289,40 @@ func (h *mcpHandler) SearchCapabilities() router.Capabilities {
 	return capabilitiesFromConfig(h.cfg)
 }
 
+// DoSync implements mcp.Deps: orchestrates a bidirectional sync operation
+// with a remote Levara instance, wrapping all the internal/http sync helpers
+// (SyncManifestFromRemote, SyncPull, syncPush, syncPullCollections,
+// syncPushCollections) so pkg/mcp doesn't need to know about APIConfig or
+// *store.CollectionManager. Added in F-4 wave 3q for toolSync.
+func (h *mcpHandler) DoSync(ctx context.Context, remoteURL, direction string, types []string, since string, collections []string) (map[string]any, map[string]any, error) {
+	rawManifest, err := SyncManifestFromRemote(remoteURL)
+	if err != nil {
+		return nil, nil, err
+	}
+	// Convert *syncManifest to map[string]any by round-tripping through JSON
+	// so the tool body stays type-clean (no internal/http types in pkg/mcp).
+	var manifest map[string]any
+	if rawManifest != nil {
+		if b, err := json.Marshal(rawManifest); err == nil {
+			json.Unmarshal(b, &manifest)
+		}
+	}
+
+	var result map[string]any
+	if direction == "pull" {
+		result = SyncPull(h.cfg, remoteURL, types, since)
+		if containsType(types, "collections") && len(collections) > 0 {
+			result["collections_sync"] = syncPullCollections(h.cfg, remoteURL, collections)
+		}
+	} else {
+		result = syncPush(ctx, h.cfg, remoteURL, types, since)
+		if containsType(types, "collections") && len(collections) > 0 {
+			result["collections_sync"] = syncPushCollections(ctx, h.cfg, remoteURL, collections)
+		}
+	}
+	return result, manifest, nil
+}
+
 // CollectionMeta implements mcp.Deps: returns observable metadata for the
 // named collection without exposing the internal/store.CollectionMeta pointer
 // to pkg/mcp. Returns zero CollectionInfo when the collection manager is nil
@@ -861,66 +895,12 @@ func (h *mcpHandler) toolCrossSearch(ctx context.Context, args map[string]any) m
 	return mcp.ToolCrossSearch(ctx, h, args)
 }
 
+// toolSync is a thin shim over mcp.ToolSync. F-4 wave 3q moved the body
+// (arg parsing, direction gate, manifest fetch, SyncPull/Push, heartbeat)
+// into pkg/mcp. DoSync wraps all the internal/http sync helpers so
+// pkg/mcp stays free of APIConfig and *store.CollectionManager.
 func (h *mcpHandler) toolSync(ctx context.Context, args map[string]any) mcpToolResult {
-	remoteURL, _ := args["remote_url"].(string)
-	if remoteURL == "" {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: 'remote_url' required (e.g., http://10.23.0.53:8080/api/v1)"}}, IsError: true}
-	}
-	direction, _ := args["direction"].(string)
-	if direction == "" {
-		direction = "pull"
-	}
-	since, _ := args["since"].(string)
-
-	var types []string
-	if typesRaw, ok := args["types"].([]any); ok {
-		for _, t := range typesRaw {
-			if s, ok := t.(string); ok {
-				types = append(types, s)
-			}
-		}
-	}
-
-	var collectionNames []string
-	if collsRaw, ok := args["collections"].([]any); ok {
-		for _, c := range collsRaw {
-			if s, ok := c.(string); ok && s != "" {
-				collectionNames = append(collectionNames, s)
-			}
-		}
-	}
-
-	if h.cfg.DB == nil {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: database not configured"}}, IsError: true}
-	}
-
-	// First, get remote manifest
-	manifest, err := SyncManifestFromRemote(remoteURL)
-	if err != nil {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "Error: " + err.Error()}}, IsError: true}
-	}
-
-	if direction == "pull" {
-		result := SyncPull(h.cfg, remoteURL, types, since)
-		// Collection sync (pull: fetch text from remote → re-embed locally)
-		if containsType(types, "collections") && len(collectionNames) > 0 {
-			result["collections_sync"] = syncPullCollections(h.cfg, remoteURL, collectionNames)
-		}
-		result["remote_manifest"] = manifest
-		h.logHeartbeat("sync", map[string]any{"direction": "pull", "remote": remoteURL, "types": types})
-		out, _ := json.MarshalIndent(result, "", "  ")
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(out)}}}
-	}
-
-	// Push: export local data, POST to remote
-	result := syncPush(ctx, h.cfg, remoteURL, types, since)
-	if containsType(types, "collections") && len(collectionNames) > 0 {
-		result["collections_sync"] = syncPushCollections(ctx, h.cfg, remoteURL, collectionNames)
-	}
-	result["remote_manifest"] = manifest
-	h.logHeartbeat("sync", map[string]any{"direction": "push", "remote": remoteURL, "types": types})
-	out, _ := json.MarshalIndent(result, "", "  ")
-	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(out)}}}
+	return mcp.ToolSync(ctx, h, args)
 }
 
 func syncPush(ctx context.Context, cfg APIConfig, remoteURL string, types []string, since string) map[string]any {
