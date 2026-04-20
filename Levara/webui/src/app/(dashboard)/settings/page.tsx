@@ -43,21 +43,23 @@ export default function SettingsPage() {
   const { data: settings, isPending } = useSettings()
   const updateMutation = useUpdateSettings()
 
-  // Resolve effective values: backend settings first, then localStorage
-  // fallback (for first-load FOUC), then defaults. The ?? chain means the
-  // UI doesn't flicker between "no setting" and "backend setting" on hydration.
-  const theme: Theme =
-    settings?.theme ??
-    (typeof window !== 'undefined' ? (localStorage.getItem('levara-theme') as Theme | null) : null) ??
-    'system'
-  const locale: Locale =
-    settings?.locale ??
-    (typeof window !== 'undefined' ? (localStorage.getItem('levara-locale') as Locale | null) : null) ??
-    'ru'
+  // Effective values come ONLY from React Query cache (backend-resolved,
+  // with optimistic overlay). localStorage is write-only here — it feeds
+  // the pre-paint themeScript in app/layout.tsx to avoid FOUC on the next
+  // load, but we never read it back into the component.
+  //
+  // Reading from localStorage as a fallback (previous design) created a
+  // feedback loop on optimistic rollback: handler writes to localStorage,
+  // backend fails, cache rolls back to prev, component re-reads
+  // localStorage — which now holds the failed optimistic value — and
+  // renders it as the "effective" theme. M10 from the 2d15b38 review.
+  const theme: Theme = settings?.theme ?? 'system'
+  const locale: Locale = settings?.locale ?? 'ru'
 
-  // Re-apply theme/locale whenever the backend-resolved value changes — covers
-  // the case where the user logs in on a new device and their stored theme
-  // differs from the pre-paint inline script's guess.
+  // Single source of truth: cache → DOM + localStorage. This effect fires
+  // both for user-initiated changes (optimistic cache update) and for
+  // rollback after a failed PUT — so a backend error reverts the UI
+  // automatically without any explicit rollback wiring in handlers.
   useEffect(() => {
     applyTheme(theme)
   }, [theme])
@@ -65,14 +67,8 @@ export default function SettingsPage() {
     applyLocale(locale)
   }, [locale])
 
-  const handleTheme = (t: Theme) => {
-    applyTheme(t)
-    updateMutation.mutate({ theme: t })
-  }
-  const handleLocale = (l: Locale) => {
-    applyLocale(l)
-    updateMutation.mutate({ locale: l })
-  }
+  const handleTheme = (t: Theme) => updateMutation.mutate({ theme: t })
+  const handleLocale = (l: Locale) => updateMutation.mutate({ locale: l })
 
   return (
     <div>

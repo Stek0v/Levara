@@ -11,12 +11,53 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
+// requireSuperuser returns nil when the caller's JWT resolves to a user
+// with is_superuser=true, or a 403/503 fiber error otherwise. Used by the
+// destructive /prune/* handlers — the JWT middleware proves identity, but
+// the /prune/* endpoints need an extra role gate because they wipe ALL
+// datasets and graph state.
+//
+// Missing user_id (no JWT) falls through as unauthorized; missing DB
+// (server in memory-only mode) blocks the op since we can't verify the
+// role — prune is destructive enough to justify fail-closed.
+func requireSuperuser(c *fiber.Ctx, cfg APIConfig) error {
+	if cfg.DB == nil {
+		return c.Status(fiber.StatusServiceUnavailable).
+			JSON(fiber.Map{"detail": "database required to verify superuser role"})
+	}
+	userID, _ := c.Locals("user_id").(string)
+	if userID == "" {
+		return c.Status(fiber.StatusForbidden).
+			JSON(fiber.Map{"detail": "superuser role required"})
+	}
+	var isSuperuser bool
+	if err := cfg.DB.QueryRowContext(c.Context(),
+		Q("SELECT COALESCE(is_superuser, false) FROM users WHERE id = $1"),
+		userID).Scan(&isSuperuser); err != nil {
+		return c.Status(fiber.StatusForbidden).
+			JSON(fiber.Map{"detail": "superuser role required"})
+	}
+	if !isSuperuser {
+		return c.Status(fiber.StatusForbidden).
+			JSON(fiber.Map{"detail": "superuser role required"})
+	}
+	return nil
+}
+
 func pruneDataHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		if cfg.DB != nil {
-			cfg.DB.ExecContext(context.Background(), "DELETE FROM dataset_data")
-			cfg.DB.ExecContext(context.Background(), "DELETE FROM data")
-			cfg.DB.ExecContext(context.Background(), "DELETE FROM datasets")
+		if err := requireSuperuser(c, cfg); err != nil {
+			return err
+		}
+		ctx := c.Context()
+		if _, err := cfg.DB.ExecContext(ctx, "DELETE FROM dataset_data"); err != nil {
+			return c.Status(500).JSON(fiber.Map{"detail": err.Error()})
+		}
+		if _, err := cfg.DB.ExecContext(ctx, "DELETE FROM data"); err != nil {
+			return c.Status(500).JSON(fiber.Map{"detail": err.Error()})
+		}
+		if _, err := cfg.DB.ExecContext(ctx, "DELETE FROM datasets"); err != nil {
+			return c.Status(500).JSON(fiber.Map{"detail": err.Error()})
 		}
 		return c.JSON(fiber.Map{"status": "ok", "pruned": "data"})
 	}
@@ -24,12 +65,22 @@ func pruneDataHandler(cfg APIConfig) fiber.Handler {
 
 func pruneSystemHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		if cfg.DB != nil {
-			cfg.DB.ExecContext(context.Background(), "DELETE FROM graph_nodes")
-			cfg.DB.ExecContext(context.Background(), "DELETE FROM graph_edges")
-			cfg.DB.ExecContext(context.Background(), "DELETE FROM dataset_data")
-			cfg.DB.ExecContext(context.Background(), "DELETE FROM data")
-			cfg.DB.ExecContext(context.Background(), "DELETE FROM datasets")
+		if err := requireSuperuser(c, cfg); err != nil {
+			return err
+		}
+		ctx := c.Context()
+		// Fail fast on the first SQL error rather than plowing through a
+		// partial wipe; the caller can inspect the error and retry.
+		for _, stmt := range []string{
+			"DELETE FROM graph_nodes",
+			"DELETE FROM graph_edges",
+			"DELETE FROM dataset_data",
+			"DELETE FROM data",
+			"DELETE FROM datasets",
+		} {
+			if _, err := cfg.DB.ExecContext(ctx, stmt); err != nil {
+				return c.Status(500).JSON(fiber.Map{"detail": err.Error()})
+			}
 		}
 		return c.JSON(fiber.Map{"status": "ok", "pruned": "system"})
 	}

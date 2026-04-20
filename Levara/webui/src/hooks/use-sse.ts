@@ -22,6 +22,20 @@ export function useSSE(url: string | null, options: SSEOptions = {}) {
   const retryRef = useRef(0)
   const timerRef = useRef<ReturnType<typeof setTimeout>>(null)
 
+  // Stabilise callbacks across renders (M7 from the 2d15b38 review). If
+  // consumers passed inline closures for onMessage/onError, they'd change
+  // identity every render and drive `connect` (via useCallback deps) to a
+  // fresh closure, which `useEffect(() => connect(), [connect])` interpreted
+  // as "rebuild the EventSource" — producing a reconnect storm on every
+  // parent re-render. Refs keep the latest handlers reachable without
+  // invalidating `connect`.
+  const onMessageRef = useRef(onMessage)
+  const onErrorRef = useRef(onError)
+  useEffect(() => {
+    onMessageRef.current = onMessage
+    onErrorRef.current = onError
+  }, [onMessage, onError])
+
   const connect = useCallback(() => {
     if (!url || !enabled) return
 
@@ -29,6 +43,12 @@ export function useSSE(url: string | null, options: SSEOptions = {}) {
 
     const es = new EventSource(url, { withCredentials: true })
     esRef.current = es
+
+    // closedByDone guards against onerror firing AFTER markComplete has
+    // already closed the stream (M6 from the 2d15b38 review). Some
+    // browsers/networks report the close itself as an error, which would
+    // otherwise schedule a reconnect against a run that already finished.
+    let closedByDone = false
 
     es.onopen = () => {
       retryRef.current = 0
@@ -39,7 +59,7 @@ export function useSSE(url: string | null, options: SSEOptions = {}) {
       try {
         const data = JSON.parse(event.data)
         setState((s) => ({ ...s, data }))
-        onMessage?.(data)
+        onMessageRef.current?.(data)
       } catch {
         setState((s) => ({ ...s, data: event.data }))
       }
@@ -49,7 +69,7 @@ export function useSSE(url: string | null, options: SSEOptions = {}) {
       try {
         const data = JSON.parse((event as MessageEvent).data)
         setState((s) => ({ ...s, data }))
-        onMessage?.(data)
+        onMessageRef.current?.(data)
       } catch {}
     })
 
@@ -59,10 +79,11 @@ export function useSSE(url: string | null, options: SSEOptions = {}) {
     // and stamp `_complete: true` on the final payload so the UI layer
     // can switch out of the "running" view without polling.
     const markComplete = (event: Event) => {
+      closedByDone = true
       try {
         const data = JSON.parse((event as MessageEvent).data)
         setState({ status: 'disconnected', data: { ...data, _complete: true }, retryCount: 0 })
-        onMessage?.({ ...data, _complete: true })
+        onMessageRef.current?.({ ...data, _complete: true })
       } catch {
         setState((s) => ({ ...s, status: 'disconnected' }))
       }
@@ -75,13 +96,17 @@ export function useSSE(url: string | null, options: SSEOptions = {}) {
       try {
         const data = JSON.parse((event as MessageEvent).data)
         setState({ status: 'error', data, retryCount: retryRef.current })
-        onMessage?.(data)
+        onMessageRef.current?.(data)
       } catch {}
     })
 
     es.onerror = (event) => {
+      if (closedByDone) {
+        // Terminal state already reached via `done`; close error is noise.
+        return
+      }
       es.close()
-      onError?.(event)
+      onErrorRef.current?.(event)
 
       if (retryRef.current < maxRetries) {
         retryRef.current++
@@ -94,7 +119,7 @@ export function useSSE(url: string | null, options: SSEOptions = {}) {
         setState((s) => ({ ...s, status: 'error', retryCount: retryRef.current }))
       }
     }
-  }, [url, enabled, maxRetries, onMessage, onError])
+  }, [url, enabled, maxRetries])
 
   useEffect(() => {
     connect()

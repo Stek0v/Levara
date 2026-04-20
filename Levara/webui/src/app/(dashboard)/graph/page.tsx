@@ -42,14 +42,29 @@ export default function GraphPage() {
     // useDatasetGraph fires automatically on dsId change — no manual fetch.
   }
 
-  const types = [...new Set(nodes.map((n) => n.type || 'Entity'))]
-  const fNodes = nodes.filter((n) => {
-    if (typeFilter.size > 0 && !typeFilter.has(n.type || 'Entity')) return false
-    if (search && !n.name.toLowerCase().includes(search.toLowerCase())) return false
-    return true
-  })
-  const fIds = new Set(fNodes.map((n) => n.id))
-  const fEdges = edges.filter((e) => fIds.has(e.source) && fIds.has(e.target))
+  // Memoised derived state (M8 from the 2d15b38 review): without useMemo
+  // fNodes/fEdges were fresh arrays on every render, which tripped the
+  // d3-simulation effect below on any unrelated state change (setSelected,
+  // setSearch text-input keystrokes). The simulation would tear down and
+  // rebuild mid-frame — a visible jank plus a risk of leaked simulations
+  // if cleanup hadn't run by the next render.
+  const types = useMemo(
+    () => [...new Set(nodes.map((n) => n.type || 'Entity'))],
+    [nodes],
+  )
+  const fNodes = useMemo(
+    () =>
+      nodes.filter((n) => {
+        if (typeFilter.size > 0 && !typeFilter.has(n.type || 'Entity')) return false
+        if (search && !n.name.toLowerCase().includes(search.toLowerCase())) return false
+        return true
+      }),
+    [nodes, typeFilter, search],
+  )
+  const fEdges = useMemo(() => {
+    const fIds = new Set(fNodes.map((n) => n.id))
+    return edges.filter((e) => fIds.has(e.source) && fIds.has(e.target))
+  }, [fNodes, edges])
 
   useEffect(() => {
     if (!svgRef.current || fNodes.length === 0) return
