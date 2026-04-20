@@ -122,4 +122,23 @@ var (
 		Name: "levara_rate_limit_rejected_total",
 		Help: "Requests rejected by rate limiter, by channel and bucket",
 	}, []string{"channel", "bucket"})
+
+	// 12. Generic HTTP operation counters (T17). user_id cardinality is
+	// bounded by UserBucket (top-50 + "other" + "anon") so the series
+	// count stays predictable under load.
+	HTTPRequests = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "levara_http_requests_total",
+		Help: "HTTP requests by logical operation, result, and bucketed user_id",
+	}, []string{"operation", "status", "user_id"})
+
+	HTTPDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "levara_http_duration_seconds",
+		Help:    "HTTP handler latency by logical operation and bucketed user_id",
+		Buckets: prometheus.DefBuckets,
+	}, []string{"operation", "user_id"})
+
+	UserBucketSize = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "levara_user_bucket_size",
+		Help: "Number of user_ids currently promoted to real labels (top-N whitelist)",
+	})
 )

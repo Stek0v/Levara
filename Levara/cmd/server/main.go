@@ -56,6 +56,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/stek0v/cognevra/internal/cluster"
 	vectorGrpc "github.com/stek0v/cognevra/internal/grpc"
+	"github.com/stek0v/cognevra/internal/metrics"
 	"github.com/stek0v/cognevra/internal/store"
 	"github.com/stek0v/cognevra/pkg/embed"
 	"github.com/stek0v/cognevra/pkg/ingest"
@@ -401,6 +402,14 @@ func main() {
 	// by JWTMiddleware above, falling back to source IP for anonymous paths.
 	// Must come AFTER JWTMiddleware so c.Locals("user_id") is populated.
 	api.Use(vectorHttp.UserRateLimiter(vectorHttp.RateLimitConfig{}))
+
+	// Per-endpoint Prometheus instrumentation with bounded user_id
+	// cardinality (T17 / D14). UserBucket promotes the top-50 active users
+	// to real labels and buckets the long tail into "other"; refreshed
+	// every minute so a burst can't permanently pin a user.
+	userBucket := metrics.NewUserBucket(50, time.Minute)
+	defer userBucket.Stop()
+	api.Use(vectorHttp.PromInstrumentationMiddleware("api", userBucket))
 
 	// Tenant isolation middleware (resolves tenant from user or X-Tenant-Id header)
 	api.Use(vectorHttp.TenantMiddleware(pgDB))

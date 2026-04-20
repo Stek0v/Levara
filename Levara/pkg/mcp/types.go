@@ -40,11 +40,19 @@ type RPCError struct {
 // ── MCP-specific types ──
 
 // Tool describes one MCP tool exposed to clients via tools/list.
-// InputSchema is a JSON Schema document describing the tool's parameters.
+// InputSchema and OutputSchema are JSON Schema documents (draft 2020-12)
+// describing the tool's parameters and its return shape respectively.
+//
+// OutputSchema is optional — omitempty keeps the wire format
+// backward-compatible with pre-T14 clients that never saw the field. New
+// tools should populate it; old tools are grandfathered in without one
+// until they get audited (tools_test.go will eventually enforce its
+// presence once every tool has been annotated).
 type Tool struct {
-	Name        string         `json:"name"`
-	Description string         `json:"description"`
-	InputSchema map[string]any `json:"inputSchema"`
+	Name         string         `json:"name"`
+	Description  string         `json:"description"`
+	InputSchema  map[string]any `json:"inputSchema"`
+	OutputSchema map[string]any `json:"outputSchema,omitempty"`
 }
 
 // Content is one chunk of MCP tool output. Today we only emit "text"; future
