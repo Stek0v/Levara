@@ -110,4 +110,16 @@ var (
 		Name: "levara_collection_records_total",
 		Help: "Number of records per collection",
 	}, []string{"collection"})
+
+	// 10. Pipeline reliability
+	CognifyPanics = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "levara_cognify_panics_total",
+		Help: "Panics recovered in cognify/memify pipeline goroutines, by stage",
+	}, []string{"stage"})
+
+	// 11. Rate limiting (T2)
+	RateLimitRejected = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "levara_rate_limit_rejected_total",
+		Help: "Requests rejected by rate limiter, by channel and bucket",
+	}, []string{"channel", "bucket"})
 )

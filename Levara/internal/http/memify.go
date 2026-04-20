@@ -24,7 +24,6 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
-	"github.com/stek0v/cognevra/pkg/embed"
 	"github.com/stek0v/cognevra/pkg/graph"
 	"github.com/stek0v/cognevra/pkg/graphdb"
 	"github.com/stek0v/cognevra/pkg/orchestrator"
@@ -307,7 +306,7 @@ func tripletEmbeddings(ctx context.Context, cfg APIConfig, edges []graphdb.ReadE
 		return 0
 	}
 
-	embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 3)
+	embedClient := cfg.EmbedClient
 	coll := "Memify_triplet"
 	if !cfg.Collections.Has(coll) {
 		cfg.Collections.Create(coll)

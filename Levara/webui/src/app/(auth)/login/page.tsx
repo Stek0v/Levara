@@ -1,13 +1,35 @@
 'use client'
 
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { Suspense, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { levara, ApiError } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 
+// Only allow same-origin relative redirects. Rejects protocol-relative (//evil.com),
+// absolute URLs, and paths starting with /login (loop protection).
+function sanitizeNext(raw: string | null): string {
+  if (!raw) return '/'
+  if (!raw.startsWith('/') || raw.startsWith('//')) return '/'
+  if (raw.startsWith('/login')) return '/'
+  return raw
+}
+
+// useSearchParams in Next.js 15/16 forces the parent to opt into client-side
+// bailout at build time. Wrapping the hook consumer in <Suspense> satisfies
+// the CSR-bailout guard and lets /login still prerender its static shell.
 export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginForm />
+    </Suspense>
+  )
+}
+
+function LoginForm() {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const nextUrl = sanitizeNext(searchParams.get('next'))
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -26,7 +48,7 @@ export default function LoginPage() {
       } else {
         await levara.login(email, password)
       }
-      router.push('/')
+      router.push(nextUrl)
     } catch (err) {
       if (err instanceof ApiError) {
         setError(err.message)

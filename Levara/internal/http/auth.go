@@ -39,8 +39,12 @@ func RegisterAuthAPI(app fiber.Router, cfg *AuthConfig) {
 		cfg.JWTSecret = hex.EncodeToString(b)
 	}
 
-	app.Post("/auth/login", loginHandler(*cfg))
-	app.Post("/auth/register", registerHandler(*cfg))
+	// Per-IP rate limit on /auth/login and /auth/register (T2 / D10): caps
+	// credential stuffing at 10 req/min per source IP. /auth/me is read-only
+	// and falls under the per-user limiter added later in the chain.
+	authLimiter := AuthRateLimiter(RateLimitConfig{})
+	app.Post("/auth/login", authLimiter, loginHandler(*cfg))
+	app.Post("/auth/register", authLimiter, registerHandler(*cfg))
 
 	// /auth/me — Cognee frontend calls this to check current user after login
 	app.Get("/auth/me", authMeHandler(*cfg))

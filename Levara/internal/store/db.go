@@ -116,15 +116,15 @@ func NewLevara(dim int, storagePath string, cfg ...HNSWConfig) (*Levara, error) 
 	fmt.Println("Replaying WAL to restore data....")
 	insertCount := 0
 	deleteCount := 0
-	deletedIDs := make(map[string]struct{})
 
-	// 2-pass recovery: first collect deletes, then apply inserts (skip deleted)
+	// Single-pass sequential replay: WAL order is authoritative. Applying each
+	// entry in order correctly handles Insert→Delete→Insert of the same ID
+	// (the final Insert wins). The previous 2-pass scheme with a deletedIDs
+	// prepass dropped any Insert whose ID was ever deleted, silently losing
+	// re-inserted records after recovery.
 	err = wal.RecoverEx(func(op byte, id string, vector []float32, meta []byte, loc FileLocation) {
 		switch op {
 		case OpInsert:
-			if _, deleted := deletedIDs[id]; deleted {
-				return // Skip records that were later deleted
-			}
 			newLoc, writeErr := db.disk.Write(meta)
 			if writeErr != nil {
 				fmt.Printf("WAL recovery: failed to write metadata for %s: %v\n", id, writeErr)
@@ -133,14 +133,14 @@ func NewLevara(dim int, storagePath string, cfg ...HNSWConfig) (*Levara, error) 
 			db.insertInMemory(id, vector, newLoc)
 			insertCount++
 		case OpDelete:
-			deletedIDs[id] = struct{}{}
-			// If already inserted during this recovery, remove it
 			if idx, ok := db.index[id]; ok {
 				delete(db.index, id)
 				if int(idx) < len(db.revIndex) {
 					db.revIndex[idx] = ""
 				}
 				delete(db.metaLocs, idx)
+				// Match normal Delete semantics: tombstone in HNSW so search skips it.
+				db.hnsw.MarkDeleted(idx)
 				deleteCount++
 			}
 		}

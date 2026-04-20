@@ -13,7 +13,26 @@ export class ApiError extends Error {
   }
 }
 
-async function handleResponse<T>(res: Response): Promise<T> {
+// Paths that must NEVER trigger the global 401 redirect. /auth/me is the
+// probe itself; redirecting on its 401 would loop. /auth/login is obviously
+// exempt for the same reason.
+const AUTH_EXEMPT_PATHS = ['/api/v1/auth/me', '/api/v1/auth/login', '/api/v1/auth/register']
+
+function shouldRedirectOn401(requestPath: string): boolean {
+  if (typeof window === 'undefined') return false
+  if (window.location.pathname.startsWith('/login')) return false
+  return !AUTH_EXEMPT_PATHS.some((p) => requestPath.startsWith(p))
+}
+
+async function handleResponse<T>(res: Response, requestPath: string): Promise<T> {
+  if (res.status === 401 && shouldRedirectOn401(requestPath)) {
+    const next = encodeURIComponent(window.location.pathname + window.location.search)
+    window.location.href = `/login?next=${next}`
+    // Still throw so React Query / callers see a terminal failure — the
+    // navigation above will unload the page before they can react, but if
+    // the browser delays we want the promise chain to short-circuit.
+    throw new ApiError(401, 'UNAUTHORIZED', 'Session expired. Redirecting to login.')
+  }
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
     const err = body.error || body
@@ -48,7 +67,7 @@ export async function api<T>(path: string, options?: RequestInit): Promise<T> {
       ...options?.headers,
     },
   })
-  return handleResponse<T>(res)
+  return handleResponse<T>(res, path)
 }
 
 export const levara = {

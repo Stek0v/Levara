@@ -12,7 +12,6 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
-	"github.com/stek0v/cognevra/pkg/embed"
 	"github.com/stek0v/cognevra/pipeline"
 )
 
@@ -272,7 +271,7 @@ func cellRunHandler(cfg APIConfig) fiber.Handler {
 
 func runSearchCell(ctx context.Context, cfg APIConfig, query string) (string, error) {
 	if cfg.EmbedEndpoint == "" || cfg.Collections == nil { return "[]", nil }
-	embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 1)
+	embedClient := cfg.EmbedClient
 	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections, nil)
 	colls := cfg.Collections.List()
 	var results []map[string]any
@@ -364,7 +363,7 @@ func runCodeCell(ctx context.Context, cfg APIConfig, source string) (string, err
 		if cfg.EmbedEndpoint == "" {
 			return "", fmt.Errorf("embed-server not configured (EMBEDDING_ENDPOINT not set)")
 		}
-		embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 1)
+		embedClient := cfg.EmbedClient
 		vecs, err := embedClient.EmbedTexts(ctx, []string{text})
 		if err != nil {
 			return "", fmt.Errorf("embed error: %w", err)
