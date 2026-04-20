@@ -15,6 +15,7 @@ import (
 	"os"
 	"runtime/debug"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -162,16 +163,34 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 		// persist state — otherwise the run stays in RUNNING forever. The outer
 		// goroutine also recovers against panics in the progress loop or
 		// persistence path.
+		//
+		// stageSnapshot carries the most-recent stage value across the
+		// goroutine boundary so panic-recover can read it without racing with
+		// the progress loop that updates runStatus.Stage (C2 from the 2d15b38
+		// review). The progress loop stores to both the snapshot AND the
+		// runStatus field; SSE reader continues to read runStatus directly and
+		// is left as a pre-existing tolerated race (tracked separately).
+		var stageSnapshot atomic.Pointer[string]
+		start := "starting"
+		stageSnapshot.Store(&start)
+		readStage := func() string {
+			if p := stageSnapshot.Load(); p != nil {
+				return *p
+			}
+			return ""
+		}
+
 		go func() {
 			progressCh := make(chan orchestrator.Progress, 100)
 			errCh := make(chan error, 1)
 
 			defer func() {
 				if r := recover(); r != nil {
-					metrics.CognifyPanics.WithLabelValues(runStatus.Stage).Inc()
+					stage := readStage()
+					metrics.CognifyPanics.WithLabelValues(stage).Inc()
 					stack := debug.Stack()
 					log.Printf("cognify outer goroutine panic run_id=%s stage=%s panic=%v\n%s",
-						runID, runStatus.Stage, r, stack)
+						runID, stage, r, stack)
 					runStatus.Status = "FAILED"
 					runStatus.Message = fmt.Sprintf("panic: %v", r)
 					runStatus.ElapsedMs = time.Since(runStatus.StartedAt).Milliseconds()
@@ -185,12 +204,17 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 			}()
 
 			go func() {
-				errCh <- runWithPanicGuard(runID, func() string { return runStatus.Stage }, func() error {
+				// Inner panic recover reads stage via the atomic snapshot so
+				// the closure is safe to invoke from a panic unwinding while
+				// the outer goroutine may still be mutating runStatus.Stage.
+				errCh <- runWithPanicGuard(runID, readStage, func() error {
 					return orchestrator.Run(context.Background(), texts, pipeCfg, progressCh)
 				})
 			}()
 
 			for p := range progressCh {
+				stage := p.Stage
+				stageSnapshot.Store(&stage)
 				runStatus.Stage = p.Stage
 				runStatus.Message = p.Message
 				runStatus.Chunks = p.ChunksCreated
@@ -247,13 +271,34 @@ func cognifyStreamHandler(cfg APIConfig) fiber.Handler {
 		c.Set("Connection", "keep-alive")
 		c.Set("X-Accel-Buffering", "no")
 
+		// Capture the request context so we can notice client disconnects
+		// inside the body-stream writer goroutine. fasthttp's RequestCtx
+		// satisfies context.Context — Done() closes when the underlying
+		// connection drops, and Err() returns non-nil at the same moment.
+		// Without this check the goroutine would keep running until the
+		// pipeline itself finished (1–5 min per cognify benchmark), leaking
+		// one goroutine + bufio.Writer per disconnected client (C3).
+		reqCtx := c.Context()
+
 		c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
 			lastStage := ""
+			// flushOrExit writes its argument, flushes, and returns true if
+			// the client went away (so the caller returns immediately).
+			flushOrExit := func() bool {
+				if err := w.Flush(); err != nil {
+					return true
+				}
+				return reqCtx.Err() != nil
+			}
 			for {
+				// Early exit if the client has disconnected.
+				if reqCtx.Err() != nil {
+					return
+				}
 				status, ok := cfg.Runs.Load(runID)
 				if !ok {
 					fmt.Fprintf(w, "event: error\ndata: {\"error\":\"run not found\"}\n\n")
-					w.Flush()
+					_ = w.Flush()
 					return
 				}
 
@@ -261,16 +306,21 @@ func cognifyStreamHandler(cfg APIConfig) fiber.Handler {
 				if status.Stage != lastStage || status.Status != "RUNNING" {
 					data, _ := json.Marshal(status)
 					fmt.Fprintf(w, "event: progress\ndata: %s\n\n", data)
-					w.Flush()
+					if flushOrExit() {
+						return
+					}
 					lastStage = status.Stage
 				}
 
 				if status.Status != "RUNNING" {
 					fmt.Fprintf(w, "event: done\ndata: %s\n\n", func() string { d, _ := json.Marshal(status); return string(d) }())
-					w.Flush()
+					_ = w.Flush()
 					return
 				}
 
+				// time.Sleep blocks for the full 500ms even if the client
+				// disconnects mid-sleep. That's acceptable — one extra
+				// iteration of an unused goroutine at worst.
 				time.Sleep(500 * time.Millisecond)
 			}
 		})

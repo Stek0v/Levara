@@ -122,15 +122,32 @@ func NewLevara(dim int, storagePath string, cfg ...HNSWConfig) (*Levara, error) 
 	// (the final Insert wins). The previous 2-pass scheme with a deletedIDs
 	// prepass dropped any Insert whose ID was ever deleted, silently losing
 	// re-inserted records after recovery.
+	//
+	// Arena slots of deleted records remain allocated — this matches runtime
+	// Delete semantics (Delete only tombstones in HNSW). Checkpoint() is the
+	// only path that reclaims them.
 	err = wal.RecoverEx(func(op byte, id string, vector []float32, meta []byte, loc FileLocation) {
 		switch op {
 		case OpInsert:
+			// Dim guard before disk write so a corrupt/migrated WAL entry
+			// doesn't leak metadata bytes on disk before the arena rejects it.
+			if len(vector) != db.dim {
+				fmt.Printf("WAL recovery: skipping %s — vector dim %d != expected %d\n",
+					id, len(vector), db.dim)
+				return
+			}
 			newLoc, writeErr := db.disk.Write(meta)
 			if writeErr != nil {
 				fmt.Printf("WAL recovery: failed to write metadata for %s: %v\n", id, writeErr)
 				return
 			}
-			db.insertInMemory(id, vector, newLoc)
+			if err := db.insertInMemory(id, vector, newLoc); err != nil {
+				// Keep insertCount honest — partially-failed inserts leave the
+				// id unindexed, and continuing silently would make a later
+				// Delete for the same id appear to be a no-op (see T16 review C1).
+				fmt.Printf("WAL recovery: insertInMemory failed for %s: %v\n", id, err)
+				return
+			}
 			insertCount++
 		case OpDelete:
 			if idx, ok := db.index[id]; ok {

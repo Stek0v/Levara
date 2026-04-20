@@ -133,10 +133,29 @@ func TestInsertDeleteInsertWALRecovery(t *testing.T) {
 	if len(gotVec) != 64 {
 		t.Fatalf("wrong vector dim: %d", len(gotVec))
 	}
-	// Must be v2 metadata, not v1.
+	// Must be v2, not v1 — asserts both the vector and the metadata to guard
+	// against a future regression that restores the index entry but points it
+	// at the first Insert's arena slot.
+	if !vecEqual(gotVec, vec2) {
+		t.Fatalf("recovered vector != vec2 (Insert→Delete→Insert picked wrong slot)")
+	}
 	if got := string(gotMeta); got == "" || !contains(got, `"version":2`) {
 		t.Fatalf("expected version=2 metadata, got %q", got)
 	}
+}
+
+// vecEqual compares two vectors bit-for-bit (no tolerance — the test seed
+// uses rand.Float32, so there's no floating-point arithmetic in play).
+func vecEqual(a, b []float32) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // TestInsertInsertDeleteWALRecovery verifies the reverse order: final Delete wins.
