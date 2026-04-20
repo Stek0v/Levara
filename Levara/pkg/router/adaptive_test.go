@@ -159,4 +159,33 @@ func TestAdaptiveWeights_NilSafe(t *testing.T) {
 	if w != 1.0 {
 		t.Errorf("Nil adaptive weight: expected 1.0, got %f", w)
 	}
+	// AllWeights on nil receiver returns nil — locked in so future changes
+	// don't regress a handy no-prep-guard call site.
+	if all := aw.AllWeights(); all != nil {
+		t.Errorf("Nil AllWeights: expected nil, got %v", all)
+	}
+}
+
+// AllWeights must return a defensive copy so consumers can iterate or log
+// the map without racing the feedback loop. T12 from 20.04-tasks.md — the
+// method was at 0% coverage before.
+func TestAdaptiveWeights_AllWeightsSnapshot(t *testing.T) {
+	aw := NewAdaptiveWeights(nil, 0.2)
+	aw.RecordFeedback("CHUNKS", 5)
+	aw.RecordFeedback("HYBRID", 4)
+	aw.RecordFeedback("GRAPH_COMPLETION", 1) // negative feedback
+
+	all := aw.AllWeights()
+	if len(all) < 3 {
+		t.Fatalf("AllWeights returned %d entries, want ≥3", len(all))
+	}
+	if _, ok := all["CHUNKS"]; !ok {
+		t.Error("AllWeights missing CHUNKS")
+	}
+
+	// Mutating the returned map must not leak into the live weights.
+	all["CHUNKS"] = 99.0
+	if w := aw.GetWeight("CHUNKS"); w == 99.0 {
+		t.Error("AllWeights returned a live reference — mutation leaked")
+	}
 }

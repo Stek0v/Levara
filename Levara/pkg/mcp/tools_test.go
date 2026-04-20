@@ -83,6 +83,61 @@ func TestToolDescriptors_JSONMarshalsCleanly(t *testing.T) {
 	}
 }
 
+// Tools that return structured JSON in Content[0].Text should carry an
+// OutputSchema so MCP clients can validate the payload (T14). This test
+// enforces coverage on a curated set — new additions should either supply
+// OutputSchema or be justified here. Plain-text tools (codify verbose
+// prose, doctor human-readable report) aren't required to have one.
+func TestToolDescriptors_OutputSchemaCoverage(t *testing.T) {
+	mustHaveSchema := []string{
+		"cognify", "search", "cognify_status", "list_data", "delete",
+		"prune", "list_communities", "add", "save_memory", "recall_memory",
+		"list_memories", "wake_up", "pin_memory", "unpin_memory",
+		"query_entity", "cross_search", "sync", "get_feedback_stats",
+	}
+	byName := make(map[string]Tool)
+	for _, tool := range ToolDescriptors() {
+		byName[tool.Name] = tool
+	}
+	for _, name := range mustHaveSchema {
+		tool, ok := byName[name]
+		if !ok {
+			t.Errorf("%q is in the coverage list but missing from the registry", name)
+			continue
+		}
+		if tool.OutputSchema == nil {
+			t.Errorf("tool %q lacks OutputSchema", name)
+			continue
+		}
+		if tool.OutputSchema["type"] != "object" {
+			t.Errorf("tool %q OutputSchema.type = %v, want 'object'",
+				name, tool.OutputSchema["type"])
+		}
+	}
+}
+
+// OutputSchema must round-trip through JSON alongside InputSchema.
+func TestToolDescriptors_OutputSchemaMarshalsCleanly(t *testing.T) {
+	for _, tool := range ToolDescriptors() {
+		if tool.OutputSchema == nil {
+			continue
+		}
+		raw, err := json.Marshal(tool)
+		if err != nil {
+			t.Errorf("tool %q marshal failed: %v", tool.Name, err)
+			continue
+		}
+		var got map[string]any
+		if err := json.Unmarshal(raw, &got); err != nil {
+			t.Errorf("tool %q unmarshal failed: %v", tool.Name, err)
+			continue
+		}
+		if _, ok := got["outputSchema"]; !ok {
+			t.Errorf("tool %q: outputSchema key missing after roundtrip", tool.Name)
+		}
+	}
+}
+
 func TestToolDescriptors_RequiredCoreTools(t *testing.T) {
 	// These tool names are referenced by the dispatch switch in the handler
 	// and documented in CLAUDE.md. Losing one = silent feature breakage for
