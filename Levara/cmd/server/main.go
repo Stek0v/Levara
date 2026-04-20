@@ -480,6 +480,12 @@ func main() {
 	// for both REST and MCP so a cognify run started via /api/v1/cognify is
 	// visible to MCP's cognify_status, and vice versa.
 	runs := runreg.New()
+	// Background janitor: evict terminal (COMPLETED / FAILED) runs older
+	// than 1h every 10m. Without this the registry grows unbounded for the
+	// lifetime of the process (M3 from the 20.04 review). Active RUNNING
+	// entries are always kept — a stuck run is a bug we want to preserve.
+	runsJanitorStop := runs.StartJanitor(10*time.Minute, time.Hour)
+	defer runsJanitorStop()
 
 	// Shared embedding client (T3). Replaces 20+ per-request embed.NewClient()
 	// calls in http handlers — reuses one TCP pool, saves ~10–50ms per request.

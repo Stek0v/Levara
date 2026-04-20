@@ -42,6 +42,13 @@ func RegisterAuthAPI(app fiber.Router, cfg *AuthConfig) {
 	// Per-IP rate limit on /auth/login and /auth/register (T2 / D10): caps
 	// credential stuffing at 10 req/min per source IP. /auth/me is read-only
 	// and falls under the per-user limiter added later in the chain.
+	//
+	// SHARED bucket intent (20.04 review M4): both routes go through the
+	// SAME limiter instance, so the budget is combined — an attacker cannot
+	// burn 10 logins and then 10 registrations from the same IP in the same
+	// minute. If you're tempted to split them per-route to give users more
+	// headroom on register/login separately, DON'T — the combined budget is
+	// the security guarantee we're trading UX for.
 	authLimiter := AuthRateLimiter(RateLimitConfig{})
 	app.Post("/auth/login", authLimiter, loginHandler(*cfg))
 	app.Post("/auth/register", authLimiter, registerHandler(*cfg))

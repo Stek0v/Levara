@@ -282,8 +282,15 @@ type WALIterator func(id string, vector []float32, meta []byte, loc FileLocation
 // WALIteratorEx receives the operation type so callers can handle both inserts and deletes.
 type WALIteratorEx func(op byte, id string, vector []float32, meta []byte, loc FileLocation)
 
-// RecoverEx replays all WAL entries (inserts and deletes) in order, invoking fn for each.
-// Use this during startup to perform two-pass recovery that correctly handles deletions.
+// RecoverEx replays all WAL entries (inserts and deletes) in order, invoking
+// fn for each. Use during startup for a single-pass sequential replay —
+// WAL order is authoritative and the callback should apply operations
+// verbatim so Insert→Delete→Insert of the same ID settles with the final
+// Insert visible (see db.go:recoverFromWAL for the canonical caller).
+//
+// The older "two-pass recovery with a deletedIDs prepass" pattern was buggy:
+// it dropped any Insert whose ID had ever been deleted, silently losing
+// re-inserted records across a restart (T16 fix, 2026-04-20).
 func (wal *WAL) RecoverEx(fn WALIteratorEx) error {
 	return wal.recoverInternal(func(op byte, id string, vector []float32, meta []byte, loc FileLocation) {
 		fn(op, id, vector, meta, loc)

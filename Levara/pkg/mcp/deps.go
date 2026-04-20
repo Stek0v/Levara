@@ -93,6 +93,14 @@ type Deps interface {
 	// Caller should guard with EmbedAvailable(); implementations may
 	// panic or error if called without a configured service.
 	Embed(ctx context.Context, text string) ([]float32, error)
+	// EmbedBatch generates vectors for multiple texts, reusing the shared
+	// embedding client (same TCP pool). Returns one vector per input text
+	// in order, or an error if the underlying call failed. Callers should
+	// still guard with EmbedAvailable() before invoking.
+	//
+	// Added for tool_codify which previously constructed its own
+	// embed.Client per request; that defeated the shared-pool win from T3.
+	EmbedBatch(ctx context.Context, texts []string) ([][]float32, error)
 	// CollectionInsert adds a vector + metadata to a named collection.
 	// Best-effort — callers ignore the error (matches pre-refactor
 	// fire-and-forget ingest behavior for vector-indexed memories).
