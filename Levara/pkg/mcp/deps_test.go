@@ -125,6 +125,21 @@ func (f *fakeDeps) Embed(ctx context.Context, text string) ([]float32, error) {
 	return []float32{float32(len(text)), 0.5, -0.5}, nil
 }
 
+// EmbedBatch fans out to Embed so tests that override embedFn observe both
+// single-text and batch calls. No separate hook needed yet — if a future
+// test cares about the distinction, add a batchFn field.
+func (f *fakeDeps) EmbedBatch(ctx context.Context, texts []string) ([][]float32, error) {
+	out := make([][]float32, len(texts))
+	for i, t := range texts {
+		v, err := f.Embed(ctx, t)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = v
+	}
+	return out, nil
+}
+
 func (f *fakeDeps) CollectionInsert(collection, id string, vec []float32, meta any) error {
 	f.insertedMu.Lock()
 	defer f.insertedMu.Unlock()
@@ -277,6 +292,7 @@ func (nilDBDeps) StoragePath() string                                          {
 func (nilDBDeps) CollectionExists(string) bool                                 { return false }
 func (nilDBDeps) EmbedAvailable() bool                                         { return false }
 func (nilDBDeps) Embed(context.Context, string) ([]float32, error)             { return nil, nil }
+func (nilDBDeps) EmbedBatch(context.Context, []string) ([][]float32, error)    { return nil, nil }
 func (nilDBDeps) CollectionInsert(string, string, []float32, any) error        { return nil }
 func (nilDBDeps) CollectionSearch(string, []float32, int) ([]SearchResult, error) {
 	return nil, nil

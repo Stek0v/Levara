@@ -88,6 +88,79 @@ func TestRegistry_ConcurrentStoreLoad(t *testing.T) {
 	wg.Wait()
 }
 
+// PruneTerminalOlderThan evicts only COMPLETED/FAILED entries past cutoff.
+// Running entries and young terminal entries must survive.
+func TestRegistry_PruneTerminalOlderThan(t *testing.T) {
+	r := New()
+	now := time.Now()
+
+	// Old terminal — should be evicted.
+	r.Store("old-done", &Status{RunID: "old-done", Status: "COMPLETED", StartedAt: now.Add(-2 * time.Hour)})
+	r.Store("old-failed", &Status{RunID: "old-failed", Status: "FAILED", StartedAt: now.Add(-90 * time.Minute)})
+	// Old but still running — kept.
+	r.Store("stuck", &Status{RunID: "stuck", Status: "RUNNING", StartedAt: now.Add(-2 * time.Hour)})
+	// Recent terminal — kept (within TTL).
+	r.Store("fresh-done", &Status{RunID: "fresh-done", Status: "COMPLETED", StartedAt: now.Add(-5 * time.Minute)})
+
+	evicted := r.PruneTerminalOlderThan(time.Hour)
+	if evicted != 2 {
+		t.Errorf("evicted = %d, want 2", evicted)
+	}
+
+	for _, id := range []string{"old-done", "old-failed"} {
+		if _, ok := r.Load(id); ok {
+			t.Errorf("%s should have been evicted", id)
+		}
+	}
+	for _, id := range []string{"stuck", "fresh-done"} {
+		if _, ok := r.Load(id); !ok {
+			t.Errorf("%s should have survived", id)
+		}
+	}
+}
+
+// Janitor ticks on schedule and can be stopped cleanly.
+func TestRegistry_StartJanitorStops(t *testing.T) {
+	r := New()
+	// Plant something that will definitely get evicted.
+	r.Store("goner", &Status{
+		RunID:     "goner",
+		Status:    "COMPLETED",
+		StartedAt: time.Now().Add(-time.Hour),
+	})
+	// Short interval so we don't wait long.
+	stop := r.StartJanitor(10*time.Millisecond, time.Minute)
+
+	// Wait up to 200ms for the entry to disappear.
+	deadline := time.Now().Add(200 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if _, ok := r.Load("goner"); !ok {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if _, ok := r.Load("goner"); ok {
+		t.Fatal("janitor did not evict the stale terminal run within 200ms")
+	}
+
+	// Stop must return promptly.
+	done := make(chan struct{})
+	go func() { stop(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("stop() didn't return within 1s")
+	}
+}
+
+func TestRegistry_StartJanitorZeroIntervalNoop(t *testing.T) {
+	// Passing 0 is legal — useful for tests that don't need a janitor.
+	// The returned stop function must still be safely callable.
+	r := New()
+	stop := r.StartJanitor(0, 0)
+	stop() // must not hang
+}
+
 func TestStatus_JSONTagsMatchPreRefactor(t *testing.T) {
 	// The REST/SSE clients consume these fields verbatim; changing a tag
 	// would be a silent breaking change. Guard them here.

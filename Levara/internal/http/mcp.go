@@ -137,6 +137,16 @@ func (h *mcpHandler) Embed(ctx context.Context, text string) ([]float32, error) 
 	return h.cfg.EmbedClient.EmbedSingle(ctx, text)
 }
 
+// EmbedBatch implements mcp.Deps: reuses the shared embedding client for
+// a multi-text call. Used by tool_codify to embed entity descriptions in
+// one round-trip instead of constructing a fresh client per invocation.
+func (h *mcpHandler) EmbedBatch(ctx context.Context, texts []string) ([][]float32, error) {
+	if h.cfg.EmbedClient == nil {
+		return nil, fmt.Errorf("embed client not configured")
+	}
+	return h.cfg.EmbedClient.EmbedTexts(ctx, texts)
+}
+
 // CollectionInsert implements mcp.Deps: forwards to the shared
 // CollectionManager. Callers are expected to have guarded on
 // EmbedAvailable(); we still return an error rather than panicking

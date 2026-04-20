@@ -17,7 +17,6 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/stek0v/cognevra/pkg/embed"
 	"github.com/stek0v/cognevra/pkg/extract"
 )
 
@@ -80,20 +79,18 @@ func ToolCodify(ctx context.Context, deps Deps, args map[string]any) ToolResult 
 	}
 
 	// Embed entity descriptions into collection when configured.
-	// T6: narrow accessors instead of BaseCognifyConfig — this tool only
-	// needs the embed endpoint/model, not the whole Config template.
+	// T3.2: use Deps.EmbedBatch so we share the process-wide embed client's
+	// TCP pool instead of dialling fresh per codify invocation (the prior
+	// embed.NewClient(...) path defeated the T3 shared-pool win).
 	collection, _ := args["collection"].(string)
-	embedEndpoint := deps.EmbedEndpoint()
-	embedModel := deps.EmbedModel()
-	if collection != "" && embedEndpoint != "" && deps.HasCollections() {
-		embedClient := embed.NewClient(embedEndpoint, embedModel, 16, 3)
+	if collection != "" && deps.EmbedAvailable() {
 		var texts, ids []string
 		for _, e := range analysis.Entities {
 			texts = append(texts, e.Name+": "+e.Type+" in "+e.File)
 			ids = append(ids, uuid.NewSHA1(uuid.NameSpaceOID, []byte(e.Name+e.Type+e.File)).String())
 		}
 		if len(texts) > 0 {
-			if vecs, err := embedClient.EmbedTexts(ctx, texts); err == nil {
+			if vecs, err := deps.EmbedBatch(ctx, texts); err == nil {
 				for i, vec := range vecs {
 					meta := fmt.Sprintf(`{"name":"%s","type":"%s","file":"%s"}`,
 						analysis.Entities[i].Name, analysis.Entities[i].Type, analysis.Entities[i].File)
