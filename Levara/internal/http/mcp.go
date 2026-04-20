@@ -125,7 +125,15 @@ func (h *mcpHandler) EmbedAvailable() bool {
 // Embed implements mcp.Deps: single-text embedding via the configured
 // embed service. Batch + concurrency are 1 since MCP tool calls drive
 // one vector at a time.
+//
+// Nil-guard: callers are supposed to check EmbedAvailable() first, but a
+// misconfigured APIConfig (e.g. EmbedEndpoint set without wiring
+// EmbedClient in main) would otherwise nil-panic here. Fail closed with
+// an error so the tool layer can surface a proper failure instead.
 func (h *mcpHandler) Embed(ctx context.Context, text string) ([]float32, error) {
+	if h.cfg.EmbedClient == nil {
+		return nil, fmt.Errorf("embed client not configured")
+	}
 	return h.cfg.EmbedClient.EmbedSingle(ctx, text)
 }
 
@@ -267,7 +275,10 @@ func (a *searchPipelineAdapter) RerankEnabled() bool {
 // tool code treats nil as "no results (embedding service not
 // configured)".
 func (h *mcpHandler) NewSearchPipeline(doRerank bool) mcp.SearchPipeline {
-	if h.cfg.EmbedEndpoint == "" || h.cfg.Collections == nil {
+	// EmbedClient nil-check as well as endpoint — misconfigured APIConfig
+	// (endpoint set but client forgotten in main wiring) should return nil
+	// rather than yield a pipeline that'll nil-panic on first .SearchByText.
+	if h.cfg.EmbedEndpoint == "" || h.cfg.Collections == nil || h.cfg.EmbedClient == nil {
 		return nil
 	}
 	embedClient := h.cfg.EmbedClient
