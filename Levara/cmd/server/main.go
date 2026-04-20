@@ -397,6 +397,11 @@ func main() {
 	// JWT + API Key middleware on all protected routes below this point
 	api.Use(vectorHttp.JWTMiddleware(authCfg.JWTSecret, *requireAuth))
 
+	// Per-user rate limit (T2 / D10): 100 req/min keyed on the user_id resolved
+	// by JWTMiddleware above, falling back to source IP for anonymous paths.
+	// Must come AFTER JWTMiddleware so c.Locals("user_id") is populated.
+	api.Use(vectorHttp.UserRateLimiter(vectorHttp.RateLimitConfig{}))
+
 	// Tenant isolation middleware (resolves tenant from user or X-Tenant-Id header)
 	api.Use(vectorHttp.TenantMiddleware(pgDB))
 
@@ -476,12 +481,20 @@ func main() {
 	// visible to MCP's cognify_status, and vice versa.
 	runs := runreg.New()
 
+	// Shared embedding client (T3). Replaces 20+ per-request embed.NewClient()
+	// calls in http handlers — reuses one TCP pool, saves ~10–50ms per request.
+	// Handlers needing non-default params (custom endpoint/model/batchSize, e.g.
+	// reembed migration, per-collection dual-search, gRPC request-driven params)
+	// still construct their own client.
+	sharedEmbed := embed.NewClient(embedEndpoint, embedModel, 16, 3)
+
 	// Protected routes: Cognee-compatible API (datasets, upload, cognify, search)
 	vectorHttp.RegisterCogneeAPI(api, vectorHttp.APIConfig{
 		PostgresDSN:     pgDSN,
 		StoragePath:     *dataDir + "/uploads",
 		EmbedEndpoint:   embedEndpoint,
 		EmbedModel:      embedModel,
+		EmbedClient:     sharedEmbed,
 		Collections:     colManager,
 		Neo4jCfg:        vizCfg,
 		DB:              pgDB,
@@ -499,6 +512,7 @@ func main() {
 	vectorHttp.RegisterMCPAPI(app, vectorHttp.APIConfig{
 		EmbedEndpoint:  embedEndpoint,
 		EmbedModel:     embedModel,
+		EmbedClient:    sharedEmbed,
 		Collections:    colManager,
 		DB:             pgDB,
 		BM25Indexes:    grpcSvc.BM25Indexes(),
@@ -630,8 +644,17 @@ func main() {
 			if err != nil {
 				log.Fatalf("gRPC listen: %v", err)
 			}
+			// Per-peer token bucket (T2): 100 req/min default, burst=20.
+			// idleTTL=30min evicts dormant buckets.
+			grpcLimiters := vectorGrpc.NewPeerLimiters(100, 20, 30*time.Minute)
 			grpcServer := grpc.NewServer(
-				grpc.UnaryInterceptor(vectorGrpc.MetricsUnaryInterceptor()),
+				grpc.ChainUnaryInterceptor(
+					vectorGrpc.UnaryRateLimitInterceptor(grpcLimiters),
+					vectorGrpc.MetricsUnaryInterceptor(),
+				),
+				grpc.ChainStreamInterceptor(
+					vectorGrpc.StreamRateLimitInterceptor(grpcLimiters),
+				),
 			)
 			pb.RegisterCognevraServiceServer(grpcServer, grpcSvc)
 			log.Printf("gRPC server listening on port %d", *grpcPort)

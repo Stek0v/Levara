@@ -24,7 +24,6 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/stek0v/cognevra/internal/metrics"
-	"github.com/stek0v/cognevra/pkg/embed"
 	"github.com/stek0v/cognevra/pkg/llm"
 	"github.com/stek0v/cognevra/pkg/mcp"
 	"github.com/stek0v/cognevra/pkg/orchestrator"
@@ -127,8 +126,7 @@ func (h *mcpHandler) EmbedAvailable() bool {
 // embed service. Batch + concurrency are 1 since MCP tool calls drive
 // one vector at a time.
 func (h *mcpHandler) Embed(ctx context.Context, text string) ([]float32, error) {
-	client := embed.NewClient(h.cfg.EmbedEndpoint, h.cfg.EmbedModel, 1, 1)
-	return client.EmbedSingle(ctx, text)
+	return h.cfg.EmbedClient.EmbedSingle(ctx, text)
 }
 
 // CollectionInsert implements mcp.Deps: forwards to the shared
@@ -264,7 +262,7 @@ func (h *mcpHandler) NewSearchPipeline(doRerank bool) mcp.SearchPipeline {
 	if h.cfg.EmbedEndpoint == "" || h.cfg.Collections == nil {
 		return nil
 	}
-	embedClient := embed.NewClient(h.cfg.EmbedEndpoint, h.cfg.EmbedModel, 16, 1)
+	embedClient := h.cfg.EmbedClient
 	var rerankClient *rerank.Client
 	if doRerank {
 		rerankClient = rerank.NewClient(h.cfg.RerankEndpoint, h.cfg.RerankModel, 0, h.cfg.RerankTimeoutMs)

@@ -13,7 +13,6 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/stek0v/cognevra/pkg/community"
-	"github.com/stek0v/cognevra/pkg/embed"
 	"github.com/stek0v/cognevra/pkg/graphdb"
 	"github.com/stek0v/cognevra/pipeline"
 )
@@ -27,7 +26,7 @@ func graphCompletionSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest)
 	ctx := context.Background()
 
 	// Step 1: Vector search across entity collections
-	embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 1)
+	embedClient := cfg.EmbedClient
 	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections, nil)
 
 	colls := resolveCollections(cfg, req)
@@ -132,7 +131,7 @@ func contextExtensionSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest
 	ctx := context.Background()
 
 	// Step 1: Vector search — same as graphCompletionSearch
-	embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 1)
+	embedClient := cfg.EmbedClient
 	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections, nil)
 
 	colls := resolveCollections(cfg, req)
@@ -330,7 +329,7 @@ func cotSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
 	}
 
 	// ── Step 2: For each sub-question, run vector search + graph traversal ──
-	embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 1)
+	embedClient := cfg.EmbedClient
 	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections, nil)
 	colls := resolveCollections(cfg, req)
 
@@ -461,7 +460,7 @@ func codingRulesSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) err
 	}
 
 	// Step 1: Vector search across collections, filter to code entities.
-	embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 1)
+	embedClient := cfg.EmbedClient
 	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections, nil)
 	colls := resolveCollections(cfg, req)
 
@@ -707,7 +706,7 @@ func tripletCompletionSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchReques
 	}
 
 	// Search only triplet collections
-	embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 1)
+	embedClient := cfg.EmbedClient
 	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections, nil)
 
 	colls := resolveCollections(cfg, req)
@@ -1094,7 +1093,7 @@ func communityLocalSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) 
 	}
 
 	ctx := context.Background()
-	embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 1)
+	embedClient := cfg.EmbedClient
 	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections, nil)
 	colls := resolveCollections(cfg, req)
 
@@ -1194,7 +1193,7 @@ func communityGlobalSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest)
 	}
 
 	ctx := context.Background()
-	embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 1)
+	embedClient := cfg.EmbedClient
 	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections, nil)
 
 	// Step 1: Search community summaries

@@ -92,6 +92,89 @@ func TestDeleteWALRecovery(t *testing.T) {
 	}
 }
 
+// TestInsertDeleteInsertWALRecovery verifies that a re-Insert after Delete of the
+// same ID survives WAL recovery. The buggy 2-pass recovery (pre-T16) would collect
+// all deleted IDs first, then skip any Insert that matches — losing the final Insert.
+func TestInsertDeleteInsertWALRecovery(t *testing.T) {
+	dir, _ := os.MkdirTemp("", "levara-wal-ridi-test-*")
+	defer os.RemoveAll(dir)
+	dbPath := dir + "/meta.bin"
+
+	vec1 := randVecForTest(64)
+	vec2 := randVecForTest(64)
+
+	// Phase 1: Insert(id=1, v1) → Delete(id=1) → Insert(id=1, v2)
+	db, err := NewLevara(64, dbPath)
+	if err != nil {
+		t.Fatalf("NewLevara: %v", err)
+	}
+	if err := db.Insert("re-id", vec1, map[string]any{"version": 1}); err != nil {
+		t.Fatalf("Insert v1: %v", err)
+	}
+	if err := db.Delete("re-id"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if err := db.Insert("re-id", vec2, map[string]any{"version": 2}); err != nil {
+		t.Fatalf("Insert v2: %v", err)
+	}
+	db.Close()
+
+	// Phase 2: Recover from WAL — the second Insert must survive.
+	db2, err := NewLevara(64, dbPath)
+	if err != nil {
+		t.Fatalf("Recover: %v", err)
+	}
+	defer db2.Close()
+
+	gotVec, gotMeta, exists := db2.Get("re-id")
+	if !exists {
+		t.Fatal("re-id lost after WAL recovery (Insert→Delete→Insert)")
+	}
+	if len(gotVec) != 64 {
+		t.Fatalf("wrong vector dim: %d", len(gotVec))
+	}
+	// Must be v2 metadata, not v1.
+	if got := string(gotMeta); got == "" || !contains(got, `"version":2`) {
+		t.Fatalf("expected version=2 metadata, got %q", got)
+	}
+}
+
+// TestInsertInsertDeleteWALRecovery verifies the reverse order: final Delete wins.
+func TestInsertInsertDeleteWALRecovery(t *testing.T) {
+	dir, _ := os.MkdirTemp("", "levara-wal-iid-test-*")
+	defer os.RemoveAll(dir)
+	dbPath := dir + "/meta.bin"
+
+	db, err := NewLevara(64, dbPath)
+	if err != nil {
+		t.Fatalf("NewLevara: %v", err)
+	}
+	db.Insert("id", randVecForTest(64), map[string]any{"v": 1})
+	db.Insert("id", randVecForTest(64), map[string]any{"v": 2})
+	db.Delete("id")
+	db.Close()
+
+	db2, err := NewLevara(64, dbPath)
+	if err != nil {
+		t.Fatalf("Recover: %v", err)
+	}
+	defer db2.Close()
+
+	if _, _, exists := db2.Get("id"); exists {
+		t.Fatal("id should NOT exist after Insert→Insert→Delete recovery")
+	}
+}
+
+// contains is a tiny helper so we don't pull strings in the test file for one call.
+func contains(s, sub string) bool {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
+}
+
 func TestBatchDelete(t *testing.T) {
 	dir, _ := os.MkdirTemp("", "levara-batch-del-test-*")
 	defer os.RemoveAll(dir)

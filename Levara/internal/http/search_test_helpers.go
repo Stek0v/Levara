@@ -29,6 +29,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/stek0v/cognevra/pkg/embed"
+
 	"github.com/gofiber/fiber/v2"
 	_ "github.com/ncruces/go-sqlite3/driver"
 	"github.com/stek0v/cognevra/internal/store"
@@ -218,6 +220,7 @@ func newSearchTestEnv(t testing.TB) *searchTestEnv {
 	cfg := APIConfig{
 		EmbedEndpoint: embedSrv.URL,
 		EmbedModel:    "test-model",
+		EmbedClient:   embed.NewClient(embedSrv.URL, "test-model", 16, 1),
 		Collections:   cm,
 		DB:            db,
 	}
