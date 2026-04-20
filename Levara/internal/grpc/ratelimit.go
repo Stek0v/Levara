@@ -10,6 +10,7 @@ package grpc
 
 import (
 	"context"
+	"net"
 	"sync"
 	"time"
 
@@ -103,10 +104,28 @@ func StreamRateLimitInterceptor(pl *peerLimiters) grpclib.StreamServerIntercepto
 	}
 }
 
+// allow returns true when the peer is under the per-IP rate cap.
+//
+// The bucket key is the IP (not IP:port) — if we keyed on the full peer
+// address, every fresh TCP connection would mint a new bucket and clients
+// could escape the limit by reconnecting (HTTP/2 idle-timeout reconnects,
+// kube-proxy port churn, retry-on-error loops all trigger this). We strip
+// the port by casting to *net.TCPAddr and taking .IP.String(); non-TCP
+// peers (in-process test transports, unix sockets) fall back to the raw
+// Addr.String() since there's no port to strip.
 func (p *peerLimiters) allow(ctx context.Context) bool {
-	addr := "unknown"
-	if pr, ok := peer.FromContext(ctx); ok && pr.Addr != nil {
-		addr = pr.Addr.String()
+	return p.get(peerKey(ctx)).Allow()
+}
+
+// peerKey is exported only internally so tests can exercise the key
+// extraction without standing up a gRPC server.
+func peerKey(ctx context.Context) string {
+	pr, ok := peer.FromContext(ctx)
+	if !ok || pr.Addr == nil {
+		return "unknown"
 	}
-	return p.get(addr).Allow()
+	if tcp, ok := pr.Addr.(*net.TCPAddr); ok && tcp.IP != nil {
+		return tcp.IP.String()
+	}
+	return pr.Addr.String()
 }
