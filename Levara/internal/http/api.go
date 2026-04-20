@@ -53,6 +53,10 @@ type APIConfig struct {
 	// the same *runreg.Registry as the one passed to RegisterMCPAPI so that
 	// MCP clients can poll REST-initiated runs and vice versa.
 	Runs *runreg.Registry
+	// SearchStrategies maps query_type to its strategy handler (T5). When
+	// nil the searchHandler constructs a default registry on demand — main
+	// wiring sets this explicitly so tests can override with stubs.
+	SearchStrategies *StrategyRegistry
 }
 
 // RegisterCogneeAPI registers all Cognee-compatible endpoints on the Fiber app.

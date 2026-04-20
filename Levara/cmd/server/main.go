@@ -488,24 +488,29 @@ func main() {
 	// still construct their own client.
 	sharedEmbed := embed.NewClient(embedEndpoint, embedModel, 16, 3)
 
+	// Shared search-strategy registry (T5) — owned by main so tests can
+	// substitute strategies without touching NewDefaultStrategyRegistry.
+	searchStrategies := vectorHttp.NewDefaultStrategyRegistry()
+
 	// Protected routes: Cognee-compatible API (datasets, upload, cognify, search)
 	vectorHttp.RegisterCogneeAPI(api, vectorHttp.APIConfig{
-		PostgresDSN:     pgDSN,
-		StoragePath:     *dataDir + "/uploads",
-		EmbedEndpoint:   embedEndpoint,
-		EmbedModel:      embedModel,
-		EmbedClient:     sharedEmbed,
-		Collections:     colManager,
-		Neo4jCfg:        vizCfg,
-		DB:              pgDB,
-		BM25Indexes:     grpcSvc.BM25Indexes(),
-		LLMCache:        llmCache,
-		LLMProvider:     llmProvider,
-		ErrorTracker:    errTracker,
-		FileStorage:     fileStore,
-		Logger:          srvLog,
-		AdaptiveWeights: adaptiveWeights,
-		Runs:            runs,
+		PostgresDSN:      pgDSN,
+		StoragePath:      *dataDir + "/uploads",
+		EmbedEndpoint:    embedEndpoint,
+		EmbedModel:       embedModel,
+		EmbedClient:      sharedEmbed,
+		Collections:      colManager,
+		Neo4jCfg:         vizCfg,
+		DB:               pgDB,
+		BM25Indexes:      grpcSvc.BM25Indexes(),
+		LLMCache:         llmCache,
+		LLMProvider:      llmProvider,
+		ErrorTracker:     errTracker,
+		FileStorage:      fileStore,
+		Logger:           srvLog,
+		AdaptiveWeights:  adaptiveWeights,
+		Runs:             runs,
+		SearchStrategies: searchStrategies,
 	})
 
 	// MCP (Model Context Protocol) server — JSON-RPC 2.0 for AI agent integration

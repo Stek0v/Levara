@@ -303,40 +303,13 @@ func searchHandler(cfg APIConfig) fiber.Handler {
 			c.Locals("routing_decision", routingDecision)
 		}
 
-		switch queryType {
-		case "CHUNKS":
-			return chunksSearch(c, cfg, req)
-		case "RAG_COMPLETION":
-			return ragCompletionSearch(c, cfg, req)
-		case "SUMMARIES":
-			return summariesSearch(c, cfg, req)
-		case "CHUNKS_LEXICAL":
-			return bm25Search(c, cfg, req)
-		case "HYBRID", "WEIGHTED_HYBRID":
-			return hybridSearch(c, cfg, req)
-		case "TEMPORAL":
-			return temporalSearch(c, cfg, req)
-		case "GRAPH_COMPLETION", "GRAPH_SUMMARY_COMPLETION":
-			return graphCompletionSearch(c, cfg, req)
-		case "GRAPH_COMPLETION_CONTEXT_EXTENSION":
-			return contextExtensionSearch(c, cfg, req)
-		case "GRAPH_COMPLETION_COT":
-			return cotSearch(c, cfg, req)
-		case "TRIPLET_COMPLETION":
-			return tripletCompletionSearch(c, cfg, req)
-		case "NATURAL_LANGUAGE":
-			return naturalLanguageSearch(c, cfg, req)
-		case "CYPHER":
-			return cypherSearch(c, cfg, req)
-		case "CODE", "CODING_RULES":
-			return codingRulesSearch(c, cfg, req)
-		case "COMMUNITY_LOCAL":
-			return communityLocalSearch(c, cfg, req)
-		case "COMMUNITY_GLOBAL":
-			return communityGlobalSearch(c, cfg, req)
-		default:
-			return chunksSearch(c, cfg, req)
+		// T5: strategy dispatch through the registry. Unknown query_type
+		// falls through to the registry's default strategy (CHUNKS).
+		registry := cfg.SearchStrategies
+		if registry == nil {
+			registry = NewDefaultStrategyRegistry()
 		}
+		return registry.Get(queryType).Execute(c, cfg, req)
 	}
 }
 
