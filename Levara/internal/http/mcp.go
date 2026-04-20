@@ -174,6 +174,14 @@ func (h *mcpHandler) Runs() *runreg.Registry { return h.cfg.Runs }
 // needs. The MCP tool body then overrides per-call fields (Collection,
 // DatasetID, Room, Tags, SystemPrompt, SkipGraph, chunking knobs) before
 // passing the result to RunPipeline.
+// EmbedEndpoint returns the deployment-wide embed URL. Narrow accessor
+// added in T6 so tools that only need this single setting don't have to
+// materialise the full orchestrator.Config.
+func (h *mcpHandler) EmbedEndpoint() string { return h.cfg.EmbedEndpoint }
+
+// EmbedModel returns the deployment-wide embed model name (T6).
+func (h *mcpHandler) EmbedModel() string { return h.cfg.EmbedModel }
+
 func (h *mcpHandler) BaseCognifyConfig() orchestrator.Config {
 	return orchestrator.Config{
 		ChunkStrategy:  "merged",

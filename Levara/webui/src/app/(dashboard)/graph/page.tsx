@@ -1,16 +1,20 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
-import { levara } from '@/lib/api'
+import { useState, useEffect, useRef, useMemo } from 'react'
+import { useDatasets, useDatasetGraph } from '@/hooks/use-levara'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Share2 } from 'lucide-react'
 import * as d3 from 'd3'
+import type { GraphNode, GraphEdge } from '@/lib/api'
 
-interface GNode { id: string; name: string; type: string; properties?: Record<string, unknown> }
-interface GEdge { source: string; target: string; label: string }
+// Local aliases keep d3 simulation types stable while referencing the
+// canonical shape from @/lib/api. Before T7 this file redefined GNode
+// inline and pulled the data via raw fetch().
+type GNode = GraphNode
+type GEdge = GraphEdge
 interface SimNode extends d3.SimulationNodeDatum, GNode {}
 interface SimLink extends d3.SimulationLinkDatum<SimNode> { label: string }
 
@@ -21,25 +25,21 @@ const COLORS: Record<string, string> = {
 
 export default function GraphPage() {
   const svgRef = useRef<SVGSVGElement>(null)
-  const [datasets, setDatasets] = useState<{ id: string; name: string }[]>([])
   const [dsId, setDsId] = useState('')
-  const [nodes, setNodes] = useState<GNode[]>([])
-  const [edges, setEdges] = useState<GEdge[]>([])
-  const [loading, setLoading] = useState(false)
   const [selected, setSelected] = useState<GNode | null>(null)
   const [typeFilter, setTypeFilter] = useState<Set<string>>(new Set())
   const [search, setSearch] = useState('')
 
-  useEffect(() => { levara.datasets().then((r) => setDatasets(r.data || [])).catch(() => {}) }, [])
+  const { data: datasetsRes } = useDatasets()
+  const datasets = datasetsRes?.data ?? []
+  const { data: graph, isFetching: loading } = useDatasetGraph(dsId)
+  const nodes = useMemo(() => graph?.nodes ?? [], [graph])
+  const edges = useMemo(() => graph?.edges ?? [], [graph])
 
-  const load = async (id: string) => {
-    setDsId(id); setLoading(true); setSelected(null)
-    try {
-      const url = `${process.env.NEXT_PUBLIC_API_URL || ''}/api/v1/datasets/${id}/graph`
-      const d = await fetch(url, { credentials: 'include' }).then((r) => r.json())
-      setNodes(d.nodes || []); setEdges(d.edges || [])
-    } catch { setNodes([]); setEdges([]) }
-    finally { setLoading(false) }
+  const load = (id: string) => {
+    setDsId(id)
+    setSelected(null)
+    // useDatasetGraph fires automatically on dsId change — no manual fetch.
   }
 
   const types = [...new Set(nodes.map((n) => n.type || 'Entity'))]

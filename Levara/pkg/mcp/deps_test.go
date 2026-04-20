@@ -163,6 +163,9 @@ func (f *fakeDeps) Runs() *runreg.Registry {
 
 func (f *fakeDeps) BaseCognifyConfig() orchestrator.Config { return f.baseCfg }
 
+func (f *fakeDeps) EmbedEndpoint() string { return f.baseCfg.EmbedEndpoint }
+func (f *fakeDeps) EmbedModel() string    { return f.baseCfg.EmbedModel }
+
 func (f *fakeDeps) OntologyPromptSuffix(collection string) string {
 	if f.ontologyFn != nil {
 		return f.ontologyFn(collection)
@@ -280,6 +283,8 @@ func (nilDBDeps) CollectionSearch(string, []float32, int) ([]SearchResult, error
 }
 func (nilDBDeps) Runs() *runreg.Registry                { return runreg.New() }
 func (nilDBDeps) BaseCognifyConfig() orchestrator.Config { return orchestrator.Config{} }
+func (nilDBDeps) EmbedEndpoint() string                   { return "" }
+func (nilDBDeps) EmbedModel() string                      { return "" }
 func (nilDBDeps) OntologyPromptSuffix(string) string     { return "" }
 func (nilDBDeps) PersistPipelineStatus(string, string, string, int, int, int, int64) {}
 func (nilDBDeps) LogHeartbeat(string, any)                                           {}

@@ -166,7 +166,8 @@ type driftResult struct {
 //
 // Returns "[]" (empty JSON array, not IsError) when nothing is drifted.
 func ToolCheckDrift(ctx context.Context, deps Deps, args map[string]any) ToolResult {
-	currentModel := deps.BaseCognifyConfig().EmbedModel
+	// T6: narrow accessor — ToolCheckDrift only needs the model name.
+	currentModel := deps.EmbedModel()
 
 	// Find the representative dimension by looking at the first collection
 	// that reports a non-zero dim. This matches the pre-refactor two-step

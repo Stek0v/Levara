@@ -80,10 +80,13 @@ func ToolCodify(ctx context.Context, deps Deps, args map[string]any) ToolResult 
 	}
 
 	// Embed entity descriptions into collection when configured.
+	// T6: narrow accessors instead of BaseCognifyConfig — this tool only
+	// needs the embed endpoint/model, not the whole Config template.
 	collection, _ := args["collection"].(string)
-	embedCfg := deps.BaseCognifyConfig()
-	if collection != "" && embedCfg.EmbedEndpoint != "" && deps.HasCollections() {
-		embedClient := embed.NewClient(embedCfg.EmbedEndpoint, embedCfg.EmbedModel, 16, 3)
+	embedEndpoint := deps.EmbedEndpoint()
+	embedModel := deps.EmbedModel()
+	if collection != "" && embedEndpoint != "" && deps.HasCollections() {
+		embedClient := embed.NewClient(embedEndpoint, embedModel, 16, 3)
 		var texts, ids []string
 		for _, e := range analysis.Entities {
 			texts = append(texts, e.Name+": "+e.Type+" in "+e.File)
