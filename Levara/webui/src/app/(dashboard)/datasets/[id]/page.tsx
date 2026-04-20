@@ -3,6 +3,12 @@
 import { useState, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { levara } from '@/lib/api'
+import { useCognifyProgress } from '@/hooks/use-sse'
+import {
+  useDatasets,
+  useDatasetData,
+  useDeleteDatasetRecord,
+} from '@/hooks/use-levara'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
@@ -33,59 +39,66 @@ export default function DatasetDetailPage() {
   const router = useRouter()
   const datasetId = params.id as string
 
-  const [dsName, setDsName] = useState('')
-  const [records, setRecords] = useState<DataRecord[]>([])
-  const [loading, setLoading] = useState(true)
   const [page, setPage] = useState(1)
-  const [total, setTotal] = useState(0)
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [cognifyRunning, setCognifyRunning] = useState(false)
+  const [activeCognifyRunId, setActiveCognifyRunId] = useState<string | null>(null)
+  const cognifyProgress = useCognifyProgress(activeCognifyRunId)
   const limit = 20
 
-  useEffect(() => {
-    const load = async () => {
-      setLoading(true)
-      try {
-        const ds = await levara.datasets()
-        const dataset = ds.data?.find((d) => d.id === datasetId)
-        if (dataset) setDsName(dataset.name)
+  // Data access moved to React Query (T7). Datasets list feeds the name
+  // lookup; useDatasetData paginates rows and handles the two response
+  // shapes backend still returns (plain array vs {data, pagination}).
+  // useDeleteDatasetRecord invalidates every page of this dataset on
+  // success so deletions reflect in the table without manual refetch.
+  const { data: datasetsRes } = useDatasets()
+  const dsName =
+    datasetsRes?.data?.find((d) => d.id === datasetId)?.name ?? ''
+  const { data: dataPage, isLoading: loading } = useDatasetData(datasetId, page, limit)
+  const records = (dataPage?.rows ?? []) as DataRecord[]
+  const total = dataPage?.total ?? 0
+  const deleteRecordMutation = useDeleteDatasetRecord()
 
-        const res = await fetch(`/api/v1/datasets/${datasetId}/data?page=${page}&limit=${limit}`, { credentials: 'include' }).then((r) => r.json())
-        setRecords(res.data || res || [])
-        setTotal(res.pagination?.total || (Array.isArray(res) ? res.length : 0))
-      } catch {
-        setRecords([])
-      } finally {
-        setLoading(false)
-      }
-    }
-    load()
-  }, [datasetId, page])
+  // SSE-driven completion: when the stream emits a terminal status,
+  // stop showing the "running" spinner (T8). Replaces the previous
+  // 3s cognifyStatus polling loop which raced with SSE updates.
+  useEffect(() => {
+    const d = cognifyProgress.data
+    if (!d) return
+    const terminal = d._complete || d.status === 'COMPLETED' || d.status === 'FAILED'
+    if (!terminal) return
+    setCognifyRunning(false)
+    setActiveCognifyRunId(null)
+  }, [cognifyProgress.data])
+
+  // datasets list + page data come from React Query now (see above). No
+  // standalone useEffect — queries refetch automatically on key change.
 
   const handleCognify = async () => {
     setCognifyRunning(true)
     try {
       const res = await levara.cognify({ dataset_id: datasetId, collection: dsName })
       const runId = res?.pipeline_run_id
-      if (!runId) { setCognifyRunning(false); return }
-      const poll = setInterval(async () => {
-        try {
-          const status = await levara.cognifyStatus(runId)
-          if (['COMPLETED', 'FAILED', 'completed', 'failed'].includes(status.status)) {
-            clearInterval(poll); setCognifyRunning(false)
-          }
-        } catch { clearInterval(poll); setCognifyRunning(false) }
-      }, 3000)
-    } catch { setCognifyRunning(false) }
+      if (!runId) {
+        setCognifyRunning(false)
+        return
+      }
+      // Hand off to SSE — the useEffect above flips cognifyRunning off
+      // when the stream reports a terminal state.
+      setActiveCognifyRunId(runId)
+    } catch {
+      setCognifyRunning(false)
+    }
   }
 
   const handleDelete = async (recordId: string) => {
     try {
-      await fetch(`/api/v1/datasets/${datasetId}/data/${recordId}`, { method: 'DELETE', credentials: 'include' })
-      setRecords(records.filter((r) => r.id !== recordId))
-      setTotal((t) => t - 1)
-    } catch (err) { alert(`Failed: ${err instanceof Error ? err.message : 'Error'}`) }
+      await deleteRecordMutation.mutateAsync({ datasetId, recordId })
+      // Cache invalidation in useDeleteDatasetRecord refreshes records + total.
+    } catch (err) {
+      alert(`Failed: ${err instanceof Error ? err.message : 'Error'}`)
+    }
   }
 
   const handleBulkDelete = async () => {

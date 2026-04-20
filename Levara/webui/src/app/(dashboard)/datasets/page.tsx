@@ -1,9 +1,8 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useDatasets, useCreateDataset, useDeleteDataset, useUpload, useCognify } from '@/hooks/use-levara'
 import { useCognifyProgress, type CognifyProgress } from '@/hooks/use-sse'
-import { levara } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -38,6 +37,27 @@ export default function DatasetsPage() {
   // SSE progress for active cognify
   const cognifyProgress = useCognifyProgress(activeCognifyRunId)
 
+  // SSE-driven completion: when the backend emits `event: done` or the
+  // progress payload transitions to a terminal status, useCognifyProgress
+  // stamps `_complete` and/or sets `status` to COMPLETED/FAILED. We
+  // reconcile the per-file upload state off that single source of truth
+  // — no more parallel polling loop (T8).
+  useEffect(() => {
+    const d = cognifyProgress.data
+    if (!d) return
+    const terminal = d._complete || d.status === 'COMPLETED' || d.status === 'FAILED'
+    if (!terminal) return
+    const ok = d.status !== 'FAILED'
+    setUploadedFiles((prev) =>
+      prev.map((f) =>
+        f.status === 'processing'
+          ? { ...f, status: ok ? ('ready' as const) : ('error' as const) }
+          : f,
+      ),
+    )
+    setActiveCognifyRunId(null)
+  }, [cognifyProgress.data])
+
   const handleUpload = async (files: FileList | File[]) => {
     const fileArr = Array.from(files)
     if (!fileArr.length) return
@@ -61,7 +81,11 @@ export default function DatasetsPage() {
         prev.map((f) => f.status === 'uploading' ? { ...f, dataset: actualDsName, status: 'processing' as const } : f)
       )
 
-      // Auto-cognify
+      // Auto-cognify. SSE (via useCognifyProgress below) drives both live
+      // progress and terminal-state transitions — we no longer poll
+      // /cognify/:id/status separately (T8). The effect watching
+      // cognifyProgress.data picks up _complete / status=FAILED and
+      // reconciles the uploadedFiles UI.
       if (dsId) {
         try {
           const cognifyRes = await cognifyMutation.mutateAsync({ dataset_id: dsId, collection: actualDsName })
@@ -71,21 +95,6 @@ export default function DatasetsPage() {
             return
           }
           setActiveCognifyRunId(runId)
-
-          // Poll for completion (SSE provides live updates, polling is backup)
-          const poll = setInterval(async () => {
-            try {
-              const status = await levara.cognifyStatus(runId)
-              if (['COMPLETED', 'FAILED', 'completed', 'failed'].includes(status.status)) {
-                clearInterval(poll)
-                setActiveCognifyRunId(null)
-                const ok = status.status.toLowerCase().includes('complete')
-                setUploadedFiles((prev) =>
-                  prev.map((f) => f.status === 'processing' ? { ...f, status: ok ? 'ready' as const : 'error' as const } : f)
-                )
-              }
-            } catch { clearInterval(poll); setActiveCognifyRunId(null) }
-          }, 3000)
         } catch {
           setUploadedFiles((prev) => prev.map((f) => f.status === 'processing' ? { ...f, status: 'error' as const } : f))
         }

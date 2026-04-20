@@ -53,14 +53,23 @@ export function useSSE(url: string | null, options: SSEOptions = {}) {
       } catch {}
     })
 
-    es.addEventListener('complete', (event) => {
+    // Backend emits `event: done` when a run reaches a terminal state
+    // (COMPLETED / FAILED); we also accept `event: complete` as an alias
+    // for older / alternate stream producers. Both close the EventSource
+    // and stamp `_complete: true` on the final payload so the UI layer
+    // can switch out of the "running" view without polling.
+    const markComplete = (event: Event) => {
       try {
         const data = JSON.parse((event as MessageEvent).data)
         setState({ status: 'disconnected', data: { ...data, _complete: true }, retryCount: 0 })
         onMessage?.({ ...data, _complete: true })
-      } catch {}
+      } catch {
+        setState((s) => ({ ...s, status: 'disconnected' }))
+      }
       es.close()
-    })
+    }
+    es.addEventListener('done', markComplete)
+    es.addEventListener('complete', markComplete)
 
     es.addEventListener('error', (event) => {
       try {
@@ -104,8 +113,10 @@ export function useSSE(url: string | null, options: SSEOptions = {}) {
   return { ...state, reconnect }
 }
 
-// Typed hook for Cognify progress
+// Typed hook for Cognify progress. Mirrors pkg/runreg.Status JSON tags
+// on the Go side — keep this in sync if the backend adds fields.
 export interface CognifyProgress {
+  status?: 'RUNNING' | 'COMPLETED' | 'FAILED' | string
   stage: string
   items_total?: number
   items_processed?: number

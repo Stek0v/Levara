@@ -113,7 +113,20 @@ type Deps interface {
 	// indexes, DB handle. Tool-level fields (Collection, DatasetID, Room,
 	// Tags, SystemPrompt, SkipGraph, chunking overrides, ...) are the
 	// caller's responsibility and override the returned base.
+	//
+	// For tools that only need one or two settings, prefer the narrow
+	// accessors below (EmbedEndpoint / EmbedModel) — they don't pull
+	// orchestrator.Config into your file's type surface, which keeps
+	// tests lighter and the seam easier to reason about. BaseCognifyConfig
+	// is still the right choice when you mutate many fields to build a
+	// pipeline config from this template (see tool_cognify, tool_git).
 	BaseCognifyConfig() orchestrator.Config
+	// EmbedEndpoint returns the deployment-wide embedding service URL. Empty
+	// string when the embed service isn't configured — callers must guard.
+	EmbedEndpoint() string
+	// EmbedModel returns the deployment-wide embedding model name. Empty
+	// string when not configured.
+	EmbedModel() string
 	// OntologyPromptSuffix returns the ontology-guided extraction text to
 	// append to the system prompt for a given collection. Returns empty
 	// string when no ontology is configured for the collection. Harmless

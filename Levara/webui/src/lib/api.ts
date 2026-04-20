@@ -161,9 +161,19 @@ export const levara = {
   feedbackStats: () => api<{ total: number; avg_rating: number; worst_query?: string }>('/api/v1/feedback/stats'),
 
   // Settings
-  settings: () => api<Record<string, unknown>>('/api/v1/settings'),
-  updateSettings: (data: Record<string, unknown>) =>
+  getSettings: () => api<Settings>('/api/v1/settings'),
+  updateSettings: (data: Partial<Settings>) =>
     api<void>('/api/v1/settings', { method: 'PUT', body: JSON.stringify(data) }),
+
+  // Dataset data rows (paginated) + record delete + graph (T7)
+  getDatasetData: (id: string, page = 1, limit = 20) =>
+    api<DatasetDataResponse | DatasetDataRow[]>(
+      `/api/v1/datasets/${id}/data?page=${page}&limit=${limit}`,
+    ),
+  deleteDatasetRecord: (datasetId: string, recordId: string) =>
+    api<void>(`/api/v1/datasets/${datasetId}/data/${recordId}`, { method: 'DELETE' }),
+  getDatasetGraph: (id: string) =>
+    api<DatasetGraph>(`/api/v1/datasets/${id}/graph`),
 }
 
 // Types
@@ -229,4 +239,55 @@ export interface CognifyStatus {
   entities?: number
   edges?: number
   elapsed_ms?: number
+}
+
+export type Theme = 'light' | 'dark' | 'system'
+export type Locale = 'ru' | 'en'
+
+export interface Settings {
+  theme?: Theme
+  locale?: Locale
+  // Backend may return additional user-specific settings; we keep the
+  // shape open so new keys don't require a client upgrade in lockstep.
+  [key: string]: unknown
+}
+
+// Data records inside a dataset — returned by GET /datasets/:id/data.
+// Backend currently returns either a plain array (no pagination) or a
+// {data, pagination} envelope, so the client normalises both shapes.
+export interface DatasetDataRow {
+  id: string
+  name?: string
+  extension?: string
+  mime_type?: string
+  raw_data_location?: string
+  data_size?: number
+  pipeline_status?: string
+  tags?: string
+  created_at?: string
+  [key: string]: unknown
+}
+
+export interface DatasetDataResponse {
+  data: DatasetDataRow[]
+  pagination?: Pagination
+}
+
+// Knowledge-graph view for a dataset — returned by GET /datasets/:id/graph.
+export interface GraphNode {
+  id: string
+  name: string
+  type: string
+  properties?: Record<string, unknown>
+}
+
+export interface GraphEdge {
+  source: string
+  target: string
+  label: string
+}
+
+export interface DatasetGraph {
+  nodes: GraphNode[]
+  edges: GraphEdge[]
 }

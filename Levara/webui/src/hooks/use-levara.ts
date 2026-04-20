@@ -1,7 +1,17 @@
 'use client'
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { levara, type Dataset, type CollectionMeta, type Memory, type SearchRequest } from '@/lib/api'
+import {
+  levara,
+  type Dataset,
+  type CollectionMeta,
+  type Memory,
+  type SearchRequest,
+  type Settings,
+  type DatasetDataRow,
+  type DatasetDataResponse,
+  type DatasetGraph,
+} from '@/lib/api'
 
 // ── Query Keys (single source of truth) ──
 
@@ -15,6 +25,9 @@ export const queryKeys = {
   feedbackStats: ['feedbackStats'] as const,
   cacheStats: ['cacheStats'] as const,
   errors: ['errors'] as const,
+  settings: ['settings'] as const,
+  datasetData: (id: string, page: number) => ['datasetData', id, page] as const,
+  datasetGraph: (id: string) => ['datasetGraph', id] as const,
 }
 
 // ── Queries ──
@@ -166,3 +179,95 @@ export function useSearch() {
     mutationFn: (params: SearchRequest) => levara.search(params),
   })
 }
+
+// ── Settings (T9) ──
+//
+// useSettings hydrates from the backend once per session (staleTime=Infinity
+// — settings rarely change out-of-band, and we refresh on mutation via
+// invalidateQueries below). useUpdateSettings applies an optimistic cache
+// patch so toggles feel instant; the onError rollback restores the prior
+// value if the backend rejects the PUT. onSettled forces a refetch so the
+// cache matches the server's view of merged settings.
+export function useSettings() {
+  return useQuery({
+    queryKey: queryKeys.settings,
+    queryFn: () => levara.getSettings(),
+    staleTime: Infinity,
+  })
+}
+
+export function useUpdateSettings() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (patch: Partial<Settings>) => levara.updateSettings(patch),
+    onMutate: async (patch) => {
+      await qc.cancelQueries({ queryKey: queryKeys.settings })
+      const prev = qc.getQueryData<Settings>(queryKeys.settings) ?? {}
+      qc.setQueryData<Settings>(queryKeys.settings, { ...prev, ...patch })
+      return { prev }
+    },
+    onError: (_err, _patch, ctx) => {
+      if (ctx?.prev) qc.setQueryData(queryKeys.settings, ctx.prev)
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.settings })
+    },
+  })
+}
+
+// ── Dataset data + graph (T7) ──
+//
+// useDatasetData normalises the two response shapes (plain array vs
+// {data, pagination}) into a single {rows, total} view so the page
+// component doesn't need to branch on shape. useDatasetGraph returns the
+// raw {nodes, edges} payload. useDeleteDatasetRecord invalidates ALL
+// datasetData pages for this dataset via a predicate — otherwise a
+// delete from page 2 leaves the now-stale page 1 in cache.
+export function useDatasetData(datasetId: string, page = 1, limit = 20) {
+  return useQuery({
+    queryKey: queryKeys.datasetData(datasetId, page),
+    queryFn: async () => {
+      const res = await levara.getDatasetData(datasetId, page, limit)
+      if (Array.isArray(res)) {
+        return { rows: res as DatasetDataRow[], total: res.length }
+      }
+      const env = res as DatasetDataResponse
+      return {
+        rows: env.data ?? [],
+        total: env.pagination?.total ?? env.data?.length ?? 0,
+      }
+    },
+    staleTime: 5_000,
+    enabled: !!datasetId,
+  })
+}
+
+export function useDatasetGraph(datasetId: string) {
+  return useQuery({
+    queryKey: queryKeys.datasetGraph(datasetId),
+    queryFn: () => levara.getDatasetGraph(datasetId),
+    staleTime: 10_000,
+    enabled: !!datasetId,
+  })
+}
+
+export function useDeleteDatasetRecord() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ datasetId, recordId }: { datasetId: string; recordId: string }) =>
+      levara.deleteDatasetRecord(datasetId, recordId),
+    onSuccess: (_res, { datasetId }) => {
+      // Invalidate every page of this dataset's data + its graph view —
+      // a deleted record could change pagination and graph structure.
+      qc.invalidateQueries({
+        predicate: (q) =>
+          q.queryKey[0] === 'datasetData' && q.queryKey[1] === datasetId,
+      })
+      qc.invalidateQueries({ queryKey: queryKeys.datasetGraph(datasetId) })
+    },
+  })
+}
+
+// Re-export the DatasetGraph type so consumers can annotate props without
+// pulling it directly from @/lib/api.
+export type { DatasetGraph }
