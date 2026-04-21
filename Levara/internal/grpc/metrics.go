@@ -51,3 +51,31 @@ func MetricsUnaryInterceptor() grpclib.UnaryServerInterceptor {
 		return resp, err
 	}
 }
+
+// MetricsStreamInterceptor mirrors the unary version for server-streaming
+// RPCs (PipelineCognify and any future stream we add). Without it, stream
+// methods produced no histogram data and dashboards showed a hole in
+// gRPC latency wherever streams were the dominant traffic — A.3 from the
+// 20.04 review.
+//
+// The duration measured is the full stream lifetime (open → close), which
+// is the right thing for "how long did the consumer stay connected" but
+// will look long for live progress streams. Pair with a per-message
+// counter if you need throughput visibility — that's a separate metric
+// the handler itself owns.
+func MetricsStreamInterceptor() grpclib.StreamServerInterceptor {
+	return func(srv any, ss grpclib.ServerStream, info *grpclib.StreamServerInfo, handler grpclib.StreamHandler) error {
+		start := time.Now()
+		err := handler(srv, ss)
+		duration := time.Since(start).Seconds()
+
+		method := info.FullMethod
+		status := "ok"
+		if err != nil {
+			status = "error"
+		}
+		rpcDuration.WithLabelValues(method).Observe(duration)
+		rpcTotal.WithLabelValues(method, status).Inc()
+		return err
+	}
+}

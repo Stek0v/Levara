@@ -6,7 +6,26 @@ services:
       - "50051:50051"
     volumes:
       - cognevra-data:/app/data
-    command: ["./cognevra", "-standalone=true", "-dim=${COGNEVRA_DIM:-${EMBEDDING_DIMENSIONS:-1024}}", "-shards=${COGNEVRA_SHARDS:-3}", "-port=8080", "-grpc-port=50051", "-hnsw-m=${HNSW_M:-20}", "-hnsw-ef-mult=${HNSW_EF_MULT:-10}", "-hnsw-ef-min=${HNSW_EF_MIN:-64}"]
+    environment:
+      # Auth (T19, 20.04). MUST be set in production — empty triggers a
+      # random secret on every restart, which invalidates every live
+      # token. Generate once via `openssl rand -hex 32` and persist.
+      - JWT_SECRET=${JWT_SECRET:-}
+      # Swagger UI (T13). dev → /swagger/* served; production → 404.
+      - ENV=${ENV:-dev}
+      # Embedding service (T3 shared client). Empty disables search.
+      - EMBEDDING_ENDPOINT=${EMBEDDING_ENDPOINT:-}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-3-small}
+      # LLM provider (cognify + RAG answers).
+      - LLM_PROVIDER=${LLM_PROVIDER:-}
+      - LLM_ENDPOINT=${LLM_ENDPOINT:-}
+      - LLM_MODEL=${LLM_MODEL:-}
+      - LLM_API_KEY=${LLM_API_KEY:-}
+    # `-require-auth=false` keeps the gRPC + HTTP interceptors permissive
+    # so unauthenticated calls log instead of reject — useful during the
+    # client-upgrade window. Flip to true in prod once every consumer
+    # ships a token (see docs/MIGRATION-20.04.md).
+    command: ["./cognevra", "-standalone=true", "-dim=${COGNEVRA_DIM:-${EMBEDDING_DIMENSIONS:-1024}}", "-shards=${COGNEVRA_SHARDS:-3}", "-port=8080", "-grpc-port=50051", "-hnsw-m=${HNSW_M:-20}", "-hnsw-ef-mult=${HNSW_EF_MULT:-10}", "-hnsw-ef-min=${HNSW_EF_MIN:-64}", "-require-auth=${REQUIRE_AUTH:-false}"]
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/metrics"]
       interval: 10s
