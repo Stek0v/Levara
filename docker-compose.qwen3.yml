@@ -1,0 +1,156 @@
+# docker-compose.qwen3.yml — overlay that adds Qwen3-Embedding and
+# Qwen3-Reranker as llama-server services behind Levara.
+#
+# Used together with the base compose:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.qwen3.yml up -d --build
+#
+# or on the GPU host (10.23.0.64 per the current deployment memory), the
+# llama-server pieces can run standalone and only the cognevra service
+# consumes them over the network — in that case skip this file on the
+# cognevra host and only bring up `qwen3-embed` + `qwen3-rerank-front`
+# on the GPU box.
+#
+# Prerequisites:
+#   1. Put the GGUFs next to this file under ./models/:
+#        models/qwen3-embedding-0.6b-q8_0.gguf
+#        models/qwen3-reranker-0.6b-q8_0.gguf
+#   2. Build or pull a llama.cpp CUDA image — this file uses
+#      `ghcr.io/ggerganov/llama.cpp:server-cuda` as a reasonable default.
+#      On CPU-only hosts, swap for `:server` and remove the `runtime:`
+#      + `deploy.resources.reservations` stanzas.
+
+services:
+  # ────────────────────────────────────────────────────────────
+  # Qwen3-Embedding — 0.6B Q8_0, OpenAI /v1/embeddings compat.
+  # Memory: ~0.65 GB VRAM when loaded.
+  # ────────────────────────────────────────────────────────────
+  qwen3-embed:
+    image: ghcr.io/ggerganov/llama.cpp:server-cuda
+    ports:
+      - "9001:9001"
+    volumes:
+      - ./models:/models:ro
+    command:
+      - "-m"
+      - "/models/qwen3-embedding-0.6b-q8_0.gguf"
+      - "--embedding"
+      - "--port"
+      - "9001"
+      - "--host"
+      - "0.0.0.0"
+      - "--n-gpu-layers"
+      - "999"
+      - "-c"
+      - "8192"
+      - "--batch-size"
+      - "64"
+      - "--parallel"
+      - "4"
+      - "--cont-batching"
+    healthcheck:
+      # /v1/models is cheap and proves the model is loaded + the HTTP
+      # server is accepting connections. /health alone on llama.cpp
+      # returns "ok" before the model finishes loading.
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:9001/v1/models"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  # ────────────────────────────────────────────────────────────
+  # Qwen3-Reranker — 0.6B Q8_0. Served as raw chat-completions on
+  # :9002; the Cohere-compat adapter (pkg/rerank.Qwen3Client) sits
+  # in the `qwen3-rerank-front` service below on :9003.
+  # ────────────────────────────────────────────────────────────
+  qwen3-rerank-llm:
+    image: ghcr.io/ggerganov/llama.cpp:server-cuda
+    ports:
+      - "9002:9002"
+    volumes:
+      - ./models:/models:ro
+    command:
+      - "-m"
+      - "/models/qwen3-reranker-0.6b-q8_0.gguf"
+      - "--port"
+      - "9002"
+      - "--host"
+      - "0.0.0.0"
+      - "--n-gpu-layers"
+      - "999"
+      - "-c"
+      - "4096"
+      - "--batch-size"
+      - "32"
+      - "--parallel"
+      - "4"
+      - "--cont-batching"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:9002/v1/models"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  # ────────────────────────────────────────────────────────────
+  # Cohere-compat adapter — translates {query, documents, top_n}
+  # into N yes/no completions against qwen3-rerank-llm and returns
+  # Cohere-shaped {results:[{index, relevance_score}]}. Levara's
+  # pkg/rerank.Client talks to this service via RERANK_ENDPOINT.
+  #
+  # The small Go binary is built from cmd/qwen3rerank which wraps
+  # pkg/rerank.QwenRerankHTTPHandler — see Dockerfile.qwen3rerank
+  # (add this cmd if not yet present; the adapter binary is 5-10 MB).
+  # ────────────────────────────────────────────────────────────
+  qwen3-rerank-front:
+    build:
+      context: ./Levara
+      dockerfile: Dockerfile.qwen3rerank
+    ports:
+      - "9003:9003"
+    environment:
+      - QWEN3_UPSTREAM=http://qwen3-rerank-llm:9002
+      - QWEN3_MODEL=qwen3-reranker-0.6b
+      - QWEN3_TIMEOUT_MS=5000
+      - QWEN3_CONCURRENCY=4
+    depends_on:
+      qwen3-rerank-llm:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:9003/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # ────────────────────────────────────────────────────────────
+  # Cognevra override — point at the new embed + rerank endpoints.
+  # Only the env block is patched; everything else comes from the
+  # base docker-compose.yml.
+  # ────────────────────────────────────────────────────────────
+  cognevra:
+    environment:
+      - EMBEDDING_ENDPOINT=http://qwen3-embed:9001/v1/embeddings
+      - EMBEDDING_MODEL=qwen3-embedding-0.6b
+      - EMBEDDING_DIMENSIONS=${EMBEDDING_DIMENSIONS:-1024}
+      - RERANK_ENDPOINT=http://qwen3-rerank-front:9003/rerank
+      - RERANK_MODEL=qwen3-reranker-0.6b
+      - RERANK_TIMEOUT_MS=5000
+    depends_on:
+      qwen3-embed:
+        condition: service_healthy
+      qwen3-rerank-front:
+        condition: service_healthy

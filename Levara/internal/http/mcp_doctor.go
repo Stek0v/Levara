@@ -42,6 +42,11 @@ func (h *mcpHandler) toolDoctor(ctx context.Context, args map[string]any) mcpToo
 	// 2. Embedding service
 	checks = append(checks, h.checkEmbedService())
 
+	// 2b. Reranker service (optional — skip check when not configured).
+	if h.cfg.RerankEndpoint != "" {
+		checks = append(checks, h.checkRerankService())
+	}
+
 	// 3. LLM service
 	checks = append(checks, h.checkLLM())
 
@@ -52,6 +57,12 @@ func (h *mcpHandler) toolDoctor(ctx context.Context, args map[string]any) mcpToo
 
 	// 5. Embedding coverage
 	checks = append(checks, h.checkEmbeddingCoverage(ctx, verbose)...)
+
+	// 5b. Embedding drift — are any collections on a stale model/dim?
+	//     Turns check_drift tool logic into a doctor-level assertion so
+	//     a mid-migration state surfaces without the operator having to
+	//     ask specifically.
+	checks = append(checks, h.checkEmbeddingDriftAssertion(ctx))
 
 	// 6. BM25 coverage
 	checks = append(checks, h.checkBM25Coverage(verbose))
@@ -485,4 +496,84 @@ func condStr(cond bool, t, f string) string {
 		return t
 	}
 	return f
+}
+
+// checkRerankService verifies the Cohere-compat reranker endpoint is
+// reachable. We probe /health when available, otherwise fall back to a
+// HEAD on the rerank URL root.
+func (h *mcpHandler) checkRerankService() doctorCheck {
+	ep := h.cfg.RerankEndpoint
+	// Strip the /rerank suffix so we can hit /health on the same host.
+	base := strings.TrimSuffix(ep, "/rerank")
+
+	client := &http.Client{Timeout: 3 * time.Second}
+	for _, path := range []string{"/health", "/", ""} {
+		resp, err := client.Get(base + path)
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode < 500 {
+				return doctorCheck{
+					Name:    "rerank_service",
+					Status:  "ok",
+					Message: fmt.Sprintf("Connected (%s, model: %s)", ep, h.cfg.RerankModel),
+				}
+			}
+		}
+	}
+	return doctorCheck{
+		Name:        "rerank_service",
+		Status:      "fail",
+		Message:     fmt.Sprintf("Unreachable: %s", ep),
+		Remediation: "Start reranker (e.g. qwen3-rerank-front sidecar) or unset RERANK_ENDPOINT to disable",
+	}
+}
+
+// checkEmbeddingDriftAssertion surfaces any collections whose stored
+// embed_model ≠ the currently configured one. Lifts the `check_drift`
+// MCP tool logic into doctor's check list so a mid-migration state
+// (some collections on old nomic-embed, some on new Qwen3) shows up in
+// the default health report.
+func (h *mcpHandler) checkEmbeddingDriftAssertion(ctx context.Context) doctorCheck {
+	if !h.HasCollections() {
+		return doctorCheck{
+			Name:    "embedding_drift",
+			Status:  "ok",
+			Message: "No collections configured",
+		}
+	}
+	currentModel := h.cfg.EmbedModel
+	if currentModel == "" {
+		return doctorCheck{
+			Name:    "embedding_drift",
+			Status:  "warn",
+			Message: "Cannot check drift — EMBED_MODEL is empty",
+		}
+	}
+
+	drifted := []string{}
+	for _, name := range h.ListCollections() {
+		// Skip internal collections — they're managed by the pipeline
+		// and match the current model by construction.
+		if strings.HasPrefix(name, "_") || strings.HasPrefix(name, "Triplet_") {
+			continue
+		}
+		meta := h.CollectionMeta(name)
+		if meta.EmbedModel != "" && meta.EmbedModel != currentModel {
+			drifted = append(drifted, fmt.Sprintf("%s (was %s)", name, meta.EmbedModel))
+		}
+	}
+
+	if len(drifted) == 0 {
+		return doctorCheck{
+			Name:    "embedding_drift",
+			Status:  "ok",
+			Message: fmt.Sprintf("All collections on %s", currentModel),
+		}
+	}
+	return doctorCheck{
+		Name:        "embedding_drift",
+		Status:      "warn",
+		Message:     fmt.Sprintf("%d collection(s) on stale model: %s", len(drifted), strings.Join(drifted, ", ")),
+		Remediation: fmt.Sprintf("Run POST /api/v1/reembed or MCP `check_drift` then re-embed those collections to %s", currentModel),
+	}
 }

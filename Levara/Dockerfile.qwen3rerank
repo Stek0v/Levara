@@ -1,0 +1,15 @@
+FROM golang:1.26-alpine AS builder
+
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+
+# Static binary for the Cohere-compat → Qwen3 chat adapter.
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o qwen3rerank ./cmd/qwen3rerank
+
+FROM alpine:latest
+WORKDIR /app
+COPY --from=builder /app/qwen3rerank .
+EXPOSE 9003
+CMD ["./qwen3rerank"]
