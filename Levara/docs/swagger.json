@@ -1,0 +1,685 @@
+{
+    "schemes": [
+        "http",
+        "https"
+    ],
+    "swagger": "2.0",
+    "info": {
+        "description": "Levara HNSW + BM25 + Neo4j vector DB HTTP API.\nSee CLAUDE.md for architecture; pkg/mcp for the MCP alternate transport.",
+        "title": "Levara API",
+        "contact": {},
+        "version": "v1"
+    },
+    "basePath": "/api/v1",
+    "paths": {
+        "/auth/login": {
+            "post": {
+                "description": "Accepts either form-encoded (Cognee frontend) or JSON body. On success returns a 24h HS256 JWT in the response + a secure http-only cookie.",
+                "consumes": [
+                    "application/json",
+                    "application/x-www-form-urlencoded"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Exchange credentials for a JWT",
+                "parameters": [
+                    {
+                        "description": "email + password",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Missing credentials",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Invalid credentials",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "429": {
+                        "description": "Rate-limited (shared bucket with /auth/register)",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/me": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Validates the bearer token and returns the associated user record. Also the probe called by the WebUI auth guard on every dashboard mount (T1).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Return the current user",
+                "responses": {
+                    "200": {
+                        "description": "id, email, username",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthenticated",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/register": {
+            "post": {
+                "description": "Bcrypt-hashes the password and issues a fresh JWT on success.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Create a user account",
+                "parameters": [
+                    {
+                        "description": "email + password",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Missing or malformed fields",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "409": {
+                        "description": "Email already registered",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "429": {
+                        "description": "Rate-limited (shared bucket with /auth/login)",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/cognify": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Transforms text into chunks + embeddings + (optional) graph. Body may provide inline texts[] or reference datasets[] whose raw files are loaded from disk. rag mode skips graph extraction.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "cognify"
+                ],
+                "summary": "Start a cognify pipeline run",
+                "parameters": [
+                    {
+                        "description": "datasets | datasetIds | texts, optional llm_model, collection, session_id",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "status + pipeline_run_id",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "no texts to cognify",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/cognify/{runId}/status": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "cognify"
+                ],
+                "summary": "Poll the status of a cognify run",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Run ID returned by POST /cognify",
+                        "name": "runId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/runreg.Status"
+                        }
+                    },
+                    "404": {
+                        "description": "run not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/cognify/{runId}/stream": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Emits event:progress updates every 500ms while the run is RUNNING, then event:done with the terminal payload. Client should disconnect after the done event.",
+                "produces": [
+                    "text/event-stream"
+                ],
+                "tags": [
+                    "cognify"
+                ],
+                "summary": "Stream cognify progress via Server-Sent Events",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Run ID returned by POST /cognify",
+                        "name": "runId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "SSE stream",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "404": {
+                        "description": "run not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/datasets": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns datasets owned by the caller plus any explicitly shared. Superusers see all rows.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "datasets"
+                ],
+                "summary": "List datasets visible to the caller",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/http.DatasetDTO"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "datasets"
+                ],
+                "summary": "Create a new dataset",
+                "parameters": [
+                    {
+                        "description": "Dataset name",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "name": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/http.DatasetDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "name required",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/datasets/{id}": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "datasets"
+                ],
+                "summary": "Delete a dataset (idempotent)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Dataset UUID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "boolean"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/prune/data": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "Wipe all datasets and their data (superuser-only)",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "superuser role required",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "SQL error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/prune/system": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "Wipe datasets + graph (superuser-only)",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "superuser role required",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "SQL error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/search": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "query_type selects the strategy. AUTO routes via the adaptive router; explicit values pin a strategy. CHUNKS/HYBRID/BM25/TEMPORAL/RAG_COMPLETION/SUMMARIES are vector-side; GRAPH_COMPLETION, CYPHER, NATURAL_LANGUAGE, TRIPLET_COMPLETION, CODE, COMMUNITY_LOCAL/GLOBAL, GRAPH_COMPLETION_CONTEXT_EXTENSION/COT are graph-side.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "search"
+                ],
+                "summary": "Unified search entry point",
+                "parameters": [
+                    {
+                        "description": "Query + options",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/http.CogneeSearchRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "strategy-dependent shape; always includes search_type",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/search/text": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "query_type selects the strategy. AUTO routes via the adaptive router; explicit values pin a strategy. CHUNKS/HYBRID/BM25/TEMPORAL/RAG_COMPLETION/SUMMARIES are vector-side; GRAPH_COMPLETION, CYPHER, NATURAL_LANGUAGE, TRIPLET_COMPLETION, CODE, COMMUNITY_LOCAL/GLOBAL, GRAPH_COMPLETION_CONTEXT_EXTENSION/COT are graph-side.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "search"
+                ],
+                "summary": "Unified search entry point",
+                "parameters": [
+                    {
+                        "description": "Query + options",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/http.CogneeSearchRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "strategy-dependent shape; always includes search_type",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "http.CogneeSearchRequest": {
+            "type": "object",
+            "properties": {
+                "collection": {
+                    "description": "Filter search to one collection (empty = all)",
+                    "type": "string"
+                },
+                "cypher_query": {
+                    "description": "Raw Cypher for CYPHER search type",
+                    "type": "string"
+                },
+                "domain": {
+                    "description": "Optional: filter to collections tagged with this domain",
+                    "type": "string"
+                },
+                "query_text": {
+                    "type": "string"
+                },
+                "query_type": {
+                    "description": "CHUNKS, GRAPH_COMPLETION, etc.",
+                    "type": "string"
+                },
+                "rerank": {
+                    "description": "Optional: rerank results via cross-encoder",
+                    "type": "boolean"
+                },
+                "session_id": {
+                    "description": "Conversational memory: load prior interactions",
+                    "type": "string"
+                },
+                "tags": {
+                    "description": "Optional: filter results by metadata tags",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "top_k": {
+                    "type": "integer"
+                }
+            }
+        },
+        "http.DatasetDTO": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "owner_id": {
+                    "type": "string"
+                },
+                "record_count": {
+                    "type": "integer"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "runreg.Status": {
+            "type": "object",
+            "properties": {
+                "chunks_created": {
+                    "type": "integer"
+                },
+                "edges_extracted": {
+                    "type": "integer"
+                },
+                "elapsed_ms": {
+                    "type": "integer"
+                },
+                "entities_extracted": {
+                    "type": "integer"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "pipeline_run_id": {
+                    "type": "string"
+                },
+                "stage": {
+                    "type": "string"
+                },
+                "started_at": {
+                    "type": "string"
+                },
+                "status": {
+                    "description": "RUNNING, COMPLETED, FAILED",
+                    "type": "string"
+                }
+            }
+        }
+    },
+    "securityDefinitions": {
+        "BearerAuth": {
+            "description": "\"Bearer \u003cjwt\u003e\" from POST /auth/login or an API key from POST /auth/keys.",
+            "type": "apiKey",
+            "name": "Authorization",
+            "in": "header"
+        }
+    }
+}

@@ -244,6 +244,20 @@ func extractDatasetID(r fiber.Map) string {
 	return dsID
 }
 
+// searchHandler — POST /search, /search/text, /search/ (all aliases).
+// Dispatches to the right strategy via the SearchStrategies registry
+// (T5); unknown query_type falls back to CHUNKS.
+//
+// @Summary     Unified search entry point
+// @Description query_type selects the strategy. AUTO routes via the adaptive router; explicit values pin a strategy. CHUNKS/HYBRID/BM25/TEMPORAL/RAG_COMPLETION/SUMMARIES are vector-side; GRAPH_COMPLETION, CYPHER, NATURAL_LANGUAGE, TRIPLET_COMPLETION, CODE, COMMUNITY_LOCAL/GLOBAL, GRAPH_COMPLETION_CONTEXT_EXTENSION/COT are graph-side.
+// @Tags        search
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       body body CogneeSearchRequest true "Query + options"
+// @Success     200 {object} map[string]any "strategy-dependent shape; always includes search_type"
+// @Router      /search [post]
+// @Router      /search/text [post]
 func searchHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		var req CogneeSearchRequest

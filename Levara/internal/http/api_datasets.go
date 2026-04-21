@@ -38,6 +38,16 @@ var memDatasets = struct {
 	data []DatasetDTO
 }{}
 
+// datasetsListHandler — GET /datasets.
+//
+// @Summary     List datasets visible to the caller
+// @Description Returns datasets owned by the caller plus any explicitly shared. Superusers see all rows.
+// @Tags        datasets
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200 {array}  DatasetDTO
+// @Failure     500 {object} map[string]any
+// @Router      /datasets [get]
 func datasetsListHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		if cfg.DB == nil {
@@ -95,6 +105,17 @@ func datasetsListHandler(cfg APIConfig) fiber.Handler {
 	}
 }
 
+// datasetCreateHandler — POST /datasets.
+//
+// @Summary     Create a new dataset
+// @Tags        datasets
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       body body object{name=string} true "Dataset name"
+// @Success     201 {object} DatasetDTO
+// @Failure     400 {object} map[string]any "name required"
+// @Router      /datasets [post]
 func datasetCreateHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		var req struct {
@@ -126,6 +147,16 @@ func datasetCreateHandler(cfg APIConfig) fiber.Handler {
 	}
 }
 
+// datasetDeleteHandler — DELETE /datasets/:id. Idempotent; unknown IDs
+// still return 200 {deleted:true} matching the vector-delete contract.
+//
+// @Summary     Delete a dataset (idempotent)
+// @Tags        datasets
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id path string true "Dataset UUID"
+// @Success     200 {object} map[string]bool
+// @Router      /datasets/{id} [delete]
 func datasetDeleteHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		id := c.Params("id")

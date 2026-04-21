@@ -44,6 +44,17 @@ func requireSuperuser(c *fiber.Ctx, cfg APIConfig) error {
 	return nil
 }
 
+// pruneDataHandler — POST /prune/data. Destructive: wipes datasets +
+// dataset_data + data. Superuser-only (M5).
+//
+// @Summary     Wipe all datasets and their data (superuser-only)
+// @Tags        admin
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200 {object} map[string]string
+// @Failure     403 {object} map[string]any "superuser role required"
+// @Failure     500 {object} map[string]any "SQL error"
+// @Router      /prune/data [post]
 func pruneDataHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		if err := requireSuperuser(c, cfg); err != nil {
@@ -63,6 +74,18 @@ func pruneDataHandler(cfg APIConfig) fiber.Handler {
 	}
 }
 
+// pruneSystemHandler — POST /prune/system. Destructive: everything
+// pruneData clears PLUS the graph (graph_nodes + graph_edges). Used when
+// you want a fresh-from-scratch deployment without reimaging disks.
+//
+// @Summary     Wipe datasets + graph (superuser-only)
+// @Tags        admin
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200 {object} map[string]string
+// @Failure     403 {object} map[string]any "superuser role required"
+// @Failure     500 {object} map[string]any "SQL error"
+// @Router      /prune/system [post]
 func pruneSystemHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		if err := requireSuperuser(c, cfg); err != nil {
