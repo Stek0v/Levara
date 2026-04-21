@@ -66,6 +66,16 @@ func ToolDescriptors() []Tool {
 	{
 		Name:        "check_drift",
 		Description: "Check for embedding model drift across collections. Reports collections where the configured model/dimension doesn't match stored data.",
+		OutputSchema: objectSchema(map[string]any{
+			"current_model": stringProp("Model name from server config."),
+			"current_dim":   integerProp("Dimension from the first collection that reported one."),
+			"drifted": arrayOfObjectsProp(objectSchema(map[string]any{
+				"collection":     stringProp("Collection name."),
+				"stored_model":   stringProp("Model recorded when the collection was created."),
+				"stored_dim":     integerProp("Stored dimension."),
+				"reason":         stringProp("Why this collection counts as drifted."),
+			}), "Collections whose model or dimension diverges from current."),
+		}),
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{},
@@ -74,6 +84,11 @@ func ToolDescriptors() []Tool {
 	{
 		Name:        "prune_graph",
 		Description: "Clean up old superseded graph edges and optionally orphaned nodes.",
+		OutputSchema: objectSchema(map[string]any{
+			"edges_pruned": integerProp("Superseded edges removed (or that would be removed when dry_run=true)."),
+			"nodes_pruned": integerProp("Orphan nodes removed (only when include_orphan_nodes=true)."),
+			"dry_run":      booleanProp("Echo of the request flag."),
+		}),
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -179,6 +194,12 @@ func ToolDescriptors() []Tool {
 	{
 		Name:        "analyze_commits",
 		Description: "Analyze git repository commits and build knowledge graph.",
+		OutputSchema: objectSchema(map[string]any{
+			"commits_analyzed": integerProp("Number of commits scanned."),
+			"entities":         integerProp("Entities extracted across the commit history."),
+			"edges":            integerProp("Graph edges added."),
+			"summary":          stringProp("Truncated text summary of the commit window."),
+		}),
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -192,6 +213,9 @@ func ToolDescriptors() []Tool {
 	{
 		Name:        "git_search",
 		Description: "Search through analyzed git commits in the knowledge graph.",
+		OutputSchema: objectSchema(map[string]any{
+			"results": arrayOfObjectsProp(searchResultItemSchema(), "Commit-bearing hits ranked by relevance."),
+		}),
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -337,8 +361,9 @@ func ToolDescriptors() []Tool {
 		},
 	},
 	{
-		Name:        "diary_write",
-		Description: "Append an entry to a per-agent diary (isolated memory namespace under owner_id=agent:<name>). Use for specialized agents (reviewer, architect, oncall) to keep their own notes without polluting project memory.",
+		Name:         "diary_write",
+		Description:  "Append an entry to a per-agent diary (isolated memory namespace under owner_id=agent:<name>). Use for specialized agents (reviewer, architect, oncall) to keep their own notes without polluting project memory.",
+		OutputSchema: statusMessageSchema(),
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -353,6 +378,13 @@ func ToolDescriptors() []Tool {
 	{
 		Name:        "diary_read",
 		Description: "Read entries from a per-agent diary, optionally filtered by query.",
+		OutputSchema: objectSchema(map[string]any{
+			"entries": arrayOfObjectsProp(objectSchema(map[string]any{
+				"key":        stringProp("Entry key."),
+				"value":      stringProp("Entry text."),
+				"created_at": stringProp("RFC3339."),
+			}), "Diary entries in insertion order."),
+		}),
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -367,7 +399,8 @@ func ToolDescriptors() []Tool {
 	// ── Chat History tools ──
 	{
 		Name:        "save_chat",
-		Description: "Save chat session messages.",
+		Description:  "Save chat session messages.",
+		OutputSchema: statusMessageSchema(),
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -391,6 +424,13 @@ func ToolDescriptors() []Tool {
 	{
 		Name:        "recall_chat",
 		Description: "Recall chat history by session ID.",
+		OutputSchema: objectSchema(map[string]any{
+			"session_id": stringProp("Echo of the request."),
+			"messages": arrayOfObjectsProp(objectSchema(map[string]any{
+				"role":    stringProp("user | assistant"),
+				"content": stringProp("Message body."),
+			}), "Messages in chronological order."),
+		}),
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -403,6 +443,14 @@ func ToolDescriptors() []Tool {
 	{
 		Name:        "search_chats",
 		Description: "Search across all chat sessions.",
+		OutputSchema: objectSchema(map[string]any{
+			"results": arrayOfObjectsProp(objectSchema(map[string]any{
+				"session_id": stringProp("Source session."),
+				"snippet":    stringProp("Matched snippet."),
+				"role":       stringProp("user | assistant"),
+				"score":      numberProp("Relevance score."),
+			}), "Hits across all chat sessions."),
+		}),
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -415,6 +463,13 @@ func ToolDescriptors() []Tool {
 	{
 		Name:        "get_project_context",
 		Description: "Get full project context: memories, collection stats, key entities, recent interactions. Call at session start for maximum context awareness.",
+		OutputSchema: objectSchema(map[string]any{
+			"collection":   stringProp("Project collection name."),
+			"records":      integerProp("Total records in the collection."),
+			"key_entities": arrayOfStringsProp("Top entities by graph degree."),
+			"memories":     arrayOfObjectsProp(objectSchema(map[string]any{"key": stringProp(""), "value": stringProp("")}), "Recent project memories."),
+			"interactions": integerProp("Recent interaction count."),
+		}),
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -425,8 +480,9 @@ func ToolDescriptors() []Tool {
 		},
 	},
 	{
-		Name:        "set_context",
-		Description: "Set the default project collection for this MCP session. All subsequent tool calls will use this collection unless explicitly overridden. Call this at session start or when switching projects.",
+		Name:         "set_context",
+		Description:  "Set the default project collection for this MCP session. All subsequent tool calls will use this collection unless explicitly overridden. Call this at session start or when switching projects.",
+		OutputSchema: statusMessageSchema(),
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -483,8 +539,9 @@ func ToolDescriptors() []Tool {
 		},
 	},
 	{
-		Name:        "add_feedback",
-		Description: "Submit feedback on a search result to help improve search quality. Rate results 1-5.",
+		Name:         "add_feedback",
+		Description:  "Submit feedback on a search result to help improve search quality. Rate results 1-5.",
+		OutputSchema: statusMessageSchema(),
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -516,6 +573,12 @@ func ToolDescriptors() []Tool {
 	{
 		Name:        "codify",
 		Description: "Analyze source code and extract entities (functions, classes, imports) and relationships (CALLS, IMPORTS, EXTENDS). Supports Go and Python.",
+		OutputSchema: objectSchema(map[string]any{
+			"language":  stringProp("Detected language (go | python)."),
+			"entities":  integerProp("Count of extracted entities."),
+			"relations": integerProp("Count of extracted relations."),
+			"text":      stringProp("Pretty-printed extraction summary."),
+		}),
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -531,6 +594,15 @@ func ToolDescriptors() []Tool {
 	{
 		Name:        "doctor",
 		Description: "Self-diagnose system health: service connectivity (postgres, embed, LLM, neo4j), embedding coverage, BM25 index coverage, graph connectivity, memory staleness. Returns structured checks with actionable remediation advice.",
+		OutputSchema: objectSchema(map[string]any{
+			"checks": arrayOfObjectsProp(objectSchema(map[string]any{
+				"name":   stringProp("Check name (postgres, embed, neo4j, ...)."),
+				"status": map[string]any{"type": "string", "enum": []string{"ok", "warn", "fail"}},
+				"detail": stringProp("Free-form explanation."),
+				"hint":   stringProp("Remediation suggestion when status != ok."),
+			}), "Per-dependency check results."),
+			"overall": map[string]any{"type": "string", "enum": []string{"ok", "warn", "fail"}},
+		}),
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -541,6 +613,14 @@ func ToolDescriptors() []Tool {
 	{
 		Name:        "heartbeat",
 		Description: "Query recent system heartbeat events (doctor runs, sync, cognify completions, prune). Useful to understand system activity history and detect degradation patterns.",
+		OutputSchema: objectSchema(map[string]any{
+			"events": arrayOfObjectsProp(objectSchema(map[string]any{
+				"id":         stringProp("Event UUID."),
+				"event_type": stringProp("doctor | sync | cognify | prune | ..."),
+				"payload":    map[string]any{"type": "object", "description": "Event-specific structured payload."},
+				"created_at": stringProp("RFC3339."),
+			}), "Recent events ordered by created_at desc."),
+		}),
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{

@@ -22,6 +22,18 @@ type UserDTO struct {
 	UpdatedAt  *string `json:"updated_at"`
 }
 
+// userLookupHandler — GET /users?email=... — admin-side lookup used by
+// the WebUI when sharing a dataset to a user identified by email.
+//
+// @Summary     Look up a user by email
+// @Tags        users
+// @Produce     json
+// @Security    BearerAuth
+// @Param       email query string true "Exact email"
+// @Success     200 {object} UserDTO
+// @Failure     400 {object} map[string]any "email query parameter required"
+// @Failure     404 {object} map[string]any "no user with that email"
+// @Router      /users [get]
 func userLookupHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		email := c.Query("email")
@@ -42,6 +54,17 @@ func userLookupHandler(cfg APIConfig) fiber.Handler {
 	}
 }
 
+// userMeHandler — GET /users/me. Returns the JWT-resolved user record.
+// Distinct from /auth/me which validates the token; this one assumes
+// auth has already passed and just renders the DTO.
+//
+// @Summary     Return the authenticated user's full record
+// @Tags        users
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200 {object} UserDTO
+// @Failure     401 {object} map[string]any "no user_id in context"
+// @Router      /users/me [get]
 func userMeHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		userID, _ := c.Locals("user_id").(string)
@@ -79,6 +102,19 @@ func userMeHandler(cfg APIConfig) fiber.Handler {
 	}
 }
 
+// userUpdateHandler — PUT /users/me. Updates email / username on the
+// caller's own record only; can't modify other users (RBAC handled
+// separately at /admin endpoints).
+//
+// @Summary     Update the caller's profile
+// @Tags        users
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       body body object true "email + username"
+// @Success     200 {object} UserDTO
+// @Failure     400 {object} map[string]any "invalid body"
+// @Router      /users/me [put]
 func userUpdateHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		userID, _ := c.Locals("user_id").(string)
@@ -108,6 +144,19 @@ func userUpdateHandler(cfg APIConfig) fiber.Handler {
 	}
 }
 
+// userChangePasswordHandler — PUT /users/me/password. Requires the
+// current password as a re-auth check before bcrypt-hashing the new one.
+//
+// @Summary     Change the caller's password
+// @Tags        users
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       body body object true "current_password + new_password"
+// @Success     200 {object} map[string]any
+// @Failure     400 {object} map[string]any "missing fields"
+// @Failure     401 {object} map[string]any "current_password mismatch"
+// @Router      /users/me/password [put]
 func userChangePasswordHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		userID, _ := c.Locals("user_id").(string)
