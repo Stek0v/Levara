@@ -383,18 +383,19 @@ func chunksSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
 
 	var allResults []fiber.Map
 	seen := map[string]bool{}
-	wasReranked := false
-
+	// A.2 (20.04 review): track per-result reranked status. The previous
+	// global wasReranked bool flipped on the first sub-query that managed
+	// a rerank pass and then mislabelled every later result that DIDN'T
+	// go through rerank as `"reranked": true`. Per-result tracking keeps
+	// the contract honest — clients can now trust the field as a per-hit
+	// provenance signal rather than a meta-flag.
 	for _, sq := range subQueries {
 		for _, coll := range colls {
 			var results []pipeline.ScoredResult
 			var err error
+			rerankedThisCall := false
 			if rerankClient != nil && rerankClient.Enabled() {
-				var reranked bool
-				results, reranked, err = sp.SearchByTextWithRerank(context.Background(), coll, sq, req.TopK)
-				if reranked {
-					wasReranked = true
-				}
+				results, rerankedThisCall, err = sp.SearchByTextWithRerank(context.Background(), coll, sq, req.TopK)
 			} else {
 				results, err = sp.SearchByText(context.Background(), coll, sq, req.TopK)
 			}
@@ -411,7 +412,7 @@ func chunksSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
 					"score":      r.Score,
 					"collection": coll,
 					"metadata":   json.RawMessage(r.Metadata),
-					"reranked":   wasReranked,
+					"reranked":   rerankedThisCall,
 				})
 			}
 		}

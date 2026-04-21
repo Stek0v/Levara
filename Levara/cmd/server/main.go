@@ -711,6 +711,7 @@ func main() {
 				grpc.ChainStreamInterceptor(
 					vectorGrpc.StreamAuthInterceptor(authCfg.JWTSecret, *requireAuth),
 					vectorGrpc.StreamRateLimitInterceptor(grpcLimiters),
+					vectorGrpc.MetricsStreamInterceptor(),
 				),
 			)
 			pb.RegisterCognevraServiceServer(grpcServer, grpcSvc)

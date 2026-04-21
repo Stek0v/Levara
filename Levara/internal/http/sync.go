@@ -169,14 +169,27 @@ func syncImportMemoriesHandler(cfg APIConfig) fiber.Handler {
 
 		metrics.SyncOperations.WithLabelValues("import", "memories", "ok").Add(float64(imported))
 
-		// Auto re-embed imported memories into _memories vector collection
+		// Auto re-embed imported memories into _memories vector collection.
+		// A.4 (20.04 review backlog): wrap fire-and-forget goroutine in
+		// recover so a single bad metadata blob can't take the goroutine
+		// down silently — the original "continue on error" loop covered
+		// embed failures but not panics from json.Marshal / Insert paths.
 		embedded := 0
 		if imported > 0 && cfg.EmbedEndpoint != "" && cfg.Collections != nil {
+			embedClient := cfg.EmbedClient
+			if embedClient == nil {
+				embedClient = embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 3)
+			}
+			memoriesSnapshot := memories
 			go func() {
-				embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 3)
+				defer func() {
+					if r := recover(); r != nil {
+						log.Printf("[sync] auto re-embed panic recovered: %v", r)
+					}
+				}()
 				ctx := context.Background()
 
-				for _, m := range memories {
+				for _, m := range memoriesSnapshot {
 					text := m.Key + " " + m.Value
 					vec, err := embedClient.EmbedSingle(ctx, text)
 					if err != nil {
@@ -194,7 +207,7 @@ func syncImportMemoriesHandler(cfg APIConfig) fiber.Handler {
 						embedded++
 					}
 				}
-				log.Printf("[sync] auto re-embed: %d/%d memories embedded into vector index", embedded, len(memories))
+				log.Printf("[sync] auto re-embed: %d/%d memories embedded into vector index", embedded, len(memoriesSnapshot))
 			}()
 		}
 
@@ -505,9 +518,19 @@ func syncImportCollectionHandler(cfg APIConfig) fiber.Handler {
 		batchSize := 50
 
 		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("[sync] collection import panic recovered run=%s: %v", runID, r)
+					status.Status = "FAILED"
+					status.Message = fmt.Sprintf("panic: %v", r)
+				}
+			}()
 			start := time.Now()
 			ctx := context.Background()
 
+			// Custom batch size means we keep constructing a one-off
+			// client here — production-shared cfg.EmbedClient uses
+			// batchSize=16 which is wrong for the bulk re-embed path.
 			embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, batchSize, 3)
 
 			// Auto-detect target dimension
