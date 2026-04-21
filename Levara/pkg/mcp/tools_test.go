@@ -90,10 +90,22 @@ func TestToolDescriptors_JSONMarshalsCleanly(t *testing.T) {
 // prose, doctor human-readable report) aren't required to have one.
 func TestToolDescriptors_OutputSchemaCoverage(t *testing.T) {
 	mustHaveSchema := []string{
+		// Original 18 (T14):
 		"cognify", "search", "cognify_status", "list_data", "delete",
 		"prune", "list_communities", "add", "save_memory", "recall_memory",
 		"list_memories", "wake_up", "pin_memory", "unpin_memory",
 		"query_entity", "cross_search", "sync", "get_feedback_stats",
+		// Docs polish (post-20.04): the previously plain-text tools
+		// gained schemas so MCP clients can validate every structured
+		// response. analyze_commits / git_search / codify produce search-
+		// shaped output; check_drift / prune_graph / doctor / heartbeat
+		// produce status / event lists; the chat + diary surfaces are
+		// the missing read paths from F-4 wave 3o.
+		"check_drift", "prune_graph", "analyze_commits", "git_search",
+		"diary_write", "diary_read",
+		"save_chat", "recall_chat", "search_chats",
+		"get_project_context", "set_context", "add_feedback",
+		"codify", "doctor", "heartbeat",
 	}
 	byName := make(map[string]Tool)
 	for _, tool := range ToolDescriptors() {

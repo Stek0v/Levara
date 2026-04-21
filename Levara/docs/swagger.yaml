@@ -45,6 +45,54 @@ definitions:
       updated_at:
         type: string
     type: object
+  http.SettingsDTO:
+    properties:
+      chunk_size:
+        type: integer
+      chunk_strategy:
+        type: string
+      embedding_dimension:
+        type: integer
+      embedding_endpoint:
+        type: string
+      embedding_model:
+        type: string
+      embedding_provider:
+        type: string
+      graph_database:
+        type: string
+      graph_engine:
+        type: string
+      graph_url:
+        type: string
+      llm_api_key:
+        type: string
+      llm_endpoint:
+        type: string
+      llm_model:
+        type: string
+      llm_provider:
+        type: string
+      vector_engine:
+        type: string
+    type: object
+  http.UserDTO:
+    properties:
+      created_at:
+        type: string
+      email:
+        type: string
+      id:
+        type: string
+      is_active:
+        type: boolean
+      is_superuser:
+        type: boolean
+      is_verified:
+        type: boolean
+      updated_at:
+        type: string
+    type: object
   runreg.Status:
     properties:
       chunks_created:
@@ -339,6 +387,187 @@ paths:
       summary: Delete a dataset (idempotent)
       tags:
       - datasets
+  /feedback:
+    get:
+      parameters:
+      - description: Max rows (default 50, max 200)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              additionalProperties: true
+              type: object
+            type: array
+      security:
+      - BearerAuth: []
+      summary: List recent feedback rows
+      tags:
+      - feedback
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: query, rating (1-5), optional result_id, search_type, comment
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: missing query or rating
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Rate a search result
+      tags:
+      - feedback
+  /feedback/stats:
+    get:
+      parameters:
+      - description: Filter stats by collection
+        in: query
+        name: collection
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: total, avg_rating, worst_query
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Aggregate feedback statistics
+      tags:
+      - feedback
+  /memories:
+    get:
+      parameters:
+      - description: 'Optional filter: user | project | feedback'
+        in: query
+        name: type
+        type: string
+      - description: Optional collection scope
+        in: query
+        name: collection
+        type: string
+      - description: Optional sub-topic filter
+        in: query
+        name: room
+        type: string
+      - description: Optional genre filter
+        in: query
+        name: hall
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              additionalProperties: true
+              type: object
+            type: array
+      security:
+      - BearerAuth: []
+      summary: List project memories
+      tags:
+      - memories
+    post:
+      consumes:
+      - application/json
+      description: Mirror of the MCP `save_memory` tool — same key/value/hall vocab,
+        same per-collection scoping. Used by the WebUI memory page.
+      parameters:
+      - description: key + value, optional type/room/hall/collection
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: missing key or value
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Save a project memory
+      tags:
+      - memories
+  /memories/{key}:
+    delete:
+      parameters:
+      - description: Memory key
+        in: path
+        name: key
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: boolean
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete a memory by key (idempotent)
+      tags:
+      - memories
+    get:
+      parameters:
+      - description: Memory key
+        in: path
+        name: key
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: key not found
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Fetch a single memory by key
+      tags:
+      - memories
   /prune/data:
     post:
       produces:
@@ -447,6 +676,160 @@ paths:
       summary: Unified search entry point
       tags:
       - search
+  /settings:
+    get:
+      description: Theme, locale, LLM/embed config, and any backend-stored UI preferences.
+        The WebUI hydrates from this on session start (T9). Falls back to defaults
+        derived from env when the user has nothing persisted.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/http.SettingsDTO'
+      security:
+      - BearerAuth: []
+      summary: Read user settings
+      tags:
+      - settings
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: Partial settings (omitted fields fall back to env defaults)
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/http.SettingsDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/http.SettingsDTO'
+        "400":
+          description: invalid settings
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update user settings
+      tags:
+      - settings
+  /users:
+    get:
+      parameters:
+      - description: Exact email
+        in: query
+        name: email
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/http.UserDTO'
+        "400":
+          description: email query parameter required
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: no user with that email
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Look up a user by email
+      tags:
+      - users
+  /users/me:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/http.UserDTO'
+        "401":
+          description: no user_id in context
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Return the authenticated user's full record
+      tags:
+      - users
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: email + username
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/http.UserDTO'
+        "400":
+          description: invalid body
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update the caller's profile
+      tags:
+      - users
+  /users/me/password:
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: current_password + new_password
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: missing fields
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: current_password mismatch
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Change the caller's password
+      tags:
+      - users
 schemes:
 - http
 - https

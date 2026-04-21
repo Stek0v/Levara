@@ -14,6 +14,19 @@ func RegisterFeedbackAPI(app fiber.Router, cfg APIConfig) {
 	app.Get("/feedback", feedbackListHandler(cfg))
 }
 
+// feedbackSubmitHandler — POST /feedback. Stores a 1-5 rating against a
+// (query, result_id, search_type) triple. The adaptive router uses these
+// scores to learn per-strategy weight adjustments.
+//
+// @Summary     Rate a search result
+// @Tags        feedback
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       body body object true "query, rating (1-5), optional result_id, search_type, comment"
+// @Success     200 {object} map[string]any
+// @Failure     400 {object} map[string]any "missing query or rating"
+// @Router      /feedback [post]
 func feedbackSubmitHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		var req struct {
@@ -54,6 +67,16 @@ func feedbackSubmitHandler(cfg APIConfig) fiber.Handler {
 	}
 }
 
+// feedbackStatsHandler — GET /feedback/stats. Aggregated metrics over
+// all submitted feedback rows; the WebUI Analytics page consumes this.
+//
+// @Summary     Aggregate feedback statistics
+// @Tags        feedback
+// @Produce     json
+// @Security    BearerAuth
+// @Param       collection query string false "Filter stats by collection"
+// @Success     200 {object} map[string]any "total, avg_rating, worst_query"
+// @Router      /feedback/stats [get]
 func feedbackStatsHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		if cfg.DB == nil {
@@ -87,6 +110,15 @@ func feedbackStatsHandler(cfg APIConfig) fiber.Handler {
 	}
 }
 
+// feedbackListHandler — GET /feedback. Paginated raw feedback rows.
+//
+// @Summary     List recent feedback rows
+// @Tags        feedback
+// @Produce     json
+// @Security    BearerAuth
+// @Param       limit query int false "Max rows (default 50, max 200)"
+// @Success     200 {array} map[string]any
+// @Router      /feedback [get]
 func feedbackListHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		if cfg.DB == nil {

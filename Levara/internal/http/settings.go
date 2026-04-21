@@ -33,6 +33,15 @@ type SettingsDTO struct {
 // userSettings stores per-user overrides (in-memory, keyed by user_id).
 var userSettings sync.Map // user_id → *SettingsDTO
 
+// settingsGetHandler — GET /settings.
+//
+// @Summary     Read user settings
+// @Description Theme, locale, LLM/embed config, and any backend-stored UI preferences. The WebUI hydrates from this on session start (T9). Falls back to defaults derived from env when the user has nothing persisted.
+// @Tags        settings
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200 {object} SettingsDTO
+// @Router      /settings [get]
 func settingsGetHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		userID, _ := c.Locals("user_id").(string)
@@ -63,6 +72,19 @@ func settingsGetHandler(cfg APIConfig) fiber.Handler {
 	}
 }
 
+// settingsPutHandler — PUT /settings. Merges request body over current
+// settings, persists to DB, and updates the in-memory cache that
+// settingsGet reads.
+//
+// @Summary     Update user settings
+// @Tags        settings
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       body body SettingsDTO true "Partial settings (omitted fields fall back to env defaults)"
+// @Success     200 {object} SettingsDTO
+// @Failure     400 {object} map[string]any "invalid settings"
+// @Router      /settings [put]
 func settingsPutHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		userID, _ := c.Locals("user_id").(string)

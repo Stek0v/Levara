@@ -17,6 +17,19 @@ func RegisterMemoryAPI(app fiber.Router, cfg APIConfig) {
 	app.Delete("/memories/:key", deleteMemoryHandler(cfg))
 }
 
+// saveMemoryHandler — POST /memories. Stores a key/value memory with
+// optional type/room/hall metadata for filtered retrieval.
+//
+// @Summary     Save a project memory
+// @Description Mirror of the MCP `save_memory` tool — same key/value/hall vocab, same per-collection scoping. Used by the WebUI memory page.
+// @Tags        memories
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       body body object true "key + value, optional type/room/hall/collection"
+// @Success     200 {object} map[string]any
+// @Failure     400 {object} map[string]any "missing key or value"
+// @Router      /memories [post]
 func saveMemoryHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		var req struct {
@@ -69,6 +82,18 @@ func saveMemoryHandler(cfg APIConfig) fiber.Handler {
 	}
 }
 
+// listMemoriesHandler — GET /memories.
+//
+// @Summary     List project memories
+// @Tags        memories
+// @Produce     json
+// @Security    BearerAuth
+// @Param       type       query string false "Optional filter: user | project | feedback"
+// @Param       collection query string false "Optional collection scope"
+// @Param       room       query string false "Optional sub-topic filter"
+// @Param       hall       query string false "Optional genre filter"
+// @Success     200 {array} map[string]any
+// @Router      /memories [get]
 func listMemoriesHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		if cfg.DB == nil {
@@ -107,6 +132,16 @@ func listMemoriesHandler(cfg APIConfig) fiber.Handler {
 	}
 }
 
+// getMemoryHandler — GET /memories/:key.
+//
+// @Summary     Fetch a single memory by key
+// @Tags        memories
+// @Produce     json
+// @Security    BearerAuth
+// @Param       key path string true "Memory key"
+// @Success     200 {object} map[string]any
+// @Failure     404 {object} map[string]any "key not found"
+// @Router      /memories/{key} [get]
 func getMemoryHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		key := c.Params("key")
@@ -130,6 +165,16 @@ func getMemoryHandler(cfg APIConfig) fiber.Handler {
 	}
 }
 
+// deleteMemoryHandler — DELETE /memories/:key. Idempotent — missing key
+// still returns 200 to keep retries safe.
+//
+// @Summary     Delete a memory by key (idempotent)
+// @Tags        memories
+// @Produce     json
+// @Security    BearerAuth
+// @Param       key path string true "Memory key"
+// @Success     200 {object} map[string]bool
+// @Router      /memories/{key} [delete]
 func deleteMemoryHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		key := c.Params("key")
