@@ -1,0 +1,147 @@
+// cognevra_v2.proto — next-generation Cognevra gRPC API (T10).
+//
+// Design goals:
+//   1. Fix the naming drift that made v1 confusing (Insert vs Add vs Save
+//      vs Create). v2 keeps Insert as the canonical write and exposes
+//      Add/Save/Create as `deprecated=true` aliases so clients can migrate
+//      one RPC at a time — per 20.04-tasks.md D12.
+//   2. Introduce a typed ErrorDetail so clients can distinguish validation
+//      errors from auth errors from backend errors without parsing the
+//      status message string.
+//   3. Reserve field numbers in every message so renaming a field later
+//      doesn't accidentally reuse a wire tag that older clients still know.
+//
+// v1 stays active for 3 months post-v2-launch (D11). Both services are
+// registered on the same port; a v2-aware client picks its flavour via
+// the service name, a v1 client sees v2 as not-implemented.
+//
+// This file is authored but NOT yet code-generated in this commit. Run
+// `make proto` once protoc-gen-go is wired into CI; in the meantime the
+// file serves as the reviewable contract.
+syntax = "proto3";
+package cognevra.v2;
+option go_package = "github.com/stek0v/cognevra/proto/pb/v2";
+
+// ── Error model ────────────────────────────────────────────────────
+//
+// Every v2 response that can fail carries an optional ErrorDetail in
+// addition to the gRPC status code. Clients inspect Code to branch on
+// categories; Details carries key/value pairs specific to each category
+// (e.g. field="vector" for validation, retry_after="60" for rate-limit).
+message ErrorDetail {
+  int32 code = 1;
+  string message = 2;
+  map<string, string> details = 3;
+}
+
+// Reserved field numbers below 50 are for canonical fields; 50-100 is
+// reserved in every message so new fields added later don't risk wire
+// collision with deprecated v1 tags clients may still send.
+// ──────────────────────────────────────────────────────────────────
+
+service CognevraServiceV2 {
+  // Reserved method slots for future additions. Do NOT recycle removed
+  // method names onto these — register a new name instead.
+  // (gRPC has no `reserved` at the service level, but the spec-in-comment
+  // is honoured by our own review process.)
+
+  // Records — canonical.
+  rpc Insert(InsertReq) returns (InsertResp);
+
+  // Records — aliases. All three delegate to Insert on the server. Left
+  // in place for v1 migration so clients who built around Add/Save/Create
+  // don't have to rename their generated code on day one.
+  rpc Add(InsertReq)    returns (InsertResp) { option deprecated = true; }
+  rpc Save(InsertReq)   returns (InsertResp) { option deprecated = true; }
+  rpc Create(InsertReq) returns (InsertResp) { option deprecated = true; }
+
+  rpc BatchInsert(BatchInsertReq) returns (BatchInsertResp);
+  rpc Delete(DeleteReq)           returns (DeleteResp);
+  rpc Search(SearchReq)           returns (SearchResp);
+
+  // Info — public, not auth-gated.
+  rpc Info(InfoReq) returns (InfoResp);
+}
+
+message InsertReq {
+  reserved 50 to 100;
+  string collection = 1;
+  string id = 2;
+  repeated float vector = 3;
+  bytes metadata_json = 4;
+}
+
+message InsertResp {
+  reserved 50 to 100;
+  bool ok = 1;
+  ErrorDetail error = 2;
+}
+
+message BatchInsertReq {
+  reserved 50 to 100;
+  string collection = 1;
+  repeated InsertItem items = 2;
+}
+
+message InsertItem {
+  reserved 50 to 100;
+  string id = 1;
+  repeated float vector = 2;
+  bytes metadata_json = 3;
+}
+
+message BatchInsertResp {
+  reserved 50 to 100;
+  int32 inserted = 1;
+  int32 failed = 2;
+  repeated BatchInsertFailure failures = 3;
+  ErrorDetail error = 4;
+}
+
+message BatchInsertFailure {
+  reserved 50 to 100;
+  string id = 1;
+  ErrorDetail error = 2;
+}
+
+message DeleteReq {
+  reserved 50 to 100;
+  string collection = 1;
+  repeated string ids = 2;
+}
+
+message DeleteResp {
+  reserved 50 to 100;
+  int32 deleted = 1;
+  int32 failed = 2;
+  ErrorDetail error = 3;
+}
+
+message SearchReq {
+  reserved 50 to 100;
+  string collection = 1;
+  repeated float vector = 2;
+  int32 top_k = 3;
+}
+
+message SearchResp {
+  reserved 50 to 100;
+  repeated SearchResult results = 1;
+  ErrorDetail error = 2;
+}
+
+message SearchResult {
+  reserved 50 to 100;
+  string id = 1;
+  float score = 2;
+  bytes metadata_json = 3;
+}
+
+message InfoReq {}
+
+message InfoResp {
+  reserved 50 to 100;
+  int32 dimension = 1;
+  int32 shards = 2;
+  string version = 3;
+}

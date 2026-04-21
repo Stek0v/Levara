@@ -26,6 +26,20 @@ import (
 	"github.com/stek0v/cognevra/pkg/runreg"
 )
 
+// cognifyHandler — POST /cognify. Kicks off an async pipeline and returns
+// a run ID immediately; progress is available via /cognify/:id/status
+// (polling) or /cognify/:id/stream (SSE).
+//
+// @Summary     Start a cognify pipeline run
+// @Description Transforms text into chunks + embeddings + (optional) graph. Body may provide inline texts[] or reference datasets[] whose raw files are loaded from disk. rag mode skips graph extraction.
+// @Tags        cognify
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       body body object true "datasets | datasetIds | texts, optional llm_model, collection, session_id"
+// @Success     200 {object} map[string]string "status + pipeline_run_id"
+// @Failure     400 {object} map[string]any "no texts to cognify"
+// @Router      /cognify [post]
 func cognifyHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		var req struct {
@@ -246,6 +260,16 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 	}
 }
 
+// cognifyStatusHandler — GET /cognify/:runId/status (one-shot poll).
+//
+// @Summary     Poll the status of a cognify run
+// @Tags        cognify
+// @Produce     json
+// @Security    BearerAuth
+// @Param       runId path string true "Run ID returned by POST /cognify"
+// @Success     200 {object} runreg.Status
+// @Failure     404 {object} map[string]any "run not found"
+// @Router      /cognify/{runId}/status [get]
 func cognifyStatusHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		runID := c.Params("runId")
@@ -259,6 +283,17 @@ func cognifyStatusHandler(cfg APIConfig) fiber.Handler {
 // cognifyStreamHandler streams pipeline progress via Server-Sent Events (SSE).
 // GET /cognify/:runId/stream
 // React frontend: const es = new EventSource("/api/v1/cognify/{runId}/stream")
+// cognifyStreamHandler — GET /cognify/:runId/stream (SSE).
+//
+// @Summary     Stream cognify progress via Server-Sent Events
+// @Description Emits event:progress updates every 500ms while the run is RUNNING, then event:done with the terminal payload. Client should disconnect after the done event.
+// @Tags        cognify
+// @Produce     text/event-stream
+// @Security    BearerAuth
+// @Param       runId path string true "Run ID returned by POST /cognify"
+// @Success     200 {string} string "SSE stream"
+// @Failure     404 {object} map[string]any "run not found"
+// @Router      /cognify/{runId}/stream [get]
 func cognifyStreamHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		runID := c.Params("runId")

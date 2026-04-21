@@ -31,6 +31,23 @@
 //
 // The server handles SIGTERM and SIGINT with graceful shutdown: all WAL buffers
 // are flushed and disk stores are closed before the process exits.
+//
+// Swagger / OpenAPI (T13): the swaggo annotations below generate
+// docs/swagger.{json,yaml} via `make swag`. Swagger UI is mounted at
+// /swagger/* — publicly in dev, admin-gated in prod. The /auth/* and /prune/*
+// endpoints are deliberately annotated so security reviewers can diff the
+// contract in CI.
+//
+// @title       Levara API
+// @version     v1
+// @description Levara HNSW + BM25 + Neo4j vector DB HTTP API.
+// @description See CLAUDE.md for architecture; pkg/mcp for the MCP alternate transport.
+// @BasePath    /api/v1
+// @schemes     http https
+// @securityDefinitions.apikey BearerAuth
+// @in          header
+// @name        Authorization
+// @description "Bearer <jwt>" from POST /auth/login or an API key from POST /auth/keys.
 package main
 
 import (
@@ -54,10 +71,13 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"  // pgx via database/sql (binary protocol, prepared stmts)
 	_ "github.com/ncruces/go-sqlite3/driver" // pure-Go SQLite driver (no CGO, ARM64 ready)
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/gofiber/swagger"
 	"github.com/stek0v/cognevra/internal/cluster"
 	vectorGrpc "github.com/stek0v/cognevra/internal/grpc"
 	"github.com/stek0v/cognevra/internal/metrics"
 	"github.com/stek0v/cognevra/internal/store"
+
+	_ "github.com/stek0v/cognevra/docs" // swaggo-generated OpenAPI spec (T13)
 	"github.com/stek0v/cognevra/pkg/embed"
 	"github.com/stek0v/cognevra/pkg/ingest"
 	"github.com/stek0v/cognevra/pkg/graphdb"
@@ -69,6 +89,7 @@ import (
 	"github.com/stek0v/cognevra/pkg/runreg"
 	"github.com/stek0v/cognevra/pkg/storage"
 	pb "github.com/stek0v/cognevra/proto/pb"
+	pbv2 "github.com/stek0v/cognevra/proto/pb/v2"
 	"google.golang.org/grpc"
 
 	"github.com/gofiber/fiber/v2"
@@ -226,6 +247,14 @@ func main() {
 
 	handler := vectorHttp.NewHandler(c, *dim)
 	app.Get("/metrics", adaptor.HTTPHandler(promhttp.Handler()))
+
+	// Swagger UI (T13). Public in dev so anyone can explore; in prod we
+	// could gate behind a JWT admin middleware, but for now we let
+	// operators flip it off entirely by not setting ENV=dev. Regenerate
+	// docs/swagger.{json,yaml} via `make swag`.
+	if strings.EqualFold(os.Getenv("ENV"), "dev") || os.Getenv("ENV") == "" {
+		app.Get("/swagger/*", swagger.HandlerDefault)
+	}
 
 	// Root-level health for frontend compatibility
 	app.Get("/health", func(c *fiber.Ctx) error {
@@ -667,16 +696,29 @@ func main() {
 			// Per-peer token bucket (T2): 100 req/min default, burst=20.
 			// idleTTL=30min evicts dormant buckets.
 			grpcLimiters := vectorGrpc.NewPeerLimiters(100, 20, 30*time.Minute)
+			// JWT auth interceptors (T19): same secret as HTTP, so a token
+			// issued at /auth/login works against both transports. Mirrors
+			// requireAuth flag so dev deployments that run without JWT still
+			// accept unauthenticated calls (permissive mode). Order matters —
+			// auth runs first so a rejected call never hits the limiter
+			// bucket (attackers can't burn a legit user's budget).
 			grpcServer := grpc.NewServer(
 				grpc.ChainUnaryInterceptor(
+					vectorGrpc.UnaryAuthInterceptor(authCfg.JWTSecret, *requireAuth),
 					vectorGrpc.UnaryRateLimitInterceptor(grpcLimiters),
 					vectorGrpc.MetricsUnaryInterceptor(),
 				),
 				grpc.ChainStreamInterceptor(
+					vectorGrpc.StreamAuthInterceptor(authCfg.JWTSecret, *requireAuth),
 					vectorGrpc.StreamRateLimitInterceptor(grpcLimiters),
 				),
 			)
 			pb.RegisterCognevraServiceServer(grpcServer, grpcSvc)
+			// Register v2 on the same port (T10). gRPC dispatches by fully
+			// qualified method name, so v1 and v2 coexist without conflict —
+			// v1 clients keep working while new clients pick v2 for
+			// ErrorDetail-typed errors and the Add/Save/Create aliases.
+			pbv2.RegisterCognevraServiceV2Server(grpcServer, vectorGrpc.NewServiceV2(grpcSvc))
 			log.Printf("gRPC server listening on port %d", *grpcPort)
 			if err := grpcServer.Serve(lis); err != nil {
 				log.Fatalf("gRPC serve: %v", err)

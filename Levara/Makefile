@@ -1,4 +1,12 @@
-.PHONY: all build run test benchmark clean docker arm64 proto proto-go proto-python
+.PHONY: all build run test benchmark clean docker arm64 proto proto-go proto-python swag
+
+# Regenerate OpenAPI spec from swaggo annotations (T13).
+# Requires `go install github.com/swaggo/swag/cmd/swag@latest` once.
+# Output: docs/docs.go, docs/swagger.json, docs/swagger.yaml.
+swag:
+	@echo "Regenerating OpenAPI spec from swaggo annotations..."
+	@$$(go env GOPATH)/bin/swag init -g cmd/server/main.go -d ./ -o docs/
+	@echo "Done. Serve via /swagger/* when ENV=dev."
 
 # Variables
 BINARY_NAME=levara

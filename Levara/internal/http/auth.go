@@ -18,6 +18,8 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"golang.org/x/crypto/bcrypt"
+
+	vectorAuth "github.com/stek0v/cognevra/pkg/auth"
 )
 
 // AuthConfig holds auth settings.
@@ -29,6 +31,10 @@ type AuthConfig struct {
 
 // RegisterAuthAPI registers /auth/login and /auth/register.
 // It mutates cfg.JWTSecret in-place if empty (generates random secret).
+//
+// Swagger annotations (T13) for the endpoints registered below live
+// directly on loginHandler / registerHandler / authMeHandler below so
+// `swag init` picks them up regardless of registration order.
 func RegisterAuthAPI(app fiber.Router, cfg *AuthConfig) {
 	if cfg.JWTSecret == "" {
 		// Generate random secret if not provided
@@ -94,41 +100,35 @@ func createJWT(userID, email, secret string) string {
 	return sigInput + "." + sig
 }
 
+// verifyJWT delegates to pkg/auth.VerifyJWT so the HTTP and gRPC sides
+// share a single implementation. T19: gRPC interceptors need to verify
+// the same tokens the HTTP handlers issue; moving the logic to pkg/auth
+// lets both import it without going through internal/http (which would
+// create a package cycle for gRPC).
 func verifyJWT(token, secret string) (*jwtPayload, bool) {
-	parts := strings.SplitN(token, ".", 3)
-	if len(parts) != 3 {
+	p, ok := vectorAuth.VerifyJWT(token, secret)
+	if !ok {
 		return nil, false
 	}
-
-	// Verify signature
-	sigInput := parts[0] + "." + parts[1]
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(sigInput))
-	expectedSig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
-	if !hmac.Equal([]byte(parts[2]), []byte(expectedSig)) {
-		return nil, false
-	}
-
-	// Decode payload
-	pJSON, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return nil, false
-	}
-	var payload jwtPayload
-	if json.Unmarshal(pJSON, &payload) != nil {
-		return nil, false
-	}
-
-	// Check expiry
-	if payload.Exp < time.Now().Unix() {
-		return nil, false
-	}
-
-	return &payload, true
+	return &jwtPayload{Sub: p.Sub, Email: p.Email, Exp: p.Exp, Iat: p.Iat}, true
 }
 
 // ── Handlers ──
 
+// loginHandler handles POST /auth/login.
+//
+// @Summary     Exchange credentials for a JWT
+// @Description Accepts either form-encoded (Cognee frontend) or JSON body. On success returns a 24h HS256 JWT in the response + a secure http-only cookie.
+// @Tags        auth
+// @Accept      json
+// @Accept      x-www-form-urlencoded
+// @Produce     json
+// @Param       body body object true "email + password"
+// @Success     200  {object} map[string]string
+// @Failure     400  {object} map[string]any "Missing credentials"
+// @Failure     401  {object} map[string]any "Invalid credentials"
+// @Failure     429  {object} map[string]any "Rate-limited (shared bucket with /auth/register)"
+// @Router      /auth/login [post]
 func loginHandler(cfg AuthConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		// Support both JSON and form-encoded (Cognee frontend uses form)
@@ -185,6 +185,19 @@ func loginHandler(cfg AuthConfig) fiber.Handler {
 	}
 }
 
+// registerHandler handles POST /auth/register.
+//
+// @Summary     Create a user account
+// @Description Bcrypt-hashes the password and issues a fresh JWT on success.
+// @Tags        auth
+// @Accept      json
+// @Produce     json
+// @Param       body body object true "email + password"
+// @Success     201  {object} map[string]string
+// @Failure     400  {object} map[string]any "Missing or malformed fields"
+// @Failure     409  {object} map[string]any "Email already registered"
+// @Failure     429  {object} map[string]any "Rate-limited (shared bucket with /auth/login)"
+// @Router      /auth/register [post]
 func registerHandler(cfg AuthConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		var req struct {
@@ -239,6 +252,15 @@ func generateUUID() string {
 
 // authMeHandler returns current user from JWT token.
 // GET /auth/me — called by Cognee frontend after login to verify session.
+//
+// @Summary     Return the current user
+// @Description Validates the bearer token and returns the associated user record. Also the probe called by the WebUI auth guard on every dashboard mount (T1).
+// @Tags        auth
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200 {object} map[string]any "id, email, username"
+// @Failure     401 {object} map[string]any "Unauthenticated"
+// @Router      /auth/me [get]
 func authMeHandler(cfg AuthConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		token := ""
