@@ -4,6 +4,7 @@ package http
 
 import (
 	"database/sql"
+	"log"
 	"os"
 
 	"github.com/gofiber/fiber/v2"
@@ -64,7 +65,14 @@ func RegisterCogneeAPI(app fiber.Router, cfg APIConfig) {
 	if cfg.StoragePath == "" {
 		cfg.StoragePath = "data/uploads"
 	}
-	os.MkdirAll(cfg.StoragePath, 0755)
+	// BL-2: log MkdirAll failures so ops can see permission / disk-full
+	// issues before the first upload attempt returns a cryptic 500. We
+	// don't fail startup — readonly filesystems are a legit deployment
+	// mode (e.g. stateless replicas) and the upload handler will surface
+	// its own error when it actually tries to write.
+	if err := os.MkdirAll(cfg.StoragePath, 0755); err != nil {
+		log.Printf("[api] MkdirAll %q: %v (uploads may fail)", cfg.StoragePath, err)
+	}
 
 	// U1: Health is registered as public route in main.go (before JWT middleware)
 

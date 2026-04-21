@@ -75,3 +75,38 @@ func TestStrategyRegistry_OverrideReplacesExisting(t *testing.T) {
 		t.Errorf("Get(CHUNKS) returned the original strategy, not the override")
 	}
 }
+
+// BL-5: Register and Get must be safe to call concurrently. The goroutines
+// here hammer both sides so `go test -race` fails if the RWMutex is ever
+// removed.
+func TestStrategyRegistry_ConcurrentRegisterAndGet(t *testing.T) {
+	r := NewDefaultStrategyRegistry()
+	done := make(chan struct{})
+
+	// Readers.
+	for i := 0; i < 4; i++ {
+		go func() {
+			for j := 0; j < 500; j++ {
+				_ = r.Get("CHUNKS")
+				_ = r.Get("UNKNOWN_TYPE")
+			}
+			done <- struct{}{}
+		}()
+	}
+	// Writers.
+	for i := 0; i < 2; i++ {
+		go func(id int) {
+			for j := 0; j < 500; j++ {
+				r.Register(&countingStrategy{name: "CUSTOM"})
+			}
+			done <- struct{}{}
+		}(i)
+	}
+
+	for i := 0; i < 6; i++ {
+		<-done
+	}
+	if r.Get("CHUNKS") == nil {
+		t.Error("registry lost CHUNKS during concurrent access")
+	}
+}

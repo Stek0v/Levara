@@ -144,6 +144,7 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 			LLMConcurrency:      1,
 			EmbedEndpoint:       cfg.EmbedEndpoint,
 			EmbedModel:          cfg.EmbedModel,
+			EmbedClient:         cfg.EmbedClient, // T3 follow-up: reuse shared TCP pool through the pipeline
 			Neo4jURL:            cfg.Neo4jCfg.Neo4jURL,
 			Neo4jUser:           cfg.Neo4jCfg.Neo4jUser,
 			Neo4jPassword:       cfg.Neo4jCfg.Neo4jPassword,

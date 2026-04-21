@@ -33,9 +33,13 @@ func ontologyUploadHandler(cfg APIConfig) fiber.Handler {
 			name = file.Filename
 		}
 
-		// Save file
+		// Save file. BL-2: surface MkdirAll error instead of silently
+		// continuing; the SaveFile below would fail with a far less useful
+		// message.
 		ontDir := filepath.Join(cfg.StoragePath, "ontologies")
-		os.MkdirAll(ontDir, 0755)
+		if err := os.MkdirAll(ontDir, 0755); err != nil {
+			return c.Status(500).JSON(fiber.Map{"detail": "mkdir: " + err.Error()})
+		}
 		savePath := filepath.Join(ontDir, file.Filename)
 
 		src, err := file.Open()

@@ -21,6 +21,8 @@
 package http
 
 import (
+	"sync"
+
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -37,7 +39,14 @@ type SearchStrategy interface {
 // StrategyRegistry maps query_type strings to strategy implementations.
 // Lookups fall back to a default strategy (CHUNKS) when the query_type
 // is unknown, matching the pre-T5 switch behaviour.
+//
+// All access goes through the embedded RWMutex (BL-5). In practice
+// Register is only called at startup from main and Get is hot-path
+// read-only, but treating the registry as genuinely concurrent-safe
+// removes a class of "works on my laptop, races on CI" bugs and lets
+// tests do `r.Register(stub)` from goroutines without ceremony.
 type StrategyRegistry struct {
+	mu       sync.RWMutex
 	m        map[string]SearchStrategy
 	fallback SearchStrategy
 }
@@ -79,12 +88,16 @@ func NewDefaultStrategyRegistry() *StrategyRegistry {
 // most recent registration wins, which lets tests substitute stubs by
 // calling Register after NewDefaultStrategyRegistry.
 func (r *StrategyRegistry) Register(s SearchStrategy) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.m[s.Name()] = s
 }
 
 // Get returns the strategy for queryType, falling back to the default
 // (CHUNKS) when unknown. Never nil.
 func (r *StrategyRegistry) Get(queryType string) SearchStrategy {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	if s, ok := r.m[queryType]; ok {
 		return s
 	}
