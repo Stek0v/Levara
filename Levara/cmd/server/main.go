@@ -56,13 +56,8 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"net"
-	"net/http"
 	"os"
-	"os/signal"
-	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"path/filepath"
@@ -80,17 +75,11 @@ import (
 	_ "github.com/stek0v/cognevra/docs" // swaggo-generated OpenAPI spec (T13)
 	"github.com/stek0v/cognevra/pkg/embed"
 	"github.com/stek0v/cognevra/pkg/ingest"
-	"github.com/stek0v/cognevra/pkg/graphdb"
-	"github.com/stek0v/cognevra/pkg/llm"
 	"github.com/stek0v/cognevra/pkg/llmcache"
-	"github.com/stek0v/cognevra/pkg/llmproxy"
 	"github.com/stek0v/cognevra/pkg/observe"
 	"github.com/stek0v/cognevra/pkg/router"
 	"github.com/stek0v/cognevra/pkg/runreg"
 	"github.com/stek0v/cognevra/pkg/storage"
-	pb "github.com/stek0v/cognevra/proto/pb"
-	pbv2 "github.com/stek0v/cognevra/proto/pb/v2"
-	"google.golang.org/grpc"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/adaptor"
@@ -468,48 +457,9 @@ func main() {
 		defer pc.Close()
 	}
 
-	// LLM multi-provider abstraction: supports OpenAI, Ollama, Anthropic via env vars.
-	// LLM_PROVIDER: "openai" (default), "ollama", "anthropic"
-	// LLM_ENDPOINT: required for openai/ollama (e.g. http://localhost:11434/v1)
-	// LLM_API_KEY:  required for anthropic, optional for openai
-	var llmProvider llm.Provider
-	{
-		providerName := os.Getenv("LLM_PROVIDER")
-		llmEndpoint := os.Getenv("LLM_ENDPOINT")
-		llmAPIKey := os.Getenv("LLM_API_KEY")
-		if providerName != "" || llmEndpoint != "" {
-			p, err := llm.NewProvider(providerName, llmEndpoint, llmAPIKey)
-			if err != nil {
-				log.Printf("LLM provider init warning: %v (using legacy HTTP)", err)
-			} else {
-				llmProvider = p
-				log.Printf("LLM provider: %s (model=%s)", p.Name(), os.Getenv("LLM_MODEL"))
-			}
-		}
-	}
-
-	// Langfuse LLM tracing (optional): wrap provider if LANGFUSE_PUBLIC_KEY is set
-	if lfPubKey := os.Getenv("LANGFUSE_PUBLIC_KEY"); lfPubKey != "" && llmProvider != nil {
-		lfSecKey := os.Getenv("LANGFUSE_SECRET_KEY")
-		lfEndpoint := os.Getenv("LANGFUSE_ENDPOINT")
-		tracer := observe.NewLangfuseTracer(lfEndpoint, lfPubKey, lfSecKey)
-		adapter := llm.NewLangfuseAdapter(tracer)
-		llmProvider = llm.NewTracedProvider(llmProvider, adapter)
-		log.Printf("Langfuse tracing enabled (endpoint=%s)", tracer.Endpoint())
-	}
-
-	// Rate limiting (optional): LLM_RATE_LIMIT_REQUESTS + LLM_RATE_LIMIT_INTERVAL
-	if rlReqs := os.Getenv("LLM_RATE_LIMIT_REQUESTS"); rlReqs != "" {
-		maxReqs, _ := strconv.Atoi(rlReqs)
-		intervalSec, _ := strconv.Atoi(os.Getenv("LLM_RATE_LIMIT_INTERVAL"))
-		if intervalSec <= 0 {
-			intervalSec = 60
-		}
-		if maxReqs > 0 && llmProvider != nil {
-			llmProvider = llm.NewRateLimiter(llmProvider, maxReqs, time.Duration(intervalSec)*time.Second)
-			log.Printf("LLM rate limit: %d requests per %ds", maxReqs, intervalSec)
-		}
-	}
+	// LLM provider + Langfuse + outbound rate-limit are all driven by env
+	// vars; bootstrap.go owns the wiring so this file stays scannable.
+	llmProvider := initLLMProvider()
 
 	// Adaptive router weights (feedback-driven learning)
 	adaptiveWeights := router.NewAdaptiveWeights(pgDB, 0.1)
@@ -577,178 +527,29 @@ func main() {
 	})
 	log.Printf("MCP server registered at POST /mcp (7 tools)")
 
-	// Detailed health endpoint — checks all dependencies (registered after all inits)
-	app.Get("/health/details", func(ctx *fiber.Ctx) error {
-		services := fiber.Map{}
-		services["backend"] = fiber.Map{"status": "connected", "version": "levara-go", "port": *port}
-
-		if pgDB != nil {
-			if err := pgDB.Ping(); err == nil {
-				services["postgres"] = fiber.Map{"status": "connected"}
-			} else {
-				services["postgres"] = fiber.Map{"status": "error", "error": err.Error()}
-			}
-		} else {
-			services["postgres"] = fiber.Map{"status": "not_configured"}
-		}
-
-		if *neo4jURL != "" {
-			// Actually try to connect
-			neoCtx, neoCancel := context.WithTimeout(context.Background(), 3*time.Second)
-			w, neoErr := graphdb.NewWriter(neoCtx, *neo4jURL, *neo4jUser, *neo4jPassword, *neo4jDatabase)
-			if neoErr == nil {
-				w.Close(neoCtx)
-				services["neo4j"] = fiber.Map{"status": "connected", "url": *neo4jURL}
-			} else {
-				services["neo4j"] = fiber.Map{"status": "unreachable", "url": *neo4jURL, "error": neoErr.Error()}
-			}
-			neoCancel()
-		} else {
-			services["neo4j"] = fiber.Map{"status": "not_configured"}
-		}
-
-		if embedEndpoint != "" {
-			// Derive base URL from embed endpoint (strip /v1/embeddings or similar suffix)
-			embedBase := embedEndpoint
-			for _, suffix := range []string{"/v1/embeddings", "/v1/embed", "/api/embed", "/api/embeddings", "/embeddings"} {
-				if strings.HasSuffix(embedBase, suffix) {
-					embedBase = strings.TrimSuffix(embedBase, suffix)
-					break
-				}
-			}
-			if embedBase == "" {
-				embedBase = embedEndpoint
-			}
-			// Try health check on base URL
-			embedOk := false
-			for _, path := range []string{"/api/tags", "/health", "/v1/models", ""} {
-				resp, err := http.Get(embedBase + path)
-				if err == nil {
-					resp.Body.Close()
-					if resp.StatusCode == 200 {
-						embedOk = true
-						break
-					}
-				}
-			}
-			if embedOk {
-				services["embed"] = fiber.Map{"status": "connected", "endpoint": embedEndpoint, "model": embedModel}
-			} else {
-				services["embed"] = fiber.Map{"status": "unreachable", "endpoint": embedEndpoint, "model": embedModel}
-			}
-		} else {
-			services["embed"] = fiber.Map{"status": "not_configured"}
-		}
-
-		llmEP := os.Getenv("LLM_ENDPOINT")
-		llmMD := os.Getenv("LLM_MODEL")
-		if llmEP != "" {
-			resp, err := http.Get(llmEP + "/models")
-			if err == nil {
-				resp.Body.Close()
-				services["llm"] = fiber.Map{"status": "connected", "endpoint": llmEP, "model": llmMD}
-			} else {
-				services["llm"] = fiber.Map{"status": "unreachable", "endpoint": llmEP, "model": llmMD}
-			}
-		} else {
-			services["llm"] = fiber.Map{"status": "not_configured"}
-		}
-
-		// Rate limiter status
-		if rl, ok := llmProvider.(*llm.RateLimiter); ok {
-			services["llm_rate_limit"] = fiber.Map{
-				"status":           "active",
-				"available_tokens": rl.AvailableTokens(),
-				"max_requests":     rl.MaxRequests(),
-				"interval_seconds": int(rl.Interval().Seconds()),
-			}
-		}
-
-		if whisperEndpoint := os.Getenv("WHISPER_ENDPOINT"); whisperEndpoint != "" {
-			resp, err := http.Get(whisperEndpoint + "/health")
-			if err == nil {
-				resp.Body.Close()
-				if resp.StatusCode == 200 {
-					services["whisper"] = fiber.Map{"status": "connected", "endpoint": whisperEndpoint}
-				} else {
-					services["whisper"] = fiber.Map{"status": "unreachable", "endpoint": whisperEndpoint}
-				}
-			} else {
-				services["whisper"] = fiber.Map{"status": "unreachable", "endpoint": whisperEndpoint}
-			}
-		} else {
-			services["whisper"] = fiber.Map{"status": "not_configured"}
-		}
-
-		services["collections"] = fiber.Map{"status": "ready", "count": len(colManager.List()), "dimension": *dim}
-		services["grpc"] = fiber.Map{"status": "listening", "port": *grpcPort}
-
-		return ctx.JSON(fiber.Map{"services": services})
+	// Detailed /health/details with per-dependency probes lives in
+	// bootstrap.go.
+	registerHealthDetails(app, healthDeps{
+		port:           *port,
+		grpcPort:       *grpcPort,
+		dim:            *dim,
+		pgDB:           pgDB,
+		neo4jURL:       *neo4jURL,
+		neo4jUser:      *neo4jUser,
+		neo4jPassword:  *neo4jPassword,
+		neo4jDatabase:  *neo4jDatabase,
+		embedEndpoint:  embedEndpoint,
+		embedModel:     embedModel,
+		llmProvider:    llmProvider,
+		colManager:     colManager,
 	})
 
-	// Start gRPC server (parallel to HTTP)
-	if *grpcPort > 0 {
-		go func() {
-			lis, err := net.Listen("tcp", fmt.Sprintf(":%d", *grpcPort))
-			if err != nil {
-				log.Fatalf("gRPC listen: %v", err)
-			}
-			// Per-peer token bucket (T2): 100 req/min default, burst=20.
-			// idleTTL=30min evicts dormant buckets.
-			grpcLimiters := vectorGrpc.NewPeerLimiters(100, 20, 30*time.Minute)
-			// JWT auth interceptors (T19): same secret as HTTP, so a token
-			// issued at /auth/login works against both transports. Mirrors
-			// requireAuth flag so dev deployments that run without JWT still
-			// accept unauthenticated calls (permissive mode). Order matters —
-			// auth runs first so a rejected call never hits the limiter
-			// bucket (attackers can't burn a legit user's budget).
-			grpcServer := grpc.NewServer(
-				grpc.ChainUnaryInterceptor(
-					vectorGrpc.UnaryAuthInterceptor(authCfg.JWTSecret, *requireAuth),
-					vectorGrpc.UnaryRateLimitInterceptor(grpcLimiters),
-					vectorGrpc.MetricsUnaryInterceptor(),
-				),
-				grpc.ChainStreamInterceptor(
-					vectorGrpc.StreamAuthInterceptor(authCfg.JWTSecret, *requireAuth),
-					vectorGrpc.StreamRateLimitInterceptor(grpcLimiters),
-					vectorGrpc.MetricsStreamInterceptor(),
-				),
-			)
-			pb.RegisterCognevraServiceServer(grpcServer, grpcSvc)
-			// Register v2 on the same port (T10). gRPC dispatches by fully
-			// qualified method name, so v1 and v2 coexist without conflict —
-			// v1 clients keep working while new clients pick v2 for
-			// ErrorDetail-typed errors and the Add/Save/Create aliases.
-			pbv2.RegisterCognevraServiceV2Server(grpcServer, vectorGrpc.NewServiceV2(grpcSvc))
-			log.Printf("gRPC server listening on port %d", *grpcPort)
-			if err := grpcServer.Serve(lis); err != nil {
-				log.Fatalf("gRPC serve: %v", err)
-			}
-		}()
-	}
+	// gRPC server (v1 + v2) starts in a goroutine. nil when disabled.
+	grpcServer := startGRPCServer(*grpcPort, authCfg.JWTSecret, *requireAuth, grpcSvc)
 
-	// Start LLM proxy (optional) with persistent cache
-	if *llmProxyPort > 0 && *llmUpstream != "" {
-		cachePath := *dataDir + "/" + nodeID + "/llm_cache.jsonl"
-		cache, cacheErr := llmcache.NewPersistent(*llmCacheSize, cachePath)
-		if cacheErr != nil {
-			log.Printf("LLM cache persist warning: %v (using in-memory)", cacheErr)
-			cache = &llmcache.PersistentCache{Cache: llmcache.New(*llmCacheSize, 0)}
-		}
-		defer cache.Close()
-		stop, err := llmproxy.StartBackground(
-			fmt.Sprintf(":%d", *llmProxyPort),
-			llmproxy.Config{
-				UpstreamURL: *llmUpstream,
-				Cache:       cache.Cache,
-				MaxInFlight: *llmMaxInflight,
-			},
-		)
-		if err != nil {
-			log.Fatalf("LLM proxy: %v", err)
-		}
-		defer stop()
-	}
+	// Optional LLM proxy on its own port.
+	stopProxy := startLLMProxyIfConfigured(*llmProxyPort, *llmUpstream, *dataDir, nodeID, *llmCacheSize, *llmMaxInflight)
+	defer stopProxy()
 
 	// Start replica client if joining a primary
 	if *joinAddr != "" && replServer != nil && replDB != nil {
@@ -770,47 +571,11 @@ func main() {
 	}
 	log.Printf("Levara listening on HTTP:%d gRPC:%d (dim=%d, shards=%d, mode=%s, node=%s)", *port, *grpcPort, *dim, numShards, mode, nodeID)
 
-	// Graceful shutdown: flush WAL + disk on SIGTERM/SIGINT
-	go func() {
-		sigCh := make(chan os.Signal, 1)
-		signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
-		sig := <-sigCh
-		log.Printf("Received %v, shutting down gracefully...", sig)
+	// Graceful shutdown — see bootstrap.go for the full close ordering.
+	installGracefulShutdown(app, shards, colManager, pgDB, grpcServer)
 
-		for i, shard := range shards {
-			if dn, ok := shard.(*cluster.DirectNode); ok {
-				if err := dn.DB.Close(); err != nil {
-					log.Printf("shard %d close error: %v", i, err)
-				}
-			}
-		}
-		if err := colManager.Close(); err != nil {
-			log.Printf("collection manager close: %v", err)
-		}
-		if pgDB != nil {
-			pgDB.Close()
-		}
-		log.Println("All shards flushed and closed")
-		app.Shutdown()
-	}()
-
-	// Background keep-alive ping for Ollama models (prevents model eviction)
-	if embedEndpoint != "" {
-		go func() {
-			embedClient := embed.NewClient(embedEndpoint, embedModel, 1, 1)
-			ticker := time.NewTicker(10 * time.Minute)
-			defer ticker.Stop()
-			for range ticker.C {
-				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-				_, err := embedClient.EmbedSingle(ctx, "keepalive")
-				if err != nil {
-					log.Printf("[keepalive] embed ping failed: %v", err)
-				}
-				cancel()
-			}
-		}()
-		log.Printf("Embed keep-alive started (ping every 10min)")
-	}
+	// Embed model keep-alive ticker (Ollama eviction defence).
+	startEmbedKeepAlive(embedEndpoint, embedModel)
 
 	log.Fatal(app.Listen(addr))
 }
