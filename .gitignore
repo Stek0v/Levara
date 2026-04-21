@@ -47,3 +47,17 @@ logs/
 
 # External dependencies
 cognee/
+
+# Build artifacts
+Levara/levara-server
+Levara/levara-server-arm64
+Levara/levara-arm64
+Levara/levara-cli-arm64
+Levara/levara-test
+
+# Benchmark embeddings cache (regenerated on run, 10+ MB each)
+posttests/bier/*.npz
+posttests/bier/mac_results/
+
+# Session-local memory buffer used by the `remember` skill
+.remember/
