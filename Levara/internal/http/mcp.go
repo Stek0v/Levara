@@ -212,6 +212,7 @@ func (h *mcpHandler) BaseCognifyConfig() orchestrator.Config {
 		LLMConcurrency: 1,
 		EmbedEndpoint:  h.cfg.EmbedEndpoint,
 		EmbedModel:     h.cfg.EmbedModel,
+		EmbedClient:    h.cfg.EmbedClient, // BL-1: reuse shared TCP pool inside pipeline
 		Neo4jURL:       h.cfg.Neo4jCfg.Neo4jURL,
 		Neo4jUser:      h.cfg.Neo4jCfg.Neo4jUser,
 		Neo4jPassword:  h.cfg.Neo4jCfg.Neo4jPassword,

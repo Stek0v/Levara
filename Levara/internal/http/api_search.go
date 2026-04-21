@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"unicode"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -52,6 +53,14 @@ type CogneeSearchRequest struct {
 	AllowedDatasetIDs []string `json:"-"`              // RBAC: nil = no filtering (dev mode)
 }
 
+// isQueryWordRune reports whether r is part of a meaningful query token.
+// BL-4: we used to filter with `'a' <= r && r <= 'z'`, which dropped every
+// non-ASCII letter — Cyrillic, CJK, accented Latin — so Russian queries
+// lost graph expansion entirely. unicode.IsLetter + IsDigit is the fix.
+func isQueryWordRune(r rune) bool {
+	return unicode.IsLetter(r) || unicode.IsDigit(r)
+}
+
 // extractQueryEntities finds graph entity names that match query terms.
 // Used by graphrank to compute proximity between query entities and result entities.
 func extractQueryEntities(ctx context.Context, db *sql.DB, query string) []string {
@@ -62,8 +71,10 @@ func extractQueryEntities(ctx context.Context, db *sql.DB, query string) []strin
 	var conditions []string
 	var args []any
 	for i, w := range words {
-		cleaned := strings.TrimFunc(w, func(r rune) bool { return !('a' <= r && r <= 'z') && !('0' <= r && r <= '9') })
-		if len(cleaned) > 2 {
+		cleaned := strings.TrimFunc(w, func(r rune) bool { return !isQueryWordRune(r) })
+		// Count runes, not bytes — "кот" has 3 runes but 6 bytes, and we
+		// care about lexical length here.
+		if len([]rune(cleaned)) > 2 {
 			conditions = append(conditions, fmt.Sprintf("LOWER(name) LIKE $%d", i+1))
 			args = append(args, "%"+cleaned+"%")
 		}
@@ -92,12 +103,14 @@ func expandQueryFromGraph(ctx context.Context, db *sql.DB, query string) string 
 	if db == nil || query == "" {
 		return ""
 	}
-	// Extract meaningful words (>3 chars) as potential entity name fragments
+	// Extract meaningful words (>3 runes) as potential entity name fragments.
+	// BL-4: unicode-aware filter so non-ASCII queries (Russian, CJK, etc.)
+	// still produce expansion candidates.
 	words := strings.Fields(strings.ToLower(query))
 	var searchTerms []string
 	for _, w := range words {
-		cleaned := strings.TrimFunc(w, func(r rune) bool { return !('a' <= r && r <= 'z') && !('0' <= r && r <= '9') })
-		if len(cleaned) > 3 {
+		cleaned := strings.TrimFunc(w, func(r rune) bool { return !isQueryWordRune(r) })
+		if len([]rune(cleaned)) > 3 {
 			searchTerms = append(searchTerms, cleaned)
 		}
 	}

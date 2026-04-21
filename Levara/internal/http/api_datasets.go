@@ -13,6 +13,7 @@ package http
 import (
 	"context"
 	"database/sql"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -83,8 +84,14 @@ func datasetsListHandler(cfg APIConfig) fiber.Handler {
 				 GROUP BY d.id ORDER BY d.created_at DESC`, userID)
 			rows, err = cfg.DB.QueryContext(context.Background(), dsSQL, dsArgs...)
 		}
+		// BL-3: surface SQL errors instead of returning []. Silent empty
+		// responses made bad credentials / missing tables indistinguishable
+		// from an empty dataset list — the WebUI would render "no datasets"
+		// forever instead of letting the user retry.
 		if err != nil {
-			return c.JSON([]DatasetDTO{})
+			log.Printf("[datasets] list query: %v", err)
+			return c.Status(fiber.StatusInternalServerError).
+				JSON(fiber.Map{"detail": "list datasets: " + err.Error()})
 		}
 		defer rows.Close()
 
@@ -93,6 +100,7 @@ func datasetsListHandler(cfg APIConfig) fiber.Handler {
 			var d DatasetDTO
 			var createdAt string
 			if err := rows.Scan(&d.ID, &d.Name, &createdAt, &d.OwnerID, &d.RecordCount); err != nil {
+				log.Printf("[datasets] scan row: %v", err)
 				continue
 			}
 			d.CreatedAt = createdAt
@@ -206,8 +214,12 @@ func datasetDataHandler(cfg APIConfig) fiber.Handler {
 			 COALESCE(d.data_size, 0), COALESCE(d.pipeline_status, '{}'), COALESCE(d.tags, '[]'), d.created_at
 			 FROM data d JOIN dataset_data dd ON d.id = dd.data_id
 			 WHERE dd.dataset_id = $1 ORDER BY d.created_at DESC`), dsID)
+		// BL-3: same fix as datasetsListHandler — don't silently mask SQL
+		// errors behind an empty array.
 		if err != nil {
-			return c.JSON([]DataDTO{})
+			log.Printf("[datasets] data query ds=%s: %v", dsID, err)
+			return c.Status(fiber.StatusInternalServerError).
+				JSON(fiber.Map{"detail": "load dataset data: " + err.Error()})
 		}
 		defer rows.Close()
 
@@ -215,7 +227,10 @@ func datasetDataHandler(cfg APIConfig) fiber.Handler {
 		for rows.Next() {
 			var d DataDTO
 			var createdAt string
-			rows.Scan(&d.ID, &d.Name, &d.Extension, &d.MimeType, &d.RawDataLocation, &d.DataSize, &d.PipelineStatus, &d.Tags, &createdAt)
+			if err := rows.Scan(&d.ID, &d.Name, &d.Extension, &d.MimeType, &d.RawDataLocation, &d.DataSize, &d.PipelineStatus, &d.Tags, &createdAt); err != nil {
+				log.Printf("[datasets] data scan ds=%s: %v", dsID, err)
+				continue
+			}
 			d.CreatedAt = createdAt
 			items = append(items, d)
 		}

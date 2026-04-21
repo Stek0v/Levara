@@ -54,6 +54,12 @@ type Config struct {
 	// Embedding
 	EmbedEndpoint string
 	EmbedModel    string
+	// EmbedClient reuses the process-wide *embed.Client (T3). When nil,
+	// each stage falls back to constructing its own — preserves the
+	// pre-T3 behaviour for the one-off orchestrator.Run path (tests,
+	// ad-hoc tooling) while production HTTP/MCP callers plumb the shared
+	// client through so TCP pool + TLS handshake costs amortise.
+	EmbedClient *embed.Client
 	// Neo4j
 	Neo4jURL      string
 	Neo4jUser     string
@@ -399,7 +405,10 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 
 	// --- Stage 3a: Semantic dedup (merge similar entities by name embedding) ---
 	if cfg.EmbedEndpoint != "" && len(dedupResult.Nodes) > 1 {
-		embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 3)
+		embedClient := cfg.EmbedClient
+		if embedClient == nil {
+			embedClient = embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 3)
+		}
 		names := make([]string, len(dedupResult.Nodes))
 		for i, n := range dedupResult.Nodes {
 			names[i] = n.Name
@@ -583,7 +592,10 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 		writeWg.Add(1)
 		go func() {
 			defer writeWg.Done()
-			embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 3)
+			embedClient := cfg.EmbedClient
+			if embedClient == nil {
+				embedClient = embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 3)
+			}
 
 			coll := cfg.Collection
 			if coll == "" {
@@ -849,9 +861,13 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 						Message: fmt.Sprintf("summarizing %d communities", communitiesDetected),
 						ElapsedMs: ms(start),
 					}
+					summarizeEmbed := cfg.EmbedClient
+					if summarizeEmbed == nil {
+						summarizeEmbed = embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 3)
+					}
 					sumCfg := community.SummarizeConfig{
 						LLMProvider: cfg.LLMProvider,
-						EmbedClient: embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 3),
+						EmbedClient: summarizeEmbed,
 						Collections: cfg.Collections,
 						DB:          cfg.DB,
 						LLMCache:    cfg.LLMCache,
