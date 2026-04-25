@@ -15,6 +15,8 @@ import (
 	"os"
 	"sort"
 	"sync"
+
+	"github.com/stek0v/cognevra/internal/metrics"
 )
 
 // VectroRecord is a single result returned by [Levara.Search].
@@ -162,6 +164,11 @@ func NewLevara(dim int, storagePath string, cfg ...HNSWConfig) (*Levara, error) 
 			}
 		}
 	})
+	if err != nil {
+		metrics.WALRecoveriesTotal.WithLabelValues("fail").Inc()
+	} else {
+		metrics.WALRecoveriesTotal.WithLabelValues("ok").Inc()
+	}
 	fmt.Printf("Recovered %d records (%d deleted) from WAL\n", insertCount, deleteCount)
 
 	// Start background HNSW indexer.

@@ -57,6 +57,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
@@ -88,6 +89,27 @@ import (
 
 	vectorHttp "github.com/stek0v/cognevra/internal/http"
 )
+
+// Build metadata injected via -ldflags "-X main.GitSHA=… -X main.BuildTime=…".
+// Defaults make the unset case ("go run") obvious instead of empty strings.
+var (
+	GitSHA    = "dev"
+	BuildTime = "unknown"
+)
+
+const mcpProtocolVersion = "2024-11-05"
+
+func versionPayload() fiber.Map {
+	return fiber.Map{
+		"version":    GitSHA,
+		"build_time": BuildTime,
+		"go_version": runtime.Version(),
+		"protocol_versions": fiber.Map{
+			"grpc": []string{"v1", "v2"},
+			"mcp":  mcpProtocolVersion,
+		},
+	}
+}
 
 func main() {
 	bootstrap := flag.Bool("bootstrap", false, "Bootstrap the Raft cluster (Leader only)")
@@ -250,6 +272,11 @@ func main() {
 		return c.JSON(fiber.Map{"status": "ready", "health": "healthy", "version": "levara-go"})
 	})
 
+	// Build/version probe — consumed by the Qwen3 doctor drift-assertion (349f6e1)
+	// and by ops scripts to verify the deployed git SHA without parsing /metrics.
+	versionHandler := func(c *fiber.Ctx) error { return c.JSON(versionPayload()) }
+	app.Get("/version", versionHandler)
+
 
 	// ---------------------------------------------------------------
 	// Cluster replication endpoints
@@ -287,6 +314,7 @@ func main() {
 	api.Get("/health", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "ready", "health": "healthy", "version": "levara-go"})
 	})
+	api.Get("/version", versionHandler)
 	api.Post("/checks/connection", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "connected"})
 	})
