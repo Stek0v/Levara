@@ -141,4 +141,18 @@ var (
 		Name: "levara_user_bucket_size",
 		Help: "Number of user_ids currently promoted to real labels (top-N whitelist)",
 	})
+
+	// 13. WAL recovery (T16). Eagerly registered so the series appears at 0
+	// on a clean start — operators alert on any non-zero, restart-bumped value.
+	WALRecoveriesTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "levara_wal_recoveries_total",
+		Help: "WAL recovery passes by result (ok|fail), summed across shards",
+	}, []string{"result"})
 )
+
+func init() {
+	// Force "ok" and "fail" series to materialize at 0 so /metrics never
+	// hides them just because no recovery has happened in this process.
+	WALRecoveriesTotal.WithLabelValues("ok")
+	WALRecoveriesTotal.WithLabelValues("fail")
+}

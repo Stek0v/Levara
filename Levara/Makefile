@@ -14,13 +14,18 @@ CLI_NAME=levara
 SERVER_NAME=levara-server
 DOCKER_IMAGE=levara:latest
 
+# Build metadata wired into /version via -ldflags -X main.GitSHA / main.BuildTime.
+GIT_SHA    := $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
+BUILD_TIME := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+LDFLAGS    := -X main.GitSHA=$(GIT_SHA) -X main.BuildTime=$(BUILD_TIME)
+
 all: build
 
 # --- Build ---
 
 build:
-	@echo "Building Levara..."
-	@go build -o $(SERVER_NAME) ./cmd/server/
+	@echo "Building Levara ($(GIT_SHA) @ $(BUILD_TIME))..."
+	@go build -ldflags "$(LDFLAGS)" -o $(SERVER_NAME) ./cmd/server/
 	@go build -o $(CLI_NAME) ./cmd/cli/
 	@echo "Build complete: $(SERVER_NAME), $(CLI_NAME)"
 
@@ -38,7 +43,7 @@ benchmark:
 # --- Cross-compile ---
 
 arm64:
-	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags="-s -w" -o levara-arm64 ./cmd/server/
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags="-s -w $(LDFLAGS)" -o levara-arm64 ./cmd/server/
 
 # --- Docker ---
 
