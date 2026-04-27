@@ -1,0 +1,304 @@
+# docker-compose.qwen-stack.yml — One-command 3-Qwen stack for GPU host 10.23.0.64
+#
+# Includes:
+#   • Levara (HTTP :8080, gRPC :50051) — built from ./Levara.
+#     Defaults are auth-on/production; deploy-qwen-stack.sh creates JWT_SECRET.
+#   • qwen3-embed — Qwen3-Embedding 0.6B, OpenAI /v1/embeddings, :9001
+#   • qwen3-rerank-llm — Qwen3-Reranker 0.6B chat completions, :9002
+#   • qwen3-rerank-front — Cohere-compat adapter (pkg/rerank.Qwen3Client), :9003
+#   • qwen-llm — Qwen chat model (llama-server), :11434
+#   • postgres — pgvector, :5433
+#   • prometheus — metrics, :9090
+#
+# Usage:
+#   docker compose -f docker-compose.qwen-stack.yml up -d --build
+#
+# Pre-requisites:
+#   ./models/qwen3-embedding-0.6b-q8_0.gguf
+#   ./models/qwen3-reranker-0.6b-q8_0.gguf
+#   ./models/<qwen-chat>.gguf  (see QWEN_CHAT_MODEL env)
+#   NVIDIA container runtime for GPU layers (or remove `runtime:` + `deploy:` blocks)
+
+services:
+
+  # ──────────────────────────────────────────────────────────────
+  # Levara — vector DB + BM25 + WAL + gRPC + MCP
+  # ──────────────────────────────────────────────────────────────
+  cognevra:
+    build:
+      context: ./Levara
+      dockerfile: Dockerfile
+    container_name: levara
+    ports:
+      - "8080:8080"
+      - "50051:50051"
+    environment:
+      # Auth. deploy-qwen-stack.sh generates JWT_SECRET into .env when absent.
+      JWT_SECRET: ${JWT_SECRET:-}
+      # Swagger UI is hidden unless ENV=dev is explicitly selected.
+      ENV: ${ENV:-production}
+      # DB
+      DB_PROVIDER: postgres
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USERNAME: ${POSTGRES_USER:-cognee}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-cognee}
+      DB_NAME: ${POSTGRES_DB:-cognee_db}
+      # Embedding → qwen3-embed
+      EMBEDDING_ENDPOINT: http://qwen3-embed:9001/v1/embeddings
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-qwen3-embedding-0.6b}
+      EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-1024}
+      # Reranking → qwen3-rerank-front (Cohere adapter)
+      RERANK_ENDPOINT: http://qwen3-rerank-front:9003/rerank
+      RERANK_MODEL: qwen3-reranker-0.6b
+      RERANK_TIMEOUT_MS: "5000"
+      # LLM chat → qwen-llm (llama-server)
+      LLM_ENDPOINT: http://qwen-llm:11434/v1
+      LLM_MODEL: ${LLM_MODEL:-qwen-chat}
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      LLM_API_KEY: ${LLM_API_KEY:-no-key}
+      LLM_RATE_LIMIT_REQUESTS: "10"
+      LLM_RATE_LIMIT_INTERVAL: "60"
+    command:
+      - "./levara"
+      - "-standalone=true"
+      - "-dim=${EMBEDDING_DIMENSIONS:-1024}"
+      - "-shards=${COGNEVRA_SHARDS:-3}"
+      - "-port=8080"
+      - "-grpc-port=50051"
+      - "-hnsw-m=${HNSW_M:-20}"
+      - "-hnsw-ef-mult=${HNSW_EF_MULT:-10}"
+      - "-hnsw-ef-min=${HNSW_EF_MIN:-64}"
+      - "-require-auth=${REQUIRE_AUTH:-true}"
+    volumes:
+      - levara-data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qwen3-embed:
+        condition: service_healthy
+      qwen3-rerank-front:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/metrics"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - qwen-net
+
+  # ──────────────────────────────────────────────────────────────
+  # Qwen3-Embedding — 0.6B Q8_0, OpenAI-compat /v1/embeddings
+  # Memory: ~0.65 GB VRAM
+  # ──────────────────────────────────────────────────────────────
+  qwen3-embed:
+    image: ghcr.io/ggerganov/llama.cpp:server-cuda
+    container_name: qwen3-embed
+    ports:
+      - "9001:9001"
+    volumes:
+      - ./models:/models:ro
+    command:
+      - "-m"
+      - "/models/qwen3-embedding-0.6b-q8_0.gguf"
+      - "--embedding"
+      - "--port"
+      - "9001"
+      - "--host"
+      - "0.0.0.0"
+      - "--n-gpu-layers"
+      - "${EMBED_GPU_LAYERS:-999}"
+      - "-c"
+      - "8192"
+      - "--batch-size"
+      - "64"
+      - "--parallel"
+      - "4"
+      - "--cont-batching"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:9001/v1/models"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - qwen-net
+
+  # ──────────────────────────────────────────────────────────────
+  # Qwen3-Reranker — 0.6B Q8_0, raw chat completions on :9002
+  # The Cohere-compat adapter (qwen3-rerank-front) translates calls.
+  # ──────────────────────────────────────────────────────────────
+  qwen3-rerank-llm:
+    image: ghcr.io/ggerganov/llama.cpp:server-cuda
+    container_name: qwen3-rerank-llm
+    ports:
+      - "9002:9002"
+    volumes:
+      - ./models:/models:ro
+    command:
+      - "-m"
+      - "/models/qwen3-reranker-0.6b-q8_0.gguf"
+      - "--port"
+      - "9002"
+      - "--host"
+      - "0.0.0.0"
+      - "--n-gpu-layers"
+      - "${RERANK_GPU_LAYERS:-999}"
+      - "-c"
+      - "4096"
+      - "--batch-size"
+      - "32"
+      - "--parallel"
+      - "4"
+      - "--cont-batching"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:9002/v1/models"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - qwen-net
+
+  # ──────────────────────────────────────────────────────────────
+  # Cohere-compat adapter for Qwen3-Reranker
+  # Translates {query, documents, top_n} → Cohere-shaped responses.
+  # Levara's pkg/rerank.Client talks to this on :9003.
+  # ──────────────────────────────────────────────────────────────
+  qwen3-rerank-front:
+    build:
+      context: ./Levara
+      dockerfile: Dockerfile.qwen3rerank
+    container_name: qwen3-rerank-front
+    ports:
+      - "9003:9003"
+    environment:
+      QWEN3_UPSTREAM: http://qwen3-rerank-llm:9002
+      QWEN3_MODEL: qwen3-reranker-0.6b
+      QWEN3_TIMEOUT_MS: "5000"
+      QWEN3_CONCURRENCY: "4"
+    depends_on:
+      qwen3-rerank-llm:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:9003/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks:
+      - qwen-net
+
+  # ──────────────────────────────────────────────────────────────
+  # Qwen Chat LLM — llama-server, OpenAI-compat /v1/chat/completions
+  # Used by: PicoClaw agent, Levara cognify/RAG, LLM_ENDPOINT.
+  # Default port: 11434 (ollama-compatible for tooling).
+  # Override: QWEN_CHAT_MODEL=./models/your-model.gguf
+  # Override port: LLM_PORT=8100 (if picoclaw expects :8100)
+  # ──────────────────────────────────────────────────────────────
+  qwen-llm:
+    image: ghcr.io/ggerganov/llama.cpp:server-cuda
+    container_name: qwen-llm
+    ports:
+      - "${LLM_PORT:-11434}:11434"
+    volumes:
+      - ./models:/models:ro
+    command:
+      - "-m"
+      - "/models/${QWEN_CHAT_MODEL:-qwen2.5-7b-instruct-q4_k_m.gguf}"
+      - "--port"
+      - "11434"
+      - "--host"
+      - "0.0.0.0"
+      - "--n-gpu-layers"
+      - "${LLM_GPU_LAYERS:-999}"
+      - "-c"
+      - "${LLM_CTX:-8192}"
+      - "--batch-size"
+      - "128"
+      - "--parallel"
+      - "${LLM_PARALLEL:-4}"
+      - "--cont-batching"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:11434/v1/models"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 90s
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - qwen-net
+
+  # ──────────────────────────────────────────────────────────────
+  # PostgreSQL — metadata, memories, graph fallback, auth
+  # ──────────────────────────────────────────────────────────────
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: postgres
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-cognee}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cognee}
+      POSTGRES_DB: ${POSTGRES_DB:-cognee_db}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cognee} -d ${POSTGRES_DB:-cognee_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - qwen-net
+
+  # ──────────────────────────────────────────────────────────────
+  # Prometheus — scrapes Levara metrics (:8080/metrics)
+  # ──────────────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    depends_on:
+      cognevra:
+        condition: service_healthy
+    networks:
+      - qwen-net
+
+networks:
+  qwen-net:
+    name: qwen-stack-network
+
+volumes:
+  levara-data:
+  postgres-data:

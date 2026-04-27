@@ -485,6 +485,7 @@ func main() {
 	// Shared search-strategy registry (T5) — owned by main so tests can
 	// substitute strategies without touching NewDefaultStrategyRegistry.
 	searchStrategies := vectorHttp.NewDefaultStrategyRegistry()
+	rerankCfg := rerankConfigFromEnv()
 
 	// Protected routes: Cognee-compatible API (datasets, upload, cognify, search)
 	vectorHttp.RegisterCogneeAPI(api, vectorHttp.APIConfig{
@@ -502,6 +503,9 @@ func main() {
 		ErrorTracker:     errTracker,
 		FileStorage:      fileStore,
 		Logger:           srvLog,
+		RerankEndpoint:   rerankCfg.Endpoint,
+		RerankModel:      rerankCfg.Model,
+		RerankTimeoutMs:  rerankCfg.TimeoutMs,
 		AdaptiveWeights:  adaptiveWeights,
 		Runs:             runs,
 		SearchStrategies: searchStrategies,
@@ -516,8 +520,9 @@ func main() {
 		DB:             pgDB,
 		BM25Indexes:    grpcSvc.BM25Indexes(),
 		LLMCache:       llmCache,
-		RerankEndpoint: os.Getenv("RERANK_ENDPOINT"),
-		RerankModel:    os.Getenv("RERANK_MODEL"),
+		RerankEndpoint: rerankCfg.Endpoint,
+		RerankModel:    rerankCfg.Model,
+		RerankTimeoutMs: rerankCfg.TimeoutMs,
 		Runs:           runs,
 	})
 
