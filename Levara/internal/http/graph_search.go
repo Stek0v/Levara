@@ -20,7 +20,14 @@ import (
 // graphCompletionSearch performs vector search → extract entities → graph context → LLM answer.
 func graphCompletionSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
 	if cfg.EmbedEndpoint == "" || cfg.Collections == nil {
-		return c.JSON(fiber.Map{"answer": "", "context": []any{}, "search_type": "GRAPH_COMPLETION"})
+		return c.JSON(attachSearchDebugMetadata(c, fiber.Map{
+			"answer":         "",
+			"context":        []any{},
+			"search_type":    "GRAPH_COMPLETION",
+			"confidence":     0.0,
+			"abstained":      true,
+			"abstain_reason": "embedding backend unavailable",
+		}))
 	}
 
 	ctx := context.Background()
@@ -57,6 +64,7 @@ func graphCompletionSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest)
 	}
 	// RBAC post-filter
 	vectorChunks = filterByAllowedDatasets(vectorChunks, req.AllowedDatasetIDs)
+	vectorChunks, verification := verifyScoredResults(vectorChunks, req.MinScore, req.VerifyResults)
 
 	if len(vectorChunks) > req.TopK {
 		vectorChunks = vectorChunks[:req.TopK]
@@ -76,12 +84,28 @@ func graphCompletionSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest)
 		graphContext = graphContextFromPostgres(ctx, cfg, entityNames, req.AllowedDatasetIDs)
 	}
 
+	threshold := ragAbstainThresholdFor("GRAPH_COMPLETION")
+	breakdown := buildConfidenceBreakdown(c, vectorChunks, threshold)
+	confidence := breakdown.Combined
+	evidenceIDs := extractEvidenceChunkIDs(vectorChunks, 10)
+	lowConfidence := threshold > 0 && ((len(graphContext) == 0 && len(vectorChunks) == 0) || confidence < threshold)
+	noEvidence := req.StrictGrounded && len(evidenceIDs) == 0
+	abstained := lowConfidence || noEvidence
+	abstainReason := ""
+	if noEvidence {
+		abstainReason = "strict_grounded_no_evidence"
+	} else if lowConfidence {
+		abstainReason = "low_confidence"
+	}
+
 	// Step 3: LLM completion
 	llmEndpoint := os.Getenv("LLM_ENDPOINT")
 	llmModel := os.Getenv("LLM_MODEL")
 	answer := ""
 
-	if llmEndpoint != "" && llmModel != "" && (len(graphContext) > 0 || len(vectorChunks) > 0) {
+	if abstained {
+		answer = defaultAbstainMessage
+	} else if llmEndpoint != "" && llmModel != "" && (len(graphContext) > 0 || len(vectorChunks) > 0) {
 		var contextStr string
 		if len(graphContext) > 0 {
 			contextStr = "Knowledge graph context:\n" + strings.Join(graphContext, "\n")
@@ -112,12 +136,19 @@ func graphCompletionSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest)
 
 	recordInteraction(cfg, req.SessionID, "", req.QueryText, answer, "GRAPH_COMPLETION")
 
-	return c.JSON(fiber.Map{
-		"answer":      answer,
-		"context":     graphContext,
-		"chunks":      vectorChunks,
-		"search_type": "GRAPH_COMPLETION",
-	})
+	return c.JSON(attachSearchDebugMetadata(c, fiber.Map{
+		"answer":               answer,
+		"context":              graphContext,
+		"chunks":               vectorChunks,
+		"evidence_ids":         evidenceIDs,
+		"search_type":          "GRAPH_COMPLETION",
+		"confidence":           confidence,
+		"confidence_breakdown": breakdown,
+		"abstained":            abstained,
+		"abstain_reason":       abstainReason,
+		"threshold":            threshold,
+		"verification":         verification,
+	}))
 }
 
 // contextExtensionSearch performs 2-hop graph traversal for richer context.
@@ -125,7 +156,14 @@ func graphCompletionSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest)
 // entity→neighbours→THEIR neighbours, gathering a wider knowledge context.
 func contextExtensionSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
 	if cfg.EmbedEndpoint == "" || cfg.Collections == nil {
-		return c.JSON(fiber.Map{"answer": "", "context": []any{}, "search_type": "GRAPH_COMPLETION_CONTEXT_EXTENSION"})
+		return c.JSON(attachSearchDebugMetadata(c, fiber.Map{
+			"answer":         "",
+			"context":        []any{},
+			"search_type":    "GRAPH_COMPLETION_CONTEXT_EXTENSION",
+			"confidence":     0.0,
+			"abstained":      true,
+			"abstain_reason": "embedding backend unavailable",
+		}))
 	}
 
 	ctx := context.Background()
@@ -158,6 +196,7 @@ func contextExtensionSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest
 		}
 	}
 	vectorChunks = filterByAllowedDatasets(vectorChunks, req.AllowedDatasetIDs)
+	vectorChunks, verification := verifyScoredResults(vectorChunks, req.MinScore, req.VerifyResults)
 	if len(vectorChunks) > req.TopK {
 		vectorChunks = vectorChunks[:req.TopK]
 	}
@@ -204,12 +243,28 @@ func contextExtensionSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest
 	// Merge all context
 	allContext := append(hop1Context, hop2Context...)
 
+	threshold := ragAbstainThresholdFor("GRAPH_COMPLETION_CONTEXT_EXTENSION")
+	breakdown := buildConfidenceBreakdown(c, vectorChunks, threshold)
+	confidence := breakdown.Combined
+	evidenceIDs := extractEvidenceChunkIDs(vectorChunks, 10)
+	lowConfidence := threshold > 0 && ((len(allContext) == 0 && len(vectorChunks) == 0) || confidence < threshold)
+	noEvidence := req.StrictGrounded && len(evidenceIDs) == 0
+	abstained := lowConfidence || noEvidence
+	abstainReason := ""
+	if noEvidence {
+		abstainReason = "strict_grounded_no_evidence"
+	} else if lowConfidence {
+		abstainReason = "low_confidence"
+	}
+
 	// Step 4: LLM completion with extended context
 	llmEndpoint := os.Getenv("LLM_ENDPOINT")
 	llmModel := os.Getenv("LLM_MODEL")
 	answer := ""
 
-	if llmEndpoint != "" && llmModel != "" && (len(allContext) > 0 || len(vectorChunks) > 0) {
+	if abstained {
+		answer = defaultAbstainMessage
+	} else if llmEndpoint != "" && llmModel != "" && (len(allContext) > 0 || len(vectorChunks) > 0) {
 		var contextStr string
 		if len(hop1Context) > 0 {
 			contextStr = "Direct relationships (1-hop):\n" + strings.Join(hop1Context, "\n")
@@ -245,14 +300,21 @@ func contextExtensionSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest
 
 	recordInteraction(cfg, req.SessionID, "", req.QueryText, answer, "GRAPH_COMPLETION_CONTEXT_EXTENSION")
 
-	return c.JSON(fiber.Map{
-		"answer":       answer,
-		"context_hop1": hop1Context,
-		"context_hop2": hop2Context,
-		"chunks":       vectorChunks,
-		"hops":         2,
-		"search_type":  "GRAPH_COMPLETION_CONTEXT_EXTENSION",
-	})
+	return c.JSON(attachSearchDebugMetadata(c, fiber.Map{
+		"answer":               answer,
+		"context_hop1":         hop1Context,
+		"context_hop2":         hop2Context,
+		"chunks":               vectorChunks,
+		"evidence_ids":         evidenceIDs,
+		"hops":                 2,
+		"search_type":          "GRAPH_COMPLETION_CONTEXT_EXTENSION",
+		"confidence":           confidence,
+		"confidence_breakdown": breakdown,
+		"abstained":            abstained,
+		"abstain_reason":       abstainReason,
+		"threshold":            threshold,
+		"verification":         verification,
+	}))
 }
 
 // graphContextWithTargetsNeo4j returns context strings AND target entity names (for 2nd hop).

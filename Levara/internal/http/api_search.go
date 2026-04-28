@@ -50,6 +50,10 @@ type CogneeSearchRequest struct {
 	SessionID         string   `json:"session_id"`    // Conversational memory: load prior interactions
 	Tags              []string `json:"tags"`           // Optional: filter results by metadata tags
 	Rerank            bool     `json:"rerank"`         // Optional: rerank results via cross-encoder
+	IncludeDebug      bool     `json:"include_debug"`  // Optional: envelope list responses with debug metadata
+	StrictGrounded    bool     `json:"strict_grounded"` // Optional: abstain if no evidence_ids
+	VerifyResults     bool     `json:"verify_results"` // Optional: verify metadata JSON and filter malformed rows
+	MinScore          float64  `json:"min_score"`      // Optional: drop hits below this score
 	AllowedDatasetIDs []string `json:"-"`              // RBAC: nil = no filtering (dev mode)
 }
 
@@ -323,11 +327,12 @@ func searchHandler(cfg APIConfig) fiber.Handler {
 			queryType = d.SearchType
 		}
 
-		metrics.SearchRequestsByType.WithLabelValues(queryType, source).Inc()
+			metrics.SearchRequestsByType.WithLabelValues(queryType, source).Inc()
+			c.Locals("routing_source", source)
 
-		// Store routing metadata for response enrichment
-		if routingDecision != nil {
-			c.Locals("routing_decision", routingDecision)
+			// Store routing metadata for response enrichment
+			if routingDecision != nil {
+				c.Locals("routing_decision", routingDecision)
 		}
 
 		// T5: strategy dispatch through the registry. Unknown query_type
@@ -362,7 +367,7 @@ func capabilitiesFromConfig(cfg APIConfig) router.Capabilities {
 
 func chunksSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
 	if cfg.EmbedEndpoint == "" || cfg.Collections == nil {
-		return c.JSON([]any{})
+		return respondSearchItems(c, req, "CHUNKS", []any{})
 	}
 
 	// Create reranker if requested and endpoint configured
@@ -450,12 +455,12 @@ func chunksSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
 		allResults = allResults[:req.TopK]
 	}
 
-	return c.JSON(allResults)
+	return respondSearchItems(c, req, "CHUNKS", allResults)
 }
 
 func bm25Search(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
 	if cfg.BM25Indexes == nil {
-		return c.JSON([]any{})
+		return respondSearchItems(c, req, "CHUNKS_LEXICAL", []any{})
 	}
 
 	var allResults []fiber.Map
@@ -480,12 +485,12 @@ func bm25Search(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
 	if len(allResults) > req.TopK {
 		allResults = allResults[:req.TopK]
 	}
-	return c.JSON(allResults)
+	return respondSearchItems(c, req, "CHUNKS_LEXICAL", allResults)
 }
 
 func hybridSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
 	if cfg.EmbedEndpoint == "" || cfg.Collections == nil {
-		return c.JSON([]any{})
+		return respondSearchItems(c, req, "HYBRID", []any{})
 	}
 
 	var rerankClient *rerank.Client
@@ -549,7 +554,7 @@ func hybridSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
 	if len(allResults) > req.TopK {
 		allResults = allResults[:req.TopK]
 	}
-	return c.JSON(allResults)
+	return respondSearchItems(c, req, "HYBRID", allResults)
 }
 
 func temporalSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
@@ -619,11 +624,11 @@ func temporalSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error 
 		})
 	}
 
-	return c.JSON(fiber.Map{
+	return c.JSON(attachSearchDebugMetadata(c, fiber.Map{
 		"results":         combined,
 		"extracted_dates": extractedDates,
 		"search_type":     "TEMPORAL",
-	})
+	}))
 }
 
 // temporalSearchNeo4j queries Neo4j for entities linked to TemporalEvent nodes in a date range.
@@ -738,7 +743,13 @@ func temporalSearchPostgres(ctx context.Context, cfg APIConfig, from, to time.Ti
 // Returns both raw chunks and an LLM-generated answer.
 func ragCompletionSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
 	if cfg.EmbedEndpoint == "" || cfg.Collections == nil {
-		return c.JSON(fiber.Map{"chunks": []any{}, "answer": ""})
+		return c.JSON(attachSearchDebugMetadata(c, fiber.Map{
+			"chunks":         []any{},
+			"answer":         "",
+			"confidence":     0.0,
+			"abstained":      true,
+			"abstain_reason": "embedding backend unavailable",
+		}))
 	}
 
 	// Step 1: vector search (same as chunksSearch)
@@ -767,13 +778,30 @@ func ragCompletionSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) e
 	}
 	// RBAC post-filter
 	chunks = filterByAllowedDatasets(chunks, req.AllowedDatasetIDs)
+	chunks, verification := verifyScoredResults(chunks, req.MinScore, req.VerifyResults)
+
+	threshold := ragAbstainThresholdFor("RAG_COMPLETION")
+	breakdown := buildConfidenceBreakdown(c, chunks, threshold)
+	confidence := breakdown.Combined
+	evidenceIDs := extractEvidenceChunkIDs(chunks, 10)
+	lowConfidence := threshold > 0 && (len(chunks) == 0 || confidence < threshold)
+	noEvidence := req.StrictGrounded && len(evidenceIDs) == 0
+	abstained := lowConfidence || noEvidence
+	abstainReason := ""
+	if noEvidence {
+		abstainReason = "strict_grounded_no_evidence"
+	} else if lowConfidence {
+		abstainReason = "low_confidence"
+	}
 
 	// Step 2: LLM completion using retrieved chunks as context
 	llmEndpoint := os.Getenv("LLM_ENDPOINT")
 	llmModel := os.Getenv("LLM_MODEL")
 	answer := ""
 
-	if llmEndpoint != "" && llmModel != "" && len(chunks) > 0 {
+	if abstained {
+		answer = defaultAbstainMessage
+	} else if llmEndpoint != "" && llmModel != "" && len(chunks) > 0 {
 		// Build context from chunk metadata — extract "text" field, skip entities without text
 		var contextParts []string
 		for _, chunk := range chunks {
@@ -840,16 +868,24 @@ func ragCompletionSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) e
 		}
 	}
 
-	return c.JSON(fiber.Map{
-		"chunks": chunks,
-		"answer": answer,
-	})
+	return c.JSON(attachSearchDebugMetadata(c, fiber.Map{
+		"chunks":               chunks,
+		"evidence_ids":         evidenceIDs,
+		"answer":               answer,
+		"confidence":           confidence,
+		"confidence_breakdown": breakdown,
+		"abstained":            abstained,
+		"abstain_reason":       abstainReason,
+		"threshold":            threshold,
+		"search_type":          "RAG_COMPLETION",
+		"verification":         verification,
+	}))
 }
 
 // summariesSearch searches only in summary collections (TextSummary nodes from memify).
 func summariesSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
 	if cfg.EmbedEndpoint == "" || cfg.Collections == nil {
-		return c.JSON([]any{})
+		return respondSearchItems(c, req, "SUMMARIES", []any{})
 	}
 
 	embedClient := cfg.EmbedClient
@@ -926,7 +962,7 @@ func summariesSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error
 		allResults = allResults[:req.TopK]
 	}
 
-	return c.JSON(allResults)
+	return respondSearchItems(c, req, "SUMMARIES", allResults)
 }
 
 // callLLMFromAPI is a standalone LLM call helper for search handlers.

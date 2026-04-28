@@ -38,6 +38,15 @@ func TestContextExtensionSearch_EmptyConfig(t *testing.T) {
 	if body["search_type"] != "GRAPH_COMPLETION_CONTEXT_EXTENSION" {
 		t.Errorf("search_type = %v", body["search_type"])
 	}
+	if body["abstained"] != true {
+		t.Errorf("abstained = %v, want true", body["abstained"])
+	}
+	if body["confidence"] != float64(0) {
+		t.Errorf("confidence = %v, want 0", body["confidence"])
+	}
+	if dbg, ok := body["debug"].(map[string]any); !ok || dbg["source"] != "explicit" {
+		t.Errorf("debug = %v, want source=explicit", body["debug"])
+	}
 }
 
 // Postgres path populates hop1 context via graphContextFromPostgres, but
@@ -98,6 +107,9 @@ func TestContextExtensionSearch_CallsLLMWithLabelledContext(t *testing.T) {
 	if body["answer"] != "Alice knows Bob." {
 		t.Errorf("answer = %v", body["answer"])
 	}
+	if ids, ok := body["evidence_ids"].([]any); !ok || len(ids) == 0 {
+		t.Fatalf("evidence_ids missing/empty: %#v", body["evidence_ids"])
+	}
 	prompts := llm.promptsSnapshot()
 	if len(prompts) != 1 {
 		t.Fatalf("captured %d prompts, want 1", len(prompts))
@@ -109,6 +121,45 @@ func TestContextExtensionSearch_CallsLLMWithLabelledContext(t *testing.T) {
 	// header must NOT appear when hop2 is empty.
 	if strings.Contains(prompts[0], "Extended relationships (2-hop)") {
 		t.Errorf("prompt has hop2 section with no hop2 data:\n%s", prompts[0])
+	}
+}
+
+func TestContextExtensionSearch_AbstainsAtHighThreshold(t *testing.T) {
+	env := newSearchTestEnv(t)
+	llm := &recordingLLM{responses: []string{"should not be used"}}
+	env.cfg.LLMProvider = llm
+	t.Setenv("LLM_ENDPOINT", "http://unused.test")
+	t.Setenv("LLM_MODEL", "unused-model")
+	t.Setenv("LEVARA_RAG_ABSTAIN_THRESHOLD", "0.95")
+	t.Setenv("LEVARA_RAG_ABSTAIN_THRESHOLD_GRAPH_COMPLETION_CONTEXT_EXTENSION", "0.95")
+	env.start()
+
+	vec := []float32{1, 0, 0, 0}
+	env.insertVector("entities", "e1", vec, map[string]any{"name": "Alice"})
+	env.insertNode("n1", "Alice", "Person", "")
+	env.insertNode("n2", "Bob", "Person", "")
+	env.insertEdge("r1", "n1", "n2", "KNOWS")
+
+	_, body := env.postSearch(map[string]any{
+		"query_text": "what is related to alice",
+		"query_type": "GRAPH_COMPLETION_CONTEXT_EXTENSION",
+		"collection": "entities",
+	})
+
+	if body["abstained"] != true {
+		t.Fatalf("abstained = %v, want true", body["abstained"])
+	}
+	if body["threshold"] != 0.95 {
+		t.Fatalf("threshold = %v, want 0.95", body["threshold"])
+	}
+	if _, ok := body["confidence_breakdown"].(map[string]any); !ok {
+		t.Fatalf("confidence_breakdown missing or wrong type: %#v", body["confidence_breakdown"])
+	}
+	if body["answer"] != defaultAbstainMessage {
+		t.Fatalf("answer = %v, want abstain message", body["answer"])
+	}
+	if got := len(llm.promptsSnapshot()); got != 0 {
+		t.Fatalf("llm prompts = %d, want 0 on abstain", got)
 	}
 }
 
