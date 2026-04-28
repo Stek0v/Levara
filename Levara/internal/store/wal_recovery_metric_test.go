@@ -6,7 +6,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
-	"github.com/stek0v/cognevra/internal/metrics"
+	"github.com/stek0v/levara/internal/metrics"
 )
 
 // TestWALRecoveryMetricIncrement covers T16 observability: every NewLevara
