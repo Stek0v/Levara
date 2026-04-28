@@ -10,11 +10,11 @@ import (
 	"context"
 	"database/sql"
 
-	"github.com/stek0v/cognevra/pipeline"
-	"github.com/stek0v/cognevra/pkg/llm"
-	"github.com/stek0v/cognevra/pkg/orchestrator"
-	"github.com/stek0v/cognevra/pkg/router"
-	"github.com/stek0v/cognevra/pkg/runreg"
+	"github.com/stek0v/levara/pipeline"
+	"github.com/stek0v/levara/pkg/llm"
+	"github.com/stek0v/levara/pkg/orchestrator"
+	"github.com/stek0v/levara/pkg/router"
+	"github.com/stek0v/levara/pkg/runreg"
 )
 
 // Deps is the narrow application-state surface that MCP tool

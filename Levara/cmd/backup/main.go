@@ -18,7 +18,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/stek0v/cognevra/pkg/backup"
+	"github.com/stek0v/levara/pkg/backup"
 )
 
 func main() {

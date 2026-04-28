@@ -26,16 +26,16 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 
-	"github.com/stek0v/cognevra/internal/metrics"
-	"github.com/stek0v/cognevra/pkg/bm25"
-	"github.com/stek0v/cognevra/pkg/graph"
-	"github.com/stek0v/cognevra/pkg/graphdb"
-	"github.com/stek0v/cognevra/pkg/graphrank"
-	"github.com/stek0v/cognevra/pkg/llm"
-	"github.com/stek0v/cognevra/pkg/rerank"
-	"github.com/stek0v/cognevra/pkg/router"
-	"github.com/stek0v/cognevra/pkg/temporal"
-	"github.com/stek0v/cognevra/pipeline"
+	"github.com/stek0v/levara/internal/metrics"
+	"github.com/stek0v/levara/pkg/bm25"
+	"github.com/stek0v/levara/pkg/graph"
+	"github.com/stek0v/levara/pkg/graphdb"
+	"github.com/stek0v/levara/pkg/graphrank"
+	"github.com/stek0v/levara/pkg/llm"
+	"github.com/stek0v/levara/pkg/rerank"
+	"github.com/stek0v/levara/pkg/router"
+	"github.com/stek0v/levara/pkg/temporal"
+	"github.com/stek0v/levara/pipeline"
 )
 
 // ── U5: Cognee-compatible Search ──

@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stek0v/cognevra/pkg/llmcache"
+	"github.com/stek0v/levara/pkg/llmcache"
 )
 
 // T-9 smoke tests for pkg/llmproxy.

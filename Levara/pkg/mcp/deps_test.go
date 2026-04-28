@@ -11,12 +11,12 @@ import (
 	"testing"
 
 	_ "github.com/ncruces/go-sqlite3/driver"
-	"github.com/stek0v/cognevra/pipeline"
-	"github.com/stek0v/cognevra/pkg/ingest"
-	"github.com/stek0v/cognevra/pkg/llm"
-	"github.com/stek0v/cognevra/pkg/orchestrator"
-	"github.com/stek0v/cognevra/pkg/router"
-	"github.com/stek0v/cognevra/pkg/runreg"
+	"github.com/stek0v/levara/pipeline"
+	"github.com/stek0v/levara/pkg/ingest"
+	"github.com/stek0v/levara/pkg/llm"
+	"github.com/stek0v/levara/pkg/orchestrator"
+	"github.com/stek0v/levara/pkg/router"
+	"github.com/stek0v/levara/pkg/runreg"
 )
 
 // fakeDeps is the minimum Deps implementation for unit-testing tool

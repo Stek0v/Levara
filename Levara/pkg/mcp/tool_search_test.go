@@ -7,9 +7,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/stek0v/cognevra/pipeline"
-	"github.com/stek0v/cognevra/pkg/llm"
-	"github.com/stek0v/cognevra/pkg/router"
+	"github.com/stek0v/levara/pipeline"
+	"github.com/stek0v/levara/pkg/llm"
+	"github.com/stek0v/levara/pkg/router"
 )
 
 // scoredRes builds a pipeline.ScoredResult with a {"text":"..."} metadata

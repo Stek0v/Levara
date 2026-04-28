@@ -14,8 +14,8 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/stek0v/cognevra/internal/metrics"
-	"github.com/stek0v/cognevra/pkg/embed"
+	"github.com/stek0v/levara/internal/metrics"
+	"github.com/stek0v/levara/pkg/embed"
 )
 
 // RegisterSyncAPI registers sync export/import endpoints.

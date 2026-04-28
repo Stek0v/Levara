@@ -23,9 +23,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/stek0v/cognevra/pkg/graph"
-	"github.com/stek0v/cognevra/pkg/llm"
-	"github.com/stek0v/cognevra/pkg/llmcache"
+	"github.com/stek0v/levara/pkg/graph"
+	"github.com/stek0v/levara/pkg/llm"
+	"github.com/stek0v/levara/pkg/llmcache"
 )
 
 // useStructuredOutput is the convenience accessor for the optional bool

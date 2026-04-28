@@ -10,7 +10,7 @@ package http
 import (
 	"context"
 
-	"github.com/stek0v/cognevra/pkg/mcp"
+	"github.com/stek0v/levara/pkg/mcp"
 )
 
 // Hall vocabulary, ChunkMetaMatches, and IsValidHall live in pkg/mcp now

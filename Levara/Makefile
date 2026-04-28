@@ -65,12 +65,12 @@ proto-go:
 		-Iproto \
 		--go_out=proto/pb --go_opt=paths=source_relative \
 		--go-grpc_out=proto/pb --go-grpc_opt=paths=source_relative \
-		proto/cognevra.proto
+		proto/levara.proto
 	@PATH="$$(go env GOPATH)/bin:$$PATH" protoc \
 		-Iproto \
 		--go_out=proto/pb/v2 --go_opt=paths=source_relative \
 		--go-grpc_out=proto/pb/v2 --go-grpc_opt=paths=source_relative \
-		proto/cognevra_v2.proto
+		proto/levara_v2.proto
 	@echo "Done."
 
 proto-python:
@@ -80,7 +80,7 @@ proto-python:
 		-Iproto \
 		--python_out=./generated \
 		--grpc_python_out=./generated \
-		proto/cognevra.proto proto/cognevra_v2.proto
+		proto/levara.proto proto/levara_v2.proto
 	@echo "Done."
 
 proto: proto-go proto-python

@@ -67,26 +67,26 @@ import (
 	_ "github.com/ncruces/go-sqlite3/driver" // pure-Go SQLite driver (no CGO, ARM64 ready)
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/gofiber/swagger"
-	"github.com/stek0v/cognevra/internal/cluster"
-	vectorGrpc "github.com/stek0v/cognevra/internal/grpc"
-	"github.com/stek0v/cognevra/internal/metrics"
-	"github.com/stek0v/cognevra/internal/store"
+	"github.com/stek0v/levara/internal/cluster"
+	vectorGrpc "github.com/stek0v/levara/internal/grpc"
+	"github.com/stek0v/levara/internal/metrics"
+	"github.com/stek0v/levara/internal/store"
 
-	_ "github.com/stek0v/cognevra/docs" // swaggo-generated OpenAPI spec (T13)
-	"github.com/stek0v/cognevra/pkg/embed"
-	"github.com/stek0v/cognevra/pkg/ingest"
-	"github.com/stek0v/cognevra/pkg/llmcache"
-	"github.com/stek0v/cognevra/pkg/observe"
-	"github.com/stek0v/cognevra/pkg/router"
-	"github.com/stek0v/cognevra/pkg/runreg"
-	"github.com/stek0v/cognevra/pkg/storage"
+	_ "github.com/stek0v/levara/docs" // swaggo-generated OpenAPI spec (T13)
+	"github.com/stek0v/levara/pkg/embed"
+	"github.com/stek0v/levara/pkg/ingest"
+	"github.com/stek0v/levara/pkg/llmcache"
+	"github.com/stek0v/levara/pkg/observe"
+	"github.com/stek0v/levara/pkg/router"
+	"github.com/stek0v/levara/pkg/runreg"
+	"github.com/stek0v/levara/pkg/storage"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/adaptor"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/logger"
 
-	vectorHttp "github.com/stek0v/cognevra/internal/http"
+	vectorHttp "github.com/stek0v/levara/internal/http"
 )
 
 func main() {

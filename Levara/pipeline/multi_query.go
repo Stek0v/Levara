@@ -7,7 +7,7 @@ import (
 	"log"
 	"strings"
 
-	"github.com/stek0v/cognevra/pkg/llm"
+	"github.com/stek0v/levara/pkg/llm"
 )
 
 // SearchByTextMultiQuery generates query variants via LLM,

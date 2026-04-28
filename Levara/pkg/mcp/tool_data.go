@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/stek0v/cognevra/pkg/ingest"
+	"github.com/stek0v/levara/pkg/ingest"
 )
 
 // ToolDelete deletes a dataset row by id.

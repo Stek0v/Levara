@@ -24,7 +24,7 @@ services:
   # ──────────────────────────────────────────────────────────────
   # Levara — vector DB + BM25 + WAL + gRPC + MCP
   # ──────────────────────────────────────────────────────────────
-  cognevra:
+  levara:
     build:
       context: ./Levara
       dockerfile: Dockerfile
@@ -63,7 +63,7 @@ services:
       - "./levara"
       - "-standalone=true"
       - "-dim=${EMBEDDING_DIMENSIONS:-1024}"
-      - "-shards=${COGNEVRA_SHARDS:-3}"
+      - "-shards=${LEVARA_SHARDS:-3}"
       - "-port=8080"
       - "-grpc-port=50051"
       - "-hnsw-m=${HNSW_M:-20}"
@@ -290,7 +290,7 @@ services:
       - '--storage.tsdb.retention.time=200h'
       - '--web.enable-lifecycle'
     depends_on:
-      cognevra:
+      levara:
         condition: service_healthy
     networks:
       - qwen-net

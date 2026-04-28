@@ -19,7 +19,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	vectorAuth "github.com/stek0v/cognevra/pkg/auth"
+	vectorAuth "github.com/stek0v/levara/pkg/auth"
 )
 
 // ctxUserIDKey is the context key under which an authenticated user ID
@@ -31,7 +31,7 @@ type ctxUserIDKey struct{}
 // short — every entry is a potential abuse surface. Health/Info probes
 // need to work before a client has a token.
 var publicMethods = map[string]bool{
-	"/cognevra.v1.CognevraService/Info": true,
+	"/levara.v1.LevaraService/Info": true,
 }
 
 // UserIDFromContext returns the authenticated user ID if the interceptor

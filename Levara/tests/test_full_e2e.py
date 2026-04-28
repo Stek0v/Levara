@@ -437,7 +437,7 @@ class TestCompleteness:
         except (json.JSONDecodeError, AttributeError):
             pytest.skip("No cognified data yet")
         doc_queries = {
-            "CLAUDE.md": "Cognevra benchmark vector database",
+            "CLAUDE.md": "Levara benchmark vector database",
             "per-project-collections.md": "per-project collection isolation",
             "setup-levara-workstation.md": "launchd systemd workstation setup",
         }

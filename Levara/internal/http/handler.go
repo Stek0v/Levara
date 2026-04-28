@@ -5,8 +5,8 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/stek0v/cognevra/internal/metrics"
-	"github.com/stek0v/cognevra/internal/store"
+	"github.com/stek0v/levara/internal/metrics"
+	"github.com/stek0v/levara/internal/store"
 )
 
 type Handler struct {

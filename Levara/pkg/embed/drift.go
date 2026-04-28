@@ -3,7 +3,7 @@ package embed
 import (
 	"strings"
 
-	"github.com/stek0v/cognevra/internal/store"
+	"github.com/stek0v/levara/internal/store"
 )
 
 // DriftCheckResult reports an embedding configuration mismatch for one collection.

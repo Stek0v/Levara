@@ -17,7 +17,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/limiter"
 
-	"github.com/stek0v/cognevra/internal/metrics"
+	"github.com/stek0v/levara/internal/metrics"
 )
 
 // RateLimitConfig holds tunable limits. Defaults match 20.04-tasks.md D10.

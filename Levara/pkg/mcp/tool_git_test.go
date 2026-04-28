@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stek0v/cognevra/pipeline"
-	"github.com/stek0v/cognevra/pkg/orchestrator"
+	"github.com/stek0v/levara/pipeline"
+	"github.com/stek0v/levara/pkg/orchestrator"
 )
 
 // makeGitRepo sets up a minimal git repo with two commits in a

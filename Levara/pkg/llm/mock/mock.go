@@ -15,7 +15,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/stek0v/cognevra/pkg/llm"
+	"github.com/stek0v/levara/pkg/llm"
 )
 
 // Mock is a test double for llm.Provider with scripted responses.

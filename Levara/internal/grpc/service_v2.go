@@ -1,6 +1,6 @@
 // service_v2.go — thin v2 façade over the v1 gRPC service (T10).
 //
-// The v2 wire contract (proto/cognevra_v2.proto) introduces a typed
+// The v2 wire contract (proto/levara_v2.proto) introduces a typed
 // ErrorDetail and keeps Add/Save/Create as deprecated aliases for Insert
 // so existing clients don't have to rename their generated calls on day
 // one. Rather than reimplement every handler, ServiceV2 composes the v1
@@ -11,20 +11,20 @@ package grpc
 import (
 	"context"
 
-	pbv1 "github.com/stek0v/cognevra/proto/pb"
-	pbv2 "github.com/stek0v/cognevra/proto/pb/v2"
+	pbv1 "github.com/stek0v/levara/proto/pb"
+	pbv2 "github.com/stek0v/levara/proto/pb/v2"
 )
 
-// ServiceV2 implements pbv2.CognevraServiceV2Server by delegating to an
+// ServiceV2 implements pbv2.LevaraServiceV2Server by delegating to an
 // embedded v1 Service. The v1 Service stays the source of truth for
 // storage + auth; v2 only changes the wire shape.
 type ServiceV2 struct {
-	pbv2.UnimplementedCognevraServiceV2Server
+	pbv2.UnimplementedLevaraServiceV2Server
 	v1 *Service
 }
 
 // NewServiceV2 wraps an existing v1 Service. Callers register the
-// returned value via pbv2.RegisterCognevraServiceV2Server on the same
+// returned value via pbv2.RegisterLevaraServiceV2Server on the same
 // grpc.Server used for v1 — gRPC dispatches by fully qualified method
 // name so both contracts coexist.
 func NewServiceV2(v1 *Service) *ServiceV2 {
