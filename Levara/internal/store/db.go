@@ -16,7 +16,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/stek0v/cognevra/internal/metrics"
+	"github.com/stek0v/levara/internal/metrics"
 )
 
 // VectroRecord is a single result returned by [Levara.Search].
