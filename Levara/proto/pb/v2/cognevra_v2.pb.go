@@ -23,7 +23,7 @@
 // versions:
 // 	protoc-gen-go v1.36.11
 // 	protoc        v7.34.1
-// source: proto/cognevra_v2.proto
+// source: cognevra_v2.proto
 
 package v2
 
@@ -59,7 +59,7 @@ type ErrorDetail struct {
 
 func (x *ErrorDetail) Reset() {
 	*x = ErrorDetail{}
-	mi := &file_proto_cognevra_v2_proto_msgTypes[0]
+	mi := &file_cognevra_v2_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -71,7 +71,7 @@ func (x *ErrorDetail) String() string {
 func (*ErrorDetail) ProtoMessage() {}
 
 func (x *ErrorDetail) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_cognevra_v2_proto_msgTypes[0]
+	mi := &file_cognevra_v2_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -84,7 +84,7 @@ func (x *ErrorDetail) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ErrorDetail.ProtoReflect.Descriptor instead.
 func (*ErrorDetail) Descriptor() ([]byte, []int) {
-	return file_proto_cognevra_v2_proto_rawDescGZIP(), []int{0}
+	return file_cognevra_v2_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *ErrorDetail) GetCode() int32 {
@@ -120,7 +120,7 @@ type InsertReq struct {
 
 func (x *InsertReq) Reset() {
 	*x = InsertReq{}
-	mi := &file_proto_cognevra_v2_proto_msgTypes[1]
+	mi := &file_cognevra_v2_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -132,7 +132,7 @@ func (x *InsertReq) String() string {
 func (*InsertReq) ProtoMessage() {}
 
 func (x *InsertReq) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_cognevra_v2_proto_msgTypes[1]
+	mi := &file_cognevra_v2_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -145,7 +145,7 @@ func (x *InsertReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InsertReq.ProtoReflect.Descriptor instead.
 func (*InsertReq) Descriptor() ([]byte, []int) {
-	return file_proto_cognevra_v2_proto_rawDescGZIP(), []int{1}
+	return file_cognevra_v2_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *InsertReq) GetCollection() string {
@@ -186,7 +186,7 @@ type InsertResp struct {
 
 func (x *InsertResp) Reset() {
 	*x = InsertResp{}
-	mi := &file_proto_cognevra_v2_proto_msgTypes[2]
+	mi := &file_cognevra_v2_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -198,7 +198,7 @@ func (x *InsertResp) String() string {
 func (*InsertResp) ProtoMessage() {}
 
 func (x *InsertResp) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_cognevra_v2_proto_msgTypes[2]
+	mi := &file_cognevra_v2_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -211,7 +211,7 @@ func (x *InsertResp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InsertResp.ProtoReflect.Descriptor instead.
 func (*InsertResp) Descriptor() ([]byte, []int) {
-	return file_proto_cognevra_v2_proto_rawDescGZIP(), []int{2}
+	return file_cognevra_v2_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *InsertResp) GetOk() bool {
@@ -238,7 +238,7 @@ type BatchInsertReq struct {
 
 func (x *BatchInsertReq) Reset() {
 	*x = BatchInsertReq{}
-	mi := &file_proto_cognevra_v2_proto_msgTypes[3]
+	mi := &file_cognevra_v2_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -250,7 +250,7 @@ func (x *BatchInsertReq) String() string {
 func (*BatchInsertReq) ProtoMessage() {}
 
 func (x *BatchInsertReq) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_cognevra_v2_proto_msgTypes[3]
+	mi := &file_cognevra_v2_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -263,7 +263,7 @@ func (x *BatchInsertReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BatchInsertReq.ProtoReflect.Descriptor instead.
 func (*BatchInsertReq) Descriptor() ([]byte, []int) {
-	return file_proto_cognevra_v2_proto_rawDescGZIP(), []int{3}
+	return file_cognevra_v2_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *BatchInsertReq) GetCollection() string {
@@ -291,7 +291,7 @@ type InsertItem struct {
 
 func (x *InsertItem) Reset() {
 	*x = InsertItem{}
-	mi := &file_proto_cognevra_v2_proto_msgTypes[4]
+	mi := &file_cognevra_v2_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -303,7 +303,7 @@ func (x *InsertItem) String() string {
 func (*InsertItem) ProtoMessage() {}
 
 func (x *InsertItem) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_cognevra_v2_proto_msgTypes[4]
+	mi := &file_cognevra_v2_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -316,7 +316,7 @@ func (x *InsertItem) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InsertItem.ProtoReflect.Descriptor instead.
 func (*InsertItem) Descriptor() ([]byte, []int) {
-	return file_proto_cognevra_v2_proto_rawDescGZIP(), []int{4}
+	return file_cognevra_v2_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *InsertItem) GetId() string {
@@ -352,7 +352,7 @@ type BatchInsertResp struct {
 
 func (x *BatchInsertResp) Reset() {
 	*x = BatchInsertResp{}
-	mi := &file_proto_cognevra_v2_proto_msgTypes[5]
+	mi := &file_cognevra_v2_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -364,7 +364,7 @@ func (x *BatchInsertResp) String() string {
 func (*BatchInsertResp) ProtoMessage() {}
 
 func (x *BatchInsertResp) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_cognevra_v2_proto_msgTypes[5]
+	mi := &file_cognevra_v2_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -377,7 +377,7 @@ func (x *BatchInsertResp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BatchInsertResp.ProtoReflect.Descriptor instead.
 func (*BatchInsertResp) Descriptor() ([]byte, []int) {
-	return file_proto_cognevra_v2_proto_rawDescGZIP(), []int{5}
+	return file_cognevra_v2_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *BatchInsertResp) GetInserted() int32 {
@@ -418,7 +418,7 @@ type BatchInsertFailure struct {
 
 func (x *BatchInsertFailure) Reset() {
 	*x = BatchInsertFailure{}
-	mi := &file_proto_cognevra_v2_proto_msgTypes[6]
+	mi := &file_cognevra_v2_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -430,7 +430,7 @@ func (x *BatchInsertFailure) String() string {
 func (*BatchInsertFailure) ProtoMessage() {}
 
 func (x *BatchInsertFailure) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_cognevra_v2_proto_msgTypes[6]
+	mi := &file_cognevra_v2_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -443,7 +443,7 @@ func (x *BatchInsertFailure) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BatchInsertFailure.ProtoReflect.Descriptor instead.
 func (*BatchInsertFailure) Descriptor() ([]byte, []int) {
-	return file_proto_cognevra_v2_proto_rawDescGZIP(), []int{6}
+	return file_cognevra_v2_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *BatchInsertFailure) GetId() string {
@@ -470,7 +470,7 @@ type DeleteReq struct {
 
 func (x *DeleteReq) Reset() {
 	*x = DeleteReq{}
-	mi := &file_proto_cognevra_v2_proto_msgTypes[7]
+	mi := &file_cognevra_v2_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -482,7 +482,7 @@ func (x *DeleteReq) String() string {
 func (*DeleteReq) ProtoMessage() {}
 
 func (x *DeleteReq) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_cognevra_v2_proto_msgTypes[7]
+	mi := &file_cognevra_v2_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -495,7 +495,7 @@ func (x *DeleteReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteReq.ProtoReflect.Descriptor instead.
 func (*DeleteReq) Descriptor() ([]byte, []int) {
-	return file_proto_cognevra_v2_proto_rawDescGZIP(), []int{7}
+	return file_cognevra_v2_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *DeleteReq) GetCollection() string {
@@ -523,7 +523,7 @@ type DeleteResp struct {
 
 func (x *DeleteResp) Reset() {
 	*x = DeleteResp{}
-	mi := &file_proto_cognevra_v2_proto_msgTypes[8]
+	mi := &file_cognevra_v2_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -535,7 +535,7 @@ func (x *DeleteResp) String() string {
 func (*DeleteResp) ProtoMessage() {}
 
 func (x *DeleteResp) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_cognevra_v2_proto_msgTypes[8]
+	mi := &file_cognevra_v2_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -548,7 +548,7 @@ func (x *DeleteResp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteResp.ProtoReflect.Descriptor instead.
 func (*DeleteResp) Descriptor() ([]byte, []int) {
-	return file_proto_cognevra_v2_proto_rawDescGZIP(), []int{8}
+	return file_cognevra_v2_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *DeleteResp) GetDeleted() int32 {
@@ -583,7 +583,7 @@ type SearchReq struct {
 
 func (x *SearchReq) Reset() {
 	*x = SearchReq{}
-	mi := &file_proto_cognevra_v2_proto_msgTypes[9]
+	mi := &file_cognevra_v2_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -595,7 +595,7 @@ func (x *SearchReq) String() string {
 func (*SearchReq) ProtoMessage() {}
 
 func (x *SearchReq) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_cognevra_v2_proto_msgTypes[9]
+	mi := &file_cognevra_v2_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -608,7 +608,7 @@ func (x *SearchReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SearchReq.ProtoReflect.Descriptor instead.
 func (*SearchReq) Descriptor() ([]byte, []int) {
-	return file_proto_cognevra_v2_proto_rawDescGZIP(), []int{9}
+	return file_cognevra_v2_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *SearchReq) GetCollection() string {
@@ -642,7 +642,7 @@ type SearchResp struct {
 
 func (x *SearchResp) Reset() {
 	*x = SearchResp{}
-	mi := &file_proto_cognevra_v2_proto_msgTypes[10]
+	mi := &file_cognevra_v2_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -654,7 +654,7 @@ func (x *SearchResp) String() string {
 func (*SearchResp) ProtoMessage() {}
 
 func (x *SearchResp) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_cognevra_v2_proto_msgTypes[10]
+	mi := &file_cognevra_v2_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -667,7 +667,7 @@ func (x *SearchResp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SearchResp.ProtoReflect.Descriptor instead.
 func (*SearchResp) Descriptor() ([]byte, []int) {
-	return file_proto_cognevra_v2_proto_rawDescGZIP(), []int{10}
+	return file_cognevra_v2_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *SearchResp) GetResults() []*SearchResult {
@@ -695,7 +695,7 @@ type SearchResult struct {
 
 func (x *SearchResult) Reset() {
 	*x = SearchResult{}
-	mi := &file_proto_cognevra_v2_proto_msgTypes[11]
+	mi := &file_cognevra_v2_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -707,7 +707,7 @@ func (x *SearchResult) String() string {
 func (*SearchResult) ProtoMessage() {}
 
 func (x *SearchResult) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_cognevra_v2_proto_msgTypes[11]
+	mi := &file_cognevra_v2_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -720,7 +720,7 @@ func (x *SearchResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SearchResult.ProtoReflect.Descriptor instead.
 func (*SearchResult) Descriptor() ([]byte, []int) {
-	return file_proto_cognevra_v2_proto_rawDescGZIP(), []int{11}
+	return file_cognevra_v2_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *SearchResult) GetId() string {
@@ -752,7 +752,7 @@ type InfoReq struct {
 
 func (x *InfoReq) Reset() {
 	*x = InfoReq{}
-	mi := &file_proto_cognevra_v2_proto_msgTypes[12]
+	mi := &file_cognevra_v2_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -764,7 +764,7 @@ func (x *InfoReq) String() string {
 func (*InfoReq) ProtoMessage() {}
 
 func (x *InfoReq) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_cognevra_v2_proto_msgTypes[12]
+	mi := &file_cognevra_v2_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -777,7 +777,7 @@ func (x *InfoReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InfoReq.ProtoReflect.Descriptor instead.
 func (*InfoReq) Descriptor() ([]byte, []int) {
-	return file_proto_cognevra_v2_proto_rawDescGZIP(), []int{12}
+	return file_cognevra_v2_proto_rawDescGZIP(), []int{12}
 }
 
 type InfoResp struct {
@@ -791,7 +791,7 @@ type InfoResp struct {
 
 func (x *InfoResp) Reset() {
 	*x = InfoResp{}
-	mi := &file_proto_cognevra_v2_proto_msgTypes[13]
+	mi := &file_cognevra_v2_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -803,7 +803,7 @@ func (x *InfoResp) String() string {
 func (*InfoResp) ProtoMessage() {}
 
 func (x *InfoResp) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_cognevra_v2_proto_msgTypes[13]
+	mi := &file_cognevra_v2_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -816,7 +816,7 @@ func (x *InfoResp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InfoResp.ProtoReflect.Descriptor instead.
 func (*InfoResp) Descriptor() ([]byte, []int) {
-	return file_proto_cognevra_v2_proto_rawDescGZIP(), []int{13}
+	return file_cognevra_v2_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *InfoResp) GetDimension() int32 {
@@ -840,11 +840,11 @@ func (x *InfoResp) GetVersion() string {
 	return ""
 }
 
-var File_proto_cognevra_v2_proto protoreflect.FileDescriptor
+var File_cognevra_v2_proto protoreflect.FileDescriptor
 
-const file_proto_cognevra_v2_proto_rawDesc = "" +
+const file_cognevra_v2_proto_rawDesc = "" +
 	"\n" +
-	"\x17proto/cognevra_v2.proto\x12\vcognevra.v2\"\xb8\x01\n" +
+	"\x11cognevra_v2.proto\x12\vcognevra.v2\"\xb8\x01\n" +
 	"\vErrorDetail\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12?\n" +
@@ -921,19 +921,19 @@ const file_proto_cognevra_v2_proto_rawDesc = "" +
 	"\x04Info\x12\x14.cognevra.v2.InfoReq\x1a\x15.cognevra.v2.InfoRespB(Z&github.com/stek0v/cognevra/proto/pb/v2b\x06proto3"
 
 var (
-	file_proto_cognevra_v2_proto_rawDescOnce sync.Once
-	file_proto_cognevra_v2_proto_rawDescData []byte
+	file_cognevra_v2_proto_rawDescOnce sync.Once
+	file_cognevra_v2_proto_rawDescData []byte
 )
 
-func file_proto_cognevra_v2_proto_rawDescGZIP() []byte {
-	file_proto_cognevra_v2_proto_rawDescOnce.Do(func() {
-		file_proto_cognevra_v2_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_proto_cognevra_v2_proto_rawDesc), len(file_proto_cognevra_v2_proto_rawDesc)))
+func file_cognevra_v2_proto_rawDescGZIP() []byte {
+	file_cognevra_v2_proto_rawDescOnce.Do(func() {
+		file_cognevra_v2_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_cognevra_v2_proto_rawDesc), len(file_cognevra_v2_proto_rawDesc)))
 	})
-	return file_proto_cognevra_v2_proto_rawDescData
+	return file_cognevra_v2_proto_rawDescData
 }
 
-var file_proto_cognevra_v2_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
-var file_proto_cognevra_v2_proto_goTypes = []any{
+var file_cognevra_v2_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
+var file_cognevra_v2_proto_goTypes = []any{
 	(*ErrorDetail)(nil),        // 0: cognevra.v2.ErrorDetail
 	(*InsertReq)(nil),          // 1: cognevra.v2.InsertReq
 	(*InsertResp)(nil),         // 2: cognevra.v2.InsertResp
@@ -950,7 +950,7 @@ var file_proto_cognevra_v2_proto_goTypes = []any{
 	(*InfoResp)(nil),           // 13: cognevra.v2.InfoResp
 	nil,                        // 14: cognevra.v2.ErrorDetail.DetailsEntry
 }
-var file_proto_cognevra_v2_proto_depIdxs = []int32{
+var file_cognevra_v2_proto_depIdxs = []int32{
 	14, // 0: cognevra.v2.ErrorDetail.details:type_name -> cognevra.v2.ErrorDetail.DetailsEntry
 	0,  // 1: cognevra.v2.InsertResp.error:type_name -> cognevra.v2.ErrorDetail
 	4,  // 2: cognevra.v2.BatchInsertReq.items:type_name -> cognevra.v2.InsertItem
@@ -983,26 +983,26 @@ var file_proto_cognevra_v2_proto_depIdxs = []int32{
 	0,  // [0:9] is the sub-list for field type_name
 }
 
-func init() { file_proto_cognevra_v2_proto_init() }
-func file_proto_cognevra_v2_proto_init() {
-	if File_proto_cognevra_v2_proto != nil {
+func init() { file_cognevra_v2_proto_init() }
+func file_cognevra_v2_proto_init() {
+	if File_cognevra_v2_proto != nil {
 		return
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_cognevra_v2_proto_rawDesc), len(file_proto_cognevra_v2_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_cognevra_v2_proto_rawDesc), len(file_cognevra_v2_proto_rawDesc)),
 			NumEnums:      0,
 			NumMessages:   15,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
-		GoTypes:           file_proto_cognevra_v2_proto_goTypes,
-		DependencyIndexes: file_proto_cognevra_v2_proto_depIdxs,
-		MessageInfos:      file_proto_cognevra_v2_proto_msgTypes,
+		GoTypes:           file_cognevra_v2_proto_goTypes,
+		DependencyIndexes: file_cognevra_v2_proto_depIdxs,
+		MessageInfos:      file_cognevra_v2_proto_msgTypes,
 	}.Build()
-	File_proto_cognevra_v2_proto = out.File
-	file_proto_cognevra_v2_proto_goTypes = nil
-	file_proto_cognevra_v2_proto_depIdxs = nil
+	File_cognevra_v2_proto = out.File
+	file_cognevra_v2_proto_goTypes = nil
+	file_cognevra_v2_proto_depIdxs = nil
 }

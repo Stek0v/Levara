@@ -23,7 +23,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.6.1
 // - protoc             v7.34.1
-// source: proto/cognevra_v2.proto
+// source: cognevra_v2.proto
 
 package v2
 
@@ -423,5 +423,5 @@ var CognevraServiceV2_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "proto/cognevra_v2.proto",
+	Metadata: "cognevra_v2.proto",
 }
