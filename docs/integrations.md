@@ -111,6 +111,8 @@ docker run -d --name neo4j \
 ### Cypher Queries
 ```bash
 ALLOW_CYPHER_QUERY=true  # разрешить raw Cypher через API
+# Optional startup toggle (default: enabled):
+NEO4J_BOOTSTRAP_SCHEMA=false  # не выполнять startup CREATE INDEX/CONSTRAINT
 ```
 Защита: CREATE/MERGE/DELETE/SET/REMOVE/DROP блокируются.
 

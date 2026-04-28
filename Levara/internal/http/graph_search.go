@@ -12,9 +12,9 @@ import (
 	"sync"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/stek0v/levara/pipeline"
 	"github.com/stek0v/levara/pkg/community"
 	"github.com/stek0v/levara/pkg/graphdb"
-	"github.com/stek0v/levara/pipeline"
 )
 
 // graphCompletionSearch performs vector search → extract entities → graph context → LLM answer.
@@ -644,20 +644,20 @@ func codeGraphContextFromPostgres(ctx context.Context, cfg APIConfig, names []st
 func formatCodeRules(rows []map[string]any) []string {
 	// Map relationship types to human-readable verbs.
 	verbMap := map[string]string{
-		"CALLS":        "calls",
-		"IMPORTS":      "imports",
-		"INHERITS":     "inherits from",
-		"EXTENDS":      "extends",
-		"IMPLEMENTS":   "implements",
-		"CONTAINS":     "contains",
-		"HAS_PART":     "contains",
-		"DEPENDS_ON":   "depends on",
-		"RELATES_TO":   "is related to",
-		"USES":         "uses",
-		"RETURNS":      "returns",
-		"ACCEPTS":      "accepts",
-		"DEFINES":      "defines",
-		"OVERRIDES":    "overrides",
+		"CALLS":      "calls",
+		"IMPORTS":    "imports",
+		"INHERITS":   "inherits from",
+		"EXTENDS":    "extends",
+		"IMPLEMENTS": "implements",
+		"CONTAINS":   "contains",
+		"HAS_PART":   "contains",
+		"DEPENDS_ON": "depends on",
+		"RELATES_TO": "is related to",
+		"USES":       "uses",
+		"RETURNS":    "returns",
+		"ACCEPTS":    "accepts",
+		"DEFINES":    "defines",
+		"OVERRIDES":  "overrides",
 	}
 
 	var rules []string
@@ -796,12 +796,10 @@ func cypherSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
 		return c.Status(400).JSON(fiber.Map{"detail": "cypher_query required for CYPHER search type"})
 	}
 
-	// Block write operations
-	upper := strings.ToUpper(cypherQuery)
-	for _, keyword := range []string{"CREATE", "MERGE", "DELETE", "DETACH", "SET ", "REMOVE"} {
-		if strings.Contains(upper, keyword) {
-			return c.Status(403).JSON(fiber.Map{"detail": "Write operations not allowed in Cypher search"})
-		}
+	if !isCypherAllowed(cypherQuery, os.Getenv("ALLOW_CYPHER_WRITE") == "true") {
+		return c.Status(403).JSON(fiber.Map{
+			"detail": "Cypher policy violation: only read-only MATCH/RETURN/CALL/WITH/OPTIONAL MATCH/UNWIND queries are allowed unless ALLOW_CYPHER_WRITE=true",
+		})
 	}
 
 	ctx := context.Background()
@@ -822,6 +820,71 @@ func cypherSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
 		"query":       cypherQuery,
 		"search_type": "CYPHER",
 	})
+}
+
+// isCypherAllowed validates whether a Cypher query is allowed by policy.
+//
+// Default policy (allowWrite=false):
+//   - Query must start with a read clause: MATCH / OPTIONAL MATCH / WITH / CALL / UNWIND
+//   - Query must not include write/admin keywords.
+//   - This is intentionally conservative: uncertain queries are denied.
+//
+// Write policy (allowWrite=true):
+//   - Still blocks administrative/destructive schema/database operations.
+func isCypherAllowed(query string, allowWrite bool) bool {
+	trimmed := strings.TrimSpace(query)
+	if trimmed == "" {
+		return false
+	}
+	upper := strings.ToUpper(trimmed)
+
+	if containsAnyCypherKeyword(upper, []string{
+		"DROP ",
+		" DATABASE ",
+		" CONSTRAINT ",
+		" INDEX ",
+		" DBMS ",
+		" TERMINATE ",
+		" LOAD CSV",
+	}) {
+		return false
+	}
+
+	if !allowWrite {
+		if !hasAllowedReadPrefix(upper) {
+			return false
+		}
+		if containsAnyCypherKeyword(upper, []string{
+			"CREATE ",
+			"MERGE ",
+			"DELETE ",
+			"DETACH ",
+			"SET ",
+			"REMOVE ",
+			"FOREACH ",
+		}) {
+			return false
+		}
+	}
+	return true
+}
+
+func hasAllowedReadPrefix(upperQuery string) bool {
+	for _, prefix := range []string{"MATCH ", "OPTIONAL MATCH ", "WITH ", "CALL ", "UNWIND "} {
+		if strings.HasPrefix(upperQuery, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsAnyCypherKeyword(upperQuery string, keywords []string) bool {
+	for _, kw := range keywords {
+		if strings.Contains(upperQuery, kw) {
+			return true
+		}
+	}
+	return false
 }
 
 // naturalLanguageSearch converts a natural language question to Cypher via LLM, then executes it.
@@ -877,13 +940,10 @@ Cypher query:`, strings.Join(labels, ", "), strings.Join(relTypes, ", "), req.Qu
 		return graphCompletionSearch(c, cfg, req)
 	}
 
-	// Safety check: block write operations
-	upper := strings.ToUpper(cypher)
-	for _, keyword := range []string{"CREATE", "MERGE", "DELETE", "DETACH", "SET ", "REMOVE"} {
-		if strings.Contains(upper, keyword) {
-			log.Printf("[nl-search] LLM generated write query, falling back: %s", cypher)
-			return graphCompletionSearch(c, cfg, req)
-		}
+	// Safety check: force read-only policy for NL-generated Cypher.
+	if !isCypherAllowed(cypher, false) {
+		log.Printf("[nl-search] LLM generated disallowed query, falling back: %s", cypher)
+		return graphCompletionSearch(c, cfg, req)
 	}
 
 	// Step 3: Execute
@@ -1187,7 +1247,7 @@ func communityGlobalSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest)
 	if cfg.EmbedEndpoint == "" || cfg.Collections == nil {
 		return c.JSON(fiber.Map{"answer": "", "search_type": "COMMUNITY_GLOBAL"})
 	}
-	if (llmEndpoint == "" && cfg.LLMProvider == nil) {
+	if llmEndpoint == "" && cfg.LLMProvider == nil {
 		// No LLM → fallback to CHUNKS
 		return chunksSearch(c, cfg, req)
 	}
@@ -1309,9 +1369,9 @@ func communityGlobalSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest)
 	recordInteraction(cfg, req.SessionID, "", req.QueryText, answer, "COMMUNITY_GLOBAL")
 
 	return c.JSON(fiber.Map{
-		"answer":                   answer,
-		"communities_used":         partials,
+		"answer":                     answer,
+		"communities_used":           partials,
 		"total_communities_searched": len(hits),
-		"search_type":              "COMMUNITY_GLOBAL",
+		"search_type":                "COMMUNITY_GLOBAL",
 	})
 }
