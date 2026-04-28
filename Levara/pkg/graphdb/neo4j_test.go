@@ -2,6 +2,7 @@ package graphdb
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -56,10 +57,10 @@ func TestFlattenEdgeProperties(t *testing.T) {
 		"source_node_id": "n1",
 		"target_node_id": "n2",
 		"weights": map[string]any{
-			"semantic":  0.8,
-			"temporal":  0.3,
+			"semantic": 0.8,
+			"temporal": 0.3,
 		},
-		"edge_text": "uses",
+		"edge_text":  "uses",
 		"extra_data": map[string]any{"foo": "bar"},
 		"tag_list":   []any{"a", "b"},
 	}
@@ -108,5 +109,30 @@ func TestFlattenEdgePropertiesNil(t *testing.T) {
 	out := flattenEdgeProperties(nil)
 	if out == nil || len(out) != 0 {
 		t.Errorf("nil props should return empty map, got %v", out)
+	}
+}
+
+func TestRequiredNeo4jSchemaStatements(t *testing.T) {
+	stmts := requiredNeo4jSchemaStatements(baseLabel)
+	if len(stmts) != 4 {
+		t.Fatalf("expected 4 schema statements, got %d", len(stmts))
+	}
+	wantContains := []string{
+		"CREATE CONSTRAINT IF NOT EXISTS",
+		"ON (n.name)",
+		"ON (n.dataset_id)",
+		"ON (n.type)",
+	}
+	for _, want := range wantContains {
+		found := false
+		for _, stmt := range stmts {
+			if strings.Contains(stmt, want) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("schema statements missing fragment %q; got %v", want, stmts)
+		}
 	}
 }

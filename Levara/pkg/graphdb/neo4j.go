@@ -15,9 +15,9 @@ const baseLabel = "__Node__"
 
 // NodeRecord represents a node to write to Neo4j.
 type NodeRecord struct {
-	ID         string            // UUID string
-	Label      string            // Dynamic label (class name, e.g. "Entity")
-	Properties map[string]any    // All serialized properties
+	ID         string         // UUID string
+	Label      string         // Dynamic label (class name, e.g. "Entity")
+	Properties map[string]any // All serialized properties
 }
 
 // EdgeRecord represents an edge to write to Neo4j.
@@ -65,14 +65,20 @@ func NewWriter(ctx context.Context, url, username, password, database string) (*
 		return nil, fmt.Errorf("neo4j connectivity: %w", err)
 	}
 
-	w := &Writer{driver: driver, database: database}
+	return &Writer{driver: driver, database: database}, nil
+}
 
-	// Ensure unique constraint
-	if err := w.ensureConstraint(ctx); err != nil {
-		driver.Close(ctx)
+// NewWriterWithSchema creates a writer and ensures required schema objects.
+// Use this for one-time bootstrap paths, not per-request query handlers.
+func NewWriterWithSchema(ctx context.Context, url, username, password, database string) (*Writer, error) {
+	w, err := NewWriter(ctx, url, username, password, database)
+	if err != nil {
 		return nil, err
 	}
-
+	if err := w.EnsureSchema(ctx); err != nil {
+		w.Close(ctx)
+		return nil, err
+	}
 	return w, nil
 }
 
@@ -81,15 +87,26 @@ func (w *Writer) Close(ctx context.Context) error {
 	return w.driver.Close(ctx)
 }
 
-func (w *Writer) ensureConstraint(ctx context.Context) error {
+// EnsureSchema creates required constraints/indexes if they do not exist.
+func (w *Writer) EnsureSchema(ctx context.Context) error {
 	session := w.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: w.database})
 	defer session.Close(ctx)
 
-	_, err := session.Run(ctx,
-		fmt.Sprintf("CREATE CONSTRAINT IF NOT EXISTS FOR (n:`%s`) REQUIRE n.id IS UNIQUE", baseLabel),
-		nil,
-	)
-	return err
+	for _, stmt := range requiredNeo4jSchemaStatements(baseLabel) {
+		if _, err := session.Run(ctx, stmt, nil); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func requiredNeo4jSchemaStatements(label string) []string {
+	return []string{
+		fmt.Sprintf("CREATE CONSTRAINT IF NOT EXISTS FOR (n:`%s`) REQUIRE n.id IS UNIQUE", label),
+		fmt.Sprintf("CREATE INDEX IF NOT EXISTS FOR (n:`%s`) ON (n.name)", label),
+		fmt.Sprintf("CREATE INDEX IF NOT EXISTS FOR (n:`%s`) ON (n.dataset_id)", label),
+		fmt.Sprintf("CREATE INDEX IF NOT EXISTS FOR (n:`%s`) ON (n.type)", label),
+	}
 }
 
 // BatchWrite writes nodes and edges to Neo4j in batch using UNWIND.
