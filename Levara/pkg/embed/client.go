@@ -10,7 +10,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/stek0v/cognevra/internal/metrics"
+	"github.com/stek0v/levara/internal/metrics"
 	"golang.org/x/sync/errgroup"
 )
 

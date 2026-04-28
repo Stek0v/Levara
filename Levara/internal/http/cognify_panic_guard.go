@@ -5,7 +5,7 @@ import (
 	"log"
 	"runtime/debug"
 
-	"github.com/stek0v/cognevra/internal/metrics"
+	"github.com/stek0v/levara/internal/metrics"
 )
 
 // runWithPanicGuard executes fn and converts a panic into an error. It also

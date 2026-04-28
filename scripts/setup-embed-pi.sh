@@ -3,7 +3,7 @@
 
 set -e
 
-echo "=== Cognevra Pi Setup ==="
+echo "=== Levara Pi Setup ==="
 
 # Check architecture
 ARCH=$(uname -m)
@@ -46,8 +46,8 @@ curl -s http://localhost:11434/v1/embeddings -X POST \
 
 echo ""
 echo "=== Setup complete ==="
-echo "Start Cognevra with:"
+echo "Start Levara with:"
 echo "  DB_PROVIDER=sqlite \\"
 echo "  EMBEDDING_ENDPOINT=http://localhost:11434/v1/embeddings \\"
 echo "  EMBEDDING_MODEL=$EMBED_MODEL \\"
-echo "  ./cognevra-arm64 -standalone=true -dim=$EMBED_DIM -port=8080"
+echo "  ./levara-arm64 -standalone=true -dim=$EMBED_DIM -port=8080"

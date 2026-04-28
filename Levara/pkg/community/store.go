@@ -9,10 +9,10 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/stek0v/cognevra/internal/store"
-	"github.com/stek0v/cognevra/pkg/embed"
-	"github.com/stek0v/cognevra/pkg/llm"
-	"github.com/stek0v/cognevra/pkg/llmcache"
+	"github.com/stek0v/levara/internal/store"
+	"github.com/stek0v/levara/pkg/embed"
+	"github.com/stek0v/levara/pkg/llm"
+	"github.com/stek0v/levara/pkg/llmcache"
 )
 
 // SummarizeConfig holds configuration for community summarization.

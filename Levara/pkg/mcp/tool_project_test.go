@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stek0v/cognevra/pkg/orchestrator"
+	"github.com/stek0v/levara/pkg/orchestrator"
 )
 
 // testBaseCfg returns an orchestrator.Config with just EmbedModel set

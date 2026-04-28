@@ -12,7 +12,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
-	"github.com/stek0v/cognevra/pkg/ontology"
+	"github.com/stek0v/levara/pkg/ontology"
 )
 
 // In-memory ontology cache for cognify prompt injection

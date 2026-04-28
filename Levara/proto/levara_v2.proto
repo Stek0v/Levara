@@ -1,4 +1,4 @@
-// cognevra_v2.proto — next-generation Cognevra gRPC API (T10).
+// levara_v2.proto — next-generation Levara gRPC API (T10).
 //
 // Design goals:
 //   1. Fix the naming drift that made v1 confusing (Insert vs Add vs Save
@@ -19,8 +19,8 @@
 // `make proto` once protoc-gen-go is wired into CI; in the meantime the
 // file serves as the reviewable contract.
 syntax = "proto3";
-package cognevra.v2;
-option go_package = "github.com/stek0v/cognevra/proto/pb/v2";
+package levara.v2;
+option go_package = "github.com/stek0v/levara/proto/pb/v2";
 
 // ── Error model ────────────────────────────────────────────────────
 //
@@ -39,7 +39,7 @@ message ErrorDetail {
 // collision with deprecated v1 tags clients may still send.
 // ──────────────────────────────────────────────────────────────────
 
-service CognevraServiceV2 {
+service LevaraServiceV2 {
   // Reserved method slots for future additions. Do NOT recycle removed
   // method names onto these — register a new name instead.
   // (gRPC has no `reserved` at the service level, but the spec-in-comment

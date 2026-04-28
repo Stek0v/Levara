@@ -23,7 +23,7 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/stek0v/cognevra/pkg/rerank"
+	"github.com/stek0v/levara/pkg/rerank"
 )
 
 func main() {

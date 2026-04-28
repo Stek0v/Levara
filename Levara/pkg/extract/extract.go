@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/stek0v/cognevra/pkg/audio"
+	"github.com/stek0v/levara/pkg/audio"
 	"github.com/tsawler/tabula"
 )
 

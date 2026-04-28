@@ -10,8 +10,8 @@ import (
 
 	"github.com/hashicorp/raft"
 	raftboltdb "github.com/hashicorp/raft-boltdb/v2"
-	"github.com/stek0v/cognevra/internal/metrics"
-	"github.com/stek0v/cognevra/internal/store"
+	"github.com/stek0v/levara/internal/metrics"
+	"github.com/stek0v/levara/internal/store"
 )
 
 const (

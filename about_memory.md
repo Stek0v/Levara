@@ -232,11 +232,11 @@ auth (JWT из metadata.authorization) → rate-limit (per peer IP)
   → metrics → handler
 ```
 
-**Whitelist:** `cognevra.v1.CognevraService/Info` проходит без auth (для health-probes).
+**Whitelist:** `levara.v1.LevaraService/Info` проходит без auth (для health-probes).
 
 **v1 vs v2 (после T10):**
-- `cognevra.v1.CognevraService` — существующий контракт, остаётся 3 месяца после релиза v2.
-- `cognevra.v2.CognevraServiceV2` — новый контракт с **типизированным `ErrorDetail`** (code + message + details map) и naming-алиасами `Add`/`Save`/`Create` для `Insert`. Оба сервиса на одном порту; gRPC dispatcher сам выбирает по имени метода.
+- `levara.v1.LevaraService` — существующий контракт, остаётся 3 месяца после релиза v2.
+- `levara.v2.LevaraServiceV2` — новый контракт с **типизированным `ErrorDetail`** (code + message + details map) и naming-алиасами `Add`/`Save`/`Create` для `Insert`. Оба сервиса на одном порту; gRPC dispatcher сам выбирает по имени метода.
 
 ### 3.3. MCP (JSON-RPC 2.0, endpoint `/mcp`)
 
@@ -635,12 +635,12 @@ curl -X POST localhost:8080/api/v1/memories \
 ```bash
 grpcurl -H "authorization: Bearer $TOKEN" -plaintext \
   -d '{"collection":"docs","id":"x","vector":[0.1,0.2,0.3]}' \
-  localhost:50051 cognevra.v1.CognevraService/Insert
+  localhost:50051 levara.v1.LevaraService/Insert
 
 # v2 с типизированной ошибкой
 grpcurl -H "authorization: Bearer $TOKEN" -plaintext \
   -d '{"collection":"docs","query_text":"revenue"}' \
-  localhost:50051 cognevra.v2.CognevraServiceV2/Search
+  localhost:50051 levara.v2.LevaraServiceV2/Search
 ```
 
 ---
@@ -797,7 +797,7 @@ heartbeat(event_type="cognify", limit=10)
 | JWT verify (shared) | `Levara/pkg/auth/jwt.go` |
 | gRPC interceptors | `Levara/internal/grpc/auth_interceptor.go`, `ratelimit.go`, `metrics.go` |
 | gRPC v2 service | `Levara/internal/grpc/service_v2.go` |
-| Proto definitions | `Levara/proto/cognevra.proto` (v1), `cognevra_v2.proto` |
+| Proto definitions | `Levara/proto/levara.proto` (v1), `levara_v2.proto` |
 | Background runreg | `Levara/pkg/runreg/runreg.go` |
 | Rate-limit middleware | `Levara/internal/http/ratelimit.go`, `Levara/internal/grpc/ratelimit.go` |
 | UserBucket (bounded labels) | `Levara/internal/metrics/user_bucket.go` |

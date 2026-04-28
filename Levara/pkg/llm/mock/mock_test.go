@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stek0v/cognevra/pkg/llm"
+	"github.com/stek0v/levara/pkg/llm"
 )
 
 func TestMock_SubstringMatchWinsOverAny(t *testing.T) {

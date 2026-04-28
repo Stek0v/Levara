@@ -2,13 +2,14 @@ package embed
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 )
 
 const (
-	embedURL   = "http://localhost:9001/v1/embeddings"
-	embedModel = "pplx-embed-context-v1-0.6b"
+	embedModel  = "pplx-embed-context-v1-0.6b"
 	expectedDim = 1024
 )
 
@@ -21,12 +22,44 @@ func isEmbedServerAvailable() bool {
 	return resp.StatusCode == 200
 }
 
-func TestEmbedSingle(t *testing.T) {
-	if !isEmbedServerAvailable() {
-		t.Skip("embed-server not available at localhost:9001")
-	}
+func fakeEmbedServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if r.URL.Path != "/v1/embeddings" {
+			http.NotFound(w, r)
+			return
+		}
+		var req embeddingRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		resp := embeddingResponse{}
+		for i, text := range req.Input {
+			vec := make([]float32, expectedDim)
+			seed := float32(len(text) + i + 1)
+			for j := range vec {
+				vec[j] = seed + float32(j)/1000
+			}
+			resp.Data = append(resp.Data, struct {
+				Index     int       `json:"index"`
+				Embedding []float32 `json:"embedding"`
+			}{Index: i, Embedding: vec})
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+}
 
-	client := NewClient(embedURL, embedModel, 16, 1)
+func TestEmbedSingle(t *testing.T) {
+	srv := fakeEmbedServer(t)
+	defer srv.Close()
+
+	client := NewClient(srv.URL+"/v1/embeddings", embedModel, 16, 1)
 	ctx := context.Background()
 
 	vec, err := client.EmbedSingle(ctx, "тестовый текст для эмбеддинга")
@@ -55,11 +88,10 @@ func TestEmbedSingle(t *testing.T) {
 }
 
 func TestEmbedBatch(t *testing.T) {
-	if !isEmbedServerAvailable() {
-		t.Skip("embed-server not available at localhost:9001")
-	}
+	srv := fakeEmbedServer(t)
+	defer srv.Close()
 
-	client := NewClient(embedURL, embedModel, 16, 1)
+	client := NewClient(srv.URL+"/v1/embeddings", embedModel, 16, 1)
 	ctx := context.Background()
 
 	texts := []string{
@@ -89,11 +121,10 @@ func TestEmbedBatch(t *testing.T) {
 }
 
 func TestEmbedLargeBatch(t *testing.T) {
-	if !isEmbedServerAvailable() {
-		t.Skip("embed-server not available at localhost:9001")
-	}
+	srv := fakeEmbedServer(t)
+	defer srv.Close()
 
-	client := NewClient(embedURL, embedModel, 16, 1)
+	client := NewClient(srv.URL+"/v1/embeddings", embedModel, 16, 1)
 	ctx := context.Background()
 
 	// 50 texts → split into 4 batches of 16+16+16+2
@@ -115,7 +146,7 @@ func TestEmbedLargeBatch(t *testing.T) {
 }
 
 func TestEmbedEmpty(t *testing.T) {
-	client := NewClient(embedURL, embedModel, 16, 1)
+	client := NewClient("http://localhost:9001/v1/embeddings", embedModel, 16, 1)
 	ctx := context.Background()
 
 	vecs, err := client.EmbedTexts(ctx, nil)
@@ -140,7 +171,7 @@ func BenchmarkEmbedSingle(b *testing.B) {
 		b.Skip("embed-server not available")
 	}
 
-	client := NewClient(embedURL, embedModel, 16, 1)
+	client := NewClient("http://localhost:9001/v1/embeddings", embedModel, 16, 1)
 	ctx := context.Background()
 
 	b.ResetTimer()

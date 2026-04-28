@@ -18,7 +18,7 @@ import (
 	"strings"
 	"testing"
 
-	pb "github.com/stek0v/cognevra/proto/pb"
+	pb "github.com/stek0v/levara/proto/pb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )

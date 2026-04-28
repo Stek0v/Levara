@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/stek0v/cognevra/pkg/orchestrator"
-	"github.com/stek0v/cognevra/pkg/runreg"
+	"github.com/stek0v/levara/pkg/orchestrator"
+	"github.com/stek0v/levara/pkg/runreg"
 )
 
 // cognifyProgressBufSize matches the pre-refactor channel capacity on

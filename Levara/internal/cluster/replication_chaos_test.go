@@ -39,7 +39,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stek0v/cognevra/internal/store"
+	"github.com/stek0v/levara/internal/store"
 )
 
 // --- test harness -----------------------------------------------------------

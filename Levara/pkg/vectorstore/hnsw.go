@@ -2,7 +2,7 @@
 package vectorstore
 
 import (
-	"github.com/stek0v/cognevra/internal/store"
+	"github.com/stek0v/levara/internal/store"
 )
 
 // HNSWStore wraps CollectionManager to implement VectorStore.

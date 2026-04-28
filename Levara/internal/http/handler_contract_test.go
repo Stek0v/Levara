@@ -11,8 +11,8 @@ import (
 	"testing"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/stek0v/cognevra/internal/cluster"
-	"github.com/stek0v/cognevra/internal/store"
+	"github.com/stek0v/levara/internal/cluster"
+	"github.com/stek0v/levara/internal/store"
 )
 
 // T-5: HTTP contract tests for the four vector-ops endpoints that back every

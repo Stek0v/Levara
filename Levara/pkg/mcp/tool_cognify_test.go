@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stek0v/cognevra/pkg/orchestrator"
-	"github.com/stek0v/cognevra/pkg/runreg"
+	"github.com/stek0v/levara/pkg/orchestrator"
+	"github.com/stek0v/levara/pkg/runreg"
 )
 
 // waitDone blocks until done is closed or the deadline elapses. Fails

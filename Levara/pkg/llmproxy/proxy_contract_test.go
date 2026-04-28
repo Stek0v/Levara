@@ -25,7 +25,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stek0v/cognevra/pkg/llmcache"
+	"github.com/stek0v/levara/pkg/llmcache"
 )
 
 // TestContract_ForwardsBodyVerbatim proves we don't re-encode the request

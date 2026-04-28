@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stek0v/cognevra/internal/store"
-	pb "github.com/stek0v/cognevra/proto/pb"
+	"github.com/stek0v/levara/internal/store"
+	pb "github.com/stek0v/levara/proto/pb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -27,7 +27,7 @@ func randomVec(dim int) []float32 {
 }
 
 // startTestServer starts a gRPC server on a random port and returns client + cleanup.
-func startTestServer(t *testing.T, dim int) (pb.CognevraServiceClient, func()) {
+func startTestServer(t *testing.T, dim int) (pb.LevaraServiceClient, func()) {
 	t.Helper()
 
 	dir, _ := os.MkdirTemp("", "levara-grpc-test-*")
@@ -51,7 +51,7 @@ func startTestServer(t *testing.T, dim int) (pb.CognevraServiceClient, func()) {
 	}
 
 	srv := grpc.NewServer()
-	pb.RegisterCognevraServiceServer(srv, NewService(colMgr, cluster, dim))
+	pb.RegisterLevaraServiceServer(srv, NewService(colMgr, cluster, dim))
 	go srv.Serve(lis)
 
 	conn, err := grpc.NewClient(lis.Addr().String(),
@@ -60,7 +60,7 @@ func startTestServer(t *testing.T, dim int) (pb.CognevraServiceClient, func()) {
 		t.Fatalf("dial: %v", err)
 	}
 
-	client := pb.NewCognevraServiceClient(conn)
+	client := pb.NewLevaraServiceClient(conn)
 
 	cleanup := func() {
 		conn.Close()
@@ -408,14 +408,14 @@ func BenchmarkGRPCSearch(b *testing.B) {
 
 	lis, _ := net.Listen("tcp", "127.0.0.1:0")
 	srv := grpc.NewServer()
-	pb.RegisterCognevraServiceServer(srv, NewService(colMgr, cluster, dim))
+	pb.RegisterLevaraServiceServer(srv, NewService(colMgr, cluster, dim))
 	go srv.Serve(lis)
 	defer srv.GracefulStop()
 
 	conn, _ := grpc.NewClient(lis.Addr().String(),
 		grpc.WithTransportCredentials(insecure.NewCredentials()))
 	defer conn.Close()
-	client := pb.NewCognevraServiceClient(conn)
+	client := pb.NewLevaraServiceClient(conn)
 	ctx := context.Background()
 
 	// Setup: create collection + insert 500 vectors

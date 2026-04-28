@@ -13,9 +13,9 @@ import (
 
 	"github.com/hashicorp/raft"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/stek0v/cognevra/internal/cluster"
-	"github.com/stek0v/cognevra/internal/metrics"
-	"github.com/stek0v/cognevra/internal/store"
+	"github.com/stek0v/levara/internal/cluster"
+	"github.com/stek0v/levara/internal/metrics"
+	"github.com/stek0v/levara/internal/store"
 )
 
 const (

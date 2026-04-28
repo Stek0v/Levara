@@ -12,7 +12,7 @@ import (
 	"testing"
 )
 
-// fakeChatServer replies with a /v1/chat/completions-shaped response
+// fakeChatServer replies with a real llama-server /completion-shaped response
 // whose logprob comes from scorer(query, doc). Lets us simulate "doc 3
 // is the best match" without running an actual LLM.
 func fakeChatServer(t *testing.T, scorer func(query, doc string) float64) (*httptest.Server, *atomic.Int64) {
@@ -21,20 +21,21 @@ func fakeChatServer(t *testing.T, scorer func(query, doc string) float64) (*http
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		body, _ := io.ReadAll(r.Body)
-		var req qwen3ChatReq
+		var req qwen3CompletionReq
 		_ = json.Unmarshal(body, &req)
 
-		// Last user message holds the document text (Qwen3 format).
+		// Extract query + document from the raw prompt template:
+		//   "...<Query>: Q\n<Document>: D<|im_end|>..."
 		var query, doc string
-		for _, m := range req.Messages {
-			if m.Role == "user" {
-				// Structure: "<Instruct>: ...\n\n<Query>: Q\n\n<Document>: D"
-				if idx := strings.Index(m.Content, "<Query>: "); idx >= 0 {
-					rest := m.Content[idx+len("<Query>: "):]
-					if dIdx := strings.Index(rest, "\n\n<Document>: "); dIdx >= 0 {
-						query = rest[:dIdx]
-						doc = rest[dIdx+len("\n\n<Document>: "):]
-					}
+		if idx := strings.Index(req.Prompt, "<Query>: "); idx >= 0 {
+			rest := req.Prompt[idx+len("<Query>: "):]
+			if dIdx := strings.Index(rest, "\n<Document>: "); dIdx >= 0 {
+				query = rest[:dIdx]
+				rest = rest[dIdx+len("\n<Document>: "):]
+				if endIdx := strings.Index(rest, "<|im_end|>"); endIdx >= 0 {
+					doc = rest[:endIdx]
+				} else {
+					doc = rest
 				}
 			}
 		}
@@ -46,24 +47,14 @@ func fakeChatServer(t *testing.T, scorer func(query, doc string) float64) (*http
 		if score >= 1 {
 			score = 0.9999
 		}
-		logp := math.Log(score)
-		notLogp := math.Log(1 - score)
-
 		resp := map[string]any{
-			"choices": []map[string]any{
+			"content": "yes",
+			"completion_probabilities": []map[string]any{
 				{
-					"message": map[string]any{"content": "yes"},
-					"logprobs": map[string]any{
-						"content": []map[string]any{
-							{
-								"token":   "yes",
-								"logprob": logp,
-								"top_logprobs": []map[string]any{
-									{"token": "yes", "logprob": logp},
-									{"token": "no", "logprob": notLogp},
-								},
-							},
-						},
+					"content": "yes",
+					"probs": []map[string]any{
+						{"tok_str": "yes", "prob": score},
+						{"tok_str": "no", "prob": 1 - score},
 					},
 				},
 			},
@@ -72,6 +63,35 @@ func fakeChatServer(t *testing.T, scorer func(query, doc string) float64) (*http
 		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	return srv, &calls
+}
+
+func TestQwen3Client_UsesLlamaCompletionProbabilities(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := map[string]any{
+			"content": "no",
+			"completion_probabilities": []map[string]any{
+				{
+					"content": "no",
+					"probs": []map[string]any{
+						{"tok_str": "no", "prob": 0.69},
+						{"tok_str": "yes", "prob": 0.31},
+					},
+				},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	q := NewQwen3Client(srv.URL, "qwen3-reranker-0.6b", 0, 2000, 1)
+	score, err := q.scorePair(context.Background(), "q", "doc")
+	if err != nil {
+		t.Fatalf("scorePair: %v", err)
+	}
+	if math.Abs(score-0.31) > 0.0001 {
+		t.Fatalf("score = %.4f, want 0.31 from llama.cpp probs", score)
+	}
 }
 
 // TestQwen3Client_OrdersByScore verifies the adapter calls the server
@@ -187,5 +207,32 @@ func TestQwenRerankHTTPHandler_Roundtrip(t *testing.T) {
 	// Longer doc (index 1) must win.
 	if results[0].Index != 1 {
 		t.Errorf("top index = %d, want 1 (longer doc)", results[0].Index)
+	}
+}
+
+func TestQwenRerankHTTPHandler_RespectsRequestTopN(t *testing.T) {
+	chatSrv, calls := fakeChatServer(t, func(_, doc string) float64 {
+		scores := map[string]float64{"A": 0.8, "B": 0.7, "C": 0.6}
+		return scores[doc]
+	})
+	defer chatSrv.Close()
+
+	q := NewQwen3Client(chatSrv.URL, "qwen3-reranker-0.6b", 0, 2000, 2)
+	front := httptest.NewServer(QwenRerankHTTPHandler(q))
+	defer front.Close()
+
+	c := NewClient(front.URL, "qwen3-reranker-0.6b", 2, 5000)
+	results, err := c.Rerank(context.Background(), "anything", []string{"A", "B", "C"})
+	if err != nil {
+		t.Fatalf("Rerank: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("len = %d, want request top_n=2", len(results))
+	}
+	if calls.Load() != 3 {
+		t.Fatalf("upstream calls = %d, want all 3 documents scored", calls.Load())
+	}
+	if results[0].Index != 0 || results[1].Index != 1 {
+		t.Fatalf("results = %+v, want top docs A then B", results)
 	}
 }

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stek0v/cognevra/pipeline"
+	"github.com/stek0v/levara/pipeline"
 )
 
 // setupCrossSearchDB returns a fakeDeps whose DB has a populated

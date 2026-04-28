@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/stek0v/cognevra/pkg/git"
-	"github.com/stek0v/cognevra/pkg/runreg"
+	"github.com/stek0v/levara/pkg/git"
+	"github.com/stek0v/levara/pkg/runreg"
 )
 
 const (

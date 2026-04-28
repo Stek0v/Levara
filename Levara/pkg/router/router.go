@@ -11,7 +11,7 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/stek0v/cognevra/pkg/temporal"
+	"github.com/stek0v/levara/pkg/temporal"
 )
 
 // Capabilities describes which backends are available for search.

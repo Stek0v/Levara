@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/stek0v/cognevra/internal/store"
+	"github.com/stek0v/levara/internal/store"
 )
 
 // T-9b smoke for HNSWStore — the VectorStore adapter wrapping

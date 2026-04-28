@@ -11,12 +11,11 @@
 //
 // Wire-up:
 //   - Stand the reranker up as `llama-server -m qwen3-reranker-0.6b-q8_0.gguf
-//     --port 9002 --n-gpu-layers 999 --host 0.0.0.0`.
-//   - Point RERANK_ENDPOINT at http://host:9002/qwen3-rerank (handled by
-//     this adapter's HTTP server, see QwenRerankHTTPHandler below).
-//   - Or, if you prefer in-process without an extra server, call
-//     NewQwen3Client directly and swap it into APIConfig.RerankEndpoint
-//     via a custom dial — but the HTTP front is easier to deploy.
+//     --port 9002 --host 0.0.0.0` (CPU-only is fine; the adapter talks
+//     to the raw /completion endpoint).
+//   - Point RERANK_ENDPOINT at http://host:9003/rerank (handled by the
+//     Cohere-compat HTTP front, QwenRerankHTTPHandler below, usually run
+//     as a sidecar process like cmd/qwen3rerank).
 //
 // If a native Cohere-compat reranker (BGE, Mixedbread, etc.) is
 // available, prefer that and skip this adapter — fewer moving parts.
@@ -150,54 +149,54 @@ func allZero(rs []Result) bool {
 	return true
 }
 
-// qwen3ChatReq is the subset of OpenAI /v1/chat/completions we need.
-// logprobs + top_logprobs let us pull P("yes") without parsing the
-// generated text (which would require an exact string match).
-type qwen3ChatReq struct {
-	Model        string           `json:"model"`
-	Messages     []qwen3Message   `json:"messages"`
-	MaxTokens    int              `json:"max_tokens"`
-	Temperature  float32          `json:"temperature"`
-	Logprobs     bool             `json:"logprobs"`
-	TopLogprobs  int              `json:"top_logprobs"`
-	Stream       bool             `json:"stream"`
+// qwen3CompletionReq targets llama-server's raw /completion endpoint.
+// The OpenAI /v1/chat/completions route wraps messages with an auto
+// chat template that doesn't match Qwen3-Reranker's expected input —
+// the model then emits garbage like "utter" instead of yes/no. Using
+// the raw prompt with the exact template from the Qwen docs reliably
+// produces a yes/no token.
+type qwen3CompletionReq struct {
+	Prompt      string   `json:"prompt"`
+	NPredict    int      `json:"n_predict"`
+	Temperature float32  `json:"temperature"`
+	NProbs      int      `json:"n_probs"`
+	Stream      bool     `json:"stream"`
+	Stop        []string `json:"stop,omitempty"`
 }
 
-type qwen3Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
-type qwen3ChatResp struct {
-	Choices []struct {
-		Message struct {
-			Content string `json:"content"`
-		} `json:"message"`
-		Logprobs *struct {
-			Content []struct {
-				Token       string `json:"token"`
-				Logprob     float64 `json:"logprob"`
-				TopLogprobs []struct {
-					Token   string  `json:"token"`
-					Logprob float64 `json:"logprob"`
-				} `json:"top_logprobs"`
-			} `json:"content"`
-		} `json:"logprobs,omitempty"`
-	} `json:"choices"`
+// qwen3CompletionResp matches llama-server's /completion response.
+// completion_probabilities[i].probs contains the candidate tokens at
+// position i with their probabilities — we pull P("yes") from there.
+type qwen3CompletionResp struct {
+	Content                 string `json:"content"`
+	CompletionProbabilities []struct {
+		Content string `json:"content"`
+		Probs   []struct {
+			Token string  `json:"tok_str"`
+			Prob  float64 `json:"prob"`
+		} `json:"probs"`
+		// Legacy/test compatibility with OpenAI-shaped probability fixtures.
+		Token       string  `json:"token"`
+		Logprob     float64 `json:"logprob"`
+		TopLogprobs []struct {
+			Token   string  `json:"token"`
+			Logprob float64 `json:"logprob"`
+		} `json:"top_logprobs"`
+	} `json:"completion_probabilities"`
 }
 
 // scorePair issues one completion and returns P("yes") ∈ [0, 1].
-// Fallback when logprobs aren't supplied: parse the assistant's text and
+// Fallback when logprobs aren't supplied: parse the generated text and
 // return 1.0 for "yes", 0.0 otherwise — less discriminating but always
 // produces a usable ordering.
 func (c *Qwen3Client) scorePair(ctx context.Context, query, document string) (float64, error) {
-	body, err := json.Marshal(qwen3ChatReq{
-		Model:       c.model,
-		Messages:    qwen3Messages(query, document),
-		MaxTokens:   1,
-		Temperature: 0,
-		Logprobs:    true,
-		TopLogprobs: 5, // yes, no, maybe, Yes, YES are all plausible top tokens
+	body, err := json.Marshal(qwen3CompletionReq{
+		Prompt:   qwen3RerankPrompt(query, document),
+		NPredict: 1,
+		// llama.cpp temperature < 0 keeps greedy sampling but still computes
+		// meaningful next-token probabilities for n_probs.
+		Temperature: -1,
+		NProbs:      5, // yes, no, Yes, YES, maybe are all plausible top tokens
 		Stream:      false,
 	})
 	if err != nil {
@@ -205,8 +204,8 @@ func (c *Qwen3Client) scorePair(ctx context.Context, query, document string) (fl
 	}
 
 	url := c.endpoint
-	if !endsWithPath(url, "/v1/chat/completions") {
-		url = trimTrailingSlash(url) + "/v1/chat/completions"
+	if !endsWithPath(url, "/completion") {
+		url = trimTrailingSlash(url) + "/completion"
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
@@ -226,17 +225,24 @@ func (c *Qwen3Client) scorePair(ctx context.Context, query, document string) (fl
 		return 0, fmt.Errorf("http %d: %s", resp.StatusCode, string(body))
 	}
 
-	var out qwen3ChatResp
+	var out qwen3CompletionResp
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return 0, fmt.Errorf("decode: %w", err)
 	}
-	if len(out.Choices) == 0 {
-		return 0, fmt.Errorf("empty choices")
-	}
 
 	// Preferred path: logprobs tell us exactly how confident the model is.
-	if out.Choices[0].Logprobs != nil && len(out.Choices[0].Logprobs.Content) > 0 {
-		first := out.Choices[0].Logprobs.Content[0]
+	if len(out.CompletionProbabilities) > 0 {
+		first := out.CompletionProbabilities[0]
+		for _, prob := range first.Probs {
+			if isYes(prob.Token) {
+				return prob.Prob, nil
+			}
+		}
+		if len(first.Probs) > 0 {
+			// "yes" wasn't even in top-N → very low confidence.
+			return 0.01, nil
+		}
+
 		// first.Token is the actually sampled token. If it's "yes"-ish,
 		// the logprob IS the probability of yes. If not, search
 		// top_logprobs for a "yes" entry and use its logprob.
@@ -254,20 +260,24 @@ func (c *Qwen3Client) scorePair(ctx context.Context, query, document string) (fl
 
 	// Fallback: text match. Binary score but stable ordering if most
 	// pairs match the same way.
-	if isYes(out.Choices[0].Message.Content) {
+	if isYes(out.Content) {
 		return 1.0, nil
 	}
 	return 0.0, nil
 }
 
-func qwen3Messages(query, document string) []qwen3Message {
-	return []qwen3Message{
-		{Role: "system", Content: qwen3RerankSystem},
-		{Role: "user", Content: fmt.Sprintf(
-			"<Instruct>: %s\n\n<Query>: %s\n\n<Document>: %s",
-			qwen3RerankInstruct, query, document,
-		)},
-	}
+// qwen3RerankPrompt builds the exact prompt template the Qwen3-Reranker
+// was fine-tuned on (see https://huggingface.co/Qwen/Qwen3-Reranker-0.6B).
+// The empty <think></think> block is load-bearing: omitting it degrades
+// yes/no calibration because the model was trained to always emit a
+// reasoning span before the answer token.
+func qwen3RerankPrompt(query, document string) string {
+	return fmt.Sprintf(
+		"<|im_start|>system\n%s<|im_end|>\n"+
+			"<|im_start|>user\n<Instruct>: %s\n<Query>: %s\n<Document>: %s<|im_end|>\n"+
+			"<|im_start|>assistant\n<think>\n\n</think>\n\n",
+		qwen3RerankSystem, qwen3RerankInstruct, query, document,
+	)
 }
 
 // isYes is intentionally lenient — "yes", "Yes", " yes", "YES" all count.
@@ -341,6 +351,9 @@ func QwenRerankHTTPHandler(q *Qwen3Client) http.Handler {
 		if err != nil {
 			http.Error(w, "rerank: "+err.Error(), http.StatusBadGateway)
 			return
+		}
+		if req.TopN > 0 && req.TopN < len(results) {
+			results = results[:req.TopN]
 		}
 		// Cohere format: results with index + relevance_score.
 		out := struct {

@@ -21,17 +21,17 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"google.golang.org/grpc"
 
-	"github.com/stek0v/cognevra/internal/cluster"
-	vectorGrpc "github.com/stek0v/cognevra/internal/grpc"
-	"github.com/stek0v/cognevra/internal/store"
-	"github.com/stek0v/cognevra/pkg/embed"
-	"github.com/stek0v/cognevra/pkg/graphdb"
-	"github.com/stek0v/cognevra/pkg/llm"
-	"github.com/stek0v/cognevra/pkg/llmcache"
-	"github.com/stek0v/cognevra/pkg/llmproxy"
-	"github.com/stek0v/cognevra/pkg/observe"
-	pb "github.com/stek0v/cognevra/proto/pb"
-	pbv2 "github.com/stek0v/cognevra/proto/pb/v2"
+	"github.com/stek0v/levara/internal/cluster"
+	vectorGrpc "github.com/stek0v/levara/internal/grpc"
+	"github.com/stek0v/levara/internal/store"
+	"github.com/stek0v/levara/pkg/embed"
+	"github.com/stek0v/levara/pkg/graphdb"
+	"github.com/stek0v/levara/pkg/llm"
+	"github.com/stek0v/levara/pkg/llmcache"
+	"github.com/stek0v/levara/pkg/llmproxy"
+	"github.com/stek0v/levara/pkg/observe"
+	pb "github.com/stek0v/levara/proto/pb"
+	pbv2 "github.com/stek0v/levara/proto/pb/v2"
 )
 
 // initLLMProvider wires the multi-provider abstraction from env vars
@@ -109,10 +109,10 @@ func startGRPCServer(port int, jwtSecret string, requireAuth bool, svc *vectorGr
 			vectorGrpc.MetricsStreamInterceptor(),
 		),
 	)
-	pb.RegisterCognevraServiceServer(srv, svc)
+	pb.RegisterLevaraServiceServer(srv, svc)
 	// v2 (T10): coexists with v1 on the same listener; gRPC dispatches by
 	// fully qualified method name so old clients keep working.
-	pbv2.RegisterCognevraServiceV2Server(srv, vectorGrpc.NewServiceV2(svc))
+	pbv2.RegisterLevaraServiceV2Server(srv, vectorGrpc.NewServiceV2(svc))
 	go func() {
 		log.Printf("gRPC server listening on port %d", port)
 		if err := srv.Serve(lis); err != nil {

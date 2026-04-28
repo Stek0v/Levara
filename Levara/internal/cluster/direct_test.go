@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/stek0v/cognevra/internal/store"
+	"github.com/stek0v/levara/internal/store"
 )
 
 // T-6: DirectNode is the single-node path (no Raft); it must forward all

@@ -19,7 +19,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"golang.org/x/crypto/bcrypt"
 
-	vectorAuth "github.com/stek0v/cognevra/pkg/auth"
+	vectorAuth "github.com/stek0v/levara/pkg/auth"
 )
 
 // AuthConfig holds auth settings.

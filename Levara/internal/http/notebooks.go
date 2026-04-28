@@ -12,7 +12,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
-	"github.com/stek0v/cognevra/pipeline"
+	"github.com/stek0v/levara/pipeline"
 )
 
 // DTOs match frontend types exactly: Notebook{id, name, cells[], deletable}, Cell{id, name, type, content}

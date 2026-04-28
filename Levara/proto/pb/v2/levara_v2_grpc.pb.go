@@ -1,4 +1,4 @@
-// cognevra_v2.proto — next-generation Cognevra gRPC API (T10).
+// levara_v2.proto — next-generation Levara gRPC API (T10).
 //
 // Design goals:
 //   1. Fix the naming drift that made v1 confusing (Insert vs Add vs Save
@@ -23,7 +23,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.6.1
 // - protoc             v7.34.1
-// source: proto/cognevra_v2.proto
+// source: levara_v2.proto
 
 package v2
 
@@ -40,20 +40,20 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	CognevraServiceV2_Insert_FullMethodName      = "/cognevra.v2.CognevraServiceV2/Insert"
-	CognevraServiceV2_Add_FullMethodName         = "/cognevra.v2.CognevraServiceV2/Add"
-	CognevraServiceV2_Save_FullMethodName        = "/cognevra.v2.CognevraServiceV2/Save"
-	CognevraServiceV2_Create_FullMethodName      = "/cognevra.v2.CognevraServiceV2/Create"
-	CognevraServiceV2_BatchInsert_FullMethodName = "/cognevra.v2.CognevraServiceV2/BatchInsert"
-	CognevraServiceV2_Delete_FullMethodName      = "/cognevra.v2.CognevraServiceV2/Delete"
-	CognevraServiceV2_Search_FullMethodName      = "/cognevra.v2.CognevraServiceV2/Search"
-	CognevraServiceV2_Info_FullMethodName        = "/cognevra.v2.CognevraServiceV2/Info"
+	LevaraServiceV2_Insert_FullMethodName      = "/levara.v2.LevaraServiceV2/Insert"
+	LevaraServiceV2_Add_FullMethodName         = "/levara.v2.LevaraServiceV2/Add"
+	LevaraServiceV2_Save_FullMethodName        = "/levara.v2.LevaraServiceV2/Save"
+	LevaraServiceV2_Create_FullMethodName      = "/levara.v2.LevaraServiceV2/Create"
+	LevaraServiceV2_BatchInsert_FullMethodName = "/levara.v2.LevaraServiceV2/BatchInsert"
+	LevaraServiceV2_Delete_FullMethodName      = "/levara.v2.LevaraServiceV2/Delete"
+	LevaraServiceV2_Search_FullMethodName      = "/levara.v2.LevaraServiceV2/Search"
+	LevaraServiceV2_Info_FullMethodName        = "/levara.v2.LevaraServiceV2/Info"
 )
 
-// CognevraServiceV2Client is the client API for CognevraServiceV2 service.
+// LevaraServiceV2Client is the client API for LevaraServiceV2 service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
-type CognevraServiceV2Client interface {
+type LevaraServiceV2Client interface {
 	// Records — canonical.
 	Insert(ctx context.Context, in *InsertReq, opts ...grpc.CallOption) (*InsertResp, error)
 	// Deprecated: Do not use.
@@ -72,18 +72,18 @@ type CognevraServiceV2Client interface {
 	Info(ctx context.Context, in *InfoReq, opts ...grpc.CallOption) (*InfoResp, error)
 }
 
-type cognevraServiceV2Client struct {
+type levaraServiceV2Client struct {
 	cc grpc.ClientConnInterface
 }
 
-func NewCognevraServiceV2Client(cc grpc.ClientConnInterface) CognevraServiceV2Client {
-	return &cognevraServiceV2Client{cc}
+func NewLevaraServiceV2Client(cc grpc.ClientConnInterface) LevaraServiceV2Client {
+	return &levaraServiceV2Client{cc}
 }
 
-func (c *cognevraServiceV2Client) Insert(ctx context.Context, in *InsertReq, opts ...grpc.CallOption) (*InsertResp, error) {
+func (c *levaraServiceV2Client) Insert(ctx context.Context, in *InsertReq, opts ...grpc.CallOption) (*InsertResp, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(InsertResp)
-	err := c.cc.Invoke(ctx, CognevraServiceV2_Insert_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, LevaraServiceV2_Insert_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -91,10 +91,10 @@ func (c *cognevraServiceV2Client) Insert(ctx context.Context, in *InsertReq, opt
 }
 
 // Deprecated: Do not use.
-func (c *cognevraServiceV2Client) Add(ctx context.Context, in *InsertReq, opts ...grpc.CallOption) (*InsertResp, error) {
+func (c *levaraServiceV2Client) Add(ctx context.Context, in *InsertReq, opts ...grpc.CallOption) (*InsertResp, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(InsertResp)
-	err := c.cc.Invoke(ctx, CognevraServiceV2_Add_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, LevaraServiceV2_Add_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -102,10 +102,10 @@ func (c *cognevraServiceV2Client) Add(ctx context.Context, in *InsertReq, opts .
 }
 
 // Deprecated: Do not use.
-func (c *cognevraServiceV2Client) Save(ctx context.Context, in *InsertReq, opts ...grpc.CallOption) (*InsertResp, error) {
+func (c *levaraServiceV2Client) Save(ctx context.Context, in *InsertReq, opts ...grpc.CallOption) (*InsertResp, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(InsertResp)
-	err := c.cc.Invoke(ctx, CognevraServiceV2_Save_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, LevaraServiceV2_Save_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -113,60 +113,60 @@ func (c *cognevraServiceV2Client) Save(ctx context.Context, in *InsertReq, opts 
 }
 
 // Deprecated: Do not use.
-func (c *cognevraServiceV2Client) Create(ctx context.Context, in *InsertReq, opts ...grpc.CallOption) (*InsertResp, error) {
+func (c *levaraServiceV2Client) Create(ctx context.Context, in *InsertReq, opts ...grpc.CallOption) (*InsertResp, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(InsertResp)
-	err := c.cc.Invoke(ctx, CognevraServiceV2_Create_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, LevaraServiceV2_Create_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *cognevraServiceV2Client) BatchInsert(ctx context.Context, in *BatchInsertReq, opts ...grpc.CallOption) (*BatchInsertResp, error) {
+func (c *levaraServiceV2Client) BatchInsert(ctx context.Context, in *BatchInsertReq, opts ...grpc.CallOption) (*BatchInsertResp, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(BatchInsertResp)
-	err := c.cc.Invoke(ctx, CognevraServiceV2_BatchInsert_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, LevaraServiceV2_BatchInsert_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *cognevraServiceV2Client) Delete(ctx context.Context, in *DeleteReq, opts ...grpc.CallOption) (*DeleteResp, error) {
+func (c *levaraServiceV2Client) Delete(ctx context.Context, in *DeleteReq, opts ...grpc.CallOption) (*DeleteResp, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(DeleteResp)
-	err := c.cc.Invoke(ctx, CognevraServiceV2_Delete_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, LevaraServiceV2_Delete_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *cognevraServiceV2Client) Search(ctx context.Context, in *SearchReq, opts ...grpc.CallOption) (*SearchResp, error) {
+func (c *levaraServiceV2Client) Search(ctx context.Context, in *SearchReq, opts ...grpc.CallOption) (*SearchResp, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SearchResp)
-	err := c.cc.Invoke(ctx, CognevraServiceV2_Search_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, LevaraServiceV2_Search_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *cognevraServiceV2Client) Info(ctx context.Context, in *InfoReq, opts ...grpc.CallOption) (*InfoResp, error) {
+func (c *levaraServiceV2Client) Info(ctx context.Context, in *InfoReq, opts ...grpc.CallOption) (*InfoResp, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(InfoResp)
-	err := c.cc.Invoke(ctx, CognevraServiceV2_Info_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, LevaraServiceV2_Info_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-// CognevraServiceV2Server is the server API for CognevraServiceV2 service.
-// All implementations must embed UnimplementedCognevraServiceV2Server
+// LevaraServiceV2Server is the server API for LevaraServiceV2 service.
+// All implementations must embed UnimplementedLevaraServiceV2Server
 // for forward compatibility.
-type CognevraServiceV2Server interface {
+type LevaraServiceV2Server interface {
 	// Records — canonical.
 	Insert(context.Context, *InsertReq) (*InsertResp, error)
 	// Deprecated: Do not use.
@@ -183,245 +183,245 @@ type CognevraServiceV2Server interface {
 	Search(context.Context, *SearchReq) (*SearchResp, error)
 	// Info — public, not auth-gated.
 	Info(context.Context, *InfoReq) (*InfoResp, error)
-	mustEmbedUnimplementedCognevraServiceV2Server()
+	mustEmbedUnimplementedLevaraServiceV2Server()
 }
 
-// UnimplementedCognevraServiceV2Server must be embedded to have
+// UnimplementedLevaraServiceV2Server must be embedded to have
 // forward compatible implementations.
 //
 // NOTE: this should be embedded by value instead of pointer to avoid a nil
 // pointer dereference when methods are called.
-type UnimplementedCognevraServiceV2Server struct{}
+type UnimplementedLevaraServiceV2Server struct{}
 
-func (UnimplementedCognevraServiceV2Server) Insert(context.Context, *InsertReq) (*InsertResp, error) {
+func (UnimplementedLevaraServiceV2Server) Insert(context.Context, *InsertReq) (*InsertResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method Insert not implemented")
 }
-func (UnimplementedCognevraServiceV2Server) Add(context.Context, *InsertReq) (*InsertResp, error) {
+func (UnimplementedLevaraServiceV2Server) Add(context.Context, *InsertReq) (*InsertResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method Add not implemented")
 }
-func (UnimplementedCognevraServiceV2Server) Save(context.Context, *InsertReq) (*InsertResp, error) {
+func (UnimplementedLevaraServiceV2Server) Save(context.Context, *InsertReq) (*InsertResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method Save not implemented")
 }
-func (UnimplementedCognevraServiceV2Server) Create(context.Context, *InsertReq) (*InsertResp, error) {
+func (UnimplementedLevaraServiceV2Server) Create(context.Context, *InsertReq) (*InsertResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method Create not implemented")
 }
-func (UnimplementedCognevraServiceV2Server) BatchInsert(context.Context, *BatchInsertReq) (*BatchInsertResp, error) {
+func (UnimplementedLevaraServiceV2Server) BatchInsert(context.Context, *BatchInsertReq) (*BatchInsertResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method BatchInsert not implemented")
 }
-func (UnimplementedCognevraServiceV2Server) Delete(context.Context, *DeleteReq) (*DeleteResp, error) {
+func (UnimplementedLevaraServiceV2Server) Delete(context.Context, *DeleteReq) (*DeleteResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method Delete not implemented")
 }
-func (UnimplementedCognevraServiceV2Server) Search(context.Context, *SearchReq) (*SearchResp, error) {
+func (UnimplementedLevaraServiceV2Server) Search(context.Context, *SearchReq) (*SearchResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method Search not implemented")
 }
-func (UnimplementedCognevraServiceV2Server) Info(context.Context, *InfoReq) (*InfoResp, error) {
+func (UnimplementedLevaraServiceV2Server) Info(context.Context, *InfoReq) (*InfoResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method Info not implemented")
 }
-func (UnimplementedCognevraServiceV2Server) mustEmbedUnimplementedCognevraServiceV2Server() {}
-func (UnimplementedCognevraServiceV2Server) testEmbeddedByValue()                           {}
+func (UnimplementedLevaraServiceV2Server) mustEmbedUnimplementedLevaraServiceV2Server() {}
+func (UnimplementedLevaraServiceV2Server) testEmbeddedByValue()                         {}
 
-// UnsafeCognevraServiceV2Server may be embedded to opt out of forward compatibility for this service.
-// Use of this interface is not recommended, as added methods to CognevraServiceV2Server will
+// UnsafeLevaraServiceV2Server may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to LevaraServiceV2Server will
 // result in compilation errors.
-type UnsafeCognevraServiceV2Server interface {
-	mustEmbedUnimplementedCognevraServiceV2Server()
+type UnsafeLevaraServiceV2Server interface {
+	mustEmbedUnimplementedLevaraServiceV2Server()
 }
 
-func RegisterCognevraServiceV2Server(s grpc.ServiceRegistrar, srv CognevraServiceV2Server) {
-	// If the following call panics, it indicates UnimplementedCognevraServiceV2Server was
+func RegisterLevaraServiceV2Server(s grpc.ServiceRegistrar, srv LevaraServiceV2Server) {
+	// If the following call panics, it indicates UnimplementedLevaraServiceV2Server was
 	// embedded by pointer and is nil.  This will cause panics if an
 	// unimplemented method is ever invoked, so we test this at initialization
 	// time to prevent it from happening at runtime later due to I/O.
 	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
 		t.testEmbeddedByValue()
 	}
-	s.RegisterService(&CognevraServiceV2_ServiceDesc, srv)
+	s.RegisterService(&LevaraServiceV2_ServiceDesc, srv)
 }
 
-func _CognevraServiceV2_Insert_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _LevaraServiceV2_Insert_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(InsertReq)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(CognevraServiceV2Server).Insert(ctx, in)
+		return srv.(LevaraServiceV2Server).Insert(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: CognevraServiceV2_Insert_FullMethodName,
+		FullMethod: LevaraServiceV2_Insert_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(CognevraServiceV2Server).Insert(ctx, req.(*InsertReq))
+		return srv.(LevaraServiceV2Server).Insert(ctx, req.(*InsertReq))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _CognevraServiceV2_Add_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _LevaraServiceV2_Add_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(InsertReq)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(CognevraServiceV2Server).Add(ctx, in)
+		return srv.(LevaraServiceV2Server).Add(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: CognevraServiceV2_Add_FullMethodName,
+		FullMethod: LevaraServiceV2_Add_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(CognevraServiceV2Server).Add(ctx, req.(*InsertReq))
+		return srv.(LevaraServiceV2Server).Add(ctx, req.(*InsertReq))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _CognevraServiceV2_Save_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _LevaraServiceV2_Save_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(InsertReq)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(CognevraServiceV2Server).Save(ctx, in)
+		return srv.(LevaraServiceV2Server).Save(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: CognevraServiceV2_Save_FullMethodName,
+		FullMethod: LevaraServiceV2_Save_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(CognevraServiceV2Server).Save(ctx, req.(*InsertReq))
+		return srv.(LevaraServiceV2Server).Save(ctx, req.(*InsertReq))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _CognevraServiceV2_Create_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _LevaraServiceV2_Create_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(InsertReq)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(CognevraServiceV2Server).Create(ctx, in)
+		return srv.(LevaraServiceV2Server).Create(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: CognevraServiceV2_Create_FullMethodName,
+		FullMethod: LevaraServiceV2_Create_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(CognevraServiceV2Server).Create(ctx, req.(*InsertReq))
+		return srv.(LevaraServiceV2Server).Create(ctx, req.(*InsertReq))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _CognevraServiceV2_BatchInsert_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _LevaraServiceV2_BatchInsert_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(BatchInsertReq)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(CognevraServiceV2Server).BatchInsert(ctx, in)
+		return srv.(LevaraServiceV2Server).BatchInsert(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: CognevraServiceV2_BatchInsert_FullMethodName,
+		FullMethod: LevaraServiceV2_BatchInsert_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(CognevraServiceV2Server).BatchInsert(ctx, req.(*BatchInsertReq))
+		return srv.(LevaraServiceV2Server).BatchInsert(ctx, req.(*BatchInsertReq))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _CognevraServiceV2_Delete_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _LevaraServiceV2_Delete_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(DeleteReq)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(CognevraServiceV2Server).Delete(ctx, in)
+		return srv.(LevaraServiceV2Server).Delete(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: CognevraServiceV2_Delete_FullMethodName,
+		FullMethod: LevaraServiceV2_Delete_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(CognevraServiceV2Server).Delete(ctx, req.(*DeleteReq))
+		return srv.(LevaraServiceV2Server).Delete(ctx, req.(*DeleteReq))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _CognevraServiceV2_Search_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _LevaraServiceV2_Search_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(SearchReq)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(CognevraServiceV2Server).Search(ctx, in)
+		return srv.(LevaraServiceV2Server).Search(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: CognevraServiceV2_Search_FullMethodName,
+		FullMethod: LevaraServiceV2_Search_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(CognevraServiceV2Server).Search(ctx, req.(*SearchReq))
+		return srv.(LevaraServiceV2Server).Search(ctx, req.(*SearchReq))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _CognevraServiceV2_Info_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _LevaraServiceV2_Info_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(InfoReq)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(CognevraServiceV2Server).Info(ctx, in)
+		return srv.(LevaraServiceV2Server).Info(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: CognevraServiceV2_Info_FullMethodName,
+		FullMethod: LevaraServiceV2_Info_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(CognevraServiceV2Server).Info(ctx, req.(*InfoReq))
+		return srv.(LevaraServiceV2Server).Info(ctx, req.(*InfoReq))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-// CognevraServiceV2_ServiceDesc is the grpc.ServiceDesc for CognevraServiceV2 service.
+// LevaraServiceV2_ServiceDesc is the grpc.ServiceDesc for LevaraServiceV2 service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
-var CognevraServiceV2_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "cognevra.v2.CognevraServiceV2",
-	HandlerType: (*CognevraServiceV2Server)(nil),
+var LevaraServiceV2_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "levara.v2.LevaraServiceV2",
+	HandlerType: (*LevaraServiceV2Server)(nil),
 	Methods: []grpc.MethodDesc{
 		{
 			MethodName: "Insert",
-			Handler:    _CognevraServiceV2_Insert_Handler,
+			Handler:    _LevaraServiceV2_Insert_Handler,
 		},
 		{
 			MethodName: "Add",
-			Handler:    _CognevraServiceV2_Add_Handler,
+			Handler:    _LevaraServiceV2_Add_Handler,
 		},
 		{
 			MethodName: "Save",
-			Handler:    _CognevraServiceV2_Save_Handler,
+			Handler:    _LevaraServiceV2_Save_Handler,
 		},
 		{
 			MethodName: "Create",
-			Handler:    _CognevraServiceV2_Create_Handler,
+			Handler:    _LevaraServiceV2_Create_Handler,
 		},
 		{
 			MethodName: "BatchInsert",
-			Handler:    _CognevraServiceV2_BatchInsert_Handler,
+			Handler:    _LevaraServiceV2_BatchInsert_Handler,
 		},
 		{
 			MethodName: "Delete",
-			Handler:    _CognevraServiceV2_Delete_Handler,
+			Handler:    _LevaraServiceV2_Delete_Handler,
 		},
 		{
 			MethodName: "Search",
-			Handler:    _CognevraServiceV2_Search_Handler,
+			Handler:    _LevaraServiceV2_Search_Handler,
 		},
 		{
 			MethodName: "Info",
-			Handler:    _CognevraServiceV2_Info_Handler,
+			Handler:    _LevaraServiceV2_Info_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "proto/cognevra_v2.proto",
+	Metadata: "levara_v2.proto",
 }

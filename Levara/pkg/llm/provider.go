@@ -22,7 +22,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/stek0v/cognevra/internal/metrics"
+	"github.com/stek0v/levara/internal/metrics"
 )
 
 // Message is a chat message (role + content).
