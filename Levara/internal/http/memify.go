@@ -24,9 +24,9 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
-	"github.com/stek0v/cognevra/pkg/graph"
-	"github.com/stek0v/cognevra/pkg/graphdb"
-	"github.com/stek0v/cognevra/pkg/orchestrator"
+	"github.com/stek0v/levara/pkg/graph"
+	"github.com/stek0v/levara/pkg/graphdb"
+	"github.com/stek0v/levara/pkg/orchestrator"
 )
 
 type memifyRequest struct {

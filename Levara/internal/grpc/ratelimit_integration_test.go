@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	pb "github.com/stek0v/cognevra/proto/pb"
+	pb "github.com/stek0v/levara/proto/pb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -54,14 +54,14 @@ func TestRateLimit_IntegrationPerSourceIP(t *testing.T) {
 	// Register only the Info method target — we need something that takes
 	// Empty and returns quickly. Info is registered by the real Service, so
 	// we use a minimal hand-rolled server that satisfies the interface.
-	pb.RegisterCognevraServiceServer(srv, &minimalSvc{})
+	pb.RegisterLevaraServiceServer(srv, &minimalSvc{})
 	go srv.Serve(lis)
 	defer srv.GracefulStop()
 
 	// dialFrom opens a gRPC client that binds its outgoing connection to
 	// the given local IP. This is how we simulate "two clients from
 	// different source IPs" in a single-process test.
-	dialFrom := func(localIP string) (pb.CognevraServiceClient, func()) {
+	dialFrom := func(localIP string) (pb.LevaraServiceClient, func()) {
 		dialer := &net.Dialer{
 			LocalAddr: &net.TCPAddr{IP: net.ParseIP(localIP)},
 			Timeout:   2 * time.Second,
@@ -76,7 +76,7 @@ func TestRateLimit_IntegrationPerSourceIP(t *testing.T) {
 		if err != nil {
 			t.Fatalf("dial from %s: %v", localIP, err)
 		}
-		return pb.NewCognevraServiceClient(conn), func() { conn.Close() }
+		return pb.NewLevaraServiceClient(conn), func() { conn.Close() }
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -105,11 +105,11 @@ func TestRateLimit_IntegrationPerSourceIP(t *testing.T) {
 	}
 }
 
-// minimalSvc satisfies pb.CognevraServiceServer enough for the interceptor
+// minimalSvc satisfies pb.LevaraServiceServer enough for the interceptor
 // integration test. We only actually call Info; everything else panics so
 // accidental expansion of the test is noisy rather than silent.
 type minimalSvc struct {
-	pb.UnimplementedCognevraServiceServer
+	pb.UnimplementedLevaraServiceServer
 }
 
 func (*minimalSvc) Info(context.Context, *pb.Empty) (*pb.InfoResp, error) {

@@ -81,7 +81,7 @@ async def scenario_chat(client, session, headers, iterations=20):
         "Explain the WAL recovery process after a crash.",
         "How does sharding work with Raft consensus?",
         "What are the memory requirements for 1M vectors at dim=1024?",
-        "How to monitor Cognevra metrics with Prometheus?",
+        "How to monitor Levara metrics with Prometheus?",
         "What is the difference between cosine and L2 distance?",
         "How to set up replication across 3 nodes?",
         "Explain the arena allocator memory layout.",
@@ -93,7 +93,7 @@ async def scenario_chat(client, session, headers, iterations=20):
         "How to benchmark search latency under load?",
         "Explain the HTTP handler request pipeline.",
         "What is the P99 latency target for production?",
-        "How to migrate data between Cognevra versions?",
+        "How to migrate data between Levara versions?",
         "Describe the connection pooling strategy.",
         "How to implement hybrid search with metadata filters?",
     ]

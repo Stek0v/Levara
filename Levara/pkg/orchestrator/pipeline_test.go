@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stek0v/cognevra/pkg/llm/mock"
+	"github.com/stek0v/levara/pkg/llm/mock"
 )
 
 // T-2: integration test for the cognify pipeline against a mock LLM provider.

@@ -10,7 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/stek0v/cognevra/pkg/community"
+	"github.com/stek0v/levara/pkg/community"
 )
 
 // ToolListCommunities queries the graph_communities table and returns a

@@ -21,7 +21,7 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/stek0v/cognevra/internal/store"
+	"github.com/stek0v/levara/internal/store"
 )
 
 // WALEntry is one replicated entry sent from primary to replica.

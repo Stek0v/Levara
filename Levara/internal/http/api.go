@@ -9,15 +9,15 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	_ "github.com/jackc/pgx/v5/stdlib"
-	"github.com/stek0v/cognevra/internal/store"
-	"github.com/stek0v/cognevra/pkg/bm25"
-	"github.com/stek0v/cognevra/pkg/embed"
-	"github.com/stek0v/cognevra/pkg/llm"
-	"github.com/stek0v/cognevra/pkg/llmcache"
-	"github.com/stek0v/cognevra/pkg/observe"
-	"github.com/stek0v/cognevra/pkg/router"
-	"github.com/stek0v/cognevra/pkg/runreg"
-	"github.com/stek0v/cognevra/pkg/storage"
+	"github.com/stek0v/levara/internal/store"
+	"github.com/stek0v/levara/pkg/bm25"
+	"github.com/stek0v/levara/pkg/embed"
+	"github.com/stek0v/levara/pkg/llm"
+	"github.com/stek0v/levara/pkg/llmcache"
+	"github.com/stek0v/levara/pkg/observe"
+	"github.com/stek0v/levara/pkg/router"
+	"github.com/stek0v/levara/pkg/runreg"
+	"github.com/stek0v/levara/pkg/storage"
 )
 
 // APIConfig holds configuration for Cognee-compatible API endpoints.

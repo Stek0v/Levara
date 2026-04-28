@@ -29,12 +29,12 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/stek0v/cognevra/pkg/embed"
+	"github.com/stek0v/levara/pkg/embed"
 
 	"github.com/gofiber/fiber/v2"
 	_ "github.com/ncruces/go-sqlite3/driver"
-	"github.com/stek0v/cognevra/internal/store"
-	"github.com/stek0v/cognevra/pkg/llm"
+	"github.com/stek0v/levara/internal/store"
+	"github.com/stek0v/levara/pkg/llm"
 )
 
 // recordingLLM implements llm.Provider for tests. Each ChatCompletion call

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/stek0v/cognevra/pkg/graph"
+	"github.com/stek0v/levara/pkg/graph"
 )
 
 // exclusiveRelationships are relationship types where a single source entity

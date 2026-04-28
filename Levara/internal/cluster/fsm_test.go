@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/hashicorp/raft"
-	"github.com/stek0v/cognevra/internal/store"
+	"github.com/stek0v/levara/internal/store"
 )
 
 // T-6 regression tests for the Raft FSM layer. The Apply / Snapshot / Restore

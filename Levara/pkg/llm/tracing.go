@@ -3,7 +3,7 @@ package llm
 import (
 	"context"
 
-	"github.com/stek0v/cognevra/pkg/observe"
+	"github.com/stek0v/levara/pkg/observe"
 )
 
 // LangfuseAdapter wraps observe.LangfuseTracer to satisfy the llm.Tracer interface.

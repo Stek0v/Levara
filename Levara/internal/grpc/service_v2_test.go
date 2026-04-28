@@ -6,8 +6,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/stek0v/cognevra/internal/store"
-	pbv2 "github.com/stek0v/cognevra/proto/pb/v2"
+	"github.com/stek0v/levara/internal/store"
+	pbv2 "github.com/stek0v/levara/proto/pb/v2"
 )
 
 // v2TestService spins up a real v1 Service (in-memory store + cluster)

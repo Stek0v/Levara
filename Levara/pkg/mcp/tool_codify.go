@@ -17,7 +17,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/stek0v/cognevra/pkg/extract"
+	"github.com/stek0v/levara/pkg/extract"
 )
 
 // ToolCodify parses code with extract.AnalyzeCode, stores extracted

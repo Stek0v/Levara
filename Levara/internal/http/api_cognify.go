@@ -21,9 +21,9 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 
-	"github.com/stek0v/cognevra/internal/metrics"
-	"github.com/stek0v/cognevra/pkg/orchestrator"
-	"github.com/stek0v/cognevra/pkg/runreg"
+	"github.com/stek0v/levara/internal/metrics"
+	"github.com/stek0v/levara/pkg/orchestrator"
+	"github.com/stek0v/levara/pkg/runreg"
 )
 
 // cognifyHandler — POST /cognify. Kicks off an async pipeline and returns

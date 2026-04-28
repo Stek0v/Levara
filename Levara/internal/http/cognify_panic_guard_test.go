@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stek0v/cognevra/internal/metrics"
+	"github.com/stek0v/levara/internal/metrics"
 
 	dto "github.com/prometheus/client_model/go"
 )

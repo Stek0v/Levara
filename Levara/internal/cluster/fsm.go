@@ -6,7 +6,7 @@ import (
 	"io"
 
 	"github.com/hashicorp/raft"
-	"github.com/stek0v/cognevra/internal/store"
+	"github.com/stek0v/levara/internal/store"
 )
 
 // Command is what we replicate across the network

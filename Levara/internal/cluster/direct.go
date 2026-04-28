@@ -1,6 +1,6 @@
 package cluster
 
-import "github.com/stek0v/cognevra/internal/store"
+import "github.com/stek0v/levara/internal/store"
 
 // DirectNode implements store.ShardHandler by calling Levara directly,
 // bypassing Raft consensus. Durability is provided by WAL.

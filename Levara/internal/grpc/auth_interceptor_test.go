@@ -14,7 +14,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	vectorAuth "github.com/stek0v/cognevra/pkg/auth"
+	vectorAuth "github.com/stek0v/levara/pkg/auth"
 )
 
 // signJWT produces a valid HS256 token with the given sub/secret/ttl.
@@ -52,7 +52,7 @@ func TestUnaryAuthInterceptor_ValidTokenInjectsUserID(t *testing.T) {
 	ctx := ctxWithToken(tok)
 
 	interceptor := UnaryAuthInterceptor(secret, true)
-	info := &grpclib.UnaryServerInfo{FullMethod: "/cognevra.v1.CognevraService/Search"}
+	info := &grpclib.UnaryServerInfo{FullMethod: "/levara.v1.LevaraService/Search"}
 
 	var gotUID string
 	_, err := interceptor(ctx, nil, info, func(ctx context.Context, req any) (any, error) {
@@ -69,7 +69,7 @@ func TestUnaryAuthInterceptor_ValidTokenInjectsUserID(t *testing.T) {
 
 func TestUnaryAuthInterceptor_MissingTokenRejected(t *testing.T) {
 	interceptor := UnaryAuthInterceptor("s3cret", true)
-	info := &grpclib.UnaryServerInfo{FullMethod: "/cognevra.v1.CognevraService/Search"}
+	info := &grpclib.UnaryServerInfo{FullMethod: "/levara.v1.LevaraService/Search"}
 
 	_, err := interceptor(context.Background(), nil, info, func(context.Context, any) (any, error) {
 		t.Fatal("handler should not have been called")
@@ -85,7 +85,7 @@ func TestUnaryAuthInterceptor_MissingTokenRejected(t *testing.T) {
 
 func TestUnaryAuthInterceptor_WhitelistedMethodBypassesAuth(t *testing.T) {
 	interceptor := UnaryAuthInterceptor("s3cret", true)
-	info := &grpclib.UnaryServerInfo{FullMethod: "/cognevra.v1.CognevraService/Info"}
+	info := &grpclib.UnaryServerInfo{FullMethod: "/levara.v1.LevaraService/Info"}
 
 	called := false
 	_, err := interceptor(context.Background(), nil, info, func(context.Context, any) (any, error) {
@@ -106,7 +106,7 @@ func TestUnaryAuthInterceptor_ExpiredTokenRejected(t *testing.T) {
 	ctx := ctxWithToken(tok)
 
 	interceptor := UnaryAuthInterceptor(secret, true)
-	info := &grpclib.UnaryServerInfo{FullMethod: "/cognevra.v1.CognevraService/Search"}
+	info := &grpclib.UnaryServerInfo{FullMethod: "/levara.v1.LevaraService/Search"}
 	_, err := interceptor(ctx, nil, info, func(context.Context, any) (any, error) {
 		t.Fatal("expired token should not reach handler")
 		return nil, nil
@@ -121,7 +121,7 @@ func TestUnaryAuthInterceptor_WrongSecretRejected(t *testing.T) {
 	ctx := ctxWithToken(tok)
 
 	interceptor := UnaryAuthInterceptor("wrong-secret", true)
-	info := &grpclib.UnaryServerInfo{FullMethod: "/cognevra.v1.CognevraService/Search"}
+	info := &grpclib.UnaryServerInfo{FullMethod: "/levara.v1.LevaraService/Search"}
 	_, err := interceptor(ctx, nil, info, func(context.Context, any) (any, error) {
 		t.Fatal("wrong-secret token should not reach handler")
 		return nil, nil
@@ -135,7 +135,7 @@ func TestUnaryAuthInterceptor_WrongSecretRejected(t *testing.T) {
 // some clients haven't been upgraded to send tokens yet.
 func TestUnaryAuthInterceptor_PermissiveModeAllowsAnon(t *testing.T) {
 	interceptor := UnaryAuthInterceptor("s3cret", false)
-	info := &grpclib.UnaryServerInfo{FullMethod: "/cognevra.v1.CognevraService/Search"}
+	info := &grpclib.UnaryServerInfo{FullMethod: "/levara.v1.LevaraService/Search"}
 
 	called := false
 	var gotUID string

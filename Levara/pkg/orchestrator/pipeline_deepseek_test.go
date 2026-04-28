@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stek0v/cognevra/pkg/llm"
+	"github.com/stek0v/levara/pkg/llm"
 )
 
 // Integration test against the real DeepSeek Chat API (OpenAI-compatible).

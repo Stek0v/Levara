@@ -60,16 +60,27 @@ docker-stop:
 
 proto-go:
 	@echo "Generating Go protobuf stubs..."
-	@protoc --go_out=. --go-grpc_out=. proto/levara.proto
+	@mkdir -p proto/pb proto/pb/v2
+	@PATH="$$(go env GOPATH)/bin:$$PATH" protoc \
+		-Iproto \
+		--go_out=proto/pb --go_opt=paths=source_relative \
+		--go-grpc_out=proto/pb --go-grpc_opt=paths=source_relative \
+		proto/levara.proto
+	@PATH="$$(go env GOPATH)/bin:$$PATH" protoc \
+		-Iproto \
+		--go_out=proto/pb/v2 --go_opt=paths=source_relative \
+		--go-grpc_out=proto/pb/v2 --go-grpc_opt=paths=source_relative \
+		proto/levara_v2.proto
 	@echo "Done."
 
 proto-python:
 	@echo "Generating Python gRPC stubs..."
-	@python3 -m grpc_tools.protoc \
+	@mkdir -p ./generated
+	@PATH="$$(go env GOPATH)/bin:$$PATH" python3 -m grpc_tools.protoc \
 		-Iproto \
 		--python_out=./generated \
 		--grpc_python_out=./generated \
-		proto/levara.proto
+		proto/levara.proto proto/levara_v2.proto
 	@echo "Done."
 
 proto: proto-go proto-python

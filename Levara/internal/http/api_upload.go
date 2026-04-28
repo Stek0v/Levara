@@ -23,9 +23,9 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 
-	"github.com/stek0v/cognevra/pkg/extract"
-	"github.com/stek0v/cognevra/pkg/fetch"
-	"github.com/stek0v/cognevra/pkg/ingest"
+	"github.com/stek0v/levara/pkg/extract"
+	"github.com/stek0v/levara/pkg/fetch"
+	"github.com/stek0v/levara/pkg/ingest"
 )
 
 // ── U3: File Upload (multipart) ──

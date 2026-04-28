@@ -1,8 +1,8 @@
 syntax = "proto3";
-package cognevra.v1;
-option go_package = "github.com/stek0v/cognevra/proto/pb";
+package levara.v1;
+option go_package = "github.com/stek0v/levara/proto/pb";
 
-service CognevraService {
+service LevaraService {
   // Collections
   rpc CreateCollection(CreateCollectionReq) returns (StatusResp);
   rpc DropCollection(DropCollectionReq) returns (StatusResp);

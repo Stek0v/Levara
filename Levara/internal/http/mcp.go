@@ -23,14 +23,14 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/stek0v/cognevra/internal/metrics"
-	"github.com/stek0v/cognevra/pkg/llm"
-	"github.com/stek0v/cognevra/pkg/mcp"
-	"github.com/stek0v/cognevra/pkg/orchestrator"
-	"github.com/stek0v/cognevra/pkg/rerank"
-	"github.com/stek0v/cognevra/pkg/router"
-	"github.com/stek0v/cognevra/pkg/runreg"
-	"github.com/stek0v/cognevra/pipeline"
+	"github.com/stek0v/levara/internal/metrics"
+	"github.com/stek0v/levara/pkg/llm"
+	"github.com/stek0v/levara/pkg/mcp"
+	"github.com/stek0v/levara/pkg/orchestrator"
+	"github.com/stek0v/levara/pkg/rerank"
+	"github.com/stek0v/levara/pkg/router"
+	"github.com/stek0v/levara/pkg/runreg"
+	"github.com/stek0v/levara/pipeline"
 )
 
 // F-4 wave 1b: the canonical type definitions live in pkg/mcp now. Local
