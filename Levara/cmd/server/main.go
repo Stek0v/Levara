@@ -62,11 +62,11 @@ import (
 
 	"path/filepath"
 
+	"github.com/gofiber/swagger"
 	"github.com/hashicorp/raft"
-	_ "github.com/jackc/pgx/v5/stdlib"  // pgx via database/sql (binary protocol, prepared stmts)
+	_ "github.com/jackc/pgx/v5/stdlib"       // pgx via database/sql (binary protocol, prepared stmts)
 	_ "github.com/ncruces/go-sqlite3/driver" // pure-Go SQLite driver (no CGO, ARM64 ready)
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/gofiber/swagger"
 	"github.com/stek0v/levara/internal/cluster"
 	vectorGrpc "github.com/stek0v/levara/internal/grpc"
 	"github.com/stek0v/levara/internal/metrics"
@@ -74,6 +74,7 @@ import (
 
 	_ "github.com/stek0v/levara/docs" // swaggo-generated OpenAPI spec (T13)
 	"github.com/stek0v/levara/pkg/embed"
+	"github.com/stek0v/levara/pkg/graphdb"
 	"github.com/stek0v/levara/pkg/ingest"
 	"github.com/stek0v/levara/pkg/llmcache"
 	"github.com/stek0v/levara/pkg/observe"
@@ -250,7 +251,6 @@ func main() {
 		return c.JSON(fiber.Map{"status": "ready", "health": "healthy", "version": "levara-go"})
 	})
 
-
 	// ---------------------------------------------------------------
 	// Cluster replication endpoints
 	// ---------------------------------------------------------------
@@ -272,8 +272,23 @@ func main() {
 		return c.JSON(fiber.Map{"status": "ready", "health": "healthy", "version": "levara-go"})
 	})
 
-
 	api := app.Group("/api/v1")
+
+	// Neo4j schema bootstrap is one-time at startup. Per-request handlers
+	// should not execute DDL for latency and side-effect reasons.
+	if *neo4jURL != "" && shouldBootstrapNeo4jSchema(os.Getenv("NEO4J_BOOTSTRAP_SCHEMA")) {
+		neoCtx, neoCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		w, neoErr := graphdb.NewWriterWithSchema(neoCtx, *neo4jURL, *neo4jUser, *neo4jPassword, *neo4jDatabase)
+		if neoErr != nil {
+			log.Printf("[startup] neo4j schema bootstrap skipped: %v", neoErr)
+		} else {
+			_ = w.Close(neoCtx)
+			log.Printf("[startup] neo4j schema bootstrap complete")
+		}
+		neoCancel()
+	} else if *neo4jURL != "" {
+		log.Printf("[startup] neo4j schema bootstrap disabled (NEO4J_BOOTSTRAP_SCHEMA=%q)", os.Getenv("NEO4J_BOOTSTRAP_SCHEMA"))
+	}
 
 	// Graph visualization config (used by both public and protected routes)
 	vizCfg := vectorHttp.GraphVisualizationConfig{
@@ -360,10 +375,22 @@ func main() {
 	} else if dbHost := os.Getenv("DB_HOST"); dbHost != "" {
 		// PostgreSQL mode (default)
 		vectorHttp.SetDBProvider(vectorHttp.DBPostgres)
-		dbUser := os.Getenv("DB_USERNAME"); if dbUser == "" { dbUser = "cognee" }
-		dbPass := os.Getenv("DB_PASSWORD"); if dbPass == "" { dbPass = "cognee" }
-		dbName := os.Getenv("DB_NAME"); if dbName == "" { dbName = "cognee_db" }
-		dbPort := os.Getenv("DB_PORT"); if dbPort == "" { dbPort = "5432" }
+		dbUser := os.Getenv("DB_USERNAME")
+		if dbUser == "" {
+			dbUser = "cognee"
+		}
+		dbPass := os.Getenv("DB_PASSWORD")
+		if dbPass == "" {
+			dbPass = "cognee"
+		}
+		dbName := os.Getenv("DB_NAME")
+		if dbName == "" {
+			dbName = "cognee_db"
+		}
+		dbPort := os.Getenv("DB_PORT")
+		if dbPort == "" {
+			dbPort = "5432"
+		}
 		pgDSN = fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable", dbUser, dbPass, dbHost, dbPort, dbName)
 
 		var dbErr error
@@ -392,7 +419,10 @@ func main() {
 		log.Printf("Graph visualization: SQL fallback enabled")
 	}
 	embedEndpoint := os.Getenv("EMBEDDING_ENDPOINT")
-	embedModel := os.Getenv("EMBEDDING_MODEL"); if embedModel == "" { embedModel = "text-embedding-3-small" }
+	embedModel := os.Getenv("EMBEDDING_MODEL")
+	if embedModel == "" {
+		embedModel = "text-embedding-3-small"
+	}
 
 	// Auth endpoints (public — no JWT required)
 	jwtSecret := os.Getenv("JWT_SECRET")
@@ -513,17 +543,17 @@ func main() {
 
 	// MCP (Model Context Protocol) server — JSON-RPC 2.0 for AI agent integration
 	vectorHttp.RegisterMCPAPI(app, vectorHttp.APIConfig{
-		EmbedEndpoint:  embedEndpoint,
-		EmbedModel:     embedModel,
-		EmbedClient:    sharedEmbed,
-		Collections:    colManager,
-		DB:             pgDB,
-		BM25Indexes:    grpcSvc.BM25Indexes(),
-		LLMCache:       llmCache,
-		RerankEndpoint: rerankCfg.Endpoint,
-		RerankModel:    rerankCfg.Model,
+		EmbedEndpoint:   embedEndpoint,
+		EmbedModel:      embedModel,
+		EmbedClient:     sharedEmbed,
+		Collections:     colManager,
+		DB:              pgDB,
+		BM25Indexes:     grpcSvc.BM25Indexes(),
+		LLMCache:        llmCache,
+		RerankEndpoint:  rerankCfg.Endpoint,
+		RerankModel:     rerankCfg.Model,
 		RerankTimeoutMs: rerankCfg.TimeoutMs,
-		Runs:           runs,
+		Runs:            runs,
 	})
 
 	// Cache stats endpoint
@@ -535,18 +565,18 @@ func main() {
 	// Detailed /health/details with per-dependency probes lives in
 	// bootstrap.go.
 	registerHealthDetails(app, healthDeps{
-		port:           *port,
-		grpcPort:       *grpcPort,
-		dim:            *dim,
-		pgDB:           pgDB,
-		neo4jURL:       *neo4jURL,
-		neo4jUser:      *neo4jUser,
-		neo4jPassword:  *neo4jPassword,
-		neo4jDatabase:  *neo4jDatabase,
-		embedEndpoint:  embedEndpoint,
-		embedModel:     embedModel,
-		llmProvider:    llmProvider,
-		colManager:     colManager,
+		port:          *port,
+		grpcPort:      *grpcPort,
+		dim:           *dim,
+		pgDB:          pgDB,
+		neo4jURL:      *neo4jURL,
+		neo4jUser:     *neo4jUser,
+		neo4jPassword: *neo4jPassword,
+		neo4jDatabase: *neo4jDatabase,
+		embedEndpoint: embedEndpoint,
+		embedModel:    embedModel,
+		llmProvider:   llmProvider,
+		colManager:    colManager,
 	})
 
 	// gRPC server (v1 + v2) starts in a goroutine. nil when disabled.

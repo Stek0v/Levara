@@ -11,8 +11,11 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"time"
+
+	"github.com/stek0v/levara/pkg/graphdb"
 )
 
 // ── Doctor check types ──
@@ -53,6 +56,7 @@ func (h *mcpHandler) toolDoctor(ctx context.Context, args map[string]any) mcpToo
 	// 4. Neo4j (optional)
 	if h.cfg.Neo4jCfg.Neo4jURL != "" {
 		checks = append(checks, h.checkNeo4j(ctx))
+		checks = append(checks, h.checkNeo4jSchema(ctx))
 	}
 
 	// 5. Embedding coverage
@@ -222,6 +226,141 @@ func (h *mcpHandler) checkNeo4j(ctx context.Context) doctorCheck {
 		Status:      "warn",
 		Message:     fmt.Sprintf("Unreachable: %s", url),
 		Remediation: "Check Neo4j service or remove NEO4J_URL if not needed",
+	}
+}
+
+func (h *mcpHandler) checkNeo4jSchema(ctx context.Context) doctorCheck {
+	writer, err := graphdb.NewWriter(ctx, h.cfg.Neo4jCfg.Neo4jURL, h.cfg.Neo4jCfg.Neo4jUser,
+		h.cfg.Neo4jCfg.Neo4jPassword, h.cfg.Neo4jCfg.Neo4jDatabase)
+	if err != nil {
+		return doctorCheck{
+			Name:        "neo4j_schema",
+			Status:      "warn",
+			Message:     fmt.Sprintf("Unable to verify schema (connect error): %v", err),
+			Remediation: "Ensure Neo4j is reachable to run schema checks and auto-create required indexes/constraints",
+		}
+	}
+	defer writer.Close(ctx)
+
+	constraintRows, err := writer.Query(ctx, "SHOW CONSTRAINTS YIELD type, labelsOrTypes, properties RETURN type, labelsOrTypes, properties", nil)
+	if err != nil {
+		return doctorCheck{
+			Name:        "neo4j_schema",
+			Status:      "warn",
+			Message:     fmt.Sprintf("Constraint introspection failed: %v", err),
+			Remediation: "Verify Neo4j version/permissions; SHOW CONSTRAINTS must be accessible",
+		}
+	}
+	indexRows, err := writer.Query(ctx, "SHOW INDEXES YIELD labelsOrTypes, properties RETURN labelsOrTypes, properties", nil)
+	if err != nil {
+		return doctorCheck{
+			Name:        "neo4j_schema",
+			Status:      "warn",
+			Message:     fmt.Sprintf("Index introspection failed: %v", err),
+			Remediation: "Verify Neo4j version/permissions; SHOW INDEXES must be accessible",
+		}
+	}
+
+	obs := neo4jObservedSchema{
+		constraints: normalizeNeo4jConstraintRows(constraintRows),
+		indexes:     normalizeNeo4jIndexRows(indexRows),
+	}
+	status, message, remediation := evaluateNeo4jSchema(obs)
+	return doctorCheck{
+		Name:        "neo4j_schema",
+		Status:      status,
+		Message:     message,
+		Remediation: remediation,
+	}
+}
+
+type neo4jObservedSchema struct {
+	constraints map[string]bool
+	indexes     map[string]bool
+}
+
+func requiredNeo4jConstraintKeys() []string {
+	return []string{"__Node__:id:UNIQUE"}
+}
+
+func requiredNeo4jIndexKeys() []string {
+	return []string{
+		"__Node__:name",
+		"__Node__:dataset_id",
+		"__Node__:type",
+	}
+}
+
+func evaluateNeo4jSchema(obs neo4jObservedSchema) (status, message, remediation string) {
+	missing := missingNeo4jSchemaKeys(obs)
+	if len(missing) == 0 {
+		return "ok", "Required Neo4j constraints/indexes are present", ""
+	}
+	sort.Strings(missing)
+	return "warn",
+		fmt.Sprintf("Missing %d schema objects: %s", len(missing), strings.Join(missing, ", ")),
+		"Run startup schema bootstrap (Writer.EnsureSchema) or manually create the missing Neo4j indexes/constraints"
+}
+
+func missingNeo4jSchemaKeys(obs neo4jObservedSchema) []string {
+	var missing []string
+	for _, key := range requiredNeo4jConstraintKeys() {
+		if !obs.constraints[key] {
+			missing = append(missing, "constraint:"+key)
+		}
+	}
+	for _, key := range requiredNeo4jIndexKeys() {
+		if !obs.indexes[key] {
+			missing = append(missing, "index:"+key)
+		}
+	}
+	return missing
+}
+
+func normalizeNeo4jConstraintRows(rows []map[string]any) map[string]bool {
+	out := map[string]bool{}
+	for _, row := range rows {
+		typ, _ := row["type"].(string)
+		props := rowStringSlice(row["properties"])
+		labels := rowStringSlice(row["labelsOrTypes"])
+		for _, label := range labels {
+			for _, prop := range props {
+				key := fmt.Sprintf("%s:%s:%s", label, prop, strings.ToUpper(strings.TrimSpace(typ)))
+				out[key] = true
+			}
+		}
+	}
+	return out
+}
+
+func normalizeNeo4jIndexRows(rows []map[string]any) map[string]bool {
+	out := map[string]bool{}
+	for _, row := range rows {
+		props := rowStringSlice(row["properties"])
+		labels := rowStringSlice(row["labelsOrTypes"])
+		for _, label := range labels {
+			for _, prop := range props {
+				out[fmt.Sprintf("%s:%s", label, prop)] = true
+			}
+		}
+	}
+	return out
+}
+
+func rowStringSlice(v any) []string {
+	switch x := v.(type) {
+	case []any:
+		out := make([]string, 0, len(x))
+		for _, it := range x {
+			if s, ok := it.(string); ok && s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	case []string:
+		return x
+	default:
+		return nil
 	}
 }
 
