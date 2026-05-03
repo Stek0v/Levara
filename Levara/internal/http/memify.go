@@ -1,5 +1,5 @@
 // memify.go — Post-cognify graph enrichment endpoint.
-// Implements Cognee's memify pipeline: extract subgraph → LLM enrich → persist.
+// Implements Levara's memify pipeline: extract subgraph → LLM enrich → persist.
 //
 // Enrichment tasks:
 //   - entity_consolidation: merge duplicate/fragmented entities via LLM

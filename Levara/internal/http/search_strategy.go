@@ -13,7 +13,7 @@
 //      implicit: spread across 13 function signatures.
 //
 // This file introduces a minimal SearchStrategy interface and a registry
-// wired once during RegisterCogneeAPI. The existing handler functions
+// wired once during RegisterAPI. The existing handler functions
 // stay in place — each is wrapped in a small struct so we don't have to
 // move ~1300 lines of graph_search.go in one step. Follow-up work (still
 // under T5 in 20.04-tasks.md) can extract each wrapped function into its
@@ -33,7 +33,7 @@ import (
 // without comparing function pointers.
 type SearchStrategy interface {
 	Name() string
-	Execute(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error
+	Execute(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error
 }
 
 // StrategyRegistry maps query_type strings to strategy implementations.
@@ -110,10 +110,10 @@ func (r *StrategyRegistry) Get(queryType string) SearchStrategy {
 // the registry key, not a per-type identity.
 type funcStrategy struct {
 	name string
-	fn   func(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error
+	fn   func(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error
 }
 
 func (f funcStrategy) Name() string { return f.name }
-func (f funcStrategy) Execute(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
+func (f funcStrategy) Execute(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 	return f.fn(c, cfg, req)
 }

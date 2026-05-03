@@ -59,7 +59,7 @@ func RegisterAuthAPI(app fiber.Router, cfg *AuthConfig) {
 	app.Post("/auth/login", authLimiter, loginHandler(*cfg))
 	app.Post("/auth/register", authLimiter, registerHandler(*cfg))
 
-	// /auth/me — Cognee frontend calls this to check current user after login
+	// /auth/me — Levara frontend calls this to check current user after login
 	app.Get("/auth/me", authMeHandler(*cfg))
 }
 
@@ -118,7 +118,7 @@ func verifyJWT(token, secret string) (*jwtPayload, bool) {
 // loginHandler handles POST /auth/login.
 //
 // @Summary     Exchange credentials for a JWT
-// @Description Accepts either form-encoded (Cognee frontend) or JSON body. On success returns a 24h HS256 JWT in the response + a secure http-only cookie.
+// @Description Accepts either form-encoded (Levara frontend) or JSON body. On success returns a 24h HS256 JWT in the response + a secure http-only cookie.
 // @Tags        auth
 // @Accept      json
 // @Accept      x-www-form-urlencoded
@@ -131,7 +131,7 @@ func verifyJWT(token, secret string) (*jwtPayload, bool) {
 // @Router      /auth/login [post]
 func loginHandler(cfg AuthConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		// Support both JSON and form-encoded (Cognee frontend uses form)
+		// Support both JSON and form-encoded (Levara frontend uses form)
 		email := c.FormValue("username")
 		password := c.FormValue("password")
 
@@ -251,7 +251,7 @@ func generateUUID() string {
 }
 
 // authMeHandler returns current user from JWT token.
-// GET /auth/me — called by Cognee frontend after login to verify session.
+// GET /auth/me — called by Levara frontend after login to verify session.
 //
 // @Summary     Return the current user
 // @Description Validates the bearer token and returns the associated user record. Also the probe called by the WebUI auth guard on every dashboard mount (T1).

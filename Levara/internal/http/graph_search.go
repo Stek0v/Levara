@@ -1,4 +1,4 @@
-// graph_search.go — Graph-based search handlers for Cognee-compatible search API.
+// graph_search.go — Graph-based search handlers for Levara search API.
 // Implements: GRAPH_COMPLETION, GRAPH_COMPLETION_COT, TRIPLET_COMPLETION, CYPHER, NATURAL_LANGUAGE, CODING_RULES.
 package http
 
@@ -18,7 +18,7 @@ import (
 )
 
 // graphCompletionSearch performs vector search → extract entities → graph context → LLM answer.
-func graphCompletionSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
+func graphCompletionSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 	if cfg.EmbedEndpoint == "" || cfg.Collections == nil {
 		return c.JSON(attachSearchDebugMetadata(c, fiber.Map{
 			"answer":         "",
@@ -154,7 +154,7 @@ func graphCompletionSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest)
 // contextExtensionSearch performs 2-hop graph traversal for richer context.
 // Unlike graphCompletionSearch (1-hop: entity→neighbours), this extends to
 // entity→neighbours→THEIR neighbours, gathering a wider knowledge context.
-func contextExtensionSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
+func contextExtensionSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 	if cfg.EmbedEndpoint == "" || cfg.Collections == nil {
 		return c.JSON(attachSearchDebugMetadata(c, fiber.Map{
 			"answer":         "",
@@ -360,7 +360,7 @@ func graphContextWithTargetsNeo4j(ctx context.Context, cfg APIConfig, names []st
 // Step 1: LLM decomposes query into sub-questions.
 // Step 2: Each sub-question runs graph search (vector + graph traversal).
 // Step 3: LLM synthesizes a final answer from all gathered context.
-func cotSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
+func cotSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 	llmEndpoint := os.Getenv("LLM_ENDPOINT")
 	llmModel := os.Getenv("LLM_MODEL")
 
@@ -508,7 +508,7 @@ func parseJSONStringArray(raw string) []string {
 
 // codingRulesSearch searches for code-related entities (Function, Class, Module, Method, Import)
 // and returns their relationships formatted as coding rules.
-func codingRulesSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
+func codingRulesSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 	if cfg.EmbedEndpoint == "" || cfg.Collections == nil {
 		return c.JSON(fiber.Map{"rules": []any{}, "entities": []any{}, "search_type": "CODING_RULES"})
 	}
@@ -762,7 +762,7 @@ func formatCodeRules(rows []map[string]any) []string {
 }
 
 // tripletCompletionSearch searches triplet collections and uses triplet context for LLM.
-func tripletCompletionSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
+func tripletCompletionSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 	if cfg.EmbedEndpoint == "" || cfg.Collections == nil {
 		return c.JSON(fiber.Map{"answer": "", "triplets": []any{}, "search_type": "TRIPLET_COMPLETION"})
 	}
@@ -843,7 +843,7 @@ func tripletCompletionSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchReques
 }
 
 // cypherSearch executes a raw Cypher query against Neo4j.
-func cypherSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
+func cypherSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 	// Security gate
 	if os.Getenv("ALLOW_CYPHER_QUERY") != "true" {
 		return c.Status(403).JSON(fiber.Map{"detail": "Cypher queries disabled. Set ALLOW_CYPHER_QUERY=true to enable."})
@@ -950,7 +950,7 @@ func containsAnyCypherKeyword(upperQuery string, keywords []string) bool {
 }
 
 // naturalLanguageSearch converts a natural language question to Cypher via LLM, then executes it.
-func naturalLanguageSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
+func naturalLanguageSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 	if cfg.Neo4jCfg.Neo4jURL == "" {
 		// No Neo4j — fallback to graph completion
 		return graphCompletionSearch(c, cfg, req)
@@ -1206,7 +1206,7 @@ func dedup(ss []string) []string {
 // --- Community-based search ---
 
 // communityLocalSearch: find entity's community → enrich context from community members → LLM answer.
-func communityLocalSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
+func communityLocalSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 	llmEndpoint := os.Getenv("LLM_ENDPOINT")
 	llmModel := os.Getenv("LLM_MODEL")
 
@@ -1302,7 +1302,7 @@ func communityLocalSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) 
 // Step 1: vector search _community_summaries → top-K communities.
 // Step 2: per-community partial answers via LLM.
 // Step 3: synthesize final answer.
-func communityGlobalSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
+func communityGlobalSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 	llmEndpoint := os.Getenv("LLM_ENDPOINT")
 	llmModel := os.Getenv("LLM_MODEL")
 

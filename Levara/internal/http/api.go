@@ -1,4 +1,4 @@
-// api.go — Cognee-compatible REST API endpoints for React frontend.
+// api.go — Levara REST API endpoints for React frontend.
 // Implements: health, datasets CRUD, file upload, cognify trigger, search.
 package http
 
@@ -20,7 +20,7 @@ import (
 	"github.com/stek0v/levara/pkg/storage"
 )
 
-// APIConfig holds configuration for Cognee-compatible API endpoints.
+// APIConfig holds configuration for Levara API endpoints.
 type APIConfig struct {
 	PostgresDSN   string
 	StoragePath   string
@@ -60,8 +60,8 @@ type APIConfig struct {
 	SearchStrategies *StrategyRegistry
 }
 
-// RegisterCogneeAPI registers all Cognee-compatible endpoints on the Fiber app.
-func RegisterCogneeAPI(app fiber.Router, cfg APIConfig) {
+// RegisterAPI registers all Levara endpoints on the Fiber app.
+func RegisterAPI(app fiber.Router, cfg APIConfig) {
 	if cfg.StoragePath == "" {
 		cfg.StoragePath = "data/uploads"
 	}
@@ -146,7 +146,7 @@ func RegisterCogneeAPI(app fiber.Router, cfg APIConfig) {
 	// U21: Search feedback
 	RegisterFeedbackAPI(app, cfg)
 
-	// U22: Ontology upload (already registered via RegisterCogneeAPI for ontology list/upload)
+	// U22: Ontology upload (already registered via RegisterAPI for ontology list/upload)
 
 	// U18: Ontology management
 	app.Post("/ontologies", ontologyUploadHandler(cfg))
@@ -166,11 +166,11 @@ func RegisterCogneeAPI(app fiber.Router, cfg APIConfig) {
 	app.Put("/notebooks/:id/cells/:cellId", cellUpdateHandler(cfg))
 	app.Delete("/notebooks/:id/cells/:cellId", cellDeleteHandler(cfg))
 	app.Post("/notebooks/:id/cells/:cellId/run", cellRunHandler(cfg))
-	app.Post("/notebooks/:id/:cellId/run", cellRunHandler(cfg)) // Cognee frontend compat
+	app.Post("/notebooks/:id/:cellId/run", cellRunHandler(cfg)) // Levara frontend compat
 
-	// U5: Cognee-compatible search (separate from legacy vector /search)
+	// U5: Levara search (separate from legacy vector /search)
 	app.Post("/search/text", searchHandler(cfg))
-	app.Post("/search/", searchHandler(cfg)) // Cognee frontend compat alias
+	app.Post("/search/", searchHandler(cfg)) // Levara frontend compat alias
 	app.Post("/search", searchHandler(cfg))  // without trailing slash
 
 	// U6: Heartbeat event log (system activity history)

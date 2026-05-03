@@ -1,4 +1,4 @@
-// api_search.go — Cognee-compatible search endpoints split out of api.go
+// api_search.go — Levara search endpoints split out of api.go
 // (T4). Covers POST /search, /search/text, /search/ plus the handlers for
 // the various query_type branches (CHUNKS, HYBRID, BM25, TEMPORAL,
 // RAG_COMPLETION, SUMMARIES) and their shared helpers.
@@ -38,9 +38,9 @@ import (
 	"github.com/stek0v/levara/pipeline"
 )
 
-// ── U5: Cognee-compatible Search ──
+// ── U5: Levara Search ──
 
-type CogneeSearchRequest struct {
+type UnifiedSearchRequest struct {
 	QueryText         string   `json:"query_text"`
 	QueryType         string   `json:"query_type"` // CHUNKS, GRAPH_COMPLETION, etc.
 	TopK              int      `json:"top_k"`
@@ -159,7 +159,7 @@ func expandQueryFromGraph(ctx context.Context, db *sql.DB, query string) string 
 // If req.Collection is set, only that collection is searched.
 // If req.Domain is set, only collections matching that domain are searched.
 // Otherwise all collections are listed.
-func resolveCollections(cfg APIConfig, req CogneeSearchRequest) []string {
+func resolveCollections(cfg APIConfig, req UnifiedSearchRequest) []string {
 	if req.Collection != "" {
 		return []string{req.Collection}
 	}
@@ -271,13 +271,13 @@ func extractDatasetID(r fiber.Map) string {
 // @Accept      json
 // @Produce     json
 // @Security    BearerAuth
-// @Param       body body CogneeSearchRequest true "Query + options"
+// @Param       body body UnifiedSearchRequest true "Query + options"
 // @Success     200 {object} map[string]any "strategy-dependent shape; always includes search_type"
 // @Router      /search [post]
 // @Router      /search/text [post]
 func searchHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		var req CogneeSearchRequest
+		var req UnifiedSearchRequest
 		if err := c.BodyParser(&req); err != nil {
 			return c.Status(400).JSON(fiber.Map{"detail": "invalid request"})
 		}
@@ -365,7 +365,7 @@ func capabilitiesFromConfig(cfg APIConfig) router.Capabilities {
 	}
 }
 
-func chunksSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
+func chunksSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 	if cfg.EmbedEndpoint == "" || cfg.Collections == nil {
 		return respondSearchItems(c, req, "CHUNKS", []any{})
 	}
@@ -458,7 +458,7 @@ func chunksSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
 	return respondSearchItems(c, req, "CHUNKS", allResults)
 }
 
-func bm25Search(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
+func bm25Search(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 	if cfg.BM25Indexes == nil {
 		return respondSearchItems(c, req, "CHUNKS_LEXICAL", []any{})
 	}
@@ -488,7 +488,7 @@ func bm25Search(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
 	return respondSearchItems(c, req, "CHUNKS_LEXICAL", allResults)
 }
 
-func hybridSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
+func hybridSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 	if cfg.EmbedEndpoint == "" || cfg.Collections == nil {
 		return respondSearchItems(c, req, "HYBRID", []any{})
 	}
@@ -557,7 +557,7 @@ func hybridSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
 	return respondSearchItems(c, req, "HYBRID", allResults)
 }
 
-func temporalSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
+func temporalSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 	// Step 1: Extract dates from query text
 	events := temporal.ExtractTimestamps(req.QueryText, time.Now())
 
@@ -741,7 +741,7 @@ func temporalSearchPostgres(ctx context.Context, cfg APIConfig, from, to time.Ti
 
 // ragCompletionSearch does vector search + LLM completion over results.
 // Returns both raw chunks and an LLM-generated answer.
-func ragCompletionSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
+func ragCompletionSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 	if cfg.EmbedEndpoint == "" || cfg.Collections == nil {
 		return c.JSON(attachSearchDebugMetadata(c, fiber.Map{
 			"chunks":         []any{},
@@ -883,7 +883,7 @@ func ragCompletionSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) e
 }
 
 // summariesSearch searches only in summary collections (TextSummary nodes from memify).
-func summariesSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
+func summariesSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 	if cfg.EmbedEndpoint == "" || cfg.Collections == nil {
 		return respondSearchItems(c, req, "SUMMARIES", []any{})
 	}

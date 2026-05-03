@@ -377,15 +377,15 @@ func main() {
 		vectorHttp.SetDBProvider(vectorHttp.DBPostgres)
 		dbUser := os.Getenv("DB_USERNAME")
 		if dbUser == "" {
-			dbUser = "cognee"
+			dbUser = "levara"
 		}
 		dbPass := os.Getenv("DB_PASSWORD")
 		if dbPass == "" {
-			dbPass = "cognee"
+			dbPass = "levara"
 		}
 		dbName := os.Getenv("DB_NAME")
 		if dbName == "" {
-			dbName = "cognee_db"
+			dbName = "levara_db"
 		}
 		dbPort := os.Getenv("DB_PORT")
 		if dbPort == "" {
@@ -517,8 +517,8 @@ func main() {
 	searchStrategies := vectorHttp.NewDefaultStrategyRegistry()
 	rerankCfg := rerankConfigFromEnv()
 
-	// Protected routes: Cognee-compatible API (datasets, upload, cognify, search)
-	vectorHttp.RegisterCogneeAPI(api, vectorHttp.APIConfig{
+	// Protected routes: Levara API (datasets, upload, cognify, search)
+	vectorHttp.RegisterAPI(api, vectorHttp.APIConfig{
 		PostgresDSN:      pgDSN,
 		StoragePath:      *dataDir + "/uploads",
 		EmbedEndpoint:    embedEndpoint,

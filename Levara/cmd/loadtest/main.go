@@ -25,7 +25,7 @@ type InsertRequest struct {
 	Metadata map[string]string `json:"metadata"`
 }
 
-type SearchRequest struct {
+type UnifiedSearchRequest struct {
 	Vector []float32 `json:"vector"`
 	K      int       `json:"k"`
 }
@@ -48,7 +48,7 @@ func main() {
 	// --- Phase 2: Search ---
 	fmt.Println("\n🔍 Phase 2: Search (Reading from Memory)...")
 	runTest("search", SearchCount, func(workerID, i int) error {
-		reqBody := SearchRequest{
+		reqBody := UnifiedSearchRequest{
 			Vector: randomVector(128),
 			K:      10, // Top 10 results
 		}

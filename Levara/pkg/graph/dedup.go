@@ -49,7 +49,7 @@ type Triplet struct {
 }
 
 // Deduplicate removes duplicate nodes (by ID) and edges (by source+relationship+target),
-// then generates triplets. Mirrors Cognee's deduplicate_nodes_and_edges + _create_triplets_from_graph.
+// then generates triplets. Mirrors Levara's deduplicate_nodes_and_edges + _create_triplets_from_graph.
 func Deduplicate(nodes []DedupNode, edges []DedupEdge) DeduplicateResult {
 	// --- Deduplicate nodes (first occurrence wins) ---
 	seen := make(map[string]bool, len(nodes))

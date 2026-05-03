@@ -1,7 +1,7 @@
 // Package graph provides in-memory graph structures and triplet scoring
 // for fast search-time ranking of knowledge graph edges.
 //
-// The algorithm mirrors Cognee's brute_force_triplet_search:
+// The algorithm mirrors Levara's brute_force_triplet_search:
 //  1. Build in-memory graph from nodes + edges
 //  2. Map vector distances from DB search results onto graph elements
 //  3. Score each edge as sum(node1_dist + edge_dist + node2_dist)

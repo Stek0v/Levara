@@ -12,7 +12,7 @@ import (
 	"github.com/stek0v/levara/pkg/embed"
 )
 
-type dualSearchRequest struct {
+type dualUnifiedSearchRequest struct {
 	QueryText   string   `json:"query_text"`
 	Collections []string `json:"collections"` // explicit list, or empty = all
 	TopK        int      `json:"top_k"`
@@ -34,7 +34,7 @@ func RegisterDualSearchAPI(app fiber.Router, cfg APIConfig) {
 
 func dualSearchHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		var req dualSearchRequest
+		var req dualUnifiedSearchRequest
 		if err := c.BodyParser(&req); err != nil {
 			return c.Status(400).JSON(fiber.Map{"detail": "invalid request"})
 		}

@@ -35,7 +35,7 @@ func attachSearchDebugMetadata(c *fiber.Ctx, payload fiber.Map) fiber.Map {
 // respondSearchItems keeps backward compatibility for list-style endpoints:
 // - default: returns plain array payload (legacy contract)
 // - include_debug=true: returns envelope with debug metadata
-func respondSearchItems(c *fiber.Ctx, req CogneeSearchRequest, searchType string, items any) error {
+func respondSearchItems(c *fiber.Ctx, req UnifiedSearchRequest, searchType string, items any) error {
 	if !req.IncludeDebug {
 		return c.JSON(items)
 	}
