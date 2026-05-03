@@ -76,9 +76,11 @@ services:
     environment:
       MEMORYFS_WORKSPACE_ID: ${MEMORYFS_WORKSPACE_ID:-default}
       MEMORYFS_LOG: ${MEMORYFS_LOG:-info}
-      MEMORYFS_TOKEN: ${MEMORYFS_TOKEN:-}
+      MEMORYFS_TOKEN: ${MEMORYFS_TOKEN:-atk_mem0}
+      MEMORYFS_DEV_ALLOW_ALL: ${MEMORYFS_DEV_ALLOW_ALL:-true}
       LEVARA_GRPC_ENDPOINT: http://levara:50051
-      LEVARA_COLLECTION: ${LEVARA_COLLECTION:-memoryfs}
+      LEVARA_HTTP_ENDPOINT: http://levara:8080
+      LEVARA_COLLECTION: ${LEVARA_COLLECTION:-mem0}
       EMBEDDING_ENDPOINT: http://ollama:11434
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
       EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-768}
@@ -111,7 +113,7 @@ services:
       MEM0_VECTOR_STORE_PROVIDER: memoryfs
       MEMORYFS_URL: http://memoryfs:7777
       MEMORYFS_WORKSPACE_ID: ${MEMORYFS_WORKSPACE_ID:-default}
-      MEMORYFS_TOKEN: ${MEMORYFS_TOKEN:-}
+      MEMORYFS_TOKEN: ${MEMORYFS_TOKEN:-atk_mem0}
       LEVARA_URL: http://levara:8080
       LEVARA_COLLECTION: mem0
       LEVARA_EMBEDDING_DIMS: ${EMBEDDING_DIMENSIONS:-768}
@@ -136,7 +138,7 @@ services:
       MEM0_TELEMETRY: "false"
       DASHBOARD_URL: http://localhost:3001
     command: >
-      sh -c "pip install -q --force-reinstall --no-deps mem0ai &&
+      sh -c "pip install -q ollama &&
              alembic upgrade head &&
              uvicorn main:app --host 0.0.0.0 --port 8000 --reload"
     working_dir: /app
@@ -150,7 +152,7 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8000/health"]
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8000/docs"]
       interval: 15s
       timeout: 5s
       retries: 5
