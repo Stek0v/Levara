@@ -10,12 +10,22 @@ import (
 )
 
 type Handler struct {
-	cluster *store.Cluster
-	dim     int
+	cluster     *store.Cluster
+	collections *store.CollectionManager
+	dim         int
 }
 
 func NewHandler(cluster *store.Cluster, dim int) *Handler {
 	return &Handler{cluster: cluster, dim: dim}
+}
+
+// SetCollections wires a CollectionManager so HTTP write/search/delete can
+// route per-collection requests to the per-tenant HNSW+Arena+WAL stacks
+// instead of the shared cluster store. Call after NewHandler when the
+// CollectionManager has been constructed (it depends on data dir + node id
+// which are resolved later in startup).
+func (h *Handler) SetCollections(cm *store.CollectionManager) {
+	h.collections = cm
 }
 
 func (h *Handler) Info(c *fiber.Ctx) error {
@@ -41,7 +51,12 @@ func (h *Handler) Insert(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "id and vector are required"})
 	}
 
-	err := h.cluster.Insert(req.ID, req.Vector, req.Data)
+	var err error
+	if req.Collection != "" && h.collections != nil {
+		err = h.collections.Insert(req.Collection, req.ID, req.Vector, req.Data)
+	} else {
+		err = h.cluster.Insert(req.ID, req.Vector, req.Data)
+	}
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -83,7 +98,12 @@ func (h *Handler) BatchInsert(c *fiber.Ctx) error {
 		})
 	}
 
-	errs := h.cluster.BatchInsert(items)
+	var errs []error
+	if req.Collection != "" && h.collections != nil {
+		errs = h.collections.BatchInsert(req.Collection, items)
+	} else {
+		errs = h.cluster.BatchInsert(items)
+	}
 
 	resp := BatchInsertResponse{
 		Inserted: len(items) - len(errs),
@@ -111,7 +131,12 @@ func (h *Handler) Delete(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "ids array is required"})
 	}
 
-	errs := h.cluster.BatchDelete(req.IDs)
+	var errs []error
+	if req.Collection != "" && h.collections != nil {
+		errs = h.collections.BatchDelete(req.Collection, req.IDs)
+	} else {
+		errs = h.cluster.BatchDelete(req.IDs)
+	}
 
 	resp := DeleteResponse{
 		Deleted: len(req.IDs) - len(errs),
@@ -143,7 +168,16 @@ func (h *Handler) Search(c *fiber.Ctx) error {
 		req.TopK = 5 // Default TopK
 	}
 
-	results := h.cluster.Search(req.Vector, req.TopK)
+	var results []store.VectroRecord
+	if req.Collection != "" && h.collections != nil {
+		recs, err := h.collections.Search(req.Collection, req.Vector, req.TopK)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		}
+		results = recs
+	} else {
+		results = h.cluster.Search(req.Vector, req.TopK)
+	}
 
 	responseItems := make([]SearchResult, 0, len(results))
 	for _, res := range results {

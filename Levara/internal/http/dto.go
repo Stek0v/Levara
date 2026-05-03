@@ -3,9 +3,10 @@ package http
 import "encoding/json"
 
 type InsertRequest struct {
-	ID     string         `json:"id"`
-	Vector []float32      `json:"vector"`
-	Data   map[string]any `json:"metadata"`
+	Collection string         `json:"collection,omitempty"`
+	ID         string         `json:"id"`
+	Vector     []float32      `json:"vector"`
+	Data       map[string]any `json:"metadata"`
 }
 
 // BatchInsertItem is a single record inside a BatchInsertRequest.
@@ -17,8 +18,13 @@ type BatchInsertItem struct {
 
 // BatchInsertRequest allows inserting many records in one HTTP call,
 // reducing round-trips and amortising Raft consensus cost across records.
+//
+// Collection routes the batch into a per-collection HNSW+Arena+WAL stack
+// via CollectionManager when set; an empty value falls back to the legacy
+// cluster store for backward compatibility.
 type BatchInsertRequest struct {
-	Records []BatchInsertItem `json:"records"`
+	Collection string            `json:"collection,omitempty"`
+	Records    []BatchInsertItem `json:"records"`
 }
 
 // BatchInsertResponse reports per-record success/failure.
@@ -29,8 +35,9 @@ type BatchInsertResponse struct {
 }
 
 type SearchRequest struct {
-	Vector []float32 `json:"vector"`
-	TopK   int       `json:"k"`
+	Collection string    `json:"collection,omitempty"`
+	Vector     []float32 `json:"vector"`
+	TopK       int       `json:"k"`
 }
 
 type SearchResponse struct {
@@ -45,7 +52,8 @@ type SearchResult struct {
 
 // Delete DTOs
 type DeleteRequest struct {
-	IDs []string `json:"ids"`
+	Collection string   `json:"collection,omitempty"`
+	IDs        []string `json:"ids"`
 }
 
 type DeleteResponse struct {
