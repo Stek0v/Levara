@@ -320,11 +320,17 @@ func main() {
 		return c.JSON(fiber.Map{"cleared": true})
 	})
 
-	// Initialize CollectionManager for native collections (used by gRPC)
+	// Initialize CollectionManager for native collections (used by gRPC + the
+	// collection-aware HTTP write/search/delete paths).
 	colManager, err := store.NewCollectionManager(*dim, *dataDir+"/"+nodeID, hnswCfg)
 	if err != nil {
 		log.Fatalf("Failed to init CollectionManager: %v", err)
 	}
+	// Wire CollectionManager into the HTTP handler so requests carrying a
+	// `collection` field route to the per-tenant HNSW stack instead of the
+	// shared cluster store. Requests without `collection` keep using cluster
+	// for backward compatibility.
+	handler.SetCollections(colManager)
 
 	// Database connection pool (shared across all HTTP handlers)
 	// DB_PROVIDER: "sqlite" (embedded, no external server) or "postgres" (default)
