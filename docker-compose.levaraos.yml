@@ -65,6 +65,37 @@ services:
     networks:
       - levaraos
 
+  # ── MemoryFS — verifiable memory workspace ─────────────────────
+  memoryfs:
+    build: ../memoryfs-planning
+    container_name: memoryfs
+    ports:
+      - "7777:7777"
+    volumes:
+      - memoryfs-data:/data
+    environment:
+      MEMORYFS_WORKSPACE_ID: ${MEMORYFS_WORKSPACE_ID:-default}
+      MEMORYFS_LOG: ${MEMORYFS_LOG:-info}
+      MEMORYFS_TOKEN: ${MEMORYFS_TOKEN:-}
+      LEVARA_GRPC_ENDPOINT: http://levara:50051
+      LEVARA_COLLECTION: ${LEVARA_COLLECTION:-memoryfs}
+      EMBEDDING_ENDPOINT: http://ollama:11434
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
+      EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-768}
+    depends_on:
+      levara:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:7777/v1/admin/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - levaraos
+
   # ── mem0 agent API ─────────────────────────────────────────────
   mem0:
     build:
@@ -76,8 +107,11 @@ services:
     environment:
       PYTHONDONTWRITEBYTECODE: "1"
       PYTHONUNBUFFERED: "1"
-      # Vector store → Levara (not pgvector)
-      MEM0_VECTOR_STORE_PROVIDER: levara
+      # Vector store → MemoryFS writes, Levara reads (Variant B)
+      MEM0_VECTOR_STORE_PROVIDER: memoryfs
+      MEMORYFS_URL: http://memoryfs:7777
+      MEMORYFS_WORKSPACE_ID: ${MEMORYFS_WORKSPACE_ID:-default}
+      MEMORYFS_TOKEN: ${MEMORYFS_TOKEN:-}
       LEVARA_URL: http://levara:8080
       LEVARA_COLLECTION: mem0
       LEVARA_EMBEDDING_DIMS: ${EMBEDDING_DIMENSIONS:-768}
@@ -110,6 +144,8 @@ services:
       - mem0-history:/app/history
     depends_on:
       levara:
+        condition: service_healthy
+      memoryfs:
         condition: service_healthy
       postgres:
         condition: service_healthy
@@ -200,6 +236,7 @@ networks:
 
 volumes:
   levara-data:
+  memoryfs-data:
   postgres-data:
   ollama-data:
   mem0-history:
