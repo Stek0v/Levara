@@ -402,16 +402,27 @@ func (h *HNSWIndex) isDeleted(arenaOffset uint32) bool {
 }
 
 // Search finds and returns the k closest nodes to the query vector.
+//
+// Holds h.RLock for the entire traversal to prevent concurrent Add from
+// mutating Nodes/Connections mid-search (see Levara F-6 fix).
 func (h *HNSWIndex) Search(query []float32, k int) []VectroRecord {
-	// Normalize query so dot-product distance works correctly.
+	if len(query) == 0 {
+		return nil
+	}
 	normQ := normalizeVec(query)
 
 	h.RLock()
+	defer h.RUnlock()
+
 	entryID := h.EntryNodeID
 	maxL := h.MaxLayer
-	h.RUnlock()
 
 	if entryID == "" {
+		return nil
+	}
+
+	curr := h.Nodes[entryID]
+	if curr == nil {
 		return nil
 	}
 
@@ -422,10 +433,6 @@ func (h *HNSWIndex) Search(query []float32, k int) []VectroRecord {
 
 	query = normQ
 	getVec := h.vecUnsafe
-
-	h.RLock()
-	curr := h.Nodes[entryID]
-	h.RUnlock()
 
 	for l := maxL; l > 0; l-- {
 		curr = h.searchLayer(query, curr, l, getVec)
@@ -439,7 +446,7 @@ func (h *HNSWIndex) Search(query []float32, k int) []VectroRecord {
 	records := make([]VectroRecord, 0, len(topResults))
 	for _, sr := range topResults {
 		if h.isDeleted(sr.node.ArenaOffset) {
-			continue // Skip tombstoned records
+			continue
 		}
 		records = append(records, VectroRecord{
 			ID:    sr.node.ID,

@@ -1338,6 +1338,10 @@ func (s *Service) HybridSearch(ctx context.Context, req *pb.HybridSearchReq) (*p
 			vsCh <- vsOut{err: err}
 			return
 		}
+		if len(vec) == 0 {
+			vsCh <- vsOut{err: fmt.Errorf("embed endpoint returned empty vector")}
+			return
+		}
 		searchResults, err := s.collections.Search(req.Collection, vec, topK*2)
 		if err != nil {
 			vsCh <- vsOut{err: err}

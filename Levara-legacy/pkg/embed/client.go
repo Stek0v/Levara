@@ -58,12 +58,15 @@ type embeddingRequest struct {
 	Model string   `json:"model"`
 }
 
-// embeddingResponse is the OpenAI-compatible response format.
+// embeddingResponse supports both OpenAI and Ollama response formats.
 type embeddingResponse struct {
+	// OpenAI format
 	Data []struct {
 		Index     int       `json:"index"`
 		Embedding []float32 `json:"embedding"`
 	} `json:"data"`
+	// Ollama /api/embed format
+	Embeddings [][]float32 `json:"embeddings"`
 }
 
 // EmbedTexts embeds multiple texts, batching by batchSize.
@@ -190,7 +193,11 @@ func (c *Client) embedBatch(ctx context.Context, texts []string) ([][]float32, e
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
 
-	// Sort by index to ensure correct order
+	// Ollama /api/embed returns {"embeddings": [[...]]} instead of OpenAI's {"data": [...]}
+	if len(result.Data) == 0 && len(result.Embeddings) > 0 {
+		return result.Embeddings, nil
+	}
+
 	sort.Slice(result.Data, func(i, j int) bool {
 		return result.Data[i].Index < result.Data[j].Index
 	})
