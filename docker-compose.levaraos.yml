@@ -36,9 +36,11 @@ services:
       EMBEDDING_ENDPOINT: http://ollama:11434/api/embeddings
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
       EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-768}
-      LLM_PROVIDER: ollama
-      LLM_ENDPOINT: http://ollama:11434
-      LLM_MODEL: ${LLM_MODEL:-gemma3:4b}
+      # LLM defaults to a small fast model so mem0's infer=True path is usable
+      # on CPU. Override LLM_MODEL/LLM_PROVIDER for richer extraction.
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      LLM_ENDPOINT: ${LLM_ENDPOINT:-http://ollama:11434}
+      LLM_MODEL: ${LLM_MODEL:-qwen2.5:1.5b}
       LLM_API_KEY: ${LLM_API_KEY:-no-key}
     command:
       - "./levara"
@@ -122,9 +124,11 @@ services:
       MEM0_EMBEDDER_PROVIDER: ollama
       MEM0_DEFAULT_EMBEDDER_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
       OLLAMA_BASE_URL: http://ollama:11434
-      # LLM → Ollama (or OpenAI if OPENAI_API_KEY is set)
+      # LLM → OpenAI when OPENAI_API_KEY is set (fast, reliable infer=True),
+      # otherwise Ollama with a small CPU-friendly default. Override either
+      # MEM0_LLM_PROVIDER or LLM_MODEL to switch.
       MEM0_LLM_PROVIDER: ${MEM0_LLM_PROVIDER:-ollama}
-      MEM0_DEFAULT_LLM_MODEL: ${LLM_MODEL:-gemma3:4b}
+      MEM0_DEFAULT_LLM_MODEL: ${LLM_MODEL:-qwen2.5:1.5b}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       # Postgres for mem0 app DB (history, auth, etc.)
       POSTGRES_HOST: postgres
@@ -177,6 +181,8 @@ services:
       - levaraos
 
   # ── Ollama — shared embeddings + LLM ──────────────────────────
+  # The base image has no curl/wget, so the healthcheck uses ollama's own
+  # binary (it exits 0 when the daemon is up).
   ollama:
     image: ollama/ollama:latest
     container_name: ollama
@@ -185,10 +191,35 @@ services:
     volumes:
       - ollama-data:/root/.ollama
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://127.0.0.1:11434/api/tags"]
+      test: ["CMD", "ollama", "list"]
       interval: 15s
-      timeout: 5s
-      retries: 5
+      timeout: 10s
+      retries: 8
+      start_period: 30s
+    networks:
+      - levaraos
+
+  # One-shot job that pulls the configured embedding + LLM models on startup.
+  # Without this the first add()/search() call has to wait minutes for an
+  # ad-hoc download. Runs to completion then exits.
+  ollama-pull:
+    image: ollama/ollama:latest
+    container_name: ollama-pull
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >
+        set -e;
+        ollama pull ${EMBEDDING_MODEL:-nomic-embed-text};
+        if [ "${MEM0_LLM_PROVIDER:-ollama}" = "ollama" ]; then
+          ollama pull ${LLM_MODEL:-qwen2.5:1.5b};
+        fi;
+        echo 'models ready'
+    restart: "no"
     networks:
       - levaraos
 
