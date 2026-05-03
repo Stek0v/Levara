@@ -414,6 +414,9 @@ func (h *HNSWIndex) isDeleted(arenaOffset uint32) bool {
 // lock newNode during its link-up phase; deferred until there's a measured
 // throughput need.
 func (h *HNSWIndex) Search(query []float32, k int) []VectroRecord {
+	if len(query) == 0 {
+		return nil
+	}
 	// Normalize query so dot-product distance works correctly.
 	normQ := normalizeVec(query)
 
@@ -436,6 +439,9 @@ func (h *HNSWIndex) Search(query []float32, k int) []VectroRecord {
 	getVec := h.vecUnsafe
 
 	curr := h.Nodes[entryID]
+	if curr == nil {
+		return nil
+	}
 
 	for l := maxL; l > 0; l-- {
 		curr = h.searchLayer(query, curr, l, getVec)

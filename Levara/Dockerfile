@@ -11,7 +11,7 @@ RUN go mod download
 COPY . .
 
 # CGO disabled keeps the image static; ldflags strip debug info.
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o levara ./cmd/server/main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o levara ./cmd/server/
 
 FROM alpine:latest
 
