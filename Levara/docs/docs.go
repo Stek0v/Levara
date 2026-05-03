@@ -17,7 +17,7 @@ const docTemplate = `{
     "paths": {
         "/auth/login": {
             "post": {
-                "description": "Accepts either form-encoded (Cognee frontend) or JSON body. On success returns a 24h HS256 JWT in the response + a secure http-only cookie.",
+                "description": "Accepts either form-encoded (Levara frontend) or JSON body. On success returns a 24h HS256 JWT in the response + a secure http-only cookie.",
                 "consumes": [
                     "application/json",
                     "application/x-www-form-urlencoded"
@@ -808,7 +808,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/http.CogneeSearchRequest"
+                            "$ref": "#/definitions/http.UnifiedSearchRequest"
                         }
                     }
                 ],
@@ -848,7 +848,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/http.CogneeSearchRequest"
+                            "$ref": "#/definitions/http.UnifiedSearchRequest"
                         }
                     }
                 ],
@@ -1107,7 +1107,7 @@ const docTemplate = `{
         }
     },
     "definitions": {
-        "http.CogneeSearchRequest": {
+        "http.UnifiedSearchRequest": {
             "type": "object",
             "properties": {
                 "collection": {

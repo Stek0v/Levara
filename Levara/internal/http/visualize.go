@@ -22,7 +22,7 @@ type GraphVisualizationConfig struct {
 	DB            *sql.DB // PostgreSQL/SQLite fallback for graph visualization
 }
 
-// GraphNodeDTO matches Cognee's frontend expected format.
+// GraphNodeDTO matches Levara's frontend expected format.
 type GraphNodeDTO struct {
 	ID         string         `json:"id"`
 	Label      string         `json:"label"`
@@ -30,7 +30,7 @@ type GraphNodeDTO struct {
 	Properties map[string]any `json:"properties"`
 }
 
-// GraphEdgeDTO matches Cognee's frontend expected format.
+// GraphEdgeDTO matches Levara's frontend expected format.
 type GraphEdgeDTO struct {
 	Source string `json:"source"`
 	Target string `json:"target"`
@@ -43,7 +43,7 @@ type GraphDTO struct {
 	Edges []GraphEdgeDTO `json:"edges"`
 }
 
-// DatasetGraph returns graph data for a dataset in Cognee-compatible format.
+// DatasetGraph returns graph data for a dataset in Levara format.
 // GET /api/v1/datasets/:id/graph
 func DatasetGraph(cfg GraphVisualizationConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {

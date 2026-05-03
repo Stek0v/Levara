@@ -1,5 +1,5 @@
 // Package graphdb provides batch write operations for Neo4j,
-// mirroring Cognee's Neo4j adapter Cypher patterns (UNWIND + MERGE + APOC).
+// mirroring Levara's Neo4j adapter Cypher patterns (UNWIND + MERGE + APOC).
 package graphdb
 
 import (
@@ -110,7 +110,7 @@ func requiredNeo4jSchemaStatements(label string) []string {
 }
 
 // BatchWrite writes nodes and edges to Neo4j in batch using UNWIND.
-// Mirrors Cognee's add_nodes + add_edges Cypher patterns.
+// Mirrors Levara's add_nodes + add_edges Cypher patterns.
 func (w *Writer) BatchWrite(ctx context.Context, nodes []NodeRecord, edges []EdgeRecord) BatchWriteResult {
 	result := BatchWriteResult{}
 
@@ -149,7 +149,7 @@ func (w *Writer) writeNodes(ctx context.Context, nodes []NodeRecord) (int, error
 		}
 	}
 
-	// UNWIND + MERGE + APOC addLabels (same as Cognee)
+	// UNWIND + MERGE + APOC addLabels (same as Levara)
 	query := fmt.Sprintf(`
 		UNWIND $nodes AS node
 		MERGE (n: `+"`%s`"+` {id: node.node_id})
@@ -194,7 +194,7 @@ func (w *Writer) writeEdges(ctx context.Context, edges []EdgeRecord) (int, error
 		}
 	}
 
-	// UNWIND + MATCH + apoc.merge.relationship (same as Cognee)
+	// UNWIND + MATCH + apoc.merge.relationship (same as Levara)
 	query := fmt.Sprintf(`
 		UNWIND $edges AS edge
 		MATCH (from_node: `+"`%s`"+` {id: edge.from_node})
@@ -227,7 +227,7 @@ func (w *Writer) writeEdges(ctx context.Context, edges []EdgeRecord) (int, error
 }
 
 // serializeProperties converts Go types to Neo4j-compatible property types.
-// Mirrors Cognee's serialize_properties: UUID→string, dict→JSON string.
+// Mirrors Levara's serialize_properties: UUID→string, dict→JSON string.
 func serializeProperties(props map[string]any) map[string]any {
 	if props == nil {
 		return map[string]any{}
@@ -248,7 +248,7 @@ func serializeProperties(props map[string]any) map[string]any {
 	return out
 }
 
-// flattenEdgeProperties mirrors Cognee's _flatten_edge_properties:
+// flattenEdgeProperties mirrors Levara's _flatten_edge_properties:
 // weights dict → weight_X prefixed keys, other dicts/lists → JSON strings.
 func flattenEdgeProperties(props map[string]any) map[string]any {
 	if props == nil {
@@ -298,7 +298,7 @@ type ReadEdge struct {
 	Properties       map[string]any
 }
 
-// ReadFullGraph returns all nodes and edges. Mirrors Cognee's get_graph_data().
+// ReadFullGraph returns all nodes and edges. Mirrors Levara's get_graph_data().
 func (w *Writer) ReadFullGraph(ctx context.Context) (GraphReadResult, error) {
 	session := w.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: w.database})
 	defer session.Close(ctx)

@@ -12,7 +12,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-// SettingsDTO matches Cognee frontend expected format.
+// SettingsDTO matches Levara frontend expected format.
 type SettingsDTO struct {
 	LLMProvider    string `json:"llm_provider"`
 	LLMModel       string `json:"llm_model"`

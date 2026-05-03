@@ -459,7 +459,7 @@ func (s *Service) SearchTriplets(_ context.Context, req *pb.SearchTripletsReq) (
 }
 
 // DeduplicateGraph removes duplicate nodes/edges and generates triplets.
-// Mirrors Cognee's deduplicate_nodes_and_edges + _create_triplets_from_graph.
+// Mirrors Levara's deduplicate_nodes_and_edges + _create_triplets_from_graph.
 func (s *Service) DeduplicateGraph(_ context.Context, req *pb.DeduplicateGraphReq) (*pb.DeduplicateGraphResp, error) {
 	nodes := make([]graph.DedupNode, len(req.Nodes))
 	for i, n := range req.Nodes {
@@ -1644,7 +1644,7 @@ func (s *Service) ExtractText(_ context.Context, req *pb.ExtractTextReq) (*pb.Ex
 }
 
 // TemporalSearch extracts timestamps from text and filters by date range.
-// Covers Cognee's TEMPORAL search type.
+// Covers Levara's TEMPORAL search type.
 func (s *Service) TemporalSearch(_ context.Context, req *pb.TemporalSearchReq) (*pb.TemporalSearchResp, error) {
 	if req.Text == "" {
 		return nil, status.Errorf(codes.InvalidArgument, "text required")

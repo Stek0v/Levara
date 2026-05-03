@@ -1,7 +1,7 @@
 // Package llmproxy provides an OpenAI-compatible HTTP proxy for LLM APIs
 // with in-flight deduplication, response caching, and rate limiting.
 //
-// When Cognee cognify processes 100 chunks, many generate similar/identical
+// When Levara cognify processes 100 chunks, many generate similar/identical
 // LLM prompts (e.g. same entity extraction template). Without dedup,
 // each sends a separate LLM call (5-30s each). The proxy:
 //

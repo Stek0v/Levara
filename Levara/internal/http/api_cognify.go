@@ -44,7 +44,7 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		var req struct {
 			Datasets        []string `json:"datasets"`
-			DatasetIds      []string `json:"datasetIds"` // Cognee frontend format
+			DatasetIds      []string `json:"datasetIds"` // Levara frontend format
 			Texts           []string `json:"texts"`
 			LLMModel        string   `json:"llm_model"`
 			Collection      string   `json:"collection"`

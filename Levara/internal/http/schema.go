@@ -47,7 +47,7 @@ func MigrateSchema(db *sql.DB) error {
 }
 
 var schemaStatements = []string{
-	// Principals: base entity for users/groups (Cognee FK requirement)
+	// Principals: base entity for users/groups (Levara FK requirement)
 	`CREATE TABLE IF NOT EXISTS principals (
 		id TEXT PRIMARY KEY,
 		type TEXT NOT NULL DEFAULT 'user',

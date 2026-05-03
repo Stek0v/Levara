@@ -16,7 +16,7 @@ type countingStrategy struct {
 }
 
 func (s *countingStrategy) Name() string { return s.name }
-func (s *countingStrategy) Execute(_ *fiber.Ctx, _ APIConfig, _ CogneeSearchRequest) error {
+func (s *countingStrategy) Execute(_ *fiber.Ctx, _ APIConfig, _ UnifiedSearchRequest) error {
 	atomic.AddInt64(&s.calls, 1)
 	return nil
 }

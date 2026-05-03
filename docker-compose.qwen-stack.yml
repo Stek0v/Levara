@@ -41,9 +41,9 @@ services:
       DB_PROVIDER: postgres
       DB_HOST: postgres
       DB_PORT: 5432
-      DB_USERNAME: ${POSTGRES_USER:-cognee}
-      DB_PASSWORD: ${POSTGRES_PASSWORD:-cognee}
-      DB_NAME: ${POSTGRES_DB:-cognee_db}
+      DB_USERNAME: ${POSTGRES_USER:-levara}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-levara}
+      DB_NAME: ${POSTGRES_DB:-levara_db}
       # Embedding → qwen3-embed
       EMBEDDING_ENDPOINT: http://qwen3-embed:9001/v1/embeddings
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-qwen3-embedding-0.6b}
@@ -261,13 +261,13 @@ services:
     ports:
       - "5433:5432"
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-cognee}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cognee}
-      POSTGRES_DB: ${POSTGRES_DB:-cognee_db}
+      POSTGRES_USER: ${POSTGRES_USER:-levara}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-levara}
+      POSTGRES_DB: ${POSTGRES_DB:-levara_db}
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cognee} -d ${POSTGRES_DB:-cognee_db}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-levara} -d ${POSTGRES_DB:-levara_db}"]
       interval: 10s
       timeout: 5s
       retries: 5

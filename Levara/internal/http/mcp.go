@@ -183,7 +183,7 @@ func (h *mcpHandler) CollectionSearch(collection string, query []float32, topK i
 
 // Runs implements mcp.Deps: returns the shared pipeline-run registry.
 // Configured in cmd/server/main.go; a single *runreg.Registry is handed
-// to both RegisterCogneeAPI and RegisterMCPAPI so MCP-initiated runs and
+// to both RegisterAPI and RegisterMCPAPI so MCP-initiated runs and
 // REST-initiated runs share the same map.
 func (h *mcpHandler) Runs() *runreg.Registry { return h.cfg.Runs }
 

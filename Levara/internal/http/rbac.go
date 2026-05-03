@@ -29,7 +29,7 @@ type ShareDTO struct {
 }
 
 // RegisterRBACAPI registers permission and sharing endpoints.
-// Called from RegisterCogneeAPI (protected routes).
+// Called from RegisterAPI (protected routes).
 func RegisterRBACAPI(app fiber.Router, cfg APIConfig) {
 	app.Get("/datasets/:id/shares", datasetSharesListHandler(cfg))
 	app.Post("/datasets/:id/shares", datasetShareCreateHandler(cfg))
