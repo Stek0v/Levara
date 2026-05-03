@@ -1,0 +1,205 @@
+# docker-compose.levaraos.yml — LevaraOS unified stack
+#
+# Brings together:
+#   • Levara (engine)     — HNSW + BM25 + WAL + gRPC + MCP
+#   • mem0 (agent API)    — high-level memory abstraction
+#   • Ollama              — shared embeddings + LLM
+#   • PostgreSQL          — metadata for both Levara and mem0
+#   • Prometheus          — metrics
+#
+# mem0 uses Levara as its vector store (MEM0_VECTOR_STORE_PROVIDER=levara).
+# Both share the same Ollama embedder for vector consistency.
+#
+# Usage:
+#   docker compose -f docker-compose.levaraos.yml up -d --build
+
+services:
+
+  # ── Levara engine ──────────────────────────────────────────────
+  levara:
+    build: ./Levara
+    container_name: levara
+    ports:
+      - "8080:8080"
+      - "50051:50051"
+    volumes:
+      - levara-data:/app/data
+    environment:
+      JWT_SECRET: ${JWT_SECRET:-}
+      ENV: ${ENV:-dev}
+      DB_PROVIDER: postgres
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USERNAME: ${POSTGRES_USER:-levara}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-levara}
+      DB_NAME: ${POSTGRES_DB:-levara_db}
+      EMBEDDING_ENDPOINT: http://ollama:11434/api/embeddings
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
+      EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-768}
+      LLM_PROVIDER: ollama
+      LLM_ENDPOINT: http://ollama:11434
+      LLM_MODEL: ${LLM_MODEL:-gemma3:4b}
+      LLM_API_KEY: ${LLM_API_KEY:-no-key}
+    command:
+      - "./levara"
+      - "-standalone=true"
+      - "-dim=${EMBEDDING_DIMENSIONS:-768}"
+      - "-shards=${LEVARA_SHARDS:-3}"
+      - "-port=8080"
+      - "-grpc-port=50051"
+      - "-hnsw-m=${HNSW_M:-20}"
+      - "-hnsw-ef-mult=${HNSW_EF_MULT:-10}"
+      - "-hnsw-ef-min=${HNSW_EF_MIN:-64}"
+      - "-require-auth=${REQUIRE_AUTH:-false}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/metrics"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - levaraos
+
+  # ── mem0 agent API ─────────────────────────────────────────────
+  mem0:
+    build:
+      context: ../OpenMem/third_party/mem0
+      dockerfile: server/dev.Dockerfile
+    container_name: mem0
+    ports:
+      - "8888:8000"
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+      # Vector store → Levara (not pgvector)
+      MEM0_VECTOR_STORE_PROVIDER: levara
+      LEVARA_URL: http://levara:8080
+      LEVARA_COLLECTION: mem0
+      LEVARA_EMBEDDING_DIMS: ${EMBEDDING_DIMENSIONS:-768}
+      LEVARA_API_KEY: ${LEVARA_API_KEY:-}
+      # Embedder → same Ollama as Levara for vector consistency
+      MEM0_EMBEDDER_PROVIDER: ollama
+      MEM0_DEFAULT_EMBEDDER_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
+      OLLAMA_BASE_URL: http://ollama:11434
+      # LLM → Ollama (or OpenAI if OPENAI_API_KEY is set)
+      MEM0_LLM_PROVIDER: ${MEM0_LLM_PROVIDER:-ollama}
+      MEM0_DEFAULT_LLM_MODEL: ${LLM_MODEL:-gemma3:4b}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # Postgres for mem0 app DB (history, auth, etc.)
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: mem0_app
+      POSTGRES_USER: ${POSTGRES_USER:-levara}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-levara}
+      # Auth
+      JWT_SECRET: ${JWT_SECRET:-}
+      AUTH_DISABLED: ${MEM0_AUTH_DISABLED:-true}
+      MEM0_TELEMETRY: "false"
+      DASHBOARD_URL: http://localhost:3001
+    command: >
+      sh -c "pip install -q --force-reinstall --no-deps mem0ai &&
+             alembic upgrade head &&
+             uvicorn main:app --host 0.0.0.0 --port 8000 --reload"
+    working_dir: /app
+    volumes:
+      - mem0-history:/app/history
+    depends_on:
+      levara:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - levaraos
+
+  # ── mem0 dashboard ─────────────────────────────────────────────
+  mem0-dashboard:
+    build: ../OpenMem/third_party/mem0/server/dashboard
+    container_name: mem0-dashboard
+    ports:
+      - "3001:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8888
+      API_INTERNAL_URL: http://mem0:8000
+      NEXT_PUBLIC_INSTANCE_NAME: LevaraOS
+    depends_on:
+      mem0:
+        condition: service_started
+    networks:
+      - levaraos
+
+  # ── Ollama — shared embeddings + LLM ──────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:11434/api/tags"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks:
+      - levaraos
+
+  # ── PostgreSQL — shared by Levara + mem0 ───────────────────────
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: postgres
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-levara}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-levara}
+      POSTGRES_DB: ${POSTGRES_DB:-levara_db}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ../OpenMem/third_party/mem0/server/init-db.sh:/docker-entrypoint-initdb.d/init-db.sh
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-levara} -d ${POSTGRES_DB:-levara_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - levaraos
+
+  # ── Prometheus ─────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    depends_on:
+      levara:
+        condition: service_healthy
+    networks:
+      - levaraos
+
+networks:
+  levaraos:
+    name: levaraos-network
+
+volumes:
+  levara-data:
+  postgres-data:
+  ollama-data:
+  mem0-history:
