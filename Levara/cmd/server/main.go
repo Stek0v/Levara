@@ -57,6 +57,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -455,7 +456,22 @@ func main() {
 	// Per-user rate limit (T2 / D10): 100 req/min keyed on the user_id resolved
 	// by JWTMiddleware above, falling back to source IP for anonymous paths.
 	// Must come AFTER JWTMiddleware so c.Locals("user_id") is populated.
-	api.Use(vectorHttp.UserRateLimiter(vectorHttp.RateLimitConfig{}))
+	//
+	// Tunable via env so the integrated stack (where the MemoryFS indexer
+	// hammers /api/v1/batch_insert from a single source IP) can lift the cap
+	// without recompiling. Empty/invalid → defaults (100 req/min).
+	rlCfg := vectorHttp.RateLimitConfig{}
+	if v := os.Getenv("RATE_LIMIT_USER_MAX"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			rlCfg.UserMax = n
+		}
+	}
+	if v := os.Getenv("RATE_LIMIT_USER_WINDOW_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			rlCfg.UserWindow = time.Duration(n) * time.Second
+		}
+	}
+	api.Use(vectorHttp.UserRateLimiter(rlCfg))
 
 	// Per-endpoint Prometheus instrumentation with bounded user_id
 	// cardinality (T17 / D14). UserBucket promotes the top-50 active users
