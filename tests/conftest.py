@@ -308,18 +308,22 @@ else:
     _pb2_grpc_mod = _stub(f"{_generated_pkg_name}.levara_pb2_grpc")
     _generated_pkg.levara_pb2_grpc = _pb2_grpc_mod
 
-# Now load the adapter (its `from .generated import levara_pb2` will resolve)
+# Now load the adapter (its `from .generated import levara_pb2` will resolve).
+# The adapter source may have moved to _archived/ during consolidation, so skip
+# loading when absent — tests that don't import it can still run, and ones that
+# do will fail loudly with a clear ImportError.
 _adapter_path = (
     _REPO_ROOT / "cognee" / "infrastructure" / "databases" / "vector"
     / "levara" / "LevaraAdapter.py"
 )
-_spec = importlib.util.spec_from_file_location(
-    "cognee.infrastructure.databases.vector.levara.LevaraAdapter",
-    _adapter_path,
-)
-_adapter_mod = importlib.util.module_from_spec(_spec)
-sys.modules["cognee.infrastructure.databases.vector.levara.LevaraAdapter"] = _adapter_mod
-_spec.loader.exec_module(_adapter_mod)
+if _adapter_path.exists():
+    _spec = importlib.util.spec_from_file_location(
+        "cognee.infrastructure.databases.vector.levara.LevaraAdapter",
+        _adapter_path,
+    )
+    _adapter_mod = importlib.util.module_from_spec(_spec)
+    sys.modules["cognee.infrastructure.databases.vector.levara.LevaraAdapter"] = _adapter_mod
+    _spec.loader.exec_module(_adapter_mod)
 
-# Attach to parent package so `from cognee...levara.LevaraAdapter import X` works
-_levara_pkg.LevaraAdapter = _adapter_mod.LevaraAdapter
+    # Attach to parent package so `from cognee...levara.LevaraAdapter import X` works
+    _levara_pkg.LevaraAdapter = _adapter_mod.LevaraAdapter
