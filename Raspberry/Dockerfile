@@ -5,11 +5,11 @@ ARG TARGETARCH=arm64
 WORKDIR /build
 
 # Cache dependencies
-COPY Cognevra/go.mod Cognevra/go.sum ./
+COPY Levara-legacy/go.mod Levara-legacy/go.sum ./
 RUN go mod download
 
 # Copy source
-COPY Cognevra/ .
+COPY Levara-legacy/ .
 
 # Build static binary
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
