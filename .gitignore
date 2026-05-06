@@ -56,13 +56,13 @@ Levara/levara-cli-arm64
 Levara/levara-test
 Levara/server
 Levara/vectradb
-Cognevra/cli
-Cognevra/cognevra
-Cognevra/cognevra-arm64
-Cognevra/test-server
+Levara-legacy/cli
+Levara-legacy/cognevra
+Levara-legacy/cognevra-arm64
+Levara-legacy/test-server
 
 # Runtime vector store shards (regenerated on first run)
-Cognevra/data_768/
+Levara-legacy/data_768/
 Levara/data_768/
 
 # Benchmark embeddings cache (regenerated on run, 10+ MB each)
