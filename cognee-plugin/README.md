@@ -1,6 +1,6 @@
-# cognee-cognevra
+# cognee-levara
 
-gRPC adapter connecting Cognee's VectorDBInterface to Cognevra.
+gRPC adapter connecting Cognee's VectorDBInterface to Levara.
 
 ## Installation
 
@@ -11,7 +11,7 @@ make proto  # generate gRPC stubs
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| VECTOR_DB_PROVIDER | cognevra | Select Cognevra backend |
+| VECTOR_DB_PROVIDER | levara | Select Levara backend |
 | VECTOR_DB_URL | localhost:50051 | gRPC server address |
 
 ## VectorDBInterface Methods

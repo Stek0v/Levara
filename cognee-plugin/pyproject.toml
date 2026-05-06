@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "cognee-cognevra"
+name = "cognee-levara"
 version = "0.2.0"
-description = "Cognevra adapter plugin for Cognee — high-performance vector search via gRPC"
+description = "Levara adapter plugin for Cognee — high-performance vector search via gRPC"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
@@ -22,4 +22,4 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["cognevra_adapter"]
+packages = ["levara_adapter"]
