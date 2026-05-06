@@ -1,1 +1,0 @@
-Cognevra is a high-performance vector database written in Go. It uses HNSW (Hierarchical Navigable Small World) indexing for fast approximate nearest neighbor search. The system combines WAL durability with memory-mapped arenas for efficient vector storage. Cognevra supports multiple embedding models and can store vectors of any dimension.

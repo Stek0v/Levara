@@ -1,4 +1,0 @@
-name,type,speed
-Cognevra,VectorDB,fast
-Neo4j,GraphDB,medium
-Postgres,RelationalDB,fast

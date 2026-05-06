@@ -1,9 +1,0 @@
-{
-  "name": "delcoll_e3ed382f",
-  "embedding_model": "",
-  "embedding_dim": 128,
-  "distance_metric": "cosine",
-  "record_count": 0,
-  "created_at": "2026-03-21T21:32:06Z",
-  "updated_at": "2026-03-21T21:32:06Z"
-}

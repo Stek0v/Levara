@@ -1,4 +1,0 @@
-name,type,description
-Cognevra,database,Vector DB
-Neo4j,database,Graph DB
-PostgreSQL,database,Relational DB

@@ -1,1 +1,0 @@
-Cognevra is a high-performance vector database written in Go. It uses HNSW indexing with WAL durability for crash recovery.
