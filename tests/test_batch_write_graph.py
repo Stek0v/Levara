@@ -1,7 +1,7 @@
 """A3: BatchWriteGraph integration test — real Neo4j, book entities.
 
 Tests Go→Neo4j batch write via gRPC with Cypher verification.
-Requires: Cognevra gRPC:50051, Neo4j:7687 (Docker).
+Requires: Levara gRPC:50051, Neo4j:7687 (Docker).
 """
 import grpc
 import json
@@ -11,8 +11,8 @@ import time
 
 import pytest
 
-pb = sys.modules.get("cognee.infrastructure.databases.vector.cognevra.generated.cognevra_pb2")
-pb_grpc = sys.modules.get("cognee.infrastructure.databases.vector.cognevra.generated.cognevra_pb2_grpc")
+pb = sys.modules.get("cognee.infrastructure.databases.vector.levara.generated.levara_pb2")
+pb_grpc = sys.modules.get("cognee.infrastructure.databases.vector.levara.generated.levara_pb2_grpc")
 if pb is None or pb_grpc is None:
     pytest.skip("Proto stubs not loaded", allow_module_level=True)
 
@@ -46,7 +46,7 @@ def _check_services():
         return False
 
 
-pytestmark = pytest.mark.skipif(not _check_services(), reason="Need Cognevra:50051 + Neo4j:7687")
+pytestmark = pytest.mark.skipif(not _check_services(), reason="Need Levara:50051 + Neo4j:7687")
 
 # Book characters
 CHARACTERS = [
@@ -88,7 +88,7 @@ EDGES = [
 def _stub():
     ch = grpc.insecure_channel("localhost:50051")
     grpc.channel_ready_future(ch).result(timeout=5)
-    return pb_grpc.CognevraServiceStub(ch), ch
+    return pb_grpc.LevaraServiceStub(ch), ch
 
 
 def _write_graph(stub):
