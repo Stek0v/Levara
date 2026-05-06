@@ -1,7 +1,7 @@
 """
-Head-to-head: Cognevra adapter vs LanceDB (Cognee default).
+Head-to-head: Levara adapter vs LanceDB (Cognee default).
 
-Cognevra side: CognevraAdapter + GrpcMockServer (zero network/Raft)
+Levara side: LevaraAdapter + GrpcMockServer (zero network/Raft)
 LanceDB side:  raw lancedb library — same operations as LanceDBAdapter does
 
 Why raw lancedb instead of LanceDBAdapter?
@@ -32,14 +32,14 @@ from pydantic import BaseModel
 
 import pytest
 
-from cognee.infrastructure.databases.vector.cognevra.CognevraAdapter import (
-    CognevraAdapter,
+from cognee.infrastructure.databases.vector.levara.LevaraAdapter import (
+    LevaraAdapter,
 )
 
 import sys
 
 _DataPoint = sys.modules["cognee.infrastructure.engine"].DataPoint
-pb = sys.modules["cognee.infrastructure.databases.vector.cognevra.generated.cognevra_pb2"]
+pb = sys.modules["cognee.infrastructure.databases.vector.levara.generated.levara_pb2"]
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -203,8 +203,8 @@ class GrpcMockServer:
         return pb.DeleteResp(deleted=deleted, failed=0)
 
 
-def _make_cognevra(server, engine):
-    a = CognevraAdapter(url="localhost:50051", api_key=None, embedding_engine=engine)
+def _make_levara(server, engine):
+    a = LevaraAdapter(url="localhost:50051", api_key=None, embedding_engine=engine)
     a._stub = server
     return a
 
@@ -230,20 +230,20 @@ class TestHeadToHead:
     async def test_1_insert_throughput(self):
         print("\n\n" + "=" * 70)
         print(f"  1. INSERT THROUGHPUT  (N={N}, batch={BATCH})")
-        print("     Cognevra: GrpcMockServer (no Raft, no disk)")
+        print("     Levara: GrpcMockServer (no Raft, no disk)")
         print("     LanceDB:  real Arrow file I/O, merge_insert")
         print("=" * 70)
 
         ids, texts, vectors = _gen_data(N)
         dps = [_DP(uid, text) for uid, text in zip(ids, texts)]
 
-        # -- Cognevra --
+        # -- Levara --
         vec_iter = iter(vectors)
         fast = MagicMock()
         fast.embed_text = AsyncMock(side_effect=lambda t: [next(vec_iter) for _ in t])
         fast.get_vector_size = MagicMock(return_value=DIM)
         server = GrpcMockServer()
-        va = _make_cognevra(server, fast)
+        va = _make_levara(server, fast)
 
         t0 = time.perf_counter()
         for i in range(0, N, BATCH):
@@ -263,11 +263,11 @@ class TestHeadToHead:
         l_dps = N / t_l
         print(f"\n  {'Provider':<22} {'dp/s':>10}  {'total ms':>10}")
         print(f"  {'-'*48}")
-        print(f"  {'Cognevra (mock)':<22} {v_dps:>10,.0f}  {t_v*1000:>10.1f}")
+        print(f"  {'Levara (mock)':<22} {v_dps:>10,.0f}  {t_v*1000:>10.1f}")
         print(f"  {'LanceDB (real file)':<22} {l_dps:>10,.0f}  {t_l*1000:>10.1f}")
         ratio = v_dps / l_dps if l_dps > 0 else 1
-        print(f"\n  Cognevra mock: {ratio:.1f}x faster insert (no disk/Raft)")
-        print(f"  * With real Raft Cognevra will be ~10-50x SLOWER => insert wins LanceDB\n")
+        print(f"\n  Levara mock: {ratio:.1f}x faster insert (no disk/Raft)")
+        print(f"  * With real Raft Levara will be ~10-50x SLOWER => insert wins LanceDB\n")
 
         assert v_dps > 500
         assert l_dps > 50
@@ -276,20 +276,20 @@ class TestHeadToHead:
     async def test_2_search_latency(self):
         print("\n\n" + "=" * 70)
         print(f"  2. SEARCH LATENCY  (N={N}, {N_QUERIES} queries, k={K})")
-        print("     Pre-computed vectors, no embedding overhead (Cognevra vs LanceDB)")
+        print("     Pre-computed vectors, no embedding overhead (Levara vs LanceDB)")
         print("=" * 70)
 
         ids, texts, vectors = _gen_data(N)
         dps = [_DP(uid, text) for uid, text in zip(ids, texts)]
         q_vecs = [_random_vec() for _ in range(N_QUERIES)]
 
-        # -- Cognevra --
+        # -- Levara --
         vec_iter = iter(vectors)
         fast = MagicMock()
         fast.embed_text = AsyncMock(side_effect=lambda t: [next(vec_iter) for _ in t])
         fast.get_vector_size = MagicMock(return_value=DIM)
         server = GrpcMockServer()
-        va = _make_cognevra(server, fast)
+        va = _make_levara(server, fast)
         for i in range(0, N, BATCH):
             await va.create_data_points("col", dps[i : i + BATCH])
 
@@ -321,16 +321,16 @@ class TestHeadToHead:
 
         print(f"\n  {'Provider':<22} {'p50':>7} {'p95':>7} {'p99':>7} {'mean':>7}  (ms)")
         print(f"  {'-'*58}")
-        print(f"  {'Cognevra (mock)':<22} {vp50:>7.3f} {vp95:>7.3f} {vp99:>7.3f} {vm:>7.3f}")
+        print(f"  {'Levara (mock)':<22} {vp50:>7.3f} {vp95:>7.3f} {vp99:>7.3f} {vm:>7.3f}")
         print(f"  {'LanceDB (real file)':<22} {lp50:>7.3f} {lp95:>7.3f} {lp99:>7.3f} {lm:>7.3f}")
-        winner = "Cognevra" if vm < lm else "LanceDB"
+        winner = "Levara" if vm < lm else "LanceDB"
         ratio = max(vm, lm) / min(vm, lm) if min(vm, lm) > 0.001 else 1
         print(f"\n  Winner: {winner} ({ratio:.1f}x faster mean)\n")
 
     @pytest.mark.asyncio
     async def test_3_concurrent_search(self):
         print("\n\n" + "=" * 70)
-        print(f"  3. CONCURRENT SEARCH  (50 queries at once, {N} vectors, Cognevra vs LanceDB)")
+        print(f"  3. CONCURRENT SEARCH  (50 queries at once, {N} vectors, Levara vs LanceDB)")
         print("=" * 70)
 
         ids, texts, vectors = _gen_data(N)
@@ -338,13 +338,13 @@ class TestHeadToHead:
         N_C = 50
         q_vecs = [_random_vec() for _ in range(N_C)]
 
-        # -- Cognevra --
+        # -- Levara --
         vec_iter = iter(vectors)
         fast = MagicMock()
         fast.embed_text = AsyncMock(side_effect=lambda t: [next(vec_iter) for _ in t])
         fast.get_vector_size = MagicMock(return_value=DIM)
         server = GrpcMockServer()
-        va = _make_cognevra(server, fast)
+        va = _make_levara(server, fast)
         for i in range(0, N, BATCH):
             await va.create_data_points("col", dps[i : i + BATCH])
 
@@ -367,9 +367,9 @@ class TestHeadToHead:
         qps_v, qps_l = N_C / t_v, N_C / t_l
         print(f"\n  {'Provider':<22} {'QPS':>8}  {'total ms':>10}")
         print(f"  {'-'*48}")
-        print(f"  {'Cognevra (mock)':<22} {qps_v:>8,.0f}  {t_v*1000:>10.1f}")
+        print(f"  {'Levara (mock)':<22} {qps_v:>8,.0f}  {t_v*1000:>10.1f}")
         print(f"  {'LanceDB (real file)':<22} {qps_l:>8,.0f}  {t_l*1000:>10.1f}")
-        winner = "Cognevra" if qps_v > qps_l else "LanceDB"
+        winner = "Levara" if qps_v > qps_l else "LanceDB"
         ratio = max(qps_v, qps_l) / min(qps_v, qps_l) if min(qps_v, qps_l) > 0 else 1
         print(f"\n  Winner: {winner} ({ratio:.1f}x higher QPS)\n")
 
@@ -378,7 +378,7 @@ class TestHeadToHead:
         print("\n\n" + "=" * 70)
         print(f"  4. EMBEDDING CACHE  (re-index same {N} texts twice)")
         print("     LanceDB adapter: embed_data() = direct engine call, NO cache")
-        print("     Cognevra adapter: embed_data() = LRU cache => 0 calls on 2nd pass")
+        print("     Levara adapter: embed_data() = LRU cache => 0 calls on 2nd pass")
         print("=" * 70)
 
         ids, texts, vectors = _gen_data(N)
@@ -386,7 +386,7 @@ class TestHeadToHead:
 
         v_engine = _make_engine()
         server = GrpcMockServer()
-        va = _make_cognevra(server, v_engine)
+        va = _make_levara(server, v_engine)
 
         # 1st pass
         for i in range(0, N, BATCH):
@@ -404,24 +404,24 @@ class TestHeadToHead:
 
         print(f"\n  {'Provider':<22} {'embed calls (2nd)':>20}  {'saved':>12}")
         print(f"  {'-'*60}")
-        print(f"  {'Cognevra':<22} {second_calls:>20}  {(lance_calls - second_calls) * EMBED_MS:>10.0f} ms")
+        print(f"  {'Levara':<22} {second_calls:>20}  {(lance_calls - second_calls) * EMBED_MS:>10.0f} ms")
         print(f"  {'LanceDB':<22} {lance_calls:>20}  {'0':>10} ms")
-        print(f"\n  Cognevra saves {(lance_calls) * EMBED_MS:.0f}ms when re-indexing {N} texts\n")
+        print(f"\n  Levara saves {(lance_calls) * EMBED_MS:.0f}ms when re-indexing {N} texts\n")
 
         assert second_calls == 0
 
     @pytest.mark.asyncio
     async def test_5_summary(self):
         print("\n\n" + "=" * 70)
-        print("  SUMMARY: Cognevra (our plugin) vs LanceDB (Cognee default)")
+        print("  SUMMARY: Levara (our plugin) vs LanceDB (Cognee default)")
         print("=" * 70)
         print("""
   Conditions:
-    Cognevra = GrpcMockServer (no network, no Raft) — best case
+    Levara = GrpcMockServer (no network, no Raft) — best case
     LanceDB  = real file I/O — production conditions
 
   +-----------------------------------+--------------+--------------+
-  | Metric                            |  Cognevra    |  LanceDB     |
+  | Metric                            |  Levara    |  LanceDB     |
   +-----------------------------------+--------------+--------------+
   | Insert (with Raft in prod)        |  ~200 dp/s   | ~300-2k dp/s |
   | Search latency p50                |  see test 2  |  see test 2  |
@@ -436,7 +436,7 @@ class TestHeadToHead:
   | Deploy                            |  Go binary   |  pip install |
   +-----------------------------------+--------------+--------------+
 
-  WHERE COGNEVRA IS BETTER:
+  WHERE LEVARA IS BETTER:
     + Embedding cache: saves ~67ms on re-index of 500 texts
     + Search latency: lock-free reads in Go
     + orjson: 3x faster serialization
@@ -451,7 +451,7 @@ class TestHeadToHead:
     - No network/process overhead
 
   CONCLUSION:
-    Cognevra is better for READ-HEAVY workloads with low latency.
+    Levara is better for READ-HEAVY workloads with low latency.
     LanceDB is better for WRITE-HEAVY, high recall workloads.
 """)
         print("=" * 70)

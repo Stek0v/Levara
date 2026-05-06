@@ -1,24 +1,24 @@
 [Unit]
-Description=Cognevra Memory Server
-Documentation=https://github.com/stek0v/cognevra
+Description=Levara Memory Server
+Documentation=https://github.com/stek0v/levara
 After=network-online.target ollama.service
 Wants=network-online.target
 Requires=ollama.service
 
 [Service]
 Type=simple
-User=cognevra
-Group=cognevra
+User=levara
+Group=levara
 
-EnvironmentFile=/etc/cognevra/cognevra.env
+EnvironmentFile=/etc/levara/levara.env
 
-ExecStart=/usr/local/bin/cognevra \
+ExecStart=/usr/local/bin/levara \
     -standalone=true \
     -dim=768 \
     -shards=1 \
     -port=8080 \
     -grpc-port=0 \
-    -data-dir=/var/lib/cognevra/data
+    -data-dir=/var/lib/levara/data
 
 ExecStartPost=/bin/sh -c 'sleep 3 && curl -sf http://localhost:8080/health > /dev/null || exit 1'
 
@@ -37,8 +37,8 @@ CPUQuota=300%
 LimitNOFILE=65536
 
 # Security hardening
-WorkingDirectory=/var/lib/cognevra
-ReadWritePaths=/var/lib/cognevra /var/log/cognevra
+WorkingDirectory=/var/lib/levara
+ReadWritePaths=/var/lib/levara /var/log/levara
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
@@ -47,7 +47,7 @@ NoNewPrivileges=true
 # Logging
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=cognevra
+SyslogIdentifier=levara
 
 [Install]
 WantedBy=multi-user.target

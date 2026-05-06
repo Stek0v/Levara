@@ -2,14 +2,14 @@
 set -euo pipefail
 
 # ============================================================
-# Cognevra Backup Script
+# Levara Backup Script
 # Usage: sudo ./backup.sh [backup_dir]
 # ============================================================
 
-BACKUP_BASE="${1:-/var/backups/cognevra}"
-COGNEVRA_DIR="/var/lib/cognevra"
-DB_PATH="$COGNEVRA_DIR/cognevra.db"
-DATA_DIR="$COGNEVRA_DIR/data"
+BACKUP_BASE="${1:-/var/backups/levara}"
+LEVARA_DIR="/var/lib/levara"
+DB_PATH="$LEVARA_DIR/levara.db"
+DATA_DIR="$LEVARA_DIR/data"
 
 DATE=$(date +%Y%m%d_%H%M%S)
 BACKUP_DIR="$BACKUP_BASE/$DATE"
@@ -40,9 +40,9 @@ log "Backup directory: $BACKUP_DIR"
 
 # --- 1. SQLite backup (online, WAL-safe) ---
 log "Backing up SQLite database..."
-sqlite3 "$DB_PATH" ".backup '$BACKUP_DIR/cognevra.db'"
+sqlite3 "$DB_PATH" ".backup '$BACKUP_DIR/levara.db'"
 if [ $? -eq 0 ]; then
-    log "SQLite backup OK ($(du -h "$BACKUP_DIR/cognevra.db" | cut -f1))"
+    log "SQLite backup OK ($(du -h "$BACKUP_DIR/levara.db" | cut -f1))"
 else
     err "SQLite backup failed!"
 fi
@@ -57,9 +57,9 @@ else
 fi
 
 # --- 3. Config backup ---
-if [ -f /etc/cognevra/cognevra.env ]; then
+if [ -f /etc/levara/levara.env ]; then
     log "Backing up config..."
-    cp /etc/cognevra/cognevra.env "$BACKUP_DIR/cognevra.env"
+    cp /etc/levara/levara.env "$BACKUP_DIR/levara.env"
 fi
 
 # --- 4. Create symlink to latest ---

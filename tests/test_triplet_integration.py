@@ -1,6 +1,6 @@
-"""Integration tests for process_triplets() on CognevraAdapter.
+"""Integration tests for process_triplets() on LevaraAdapter.
 
-Uses the gRPC stub pattern established in test_cognevra_adapter.py
+Uses the gRPC stub pattern established in test_levara_adapter.py
 and test_chunker_integration.py: no real server, AsyncMock on _stub.
 """
 
@@ -9,15 +9,15 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from cognee.infrastructure.databases.vector.cognevra.CognevraAdapter import CognevraAdapter
+from cognee.infrastructure.databases.vector.levara.LevaraAdapter import LevaraAdapter
 
-pb = sys.modules["cognee.infrastructure.databases.vector.cognevra.generated.cognevra_pb2"]
+pb = sys.modules["cognee.infrastructure.databases.vector.levara.generated.levara_pb2"]
 
 
 # ─── helpers ──────────────────────────────────────────────────────────────────
 
-def _make_adapter() -> CognevraAdapter:
-    adapter = CognevraAdapter(url="localhost:50051", api_key=None, embedding_engine=MagicMock())
+def _make_adapter() -> LevaraAdapter:
+    adapter = LevaraAdapter(url="localhost:50051", api_key=None, embedding_engine=MagicMock())
     adapter._stub = MagicMock()
     return adapter
 

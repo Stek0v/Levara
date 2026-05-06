@@ -1,23 +1,23 @@
 """
-Benchmark: Cognee+LanceDB vs Cognee+Cognevra
+Benchmark: Cognee+LanceDB vs Cognee+Levara
 
 Metrics: insert latency (p50/p95/p99), search latency, throughput (ops/sec), recall@10.
 
 Usage:
     # Against LanceDB (default Cognee)
-    python benchmarks/cognevra_vs_lancedb.py --provider=lancedb
+    python benchmarks/levara_vs_lancedb.py --provider=lancedb
 
-    # Against Cognevra (start server first: cd Cognevra && make run)
-    python benchmarks/cognevra_vs_lancedb.py --provider=cognevra --cognevra-url=http://localhost:8080
+    # Against Levara (start server first: cd Levara && make run)
+    python benchmarks/levara_vs_lancedb.py --provider=levara --levara-url=http://localhost:8080
 
     # Both in sequence and compare
-    python benchmarks/cognevra_vs_lancedb.py --provider=both
+    python benchmarks/levara_vs_lancedb.py --provider=both
 
 Prerequisites:
     pip install cognee numpy tqdm
 
-For Cognevra, start the server with matching vector dimension:
-    cd Cognevra && ./cognevra -bootstrap=true -dim=384
+For Levara, start the server with matching vector dimension:
+    cd Levara && ./levara -bootstrap=true -dim=384
 """
 
 import argparse
@@ -124,7 +124,7 @@ async def run_benchmark(
     n_docs: int,
     n_queries: int,
     dim: int,
-    cognevra_url: str,
+    levara_url: str,
     output_dir: Path,
 ) -> dict:
     print(f"\n{'='*60}")
@@ -147,11 +147,11 @@ async def run_benchmark(
             api_key=None,
             embedding_engine=embedding_engine,
         )
-    elif provider == "cognevra":
-        from cognee.infrastructure.databases.vector.cognevra.CognevraAdapter import CognevraAdapter
+    elif provider == "levara":
+        from cognee.infrastructure.databases.vector.levara.LevaraAdapter import LevaraAdapter
 
-        adapter = CognevraAdapter(
-            url=cognevra_url,
+        adapter = LevaraAdapter(
+            url=levara_url,
             api_key=None,
             embedding_engine=embedding_engine,
         )
@@ -282,19 +282,19 @@ def print_comparison(results: List[dict]):
 
 
 async def main():
-    parser = argparse.ArgumentParser(description="Cognevra vs LanceDB benchmark")
-    parser.add_argument("--provider", choices=["lancedb", "cognevra", "both"], default="both")
+    parser = argparse.ArgumentParser(description="Levara vs LanceDB benchmark")
+    parser.add_argument("--provider", choices=["lancedb", "levara", "both"], default="both")
     parser.add_argument("--n-docs", type=int, default=10_000)
     parser.add_argument("--n-queries", type=int, default=1_000)
     parser.add_argument("--dim", type=int, default=384, help="Vector dimension (match embedding model)")
-    parser.add_argument("--cognevra-url", default="http://localhost:8080")
+    parser.add_argument("--levara-url", default="http://localhost:8080")
     parser.add_argument("--output-dir", default="benchmarks/results")
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    providers = ["lancedb", "cognevra"] if args.provider == "both" else [args.provider]
+    providers = ["lancedb", "levara"] if args.provider == "both" else [args.provider]
     results = []
     for provider in providers:
         result = await run_benchmark(
@@ -302,7 +302,7 @@ async def main():
             n_docs=args.n_docs,
             n_queries=args.n_queries,
             dim=args.dim,
-            cognevra_url=args.cognevra_url,
+            levara_url=args.levara_url,
             output_dir=output_dir,
         )
         results.append(result)

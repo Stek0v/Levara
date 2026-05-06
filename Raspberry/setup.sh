@@ -2,15 +2,15 @@
 set -euo pipefail
 
 # ============================================================
-# Cognevra Pi Setup — One-click installer
+# Levara Pi Setup — One-click installer
 # Run as root: sudo ./setup.sh
 # ============================================================
 
-COGNEVRA_USER="cognevra"
-COGNEVRA_DIR="/var/lib/cognevra"
-COGNEVRA_CONF="/etc/cognevra"
-COGNEVRA_LOG="/var/log/cognevra"
-COGNEVRA_BIN="/usr/local/bin/cognevra"
+LEVARA_USER="levara"
+LEVARA_DIR="/var/lib/levara"
+LEVARA_CONF="/etc/levara"
+LEVARA_LOG="/var/log/levara"
+LEVARA_BIN="/usr/local/bin/levara"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Colors
@@ -34,23 +34,23 @@ if [ "$ARCH" != "aarch64" ] && [ "$ARCH" != "arm64" ]; then
 fi
 
 echo "============================================"
-echo "  Cognevra Pi Setup"
+echo "  Levara Pi Setup"
 echo "============================================"
 echo ""
 
 # --- 1. System user & directories ---
 log "Creating user and directories..."
-if ! id "$COGNEVRA_USER" &>/dev/null; then
-    useradd -r -s /bin/false "$COGNEVRA_USER"
-    log "Created user: $COGNEVRA_USER"
+if ! id "$LEVARA_USER" &>/dev/null; then
+    useradd -r -s /bin/false "$LEVARA_USER"
+    log "Created user: $LEVARA_USER"
 else
-    log "User $COGNEVRA_USER already exists"
+    log "User $LEVARA_USER already exists"
 fi
 
-mkdir -p "$COGNEVRA_DIR/data"
-mkdir -p "$COGNEVRA_CONF"
-mkdir -p "$COGNEVRA_LOG"
-chown -R "$COGNEVRA_USER:$COGNEVRA_USER" "$COGNEVRA_DIR" "$COGNEVRA_LOG"
+mkdir -p "$LEVARA_DIR/data"
+mkdir -p "$LEVARA_CONF"
+mkdir -p "$LEVARA_LOG"
+chown -R "$LEVARA_USER:$LEVARA_USER" "$LEVARA_DIR" "$LEVARA_LOG"
 
 # --- 2. Install dependencies ---
 log "Installing dependencies..."
@@ -137,22 +137,22 @@ EOF
 systemctl daemon-reload
 systemctl restart ollama
 
-# --- 7. Install Cognevra binary ---
-if [ -f "$SCRIPT_DIR/cognevra-arm64" ]; then
-    log "Installing Cognevra from local binary..."
-    cp "$SCRIPT_DIR/cognevra-arm64" "$COGNEVRA_BIN"
+# --- 7. Install Levara binary ---
+if [ -f "$SCRIPT_DIR/levara-arm64" ]; then
+    log "Installing Levara from local binary..."
+    cp "$SCRIPT_DIR/levara-arm64" "$LEVARA_BIN"
 else
-    log "Downloading Cognevra binary..."
-    wget -q https://github.com/stek0v/cognevra/releases/latest/download/cognevra-arm64 -O "$COGNEVRA_BIN" || \
-        err "Failed to download Cognevra binary. Place cognevra-arm64 in this directory and retry."
+    log "Downloading Levara binary..."
+    wget -q https://github.com/stek0v/levara/releases/latest/download/levara-arm64 -O "$LEVARA_BIN" || \
+        err "Failed to download Levara binary. Place levara-arm64 in this directory and retry."
 fi
-chmod +x "$COGNEVRA_BIN"
+chmod +x "$LEVARA_BIN"
 
 # --- 8. Install config ---
 log "Installing configuration..."
-cat > "$COGNEVRA_CONF/cognevra.env" << ENVEOF
+cat > "$LEVARA_CONF/levara.env" << ENVEOF
 DB_PROVIDER=sqlite
-DB_PATH=$COGNEVRA_DIR/cognevra.db
+DB_PATH=$LEVARA_DIR/levara.db
 EMBEDDING_ENDPOINT=http://localhost:11434/v1/embeddings
 EMBEDDING_MODEL=$EMBED_MODEL
 LLM_PROVIDER=openai
@@ -173,19 +173,19 @@ if [ "$TOTAL_MEM" -ge 6000 ]; then
     SHARDS=2
 fi
 
-cat > /etc/systemd/system/cognevra.service << SVCEOF
+cat > /etc/systemd/system/levara.service << SVCEOF
 [Unit]
-Description=Cognevra Memory Server
+Description=Levara Memory Server
 After=network-online.target ollama.service
 Wants=network-online.target
 Requires=ollama.service
 
 [Service]
 Type=simple
-User=$COGNEVRA_USER
-Group=$COGNEVRA_USER
-EnvironmentFile=$COGNEVRA_CONF/cognevra.env
-ExecStart=$COGNEVRA_BIN -standalone=true -dim=$DIM -shards=$SHARDS -port=8080 -grpc-port=0 -data-dir=$COGNEVRA_DIR/data
+User=$LEVARA_USER
+Group=$LEVARA_USER
+EnvironmentFile=$LEVARA_CONF/levara.env
+ExecStart=$LEVARA_BIN -standalone=true -dim=$DIM -shards=$SHARDS -port=8080 -grpc-port=0 -data-dir=$LEVARA_DIR/data
 Restart=always
 RestartSec=5
 WatchdogSec=30
@@ -193,28 +193,28 @@ MemoryMax=2G
 MemoryHigh=1536M
 CPUQuota=300%
 LimitNOFILE=65536
-WorkingDirectory=$COGNEVRA_DIR
+WorkingDirectory=$LEVARA_DIR
 ProtectSystem=strict
-ReadWritePaths=$COGNEVRA_DIR $COGNEVRA_LOG
+ReadWritePaths=$LEVARA_DIR $LEVARA_LOG
 ProtectHome=true
 PrivateTmp=true
 NoNewPrivileges=true
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=cognevra
+SyslogIdentifier=levara
 
 [Install]
 WantedBy=multi-user.target
 SVCEOF
 
 # --- 10. Enable & start ---
-log "Enabling and starting Cognevra..."
+log "Enabling and starting Levara..."
 systemctl daemon-reload
-systemctl enable cognevra
-systemctl start cognevra
+systemctl enable levara
+systemctl start levara
 
 # --- 11. Health check ---
-log "Waiting for Cognevra to start..."
+log "Waiting for Levara to start..."
 sleep 5
 
 HEALTH_OK=false
@@ -229,12 +229,12 @@ done
 echo ""
 echo "============================================"
 if [ "$HEALTH_OK" = true ]; then
-    log "Cognevra is running!"
+    log "Levara is running!"
     echo ""
     echo "  Health:     curl http://localhost:8080/health"
-    echo "  Logs:       journalctl -u cognevra -f"
-    echo "  Config:     $COGNEVRA_CONF/cognevra.env"
-    echo "  Data:       $COGNEVRA_DIR"
+    echo "  Logs:       journalctl -u levara -f"
+    echo "  Config:     $LEVARA_CONF/levara.env"
+    echo "  Data:       $LEVARA_DIR"
     echo ""
     echo "  MCP URL:    http://$(hostname).local:8080/mcp"
     echo ""
@@ -242,7 +242,7 @@ if [ "$HEALTH_OK" = true ]; then
     echo "  Dimension:  $DIM"
     echo "  Shards:     $SHARDS"
 else
-    warn "Cognevra may not have started correctly."
-    echo "  Check logs: journalctl -u cognevra --no-pager -n 50"
+    warn "Levara may not have started correctly."
+    echo "  Check logs: journalctl -u levara --no-pager -n 50"
 fi
 echo "============================================"
