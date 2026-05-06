@@ -11,7 +11,7 @@ Each experiment records a ResultRecord; the final test prints a comparison table
 
 Requires running stack:
   - embed-server on :9001 (pplx-embed-context-v1-0.6b, dim=1024)
-  - Cognevra on :8080 (dim=1024, 3 shards)
+  - Levara on :8080 (dim=1024, 3 shards)
 
 Run:
     pytest tests/test_embed_optimization.py -v -s
@@ -34,7 +34,7 @@ import pytest
 
 BOOK_PATH = Path(__file__).parent.parent / "Edvards_Dzanet_Uragan_r4_P61XH.txt"
 EMBED_URL = "http://localhost:9001/v1/embeddings"
-COGNEVRA_URL = "http://localhost:8080"
+LEVARA_URL = "http://localhost:8080"
 EMBED_MODEL = "pplx-embed-context-v1-0.6b"
 DIM = 1024
 MIN_CHUNK_CHARS = 80
@@ -60,7 +60,7 @@ def _stack_available() -> bool:
 
 pytestmark = pytest.mark.skipif(
     not _stack_available(),
-    reason="Real stack not running (need embed-server:9001 + Cognevra:8080)",
+    reason="Real stack not running (need embed-server:9001 + Levara:8080)",
 )
 
 
@@ -192,20 +192,20 @@ async def embed_texts_concurrent(
     return results  # type: ignore[return-value]
 
 
-# ── Cognevra client ──────────────────────────────────────────────────────────
+# ── Levara client ──────────────────────────────────────────────────────────
 
-async def cognevra_insert(
+async def levara_insert(
     session: aiohttp.ClientSession,
     records: List[dict],
 ) -> dict:
     payload = {"records": records}
     async with session.post(
-        f"{COGNEVRA_URL}/api/v1/batch_insert", json=payload,
+        f"{LEVARA_URL}/api/v1/batch_insert", json=payload,
     ) as resp:
         if resp.status == 404:
             for rec in records:
                 async with session.post(
-                    f"{COGNEVRA_URL}/api/v1/insert", json=rec,
+                    f"{LEVARA_URL}/api/v1/insert", json=rec,
                 ) as r:
                     r.raise_for_status()
             return {"inserted": len(records), "failed": 0}
@@ -213,14 +213,14 @@ async def cognevra_insert(
         return await resp.json()
 
 
-async def cognevra_search(
+async def levara_search(
     session: aiohttp.ClientSession,
     vector: List[float],
     k: int = 10,
 ) -> List[dict]:
     payload = {"vector": vector, "k": k}
     async with session.post(
-        f"{COGNEVRA_URL}/api/v1/search", json=payload,
+        f"{LEVARA_URL}/api/v1/search", json=payload,
     ) as resp:
         resp.raise_for_status()
         data = await resp.json()
@@ -273,7 +273,7 @@ async def _measure_hit_rate(
     query_vectors = await embed_texts(session, query_texts)
     hits = 0
     for cq, qvec in zip(CONTEXTUAL_QUERIES, query_vectors):
-        results = await cognevra_search(session, qvec, k=10)
+        results = await levara_search(session, qvec, k=10)
         combined = " ".join(
             r.get("metadata", {}).get("text", "") for r in results
         ).lower()
@@ -298,7 +298,7 @@ async def _insert_with_prefix(
 
     t0 = time.perf_counter()
     for start in range(0, len(records), insert_batch):
-        await cognevra_insert(session, records[start:start + insert_batch])
+        await levara_insert(session, records[start:start + insert_batch])
     return time.perf_counter() - t0
 
 
@@ -573,7 +573,7 @@ class TestPipelineOverlap:
                             "chapter": c["chapter"],
                         },
                     } for c, v in zip(batch_chunks, vecs)]
-                    await cognevra_insert(session, records)
+                    await levara_insert(session, records)
                     inserted_count += len(records)
 
             # Also measure embed-only time for comparison

@@ -26,7 +26,7 @@ async def test_get_default_settings():
         async with s.get(f"{BASE_URL}/settings", headers=h) as r:
             assert r.status == 200
             data = await r.json()
-            assert data["vector_engine"] == "cognevra"
+            assert data["vector_engine"] == "levara"
             assert "embedding_model" in data
             assert "embedding_dimension" in data
             assert "llm_provider" in data

@@ -78,7 +78,7 @@ Integration Tests (3):
 
 Итого: 18 тестов.
 
-Requires: Cognevra HTTP :8080. Neo4j, LLM — опционально (skip если нет).
+Requires: Levara HTTP :8080. Neo4j, LLM — опционально (skip если нет).
 """
 import os
 import time
@@ -87,7 +87,7 @@ import asyncio
 import pytest
 import aiohttp
 
-BASE = os.getenv("COGNEVRA_HTTP_URL", "http://localhost:8080/api/v1")
+BASE = os.getenv("LEVARA_HTTP_URL", "http://localhost:8080/api/v1")
 BASE_ROOT = BASE.rsplit("/api/v1", 1)[0]  # http://localhost:8080
 
 pytestmark = pytest.mark.asyncio

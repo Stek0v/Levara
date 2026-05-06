@@ -9,8 +9,8 @@ from playwright.sync_api import Page
 
 BASE = "http://localhost:3000"
 API = "http://localhost:8080/api/v1"
-DIR = "/tmp/cognevra_screenshots_full"
-EMAIL = "admin@cognevra.dev"
+DIR = "/tmp/levara_screenshots_full"
+EMAIL = "admin@levara.dev"
 PASSWORD = "admin123456"
 
 os.makedirs(DIR, exist_ok=True)

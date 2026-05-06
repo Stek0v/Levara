@@ -14,7 +14,7 @@
    Импакт: средний — ops не видит состояние sub-services.
    Тесты: test_health_details_format, test_storage_backend_info.
 
-3. /metrics не содержит cognevra_ prefix (#METRICS_EMPTY)
+3. /metrics не содержит levara_ prefix (#METRICS_EMPTY)
    Вероятность: низкая (Prometheus уже подключен по CLAUDE.md).
    Импакт: средний — Grafana dashboards не работают.
    Тесты: test_metrics_endpoint.
@@ -59,7 +59,7 @@ Integration (2):
   test_full_pipeline_all_phases       #7 add → cognify(session) → search(GRAPH)
   test_cache_stats_after_pipeline     #6 pipeline → cache/stats → size > 0
 
-Requires: Cognevra HTTP :8080, embed-server :9001.
+Requires: Levara HTTP :8080, embed-server :9001.
 НЕ используем pytest.skip() — если сервис упал, тест FAIL.
 """
 import asyncio
@@ -251,9 +251,9 @@ async def test_health_details_format():
 
 
 async def test_metrics_endpoint():
-    """DoD: GET /metrics → 200, содержит prometheus format (cognevra_ prefix).
+    """DoD: GET /metrics → 200, содержит prometheus format (levara_ prefix).
     Проверяет: Prometheus метрики доступны с правильным namespace.
-    Риски: #3 (metrics не содержит cognevra_ prefix).
+    Риски: #3 (metrics не содержит levara_ prefix).
     """
     async with aiohttp.ClientSession(timeout=TIMEOUT) as s:
         # /metrics обычно без авторизации (Prometheus scraping)
@@ -268,15 +268,15 @@ async def test_metrics_endpoint():
                 f"#3: prometheus exporter не настроен"
             )
             # Prometheus format: строки с # HELP, # TYPE, или metric_name{labels} value
-            assert "cognevra_" in text or "HELP" in text or "TYPE" in text, (
+            assert "levara_" in text or "HELP" in text or "TYPE" in text, (
                 f"GET /metrics не содержит prometheus format. "
                 f"Начало ответа: {text[:300]}. "
                 f"#3: формат метрик не Prometheus"
             )
-            # Предпочтительно — наличие cognevra_ prefix
-            if "cognevra_" not in text:
+            # Предпочтительно — наличие levara_ prefix
+            if "levara_" not in text:
                 # Не fatal, но warning: метрики без namespace
-                pass  # допускаем метрики без cognevra_ prefix
+                pass  # допускаем метрики без levara_ prefix
 
 
 async def test_server_logs_json():

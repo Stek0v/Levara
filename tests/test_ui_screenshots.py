@@ -1,6 +1,6 @@
 """
 UI SCREENSHOT TESTS — каждый шаг делает скриншот, Claude анализирует его.
-Скриншоты сохраняются в /tmp/cognevra_screenshots/.
+Скриншоты сохраняются в /tmp/levara_screenshots/.
 После прогона все скриншоты можно просмотреть для аудита.
 """
 import os
@@ -8,8 +8,8 @@ import pytest
 from playwright.sync_api import Page
 
 BASE = "http://localhost:3000"
-SCREENSHOTS_DIR = "/tmp/cognevra_screenshots"
-EMAIL = "admin@cognevra.dev"
+SCREENSHOTS_DIR = "/tmp/levara_screenshots"
+EMAIL = "admin@levara.dev"
 PASSWORD = "admin123456"
 
 os.makedirs(SCREENSHOTS_DIR, exist_ok=True)

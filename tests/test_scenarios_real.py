@@ -79,7 +79,7 @@ async def test_s02_developer_knowledge_base():
     async with aiohttp.ClientSession() as s:
         h, _, _ = await _user(s, "dev")
         async with s.post(f"{BASE_URL}/add",
-            data="Cognevra uses HNSW for fast approximate nearest neighbor search. It supports WAL durability.",
+            data="Levara uses HNSW for fast approximate nearest neighbor search. It supports WAL durability.",
             headers={**h, "Content-Type": "text/plain"}) as r:
             assert (await r.json())["items"] >= 1
         async with s.post(f"{BASE_URL}/search/text", json={
@@ -97,7 +97,7 @@ async def test_s03_analyst_csv_upload():
     """Analyst: upload CSV → RAG search."""
     async with aiohttp.ClientSession() as s:
         h, _, _ = await _user(s, "analyst")
-        csv = b"name,type,speed\nCognevra,VectorDB,fast\nNeo4j,GraphDB,medium\nPostgres,RelationalDB,fast"
+        csv = b"name,type,speed\nLevara,VectorDB,fast\nNeo4j,GraphDB,medium\nPostgres,RelationalDB,fast"
         form = aiohttp.FormData()
         form.add_field("data", csv, filename="benchmarks.csv", content_type="text/csv")
         async with s.post(f"{BASE_URL}/add", data=form, headers=h) as r:
@@ -193,7 +193,7 @@ async def test_s07_mcp_agent_pipeline():
             "jsonrpc": "2.0", "id": "1", "method": "initialize", "params": {}
         }) as r:
             init = await r.json()
-            assert init["result"]["serverInfo"]["name"] == "Cognevra"
+            assert init["result"]["serverInfo"]["name"] == "Levara"
         # List tools
         async with s.post(f"{MCP_URL}/mcp", json={
             "jsonrpc": "2.0", "id": "2", "method": "tools/list", "params": {}

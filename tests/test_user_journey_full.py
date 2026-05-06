@@ -1,7 +1,7 @@
 """
 Full User Journey Test — от регистрации до визуализации графа.
 
-Описывает ПОЛНЫЙ путь нового пользователя в Cognevra:
+Описывает ПОЛНЫЙ путь нового пользователя в Levara:
 
 1. РЕГИСТРАЦИЯ → Пользователь создаёт аккаунт
 2. ЛОГИН → Получает JWT токен + cookie
@@ -54,7 +54,7 @@ _state = {}
 
 async def test_step01_register():
     """Пользователь регистрирует новый аккаунт."""
-    _state["email"] = f"journey_{unique_id()}@cognevra.dev"
+    _state["email"] = f"journey_{unique_id()}@levara.dev"
     _state["password"] = "JourneyPass123!"
 
     async with aiohttp.ClientSession() as s:
@@ -134,7 +134,7 @@ async def test_step04_check_settings():
             assert r.status == 200
             settings = await r.json()
             assert "vector_engine" in settings
-            assert settings["vector_engine"] == "cognevra"
+            assert settings["vector_engine"] == "levara"
             assert "embedding_model" in settings
             assert "llm_provider" in settings
             print(f"  ✓ Settings: embed={settings['embedding_model']}, "
@@ -197,11 +197,11 @@ async def test_step06_upload_text_file():
     async with aiohttp.ClientSession() as s:
         form = aiohttp.FormData()
         form.add_field("data",
-            b"Cognevra is a high-performance vector database written in Go. "
+            b"Levara is a high-performance vector database written in Go. "
             b"It uses HNSW (Hierarchical Navigable Small World) indexing for fast approximate nearest neighbor search. "
             b"The system combines WAL durability with memory-mapped arenas for efficient vector storage. "
-            b"Cognevra supports multiple embedding models and can store vectors of any dimension.",
-            filename="cognevra_intro.txt", content_type="text/plain")
+            b"Levara supports multiple embedding models and can store vectors of any dimension.",
+            filename="levara_intro.txt", content_type="text/plain")
         form.add_field("datasetId", _state["dataset_id"])
 
         async with s.post(f"{BASE_URL}/add", data=form, headers=_state["headers"]) as r:
@@ -210,7 +210,7 @@ async def test_step06_upload_text_file():
             assert data["status"] == "ok"
             assert data["items"] >= 1
             assert data["dataset_id"] == _state["dataset_id"]
-            print(f"  ✓ Uploaded: cognevra_intro.txt ({data['items']} items)")
+            print(f"  ✓ Uploaded: levara_intro.txt ({data['items']} items)")
 
 
 async def test_step06b_upload_markdown_file():
@@ -290,7 +290,7 @@ async def test_step08_cognify_dataset():
     async with aiohttp.ClientSession() as s:
         async with s.post(f"{BASE_URL}/cognify", json={
             "texts": [
-                "Cognevra uses HNSW for vector search. Neo4j stores the knowledge graph. "
+                "Levara uses HNSW for vector search. Neo4j stores the knowledge graph. "
                 "PostgreSQL stores metadata. The system was created by stek0v.",
             ]
         }, headers=_state["headers"]) as r:
@@ -423,7 +423,7 @@ async def test_step11e_search_rag():
     """Пользователь ищет по RAG_COMPLETION (chunks + LLM answer)."""
     async with aiohttp.ClientSession() as s:
         async with s.post(f"{BASE_URL}/search/text", json={
-            "query_text": "What is Cognevra?",
+            "query_text": "What is Levara?",
             "query_type": "RAG_COMPLETION",
             "top_k": 3,
         }, headers=_state["headers"]) as r:
@@ -463,7 +463,7 @@ async def test_step12b_add_markdown_cell():
     async with aiohttp.ClientSession() as s:
         async with s.post(f"{BASE_URL}/notebooks/{_state['notebook_id']}/cells", json={
             "type": "markdown",
-            "content": "# My Research\n\nAnalyzing Cognevra vector database architecture.",
+            "content": "# My Research\n\nAnalyzing Levara vector database architecture.",
         }, headers=_state["headers"]) as r:
             assert r.status == 201
             data = await r.json()
@@ -544,7 +544,7 @@ async def test_step13a_mcp_initialize():
         }) as r:
             assert r.status == 200
             data = await r.json()
-            assert data["result"]["serverInfo"]["name"] == "Cognevra"
+            assert data["result"]["serverInfo"]["name"] == "Levara"
             print(f"  ✓ MCP initialized: {data['result']['serverInfo']['name']} "
                   f"v{data['result']['serverInfo']['version']}")
 
@@ -589,7 +589,7 @@ async def test_step13c_health_details():
 
 async def test_step14a_create_colleague():
     """Создаём коллегу для шаринга."""
-    _state["colleague_email"] = f"colleague_{unique_id()}@cognevra.dev"
+    _state["colleague_email"] = f"colleague_{unique_id()}@levara.dev"
     async with aiohttp.ClientSession() as s:
         async with s.post(f"{BASE_URL}/auth/register", json={
             "email": _state["colleague_email"],
@@ -632,7 +632,7 @@ async def test_step14c_check_permissions():
 # STEP 15: COLLECTIONS — Vector collection metadata
 # Пользователь просматривает vector collections и их метаданные.
 # GET /collections → [{name, embedding_model, embedding_dim, distance_metric, record_count}]
-# Docs: — (Cognevra extension)
+# Docs: — (Levara extension)
 # ═══════════════════════════════════════════════════════════════════════
 
 async def test_step15_list_collections():

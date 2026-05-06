@@ -1,6 +1,6 @@
 """Stress tests: volume — large data sets, scale limits.
 
-Requires: Cognevra gRPC:50051, embed-server:9001 (for some).
+Requires: Levara gRPC:50051, embed-server:9001 (for some).
 """
 import grpc
 import json
@@ -10,8 +10,8 @@ from pathlib import Path
 
 import pytest
 
-pb = sys.modules.get("cognee.infrastructure.databases.vector.cognevra.generated.cognevra_pb2")
-pb_grpc = sys.modules.get("cognee.infrastructure.databases.vector.cognevra.generated.cognevra_pb2_grpc")
+pb = sys.modules.get("cognee.infrastructure.databases.vector.levara.generated.levara_pb2")
+pb_grpc = sys.modules.get("cognee.infrastructure.databases.vector.levara.generated.levara_pb2_grpc")
 if pb is None or pb_grpc is None:
     pytest.skip("Proto stubs not loaded", allow_module_level=True)
 
@@ -24,8 +24,8 @@ def _stub():
     try:
         grpc.channel_ready_future(ch).result(timeout=3)
     except grpc.FutureTimeoutError:
-        pytest.skip("Cognevra not running")
-    return pb_grpc.CognevraServiceStub(ch), ch
+        pytest.skip("Levara not running")
+    return pb_grpc.LevaraServiceStub(ch), ch
 
 
 class TestVolumeInsert:

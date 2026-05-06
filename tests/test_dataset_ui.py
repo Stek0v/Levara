@@ -6,7 +6,7 @@ import pytest
 from playwright.sync_api import Page, expect
 
 BASE = "http://localhost:3000"
-EMAIL = "admin@cognevra.dev"
+EMAIL = "admin@levara.dev"
 PASSWORD = "admin123456"
 
 
@@ -87,7 +87,7 @@ def test_mcp_shows_services(page: Page):
     page.wait_for_timeout(3000)
     body = page.inner_text("body")
     # Should show backend service
-    assert "Backend" in body or "Cognevra" in body or "connected" in body.lower()
+    assert "Backend" in body or "Levara" in body or "connected" in body.lower()
 
 def test_mcp_shows_tools(page: Page):
     login(page)

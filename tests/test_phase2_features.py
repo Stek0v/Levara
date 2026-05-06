@@ -82,7 +82,7 @@ Rate Limiting (4):
   test_rate_limit_provider_stable       #8 3 sequential cognify → all COMPLETED
   test_rate_limit_concurrent            #8 2 concurrent cognify → no deadlock
 
-Requires: Cognevra HTTP :8080, embed-server :9001, CLI binary.
+Requires: Levara HTTP :8080, embed-server :9001, CLI binary.
 НЕ используем pytest.skip() — если сервис упал, тест FAIL.
 """
 import asyncio
@@ -104,7 +104,7 @@ pytestmark = pytest.mark.asyncio
 
 BASE = BASE_URL  # http://localhost:8080/api/v1
 TIMEOUT = aiohttp.ClientTimeout(total=300)
-CLI = os.path.join(os.path.dirname(__file__), "..", "Cognevra", "cognevra")
+CLI = os.path.join(os.path.dirname(__file__), "..", "Levara", "levara")
 
 # Тестовый Python-код для code extraction
 PYTHON_CODE = (
@@ -494,44 +494,44 @@ async def test_code_search_after_cognify():
 
 
 def test_cli_health():
-    """DoD: cognevra health → exit code 0, output contains "HEALTHY".
+    """DoD: levara health → exit code 0, output contains "HEALTHY".
     Проверяет: CLI binary существует и может проверить здоровье сервера.
     Риски: #6 (CLI binary не собран).
     """
     rc, stdout, stderr = _run_cli("health")
     assert rc == 0, (
-        f"cognevra health exit code={rc}. "
+        f"levara health exit code={rc}. "
         f"#6: CLI binary не найден или не работает. "
         f"stderr: {stderr[:300]}"
     )
     output = (stdout + stderr).upper()
     assert "HEALTHY" in output or "OK" in output, (
-        f"cognevra health не содержит HEALTHY/OK. "
+        f"levara health не содержит HEALTHY/OK. "
         f"#6: сервер не отвечает? stdout: {stdout[:300]}"
     )
 
 
 def test_cli_datasets_list():
-    """DoD: cognevra datasets list → exit code 0, output содержит table.
+    """DoD: levara datasets list → exit code 0, output содержит table.
     Проверяет: CLI может показать список datasets.
     Риски: #6 (binary missing), #7 (output format).
     """
     rc, stdout, stderr = _run_cli("datasets", "list")
     assert rc == 0, (
-        f"cognevra datasets list exit code={rc}. "
+        f"levara datasets list exit code={rc}. "
         f"#6: CLI не работает. stderr: {stderr[:300]}"
     )
     # Минимальная проверка — вывод не пустой (может быть пустая таблица)
     output = stdout + stderr
     assert len(output.strip()) > 0, (
-        f"cognevra datasets list — пустой вывод. "
+        f"levara datasets list — пустой вывод. "
         f"#7: формат вывода изменился или endpoint не работает"
     )
 
 
 def test_cli_add_and_search():
-    """DoD: cognevra add "Test CLI text" → exit 0.
-    cognevra search "CLI text" → exit 0, output содержит results.
+    """DoD: levara add "Test CLI text" → exit 0.
+    levara search "CLI text" → exit 0, output содержит results.
     Проверяет: CLI round-trip add → search.
     Риски: #6 (binary missing).
     """
@@ -539,36 +539,36 @@ def test_cli_add_and_search():
     test_text = f"Test CLI text for phase2 {uuid.uuid4().hex[:8]}"
     rc, stdout, stderr = _run_cli("add", test_text)
     assert rc == 0, (
-        f"cognevra add exit code={rc}. "
+        f"levara add exit code={rc}. "
         f"#6: CLI add не работает. stderr: {stderr[:300]}"
     )
 
     # Search
     rc, stdout, stderr = _run_cli("search", "CLI text")
     assert rc == 0, (
-        f"cognevra search exit code={rc}. "
+        f"levara search exit code={rc}. "
         f"#6: CLI search не работает. stderr: {stderr[:300]}"
     )
     output = stdout + stderr
     assert len(output.strip()) > 0, (
-        f"cognevra search — пустой вывод. "
+        f"levara search — пустой вывод. "
         f"#6: search не вернул результатов"
     )
 
 
 def test_cli_cache_stats():
-    """DoD: cognevra cache stats → exit 0, output содержит "Size" или "Hits".
+    """DoD: levara cache stats → exit 0, output содержит "Size" или "Hits".
     Проверяет: CLI cache stats endpoint работает.
     Риски: #6 (binary missing), #7 (output format).
     """
     rc, stdout, stderr = _run_cli("cache", "stats")
     assert rc == 0, (
-        f"cognevra cache stats exit code={rc}. "
+        f"levara cache stats exit code={rc}. "
         f"#6: CLI не работает. stderr: {stderr[:300]}"
     )
     output = (stdout + stderr).lower()
     assert "size" in output or "hits" in output or "cache" in output, (
-        f"cognevra cache stats не содержит Size/Hits/Cache. "
+        f"levara cache stats не содержит Size/Hits/Cache. "
         f"#7: формат вывода изменился. stdout: {stdout[:300]}"
     )
 

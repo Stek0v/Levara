@@ -67,7 +67,7 @@ async def test_int_cognify_writes_graph():
             ds_id = (await r.json())["id"]
 
         async with s.post(f"{BASE_URL}/cognify", json={
-            "texts": ["Cognevra uses HNSW indexing. It was created by stek0v for fast vector search."],
+            "texts": ["Levara uses HNSW indexing. It was created by stek0v for fast vector search."],
             "datasetIds": [ds_id],
         }, headers=h) as r:
             run_id = (await r.json())["pipeline_run_id"]

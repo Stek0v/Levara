@@ -2,7 +2,7 @@
 
 Setup: ingest texts, embed, index to vector + BM25.
 Then test every search type.
-Requires: Cognevra gRPC:50051, embed-server:9001.
+Requires: Levara gRPC:50051, embed-server:9001.
 """
 import grpc
 import json
@@ -12,8 +12,8 @@ import urllib.request
 
 import pytest
 
-pb = sys.modules.get("cognee.infrastructure.databases.vector.cognevra.generated.cognevra_pb2")
-pb_grpc = sys.modules.get("cognee.infrastructure.databases.vector.cognevra.generated.cognevra_pb2_grpc")
+pb = sys.modules.get("cognee.infrastructure.databases.vector.levara.generated.levara_pb2")
+pb_grpc = sys.modules.get("cognee.infrastructure.databases.vector.levara.generated.levara_pb2_grpc")
 if pb is None or pb_grpc is None:
     pytest.skip("Proto stubs not loaded", allow_module_level=True)
 
@@ -33,12 +33,12 @@ def _check():
         return False
 
 
-pytestmark = pytest.mark.skipif(not _check(), reason="Need embed-server + Cognevra")
+pytestmark = pytest.mark.skipif(not _check(), reason="Need embed-server + Levara")
 
 
 def _stub():
     ch = grpc.insecure_channel(GRPC)
-    return pb_grpc.CognevraServiceStub(ch), ch
+    return pb_grpc.LevaraServiceStub(ch), ch
 
 
 def _embed(texts):
@@ -56,7 +56,7 @@ def setup_data():
         ("s1", "Quantum computers use qubits for superposition and entanglement"),
         ("s2", "Natural language processing analyzes text using transformers"),
         ("s3", "HNSW algorithm provides fast approximate nearest neighbor search"),
-        ("s4", "In March 2024 Cognevra released v1.0 with WAL support"),
+        ("s4", "In March 2024 Levara released v1.0 with WAL support"),
         ("s5", "BM25 is a probabilistic ranking function for keyword retrieval"),
     ]
     vecs = _embed([t for _, t in docs])
@@ -151,7 +151,7 @@ class TestTemporalSearch:
     def test_06_temporal_range(self, setup_data):
         stub, ch = _stub()
         # Use doc s4 directly which has "March 2024"
-        text = "In March 2024 Cognevra released v1.0. On 2024-06-15 gRPC was added."
+        text = "In March 2024 Levara released v1.0. On 2024-06-15 gRPC was added."
         resp = stub.TemporalSearch(pb.TemporalSearchReq(
             text=text, date_from="2024-01-01", date_to="2024-12-31"))
         assert resp.total_extracted >= 1
