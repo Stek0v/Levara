@@ -1,11 +1,11 @@
 services:
-  cognevra:
-    build: ./Cognevra
+  levara:
+    build: ./Levara
     ports:
       - "8080:8080"
       - "50051:50051"
     volumes:
-      - cognevra-data:/app/data
+      - levara-data:/app/data
     environment:
       # Auth (T19, 20.04). MUST be set in production — empty triggers a
       # random secret on every restart, which invalidates every live
@@ -25,7 +25,7 @@ services:
     # so unauthenticated calls log instead of reject — useful during the
     # client-upgrade window. Flip to true in prod once every consumer
     # ships a token (see docs/MIGRATION-20.04.md).
-    command: ["./cognevra", "-standalone=true", "-dim=${COGNEVRA_DIM:-${EMBEDDING_DIMENSIONS:-1024}}", "-shards=${COGNEVRA_SHARDS:-3}", "-port=8080", "-grpc-port=50051", "-hnsw-m=${HNSW_M:-20}", "-hnsw-ef-mult=${HNSW_EF_MULT:-10}", "-hnsw-ef-min=${HNSW_EF_MIN:-64}", "-require-auth=${REQUIRE_AUTH:-false}"]
+    command: ["./levara", "-standalone=true", "-dim=${LEVARA_DIM:-${EMBEDDING_DIMENSIONS:-1024}}", "-shards=${LEVARA_SHARDS:-3}", "-port=8080", "-grpc-port=50051", "-hnsw-m=${HNSW_M:-20}", "-hnsw-ef-mult=${HNSW_EF_MULT:-10}", "-hnsw-ef-min=${HNSW_EF_MIN:-64}", "-require-auth=${REQUIRE_AUTH:-false}"]
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/metrics"]
       interval: 10s
@@ -44,7 +44,7 @@ services:
       - '--storage.tsdb.retention.time=200h'
       - '--web.enable-lifecycle'
     depends_on:
-      - cognevra
+      - levara
 
 volumes:
-  cognevra-data:
+  levara-data:

@@ -6,9 +6,9 @@
 #   docker compose -f docker-compose.yml -f docker-compose.qwen3.yml up -d --build
 #
 # or on the GPU host (10.23.0.64 per the current deployment memory), the
-# llama-server pieces can run standalone and only the cognevra service
+# llama-server pieces can run standalone and only the levara service
 # consumes them over the network — in that case skip this file on the
-# cognevra host and only bring up `qwen3-embed` + `qwen3-rerank-front`
+# levara host and only bring up `qwen3-embed` + `qwen3-rerank-front`
 # on the GPU box.
 #
 # Prerequisites:
@@ -137,11 +137,11 @@ services:
       retries: 5
 
   # ────────────────────────────────────────────────────────────
-  # Cognevra override — point at the new embed + rerank endpoints.
+  # Levara override — point at the new embed + rerank endpoints.
   # Only the env block is patched; everything else comes from the
   # base docker-compose.yml.
   # ────────────────────────────────────────────────────────────
-  cognevra:
+  levara:
     environment:
       - EMBEDDING_ENDPOINT=http://qwen3-embed:9001/v1/embeddings
       - EMBEDDING_MODEL=qwen3-embedding-0.6b
