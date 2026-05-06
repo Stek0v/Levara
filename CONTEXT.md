@@ -2,26 +2,26 @@
 
 ## Что это за проект
 
-Cognevra — production-оптимизированная векторная база данных, объединяющая Go HNSW движок (оригинально VectraDB от Rupam) с интерфейсом Cognee AI memory platform. Сравнивается с LanceDB как альтернативным backend для Cognee. Проект включает: Go сервер, Python тесты (143), бенчмарки, RAG pipeline тесты с Qwen LLM.
+Levara — production-оптимизированная векторная база данных, объединяющая Go HNSW движок (оригинально VectraDB от Rupam) с интерфейсом Cognee AI memory platform. Сравнивается с LanceDB как альтернативным backend для Cognee. Проект включает: Go сервер, Python тесты (143), бенчмарки, RAG pipeline тесты с Qwen LLM.
 
 ## Ключевые результаты бенчмарков (2026-03-17)
 
-- Cognevra search: 2.6ms mean, 719 QPS, 93% keyword hit rate
+- Levara search: 2.6ms mean, 719 QPS, 93% keyword hit rate
 - LanceDB search: 9.1ms mean, 150 QPS, 100% keyword hit rate
-- Cognevra insert: 741 dp/s (bottleneck: WAL fsync + db.mu lock + HTTP)
+- Levara insert: 741 dp/s (bottleneck: WAL fsync + db.mu lock + HTTP)
 - LanceDB insert: 5,067 dp/s (in-process, no overhead)
-- Crash recovery: Cognevra 100% (WAL), LanceDB N/A
+- Crash recovery: Levara 100% (WAL), LanceDB N/A
 - All 143 tests PASSED, cases.md 20/20 covered
 
 ## Архитектурные решения
 
-1. Cognevra работает в standalone/WAL mode (без Raft) — быстрее для single-node
+1. Levara работает в standalone/WAL mode (без Raft) — быстрее для single-node
 2. HNSW indexing async — вставка не блокируется построением графа
 3. Python adapter использует нативные коллекции через CollectionManager (Go)
 4. conftest.py стабит все Cognee зависимости через sys.modules injection
 5. Тесты работают напрямую с gRPC API, минуя Cognee pipeline
 
-## Bottleneck-анализ Cognevra write path
+## Bottleneck-анализ Levara write path
 
 1. WAL fsync (wal.go:115) — 10-30ms/batch (durability cost)
 2. db.mu lock (db.go:199-236) — 20-70ms (JSON marshal + arena + disk under one mutex)
@@ -48,12 +48,12 @@ Cognevra — production-оптимизированная векторная ба
 
 ## Use case recommendations
 
-- Cognevra: read-heavy (>100:1 R/W), concurrent API, latency SLA <10ms
+- Levara: read-heavy (>100:1 R/W), concurrent API, latency SLA <10ms
 - LanceDB: batch ingestion, CRUD, prototyping, zero-ops
 
 ## Стек на хосте
 
-- Cognevra: Docker, port 8080, dim=1024, 3 shards
+- Levara: Docker, port 8080, dim=1024, 3 shards
 - embed-server: port 9001, pplx-embed-context-v1-0.6b, FP16, CUDA, RTX 3090
 - Ollama: port 11434, qwen3.5:latest (9.7B) + qwen3.5:27b (27.8B)
 - Prometheus: port 9090
@@ -71,7 +71,7 @@ Cognevra — production-оптимизированная векторная ба
 
 ```
 fcdfa2b test: comprehensive benchmark + RAG cases (143 tests)
-08366b2 test: book head-to-head Cognevra vs LanceDB
+08366b2 test: book head-to-head Levara vs LanceDB
 c5fed8f perf: async HNSW indexing
 944abcc perf: standalone WAL-only mode
 381da19 fix: cosine distance, WAL recovery, data persistence
@@ -93,4 +93,4 @@ orjson>=3.10
 - Claude memory is at ~/.claude/projects/-home-USER-src-new_db/ (path-dependent)
 - .env has hardcoded IP 10.23.0.64 (GPU server) — reconfigure for new host
 - cognee/ is not committed (23MB, external dependency) — install separately
-- Cognevra data/ contains WAL files (not committed, regenerated on start)
+- Levara data/ contains WAL files (not committed, regenerated on start)

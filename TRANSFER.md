@@ -1,4 +1,4 @@
-# Перенос проекта Cognevra на другой компьютер
+# Перенос проекта Levara на другой компьютер
 
 ## Быстрый старт
 
@@ -9,7 +9,7 @@ cd new_db
 
 # 2. Установить зависимости
 # Go 1.25+
-cd Cognevra && go mod download && cd ..
+cd Levara && go mod download && cd ..
 
 # Python 3.10+
 pip install grpcio grpcio-tools protobuf pytest pytest-asyncio aiohttp lancedb pydantic
@@ -20,7 +20,7 @@ cd cognee-plugin && pip install -e ".[dev]" && cd ..
 # 3. Сгенерировать proto stubs
 make proto
 
-# 4. Запустить Cognevra
+# 4. Запустить Levara
 docker compose up -d --build
 
 # 5. Проверить
@@ -28,7 +28,7 @@ python3 -c "import grpc; ch=grpc.insecure_channel('localhost:50051'); grpc.chann
 
 # 6. Запустить тесты
 python3 -m pytest tests/ -v      # Python: 80+ integration tests
-cd Cognevra && go test ./... -v   # Go: ~50 tests
+cd Levara && go test ./... -v   # Go: ~50 tests
 ```
 
 ## Что нужно на новом компьютере
@@ -53,7 +53,7 @@ cd Cognevra && go test ./... -v   # Go: ~50 tests
 ```
 cognee/                              # Внешний Cognee репо (в .gitignore)
   cognee/infrastructure/databases/
-    vector/cognevra/                 # Наша копия адаптера + generated stubs
+    vector/levara/                 # Наша копия адаптера + generated stubs
 Edvards_Dzanet_Uragan_r4_P61XH.txt  # Тестовая книга "Ураган" (1.2MB)
 .env                                # Локальные настройки (скопировать из .env.template)
 ```
@@ -62,9 +62,9 @@ Edvards_Dzanet_Uragan_r4_P61XH.txt  # Тестовая книга "Ураган"
 
 ```bash
 # Скопировать адаптер из plugin в cognee tree
-mkdir -p cognee/cognee/infrastructure/databases/vector/cognevra/generated
-cp cognee-plugin/cognevra_adapter/CognevraAdapter.py \
-   cognee/cognee/infrastructure/databases/vector/cognevra/CognevraAdapter.py
+mkdir -p cognee/cognee/infrastructure/databases/vector/levara/generated
+cp cognee-plugin/levara_adapter/LevaraAdapter.py \
+   cognee/cognee/infrastructure/databases/vector/levara/LevaraAdapter.py
 # Добавить health_check() метод в cognee tree copy (есть только там)
 
 # Сгенерировать Python proto stubs
@@ -75,7 +75,7 @@ make proto
 
 ```
 new_db/
-  Cognevra/                     # Go server (15 gRPC RPCs)
+  Levara/                     # Go server (15 gRPC RPCs)
     cmd/server/main.go          # Entry point, CLI flags
     internal/store/             # HNSW, WAL, Arena, DiskStore, Collections
     internal/grpc/service.go    # gRPC handlers
@@ -84,16 +84,16 @@ new_db/
     pkg/fileio/                 # HashFiles, ListDirectory
     pkg/aggregator/             # Search result ranking
     pipeline/                   # In-process search pipeline
-    proto/cognevra.proto        # gRPC service definition
+    proto/levara.proto        # gRPC service definition
   cognee-plugin/                # Python gRPC adapter (pip installable)
-    cognevra_adapter/
-      CognevraAdapter.py        # 13 methods
+    levara_adapter/
+      LevaraAdapter.py        # 13 methods
       generated/                # Proto stubs (.gitignore)
   tests/                        # 80+ Python integration tests
   docs/
-    cognevra-integration/       # LLM optimizations, coordinators
+    levara-integration/       # LLM optimizations, coordinators
     archived/                   # Old plans and specs
-  docker-compose.yml            # Cognevra + Prometheus
+  docker-compose.yml            # Levara + Prometheus
   Makefile                      # up, down, test, proto, clean
 ```
 
@@ -101,8 +101,8 @@ new_db/
 
 | Service | Port | Описание |
 |---------|------|----------|
-| Cognevra gRPC | 50051 | Primary API |
-| Cognevra HTTP | 8080 | Prometheus metrics |
+| Levara gRPC | 50051 | Primary API |
+| Levara HTTP | 8080 | Prometheus metrics |
 | Prometheus | 9090 | Metrics dashboard |
 | embed-server | 9001 | Sentence embeddings |
 | Ollama | 11434 | LLM (для RAG тестов) |
@@ -110,8 +110,8 @@ new_db/
 ## Конфигурация (docker-compose.yml)
 
 ```
-COGNEVRA_DIM=1024        # Vector dimension
-COGNEVRA_SHARDS=3        # Number of shards
+LEVARA_DIM=1024        # Vector dimension
+LEVARA_SHARDS=3        # Number of shards
 HNSW_M=20                # HNSW graph connectivity
 HNSW_EF_MULT=10          # efSearch multiplier
 HNSW_EF_MIN=64           # Minimum efSearch
@@ -120,7 +120,7 @@ HNSW_EF_MIN=64           # Minimum efSearch
 ## Claude Code memory
 
 Директория `.claude/` содержит:
-- `projects/-home-stek0v-src-new-db/memory/` — память проекта (MEMORY.md, user_role.md, project_cognevra.md, feedback_style.md)
+- `projects/-home-stek0v-src-new-db/memory/` — память проекта (MEMORY.md, user_role.md, project_levara.md, feedback_style.md)
 - `plans/` — текущие планы
 
 При переносе скопировать `.claude/` целиком для сохранения контекста.
