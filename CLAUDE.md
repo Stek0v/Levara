@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Cognevra benchmark and testing project: production-optimized vector database combining the Go HNSW engine (originally VectraDB by Rupam) with the Cognee AI memory platform interface. Benchmarked against LanceDB (Rust/Arrow) as an alternative vector storage backend.
+Levara benchmark and testing project: production-optimized vector database combining the Go HNSW engine (originally VectraDB by Rupam) with the Cognee AI memory platform interface. Benchmarked against LanceDB (Rust/Arrow) as an alternative vector storage backend.
 
 ## Stack
 
@@ -64,7 +64,7 @@ new_db/
     pkg/runreg/        # background-run registry (TTL janitor on terminal runs)
     pkg/mcp/           # 33 MCP tools + Deps interface + OutputSchema (T14)
     pkg/backup/        # backup/restore library
-    proto/             # cognevra.proto (gRPC definitions)
+    proto/             # levara.proto (gRPC definitions)
     webui/             # Next.js 15 WebUI (12 routes, 61 E2E tests)
     docs/              # WEBUI_REQUIREMENTS.md, WEBUI_DOD.md, ux_test.md, fix.md
   posttests/bier/      # BEIR benchmark suite (6 datasets)
@@ -77,7 +77,7 @@ new_db/
 # Start services
 docker compose up -d --build
 
-# Run all tests (requires embed-server + Cognevra + Ollama)
+# Run all tests (requires embed-server + Levara + Ollama)
 pytest tests/ -v -s
 
 # Run only vector DB tests (no LLM needed)
@@ -88,10 +88,10 @@ pytest tests/test_rag_llm_cases.py -v -s
 
 # Check service health
 curl http://localhost:9001/health    # embed-server
-curl http://localhost:8080/metrics   # Cognevra
+curl http://localhost:8080/metrics   # Levara
 curl http://127.0.0.1:11434/api/tags # Ollama
 
-# Rebuild Cognevra after Go changes
+# Rebuild Levara after Go changes
 docker compose down && docker compose up -d --build
 
 # Regenerate OpenAPI spec after swaggo comment changes (T13)
@@ -104,47 +104,47 @@ curl -s localhost:8080/metrics | grep 'levara_http_requests_total\|levara_rate_l
 
 ## gRPC v1 + v2 (T10)
 
-Both services register on the same :50051 listener. `cognevra.v1.CognevraService`
-is the legacy surface; `cognevra.v2.CognevraServiceV2` adds a typed `ErrorDetail`
+Both services register on the same :50051 listener. `levara.v1.LevaraService`
+is the legacy surface; `levara.v2.LevaraServiceV2` adds a typed `ErrorDetail`
 and aliases `Add`/`Save`/`Create` for `Insert` during the 3-month deprecation window.
 
 ```bash
 # v1 (still default)
 grpcurl -H "authorization: Bearer $TOKEN" -plaintext \
   -d '{"collection":"c","id":"1","vector":[0.1,0.2]}' \
-  localhost:50051 cognevra.v1.CognevraService/Insert
+  localhost:50051 levara.v1.LevaraService/Insert
 
 # v2 (new)
 grpcurl -H "authorization: Bearer $TOKEN" -plaintext \
   -d '{"collection":"c","id":"1","vector":[0.1,0.2]}' \
-  localhost:50051 cognevra.v2.CognevraServiceV2/Insert
+  localhost:50051 levara.v2.LevaraServiceV2/Insert
 ```
 
 ## Key Benchmark Results
 
-| Metric | Cognevra | LanceDB | Winner |
+| Metric | Levara | LanceDB | Winner |
 |--------|----------|---------|--------|
-| Search latency (mean) | **2.6 ms** | 9.1 ms | Cognevra (3.5x) |
-| Concurrent QPS | **719** | 150 | Cognevra (4.8x) |
+| Search latency (mean) | **2.6 ms** | 9.1 ms | Levara (3.5x) |
+| Concurrent QPS | **719** | 150 | Levara (4.8x) |
 | Insert throughput | 741 dp/s | **5,067 dp/s** | LanceDB (6.8x) |
-| Scale 10K search | **2.6 ms** | 16.4 ms | Cognevra (6.3x) |
-| Crash recovery | **100%** | N/A | Cognevra |
+| Scale 10K search | **2.6 ms** | 16.4 ms | Levara (6.3x) |
+| Crash recovery | **100%** | N/A | Levara |
 
-**Cognevra**: best for read-heavy concurrent API workloads (read:write > 100:1).
+**Levara**: best for read-heavy concurrent API workloads (read:write > 100:1).
 **LanceDB**: best for batch ingestion, CRUD, simple deployments.
 
 ## Test Architecture
 
-Tests bypass Cognee pipeline and hit Cognevra HTTP API + LanceDB Python API directly with the same pre-computed embeddings from embed-server. This isolates vector DB performance from LLM/pipeline overhead.
+Tests bypass Cognee pipeline and hit Levara HTTP API + LanceDB Python API directly with the same pre-computed embeddings from embed-server. This isolates vector DB performance from LLM/pipeline overhead.
 
 Key shared components (duplicated across test files):
 - `load_and_chunk_book()` — paragraph-based chunking with chapter detection
 - `embed_texts()` — batch embedding via embed-server HTTP API
-- `cognevra_insert/search/delete()` — Cognevra HTTP helpers
+- `levara_insert/search/delete()` — Levara HTTP helpers
 - `LanceRecord/LancePayload` — LanceDB Pydantic schema (dim=1024)
 - `QUERIES[]` — 15 semantic queries with expected keywords
 
-## Cognevra Write Path
+## Levara Write Path
 
 Insert throughput with group-commit WAL (measured 2026-04-16):
 
@@ -167,14 +167,14 @@ Remaining write-path costs:
 ## Conventions
 
 - Tests use `pytest.mark.asyncio` + `aiohttp.ClientSession` for async HTTP
-- Cognevra record IDs use prefixes for test isolation: `book:`, `comp:`, `rag:`, `llm:`
+- Levara record IDs use prefixes for test isolation: `book:`, `comp:`, `rag:`, `llm:`
 - LanceDB uses temp directories (`tempfile.mkdtemp()`) per test to avoid state leakage
 - conftest.py stubs all Cognee dependencies via `sys.modules` injection
 - Qwen 3.5 via Ollama needs `/no_think` prefix + `num_predict: 3000-5000`
 
 ## Important Notes
 
-- Cognevra supports native collections via `CollectionManager` — each collection is an independent HNSW+Arena+WAL stack. No prefix hacks needed.
+- Levara supports native collections via `CollectionManager` — each collection is an independent HNSW+Arena+WAL stack. No prefix hacks needed.
 - NDCG/Recall metrics can be misleadingly low when multiple tests insert data with different prefixes — run in clean state (`docker compose down -v`) for accurate quality metrics.
 - Remote llama.cpp at `10.23.0.64:9004` is not always reachable. Use local Ollama at `127.0.0.1:11434`.
 

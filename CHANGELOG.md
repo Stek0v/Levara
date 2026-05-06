@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### 2026-05-06
+- chore: rebrand Cognevra → Levara across visitor-facing files (compose, README, ARCHITECTURE, CLAUDE.md, CONTEXT.md, BENCHMARK_RESULTS.md, TRANSFER.md, pre_release.md, prometheus.yml, .env.template, Makefile)
+
 ### 2026-03-19
 - docs: rebrand all documentation (VectraDB → Cognevra)
 - docs: add "What is Cognevra" sections explaining product identity

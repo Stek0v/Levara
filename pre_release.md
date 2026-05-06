@@ -1,4 +1,4 @@
-# Cognevra — Pre-Release Overview
+# Levara — Pre-Release Overview
 
 > Go-based acceleration layer для Cognee AI Memory Platform.
 > Заменяет Python backend на 85% — core pipeline (ingest → cognify → search) полностью на Go.
@@ -6,11 +6,11 @@
 
 ---
 
-## 1. Что такое Cognevra
+## 1. Что такое Levara
 
-Cognevra — полная реализация бэкенда Cognee на Go. Вместо Python (Django/FastAPI + SQLAlchemy + asyncio) используется Go (Fiber + pgx + goroutines). Frontend Cognee (Next.js) работает без изменений — API полностью совместимо.
+Levara — полная реализация бэкенда Cognee на Go. Вместо Python (Django/FastAPI + SQLAlchemy + asyncio) используется Go (Fiber + pgx + goroutines). Frontend Cognee (Next.js) работает без изменений — API полностью совместимо.
 
-**Зачем:** Cognee Python тратит 164-1295ms на ingestion одного файла, 9.1ms на search. Cognevra: 5-20ms ingestion, 2.6ms search. При 100+ concurrent users разница критична.
+**Зачем:** Cognee Python тратит 164-1295ms на ingestion одного файла, 9.1ms на search. Levara: 5-20ms ingestion, 2.6ms search. При 100+ concurrent users разница критична.
 
 ---
 
@@ -18,7 +18,7 @@ Cognevra — полная реализация бэкенда Cognee на Go. В
 
 ```
 ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
-│  Next.js UI  │────▶│  Cognevra Go │────▶│  PostgreSQL   │
+│  Next.js UI  │────▶│  Levara Go │────▶│  PostgreSQL   │
 │  :3000       │     │  :8080 HTTP  │     │  :5432        │
 └──────────────┘     │  :50051 gRPC │     └──────────────┘
                      │  /mcp JSON-RPC│
@@ -34,9 +34,9 @@ Cognevra — полная реализация бэкенда Cognee на Go. В
 
 | Сервис | Порт | Назначение |
 |--------|------|------------|
-| Cognevra HTTP | 8080 | REST API (98 endpoints) |
-| Cognevra gRPC | 50051 | Межсервисный протокол (61 method) |
-| Cognevra MCP | 8080/mcp | Claude Desktop / Cursor / Cline |
+| Levara HTTP | 8080 | REST API (98 endpoints) |
+| Levara gRPC | 50051 | Межсервисный протокол (61 method) |
+| Levara MCP | 8080/mcp | Claude Desktop / Cursor / Cline |
 | Next.js Frontend | 3000 | UI (proxy → :8080) |
 | PostgreSQL | 5432 | Пользователи, datasets, metadata (18 таблиц) |
 | Neo4j | 7687 | Knowledge graph |
@@ -156,7 +156,7 @@ Cognevra — полная реализация бэкенда Cognee на Go. В
 
 ### Feature Parity
 
-| Фича | Cognee Python | Cognevra Go | Примечание |
+| Фича | Cognee Python | Levara Go | Примечание |
 |------|--------------|-------------|------------|
 | **HTTP API** | FastAPI, ~30 endpoints | Fiber, 98 endpoints | Go: больше endpoints |
 | **gRPC** | ❌ | ✅ 61 method | Только в Go |
@@ -180,7 +180,7 @@ Cognevra — полная реализация бэкенда Cognee на Go. В
 
 ### Search Types
 
-| Тип | Cognee | Cognevra |
+| Тип | Cognee | Levara |
 |-----|--------|----------|
 | CHUNKS (vector) | ✅ | ✅ |
 | CHUNKS_LEXICAL (BM25) | ✅ | ✅ |
@@ -202,7 +202,7 @@ Cognevra — полная реализация бэкенда Cognee на Go. В
 
 ### Data Loaders
 
-| Формат | Cognee | Cognevra |
+| Формат | Cognee | Levara |
 |--------|--------|----------|
 | PDF | ✅ (PyPDF) | ✅ (tabula) |
 | DOCX | ✅ (unstructured) | ✅ (tabula) |
@@ -223,7 +223,7 @@ Cognevra — полная реализация бэкенда Cognee на Go. В
 
 ### Database Backends
 
-| Backend | Cognee | Cognevra |
+| Backend | Cognee | Levara |
 |---------|--------|----------|
 | Vector: HNSW (native) | ❌ | ✅ |
 | Vector: LanceDB | ✅ | ❌ |
@@ -242,7 +242,7 @@ Cognevra — полная реализация бэкенда Cognee на Go. В
 
 ### Search Performance (1.4K vectors, dim=1024)
 
-| Метрика | Cognevra | Cognee (LanceDB) | Разница |
+| Метрика | Levara | Cognee (LanceDB) | Разница |
 |---------|----------|-------------------|---------|
 | Latency p50 | **2.6 ms** | 9.1 ms | 3.5x |
 | Latency p99 | **5.1 ms** | 18.3 ms | 3.6x |
@@ -250,7 +250,7 @@ Cognevra — полная реализация бэкенда Cognee на Go. В
 
 ### Ingestion
 
-| Метрика | Cognevra | Cognee Python | Разница |
+| Метрика | Levara | Cognee Python | Разница |
 |---------|----------|---------------|---------|
 | Per-item | **5-20 ms** | 164-1,295 ms | 10-65x |
 | SHA256 passes | 1 | 3 (MD5) | 3x |
@@ -258,14 +258,14 @@ Cognevra — полная реализация бэкенда Cognee на Go. В
 
 ### Scale (100K vectors)
 
-| Метрика | Cognevra | LanceDB | Разница |
+| Метрика | Levara | LanceDB | Разница |
 |---------|----------|---------|---------|
 | Search latency | **23.7 ms** | 203.7 ms | 8.6x |
 | QPS | **143** | 5 | 28.6x |
 
 ### Crash Recovery
 
-| Метрика | Cognevra | LanceDB |
+| Метрика | Levara | LanceDB |
 |---------|----------|---------|
 | Recovery rate | **100%** | N/A |
 | WAL durability | ✅ | ❌ |
@@ -324,7 +324,7 @@ Cognevra — полная реализация бэкенда Cognee на Go. В
 | **DELETE /collections** | Route не зарегистрирован | LOW |
 | **DELETE /ontologies** | Route не зарегистрирован | LOW |
 
-### Что есть в Cognee Python, но НЕТ в Cognevra
+### Что есть в Cognee Python, но НЕТ в Levara
 
 | Фича | Сложность | Приоритет |
 |------|-----------|-----------|
@@ -366,7 +366,7 @@ pytest tests/test_new_ui_features.py -v -s
 
 ```
 new_db/
-├── Cognevra/                    # Go backend (~20K LOC)
+├── Levara/                    # Go backend (~20K LOC)
 │   ├── cmd/server/main.go       # Entry point
 │   ├── internal/
 │   │   ├── store/               # HNSW + WAL + Arena + Collections
