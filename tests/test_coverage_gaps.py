@@ -196,7 +196,7 @@ async def test_upload_csv_file():
     """Upload CSV file.
     Docs: https://docs.cognee.ai/core-concepts/main-operations/add
     """
-    csv_content = b"name,type,description\nCognevra,database,Vector DB\nNeo4j,database,Graph DB\nPostgreSQL,database,Relational DB"
+    csv_content = b"name,type,description\nLevara,database,Vector DB\nNeo4j,database,Graph DB\nPostgreSQL,database,Relational DB"
     async with aiohttp.ClientSession() as s:
         h, _ = await _auth(s)
         form = aiohttp.FormData()
@@ -209,7 +209,7 @@ async def test_upload_json_file():
     """Upload JSON file.
     Docs: https://docs.cognee.ai/core-concepts/main-operations/add
     """
-    json_content = b'[{"entity": "Cognevra", "type": "database"}, {"entity": "HNSW", "type": "algorithm"}]'
+    json_content = b'[{"entity": "Levara", "type": "database"}, {"entity": "HNSW", "type": "algorithm"}]'
     async with aiohttp.ClientSession() as s:
         h, _ = await _auth(s)
         form = aiohttp.FormData()
@@ -442,12 +442,12 @@ async def test_cognify_custom_prompt():
 
 # ═══════════════════════════════════════════════════════════
 # LOW PRIORITY: Multi-dataset search (/search/dual)
-# Cognevra extension — not in Cognee docs
+# Levara extension — not in Cognee docs
 # ═══════════════════════════════════════════════════════════
 
 async def test_dual_search():
     """Dual search across multiple collections with different dims.
-    Cognevra extension: POST /search/dual
+    Levara extension: POST /search/dual
     """
     async with aiohttp.ClientSession() as s:
         h, _ = await _auth(s)
@@ -463,12 +463,12 @@ async def test_dual_search():
 
 # ═══════════════════════════════════════════════════════════
 # LOW PRIORITY: Collections CRUD with metadata
-# Cognevra extension
+# Levara extension
 # ═══════════════════════════════════════════════════════════
 
 async def test_collection_create_with_dim():
     """Create collection with specific dim and model.
-    Cognevra extension: POST /collections
+    Levara extension: POST /collections
     """
     async with aiohttp.ClientSession() as s:
         h, _ = await _auth(s)
@@ -488,7 +488,7 @@ async def test_collection_create_with_dim():
 
 async def test_collection_meta_update():
     """Update collection metadata (model, version).
-    Cognevra extension: PUT /collections/:name/meta
+    Levara extension: PUT /collections/:name/meta
     """
     async with aiohttp.ClientSession() as s:
         h, _ = await _auth(s)
@@ -506,7 +506,7 @@ async def test_collection_meta_update():
 
 async def test_collection_list_with_metadata():
     """List collections returns metadata (dim, model, count).
-    Cognevra extension: GET /collections
+    Levara extension: GET /collections
     """
     async with aiohttp.ClientSession() as s:
         h, _ = await _auth(s)
@@ -522,12 +522,12 @@ async def test_collection_list_with_metadata():
 
 # ═══════════════════════════════════════════════════════════
 # LOW PRIORITY: Re-embed endpoint
-# Cognevra extension
+# Levara extension
 # ═══════════════════════════════════════════════════════════
 
 async def test_reembed_empty_source():
     """Re-embed from empty source → completes with 0 records.
-    Cognevra extension: POST /reembed
+    Levara extension: POST /reembed
     """
     async with aiohttp.ClientSession() as s:
         h, _ = await _auth(s)
@@ -705,7 +705,7 @@ async def test_memify_node_type_filter():
 
 async def test_health_details_all_services():
     """Health details shows all 7 services.
-    Cognevra extension: GET /health/details
+    Levara extension: GET /health/details
     """
     async with aiohttp.ClientSession() as s:
         async with s.get(f"{MCP_URL}/health/details") as r:
@@ -725,7 +725,7 @@ async def test_metrics_endpoint():
         async with s.get(f"{MCP_URL}/metrics") as r:
             assert r.status == 200
             text = await r.text()
-            assert "cognevra" in text.lower() or "go_" in text or "process_" in text
+            assert "levara" in text.lower() or "go_" in text or "process_" in text
 
 
 # ═══════════════════════════════════════════════════════════

@@ -1,5 +1,5 @@
 """
-Comprehensive Cognevra vs LanceDB comparison: 10-step benchmark.
+Comprehensive Levara vs LanceDB comparison: 10-step benchmark.
 
 Same book «Ураган», same embed-server, same queries.
 Covers: throughput, latency, quality (NDCG/MRR), concurrency,
@@ -7,7 +7,7 @@ Covers: throughput, latency, quality (NDCG/MRR), concurrency,
 
 Requires:
   - embed-server on :9001 (pplx-embed-context-v1-0.6b, dim=1024)
-  - Cognevra on :8080 (dim=1024, 3 shards)
+  - Levara on :8080 (dim=1024, 3 shards)
 
 Run:
     pytest tests/test_comprehensive_comparison.py -v -s
@@ -38,7 +38,7 @@ import pytest
 
 BOOK_PATH = Path(__file__).parent.parent / "Edvards_Dzanet_Uragan_r4_P61XH.txt"
 EMBED_URL = "http://localhost:9001/v1/embeddings"
-COGNEVRA_URL = "http://localhost:8080"
+LEVARA_URL = "http://localhost:8080"
 EMBED_MODEL = "pplx-embed-context-v1-0.6b"
 DIM = 1024
 MIN_CHUNK_CHARS = 80
@@ -134,7 +134,7 @@ def _check(url):
 
 pytestmark = pytest.mark.skipif(
     not (_check("http://localhost:9001/health") and _check("http://localhost:8080/metrics")),
-    reason="Need embed-server:9001 + Cognevra:8080",
+    reason="Need embed-server:9001 + Levara:8080",
 )
 
 
@@ -199,41 +199,41 @@ def percentile_stats(values: List[float]) -> Dict[str, float]:
     }
 
 
-# ── Cognevra helpers ──────────────────────────────────────────────────────────
+# ── Levara helpers ──────────────────────────────────────────────────────────
 
-async def cognevra_insert(session: aiohttp.ClientSession, records: List[Dict]) -> Dict:
-    async with session.post(f"{COGNEVRA_URL}/api/v1/batch_insert", json={"records": records}) as r:
+async def levara_insert(session: aiohttp.ClientSession, records: List[Dict]) -> Dict:
+    async with session.post(f"{LEVARA_URL}/api/v1/batch_insert", json={"records": records}) as r:
         r.raise_for_status()
         return await r.json()
 
 
-async def cognevra_search(session: aiohttp.ClientSession, vector: List[float],
+async def levara_search(session: aiohttp.ClientSession, vector: List[float],
                         k: int = K) -> List[Dict]:
-    async with session.post(f"{COGNEVRA_URL}/api/v1/search", json={"vector": vector, "k": k}) as r:
+    async with session.post(f"{LEVARA_URL}/api/v1/search", json={"vector": vector, "k": k}) as r:
         r.raise_for_status()
         data = await r.json()
     return data.get("results", [])
 
 
-async def cognevra_delete(session: aiohttp.ClientSession, ids: List[str]) -> Dict:
-    async with session.post(f"{COGNEVRA_URL}/api/v1/delete", json={"ids": ids}) as r:
+async def levara_delete(session: aiohttp.ClientSession, ids: List[str]) -> Dict:
+    async with session.post(f"{LEVARA_URL}/api/v1/delete", json={"ids": ids}) as r:
         r.raise_for_status()
         return await r.json()
 
 
-async def cognevra_info(session: aiohttp.ClientSession) -> Dict:
-    async with session.get(f"{COGNEVRA_URL}/api/v1/info") as r:
+async def levara_info(session: aiohttp.ClientSession) -> Dict:
+    async with session.get(f"{LEVARA_URL}/api/v1/info") as r:
         r.raise_for_status()
         return await r.json()
 
 
-async def ensure_cognevra_healthy(max_wait: int = 30) -> bool:
-    """Check Cognevra health, restart if needed. Returns True if healthy."""
+async def ensure_levara_healthy(max_wait: int = 30) -> bool:
+    """Check Levara health, restart if needed. Returns True if healthy."""
     # First check if already healthy
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(
-                f"{COGNEVRA_URL}/api/v1/info",
+                f"{LEVARA_URL}/api/v1/info",
                 timeout=aiohttp.ClientTimeout(total=2),
             ) as r:
                 if r.status == 200:
@@ -244,7 +244,7 @@ async def ensure_cognevra_healthy(max_wait: int = 30) -> bool:
     # Try to restart via docker compose
     cwd = str(Path(__file__).parent.parent)
     subprocess.run(
-        ["docker", "compose", "up", "-d", "cognevra"],
+        ["docker", "compose", "up", "-d", "levara"],
         capture_output=True, text=True, timeout=60,
         cwd=cwd,
     )
@@ -254,7 +254,7 @@ async def ensure_cognevra_healthy(max_wait: int = 30) -> bool:
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(
-                    f"{COGNEVRA_URL}/api/v1/info",
+                    f"{LEVARA_URL}/api/v1/info",
                     timeout=aiohttp.ClientTimeout(total=2),
                 ) as r:
                     if r.status == 200:
@@ -265,17 +265,17 @@ async def ensure_cognevra_healthy(max_wait: int = 30) -> bool:
     return False
 
 
-async def cognevra_search_safe(session: aiohttp.ClientSession, vector: List[float],
+async def levara_search_safe(session: aiohttp.ClientSession, vector: List[float],
                               k: int = K) -> List[Dict]:
     """Search with error handling — returns empty list on connection error."""
     try:
-        return await cognevra_search(session, vector, k)
+        return await levara_search(session, vector, k)
     except (aiohttp.ClientError, ConnectionError):
         return []
 
 
 def _extract_text(result: Dict) -> str:
-    """Extract text from Cognevra or LanceDB result metadata/payload."""
+    """Extract text from Levara or LanceDB result metadata/payload."""
     meta = result.get("metadata", result.get("payload", {}))
     if isinstance(meta, str):
         try:
@@ -321,7 +321,7 @@ def book_data():
 
 
 class TestComprehensiveComparison:
-    """10-step comprehensive benchmark: Cognevra vs LanceDB."""
+    """10-step comprehensive benchmark: Levara vs LanceDB."""
 
     # Class-level storage for cross-test state
     _lance_tmpdir: str = None
@@ -340,7 +340,7 @@ class TestComprehensiveComparison:
 
     @pytest.mark.asyncio
     async def test_02_insert_throughput(self, book_data):
-        """Step 2: Insert throughput — Cognevra (HTTP) vs LanceDB (in-process)."""
+        """Step 2: Insert throughput — Levara (HTTP) vs LanceDB (in-process)."""
         chunks, vecs, _ = book_data
         N = len(chunks)
         BATCH = 50
@@ -349,7 +349,7 @@ class TestComprehensiveComparison:
         print(f"  STEP 2: INSERT THROUGHPUT  ({N} chunks, dim={DIM}, batch={BATCH})")
         print("=" * 72)
 
-        # ── Cognevra ──
+        # ── Levara ──
         batch_latencies_v = []
         async with aiohttp.ClientSession() as session:
             t0_total = time.perf_counter()
@@ -361,7 +361,7 @@ class TestComprehensiveComparison:
                                  "chapter": chunks[i]["chapter"]},
                 } for i in range(start, min(start + BATCH, N))]
                 t0 = time.perf_counter()
-                await cognevra_insert(session, batch)
+                await levara_insert(session, batch)
                 batch_latencies_v.append((time.perf_counter() - t0) * 1000)
             t_v = time.perf_counter() - t0_total
 
@@ -394,16 +394,16 @@ class TestComprehensiveComparison:
         l_stats = percentile_stats(batch_latencies_l)
 
         self.__class__._insert_results = {
-            "cognevra_dps": v_dps, "lance_dps": l_dps,
-            "cognevra_ms": t_v * 1000, "lance_ms": t_l * 1000,
+            "levara_dps": v_dps, "lance_dps": l_dps,
+            "levara_ms": t_v * 1000, "lance_ms": t_l * 1000,
         }
 
         print(f"\n  {'Provider':<30} {'dp/s':>8} {'total ms':>10} {'p50 ms':>8} {'p95 ms':>8} {'p99 ms':>8}")
         print(f"  {'-'*75}")
-        print(f"  {'Cognevra':<30} {v_dps:>8,.0f} {t_v*1000:>10.1f} {v_stats['p50']:>8.1f} {v_stats['p95']:>8.1f} {v_stats['p99']:>8.1f}")
+        print(f"  {'Levara':<30} {v_dps:>8,.0f} {t_v*1000:>10.1f} {v_stats['p50']:>8.1f} {v_stats['p95']:>8.1f} {v_stats['p99']:>8.1f}")
         print(f"  {'LanceDB':<30} {l_dps:>8,.0f} {t_l*1000:>10.1f} {l_stats['p50']:>8.1f} {l_stats['p95']:>8.1f} {l_stats['p99']:>8.1f}")
         ratio = max(v_dps, l_dps) / max(min(v_dps, l_dps), 1)
-        winner = "Cognevra" if v_dps > l_dps else "LanceDB"
+        winner = "Levara" if v_dps > l_dps else "LanceDB"
         print(f"\n  Winner: {winner} ({ratio:.1f}x)")
 
     # ── Step 3: Search Latency (single-threaded) ──────────────────────────
@@ -421,13 +421,13 @@ class TestComprehensiveComparison:
         # Let async HNSW indexer finish
         await asyncio.sleep(3)
 
-        # ── Cognevra ──
+        # ── Levara ──
         v_lats = []
         async with aiohttp.ClientSession() as session:
             for _ in range(PASSES):
                 for qv in q_vecs:
                     t0 = time.perf_counter()
-                    await cognevra_search(session, qv, k=K)
+                    await levara_search(session, qv, k=K)
                     v_lats.append((time.perf_counter() - t0) * 1000)
 
         # ── LanceDB ──
@@ -446,10 +446,10 @@ class TestComprehensiveComparison:
 
         print(f"\n  {'Provider':<30} {'p50':>7} {'p95':>7} {'p99':>7} {'mean':>7} {'max':>7}  (ms)")
         print(f"  {'-'*75}")
-        print(f"  {'Cognevra':<30} {v_stats['p50']:>7.1f} {v_stats['p95']:>7.1f} {v_stats['p99']:>7.1f} {v_stats['mean']:>7.1f} {v_stats['max']:>7.1f}")
+        print(f"  {'Levara':<30} {v_stats['p50']:>7.1f} {v_stats['p95']:>7.1f} {v_stats['p99']:>7.1f} {v_stats['mean']:>7.1f} {v_stats['max']:>7.1f}")
         print(f"  {'LanceDB':<30} {l_stats['p50']:>7.1f} {l_stats['p95']:>7.1f} {l_stats['p99']:>7.1f} {l_stats['mean']:>7.1f} {l_stats['max']:>7.1f}")
         ratio = max(v_stats['mean'], l_stats['mean']) / max(min(v_stats['mean'], l_stats['mean']), 0.001)
-        winner = "Cognevra" if v_stats['mean'] < l_stats['mean'] else "LanceDB"
+        winner = "Levara" if v_stats['mean'] < l_stats['mean'] else "LanceDB"
         print(f"\n  Winner: {winner} ({ratio:.1f}x faster)")
 
     # ── Step 4: Concurrent QPS ────────────────────────────────────────────
@@ -464,12 +464,12 @@ class TestComprehensiveComparison:
         print(f"  STEP 4: CONCURRENT QPS  ({len(QUERIES)} queries × {ROUNDS} rounds)")
         print("=" * 72)
 
-        # ── Cognevra ──
+        # ── Levara ──
         v_times = []
         async with aiohttp.ClientSession() as session:
             for _ in range(ROUNDS):
                 t0 = time.perf_counter()
-                await asyncio.gather(*[cognevra_search(session, qv, k=K) for qv in q_vecs])
+                await asyncio.gather(*[levara_search(session, qv, k=K) for qv in q_vecs])
                 v_times.append(time.perf_counter() - t0)
 
         # ── LanceDB ──
@@ -489,16 +489,16 @@ class TestComprehensiveComparison:
         l_mean_ms = statistics.mean(l_times) * 1000
 
         self.__class__._qps_results = {
-            "cognevra_qps": v_mean_qps, "lance_qps": l_mean_qps,
-            "cognevra_ms": v_mean_ms, "lance_ms": l_mean_ms,
+            "levara_qps": v_mean_qps, "lance_qps": l_mean_qps,
+            "levara_ms": v_mean_ms, "lance_ms": l_mean_ms,
         }
 
         print(f"\n  {'Provider':<30} {'avg QPS':>10} {'avg round ms':>14} {'best QPS':>10}")
         print(f"  {'-'*68}")
-        print(f"  {'Cognevra':<30} {v_mean_qps:>10,.0f} {v_mean_ms:>14.1f} {max(v_qps):>10,.0f}")
+        print(f"  {'Levara':<30} {v_mean_qps:>10,.0f} {v_mean_ms:>14.1f} {max(v_qps):>10,.0f}")
         print(f"  {'LanceDB':<30} {l_mean_qps:>10,.0f} {l_mean_ms:>14.1f} {max(l_qps):>10,.0f}")
         ratio = max(v_mean_qps, l_mean_qps) / max(min(v_mean_qps, l_mean_qps), 1)
-        winner = "Cognevra" if v_mean_qps > l_mean_qps else "LanceDB"
+        winner = "Levara" if v_mean_qps > l_mean_qps else "LanceDB"
         print(f"\n  Winner: {winner} ({ratio:.1f}x)")
 
     # ── Step 5: Keyword Hit Rate ──────────────────────────────────────────
@@ -512,12 +512,12 @@ class TestComprehensiveComparison:
         print(f"  STEP 5: KEYWORD HIT RATE  ({len(QUERIES)} queries, k={K})")
         print("=" * 72)
 
-        # ── Cognevra ──
+        # ── Levara ──
         v_hits = 0
         v_detail = []
         async with aiohttp.ClientSession() as session:
             for cq, qv in zip(QUERIES, q_vecs):
-                results = await cognevra_search(session, qv, k=K)
+                results = await levara_search(session, qv, k=K)
                 combined = " ".join(_extract_text(r) for r in results).lower()
                 hit = any(kw.lower() in combined for kw in cq["keywords"])
                 if hit:
@@ -540,11 +540,11 @@ class TestComprehensiveComparison:
         l_rate = l_hits / len(QUERIES)
 
         self.__class__._hit_rate_results = {
-            "cognevra_rate": v_rate, "lance_rate": l_rate,
-            "cognevra_hits": v_hits, "lance_hits": l_hits,
+            "levara_rate": v_rate, "lance_rate": l_rate,
+            "levara_hits": v_hits, "lance_hits": l_hits,
         }
 
-        print(f"\n  {'Query':<30} {'Cognevra':>10} {'LanceDB':>10}")
+        print(f"\n  {'Query':<30} {'Levara':>10} {'LanceDB':>10}")
         print(f"  {'-'*52}")
         for i, cq in enumerate(QUERIES):
             v_ok = "HIT" if v_detail[i][2] else "MISS"
@@ -582,8 +582,8 @@ class TestComprehensiveComparison:
                 sim_map = {idx: sim for idx, sim in bf_topk}
                 relevant_set = set(ideal_indices[:K])
 
-                # ── Cognevra results ──
-                v_results = await cognevra_search(session, qv, k=K)
+                # ── Levara results ──
+                v_results = await levara_search(session, qv, k=K)
                 v_indices = []
                 for r in v_results:
                     rid = r.get("id", "")
@@ -620,30 +620,30 @@ class TestComprehensiveComparison:
                 l_recall10.append(len(l_set & set(ideal_indices[:K])) / K)
 
         results = {
-            "cognevra_ndcg": statistics.mean(v_ndcgs),
+            "levara_ndcg": statistics.mean(v_ndcgs),
             "lance_ndcg": statistics.mean(l_ndcgs),
-            "cognevra_mrr": statistics.mean(v_mrrs),
+            "levara_mrr": statistics.mean(v_mrrs),
             "lance_mrr": statistics.mean(l_mrrs),
-            "cognevra_recall1": statistics.mean(v_recall1),
-            "cognevra_recall5": statistics.mean(v_recall5),
-            "cognevra_recall10": statistics.mean(v_recall10),
+            "levara_recall1": statistics.mean(v_recall1),
+            "levara_recall5": statistics.mean(v_recall5),
+            "levara_recall10": statistics.mean(v_recall10),
             "lance_recall1": statistics.mean(l_recall1),
             "lance_recall5": statistics.mean(l_recall5),
             "lance_recall10": statistics.mean(l_recall10),
         }
         self.__class__._ranking_results = results
 
-        print(f"\n  {'Metric':<30} {'Cognevra':>10} {'LanceDB':>10}")
+        print(f"\n  {'Metric':<30} {'Levara':>10} {'LanceDB':>10}")
         print(f"  {'-'*52}")
-        print(f"  {'NDCG@10':<30} {results['cognevra_ndcg']:>10.4f} {results['lance_ndcg']:>10.4f}")
-        print(f"  {'MRR':<30} {results['cognevra_mrr']:>10.4f} {results['lance_mrr']:>10.4f}")
-        print(f"  {'Recall@1':<30} {results['cognevra_recall1']:>10.4f} {results['lance_recall1']:>10.4f}")
-        print(f"  {'Recall@5':<30} {results['cognevra_recall5']:>10.4f} {results['lance_recall5']:>10.4f}")
-        print(f"  {'Recall@10':<30} {results['cognevra_recall10']:>10.4f} {results['lance_recall10']:>10.4f}")
+        print(f"  {'NDCG@10':<30} {results['levara_ndcg']:>10.4f} {results['lance_ndcg']:>10.4f}")
+        print(f"  {'MRR':<30} {results['levara_mrr']:>10.4f} {results['lance_mrr']:>10.4f}")
+        print(f"  {'Recall@1':<30} {results['levara_recall1']:>10.4f} {results['lance_recall1']:>10.4f}")
+        print(f"  {'Recall@5':<30} {results['levara_recall5']:>10.4f} {results['lance_recall5']:>10.4f}")
+        print(f"  {'Recall@10':<30} {results['levara_recall10']:>10.4f} {results['lance_recall10']:>10.4f}")
 
         # Per-query breakdown
         print(f"\n  Per-query NDCG@10:")
-        print(f"  {'Query':<30} {'Cognevra':>10} {'LanceDB':>10}")
+        print(f"  {'Query':<30} {'Levara':>10} {'LanceDB':>10}")
         print(f"  {'-'*52}")
         for i, cq in enumerate(QUERIES):
             print(f"  {cq['desc']:<30} {v_ndcgs[i]:>10.4f} {l_ndcgs[i]:>10.4f}")
@@ -676,16 +676,16 @@ class TestComprehensiveComparison:
         # affect timing, so just reuse)
         extra_vecs = [vecs[i % len(vecs)] for i in range(200)]
 
-        # ── Cognevra: search-only baseline ──
+        # ── Levara: search-only baseline ──
         baseline_lats = []
         async with aiohttp.ClientSession() as session:
             for i in range(N_SEARCH):
                 qv = q_vecs[i % len(q_vecs)]
                 t0 = time.perf_counter()
-                await cognevra_search(session, qv, k=K)
+                await levara_search(session, qv, k=K)
                 baseline_lats.append((time.perf_counter() - t0) * 1000)
 
-        # ── Cognevra: search with concurrent writes ──
+        # ── Levara: search with concurrent writes ──
         write_done = asyncio.Event()
         loaded_lats = []
 
@@ -698,7 +698,7 @@ class TestComprehensiveComparison:
                         "metadata": {"text": extra_chunks[j]["text"][:300],
                                      "chapter": extra_chunks[j]["chapter"]},
                     } for j in range(i, min(i + 10, 200))]
-                    await cognevra_insert(ws, batch)
+                    await levara_insert(ws, batch)
                     await asyncio.sleep(0.05)
             write_done.set()
 
@@ -707,7 +707,7 @@ class TestComprehensiveComparison:
                 for i in range(N_SEARCH):
                     qv = q_vecs[i % len(q_vecs)]
                     t0 = time.perf_counter()
-                    await cognevra_search(ss, qv, k=K)
+                    await levara_search(ss, qv, k=K)
                     loaded_lats.append((time.perf_counter() - t0) * 1000)
 
         await asyncio.gather(background_writer(), foreground_searcher())
@@ -751,7 +751,7 @@ class TestComprehensiveComparison:
             else:
                 collections["chapter_3"].append((i, c))
 
-        # ── Cognevra: insert with collection prefixes ──
+        # ── Levara: insert with collection prefixes ──
         async with aiohttp.ClientSession() as session:
             for col_name, col_chunks in collections.items():
                 if not col_chunks:
@@ -764,11 +764,11 @@ class TestComprehensiveComparison:
                                      "chapter": col_chunks[j][1]["chapter"],
                                      "collection": col_name},
                     } for j in range(start, min(start + 50, len(col_chunks)))]
-                    await cognevra_insert(session, batch)
+                    await levara_insert(session, batch)
 
         await asyncio.sleep(2)  # Let HNSW index
 
-        # ── Cognevra: search and check isolation ──
+        # ── Levara: search and check isolation ──
         leakage_count = 0
         total_checks = 0
 
@@ -779,7 +779,7 @@ class TestComprehensiveComparison:
 
                 # Use first chunk's vector as query
                 query_idx = col_chunks[0][0]
-                results = await cognevra_search(session, vecs[query_idx], k=20)
+                results = await levara_search(session, vecs[query_idx], k=20)
 
                 # Filter results by collection prefix
                 for r in results:
@@ -834,8 +834,8 @@ class TestComprehensiveComparison:
                     lance_leakage += 1
 
         self.__class__._isolation_results = {
-            "cognevra_leakage": leakage_count,
-            "cognevra_total": total_checks,
+            "levara_leakage": leakage_count,
+            "levara_total": total_checks,
             "lance_leakage": lance_leakage,
             "lance_total": lance_total,
         }
@@ -846,12 +846,12 @@ class TestComprehensiveComparison:
         print(f"\n  Collections: {', '.join(f'{k}({len(v)} chunks)' for k, v in collections.items())}")
         print(f"\n  {'Provider':<30} {'Leakage':>10} {'Total checks':>14} {'Rate':>8}")
         print(f"  {'-'*65}")
-        print(f"  {'Cognevra (prefix-based)':<30} {leakage_count:>10} {total_checks:>14} {leak_rate_v:>7.1f}%")
+        print(f"  {'Levara (prefix-based)':<30} {leakage_count:>10} {total_checks:>14} {leak_rate_v:>7.1f}%")
         print(f"  {'LanceDB (separate tables)':<30} {lance_leakage:>10} {lance_total:>14} {leak_rate_l:>7.1f}%")
 
         if leakage_count > 0:
-            print(f"\n  WARNING: Cognevra cross-collection leakage detected!")
-            print(f"  Cognevra uses prefix-based filtering, not physical isolation.")
+            print(f"\n  WARNING: Levara cross-collection leakage detected!")
+            print(f"  Levara uses prefix-based filtering, not physical isolation.")
             print(f"  For queries returning global IDs (comp:, bg:), this is expected.")
 
     # ── Step 9: Scale Test (5K-10K vectors) ──────────────────────────────
@@ -869,10 +869,10 @@ class TestComprehensiveComparison:
         print(f"  Base: {N_base} chunks × {MULTIPLIER} = ~{TARGET} vectors")
         print("=" * 72)
 
-        # Ensure Cognevra is healthy (may have crashed from accumulated data)
-        print(f"  Checking Cognevra health...")
-        if not await ensure_cognevra_healthy(max_wait=30):
-            pytest.skip("Cognevra not available for scale test")
+        # Ensure Levara is healthy (may have crashed from accumulated data)
+        print(f"  Checking Levara health...")
+        if not await ensure_levara_healthy(max_wait=30):
+            pytest.skip("Levara not available for scale test")
 
         # Generate scaled data (reuse vectors with unique IDs)
         scale_chunks = []
@@ -889,7 +889,7 @@ class TestComprehensiveComparison:
         N_scale = len(scale_chunks)
         BATCH = 100
 
-        # ── Cognevra: scale insert ──
+        # ── Levara: scale insert ──
         v_batch_lats = []
         async with aiohttp.ClientSession() as session:
             t0_total = time.perf_counter()
@@ -901,7 +901,7 @@ class TestComprehensiveComparison:
                                  "chapter": scale_chunks[i]["chapter"]},
                 } for i in range(start, min(start + BATCH, N_scale))]
                 t0 = time.perf_counter()
-                await cognevra_insert(session, batch)
+                await levara_insert(session, batch)
                 v_batch_lats.append((time.perf_counter() - t0) * 1000)
             t_v_insert = time.perf_counter() - t0_total
 
@@ -934,7 +934,7 @@ class TestComprehensiveComparison:
         print(f"\n  Insert throughput at scale ({N_scale} vectors):")
         print(f"  {'Provider':<30} {'dp/s':>10} {'total sec':>10}")
         print(f"  {'-'*52}")
-        print(f"  {'Cognevra':<30} {v_insert_dps:>10,.0f} {t_v_insert:>10.1f}")
+        print(f"  {'Levara':<30} {v_insert_dps:>10,.0f} {t_v_insert:>10.1f}")
         print(f"  {'LanceDB':<30} {l_insert_dps:>10,.0f} {t_l_insert:>10.1f}")
 
         # Wait for HNSW indexing
@@ -947,7 +947,7 @@ class TestComprehensiveComparison:
             for _ in range(PASSES):
                 for qv in q_vecs:
                     t0 = time.perf_counter()
-                    await cognevra_search(session, qv, k=K)
+                    await levara_search(session, qv, k=K)
                     v_lats.append((time.perf_counter() - t0) * 1000)
 
         l_lats = []
@@ -963,7 +963,7 @@ class TestComprehensiveComparison:
         print(f"\n  Search latency at scale ({N_scale} vectors):")
         print(f"  {'Provider':<30} {'p50':>7} {'p95':>7} {'p99':>7} {'mean':>7}  (ms)")
         print(f"  {'-'*65}")
-        print(f"  {'Cognevra':<30} {v_search_stats['p50']:>7.1f} {v_search_stats['p95']:>7.1f} {v_search_stats['p99']:>7.1f} {v_search_stats['mean']:>7.1f}")
+        print(f"  {'Levara':<30} {v_search_stats['p50']:>7.1f} {v_search_stats['p95']:>7.1f} {v_search_stats['p99']:>7.1f} {v_search_stats['mean']:>7.1f}")
         print(f"  {'LanceDB':<30} {l_search_stats['p50']:>7.1f} {l_search_stats['p95']:>7.1f} {l_search_stats['p99']:>7.1f} {l_search_stats['mean']:>7.1f}")
 
         # ── Recall at scale ──
@@ -977,7 +977,7 @@ class TestComprehensiveComparison:
                 bf_topk = brute_force_topk(qv, scale_vecs, k=K)
                 ideal_set = set(idx for idx, _ in bf_topk)
 
-                v_results = await cognevra_search(session, qv, k=K)
+                v_results = await levara_search(session, qv, k=K)
                 v_indices = set()
                 for r in v_results:
                     rid = r.get("id", "")
@@ -1000,7 +1000,7 @@ class TestComprehensiveComparison:
         print(f"\n  Recall@10 at scale (sampled {len(v_recall10_vals)} queries):")
         print(f"  {'Provider':<30} {'Recall@10':>10}")
         print(f"  {'-'*42}")
-        print(f"  {'Cognevra':<30} {v_recall_mean:>10.4f}")
+        print(f"  {'Levara':<30} {v_recall_mean:>10.4f}")
         print(f"  {'LanceDB':<30} {l_recall_mean:>10.4f}")
 
         # Compare with baseline
@@ -1009,25 +1009,25 @@ class TestComprehensiveComparison:
 
         self.__class__._scale_results = {
             "n_vectors": N_scale,
-            "cognevra_insert_dps": v_insert_dps,
+            "levara_insert_dps": v_insert_dps,
             "lance_insert_dps": l_insert_dps,
-            "cognevra_search_mean": v_search_stats["mean"],
+            "levara_search_mean": v_search_stats["mean"],
             "lance_search_mean": l_search_stats["mean"],
-            "cognevra_recall10": v_recall_mean,
+            "levara_recall10": v_recall_mean,
             "lance_recall10": l_recall_mean,
         }
 
         if baseline_latency and baseline_insert:
             v_lat_growth = ((v_search_stats["mean"] - baseline_latency.get("mean", 0))
                             / max(baseline_latency.get("mean", 1), 0.001)) * 100
-            v_tp_change = ((v_insert_dps - baseline_insert.get("cognevra_dps", 0))
-                           / max(baseline_insert.get("cognevra_dps", 1), 1)) * 100
+            v_tp_change = ((v_insert_dps - baseline_insert.get("levara_dps", 0))
+                           / max(baseline_insert.get("levara_dps", 1), 1)) * 100
 
             print(f"\n  Scale vs baseline ({N_base} → {N_scale} vectors, {MULTIPLIER}x):")
-            print(f"  Cognevra latency change: {v_lat_growth:+.1f}%")
-            print(f"  Cognevra throughput change: {v_tp_change:+.1f}%")
+            print(f"  Levara latency change: {v_lat_growth:+.1f}%")
+            print(f"  Levara throughput change: {v_tp_change:+.1f}%")
 
-    # ── Step 10: Crash Recovery (Cognevra only) ───────────────────────────
+    # ── Step 10: Crash Recovery (Levara only) ───────────────────────────
 
     @pytest.mark.asyncio
     async def test_10_crash_recovery(self, book_data):
@@ -1035,13 +1035,13 @@ class TestComprehensiveComparison:
         chunks, vecs, q_vecs = book_data
 
         print("\n" + "=" * 72)
-        print(f"  STEP 10: CRASH RECOVERY (Cognevra only)")
+        print(f"  STEP 10: CRASH RECOVERY (Levara only)")
         print("=" * 72)
 
-        # Ensure Cognevra is healthy first
-        if not await ensure_cognevra_healthy(max_wait=30):
-            self.__class__._crash_results = {"status": "SKIP", "reason": "Cognevra not available"}
-            pytest.skip("Cognevra not available for crash recovery test")
+        # Ensure Levara is healthy first
+        if not await ensure_levara_healthy(max_wait=30):
+            self.__class__._crash_results = {"status": "SKIP", "reason": "Levara not available"}
+            pytest.skip("Levara not available for crash recovery test")
 
         # Insert recovery test data
         RECOVERY_N = 500
@@ -1059,7 +1059,7 @@ class TestComprehensiveComparison:
                         "metadata": {"text": chunks[i]["text"][:300],
                                      "chapter": chunks[i]["chapter"]},
                     })
-                await cognevra_insert(session, batch)
+                await levara_insert(session, batch)
 
         inserted = len(recovery_ids)
         print(f"  Inserted {inserted} records with 'recovery:' prefix")
@@ -1069,22 +1069,22 @@ class TestComprehensiveComparison:
 
         # Verify pre-restart search works
         async with aiohttp.ClientSession() as session:
-            pre_results = await cognevra_search(session, vecs[0], k=50)
+            pre_results = await levara_search(session, vecs[0], k=50)
             pre_recovery = [r for r in pre_results if r.get("id", "").startswith("recovery:")]
             print(f"  Pre-restart: found {len(pre_recovery)} recovery records in top-50")
 
-        # Restart Cognevra container
-        print(f"  Restarting Cognevra container...")
+        # Restart Levara container
+        print(f"  Restarting Levara container...")
         cwd = str(Path(__file__).parent.parent)
         restart_ok = False
         try:
             result = subprocess.run(
-                ["docker", "compose", "restart", "cognevra"],
+                ["docker", "compose", "restart", "levara"],
                 capture_output=True, text=True, timeout=60,
                 cwd=cwd,
             )
             if result.returncode != 0:
-                for name in ["new_db-cognevra-1", "new-db-cognevra-1"]:
+                for name in ["new_db-levara-1", "new-db-levara-1"]:
                     result = subprocess.run(
                         ["docker", "restart", name],
                         capture_output=True, text=True, timeout=60,
@@ -1096,7 +1096,7 @@ class TestComprehensiveComparison:
             if not restart_ok:
                 print(f"  stderr: {result.stderr}")
                 result = subprocess.run(
-                    ["docker", "compose", "up", "-d", "cognevra"],
+                    ["docker", "compose", "up", "-d", "levara"],
                     capture_output=True, text=True, timeout=60,
                     cwd=cwd,
                 )
@@ -1107,21 +1107,21 @@ class TestComprehensiveComparison:
 
         if not restart_ok:
             self.__class__._crash_results = {"status": "SKIP", "reason": "container restart failed"}
-            pytest.skip("Could not restart Cognevra container")
+            pytest.skip("Could not restart Levara container")
 
-        # Wait for Cognevra to come back up (up to 60s)
-        print(f"  Waiting for Cognevra to recover...")
+        # Wait for Levara to come back up (up to 60s)
+        print(f"  Waiting for Levara to recover...")
         recovered = False
         for attempt in range(60):
             try:
                 async with aiohttp.ClientSession() as session:
                     async with session.get(
-                        f"{COGNEVRA_URL}/api/v1/info",
+                        f"{LEVARA_URL}/api/v1/info",
                         timeout=aiohttp.ClientTimeout(total=2),
                     ) as r:
                         if r.status == 200:
                             info = await r.json()
-                            print(f"  Cognevra back online (attempt {attempt + 1}): {info}")
+                            print(f"  Levara back online (attempt {attempt + 1}): {info}")
                             recovered = True
                             break
             except Exception:
@@ -1130,7 +1130,7 @@ class TestComprehensiveComparison:
 
         if not recovered:
             subprocess.run(
-                ["docker", "compose", "up", "-d", "cognevra"],
+                ["docker", "compose", "up", "-d", "levara"],
                 capture_output=True, text=True, timeout=60,
                 cwd=cwd,
             )
@@ -1138,7 +1138,7 @@ class TestComprehensiveComparison:
                 try:
                     async with aiohttp.ClientSession() as session:
                         async with session.get(
-                            f"{COGNEVRA_URL}/api/v1/info",
+                            f"{LEVARA_URL}/api/v1/info",
                             timeout=aiohttp.ClientTimeout(total=2),
                         ) as r:
                             if r.status == 200:
@@ -1149,8 +1149,8 @@ class TestComprehensiveComparison:
                 await asyncio.sleep(1)
 
         if not recovered:
-            self.__class__._crash_results = {"status": "FAIL", "reason": "Cognevra did not recover in 90s"}
-            pytest.fail("Cognevra did not come back online after restart")
+            self.__class__._crash_results = {"status": "FAIL", "reason": "Levara did not recover in 90s"}
+            pytest.fail("Levara did not come back online after restart")
 
         # Allow WAL recovery + HNSW rebuild
         await asyncio.sleep(8)
@@ -1160,9 +1160,9 @@ class TestComprehensiveComparison:
         crashed = False
         async with aiohttp.ClientSession() as session:
             for i in range(0, min(10, len(vecs))):
-                results = await cognevra_search_safe(session, vecs[i], k=50)
+                results = await levara_search_safe(session, vecs[i], k=50)
                 if not results and i == 0:
-                    print(f"  WARNING: Cognevra crashed during post-restart search!")
+                    print(f"  WARNING: Levara crashed during post-restart search!")
                     print(f"  This indicates a DiskStore.Read bug in WAL recovery.")
                     crashed = True
                     break
@@ -1178,7 +1178,7 @@ class TestComprehensiveComparison:
                 "sampled": 0,
                 "found": 0,
                 "recovery_rate": 0,
-                "note": "Cognevra panics on search after WAL recovery (DiskStore.Read makeslice)",
+                "note": "Levara panics on search after WAL recovery (DiskStore.Read makeslice)",
             }
             print(f"\n  {'Metric':<30} {'Value':>10}")
             print(f"  {'-'*42}")
@@ -1215,20 +1215,20 @@ class TestComprehensiveComparison:
 
         print("\n")
         print("=" * 80)
-        print("  COMPREHENSIVE COMPARISON: Cognevra vs LanceDB")
+        print("  COMPREHENSIVE COMPARISON: Levara vs LanceDB")
         print(f"  Book: «Ураган» (Джанет Эдвардс), {len(chunks)} base chunks, dim={DIM}")
         print(f"  Embeddings: pplx-embed-context-v1-0.6b (real)")
         print("=" * 80)
 
-        print(f"\n  {'#':<4} {'Test':<35} {'Cognevra':>12} {'LanceDB':>12} {'Winner':>10}")
+        print(f"\n  {'#':<4} {'Test':<35} {'Levara':>12} {'LanceDB':>12} {'Winner':>10}")
         print(f"  {'-'*75}")
 
         # Step 2: Insert
         ir = self.__class__._insert_results
         if ir:
-            c_val = f"{ir.get('cognevra_dps', 0):,.0f} dp/s"
+            c_val = f"{ir.get('levara_dps', 0):,.0f} dp/s"
             l_val = f"{ir.get('lance_dps', 0):,.0f} dp/s"
-            winner = "Cognevra" if ir.get('cognevra_dps', 0) > ir.get('lance_dps', 0) else "LanceDB"
+            winner = "Levara" if ir.get('levara_dps', 0) > ir.get('lance_dps', 0) else "LanceDB"
             print(f"  {'2':<4} {'Insert throughput':<35} {v_val:>12} {l_val:>12} {winner:>10}")
 
         # Step 3: Latency
@@ -1236,41 +1236,41 @@ class TestComprehensiveComparison:
         if lr:
             v_val = f"{lr.get('vectra', {}).get('mean', 0):.1f} ms"
             l_val = f"{lr.get('lance', {}).get('mean', 0):.1f} ms"
-            winner = "Cognevra" if lr.get('vectra', {}).get('mean', 999) < lr.get('lance', {}).get('mean', 999) else "LanceDB"
+            winner = "Levara" if lr.get('vectra', {}).get('mean', 999) < lr.get('lance', {}).get('mean', 999) else "LanceDB"
             print(f"  {'3':<4} {'Search latency (mean)':<35} {v_val:>12} {l_val:>12} {winner:>10}")
 
         # Step 4: QPS
         qr = self.__class__._qps_results
         if qr:
-            c_val = f"{qr.get('cognevra_qps', 0):,.0f} qps"
+            c_val = f"{qr.get('levara_qps', 0):,.0f} qps"
             l_val = f"{qr.get('lance_qps', 0):,.0f} qps"
-            winner = "Cognevra" if qr.get('cognevra_qps', 0) > qr.get('lance_qps', 0) else "LanceDB"
+            winner = "Levara" if qr.get('levara_qps', 0) > qr.get('lance_qps', 0) else "LanceDB"
             print(f"  {'4':<4} {'Concurrent QPS':<35} {v_val:>12} {l_val:>12} {winner:>10}")
 
         # Step 5: Hit rate
         hr = self.__class__._hit_rate_results
         if hr:
-            c_val = f"{hr.get('cognevra_rate', 0):.0%}"
+            c_val = f"{hr.get('levara_rate', 0):.0%}"
             l_val = f"{hr.get('lance_rate', 0):.0%}"
-            winner = "Cognevra" if hr.get('cognevra_rate', 0) >= hr.get('lance_rate', 0) else "LanceDB"
+            winner = "Levara" if hr.get('levara_rate', 0) >= hr.get('lance_rate', 0) else "LanceDB"
             print(f"  {'5':<4} {'Keyword hit rate':<35} {v_val:>12} {l_val:>12} {winner:>10}")
 
         # Step 6: Ranking
         rr = self.__class__._ranking_results
         if rr:
-            c_val = f"{rr.get('cognevra_ndcg', 0):.4f}"
+            c_val = f"{rr.get('levara_ndcg', 0):.4f}"
             l_val = f"{rr.get('lance_ndcg', 0):.4f}"
-            winner = "Cognevra" if rr.get('cognevra_ndcg', 0) >= rr.get('lance_ndcg', 0) else "LanceDB"
+            winner = "Levara" if rr.get('levara_ndcg', 0) >= rr.get('lance_ndcg', 0) else "LanceDB"
             print(f"  {'6':<4} {'NDCG@10':<35} {v_val:>12} {l_val:>12} {winner:>10}")
 
-            c_val = f"{rr.get('cognevra_mrr', 0):.4f}"
+            c_val = f"{rr.get('levara_mrr', 0):.4f}"
             l_val = f"{rr.get('lance_mrr', 0):.4f}"
-            winner = "Cognevra" if rr.get('cognevra_mrr', 0) >= rr.get('lance_mrr', 0) else "LanceDB"
+            winner = "Levara" if rr.get('levara_mrr', 0) >= rr.get('lance_mrr', 0) else "LanceDB"
             print(f"  {'6':<4} {'MRR':<35} {v_val:>12} {l_val:>12} {winner:>10}")
 
-            c_val = f"{rr.get('cognevra_recall10', 0):.4f}"
+            c_val = f"{rr.get('levara_recall10', 0):.4f}"
             l_val = f"{rr.get('lance_recall10', 0):.4f}"
-            winner = "Cognevra" if rr.get('cognevra_recall10', 0) >= rr.get('lance_recall10', 0) else "LanceDB"
+            winner = "Levara" if rr.get('levara_recall10', 0) >= rr.get('lance_recall10', 0) else "LanceDB"
             print(f"  {'6':<4} {'Recall@10':<35} {v_val:>12} {l_val:>12} {winner:>10}")
 
         # Step 7: Concurrent R+W
@@ -1287,7 +1287,7 @@ class TestComprehensiveComparison:
         # Step 8: Isolation
         iso = self.__class__._isolation_results
         if iso:
-            v_leak = iso.get("cognevra_leakage", 0)
+            v_leak = iso.get("levara_leakage", 0)
             l_leak = iso.get("lance_leakage", 0)
             print(f"  {'8':<4} {'Cross-collection leakage':<35} {v_leak:>12} {l_leak:>12} {'LanceDB' if v_leak > l_leak else 'Tie':>10}")
 
@@ -1295,9 +1295,9 @@ class TestComprehensiveComparison:
         sr = self.__class__._scale_results
         if sr:
             n = sr.get("n_vectors", 0)
-            c_val = f"{sr.get('cognevra_search_mean', 0):.1f} ms"
+            c_val = f"{sr.get('levara_search_mean', 0):.1f} ms"
             l_val = f"{sr.get('lance_search_mean', 0):.1f} ms"
-            winner = "Cognevra" if sr.get('cognevra_search_mean', 999) < sr.get('lance_search_mean', 999) else "LanceDB"
+            winner = "Levara" if sr.get('levara_search_mean', 999) < sr.get('lance_search_mean', 999) else "LanceDB"
             print(f"  {'9':<4} {'Scale search (' + str(n) + ' vecs)':<35} {v_val:>12} {l_val:>12} {winner:>10}")
 
         # Step 10: Crash recovery
@@ -1317,7 +1317,7 @@ class TestComprehensiveComparison:
         print(f"""
   РЕКОМЕНДАЦИЯ:
   ┌──────────────────────────────────────────────────────────────────────┐
-  │ Cognevra лучше когда:                                              │
+  │ Levara лучше когда:                                              │
   │   - Нужен отдельный сервер (microservice architecture)             │
   │   - Высокий concurrent throughput (HTTP pipelining)                │
   │   - WAL-based durability + crash recovery                          │

@@ -1,7 +1,7 @@
 """Integration test for Go-accelerated SearchTriplets gRPC RPC.
 
 Tests the in-memory graph scoring that replaces Python's brute_force_triplet_search.
-Requires Cognevra running on localhost:50051.
+Requires Levara running on localhost:50051.
 """
 import grpc
 import pytest
@@ -9,8 +9,8 @@ import sys
 import time
 
 # Proto stubs loaded by conftest.py from cognee tree
-pb = sys.modules.get("cognee.infrastructure.databases.vector.cognevra.generated.cognevra_pb2")
-pb_grpc = sys.modules.get("cognee.infrastructure.databases.vector.cognevra.generated.cognevra_pb2_grpc")
+pb = sys.modules.get("cognee.infrastructure.databases.vector.levara.generated.levara_pb2")
+pb_grpc = sys.modules.get("cognee.infrastructure.databases.vector.levara.generated.levara_pb2_grpc")
 if pb is None or pb_grpc is None:
     pytest.skip("Proto stubs not loaded (conftest issue)", allow_module_level=True)
 
@@ -20,7 +20,7 @@ def _channel():
     try:
         grpc.channel_ready_future(ch).result(timeout=3)
     except grpc.FutureTimeoutError:
-        pytest.skip("Cognevra not running on localhost:50051")
+        pytest.skip("Levara not running on localhost:50051")
     return ch
 
 
@@ -29,19 +29,19 @@ class TestSearchTriplets:
 
     def test_basic_triplet_search(self):
         ch = _channel()
-        stub = pb_grpc.CognevraServiceStub(ch)
+        stub = pb_grpc.LevaraServiceStub(ch)
 
         req = pb.SearchTripletsReq(
             nodes=[
-                pb.TripletNode(id="n1", name="Cognevra", description="Vector DB", type="Software"),
+                pb.TripletNode(id="n1", name="Levara", description="Vector DB", type="Software"),
                 pb.TripletNode(id="n2", name="HNSW", description="Graph index", type="Algorithm"),
                 pb.TripletNode(id="n3", name="WAL", description="Write-Ahead Log", type="Component"),
             ],
             edges=[
                 pb.TripletEdge(node1_id="n1", node2_id="n2", relationship_type="uses",
-                              edge_text="Cognevra uses HNSW", edge_type_id="et1"),
+                              edge_text="Levara uses HNSW", edge_type_id="et1"),
                 pb.TripletEdge(node1_id="n1", node2_id="n3", relationship_type="has",
-                              edge_text="Cognevra has WAL", edge_type_id="et2"),
+                              edge_text="Levara has WAL", edge_type_id="et2"),
             ],
             node_distances=[
                 pb.CollectionDistances(
@@ -74,7 +74,7 @@ class TestSearchTriplets:
         assert abs(second.score - 7.1) < 0.01, f"expected score ~7.1, got {second.score}"
 
         # Formatted context should contain node info
-        assert "Cognevra" in resp.formatted_context
+        assert "Levara" in resp.formatted_context
         assert "HNSW" in resp.formatted_context
         assert "Node1:" in resp.formatted_context
 
@@ -82,7 +82,7 @@ class TestSearchTriplets:
 
     def test_empty_graph(self):
         ch = _channel()
-        stub = pb_grpc.CognevraServiceStub(ch)
+        stub = pb_grpc.LevaraServiceStub(ch)
 
         resp = stub.SearchTriplets(pb.SearchTripletsReq(top_k=5))
         assert len(resp.triplets) == 0
@@ -91,7 +91,7 @@ class TestSearchTriplets:
 
     def test_missing_node_skipped(self):
         ch = _channel()
-        stub = pb_grpc.CognevraServiceStub(ch)
+        stub = pb_grpc.LevaraServiceStub(ch)
 
         req = pb.SearchTripletsReq(
             nodes=[pb.TripletNode(id="n1", name="A")],
@@ -106,7 +106,7 @@ class TestSearchTriplets:
 
     def test_lowest_distance_wins(self):
         ch = _channel()
-        stub = pb_grpc.CognevraServiceStub(ch)
+        stub = pb_grpc.LevaraServiceStub(ch)
 
         req = pb.SearchTripletsReq(
             nodes=[
@@ -135,7 +135,7 @@ class TestSearchTriplets:
     def test_performance_10k_edges(self):
         """SearchTriplets should handle 10K edges in <5ms."""
         ch = _channel()
-        stub = pb_grpc.CognevraServiceStub(ch)
+        stub = pb_grpc.LevaraServiceStub(ch)
 
         nodes = [pb.TripletNode(id=f"n{i}", name=f"Node{i}") for i in range(1000)]
         edges = [

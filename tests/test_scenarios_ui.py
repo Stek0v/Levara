@@ -18,7 +18,7 @@ from playwright.sync_api import Page, expect
 
 BASE_UI = "http://localhost:3000"
 BASE_API = "http://localhost:8080/api/v1"
-EMAIL = "admin@cognevra.dev"
+EMAIL = "admin@levara.dev"
 PASSWORD = "admin123456"
 
 
