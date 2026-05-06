@@ -1,18 +1,18 @@
 version: "3.8"
 
 services:
-  cognevra:
+  levara:
     build:
       context: ..
       dockerfile: Raspberry/Dockerfile
-    container_name: cognevra-pi
+    container_name: levara-pi
     restart: unless-stopped
     ports:
       - "8080:8080"
     volumes:
-      - cognevra-data:/data
+      - levara-data:/data
     env_file:
-      - cognevra.env
+      - levara.env
     environment:
       - EMBEDDING_ENDPOINT=http://host.docker.internal:11434/v1/embeddings
       - LLM_ENDPOINT=http://host.docker.internal:11434/v1
@@ -36,5 +36,5 @@ services:
         max-file: "3"
 
 volumes:
-  cognevra-data:
+  levara-data:
     driver: local

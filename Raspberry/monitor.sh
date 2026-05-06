@@ -2,13 +2,13 @@
 set -euo pipefail
 
 # ============================================================
-# Cognevra Monitoring Script (cron-friendly)
+# Levara Monitoring Script (cron-friendly)
 # Usage: ./monitor.sh
-# Cron:  */5 * * * * /usr/local/bin/cognevra-monitor
+# Cron:  */5 * * * * /usr/local/bin/levara-monitor
 # ============================================================
 
-LOG_FILE="/var/log/cognevra-monitor.log"
-ALERT_FILE="/var/log/cognevra-alerts.log"
+LOG_FILE="/var/log/levara-monitor.log"
+ALERT_FILE="/var/log/levara-alerts.log"
 HEALTH_URL="http://localhost:8080/health"
 CACHE_URL="http://localhost:8080/api/v1/cache/stats"
 ERRORS_URL="http://localhost:8080/api/v1/errors"
@@ -37,7 +37,7 @@ if [ -n "$HEALTH_RESPONSE" ]; then
         alert "health=DEGRADED response=$HEALTH_RESPONSE"
     fi
 else
-    alert "health=UNREACHABLE — Cognevra not responding on $HEALTH_URL"
+    alert "health=UNREACHABLE — Levara not responding on $HEALTH_URL"
 fi
 
 # --- 2. Memory Usage ---
@@ -54,16 +54,16 @@ if [ "$MEM_PERCENT" -ge "$MEM_WARN_PERCENT" ]; then
 fi
 
 # --- 3. Disk Usage ---
-COGNEVRA_DISK=$(df /var/lib/cognevra 2>/dev/null | tail -1 | awk '{print $5}' | tr -d '%')
-if [ -n "$COGNEVRA_DISK" ]; then
-    log "disk=/var/lib/cognevra=${COGNEVRA_DISK}%"
-    if [ "$COGNEVRA_DISK" -ge "$DISK_WARN_PERCENT" ]; then
-        alert "HIGH DISK: /var/lib/cognevra at ${COGNEVRA_DISK}%"
+LEVARA_DISK=$(df /var/lib/levara 2>/dev/null | tail -1 | awk '{print $5}' | tr -d '%')
+if [ -n "$LEVARA_DISK" ]; then
+    log "disk=/var/lib/levara=${LEVARA_DISK}%"
+    if [ "$LEVARA_DISK" -ge "$DISK_WARN_PERCENT" ]; then
+        alert "HIGH DISK: /var/lib/levara at ${LEVARA_DISK}%"
     fi
 fi
 
 # --- 4. SQLite DB size ---
-DB_PATH="/var/lib/cognevra/cognevra.db"
+DB_PATH="/var/lib/levara/levara.db"
 if [ -f "$DB_PATH" ]; then
     DB_SIZE=$(du -h "$DB_PATH" | cut -f1)
     log "sqlite_size=$DB_SIZE"
@@ -91,17 +91,17 @@ if [ "$HEALTH_STATUS" != "FAIL" ]; then
     fi
 fi
 
-# --- 7. Cognevra process ---
-COGNEVRA_PID=$(pgrep -f "/usr/local/bin/cognevra" 2>/dev/null || echo "")
-if [ -n "$COGNEVRA_PID" ]; then
-    COGNEVRA_RSS=$(ps -o rss= -p "$COGNEVRA_PID" 2>/dev/null | tr -d ' ')
-    if [ -n "$COGNEVRA_RSS" ]; then
-        COGNEVRA_MB=$((COGNEVRA_RSS / 1024))
-        log "cognevra_pid=$COGNEVRA_PID rss=${COGNEVRA_MB}MB"
+# --- 7. Levara process ---
+LEVARA_PID=$(pgrep -f "/usr/local/bin/levara" 2>/dev/null || echo "")
+if [ -n "$LEVARA_PID" ]; then
+    LEVARA_RSS=$(ps -o rss= -p "$LEVARA_PID" 2>/dev/null | tr -d ' ')
+    if [ -n "$LEVARA_RSS" ]; then
+        LEVARA_MB=$((LEVARA_RSS / 1024))
+        log "levara_pid=$LEVARA_PID rss=${LEVARA_MB}MB"
     fi
 else
     if [ "$HEALTH_STATUS" = "FAIL" ]; then
-        alert "Cognevra process NOT FOUND"
+        alert "Levara process NOT FOUND"
     fi
 fi
 

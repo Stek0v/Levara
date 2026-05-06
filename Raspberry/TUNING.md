@@ -1,4 +1,4 @@
-# Cognevra Pi — Подробный гайд по тюнингу
+# Levara Pi — Подробный гайд по тюнингу
 
 ## Содержание
 
@@ -79,7 +79,7 @@ Total RAM:              4096 MB
 - OS + system:           500 MB
 - Ollama embed (minilm):  80 MB
 - Ollama LLM (qwen2:0.5b): 800 MB
-- Cognevra overhead:     200 MB
+- Levara overhead:     200 MB
 ---------------------------------
 Available for HNSW:    2516 MB
 - С 1 shard, dim=384:
@@ -96,7 +96,7 @@ Total RAM:              8192 MB
 - OS + system:           500 MB
 - Ollama embed (nomic):  400 MB
 - Ollama LLM (gemma:4b): 3200 MB
-- Cognevra overhead:     300 MB
+- Levara overhead:     300 MB
 ---------------------------------
 Available for HNSW:    3792 MB
 - С 2 shards, dim=768:
@@ -127,7 +127,7 @@ Max_vectors = Available_RAM / RAM_per_vector / num_shards
 | Random write 4K | 0.5 MB/s | 35 MB/s | 70 MB/s |
 | WAL fsync | 10-30ms | 0.5-2ms | 0.2-1ms |
 
-### Влияние на Cognevra
+### Влияние на Levara
 
 | Метрика | microSD | SSD | Разница |
 |---------|---------|-----|---------|
@@ -191,7 +191,7 @@ Max_vectors = Available_RAM / RAM_per_vector / num_shards
 ### Конфигурация
 
 ```bash
-# /etc/cognevra/cognevra.env
+# /etc/levara/levara.env
 LLM_RATE_LIMIT_REQUESTS=10    # макс запросов
 LLM_RATE_LIMIT_INTERVAL=60    # за 60 секунд
 LLM_TIMEOUT=120                # таймаут одного запроса
@@ -291,8 +291,8 @@ echo 'ACTION=="add|change", KERNEL=="sd[a-z]", ATTR{queue/rotational}=="0", ATTR
 ### Kernel parameters
 
 ```bash
-# /etc/sysctl.d/99-cognevra.conf
-sudo tee /etc/sysctl.d/99-cognevra.conf << 'EOF'
+# /etc/sysctl.d/99-levara.conf
+sudo tee /etc/sysctl.d/99-levara.conf << 'EOF'
 # Reduce swappiness (prefer keeping HNSW in RAM)
 vm.swappiness=10
 
@@ -304,7 +304,7 @@ vm.dirty_background_ratio=10
 net.core.somaxconn=256
 net.ipv4.tcp_fastopen=3
 EOF
-sudo sysctl -p /etc/sysctl.d/99-cognevra.conf
+sudo sysctl -p /etc/sysctl.d/99-levara.conf
 ```
 
 ### Overclock (Pi 5, опционально)
