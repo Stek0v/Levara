@@ -2,7 +2,7 @@
 
 ## Цветовая легенда
 
-- 🟢 **ЗЕЛЁНЫЙ** — полностью реализовано на Go (Cognevra)
+- 🟢 **ЗЕЛЁНЫЙ** — полностью реализовано на Go (Levara)
 - 🔴 **КРАСНЫЙ** — не реализовано (альтернативные backends, не нужно)
 - ⚪ **СЕРЫЙ** — инфраструктура/конфиг (не на критическом пути)
 
@@ -138,7 +138,7 @@
 ```
 ┌──────────────── VECTOR DB ──────────────┐  ┌────── GRAPH DB ────────┐
 │                                          │  │                        │
-│  🟢 Cognevra (Go HNSW + WAL)            │  │  🟢 Neo4j (Go driver)  │
+│  🟢 Levara (Go HNSW + WAL)            │  │  🟢 Neo4j (Go driver)  │
 │     ├── CollectionManager                │  │     └── pkg/graphdb/   │
 │     ├── HNSW Index (SIMD NEON)           │  │         UNWIND+MERGE   │
 │     ├── VectorArena (mmap)               │  │                        │
@@ -181,10 +181,10 @@
 
 ---
 
-## Cognevra Go Server: gRPC RPCs (port 50051)
+## Levara Go Server: gRPC RPCs (port 50051)
 
 ```
-┌─────────────────────── COGNEVRA gRPC SERVICE ───────────────────────┐
+┌─────────────────────── LEVARA gRPC SERVICE ───────────────────────┐
 │                                                                      │
 │  🟢 VECTOR OPERATIONS (internal/store/)                              │
 │     CreateCollection | DropCollection | ListCollections               │
@@ -256,7 +256,7 @@
 │     Real-time progress streaming to client                            │
 │                                                                      │
 │  🟢 CLI (cmd/cli/)                                                    │
-│     cognevra binary, 6 commands                                       │
+│     levara binary, 6 commands                                       │
 │                                                                      │
 │  🟢 MAINTENANCE                                                      │
 │     Info | Compact                                                    │
@@ -425,7 +425,7 @@ embed_query → vector_search → graph_read → triplet_score → format_contex
 | A1 | **IngestData** 🔥 | **3K-19Kx** faster ADD |
 | T1 | **TemporalSearch** | Timestamp extraction + range query |
 | — | **ExtractText (tabula)** | PDF/DOCX/PPTX/XLSX/HTML/EPUB + markdown |
-| — | **Module migration** | github.com/stek0v/cognevra |
+| — | **Module migration** | github.com/stek0v/levara |
 | B1 | **Connection pooling** | Singleton *sql.DB (25 open, 10 idle) |
 | B2 | **JWT middleware** | Public/protected route split |
 | B3 | **Cognify HTTP bridge** | orchestrator.Run + status tracking |
@@ -443,7 +443,7 @@ embed_query → vector_search → graph_read → triplet_score → format_contex
 | P1.5 | **Structured Output** | JSON Schema + retry + fallback |
 | P2.1 | **Session Cognify** | session_id context in LLM prompt |
 | P2.3 | **Code Extraction** | ChunkByFunction, code entities (pkg/chunker/code.go) |
-| P2.4 | **Go CLI** | cognevra binary, 6 commands (cmd/cli/) |
+| P2.4 | **Go CLI** | levara binary, 6 commands (cmd/cli/) |
 | P2.5 | **LLM Cache** | Persistent JSONL, 77x speedup |
 | P2.6 | **Rate Limiting** | Token bucket, env config |
 | P3.4 | **Observability** | Structured logging + Langfuse + ErrorTracker (pkg/observe/) |
@@ -531,7 +531,7 @@ embed_query → vector_search → graph_read → triplet_score → format_contex
 
 ┌──────────── CMD (4) ──────────────────────────────────────────────┐
 │  cmd/server/  — Main gRPC + HTTP server entry point                │
-│  cmd/cli/     — cognevra CLI binary (6 commands)                   │
+│  cmd/cli/     — levara CLI binary (6 commands)                   │
 │  cmd/proxy/   — LLM proxy server                                   │
 │  cmd/migrate/ — Database migration tool                            │
 └────────────────────────────────────────────────────────────────────┘
@@ -539,7 +539,7 @@ embed_query → vector_search → graph_read → triplet_score → format_contex
 
 ---
 
-## Финальная сводка: `github.com/stek0v/cognevra`
+## Финальная сводка: `github.com/stek0v/levara`
 
 | Метрика | Значение |
 |---------|----------|
