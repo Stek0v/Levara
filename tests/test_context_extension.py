@@ -20,7 +20,7 @@ import asyncio
 import aiohttp
 import pytest
 
-BASE = os.getenv("COGNEVRA_HTTP_URL", "http://localhost:8080/api/v1")
+BASE = os.getenv("LEVARA_HTTP_URL", "http://localhost:8080/api/v1")
 TIMEOUT = aiohttp.ClientTimeout(total=300)
 
 pytestmark = pytest.mark.asyncio

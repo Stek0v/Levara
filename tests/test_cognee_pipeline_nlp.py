@@ -145,26 +145,26 @@ class TestCogneePipelineNLP:
         assert cnt > 0, f"Expected entities in Neo4j, got {cnt}"
         print(f"\n  Neo4j nodes: {cnt}")
 
-    def test_cognevra_has_collections(self, pipeline_result):
-        """Cognify should have created vector collections in Cognevra."""
+    def test_levara_has_collections(self, pipeline_result):
+        """Cognify should have created vector collections in Levara."""
         if pipeline_result["cognify_status"] != 200:
             pytest.skip("Cognify failed")
         import grpc
         ch = grpc.insecure_channel("localhost:50051")
         try:
             grpc.channel_ready_future(ch).result(timeout=3)
-            stub = pb_grpc.CognevraServiceStub(ch)
+            stub = pb_grpc.LevaraServiceStub(ch)
             resp = stub.ListCollections(pb.Empty())
             colls = list(resp.collections)
-            print(f"\n  Cognevra collections: {colls}")
-            assert len(colls) > 0, "Expected collections in Cognevra"
+            print(f"\n  Levara collections: {colls}")
+            assert len(colls) > 0, "Expected collections in Levara"
         except Exception as e:
-            print(f"\n  Cognevra check failed: {e}")
+            print(f"\n  Levara check failed: {e}")
         finally:
             ch.close()
 
 
 # Import proto stubs for collection check
 import sys
-pb = sys.modules.get("cognee.infrastructure.databases.vector.cognevra.generated.cognevra_pb2")
-pb_grpc = sys.modules.get("cognee.infrastructure.databases.vector.cognevra.generated.cognevra_pb2_grpc")
+pb = sys.modules.get("cognee.infrastructure.databases.vector.levara.generated.levara_pb2")
+pb_grpc = sys.modules.get("cognee.infrastructure.databases.vector.levara.generated.levara_pb2_grpc")

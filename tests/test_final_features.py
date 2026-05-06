@@ -28,7 +28,7 @@ Integration (2):
   test_all_search_types_work            Все search types → 200
   test_full_system_health               /health/details + /metrics + /errors + /cache/stats
 
-Requires: Cognevra HTTP :8080, embed-server :9001.
+Requires: Levara HTTP :8080, embed-server :9001.
 НЕ используем pytest.skip() — если сервис упал, тест FAIL.
 """
 import asyncio
@@ -756,7 +756,7 @@ async def test_full_system_health():
             )
             text = await r.text()
             assert len(text) > 0, "GET /metrics пустой ответ"
-            assert "HELP" in text or "TYPE" in text or "cognevra_" in text, (
+            assert "HELP" in text or "TYPE" in text or "levara_" in text, (
                 f"GET /metrics не prometheus format. Начало: {text[:200]}"
             )
 

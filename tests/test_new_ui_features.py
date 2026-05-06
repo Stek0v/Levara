@@ -19,9 +19,9 @@ import uuid
 import pytest
 import aiohttp
 
-BASE = os.getenv("COGNEVRA_HTTP_URL", "http://localhost:8080/api/v1")
+BASE = os.getenv("LEVARA_HTTP_URL", "http://localhost:8080/api/v1")
 BASE_ROOT = BASE.rsplit("/api/v1", 1)[0]  # http://localhost:8080
-FRONTEND = os.getenv("COGNEVRA_FRONTEND_URL", "http://localhost:3000")
+FRONTEND = os.getenv("LEVARA_FRONTEND_URL", "http://localhost:3000")
 
 pytestmark = pytest.mark.asyncio
 

@@ -1,5 +1,5 @@
 """Journey A: Basic RAG Application — add → cognify → search.
-The core 3-step user journey that every Cognee/Cognevra user follows.
+The core 3-step user journey that every Cognee/Levara user follows.
 Tests the complete pipeline from data ingestion to search results.
 """
 import asyncio
@@ -25,7 +25,7 @@ async def test_add_text_returns_ok():
     async with aiohttp.ClientSession() as s:
         h = await _auth(s)
         async with s.post(f"{BASE_URL}/add",
-            data="Cognevra is a high-performance vector database written in Go. "
+            data="Levara is a high-performance vector database written in Go. "
                  "It uses HNSW indexing with WAL durability for crash recovery.",
             headers={**h, "Content-Type": "text/plain"}
         ) as r:
@@ -143,7 +143,7 @@ async def test_upload_file_multipart():
         h = await _auth(s)
         form = aiohttp.FormData()
         form.add_field("data",
-            b"Chapter 1: Introduction\n\nCognevra is a vector database that combines "
+            b"Chapter 1: Introduction\n\nLevara is a vector database that combines "
             b"HNSW indexing with WAL durability. It supports both HTTP and gRPC APIs.\n\n"
             b"Chapter 2: Architecture\n\nThe system uses sharded HNSW indexes with "
             b"memory-mapped arenas for efficient vector storage.",
