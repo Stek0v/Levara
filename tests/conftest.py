@@ -1,9 +1,9 @@
 """
-Conftest for Cognevra adapter unit tests.
+Conftest for Levara adapter unit tests.
 
 Sets up lightweight stubs in sys.modules for heavy cognee dependencies
-BEFORE any test file is collected, then loads CognevraAdapter via importlib
-so that subsequent `from cognee... import CognevraAdapter` works.
+BEFORE any test file is collected, then loads LevaraAdapter via importlib
+so that subsequent `from cognee... import LevaraAdapter` works.
 """
 
 import importlib.util
@@ -262,64 +262,64 @@ if _lance_adapter_path.exists():
         import warnings
         warnings.warn(f"Could not load LanceDBAdapter: {_e}")
 
-# ── Load CognevraAdapter via importlib ────────────────────────────────────────
-_cognevra_pkg = _stub("cognee.infrastructure.databases.vector.cognevra")
+# ── Load LevaraAdapter via importlib ────────────────────────────────────────
+_levara_pkg = _stub("cognee.infrastructure.databases.vector.levara")
 
 # Register the generated protobuf modules BEFORE loading the adapter,
-# so that `from .generated import cognevra_pb2` resolves correctly.
+# so that `from .generated import levara_pb2` resolves correctly.
 _generated_dir = (
     _REPO_ROOT / "cognee" / "infrastructure" / "databases" / "vector"
-    / "cognevra" / "generated"
+    / "levara" / "generated"
 )
-_generated_pkg_name = "cognee.infrastructure.databases.vector.cognevra.generated"
+_generated_pkg_name = "cognee.infrastructure.databases.vector.levara.generated"
 
 # Register the generated package
 _generated_pkg = _stub(_generated_pkg_name)
 
-# Load cognevra_pb2
-_pb2_path = _generated_dir / "cognevra_pb2.py"
+# Load levara_pb2
+_pb2_path = _generated_dir / "levara_pb2.py"
 if _pb2_path.exists():
     _pb2_spec = importlib.util.spec_from_file_location(
-        f"{_generated_pkg_name}.cognevra_pb2", _pb2_path
+        f"{_generated_pkg_name}.levara_pb2", _pb2_path
     )
     _pb2_mod = importlib.util.module_from_spec(_pb2_spec)
-    sys.modules[f"{_generated_pkg_name}.cognevra_pb2"] = _pb2_mod
+    sys.modules[f"{_generated_pkg_name}.levara_pb2"] = _pb2_mod
     _pb2_spec.loader.exec_module(_pb2_mod)
-    _generated_pkg.cognevra_pb2 = _pb2_mod
+    _generated_pkg.levara_pb2 = _pb2_mod
 else:
-    _pb2_mod = _stub(f"{_generated_pkg_name}.cognevra_pb2")
-    _generated_pkg.cognevra_pb2 = _pb2_mod
+    _pb2_mod = _stub(f"{_generated_pkg_name}.levara_pb2")
+    _generated_pkg.levara_pb2 = _pb2_mod
 
-# Load cognevra_pb2_grpc
-_pb2_grpc_path = _generated_dir / "cognevra_pb2_grpc.py"
+# Load levara_pb2_grpc
+_pb2_grpc_path = _generated_dir / "levara_pb2_grpc.py"
 if _pb2_grpc_path.exists():
     _pb2_grpc_spec = importlib.util.spec_from_file_location(
-        f"{_generated_pkg_name}.cognevra_pb2_grpc", _pb2_grpc_path
+        f"{_generated_pkg_name}.levara_pb2_grpc", _pb2_grpc_path
     )
     _pb2_grpc_mod = importlib.util.module_from_spec(_pb2_grpc_spec)
-    sys.modules[f"{_generated_pkg_name}.cognevra_pb2_grpc"] = _pb2_grpc_mod
-    # cognevra_pb2_grpc.py uses `import cognevra_pb2` (bare name); alias it
-    sys.modules["cognevra_pb2"] = _pb2_mod
+    sys.modules[f"{_generated_pkg_name}.levara_pb2_grpc"] = _pb2_grpc_mod
+    # levara_pb2_grpc.py uses `import levara_pb2` (bare name); alias it
+    sys.modules["levara_pb2"] = _pb2_mod
     _pb2_grpc_spec.loader.exec_module(_pb2_grpc_mod)
     # Clean up the bare alias so it doesn't pollute the global namespace
-    sys.modules.pop("cognevra_pb2", None)
-    _generated_pkg.cognevra_pb2_grpc = _pb2_grpc_mod
+    sys.modules.pop("levara_pb2", None)
+    _generated_pkg.levara_pb2_grpc = _pb2_grpc_mod
 else:
-    _pb2_grpc_mod = _stub(f"{_generated_pkg_name}.cognevra_pb2_grpc")
-    _generated_pkg.cognevra_pb2_grpc = _pb2_grpc_mod
+    _pb2_grpc_mod = _stub(f"{_generated_pkg_name}.levara_pb2_grpc")
+    _generated_pkg.levara_pb2_grpc = _pb2_grpc_mod
 
-# Now load the adapter (its `from .generated import cognevra_pb2` will resolve)
+# Now load the adapter (its `from .generated import levara_pb2` will resolve)
 _adapter_path = (
     _REPO_ROOT / "cognee" / "infrastructure" / "databases" / "vector"
-    / "cognevra" / "CognevraAdapter.py"
+    / "levara" / "LevaraAdapter.py"
 )
 _spec = importlib.util.spec_from_file_location(
-    "cognee.infrastructure.databases.vector.cognevra.CognevraAdapter",
+    "cognee.infrastructure.databases.vector.levara.LevaraAdapter",
     _adapter_path,
 )
 _adapter_mod = importlib.util.module_from_spec(_spec)
-sys.modules["cognee.infrastructure.databases.vector.cognevra.CognevraAdapter"] = _adapter_mod
+sys.modules["cognee.infrastructure.databases.vector.levara.LevaraAdapter"] = _adapter_mod
 _spec.loader.exec_module(_adapter_mod)
 
-# Attach to parent package so `from cognee...cognevra.CognevraAdapter import X` works
-_cognevra_pkg.CognevraAdapter = _adapter_mod.CognevraAdapter
+# Attach to parent package so `from cognee...levara.LevaraAdapter import X` works
+_levara_pkg.LevaraAdapter = _adapter_mod.LevaraAdapter

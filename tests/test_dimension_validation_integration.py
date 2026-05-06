@@ -11,19 +11,19 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from cognee.infrastructure.databases.vector.cognevra.CognevraAdapter import CognevraAdapter
+from cognee.infrastructure.databases.vector.levara.LevaraAdapter import LevaraAdapter
 
 import sys
 
 _DataPoint = sys.modules["cognee.infrastructure.engine"].DataPoint
-pb = sys.modules["cognee.infrastructure.databases.vector.cognevra.generated.cognevra_pb2"]
+pb = sys.modules["cognee.infrastructure.databases.vector.levara.generated.levara_pb2"]
 
 
 # ── GrpcMockServer with Info RPC ─────────────────────────────────────────────
 
 class GrpcMockServerWithInfo:
     """
-    Mock Cognevra gRPC stub that also handles the Info RPC
+    Mock Levara gRPC stub that also handles the Info RPC
     for dimension validation.
     """
 
@@ -105,9 +105,9 @@ def _make_engine(dim: int = 768):
 def _make_adapter_with_info_server(
     server: GrpcMockServerWithInfo,
     engine_dim: int = 768,
-) -> CognevraAdapter:
+) -> LevaraAdapter:
     engine = _make_engine(engine_dim)
-    adapter = CognevraAdapter(
+    adapter = LevaraAdapter(
         url="localhost:50051",
         api_key=None,
         embedding_engine=engine,

@@ -1,4 +1,34 @@
-# Cognevra на Raspberry Pi — Полное руководство
+# Levara на Raspberry Pi — Полное руководство
+
+> **Миграция с Cognevra (актуально для Pi-устройств, на которые ставили `cognevra` до 2026-05).**
+> Имена файлов и сервиса изменились в рамках ребрендинга:
+>
+> | Было | Стало |
+> |---|---|
+> | `cognevra.service` | `levara.service` |
+> | `cognevra.env` | `levara.env` |
+> | `/etc/cognevra/cognevra.env` | `/etc/levara/levara.env` |
+> | `/var/lib/cognevra/` | `/var/lib/levara/` |
+> | `/usr/local/bin/cognevra` | `/usr/local/bin/levara` |
+> | systemd unit `cognevra` | `levara` |
+> | system user `cognevra` | `levara` |
+>
+> На уже-установленных устройствах:
+>
+> ```bash
+> sudo systemctl stop cognevra
+> sudo systemctl disable cognevra
+> sudo mv /etc/cognevra /etc/levara
+> sudo mv /etc/levara/cognevra.env /etc/levara/levara.env
+> sudo mv /var/lib/cognevra /var/lib/levara
+> # Опционально пересоздать пользователя — или оставить cognevra и поправить .service:
+> sudo cp Raspberry/levara.service /etc/systemd/system/levara.service
+> sudo systemctl daemon-reload
+> sudo systemctl enable --now levara
+> sudo rm -f /etc/systemd/system/cognevra.service
+> ```
+>
+> Кодовая база за бинарём тоже сменилась: Dockerfile теперь собирает из `Levara/` (current code, replaces legacy `Cognevra/` → `Levara-legacy/`). API совместимо, флаги те же.
 
 ## Содержание
 
@@ -29,7 +59,7 @@
 | Компонент | Pi 4GB | Pi 8GB | Описание |
 |-----------|--------|--------|----------|
 | OS + system | 500MB | 500MB | Headless Raspberry Pi OS Lite |
-| Cognevra HNSW | 500MB-1GB | 1-2GB | Зависит от кол-ва vectors |
+| Levara HNSW | 500MB-1GB | 1-2GB | Зависит от кол-ва vectors |
 | Ollama embed | 300MB | 500MB | nomic-embed-text / all-minilm |
 | Ollama LLM | 1-2GB | 3-5GB | Зависит от модели |
 | SQLite cache | 100MB | 200MB | WAL + page cache |
@@ -63,8 +93,8 @@ echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 
 ```bash
 # 1. Скачать binary
-wget https://github.com/stek0v/cognevra/releases/latest/download/cognevra-arm64
-chmod +x cognevra-arm64
+wget https://github.com/stek0v/levara/releases/latest/download/levara-arm64
+chmod +x levara-arm64
 
 # 2. Установить Ollama
 curl -fsSL https://ollama.ai/install.sh | sh
@@ -74,7 +104,7 @@ ollama pull nomic-embed-text
 DB_PROVIDER=sqlite \
 EMBEDDING_ENDPOINT=http://localhost:11434/v1/embeddings \
 EMBEDDING_MODEL=nomic-embed-text \
-./cognevra-arm64 -standalone=true -dim=768 -shards=1 -port=8080
+./levara-arm64 -standalone=true -dim=768 -shards=1 -port=8080
 
 # 4. Проверить
 curl http://localhost:8080/health
@@ -131,13 +161,13 @@ sudo blkid /dev/sda1
 # UUID=<your-uuid> /mnt/ssd ext4 defaults,noatime 0 2
 
 # Создать директорию данных
-sudo mkdir -p /mnt/ssd/cognevra
-sudo chown $(whoami):$(whoami) /mnt/ssd/cognevra
+sudo mkdir -p /mnt/ssd/levara
+sudo chown $(whoami):$(whoami) /mnt/ssd/levara
 ```
 
 Если SSD используется как data dir, укажите:
 ```bash
-DB_PATH=/mnt/ssd/cognevra/cognevra.db
+DB_PATH=/mnt/ssd/levara/levara.db
 ```
 
 ### 3.3 Установка Ollama
@@ -176,33 +206,33 @@ ollama pull nomic-embed-text
 ollama pull qwen3.5
 ```
 
-### 3.5 Установка Cognevra
+### 3.5 Установка Levara
 
 #### Вариант A: Binary (рекомендуемо)
 
 ```bash
 # Скачать
-wget https://github.com/stek0v/cognevra/releases/latest/download/cognevra-arm64
-sudo mv cognevra-arm64 /usr/local/bin/cognevra
-sudo chmod +x /usr/local/bin/cognevra
+wget https://github.com/stek0v/levara/releases/latest/download/levara-arm64
+sudo mv levara-arm64 /usr/local/bin/levara
+sudo chmod +x /usr/local/bin/levara
 
 # Создать директории
-sudo mkdir -p /var/lib/cognevra/data
-sudo mkdir -p /etc/cognevra
-sudo mkdir -p /var/log/cognevra
+sudo mkdir -p /var/lib/levara/data
+sudo mkdir -p /etc/levara
+sudo mkdir -p /var/log/levara
 
 # Создать пользователя
-sudo useradd -r -s /bin/false cognevra
-sudo chown -R cognevra:cognevra /var/lib/cognevra /var/log/cognevra
+sudo useradd -r -s /bin/false levara
+sudo chown -R levara:levara /var/lib/levara /var/log/levara
 
 # Скопировать env файл
-sudo cp cognevra.env /etc/cognevra/cognevra.env
+sudo cp levara.env /etc/levara/levara.env
 
 # Установить systemd service
-sudo cp cognevra.service /etc/systemd/system/
+sudo cp levara.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable cognevra
-sudo systemctl start cognevra
+sudo systemctl enable levara
+sudo systemctl start levara
 ```
 
 #### Вариант B: Docker
@@ -232,7 +262,7 @@ sudo ./setup.sh
 | Переменная | Default | Pi-рекомендация | Описание |
 |------------|---------|-----------------|----------|
 | `DB_PROVIDER` | `sqlite` | `sqlite` | Storage backend (sqlite/postgres) |
-| `DB_PATH` | `./cognevra.db` | `/var/lib/cognevra/cognevra.db` | Путь к SQLite БД |
+| `DB_PATH` | `./levara.db` | `/var/lib/levara/levara.db` | Путь к SQLite БД |
 | `EMBEDDING_ENDPOINT` | — | `http://localhost:11434/v1/embeddings` | URL embed сервера |
 | `EMBEDDING_MODEL` | — | `nomic-embed-text` | Модель для embeddings |
 | `LLM_PROVIDER` | `openai` | `openai` | OpenAI-compatible API |
@@ -253,7 +283,7 @@ sudo ./setup.sh
 | `-shards` | `3` | `1` | `1-2` | Количество HNSW shards |
 | `-port` | `8080` | `8080` | `8080` | HTTP порт |
 | `-grpc-port` | `50051` | `0` | `0` | gRPC порт (0=disabled) |
-| `-data-dir` | `./data` | `/var/lib/cognevra/data` | `/var/lib/cognevra/data` | Директория данных |
+| `-data-dir` | `./data` | `/var/lib/levara/data` | `/var/lib/levara/data` | Директория данных |
 | `-hnsw-m` | `16` | `12` | `16` | HNSW connectivity |
 | `-hnsw-ef-mult` | `8` | `6` | `8` | efConstruction multiplier |
 | `-hnsw-ef-min` | `64` | `32` | `64` | Минимальный efSearch |
@@ -261,9 +291,9 @@ sudo ./setup.sh
 ### 4.3 Пример конфигурации
 
 ```bash
-# /etc/cognevra/cognevra.env
+# /etc/levara/levara.env
 DB_PROVIDER=sqlite
-DB_PATH=/var/lib/cognevra/cognevra.db
+DB_PATH=/var/lib/levara/levara.db
 EMBEDDING_ENDPOINT=http://localhost:11434/v1/embeddings
 EMBEDDING_MODEL=nomic-embed-text
 LLM_PROVIDER=openai
@@ -287,7 +317,7 @@ CACHE_MAX_SIZE=500
 ```json
 {
   "mcpServers": {
-    "cognevra": {
+    "levara": {
       "url": "http://raspberrypi.local:8080/mcp"
     }
   }
@@ -390,13 +420,13 @@ curl -s http://localhost:8080/metrics
 
 | Метрика | Описание |
 |---------|----------|
-| `cognevra_search_duration_seconds` | Латентность поиска |
-| `cognevra_insert_duration_seconds` | Латентность вставки |
-| `cognevra_vectors_total` | Общее кол-во vectors |
-| `cognevra_memory_bytes` | Потребление памяти |
-| `cognevra_wal_size_bytes` | Размер WAL |
-| `cognevra_cache_hits_total` | Cache hits |
-| `cognevra_cache_misses_total` | Cache misses |
+| `levara_search_duration_seconds` | Латентность поиска |
+| `levara_insert_duration_seconds` | Латентность вставки |
+| `levara_vectors_total` | Общее кол-во vectors |
+| `levara_memory_bytes` | Потребление памяти |
+| `levara_wal_size_bytes` | Размер WAL |
+| `levara_cache_hits_total` | Cache hits |
+| `levara_cache_misses_total` | Cache misses |
 
 ### 6.3 Error Tracking
 
@@ -425,31 +455,31 @@ curl -s http://localhost:8080/api/v1/cache/stats | jq
 ### 6.5 systemd watchdog
 
 ```ini
-# /etc/systemd/system/cognevra.service
-# (см. cognevra.service в этой папке)
+# /etc/systemd/system/levara.service
+# (см. levara.service в этой папке)
 ```
 
 Мониторинг через systemd:
 ```bash
 # Статус
-sudo systemctl status cognevra
+sudo systemctl status levara
 
 # Логи
-sudo journalctl -u cognevra -f
+sudo journalctl -u levara -f
 
 # Последние ошибки
-sudo journalctl -u cognevra --priority=err --since="1 hour ago"
+sudo journalctl -u levara --priority=err --since="1 hour ago"
 ```
 
 ### 6.6 Автоматический мониторинг (cron)
 
 ```bash
 # Установить monitor.sh
-sudo cp monitor.sh /usr/local/bin/cognevra-monitor
-sudo chmod +x /usr/local/bin/cognevra-monitor
+sudo cp monitor.sh /usr/local/bin/levara-monitor
+sudo chmod +x /usr/local/bin/levara-monitor
 
 # Добавить в cron (каждые 5 минут)
-echo "*/5 * * * * /usr/local/bin/cognevra-monitor" | sudo crontab -
+echo "*/5 * * * * /usr/local/bin/levara-monitor" | sudo crontab -
 ```
 
 ---
@@ -513,8 +543,8 @@ echo "gpu_mem=16" | sudo tee -a /boot/config.txt
 echo "none" | sudo tee /sys/block/sda/queue/scheduler
 
 # Увеличить лимиты файлов
-echo "cognevra soft nofile 65536" | sudo tee -a /etc/security/limits.conf
-echo "cognevra hard nofile 65536" | sudo tee -a /etc/security/limits.conf
+echo "levara soft nofile 65536" | sudo tee -a /etc/security/limits.conf
+echo "levara hard nofile 65536" | sudo tee -a /etc/security/limits.conf
 ```
 
 ---
@@ -525,45 +555,45 @@ echo "cognevra hard nofile 65536" | sudo tee -a /etc/security/limits.conf
 
 ```bash
 # Использовать backup.sh из этой папки
-sudo cp backup.sh /usr/local/bin/cognevra-backup
-sudo chmod +x /usr/local/bin/cognevra-backup
+sudo cp backup.sh /usr/local/bin/levara-backup
+sudo chmod +x /usr/local/bin/levara-backup
 
 # Ручной запуск
-sudo /usr/local/bin/cognevra-backup
+sudo /usr/local/bin/levara-backup
 
 # Автоматический backup (ежедневно в 3:00)
-echo "0 3 * * * /usr/local/bin/cognevra-backup" | sudo crontab -
+echo "0 3 * * * /usr/local/bin/levara-backup" | sudo crontab -
 ```
 
 #### SQLite backup (онлайн, WAL-safe)
 
 ```bash
-sqlite3 /var/lib/cognevra/cognevra.db ".backup '/backup/cognevra-$(date +%Y%m%d).db'"
+sqlite3 /var/lib/levara/levara.db ".backup '/backup/levara-$(date +%Y%m%d).db'"
 ```
 
 #### Полный backup (данные + WAL)
 
 ```bash
-rsync -a /var/lib/cognevra/data/ /backup/cognevra-data/
+rsync -a /var/lib/levara/data/ /backup/levara-data/
 ```
 
 ### 8.2 Recovery
 
 ```bash
 # Остановить сервис
-sudo systemctl stop cognevra
+sudo systemctl stop levara
 
 # Восстановить SQLite
-sudo cp /backup/cognevra-latest.db /var/lib/cognevra/cognevra.db
+sudo cp /backup/levara-latest.db /var/lib/levara/levara.db
 
 # Восстановить data
-sudo rsync -a /backup/cognevra-data/ /var/lib/cognevra/data/
+sudo rsync -a /backup/levara-data/ /var/lib/levara/data/
 
 # Права
-sudo chown -R cognevra:cognevra /var/lib/cognevra
+sudo chown -R levara:levara /var/lib/levara
 
 # Запустить
-sudo systemctl start cognevra
+sudo systemctl start levara
 
 # Проверить
 curl -s http://localhost:8080/health | jq
@@ -602,22 +632,22 @@ dmesg | grep -i "oom\|killed"
 # 2. Уменьшить HNSW M: -hnsw-m=12
 # 3. Использовать меньшую LLM модель
 # 4. Увеличить swap
-# 5. Установить MemoryMax в systemd (см. cognevra.service)
+# 5. Установить MemoryMax в systemd (см. levara.service)
 ```
 
 ### SQLite locked
 
 ```bash
 # Проверить locks
-fuser /var/lib/cognevra/cognevra.db
+fuser /var/lib/levara/levara.db
 
-# Частая причина: два процесса Cognevra
-ps aux | grep cognevra
+# Частая причина: два процесса Levara
+ps aux | grep levara
 
 # Решение: остановить дубликат
-sudo systemctl stop cognevra
-sudo killall cognevra
-sudo systemctl start cognevra
+sudo systemctl stop levara
+sudo killall levara
+sudo systemctl start levara
 ```
 
 ### Медленный search
@@ -653,7 +683,7 @@ ollama rm gemma3:4b
 ollama pull qwen2:0.5b
 ```
 
-### Cognevra не видит Ollama
+### Levara не видит Ollama
 
 ```bash
 # Проверить что Ollama слушает
@@ -670,8 +700,8 @@ curl -s http://localhost:11434/v1/embeddings \
 ### Перезапуск с нуля
 
 ```bash
-sudo systemctl stop cognevra
-sudo rm -rf /var/lib/cognevra/data/*
-sudo rm -f /var/lib/cognevra/cognevra.db
-sudo systemctl start cognevra
+sudo systemctl stop levara
+sudo rm -rf /var/lib/levara/data/*
+sudo rm -f /var/lib/levara/levara.db
+sudo systemctl start levara
 ```

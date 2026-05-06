@@ -5,13 +5,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from cognee.infrastructure.databases.vector.cognevra.CognevraAdapter import CognevraAdapter
+from cognee.infrastructure.databases.vector.levara.LevaraAdapter import LevaraAdapter
 
-pb = sys.modules["cognee.infrastructure.databases.vector.cognevra.generated.cognevra_pb2"]
+pb = sys.modules["cognee.infrastructure.databases.vector.levara.generated.levara_pb2"]
 
 
 def _make_adapter():
-    adapter = CognevraAdapter(url="localhost:50051", api_key=None, embedding_engine=MagicMock())
+    adapter = LevaraAdapter(url="localhost:50051", api_key=None, embedding_engine=MagicMock())
     adapter._stub = MagicMock()
     return adapter
 
