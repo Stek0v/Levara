@@ -1,22 +1,22 @@
-# Minimal Cognevra stack for Raspberry Pi
+# Minimal Levara stack for Raspberry Pi
 # No PostgreSQL, no Neo4j — SQLite + Ollama
 services:
-  cognevra:
+  levara:
     build:
-      context: ./Cognevra
+      context: ./Levara
       platforms:
         - linux/arm64
     ports:
       - "8080:8080"
     volumes:
-      - cognevra-data:/app/data
+      - levara-data:/app/data
     environment:
       - DB_PROVIDER=sqlite
       - EMBEDDING_ENDPOINT=http://ollama:11434/v1/embeddings
       - EMBEDDING_MODEL=nomic-embed-text
       - LLM_ENDPOINT=http://ollama:11434/v1
       - LLM_MODEL=gemma3:4b
-    command: ["./cognevra", "-standalone=true", "-dim=768", "-shards=1", "-port=8080"]
+    command: ["./levara", "-standalone=true", "-dim=768", "-shards=1", "-port=8080"]
     depends_on:
       - ollama
 
@@ -28,5 +28,5 @@ services:
       - ollama-data:/root/.ollama
 
 volumes:
-  cognevra-data:
+  levara-data:
   ollama-data:

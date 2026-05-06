@@ -4,8 +4,8 @@
 
 ```mermaid
 flowchart TD
-    A[Python / Cognee] -->|VectorDBInterface| B[CognevraAdapter.py]
-    B -->|gRPC :50051 / Protobuf| C[Cognevra gRPC Server\ninternal/grpc/service.go]
+    A[Python / Cognee] -->|VectorDBInterface| B[LevaraAdapter.py]
+    B -->|gRPC :50051 / Protobuf| C[Levara gRPC Server\ninternal/grpc/service.go]
     C --> D[CollectionManager\ninternal/store/collections.go]
     D --> E[Collection A\ninternal/store/db.go]
     D --> F[Collection B\ninternal/store/db.go]
@@ -103,7 +103,7 @@ The critical insight: `db.mu` is held for only three cheap appends (arena page w
 
 ## gRPC Protocol
 
-Defined in `Cognevra/proto/cognevra.proto`. Service: `CognevraService` on port 50051.
+Defined in `Levara/proto/levara.proto`. Service: `LevaraService` on port 50051.
 
 | RPC | Description |
 |-----|-------------|
@@ -119,7 +119,7 @@ Defined in `Cognevra/proto/cognevra.proto`. Service: `CognevraService` on port 5
 | `ChunkText` | Server-side text chunking (paragraph/sentence/merged strategies) |
 | `Info` | Return dimension, shard count, status, collection list |
 
-The Python adapter (`CognevraAdapter.py`) implements all 9 Cognee `VectorDBInterface` methods by translating to these RPCs. Transport overhead is approximately **0.3ms** round-trip (vs 2.6ms for the previous HTTP/JSON adapter, an 8.4x reduction).
+The Python adapter (`LevaraAdapter.py`) implements all 9 Cognee `VectorDBInterface` methods by translating to these RPCs. Transport overhead is approximately **0.3ms** round-trip (vs 2.6ms for the previous HTTP/JSON adapter, an 8.4x reduction).
 
 ## HNSW Parameter Tuning
 
