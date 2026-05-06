@@ -1,13 +1,13 @@
 """
-Head-to-head: Cognevra vs LanceDB on real book data with real embeddings.
+Head-to-head: Levara vs LanceDB on real book data with real embeddings.
 
 Same book «Ураган», same embed-server, same queries.
-Cognevra: real Go HNSW server on :8080
+Levara: real Go HNSW server on :8080
 LanceDB:  real Arrow file I/O (in-process)
 
 Requires:
   - embed-server on :9001 (pplx-embed-context-v1-0.6b, dim=1024)
-  - Cognevra on :8080 (dim=1024, 3 shards)
+  - Levara on :8080 (dim=1024, 3 shards)
 
 Run:
     pytest tests/test_book_head_to_head.py -v -s
@@ -36,7 +36,7 @@ import pytest
 
 BOOK_PATH = Path(__file__).parent.parent / "Edvards_Dzanet_Uragan_r4_P61XH.txt"
 EMBED_URL = "http://localhost:9001/v1/embeddings"
-COGNEVRA_URL = "http://localhost:8080"
+LEVARA_URL = "http://localhost:8080"
 EMBED_MODEL = "pplx-embed-context-v1-0.6b"
 DIM = 1024
 MIN_CHUNK_CHARS = 80
@@ -132,7 +132,7 @@ def _check(url):
 
 pytestmark = pytest.mark.skipif(
     not (_check("http://localhost:9001/health") and _check("http://localhost:8080/metrics")),
-    reason="Need embed-server:9001 + Cognevra:8080",
+    reason="Need embed-server:9001 + Levara:8080",
 )
 
 
@@ -140,7 +140,7 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture(scope="module")
 def book_data():
-    """Load book, chunk, embed once — shared between Cognevra and LanceDB."""
+    """Load book, chunk, embed once — shared between Levara and LanceDB."""
     if not BOOK_PATH.exists():
         pytest.skip(f"Book not found: {BOOK_PATH}")
 
@@ -157,16 +157,16 @@ def book_data():
     return chunks, vecs, q_vecs
 
 
-# ── Cognevra helpers ──────────────────────────────────────────────────────────
+# ── Levara helpers ──────────────────────────────────────────────────────────
 
-async def cognevra_insert(session, records):
-    async with session.post(f"{COGNEVRA_URL}/api/v1/batch_insert", json={"records": records}) as r:
+async def levara_insert(session, records):
+    async with session.post(f"{LEVARA_URL}/api/v1/batch_insert", json={"records": records}) as r:
         r.raise_for_status()
         return await r.json()
 
 
-async def cognevra_search(session, vector, k=K):
-    async with session.post(f"{COGNEVRA_URL}/api/v1/search", json={"vector": vector, "k": k}) as r:
+async def levara_search(session, vector, k=K):
+    async with session.post(f"{LEVARA_URL}/api/v1/search", json={"vector": vector, "k": k}) as r:
         r.raise_for_status()
         data = await r.json()
     return data.get("results", [])
@@ -179,7 +179,7 @@ class TestBookHeadToHead:
 
     @pytest.mark.asyncio
     async def test_1_insert(self, book_data):
-        """Insert: Cognevra (real Go server) vs LanceDB (real Arrow)."""
+        """Insert: Levara (real Go server) vs LanceDB (real Arrow)."""
         chunks, vecs, _ = book_data
         N = len(chunks)
 
@@ -188,7 +188,7 @@ class TestBookHeadToHead:
         print(f"     Embeddings: pre-computed (same vectors for both)")
         print("=" * 72)
 
-        # ── Cognevra ──
+        # ── Levara ──
         async with aiohttp.ClientSession() as session:
             t0 = time.perf_counter()
             for start in range(0, N, 50):
@@ -197,7 +197,7 @@ class TestBookHeadToHead:
                     "vector": vecs[i],
                     "metadata": {"text": chunks[i]["text"][:500], "chapter": chunks[i]["chapter"]},
                 } for i in range(start, min(start + 50, N))]
-                await cognevra_insert(session, batch)
+                await levara_insert(session, batch)
             t_v = time.perf_counter() - t0
 
         # ── LanceDB ──
@@ -220,10 +220,10 @@ class TestBookHeadToHead:
         v_dps, l_dps = N / t_v, N / t_l
         print(f"\n  {'Provider':<35} {'dp/s':>8}  {'total ms':>10}")
         print(f"  {'-'*58}")
-        print(f"  {'Cognevra (standalone/WAL)':<35} {v_dps:>8,.0f}  {t_v*1000:>10.1f}")
+        print(f"  {'Levara (standalone/WAL)':<35} {v_dps:>8,.0f}  {t_v*1000:>10.1f}")
         print(f"  {'LanceDB (real Arrow)':<35} {l_dps:>8,.0f}  {t_l*1000:>10.1f}")
         ratio = max(v_dps, l_dps) / min(v_dps, l_dps)
-        winner = "Cognevra" if v_dps > l_dps else "LanceDB"
+        winner = "Levara" if v_dps > l_dps else "LanceDB"
         print(f"\n  Winner: {winner} ({ratio:.1f}x)")
 
         # Store for later tests
@@ -253,13 +253,13 @@ class TestBookHeadToHead:
         # Allow async HNSW indexer to finish
         await asyncio.sleep(2)
 
-        # ── Cognevra ──
+        # ── Levara ──
         v_lats = []
         async with aiohttp.ClientSession() as session:
             for _ in range(5):
                 for qv in q_vecs:
                     t0 = time.perf_counter()
-                    await cognevra_search(session, qv, k=K)
+                    await levara_search(session, qv, k=K)
                     v_lats.append((time.perf_counter() - t0) * 1000)
 
         # ── LanceDB ──
@@ -281,10 +281,10 @@ class TestBookHeadToHead:
 
         print(f"\n  {'Provider':<35} {'p50':>7} {'p95':>7} {'p99':>7} {'mean':>7}  (ms)")
         print(f"  {'-'*72}")
-        print(f"  {'Cognevra (standalone/WAL)':<35} {vp50:>7.1f} {vp95:>7.1f} {vp99:>7.1f} {vm:>7.1f}")
+        print(f"  {'Levara (standalone/WAL)':<35} {vp50:>7.1f} {vp95:>7.1f} {vp99:>7.1f} {vm:>7.1f}")
         print(f"  {'LanceDB (real Arrow)':<35} {lp50:>7.1f} {lp95:>7.1f} {lp99:>7.1f} {lm:>7.1f}")
         ratio = max(vm, lm) / min(vm, lm)
-        winner = "Cognevra" if vm < lm else "LanceDB"
+        winner = "Levara" if vm < lm else "LanceDB"
         print(f"\n  Winner: {winner} ({ratio:.1f}x faster)")
 
     @pytest.mark.asyncio
@@ -296,10 +296,10 @@ class TestBookHeadToHead:
         print(f"  3. CONCURRENT QPS  ({len(QUERIES)} queries at once)")
         print("=" * 72)
 
-        # ── Cognevra ──
+        # ── Levara ──
         async with aiohttp.ClientSession() as session:
             t0 = time.perf_counter()
-            await asyncio.gather(*[cognevra_search(session, qv, k=K) for qv in q_vecs])
+            await asyncio.gather(*[levara_search(session, qv, k=K) for qv in q_vecs])
             t_v = time.perf_counter() - t0
 
         # ── LanceDB ──
@@ -311,10 +311,10 @@ class TestBookHeadToHead:
         qps_v, qps_l = len(q_vecs) / t_v, len(q_vecs) / t_l
         print(f"\n  {'Provider':<35} {'QPS':>8}  {'total ms':>10}")
         print(f"  {'-'*58}")
-        print(f"  {'Cognevra (standalone/WAL)':<35} {qps_v:>8,.0f}  {t_v*1000:>10.1f}")
+        print(f"  {'Levara (standalone/WAL)':<35} {qps_v:>8,.0f}  {t_v*1000:>10.1f}")
         print(f"  {'LanceDB (real Arrow)':<35} {qps_l:>8,.0f}  {t_l*1000:>10.1f}")
         ratio = max(qps_v, qps_l) / min(qps_v, qps_l)
-        winner = "Cognevra" if qps_v > qps_l else "LanceDB"
+        winner = "Levara" if qps_v > qps_l else "LanceDB"
         print(f"\n  Winner: {winner} ({ratio:.1f}x)")
 
     @pytest.mark.asyncio
@@ -326,11 +326,11 @@ class TestBookHeadToHead:
         print(f"  4. KEYWORD HIT RATE  ({len(QUERIES)} queries, k={K})")
         print("=" * 72)
 
-        # ── Cognevra ──
+        # ── Levara ──
         v_hits = 0
         async with aiohttp.ClientSession() as session:
             for cq, qv in zip(QUERIES, q_vecs):
-                results = await cognevra_search(session, qv, k=K)
+                results = await levara_search(session, qv, k=K)
                 combined = " ".join(
                     json.loads(r.get("metadata", "{}")).get("text", "")
                     if isinstance(r.get("metadata"), str)
@@ -359,7 +359,7 @@ class TestBookHeadToHead:
 
         print(f"\n  {'Provider':<35} {'Hits':>5} {'Rate':>8}")
         print(f"  {'-'*52}")
-        print(f"  {'Cognevra (standalone/WAL)':<35} {v_hits:>3}/{len(QUERIES)}  {v_rate:>7.0%}")
+        print(f"  {'Levara (standalone/WAL)':<35} {v_hits:>3}/{len(QUERIES)}  {v_rate:>7.0%}")
         print(f"  {'LanceDB (real Arrow)':<35} {l_hits:>3}/{len(QUERIES)}  {l_rate:>7.0%}")
 
     @pytest.mark.asyncio
@@ -367,7 +367,7 @@ class TestBookHeadToHead:
         """Final comparison table."""
         chunks, _, _ = book_data
         print("\n" + "=" * 72)
-        print(f"  ИТОГО: Cognevra vs LanceDB на реальной книге")
+        print(f"  ИТОГО: Levara vs LanceDB на реальной книге")
         print(f"  «Ураган» (Джанет Эдвардс), {len(chunks)} чанков, dim={DIM}")
         print(f"  Embeddings: pplx-embed-context-v1-0.6b (реальные)")
         print("=" * 72)
@@ -376,7 +376,7 @@ class TestBookHeadToHead:
   и того же embed-server. Никаких моков — реальный текст,
   реальные вектора, реальные семантические запросы.
 
-  Cognevra: Go HNSW + WAL + HTTP (standalone mode)
+  Levara: Go HNSW + WAL + HTTP (standalone mode)
   LanceDB:  Rust Arrow + in-process (no network overhead)
 """)
         print("=" * 72)

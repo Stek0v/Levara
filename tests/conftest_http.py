@@ -1,4 +1,4 @@
-"""Shared fixtures for Cognevra HTTP API tests."""
+"""Shared fixtures for Levara HTTP API tests."""
 import os
 import uuid
 import random
@@ -6,7 +6,7 @@ import math
 import pytest
 import aiohttp
 
-BASE_URL = os.getenv("COGNEVRA_HTTP_URL", "http://localhost:8080/api/v1")
+BASE_URL = os.getenv("LEVARA_HTTP_URL", "http://localhost:8080/api/v1")
 
 # ── Markers ──
 
@@ -105,7 +105,7 @@ async def http_session():
 @pytest.fixture(scope="session")
 async def auth_token(http_session, base_url):
     """Register + login to get JWT token."""
-    email = f"testuser_{uuid.uuid4().hex[:8]}@cognevra.dev"
+    email = f"testuser_{uuid.uuid4().hex[:8]}@levara.dev"
     password = "testpass123456"
     # Register (ignore conflict if already exists)
     await http_session.post(

@@ -1,4 +1,4 @@
-# Cognevra Go — Roadmap до Feature Parity с Cognee Python
+# Levara Go — Roadmap до Feature Parity с Cognee Python
 
 > **Статус на 2026-04-17:** все P0 и почти все P1 реализованы. Оставшиеся пункты
 > — P2/P3 (расширения, не feature gap) и **закрытие тестового покрытия** в

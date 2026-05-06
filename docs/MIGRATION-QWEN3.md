@@ -71,7 +71,7 @@ mkdir -p models
 cp /path/to/qwen3-embedding-0.6b-q8_0.gguf models/
 cp /path/to/qwen3-reranker-0.6b-q8_0.gguf models/
 
-# Bring up embed + rerank services WITHOUT touching cognevra yet:
+# Bring up embed + rerank services WITHOUT touching levara yet:
 docker compose -f docker-compose.qwen3.yml up -d qwen3-embed qwen3-rerank-llm qwen3-rerank-front
 
 # Watch them load (first run is slow — GPU layer allocation):
@@ -149,12 +149,12 @@ curl -s -X POST http://10.23.0.64:8080/api/v1/collections \
 
 # TEMPORARY env override on the Levara process — point it at new embed
 # for this one request. If compose: edit docker-compose.qwen3.yml's
-# cognevra block, or use docker compose exec for a one-off:
-docker compose exec cognevra sh -c '
+# levara block, or use docker compose exec for a one-off:
+docker compose exec levara sh -c '
   EMBEDDING_ENDPOINT=http://qwen3-embed:9001/v1/embeddings \
   EMBEDDING_MODEL=qwen3-embedding-0.6b \
   EMBEDDING_DIMENSIONS=1024 \
-  ./cognevra ...'
+  ./levara ...'
 
 # Alternative: stand up a second Levara instance on a different port
 # (8090) with new env, leave the main one untouched. This is the
@@ -249,8 +249,8 @@ Once shadow validates:
 ### With compose overlay
 
 ```bash
-# Pull the overlay — the cognevra env gets patched automatically.
-docker compose -f docker-compose.yml -f docker-compose.qwen3.yml up -d --build cognevra
+# Pull the overlay — the levara env gets patched automatically.
+docker compose -f docker-compose.yml -f docker-compose.qwen3.yml up -d --build levara
 ```
 
 ### Standalone
@@ -266,7 +266,7 @@ export RERANK_MODEL=qwen3-reranker-0.6b
 export RERANK_TIMEOUT_MS=5000
 
 # Graceful restart (SIGTERM → WAL flush → exit)
-kill -TERM $(pgrep -f cognevra)
+kill -TERM $(pgrep -f levara)
 # systemd/supervisor brings it back up with new env.
 ```
 
@@ -363,7 +363,7 @@ EOF
 done
 
 # 2. Restart Levara so CollectionManager rebuilds its index from DB:
-docker compose restart cognevra
+docker compose restart levara
 
 # 3. Verify:
 curl -s http://10.23.0.64:8080/api/v1/collections \

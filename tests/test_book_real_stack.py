@@ -3,14 +3,14 @@ REAL STACK end-to-end benchmark with the book «Ураган» (Janet Edwards).
 
 Requires running stack:
   - embed-server on :9001 (pplx-embed-context-v1-0.6b, dim=1024)
-  - Cognevra on :8080 (dim=1024, 3 shards)
+  - Levara on :8080 (dim=1024, 3 shards)
   - llama-server on :9004 (Qwen3.5-27B) [optional — only for LLM tests]
 
 This test bypasses Cognee and talks directly to:
   1. embed-server — for real embeddings
-  2. Cognevra — for real vector insert/search
+  2. Levara — for real vector insert/search
 
-This way we measure the actual Cognevra + real embedding pipeline performance.
+This way we measure the actual Levara + real embedding pipeline performance.
 
 Run:
     pytest tests/test_book_real_stack.py -v -s
@@ -34,7 +34,7 @@ import pytest
 
 BOOK_PATH = Path(__file__).parent.parent / "Edvards_Dzanet_Uragan_r4_P61XH.txt"
 EMBED_URL = "http://localhost:9001/v1/embeddings"
-COGNEVRA_URL = "http://localhost:8080"
+LEVARA_URL = "http://localhost:8080"
 EMBED_MODEL = "pplx-embed-context-v1-0.6b"
 DIM = 1024
 MIN_CHUNK_CHARS = 80
@@ -61,13 +61,13 @@ def _check_service(url: str, name: str):
 def _stack_available():
     return (
         _check_service("http://localhost:9001/health", "embed-server")
-        and _check_service("http://localhost:8080/metrics", "Cognevra")
+        and _check_service("http://localhost:8080/metrics", "Levara")
     )
 
 
 pytestmark = pytest.mark.skipif(
     not _stack_available(),
-    reason="Real stack not running (need embed-server:9001 + Cognevra:8080)",
+    reason="Real stack not running (need embed-server:9001 + Levara:8080)",
 )
 
 
@@ -132,23 +132,23 @@ async def embed_texts(
     return all_vectors
 
 
-# ── Cognevra client ──────────────────────────────────────────────────────────
+# ── Levara client ──────────────────────────────────────────────────────────
 
-async def cognevra_insert(
+async def levara_insert(
     session: aiohttp.ClientSession,
     records: List[dict],
 ) -> dict:
-    """Batch insert into Cognevra."""
+    """Batch insert into Levara."""
     payload = {"records": records}
     async with session.post(
-        f"{COGNEVRA_URL}/api/v1/batch_insert",
+        f"{LEVARA_URL}/api/v1/batch_insert",
         json=payload,
     ) as resp:
         if resp.status == 404:
             # Fallback to single inserts
             for rec in records:
                 async with session.post(
-                    f"{COGNEVRA_URL}/api/v1/insert", json=rec
+                    f"{LEVARA_URL}/api/v1/insert", json=rec
                 ) as r:
                     r.raise_for_status()
             return {"inserted": len(records), "failed": 0}
@@ -156,15 +156,15 @@ async def cognevra_insert(
         return await resp.json()
 
 
-async def cognevra_search(
+async def levara_search(
     session: aiohttp.ClientSession,
     vector: List[float],
     k: int = 10,
 ) -> List[dict]:
-    """Search Cognevra."""
+    """Search Levara."""
     payload = {"vector": vector, "k": k}
     async with session.post(
-        f"{COGNEVRA_URL}/api/v1/search", json=payload
+        f"{LEVARA_URL}/api/v1/search", json=payload
     ) as resp:
         resp.raise_for_status()
         data = await resp.json()
@@ -286,7 +286,7 @@ class TestRealEmbedding:
 
 
 class TestRealStackInsert:
-    """Insert real book data into real Cognevra with real embeddings.
+    """Insert real book data into real Levara with real embeddings.
 
     Uses pipeline overlap: embed + insert run simultaneously via asyncio.Queue.
     """
@@ -294,7 +294,7 @@ class TestRealStackInsert:
     @pytest.mark.asyncio
     async def test_full_insert(self, book_chunks):
         print("\n" + "═" * 70)
-        print("  REAL STACK INSERT — «Ураган» → embed-server → Cognevra")
+        print("  REAL STACK INSERT — «Ураган» → embed-server → Levara")
         print(f"  (optimized: batch_size={DEFAULT_BATCH_SIZE}, "
               f"chunk_size={DEFAULT_MAX_CHUNK_CHARS}, pipeline overlap)")
         print("═" * 70)
@@ -340,7 +340,7 @@ class TestRealStackInsert:
                             "chunk_index": c["chunk_index"],
                         },
                     } for c, v in zip(batch_chunks, vecs)]
-                    await cognevra_insert(session, records)
+                    await levara_insert(session, records)
                     inserted += len(records)
 
             t0 = time.perf_counter()
@@ -365,7 +365,7 @@ class TestRealStackInsert:
 
 
 class TestRealStackSearch:
-    """Search with real embeddings and real Cognevra."""
+    """Search with real embeddings and real Levara."""
 
     @pytest.mark.asyncio
     async def test_search_quality_and_latency(self, book_chunks):
@@ -391,7 +391,7 @@ class TestRealStackSearch:
                     },
                 })
             for start in range(0, len(records), 50):
-                await cognevra_insert(session, records[start:start + 32])
+                await levara_insert(session, records[start:start + 32])
 
             # ── Embed queries ──
             query_texts = [q["query"] for q in CONTEXTUAL_QUERIES]
@@ -412,7 +412,7 @@ class TestRealStackSearch:
 
             for i, (cq, qvec) in enumerate(zip(CONTEXTUAL_QUERIES, query_vectors)):
                 t0 = time.perf_counter()
-                results = await cognevra_search(session, qvec, k=10)
+                results = await levara_search(session, qvec, k=10)
                 lat = (time.perf_counter() - t0) * 1000
                 latencies.append(lat)
 
@@ -444,7 +444,7 @@ class TestRealStackSearch:
             hit_rate = hits / len(CONTEXTUAL_QUERIES)
 
             print(f"\n  {'─' * 70}")
-            print(f"\n  Search Latency (Cognevra, {N} vectors, real HNSW):")
+            print(f"\n  Search Latency (Levara, {N} vectors, real HNSW):")
             print(f"    p50:  {s[n//2]:.1f} ms")
             print(f"    p95:  {s[int(n*0.95)]:.1f} ms")
             print(f"    p99:  {s[int(n*0.99)]:.1f} ms")
@@ -466,7 +466,7 @@ class TestRealStackSearch:
             for _ in range(5):
                 for qvec in query_vectors:
                     t0 = time.perf_counter()
-                    await cognevra_search(session, qvec, k=10)
+                    await levara_search(session, qvec, k=10)
                     extra_lats.append((time.perf_counter() - t0) * 1000)
 
             all_lats = sorted(extra_lats)
@@ -479,7 +479,7 @@ class TestRealStackSearch:
             # ── Concurrent QPS ──
             t0 = time.perf_counter()
             await asyncio.gather(*[
-                cognevra_search(session, qv, k=10) for qv in query_vectors
+                levara_search(session, qv, k=10) for qv in query_vectors
             ])
             t_conc = time.perf_counter() - t0
             qps = len(query_vectors) / t_conc
@@ -508,7 +508,7 @@ class TestRealStackReport:
     async def test_full_report(self, book_chunks):
         print("\n" + "═" * 70)
         print("  FULL REAL STACK REPORT — «Ураган» (Джанет Эдвардс)")
-        print("  Qwen3.5-27B + pplx-embed-v1-0.6b + Cognevra (dim=1024)")
+        print("  Qwen3.5-27B + pplx-embed-v1-0.6b + Levara (dim=1024)")
         print("═" * 70)
 
         N = len(book_chunks)
@@ -531,7 +531,7 @@ class TestRealStackReport:
 
             t0 = time.perf_counter()
             for start in range(0, len(records), 50):
-                await cognevra_insert(session, records[start:start + 32])
+                await levara_insert(session, records[start:start + 32])
             insert_time = time.perf_counter() - t0
 
             # ── Search ──
@@ -543,7 +543,7 @@ class TestRealStackReport:
             for _ in range(5):
                 for qv in query_vectors:
                     t0 = time.perf_counter()
-                    await cognevra_search(session, qv, k=10)
+                    await levara_search(session, qv, k=10)
                     lats.append((time.perf_counter() - t0) * 1000)
 
             sl = sorted(lats)
@@ -551,14 +551,14 @@ class TestRealStackReport:
 
             # QPS
             t0 = time.perf_counter()
-            await asyncio.gather(*[cognevra_search(session, qv, k=10) for qv in query_vectors])
+            await asyncio.gather(*[levara_search(session, qv, k=10) for qv in query_vectors])
             t_conc = time.perf_counter() - t0
             qps = len(query_vectors) / t_conc
 
             # Hit rate
             hits = 0
             for cq, qv in zip(CONTEXTUAL_QUERIES, query_vectors):
-                results = await cognevra_search(session, qv, k=10)
+                results = await levara_search(session, qv, k=10)
                 combined = " ".join(
                     r.get("metadata", {}).get("text", "") for r in results
                 ).lower()
@@ -566,9 +566,9 @@ class TestRealStackReport:
                     hits += 1
             hit_rate = hits / len(CONTEXTUAL_QUERIES)
 
-        # ── Cognevra info ──
+        # ── Levara info ──
         import urllib.request
-        cognevra_info = json.loads(
+        levara_info = json.loads(
             urllib.request.urlopen("http://localhost:8080/api/v1/info").read()
         )
 
@@ -584,12 +584,12 @@ class TestRealStackReport:
   │ Avg chunk size (chars)                 │ {avg_chunk:<13.0f} │
   │ Embedding model                        │ pplx-embed    │
   │ Embedding dim                          │ {DIM:<13} │
-  │ Cognevra shards                        │ {cognevra_info.get('shards', '?'):<13} │
+  │ Levara shards                        │ {levara_info.get('shards', '?'):<13} │
   ├────────────────────────────────────────┼───────────────┤
   │ Embed time ({N} chunks)               │ {embed_time*1000:<10.0f} ms │
   │ Embed throughput                       │ {N/embed_time:<10.0f} /s │
-  │ Cognevra insert time                   │ {insert_time*1000:<10.0f} ms │
-  │ Cognevra insert throughput             │ {N/insert_time:<10.0f} /s │
+  │ Levara insert time                   │ {insert_time*1000:<10.0f} ms │
+  │ Levara insert throughput             │ {N/insert_time:<10.0f} /s │
   │ Total pipeline (embed+insert)          │ {(embed_time+insert_time)*1000:<10.0f} ms │
   ├────────────────────────────────────────┼───────────────┤
   │ Search p50 (real HNSW)                 │ {sl[nl//2]:<10.1f} ms │
@@ -601,7 +601,7 @@ class TestRealStackReport:
   │ Keyword hit rate ({len(CONTEXTUAL_QUERIES)} queries)            │ {hit_rate:<10.0%}      │
   └────────────────────────────────────────┴───────────────┘
 
-  Stack: Qwen3.5-27B (Q4_K_M) + pplx-embed-context-v1 + Cognevra
+  Stack: Qwen3.5-27B (Q4_K_M) + pplx-embed-context-v1 + Levara
   GPU: RTX 3090 (CUDA)
 """)
         print("═" * 70)
