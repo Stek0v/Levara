@@ -1,7 +1,7 @@
 """
-Layer 3 tests: CognevraAdapter.health_check() — dimension validation via gRPC Info RPC.
+Layer 3 tests: LevaraAdapter.health_check() — dimension validation via gRPC Info RPC.
 
-Tests the most autonomous Python validation layer: gRPC call to Cognevra
+Tests the most autonomous Python validation layer: gRPC call to Levara
 server to compare server dimension with embedding engine dimension.
 """
 
@@ -13,18 +13,18 @@ import grpc
 import grpc.aio
 import pytest
 
-from cognee.infrastructure.databases.vector.cognevra.CognevraAdapter import CognevraAdapter
+from cognee.infrastructure.databases.vector.levara.LevaraAdapter import LevaraAdapter
 
-pb = sys.modules["cognee.infrastructure.databases.vector.cognevra.generated.cognevra_pb2"]
+pb = sys.modules["cognee.infrastructure.databases.vector.levara.generated.levara_pb2"]
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _make_adapter(engine_dim: int = 768) -> CognevraAdapter:
+def _make_adapter(engine_dim: int = 768) -> LevaraAdapter:
     """Create adapter with a mock embedding engine."""
     engine = MagicMock()
     engine.get_vector_size = MagicMock(return_value=engine_dim)
-    adapter = CognevraAdapter(
+    adapter = LevaraAdapter(
         url="localhost:50051",
         api_key=None,
         embedding_engine=engine,
@@ -32,7 +32,7 @@ def _make_adapter(engine_dim: int = 768) -> CognevraAdapter:
     return adapter
 
 
-def _patch_stub(adapter: CognevraAdapter, dimension: int, shards: int = 1, status: str = "ready"):
+def _patch_stub(adapter: LevaraAdapter, dimension: int, shards: int = 1, status: str = "ready"):
     """Replace adapter._stub with a MagicMock whose Info returns pb.InfoResp."""
     stub = MagicMock()
     stub.Info = AsyncMock(return_value=pb.InfoResp(
@@ -69,7 +69,7 @@ class TestHealthCheckLayer3:
         adapter = _make_adapter(engine_dim=768)
         _patch_stub(adapter, dimension=512, shards=1)
 
-        with pytest.raises(RuntimeError, match="Fix EMBEDDING_DIMENSIONS or Cognevra -dim flag"):
+        with pytest.raises(RuntimeError, match="Fix EMBEDDING_DIMENSIONS or Levara -dim flag"):
             await adapter.health_check()
 
     @pytest.mark.asyncio
