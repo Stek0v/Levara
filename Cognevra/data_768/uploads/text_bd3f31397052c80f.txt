@@ -1,1 +1,0 @@
-Vector databases store high-dimensional vectors and enable similarity search. HNSW, IVF, and PQ are common indexing algorithms. Cosine similarity and Euclidean distance are standard metrics.

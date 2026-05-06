@@ -1,9 +1,0 @@
-{
-  "name": "reembed_9eb9b3dd",
-  "embedding_model": "",
-  "embedding_dim": 128,
-  "distance_metric": "cosine",
-  "record_count": 0,
-  "created_at": "2026-03-21T21:23:31Z",
-  "updated_at": "2026-03-21T21:23:31Z"
-}
