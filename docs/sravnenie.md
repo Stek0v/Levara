@@ -1,10 +1,10 @@
-# Cognevra Go vs Cognee Python — Сравнительный анализ
+# Levara Go vs Cognee Python — Сравнительный анализ
 
 ## 1. Обзор
 
 **Cognee** — open-source Python-платформа для построения RAG-пайплайнов с графовой базой знаний. 13.1K GitHub stars, 80+ releases, version 0.5.3. Ядро: pluggable backends, LiteLLM routing, 97 task-файлов.
 
-**Cognevra** — production-оптимизированная реализация на Go. 29 packages, 24,662 LOC, Go 1.25.5. Native HNSW с WAL durability, gRPC + HTTP API, single binary deployment. Создана для замены Python-стека в read-heavy production workloads, где latency и throughput критичны.
+**Levara** — production-оптимизированная реализация на Go. 29 packages, 24,662 LOC, Go 1.25.5. Native HNSW с WAL durability, gRPC + HTTP API, single binary deployment. Создана для замены Python-стека в read-heavy production workloads, где latency и throughput критичны.
 
 Цель документа: точное сравнение на основе аудита обеих систем с конкретными числами.
 
@@ -19,11 +19,11 @@
 - **Async**: asyncio event loop
 - **LLM routing**: LiteLLM (10+ providers)
 - **Structured output**: Instructor + BAML
-- **Vector**: pluggable (LanceDB, PGVector, ChromaDB, VectraDB, Cognevra)
+- **Vector**: pluggable (LanceDB, PGVector, ChromaDB, VectraDB, Levara)
 - **Graph**: pluggable (Kuzu, Neo4j, Neptune)
 - **Runtime**: Python 3.10-3.13, 68 core deps + 24 optional extras
 
-### Cognevra Go
+### Levara Go
 
 - **Web**: Fiber v2 (fasthttp-based)
 - **DB**: pgx (native PostgreSQL driver, no ORM)
@@ -38,7 +38,7 @@
 ### Диаграмма стека
 
 ```
-  Cognee Python                          Cognevra Go
+  Cognee Python                          Levara Go
   ─────────────                          ───────────
   ┌─────────────────────┐                ┌─────────────────────┐
   │  FastAPI (uvicorn)  │                │  Fiber v2 (fasthttp)│
@@ -72,7 +72,7 @@
 
 Среда: NVIDIA RTX 3090, Intel i7-7700 @ 3.60GHz, Linux 6.8. Embedding: pplx-embed-context-v1-0.6b (dim=1024, FP16, CUDA).
 
-| Метрика | Cognevra Go | Cognee Python | Разница |
+| Метрика | Levara Go | Cognee Python | Разница |
 |---------|------------|---------------|---------|
 | Search latency p50 (1.4K vecs) | 2.6 ms | 9.1 ms (LanceDB) | 3.5x |
 | Search latency mean (1.4K vecs) | 2.7 ms | 13.2 ms (LanceDB) | 4.9x |
@@ -89,17 +89,17 @@
 
 ### Scale Test (synthetic vectors, dim=1024, gRPC)
 
-| Scale | Cognevra search p50 | LanceDB search p50 | Delta | Cognevra QPS | LanceDB QPS |
+| Scale | Levara search p50 | LanceDB search p50 | Delta | Levara QPS | LanceDB QPS |
 |-------|---------------------|---------------------|-------|-------------|-------------|
 | 1K | 0.99 ms | 9.81 ms | 9.9x | 589 | 98 |
 | 10K | 7.88 ms | 55.83 ms | 7.1x | 480 | 20 |
 | 100K | 23.66 ms | 203.71 ms | 8.6x | 143 | 5 |
 
-Cognevra: HNSW O(log N). LanceDB: IVF/PQ O(N) scan. При 100K vectors LanceDB непригодна для real-time (200ms+), Cognevra держится под 25ms.
+Levara: HNSW O(log N). LanceDB: IVF/PQ O(N) scan. При 100K vectors LanceDB непригодна для real-time (200ms+), Levara держится под 25ms.
 
 ### Write Throughput (LanceDB быстрее)
 
-| Scale | Cognevra dp/s | LanceDB dp/s | Delta |
+| Scale | Levara dp/s | LanceDB dp/s | Delta |
 |-------|--------------|--------------|-------|
 | 1K | 591 | 3,911 | LanceDB 6.6x |
 | 10K | 697 | 5,226 | LanceDB 7.5x |
@@ -120,7 +120,7 @@ Cognevra: HNSW O(log N). LanceDB: IVF/PQ O(N) scan. При 100K vectors LanceDB 
 
 ### Search Types
 
-| Тип | Cognee | Cognevra | Примечание |
+| Тип | Cognee | Levara | Примечание |
 |-----|--------|----------|------------|
 | SUMMARIES | Yes | Yes | — |
 | INSIGHTS | Yes | Yes | — |
@@ -138,11 +138,11 @@ Cognevra: HNSW O(log N). LanceDB: IVF/PQ O(N) scan. При 100K vectors LanceDB 
 | GRAPH_SEARCH_WITH_SCORING | Yes | Yes | — |
 | GRAPH_COMPLETION_CONTEXT_EXTENSION | Yes | **No** | Единственный пропущенный. Multi-hop graph traversal с расширенным context. Добавляется за 1 день |
 
-**Итого**: Cognee 15/15, Cognevra 14/15.
+**Итого**: Cognee 15/15, Levara 14/15.
 
 ### Data Loaders
 
-| Формат | Cognee | Cognevra | Примечание |
+| Формат | Cognee | Levara | Примечание |
 |--------|--------|----------|------------|
 | PDF | Yes | Yes | — |
 | DOCX | Yes | Yes | — |
@@ -162,35 +162,35 @@ Cognevra: HNSW O(log N). LanceDB: IVF/PQ O(N) scan. При 100K vectors LanceDB 
 | LaTeX | Yes | Yes | — |
 | Source code | Yes | Yes | Go, Python, JS, TS, Java, Rust, C/C++ |
 | Images (OCR) | Yes | Yes | — |
-| Audio (Whisper) | No | Yes | Cognevra: встроенный Whisper client |
-| Video | No | Yes | Cognevra: извлечение аудио + Whisper |
+| Audio (Whisper) | No | Yes | Levara: встроенный Whisper client |
+| Video | No | Yes | Levara: извлечение аудио + Whisper |
 | SQLite | Yes | No | Cognee: через SQLAlchemy |
 | URL scraping | Yes | Yes | — |
 
-**Итого**: Cognee 11 loaders, Cognevra 22+ форматов (включая audio/video через Whisper).
+**Итого**: Cognee 11 loaders, Levara 22+ форматов (включая audio/video через Whisper).
 
 ### LLM Providers
 
-| Provider | Cognee | Cognevra | Примечание |
+| Provider | Cognee | Levara | Примечание |
 |----------|--------|----------|------------|
 | OpenAI | Yes | Yes | GPT-4o, GPT-4, GPT-3.5 |
 | Anthropic | Yes | Yes | Claude 3.5/4 |
 | Azure OpenAI | Yes | No | Через LiteLLM |
 | Google Gemini | Yes | No | Через LiteLLM |
-| Ollama | Yes | No | Cognevra: через embed-server proxy |
+| Ollama | Yes | No | Levara: через embed-server proxy |
 | AWS Bedrock | Yes | No | Через LiteLLM |
 | Mistral | Yes | No | Через LiteLLM |
 | Groq | Yes | No | Через LiteLLM |
 | Llama.cpp | Yes | No | Через LiteLLM |
 | Custom HTTP | Yes | No | Через LiteLLM |
 
-**Итого**: Cognee 10+ providers (через LiteLLM), Cognevra 2 (OpenAI + Anthropic). Два провайдера покрывают ~95% production use cases.
+**Итого**: Cognee 10+ providers (через LiteLLM), Levara 2 (OpenAI + Anthropic). Два провайдера покрывают ~95% production use cases.
 
 ### Database Backends
 
 **Vector:**
 
-| Backend | Cognee | Cognevra | Примечание |
+| Backend | Cognee | Levara | Примечание |
 |---------|--------|----------|------------|
 | Native HNSW | No | Yes | mmap Arena, WAL, SIMD AVX2 |
 | LanceDB | Yes | No | Rust/Arrow, in-process |
@@ -200,7 +200,7 @@ Cognevra: HNSW O(log N). LanceDB: IVF/PQ O(N) scan. При 100K vectors LanceDB 
 
 **Graph:**
 
-| Backend | Cognee | Cognevra | Примечание |
+| Backend | Cognee | Levara | Примечание |
 |---------|--------|----------|------------|
 | Neo4j | Yes | Yes | — |
 | Kuzu | Yes | No | Embedded graph |
@@ -208,14 +208,14 @@ Cognevra: HNSW O(log N). LanceDB: IVF/PQ O(N) scan. При 100K vectors LanceDB 
 
 **Relational:**
 
-| Backend | Cognee | Cognevra | Примечание |
+| Backend | Cognee | Levara | Примечание |
 |---------|--------|----------|------------|
-| PostgreSQL | Yes | Yes | Cognevra: pgx, 16 tables |
+| PostgreSQL | Yes | Yes | Levara: pgx, 16 tables |
 | SQLite | Yes | No | Cognee default dev backend |
 
 ### Auth / RBAC
 
-| Функция | Cognee | Cognevra |
+| Функция | Cognee | Levara |
 |---------|--------|----------|
 | JWT authentication | Yes | Yes |
 | Multi-tenant | Yes | Yes |
@@ -227,7 +227,7 @@ Cognevra: HNSW O(log N). LanceDB: IVF/PQ O(N) scan. При 100K vectors LanceDB 
 
 ### Observability
 
-| Функция | Cognee | Cognevra |
+| Функция | Cognee | Levara |
 |---------|--------|----------|
 | Structured logging | Yes (Python logging) | Yes (slog) |
 | Prometheus metrics | No | Yes |
@@ -238,7 +238,7 @@ Cognevra: HNSW O(log N). LanceDB: IVF/PQ O(N) scan. При 100K vectors LanceDB 
 
 ---
 
-## 5. Преимущества Cognevra Go
+## 5. Преимущества Levara Go
 
 ### Скорость
 
@@ -266,7 +266,7 @@ Cognevra: HNSW O(log N). LanceDB: IVF/PQ O(N) scan. При 100K vectors LanceDB 
 
 ### Deployment
 
-| Параметр | Cognevra Go | Cognee Python |
+| Параметр | Levara Go | Cognee Python |
 |----------|------------|---------------|
 | Артефакт | Single binary ~36MB | pip install + 68 deps |
 | Docker image | ~100MB | ~2GB (с зависимостями) |
@@ -280,7 +280,7 @@ Cognevra: HNSW O(log N). LanceDB: IVF/PQ O(N) scan. При 100K vectors LanceDB 
 
 ### Экосистема
 
-- **10+ LLM providers** через LiteLLM (vs 2 в Cognevra)
+- **10+ LLM providers** через LiteLLM (vs 2 в Levara)
 - **5 vector backends** pluggable (vs 1 native HNSW)
 - **3 graph backends** (Kuzu, Neo4j, Neptune vs 1 Neo4j)
 - **LangChain + LlamaIndex** интеграции
@@ -311,7 +311,7 @@ Cognevra: HNSW O(log N). LanceDB: IVF/PQ O(N) scan. При 100K vectors LanceDB 
 
 ---
 
-## 7. Что осталось реализовать в Cognevra
+## 7. Что осталось реализовать в Levara
 
 ### Не реализовано (не нужно для production)
 
@@ -330,15 +330,15 @@ Cognevra: HNSW O(log N). LanceDB: IVF/PQ O(N) scan. При 100K vectors LanceDB 
 
 ### GRAPH_COMPLETION_CONTEXT_EXTENSION
 
-Единственный search type из Cognee Python, который не реализован в Cognevra. Расширенный context через multi-hop graph traversal с iterative context expansion. Оценка реализации: 1 день.
+Единственный search type из Cognee Python, который не реализован в Levara. Расширенный context через multi-hop graph traversal с iterative context expansion. Оценка реализации: 1 день.
 
 ---
 
 ## 8. Use Cases
 
-### Когда выбрать Cognevra Go
+### Когда выбрать Levara Go
 
-| Сценарий | Почему Cognevra | Ключевая метрика |
+| Сценарий | Почему Levara | Ключевая метрика |
 |----------|----------------|-----------------|
 | Read-heavy API (100+ concurrent users) | 5.4x выше QPS, goroutines без GIL | 589 QPS при 1K |
 | Low-latency search (SLA < 10ms) | p50 = 2.6ms, стабильный рост | 3.5-9.9x быстрее |
@@ -373,11 +373,11 @@ Cognevra: HNSW O(log N). LanceDB: IVF/PQ O(N) scan. При 100K vectors LanceDB 
   (single node,   |    (best fit)    |    (good enough)    |
    prototyping)   |                  |                     |
                   +------------------+---------------------+
-  Production      |    Cognee        |    Cognevra         |
+  Production      |    Cognee        |    Levara         |
   (microservice,  |    (write wins)  |    (best fit)       |
    K8s, SLA)      |                  |    5.4x QPS         |
                   +------------------+---------------------+
-  Edge / IoT      |    Cognevra      |    Cognevra         |
+  Edge / IoT      |    Levara      |    Levara         |
   (minimal deps)  |    (single bin)  |    (best fit)       |
                   +------------------+---------------------+
 ```
@@ -386,7 +386,7 @@ Cognevra: HNSW O(log N). LanceDB: IVF/PQ O(N) scan. При 100K vectors LanceDB 
 
 ## 9. Минимальные требования
 
-### Cognevra Go
+### Levara Go
 
 | Компонент | Минимум | Рекомендуемо |
 |-----------|---------|-------------|
@@ -416,7 +416,7 @@ Cognevra: HNSW O(log N). LanceDB: IVF/PQ O(N) scan. При 100K vectors LanceDB 
 
 ## 10. Тестирование
 
-### Cognevra Go — 191 тест, 12 suites
+### Levara Go — 191 тест, 12 suites
 
 | Suite | Tests | Что покрывает |
 |-------|-------|---------------|
@@ -464,7 +464,7 @@ Cognevra: HNSW O(log N). LanceDB: IVF/PQ O(N) scan. При 100K vectors LanceDB 
 
 ## 11. Итоги
 
-### Cognevra Go — production engine
+### Levara Go — production engine
 
 - **14/15 search types** (пропущен только GRAPH_COMPLETION_CONTEXT_EXTENSION)
 - **3.5-9.9x** быстрее на search, **5.4x** выше QPS
@@ -483,6 +483,6 @@ Cognevra: HNSW O(log N). LanceDB: IVF/PQ O(N) scan. При 100K vectors LanceDB 
 
 ### Главный вывод
 
-Cognevra Go — это не замена Cognee Python. Это специализированный production engine для read-heavy workloads, где latency и throughput являются business requirements. Cognee Python остаётся лучшим выбором для prototyping, multi-backend deployments и экосистемных интеграций.
+Levara Go — это не замена Cognee Python. Это специализированный production engine для read-heavy workloads, где latency и throughput являются business requirements. Cognee Python остаётся лучшим выбором для prototyping, multi-backend deployments и экосистемных интеграций.
 
-Оптимальная стратегия: **Cognee Python для разработки и экспериментов, Cognevra Go для production deployment**.
+Оптимальная стратегия: **Cognee Python для разработки и экспериментов, Levara Go для production deployment**.

@@ -28,7 +28,7 @@ re-authenticates.
 ### 2. gRPC clients must send `authorization: Bearer <jwt>` metadata
 
 T19 enforces auth on all gRPC RPCs except the public whitelist
-(`cognevra.v1.CognevraService/Info`). Run with `-require-auth=false`
+(`levara.v1.LevaraService/Info`). Run with `-require-auth=false`
 during the rollout window — that puts the interceptor in **permissive
 mode**: missing tokens are still allowed through (logged, not rejected),
 which lets you upgrade clients RPC by RPC. Once every client sends a
@@ -95,8 +95,8 @@ did.
 | Component | Before | After |
 |---|---|---|
 | HTTP API | `/api/v1/...` | unchanged surface, new fields in errors |
-| gRPC v1 | `cognevra.v1.CognevraService` | unchanged, requires JWT |
-| gRPC v2 | — | new `cognevra.v2.CognevraServiceV2` (3-month deprecation window for v1) |
+| gRPC v1 | `levara.v1.LevaraService` | unchanged, requires JWT |
+| gRPC v2 | — | new `levara.v2.LevaraServiceV2` (3-month deprecation window for v1) |
 | MCP transport | JSON-RPC 2.0 | unchanged, tools now carry `outputSchema` (additive) |
 | WebUI auth | — | new auth-guard + `/login?next=` redirect |
 | Settings persistence | localStorage only | backend-resolved, localStorage keeps FOUC role |
