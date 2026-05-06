@@ -84,7 +84,7 @@ Graph Search Isolation (2):
 
 Итого: 13 тестов.
 
-Requires: Cognevra HTTP :8080 с auth endpoints.
+Requires: Levara HTTP :8080 с auth endpoints.
 """
 import os
 import time
@@ -93,7 +93,7 @@ import asyncio
 import pytest
 import aiohttp
 
-BASE = os.getenv("COGNEVRA_HTTP_URL", "http://localhost:8080/api/v1")
+BASE = os.getenv("LEVARA_HTTP_URL", "http://localhost:8080/api/v1")
 BASE_ROOT = BASE.rsplit("/api/v1", 1)[0]  # http://localhost:8080
 
 pytestmark = pytest.mark.asyncio
@@ -668,7 +668,7 @@ async def test_rbac_superuser_bypass():
         assert ds_id, f"Не удалось создать dataset"
 
         # Пробуем получить superuser token через admin login
-        admin_email = "admin@cognevra.dev"
+        admin_email = "admin@levara.dev"
         admin_pw = "admin123456"
 
         h_admin = {}
@@ -692,7 +692,7 @@ async def test_rbac_superuser_bypass():
 
         if not h_admin:
             pytest.skip(
-                "Superuser login не доступен (admin@cognevra.dev)."
+                "Superuser login не доступен (admin@levara.dev)."
             )
 
         # Superuser должен видеть dataset юзера A

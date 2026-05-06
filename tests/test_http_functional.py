@@ -420,7 +420,7 @@ async def test_settings_get_defaults():
         async with s.get(f"{BASE_URL}/settings") as r:
             assert r.status == 200
             data = await r.json()
-            assert data["vector_engine"] == "cognevra"
+            assert data["vector_engine"] == "levara"
             assert "embedding_dimension" in data
 
 async def test_settings_put():

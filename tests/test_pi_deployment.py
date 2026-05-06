@@ -1,7 +1,7 @@
 """Тесты для Raspberry Pi deployment: SQLite, Git Analyzer, Memory, Chat History.
 
 Works with BOTH PostgreSQL and SQLite backends.
-Requires running Cognevra server (Go).
+Requires running Levara server (Go).
 """
 import subprocess
 import uuid
@@ -25,7 +25,7 @@ def _session():
 
 async def _register_and_token(session: aiohttp.ClientSession):
     """Register a fresh user and return (email, token)."""
-    email = f"pi_{uuid.uuid4().hex[:8]}@cognevra.dev"
+    email = f"pi_{uuid.uuid4().hex[:8]}@levara.dev"
     password = "pipass123456"
     await session.post(
         f"{BASE_URL}/auth/register",
@@ -84,7 +84,7 @@ class TestSQLite:
     async def test_sqlite_auth(self):
         """Register + login works on SQLite."""
         async with _session() as s:
-            email = f"sqlite_{uuid.uuid4().hex[:8]}@cognevra.dev"
+            email = f"sqlite_{uuid.uuid4().hex[:8]}@levara.dev"
             password = "sqlitepass123"
 
             # Register
@@ -192,10 +192,10 @@ class TestGitAnalyzer:
             assert not is_error
 
     async def test_git_analyze_cli(self):
-        """CLI `cognevra git analyze` exits with 0."""
+        """CLI `levara git analyze` exits with 0."""
         result = subprocess.run(
-            ["./cognevra", "git", "analyze", "--limit=3"],
-            cwd="/Users/stek0v/src/new_db/Cognevra",
+            ["./levara", "git", "analyze", "--limit=3"],
+            cwd="/Users/stek0v/src/new_db/Levara",
             capture_output=True,
             text=True,
             timeout=60,

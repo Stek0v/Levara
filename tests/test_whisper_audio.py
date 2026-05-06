@@ -51,7 +51,7 @@ Integration (2):
 
 Итого: 8 тестов.
 
-Requires: Cognevra HTTP :8080.
+Requires: Levara HTTP :8080.
 """
 import os
 import uuid
@@ -59,7 +59,7 @@ import asyncio
 import pytest
 import aiohttp
 
-BASE = os.getenv("COGNEVRA_HTTP_URL", "http://localhost:8080/api/v1")
+BASE = os.getenv("LEVARA_HTTP_URL", "http://localhost:8080/api/v1")
 BASE_ROOT = BASE.rsplit("/api/v1", 1)[0]  # http://localhost:8080
 
 pytestmark = pytest.mark.asyncio
@@ -138,7 +138,7 @@ async def test_audio_format_detection():
     Не должен вернуть ошибку "unknown format" или "unsupported file type"."""
     alive = await _check_server()
     if not alive:
-        assert False, "Cognevra HTTP сервер недоступен на " + BASE
+        assert False, "Levara HTTP сервер недоступен на " + BASE
 
     async with aiohttp.ClientSession(timeout=TIMEOUT) as s:
         h = await _register(s, "audio_det")
@@ -175,7 +175,7 @@ async def test_audio_classify():
     Проверяем через /add response или через /classify endpoint."""
     alive = await _check_server()
     if not alive:
-        assert False, "Cognevra HTTP сервер недоступен на " + BASE
+        assert False, "Levara HTTP сервер недоступен на " + BASE
 
     async with aiohttp.ClientSession(timeout=TIMEOUT) as s:
         h = await _register(s, "audio_cls")
@@ -224,7 +224,7 @@ async def test_audio_unsupported_format():
     Файл с неизвестным расширением НЕ должен уходить в Whisper pipeline."""
     alive = await _check_server()
     if not alive:
-        assert False, "Cognevra HTTP сервер недоступен на " + BASE
+        assert False, "Levara HTTP сервер недоступен на " + BASE
 
     async with aiohttp.ClientSession(timeout=TIMEOUT) as s:
         h = await _register(s, "audio_unk")
@@ -262,7 +262,7 @@ async def test_whisper_health_check():
     Допустимые значения: connected, not_configured, unreachable."""
     alive = await _check_server()
     if not alive:
-        assert False, "Cognevra HTTP сервер недоступен на " + BASE
+        assert False, "Levara HTTP сервер недоступен на " + BASE
 
     async with aiohttp.ClientSession(timeout=TIMEOUT) as s:
         # Пробуем /health/details
@@ -294,7 +294,7 @@ async def test_whisper_not_configured():
     Сервер должен вернуть 4xx с объяснением, или 200 с isError=true."""
     alive = await _check_server()
     if not alive:
-        assert False, "Cognevra HTTP сервер недоступен на " + BASE
+        assert False, "Levara HTTP сервер недоступен на " + BASE
 
     async with aiohttp.ClientSession(timeout=TIMEOUT) as s:
         h = await _register(s, "whisper_nc")
@@ -326,7 +326,7 @@ async def test_whisper_endpoint_format():
     Если настроен — проверяем что ответ содержит текст транскрипции."""
     alive = await _check_server()
     if not alive:
-        assert False, "Cognevra HTTP сервер недоступен на " + BASE
+        assert False, "Levara HTTP сервер недоступен на " + BASE
 
     async with aiohttp.ClientSession(timeout=TIMEOUT) as s:
         h = await _register(s, "whisper_fmt")
@@ -363,7 +363,7 @@ async def test_audio_pipeline_smoke():
     Если не настроен → проверяем что ошибка понятная."""
     alive = await _check_server()
     if not alive:
-        assert False, "Cognevra HTTP сервер недоступен на " + BASE
+        assert False, "Levara HTTP сервер недоступен на " + BASE
 
     async with aiohttp.ClientSession(timeout=TIMEOUT) as s:
         h = await _register(s, "audio_smoke")
@@ -445,7 +445,7 @@ async def test_all_format_support():
     Каждый формат должен вернуть "whisper not configured" или 200 — не generic ошибку."""
     alive = await _check_server()
     if not alive:
-        assert False, "Cognevra HTTP сервер недоступен на " + BASE
+        assert False, "Levara HTTP сервер недоступен на " + BASE
 
     async with aiohttp.ClientSession(timeout=TIMEOUT) as s:
         h = await _register(s, "audio_all")

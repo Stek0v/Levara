@@ -1,7 +1,7 @@
 """A2: Test new Go RPCs (SearchTriplets, DeduplicateGraph, BatchEmbedAndIndex)
 with real book data and real embeddings. No mocks.
 
-Requires: embed-server:9001, Cognevra gRPC:50051.
+Requires: embed-server:9001, Levara gRPC:50051.
 """
 import grpc
 import json
@@ -11,8 +11,8 @@ import uuid
 
 import pytest
 
-pb = sys.modules.get("cognee.infrastructure.databases.vector.cognevra.generated.cognevra_pb2")
-pb_grpc = sys.modules.get("cognee.infrastructure.databases.vector.cognevra.generated.cognevra_pb2_grpc")
+pb = sys.modules.get("cognee.infrastructure.databases.vector.levara.generated.levara_pb2")
+pb_grpc = sys.modules.get("cognee.infrastructure.databases.vector.levara.generated.levara_pb2_grpc")
 if pb is None or pb_grpc is None:
     pytest.skip("Proto stubs not loaded", allow_module_level=True)
 
@@ -22,7 +22,7 @@ def _channel():
     try:
         grpc.channel_ready_future(ch).result(timeout=3)
     except grpc.FutureTimeoutError:
-        pytest.skip("Cognevra not running on localhost:50051")
+        pytest.skip("Levara not running on localhost:50051")
     return ch
 
 
@@ -57,7 +57,7 @@ class TestDeduplicateGraphRealData:
 
     def test_dedup_removes_duplicates(self):
         ch = _channel()
-        stub = pb_grpc.CognevraServiceStub(ch)
+        stub = pb_grpc.LevaraServiceStub(ch)
 
         # Add duplicates
         nodes = []
@@ -91,7 +91,7 @@ class TestDeduplicateGraphRealData:
 
     def test_triplet_text_format(self):
         ch = _channel()
-        stub = pb_grpc.CognevraServiceStub(ch)
+        stub = pb_grpc.LevaraServiceStub(ch)
 
         resp = stub.DeduplicateGraph(pb.DeduplicateGraphReq(
             nodes=[
@@ -118,7 +118,7 @@ class TestDeduplicateGraphRealData:
     def test_uuid5_deterministic(self):
         """Triplet IDs should be deterministic (same input → same UUID5)."""
         ch = _channel()
-        stub = pb_grpc.CognevraServiceStub(ch)
+        stub = pb_grpc.LevaraServiceStub(ch)
 
         req = pb.DeduplicateGraphReq(
             nodes=[pb.DedupNodeMsg(id="a", name="A"), pb.DedupNodeMsg(id="b", name="B")],
@@ -135,7 +135,7 @@ class TestBatchEmbedAndIndexRealData:
 
     def test_embed_and_index_characters(self):
         ch = _channel()
-        stub = pb_grpc.CognevraServiceStub(ch)
+        stub = pb_grpc.LevaraServiceStub(ch)
 
         items = [
             pb.IndexItem(id=cid, text=f"{name}: {desc}", metadata_json=json.dumps({"name": name}))
@@ -179,7 +179,7 @@ class TestBatchEmbedAndIndexRealData:
     def test_multi_group_embed(self):
         """Embed+index multiple collections in one call."""
         ch = _channel()
-        stub = pb_grpc.CognevraServiceStub(ch)
+        stub = pb_grpc.LevaraServiceStub(ch)
 
         resp = stub.BatchEmbedAndIndex(pb.BatchEmbedAndIndexReq(
             groups=[
@@ -208,7 +208,7 @@ class TestSearchTripletsRealData:
 
     def test_search_with_character_graph(self):
         ch = _channel()
-        stub = pb_grpc.CognevraServiceStub(ch)
+        stub = pb_grpc.LevaraServiceStub(ch)
 
         # Build graph
         nodes = [
@@ -259,7 +259,7 @@ class TestSearchTripletsRealData:
     def test_performance_large_graph(self):
         """1000+ edges should complete in <10ms."""
         ch = _channel()
-        stub = pb_grpc.CognevraServiceStub(ch)
+        stub = pb_grpc.LevaraServiceStub(ch)
 
         nodes = [pb.TripletNode(id=f"n{i}", name=f"Entity{i}") for i in range(200)]
         edges = [

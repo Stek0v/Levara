@@ -1,7 +1,7 @@
 """Functional tests for Cognee full platform (add → cognify → search).
 
-Mirror of test_functional_cognevra.py — same operations, same data, same assertions.
-Uses: Cognee API:8002 (includes Cognevra + Neo4j + PostgreSQL + Redis).
+Mirror of test_functional_levara.py — same operations, same data, same assertions.
+Uses: Cognee API:8002 (includes Levara + Neo4j + PostgreSQL + Redis).
 """
 import asyncio
 import io
@@ -189,20 +189,20 @@ class TestFunctionalCognee:
 
     # ── 4. Collection management ──
 
-    def test_08_cognevra_collections_created(self, state):
+    def test_08_levara_collections_created(self, state):
         """Cognify should have created vector collections."""
         import grpc
         try:
             ch = grpc.insecure_channel("localhost:50051")
             grpc.channel_ready_future(ch).result(timeout=3)
             import sys
-            _pb = sys.modules.get("cognee.infrastructure.databases.vector.cognevra.generated.cognevra_pb2")
-            _pb_grpc = sys.modules.get("cognee.infrastructure.databases.vector.cognevra.generated.cognevra_pb2_grpc")
-            stub = _pb_grpc.CognevraServiceStub(ch)
+            _pb = sys.modules.get("cognee.infrastructure.databases.vector.levara.generated.levara_pb2")
+            _pb_grpc = sys.modules.get("cognee.infrastructure.databases.vector.levara.generated.levara_pb2_grpc")
+            stub = _pb_grpc.LevaraServiceStub(ch)
             resp = stub.ListCollections(_pb.Empty())
             colls = list(resp.collections)
             ch.close()
-            print(f"\n  Cognevra collections ({len(colls)}): {colls}")
+            print(f"\n  Levara collections ({len(colls)}): {colls}")
             assert len(colls) > 0
         except Exception as e:
             print(f"\n  Collection check: {e}")
