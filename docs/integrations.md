@@ -1,4 +1,4 @@
-# Cognevra — Документация по интеграциям
+# Levara — Документация по интеграциям
 
 ## Содержание
 1. [LLM Providers](#1-llm-providers)
@@ -209,7 +209,7 @@ WHISPER_ENDPOINT=http://localhost:9002/v1/audio/transcriptions
 ### Настройка
 ```bash
 STORAGE_BACKEND=s3
-S3_BUCKET=cognevra-data
+S3_BUCKET=levara-data
 S3_REGION=us-east-1
 S3_ENDPOINT=https://s3.amazonaws.com  # или MinIO URL
 AWS_ACCESS_KEY_ID=AKIA...
@@ -226,7 +226,7 @@ docker run -d --name minio \
   minio/minio server /data --console-address ":9001"
 
 S3_ENDPOINT=http://localhost:9000
-S3_BUCKET=cognevra
+S3_BUCKET=levara
 AWS_ACCESS_KEY_ID=admin
 AWS_SECRET_ACCESS_KEY=password
 ```
@@ -289,16 +289,16 @@ GET /metrics
 ```
 
 ### Метрики
-- `cognevra_http_requests_total` -- счётчик запросов
-- `cognevra_http_request_duration_seconds` -- гистограмма latency
-- `cognevra_search_requests_total` -- поисковые запросы по типу
-- `cognevra_cognify_duration_seconds` -- время cognify pipeline
-- `cognevra_vectors_total` -- количество vectors в коллекциях
+- `levara_http_requests_total` -- счётчик запросов
+- `levara_http_request_duration_seconds` -- гистограмма latency
+- `levara_search_requests_total` -- поисковые запросы по типу
+- `levara_cognify_duration_seconds` -- время cognify pipeline
+- `levara_vectors_total` -- количество vectors в коллекциях
 
 ### Prometheus config
 ```yaml
 scrape_configs:
-  - job_name: cognevra
+  - job_name: levara
     static_configs:
       - targets: ['localhost:8080']
     metrics_path: /metrics
@@ -335,7 +335,7 @@ POST /mcp  (JSON-RPC 2.0)
 ```json
 {
   "mcpServers": {
-    "cognevra": {
+    "levara": {
       "url": "http://localhost:8080/mcp"
     }
   }
@@ -361,7 +361,7 @@ ollama pull nomic-embed-text     # Embeddings (261MB)
 ollama pull qwen3.5:latest       # Альтернативный LLM
 ```
 
-### Настройка для Cognevra
+### Настройка для Levara
 ```bash
 LLM_PROVIDER=openai
 LLM_ENDPOINT=http://localhost:11434/v1
@@ -381,8 +381,8 @@ Ollama автоматически использует GPU если доступ
 ### Полный стек
 ```yaml
 services:
-  cognevra:
-    build: ./Cognevra
+  levara:
+    build: ./Levara
     ports: ["8080:8080", "50051:50051"]
     environment:
       - DB_HOST=postgres
@@ -423,7 +423,7 @@ services:
 
 ### Минимальный стек (без GPU)
 ```bash
-docker compose up -d cognevra postgres
+docker compose up -d levara postgres
 # LLM через внешний Ollama или OpenAI API
 ```
 

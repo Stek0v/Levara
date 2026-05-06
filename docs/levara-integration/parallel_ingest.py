@@ -1,4 +1,4 @@
-"""Parallel data ingestion coordinator using Cognevra Go RPCs + Python loaders.
+"""Parallel data ingestion coordinator using Levara Go RPCs + Python loaders.
 
 Orchestrates the ingestion pipeline:
   Phase 1 (Go): ListDirectory → get file paths

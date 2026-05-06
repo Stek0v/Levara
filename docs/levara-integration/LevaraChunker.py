@@ -1,7 +1,7 @@
-"""CognevraChunker — delegates text chunking to Go via gRPC.
+"""LevaraChunker — delegates text chunking to Go via gRPC.
 
 7-27x faster than Python chunk_by_paragraph for large documents.
-Requires Cognevra gRPC server running (default port 50051).
+Requires Levara gRPC server running (default port 50051).
 """
 
 from typing import AsyncGenerator
@@ -14,19 +14,19 @@ from cognee.modules.chunking.models.DocumentChunk import DocumentChunk
 logger = get_logger()
 
 
-class CognevraChunker(Chunker):
+class LevaraChunker(Chunker):
     """Chunker that uses Go gRPC ChunkText instead of Python chunk_by_paragraph.
 
     7-27x faster than Python chunker for large documents.
-    Requires Cognevra gRPC server running on port 50051.
+    Requires Levara gRPC server running on port 50051.
 
     Usage:
         await extract_chunks_from_documents(
-            documents, max_chunk_size=600, chunker=CognevraChunker
+            documents, max_chunk_size=600, chunker=LevaraChunker
         )
     """
 
-    #: gRPC address for the Cognevra server. Override via subclass or monkey-patch.
+    #: gRPC address for the Levara server. Override via subclass or monkey-patch.
     grpc_url: str = "localhost:50051"
 
     #: Chunking strategy forwarded to Go: "merged" | "paragraph" | "sentence"
@@ -40,11 +40,11 @@ class CognevraChunker(Chunker):
         accumulates it as token_count — accurate enough for budget tracking without
         an extra tokenizer round-trip per chunk.
         """
-        from cognee.infrastructure.databases.vector.cognevra.CognevraAdapter import (
-            CognevraAdapter,
+        from cognee.infrastructure.databases.vector.levara.LevaraAdapter import (
+            LevaraAdapter,
         )
 
-        adapter = CognevraAdapter(
+        adapter = LevaraAdapter(
             url=self.grpc_url,
             api_key=None,
             embedding_engine=None,  # Not used for chunking
@@ -78,7 +78,7 @@ class CognevraChunker(Chunker):
                         )
                     except Exception as exc:
                         logger.error(
-                            "CognevraChunker: failed to yield chunk %d for document %s: %s",
+                            "LevaraChunker: failed to yield chunk %d for document %s: %s",
                             self.chunk_index,
                             self.document.id,
                             exc,
