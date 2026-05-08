@@ -611,6 +611,19 @@ func ToolDescriptors() []Tool {
 		},
 	},
 	{
+		Name:        "levara_instructions",
+		Description: "Versioned agent contract: memory model (room × hall), when-to-save rules, what-not-to-save, recall patterns, pin policy, observability toolkit, anti-patterns. Returns the embedded markdown plus a content hash for client-side caching. Call once per session and follow what it says — overrides any conflicting hint in the initialize response.",
+		OutputSchema: objectSchema(map[string]any{
+			"version":          stringProp("Contract revision string (bumped on meaningful changes)."),
+			"content_sha":      stringProp("SHA-256 of the markdown body, hex-encoded."),
+			"content_markdown": stringProp("Full agent contract as markdown."),
+		}),
+		InputSchema: map[string]any{
+			"type":       "object",
+			"properties": map[string]any{},
+		},
+	},
+	{
 		Name:        "runtime_stats",
 		Description: "Snapshot of live runtime state: per-collection record counts and embedding model, dependency configuration (embed/llm/rerank/neo4j), goroutine and heap stats. Use to answer 'what is this instance running right now?' without parsing /metrics.",
 		OutputSchema: objectSchema(map[string]any{
