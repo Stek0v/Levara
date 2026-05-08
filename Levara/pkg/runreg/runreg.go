@@ -11,6 +11,7 @@
 package runreg
 
 import (
+	"sort"
 	"sync"
 	"time"
 )
@@ -95,6 +96,24 @@ func (r *Registry) PruneTerminalOlderThan(age time.Duration) int {
 		return true
 	})
 	return evicted
+}
+
+// Snapshot returns a copy of every run currently tracked, sorted by
+// StartedAt descending (newest first). Callers may safely mutate the
+// returned slice; the *Status pointers themselves are shared but the
+// registry treats stored entries as immutable after Store.
+func (r *Registry) Snapshot() []*Status {
+	var out []*Status
+	r.runs.Range(func(_, v any) bool {
+		if s, ok := v.(*Status); ok && s != nil {
+			out = append(out, s)
+		}
+		return true
+	})
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].StartedAt.After(out[j].StartedAt)
+	})
+	return out
 }
 
 // StartJanitor launches a goroutine that periodically calls

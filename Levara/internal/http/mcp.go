@@ -613,6 +613,10 @@ func (h *mcpHandler) executeToolInner(ctx context.Context, sess *mcpSession, nam
 		return h.toolDoctor(ctx, args)
 	case "heartbeat":
 		return h.toolHeartbeat(ctx, args)
+	case "runtime_stats":
+		return h.toolRuntimeStats(ctx, args)
+	case "ingestion_status":
+		return h.toolIngestionStatus(ctx, args)
 	default:
 		return mcpToolResult{
 			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("Unknown tool: %s", name)}},

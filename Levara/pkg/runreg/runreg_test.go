@@ -8,6 +8,29 @@ import (
 	"time"
 )
 
+func TestRegistry_SnapshotSortsNewestFirst(t *testing.T) {
+	r := New()
+	now := time.Now()
+	r.Store("old", &Status{RunID: "old", Status: "COMPLETED", StartedAt: now.Add(-2 * time.Hour)})
+	r.Store("new", &Status{RunID: "new", Status: "RUNNING", StartedAt: now})
+	r.Store("mid", &Status{RunID: "mid", Status: "FAILED", StartedAt: now.Add(-1 * time.Hour)})
+
+	snap := r.Snapshot()
+	if len(snap) != 3 {
+		t.Fatalf("Snapshot len = %d, want 3", len(snap))
+	}
+	if snap[0].RunID != "new" || snap[1].RunID != "mid" || snap[2].RunID != "old" {
+		t.Errorf("unexpected order: %s, %s, %s", snap[0].RunID, snap[1].RunID, snap[2].RunID)
+	}
+}
+
+func TestRegistry_SnapshotEmpty(t *testing.T) {
+	r := New()
+	if got := r.Snapshot(); len(got) != 0 {
+		t.Errorf("empty registry Snapshot returned %d entries", len(got))
+	}
+}
+
 func TestRegistry_StoreLoadRoundTrip(t *testing.T) {
 	r := New()
 	s := &Status{

@@ -611,6 +611,68 @@ func ToolDescriptors() []Tool {
 		},
 	},
 	{
+		Name:        "runtime_stats",
+		Description: "Snapshot of live runtime state: per-collection record counts and embedding model, dependency configuration (embed/llm/rerank/neo4j), goroutine and heap stats. Use to answer 'what is this instance running right now?' without parsing /metrics.",
+		OutputSchema: objectSchema(map[string]any{
+			"collections": arrayOfObjectsProp(objectSchema(map[string]any{
+				"name":            stringProp("Collection name."),
+				"records":         integerProp("Vector count."),
+				"dim":             integerProp("Embedding dimension."),
+				"metric":          stringProp("cosine|l2|dot"),
+				"embedding_model": stringProp("Model used to embed this collection."),
+				"domain":          stringProp("Optional domain tag."),
+			}), "Per-collection state."),
+			"collection_count":  integerProp("Number of collections."),
+			"total_records":     integerProp("Sum of records across all collections."),
+			"embed_endpoint":    stringProp("Embedding service URL."),
+			"embed_model":       stringProp("Default embedding model."),
+			"llm_provider":      stringProp("'configured' when an LLM provider is wired, '' otherwise."),
+			"llm_model":         stringProp("LLM model name."),
+			"rerank_enabled":    map[string]any{"type": "boolean", "description": "Whether a reranker is wired."},
+			"rerank_model":      stringProp("Reranker model name."),
+			"neo4j_enabled":     map[string]any{"type": "boolean", "description": "Whether Neo4j graph backend is configured."},
+			"goroutines":        integerProp("Live goroutine count."),
+			"heap_alloc_bytes":  integerProp("Currently allocated heap bytes."),
+			"heap_sys_bytes":    integerProp("Heap memory obtained from OS."),
+			"num_gc":            integerProp("Completed GC cycles since start."),
+			"snapshot_taken_at": stringProp("RFC3339 timestamp."),
+		}),
+		InputSchema: map[string]any{
+			"type":       "object",
+			"properties": map[string]any{},
+		},
+	},
+	{
+		Name:        "ingestion_status",
+		Description: "List in-flight and recently completed background pipeline runs (cognify, codify, analyze_commits) from the run registry, sorted newest-first. Use to debug stuck ingestion or confirm a long-running cognify finished.",
+		OutputSchema: objectSchema(map[string]any{
+			"summary": objectSchema(map[string]any{
+				"total":     integerProp("Total runs currently retained."),
+				"running":   integerProp("Runs in RUNNING state."),
+				"completed": integerProp("Runs in COMPLETED state."),
+				"failed":    integerProp("Runs in FAILED state."),
+			}),
+			"runs": arrayOfObjectsProp(objectSchema(map[string]any{
+				"pipeline_run_id":    stringProp("Run UUID."),
+				"status":             stringProp("RUNNING|COMPLETED|FAILED"),
+				"stage":              stringProp("Current/last stage name."),
+				"message":            stringProp("Free-form status message."),
+				"chunks_created":     integerProp(""),
+				"entities_extracted": integerProp(""),
+				"edges_extracted":    integerProp(""),
+				"elapsed_ms":         integerProp("Wall-clock duration."),
+				"started_at":         stringProp("RFC3339."),
+			}), "Filtered run list (newest first)."),
+		}),
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"status": map[string]any{"type": "string", "description": "Filter by RUNNING|COMPLETED|FAILED. Empty = all."},
+				"limit":  map[string]any{"type": "integer", "default": 20, "description": "Max runs to return (1-100)."},
+			},
+		},
+	},
+	{
 		Name:        "heartbeat",
 		Description: "Query recent system heartbeat events (doctor runs, sync, cognify completions, prune). Useful to understand system activity history and detect degradation patterns.",
 		OutputSchema: objectSchema(map[string]any{
