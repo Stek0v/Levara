@@ -673,6 +673,49 @@ func ToolDescriptors() []Tool {
 		},
 	},
 	{
+		Name:        "recent_errors",
+		Description: "Aggregated recent error signals: FAILED background runs (cognify/codify/analyze_commits) plus doctor heartbeats whose checks reported status=fail. Use as a single 'what's been going wrong lately?' query without grepping logs.",
+		OutputSchema: objectSchema(map[string]any{
+			"count": integerProp("Total entries returned."),
+			"errors": arrayOfObjectsProp(objectSchema(map[string]any{
+				"source":    stringProp("'pipeline_run' or 'doctor'."),
+				"stage":     stringProp("Run stage or doctor check name."),
+				"message":   stringProp("Free-form error message."),
+				"reference": stringProp("run_id or heartbeat_id."),
+				"at":        stringProp("RFC3339 timestamp."),
+			}), "Error entries, newest-ish first."),
+		}),
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"limit": map[string]any{"type": "integer", "default": 20, "description": "Max entries (1-100)."},
+			},
+		},
+	},
+	{
+		Name:        "sync_status",
+		Description: "Summarize recent sync events per direction (push|pull) from heartbeats: count, last-seen-at, last remote URL, and the most recent N events. Sync emits a heartbeat on success only — answers 'did sync run lately?' rather than 'did sync fail?'.",
+		OutputSchema: objectSchema(map[string]any{
+			"by_direction": map[string]any{
+				"type":        "object",
+				"description": "Per-direction summary: count, last_at, last_remote.",
+			},
+			"events": arrayOfObjectsProp(objectSchema(map[string]any{
+				"id":        stringProp("Heartbeat UUID."),
+				"direction": stringProp("push|pull|unknown."),
+				"remote":    stringProp("Remote URL."),
+				"types":     map[string]any{"description": "Sync types payload as recorded."},
+				"at":        stringProp("RFC3339."),
+			}), "Recent sync events, newest first."),
+		}),
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"limit": map[string]any{"type": "integer", "default": 10, "description": "Max events (1-50)."},
+			},
+		},
+	},
+	{
 		Name:        "heartbeat",
 		Description: "Query recent system heartbeat events (doctor runs, sync, cognify completions, prune). Useful to understand system activity history and detect degradation patterns.",
 		OutputSchema: objectSchema(map[string]any{
