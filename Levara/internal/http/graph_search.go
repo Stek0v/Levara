@@ -899,15 +899,19 @@ func isCypherAllowed(query string, allowWrite bool) bool {
 		return false
 	}
 	upper := strings.ToUpper(trimmed)
+	// Pad with spaces on both ends so word-boundary checks below work for
+	// keywords at the very start or end of the query.
+	padded := " " + upper + " "
 
-	if containsAnyCypherKeyword(upper, []string{
-		"DROP ",
+	if containsAnyCypherKeyword(padded, []string{
+		" DROP ",
 		" DATABASE ",
 		" CONSTRAINT ",
 		" INDEX ",
-		" DBMS ",
+		" DBMS ",  // `CALL DBMS …`
+		" DBMS.",  // `dbms.<func>(…)` namespace syntax
 		" TERMINATE ",
-		" LOAD CSV",
+		" LOAD CSV ",
 	}) {
 		return false
 	}
