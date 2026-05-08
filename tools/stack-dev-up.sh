@@ -49,6 +49,19 @@ until curl -sf "$LEVARA_URL/metrics" > /dev/null 2>&1; do
 done
 log "Levara healthy"
 
+# 3a. Detect silent DB-init failure. /metrics succeeds even when Levara
+#     could not reach Postgres — but memory tools, auth, and sync all
+#     return 5xx in that state. Surfacing this loudly here saves an hour
+#     of "why does save_memory return 'database not configured'".
+# `grep -q` exits early under pipefail and SIGPIPEs `docker logs`, masking
+# matches as failures — so use a full read with output suppressed instead.
+if docker logs levara 2>&1 | grep -E "running without DB|PostgreSQL ping warning" > /dev/null; then
+  warn "Levara is up but reports 'running without DB' — Postgres credentials"
+  warn "are likely out of sync (common after an upgrade from a Cognee-era"
+  warn "volume). Memory tools and auth will return 5xx until this is fixed."
+  warn "Quick fix: 'make stack-dev-reset' wipes the postgres volume and reboots."
+fi
+
 # 4. Pull embed model into Ollama if missing. Cheap when already present.
 if curl -sf "$OLLAMA_URL/api/tags" > /dev/null 2>&1; then
   if ! curl -sf "$OLLAMA_URL/api/tags" | grep -q "\"$EMBED_MODEL"; then
