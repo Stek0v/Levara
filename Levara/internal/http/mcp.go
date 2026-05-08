@@ -617,6 +617,10 @@ func (h *mcpHandler) executeToolInner(ctx context.Context, sess *mcpSession, nam
 		return h.toolRuntimeStats(ctx, args)
 	case "ingestion_status":
 		return h.toolIngestionStatus(ctx, args)
+	case "recent_errors":
+		return h.toolRecentErrors(ctx, args)
+	case "sync_status":
+		return h.toolSyncStatus(ctx, args)
 	default:
 		return mcpToolResult{
 			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("Unknown tool: %s", name)}},
