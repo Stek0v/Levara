@@ -440,6 +440,7 @@ func (h *mcpHandler) handleRPC(c *fiber.Ctx) error {
 					"name":    "levara",
 					"version": "1.0.0",
 				},
+				"instructions": "Call the `levara_instructions` tool for the versioned agent contract (memory model, when-to-save rules, observability toolkit, anti-patterns). Contract revision: " + mcp.AgentContractVersion + ".",
 			},
 		})
 
@@ -621,6 +622,8 @@ func (h *mcpHandler) executeToolInner(ctx context.Context, sess *mcpSession, nam
 		return h.toolRecentErrors(ctx, args)
 	case "sync_status":
 		return h.toolSyncStatus(ctx, args)
+	case "levara_instructions":
+		return mcp.ToolLevaraInstructions(ctx, h, args)
 	default:
 		return mcpToolResult{
 			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("Unknown tool: %s", name)}},
