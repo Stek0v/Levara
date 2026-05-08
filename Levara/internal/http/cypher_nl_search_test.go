@@ -152,6 +152,42 @@ func TestCypherSearch_WriteCanBeEnabled(t *testing.T) {
 	}
 }
 
+// Admin/destructive keywords must remain blocked even when ALLOW_CYPHER_WRITE
+// is on. A misconfigured deployment that flips the write flag should still
+// not be able to drop databases or load arbitrary CSV.
+func TestCypherSearch_AdminKeywordsBlockedEvenWithWrite(t *testing.T) {
+	t.Setenv("ALLOW_CYPHER_QUERY", "true")
+	t.Setenv("ALLOW_CYPHER_WRITE", "true")
+
+	cases := []struct {
+		name  string
+		query string
+	}{
+		{"DROP DATABASE", "DROP DATABASE neo4j"},
+		{"CREATE CONSTRAINT", "CREATE CONSTRAINT x IF NOT EXISTS FOR (n:Node) REQUIRE n.id IS UNIQUE"},
+		{"CREATE INDEX", "CREATE INDEX person_name FOR (p:Person) ON (p.name)"},
+		{"DBMS call", "CALL dbms.security.createUser('x','y')"},
+		{"TERMINATE", "MATCH (n) WITH n CALL TERMINATE TRANSACTIONS RETURN n"},
+		{"LOAD CSV", "LOAD CSV FROM 'http://x' AS line CREATE (n:Row {v:line[0]})"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := newSearchTestEnv(t)
+			env.cfg.Neo4jCfg = GraphVisualizationConfig{Neo4jURL: "bolt://unused.test:7687"}
+			env.start()
+
+			status, body := env.postSearch(map[string]any{
+				"query_text":   "q",
+				"query_type":   "CYPHER",
+				"cypher_query": tc.query,
+			})
+			if status != 403 {
+				t.Fatalf("status = %d, want 403 (admin denied even with write flag); body=%v", status, body)
+			}
+		})
+	}
+}
+
 // ── naturalLanguageSearch ──
 
 // No Neo4j configured → falls back to graphCompletionSearch. We verify by
@@ -232,6 +268,36 @@ func TestExtractCypher(t *testing.T) {
 			in:   "   \n\t ",
 			want: "",
 		},
+		{
+			// Capitalised language tag: same logic — strip first line after ```.
+			name: "markdown Cypher (capitalised tag)",
+			in:   "```Cypher\nMATCH (n) RETURN n\n```",
+			want: "MATCH (n) RETURN n",
+		},
+		{
+			// Unclosed code fence: helper falls through to the heuristic
+			// branch and returns the substring starting at MATCH.
+			name: "unclosed markdown fence",
+			in:   "```cypher\nMATCH (n) RETURN n",
+			want: "MATCH (n) RETURN n",
+		},
+		{
+			// Lowercase still trips the heuristic: the upper-cased copy
+			// contains MATCH at index 0, so the helper returns the raw
+			// (lowercase) query unchanged. Policy enforcement happens later
+			// in isCypherAllowed (which upper-cases internally) — extractor
+			// is intentionally permissive.
+			name: "lowercase match without fence",
+			in:   "match (n) return n",
+			want: "match (n) return n",
+		},
+		{
+			// Bare RETURN (no MATCH): heuristic still trips on RETURN so the
+			// raw input is returned. isCypherAllowed must reject it later.
+			name: "bare return no match",
+			in:   "RETURN 1",
+			want: "RETURN 1",
+		},
 	}
 
 	for _, tc := range tests {
@@ -260,6 +326,19 @@ func TestIsCypherAllowed(t *testing.T) {
 		{name: "drop always denied", query: "DROP DATABASE neo4j", allowWrite: true, want: false},
 		{name: "constraint always denied", query: "CREATE CONSTRAINT x IF NOT EXISTS FOR (n:Node) REQUIRE n.id IS UNIQUE", allowWrite: true, want: false},
 		{name: "empty denied", query: "   ", allowWrite: false, want: false},
+
+		// Read prefixes that must be allowed.
+		{name: "optional match read", query: "OPTIONAL MATCH (n) RETURN n", allowWrite: false, want: true},
+		{name: "with read", query: "WITH 1 AS x RETURN x", allowWrite: false, want: true},
+
+		// Admin / destructive keywords stay denied even with allowWrite=true.
+		{name: "drop with write denied", query: "DROP DATABASE neo4j", allowWrite: true, want: false},
+		{name: "create index denied", query: "CREATE INDEX x FOR (n:Node) ON (n.id)", allowWrite: true, want: false},
+		{name: "dbms call denied", query: "CALL dbms.security.listUsers()", allowWrite: false, want: false},
+		{name: "terminate denied", query: "MATCH (n) WITH n CALL TERMINATE TRANSACTIONS RETURN n", allowWrite: true, want: false},
+		{name: "load csv denied", query: "LOAD CSV FROM 'file:///x.csv' AS line RETURN line", allowWrite: true, want: false},
+		// "DATABASE" keyword anywhere — e.g. SHOW DATABASES — denied as well.
+		{name: "show database denied", query: "MATCH (n) WITH n SHOW DATABASE foo RETURN n", allowWrite: true, want: false},
 	}
 
 	for _, tc := range tests {
