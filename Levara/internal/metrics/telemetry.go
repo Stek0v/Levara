@@ -148,6 +148,25 @@ var (
 		Name: "levara_wal_recoveries_total",
 		Help: "WAL recovery passes by result (ok|fail), summed across shards",
 	}, []string{"result"})
+
+	// 14. RAG verify-stack observability. Default thresholds are 0 (disabled)
+	// so these metrics let an operator observe live confidence distributions
+	// before opting in to abstain/verify behavior.
+	RAGConfidence = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "levara_rag_confidence",
+		Help:    "Distribution of combined RAG confidence scores by search type",
+		Buckets: []float64{.05, .1, .2, .3, .4, .5, .6, .7, .8, .9, .95},
+	}, []string{"search_type"})
+
+	RAGAbstainTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "levara_rag_abstain_total",
+		Help: "RAG completions that abstained, by search type and reason (low_confidence|no_evidence)",
+	}, []string{"search_type", "reason"})
+
+	RAGVerifyDroppedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "levara_rag_verify_dropped_total",
+		Help: "Result rows dropped by verify stage, by search type and reason (low_score|bad_metadata)",
+	}, []string{"search_type", "reason"})
 )
 
 func init() {
@@ -155,4 +174,14 @@ func init() {
 	// hides them just because no recovery has happened in this process.
 	WALRecoveriesTotal.WithLabelValues("ok")
 	WALRecoveriesTotal.WithLabelValues("fail")
+
+	// Eagerly materialize RAG verify-stack series at 0 across the known
+	// search types and reasons so dashboards/alerts can reference a stable
+	// label set instead of waiting for a real abstain/drop to appear.
+	for _, st := range []string{"RAG_COMPLETION", "GRAPH_COMPLETION", "GRAPH_COMPLETION_CONTEXT_EXTENSION"} {
+		RAGAbstainTotal.WithLabelValues(st, "low_confidence")
+		RAGAbstainTotal.WithLabelValues(st, "strict_grounded_no_evidence")
+		RAGVerifyDroppedTotal.WithLabelValues(st, "low_score")
+		RAGVerifyDroppedTotal.WithLabelValues(st, "bad_metadata")
+	}
 }

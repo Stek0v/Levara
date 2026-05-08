@@ -97,6 +97,7 @@ func graphCompletionSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest
 	} else if lowConfidence {
 		abstainReason = "low_confidence"
 	}
+	emitRAGMetrics("GRAPH_COMPLETION", confidence, abstained, abstainReason, verification)
 
 	// Step 3: LLM completion
 	llmEndpoint := os.Getenv("LLM_ENDPOINT")
@@ -256,6 +257,7 @@ func contextExtensionSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchReques
 	} else if lowConfidence {
 		abstainReason = "low_confidence"
 	}
+	emitRAGMetrics("GRAPH_COMPLETION_CONTEXT_EXTENSION", confidence, abstained, abstainReason, verification)
 
 	// Step 4: LLM completion with extended context
 	llmEndpoint := os.Getenv("LLM_ENDPOINT")
