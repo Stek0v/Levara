@@ -793,6 +793,7 @@ func ragCompletionSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) 
 	} else if lowConfidence {
 		abstainReason = "low_confidence"
 	}
+	emitRAGMetrics("RAG_COMPLETION", confidence, abstained, abstainReason, verification)
 
 	// Step 2: LLM completion using retrieved chunks as context
 	llmEndpoint := os.Getenv("LLM_ENDPOINT")

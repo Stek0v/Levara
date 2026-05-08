@@ -5,7 +5,25 @@ import (
 	"math"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/stek0v/levara/internal/metrics"
 )
+
+// emitRAGMetrics records confidence distribution, abstain counts, and
+// verify-stage drops for a single RAG completion. Default thresholds keep
+// abstain/verify behavior off; these metrics let an operator observe live
+// distributions before opting in.
+func emitRAGMetrics(searchType string, confidence float64, abstained bool, abstainReason string, v resultVerification) {
+	metrics.RAGConfidence.WithLabelValues(searchType).Observe(confidence)
+	if abstained && abstainReason != "" {
+		metrics.RAGAbstainTotal.WithLabelValues(searchType, abstainReason).Inc()
+	}
+	if v.DroppedLowScore > 0 {
+		metrics.RAGVerifyDroppedTotal.WithLabelValues(searchType, "low_score").Add(float64(v.DroppedLowScore))
+	}
+	if v.DroppedBadMeta > 0 {
+		metrics.RAGVerifyDroppedTotal.WithLabelValues(searchType, "bad_metadata").Add(float64(v.DroppedBadMeta))
+	}
+}
 
 type resultVerification struct {
 	Total             int `json:"total"`
