@@ -1,4 +1,4 @@
-.PHONY: help up down full-stack full-stack-down build test benchmark proto clean install-hook qv-stack qv-stack-down qv-stack-logs
+.PHONY: help up down full-stack full-stack-down build test benchmark proto clean install-hook qv-stack qv-stack-down qv-stack-logs stack-dev stack-dev-down stack-dev-logs
 
 # Default
 help:
@@ -13,6 +13,11 @@ help:
 	@echo "  make benchmark       Run Levara vs LanceDB benchmark"
 	@echo "  make install-hook    Install Cognee git post-commit hook"
 	@echo "  make clean           Remove data volumes and temp files"
+	@echo ""
+	@echo "LevaraOS unified stack (Levara + MemoryFS + mem0 + Ollama + PG):"
+	@echo "  make stack-dev       One-command bootstrap: up + wait-for-health + pull embed model"
+	@echo "  make stack-dev-down  Stop the LevaraOS stack"
+	@echo "  make stack-dev-logs  Follow Levara logs"
 	@echo ""
 	@echo "QV Mode (local llama-server + full stack):"
 	@echo "  make qv-stack        Start all services for qv mode (requires qv running on :9004)"
@@ -61,6 +66,17 @@ proto:
 
 install-hook:
 	bash tools/install-cognee-hook.sh
+
+# --- LevaraOS Stack (one-command dev) ---
+
+stack-dev:
+	@bash tools/stack-dev-up.sh
+
+stack-dev-down:
+	docker compose -f docker-compose.levaraos.yml down
+
+stack-dev-logs:
+	docker compose -f docker-compose.levaraos.yml logs -f levara
 
 # --- QV Mode (local llama-server + full stack) ---
 
