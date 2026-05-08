@@ -1,4 +1,4 @@
-.PHONY: help up down full-stack full-stack-down build test benchmark proto clean install-hook qv-stack qv-stack-down qv-stack-logs stack-dev stack-dev-down stack-dev-logs
+.PHONY: help up down full-stack full-stack-down build test benchmark proto clean install-hook qv-stack qv-stack-down qv-stack-logs stack-dev stack-dev-down stack-dev-logs stack-dev-reset
 
 # Default
 help:
@@ -18,6 +18,7 @@ help:
 	@echo "  make stack-dev       One-command bootstrap: up + wait-for-health + pull embed model"
 	@echo "  make stack-dev-down  Stop the LevaraOS stack"
 	@echo "  make stack-dev-logs  Follow Levara logs"
+	@echo "  make stack-dev-reset Destroy volumes + reboot (use after Cognee-era upgrade)"
 	@echo ""
 	@echo "QV Mode (local llama-server + full stack):"
 	@echo "  make qv-stack        Start all services for qv mode (requires qv running on :9004)"
@@ -77,6 +78,16 @@ stack-dev-down:
 
 stack-dev-logs:
 	docker compose -f docker-compose.levaraos.yml logs -f levara
+
+# Wipe the LevaraOS postgres + levara volumes and bring the stack back up.
+# Use after upgrading from an older (Cognee-era) volume whose Postgres user
+# does not match the current credentials. DESTRUCTIVE — Postgres metadata
+# (memories, datasets, feedback) and Levara's persisted vectors are deleted.
+stack-dev-reset:
+	@echo "About to destroy LevaraOS volumes (postgres-data, levara-data, ...)."
+	@read -p "Type 'yes' to confirm: " ans && [ "$$ans" = "yes" ] || (echo "aborted"; exit 1)
+	docker compose -f docker-compose.levaraos.yml down -v
+	@bash tools/stack-dev-up.sh
 
 # --- QV Mode (local llama-server + full stack) ---
 
