@@ -353,9 +353,10 @@ func ToolDescriptors() []Tool {
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"name":  map[string]any{"type": "string", "description": "Entity name to query"},
-				"as_of": map[string]any{"type": "string", "description": "RFC3339 timestamp. If omitted, returns currently-valid edges."},
-				"limit": map[string]any{"type": "integer", "description": "Max edges to return. Default 50."},
+				"name":       map[string]any{"type": "string", "description": "Entity name to query"},
+				"as_of":      map[string]any{"type": "string", "description": "RFC3339 timestamp. If omitted, returns currently-valid edges."},
+				"dataset_id": map[string]any{"type": "string", "description": "Optional tenant/project scope. When set, only edges from this dataset are returned."},
+				"limit":      map[string]any{"type": "integer", "description": "Max edges to return. Default 50."},
 			},
 			"required": []string{"name"},
 		},
