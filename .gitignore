@@ -71,3 +71,4 @@ posttests/bier/mac_results/
 
 # Session-local memory buffer used by the `remember` skill
 .remember/
+_archived/
