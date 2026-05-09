@@ -29,6 +29,43 @@ import (
 // NamespaceOID matches Python uuid.NAMESPACE_OID.
 var namespaceOID = uuid.MustParse("6ba7b812-9dad-11d1-80b4-00c04fd430c8")
 
+// sanitizeFilename strips any directory component and rejects traversal
+// patterns from a user-supplied filename. Returns "" if the input cannot be
+// reduced to a safe basename — callers fall back to a hash-derived name.
+func sanitizeFilename(s string) string {
+	if s == "" || strings.ContainsRune(s, 0) {
+		return ""
+	}
+	// Normalize OS separators so "..\\foo" on any platform is caught.
+	s = strings.ReplaceAll(s, "\\", "/")
+	base := filepath.Base(s)
+	// filepath.Base("..") == "..", filepath.Base("/") == "/", filepath.Base(".") == "."
+	if base == "." || base == ".." || base == "/" || base == "" {
+		return ""
+	}
+	if strings.ContainsAny(base, "/\\") {
+		return ""
+	}
+	return base
+}
+
+// isInside reports whether child resolves to a path inside root.
+func isInside(root, child string) bool {
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return false
+	}
+	childAbs, err := filepath.Abs(child)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(rootAbs, childAbs)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
 // Item is input to ingest.
 type Item struct {
 	ID          string
@@ -149,7 +186,12 @@ func prepareItem(item Item, storagePath string, seen map[string]bool) (ingestPre
 		id = uuid.NewSHA1(namespaceOID, []byte(normalized)).String()
 	}
 
-	name := item.Filename
+	// Sanitize untrusted filename: strip directories, reject traversal/null bytes.
+	// User-supplied filename reaches disk via filepath.Join below; without this
+	// step a value like "../../etc/passwd" or "/etc/passwd" would escape storagePath.
+	safeName := sanitizeFilename(item.Filename)
+
+	name := safeName
 	ext := ".txt"
 	mimeType := "text/plain"
 
@@ -157,8 +199,8 @@ func prepareItem(item Item, storagePath string, seen map[string]bool) (ingestPre
 		name = "text_" + contentHash[:16]
 	}
 
-	if item.Filename != "" {
-		ext = filepath.Ext(item.Filename)
+	if safeName != "" {
+		ext = filepath.Ext(safeName)
 		if ext == "" {
 			ext = ".txt"
 		}
@@ -170,6 +212,11 @@ func prepareItem(item Item, storagePath string, seen map[string]bool) (ingestPre
 		filename = name + ext
 	}
 	fullPath := filepath.Join(storagePath, filename)
+	// Defense-in-depth: ensure the resolved path stays inside storagePath even
+	// if a future change weakens sanitizeFilename.
+	if !isInside(storagePath, fullPath) {
+		return ingestPrep{}, fmt.Errorf("filename escapes storage root: %q", item.Filename)
+	}
 
 	tagsJSON := "[]"
 	if len(item.Tags) > 0 {

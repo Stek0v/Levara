@@ -13,6 +13,28 @@ import (
 
 const baseLabel = "__Node__"
 
+// isSafeLabel reports whether s is a Cypher identifier safe to interpolate
+// into a query. Neo4j allows labels containing arbitrary characters when
+// quoted with backticks, but a backtick inside the label would let a
+// malicious caller break out and inject arbitrary Cypher. We therefore
+// restrict labels to the conservative ASCII identifier subset.
+func isSafeLabel(s string) bool {
+	if s == "" || len(s) > 64 {
+		return false
+	}
+	for i, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r == '_':
+		case i > 0 && r >= '0' && r <= '9':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // NodeRecord represents a node to write to Neo4j.
 type NodeRecord struct {
 	ID         string         // UUID string
@@ -417,7 +439,13 @@ func (w *Writer) ReadNeighbours(ctx context.Context, nodeID string) (GraphReadRe
 }
 
 // ReadSubgraph returns nodes matching label+names with their neighbors.
+// label is interpolated into Cypher (Neo4j cannot parameterize labels), so it
+// must be a syntactically valid identifier — anything else is rejected to
+// prevent Cypher injection.
 func (w *Writer) ReadSubgraph(ctx context.Context, label string, names []string) (GraphReadResult, error) {
+	if !isSafeLabel(label) {
+		return GraphReadResult{}, fmt.Errorf("invalid label %q: must match [A-Za-z_][A-Za-z0-9_]*", label)
+	}
 	query := fmt.Sprintf(`
 		UNWIND $names AS wantedName
 		MATCH (n:`+"`%s`"+`)

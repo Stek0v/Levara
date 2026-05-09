@@ -143,6 +143,46 @@ func TestIngestCustomID(t *testing.T) {
 	}
 }
 
+func TestSanitizeFilename(t *testing.T) {
+	cases := map[string]string{
+		"":                           "",
+		"foo.txt":                    "foo.txt",
+		"../../etc/passwd":           "passwd",
+		"/etc/passwd":                "passwd",
+		"..":                         "",
+		".":                          "",
+		"/":                          "",
+		"\\..\\..\\windows\\sys.dll": "sys.dll",
+		"a/b/c.md":                   "c.md",
+		"with\x00null":               "",
+	}
+	for in, want := range cases {
+		if got := sanitizeFilename(in); got != want {
+			t.Errorf("sanitizeFilename(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestIngestRejectsTraversal(t *testing.T) {
+	dir := t.TempDir()
+	// Create the target the attack would overwrite, outside storagePath.
+	outside := filepath.Join(dir, "..", "pwned.txt")
+	items := []Item{{
+		FileData: []byte("malicious"),
+		Filename: "../pwned.txt",
+	}}
+	results, err := Ingest(items, filepath.Join(dir, "store"))
+	// Either Ingest returns an error or the file is written safely inside store/.
+	if err == nil {
+		if _, statErr := os.Stat(outside); statErr == nil {
+			t.Fatalf("traversal succeeded: %s exists", outside)
+		}
+		if len(results) == 1 && !strings.HasPrefix(results[0].FilePath, "file://"+filepath.Join(dir, "store")) {
+			t.Fatalf("file landed outside store/: %s", results[0].FilePath)
+		}
+	}
+}
+
 func BenchmarkIngest100(b *testing.B) {
 	dir := b.TempDir()
 	items := make([]Item, 100)
