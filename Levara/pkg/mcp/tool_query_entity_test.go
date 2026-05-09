@@ -31,13 +31,15 @@ func setupQueryEntityDB(t *testing.T) *fakeDeps {
 
 	stmts := []string{
 		`CREATE TABLE graph_nodes (
-			id TEXT PRIMARY KEY, name TEXT, type TEXT, updated_at TEXT
+			id TEXT PRIMARY KEY, name TEXT, type TEXT,
+			dataset_id TEXT NOT NULL DEFAULT '', updated_at TEXT
 		)`,
 		`CREATE TABLE graph_edges (
 			id TEXT PRIMARY KEY, source_id TEXT, target_id TEXT,
 			relationship_name TEXT, properties TEXT,
 			valid_from TEXT, valid_until TEXT, superseded_by TEXT,
-			confidence REAL, updated_at TEXT
+			confidence REAL,
+			dataset_id TEXT NOT NULL DEFAULT '', updated_at TEXT
 		)`,
 	}
 	for _, s := range stmts {
@@ -206,6 +208,46 @@ func TestToolQueryEntity_LimitBounds(t *testing.T) {
 	edges := resp["edges"].([]any)
 	if len(edges) != 2 {
 		t.Errorf("got %d edges with limit=2, want 2", len(edges))
+	}
+}
+
+func TestToolQueryEntity_DatasetIDScopesResults(t *testing.T) {
+	// Two tenants share the entity name but live in different datasets.
+	// Without dataset_id the legacy/global view sees both; with
+	// dataset_id only the matching tenant's edges come back.
+	deps := setupQueryEntityDB(t)
+	deps.db.Exec(`INSERT INTO graph_nodes (id, name, type, dataset_id, updated_at) VALUES ('a1', 'alice', 'person', 'ds-a', '2026-01-01T00:00:00Z')`)
+	deps.db.Exec(`INSERT INTO graph_nodes (id, name, type, dataset_id, updated_at) VALUES ('a2', 'acme', 'org',    'ds-a', '2026-01-01T00:00:00Z')`)
+	deps.db.Exec(`INSERT INTO graph_nodes (id, name, type, dataset_id, updated_at) VALUES ('b1', 'alice', 'person', 'ds-b', '2026-01-01T00:00:00Z')`)
+	deps.db.Exec(`INSERT INTO graph_nodes (id, name, type, dataset_id, updated_at) VALUES ('b2', 'globex','org',    'ds-b', '2026-01-01T00:00:00Z')`)
+	deps.db.Exec(`INSERT INTO graph_edges (id, source_id, target_id, relationship_name, properties, valid_from, valid_until, superseded_by, confidence, dataset_id, updated_at)
+		VALUES ('e-a', 'a1', 'a2', 'works_at', '{}', NULL, NULL, '', 1.0, 'ds-a', '2026-03-01T00:00:00Z')`)
+	deps.db.Exec(`INSERT INTO graph_edges (id, source_id, target_id, relationship_name, properties, valid_from, valid_until, superseded_by, confidence, dataset_id, updated_at)
+		VALUES ('e-b', 'b1', 'b2', 'works_at', '{}', NULL, NULL, '', 1.0, 'ds-b', '2026-03-01T00:00:00Z')`)
+
+	// Tenant A: only e-a.
+	got := ToolQueryEntity(context.Background(), deps, map[string]any{"name": "alice", "dataset_id": "ds-a"})
+	var resp map[string]any
+	json.Unmarshal([]byte(got.Content[0].Text), &resp)
+	edges := resp["edges"].([]any)
+	if len(edges) != 1 || edges[0].(map[string]any)["id"] != "e-a" {
+		t.Fatalf("ds-a edges = %+v, want single e-a", edges)
+	}
+
+	// Tenant B: only e-b.
+	got = ToolQueryEntity(context.Background(), deps, map[string]any{"name": "alice", "dataset_id": "ds-b"})
+	json.Unmarshal([]byte(got.Content[0].Text), &resp)
+	edges = resp["edges"].([]any)
+	if len(edges) != 1 || edges[0].(map[string]any)["id"] != "e-b" {
+		t.Fatalf("ds-b edges = %+v, want single e-b", edges)
+	}
+
+	// No dataset_id: legacy/global view sees both.
+	got = ToolQueryEntity(context.Background(), deps, map[string]any{"name": "alice"})
+	json.Unmarshal([]byte(got.Content[0].Text), &resp)
+	edges = resp["edges"].([]any)
+	if len(edges) != 2 {
+		t.Fatalf("global edges = %d, want 2 (both tenants)", len(edges))
 	}
 }
 
