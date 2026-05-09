@@ -92,12 +92,15 @@ func (w *Writer) EnsureSchema(ctx context.Context) error {
 	session := w.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: w.database})
 	defer session.Close(ctx)
 
-	for _, stmt := range requiredNeo4jSchemaStatements(baseLabel) {
-		if _, err := session.Run(ctx, stmt, nil); err != nil {
-			return err
+	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		for _, stmt := range requiredNeo4jSchemaStatements(baseLabel) {
+			if _, err := tx.Run(ctx, stmt, nil); err != nil {
+				return nil, err
+			}
 		}
-	}
-	return nil
+		return nil, nil
+	})
+	return err
 }
 
 func requiredNeo4jSchemaStatements(label string) []string {
@@ -160,21 +163,27 @@ func (w *Writer) writeNodes(ctx context.Context, nodes []NodeRecord) (int, error
 		RETURN count(labeledNode) AS cnt
 	`, baseLabel)
 
-	res, err := session.Run(ctx, query, map[string]any{"nodes": batch})
-	if err != nil {
-		return 0, fmt.Errorf("write nodes: %w", err)
-	}
-
-	if res.Next(ctx) {
-		cnt, _ := res.Record().Get("cnt")
-		if c, ok := cnt.(int64); ok {
-			return int(c), nil
+	cnt, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		res, err := tx.Run(ctx, query, map[string]any{"nodes": batch})
+		if err != nil {
+			return 0, fmt.Errorf("write nodes: %w", err)
 		}
+		if res.Next(ctx) {
+			if c, ok := res.Record().Get("cnt"); ok {
+				if n, ok := c.(int64); ok {
+					return int(n), nil
+				}
+			}
+		}
+		if err := res.Err(); err != nil {
+			return 0, fmt.Errorf("write nodes cypher: %w", err)
+		}
+		return len(nodes), nil
+	})
+	if err != nil {
+		return 0, err
 	}
-	if err := res.Err(); err != nil {
-		return 0, fmt.Errorf("write nodes cypher: %w", err)
-	}
-	return len(nodes), nil
+	return cnt.(int), nil
 }
 
 func (w *Writer) writeEdges(ctx context.Context, edges []EdgeRecord) (int, error) {
@@ -209,21 +218,27 @@ func (w *Writer) writeEdges(ctx context.Context, edges []EdgeRecord) (int, error
 		RETURN count(rel) AS cnt
 	`, baseLabel, baseLabel)
 
-	res, err := session.Run(ctx, query, map[string]any{"edges": batch})
-	if err != nil {
-		return 0, fmt.Errorf("write edges: %w", err)
-	}
-
-	if res.Next(ctx) {
-		cnt, _ := res.Record().Get("cnt")
-		if c, ok := cnt.(int64); ok {
-			return int(c), nil
+	cnt, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		res, err := tx.Run(ctx, query, map[string]any{"edges": batch})
+		if err != nil {
+			return 0, fmt.Errorf("write edges: %w", err)
 		}
+		if res.Next(ctx) {
+			if c, ok := res.Record().Get("cnt"); ok {
+				if n, ok := c.(int64); ok {
+					return int(n), nil
+				}
+			}
+		}
+		if err := res.Err(); err != nil {
+			return 0, fmt.Errorf("write edges cypher: %w", err)
+		}
+		return len(edges), nil
+	})
+	if err != nil {
+		return 0, err
 	}
-	if err := res.Err(); err != nil {
-		return 0, fmt.Errorf("write edges cypher: %w", err)
-	}
-	return len(edges), nil
+	return cnt.(int), nil
 }
 
 // serializeProperties converts Go types to Neo4j-compatible property types.
@@ -303,51 +318,59 @@ func (w *Writer) ReadFullGraph(ctx context.Context) (GraphReadResult, error) {
 	session := w.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: w.database})
 	defer session.Close(ctx)
 
-	var result GraphReadResult
+	out, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		var result GraphReadResult
 
-	res, err := session.Run(ctx,
-		fmt.Sprintf("MATCH (n:`%s`) RETURN n.id AS id, labels(n) AS labels, properties(n) AS props", baseLabel), nil)
-	if err != nil {
-		return result, fmt.Errorf("read nodes: %w", err)
-	}
-	for res.Next(ctx) {
-		rec := res.Record()
-		id, _ := rec.Get("id")
-		labels, _ := rec.Get("labels")
-		props, _ := rec.Get("props")
-		label := ""
-		if ls, ok := labels.([]any); ok {
-			for _, l := range ls {
-				if s, ok := l.(string); ok && s != baseLabel {
-					label = s
-					break
+		res, err := tx.Run(ctx,
+			fmt.Sprintf("MATCH (n:`%s`) RETURN n.id AS id, labels(n) AS labels, properties(n) AS props", baseLabel), nil)
+		if err != nil {
+			return result, fmt.Errorf("read nodes: %w", err)
+		}
+		for res.Next(ctx) {
+			rec := res.Record()
+			id, _ := rec.Get("id")
+			labels, _ := rec.Get("labels")
+			props, _ := rec.Get("props")
+			label := ""
+			if ls, ok := labels.([]any); ok {
+				for _, l := range ls {
+					if s, ok := l.(string); ok && s != baseLabel {
+						label = s
+						break
+					}
 				}
 			}
+			result.Nodes = append(result.Nodes, ReadNode{
+				ID: fmt.Sprint(id), Label: label, Properties: toStringMap(props),
+			})
 		}
-		result.Nodes = append(result.Nodes, ReadNode{
-			ID: fmt.Sprint(id), Label: label, Properties: toStringMap(props),
-		})
-	}
 
-	res, err = session.Run(ctx,
-		fmt.Sprintf("MATCH (n:`%s`)-[r]->(m:`%s`) RETURN n.id AS src, m.id AS tgt, TYPE(r) AS typ, properties(r) AS props",
-			baseLabel, baseLabel), nil)
+		res, err = tx.Run(ctx,
+			fmt.Sprintf("MATCH (n:`%s`)-[r]->(m:`%s`) RETURN n.id AS src, m.id AS tgt, TYPE(r) AS typ, properties(r) AS props",
+				baseLabel, baseLabel), nil)
+		if err != nil {
+			return result, fmt.Errorf("read edges: %w", err)
+		}
+		for res.Next(ctx) {
+			rec := res.Record()
+			src, _ := rec.Get("src")
+			tgt, _ := rec.Get("tgt")
+			typ, _ := rec.Get("typ")
+			props, _ := rec.Get("props")
+			result.Edges = append(result.Edges, ReadEdge{
+				SourceID: fmt.Sprint(src), TargetID: fmt.Sprint(tgt),
+				RelationshipType: fmt.Sprint(typ), Properties: toStringMap(props),
+			})
+		}
+		return result, nil
+	})
 	if err != nil {
-		return result, fmt.Errorf("read edges: %w", err)
+		if r, ok := out.(GraphReadResult); ok {
+			return r, err
+		}
+		return GraphReadResult{}, err
 	}
-	for res.Next(ctx) {
-		rec := res.Record()
-		src, _ := rec.Get("src")
-		tgt, _ := rec.Get("tgt")
-		typ, _ := rec.Get("typ")
-		props, _ := rec.Get("props")
-		result.Edges = append(result.Edges, ReadEdge{
-			SourceID: fmt.Sprint(src), TargetID: fmt.Sprint(tgt),
-			RelationshipType: fmt.Sprint(typ), Properties: toStringMap(props),
-		})
-	}
-
-	return result, nil
+	return out.(GraphReadResult), nil
 }
 
 // ReadIDFiltered returns nodes/edges touching the given IDs.
@@ -355,7 +378,6 @@ func (w *Writer) ReadIDFiltered(ctx context.Context, ids []string) (GraphReadRes
 	session := w.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: w.database})
 	defer session.Close(ctx)
 
-	var result GraphReadResult
 	query := fmt.Sprintf(`
 		MATCH (a:`+"`%s`"+`)-[r]-(b:`+"`%s`"+`)
 		WHERE a.id IN $ids OR b.id IN $ids
@@ -364,40 +386,47 @@ func (w *Writer) ReadIDFiltered(ctx context.Context, ids []string) (GraphReadRes
 		       TYPE(r) AS typ, properties(r) AS r_props
 	`, baseLabel, baseLabel)
 
-	res, err := session.Run(ctx, query, map[string]any{"ids": ids})
+	out, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		var result GraphReadResult
+		res, err := tx.Run(ctx, query, map[string]any{"ids": ids})
+		if err != nil {
+			return result, fmt.Errorf("id-filtered read: %w", err)
+		}
+		nodesSeen := make(map[string]bool)
+		for res.Next(ctx) {
+			rec := res.Record()
+			aProps, _ := rec.Get("a_props")
+			bProps, _ := rec.Get("b_props")
+			typ, _ := rec.Get("typ")
+			rProps, _ := rec.Get("r_props")
+
+			am := toStringMap(aProps)
+			bm := toStringMap(bProps)
+			aID := fmt.Sprint(am["id"])
+			bID := fmt.Sprint(bm["id"])
+
+			if !nodesSeen[aID] {
+				nodesSeen[aID] = true
+				result.Nodes = append(result.Nodes, ReadNode{ID: aID, Properties: am})
+			}
+			if !nodesSeen[bID] {
+				nodesSeen[bID] = true
+				result.Nodes = append(result.Nodes, ReadNode{ID: bID, Properties: bm})
+			}
+			result.Edges = append(result.Edges, ReadEdge{
+				SourceID: aID, TargetID: bID,
+				RelationshipType: fmt.Sprint(typ), Properties: toStringMap(rProps),
+			})
+		}
+		return result, nil
+	})
 	if err != nil {
-		return result, fmt.Errorf("id-filtered read: %w", err)
-	}
-
-	nodesSeen := make(map[string]bool)
-	for res.Next(ctx) {
-		rec := res.Record()
-		aProps, _ := rec.Get("a_props")
-		bProps, _ := rec.Get("b_props")
-		typ, _ := rec.Get("typ")
-		rProps, _ := rec.Get("r_props")
-
-		am := toStringMap(aProps)
-		bm := toStringMap(bProps)
-		aID := fmt.Sprint(am["id"])
-		bID := fmt.Sprint(bm["id"])
-
-		if !nodesSeen[aID] {
-			nodesSeen[aID] = true
-			result.Nodes = append(result.Nodes, ReadNode{ID: aID, Properties: am})
+		if r, ok := out.(GraphReadResult); ok {
+			return r, err
 		}
-		if !nodesSeen[bID] {
-			nodesSeen[bID] = true
-			result.Nodes = append(result.Nodes, ReadNode{ID: bID, Properties: bm})
-		}
-
-		result.Edges = append(result.Edges, ReadEdge{
-			SourceID: aID, TargetID: bID,
-			RelationshipType: fmt.Sprint(typ), Properties: toStringMap(rProps),
-		})
+		return GraphReadResult{}, err
 	}
-
-	return result, nil
+	return out.(GraphReadResult), nil
 }
 
 // ReadNeighbours returns direct neighbors of a node.
@@ -410,7 +439,6 @@ func (w *Writer) ReadSubgraph(ctx context.Context, label string, names []string)
 	session := w.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: w.database})
 	defer session.Close(ctx)
 
-	var result GraphReadResult
 	query := fmt.Sprintf(`
 		UNWIND $names AS wantedName
 		MATCH (n:`+"`%s`"+`)
@@ -430,68 +458,89 @@ func (w *Writer) ReadSubgraph(ctx context.Context, label string, names []string)
 		  [r IN rels | {type: TYPE(r), properties: properties(r)}] AS rawRels
 	`, label)
 
-	res, err := session.Run(ctx, query, map[string]any{"names": names})
+	out, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		var result GraphReadResult
+		res, err := tx.Run(ctx, query, map[string]any{"names": names})
+		if err != nil {
+			return result, fmt.Errorf("subgraph read: %w", err)
+		}
+		if res.Next(ctx) {
+			rawNodes, _ := res.Record().Get("rawNodes")
+			rawRels, _ := res.Record().Get("rawRels")
+
+			if nodes, ok := rawNodes.([]any); ok {
+				for _, n := range nodes {
+					if nm, ok := n.(map[string]any); ok {
+						props := toStringMap(nm["properties"])
+						result.Nodes = append(result.Nodes, ReadNode{
+							ID: fmt.Sprint(nm["id"]), Properties: props,
+						})
+					}
+				}
+			}
+			if rels, ok := rawRels.([]any); ok {
+				for _, r := range rels {
+					if rm, ok := r.(map[string]any); ok {
+						props := toStringMap(rm["properties"])
+						srcID := fmt.Sprint(props["source_node_id"])
+						tgtID := fmt.Sprint(props["target_node_id"])
+						result.Edges = append(result.Edges, ReadEdge{
+							SourceID: srcID, TargetID: tgtID,
+							RelationshipType: fmt.Sprint(rm["type"]), Properties: props,
+						})
+					}
+				}
+			}
+		}
+		return result, nil
+	})
 	if err != nil {
-		return result, fmt.Errorf("subgraph read: %w", err)
-	}
-
-	if res.Next(ctx) {
-		rawNodes, _ := res.Record().Get("rawNodes")
-		rawRels, _ := res.Record().Get("rawRels")
-
-		if nodes, ok := rawNodes.([]any); ok {
-			for _, n := range nodes {
-				if nm, ok := n.(map[string]any); ok {
-					props := toStringMap(nm["properties"])
-					result.Nodes = append(result.Nodes, ReadNode{
-						ID: fmt.Sprint(nm["id"]), Properties: props,
-					})
-				}
-			}
+		if r, ok := out.(GraphReadResult); ok {
+			return r, err
 		}
-
-		if rels, ok := rawRels.([]any); ok {
-			for _, r := range rels {
-				if rm, ok := r.(map[string]any); ok {
-					props := toStringMap(rm["properties"])
-					srcID := fmt.Sprint(props["source_node_id"])
-					tgtID := fmt.Sprint(props["target_node_id"])
-					result.Edges = append(result.Edges, ReadEdge{
-						SourceID: srcID, TargetID: tgtID,
-						RelationshipType: fmt.Sprint(rm["type"]), Properties: props,
-					})
-				}
-			}
-		}
+		return GraphReadResult{}, err
 	}
-
-	return result, nil
+	return out.(GraphReadResult), nil
 }
 
-// Query executes an arbitrary Cypher query and returns rows as []map[string]any.
+// Query executes an arbitrary read Cypher query and returns rows as []map[string]any.
+// All current callers (graph_search, mcp_doctor, api_search) execute MATCH/SHOW
+// queries — routed through ExecuteRead so cluster deployments can use replicas.
+// Use ExecuteWrite directly via session if a write-flavoured query is needed.
 func (w *Writer) Query(ctx context.Context, cypher string, params map[string]any) ([]map[string]any, error) {
 	session := w.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: w.database})
 	defer session.Close(ctx)
 
-	res, err := session.Run(ctx, cypher, params)
-	if err != nil {
-		return nil, fmt.Errorf("cypher query: %w", err)
-	}
-
-	var rows []map[string]any
-	for res.Next(ctx) {
-		rec := res.Record()
-		row := make(map[string]any, len(rec.Keys))
-		for _, key := range rec.Keys {
-			val, _ := rec.Get(key)
-			row[key] = val
+	out, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		res, err := tx.Run(ctx, cypher, params)
+		if err != nil {
+			return nil, fmt.Errorf("cypher query: %w", err)
 		}
-		rows = append(rows, row)
+		var rows []map[string]any
+		for res.Next(ctx) {
+			rec := res.Record()
+			row := make(map[string]any, len(rec.Keys))
+			for _, key := range rec.Keys {
+				val, _ := rec.Get(key)
+				row[key] = val
+			}
+			rows = append(rows, row)
+		}
+		if err := res.Err(); err != nil {
+			return rows, fmt.Errorf("cypher iterate: %w", err)
+		}
+		return rows, nil
+	})
+	if err != nil {
+		if rows, ok := out.([]map[string]any); ok {
+			return rows, err
+		}
+		return nil, err
 	}
-	if err := res.Err(); err != nil {
-		return rows, fmt.Errorf("cypher iterate: %w", err)
+	if out == nil {
+		return nil, nil
 	}
-	return rows, nil
+	return out.([]map[string]any), nil
 }
 
 func toStringMap(v any) map[string]any {
