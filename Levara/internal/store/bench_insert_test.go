@@ -23,9 +23,9 @@ import (
 func BenchmarkInsertOneByOne_Parallel(b *testing.B) {
 	const dim = 64
 	dir, _ := os.MkdirTemp("", "levara-bench-par-*")
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 	db, _ := NewLevara(dim, dir+"/meta.bin")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	vecs := make([][]float32, b.N)
 	for i := range vecs {
@@ -37,7 +37,7 @@ func BenchmarkInsertOneByOne_Parallel(b *testing.B) {
 		i := 0
 		for pb.Next() {
 			id := fmt.Sprintf("par-%d-%d", b.N, i)
-			db.Insert(id, vecs[i%len(vecs)], nil)
+			_ = db.Insert(id, vecs[i%len(vecs)], nil)
 			i++
 		}
 	})
@@ -48,9 +48,9 @@ func BenchmarkBatchInsert50_Parallel(b *testing.B) {
 	const dim = 64
 	const batchSize = 50
 	dir, _ := os.MkdirTemp("", "levara-bench-bpar-*")
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 	db, _ := NewLevara(dim, dir+"/meta.bin")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
@@ -86,7 +86,7 @@ func TestInsert_TimingBreakdown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	vecs := make([][]float32, n)
 	for i := range vecs {
@@ -99,7 +99,7 @@ func TestInsert_TimingBreakdown(t *testing.T) {
 		id := fmt.Sprintf("t-%d", i)
 
 		start := time.Now()
-		db.Insert(id, vecs[i], nil)
+		_ = db.Insert(id, vecs[i], nil)
 		totalInsert += time.Since(start)
 	}
 
@@ -122,7 +122,7 @@ func TestInsert_ConcurrentThroughput(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer db.Close()
+			defer func() { _ = db.Close() }()
 
 			ctx, cancel := context.WithTimeout(context.Background(), duration)
 			defer cancel()
@@ -140,7 +140,7 @@ func TestInsert_ConcurrentThroughput(t *testing.T) {
 						for j := range v {
 							v[j] = rng.Float32()
 						}
-						db.Insert(fmt.Sprintf("w%d-%d", base, i), v, nil)
+						_ = db.Insert(fmt.Sprintf("w%d-%d", base, i), v, nil)
 						count.Add(1)
 						i++
 					}

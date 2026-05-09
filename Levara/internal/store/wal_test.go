@@ -47,13 +47,13 @@ func TestGroupCommitWAL_ConcurrentFlush(t *testing.T) {
 	}
 
 	// Close and reopen to verify all entries persisted.
-	wal.Close()
+	_ = wal.Close()
 
 	wal2, err := OpenWal(dir + "/test.wal")
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
-	defer wal2.Close()
+	defer func() { _ = wal2.Close() }()
 
 	var count int32
 	err = wal2.Recover(func(id string, vector []float32, meta []byte, loc FileLocation) {
@@ -86,8 +86,8 @@ func TestGroupCommitWAL_Coalescing(t *testing.T) {
 			defer wg.Done()
 			id := fmt.Sprintf("coalesce-%d", idx)
 			vec := []float32{float32(idx), float32(idx)}
-			wal.WriteEntryNoFlush(OpInsert, id, vec, nil, FileLocation{})
-			wal.FlushAsync()
+			_ = wal.WriteEntryNoFlush(OpInsert, id, vec, nil, FileLocation{})
+			_ = wal.FlushAsync()
 		}(i)
 	}
 	wg.Wait()
@@ -99,7 +99,7 @@ func TestGroupCommitWAL_Coalescing(t *testing.T) {
 		t.Fatalf("expected fewer fsyncs (%d) than entries (%d) — group commit not coalescing", syncs, numEntries)
 	}
 
-	wal.Close()
+	_ = wal.Close()
 }
 
 func TestGroupCommitWAL_DeleteRecovery(t *testing.T) {
@@ -112,23 +112,23 @@ func TestGroupCommitWAL_DeleteRecovery(t *testing.T) {
 	}
 
 	// Write insert + delete via group commit path
-	wal.WriteEntryNoFlush(OpInsert, "keep", []float32{1, 2}, []byte(`{"k":1}`), FileLocation{Offset: 0, Length: 7})
-	wal.FlushAsync()
+	_ = wal.WriteEntryNoFlush(OpInsert, "keep", []float32{1, 2}, []byte(`{"k":1}`), FileLocation{Offset: 0, Length: 7})
+	_ = wal.FlushAsync()
 
-	wal.WriteEntryNoFlush(OpInsert, "remove", []float32{3, 4}, []byte(`{"k":2}`), FileLocation{Offset: 7, Length: 7})
-	wal.FlushAsync()
+	_ = wal.WriteEntryNoFlush(OpInsert, "remove", []float32{3, 4}, []byte(`{"k":2}`), FileLocation{Offset: 7, Length: 7})
+	_ = wal.FlushAsync()
 
-	wal.WriteEntryNoFlush(OpDelete, "remove", nil, nil, FileLocation{})
-	wal.FlushAsync()
+	_ = wal.WriteEntryNoFlush(OpDelete, "remove", nil, nil, FileLocation{})
+	_ = wal.FlushAsync()
 
-	wal.Close()
+	_ = wal.Close()
 
 	// Recover and verify
 	wal2, err := OpenWal(dir + "/test.wal")
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
-	defer wal2.Close()
+	defer func() { _ = wal2.Close() }()
 
 	entries := make(map[string]byte) // id -> last op
 	wal2.RecoverEx(func(op byte, id string, vector []float32, meta []byte, loc FileLocation) {
@@ -164,5 +164,5 @@ func TestGroupCommitWAL_FlushAsyncBlocksUntilDurable(t *testing.T) {
 		t.Fatal("expected at least 1 fsync after FlushAsync")
 	}
 
-	wal.Close()
+	_ = wal.Close()
 }

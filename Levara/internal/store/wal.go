@@ -266,11 +266,11 @@ func (w *WAL) Close() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if err := w.writer.Flush(); err != nil {
-		w.file.Close()
+		_ = w.file.Close()
 		return err
 	}
 	if err := w.file.Sync(); err != nil {
-		w.file.Close()
+		_ = w.file.Close()
 		return err
 	}
 	return w.file.Close()
@@ -309,7 +309,7 @@ func (wal *WAL) Recover(fn WALIterator) error {
 
 func (wal *WAL) recoverInternal(fn func(op byte, id string, vector []float32, meta []byte, loc FileLocation)) error {
 	// Reset file pointer to start
-	wal.file.Seek(0, 0)
+	_, _ = wal.file.Seek(0, 0)
 	reader := bufio.NewReader(wal.file)
 
 	for {
@@ -389,6 +389,6 @@ func (wal *WAL) recoverInternal(fn func(op byte, id string, vector []float32, me
 	}
 
 	// Move pointer back to end for appending new writes
-	wal.file.Seek(0, 2)
+	_, _ = wal.file.Seek(0, 2)
 	return nil
 }

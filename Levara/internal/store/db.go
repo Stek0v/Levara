@@ -602,7 +602,7 @@ func (db *Levara) Close() error {
 		close(db.indexSignal)
 	})
 	if err := db.wal.Close(); err != nil {
-		db.disk.Close()
+		_ = db.disk.Close()
 		return fmt.Errorf("wal close: %w", err)
 	}
 	return db.disk.Close()
@@ -643,8 +643,8 @@ func (db *Levara) Checkpoint() error {
 
 		// Write entry to tmp WAL (same binary format)
 		if err := writeWALEntryTo(writer, OpInsert, id, vec, meta, metaLoc); err != nil {
-			tmpFile.Close()
-			os.Remove(tmpPath)
+			_ = tmpFile.Close()
+			_ = os.Remove(tmpPath)
 			return fmt.Errorf("checkpoint: write entry %s: %w", id, err)
 		}
 		count++
@@ -652,19 +652,19 @@ func (db *Levara) Checkpoint() error {
 
 	// Flush and sync
 	if err := writer.Flush(); err != nil {
-		tmpFile.Close()
-		os.Remove(tmpPath)
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("checkpoint: flush: %w", err)
 	}
 	if err := tmpFile.Sync(); err != nil {
-		tmpFile.Close()
-		os.Remove(tmpPath)
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("checkpoint: sync: %w", err)
 	}
-	tmpFile.Close()
+	_ = tmpFile.Close()
 
 	// Close current WAL
-	db.wal.Close()
+	_ = db.wal.Close()
 
 	// Atomic swap: rename tmp -> WAL
 	if err := os.Rename(tmpPath, walPath); err != nil {

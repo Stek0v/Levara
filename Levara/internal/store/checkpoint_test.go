@@ -61,7 +61,7 @@ func TestCheckpoint_BasicCompaction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
-	defer db2.Close()
+	defer func() { _ = db2.Close() }()
 
 	// Live records (50-99) should exist
 	for i := 50; i < 100; i++ {
@@ -213,7 +213,7 @@ func TestCheckpoint_ContinuedWritesAfter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
-	defer db2.Close()
+	defer func() { _ = db2.Close() }()
 
 	for i := 0; i < 20; i++ {
 		_, _, found := db2.Get(fmt.Sprintf("before-%d", i))

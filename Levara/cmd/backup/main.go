@@ -38,7 +38,7 @@ func main() {
 	server := fs.String("server", "http://localhost:8080", "Levara server URL")
 	collection := fs.String("collection", "", "Collection name")
 
-	fs.Parse(os.Args[2:])
+	_ = fs.Parse(os.Args[2:])
 
 	switch cmd {
 	case "full":

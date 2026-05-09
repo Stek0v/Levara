@@ -23,7 +23,7 @@ func TestCollectionCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewCollectionManager: %v", err)
 	}
-	defer cm.Close()
+	defer func() { _ = cm.Close() }()
 
 	// Create
 	if err := cm.Create("test_col"); err != nil {
@@ -45,7 +45,7 @@ func TestCollectionCRUD(t *testing.T) {
 	}
 
 	// Create second
-	cm.Create("another_col")
+	_ = cm.Create("another_col")
 	if cm.Count() != 2 {
 		t.Fatalf("Count: got %d, want 2", cm.Count())
 	}
@@ -75,17 +75,17 @@ func TestCollectionIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewCollectionManager: %v", err)
 	}
-	defer cm.Close()
+	defer func() { _ = cm.Close() }()
 
 	// Insert into two collections with DIFFERENT vectors
-	cm.Create("books")
-	cm.Create("movies")
+	_ = cm.Create("books")
+	_ = cm.Create("movies")
 
 	bookVec := randVecForTest(64)
 	movieVec := randVecForTest(64)
 
-	cm.Insert("books", "book-1", bookVec, map[string]any{"text": "a book"})
-	cm.Insert("movies", "movie-1", movieVec, map[string]any{"text": "a movie"})
+	_ = cm.Insert("books", "book-1", bookVec, map[string]any{"text": "a book"})
+	_ = cm.Insert("movies", "movie-1", movieVec, map[string]any{"text": "a movie"})
 
 	// Search books — should NOT find movie
 	bookResults, err := cm.Search("books", bookVec, 10)
@@ -130,10 +130,10 @@ func TestCollectionPersistence(t *testing.T) {
 	cm, _ := NewCollectionManager(dim, dir)
 	cm.Create("persist_test")
 	for i := 0; i < 10; i++ {
-		cm.Insert("persist_test", fmt.Sprintf("id-%d", i), randVecForTest(dim),
+		_ = cm.Insert("persist_test", fmt.Sprintf("id-%d", i), randVecForTest(dim),
 			map[string]any{"index": i})
 	}
-	cm.Close()
+	_ = cm.Close()
 
 	// Phase 2: Reopen and verify data survived
 	cm2, err := NewCollectionManager(dim, dir)

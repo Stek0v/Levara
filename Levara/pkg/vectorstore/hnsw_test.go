@@ -21,13 +21,13 @@ func newStore(t testing.TB, dim int) (*HNSWStore, func()) {
 	}
 	cm, err := store.NewCollectionManager(dim, dir)
 	if err != nil {
-		os.RemoveAll(dir)
+		_ = os.RemoveAll(dir)
 		t.Fatal(err)
 	}
 	s := NewHNSWStore(cm)
 	return s, func() {
 		_ = s.Close()
-		os.RemoveAll(dir)
+		_ = os.RemoveAll(dir)
 	}
 }
 
