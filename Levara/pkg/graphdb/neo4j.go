@@ -51,7 +51,7 @@ func NewWriter(ctx context.Context, url, username, password, database string) (*
 	}
 
 	driver, err := neo4j.NewDriverWithContext(url, auth,
-		func(config *neo4j.Config) {
+		func(config *neo4j.Config) { //nolint:staticcheck // SA1019: neo4j.Config deprecation; upstream upgrade out of scope
 			config.MaxConnectionLifetime = 120_000_000_000 // 120s in nanoseconds
 		},
 	)

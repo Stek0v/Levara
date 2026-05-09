@@ -290,7 +290,7 @@ func isKeywordOnly(words []string) bool {
 			return false
 		}
 		// If any word is a question word, not keyword-only
-		for _, r := range []rune(w) {
+		for _, r := range w {
 			if !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '-' && r != '_' {
 				return false
 			}

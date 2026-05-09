@@ -20,16 +20,6 @@ var (
 		Name: "levara_grpc_requests_total",
 		Help: "Total gRPC requests by method and status",
 	}, []string{"method", "status"})
-
-	cacheHits = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "levara_cache_hits_total",
-		Help: "Cache hits by cache type",
-	}, []string{"cache"})
-
-	cacheMisses = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "levara_cache_misses_total",
-		Help: "Cache misses by cache type",
-	}, []string{"cache"})
 )
 
 // MetricsUnaryInterceptor adds Prometheus metrics to all unary gRPC calls.

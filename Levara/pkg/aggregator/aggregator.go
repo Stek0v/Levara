@@ -66,11 +66,11 @@ func Aggregate(edges []ScoredEdge, topK int) AggregateResult {
 	sb.WriteString("Nodes:\n")
 	for _, n := range nodes {
 		title := createTitle(n.text)
-		sb.WriteString(fmt.Sprintf("Node: %s\n__node_content_start__\n%s\n__node_content_end__\n\n", title, n.text))
+		fmt.Fprintf(&sb, "Node: %s\n__node_content_start__\n%s\n__node_content_end__\n\n", title, n.text)
 	}
 	sb.WriteString("Connections:\n")
 	for _, r := range ranked {
-		sb.WriteString(fmt.Sprintf("%s --[%s]--> %s\n", r.edge.SourceName, r.edge.RelationshipName, r.edge.TargetName))
+		fmt.Fprintf(&sb, "%s --[%s]--> %s\n", r.edge.SourceName, r.edge.RelationshipName, r.edge.TargetName)
 	}
 
 	// 4. Build result

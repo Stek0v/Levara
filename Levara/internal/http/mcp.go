@@ -41,8 +41,6 @@ type (
 	jsonRPCRequest  = mcp.JSONRPCRequest
 	jsonRPCResponse = mcp.JSONRPCResponse
 	rpcError        = mcp.RPCError
-	contextKey      = mcp.ContextKey
-	mcpTool         = mcp.Tool
 	mcpContent      = mcp.Content
 	mcpToolResult   = mcp.ToolResult
 )
@@ -1232,15 +1230,6 @@ func MCPHealthHandler() fiber.Handler {
 	}
 }
 
-// Helper to check if string is in list
-func strIn(s string, list []string) bool {
-	for _, v := range list {
-		if strings.EqualFold(s, v) {
-			return true
-		}
-	}
-	return false
-}
 
 // toolListCommunities is a thin shim over mcp.ToolListCommunities. F-4
 // wave 3n moved the body (SQL query + JSON marshal) into pkg/mcp. No

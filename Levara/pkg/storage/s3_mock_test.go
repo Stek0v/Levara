@@ -90,7 +90,7 @@ func (m *mockS3) handler() http.Handler {
 			m.mu.Unlock()
 			w.WriteHeader(204)
 		default:
-			http.Error(w, "method not allowed", 405)
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
 	})
 }
@@ -252,7 +252,7 @@ func TestS3_ListUnderPrefix(t *testing.T) {
 // on 503 would let a dataset upload claim success when nothing landed.
 func TestS3_SaveServerError_Propagates(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		http.Error(w, "slow down", 503)
+		http.Error(w, "slow down", http.StatusServiceUnavailable)
 	}))
 	defer ts.Close()
 	s := newS3Client(t, ts, "bkt")

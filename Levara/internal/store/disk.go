@@ -36,7 +36,7 @@ func NewDiskStore(path string) (*DiskStore, error) {
 	}
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
-		return nil, fmt.Errorf("Failed to open disk store: %w", err)
+		return nil, fmt.Errorf("failed to open disk store: %w", err)
 	}
 
 	info, err := f.Stat()
