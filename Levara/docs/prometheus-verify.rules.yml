@@ -1,0 +1,65 @@
+# Prometheus recording + alerting rules for the Levara verify-stack.
+# Drop into a rule_files entry alongside prometheus.yml:
+#
+#   rule_files:
+#     - /etc/prometheus/prometheus-verify.rules.yml
+#
+# Reload Prometheus after copying. The recording rules feed the suggested
+# Grafana panels; the alerts are the operator-actionable subset.
+
+groups:
+  - name: levara-verify-recording
+    interval: 30s
+    rules:
+      # Median + tail quantiles per search type — the input to threshold tuning.
+      - record: levara:rag_confidence:p50
+        expr: histogram_quantile(0.50, sum by (search_type, le) (rate(levara_rag_confidence_bucket[5m])))
+      - record: levara:rag_confidence:p10
+        expr: histogram_quantile(0.10, sum by (search_type, le) (rate(levara_rag_confidence_bucket[5m])))
+
+      # Abstain rate as a fraction of completions, by reason.
+      - record: levara:rag_abstain:rate5m
+        expr: sum by (search_type, reason) (rate(levara_rag_abstain_total[5m]))
+
+      # Verify-drop rate — `bad_metadata` is a write-path regression signal.
+      - record: levara:rag_verify_dropped:rate5m
+        expr: sum by (search_type, reason) (rate(levara_rag_verify_dropped_total[5m]))
+
+  - name: levara-verify-alerts
+    rules:
+      - alert: HighRAGAbstainRate
+        # Trips when >20% of completions abstain over 10 minutes. Most often
+        # means the threshold is too tight for the corpus, or a collection
+        # silently went empty. Check `levara:rag_confidence:p10` first.
+        expr: |
+          sum by (search_type) (rate(levara_rag_abstain_total[10m]))
+            /
+          (sum by (search_type) (rate(levara_rag_confidence_count[10m])) > 0)
+            > 0.20
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Levara RAG abstain rate > 20% on {{ $labels.search_type }}"
+          description: "Either thresholds are too aggressive or upstream retrieval has regressed."
+
+      - alert: VerifyDropBadMetadataSpike
+        # `bad_metadata` drops imply non-JSON metadata reaching the read path
+        # — a write-side regression (chunker, ingest, or migration).
+        expr: sum(rate(levara_rag_verify_dropped_total{reason="bad_metadata"}[5m])) > 0.5
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Levara verify-stack dropping rows with malformed metadata"
+          description: "Ingest pipeline likely wrote non-JSON metadata. Inspect recent inserts and the embed/chunker code path."
+
+      - alert: WALRecoveryFailure
+        # Pairs with the verify-stack's reliability story — fast surface for
+        # restart-time WAL replay regressions.
+        expr: increase(levara_wal_recoveries_total{result="fail"}[15m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "Levara WAL recovery failed at startup"
+          description: "Investigate /version + recent restart logs; data may be inconsistent."

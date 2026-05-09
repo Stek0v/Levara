@@ -50,6 +50,12 @@ services:
       # batch of memories — bump it for the integrated stack.
       RATE_LIMIT_USER_MAX: ${RATE_LIMIT_USER_MAX:-10000}
       RATE_LIMIT_USER_WINDOW_SECONDS: ${RATE_LIMIT_USER_WINDOW_SECONDS:-60}
+      # Verify-stack thresholds (see Levara/docs/verify-stack-rollout.md).
+      # Defaults to 0 (disabled) — observability metrics emit either way.
+      # Uncomment after Phase 1 observation to enable server-wide abstain.
+      LEVARA_RAG_ABSTAIN_THRESHOLD: ${LEVARA_RAG_ABSTAIN_THRESHOLD:-0}
+      LEVARA_RAG_ABSTAIN_THRESHOLD_RAG_COMPLETION: ${LEVARA_RAG_ABSTAIN_THRESHOLD_RAG_COMPLETION:-}
+      LEVARA_RAG_ABSTAIN_THRESHOLD_GRAPH_COMPLETION: ${LEVARA_RAG_ABSTAIN_THRESHOLD_GRAPH_COMPLETION:-}
     command:
       - "./levara"
       - "-standalone=true"
@@ -260,6 +266,9 @@ services:
       - "9090:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # Verify-stack recording + alerting rules. Mount-only; rules are
+      # loaded lazily on Prometheus reload, so absent file = no rules.
+      - ./Levara/docs/prometheus-verify.rules.yml:/etc/prometheus/rules/verify.rules.yml:ro
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
