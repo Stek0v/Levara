@@ -169,8 +169,19 @@ func (a *VectorArena) GetUnsafe(index uint32) ([]float32, error) {
 func (a *VectorArena) GetNoLock(index uint32) []float32 {
 	pageIdx := int(index) / a.vectorsPerPage
 	vecIdxInPage := int(index) % a.vectorsPerPage
+	// Defensive bounds check: if the arena was swapped out from under us
+	// (e.g. Clear() during a Raft snapshot restore) a stale idx would index
+	// past a.pages and panic. Returning nil lets HNSW callsites skip the
+	// stale node — they already tolerate nil from nodeByOffset.
+	if pageIdx < 0 || pageIdx >= len(a.pages) {
+		return nil
+	}
 	offset := vecIdxInPage * a.dim * 4
-	rawbytes := a.pages[pageIdx][offset : offset+(a.dim*4)]
+	page := a.pages[pageIdx]
+	if offset < 0 || offset+(a.dim*4) > len(page) {
+		return nil
+	}
+	rawbytes := page[offset : offset+(a.dim*4)]
 	return unsafe.Slice((*float32)(unsafe.Pointer(&rawbytes[0])), a.dim)
 }
 

@@ -275,6 +275,15 @@ func (db *Levara) Insert(id string, vector []float32, data any) error {
 	db.revIndex[idx] = id
 	db.metaLocs[idx] = loc
 
+	// Append to the indexer queue under db.mu so the (idx, arena) pairing is
+	// atomic with the arena.Add above. If we released db.mu first, a
+	// concurrent Clear() could swap the arena before we appended, leaving a
+	// stale idx pointing past the new arena's bounds — which the indexer
+	// would later try to dereference and panic on.
+	db.pendingMu.Lock()
+	db.pendingVecs = append(db.pendingVecs, pendingItem{vector: vector, id: id, idx: idx})
+	db.pendingMu.Unlock()
+
 	// Release db.mu before fsync — group commit coalesces across goroutines.
 	db.mu.Unlock()
 
@@ -283,9 +292,6 @@ func (db *Levara) Insert(id string, vector []float32, data any) error {
 		return fmt.Errorf("wal flush: %w", err)
 	}
 
-	db.pendingMu.Lock()
-	db.pendingVecs = append(db.pendingVecs, pendingItem{vector: vector, id: id, idx: idx})
-	db.pendingMu.Unlock()
 	db.signalIndexer()
 
 	return nil
@@ -374,6 +380,15 @@ func (db *Levara) BatchInsert(records []BatchItem) []error {
 		db.metaLocs[idx] = d.loc
 		toIndex = append(toIndex, pendingItem{vector: d.rec.Vector, id: d.rec.ID, idx: idx})
 	}
+
+	// Enqueue under db.mu so the (idx, arena) pairing is atomic with arena.Add
+	// — see the matching note in Insert. A concurrent Clear() must observe
+	// either an empty pending queue or the items already drained.
+	if len(toIndex) > 0 {
+		db.pendingMu.Lock()
+		db.pendingVecs = append(db.pendingVecs, toIndex...)
+		db.pendingMu.Unlock()
+	}
 	db.mu.Unlock()
 
 	// Group commit: fsync outside db.mu lock
@@ -381,11 +396,7 @@ func (db *Levara) BatchInsert(records []BatchItem) []error {
 		errs = append(errs, fmt.Errorf("wal flush: %w", err))
 	}
 
-	// Phase 2: enqueue for async HNSW indexing.
 	if len(toIndex) > 0 {
-		db.pendingMu.Lock()
-		db.pendingVecs = append(db.pendingVecs, toIndex...)
-		db.pendingMu.Unlock()
 		db.signalIndexer()
 	}
 
@@ -578,6 +589,12 @@ func (db *Levara) Clear() {
 	db.metaLocs = make(map[uint32]FileLocation)
 	db.arena = NewVectorArena(db.dim)
 	db.hnsw = NewHNSWIndex(db.arena, db.hnswCfg)
+	// Drain any pending indexer items — their idx values reference the
+	// previous arena and would panic GetNoLock once the indexer drains them
+	// against the freshly-allocated empty arena.
+	db.pendingMu.Lock()
+	db.pendingVecs = nil
+	db.pendingMu.Unlock()
 }
 
 func (db *Levara) Close() error {
