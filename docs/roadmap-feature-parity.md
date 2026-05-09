@@ -1,8 +1,8 @@
 # Levara Go — Roadmap до Feature Parity с Cognee Python
 
-> **Статус на 2026-04-17:** все P0 и почти все P1 реализованы. Оставшиеся пункты
-> — P2/P3 (расширения, не feature gap) и **закрытие тестового покрытия** в
-> `internal/http` (самая большая оставшаяся дыра).
+> **Статус на 2026-05-10:** все P0 и P1 реализованы; пост-F-4 покрытие
+> `internal/http` (Wave A–D) тоже закрыто. Оставшиеся пункты — P2/P3
+> (расширения, не feature gap).
 >
 > Документ раньше описывал 55% parity и 7 search-types в fallback —
 > это устарело. Актуальное состояние ниже.
@@ -36,14 +36,14 @@
 ## Закрытие тестового покрытия в `internal/http` (текущая работа)
 
 `internal/http` = 12k+ LOC, исторически имел 1 test file (`handler_contract_test.go`).
-Сейчас идёт post-F-4 coverage push по 4 волнам:
+Post-F-4 coverage push закрыт по всем 4 волнам:
 
 | Wave | Покрытие | Статус |
 |---|---|---|
-| A | `graphCompletionSearch` + `tripletCompletionSearch` + общий fixture | ✅ 9 тестов, branch `claude/test-wave-a-graph-search` |
-| B | `cypherSearch` (security gates) + `naturalLanguageSearch` (fallback paths) | pending |
-| C | `contextExtensionSearch` + `cotSearch` + `communityLocal/GlobalSearch` | pending |
-| D | RBAC end-to-end (user A cognify → user B isolation) | pending |
+| A | `graphCompletionSearch` + `tripletCompletionSearch` + общий fixture | ✅ `graph_search_test.go` (10 тестов), `search_test_helpers.go` |
+| B | `cypherSearch` (security gates) + `naturalLanguageSearch` (fallback paths) | ✅ `cypher_nl_search_test.go` (11 тестов) |
+| C | `contextExtensionSearch` + `cotSearch` + `communityLocal/GlobalSearch` | ✅ `extended_search_test.go` (16 тестов) |
+| D | RBAC end-to-end (user A cognify → user B isolation) | ✅ `rbac_search_test.go` (6 тестов) |
 
 ## Оставшиеся P2/P3 (не feature-parity, а расширения)
 
