@@ -35,7 +35,7 @@ Compose **valid**, стек уже был запущен (uptime 25h). Health-ch
 - ✅ postgres (healthy)
 - ✅ prometheus (healthy)
 - ✅ mem0-dashboard (HTTP 307 → / redirect)
-- ❌ **mem0 API (unhealthy)** — см. known issue ниже
+- ✅ mem0 API — healthy после `--force-recreate` (см. KI-1)
 
 API smoke (Levara HTTP):
 
@@ -55,10 +55,10 @@ API smoke (Levara HTTP):
 
 ## Known issues
 
-### KI-1: mem0 service unhealthy
+### KI-1: stale mem0 container env (RESOLVED 2026-05-09)
 
-**Симптом:** `mem0` контейнер падает при старте, healthcheck `/docs` → connection refused.
-Логи показывают:
+**Симптом:** `mem0` контейнер падал на старте, healthcheck `/docs` →
+connection refused. Логи:
 
 ```
 File "/app/packages/mem0/embeddings/ollama.py", line 49, in _ensure_model_exists
@@ -66,34 +66,25 @@ File "/app/packages/mem0/embeddings/ollama.py", line 49, in _ensure_model_exists
 ollama._types.ResponseError: pull model manifest: file does not exist (status code: 500)
 ```
 
-**Причина:** В env-конфиге live-инстанса разъехались переменные:
+**Причина:** контейнер был запущен **до** того, как в compose-файл добавили
+явные `MEM0_DEFAULT_EMBEDDER_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}` и
+`MEM0_DEFAULT_LLM_MODEL: ${LLM_MODEL:-qwen2.5:1.5b}`. Образ mem0 поставляется
+со встроенными дефолтами `openai/text-embedding-3-large` и `openai/gpt-4o-mini`,
+которые с `MEM0_EMBEDDER_PROVIDER=ollama` интерпретируются как имена
+Ollama-моделей и не находятся.
 
-```
-MEM0_DEFAULT_EMBEDDER_MODEL=openai/text-embedding-3-large
-MEM0_DEFAULT_LLM_MODEL=openai/gpt-4o-mini
-MEM0_EMBEDDER_PROVIDER=ollama
-MEM0_LLM_PROVIDER=ollama
-```
+`.env` и текущий compose-файл корректны; нужно было просто пересоздать
+контейнер чтобы он подхватил актуальные env-маппинги.
 
-mem0 пытается через Ollama-клиент `pull "openai/text-embedding-3-large"` —
-такой манифест в Ollama не существует, отсюда 500.
-
-**В compose-файле дефолты корректные** (`${EMBEDDING_MODEL:-nomic-embed-text}`,
-`${LLM_MODEL:-qwen2.5:1.5b}`), модели в Ollama присутствуют. Источник
-несоответствия — внешний `.env` или старая среда, переписавшая дефолты.
-
-**Fix (когда понадобится):**
+**Fix:**
 
 ```bash
-# либо явно сбросить override
-docker compose -f docker-compose.levaraos.yml stop mem0
-unset MEM0_DEFAULT_EMBEDDER_MODEL MEM0_DEFAULT_LLM_MODEL
 docker compose -f docker-compose.levaraos.yml up -d --no-deps --force-recreate mem0
 ```
 
-Не блокирует G-3: Levara + memoryfs + ollama + prometheus полностью
-функциональны; mem0 — отдельный дашборд-слой, которым можно заняться при
-включении его use-case.
+После recreate: `MEM0_DEFAULT_EMBEDDER_MODEL=nomic-embed-text`,
+`MEM0_DEFAULT_LLM_MODEL=qwen2.5:1.5b`, контейнер healthy за ~10s,
+коллекция `mem0` в Levara создана автоматически.
 
 ### KI-2: `/healthz`, `/ready` не реализованы
 
@@ -105,8 +96,7 @@ docker compose -f docker-compose.levaraos.yml up -d --no-deps --force-recreate m
 ## DoD checklist
 
 - [x] `docker compose ... config --quiet` без ошибок.
-- [x] Все сервисы поднимаются; healthchecks проходят, кроме известного
-      KI-1 (документирован).
+- [x] Все сервисы поднимаются; healthchecks проходят (KI-1 resolved).
 - [x] Smoke-сценарий: create collection → add → search → delete
       collection все 2xx.
 - [x] `docker compose down -v` чисто (не выполнено в этом прогоне —
