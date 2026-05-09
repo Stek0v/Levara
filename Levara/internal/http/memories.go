@@ -2,7 +2,10 @@
 package http
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -13,6 +16,7 @@ import (
 func RegisterMemoryAPI(app fiber.Router, cfg APIConfig) {
 	app.Post("/memories", saveMemoryHandler(cfg))
 	app.Get("/memories", listMemoriesHandler(cfg))
+	app.Get("/memories/stream", memoryEventsStreamHandler())
 	app.Get("/memories/:key", getMemoryHandler(cfg))
 	app.Delete("/memories/:key", deleteMemoryHandler(cfg))
 }
@@ -75,6 +79,15 @@ func saveMemoryHandler(cfg APIConfig) fiber.Handler {
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"detail": "save failed: " + err.Error()})
 		}
+
+		memoryEvents.Publish(MemoryEvent{
+			Kind:      "memory.saved",
+			Key:       req.Key,
+			Value:     req.Value,
+			Type:      req.Type,
+			OwnerID:   req.OwnerID,
+			Timestamp: now,
+		})
 
 		return c.Status(201).JSON(fiber.Map{
 			"id": id, "key": req.Key, "saved": true,
@@ -188,7 +201,98 @@ func deleteMemoryHandler(cfg APIConfig) fiber.Handler {
 			return c.Status(500).JSON(fiber.Map{"detail": "delete failed: " + err.Error()})
 		}
 
+		memoryEvents.Publish(MemoryEvent{
+			Kind:      "memory.deleted",
+			Key:       key,
+			OwnerID:   ownerID,
+			Timestamp: time.Now().UTC().Format(time.RFC3339),
+		})
+
 		return c.JSON(fiber.Map{"deleted": true, "key": key})
+	}
+}
+
+// memoryEventsStreamHandler — GET /memories/stream. Streams memory
+// mutations as Server-Sent Events. Optional ?owner_id=&type=&key_prefix=
+// filters narrow the stream to the caller's interest. Connection holds
+// open until the client disconnects or the request ctx is cancelled.
+//
+// Event format: `event: <kind>\ndata: <json>\n\n` plus a periodic
+// `: keepalive\n\n` comment to keep proxies happy.
+//
+// @Summary     Subscribe to memory mutation events (SSE)
+// @Description Push-based replacement for polling /memories. Emits memory.saved and memory.deleted events for the authenticated owner. Filters: owner_id, type, key_prefix. Keepalive comment every 25s.
+// @Tags        memories
+// @Produce     text/event-stream
+// @Security    BearerAuth
+// @Param       owner_id   query string false "Filter by owner_id (defaults to caller)"
+// @Param       type       query string false "Filter by memory type"
+// @Param       key_prefix query string false "Filter to keys starting with this prefix"
+// @Success     200 {string} string "SSE stream"
+// @Router      /memories/stream [get]
+func memoryEventsStreamHandler() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		callerID, _ := c.Locals("user_id").(string)
+		ownerFilter := c.Query("owner_id", callerID)
+		typeFilter := c.Query("type", "")
+		keyPrefix := c.Query("key_prefix", "")
+
+		c.Set("Content-Type", "text/event-stream")
+		c.Set("Cache-Control", "no-cache")
+		c.Set("Connection", "keep-alive")
+		c.Set("X-Accel-Buffering", "no")
+
+		ch, cancel := memoryEvents.Subscribe()
+		ctx := c.Context()
+
+		c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
+			defer cancel()
+
+			// Send a hello frame so clients know the subscription is live
+			// even before the first mutation arrives.
+			fmt.Fprintf(w, "event: ready\ndata: {\"subscribed\":true}\n\n")
+			_ = w.Flush()
+
+			keepalive := time.NewTicker(25 * time.Second)
+			defer keepalive.Stop()
+
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-keepalive.C:
+					if _, err := w.WriteString(": keepalive\n\n"); err != nil {
+						return
+					}
+					if err := w.Flush(); err != nil {
+						return
+					}
+				case ev, ok := <-ch:
+					if !ok {
+						return
+					}
+					if ownerFilter != "" && ev.OwnerID != "" && ev.OwnerID != ownerFilter {
+						continue
+					}
+					if typeFilter != "" && ev.Type != typeFilter {
+						continue
+					}
+					if keyPrefix != "" {
+						if len(ev.Key) < len(keyPrefix) || ev.Key[:len(keyPrefix)] != keyPrefix {
+							continue
+						}
+					}
+					data, _ := json.Marshal(ev)
+					if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", ev.Kind, data); err != nil {
+						return
+					}
+					if err := w.Flush(); err != nil {
+						return
+					}
+				}
+			}
+		})
+		return nil
 	}
 }
 
