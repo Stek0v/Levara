@@ -801,7 +801,7 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 		writeWg.Add(1)
 		go func() {
 			defer writeWg.Done()
-			nw, ew, err := UpsertGraphToPostgres(ctx, cfg.DB, dedupResult.Nodes, dedupResult.Edges)
+			nw, ew, err := UpsertGraphToPostgres(ctx, cfg.DB, cfg.DatasetID, dedupResult.Nodes, dedupResult.Edges)
 			if err != nil {
 				log.Printf("[pipeline] pg upsert: %v", err)
 			} else {

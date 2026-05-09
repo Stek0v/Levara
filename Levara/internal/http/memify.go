@@ -216,7 +216,7 @@ func memifyHandler(cfg APIConfig) fiber.Handler {
 						RelationshipName: e.RelationshipType,
 					}
 				}
-				orchestrator.UpsertGraphToPostgres(ctx, cfg.DB, dedupNodes, dedupEdges)
+				orchestrator.UpsertGraphToPostgres(ctx, cfg.DB, req.Dataset, dedupNodes, dedupEdges)
 			}
 
 			status.Status = "COMPLETED"

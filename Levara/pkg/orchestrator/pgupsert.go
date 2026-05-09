@@ -49,8 +49,11 @@ func IsExclusiveRelationship(rel string) bool {
 }
 
 // UpsertGraphToPostgres writes deduped nodes and edges to PostgreSQL in a single transaction.
+// datasetID scopes the rows to a tenant/project; pass "" for legacy/global.
+// Auto-supersession is also dataset-scoped — exclusive edges in dataset A
+// never collide with the same source+relation in dataset B.
 // Returns (nodesWritten, edgesWritten, error).
-func UpsertGraphToPostgres(ctx context.Context, db *sql.DB, nodes []graph.DedupNode, edges []graph.DedupEdge) (int, int, error) {
+func UpsertGraphToPostgres(ctx context.Context, db *sql.DB, datasetID string, nodes []graph.DedupNode, edges []graph.DedupEdge) (int, int, error) {
 	if db == nil || (len(nodes) == 0 && len(edges) == 0) {
 		return 0, 0, nil
 	}
@@ -71,15 +74,16 @@ func UpsertGraphToPostgres(ctx context.Context, db *sql.DB, nodes []graph.DedupN
 			"name": n.Name, "type": n.Type, "description": n.Description,
 		})
 		_, err := tx.ExecContext(ctx,
-			`INSERT INTO graph_nodes (id, name, type, description, properties, created_at, updated_at)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7)
+			`INSERT INTO graph_nodes (id, name, type, description, properties, dataset_id, created_at, updated_at)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 			 ON CONFLICT (id) DO UPDATE SET
 				name = EXCLUDED.name,
 				type = EXCLUDED.type,
 				description = EXCLUDED.description,
 				properties = EXCLUDED.properties,
+				dataset_id = EXCLUDED.dataset_id,
 				updated_at = EXCLUDED.updated_at`,
-			n.ID, n.Name, n.Type, n.Description, string(props), now, now)
+			n.ID, n.Name, n.Type, n.Description, string(props), datasetID, now, now)
 		if err != nil {
 			return nodesWritten, edgesWritten, fmt.Errorf("upsert node %s: %w", n.ID, err)
 		}
@@ -91,24 +95,25 @@ func UpsertGraphToPostgres(ctx context.Context, db *sql.DB, nodes []graph.DedupN
 		edgeID := fmt.Sprintf("%s_%s_%s", e.SourceID, e.RelationshipName, e.TargetID)
 		props, _ := json.Marshal(map[string]string{"edge_text": e.EdgeText})
 		_, err := tx.ExecContext(ctx,
-			`INSERT INTO graph_edges (id, source_id, target_id, relationship_name, properties, valid_from, created_at, updated_at)
-			 VALUES ($1, $2, $3, $4, $5, $6, $6, $6)
+			`INSERT INTO graph_edges (id, source_id, target_id, relationship_name, properties, valid_from, dataset_id, created_at, updated_at)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $6, $6)
 			 ON CONFLICT (id) DO UPDATE SET
 				source_id = EXCLUDED.source_id,
 				target_id = EXCLUDED.target_id,
 				relationship_name = EXCLUDED.relationship_name,
 				properties = EXCLUDED.properties,
+				dataset_id = EXCLUDED.dataset_id,
 				updated_at = EXCLUDED.updated_at`,
-			edgeID, e.SourceID, e.TargetID, e.RelationshipName, string(props), now)
+			edgeID, e.SourceID, e.TargetID, e.RelationshipName, string(props), now, datasetID)
 		if err != nil {
 			return nodesWritten, edgesWritten, fmt.Errorf("upsert edge %s: %w", edgeID, err)
 		}
 		edgesWritten++
 
-		// Auto-supersession for exclusive relationships:
+		// Auto-supersession for exclusive relationships, scoped to dataset:
 		// when a single source can have only one current target, mark
-		// prior valid edges (different target, same source+rel) as
-		// superseded by this new edge.
+		// prior valid edges (different target, same source+rel, same
+		// dataset) as superseded by this new edge.
 		if IsExclusiveRelationship(e.RelationshipName) {
 			_, err := tx.ExecContext(ctx,
 				`UPDATE graph_edges
@@ -116,8 +121,9 @@ func UpsertGraphToPostgres(ctx context.Context, db *sql.DB, nodes []graph.DedupN
 				 WHERE source_id = $4
 				   AND relationship_name = $5
 				   AND id <> $6
+				   AND dataset_id = $7
 				   AND (valid_until IS NULL)`,
-				now, edgeID, now, e.SourceID, e.RelationshipName, edgeID)
+				now, edgeID, now, e.SourceID, e.RelationshipName, edgeID, datasetID)
 			if err != nil {
 				return nodesWritten, edgesWritten, fmt.Errorf("supersede edges for %s: %w", edgeID, err)
 			}

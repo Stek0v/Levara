@@ -144,12 +144,14 @@ var schemaStatements = []string{
 	)`,
 
 	// Graph nodes (PostgreSQL mirror of Neo4j for SQL queries)
+	// dataset_id scopes nodes to a tenant/project; '' means legacy/global.
 	`CREATE TABLE IF NOT EXISTS graph_nodes (
 		id TEXT PRIMARY KEY,
 		name TEXT NOT NULL DEFAULT '',
 		type TEXT NOT NULL DEFAULT '',
 		description TEXT NOT NULL DEFAULT '',
 		properties JSONB NOT NULL DEFAULT '{}',
+		dataset_id TEXT NOT NULL DEFAULT '',
 		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 	)`,
@@ -158,6 +160,7 @@ var schemaStatements = []string{
 	// Temporal validity: valid_from/valid_until track when an edge was true.
 	// superseded_by stores edge ID that replaced this one (for non-overlapping
 	// exclusive relationships like assigned_to, role_is, status_is).
+	// dataset_id scopes edges to a tenant/project; '' means legacy/global.
 	`CREATE TABLE IF NOT EXISTS graph_edges (
 		id TEXT PRIMARY KEY,
 		source_id TEXT NOT NULL,
@@ -168,6 +171,7 @@ var schemaStatements = []string{
 		valid_until TIMESTAMPTZ,
 		superseded_by TEXT NOT NULL DEFAULT '',
 		confidence REAL NOT NULL DEFAULT 1.0,
+		dataset_id TEXT NOT NULL DEFAULT '',
 		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 	)`,
@@ -285,11 +289,18 @@ var schemaStatements = []string{
 	`ALTER TABLE graph_edges ADD COLUMN IF NOT EXISTS valid_until TIMESTAMPTZ`,
 	`ALTER TABLE graph_edges ADD COLUMN IF NOT EXISTS superseded_by TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE graph_edges ADD COLUMN IF NOT EXISTS confidence REAL NOT NULL DEFAULT 1.0`,
+	// Tenant/project scoping — promotes dataset_id from JSON property to a
+	// first-class column so query_entity and graph reads can filter without
+	// JSON extraction. Empty string preserves legacy/global rows.
+	`ALTER TABLE graph_nodes ADD COLUMN IF NOT EXISTS dataset_id TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE graph_edges ADD COLUMN IF NOT EXISTS dataset_id TEXT NOT NULL DEFAULT ''`,
 	// Indexes that depend on the columns added by the ALTERs above.
 	`CREATE INDEX IF NOT EXISTS idx_memories_room ON memories(collection_name, room)`,
 	`CREATE INDEX IF NOT EXISTS idx_memories_hall ON memories(hall)`,
 	`CREATE INDEX IF NOT EXISTS idx_memories_pinned ON memories(is_pinned, pin_priority DESC)`,
 	`CREATE INDEX IF NOT EXISTS idx_graph_edges_validity ON graph_edges(source_id, relationship_name, valid_until)`,
+	`CREATE INDEX IF NOT EXISTS idx_graph_nodes_dataset ON graph_nodes(dataset_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_graph_edges_dataset ON graph_edges(dataset_id)`,
 
 	`CREATE INDEX IF NOT EXISTS idx_acl_principal ON acl(principal_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_acl_dataset ON acl(dataset_id)`,
@@ -476,6 +487,7 @@ var schemaSQLiteStatements = []string{
 		type TEXT NOT NULL DEFAULT '',
 		description TEXT NOT NULL DEFAULT '',
 		properties TEXT NOT NULL DEFAULT '{}',
+		dataset_id TEXT NOT NULL DEFAULT '',
 		created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 	)`,
@@ -490,6 +502,7 @@ var schemaSQLiteStatements = []string{
 		valid_until TEXT,
 		superseded_by TEXT NOT NULL DEFAULT '',
 		confidence REAL NOT NULL DEFAULT 1.0,
+		dataset_id TEXT NOT NULL DEFAULT '',
 		created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 	)`,
@@ -628,11 +641,15 @@ var schemaSQLiteStatements = []string{
 	`ALTER TABLE graph_edges ADD COLUMN valid_until TEXT`,
 	`ALTER TABLE graph_edges ADD COLUMN superseded_by TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE graph_edges ADD COLUMN confidence REAL NOT NULL DEFAULT 1.0`,
+	`ALTER TABLE graph_nodes ADD COLUMN dataset_id TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE graph_edges ADD COLUMN dataset_id TEXT NOT NULL DEFAULT ''`,
 	// Indexes that depend on the columns added above.
 	`CREATE INDEX IF NOT EXISTS idx_memories_room ON memories(collection_name, room)`,
 	`CREATE INDEX IF NOT EXISTS idx_memories_hall ON memories(hall)`,
 	`CREATE INDEX IF NOT EXISTS idx_memories_pinned ON memories(is_pinned, pin_priority DESC)`,
 	`CREATE INDEX IF NOT EXISTS idx_graph_edges_validity ON graph_edges(source_id, relationship_name, valid_until)`,
+	`CREATE INDEX IF NOT EXISTS idx_graph_nodes_dataset ON graph_nodes(dataset_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_graph_edges_dataset ON graph_edges(dataset_id)`,
 
 	// Graph communities (Louvain multi-level) — SQLite
 	`CREATE TABLE IF NOT EXISTS graph_communities (
