@@ -116,7 +116,7 @@ func NewCollectionManager(dim int, basePath string, cfg ...HNSWConfig) (*Collect
 					RecordCount:    len(db.index),
 					CreatedAt:      time.Now().UTC().Format(time.RFC3339),
 				}
-				saveCollectionMeta(colDir, meta)
+				_ = saveCollectionMeta(colDir, meta)
 			}
 			meta.RecordCount = len(db.index)
 			cm.metas[name] = meta
@@ -206,7 +206,7 @@ func (cm *CollectionManager) CreateWithDim(name string, dim int, embeddingModel,
 		DistanceMetric: distanceMetric,
 		CreatedAt:      time.Now().UTC().Format(time.RFC3339),
 	}
-	saveCollectionMeta(colDir, meta)
+	_ = saveCollectionMeta(colDir, meta)
 	cm.metas[name] = meta
 
 	return nil
@@ -271,7 +271,7 @@ func (cm *CollectionManager) SetDomain(name, domain string) {
 	if m, ok := cm.metas[name]; ok {
 		m.Domain = domain
 		colDir := filepath.Join(cm.basePath, name)
-		saveCollectionMeta(colDir, m)
+		_ = saveCollectionMeta(colDir, m)
 	}
 }
 

@@ -41,7 +41,7 @@ func NewDiskStore(path string) (*DiskStore, error) {
 
 	info, err := f.Stat()
 	if err != nil {
-		f.Close()
+		_ = f.Close()
 		return nil, err
 	}
 

@@ -63,7 +63,7 @@ func ImportCollection(serverURL, input string) error {
 	}
 
 	var result map[string]interface{}
-	json.Unmarshal(body, &result)
+	_ = json.Unmarshal(body, &result)
 	log.Printf("[import] started: %v", result)
 	return nil
 }
@@ -106,6 +106,6 @@ func fetchJSON(url string) interface{} {
 	}
 	defer resp.Body.Close()
 	var result interface{}
-	json.NewDecoder(resp.Body).Decode(&result)
+	_ = json.NewDecoder(resp.Body).Decode(&result)
 	return result
 }

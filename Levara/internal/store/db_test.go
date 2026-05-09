@@ -69,7 +69,7 @@ func TestDeleteWALRecovery(t *testing.T) {
 	vec := randVecForTest(64)
 	db.Insert("keep-me", randVecForTest(64), map[string]any{"status": "keep"})
 	db.Insert("delete-me", vec, map[string]any{"status": "delete"})
-	db.Delete("delete-me")
+	_ = db.Delete("delete-me")
 	db.Close()
 
 	// Phase 2: Recover from WAL
@@ -177,7 +177,7 @@ func TestInsertInsertDeleteWALRecovery(t *testing.T) {
 	}
 	db.Insert("id", randVecForTest(64), map[string]any{"v": 1})
 	db.Insert("id", randVecForTest(64), map[string]any{"v": 2})
-	db.Delete("id")
+	_ = db.Delete("id")
 	db.Close()
 
 	db2, err := NewLevara(64, dbPath)
