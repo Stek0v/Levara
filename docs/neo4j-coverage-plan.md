@@ -58,7 +58,7 @@
 - [x] При transient ошибке наблюдается успешный bounded retry. Делегировано neo4j-go-driver v5 managed transactions (`session.ExecuteRead`/`ExecuteWrite`) — экспоненциальный backoff до `MaxTransactionRetryTime` (30s по умолчанию). Документировано в `pkg/graphdb/tx.go`.
 - [x] Покрытие unit-тестами и happy-path integration-тестом. Unit-тесты (`neo4j_test.go`, `cache_test.go`) сохранены; live-тесты `BatchWrite_Atomicity` / `BatchWrite_HappyPath` (`integration_test.go`) гейтятся `NEO4J_TEST_URL` и пропускаются в CI без живого Neo4j.
 
-> Follow-up (отдельный PR): `ParallelWriteDataPoints` в `internal/grpc/service.go` пишет узлы и рёбра двумя независимыми транзакциями — атомарность пока не гарантируется. Вынесено отдельной задачей.
+> ~Follow-up (отдельный PR): `ParallelWriteDataPoints` в `internal/grpc/service.go` пишет узлы и рёбра двумя независимыми транзакциями — атомарность пока не гарантируется.~ — закрыто: gRPC-путь теперь объединяет узлы+рёбра в один `BatchWrite`, embed+index работает параллельно, orphan-nodes невозможны.
 
 ---
 

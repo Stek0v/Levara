@@ -703,113 +703,50 @@ func (s *Service) ParallelWriteDataPoints(ctx context.Context, req *pb.ParallelW
 		embedClient = embed.NewClient(req.EmbedEndpoint, model, batchSize, 3)
 	}
 
-	// --- Phase 1: Nodes (parallel: Neo4j + embed+index) ---
+	// --- Phase 1: Neo4j (atomic nodes+edges) || embed+index nodes ---
+	//
+	// Atomicity: nodes and edges are written in a single graphdb.BatchWrite
+	// transaction. A failure on the edges phase rolls back the node MERGEs,
+	// so the graph never observes orphan nodes from a partial write. The
+	// previous design split this into two sequential transactions which left
+	// committed orphan nodes when the edges phase errored.
+	//
+	// Parallelism: the Neo4j tx and the embed+index pipeline run as
+	// independent goroutines — embed+index touches only the local HNSW
+	// store, never Neo4j, so it's safe to overlap.
 	phase1Start := time.Now()
-	type phase1Result struct {
-		neo4jNodes int
-		neo4jErr   error
-		embedCount int
-		indexCount int
+
+	type neoResult struct {
+		nodesWritten int
+		edgesWritten int
+		err          error
+		ms           int64
+	}
+	type embedResult struct {
+		embedCount   int
+		indexCount   int
 		collsCreated int
-		embedErr   error
+		err          error
 	}
-	p1ch := make(chan phase1Result, 2)
+	neoCh := make(chan neoResult, 1)
+	embedCh := make(chan embedResult, 1)
 
-	// Goroutine 1: Neo4j nodes
+	// Goroutine 1: Neo4j atomic write
 	go func() {
-		r := phase1Result{}
-		if neo4jWriter != nil {
-			neoNodes := make([]graphdb.NodeRecord, len(dedupResult.Nodes))
-			for i, n := range dedupResult.Nodes {
-				props := map[string]any{"name": n.Name, "description": n.Description, "type": n.Type, "text": n.Text}
-				neoNodes[i] = graphdb.NodeRecord{ID: n.ID, Label: n.Type, Properties: props}
-			}
-			res := neo4jWriter.BatchWrite(ctx, neoNodes, nil)
-			r.neo4jNodes = res.NodesWritten
-			if len(res.Errors) > 0 {
-				r.neo4jErr = fmt.Errorf("%s", strings.Join(res.Errors, "; "))
-			}
+		neoStart := time.Now()
+		r := neoResult{}
+		defer func() { r.ms = time.Since(neoStart).Milliseconds(); neoCh <- r }()
+		if neo4jWriter == nil {
+			return
 		}
-		p1ch <- r
-	}()
-
-	// Goroutine 2: Embed + index nodes
-	go func() {
-		r := phase1Result{}
-		if embedClient != nil && len(req.IndexGroups) > 0 {
-			for _, grp := range req.IndexGroups {
-				if grp.Collection == "" || len(grp.Items) == 0 {
-					continue
-				}
-				if !s.collections.Has(grp.Collection) {
-					if err := s.collections.Create(grp.Collection); err != nil {
-						continue
-					}
-					r.collsCreated++
-				}
-				texts := make([]string, len(grp.Items))
-				for i, item := range grp.Items {
-					texts[i] = item.Text
-				}
-				vecs, err := embedClient.EmbedTexts(ctx, texts)
-				if err != nil {
-					r.embedErr = err
-					continue
-				}
-				r.embedCount += len(vecs)
-				for i, item := range grp.Items {
-					if i < len(vecs) {
-						meta := item.MetadataJson
-						if meta == "" {
-							meta = "{}"
-						}
-						if err := s.collections.Insert(grp.Collection, item.Id, vecs[i], meta); err == nil {
-							r.indexCount++
-						}
-					}
-				}
-			}
+		neoNodes := make([]graphdb.NodeRecord, len(dedupResult.Nodes))
+		for i, n := range dedupResult.Nodes {
+			props := map[string]any{"name": n.Name, "description": n.Description, "type": n.Type, "text": n.Text}
+			neoNodes[i] = graphdb.NodeRecord{ID: n.ID, Label: n.Type, Properties: props}
 		}
-		p1ch <- r
-	}()
-
-	// Collect Phase 1 results
-	var p1neo, p1embed phase1Result
-	for i := 0; i < 2; i++ {
-		r := <-p1ch
-		if r.neo4jNodes > 0 || r.neo4jErr != nil {
-			p1neo = r
-		} else {
-			p1embed = r
-		}
-	}
-
-	resp.Neo4JNodesWritten = int32(p1neo.neo4jNodes)
-	if p1neo.neo4jErr != nil {
-		resp.Errors = append(resp.Errors, fmt.Sprintf("neo4j nodes: %v", p1neo.neo4jErr))
-	}
-	resp.VectorsEmbedded = int32(p1embed.embedCount)
-	resp.VectorsIndexed = int32(p1embed.indexCount)
-	resp.CollectionsCreated = int32(p1embed.collsCreated)
-	if p1embed.embedErr != nil {
-		resp.Errors = append(resp.Errors, fmt.Sprintf("embed nodes: %v", p1embed.embedErr))
-	}
-	resp.Neo4JNodesMs = time.Since(phase1Start).Milliseconds()
-
-	// --- Phase 2: Edges (parallel: Neo4j + embed edge types) ---
-	phase2Start := time.Now()
-	type phase2Result struct {
-		neo4jEdges int
-		neo4jErr   error
-		triplets   int
-	}
-	p2ch := make(chan phase2Result, 1)
-
-	// Goroutine 3: Neo4j edges
-	go func() {
-		r := phase2Result{}
-		if neo4jWriter != nil && len(dedupResult.Edges) > 0 {
-			neoEdges := make([]graphdb.EdgeRecord, len(dedupResult.Edges))
+		var neoEdges []graphdb.EdgeRecord
+		if len(dedupResult.Edges) > 0 {
+			neoEdges = make([]graphdb.EdgeRecord, len(dedupResult.Edges))
 			for i, e := range dedupResult.Edges {
 				props := map[string]any{"edge_text": e.EdgeText}
 				neoEdges[i] = graphdb.EdgeRecord{
@@ -817,26 +754,78 @@ func (s *Service) ParallelWriteDataPoints(ctx context.Context, req *pb.ParallelW
 					RelationshipName: e.RelationshipName, Properties: props,
 				}
 			}
-			res := neo4jWriter.BatchWrite(ctx, nil, neoEdges)
-			r.neo4jEdges = res.EdgesWritten
-			if len(res.Errors) > 0 {
-				r.neo4jErr = fmt.Errorf("%s", strings.Join(res.Errors, "; "))
-			}
 		}
-		// Triplets
-		if req.GenerateTriplets {
-			r.triplets = len(dedupResult.Triplets)
+		res := neo4jWriter.BatchWrite(ctx, neoNodes, neoEdges)
+		r.nodesWritten = res.NodesWritten
+		r.edgesWritten = res.EdgesWritten
+		if len(res.Errors) > 0 {
+			r.err = fmt.Errorf("%s", strings.Join(res.Errors, "; "))
 		}
-		p2ch <- r
 	}()
 
-	p2 := <-p2ch
-	resp.Neo4JEdgesWritten = int32(p2.neo4jEdges)
-	if p2.neo4jErr != nil {
-		resp.Errors = append(resp.Errors, fmt.Sprintf("neo4j edges: %v", p2.neo4jErr))
+	// Goroutine 2: Embed + index nodes
+	go func() {
+		r := embedResult{}
+		defer func() { embedCh <- r }()
+		if embedClient == nil || len(req.IndexGroups) == 0 {
+			return
+		}
+		for _, grp := range req.IndexGroups {
+			if grp.Collection == "" || len(grp.Items) == 0 {
+				continue
+			}
+			if !s.collections.Has(grp.Collection) {
+				if err := s.collections.Create(grp.Collection); err != nil {
+					continue
+				}
+				r.collsCreated++
+			}
+			texts := make([]string, len(grp.Items))
+			for i, item := range grp.Items {
+				texts[i] = item.Text
+			}
+			vecs, err := embedClient.EmbedTexts(ctx, texts)
+			if err != nil {
+				r.err = err
+				continue
+			}
+			r.embedCount += len(vecs)
+			for i, item := range grp.Items {
+				if i < len(vecs) {
+					meta := item.MetadataJson
+					if meta == "" {
+						meta = "{}"
+					}
+					if err := s.collections.Insert(grp.Collection, item.Id, vecs[i], meta); err == nil {
+						r.indexCount++
+					}
+				}
+			}
+		}
+	}()
+
+	neo := <-neoCh
+	emb := <-embedCh
+
+	resp.Neo4JNodesWritten = int32(neo.nodesWritten)
+	resp.Neo4JEdgesWritten = int32(neo.edgesWritten)
+	if neo.err != nil {
+		resp.Errors = append(resp.Errors, fmt.Sprintf("neo4j: %v", neo.err))
 	}
-	resp.TripletsGenerated = int32(p2.triplets)
-	resp.Neo4JEdgesMs = time.Since(phase2Start).Milliseconds()
+	resp.VectorsEmbedded = int32(emb.embedCount)
+	resp.VectorsIndexed = int32(emb.indexCount)
+	resp.CollectionsCreated = int32(emb.collsCreated)
+	if emb.err != nil {
+		resp.Errors = append(resp.Errors, fmt.Sprintf("embed nodes: %v", emb.err))
+	}
+	// Neo4jNodesMs/Neo4jEdgesMs are kept on the response for compatibility,
+	// but nodes+edges share a single transaction now — report total tx wall
+	// time on Neo4jNodesMs and leave Neo4jEdgesMs at 0.
+	resp.Neo4JNodesMs = neo.ms
+	resp.Neo4JEdgesMs = 0
+	if req.GenerateTriplets {
+		resp.TripletsGenerated = int32(len(dedupResult.Triplets))
+	}
 
 	// Embed+index triplets if requested
 	if req.GenerateTriplets && embedClient != nil && len(dedupResult.Triplets) > 0 {
