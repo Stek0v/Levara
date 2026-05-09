@@ -27,12 +27,6 @@ import (
 // runtime.Gosched() pressure: many writers issue Inserts while a single
 // goroutine repeatedly Clears. Without the fix this panics within seconds.
 func TestClear_DrainsPendingVecs_NoIndexerPanic(t *testing.T) {
-	if raceEnabled {
-		// TODO(ci): pre-existing data race between Insert (arena.Add line 76,
-		// in-place L2-normalize) and indexerLoop reads via GetNoLock zero-copy
-		// view. Tracked separately; skip under -race so the new CI gate is green.
-		t.Skip("known pre-existing race (arena.Add in-place mutation vs indexer GetNoLock view)")
-	}
 	dir := t.TempDir()
 	db, err := NewLevara(16, dir+"/meta.bin")
 	if err != nil {
