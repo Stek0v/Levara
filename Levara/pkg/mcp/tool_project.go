@@ -36,10 +36,10 @@ func ToolGetProjectContext(ctx context.Context, deps Deps, args map[string]any) 
 	sb.WriteString("## Collection Stats\n")
 	meta := deps.CollectionMeta(collection)
 	if meta.Records > 0 || meta.Dim > 0 {
-		sb.WriteString(fmt.Sprintf("- Name: %s\n- Records: %d\n- Dimension: %d\n- Metric: %s\n\n",
-			meta.Name, meta.Records, meta.Dim, meta.Metric))
+		fmt.Fprintf(&sb, "- Name: %s\n- Records: %d\n- Dimension: %d\n- Metric: %s\n\n",
+			meta.Name, meta.Records, meta.Dim, meta.Metric)
 	} else {
-		sb.WriteString(fmt.Sprintf("- Collection '%s' not found (no vectors indexed yet)\n\n", collection))
+		fmt.Fprintf(&sb, "- Collection '%s' not found (no vectors indexed yet)\n\n", collection)
 	}
 
 	// 2. Memories
@@ -54,7 +54,7 @@ func ToolGetProjectContext(ctx context.Context, deps Deps, args map[string]any) 
 			for rows.Next() {
 				var key, value, typ string
 				rows.Scan(&key, &value, &typ)
-				sb.WriteString(fmt.Sprintf("- [%s] %s: %s\n", typ, key, Truncate(value, 200)))
+				fmt.Fprintf(&sb, "- [%s] %s: %s\n", typ, key, Truncate(value, 200))
 				count++
 			}
 			if count == 0 {
@@ -76,7 +76,7 @@ func ToolGetProjectContext(ctx context.Context, deps Deps, args map[string]any) 
 				var typ string
 				var cnt int
 				rows.Scan(&typ, &cnt)
-				sb.WriteString(fmt.Sprintf("- %s: %d entities\n", typ, cnt))
+				fmt.Fprintf(&sb, "- %s: %d entities\n", typ, cnt)
 				count++
 			}
 			if count == 0 {
@@ -98,7 +98,7 @@ func ToolGetProjectContext(ctx context.Context, deps Deps, args map[string]any) 
 			for rows.Next() {
 				var query, response, createdAt string
 				rows.Scan(&query, &response, &createdAt)
-				sb.WriteString(fmt.Sprintf("- Q: %s\n  A: %s\n", Truncate(query, 100), Truncate(response, 150)))
+				fmt.Fprintf(&sb, "- Q: %s\n  A: %s\n", Truncate(query, 100), Truncate(response, 150))
 				count++
 			}
 			if count == 0 {
@@ -115,10 +115,10 @@ func ToolGetProjectContext(ctx context.Context, deps Deps, args map[string]any) 
 			if !ok || relColl == "" {
 				continue
 			}
-			sb.WriteString(fmt.Sprintf("\n### %s\n", relColl))
+			fmt.Fprintf(&sb, "\n### %s\n", relColl)
 			relMeta := deps.CollectionMeta(relColl)
 			if relMeta.Records > 0 || relMeta.Dim > 0 {
-				sb.WriteString(fmt.Sprintf("- Records: %d, Dim: %d\n", relMeta.Records, relMeta.Dim))
+				fmt.Fprintf(&sb, "- Records: %d, Dim: %d\n", relMeta.Records, relMeta.Dim)
 			} else {
 				sb.WriteString("- (no vectors)\n")
 			}
@@ -130,7 +130,7 @@ func ToolGetProjectContext(ctx context.Context, deps Deps, args map[string]any) 
 					for relRows.Next() {
 						var key, value string
 						relRows.Scan(&key, &value)
-						sb.WriteString(fmt.Sprintf("- %s: %s\n", key, Truncate(value, 100)))
+						fmt.Fprintf(&sb, "- %s: %s\n", key, Truncate(value, 100))
 					}
 				}
 			}

@@ -98,8 +98,8 @@ func parseGitOutput(raw string) ([]Commit, error) {
 func CommitsToText(commits []Commit) string {
 	var sb strings.Builder
 	for _, c := range commits {
-		sb.WriteString(fmt.Sprintf("Commit %s by %s on %s: %s\n",
-			c.Hash[:min(8, len(c.Hash))], c.Author, c.Date.Format("2006-01-02"), c.Message))
+		fmt.Fprintf(&sb, "Commit %s by %s on %s: %s\n",
+			c.Hash[:min(8, len(c.Hash))], c.Author, c.Date.Format("2006-01-02"), c.Message)
 		if len(c.Files) > 0 {
 			sb.WriteString("  Files: " + strings.Join(c.Files, ", ") + "\n")
 		}

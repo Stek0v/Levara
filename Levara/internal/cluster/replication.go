@@ -19,7 +19,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"unsafe"
 
 	"github.com/stek0v/levara/internal/store"
 )
@@ -383,10 +382,3 @@ func WALEntryFromDelete(id string) WALEntry {
 	return WALEntry{Op: store.OpDelete, ID: id}
 }
 
-// vecToBytes converts []float32 to []byte without allocation.
-func vecToBytes(v []float32) []byte {
-	if len(v) == 0 {
-		return nil
-	}
-	return unsafe.Slice((*byte)(unsafe.Pointer(&v[0])), len(v)*4)
-}

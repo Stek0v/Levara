@@ -3,7 +3,6 @@ package http
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
@@ -297,12 +296,6 @@ func escapeJS(s string) string {
 	s = strings.ReplaceAll(s, `"`, `\"`)
 	s = strings.ReplaceAll(s, "\n", `\n`)
 	return s
-}
-
-// Adapted from json for properties
-func propsToJSON(props map[string]any) string {
-	b, _ := json.Marshal(props)
-	return string(b)
 }
 
 const htmlTemplate = `<!DOCTYPE html>

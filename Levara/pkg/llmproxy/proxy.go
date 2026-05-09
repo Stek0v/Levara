@@ -183,7 +183,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("X-LLM-Proxy", "dedup")
 		if existing.err != nil {
-			http.Error(w, existing.err.Error(), 502)
+			http.Error(w, existing.err.Error(), http.StatusBadGateway)
 			return
 		}
 		w.WriteHeader(existing.status)
@@ -219,7 +219,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		delete(p.inflight, dedupKey)
 		p.inflightMu.Unlock()
 		p.stats.Errors.Add(1)
-		http.Error(w, "upstream: "+err.Error(), 502)
+		http.Error(w, "upstream: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
@@ -257,7 +257,7 @@ func (p *Proxy) forwardDirect(w http.ResponseWriter, r *http.Request) {
 	}
 	resp, err := p.client.Do(upReq)
 	if err != nil {
-		http.Error(w, err.Error(), 502)
+		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
@@ -278,7 +278,7 @@ func (p *Proxy) forwardBody(w http.ResponseWriter, r *http.Request, body []byte)
 	}
 	resp, err := p.client.Do(upReq)
 	if err != nil {
-		http.Error(w, err.Error(), 502)
+		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()

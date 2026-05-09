@@ -204,11 +204,6 @@ func SemanticDedupLSH(vectors [][]float32, threshold float32, numTables, numBits
 	return SemanticDedupResult{Kept: kept, Removed: removedList, Pairs: pairs}
 }
 
-// cosineSimilarityNorm computes cosine for pre-normalized vectors (just dot product).
-func cosineSimilarityNorm(a, b []float32) float32 {
-	return dotProduct(a, b)
-}
-
 // normalizeVector normalizes vector to unit length.
 func normalizeVector(v []float32) []float32 {
 	var norm float32

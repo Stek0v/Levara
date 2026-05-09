@@ -13,7 +13,7 @@ func TestRandomHex_Length(t *testing.T) {
 		}
 		// Hex characters only
 		for _, c := range got {
-			if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
 				t.Errorf("RandomHex(%d) = %q contains non-hex char %q", n, got, c)
 				break
 			}

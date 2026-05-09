@@ -32,7 +32,6 @@ type Mock struct {
 	rules    []rule
 	calls    []llm.CompletionRequest
 	name     string
-	errOnAny error
 }
 
 type rule struct {

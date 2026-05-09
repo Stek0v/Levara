@@ -122,7 +122,7 @@ func (a *VectorArena) Get(index uint32) ([]float32, error) {
 
 	// 1. Calculate page and offset
 	if index >= a.totalVectors {
-		return nil, fmt.Errorf("Index out of bounds")
+		return nil, fmt.Errorf("index out of bounds")
 	}
 
 	pageIdx := int(index) / a.vectorsPerPage

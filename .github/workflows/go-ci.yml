@@ -1,0 +1,66 @@
+name: go-ci
+
+on:
+  pull_request:
+    paths:
+      - 'Levara/**'
+      - '.github/workflows/go-ci.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'Levara/**'
+      - '.github/workflows/go-ci.yml'
+
+defaults:
+  run:
+    working-directory: Levara
+
+jobs:
+  vet-build:
+    name: vet + build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: Levara/go.mod
+          cache-dependency-path: Levara/go.sum
+      - run: go vet ./...
+      - run: go build ./...
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: Levara/go.mod
+          cache-dependency-path: Levara/go.sum
+      - run: go test -count=1 ./...
+
+  race:
+    name: test -race
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: Levara/go.mod
+          cache-dependency-path: Levara/go.sum
+      - run: go test -race -count=1 ./...
+
+  lint:
+    name: golangci-lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: Levara/go.mod
+          cache-dependency-path: Levara/go.sum
+      - uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.12.2
+          working-directory: Levara
+          args: --timeout=5m

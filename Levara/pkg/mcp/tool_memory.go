@@ -53,7 +53,6 @@ func ToolListMemories(ctx context.Context, deps Deps, args map[string]any) ToolR
 	if hall != "" {
 		conds = append(conds, fmt.Sprintf("hall = $%d", pos))
 		qargs = append(qargs, hall)
-		pos++
 	}
 
 	sqlStr := `SELECT id, key, value, type, owner_id, room, hall, is_pinned, pin_priority, created_at, updated_at FROM memories`

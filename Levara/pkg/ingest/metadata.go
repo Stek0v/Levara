@@ -148,29 +148,3 @@ func (w *MetadataWriter) WriteMetadata(ctx context.Context, results []Result, ow
 	return written, nil
 }
 
-// BatchInsertValues builds a single INSERT with multiple VALUES for efficiency.
-// For very large batches (1000+), this is faster than individual inserts.
-func buildBatchInsert(table string, columns []string, count int) string {
-	var b strings.Builder
-	b.WriteString("INSERT INTO ")
-	b.WriteString(table)
-	b.WriteString(" (")
-	b.WriteString(strings.Join(columns, ", "))
-	b.WriteString(") VALUES ")
-
-	numCols := len(columns)
-	for i := 0; i < count; i++ {
-		if i > 0 {
-			b.WriteString(", ")
-		}
-		b.WriteString("(")
-		for j := 0; j < numCols; j++ {
-			if j > 0 {
-				b.WriteString(", ")
-			}
-			b.WriteString(fmt.Sprintf("$%d", i*numCols+j+1))
-		}
-		b.WriteString(")")
-	}
-	return b.String()
-}

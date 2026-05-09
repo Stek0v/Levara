@@ -249,7 +249,6 @@ func recallViaSQLLike(ctx context.Context, db *sql.DB, rewrite func(string) stri
 	if hall != "" {
 		conds = append(conds, fmt.Sprintf("hall = $%d", pos))
 		qargs = append(qargs, hall)
-		pos++
 	}
 	sqlStr := fmt.Sprintf(`
 		SELECT id, key, value, type, owner_id, room, hall, created_at, updated_at

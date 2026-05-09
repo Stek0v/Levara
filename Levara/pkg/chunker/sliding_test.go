@@ -131,15 +131,8 @@ func TestChunkBySliding_ZeroOverlap(t *testing.T) {
 	if len(chunks) != 2 {
 		t.Fatalf("Zero overlap: expected 2 chunks, got %d", len(chunks))
 	}
-	// No shared content
-	runes0 := []rune(chunks[0].Text)
-	runes1 := []rune(chunks[1].Text)
-	if runes0[len(runes0)-1] == runes1[0] {
-		// Both are 'Z' so they're equal, but positions differ.
-		// With zero overlap the end of chunk 0 should be rune 99,
-		// start of chunk 1 should be rune 100 — no overlap by position.
-		// Can't test content-wise with uniform chars, so just verify count.
-	}
+	// With zero overlap and uniform chars we can only verify counts —
+	// content equality at the boundary is meaningless when every rune is the same.
 	if runeLen(chunks[0].Text) != 100 || runeLen(chunks[1].Text) != 100 {
 		t.Errorf("Expected 100+100 runes, got %d+%d", runeLen(chunks[0].Text), runeLen(chunks[1].Text))
 	}

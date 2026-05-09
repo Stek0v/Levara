@@ -82,7 +82,7 @@ func extractQueryEntitiesForSearch(ctx context.Context, deps Deps, query string)
 	var args []any
 	for i, w := range words {
 		cleaned := strings.TrimFunc(w, func(r rune) bool {
-			return !('a' <= r && r <= 'z') && !('0' <= r && r <= '9')
+			return (r < 'a' || r > 'z') && (r < '0' || r > '9')
 		})
 		if len(cleaned) > 2 {
 			conditions = append(conditions, fmt.Sprintf("LOWER(name) LIKE $%d", i+1))

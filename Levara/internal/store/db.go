@@ -87,7 +87,7 @@ func NewLevara(dim int, storagePath string, cfg ...HNSWConfig) (*Levara, error) 
 
 	ds, err := NewDiskStore(storagePath)
 	if err != nil {
-		return nil, fmt.Errorf("Failed to init disk store at %s: %w", storagePath, err)
+		return nil, fmt.Errorf("failed to init disk store at %s: %w", storagePath, err)
 	}
 	walPath := storagePath + ".wal"
 	wal, err := OpenWal(walPath)
@@ -241,7 +241,7 @@ func (db *Levara) Insert(id string, vector []float32, data any) error {
 		bytes, err = json.Marshal(data)
 	}
 	if err != nil {
-		return fmt.Errorf("Failed to marshal metadata: %w", err)
+		return fmt.Errorf("failed to marshal metadata: %w", err)
 	}
 
 	// Write metadata to disk outside db.mu — DiskStore has its own internal

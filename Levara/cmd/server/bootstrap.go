@@ -210,10 +210,6 @@ func installGracefulShutdown(app *fiber.App, shards []store.ShardHandler, colMan
 // keeps the helper from importing database/sql just for *sql.DB.
 type closer interface{ Close() error }
 
-// healthCheckResult is the shape registerHealthDetails serialises into
-// the response — kept private since it's not part of the API contract.
-type healthCheckResult = fiber.Map
-
 // registerHealthDetails wires the verbose /health/details endpoint that
 // probes every dependency (Postgres, Neo4j, embed service, LLM, Whisper)
 // and reports status + endpoint info per service.
