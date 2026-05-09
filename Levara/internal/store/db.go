@@ -280,8 +280,14 @@ func (db *Levara) Insert(id string, vector []float32, data any) error {
 	// concurrent Clear() could swap the arena before we appended, leaving a
 	// stale idx pointing past the new arena's bounds — which the indexer
 	// would later try to dereference and panic on.
+	// Copy vector for the indexer: the caller may reuse its slice for a
+	// subsequent Insert, and arena.Add is allowed to mutate it (in-place
+	// L2-normalization). Sharing the slice would race with hnsw.Add reading it
+	// later as the search query.
+	vecCopy := make([]float32, len(vector))
+	copy(vecCopy, vector)
 	db.pendingMu.Lock()
-	db.pendingVecs = append(db.pendingVecs, pendingItem{vector: vector, id: id, idx: idx})
+	db.pendingVecs = append(db.pendingVecs, pendingItem{vector: vecCopy, id: id, idx: idx})
 	db.pendingMu.Unlock()
 
 	// Release db.mu before fsync — group commit coalesces across goroutines.
@@ -378,7 +384,11 @@ func (db *Levara) BatchInsert(records []BatchItem) []error {
 		}
 		db.revIndex[idx] = d.rec.ID
 		db.metaLocs[idx] = d.loc
-		toIndex = append(toIndex, pendingItem{vector: d.rec.Vector, id: d.rec.ID, idx: idx})
+		// Copy: caller may reuse the input slice; arena.Add may have mutated it
+		// in-place. See the matching note in Insert.
+		vecCopy := make([]float32, len(d.rec.Vector))
+		copy(vecCopy, d.rec.Vector)
+		toIndex = append(toIndex, pendingItem{vector: vecCopy, id: d.rec.ID, idx: idx})
 	}
 
 	// Enqueue under db.mu so the (idx, arena) pairing is atomic with arena.Add

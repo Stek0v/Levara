@@ -70,7 +70,11 @@ func (a *VectorArena) Add(vector []float32) (uint32, error) {
 	}
 
 	// L2-normalize so dot product == cosine similarity (required by HNSW dist).
-	if mag2 > 0 {
+	// Skip when the input is already unit length within float32 epsilon: a
+	// second normalization would produce slightly different bits, which breaks
+	// bit-exact WAL recovery comparisons (the WAL stores the post-normalize
+	// vector, so replay re-feeds an already-unit vector through this path).
+	if mag2 > 0 && math.Abs(mag2-1.0) > 1e-6 {
 		invNorm := float32(1.0 / math.Sqrt(mag2))
 		for i := range vector {
 			vector[i] *= invNorm
@@ -162,11 +166,17 @@ func (a *VectorArena) GetUnsafe(index uint32) ([]float32, error) {
 	return unsafe.Slice((*float32)(unsafe.Pointer(&rawbytes[0])), a.dim), nil
 }
 
-// GetNoLock returns a zero-copy slice WITHOUT acquiring any lock.
-// Use ONLY when the caller guarantees no concurrent writes to the arena
-// (e.g., inside HNSW.Add which holds the HNSW write lock, preventing
-// concurrent inserts that could modify pages).
+// GetNoLock returns a copy of the vector at index. The name is historical: it
+// originally returned a zero-copy view assuming the caller held a mutually
+// exclusive lock against arena.Add, but that invariant did not hold — HNSW.Add
+// takes only the HNSW lock, while concurrent db.Insert callers take arena.mu
+// and append pages without coordinating with HNSW. The race detector flagged
+// this as a write-vs-read on page bytes (arena.go:109 vs vek32.Dot reads).
+// Now we acquire arena.mu.RLock and copy the slot bytes, so callers can hold
+// the result safely with no further synchronization.
 func (a *VectorArena) GetNoLock(index uint32) []float32 {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
 	pageIdx := int(index) / a.vectorsPerPage
 	vecIdxInPage := int(index) % a.vectorsPerPage
 	// Defensive bounds check: if the arena was swapped out from under us
@@ -176,13 +186,15 @@ func (a *VectorArena) GetNoLock(index uint32) []float32 {
 	if pageIdx < 0 || pageIdx >= len(a.pages) {
 		return nil
 	}
-	offset := vecIdxInPage * a.dim * 4
 	page := a.pages[pageIdx]
+	offset := vecIdxInPage * a.dim * 4
 	if offset < 0 || offset+(a.dim*4) > len(page) {
 		return nil
 	}
-	rawbytes := page[offset : offset+(a.dim*4)]
-	return unsafe.Slice((*float32)(unsafe.Pointer(&rawbytes[0])), a.dim)
+	out := make([]float32, a.dim)
+	src := unsafe.Slice((*float32)(unsafe.Pointer(&page[offset])), a.dim)
+	copy(out, src)
+	return out
 }
 
 // Returns the total number of vectors stored

@@ -190,7 +190,14 @@ func (h *HNSWIndex) searchLayer(query []float32, entryPoint *HNSWNode, layer int
 	for {
 		changed := false
 		curr.RLock()
-		friends := curr.Connections[layer]
+		// Defensive bounds check: under concurrent Clear() the captured hnsw may
+		// briefly carry an entry-node pointer whose Layer (and thus
+		// len(Connections)) is smaller than the layer we are searching at.
+		// Treat that as "no friends here" and let the caller fall through.
+		var friends []uint32
+		if layer < len(curr.Connections) {
+			friends = curr.Connections[layer]
+		}
 		curr.RUnlock()
 
 		for _, fOffset := range friends {
@@ -384,7 +391,10 @@ func (h *HNSWIndex) searchLayerTopK(query []float32, entry *HNSWNode, layer, ef 
 		}
 
 		best.node.RLock()
-		friends := best.node.Connections[layer]
+		var friends []uint32
+		if layer < len(best.node.Connections) {
+			friends = best.node.Connections[layer]
+		}
 		best.node.RUnlock()
 
 		for _, fOffset := range friends {
