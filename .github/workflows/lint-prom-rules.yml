@@ -1,0 +1,29 @@
+name: lint-prom-rules
+
+on:
+  pull_request:
+    paths:
+      - 'Levara/docs/prometheus-verify.rules.yml'
+      - '.github/workflows/lint-prom-rules.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'Levara/docs/prometheus-verify.rules.yml'
+      - '.github/workflows/lint-prom-rules.yml'
+
+jobs:
+  promtool:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install promtool
+        run: |
+          set -euo pipefail
+          PROM_VERSION=2.55.1
+          curl -sSL "https://github.com/prometheus/prometheus/releases/download/v${PROM_VERSION}/prometheus-${PROM_VERSION}.linux-amd64.tar.gz" \
+            | tar -xz --strip-components=1 -C /usr/local/bin "prometheus-${PROM_VERSION}.linux-amd64/promtool"
+          promtool --version
+
+      - name: Validate verify-stack rules
+        run: promtool check rules Levara/docs/prometheus-verify.rules.yml
