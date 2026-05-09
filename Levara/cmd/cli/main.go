@@ -223,7 +223,7 @@ func addFile(path, dataset string) {
 	dsName, _ := result["dataset_name"].(string)
 	dsID, _ := result["dataset_id"].(string)
 	fmt.Printf("%s%sOK%s  ingested %s → %d item(s) into dataset %q (%s)\n",
-		colorBold, colorGreen, colorReset, filepath.Base(path), int(items), dsName, dsID[:8])
+		colorBold, colorGreen, colorReset, filepath.Base(path), int(items), dsName, dsID[:min(8, len(dsID))])
 }
 
 func addText(text, dataset string) {
