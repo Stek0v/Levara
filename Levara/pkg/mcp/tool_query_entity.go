@@ -49,12 +49,13 @@ func ToolQueryEntity(ctx context.Context, deps Deps, args map[string]any) ToolRe
 		}
 	}
 	asOf, _ := args["as_of"].(string)
+	datasetID, _ := args["dataset_id"].(string)
 	limit := queryEntityEdgeLimit
 	if l, ok := args["limit"].(float64); ok && l > 0 {
 		limit = int(l)
 	}
 
-	nodeIDs := resolveEntityNodes(ctx, db, deps.Q, name)
+	nodeIDs := resolveEntityNodes(ctx, db, deps.Q, name, datasetID)
 	if len(nodeIDs) == 0 {
 		return ToolResult{Content: []Content{{
 			Type: "text",
@@ -62,7 +63,7 @@ func ToolQueryEntity(ctx context.Context, deps Deps, args map[string]any) ToolRe
 		}}}
 	}
 
-	edges, err := queryEntityEdges(ctx, db, deps.Q, nodeIDs, asOf, limit)
+	edges, err := queryEntityEdges(ctx, db, deps.Q, nodeIDs, asOf, datasetID, limit)
 	if err != nil {
 		return ToolResult{
 			Content: []Content{{Type: "text", Text: "Error: " + err.Error()}},
@@ -71,22 +72,34 @@ func ToolQueryEntity(ctx context.Context, deps Deps, args map[string]any) ToolRe
 	}
 
 	resp := map[string]any{
-		"entity":   name,
-		"as_of":    asOf,
-		"node_ids": nodeIDs,
-		"edges":    edges,
+		"entity":     name,
+		"as_of":      asOf,
+		"dataset_id": datasetID,
+		"node_ids":   nodeIDs,
+		"edges":      edges,
 	}
 	out, _ := json.MarshalIndent(resp, "", "  ")
 	return ToolResult{Content: []Content{{Type: "text", Text: string(out)}}}
 }
 
 // resolveEntityNodes returns the graph node IDs that share the given
-// entity name. Capped at queryEntityNodeResolveLimit; silent failure
-// returns an empty slice (callers surface "No entity found").
-func resolveEntityNodes(ctx context.Context, db *sql.DB, rewrite func(string) string, name string) []string {
-	rows, err := db.QueryContext(ctx, rewrite(fmt.Sprintf(
-		"SELECT id FROM graph_nodes WHERE name = $1 LIMIT %d", queryEntityNodeResolveLimit,
-	)), name)
+// entity name. When datasetID is non-empty, results are scoped to that
+// dataset; an empty datasetID matches all rows (legacy/global behaviour).
+// Capped at queryEntityNodeResolveLimit; silent failure returns an empty
+// slice (callers surface "No entity found").
+func resolveEntityNodes(ctx context.Context, db *sql.DB, rewrite func(string) string, name, datasetID string) []string {
+	var (
+		query string
+		args  []any
+	)
+	if datasetID == "" {
+		query = fmt.Sprintf("SELECT id FROM graph_nodes WHERE name = $1 LIMIT %d", queryEntityNodeResolveLimit)
+		args = []any{name}
+	} else {
+		query = fmt.Sprintf("SELECT id FROM graph_nodes WHERE name = $1 AND dataset_id = $2 LIMIT %d", queryEntityNodeResolveLimit)
+		args = []any{name, datasetID}
+	}
+	rows, err := db.QueryContext(ctx, rewrite(query), args...)
 	if err != nil {
 		return nil
 	}
@@ -106,7 +119,7 @@ func resolveEntityNodes(ctx context.Context, db *sql.DB, rewrite func(string) st
 // or target), applying the active-now or as_of-based validity filter.
 // Returns SQL errors to the caller since a malformed query here is a
 // real fault, not a not-found.
-func queryEntityEdges(ctx context.Context, db *sql.DB, rewrite func(string) string, nodeIDs []string, asOf string, limit int) ([]map[string]any, error) {
+func queryEntityEdges(ctx context.Context, db *sql.DB, rewrite func(string) string, nodeIDs []string, asOf, datasetID string, limit int) ([]map[string]any, error) {
 	srcPlaceholders := make([]string, 0, len(nodeIDs))
 	tgtPlaceholders := make([]string, 0, len(nodeIDs))
 	qargs := make([]any, 0, len(nodeIDs)*2+2)
@@ -134,6 +147,15 @@ func queryEntityEdges(ctx context.Context, db *sql.DB, rewrite func(string) stri
 		pos += 2
 	}
 
+	// Tenant scope: when caller supplies dataset_id, drop edges from other
+	// datasets. Empty dataset_id keeps the legacy/global view.
+	var datasetClause string
+	if datasetID != "" {
+		datasetClause = fmt.Sprintf(" AND dataset_id = $%d", pos)
+		qargs = append(qargs, datasetID)
+		pos++
+	}
+
 	// Scan timestamp columns as NullString so the driver returns "" for NULL
 	// without forcing a Postgres-specific COALESCE(..::text, ''). SQLite (used
 	// by tests) and Postgres both accept this — earlier `COALESCE(col, '')`
@@ -142,9 +164,9 @@ func queryEntityEdges(ctx context.Context, db *sql.DB, rewrite func(string) stri
 		SELECT id, source_id, target_id, relationship_name, properties,
 			valid_from, valid_until, superseded_by, confidence
 		FROM graph_edges
-		WHERE (source_id IN (%s) OR target_id IN (%s))%s
+		WHERE (source_id IN (%s) OR target_id IN (%s))%s%s
 		ORDER BY updated_at DESC LIMIT $%d
-	`, strings.Join(srcPlaceholders, ","), strings.Join(tgtPlaceholders, ","), validityClause, pos)
+	`, strings.Join(srcPlaceholders, ","), strings.Join(tgtPlaceholders, ","), validityClause, datasetClause, pos)
 	qargs = append(qargs, limit)
 
 	rows, err := db.QueryContext(ctx, rewrite(sqlStr), qargs...)
