@@ -2,8 +2,11 @@ package grpc
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -593,8 +596,8 @@ func (s *Service) BatchEmbedAndIndex(ctx context.Context, req *pb.BatchEmbedAndI
 // BatchWriteGraph writes nodes and edges to Neo4j in batch via UNWIND+MERGE.
 // Creates a short-lived Neo4j connection per call (caller provides credentials).
 func (s *Service) BatchWriteGraph(ctx context.Context, req *pb.BatchWriteGraphReq) (*pb.BatchWriteGraphResp, error) {
-	if req.Neo4JUrl == "" {
-		return nil, status.Errorf(codes.InvalidArgument, "neo4j_url is required")
+	if err := validateNeo4jURL(req.Neo4JUrl); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "%v", err)
 	}
 	dbName := req.Neo4JDatabase
 	if dbName == "" {
@@ -676,16 +679,20 @@ func (s *Service) ParallelWriteDataPoints(ctx context.Context, req *pb.ParallelW
 	// --- Prepare Neo4j writer (if configured) ---
 	var neo4jWriter *graphdb.Writer
 	if req.Neo4JUrl != "" {
-		dbName := req.Neo4JDatabase
-		if dbName == "" {
-			dbName = "neo4j"
-		}
-		w, err := graphdb.NewWriter(ctx, req.Neo4JUrl, req.Neo4JUser, req.Neo4JPassword, dbName)
-		if err != nil {
-			resp.Errors = append(resp.Errors, fmt.Sprintf("neo4j connect: %v", err))
+		if err := validateNeo4jURL(req.Neo4JUrl); err != nil {
+			resp.Errors = append(resp.Errors, fmt.Sprintf("neo4j: %v", err))
 		} else {
-			neo4jWriter = w
-			defer w.Close(ctx)
+			dbName := req.Neo4JDatabase
+			if dbName == "" {
+				dbName = "neo4j"
+			}
+			w, err := graphdb.NewWriter(ctx, req.Neo4JUrl, req.Neo4JUser, req.Neo4JPassword, dbName)
+			if err != nil {
+				resp.Errors = append(resp.Errors, fmt.Sprintf("neo4j connect: %v", err))
+			} else {
+				neo4jWriter = w
+				defer w.Close(ctx)
+			}
 		}
 	}
 
@@ -941,8 +948,41 @@ func (s *Service) BatchSearchByText(ctx context.Context, req *pb.BatchSearchByTe
 	return &pb.BatchSearchByTextResp{Results: groups}, nil
 }
 
+// validateNeo4jURL enforces an allowlist for client-supplied Neo4j URLs to
+// prevent SSRF. Allowlist source: NEO4J_URL_ALLOWLIST (comma-separated) or,
+// when unset, the single server-configured NEO4J_URL. Empty allowlist means
+// no client-supplied URL is accepted.
+func validateNeo4jURL(url string) error {
+	if url == "" {
+		return fmt.Errorf("neo4j_url required")
+	}
+	allow := os.Getenv("NEO4J_URL_ALLOWLIST")
+	if allow == "" {
+		allow = os.Getenv("NEO4J_URL")
+	}
+	if allow == "" {
+		return fmt.Errorf("client-supplied neo4j_url not permitted; set NEO4J_URL_ALLOWLIST")
+	}
+	for _, candidate := range strings.Split(allow, ",") {
+		if strings.TrimSpace(candidate) == url {
+			return nil
+		}
+	}
+	return fmt.Errorf("neo4j_url %q not in allowlist", url)
+}
+
+// graphCacheKey hashes credentials into the cache key so a writer minted
+// with one user/pass pair cannot be reused for a different identity.
+func graphCacheKey(url, user, pass, db string) string {
+	h := sha256.Sum256([]byte(url + "\x00" + user + "\x00" + pass + "\x00" + db))
+	return hex.EncodeToString(h[:])
+}
+
 func (s *Service) getGraphCache(ctx context.Context, url, user, pass, db string) (*graphdb.CachedWriter, error) {
-	key := url + "|" + db
+	if err := validateNeo4jURL(url); err != nil {
+		return nil, err
+	}
+	key := graphCacheKey(url, user, pass, db)
 	s.graphCacheMu.Lock()
 	defer s.graphCacheMu.Unlock()
 
@@ -1124,7 +1164,7 @@ func (s *Service) GraphCompletionSearch(ctx context.Context, req *pb.GraphComple
 	var graphNodes []graph.Node
 	var graphEdges []graph.Edge // reuse from pkg/graph for scoring
 
-	if req.Neo4JUrl != "" && len(relevantIDs) > 0 {
+	if req.Neo4JUrl != "" && len(relevantIDs) > 0 && validateNeo4jURL(req.Neo4JUrl) == nil {
 		dbName := req.Neo4JDatabase
 		if dbName == "" {
 			dbName = "neo4j"
