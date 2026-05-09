@@ -39,7 +39,10 @@ services:
       # LLM defaults to a small fast model so mem0's infer=True path is usable
       # on CPU. Override LLM_MODEL/LLM_PROVIDER for richer extraction.
       LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
-      LLM_ENDPOINT: ${LLM_ENDPOINT:-http://ollama:11434}
+      # Ollama's OpenAI-compatible surface lives under /v1 — without this suffix
+      # the provider hits /chat/completions on bare 11434 and gets 404, which
+      # silently disables entity extraction during cognify.
+      LLM_ENDPOINT: ${LLM_ENDPOINT:-http://ollama:11434/v1}
       LLM_MODEL: ${LLM_MODEL:-qwen2.5:1.5b}
       LLM_API_KEY: ${LLM_API_KEY:-no-key}
       # The MemoryFS indexer makes one batch_insert per .md file from a single

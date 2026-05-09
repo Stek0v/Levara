@@ -202,6 +202,25 @@ func parseEntities(content string) ([]graph.DedupNode, []graph.DedupEdge, error)
 		}
 	}
 
+	// Map entity names → node IDs so we can translate LLM-emitted edges
+	// (which reference entities by name) into the UUID-keyed graph schema.
+	// Without this, query_entity resolves names to UUIDs and finds nothing
+	// because graph_edges stored the raw names as source_id/target_id.
+	nameToID := make(map[string]string, len(nodes))
+	for _, n := range nodes {
+		nameToID[n.Name] = n.ID
+	}
+	resolveID := func(ref string) string {
+		if id, ok := nameToID[ref]; ok {
+			return id
+		}
+		// Fall back to the LLM-supplied ref so we don't drop edges that
+		// mention an entity not in the nodes list (e.g. "board" in
+		// "Alice reports_to board"). The dedup stage handles these as
+		// loose references.
+		return ref
+	}
+
 	edges := make([]graph.DedupEdge, len(kg.Edges))
 	for i, e := range kg.Edges {
 		relName := e.Relationship
@@ -209,8 +228,8 @@ func parseEntities(content string) ([]graph.DedupNode, []graph.DedupEdge, error)
 			relName = e.RelationshipName
 		}
 		edges[i] = graph.DedupEdge{
-			SourceID:         e.Source,
-			TargetID:         e.Target,
+			SourceID:         resolveID(e.Source),
+			TargetID:         resolveID(e.Target),
 			RelationshipName: relName,
 			EdgeText:         e.EdgeText,
 		}
