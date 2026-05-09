@@ -134,9 +134,13 @@ func queryEntityEdges(ctx context.Context, db *sql.DB, rewrite func(string) stri
 		pos += 2
 	}
 
+	// Scan timestamp columns as NullString so the driver returns "" for NULL
+	// without forcing a Postgres-specific COALESCE(..::text, ''). SQLite (used
+	// by tests) and Postgres both accept this — earlier `COALESCE(col, '')`
+	// failed under PG because '' isn't a valid timestamptz.
 	sqlStr := fmt.Sprintf(`
 		SELECT id, source_id, target_id, relationship_name, properties,
-			COALESCE(valid_from, ''), COALESCE(valid_until, ''), superseded_by, confidence
+			valid_from, valid_until, superseded_by, confidence
 		FROM graph_edges
 		WHERE (source_id IN (%s) OR target_id IN (%s))%s
 		ORDER BY updated_at DESC LIMIT $%d
@@ -151,7 +155,8 @@ func queryEntityEdges(ctx context.Context, db *sql.DB, rewrite func(string) stri
 
 	var edges []map[string]any
 	for rows.Next() {
-		var id, src, tgt, rel, props, vf, vu, sb string
+		var id, src, tgt, rel, props, sb string
+		var vf, vu sql.NullString
 		var conf float64
 		if err := rows.Scan(&id, &src, &tgt, &rel, &props, &vf, &vu, &sb, &conf); err != nil {
 			continue
@@ -162,8 +167,8 @@ func queryEntityEdges(ctx context.Context, db *sql.DB, rewrite func(string) stri
 			"target_id":     tgt,
 			"relationship":  rel,
 			"properties":    json.RawMessage(props),
-			"valid_from":    vf,
-			"valid_until":   vu,
+			"valid_from":    vf.String,
+			"valid_until":   vu.String,
 			"superseded_by": sb,
 			"confidence":    conf,
 		})
