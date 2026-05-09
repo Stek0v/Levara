@@ -150,6 +150,58 @@ func TestParseEntities_InvalidJSON(t *testing.T) {
 	}
 }
 
+// Regression for #57: LLMs typically reference entities in edges by *name*
+// rather than by the node id field. parseEntities must rewrite those refs
+// to the node's UUID so that graph_edges rows align with the UUID-keyed
+// schema query_entity reads through.
+func TestParseEntities_EdgeRefsResolvedByName(t *testing.T) {
+	llmOut := `{
+		"nodes": [
+			{"id":"uuid-a","name":"Alice","type":"Person"},
+			{"id":"uuid-b","name":"Acme","type":"Org"}
+		],
+		"edges": [
+			{"source":"Alice","target":"Acme","relationship":"works_at","edge_text":"Alice works at Acme"}
+		]
+	}`
+	_, edges, err := parseEntities(llmOut)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(edges) != 1 {
+		t.Fatalf("want 1 edge, got %d", len(edges))
+	}
+	if edges[0].SourceID != "uuid-a" {
+		t.Errorf("SourceID = %q, want uuid-a (name→ID rewrite failed)", edges[0].SourceID)
+	}
+	if edges[0].TargetID != "uuid-b" {
+		t.Errorf("TargetID = %q, want uuid-b (name→ID rewrite failed)", edges[0].TargetID)
+	}
+}
+
+// Regression for #57: edges that reference an entity not present in the
+// nodes list ("loose ref") must pass through unchanged rather than being
+// dropped — the dedup stage handles them downstream.
+func TestParseEntities_UnknownEdgeRefFallsThrough(t *testing.T) {
+	llmOut := `{
+		"nodes": [{"id":"uuid-a","name":"Alice"}],
+		"edges": [{"source":"Alice","target":"board","relationship":"reports_to","edge_text":"Alice reports to board"}]
+	}`
+	_, edges, err := parseEntities(llmOut)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(edges) != 1 {
+		t.Fatalf("want 1 edge, got %d", len(edges))
+	}
+	if edges[0].SourceID != "uuid-a" {
+		t.Errorf("SourceID = %q, want uuid-a", edges[0].SourceID)
+	}
+	if edges[0].TargetID != "board" {
+		t.Errorf("TargetID = %q, want raw 'board' fallback", edges[0].TargetID)
+	}
+}
+
 func TestParseEntities_EmptyGraph(t *testing.T) {
 	// Empty but valid JSON must succeed — downstream treats zero entities as "nothing to write".
 	nodes, edges, err := parseEntities(`{"nodes":[],"edges":[]}`)
