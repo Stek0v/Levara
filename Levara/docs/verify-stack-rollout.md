@@ -66,6 +66,74 @@ The kill-switch is environment-only — unset the threshold variables and restar
 
 Per-request flags (`verify_results`, `strict_grounded`) are caller-controlled, so individual clients can disable them without a server change.
 
+## Decisions log
+
+### 2026-05-09 — current state
+
+- **Phase 1 still active.** Not enough Prometheus history to pick thresholds
+  empirically. Continue observe-only; revisit when ≥1–2 weeks of
+  `levara_rag_confidence_bucket` data is in.
+- **Threshold candidates frozen at the playbook defaults** (`0.30` global,
+  `0.35` RAG, `0.25` GRAPH) as the *starting point* for Phase 3 once data is
+  in. No env change yet — these are documentation, not configuration.
+- **Phase 2 trigger = client-side query parameter.** Server will not flip
+  defaults per request type. Callers (PicoClaw, WebUI, mem0, ad-hoc curl)
+  must explicitly pass `verify_results=true` / `min_score=…` /
+  `strict_grounded=true`. This keeps the rollout reversible at the caller
+  level without touching server config.
+- **Envelope shape (legacy array vs `{results, debug}`)** — undecided.
+  `include_debug=true` already toggles it per-request; default stays the
+  legacy array until we know what WebUI + MCP clients can parse without a
+  release. Tracking as an open question, not a blocker.
+- **Phase 3 rollback = test endpoint, not a flag flip.** Until thresholds
+  are enabled globally, the per-request flags are the *test handle*: QA can
+  exercise the gates against any `/search` call and observe metrics.
+  See "Test handle (QA cookbook)" below.
+
+## Test handle (QA cookbook)
+
+The same `/api/v1/search` endpoint **is** the verify test handle. Pass the
+flags in the request body — no separate route, no server config required.
+
+```bash
+# Vanilla search (no gates)
+curl -sf -X POST http://127.0.0.1:8080/api/v1/search \
+  -H 'Content-Type: application/json' \
+  -d '{"collection":"mem0","query":"hello","limit":5}' | jq .
+
+# Verify ON: drop low-score + bad-metadata rows; envelope the response.
+curl -sf -X POST http://127.0.0.1:8080/api/v1/search \
+  -H 'Content-Type: application/json' \
+  -d '{
+        "collection":"mem0",
+        "query":"hello",
+        "limit":5,
+        "verify_results": true,
+        "min_score": 0.30,
+        "strict_grounded": true,
+        "include_debug": true
+      }' | jq .
+```
+
+What to look at in the envelope:
+
+- `debug.confidence.value` — should land in `[0,1]`; spot-check against
+  `histogram_quantile(0.5, sum by (search_type, le) (rate(levara_rag_confidence_bucket[1h])))`.
+- `debug.verification` — `{total, kept, dropped_score, dropped_meta}`.
+  `dropped_meta > 0` means an upstream chunker is emitting non-JSON metadata
+  (write-path regression, file an issue).
+- `debug.evidence_ids` — should be ≤10 unique IDs; empty + `strict_grounded=true`
+  → `abstain_reason=strict_grounded_no_evidence`.
+
+Metrics to watch while exercising the handle:
+
+```promql
+rate(levara_rag_verify_dropped_total[5m])  by (reason)
+rate(levara_rag_abstain_total[5m])         by (reason, search_type)
+histogram_quantile(0.5, sum by (search_type, le)
+   (rate(levara_rag_confidence_bucket[5m])))
+```
+
 ## Related code
 
 - `Levara/internal/http/confidence.go` — score blend, env parsing.
