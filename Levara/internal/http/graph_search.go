@@ -668,7 +668,12 @@ func codeGraphContextFromPostgres(ctx context.Context, cfg APIConfig, names []st
 			dsPlaceholders[i] = fmt.Sprintf("$%d", idx)
 			args = append(args, id)
 		}
-		dsFilter = fmt.Sprintf(" AND (gn.dataset_id IS NULL OR gn.dataset_id = '' OR gn.dataset_id IN (%s))", strings.Join(dsPlaceholders, ","))
+		// Filter both endpoints (gn = source, gn2 = target). A cross-dataset
+		// edge can otherwise leak the target's name into another tenant.
+		dsFilter = fmt.Sprintf(
+			" AND (gn.dataset_id IS NULL OR gn.dataset_id = '' OR gn.dataset_id IN (%s))"+
+				" AND (gn2.dataset_id IS NULL OR gn2.dataset_id = '' OR gn2.dataset_id IN (%s))",
+			strings.Join(dsPlaceholders, ","), strings.Join(dsPlaceholders, ","))
 	}
 
 	limitIdx := len(args) + 1
@@ -1044,8 +1049,12 @@ func graphContextFromNeo4j(ctx context.Context, cfg APIConfig, names []string, a
 	var cypher string
 	params := map[string]any{"names": names}
 	if allowedDatasetIDs != nil {
+		// Filter BOTH endpoints — otherwise a cross-dataset edge would leak the
+		// target's name into a different tenant's graph context.
 		cypher = `MATCH (n:` + "`__Node__`" + `)-[r]-(m:` + "`__Node__`" + `)
-		 WHERE n.name IN $names AND (n.dataset_id IS NULL OR n.dataset_id IN $allowedIDs)
+		 WHERE n.name IN $names
+		   AND (n.dataset_id IS NULL OR n.dataset_id IN $allowedIDs)
+		   AND (m.dataset_id IS NULL OR m.dataset_id IN $allowedIDs)
 		 RETURN n.name AS source, TYPE(r) AS rel, m.name AS target
 		 LIMIT 50`
 		params["allowedIDs"] = allowedDatasetIDs
@@ -1098,7 +1107,12 @@ func graphContextFromPostgres(ctx context.Context, cfg APIConfig, names []string
 			dsPlaceholders[i] = fmt.Sprintf("$%d", idx)
 			args = append(args, id)
 		}
-		dsFilter = fmt.Sprintf(" AND (gn.dataset_id IS NULL OR gn.dataset_id = '' OR gn.dataset_id IN (%s))", strings.Join(dsPlaceholders, ","))
+		// Filter both endpoints (gn = source, gn2 = target). A cross-dataset
+		// edge can otherwise leak the target's name into another tenant.
+		dsFilter = fmt.Sprintf(
+			" AND (gn.dataset_id IS NULL OR gn.dataset_id = '' OR gn.dataset_id IN (%s))"+
+				" AND (gn2.dataset_id IS NULL OR gn2.dataset_id = '' OR gn2.dataset_id IN (%s))",
+			strings.Join(dsPlaceholders, ","), strings.Join(dsPlaceholders, ","))
 	}
 
 	limitIdx := len(args) + 1
