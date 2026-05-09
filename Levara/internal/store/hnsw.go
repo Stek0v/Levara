@@ -181,7 +181,11 @@ func (h *HNSWIndex) vecUnsafe(offset uint32) []float32 {
 // searchLayer finds the closest node to query in a specific layer (greedy)
 func (h *HNSWIndex) searchLayer(query []float32, entryPoint *HNSWNode, layer int, getVec vecFn) *HNSWNode {
 	curr := entryPoint
-	minDist := dist(query, getVec(curr.ArenaOffset))
+	currVec := getVec(curr.ArenaOffset)
+	if currVec == nil {
+		return curr
+	}
+	minDist := dist(query, currVec)
 
 	for {
 		changed := false
@@ -194,7 +198,11 @@ func (h *HNSWIndex) searchLayer(query []float32, entryPoint *HNSWNode, layer int
 			if friendNode == nil {
 				continue
 			}
-			d := dist(query, getVec(friendNode.ArenaOffset))
+			fVec := getVec(friendNode.ArenaOffset)
+			if fVec == nil {
+				continue
+			}
+			d := dist(query, fVec)
 			if d < minDist {
 				minDist = d
 				curr = friendNode
@@ -246,6 +254,13 @@ func (h *HNSWIndex) Add(vector []float32, id string, idx uint32) {
 
 	getVec := h.vecNoLock
 	curr := h.Nodes[h.EntryNodeID]
+	// If the entry node's vector is no longer reachable in the current arena
+	// (e.g. arena was swapped by Clear() before we got the write lock), abort
+	// the topology stitching — the new node remains as an orphan that the
+	// next Add will pick up as the entry point.
+	if curr == nil || getVec(curr.ArenaOffset) == nil {
+		return
+	}
 
 	// Zoom Phase: greedy search from top layer down to node's level
 	for l := h.MaxLayer; l > level; l-- {
@@ -296,6 +311,9 @@ func (h *HNSWIndex) pruneConnections(node *HNSWNode, layer, maxConn int, getVec 
 	}
 
 	nodeVec := getVec(node.ArenaOffset)
+	if nodeVec == nil {
+		return
+	}
 
 	type scored struct {
 		offset uint32
@@ -307,7 +325,11 @@ func (h *HNSWIndex) pruneConnections(node *HNSWNode, layer, maxConn int, getVec 
 		if cn == nil {
 			continue
 		}
-		items = append(items, scored{offset, dist(nodeVec, getVec(cn.ArenaOffset))})
+		cnVec := getVec(cn.ArenaOffset)
+		if cnVec == nil {
+			continue
+		}
+		items = append(items, scored{offset, dist(nodeVec, cnVec)})
 	}
 
 	if len(items) <= maxConn {
@@ -345,7 +367,11 @@ func (h *HNSWIndex) searchLayerTopK(query []float32, entry *HNSWNode, layer, ef 
 
 	visited[entry.ArenaOffset] = struct{}{}
 
-	entryDist := dist(query, getVec(entry.ArenaOffset))
+	entryVec := getVec(entry.ArenaOffset)
+	if entryVec == nil {
+		return nil
+	}
+	entryDist := dist(query, entryVec)
 
 	candidates := srMinHeap{{entry, entryDist}}
 	results := srMaxHeap{{entry, entryDist}}
@@ -370,7 +396,11 @@ func (h *HNSWIndex) searchLayerTopK(query []float32, entry *HNSWNode, layer, ef 
 			if fNode == nil {
 				continue
 			}
-			fDist := dist(query, getVec(fNode.ArenaOffset))
+			fVec := getVec(fNode.ArenaOffset)
+			if fVec == nil {
+				continue
+			}
+			fDist := dist(query, fVec)
 
 			if results.Len() < ef {
 				results.Push(searchResult{fNode, fDist})
