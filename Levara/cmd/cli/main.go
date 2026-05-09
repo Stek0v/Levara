@@ -124,7 +124,7 @@ func cmdHealth(args []string) {
 
 	if !details {
 		var resp map[string]any
-		json.Unmarshal(body, &resp)
+		_ = json.Unmarshal(body, &resp)
 		health, _ := resp["health"].(string)
 		version, _ := resp["version"].(string)
 		color := colorGreen
@@ -139,7 +139,7 @@ func cmdHealth(args []string) {
 	var resp struct {
 		Services map[string]map[string]any `json:"services"`
 	}
-	json.Unmarshal(body, &resp)
+	_ = json.Unmarshal(body, &resp)
 
 	fmt.Printf("\n%s%-20s %-14s %s%s\n", colorBold, "SERVICE", "STATUS", "DETAILS", colorReset)
 	fmt.Println(strings.Repeat("─", 60))
@@ -188,13 +188,19 @@ func addFile(path, dataset string) {
 
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
-	w.WriteField("datasetName", dataset)
+	if err := w.WriteField("datasetName", dataset); err != nil {
+		fatalf("write field: %v", err)
+	}
 	part, err := w.CreateFormFile("data", filepath.Base(path))
 	if err != nil {
 		fatalf("create form file: %v", err)
 	}
-	part.Write(data)
-	w.Close()
+	if _, err := part.Write(data); err != nil {
+		fatalf("write part: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		fatalf("close writer: %v", err)
+	}
 
 	req, _ := http.NewRequest("POST", baseURL+"/add", &buf)
 	req.Header.Set("Content-Type", w.FormDataContentType())
@@ -204,7 +210,7 @@ func addFile(path, dataset string) {
 	if err != nil {
 		fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 
 	if resp.StatusCode >= 400 {
@@ -212,7 +218,7 @@ func addFile(path, dataset string) {
 	}
 
 	var result map[string]any
-	json.Unmarshal(body, &result)
+	_ = json.Unmarshal(body, &result)
 	items, _ := result["items"].(float64)
 	dsName, _ := result["dataset_name"].(string)
 	dsID, _ := result["dataset_id"].(string)
@@ -231,7 +237,7 @@ func addText(text, dataset string) {
 	if err != nil {
 		fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 
 	if resp.StatusCode >= 400 {
@@ -239,7 +245,7 @@ func addText(text, dataset string) {
 	}
 
 	var result map[string]any
-	json.Unmarshal(body, &result)
+	_ = json.Unmarshal(body, &result)
 	items, _ := result["items"].(float64)
 	dsName, _ := result["dataset_name"].(string)
 	dsID, _ := result["dataset_id"].(string)

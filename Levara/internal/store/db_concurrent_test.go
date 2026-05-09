@@ -218,7 +218,7 @@ func TestDB_WALReplayFullCycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db2.Close()
+	defer func() { _ = db2.Close() }()
 
 	if got := db2.Count(); got != len(want) {
 		t.Errorf("Count after replay = %d, want %d", got, len(want))
@@ -297,7 +297,7 @@ func TestDB_CheckpointUnderLoad(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db2.Close()
+	defer func() { _ = db2.Close() }()
 	if got := db2.Count(); got != wantCount {
 		t.Errorf("Count after reopen = %d, want %d", got, wantCount)
 	}

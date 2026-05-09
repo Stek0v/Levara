@@ -100,7 +100,7 @@ func FullBackup(dataDir, dbDSN, output string) error {
 	if err := manifest.Write(manifestPath); err != nil {
 		return fmt.Errorf("write manifest: %w", err)
 	}
-	addFileToTar(tw, manifestPath, "manifest.json")
+	_ = addFileToTar(tw, manifestPath, "manifest.json")
 	os.Remove(manifestPath)
 
 	log.Printf("[backup] complete: %s (%d collections, %d uploads)", output, len(manifest.Collections), manifest.UploadsCount)
@@ -256,7 +256,7 @@ func addFileToTar(tw *tar.Writer, path, name string) error {
 func countFiles(dir string) (int, int64) {
 	count := 0
 	var size int64
-	filepath.Walk(dir, func(_ string, info os.FileInfo, _ error) error {
+	_ = filepath.Walk(dir, func(_ string, info os.FileInfo, _ error) error {
 		if info != nil && !info.IsDir() {
 			count++
 			size += info.Size()
