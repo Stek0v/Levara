@@ -89,16 +89,13 @@ func (w *Writer) Close(ctx context.Context) error {
 
 // EnsureSchema creates required constraints/indexes if they do not exist.
 func (w *Writer) EnsureSchema(ctx context.Context) error {
-	session := w.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: w.database})
-	defer session.Close(ctx)
-
-	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+	_, err := RunWriteTx(ctx, w, func(ctx context.Context, tx neo4j.ManagedTransaction) (struct{}, error) {
 		for _, stmt := range requiredNeo4jSchemaStatements(baseLabel) {
 			if _, err := tx.Run(ctx, stmt, nil); err != nil {
-				return nil, err
+				return struct{}{}, err
 			}
 		}
-		return nil, nil
+		return struct{}{}, nil
 	})
 	return err
 }
@@ -114,33 +111,47 @@ func requiredNeo4jSchemaStatements(label string) []string {
 
 // BatchWrite writes nodes and edges to Neo4j in batch using UNWIND.
 // Mirrors Levara's add_nodes + add_edges Cypher patterns.
+//
+// Atomicity: nodes and edges share a single Neo4j transaction. If the edge
+// MERGE fails after the node MERGE has run, the entire transaction rolls
+// back — orphaned nodes cannot leak to the database (Stage 3 invariant).
+// On error both NodesWritten and EdgesWritten in the returned result are 0.
 func (w *Writer) BatchWrite(ctx context.Context, nodes []NodeRecord, edges []EdgeRecord) BatchWriteResult {
-	result := BatchWriteResult{}
-
-	if len(nodes) > 0 {
-		n, err := w.writeNodes(ctx, nodes)
-		result.NodesWritten = n
-		if err != nil {
-			result.Errors = append(result.Errors, fmt.Sprintf("nodes: %v", err))
-		}
+	if len(nodes) == 0 && len(edges) == 0 {
+		return BatchWriteResult{}
 	}
 
-	if len(edges) > 0 {
-		n, err := w.writeEdges(ctx, edges)
-		result.EdgesWritten = n
-		if err != nil {
-			result.Errors = append(result.Errors, fmt.Sprintf("edges: %v", err))
-		}
-	}
+	nodeBatch := buildNodeBatch(nodes)
+	edgeBatch := buildEdgeBatch(edges)
 
+	type counts struct{ nodes, edges int }
+	out, err := RunWriteTx(ctx, w, func(ctx context.Context, tx neo4j.ManagedTransaction) (counts, error) {
+		var c counts
+		if len(nodeBatch) > 0 {
+			n, err := runNodeMerge(ctx, tx, nodeBatch)
+			if err != nil {
+				return counts{}, fmt.Errorf("nodes: %w", err)
+			}
+			c.nodes = n
+		}
+		if len(edgeBatch) > 0 {
+			n, err := runEdgeMerge(ctx, tx, edgeBatch)
+			if err != nil {
+				return counts{}, fmt.Errorf("edges: %w", err)
+			}
+			c.edges = n
+		}
+		return c, nil
+	})
+
+	result := BatchWriteResult{NodesWritten: out.nodes, EdgesWritten: out.edges}
+	if err != nil {
+		result.Errors = append(result.Errors, err.Error())
+	}
 	return result
 }
 
-func (w *Writer) writeNodes(ctx context.Context, nodes []NodeRecord) (int, error) {
-	session := w.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: w.database})
-	defer session.Close(ctx)
-
-	// Build batch payload
+func buildNodeBatch(nodes []NodeRecord) []map[string]any {
 	batch := make([]map[string]any, len(nodes))
 	for i, n := range nodes {
 		props := serializeProperties(n.Properties)
@@ -151,45 +162,10 @@ func (w *Writer) writeNodes(ctx context.Context, nodes []NodeRecord) (int, error
 			"properties": props,
 		}
 	}
-
-	// UNWIND + MERGE + APOC addLabels (same as Levara)
-	query := fmt.Sprintf(`
-		UNWIND $nodes AS node
-		MERGE (n: `+"`%s`"+` {id: node.node_id})
-		ON CREATE SET n += node.properties, n.updated_at = timestamp()
-		ON MATCH SET n += node.properties, n.updated_at = timestamp()
-		WITH n, node.label AS label
-		CALL apoc.create.addLabels(n, [label]) YIELD node AS labeledNode
-		RETURN count(labeledNode) AS cnt
-	`, baseLabel)
-
-	cnt, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
-		res, err := tx.Run(ctx, query, map[string]any{"nodes": batch})
-		if err != nil {
-			return 0, fmt.Errorf("write nodes: %w", err)
-		}
-		if res.Next(ctx) {
-			if c, ok := res.Record().Get("cnt"); ok {
-				if n, ok := c.(int64); ok {
-					return int(n), nil
-				}
-			}
-		}
-		if err := res.Err(); err != nil {
-			return 0, fmt.Errorf("write nodes cypher: %w", err)
-		}
-		return len(nodes), nil
-	})
-	if err != nil {
-		return 0, err
-	}
-	return cnt.(int), nil
+	return batch
 }
 
-func (w *Writer) writeEdges(ctx context.Context, edges []EdgeRecord) (int, error) {
-	session := w.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: w.database})
-	defer session.Close(ctx)
-
+func buildEdgeBatch(edges []EdgeRecord) []map[string]any {
 	batch := make([]map[string]any, len(edges))
 	for i, e := range edges {
 		props := flattenEdgeProperties(e.Properties)
@@ -202,43 +178,69 @@ func (w *Writer) writeEdges(ctx context.Context, edges []EdgeRecord) (int, error
 			"properties":        props,
 		}
 	}
+	return batch
+}
 
-	// UNWIND + MATCH + apoc.merge.relationship (same as Levara)
-	query := fmt.Sprintf(`
-		UNWIND $edges AS edge
-		MATCH (from_node: `+"`%s`"+` {id: edge.from_node})
-		MATCH (to_node: `+"`%s`"+` {id: edge.to_node})
-		CALL apoc.merge.relationship(
-			from_node,
-			edge.relationship_name,
-			{source_node_id: edge.from_node, target_node_id: edge.to_node},
-			edge.properties,
-			to_node
-		) YIELD rel
-		RETURN count(rel) AS cnt
-	`, baseLabel, baseLabel)
+// nodeMergeCypher returns the UNWIND+MERGE+APOC addLabels query for nodes.
+// Exposed as a package var so tests can assert the wire format.
+var nodeMergeCypher = fmt.Sprintf(`
+	UNWIND $nodes AS node
+	MERGE (n: `+"`%s`"+` {id: node.node_id})
+	ON CREATE SET n += node.properties, n.updated_at = timestamp()
+	ON MATCH SET n += node.properties, n.updated_at = timestamp()
+	WITH n, node.label AS label
+	CALL apoc.create.addLabels(n, [label]) YIELD node AS labeledNode
+	RETURN count(labeledNode) AS cnt
+`, baseLabel)
 
-	cnt, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
-		res, err := tx.Run(ctx, query, map[string]any{"edges": batch})
-		if err != nil {
-			return 0, fmt.Errorf("write edges: %w", err)
-		}
-		if res.Next(ctx) {
-			if c, ok := res.Record().Get("cnt"); ok {
-				if n, ok := c.(int64); ok {
-					return int(n), nil
-				}
-			}
-		}
-		if err := res.Err(); err != nil {
-			return 0, fmt.Errorf("write edges cypher: %w", err)
-		}
-		return len(edges), nil
-	})
+var edgeMergeCypher = fmt.Sprintf(`
+	UNWIND $edges AS edge
+	MATCH (from_node: `+"`%s`"+` {id: edge.from_node})
+	MATCH (to_node: `+"`%s`"+` {id: edge.to_node})
+	CALL apoc.merge.relationship(
+		from_node,
+		edge.relationship_name,
+		{source_node_id: edge.from_node, target_node_id: edge.to_node},
+		edge.properties,
+		to_node
+	) YIELD rel
+	RETURN count(rel) AS cnt
+`, baseLabel, baseLabel)
+
+func runNodeMerge(ctx context.Context, tx neo4j.ManagedTransaction, batch []map[string]any) (int, error) {
+	res, err := tx.Run(ctx, nodeMergeCypher, map[string]any{"nodes": batch})
 	if err != nil {
 		return 0, err
 	}
-	return cnt.(int), nil
+	if res.Next(ctx) {
+		if c, ok := res.Record().Get("cnt"); ok {
+			if n, ok := c.(int64); ok {
+				return int(n), nil
+			}
+		}
+	}
+	if err := res.Err(); err != nil {
+		return 0, fmt.Errorf("cypher: %w", err)
+	}
+	return len(batch), nil
+}
+
+func runEdgeMerge(ctx context.Context, tx neo4j.ManagedTransaction, batch []map[string]any) (int, error) {
+	res, err := tx.Run(ctx, edgeMergeCypher, map[string]any{"edges": batch})
+	if err != nil {
+		return 0, err
+	}
+	if res.Next(ctx) {
+		if c, ok := res.Record().Get("cnt"); ok {
+			if n, ok := c.(int64); ok {
+				return int(n), nil
+			}
+		}
+	}
+	if err := res.Err(); err != nil {
+		return 0, fmt.Errorf("cypher: %w", err)
+	}
+	return len(batch), nil
 }
 
 // serializeProperties converts Go types to Neo4j-compatible property types.
@@ -315,10 +317,7 @@ type ReadEdge struct {
 
 // ReadFullGraph returns all nodes and edges. Mirrors Levara's get_graph_data().
 func (w *Writer) ReadFullGraph(ctx context.Context) (GraphReadResult, error) {
-	session := w.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: w.database})
-	defer session.Close(ctx)
-
-	out, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+	return RunReadTx(ctx, w, func(ctx context.Context, tx neo4j.ManagedTransaction) (GraphReadResult, error) {
 		var result GraphReadResult
 
 		res, err := tx.Run(ctx,
@@ -364,20 +363,10 @@ func (w *Writer) ReadFullGraph(ctx context.Context) (GraphReadResult, error) {
 		}
 		return result, nil
 	})
-	if err != nil {
-		if r, ok := out.(GraphReadResult); ok {
-			return r, err
-		}
-		return GraphReadResult{}, err
-	}
-	return out.(GraphReadResult), nil
 }
 
 // ReadIDFiltered returns nodes/edges touching the given IDs.
 func (w *Writer) ReadIDFiltered(ctx context.Context, ids []string) (GraphReadResult, error) {
-	session := w.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: w.database})
-	defer session.Close(ctx)
-
 	query := fmt.Sprintf(`
 		MATCH (a:`+"`%s`"+`)-[r]-(b:`+"`%s`"+`)
 		WHERE a.id IN $ids OR b.id IN $ids
@@ -386,7 +375,7 @@ func (w *Writer) ReadIDFiltered(ctx context.Context, ids []string) (GraphReadRes
 		       TYPE(r) AS typ, properties(r) AS r_props
 	`, baseLabel, baseLabel)
 
-	out, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+	return RunReadTx(ctx, w, func(ctx context.Context, tx neo4j.ManagedTransaction) (GraphReadResult, error) {
 		var result GraphReadResult
 		res, err := tx.Run(ctx, query, map[string]any{"ids": ids})
 		if err != nil {
@@ -420,13 +409,6 @@ func (w *Writer) ReadIDFiltered(ctx context.Context, ids []string) (GraphReadRes
 		}
 		return result, nil
 	})
-	if err != nil {
-		if r, ok := out.(GraphReadResult); ok {
-			return r, err
-		}
-		return GraphReadResult{}, err
-	}
-	return out.(GraphReadResult), nil
 }
 
 // ReadNeighbours returns direct neighbors of a node.
@@ -436,9 +418,6 @@ func (w *Writer) ReadNeighbours(ctx context.Context, nodeID string) (GraphReadRe
 
 // ReadSubgraph returns nodes matching label+names with their neighbors.
 func (w *Writer) ReadSubgraph(ctx context.Context, label string, names []string) (GraphReadResult, error) {
-	session := w.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: w.database})
-	defer session.Close(ctx)
-
 	query := fmt.Sprintf(`
 		UNWIND $names AS wantedName
 		MATCH (n:`+"`%s`"+`)
@@ -458,7 +437,7 @@ func (w *Writer) ReadSubgraph(ctx context.Context, label string, names []string)
 		  [r IN rels | {type: TYPE(r), properties: properties(r)}] AS rawRels
 	`, label)
 
-	out, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+	return RunReadTx(ctx, w, func(ctx context.Context, tx neo4j.ManagedTransaction) (GraphReadResult, error) {
 		var result GraphReadResult
 		res, err := tx.Run(ctx, query, map[string]any{"names": names})
 		if err != nil {
@@ -494,13 +473,6 @@ func (w *Writer) ReadSubgraph(ctx context.Context, label string, names []string)
 		}
 		return result, nil
 	})
-	if err != nil {
-		if r, ok := out.(GraphReadResult); ok {
-			return r, err
-		}
-		return GraphReadResult{}, err
-	}
-	return out.(GraphReadResult), nil
 }
 
 // Query executes an arbitrary read Cypher query and returns rows as []map[string]any.
@@ -508,10 +480,7 @@ func (w *Writer) ReadSubgraph(ctx context.Context, label string, names []string)
 // queries — routed through ExecuteRead so cluster deployments can use replicas.
 // Use ExecuteWrite directly via session if a write-flavoured query is needed.
 func (w *Writer) Query(ctx context.Context, cypher string, params map[string]any) ([]map[string]any, error) {
-	session := w.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: w.database})
-	defer session.Close(ctx)
-
-	out, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+	return RunReadTx(ctx, w, func(ctx context.Context, tx neo4j.ManagedTransaction) ([]map[string]any, error) {
 		res, err := tx.Run(ctx, cypher, params)
 		if err != nil {
 			return nil, fmt.Errorf("cypher query: %w", err)
@@ -531,16 +500,6 @@ func (w *Writer) Query(ctx context.Context, cypher string, params map[string]any
 		}
 		return rows, nil
 	})
-	if err != nil {
-		if rows, ok := out.([]map[string]any); ok {
-			return rows, err
-		}
-		return nil, err
-	}
-	if out == nil {
-		return nil, nil
-	}
-	return out.([]map[string]any), nil
 }
 
 func toStringMap(v any) map[string]any {
