@@ -1,7 +1,6 @@
 package graph
 
 import (
-	"fmt"
 	"math/rand"
 	"testing"
 )
@@ -138,7 +137,6 @@ func BenchmarkBruteForceDedup1000(b *testing.B) {
 		vectors = append(vectors, normalizeVector(dup))
 	}
 
-	_ = fmt.Sprintf("") // keep fmt used
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		SemanticDedup(vectors, 0.95)

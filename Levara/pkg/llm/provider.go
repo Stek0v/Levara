@@ -355,7 +355,7 @@ func (p *AnthropicProvider) ChatCompletion(ctx context.Context, req CompletionRe
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 200 {
 		metrics.LLMRequests.WithLabelValues(req.Model, "error").Inc()
-		return nil, fmt.Errorf("Anthropic status %d: %s", resp.StatusCode, truncate(string(respBody), 300))
+		return nil, fmt.Errorf("anthropic status %d: %s", resp.StatusCode, truncate(string(respBody), 300))
 	}
 
 	var antResp struct {

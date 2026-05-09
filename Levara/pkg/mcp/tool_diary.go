@@ -103,7 +103,6 @@ func ToolDiaryRead(ctx context.Context, deps Deps, args map[string]any) ToolResu
 	if collectionName != "" {
 		conds = append(conds, fmt.Sprintf("collection_name = $%d", pos))
 		qargs = append(qargs, collectionName)
-		pos++
 	}
 	sqlStr := fmt.Sprintf(`
 		SELECT key, value, created_at, updated_at FROM memories

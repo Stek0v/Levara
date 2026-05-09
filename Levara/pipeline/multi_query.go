@@ -42,11 +42,6 @@ func (p *SearchPipeline) SearchByTextMultiQuery(
 		perQueryLimit = 10
 	}
 
-	type rankedResult struct {
-		result ScoredResult
-		rank   int
-	}
-
 	// Collect results per query with rank
 	idBestRank := make(map[string]int)           // ID → best rank across all queries
 	idResult := make(map[string]ScoredResult)     // ID → best-scored result
@@ -257,12 +252,6 @@ func (p *SearchPipeline) SearchByTextParentChild(
 			parents = append(parents, r)
 			foundParents[r.ID] = true
 		}
-	}
-
-	// If some parents weren't found via search (different query angle),
-	// still return what we have, ordered by child score
-	if len(parents) < limit && len(parents) < len(parentHits) {
-		// We got fewer parents than expected — that's OK
 	}
 
 	if len(parents) > limit {
