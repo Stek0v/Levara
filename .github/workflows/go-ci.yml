@@ -61,6 +61,6 @@ jobs:
           cache-dependency-path: Levara/go.sum
       - uses: golangci/golangci-lint-action@v7
         with:
-          version: v2.0.2
+          version: v2.12.2
           working-directory: Levara
           args: --timeout=5m
