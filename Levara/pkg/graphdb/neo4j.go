@@ -16,14 +16,22 @@ import (
 
 const baseLabel = "__Node__"
 
-// isSafeLabel reports whether s is a Cypher identifier safe to interpolate
-// into a query. Neo4j allows labels containing arbitrary characters when
-// quoted with backticks, but a backtick inside the label would let a
-// malicious caller break out and inject arbitrary Cypher. We therefore
-// restrict labels to the conservative ASCII identifier subset.
-func isSafeLabel(s string) bool {
-	if s == "" || len(s) > 64 {
-		return false
+// safeLabel validates s as a Cypher identifier safe to interpolate into a
+// query. Neo4j allows labels containing arbitrary characters when quoted
+// with backticks, but a backtick inside the label would let a malicious
+// caller break out and inject arbitrary Cypher. We therefore restrict
+// labels to the conservative ASCII identifier subset.
+//
+// Returns the validated label on success, or an error explaining why the
+// input is unsafe. Callers should propagate the error rather than panic so
+// the request boundary can decide between 400 (user input), 500 (internal
+// bug), or fallback behavior.
+func safeLabel(s string) (string, error) {
+	if s == "" {
+		return "", fmt.Errorf("empty label")
+	}
+	if len(s) > 64 {
+		return "", fmt.Errorf("label too long: %d > 64", len(s))
 	}
 	for i, r := range s {
 		switch {
@@ -32,10 +40,21 @@ func isSafeLabel(s string) bool {
 		case r == '_':
 		case i > 0 && r >= '0' && r <= '9':
 		default:
-			return false
+			return "", fmt.Errorf("label %q contains invalid character %q at offset %d (allowed: [A-Za-z_][A-Za-z0-9_]*)", s, r, i)
 		}
 	}
-	return true
+	return s, nil
+}
+
+// safeRelType validates s as a Cypher relationship type safe to interpolate.
+// Same character class as safeLabel — Cypher does not distinguish syntactically
+// between labels and relationship types for backtick-quoted identifiers, but
+// having a separate name documents intent at call sites.
+func safeRelType(s string) (string, error) {
+	if _, err := safeLabel(s); err != nil {
+		return "", fmt.Errorf("relationship type: %w", err)
+	}
+	return s, nil
 }
 
 // NodeRecord represents a node to write to Neo4j.
@@ -450,8 +469,8 @@ func (w *Writer) ReadNeighbours(ctx context.Context, nodeID string) (GraphReadRe
 // prevent Cypher injection.
 func (w *Writer) ReadSubgraph(ctx context.Context, label string, names []string) (result GraphReadResult, err error) {
 	defer metrics.ObserveExternalCall("neo4j", "read", time.Now(), &err)
-	if !isSafeLabel(label) {
-		return GraphReadResult{}, fmt.Errorf("invalid label %q: must match [A-Za-z_][A-Za-z0-9_]*", label)
+	if _, err := safeLabel(label); err != nil {
+		return GraphReadResult{}, err
 	}
 	query := fmt.Sprintf(`
 		UNWIND $names AS wantedName

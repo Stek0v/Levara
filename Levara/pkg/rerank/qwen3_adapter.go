@@ -32,6 +32,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/stek0v/levara/internal/metrics"
 )
 
 // Qwen3 chat template for the reranker role. The model was fine-tuned
@@ -84,13 +86,14 @@ func (c *Qwen3Client) Enabled() bool { return c != nil && c.endpoint != "" }
 
 // Rerank satisfies the same contract as Client.Rerank — query +
 // documents in, Results sorted by descending score out.
-func (c *Qwen3Client) Rerank(ctx context.Context, query string, documents []string) ([]Result, error) {
+func (c *Qwen3Client) Rerank(ctx context.Context, query string, documents []string) (_ []Result, err error) {
 	if !c.Enabled() {
 		return nil, nil
 	}
 	if len(documents) == 0 {
 		return []Result{}, nil
 	}
+	defer metrics.ObserveExternalCall("rerank", "rerank", time.Now(), &err)
 
 	results := make([]Result, len(documents))
 	sem := make(chan struct{}, c.concurrency)

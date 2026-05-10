@@ -6,6 +6,9 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
+
+	"github.com/stek0v/levara/internal/metrics"
 )
 
 // PostgresGraphStore implements GraphStore using SQL JOINs and recursive CTEs.
@@ -28,10 +31,11 @@ func (p *PostgresGraphStore) Query2Hop(ctx context.Context, entityNames []string
 	return p.QueryNHop(ctx, entityNames, 2)
 }
 
-func (p *PostgresGraphStore) QueryNHop(ctx context.Context, entityNames []string, hops int) ([]GraphContext, error) {
+func (p *PostgresGraphStore) QueryNHop(ctx context.Context, entityNames []string, hops int) (_ []GraphContext, err error) {
 	if len(entityNames) == 0 || p.db == nil {
 		return nil, nil
 	}
+	defer metrics.ObserveExternalCall("postgres-graph", "read", time.Now(), &err)
 
 	// Build IN clause
 	placeholders := make([]string, len(entityNames))

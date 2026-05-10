@@ -104,8 +104,9 @@ func (p *OpenAIProvider) Name() string { return "openai" }
 // DeepSeek returns HTTP 400 for it — see llm/structured.go).
 func (p *OpenAIProvider) Endpoint() string { return p.endpoint }
 
-func (p *OpenAIProvider) ChatCompletion(ctx context.Context, req CompletionRequest) (*CompletionResponse, error) {
+func (p *OpenAIProvider) ChatCompletion(ctx context.Context, req CompletionRequest) (_ *CompletionResponse, err error) {
 	llmStart := time.Now()
+	defer metrics.ObserveExternalCall("llm", "complete", llmStart, &err)
 	defer func() {
 		metrics.LLMDuration.Observe(time.Since(llmStart).Seconds())
 	}()
@@ -290,8 +291,9 @@ func (tp *TracedProvider) ChatCompletion(ctx context.Context, req CompletionRequ
 	return resp, err
 }
 
-func (p *AnthropicProvider) ChatCompletion(ctx context.Context, req CompletionRequest) (*CompletionResponse, error) {
+func (p *AnthropicProvider) ChatCompletion(ctx context.Context, req CompletionRequest) (_ *CompletionResponse, err error) {
 	llmStart := time.Now()
+	defer metrics.ObserveExternalCall("llm", "complete", llmStart, &err)
 	defer func() {
 		metrics.LLMDuration.Observe(time.Since(llmStart).Seconds())
 	}()

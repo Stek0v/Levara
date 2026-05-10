@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/stek0v/levara/internal/metrics"
 )
 
 // schemaUnsupportedEndpoints remembers endpoints that rejected json_schema
@@ -320,7 +322,8 @@ func structuredCallPlainJSON(ctx context.Context, req StructuredRequest) (string
 }
 
 // doStructuredCall makes a single LLM HTTP call, optionally with response_format.
-func doStructuredCall(ctx context.Context, client *http.Client, endpoint string, req StructuredRequest, withSchema bool) (string, error) {
+func doStructuredCall(ctx context.Context, client *http.Client, endpoint string, req StructuredRequest, withSchema bool) (_ string, err error) {
+	defer metrics.ObserveExternalCall("llm", "complete", time.Now(), &err)
 	body := map[string]any{
 		"model": req.Model,
 		"messages": []map[string]string{

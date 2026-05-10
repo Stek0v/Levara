@@ -136,3 +136,47 @@ func TestRequiredNeo4jSchemaStatements(t *testing.T) {
 		}
 	}
 }
+
+func TestSafeLabel(t *testing.T) {
+	cases := []struct {
+		in      string
+		wantErr bool
+	}{
+		{"Entity", false},
+		{"_internal", false},
+		{"Node_42", false},
+		{"a", false},
+		{"", true},
+		{"42Node", true},
+		{"a-b", true},
+		{"a b", true},
+		{"a`b", true},
+		{"a\nMATCH (x) DETACH DELETE x", true},
+		{"a;DROP", true},
+		{strings.Repeat("a", 65), true},
+	}
+	for _, tc := range cases {
+		got, err := safeLabel(tc.in)
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("safeLabel(%q) expected error, got %q", tc.in, got)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("safeLabel(%q) unexpected error: %v", tc.in, err)
+		}
+		if got != tc.in {
+			t.Errorf("safeLabel(%q) = %q, want %q", tc.in, got, tc.in)
+		}
+	}
+}
+
+func TestSafeRelType(t *testing.T) {
+	if _, err := safeRelType("RELATED_TO"); err != nil {
+		t.Errorf("RELATED_TO should be valid: %v", err)
+	}
+	if _, err := safeRelType("a`b"); err == nil {
+		t.Error("backtick should be rejected")
+	}
+}
