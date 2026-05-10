@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -83,6 +84,11 @@ type BatchWriteResult struct {
 type Writer struct {
 	driver   neo4j.DriverWithContext
 	database string
+
+	// lazyValidFromOnce gates Stage-5 lazy temporal migration: the first read
+	// after process start backfills valid_from=0 (epoch) on legacy edges that
+	// pre-date the temporal model. Subsequent reads skip the no-op MATCH.
+	lazyValidFromOnce sync.Once
 }
 
 // NewWriter creates a Neo4j writer. url is bolt:// or neo4j:// URI.
@@ -129,6 +135,24 @@ func NewWriterWithSchema(ctx context.Context, url, username, password, database 
 // Close releases the Neo4j driver.
 func (w *Writer) Close(ctx context.Context) error {
 	return w.driver.Close(ctx)
+}
+
+// ensureValidFromBackfill is the lazy Stage-5 temporal migration: any edge
+// missing valid_from gets epoch 0 written, so range queries (as_of) treat
+// pre-temporal edges as valid since the dawn of time. Runs at most once per
+// process via lazyValidFromOnce. Best-effort: errors are logged via the
+// observed metric channel but never fail the read that triggered it.
+func (w *Writer) ensureValidFromBackfill(ctx context.Context) {
+	w.lazyValidFromOnce.Do(func() {
+		var err error
+		defer metrics.ObserveExternalCall("neo4j", "migrate_valid_from", time.Now(), &err)
+		_, err = RunWriteTx(ctx, w, func(ctx context.Context, tx neo4j.ManagedTransaction) (struct{}, error) {
+			_, runErr := tx.Run(ctx,
+				"MATCH ()-[r]->() WHERE r.valid_from IS NULL SET r.valid_from = 0",
+				nil)
+			return struct{}{}, runErr
+		})
+	})
 }
 
 // EnsureSchema creates required constraints/indexes if they do not exist.
@@ -364,6 +388,7 @@ type ReadEdge struct {
 
 // ReadFullGraph returns all nodes and edges. Mirrors Levara's get_graph_data().
 func (w *Writer) ReadFullGraph(ctx context.Context) (GraphReadResult, error) {
+	w.ensureValidFromBackfill(ctx)
 	return RunReadTx(ctx, w, func(ctx context.Context, tx neo4j.ManagedTransaction) (GraphReadResult, error) {
 		var result GraphReadResult
 
@@ -414,6 +439,7 @@ func (w *Writer) ReadFullGraph(ctx context.Context) (GraphReadResult, error) {
 
 // ReadIDFiltered returns nodes/edges touching the given IDs.
 func (w *Writer) ReadIDFiltered(ctx context.Context, ids []string) (GraphReadResult, error) {
+	w.ensureValidFromBackfill(ctx)
 	query := fmt.Sprintf(`
 		MATCH (a:`+"`%s`"+`)-[r]-(b:`+"`%s`"+`)
 		WHERE a.id IN $ids OR b.id IN $ids
@@ -472,6 +498,7 @@ func (w *Writer) ReadSubgraph(ctx context.Context, label string, names []string)
 	if _, err := safeLabel(label); err != nil {
 		return GraphReadResult{}, err
 	}
+	w.ensureValidFromBackfill(ctx)
 	query := fmt.Sprintf(`
 		UNWIND $names AS wantedName
 		MATCH (n:`+"`%s`"+`)
