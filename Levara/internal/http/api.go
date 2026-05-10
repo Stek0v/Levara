@@ -179,6 +179,9 @@ func RegisterAPI(app fiber.Router, cfg APIConfig) {
 
 	// U6: Heartbeat event log (system activity history)
 	app.Get("/heartbeats", heartbeatsHandler(cfg))
+
+	// T5: Graph path/traversal — shortest-path edges with as_of + cursor.
+	app.Get("/graph/path", graphPathHandler(cfg))
 }
 
 // ── U1: Health ──
