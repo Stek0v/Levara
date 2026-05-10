@@ -219,3 +219,29 @@ func TestStatus_JSONTagsMatchPreRefactor(t *testing.T) {
 		}
 	}
 }
+
+func TestStatus_AppendEventCapsToMax(t *testing.T) {
+	s := &Status{}
+	for i := 0; i < MaxStageEvents+10; i++ {
+		s.AppendEvent(StageEvent{Stage: "s", ElapsedMs: int64(i)})
+	}
+	if len(s.Events) != MaxStageEvents {
+		t.Fatalf("Events len=%d, want %d", len(s.Events), MaxStageEvents)
+	}
+	// Oldest entries dropped first; the surviving slice should start at
+	// the (10)th event by ElapsedMs since we overflowed by 10.
+	if s.Events[0].ElapsedMs != 10 {
+		t.Errorf("Events[0].ElapsedMs=%d, want 10 (oldest 10 evicted)", s.Events[0].ElapsedMs)
+	}
+	if s.Events[len(s.Events)-1].ElapsedMs != int64(MaxStageEvents+10-1) {
+		t.Errorf("last ElapsedMs=%d, want %d", s.Events[len(s.Events)-1].ElapsedMs, MaxStageEvents+10-1)
+	}
+}
+
+func TestStatus_EventsOmittedWhenEmpty(t *testing.T) {
+	s := &Status{RunID: "r", Status: "RUNNING"}
+	out, _ := json.Marshal(s)
+	if strings.Contains(string(out), "events") {
+		t.Errorf("empty Events should be omitted via omitempty; got %s", out)
+	}
+}

@@ -150,6 +150,11 @@ func runPipelineWithStatus(deps Deps, texts []string, pipeCfg orchestrator.Confi
 		errCh <- deps.RunPipeline(context.Background(), texts, pipeCfg, progressCh)
 	}()
 
+	// T9: emit one event per stage transition so MCP clients polling
+	// cognify_status (or REST SSE) can reconstruct per-stage timing without
+	// a long-lived stream. Initial Stage is "starting" (set in ToolCognify),
+	// so the first different Stage value triggers the first append.
+	lastStage := status.Stage
 	for p := range progressCh {
 		status.Stage = p.Stage
 		status.Message = p.Message
@@ -157,6 +162,18 @@ func runPipelineWithStatus(deps Deps, texts []string, pipeCfg orchestrator.Confi
 		status.Entities = p.EntitiesExtracted
 		status.Edges = p.EdgesExtracted
 		status.ElapsedMs = p.ElapsedMs
+		if p.Stage != lastStage {
+			status.AppendEvent(runreg.StageEvent{
+				Stage:     p.Stage,
+				Message:   p.Message,
+				At:        time.Now(),
+				ElapsedMs: p.ElapsedMs,
+				Chunks:    p.ChunksCreated,
+				Entities:  p.EntitiesExtracted,
+				Edges:     p.EdgesExtracted,
+			})
+			lastStage = p.Stage
+		}
 	}
 
 	if err := <-errCh; err != nil {
@@ -166,6 +183,16 @@ func runPipelineWithStatus(deps Deps, texts []string, pipeCfg orchestrator.Confi
 		status.Status = "COMPLETED"
 	}
 	status.ElapsedMs = time.Since(status.StartedAt).Milliseconds()
+	status.AppendEvent(runreg.StageEvent{
+		Stage:     status.Status,
+		Message:   status.Message,
+		At:        time.Now(),
+		ElapsedMs: status.ElapsedMs,
+		Chunks:    status.Chunks,
+		Entities:  status.Entities,
+		Edges:     status.Edges,
+		Terminal:  true,
+	})
 }
 
 // runCognifyPipeline wraps runPipelineWithStatus with cognify-specific

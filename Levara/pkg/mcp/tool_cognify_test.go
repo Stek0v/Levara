@@ -402,6 +402,85 @@ func TestToolCognifyStatus_ReturnsStatusJSON(t *testing.T) {
 	}
 }
 
+// T9: stage transitions are recorded in Status.Events plus a synthesized
+// terminal entry. Repeated progress events for the same stage must not
+// double-emit — callers iterate Events to render a stage-by-stage timeline
+// and would render duplicates if the dedup logic regressed.
+func TestToolCognify_StageTransitionsRecorded(t *testing.T) {
+	done := make(chan struct{})
+	var gotRunID string
+	deps := &fakeDeps{
+		baseCfg: orchestrator.Config{EmbedEndpoint: "http://embed"},
+		pipelineFn: func(ctx context.Context, texts []string, cfg orchestrator.Config, progress chan<- orchestrator.Progress) error {
+			progress <- orchestrator.Progress{Stage: "chunk", ChunksCreated: 2}
+			progress <- orchestrator.Progress{Stage: "chunk", ChunksCreated: 4} // dup stage
+			progress <- orchestrator.Progress{Stage: "embed", ChunksCreated: 4}
+			progress <- orchestrator.Progress{Stage: "write", ChunksCreated: 4, EntitiesExtracted: 3}
+			close(progress)
+			return nil
+		},
+	}
+	deps.persistFn = func(datasetID, _, _ string, _, _, _ int, _ int64) {
+		gotRunID = datasetID
+	}
+	deps.heartbeatFn = func(string, any) { close(done) }
+
+	ToolCognify(context.Background(), deps, map[string]any{"data": "x"})
+	waitDone(t, done, 2*time.Second)
+
+	s, ok := deps.Runs().Load(gotRunID)
+	if !ok {
+		t.Fatal("run not registered")
+	}
+	// Expect: chunk, embed, write, COMPLETED (terminal). Duplicate "chunk"
+	// progress event must not produce a second chunk entry.
+	wantStages := []string{"chunk", "embed", "write", "COMPLETED"}
+	if len(s.Events) != len(wantStages) {
+		t.Fatalf("Events len=%d, want %d (%v)", len(s.Events), len(wantStages), s.Events)
+	}
+	for i, w := range wantStages {
+		if s.Events[i].Stage != w {
+			t.Errorf("Events[%d].Stage=%q, want %q", i, s.Events[i].Stage, w)
+		}
+	}
+	if !s.Events[len(s.Events)-1].Terminal {
+		t.Error("last event should have Terminal=true")
+	}
+	if s.Events[2].Chunks != 4 {
+		t.Errorf("write event Chunks=%d, want 4", s.Events[2].Chunks)
+	}
+}
+
+func TestToolCognify_TerminalEventOnFailure(t *testing.T) {
+	done := make(chan struct{})
+	var gotRunID string
+	deps := &fakeDeps{
+		baseCfg: orchestrator.Config{EmbedEndpoint: "http://embed"},
+		pipelineFn: func(ctx context.Context, texts []string, cfg orchestrator.Config, progress chan<- orchestrator.Progress) error {
+			progress <- orchestrator.Progress{Stage: "chunk"}
+			close(progress)
+			return errors.New("boom")
+		},
+	}
+	deps.persistFn = func(datasetID, _, _ string, _, _, _ int, _ int64) { gotRunID = datasetID }
+	deps.heartbeatFn = func(string, any) { close(done) }
+
+	ToolCognify(context.Background(), deps, map[string]any{"data": "x"})
+	waitDone(t, done, 2*time.Second)
+
+	s, _ := deps.Runs().Load(gotRunID)
+	if s == nil || len(s.Events) == 0 {
+		t.Fatalf("expected events, got %v", s)
+	}
+	last := s.Events[len(s.Events)-1]
+	if last.Stage != "FAILED" || !last.Terminal {
+		t.Errorf("terminal event=%+v, want stage=FAILED terminal=true", last)
+	}
+	if last.Message != "boom" {
+		t.Errorf("terminal Message=%q, want boom", last.Message)
+	}
+}
+
 // Sanity: registry is shared between Save and Load paths inside one deps.
 // Prevents a regression where Runs() returns a fresh registry per call,
 // which would silently break cognify_status (no run would ever be found).

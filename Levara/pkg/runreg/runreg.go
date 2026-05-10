@@ -29,6 +29,43 @@ type Status struct {
 	Edges     int       `json:"edges_extracted"`
 	ElapsedMs int64     `json:"elapsed_ms"`
 	StartedAt time.Time `json:"started_at"`
+	// Events is a per-stage transition log (T9). The pipeline appends one
+	// entry every time Stage transitions to a new value, plus one terminal
+	// entry when Status flips to COMPLETED or FAILED. MCP clients poll
+	// cognify_status and read this slice to recover stage history without
+	// holding a long-lived SSE connection. Capped to MaxStageEvents to
+	// bound memory under runaway producers.
+	Events []StageEvent `json:"events,omitempty"`
+}
+
+// MaxStageEvents caps Status.Events length. A normal cognify run produces
+// well under ten transitions; the cap exists only as a runaway-guard.
+const MaxStageEvents = 64
+
+// StageEvent is one entry in Status.Events. Fields snapshot the cumulative
+// counters at the moment the transition was observed, so consumers can
+// reconstruct per-stage deltas without re-correlating with timestamps.
+type StageEvent struct {
+	Stage     string    `json:"stage"`
+	Message   string    `json:"message,omitempty"`
+	At        time.Time `json:"at"`
+	ElapsedMs int64     `json:"elapsed_ms"`
+	Chunks    int       `json:"chunks_created"`
+	Entities  int       `json:"entities_extracted"`
+	Edges     int       `json:"edges_extracted"`
+	// Terminal is true for the synthesized final event on COMPLETED/FAILED.
+	Terminal bool `json:"terminal,omitempty"`
+}
+
+// AppendEvent adds an event to Status.Events, dropping the oldest entry once
+// MaxStageEvents is reached. Not safe for concurrent use — callers funnel
+// appends through a single pipeline goroutine, matching the existing
+// sync-Map-without-locking pattern for Status field mutation.
+func (s *Status) AppendEvent(ev StageEvent) {
+	if len(s.Events) >= MaxStageEvents {
+		s.Events = append(s.Events[:0], s.Events[1:]...)
+	}
+	s.Events = append(s.Events, ev)
 }
 
 // isTerminal reports whether a status has reached a final state. Terminal
