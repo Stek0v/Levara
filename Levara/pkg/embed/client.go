@@ -163,7 +163,8 @@ func (c *Client) EmbedSingle(ctx context.Context, text string) ([]float32, error
 }
 
 // embedBatch sends one batch to the embedding API.
-func (c *Client) embedBatch(ctx context.Context, texts []string) ([][]float32, error) {
+func (c *Client) embedBatch(ctx context.Context, texts []string) (vecs [][]float32, err error) {
+	defer metrics.ObserveExternalCall("embed", "embed", time.Now(), &err)
 	reqBody, err := json.Marshal(embeddingRequest{
 		Input: texts,
 		Model: c.model,
@@ -209,7 +210,7 @@ func (c *Client) embedBatch(ctx context.Context, texts []string) ([][]float32, e
 		return result.Data[i].Index < result.Data[j].Index
 	})
 
-	vecs := make([][]float32, len(result.Data))
+	vecs = make([][]float32, len(result.Data))
 	for i, d := range result.Data {
 		vecs[i] = d.Embedding
 	}

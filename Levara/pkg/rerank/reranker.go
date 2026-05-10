@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"sort"
 	"time"
+
+	"github.com/stek0v/levara/internal/metrics"
 )
 
 // Result holds a single reranked item.
@@ -89,13 +91,14 @@ type rerankResponse struct {
 //	POST /rerank
 //	{"query": "...", "documents": ["..."], "model": "...", "top_n": N}
 //	-> {"results": [{"index": 0, "relevance_score": 0.95}, ...]}
-func (c *Client) Rerank(ctx context.Context, query string, documents []string) ([]Result, error) {
+func (c *Client) Rerank(ctx context.Context, query string, documents []string) (_ []Result, err error) {
 	if !c.Enabled() {
 		return nil, nil
 	}
 	if len(documents) == 0 {
 		return []Result{}, nil
 	}
+	defer metrics.ObserveExternalCall("rerank", "rerank", time.Now(), &err)
 
 	topN := c.topN
 	if topN <= 0 || topN > len(documents) {
