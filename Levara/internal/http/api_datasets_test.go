@@ -9,9 +9,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/stek0v/levara/pkg/storage"
 
 	_ "github.com/ncruces/go-sqlite3/driver"
 )
@@ -88,6 +90,8 @@ func datasetsTestApp(t *testing.T) (*fiber.App, func()) {
 	api.Post("/datasets", datasetCreateHandler(cfg))
 	api.Delete("/datasets/:id", datasetDeleteHandler(cfg))
 	api.Get("/datasets/:id/data", datasetDataHandler(cfg))
+	api.Get("/datasets/:id/data/:dataId/raw", datasetDataRawHandler(cfg))
+	api.Get("/datasets/:id/data/:dataId/raw/url", datasetDataRawURLHandler(cfg))
 	api.Post("/prune/data", pruneDataHandler(cfg))
 	api.Post("/prune/system", pruneSystemHandler(cfg))
 
@@ -98,6 +102,49 @@ func datasetsTestApp(t *testing.T) (*fiber.App, func()) {
 		SetDBProvider(DBPostgres) // reset for other tests
 	}
 	return app, cleanup
+}
+
+func datasetsRawURLTestApp(t *testing.T, fs storage.Storage) (*fiber.App, *sql.DB, func()) {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "levara-datasets-raw-url-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbPath := filepath.Join(dir, "test.db")
+	db, err := sql.Open("sqlite3", "file:"+dbPath+"?_pragma=journal_mode(WAL)")
+	if err != nil {
+		os.RemoveAll(dir)
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`
+		CREATE TABLE data (
+			id TEXT PRIMARY KEY,
+			name TEXT,
+			extension TEXT,
+			raw_data_location TEXT,
+			updated_at TIMESTAMP
+		);
+	`); err != nil {
+		db.Close()
+		os.RemoveAll(dir)
+		t.Fatalf("schema: %v", err)
+	}
+
+	SetDBProvider(DBSQLite)
+
+	cfg := APIConfig{DB: db, FileStorage: fs}
+	app := fiber.New(fiber.Config{DisableStartupMessage: true})
+	api := app.Group("/api/v1")
+	api.Get("/datasets/:id/data/:dataId/raw", datasetDataRawHandler(cfg))
+	api.Get("/datasets/:id/data/:dataId/raw/url", datasetDataRawURLHandler(cfg))
+
+	cleanup := func() {
+		_ = app.Shutdown()
+		_ = db.Close()
+		os.RemoveAll(dir)
+		SetDBProvider(DBPostgres)
+	}
+	return app, db, cleanup
 }
 
 // withUser wraps the fiber app so tests can inject a user_id local — mimicking
@@ -298,6 +345,54 @@ func TestRequireSuperuser_Gate(t *testing.T) {
 				t.Errorf("%s: status = %d, want %d", tc.name, status, tc.want)
 			}
 		})
+	}
+}
+
+func TestDatasetDataRawURL_FallbackProxy(t *testing.T) {
+	app, db, cleanup := datasetsRawURLTestApp(t, storage.NewLocalStorage(t.TempDir()))
+	defer cleanup()
+	if _, err := db.Exec(`INSERT INTO data (id, name, extension, raw_data_location) VALUES ('d1','n','.txt','file:///tmp/a.txt')`); err != nil {
+		t.Fatalf("insert data: %v", err)
+	}
+
+	status, body := getJSON(t, app, "/api/v1/datasets/ds1/data/d1/raw/url")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", status, body)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out["presigned"] != false {
+		t.Fatalf("presigned = %v, want false", out["presigned"])
+	}
+	url, _ := out["url"].(string)
+	if !strings.Contains(url, "/api/v1/datasets/ds1/data/d1/raw") {
+		t.Fatalf("fallback url = %q", url)
+	}
+}
+
+func TestDatasetDataRawURL_PresignedStorage(t *testing.T) {
+	app, db, cleanup := datasetsRawURLTestApp(t, &presignMemStorage{memStorage: newMemStorage()})
+	defer cleanup()
+	if _, err := db.Exec(`INSERT INTO data (id, name, extension, raw_data_location) VALUES ('d1','n','.txt','storage://ingest/d1.txt')`); err != nil {
+		t.Fatalf("insert data: %v", err)
+	}
+
+	status, body := getJSON(t, app, "/api/v1/datasets/ds1/data/d1/raw/url?ttl_seconds=600")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", status, body)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out["presigned"] != true {
+		t.Fatalf("presigned = %v, want true", out["presigned"])
+	}
+	url, _ := out["url"].(string)
+	if !strings.Contains(url, "signed.example/ingest/d1.txt") {
+		t.Fatalf("presigned url = %q", url)
 	}
 }
 

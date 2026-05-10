@@ -154,7 +154,15 @@ func main() {
 	if storeErr != nil {
 		log.Fatalf("storage init: %v", storeErr)
 	}
-	srvLog.Info("storage backend ready", map[string]any{"backend": os.Getenv("STORAGE_BACKEND"), "path": storagePath})
+	storageBackend := strings.ToLower(os.Getenv("STORAGE_BACKEND"))
+	srvLog.Info("storage backend ready", map[string]any{"backend": storageBackend, "path": storagePath})
+	if storageBackend == "s3" {
+		srvLog.Info("S3 storage enabled for upload hot-path", map[string]any{
+			"hot_path":     "/api/v1/add -> ingest + mirror to cfg.FileStorage",
+			"location_uri": "storage://<key> for non-local backend",
+			"storage_path": storagePath,
+		})
+	}
 
 	hnswCfg := store.HNSWConfig{
 		M:            *hnswM,
@@ -453,6 +461,43 @@ func main() {
 	if pgDB != nil {
 		log.Printf("Graph visualization: SQL fallback enabled")
 	}
+
+	// One-shot raw-data location backfill for non-local storage backends.
+	// Migrates data.raw_data_location from file://... to storage://... keys so
+	// dataset raw downloads and cognify reads can use shared object storage.
+	if pgDB != nil && storageBackend != "" && storageBackend != "local" {
+		backfillLimit := 5000
+		if v := os.Getenv("STORAGE_BACKFILL_LIMIT"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				backfillLimit = n
+			}
+		}
+		backfillTimeout := 10 * time.Minute
+		if v := os.Getenv("STORAGE_BACKFILL_TIMEOUT_SECONDS"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				backfillTimeout = time.Duration(n) * time.Second
+			}
+		}
+		backfillCtx, backfillCancel := context.WithTimeout(context.Background(), backfillTimeout)
+		report, backfillErr := vectorHttp.BackfillRawLocationsToStorage(backfillCtx, vectorHttp.APIConfig{
+			DB:          pgDB,
+			FileStorage: fileStore,
+		}, backfillLimit)
+		backfillCancel()
+		if backfillErr != nil {
+			srvLog.Warn("storage backfill failed", map[string]any{"error": backfillErr.Error()})
+		} else if report.Scanned > 0 {
+			srvLog.Info("storage backfill completed", map[string]any{
+				"scanned":  report.Scanned,
+				"migrated": report.Migrated,
+				"skipped":  report.Skipped,
+				"missing":  report.Missing,
+				"failed":   report.Failed,
+				"limit":    backfillLimit,
+			})
+		}
+	}
+
 	embedEndpoint := os.Getenv("EMBEDDING_ENDPOINT")
 	embedModel := os.Getenv("EMBEDDING_MODEL")
 	if embedModel == "" {

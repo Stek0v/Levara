@@ -1,20 +1,21 @@
 // api_datasets.go — Dataset CRUD + data listing/deletion endpoints, split
 // out of api.go (T4). Covers:
 //
-//   GET    /datasets
-//   POST   /datasets
-//   DELETE /datasets/:id
-//   GET    /datasets/:id/data
-//   DELETE /datasets/:id/data/:dataId
-//   GET    /datasets/:id/data/:dataId/raw
-//   GET    /datasets/status
+//	GET    /datasets
+//	POST   /datasets
+//	DELETE /datasets/:id
+//	GET    /datasets/:id/data
+//	DELETE /datasets/:id/data/:dataId
+//	GET    /datasets/:id/data/:dataId/raw
+//	GET    /datasets/status
 package http
 
 import (
-	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 	"log"
-	"strings"
+	"os"
 	"sync"
 	"time"
 
@@ -51,6 +52,9 @@ var memDatasets = struct {
 // @Router      /datasets [get]
 func datasetsListHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
+
 		if cfg.DB == nil {
 			memDatasets.mu.Lock()
 			ds := make([]DatasetDTO, len(memDatasets.data))
@@ -67,11 +71,11 @@ func datasetsListHandler(cfg APIConfig) fiber.Handler {
 		if !showAll && userID != "" {
 			// Check superuser — sees everything
 			var isSuperuser bool
-			cfg.DB.QueryRowContext(context.Background(), Q("SELECT COALESCE(is_superuser, false) FROM users WHERE id = $1"), userID).Scan(&isSuperuser)
+			cfg.DB.QueryRowContext(ctx, Q("SELECT COALESCE(is_superuser, false) FROM users WHERE id = $1"), userID).Scan(&isSuperuser)
 			showAll = isSuperuser
 		}
 		if showAll {
-			rows, err = cfg.DB.QueryContext(context.Background(),
+			rows, err = cfg.DB.QueryContext(ctx,
 				Q(`SELECT d.id, d.name, d.created_at, COALESCE(d.owner_id,''), COUNT(dd.data_id)
 				 FROM datasets d LEFT JOIN dataset_data dd ON dd.dataset_id = d.id
 				 GROUP BY d.id ORDER BY d.created_at DESC`))
@@ -82,7 +86,7 @@ func datasetsListHandler(cfg APIConfig) fiber.Handler {
 				 LEFT JOIN dataset_data dd ON dd.dataset_id = d.id
 				 WHERE d.owner_id = $1 OR d.owner_id = '' OR d.owner_id IS NULL OR s.id IS NOT NULL
 				 GROUP BY d.id ORDER BY d.created_at DESC`, userID)
-			rows, err = cfg.DB.QueryContext(context.Background(), dsSQL, dsArgs...)
+			rows, err = cfg.DB.QueryContext(ctx, dsSQL, dsArgs...)
 		}
 		// BL-3: surface SQL errors instead of returning []. Silent empty
 		// responses made bad credentials / missing tables indistinguishable
@@ -126,6 +130,9 @@ func datasetsListHandler(cfg APIConfig) fiber.Handler {
 // @Router      /datasets [post]
 func datasetCreateHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
+
 		var req struct {
 			Name string `json:"name"`
 		}
@@ -142,7 +149,7 @@ func datasetCreateHandler(cfg APIConfig) fiber.Handler {
 		}
 
 		if cfg.DB != nil {
-			cfg.DB.ExecContext(context.Background(),
+			cfg.DB.ExecContext(ctx,
 				Q("INSERT INTO datasets (id, name, owner_id, created_at, updated_at) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (name) DO NOTHING"),
 				id, req.Name, ownerID, now, now)
 		} else {
@@ -167,13 +174,16 @@ func datasetCreateHandler(cfg APIConfig) fiber.Handler {
 // @Router      /datasets/{id} [delete]
 func datasetDeleteHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
+
 		id := c.Params("id")
 		if cfg.DB != nil {
 			userID, _ := c.Locals("user_id").(string)
 			if userID != "" {
-				cfg.DB.ExecContext(context.Background(), Q("DELETE FROM datasets WHERE id = $1 AND (owner_id = $2 OR owner_id = '' OR owner_id IS NULL)"), id, userID)
+				cfg.DB.ExecContext(ctx, Q("DELETE FROM datasets WHERE id = $1 AND (owner_id = $2 OR owner_id = '' OR owner_id IS NULL)"), id, userID)
 			} else {
-				cfg.DB.ExecContext(context.Background(), Q("DELETE FROM datasets WHERE id = $1"), id)
+				cfg.DB.ExecContext(ctx, Q("DELETE FROM datasets WHERE id = $1"), id)
 			}
 		} else {
 			memDatasets.mu.Lock()
@@ -204,12 +214,15 @@ type DataDTO struct {
 
 func datasetDataHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
+
 		dsID := c.Params("id")
 		if cfg.DB == nil {
 			return c.JSON([]DataDTO{})
 		}
 
-		rows, err := cfg.DB.QueryContext(context.Background(),
+		rows, err := cfg.DB.QueryContext(ctx,
 			Q(`SELECT d.id, d.name, d.extension, d.mime_type, d.raw_data_location,
 			 COALESCE(d.data_size, 0), COALESCE(d.pipeline_status, '{}'), COALESCE(d.tags, '[]'), d.created_at
 			 FROM data d JOIN dataset_data dd ON d.id = dd.data_id
@@ -243,11 +256,14 @@ func datasetDataHandler(cfg APIConfig) fiber.Handler {
 
 func datasetDataDeleteHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
+
 		dataID := c.Params("dataId")
 		dsID := c.Params("id")
 		if cfg.DB != nil {
-			cfg.DB.ExecContext(context.Background(), Q("DELETE FROM dataset_data WHERE dataset_id = $1 AND data_id = $2"), dsID, dataID)
-			cfg.DB.ExecContext(context.Background(), Q("DELETE FROM data WHERE id = $1"), dataID)
+			cfg.DB.ExecContext(ctx, Q("DELETE FROM dataset_data WHERE dataset_id = $1 AND data_id = $2"), dsID, dataID)
+			cfg.DB.ExecContext(ctx, Q("DELETE FROM data WHERE id = $1"), dataID)
 		}
 		return c.JSON(fiber.Map{"deleted": true})
 	}
@@ -255,18 +271,77 @@ func datasetDataDeleteHandler(cfg APIConfig) fiber.Handler {
 
 func datasetDataRawHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
+
 		dataID := c.Params("dataId")
 		if cfg.DB == nil {
 			return c.Status(404).JSON(fiber.Map{"detail": "not found"})
 		}
 
 		var location string
-		cfg.DB.QueryRowContext(context.Background(), Q("SELECT raw_data_location FROM data WHERE id = $1"), dataID).Scan(&location)
+		cfg.DB.QueryRowContext(ctx, Q("SELECT raw_data_location FROM data WHERE id = $1"), dataID).Scan(&location)
 		if location == "" {
 			return c.Status(404).JSON(fiber.Map{"detail": "not found"})
 		}
-		path := strings.TrimPrefix(location, "file://")
-		return c.SendFile(path)
+		raw, err := loadRawDataByLocation(ctx, cfg, location)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) || os.IsNotExist(err) {
+				return c.Status(404).JSON(fiber.Map{"detail": "not found"})
+			}
+			return c.Status(500).JSON(fiber.Map{"detail": "load raw data: " + err.Error()})
+		}
+		return c.Send(raw)
+	}
+}
+
+func datasetDataRawURLHandler(cfg APIConfig) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
+
+		dataID := c.Params("dataId")
+		datasetID := c.Params("id")
+		if cfg.DB == nil {
+			return c.Status(404).JSON(fiber.Map{"detail": "not found"})
+		}
+
+		var location string
+		cfg.DB.QueryRowContext(ctx, Q("SELECT raw_data_location FROM data WHERE id = $1"), dataID).Scan(&location)
+		if location == "" {
+			return c.Status(404).JSON(fiber.Map{"detail": "not found"})
+		}
+
+		ttlSec := c.QueryInt("ttl_seconds", 900)
+		if ttlSec <= 0 {
+			ttlSec = 900
+		}
+		if ttlSec > 7*24*60*60 {
+			ttlSec = 7 * 24 * 60 * 60
+		}
+		ttl := time.Duration(ttlSec) * time.Second
+
+		url, presigned, err := presignRawLocation(ctx, cfg, location, ttl)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"detail": "presign raw data: " + err.Error()})
+		}
+		if presigned {
+			return c.JSON(fiber.Map{
+				"url":        url,
+				"expires_in": ttlSec,
+				"location":   location,
+				"presigned":  true,
+			})
+		}
+
+		// Fallback for local backends: return API URL that proxies bytes.
+		proxyURL := fmt.Sprintf("%s/api/v1/datasets/%s/data/%s/raw", c.BaseURL(), datasetID, dataID)
+		return c.JSON(fiber.Map{
+			"url":        proxyURL,
+			"expires_in": 0,
+			"location":   location,
+			"presigned":  false,
+		})
 	}
 }
 

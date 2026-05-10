@@ -1,14 +1,13 @@
 // api_cognify.go — Cognify pipeline trigger + status + SSE stream, split
 // out of api.go (T4). Covers:
 //
-//   POST /cognify
-//   GET  /cognify/:runId/status
-//   GET  /cognify/:runId/stream
+//	POST /cognify
+//	GET  /cognify/:runId/status
+//	GET  /cognify/:runId/stream
 package http
 
 import (
 	"bufio"
-	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -42,6 +41,9 @@ import (
 // @Router      /cognify [post]
 func cognifyHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		reqCtx, cancel := apiRequestContext(c)
+		defer cancel()
+
 		var req struct {
 			Datasets        []string `json:"datasets"`
 			DatasetIds      []string `json:"datasetIds"` // Levara frontend format
@@ -62,7 +64,7 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 			texts = req.Texts
 		} else if cfg.DB != nil && len(allDatasetIDs) > 0 {
 			for _, dsID := range allDatasetIDs {
-				rows, err := cfg.DB.QueryContext(context.Background(),
+				rows, err := cfg.DB.QueryContext(reqCtx,
 					Q(`SELECT d.raw_data_location FROM data d
 					 JOIN dataset_data dd ON d.id = dd.data_id
 					 WHERE dd.dataset_id = $1`), dsID)
@@ -72,8 +74,7 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 				for rows.Next() {
 					var loc string
 					rows.Scan(&loc)
-					loc = strings.TrimPrefix(loc, "file://")
-					if data, err := os.ReadFile(loc); err == nil {
+					if data, err := loadRawDataByLocation(reqCtx, cfg, loc); err == nil {
 						texts = append(texts, string(data))
 					}
 				}
@@ -82,7 +83,7 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 			// If no files found, check if data was stored as inline text (ingest stores to disk)
 			if len(texts) == 0 {
 				for _, dsID := range allDatasetIDs {
-					rows, err := cfg.DB.QueryContext(context.Background(),
+					rows, err := cfg.DB.QueryContext(reqCtx,
 						Q(`SELECT d.name FROM data d
 						 JOIN dataset_data dd ON d.id = dd.data_id
 						 WHERE dd.dataset_id = $1`), dsID)
@@ -130,30 +131,30 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 		// P2.1: Load session context if session_id provided
 		var sessionContext string
 		if req.SessionID != "" && cfg.DB != nil {
-			sessionContext = GetSessionContext(cfg.DB, context.Background(), req.SessionID, 5)
+			sessionContext = GetSessionContext(cfg.DB, reqCtx, req.SessionID, 5)
 		}
 		userID, _ := c.Locals("user_id").(string)
 
 		// Build orchestrator config from server config + request overrides
 		pipeCfg := orchestrator.Config{
-			ChunkStrategy:       "merged",
-			MinChunkChars:       50,
-			MaxChunkChars:       2000,
-			LLMEndpoint:         os.Getenv("LLM_ENDPOINT"),
-			LLMModel:            os.Getenv("LLM_MODEL"),
-			LLMConcurrency:      1,
-			EmbedEndpoint:       cfg.EmbedEndpoint,
-			EmbedModel:          cfg.EmbedModel,
-			EmbedClient:         cfg.EmbedClient, // T3 follow-up: reuse shared TCP pool through the pipeline
-			Neo4jURL:            cfg.Neo4jCfg.Neo4jURL,
-			Neo4jUser:           cfg.Neo4jCfg.Neo4jUser,
-			Neo4jPassword:       cfg.Neo4jCfg.Neo4jPassword,
-			Neo4jDatabase:       cfg.Neo4jCfg.Neo4jDatabase,
-			Collection:          collection,
-			Collections:         cfg.Collections,
-			BM25Indexes:         cfg.BM25Indexes,
-			GenerateTriplets:    true,
-			SystemPrompt:        sessionContext,
+			ChunkStrategy:    "merged",
+			MinChunkChars:    50,
+			MaxChunkChars:    2000,
+			LLMEndpoint:      os.Getenv("LLM_ENDPOINT"),
+			LLMModel:         os.Getenv("LLM_MODEL"),
+			LLMConcurrency:   1,
+			EmbedEndpoint:    cfg.EmbedEndpoint,
+			EmbedModel:       cfg.EmbedModel,
+			EmbedClient:      cfg.EmbedClient, // T3 follow-up: reuse shared TCP pool through the pipeline
+			Neo4jURL:         cfg.Neo4jCfg.Neo4jURL,
+			Neo4jUser:        cfg.Neo4jCfg.Neo4jUser,
+			Neo4jPassword:    cfg.Neo4jCfg.Neo4jPassword,
+			Neo4jDatabase:    cfg.Neo4jCfg.Neo4jDatabase,
+			Collection:       collection,
+			Collections:      cfg.Collections,
+			BM25Indexes:      cfg.BM25Indexes,
+			GenerateTriplets: true,
+			SystemPrompt:     sessionContext,
 			DatasetID: func() string {
 				if len(allDatasetIDs) > 0 {
 					return allDatasetIDs[0]
@@ -196,6 +197,12 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 		}
 
 		go func() {
+			// Bound the detached pipeline so a stuck downstream (Neo4j, LLM,
+			// embed) cannot keep the goroutine alive forever. Tunable via
+			// BACKGROUND_TASK_TIMEOUT_MS; default 30 minutes.
+			bgCtx, bgCancel := backgroundTaskContext()
+			defer bgCancel()
+
 			progressCh := make(chan orchestrator.Progress, 100)
 			errCh := make(chan error, 1)
 
@@ -223,7 +230,7 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 				// the closure is safe to invoke from a panic unwinding while
 				// the outer goroutine may still be mutating runStatus.Stage.
 				errCh <- runWithPanicGuard(runID, readStage, func() error {
-					return orchestrator.Run(context.Background(), texts, pipeCfg, progressCh)
+					return orchestrator.Run(bgCtx, texts, pipeCfg, progressCh)
 				})
 			}()
 
@@ -250,7 +257,7 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 			PersistPipelineStatus(cfg.DB, pipeCfg.DatasetID, collection,
 				runStatus.Status, runStatus.Chunks, runStatus.Entities, runStatus.Edges, runStatus.ElapsedMs)
 
-			recordInteraction(cfg, sessionID, userID, strings.Join(texts, " "),
+			recordInteraction(bgCtx, cfg, sessionID, userID, strings.Join(texts, " "),
 				fmt.Sprintf("%d entities extracted", runStatus.Entities), "cognify")
 		}()
 

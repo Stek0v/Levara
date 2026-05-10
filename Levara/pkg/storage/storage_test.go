@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/hex"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // T-9 smoke tests for pkg/storage:
@@ -108,6 +111,7 @@ func TestLocalStorage_ListEmpty(t *testing.T) {
 //	service:   iam
 //
 // Expected signing key (hex):
+//
 //	f4780e2d9f65fa895f9c67b32ce1baf0b0d8a43505a000a1a9e090d414db404d
 func TestSigV4_DeriveSigningKey_CanonicalVector(t *testing.T) {
 	key := deriveSigningKey(
@@ -157,5 +161,41 @@ func TestNewS3Storage_DefaultEndpoint(t *testing.T) {
 	}
 	if !strings.Contains(s.endpoint, "us-west-2") {
 		t.Errorf("default endpoint missing region: %q", s.endpoint)
+	}
+}
+
+func TestS3_PresignGet_IncludesSigV4Query(t *testing.T) {
+	s, err := NewS3Storage("mybkt", "us-east-1", "https://example.test", "AKID", "SECRET")
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := s.PresignGet(context.Background(), "ingest/a.txt", 10*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	parsed, err := url.Parse(u)
+	if err != nil {
+		t.Fatalf("parse URL: %v", err)
+	}
+	if !strings.Contains(parsed.Path, "/mybkt/ingest/a.txt") {
+		t.Fatalf("path = %q, want /mybkt/ingest/a.txt", parsed.Path)
+	}
+	q := parsed.Query()
+	for _, key := range []string{
+		"X-Amz-Algorithm", "X-Amz-Credential", "X-Amz-Date", "X-Amz-Expires", "X-Amz-SignedHeaders", "X-Amz-Signature",
+	} {
+		if q.Get(key) == "" {
+			t.Fatalf("missing query param %s in presigned URL", key)
+		}
+	}
+	if got := q.Get("X-Amz-Algorithm"); got != "AWS4-HMAC-SHA256" {
+		t.Fatalf("algorithm = %q, want AWS4-HMAC-SHA256", got)
+	}
+	if got := q.Get("X-Amz-SignedHeaders"); got != "host" {
+		t.Fatalf("signed headers = %q, want host", got)
+	}
+	if got := q.Get("X-Amz-Expires"); got != strconv.Itoa(600) {
+		t.Fatalf("expires = %q, want 600", got)
 	}
 }

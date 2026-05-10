@@ -34,16 +34,19 @@ type APIConfig struct {
 	// Handlers that need non-default parameters (custom endpoint/model/batchSize —
 	// e.g. reembed migration, dual-search per-collection models, gRPC request-
 	// driven params) continue to construct their own client.
-	EmbedClient   *embed.Client
-	Collections   *store.CollectionManager
-	Neo4jCfg      GraphVisualizationConfig
-	DB            *sql.DB // shared connection pool (nil if no PostgresDSN)
-	BM25Indexes   map[string]*bm25.Index // shared BM25 indexes (same as gRPC service)
-	LLMCache      llmcache.LLMCacher // shared LLM response cache (nil = no caching)
-	LLMProvider   llm.Provider // multi-provider LLM abstraction (nil = legacy raw HTTP)
-	ErrorTracker  *observe.ErrorTracker // error tracking (nil = disabled)
-	FileStorage   storage.Storage // file storage backend (nil = use os.WriteFile fallback)
-	Logger        *observe.Logger // structured logger (nil = use log.Printf fallback)
+	EmbedClient  *embed.Client
+	Collections  *store.CollectionManager
+	Neo4jCfg     GraphVisualizationConfig
+	DB           *sql.DB                // shared connection pool (nil if no PostgresDSN)
+	BM25Indexes  map[string]*bm25.Index // shared BM25 indexes (same as gRPC service)
+	LLMCache     llmcache.LLMCacher     // shared LLM response cache (nil = no caching)
+	LLMProvider  llm.Provider           // multi-provider LLM abstraction (nil = legacy raw HTTP)
+	ErrorTracker *observe.ErrorTracker  // error tracking (nil = disabled)
+	// FileStorage is wired from server bootstrap (local/S3). Upload hot-path writes
+	// local ingest artifacts first, then mirrors them into non-local backends and
+	// persists storage:// locations in metadata.
+	FileStorage storage.Storage
+	Logger      *observe.Logger // structured logger (nil = use log.Printf fallback)
 	// Reranker configuration (optional, all empty = disabled)
 	RerankEndpoint  string // e.g., "http://localhost:8787/rerank"
 	RerankModel     string // e.g., "bge-reranker-v2-m3"
@@ -83,6 +86,7 @@ func RegisterAPI(app fiber.Router, cfg APIConfig) {
 	app.Get("/datasets/:id/data", datasetDataHandler(cfg))
 	app.Delete("/datasets/:id/data/:dataId", datasetDataDeleteHandler(cfg))
 	app.Get("/datasets/:id/data/:dataId/raw", datasetDataRawHandler(cfg))
+	app.Get("/datasets/:id/data/:dataId/raw/url", datasetDataRawURLHandler(cfg))
 	app.Get("/datasets/status", datasetStatusHandler(cfg))
 
 	// U3: File upload (multipart)
@@ -179,5 +183,3 @@ func RegisterAPI(app fiber.Router, cfg APIConfig) {
 
 // ── U1: Health ──
 // Already inline above.
-
-

@@ -26,7 +26,7 @@ type NotebookDTO struct {
 type CellDTO struct {
 	ID      string `json:"id"`
 	Name    string `json:"name"`
-	Type    string `json:"type"`    // "code" | "markdown"
+	Type    string `json:"type"` // "code" | "markdown"
 	Content string `json:"content"`
 	Result  any    `json:"result,omitempty"`
 	Error   string `json:"error,omitempty"`
@@ -34,11 +34,14 @@ type CellDTO struct {
 
 func notebooksListHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
+
 		if cfg.DB == nil {
 			return c.JSON([]NotebookDTO{})
 		}
 		ownerID, _ := c.Locals("user_id").(string)
-		rows, err := cfg.DB.QueryContext(context.Background(),
+		rows, err := cfg.DB.QueryContext(ctx,
 			Q(`SELECT id, title, owner_id FROM notebooks WHERE owner_id = $1 OR owner_id = '' ORDER BY updated_at DESC`), ownerID)
 		if err != nil {
 			return c.JSON([]NotebookDTO{})
@@ -59,6 +62,9 @@ func notebooksListHandler(cfg APIConfig) fiber.Handler {
 
 func notebookCreateHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
+
 		var req struct {
 			Name  string `json:"name"`
 			Title string `json:"title"` // accept both
@@ -75,7 +81,7 @@ func notebookCreateHandler(cfg APIConfig) fiber.Handler {
 		ownerID, _ := c.Locals("user_id").(string)
 		now := time.Now().UTC()
 		if cfg.DB != nil {
-			cfg.DB.ExecContext(context.Background(),
+			cfg.DB.ExecContext(ctx,
 				Q(`INSERT INTO notebooks (id, title, owner_id, created_at, updated_at) VALUES ($1, $2, $3, $4, $5)`),
 				id, name, ownerID, now, now)
 		}
@@ -85,18 +91,21 @@ func notebookCreateHandler(cfg APIConfig) fiber.Handler {
 
 func notebookGetHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
+
 		id := c.Params("id")
 		if cfg.DB == nil {
 			return c.Status(404).JSON(fiber.Map{"detail": "not found"})
 		}
 		var name, owner string
-		err := cfg.DB.QueryRowContext(context.Background(),
+		err := cfg.DB.QueryRowContext(ctx,
 			Q(`SELECT id, title, owner_id FROM notebooks WHERE id = $1`), id).Scan(&id, &name, &owner)
 		if err != nil {
 			return c.Status(404).JSON(fiber.Map{"detail": "not found"})
 		}
 		nb := NotebookDTO{ID: id, Name: name, Cells: []CellDTO{}, Deletable: true}
-		rows, err := cfg.DB.QueryContext(context.Background(),
+		rows, err := cfg.DB.QueryContext(ctx,
 			Q(`SELECT id, cell_type, source, output, position FROM notebook_cells WHERE notebook_id = $1 ORDER BY position`), id)
 		if err == nil {
 			defer rows.Close()
@@ -116,6 +125,9 @@ func notebookGetHandler(cfg APIConfig) fiber.Handler {
 
 func notebookUpdateHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
+
 		id := c.Params("id")
 		var req struct {
 			Name  string    `json:"name"`
@@ -129,7 +141,7 @@ func notebookUpdateHandler(cfg APIConfig) fiber.Handler {
 		}
 		if cfg.DB != nil {
 			if name != "" {
-				cfg.DB.ExecContext(context.Background(), Q("UPDATE notebooks SET title = $1, updated_at = NOW() WHERE id = $2"), name, id)
+				cfg.DB.ExecContext(ctx, Q("UPDATE notebooks SET title = $1, updated_at = NOW() WHERE id = $2"), name, id)
 			}
 			// Save cells if provided
 			if req.Cells != nil {
@@ -141,7 +153,7 @@ func notebookUpdateHandler(cfg APIConfig) fiber.Handler {
 						 VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
 						 ON CONFLICT (id) DO UPDATE SET cell_type = $3, source = $4, position = $5, updated_at = NOW()`,
 						cell.ID, id, cell.Type, cell.Content, i)
-					cfg.DB.ExecContext(context.Background(), upsertSQL, upsertArgs...)
+					cfg.DB.ExecContext(ctx, upsertSQL, upsertArgs...)
 				}
 			}
 		}
@@ -151,9 +163,12 @@ func notebookUpdateHandler(cfg APIConfig) fiber.Handler {
 
 func notebookDeleteHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
+
 		id := c.Params("id")
 		if cfg.DB != nil {
-			cfg.DB.ExecContext(context.Background(), Q("DELETE FROM notebooks WHERE id = $1"), id)
+			cfg.DB.ExecContext(ctx, Q("DELETE FROM notebooks WHERE id = $1"), id)
 		}
 		return c.JSON(fiber.Map{"deleted": true})
 	}
@@ -161,6 +176,9 @@ func notebookDeleteHandler(cfg APIConfig) fiber.Handler {
 
 func cellAddHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
+
 		nbID := c.Params("id")
 		var req struct {
 			Name    string `json:"name"`
@@ -172,18 +190,24 @@ func cellAddHandler(cfg APIConfig) fiber.Handler {
 		}
 		c.BodyParser(&req)
 		cellType := req.Type
-		if cellType == "" { cellType = req.CellType }
-		if cellType == "" { cellType = "code" }
+		if cellType == "" {
+			cellType = req.CellType
+		}
+		if cellType == "" {
+			cellType = "code"
+		}
 		content := req.Content
-		if content == "" { content = req.Source }
+		if content == "" {
+			content = req.Source
+		}
 
 		cellID := uuid.New().String()
 		if cfg.DB != nil {
-			cfg.DB.ExecContext(context.Background(),
+			cfg.DB.ExecContext(ctx,
 				Q(`INSERT INTO notebook_cells (id, notebook_id, cell_type, source, position, created_at, updated_at)
 				 VALUES ($1, $2, $3, $4, 0, NOW(), NOW())`),
 				cellID, nbID, cellType, content)
-			cfg.DB.ExecContext(context.Background(), Q("UPDATE notebooks SET updated_at = NOW() WHERE id = $1"), nbID)
+			cfg.DB.ExecContext(ctx, Q("UPDATE notebooks SET updated_at = NOW() WHERE id = $1"), nbID)
 		}
 		return c.Status(201).JSON(CellDTO{ID: cellID, Name: req.Name, Type: cellType, Content: content})
 	}
@@ -191,6 +215,9 @@ func cellAddHandler(cfg APIConfig) fiber.Handler {
 
 func cellUpdateHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
+
 		cellID := c.Params("cellId")
 		var req struct {
 			Content string `json:"content"`
@@ -199,13 +226,15 @@ func cellUpdateHandler(cfg APIConfig) fiber.Handler {
 		}
 		c.BodyParser(&req)
 		content := req.Content
-		if content == "" { content = req.Source }
+		if content == "" {
+			content = req.Source
+		}
 		if cfg.DB != nil {
 			if content != "" {
-				cfg.DB.ExecContext(context.Background(), Q("UPDATE notebook_cells SET source = $1, updated_at = NOW() WHERE id = $2"), content, cellID)
+				cfg.DB.ExecContext(ctx, Q("UPDATE notebook_cells SET source = $1, updated_at = NOW() WHERE id = $2"), content, cellID)
 			}
 			if req.Type != "" {
-				cfg.DB.ExecContext(context.Background(), Q("UPDATE notebook_cells SET cell_type = $1 WHERE id = $2"), req.Type, cellID)
+				cfg.DB.ExecContext(ctx, Q("UPDATE notebook_cells SET cell_type = $1 WHERE id = $2"), req.Type, cellID)
 			}
 		}
 		return c.JSON(fiber.Map{"id": cellID, "updated": true})
@@ -214,9 +243,12 @@ func cellUpdateHandler(cfg APIConfig) fiber.Handler {
 
 func cellDeleteHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
+
 		cellID := c.Params("cellId")
 		if cfg.DB != nil {
-			cfg.DB.ExecContext(context.Background(), Q("DELETE FROM notebook_cells WHERE id = $1"), cellID)
+			cfg.DB.ExecContext(ctx, Q("DELETE FROM notebook_cells WHERE id = $1"), cellID)
 		}
 		return c.JSON(fiber.Map{"deleted": true})
 	}
@@ -224,11 +256,14 @@ func cellDeleteHandler(cfg APIConfig) fiber.Handler {
 
 func cellRunHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
+
 		cellID := c.Params("cellId")
 		var cellType, content string
 
 		if cfg.DB != nil {
-			cfg.DB.QueryRowContext(context.Background(),
+			cfg.DB.QueryRowContext(ctx,
 				Q("SELECT cell_type, source FROM notebook_cells WHERE id = $1"), cellID).
 				Scan(&cellType, &content)
 		}
@@ -239,9 +274,15 @@ func cellRunHandler(cfg APIConfig) fiber.Handler {
 			Source  string `json:"source"`
 		}
 		c.BodyParser(&req)
-		if req.Content != "" { content = req.Content }
-		if req.Source != "" { content = req.Source }
-		if req.Type != "" { cellType = req.Type }
+		if req.Content != "" {
+			content = req.Content
+		}
+		if req.Source != "" {
+			content = req.Source
+		}
+		if req.Type != "" {
+			cellType = req.Type
+		}
 
 		if content == "" {
 			return c.Status(400).JSON(fiber.Map{"detail": "empty cell"})
@@ -251,37 +292,43 @@ func cellRunHandler(cfg APIConfig) fiber.Handler {
 		var err error
 		switch cellType {
 		case "search":
-			output, err = runSearchCell(context.Background(), cfg, content)
+			output, err = runSearchCell(ctx, cfg, content)
 		case "cognify":
 			output = fmt.Sprintf("Cognify triggered for: %s", content)
 		case "markdown":
 			output = content
 		default:
-			output, err = runCodeCell(context.Background(), cfg, content)
+			output, err = runCodeCell(ctx, cfg, content)
 		}
 		if err != nil {
 			return c.JSON(fiber.Map{"id": cellID, "result": nil, "error": err.Error()})
 		}
 		if cfg.DB != nil {
-			cfg.DB.ExecContext(context.Background(), Q("UPDATE notebook_cells SET output = $1, updated_at = NOW() WHERE id = $2"), output, cellID)
+			cfg.DB.ExecContext(ctx, Q("UPDATE notebook_cells SET output = $1, updated_at = NOW() WHERE id = $2"), output, cellID)
 		}
 		return c.JSON(fiber.Map{"id": cellID, "result": output, "error": nil})
 	}
 }
 
 func runSearchCell(ctx context.Context, cfg APIConfig, query string) (string, error) {
-	if cfg.EmbedEndpoint == "" || cfg.Collections == nil { return "[]", nil }
+	if cfg.EmbedEndpoint == "" || cfg.Collections == nil {
+		return "[]", nil
+	}
 	embedClient := cfg.EmbedClient
 	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections, nil)
 	colls := cfg.Collections.List()
 	var results []map[string]any
 	for _, coll := range colls {
 		res, err := sp.SearchByText(ctx, coll, query, 5)
-		if err != nil { continue }
+		if err != nil {
+			continue
+		}
 		for _, r := range res {
 			results = append(results, map[string]any{"id": r.ID, "score": r.Score, "collection": coll, "metadata": json.RawMessage(r.Metadata)})
 		}
-		if len(results) >= 10 { break }
+		if len(results) >= 10 {
+			break
+		}
 	}
 	out, _ := json.MarshalIndent(results, "", "  ")
 	return string(out), nil
@@ -400,10 +447,15 @@ func runCodeCell(ctx context.Context, cfg APIConfig, source string) (string, err
 		}
 		// Check embed-server health
 		if cfg.EmbedEndpoint != "" {
-			resp, err := http.Get(cfg.EmbedEndpoint + "/health")
-			if err == nil {
-				resp.Body.Close()
-				info["embed_status"] = resp.StatusCode == 200
+			req, reqErr := http.NewRequestWithContext(ctx, http.MethodGet, cfg.EmbedEndpoint+"/health", nil)
+			if reqErr == nil {
+				resp, err := http.DefaultClient.Do(req)
+				if err == nil {
+					resp.Body.Close()
+					info["embed_status"] = resp.StatusCode == 200
+				} else {
+					info["embed_status"] = false
+				}
 			} else {
 				info["embed_status"] = false
 			}

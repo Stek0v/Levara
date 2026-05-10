@@ -30,7 +30,8 @@ func graphCompletionSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest
 		}))
 	}
 
-	ctx := context.Background()
+	ctx, cancel := searchRequestContext(c)
+	defer cancel()
 
 	// Step 1: Vector search across entity collections
 	embedClient := cfg.EmbedClient
@@ -41,7 +42,7 @@ func graphCompletionSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest
 	var vectorChunks []fiber.Map
 
 	for _, coll := range colls {
-		results, err := sp.SearchByText(context.Background(), coll, req.QueryText, req.TopK)
+		results, err := sp.SearchByText(ctx, coll, req.QueryText, req.TopK)
 		if err != nil {
 			continue
 		}
@@ -131,11 +132,11 @@ func graphCompletionSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest
 		}
 
 		prompt := fmt.Sprintf("Answer the question based on the following knowledge graph and search context.\n\n%s\n\nQuestion: %s\n\nAnswer:", contextStr, req.QueryText)
-		prompt = prependSessionContext(cfg, req.SessionID, prompt)
-		answer = callLLMFromAPI(llmEndpoint, llmModel, prompt, cfg.LLMProvider)
+		prompt = prependSessionContext(ctx, cfg, req.SessionID, prompt)
+		answer = callLLMFromAPI(ctx, llmEndpoint, llmModel, prompt, cfg.LLMProvider)
 	}
 
-	recordInteraction(cfg, req.SessionID, "", req.QueryText, answer, "GRAPH_COMPLETION")
+	recordInteraction(ctx, cfg, req.SessionID, "", req.QueryText, answer, "GRAPH_COMPLETION")
 
 	return c.JSON(attachSearchDebugMetadata(c, fiber.Map{
 		"answer":               answer,
@@ -167,7 +168,8 @@ func contextExtensionSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchReques
 		}))
 	}
 
-	ctx := context.Background()
+	ctx, cancel := searchRequestContext(c)
+	defer cancel()
 
 	// Step 1: Vector search — same as graphCompletionSearch
 	embedClient := cfg.EmbedClient
@@ -178,7 +180,7 @@ func contextExtensionSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchReques
 	var vectorChunks []fiber.Map
 
 	for _, coll := range colls {
-		results, err := sp.SearchByText(context.Background(), coll, req.QueryText, req.TopK)
+		results, err := sp.SearchByText(ctx, coll, req.QueryText, req.TopK)
 		if err != nil {
 			continue
 		}
@@ -296,11 +298,11 @@ func contextExtensionSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchReques
 			"Answer the question using the extended knowledge graph context below. "+
 				"The context includes both direct (1-hop) and extended (2-hop) relationships.\n\n"+
 				"%s\n\nQuestion: %s\n\nAnswer:", contextStr, req.QueryText)
-		prompt = prependSessionContext(cfg, req.SessionID, prompt)
-		answer = callLLMFromAPI(llmEndpoint, llmModel, prompt, cfg.LLMProvider)
+		prompt = prependSessionContext(ctx, cfg, req.SessionID, prompt)
+		answer = callLLMFromAPI(ctx, llmEndpoint, llmModel, prompt, cfg.LLMProvider)
 	}
 
-	recordInteraction(cfg, req.SessionID, "", req.QueryText, answer, "GRAPH_COMPLETION_CONTEXT_EXTENSION")
+	recordInteraction(ctx, cfg, req.SessionID, "", req.QueryText, answer, "GRAPH_COMPLETION_CONTEXT_EXTENSION")
 
 	return c.JSON(attachSearchDebugMetadata(c, fiber.Map{
 		"answer":               answer,
@@ -374,13 +376,14 @@ func cotSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 		return c.JSON(fiber.Map{"answer": "", "reasoning_steps": []any{}, "search_type": "GRAPH_COMPLETION_COT"})
 	}
 
-	ctx := context.Background()
+	ctx, cancel := searchRequestContext(c)
+	defer cancel()
 
 	// ── Step 1: Decompose query into sub-questions via LLM ──
 	decomposePrompt := fmt.Sprintf(
 		"Break the following question into 2-3 independent sub-questions that each need a knowledge-graph lookup. "+
 			"Return ONLY a JSON array of strings, no explanation.\n\nQuestion: %s\n\nSub-questions:", req.QueryText)
-	rawSubs := callLLMFromAPI(llmEndpoint, llmModel, decomposePrompt, cfg.LLMProvider)
+	rawSubs := callLLMFromAPI(ctx, llmEndpoint, llmModel, decomposePrompt, cfg.LLMProvider)
 
 	subQuestions := parseJSONStringArray(rawSubs)
 	if len(subQuestions) == 0 {
@@ -410,7 +413,7 @@ func cotSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 		var entityNames []string
 
 		for _, coll := range colls {
-			results, err := sp.SearchByText(context.Background(), coll, sub, req.TopK)
+			results, err := sp.SearchByText(ctx, coll, sub, req.TopK)
 			if err != nil {
 				continue
 			}
@@ -459,8 +462,8 @@ func cotSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 
 		synthesizePrompt := fmt.Sprintf(
 			"Given this multi-step research:\n\n%s\nAnswer the original question: %s", stepSummary, req.QueryText)
-		synthesizePrompt = prependSessionContext(cfg, req.SessionID, synthesizePrompt)
-		answer = callLLMFromAPI(llmEndpoint, llmModel, synthesizePrompt, cfg.LLMProvider)
+		synthesizePrompt = prependSessionContext(ctx, cfg, req.SessionID, synthesizePrompt)
+		answer = callLLMFromAPI(ctx, llmEndpoint, llmModel, synthesizePrompt, cfg.LLMProvider)
 	}
 
 	// Build JSON-serialisable steps slice.
@@ -473,7 +476,7 @@ func cotSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 		}
 	}
 
-	recordInteraction(cfg, req.SessionID, "", req.QueryText, answer, "GRAPH_COMPLETION_COT")
+	recordInteraction(ctx, cfg, req.SessionID, "", req.QueryText, answer, "GRAPH_COMPLETION_COT")
 
 	return c.JSON(fiber.Map{
 		"answer":          answer,
@@ -515,7 +518,8 @@ func codingRulesSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) er
 		return c.JSON(fiber.Map{"rules": []any{}, "entities": []any{}, "search_type": "CODING_RULES"})
 	}
 
-	ctx := context.Background()
+	ctx, cancel := searchRequestContext(c)
+	defer cancel()
 
 	// Code-related entity types to filter on.
 	codeTypes := map[string]bool{
@@ -532,7 +536,7 @@ func codingRulesSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) er
 	var entityNames []string
 
 	for _, coll := range colls {
-		results, err := sp.SearchByText(context.Background(), coll, req.QueryText, req.TopK*2)
+		results, err := sp.SearchByText(ctx, coll, req.QueryText, req.TopK*2)
 		if err != nil {
 			continue
 		}
@@ -773,6 +777,8 @@ func tripletCompletionSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchReque
 	if cfg.EmbedEndpoint == "" || cfg.Collections == nil {
 		return c.JSON(fiber.Map{"answer": "", "triplets": []any{}, "search_type": "TRIPLET_COMPLETION"})
 	}
+	ctx, cancel := searchRequestContext(c)
+	defer cancel()
 
 	// Search only triplet collections
 	embedClient := cfg.EmbedClient
@@ -796,7 +802,7 @@ func tripletCompletionSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchReque
 	var tripletTexts []string
 
 	for _, coll := range tripletColls {
-		results, err := sp.SearchByText(context.Background(), coll, req.QueryText, req.TopK)
+		results, err := sp.SearchByText(ctx, coll, req.QueryText, req.TopK)
 		if err != nil {
 			continue
 		}
@@ -836,11 +842,11 @@ func tripletCompletionSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchReque
 	if llmEndpoint != "" && llmModel != "" && len(tripletTexts) > 0 {
 		contextStr := "Knowledge graph triplets (Subject -> Predicate -> Object):\n" + strings.Join(tripletTexts, "\n")
 		prompt := fmt.Sprintf("Answer the question based on the following knowledge graph triplets.\n\n%s\n\nQuestion: %s\n\nAnswer:", contextStr, req.QueryText)
-		prompt = prependSessionContext(cfg, req.SessionID, prompt)
-		answer = callLLMFromAPI(llmEndpoint, llmModel, prompt, cfg.LLMProvider)
+		prompt = prependSessionContext(ctx, cfg, req.SessionID, prompt)
+		answer = callLLMFromAPI(ctx, llmEndpoint, llmModel, prompt, cfg.LLMProvider)
 	}
 
-	recordInteraction(cfg, req.SessionID, "", req.QueryText, answer, "TRIPLET_COMPLETION")
+	recordInteraction(ctx, cfg, req.SessionID, "", req.QueryText, answer, "TRIPLET_COMPLETION")
 
 	return c.JSON(fiber.Map{
 		"answer":      answer,
@@ -871,7 +877,8 @@ func cypherSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 		})
 	}
 
-	ctx := context.Background()
+	ctx, cancel := searchRequestContext(c)
+	defer cancel()
 	writer, err := graphdb.NewWriter(ctx, cfg.Neo4jCfg.Neo4jURL, cfg.Neo4jCfg.Neo4jUser,
 		cfg.Neo4jCfg.Neo4jPassword, cfg.Neo4jCfg.Neo4jDatabase)
 	if err != nil {
@@ -915,8 +922,8 @@ func isCypherAllowed(query string, allowWrite bool) bool {
 		" DATABASE ",
 		" CONSTRAINT ",
 		" INDEX ",
-		" DBMS ",  // `CALL DBMS …`
-		" DBMS.",  // `dbms.<func>(…)` namespace syntax
+		" DBMS ", // `CALL DBMS …`
+		" DBMS.", // `dbms.<func>(…)` namespace syntax
 		" TERMINATE ",
 		" LOAD CSV ",
 	}) {
@@ -974,7 +981,8 @@ func naturalLanguageSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest
 		return graphCompletionSearch(c, cfg, req)
 	}
 
-	ctx := context.Background()
+	ctx, cancel := searchRequestContext(c)
+	defer cancel()
 
 	// Step 1: Get schema info from Neo4j (labels + relationship types)
 	writer, err := graphdb.NewWriter(ctx, cfg.Neo4jCfg.Neo4jURL, cfg.Neo4jCfg.Neo4jUser,
@@ -1002,7 +1010,7 @@ Question: %s
 
 Cypher query:`, strings.Join(labels, ", "), strings.Join(relTypes, ", "), req.QueryText)
 
-	cypherRaw := callLLMFromAPI(llmEndpoint, llmModel, prompt, cfg.LLMProvider)
+	cypherRaw := callLLMFromAPI(ctx, llmEndpoint, llmModel, prompt, cfg.LLMProvider)
 	if cypherRaw == "" {
 		return graphCompletionSearch(c, cfg, req)
 	}
@@ -1234,7 +1242,8 @@ func communityLocalSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest)
 		return c.JSON(fiber.Map{"answer": "", "search_type": "COMMUNITY_LOCAL"})
 	}
 
-	ctx := context.Background()
+	ctx, cancel := searchRequestContext(c)
+	defer cancel()
 	embedClient := cfg.EmbedClient
 	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections, nil)
 	colls := resolveCollections(cfg, req)
@@ -1304,11 +1313,11 @@ func communityLocalSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest)
 		prompt := fmt.Sprintf(
 			"Answer based on these knowledge graph communities:\n\n%s\n\nQuestion: %s\n\nAnswer:",
 			strings.Join(communityContexts, "\n---\n"), req.QueryText)
-		prompt = prependSessionContext(cfg, req.SessionID, prompt)
-		answer = callLLMFromAPI(llmEndpoint, llmModel, prompt, cfg.LLMProvider)
+		prompt = prependSessionContext(ctx, cfg, req.SessionID, prompt)
+		answer = callLLMFromAPI(ctx, llmEndpoint, llmModel, prompt, cfg.LLMProvider)
 	}
 
-	recordInteraction(cfg, req.SessionID, "", req.QueryText, answer, "COMMUNITY_LOCAL")
+	recordInteraction(ctx, cfg, req.SessionID, "", req.QueryText, answer, "COMMUNITY_LOCAL")
 
 	return c.JSON(fiber.Map{
 		"answer":           answer,
@@ -1334,7 +1343,8 @@ func communityGlobalSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest
 		return chunksSearch(c, cfg, req)
 	}
 
-	ctx := context.Background()
+	ctx, cancel := searchRequestContext(c)
+	defer cancel()
 	embedClient := cfg.EmbedClient
 	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections, nil)
 
@@ -1409,7 +1419,7 @@ func communityGlobalSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest
 					"Based on this community's knowledge, provide relevant information for: %s\n"+
 					"If this community has no relevant information, respond with 'NOT_RELEVANT'.",
 				hit.Summary, req.QueryText)
-			partial := callLLMFromAPI(llmEndpoint, llmModel, prompt, cfg.LLMProvider)
+			partial := callLLMFromAPI(ctx, llmEndpoint, llmModel, prompt, cfg.LLMProvider)
 
 			if !strings.Contains(partial, "NOT_RELEVANT") && partial != "" {
 				mu.Lock()
@@ -1444,11 +1454,11 @@ func communityGlobalSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest
 				"Synthesize a comprehensive answer combining all relevant perspectives. "+
 				"Resolve any contradictions. Be thorough but concise.",
 			req.QueryText, strings.Join(partialTexts, "\n\n---\n\n"))
-		synthesizePrompt = prependSessionContext(cfg, req.SessionID, synthesizePrompt)
-		answer = callLLMFromAPI(llmEndpoint, llmModel, synthesizePrompt, cfg.LLMProvider)
+		synthesizePrompt = prependSessionContext(ctx, cfg, req.SessionID, synthesizePrompt)
+		answer = callLLMFromAPI(ctx, llmEndpoint, llmModel, synthesizePrompt, cfg.LLMProvider)
 	}
 
-	recordInteraction(cfg, req.SessionID, "", req.QueryText, answer, "COMMUNITY_GLOBAL")
+	recordInteraction(ctx, cfg, req.SessionID, "", req.QueryText, answer, "COMMUNITY_GLOBAL")
 
 	return c.JSON(fiber.Map{
 		"answer":                     answer,
