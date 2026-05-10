@@ -216,6 +216,7 @@ func init() {
 		{"neo4j", "read"},
 		{"neo4j", "write"},
 		{"neo4j", "query"},
+		{"neo4j", "migrate_valid_from"},
 		{"postgres-graph", "read"},
 		{"postgres-graph", "write"},
 		{"embed", "embed"},

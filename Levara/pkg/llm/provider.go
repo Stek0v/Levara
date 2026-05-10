@@ -18,7 +18,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -231,18 +234,33 @@ type TracerData struct {
 }
 
 // TracedProvider wraps a Provider with LLM call tracing.
+//
+// Sampling: errors are always traced; successes are sampled uniformly at
+// SampleRate (0.0..1.0). Default 0.1 — overridable via LANGFUSE_SAMPLE_RATE.
 type TracedProvider struct {
-	provider Provider
-	tracer   Tracer
+	provider   Provider
+	tracer     Tracer
+	SampleRate float64
 }
 
+// defaultSampleRate is the success-trace sampling rate when LANGFUSE_SAMPLE_RATE
+// is unset or invalid. Errors are always traced regardless.
+const defaultSampleRate = 0.1
+
 // NewTracedProvider wraps provider with tracing. If tracer is nil or disabled,
-// returns the original provider unwrapped.
+// returns the original provider unwrapped. Reads LANGFUSE_SAMPLE_RATE env
+// (float, 0..1) for success sampling; errors always traced.
 func NewTracedProvider(provider Provider, tracer Tracer) Provider {
 	if tracer == nil || !tracer.Enabled() {
 		return provider
 	}
-	return &TracedProvider{provider: provider, tracer: tracer}
+	rate := defaultSampleRate
+	if v := os.Getenv("LANGFUSE_SAMPLE_RATE"); v != "" {
+		if parsed, err := strconv.ParseFloat(v, 64); err == nil && parsed >= 0 && parsed <= 1 {
+			rate = parsed
+		}
+	}
+	return &TracedProvider{provider: provider, tracer: tracer, SampleRate: rate}
 }
 
 func (tp *TracedProvider) Name() string {
@@ -264,6 +282,11 @@ func (tp *TracedProvider) ChatCompletion(ctx context.Context, req CompletionRequ
 		output = resp.Content
 		tokensIn = resp.Usage.PromptTokens
 		tokensOut = resp.Usage.CompletionTokens
+	}
+
+	// Sampling: errors always traced; successes sampled at SampleRate.
+	if status != "error" && rand.Float64() >= tp.SampleRate {
+		return resp, err
 	}
 
 	// Build input summary from messages
