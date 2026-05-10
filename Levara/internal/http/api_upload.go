@@ -2,8 +2,8 @@
 // status helpers shared between cognify/search paths. Split out of api.go
 // (T4). Covers:
 //
-//   POST /add     — multipart file upload (text, image, PDF)
-//   POST /ocr     — base64 image → text via vision model
+//	POST /add     — multipart file upload (text, image, PDF)
+//	POST /ocr     — base64 image → text via vision model
 //
 // PersistPipelineStatus / CheckPipelineStatus live here because addHandler
 // writes pipeline_status on upload and cognifyHandler reads it via
@@ -32,6 +32,9 @@ import (
 
 func addHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		reqCtx, cancel := apiRequestContext(c)
+		defer cancel()
+
 		datasetName := c.FormValue("datasetName")
 		datasetID := c.FormValue("datasetId")
 
@@ -87,11 +90,15 @@ func addHandler(cfg APIConfig) fiber.Handler {
 				if err != nil {
 					return c.Status(500).JSON(fiber.Map{"detail": err.Error()})
 				}
+				results, err = mirrorResultsToFileStorage(reqCtx, cfg, results)
+				if err != nil {
+					return c.Status(500).JSON(fiber.Map{"detail": err.Error()})
+				}
 				txtDsID := datasetID
 				if txtDsID == "" {
 					// Look up existing dataset by name before creating new
 					if cfg.DB != nil && datasetName != "" {
-						cfg.DB.QueryRowContext(context.Background(),
+						cfg.DB.QueryRowContext(reqCtx,
 							Q("SELECT id FROM datasets WHERE name = $1 LIMIT 1"), datasetName).Scan(&txtDsID)
 					}
 					if txtDsID == "" {
@@ -100,7 +107,7 @@ func addHandler(cfg APIConfig) fiber.Handler {
 				}
 				if cfg.DB != nil {
 					mw := ingest.NewMetadataWriterFromDB(cfg.DB)
-					mw.WriteMetadata(context.Background(), results, ownerID, txtDsID, datasetName)
+					mw.WriteMetadata(reqCtx, results, ownerID, txtDsID, datasetName)
 				}
 				return c.JSON(fiber.Map{"status": "ok", "items": len(results), "dataset_id": txtDsID, "dataset_name": datasetName})
 			}
@@ -149,12 +156,16 @@ func addHandler(cfg APIConfig) fiber.Handler {
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"detail": err.Error()})
 		}
+		results, err = mirrorResultsToFileStorage(reqCtx, cfg, results)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"detail": err.Error()})
+		}
 
 		// Write metadata — reuse existing dataset by name
 		dsID := datasetID
 		if dsID == "" {
 			if cfg.DB != nil && datasetName != "" {
-				cfg.DB.QueryRowContext(context.Background(),
+				cfg.DB.QueryRowContext(reqCtx,
 					Q("SELECT id FROM datasets WHERE name = $1 LIMIT 1"), datasetName).Scan(&dsID)
 			}
 			if dsID == "" {
@@ -164,7 +175,7 @@ func addHandler(cfg APIConfig) fiber.Handler {
 		if cfg.DB != nil {
 			ownerID, _ := c.Locals("user_id").(string)
 			mw := ingest.NewMetadataWriterFromDB(cfg.DB)
-			mw.WriteMetadata(context.Background(), results, ownerID, dsID, datasetName)
+			mw.WriteMetadata(reqCtx, results, ownerID, dsID, datasetName)
 		}
 
 		return c.JSON(fiber.Map{
@@ -271,7 +282,7 @@ func ocrHandler(cfg APIConfig) fiber.Handler {
 
 		if len(imgData) == 0 {
 			var req struct {
-				Image    string `json:"image"`    // base64
+				Image    string `json:"image"` // base64
 				Filename string `json:"filename"`
 			}
 			if c.BodyParser(&req) == nil && req.Image != "" {
@@ -304,5 +315,3 @@ func ocrHandler(cfg APIConfig) fiber.Handler {
 func base64Decode(s string) ([]byte, error) {
 	return base64.StdEncoding.DecodeString(s)
 }
-
-

@@ -28,6 +28,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -40,6 +41,12 @@ type Storage interface {
 	Delete(ctx context.Context, path string) error
 	List(ctx context.Context, prefix string) ([]string, error)
 	Exists(ctx context.Context, path string) (bool, error)
+}
+
+// Presigner is an optional extension for storage backends that can issue
+// time-limited direct download URLs (for example S3-compatible backends).
+type Presigner interface {
+	PresignGet(ctx context.Context, path string, ttl time.Duration) (string, error)
 }
 
 // ---------------------------------------------------------------------------
@@ -260,8 +267,8 @@ type listBucketResult struct {
 	Contents []struct {
 		Key string `xml:"Key"`
 	} `xml:"Contents"`
-	IsTruncated    bool   `xml:"IsTruncated"`
-	NextContToken  string `xml:"NextContinuationToken"`
+	IsTruncated   bool   `xml:"IsTruncated"`
+	NextContToken string `xml:"NextContinuationToken"`
 }
 
 // List returns all keys under the given prefix using ListObjectsV2.
@@ -337,6 +344,66 @@ func (s *S3Storage) Exists(ctx context.Context, path string) (bool, error) {
 		return false, nil
 	}
 	return false, fmt.Errorf("storage/s3: HEAD %s status %d", path, resp.StatusCode)
+}
+
+// PresignGet returns a SigV4 query-signed URL for direct object download.
+// ttl is clamped to AWS limits [1s, 7d], defaulting to 15m when zero/negative.
+func (s *S3Storage) PresignGet(_ context.Context, path string, ttl time.Duration) (string, error) {
+	if ttl <= 0 {
+		ttl = 15 * time.Minute
+	}
+	expires := int(ttl.Seconds())
+	if expires < 1 {
+		expires = 1
+	}
+	if expires > 7*24*60*60 {
+		expires = 7 * 24 * 60 * 60
+	}
+
+	u, err := url.Parse(s.objectURL(path))
+	if err != nil {
+		return "", fmt.Errorf("storage/s3: parse URL: %w", err)
+	}
+	now := time.Now().UTC()
+	datestamp := now.Format("20060102")
+	amzDate := now.Format("20060102T150405Z")
+	credentialScope := datestamp + "/" + s.region + "/s3/aws4_request"
+
+	q := u.Query()
+	q.Set("X-Amz-Algorithm", "AWS4-HMAC-SHA256")
+	q.Set("X-Amz-Credential", s.accessKey+"/"+credentialScope)
+	q.Set("X-Amz-Date", amzDate)
+	q.Set("X-Amz-Expires", strconv.Itoa(expires))
+	q.Set("X-Amz-SignedHeaders", "host")
+	u.RawQuery = q.Encode()
+
+	canonicalURI := u.EscapedPath()
+	if canonicalURI == "" {
+		canonicalURI = "/"
+	}
+	canonicalQuery := u.Query().Encode()
+	canonicalHeaders := "host:" + u.Host + "\n"
+	canonicalRequest := strings.Join([]string{
+		"GET",
+		canonicalURI,
+		canonicalQuery,
+		canonicalHeaders,
+		"host",
+		"UNSIGNED-PAYLOAD",
+	}, "\n")
+
+	stringToSign := strings.Join([]string{
+		"AWS4-HMAC-SHA256",
+		amzDate,
+		credentialScope,
+		sha256Hex([]byte(canonicalRequest)),
+	}, "\n")
+	signingKey := deriveSigningKey(s.secretKey, datestamp, s.region, "s3")
+	signature := hex.EncodeToString(hmacSHA256(signingKey, []byte(stringToSign)))
+
+	q.Set("X-Amz-Signature", signature)
+	u.RawQuery = q.Encode()
+	return u.String(), nil
 }
 
 // ---------------------------------------------------------------------------

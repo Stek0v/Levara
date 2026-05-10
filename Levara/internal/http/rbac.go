@@ -39,12 +39,15 @@ func RegisterRBACAPI(app fiber.Router, cfg APIConfig) {
 
 func datasetSharesListHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
+
 		dsID := c.Params("id")
 		if cfg.DB == nil {
 			return c.JSON([]ShareDTO{})
 		}
 
-		rows, err := cfg.DB.QueryContext(context.Background(),
+		rows, err := cfg.DB.QueryContext(ctx,
 			Q(`SELECT s.id, s.dataset_id, s.user_id, COALESCE(u.email,''), s.role, s.granted_by, s.created_at
 			 FROM dataset_shares s LEFT JOIN users u ON s.user_id = u.id
 			 WHERE s.dataset_id = $1 ORDER BY s.created_at`), dsID)
@@ -70,6 +73,9 @@ func datasetSharesListHandler(cfg APIConfig) fiber.Handler {
 
 func datasetShareCreateHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
+
 		dsID := c.Params("id")
 		granterID, _ := c.Locals("user_id").(string)
 
@@ -95,12 +101,12 @@ func datasetShareCreateHandler(cfg APIConfig) fiber.Handler {
 
 		// Check granter owns the dataset
 		var ownerID string
-		cfg.DB.QueryRowContext(context.Background(),
+		cfg.DB.QueryRowContext(ctx,
 			Q("SELECT owner_id FROM datasets WHERE id = $1"), dsID).Scan(&ownerID)
 		if ownerID != granterID {
 			// Check if granter has admin share
 			var grantRole string
-			cfg.DB.QueryRowContext(context.Background(),
+			cfg.DB.QueryRowContext(ctx,
 				Q("SELECT role FROM dataset_shares WHERE dataset_id = $1 AND user_id = $2"), dsID, granterID).Scan(&grantRole)
 			if grantRole != RoleAdmin {
 				return c.Status(403).JSON(fiber.Map{"detail": "only owner or admin can share"})
@@ -110,7 +116,7 @@ func datasetShareCreateHandler(cfg APIConfig) fiber.Handler {
 		// Resolve user by email if needed
 		targetUserID := req.UserID
 		if targetUserID == "" && req.Email != "" {
-			cfg.DB.QueryRowContext(context.Background(),
+			cfg.DB.QueryRowContext(ctx,
 				Q("SELECT id FROM users WHERE email = $1"), req.Email).Scan(&targetUserID)
 			if targetUserID == "" {
 				return c.Status(404).JSON(fiber.Map{"detail": "user not found"})
@@ -125,7 +131,7 @@ func datasetShareCreateHandler(cfg APIConfig) fiber.Handler {
 			 VALUES ($1, $2, $3, $4, $5, NOW())
 			 ON CONFLICT (dataset_id, user_id) DO UPDATE SET role = $4`,
 			shareID, dsID, targetUserID, req.Role, granterID)
-		_, err := cfg.DB.ExecContext(context.Background(), upsertSQL, upsertArgs...)
+		_, err := cfg.DB.ExecContext(ctx, upsertSQL, upsertArgs...)
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"detail": "share failed: " + err.Error()})
 		}
@@ -138,6 +144,9 @@ func datasetShareCreateHandler(cfg APIConfig) fiber.Handler {
 
 func datasetShareDeleteHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
+
 		shareID := c.Params("shareId")
 		dsID := c.Params("id")
 		userID, _ := c.Locals("user_id").(string)
@@ -148,24 +157,27 @@ func datasetShareDeleteHandler(cfg APIConfig) fiber.Handler {
 
 		// Only owner or admin can revoke
 		var ownerID string
-		cfg.DB.QueryRowContext(context.Background(),
+		cfg.DB.QueryRowContext(ctx,
 			Q("SELECT owner_id FROM datasets WHERE id = $1"), dsID).Scan(&ownerID)
 		if ownerID != userID {
 			var role string
-			cfg.DB.QueryRowContext(context.Background(),
+			cfg.DB.QueryRowContext(ctx,
 				Q("SELECT role FROM dataset_shares WHERE dataset_id = $1 AND user_id = $2"), dsID, userID).Scan(&role)
 			if role != RoleAdmin {
 				return c.Status(403).JSON(fiber.Map{"detail": "only owner or admin can revoke shares"})
 			}
 		}
 
-		cfg.DB.ExecContext(context.Background(), Q("DELETE FROM dataset_shares WHERE id = $1"), shareID)
+		cfg.DB.ExecContext(ctx, Q("DELETE FROM dataset_shares WHERE id = $1"), shareID)
 		return c.JSON(fiber.Map{"deleted": true})
 	}
 }
 
 func permissionsMeHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
+
 		userID, _ := c.Locals("user_id").(string)
 		if userID == "" {
 			return c.Status(401).JSON(fiber.Map{"detail": "not authenticated"})
@@ -181,7 +193,7 @@ func permissionsMeHandler(cfg APIConfig) fiber.Handler {
 
 		// Check if superuser
 		var isSuperuser bool
-		cfg.DB.QueryRowContext(context.Background(),
+		cfg.DB.QueryRowContext(ctx,
 			Q("SELECT is_superuser FROM users WHERE id = $1"), userID).Scan(&isSuperuser)
 
 		globalRole := RoleEditor
@@ -190,7 +202,7 @@ func permissionsMeHandler(cfg APIConfig) fiber.Handler {
 		}
 
 		// Get all dataset shares
-		rows, err := cfg.DB.QueryContext(context.Background(),
+		rows, err := cfg.DB.QueryContext(ctx,
 			Q(`SELECT s.id, s.dataset_id, s.user_id, s.role, s.granted_by, s.created_at
 			 FROM dataset_shares s WHERE s.user_id = $1`), userID)
 		var shares []ShareDTO
@@ -254,10 +266,12 @@ func CheckDatasetAccess(db *sql.DB, c *fiber.Ctx, datasetID, userID string) bool
 	if db == nil || userID == "" {
 		return true // dev mode
 	}
+	ctx, cancel := requestContextWithTimeout(c, timeoutFromEnvMs("HTTP_REQUEST_TIMEOUT_MS", defaultAPIRequestTimeout))
+	defer cancel()
 
 	// Owner check
 	var ownerID string
-	db.QueryRowContext(context.Background(),
+	db.QueryRowContext(ctx,
 		Q("SELECT owner_id FROM datasets WHERE id = $1"), datasetID).Scan(&ownerID)
 	if ownerID == "" || ownerID == userID {
 		return true
@@ -265,7 +279,7 @@ func CheckDatasetAccess(db *sql.DB, c *fiber.Ctx, datasetID, userID string) bool
 
 	// Share check
 	var shareID string
-	db.QueryRowContext(context.Background(),
+	db.QueryRowContext(ctx,
 		Q("SELECT id FROM dataset_shares WHERE dataset_id = $1 AND user_id = $2"), datasetID, userID).Scan(&shareID)
 	return shareID != ""
 }

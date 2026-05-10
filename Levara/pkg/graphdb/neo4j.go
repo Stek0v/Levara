@@ -7,8 +7,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+
+	"github.com/stek0v/levara/internal/metrics"
 )
 
 const baseLabel = "__Node__"
@@ -142,6 +145,8 @@ func (w *Writer) BatchWrite(ctx context.Context, nodes []NodeRecord, edges []Edg
 	if len(nodes) == 0 && len(edges) == 0 {
 		return BatchWriteResult{}
 	}
+	var obsErr error
+	defer metrics.ObserveExternalCall("neo4j", "write", time.Now(), &obsErr)
 
 	nodeBatch := buildNodeBatch(nodes)
 	edgeBatch := buildEdgeBatch(edges)
@@ -169,6 +174,7 @@ func (w *Writer) BatchWrite(ctx context.Context, nodes []NodeRecord, edges []Edg
 	result := BatchWriteResult{NodesWritten: out.nodes, EdgesWritten: out.edges}
 	if err != nil {
 		result.Errors = append(result.Errors, err.Error())
+		obsErr = err
 	}
 	return result
 }
@@ -442,7 +448,8 @@ func (w *Writer) ReadNeighbours(ctx context.Context, nodeID string) (GraphReadRe
 // label is interpolated into Cypher (Neo4j cannot parameterize labels), so it
 // must be a syntactically valid identifier — anything else is rejected to
 // prevent Cypher injection.
-func (w *Writer) ReadSubgraph(ctx context.Context, label string, names []string) (GraphReadResult, error) {
+func (w *Writer) ReadSubgraph(ctx context.Context, label string, names []string) (result GraphReadResult, err error) {
+	defer metrics.ObserveExternalCall("neo4j", "read", time.Now(), &err)
 	if !isSafeLabel(label) {
 		return GraphReadResult{}, fmt.Errorf("invalid label %q: must match [A-Za-z_][A-Za-z0-9_]*", label)
 	}
@@ -507,7 +514,8 @@ func (w *Writer) ReadSubgraph(ctx context.Context, label string, names []string)
 // All current callers (graph_search, mcp_doctor, api_search) execute MATCH/SHOW
 // queries — routed through ExecuteRead so cluster deployments can use replicas.
 // Use ExecuteWrite directly via session if a write-flavoured query is needed.
-func (w *Writer) Query(ctx context.Context, cypher string, params map[string]any) ([]map[string]any, error) {
+func (w *Writer) Query(ctx context.Context, cypher string, params map[string]any) (rows []map[string]any, err error) {
+	defer metrics.ObserveExternalCall("neo4j", "query", time.Now(), &err)
 	return RunReadTx(ctx, w, func(ctx context.Context, tx neo4j.ManagedTransaction) ([]map[string]any, error) {
 		res, err := tx.Run(ctx, cypher, params)
 		if err != nil {

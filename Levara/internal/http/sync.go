@@ -4,7 +4,6 @@
 package http
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -39,13 +38,13 @@ func RegisterSyncAPI(app fiber.Router, cfg APIConfig) {
 // ── Manifest ──
 
 type syncManifest struct {
-	EmbedModel  string               `json:"embed_model"`
-	EmbedDim    int                  `json:"embed_dim"`
-	Memories    syncCount            `json:"memories"`
-	Interactions syncCount           `json:"interactions"`
-	GraphNodes  syncCount            `json:"graph_nodes"`
-	GraphEdges  syncCount            `json:"graph_edges"`
-	Collections []syncCollectionInfo `json:"collections"`
+	EmbedModel   string               `json:"embed_model"`
+	EmbedDim     int                  `json:"embed_dim"`
+	Memories     syncCount            `json:"memories"`
+	Interactions syncCount            `json:"interactions"`
+	GraphNodes   syncCount            `json:"graph_nodes"`
+	GraphEdges   syncCount            `json:"graph_edges"`
+	Collections  []syncCollectionInfo `json:"collections"`
 }
 
 type syncCount struct {
@@ -62,6 +61,9 @@ type syncCollectionInfo struct {
 
 func syncManifestHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		ctx, cancel := syncRequestContext(c)
+		defer cancel()
+
 		m := syncManifest{
 			EmbedModel: cfg.EmbedModel,
 		}
@@ -77,12 +79,12 @@ func syncManifestHandler(cfg APIConfig) fiber.Handler {
 			}
 		}
 		if cfg.DB != nil {
-			cfg.DB.QueryRowContext(context.Background(), Q(`SELECT COUNT(*) FROM memories`)).Scan(&m.Memories.Count)
-			cfg.DB.QueryRowContext(context.Background(), Q(`SELECT COALESCE(MAX(updated_at),'') FROM memories`)).Scan(&m.Memories.LatestUpdated)
-			cfg.DB.QueryRowContext(context.Background(), Q(`SELECT COUNT(*) FROM interactions`)).Scan(&m.Interactions.Count)
-			cfg.DB.QueryRowContext(context.Background(), Q(`SELECT COALESCE(MAX(created_at),'') FROM interactions`)).Scan(&m.Interactions.LatestUpdated)
-			cfg.DB.QueryRowContext(context.Background(), Q(`SELECT COUNT(*) FROM graph_nodes`)).Scan(&m.GraphNodes.Count)
-			cfg.DB.QueryRowContext(context.Background(), Q(`SELECT COUNT(*) FROM graph_edges`)).Scan(&m.GraphEdges.Count)
+			cfg.DB.QueryRowContext(ctx, Q(`SELECT COUNT(*) FROM memories`)).Scan(&m.Memories.Count)
+			cfg.DB.QueryRowContext(ctx, Q(`SELECT COALESCE(MAX(updated_at),'') FROM memories`)).Scan(&m.Memories.LatestUpdated)
+			cfg.DB.QueryRowContext(ctx, Q(`SELECT COUNT(*) FROM interactions`)).Scan(&m.Interactions.Count)
+			cfg.DB.QueryRowContext(ctx, Q(`SELECT COALESCE(MAX(created_at),'') FROM interactions`)).Scan(&m.Interactions.LatestUpdated)
+			cfg.DB.QueryRowContext(ctx, Q(`SELECT COUNT(*) FROM graph_nodes`)).Scan(&m.GraphNodes.Count)
+			cfg.DB.QueryRowContext(ctx, Q(`SELECT COUNT(*) FROM graph_edges`)).Scan(&m.GraphEdges.Count)
 		}
 		return c.JSON(m)
 	}
@@ -103,20 +105,27 @@ type syncMemory struct {
 
 func syncExportMemoriesHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		ctx, cancel := syncRequestContext(c)
+		defer cancel()
+
 		if cfg.DB == nil {
 			return c.JSON([]syncMemory{})
 		}
 		since := c.Query("since")
-		var rows interface{ Next() bool; Scan(...any) error; Close() error }
+		var rows interface {
+			Next() bool
+			Scan(...any) error
+			Close() error
+		}
 		var err error
 		if since != "" {
-			rows, err = cfg.DB.QueryContext(context.Background(),
+			rows, err = cfg.DB.QueryContext(ctx,
 				Q(`SELECT id, key, value, type, owner_id, collection_name, created_at, updated_at
-				 FROM memories WHERE updated_at > $1 ORDER BY updated_at`), since)
+					 FROM memories WHERE updated_at > $1 ORDER BY updated_at`), since)
 		} else {
-			rows, err = cfg.DB.QueryContext(context.Background(),
+			rows, err = cfg.DB.QueryContext(ctx,
 				Q(`SELECT id, key, value, type, owner_id, collection_name, created_at, updated_at
-				 FROM memories ORDER BY updated_at`))
+					 FROM memories ORDER BY updated_at`))
 		}
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"detail": err.Error()})
@@ -137,6 +146,9 @@ func syncExportMemoriesHandler(cfg APIConfig) fiber.Handler {
 
 func syncImportMemoriesHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		ctx, cancel := syncRequestContext(c)
+		defer cancel()
+
 		if cfg.DB == nil {
 			return c.Status(503).JSON(fiber.Map{"detail": "database not configured"})
 		}
@@ -149,7 +161,7 @@ func syncImportMemoriesHandler(cfg APIConfig) fiber.Handler {
 		for _, m := range memories {
 			// Last-writer-wins: check if existing record is newer
 			var existingUpdated string
-			cfg.DB.QueryRowContext(context.Background(),
+			cfg.DB.QueryRowContext(ctx,
 				Q(`SELECT updated_at FROM memories WHERE key = $1 AND owner_id = $2`),
 				m.Key, m.OwnerID).Scan(&existingUpdated)
 
@@ -162,7 +174,7 @@ func syncImportMemoriesHandler(cfg APIConfig) fiber.Handler {
 				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 				 ON CONFLICT(key, owner_id) DO UPDATE SET value = $3, type = $4, collection_name = $6, updated_at = $8`,
 				m.ID, m.Key, m.Value, m.Type, m.OwnerID, m.CollectionName, m.CreatedAt, m.UpdatedAt)
-			if _, err := cfg.DB.ExecContext(context.Background(), q, qargs...); err == nil {
+			if _, err := cfg.DB.ExecContext(ctx, q, qargs...); err == nil {
 				imported++
 			}
 		}
@@ -187,11 +199,12 @@ func syncImportMemoriesHandler(cfg APIConfig) fiber.Handler {
 						log.Printf("[sync] auto re-embed panic recovered: %v", r)
 					}
 				}()
-				ctx := context.Background()
+				bgCtx, bgCancel := backgroundTaskContext()
+				defer bgCancel()
 
 				for _, m := range memoriesSnapshot {
 					text := m.Key + " " + m.Value
-					vec, err := embedClient.EmbedSingle(ctx, text)
+					vec, err := embedClient.EmbedSingle(bgCtx, text)
 					if err != nil {
 						continue
 					}
@@ -229,20 +242,27 @@ type syncInteraction struct {
 
 func syncExportInteractionsHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		ctx, cancel := syncRequestContext(c)
+		defer cancel()
+
 		if cfg.DB == nil {
 			return c.JSON([]syncInteraction{})
 		}
 		since := c.Query("since")
-		var rows interface{ Next() bool; Scan(...any) error; Close() error }
+		var rows interface {
+			Next() bool
+			Scan(...any) error
+			Close() error
+		}
 		var err error
 		if since != "" {
-			rows, err = cfg.DB.QueryContext(context.Background(),
+			rows, err = cfg.DB.QueryContext(ctx,
 				Q(`SELECT id, session_id, user_id, query, response, search_type, created_at
-				 FROM interactions WHERE created_at > $1 ORDER BY created_at`), since)
+					 FROM interactions WHERE created_at > $1 ORDER BY created_at`), since)
 		} else {
-			rows, err = cfg.DB.QueryContext(context.Background(),
+			rows, err = cfg.DB.QueryContext(ctx,
 				Q(`SELECT id, session_id, user_id, query, response, search_type, created_at
-				 FROM interactions ORDER BY created_at`))
+					 FROM interactions ORDER BY created_at`))
 		}
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"detail": err.Error()})
@@ -263,6 +283,9 @@ func syncExportInteractionsHandler(cfg APIConfig) fiber.Handler {
 
 func syncImportInteractionsHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		ctx, cancel := syncRequestContext(c)
+		defer cancel()
+
 		if cfg.DB == nil {
 			return c.Status(503).JSON(fiber.Map{"detail": "database not configured"})
 		}
@@ -277,7 +300,7 @@ func syncImportInteractionsHandler(cfg APIConfig) fiber.Handler {
 				 VALUES ($1, $2, $3, $4, $5, $6, $7)
 				 ON CONFLICT(id) DO NOTHING`,
 				i.ID, i.SessionID, i.UserID, i.Query, i.Response, i.SearchType, i.CreatedAt)
-			res, err := cfg.DB.ExecContext(context.Background(), q, qargs...)
+			res, err := cfg.DB.ExecContext(ctx, q, qargs...)
 			if err == nil {
 				if n, _ := res.RowsAffected(); n > 0 {
 					imported++
@@ -316,12 +339,15 @@ type syncGraphEdge struct {
 
 func syncExportGraphHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		ctx, cancel := syncRequestContext(c)
+		defer cancel()
+
 		if cfg.DB == nil {
 			return c.JSON(syncGraph{Nodes: []syncGraphNode{}, Edges: []syncGraphEdge{}})
 		}
 		g := syncGraph{}
 
-		nodeRows, err := cfg.DB.QueryContext(context.Background(),
+		nodeRows, err := cfg.DB.QueryContext(ctx,
 			Q(`SELECT id, name, type, COALESCE(description,''), COALESCE(properties,'{}') FROM graph_nodes`))
 		if err == nil {
 			defer nodeRows.Close()
@@ -337,7 +363,7 @@ func syncExportGraphHandler(cfg APIConfig) fiber.Handler {
 			g.Nodes = []syncGraphNode{}
 		}
 
-		edgeRows, err := cfg.DB.QueryContext(context.Background(),
+		edgeRows, err := cfg.DB.QueryContext(ctx,
 			Q(`SELECT id, source_id, target_id, relationship_name, COALESCE(properties,'{}') FROM graph_edges`))
 		if err == nil {
 			defer edgeRows.Close()
@@ -359,6 +385,9 @@ func syncExportGraphHandler(cfg APIConfig) fiber.Handler {
 
 func syncImportGraphHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		ctx, cancel := syncRequestContext(c)
+		defer cancel()
+
 		if cfg.DB == nil {
 			return c.Status(503).JSON(fiber.Map{"detail": "database not configured"})
 		}
@@ -374,7 +403,7 @@ func syncImportGraphHandler(cfg APIConfig) fiber.Handler {
 				 VALUES ($1, $2, $3, $4, $5)
 				 ON CONFLICT(id) DO UPDATE SET name = $2, type = $3, description = $4, properties = $5`,
 				n.ID, n.Name, n.Type, n.Description, n.Properties)
-			if _, err := cfg.DB.ExecContext(context.Background(), q, qargs...); err == nil {
+			if _, err := cfg.DB.ExecContext(ctx, q, qargs...); err == nil {
 				nodesImported++
 			}
 		}
@@ -384,14 +413,14 @@ func syncImportGraphHandler(cfg APIConfig) fiber.Handler {
 				 VALUES ($1, $2, $3, $4, $5)
 				 ON CONFLICT(id) DO UPDATE SET source_id = $2, target_id = $3, relationship_name = $4, properties = $5`,
 				e.ID, e.SourceID, e.TargetID, e.RelationshipName, e.Properties)
-			if _, err := cfg.DB.ExecContext(context.Background(), q, qargs...); err == nil {
+			if _, err := cfg.DB.ExecContext(ctx, q, qargs...); err == nil {
 				edgesImported++
 			}
 		}
 
 		return c.JSON(fiber.Map{
 			"nodes_imported": nodesImported, "edges_imported": edgesImported,
-			"nodes_total":    len(g.Nodes), "edges_total": len(g.Edges),
+			"nodes_total": len(g.Nodes), "edges_total": len(g.Edges),
 		})
 	}
 }
@@ -399,9 +428,9 @@ func syncImportGraphHandler(cfg APIConfig) fiber.Handler {
 // ── Collection Sync (vectors via re-embedding) ──
 
 type syncCollectionExport struct {
-	Collection  string               `json:"collection"`
-	SourceModel string               `json:"source_model"`
-	SourceDim   int                  `json:"source_dim"`
+	Collection  string                 `json:"collection"`
+	SourceModel string                 `json:"source_model"`
+	SourceDim   int                    `json:"source_dim"`
 	Records     []syncCollectionRecord `json:"records"`
 }
 
@@ -526,7 +555,8 @@ func syncImportCollectionHandler(cfg APIConfig) fiber.Handler {
 				}
 			}()
 			start := time.Now()
-			ctx := context.Background()
+			bgCtx, bgCancel := backgroundTaskContext()
+			defer bgCancel()
 
 			// Custom batch size means we keep constructing a one-off
 			// client here — production-shared cfg.EmbedClient uses
@@ -534,7 +564,7 @@ func syncImportCollectionHandler(cfg APIConfig) fiber.Handler {
 			embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, batchSize, 3)
 
 			// Auto-detect target dimension
-			testVecs, err := embedClient.EmbedTexts(ctx, []string{export.Records[0].Text})
+			testVecs, err := embedClient.EmbedTexts(bgCtx, []string{export.Records[0].Text})
 			if err != nil || len(testVecs) == 0 {
 				status.Status = "FAILED"
 				status.Message = fmt.Sprintf("embed test failed: %v", err)
@@ -567,7 +597,7 @@ func syncImportCollectionHandler(cfg APIConfig) fiber.Handler {
 					texts[j] = r.Text
 				}
 
-				vecs, err := embedClient.EmbedTexts(ctx, texts)
+				vecs, err := embedClient.EmbedTexts(bgCtx, texts)
 				if err != nil {
 					log.Printf("[sync-import] batch %d-%d embed error: %v", i, end, err)
 					status.Failed += len(batch)
@@ -595,8 +625,8 @@ func syncImportCollectionHandler(cfg APIConfig) fiber.Handler {
 		}()
 
 		return c.JSON(fiber.Map{
-			"status": "started",
-			"run_id": runID,
+			"status":     "started",
+			"run_id":     runID,
 			"collection": export.Collection,
 			"records":    len(export.Records),
 			"source":     fmt.Sprintf("%s (dim=%d)", export.SourceModel, export.SourceDim),
@@ -622,6 +652,8 @@ func syncImportCollectionStatusHandler() fiber.Handler {
 func SyncPull(cfg APIConfig, remoteURL string, types []string, since string) map[string]any {
 	results := map[string]any{}
 	client := &http.Client{Timeout: 30 * time.Second}
+	bgCtx, bgCancel := backgroundTaskContext()
+	defer bgCancel()
 
 	shouldSync := func(t string) bool {
 		if len(types) == 0 {
@@ -651,7 +683,7 @@ func SyncPull(cfg APIConfig, remoteURL string, types []string, since string) map
 				imported, skipped := 0, 0
 				for _, m := range memories {
 					var existingUpdated string
-					cfg.DB.QueryRowContext(context.Background(),
+					cfg.DB.QueryRowContext(bgCtx,
 						Q(`SELECT updated_at FROM memories WHERE key = $1 AND owner_id = $2`),
 						m.Key, m.OwnerID).Scan(&existingUpdated)
 					if existingUpdated != "" && existingUpdated >= m.UpdatedAt {
@@ -659,10 +691,10 @@ func SyncPull(cfg APIConfig, remoteURL string, types []string, since string) map
 						continue
 					}
 					q, qargs := QArgs(`INSERT INTO memories (id, key, value, type, owner_id, collection_name, created_at, updated_at)
-						 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-						 ON CONFLICT(key, owner_id) DO UPDATE SET value = $3, type = $4, collection_name = $6, updated_at = $8`,
+							 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+							 ON CONFLICT(key, owner_id) DO UPDATE SET value = $3, type = $4, collection_name = $6, updated_at = $8`,
 						m.ID, m.Key, m.Value, m.Type, m.OwnerID, m.CollectionName, m.CreatedAt, m.UpdatedAt)
-					if _, err := cfg.DB.ExecContext(context.Background(), q, qargs...); err == nil {
+					if _, err := cfg.DB.ExecContext(bgCtx, q, qargs...); err == nil {
 						imported++
 					}
 				}
@@ -689,10 +721,10 @@ func SyncPull(cfg APIConfig, remoteURL string, types []string, since string) map
 				imported := 0
 				for _, i := range interactions {
 					q, qargs := QArgs(`INSERT INTO interactions (id, session_id, user_id, query, response, search_type, created_at)
-						 VALUES ($1, $2, $3, $4, $5, $6, $7)
-						 ON CONFLICT(id) DO NOTHING`,
+							 VALUES ($1, $2, $3, $4, $5, $6, $7)
+							 ON CONFLICT(id) DO NOTHING`,
 						i.ID, i.SessionID, i.UserID, i.Query, i.Response, i.SearchType, i.CreatedAt)
-					if res, err := cfg.DB.ExecContext(context.Background(), q, qargs...); err == nil {
+					if res, err := cfg.DB.ExecContext(bgCtx, q, qargs...); err == nil {
 						if n, _ := res.RowsAffected(); n > 0 {
 							imported++
 						}
@@ -717,19 +749,19 @@ func SyncPull(cfg APIConfig, remoteURL string, types []string, since string) map
 				nodesImported, edgesImported := 0, 0
 				for _, n := range g.Nodes {
 					q, qargs := QArgs(`INSERT INTO graph_nodes (id, name, type, description, properties)
-						 VALUES ($1, $2, $3, $4, $5)
-						 ON CONFLICT(id) DO UPDATE SET name = $2, type = $3, description = $4, properties = $5`,
+							 VALUES ($1, $2, $3, $4, $5)
+							 ON CONFLICT(id) DO UPDATE SET name = $2, type = $3, description = $4, properties = $5`,
 						n.ID, n.Name, n.Type, n.Description, n.Properties)
-					if _, err := cfg.DB.ExecContext(context.Background(), q, qargs...); err == nil {
+					if _, err := cfg.DB.ExecContext(bgCtx, q, qargs...); err == nil {
 						nodesImported++
 					}
 				}
 				for _, e := range g.Edges {
 					q, qargs := QArgs(`INSERT INTO graph_edges (id, source_id, target_id, relationship_name, properties)
-						 VALUES ($1, $2, $3, $4, $5)
-						 ON CONFLICT(id) DO UPDATE SET source_id = $2, target_id = $3, relationship_name = $4, properties = $5`,
+							 VALUES ($1, $2, $3, $4, $5)
+							 ON CONFLICT(id) DO UPDATE SET source_id = $2, target_id = $3, relationship_name = $4, properties = $5`,
 						e.ID, e.SourceID, e.TargetID, e.RelationshipName, e.Properties)
-					if _, err := cfg.DB.ExecContext(context.Background(), q, qargs...); err == nil {
+					if _, err := cfg.DB.ExecContext(bgCtx, q, qargs...); err == nil {
 						edgesImported++
 					}
 				}

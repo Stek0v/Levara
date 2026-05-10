@@ -1,6 +1,10 @@
 package metrics
 
 import (
+	"context"
+	"errors"
+	"time"
+
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
@@ -167,6 +171,24 @@ var (
 		Name: "levara_rag_verify_dropped_total",
 		Help: "Result rows dropped by verify stage, by search type and reason (low_score|bad_metadata)",
 	}, []string{"search_type", "reason"})
+
+	// 15. External calls (T2-B). Unified observability across every outbound
+	// dependency the request path touches. {target} identifies the system
+	// (neo4j, postgres-graph, embed, llm, rerank), {op} the logical action
+	// (read, write, query, embed, complete, rerank), and for the duration
+	// histogram {result} captures the outcome (ok, error, timeout, cancelled).
+	// Eager-init in init() materializes the cells so dashboards see zero
+	// series instead of "no data".
+	ExternalCallDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "levara_external_call_duration_seconds",
+		Help:    "Outbound dependency call latency by target, operation, and result",
+		Buckets: []float64{.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10, 30},
+	}, []string{"target", "op", "result"})
+
+	ExternalCallTimeouts = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "levara_external_call_timeouts_total",
+		Help: "Outbound dependency calls that exceeded their request-scoped deadline",
+	}, []string{"target", "op"})
 )
 
 func init() {
@@ -184,4 +206,46 @@ func init() {
 		RAGVerifyDroppedTotal.WithLabelValues(st, "low_score")
 		RAGVerifyDroppedTotal.WithLabelValues(st, "bad_metadata")
 	}
+
+	// Eager-init external-call cells so /metrics shows the full label space
+	// from process start. Lazy promauto leaves un-fired combinations
+	// invisible — dashboards and alerts then read "no data" instead of
+	// recognizing a healthy zero. Keep this list in sync with ObserveExternalCall
+	// callers.
+	for _, ts := range [][2]string{
+		{"neo4j", "read"},
+		{"neo4j", "write"},
+		{"neo4j", "query"},
+		{"postgres-graph", "read"},
+		{"postgres-graph", "write"},
+		{"embed", "embed"},
+		{"llm", "complete"},
+		{"rerank", "rerank"},
+	} {
+		for _, result := range []string{"ok", "error", "timeout", "cancelled"} {
+			ExternalCallDuration.WithLabelValues(ts[0], ts[1], result)
+		}
+		ExternalCallTimeouts.WithLabelValues(ts[0], ts[1])
+	}
+}
+
+// ObserveExternalCall records duration and outcome of an outbound dependency
+// call. err==nil → "ok"; ctx-deadline hits → "timeout" plus a counter bump;
+// ctx-cancellation → "cancelled"; anything else → "error". Designed to be
+// invoked via `defer metrics.ObserveExternalCall(target, op, time.Now(), &err)`
+// so the named return propagates the call's err verbatim.
+func ObserveExternalCall(target, op string, start time.Time, err *error) {
+	result := "ok"
+	if err != nil && *err != nil {
+		switch {
+		case errors.Is(*err, context.DeadlineExceeded):
+			result = "timeout"
+			ExternalCallTimeouts.WithLabelValues(target, op).Inc()
+		case errors.Is(*err, context.Canceled):
+			result = "cancelled"
+		default:
+			result = "error"
+		}
+	}
+	ExternalCallDuration.WithLabelValues(target, op, result).Observe(time.Since(start).Seconds())
 }

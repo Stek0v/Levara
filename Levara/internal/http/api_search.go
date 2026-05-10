@@ -20,13 +20,14 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"unicode"
 	"time"
+	"unicode"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 
 	"github.com/stek0v/levara/internal/metrics"
+	"github.com/stek0v/levara/pipeline"
 	"github.com/stek0v/levara/pkg/bm25"
 	"github.com/stek0v/levara/pkg/graph"
 	"github.com/stek0v/levara/pkg/graphdb"
@@ -35,7 +36,6 @@ import (
 	"github.com/stek0v/levara/pkg/rerank"
 	"github.com/stek0v/levara/pkg/router"
 	"github.com/stek0v/levara/pkg/temporal"
-	"github.com/stek0v/levara/pipeline"
 )
 
 // ── U5: Levara Search ──
@@ -44,17 +44,17 @@ type UnifiedSearchRequest struct {
 	QueryText         string   `json:"query_text"`
 	QueryType         string   `json:"query_type"` // CHUNKS, GRAPH_COMPLETION, etc.
 	TopK              int      `json:"top_k"`
-	CypherQuery       string   `json:"cypher_query"`  // Raw Cypher for CYPHER search type
-	Collection        string   `json:"collection"`    // Filter search to one collection (empty = all)
-	Domain            string   `json:"domain"`         // Optional: filter to collections tagged with this domain
-	SessionID         string   `json:"session_id"`    // Conversational memory: load prior interactions
-	Tags              []string `json:"tags"`           // Optional: filter results by metadata tags
-	Rerank            bool     `json:"rerank"`         // Optional: rerank results via cross-encoder
-	IncludeDebug      bool     `json:"include_debug"`  // Optional: envelope list responses with debug metadata
+	CypherQuery       string   `json:"cypher_query"`    // Raw Cypher for CYPHER search type
+	Collection        string   `json:"collection"`      // Filter search to one collection (empty = all)
+	Domain            string   `json:"domain"`          // Optional: filter to collections tagged with this domain
+	SessionID         string   `json:"session_id"`      // Conversational memory: load prior interactions
+	Tags              []string `json:"tags"`            // Optional: filter results by metadata tags
+	Rerank            bool     `json:"rerank"`          // Optional: rerank results via cross-encoder
+	IncludeDebug      bool     `json:"include_debug"`   // Optional: envelope list responses with debug metadata
 	StrictGrounded    bool     `json:"strict_grounded"` // Optional: abstain if no evidence_ids
-	VerifyResults     bool     `json:"verify_results"` // Optional: verify metadata JSON and filter malformed rows
-	MinScore          float64  `json:"min_score"`      // Optional: drop hits below this score
-	AllowedDatasetIDs []string `json:"-"`              // RBAC: nil = no filtering (dev mode)
+	VerifyResults     bool     `json:"verify_results"`  // Optional: verify metadata JSON and filter malformed rows
+	MinScore          float64  `json:"min_score"`       // Optional: drop hits below this score
+	AllowedDatasetIDs []string `json:"-"`               // RBAC: nil = no filtering (dev mode)
 }
 
 // isQueryWordRune reports whether r is part of a meaningful query token.
@@ -95,7 +95,9 @@ func extractQueryEntities(ctx context.Context, db *sql.DB, query string) []strin
 	var names []string
 	for rows.Next() {
 		var n string
-		if rows.Scan(&n) == nil { names = append(names, n) }
+		if rows.Scan(&n) == nil {
+			names = append(names, n)
+		}
 	}
 	return names
 }
@@ -288,9 +290,13 @@ func searchHandler(cfg APIConfig) fiber.Handler {
 			req.TopK = 10
 		}
 
+		// Request-scoped deadline for all downstream operations in this call.
+		reqCtx, cancel := searchRequestContext(c)
+		defer cancel()
+
 		// RBAC: resolve allowed dataset IDs for this user
 		userID, _ := c.Locals("user_id").(string)
-		req.AllowedDatasetIDs = GetAllowedDatasetIDs(cfg.DB, context.Background(), userID)
+		req.AllowedDatasetIDs = GetAllowedDatasetIDs(cfg.DB, reqCtx, userID)
 
 		queryType := strings.ToUpper(req.QueryType)
 
@@ -327,12 +333,12 @@ func searchHandler(cfg APIConfig) fiber.Handler {
 			queryType = d.SearchType
 		}
 
-			metrics.SearchRequestsByType.WithLabelValues(queryType, source).Inc()
-			c.Locals("routing_source", source)
+		metrics.SearchRequestsByType.WithLabelValues(queryType, source).Inc()
+		c.Locals("routing_source", source)
 
-			// Store routing metadata for response enrichment
-			if routingDecision != nil {
-				c.Locals("routing_decision", routingDecision)
+		// Store routing metadata for response enrichment
+		if routingDecision != nil {
+			c.Locals("routing_decision", routingDecision)
 		}
 
 		// T5: strategy dispatch through the registry. Unknown query_type
@@ -369,6 +375,8 @@ func chunksSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 	if cfg.EmbedEndpoint == "" || cfg.Collections == nil {
 		return respondSearchItems(c, req, "CHUNKS", []any{})
 	}
+	ctx, cancel := searchRequestContext(c)
+	defer cancel()
 
 	// Create reranker if requested and endpoint configured
 	var rerankClient *rerank.Client
@@ -400,9 +408,9 @@ func chunksSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 			var err error
 			rerankedThisCall := false
 			if rerankClient != nil && rerankClient.Enabled() {
-				results, rerankedThisCall, err = sp.SearchByTextWithRerank(context.Background(), coll, sq, req.TopK)
+				results, rerankedThisCall, err = sp.SearchByTextWithRerank(ctx, coll, sq, req.TopK)
 			} else {
-				results, err = sp.SearchByText(context.Background(), coll, sq, req.TopK)
+				results, err = sp.SearchByText(ctx, coll, sq, req.TopK)
 			}
 			if err != nil {
 				continue
@@ -425,18 +433,20 @@ func chunksSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 
 	// Graph-aware reranking: boost results that are graph-neighbors of query entities
 	if cfg.DB != nil && len(allResults) > 1 {
-		queryEntityNames := extractQueryEntities(context.Background(), cfg.DB, req.QueryText)
+		queryEntityNames := extractQueryEntities(ctx, cfg.DB, req.QueryText)
 		if len(queryEntityNames) > 0 {
 			grResults := make([]graphrank.ScoredResult, len(allResults))
 			for i, r := range allResults {
 				score, _ := r["score"].(float32)
 				if score == 0 {
-					if fs, ok := r["fused_score"].(float64); ok { score = float32(fs) }
+					if fs, ok := r["fused_score"].(float64); ok {
+						score = float32(fs)
+					}
 				}
 				meta, _ := r["metadata"].(json.RawMessage)
 				grResults[i] = graphrank.ScoredResult{ID: r["id"].(string), Score: score, Metadata: meta}
 			}
-			reranked := graphrank.RerankWithGraph(context.Background(), cfg.DB, queryEntityNames, grResults, graphrank.DefaultConfig())
+			reranked := graphrank.RerankWithGraph(ctx, cfg.DB, queryEntityNames, grResults, graphrank.DefaultConfig())
 			for i, r := range reranked {
 				allResults[i]["id"] = r.ID
 				allResults[i]["score"] = r.Score
@@ -492,6 +502,8 @@ func hybridSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 	if cfg.EmbedEndpoint == "" || cfg.Collections == nil {
 		return respondSearchItems(c, req, "HYBRID", []any{})
 	}
+	ctx, cancel := searchRequestContext(c)
+	defer cancel()
 
 	var rerankClient *rerank.Client
 	if req.Rerank && cfg.RerankEndpoint != "" {
@@ -506,7 +518,7 @@ func hybridSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 
 	for _, coll := range colls {
 		// Vector search
-		vectorResults, err := sp.SearchByText(context.Background(), coll, req.QueryText, req.TopK*2)
+		vectorResults, err := sp.SearchByText(ctx, coll, req.QueryText, req.TopK*2)
 		if err != nil {
 			continue
 		}
@@ -520,7 +532,7 @@ func hybridSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 		// BM25 search with optional graph-based query expansion
 		bm25Query := req.QueryText
 		if cfg.DB != nil {
-			if expanded := expandQueryFromGraph(context.Background(), cfg.DB, req.QueryText); expanded != "" {
+			if expanded := expandQueryFromGraph(ctx, cfg.DB, req.QueryText); expanded != "" {
 				bm25Query = req.QueryText + " " + expanded
 			}
 		}
@@ -558,6 +570,9 @@ func hybridSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 }
 
 func temporalSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
+	ctx, cancel := searchRequestContext(c)
+	defer cancel()
+
 	// Step 1: Extract dates from query text
 	events := temporal.ExtractTimestamps(req.QueryText, time.Now())
 
@@ -568,12 +583,12 @@ func temporalSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error
 		if ok {
 			// Step 2: Try Neo4j temporal query
 			if cfg.Neo4jCfg.Neo4jURL != "" {
-				temporalResults = temporalSearchNeo4j(context.Background(), cfg, from, to, req.TopK)
+				temporalResults = temporalSearchNeo4j(ctx, cfg, from, to, req.TopK)
 			}
 
 			// Step 3: Fallback to PostgreSQL if Neo4j returned nothing
 			if len(temporalResults) == 0 && cfg.DB != nil {
-				temporalResults = temporalSearchPostgres(context.Background(), cfg, from, to, req.TopK)
+				temporalResults = temporalSearchPostgres(ctx, cfg, from, to, req.TopK)
 			}
 		}
 	}
@@ -586,7 +601,7 @@ func temporalSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error
 
 		colls := resolveCollections(cfg, req)
 		for _, coll := range colls {
-			results, err := sp.SearchByText(context.Background(), coll, req.QueryText, req.TopK)
+			results, err := sp.SearchByText(ctx, coll, req.QueryText, req.TopK)
 			if err != nil {
 				continue
 			}
@@ -670,13 +685,13 @@ func temporalSearchNeo4j(ctx context.Context, cfg APIConfig, from, to time.Time,
 		entityID, _ := row["entity_id"].(string)
 
 		results = append(results, fiber.Map{
-			"id":         entityID,
-			"name":       name,
-			"type":       typ,
+			"id":          entityID,
+			"name":        name,
+			"type":        typ,
 			"description": desc,
-			"date":       date,
-			"date_str":   dateStr,
-			"source":     "neo4j_temporal",
+			"date":        date,
+			"date_str":    dateStr,
+			"source":      "neo4j_temporal",
 		})
 	}
 	return results
@@ -751,6 +766,8 @@ func ragCompletionSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) 
 			"abstain_reason": "embedding backend unavailable",
 		}))
 	}
+	ctx, cancel := searchRequestContext(c)
+	defer cancel()
 
 	// Step 1: vector search (same as chunksSearch)
 	embedClient := cfg.EmbedClient
@@ -762,8 +779,10 @@ func ragCompletionSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) 
 	for _, coll := range colls {
 		// Overfetch: entities don't have text, need more results to find chunks
 		fetchK := req.TopK * 3
-		if fetchK < 20 { fetchK = 20 }
-		results, err := sp.SearchByText(context.Background(), coll, req.QueryText, fetchK)
+		if fetchK < 20 {
+			fetchK = 20
+		}
+		results, err := sp.SearchByText(ctx, coll, req.QueryText, fetchK)
 		if err != nil {
 			continue
 		}
@@ -834,7 +853,7 @@ func ragCompletionSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) 
 		// Load conversation history if session_id provided
 		var historySection string
 		if req.SessionID != "" && cfg.DB != nil {
-			rows, err := cfg.DB.QueryContext(context.Background(),
+			rows, err := cfg.DB.QueryContext(ctx,
 				Q(`SELECT query, response FROM interactions
 				   WHERE session_id = $1 ORDER BY created_at DESC LIMIT 5`), req.SessionID)
 			if err == nil {
@@ -858,11 +877,11 @@ func ragCompletionSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) 
 		prompt := fmt.Sprintf("Based on the following context, answer the question.%s\n\nContext:\n%s\n\nQuestion: %s\n\nAnswer:",
 			historySection, strings.Join(contextParts, "\n"), req.QueryText)
 
-		answer = callLLMFromAPI(llmEndpoint, llmModel, prompt, cfg.LLMProvider)
+		answer = callLLMFromAPI(ctx, llmEndpoint, llmModel, prompt, cfg.LLMProvider)
 
 		// Save this interaction for future conversational context
 		if req.SessionID != "" && cfg.DB != nil {
-			cfg.DB.ExecContext(context.Background(),
+			cfg.DB.ExecContext(ctx,
 				Q(`INSERT INTO interactions (id, session_id, user_id, query, response, search_type, created_at)
 				   VALUES ($1, $2, $3, $4, $5, $6, NOW())`),
 				uuid.New().String(), req.SessionID, "", req.QueryText, truncate(answer, 500), "RAG_COMPLETION")
@@ -888,6 +907,8 @@ func summariesSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) erro
 	if cfg.EmbedEndpoint == "" || cfg.Collections == nil {
 		return respondSearchItems(c, req, "SUMMARIES", []any{})
 	}
+	ctx, cancel := searchRequestContext(c)
+	defer cancel()
 
 	embedClient := cfg.EmbedClient
 	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections, nil)
@@ -903,7 +924,7 @@ func summariesSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) erro
 			continue
 		}
 
-		results, err := sp.SearchByText(context.Background(), coll, req.QueryText, req.TopK)
+		results, err := sp.SearchByText(ctx, coll, req.QueryText, req.TopK)
 		if err != nil {
 			continue
 		}
@@ -940,7 +961,7 @@ func summariesSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) erro
 				 name ILIKE '%' || $1 || '%' OR description ILIKE '%' || $1 || '%'
 			 ) LIMIT $2`, req.QueryText, req.TopK)
 		}
-		rows, err := cfg.DB.QueryContext(context.Background(), sqlQuery, sqlArgs...)
+		rows, err := cfg.DB.QueryContext(ctx, sqlQuery, sqlArgs...)
 		if err == nil {
 			defer rows.Close()
 			for rows.Next() {
@@ -969,10 +990,10 @@ func summariesSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) erro
 // callLLMFromAPI is a standalone LLM call helper for search handlers.
 // If provider is non-nil, uses the provider abstraction (supports Anthropic, etc.).
 // Otherwise falls back to raw HTTP POST to OpenAI-compatible endpoint.
-func callLLMFromAPI(endpoint, model, prompt string, provider ...llm.Provider) string {
+func callLLMFromAPI(ctx context.Context, endpoint, model, prompt string, provider ...llm.Provider) string {
 	// Provider path: use abstraction if available.
 	if len(provider) > 0 && provider[0] != nil {
-		resp, err := provider[0].ChatCompletion(context.Background(), llm.CompletionRequest{
+		resp, err := provider[0].ChatCompletion(ctx, llm.CompletionRequest{
 			Model:       model,
 			Messages:    []llm.Message{{Role: "user", Content: prompt}},
 			Temperature: 0.3,
@@ -995,7 +1016,12 @@ func callLLMFromAPI(endpoint, model, prompt string, provider ...llm.Provider) st
 	}
 
 	jsonBody, _ := json.Marshal(body)
-	resp, err := http.Post(endpoint+"/chat/completions", "application/json", bytes.NewReader(jsonBody))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"/chat/completions", bytes.NewReader(jsonBody))
+	if err != nil {
+		return ""
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return ""
 	}
