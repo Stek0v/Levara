@@ -1543,7 +1543,7 @@ func runMetadataMarkdown(req workspaceRunStartRequest, runID string) string {
 	for _, k := range keys {
 		b.WriteString(k)
 		b.WriteString(": ")
-		b.WriteString(fmt.Sprint(meta[k]))
+		fmt.Fprint(&b, meta[k])
 		b.WriteByte('\n')
 	}
 	b.WriteString("---\n")
