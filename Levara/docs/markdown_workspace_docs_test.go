@@ -199,10 +199,18 @@ func TestMarkdownWorkspaceCapabilityParity(t *testing.T) {
 	for _, required := range []string{
 		"| Access preflight | `POST /workspace/access/check` | `not exposed` | `workspace_access_check` | `intentional-gap` |",
 		"| Bootstrap context | `GET /workspace/context` | `levara workspace context` | `workspace_context` | `parity` |",
+		"| Manifest read | `GET /workspace/manifest` | `levara workspace manifest` | `workspace_manifest` | `parity` |",
 		"| Exact read | `GET /workspace/read` | `levara workspace read` | `workspace_read` | `parity` |",
 		"| Indexed write | `POST /workspace/write` | `levara workspace write` | `workspace_write` | `parity` |",
+		"| Direct index file | `POST /workspace/index` | `levara workspace index` | `workspace_index` | `parity` |",
+		"| Delete indexed path | `POST /workspace/delete` | `levara workspace delete` | `workspace_delete` | `parity` |",
+		"| Reindex paths | `POST /workspace/reindex` | `levara workspace reindex` | `workspace_reindex_paths` | `parity` |",
+		"| Reconcile generation | `POST /workspace/reconcile` | `levara workspace reconcile` | `workspace_reconcile` | `parity` |",
+		"| Watch status | `GET /workspace/watch/status` | `levara workspace watch-status` | `workspace_watch_status` | `parity` |",
 		"| Run start | `POST /workspace/runs/start` | `levara workspace run start` | `workspace_run_start` | `parity` |",
+		"| Run get | `GET /workspace/runs/get` | `levara workspace run get` | `workspace_run_get` | `parity` |",
 		"| Commit | `POST /workspace/commit` | `levara workspace commit` | `workspace_commit` | `parity` |",
+		"| Log | `GET /workspace/log` | `levara workspace log` | `workspace_log` | `parity` |",
 		"| Revert | `POST /workspace/revert` | `levara workspace revert` | `workspace_revert` | `parity` |",
 		"| GC / dry-run | `POST /workspace/gc` | `levara workspace gc` | `workspace_gc` | `parity` |",
 		"| Search by active generation | `GET /search` plus workspace resolution in server layer | `levara search ...` | `workspace_search` | `functional-parity` |",
@@ -220,6 +228,215 @@ func TestMarkdownWorkspaceCapabilityParity(t *testing.T) {
 		if !strings.Contains(text, section) {
 			t.Fatalf("capability parity doc missing %q", section)
 		}
+	}
+}
+
+func TestMarkdownWorkspaceCapabilityParityMatchesSource(t *testing.T) {
+	docRaw, err := os.ReadFile("markdown-workspace-capability-parity.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	docText := string(docRaw)
+
+	workspaceRaw, err := os.ReadFile(filepath.Join("..", "internal", "http", "workspace.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspaceText := string(workspaceRaw)
+
+	mcpRaw, err := os.ReadFile(filepath.Join("..", "internal", "http", "mcp.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mcpText := string(mcpRaw)
+
+	cliRaw, err := os.ReadFile(filepath.Join("..", "cmd", "cli", "main.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cliText := string(cliRaw)
+
+	type parityRow struct {
+		name         string
+		docRow       string
+		restNeedle   string
+		cliNeedle    string
+		mcpNeedle    string
+		cliForbidden string
+		mcpForbidden string
+	}
+
+	rows := []parityRow{
+		{
+			name:         "access preflight",
+			docRow:       "| Access preflight | `POST /workspace/access/check` | `not exposed` | `workspace_access_check` | `intentional-gap` |",
+			restNeedle:   `app.Post("/workspace/access/check", workspaceAccessCheckHandler(cfg))`,
+			mcpNeedle:    `case "workspace_access_check":`,
+			cliForbidden: `case "access-check":`,
+		},
+		{
+			name:       "bootstrap context",
+			docRow:     "| Bootstrap context | `GET /workspace/context` | `levara workspace context` | `workspace_context` | `parity` |",
+			restNeedle: `app.Get("/workspace/context", workspaceContextHandler(cfg))`,
+			cliNeedle:  `case "context":`,
+			mcpNeedle:  `case "workspace_context":`,
+		},
+		{
+			name:         "audit log",
+			docRow:       "| Audit log | `GET /workspace/audit` | `not exposed` | `workspace_audit_log` | `intentional-gap` |",
+			restNeedle:   `app.Get("/workspace/audit", workspaceAuditLogHandler(cfg))`,
+			mcpNeedle:    `case "workspace_audit_log":`,
+			cliForbidden: `case "audit":`,
+		},
+		{
+			name:         "context artifacts list",
+			docRow:       "| Context artifacts list | `GET /workspace/context/artifacts` | `not exposed` | `workspace_context_artifacts` | `intentional-gap` |",
+			restNeedle:   `app.Get("/workspace/context/artifacts", workspaceContextArtifactsHandler(cfg))`,
+			mcpNeedle:    `case "workspace_context_artifacts":`,
+			cliForbidden: `context-artifacts`,
+		},
+		{
+			name:         "context artifacts reindex",
+			docRow:       "| Context artifacts reindex | `POST /workspace/context/artifacts/reindex` | `not exposed` | `workspace_reindex_artifacts` | `intentional-gap` |",
+			restNeedle:   `app.Post("/workspace/context/artifacts/reindex", workspaceReindexArtifactsHandler(cfg))`,
+			mcpNeedle:    `case "workspace_reindex_artifacts":`,
+			cliForbidden: `reindex-artifacts`,
+		},
+		{
+			name:       "ops status",
+			docRow:     "| Ops status | `GET /workspace/ops/status` | `levara workspace ops-status` | `workspace_ops_status` | `parity` |",
+			restNeedle: `app.Get("/workspace/ops/status", workspaceOpsStatusHandler(cfg))`,
+			cliNeedle:  `case "ops-status":`,
+			mcpNeedle:  `case "workspace_ops_status":`,
+		},
+		{
+			name:       "conflict report",
+			docRow:     "| Conflict report | `GET /workspace/conflicts` | `levara workspace conflicts` | `workspace_conflicts` | `parity` |",
+			restNeedle: `app.Get("/workspace/conflicts", workspaceConflictsHandler(cfg))`,
+			cliNeedle:  `case "conflicts":`,
+			mcpNeedle:  `case "workspace_conflicts":`,
+		},
+		{
+			name:       "manifest read",
+			docRow:     "| Manifest read | `GET /workspace/manifest` | `levara workspace manifest` | `workspace_manifest` | `parity` |",
+			restNeedle: `app.Get("/workspace/manifest", workspaceManifestHandler(cfg))`,
+			cliNeedle:  `case "manifest":`,
+			mcpNeedle:  `case "workspace_manifest":`,
+		},
+		{
+			name:       "exact read",
+			docRow:     "| Exact read | `GET /workspace/read` | `levara workspace read` | `workspace_read` | `parity` |",
+			restNeedle: `app.Get("/workspace/read", workspaceReadHandler(cfg))`,
+			cliNeedle:  `case "read":`,
+			mcpNeedle:  `case "workspace_read":`,
+		},
+		{
+			name:       "indexed write",
+			docRow:     "| Indexed write | `POST /workspace/write` | `levara workspace write` | `workspace_write` | `parity` |",
+			restNeedle: `app.Post("/workspace/write", workspaceWriteHandler(cfg))`,
+			cliNeedle:  `case "write":`,
+			mcpNeedle:  `case "workspace_write":`,
+		},
+		{
+			name:       "direct index file",
+			docRow:     "| Direct index file | `POST /workspace/index` | `levara workspace index` | `workspace_index` | `parity` |",
+			restNeedle: `app.Post("/workspace/index", workspaceIndexHandler(cfg))`,
+			cliNeedle:  `case "index":`,
+			mcpNeedle:  `case "workspace_index":`,
+		},
+		{
+			name:       "delete indexed path",
+			docRow:     "| Delete indexed path | `POST /workspace/delete` | `levara workspace delete` | `workspace_delete` | `parity` |",
+			restNeedle: `app.Post("/workspace/delete", workspaceDeleteHandler(cfg))`,
+			cliNeedle:  `case "delete":`,
+			mcpNeedle:  `case "workspace_delete":`,
+		},
+		{
+			name:       "reindex paths",
+			docRow:     "| Reindex paths | `POST /workspace/reindex` | `levara workspace reindex` | `workspace_reindex_paths` | `parity` |",
+			restNeedle: `app.Post("/workspace/reindex", workspaceReindexHandler(cfg))`,
+			cliNeedle:  `case "reindex":`,
+			mcpNeedle:  `case "workspace_reindex_paths":`,
+		},
+		{
+			name:       "reconcile generation",
+			docRow:     "| Reconcile generation | `POST /workspace/reconcile` | `levara workspace reconcile` | `workspace_reconcile` | `parity` |",
+			restNeedle: `app.Post("/workspace/reconcile", workspaceReconcileHandler(cfg))`,
+			cliNeedle:  `case "reconcile":`,
+			mcpNeedle:  `case "workspace_reconcile":`,
+		},
+		{
+			name:       "watch status",
+			docRow:     "| Watch status | `GET /workspace/watch/status` | `levara workspace watch-status` | `workspace_watch_status` | `parity` |",
+			restNeedle: `app.Get("/workspace/watch/status", workspaceWatchStatusHandler(cfg))`,
+			cliNeedle:  `case "watch-status":`,
+			mcpNeedle:  `case "workspace_watch_status":`,
+		},
+		{
+			name:       "run start",
+			docRow:     "| Run start | `POST /workspace/runs/start` | `levara workspace run start` | `workspace_run_start` | `parity` |",
+			restNeedle: `app.Post("/workspace/runs/start", workspaceRunStartHandler(cfg))`,
+			cliNeedle:  `case "run":`,
+			mcpNeedle:  `case "workspace_run_start":`,
+		},
+		{
+			name:       "run get",
+			docRow:     "| Run get | `GET /workspace/runs/get` | `levara workspace run get` | `workspace_run_get` | `parity` |",
+			restNeedle: `app.Get("/workspace/runs/get", workspaceRunGetHandler(cfg))`,
+			cliNeedle:  `case "run":`,
+			mcpNeedle:  `case "workspace_run_get":`,
+		},
+		{
+			name:       "commit",
+			docRow:     "| Commit | `POST /workspace/commit` | `levara workspace commit` | `workspace_commit` | `parity` |",
+			restNeedle: `app.Post("/workspace/commit", workspaceCommitHandler(cfg))`,
+			cliNeedle:  `case "commit":`,
+			mcpNeedle:  `case "workspace_commit":`,
+		},
+		{
+			name:       "log",
+			docRow:     "| Log | `GET /workspace/log` | `levara workspace log` | `workspace_log` | `parity` |",
+			restNeedle: `app.Get("/workspace/log", workspaceLogHandler(cfg))`,
+			cliNeedle:  `case "log":`,
+			mcpNeedle:  `case "workspace_log":`,
+		},
+		{
+			name:       "revert",
+			docRow:     "| Revert | `POST /workspace/revert` | `levara workspace revert` | `workspace_revert` | `parity` |",
+			restNeedle: `app.Post("/workspace/revert", workspaceRevertHandler(cfg))`,
+			cliNeedle:  `case "revert":`,
+			mcpNeedle:  `case "workspace_revert":`,
+		},
+		{
+			name:       "gc dry-run",
+			docRow:     "| GC / dry-run | `POST /workspace/gc` | `levara workspace gc` | `workspace_gc` | `parity` |",
+			restNeedle: `app.Post("/workspace/gc", workspaceGCHandler(cfg))`,
+			cliNeedle:  `case "gc":`,
+			mcpNeedle:  `case "workspace_gc":`,
+		},
+	}
+
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			if !strings.Contains(docText, row.docRow) {
+				t.Fatalf("parity doc missing row %q", row.docRow)
+			}
+			if row.restNeedle != "" && !strings.Contains(workspaceText, row.restNeedle) {
+				t.Fatalf("workspace.go missing REST route %q", row.restNeedle)
+			}
+			if row.cliNeedle != "" && !strings.Contains(cliText, row.cliNeedle) {
+				t.Fatalf("cli main.go missing command dispatch %q", row.cliNeedle)
+			}
+			if row.mcpNeedle != "" && !strings.Contains(mcpText, row.mcpNeedle) {
+				t.Fatalf("mcp.go missing tool dispatch %q", row.mcpNeedle)
+			}
+			if row.cliForbidden != "" && strings.Contains(cliText, row.cliForbidden) {
+				t.Fatalf("cli main.go unexpectedly exposes %q", row.cliForbidden)
+			}
+			if row.mcpForbidden != "" && strings.Contains(mcpText, row.mcpForbidden) {
+				t.Fatalf("mcp.go unexpectedly exposes %q", row.mcpForbidden)
+			}
+		})
 	}
 }
 
