@@ -60,6 +60,7 @@ type HNSWIndex struct {
 	MaxLayer    int
 	Arena       *VectorArena
 	cfg         HNSWConfig
+	randFloat64 func() float64
 	deletedSet  sync.Map // per-instance tombstone set (arena offset → struct{})
 	sync.RWMutex
 }
@@ -86,11 +87,12 @@ func releaseVisited(m map[uint32]struct{}) {
 // NewHNSWIndex returns a new HNSW Index Tree with the given config.
 func NewHNSWIndex(arena *VectorArena, cfg HNSWConfig) *HNSWIndex {
 	return &HNSWIndex{
-		Nodes:      make(map[string]*HNSWNode),
-		nodesByIdx: make([]*HNSWNode, 0, 4096),
-		MaxLayer:   -1,
-		Arena:      arena,
-		cfg:        cfg,
+		Nodes:       make(map[string]*HNSWNode),
+		nodesByIdx:  make([]*HNSWNode, 0, 4096),
+		MaxLayer:    -1,
+		Arena:       arena,
+		cfg:         cfg,
+		randFloat64: rand.Float64,
 	}
 }
 
@@ -114,7 +116,7 @@ func normalizeVec(v []float32) []float32 {
 // randomLevel generates a level for a new node (Geometric Distribution)
 func (h *HNSWIndex) randomLevel() int {
 	lvl := 0
-	for rand.Float64() < 0.5 {
+	for h.randFloat64() < 0.5 {
 		lvl++
 	}
 	return lvl
@@ -163,6 +165,25 @@ func (h *HNSWIndex) registerNode(node *HNSWNode) {
 		h.nodesByIdx = newSlice
 	}
 	h.nodesByIdx[idx] = node
+}
+
+func (h *HNSWIndex) refreshEntryNodeLocked() {
+	var entry *HNSWNode
+	for _, node := range h.nodesByIdx {
+		if node == nil || h.isDeleted(node.ArenaOffset) {
+			continue
+		}
+		if entry == nil || node.Layer > entry.Layer {
+			entry = node
+		}
+	}
+	if entry == nil {
+		h.EntryNodeID = ""
+		h.MaxLayer = -1
+		return
+	}
+	h.EntryNodeID = entry.ID
+	h.MaxLayer = entry.Layer
 }
 
 // vecFn abstracts arena access: GetNoLock during Add (write-locked),
@@ -230,8 +251,14 @@ func (h *HNSWIndex) Add(vector []float32, id string, idx uint32) {
 	h.Lock()
 	defer h.Unlock()
 
-	if existing, exists := h.Nodes[id]; exists && !h.isDeleted(existing.ArenaOffset) {
-		return
+	if existing, exists := h.Nodes[id]; exists {
+		if !h.isDeleted(existing.ArenaOffset) {
+			return
+		}
+		delete(h.Nodes, id)
+		if h.EntryNodeID == id {
+			h.refreshEntryNodeLocked()
+		}
 	}
 
 	level := h.randomLevel()
@@ -289,6 +316,9 @@ func (h *HNSWIndex) Add(vector []float32, id string, idx uint32) {
 		neighbors := h.searchLayerTopK(vector, curr, l, maxConn, getVec)
 
 		for _, sr := range neighbors {
+			if sr.node == nil || l >= len(sr.node.Connections) {
+				continue
+			}
 			newNode.Connections[l] = append(newNode.Connections[l], sr.node.ArenaOffset)
 
 			sr.node.Lock()
