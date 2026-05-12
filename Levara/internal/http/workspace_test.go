@@ -1998,6 +1998,199 @@ func TestWorkspaceWatcherStatusTracksBranches(t *testing.T) {
 	}
 }
 
+func TestWorkspaceSyncLifecycleQueuedReconcileClearsDriftAndFreshness(t *testing.T) {
+	cfg, closeFn := newWorkspaceTestConfig(t)
+	defer closeFn()
+	cfg.WorkspaceWatcher = NewWorkspaceWatchState()
+	app := fiber.New()
+	RegisterWorkspaceAPI(app, cfg)
+	h := &mcpHandler{cfg: cfg}
+	body, status := workspaceTestPost(t, app, "/workspace/write", map[string]any{
+		"project_id":          "payments",
+		"branch":              "main",
+		"generation":          "sync-gen-1",
+		"collection":          "sync_gen_1",
+		"path":                "docs/sync.md",
+		"text":                "# Sync\n\nOriginal sync anchor.",
+		"chunk_strategy":      "paragraph",
+		"min_chunk_chars":     1,
+		"activate_generation": true,
+	})
+	if status != http.StatusOK {
+		t.Fatalf("baseline write status=%d body=%s", status, body)
+	}
+
+	filePath, _, err := workspaceFilePath(cfg, "payments", "main", "docs/sync.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filePath, []byte("# Sync\n\nChanged sync anchor."), 0644); err != nil {
+		t.Fatal(err)
+	}
+	key := workspaceWatchKey{ProjectID: "payments", Branch: "main"}
+	cfg.WorkspaceWatcher.recordBranchChange(key, 1)
+
+	conflictBody := workspaceTestGet(t, app, "/workspace/conflicts?project_id=payments&branch=main", http.StatusOK)
+	var conflicts workspaceConflictResponse
+	if err := json.Unmarshal(conflictBody, &conflicts); err != nil {
+		t.Fatal(err)
+	}
+	if !conflicts.HasConflicts || !conflicts.Watcher.Pending || !workspaceConflictHasPath(conflicts.DirtyPaths, "docs/sync.md") {
+		t.Fatalf("expected drift before reconcile: %+v", conflicts)
+	}
+
+	search := h.executeToolInner(context.Background(), nil, "workspace_search", map[string]any{
+		"project_id":   "payments",
+		"branch":       "main",
+		"search_query": "original sync anchor",
+		"search_type":  "CHUNKS_LEXICAL",
+	})
+	if search.IsError {
+		t.Fatalf("workspace_search before reconcile error: %+v", search.Content)
+	}
+	var searchResp map[string]any
+	if err := json.Unmarshal([]byte(search.Content[0].Text), &searchResp); err != nil {
+		t.Fatal(err)
+	}
+	freshness := searchResp["freshness"].(map[string]any)
+	if freshness["potentially_stale"] != true || freshness["reason"] != "watcher_branch_has_pending_reconcile" {
+		t.Fatalf("freshness before reconcile=%+v, want pending watcher stale signal", freshness)
+	}
+
+	job, err := enqueueWorkspaceIndexJobFromPayload(cfg, workspaceIndexJobPayload{
+		Operation:          "reconcile",
+		ProjectID:          "payments",
+		Branch:             "main",
+		Generation:         "sync-gen-2",
+		ChunkStrategy:      "paragraph",
+		MinChunkChars:      1,
+		ActivateGeneration: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stop := StartWorkspaceIndexWorker(context.Background(), cfg, WorkspaceIndexWorkerOptions{
+		Interval:    10 * time.Millisecond,
+		Backoff:     10 * time.Millisecond,
+		MaxAttempts: 2,
+		Logf:        t.Logf,
+	})
+	defer stop()
+
+	waitForWorkspaceCondition(t, 2*time.Second, func() bool {
+		done, err := loadWorkspaceIndexJobPath(workspaceIndexJobPath(cfg, "payments", "main", job.ID))
+		if err != nil || done.Status != workspaceIndexJobCompleted {
+			return false
+		}
+		manifest, _, err := loadWorkspaceManifest(cfg, "payments", "main")
+		if err != nil {
+			return false
+		}
+		return manifest.ActiveGeneration == "sync-gen-2"
+	})
+	cfg.WorkspaceWatcher.recordReconcile(key, "sync-gen-2", 0)
+
+	conflictBody = workspaceTestGet(t, app, "/workspace/conflicts?project_id=payments&branch=main", http.StatusOK)
+	if err := json.Unmarshal(conflictBody, &conflicts); err != nil {
+		t.Fatal(err)
+	}
+	if conflicts.HasConflicts {
+		t.Fatalf("expected sync lifecycle to clear drift: %+v", conflicts)
+	}
+
+	search = h.executeToolInner(context.Background(), nil, "workspace_search", map[string]any{
+		"project_id":   "payments",
+		"branch":       "main",
+		"search_query": "changed sync anchor",
+		"search_type":  "CHUNKS_LEXICAL",
+	})
+	if search.IsError {
+		t.Fatalf("workspace_search after reconcile error: %+v", search.Content)
+	}
+	if err := json.Unmarshal([]byte(search.Content[0].Text), &searchResp); err != nil {
+		t.Fatal(err)
+	}
+	freshness = searchResp["freshness"].(map[string]any)
+	if freshness["potentially_stale"] != false || freshness["stale"] != false {
+		t.Fatalf("freshness after reconcile=%+v, want fresh active generation", freshness)
+	}
+	results := searchResp["results"].([]any)
+	if len(results) == 0 || !strings.Contains(results[0].(map[string]any)["text"].(string), "Changed sync anchor") {
+		t.Fatalf("search after reconcile missing changed content: %+v", searchResp)
+	}
+}
+
+func TestWorkspaceWatcherStatusReloadKeepsFreshnessSemanticsAcrossRestart(t *testing.T) {
+	cfg, closeFn := newWorkspaceTestConfig(t)
+	defer closeFn()
+	cfg.WorkspaceWatcher = NewWorkspaceWatchState()
+	cfg.WorkspaceWatcher.configurePersistence(workspaceWatchStatusPath(cfg))
+	app := fiber.New()
+	RegisterWorkspaceAPI(app, cfg)
+	h := &mcpHandler{cfg: cfg}
+
+	body, status := workspaceTestPost(t, app, "/workspace/write", map[string]any{
+		"project_id":          "payments",
+		"branch":              "main",
+		"generation":          "persist-sync-gen-1",
+		"collection":          "persist_sync_gen_1",
+		"path":                "docs/persist.md",
+		"text":                "# Persist\n\nPersisted watcher anchor.",
+		"chunk_strategy":      "paragraph",
+		"min_chunk_chars":     1,
+		"activate_generation": true,
+	})
+	if status != http.StatusOK {
+		t.Fatalf("baseline write status=%d body=%s", status, body)
+	}
+
+	key := workspaceWatchKey{ProjectID: "payments", Branch: "main"}
+	cfg.WorkspaceWatcher.recordBranchChange(key, 1)
+
+	reloaded := NewWorkspaceWatchState()
+	if err := reloaded.loadPersisted(workspaceWatchStatusPath(cfg)); err != nil {
+		t.Fatal(err)
+	}
+	cfg.WorkspaceWatcher = reloaded
+	h = &mcpHandler{cfg: cfg}
+
+	search := h.executeToolInner(context.Background(), nil, "workspace_search", map[string]any{
+		"project_id":   "payments",
+		"branch":       "main",
+		"search_query": "persisted watcher anchor",
+		"search_type":  "CHUNKS_LEXICAL",
+	})
+	if search.IsError {
+		t.Fatalf("workspace_search with reloaded watcher error: %+v", search.Content)
+	}
+	var searchResp map[string]any
+	if err := json.Unmarshal([]byte(search.Content[0].Text), &searchResp); err != nil {
+		t.Fatal(err)
+	}
+	freshness := searchResp["freshness"].(map[string]any)
+	if freshness["potentially_stale"] != true || freshness["watcher_branch_pending"] != true {
+		t.Fatalf("reloaded watcher freshness=%+v, want pending stale semantics", freshness)
+	}
+
+	reloaded.recordReconcile(key, "persist-sync-gen-1", 0)
+	search = h.executeToolInner(context.Background(), nil, "workspace_search", map[string]any{
+		"project_id":   "payments",
+		"branch":       "main",
+		"search_query": "persisted watcher anchor",
+		"search_type":  "CHUNKS_LEXICAL",
+	})
+	if search.IsError {
+		t.Fatalf("workspace_search after reloaded reconcile error: %+v", search.Content)
+	}
+	if err := json.Unmarshal([]byte(search.Content[0].Text), &searchResp); err != nil {
+		t.Fatal(err)
+	}
+	freshness = searchResp["freshness"].(map[string]any)
+	if freshness["potentially_stale"] != false {
+		t.Fatalf("freshness after persisted reconcile=%+v, want cleared pending state", freshness)
+	}
+}
+
 func TestWorkspaceAPIRunArtifactsAreDurableMarkdown(t *testing.T) {
 	cfg, closeFn := newWorkspaceTestConfig(t)
 	defer closeFn()
