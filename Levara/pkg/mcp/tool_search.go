@@ -247,10 +247,7 @@ func isHybridSearchType(searchType string) bool {
 }
 
 func searchNeedsVector(a searchArgs) bool {
-	if isLexicalSearchType(a.searchType) {
-		return false
-	}
-	return true
+	return !isLexicalSearchType(a.searchType)
 }
 
 // ToolSearch runs vector, lexical, or hybrid search (+ optional rerank / graph /

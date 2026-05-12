@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"time"
 )
 
@@ -539,30 +538,10 @@ func workspaceSortedPaths(paths []string) []string {
 	return out
 }
 
-func workspaceIndexJobErrorResponse(err error) mcpToolResult {
-	if err == nil {
-		err = errors.New("workspace index job error")
-	}
-	return workspaceMCPError(err)
-}
-
 func workspaceJobStatusSummary(jobs []workspaceIndexJob) map[string]int {
 	out := map[string]int{}
 	for _, job := range jobs {
 		out[string(job.Status)]++
 	}
 	return out
-}
-
-func workspaceIndexJobIDs(jobs []workspaceIndexJob) []string {
-	ids := make([]string, 0, len(jobs))
-	for _, job := range jobs {
-		ids = append(ids, job.ID)
-	}
-	sort.Strings(ids)
-	return ids
-}
-
-func workspaceIndexJobStringList(xs []string) string {
-	return strings.Join(xs, ",")
 }
