@@ -616,6 +616,270 @@ func TestWorkspaceContextArtifactsRegistryListsAndReindexes(t *testing.T) {
 	}
 }
 
+func TestWorkspaceContextArtifactsRegistryRejectsBrokenJSON(t *testing.T) {
+	cfg, closeFn := newWorkspaceTestConfig(t)
+	defer closeFn()
+	app := fiber.New()
+	RegisterWorkspaceAPI(app, cfg)
+
+	registryPath := workspaceContextArtifactRegistryPath(cfg)
+	if err := os.MkdirAll(filepath.Dir(registryPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(registryPath, []byte("{broken-json"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	body := workspaceTestGet(t, app, "/workspace/context/artifacts?project_id=payments&branch=main", http.StatusBadRequest)
+	if !strings.Contains(string(body), "error") {
+		t.Fatalf("broken registry response missing error: %s", body)
+	}
+}
+
+func TestWorkspaceContextArtifactsBranchDeletedAndIndexFiltering(t *testing.T) {
+	cfg, closeFn := newWorkspaceTestConfig(t)
+	defer closeFn()
+	app := fiber.New()
+	RegisterWorkspaceAPI(app, cfg)
+
+	mainAPIPath, _, err := workspaceFilePath(cfg, "payments", "main", "artifacts/api/openapi.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(mainAPIPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mainAPIPath, []byte("openapi: 3.0.0\ninfo:\n  title: Main API\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	devAPIPath, _, err := workspaceFilePath(cfg, "payments", "dev", "artifacts/api/dev-openapi.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(devAPIPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(devAPIPath, []byte("openapi: 3.0.0\ninfo:\n  title: Dev API\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	registry := workspaceContextArtifactRegistry{
+		Version: workspaceArtifactRegistryVersion,
+		Includes: []workspaceContextArtifactInclude{
+			{
+				ProjectID: "payments",
+				Branch:    "main",
+				Glob:      "artifacts/api/**/*.yaml",
+				Kind:      "openapi",
+				Tags:      []string{"main"},
+			},
+			{
+				ProjectID: "payments",
+				Branch:    "dev",
+				Glob:      "artifacts/api/**/*.yaml",
+				Kind:      "openapi",
+				Tags:      []string{"dev"},
+			},
+		},
+		Artifacts: []workspaceContextArtifactRequest{
+			{
+				ID:        "payments-missing-runbook",
+				ProjectID: "payments",
+				Branch:    "main",
+				Path:      "docs/runbooks/missing.md",
+				Kind:      "runbook",
+				Tags:      []string{"deleted"},
+			},
+			{
+				ID:               "payments-tf-noindex",
+				ProjectID:        "payments",
+				Branch:           "main",
+				Path:             "artifacts/infra/network.tf",
+				Kind:             "terraform",
+				Index:            boolPtr(false),
+				IncludeInContext: boolPtr(true),
+			},
+		},
+	}
+
+	tfPath, _, err := workspaceFilePath(cfg, "payments", "main", "artifacts/infra/network.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(tfPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tfPath, []byte(`resource "null_resource" "net" {}`+"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, _ := json.MarshalIndent(registry, "", "  ")
+	if err := os.MkdirAll(filepath.Dir(workspaceContextArtifactRegistryPath(cfg)), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(workspaceContextArtifactRegistryPath(cfg), append(raw, '\n'), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	mainBody := workspaceTestGet(t, app, "/workspace/context/artifacts?project_id=payments&branch=main", http.StatusOK)
+	var mainResp workspaceContextArtifactsResponse
+	if err := json.Unmarshal(mainBody, &mainResp); err != nil {
+		t.Fatal(err)
+	}
+	if mainResp.Total != 3 {
+		t.Fatalf("main artifacts total=%d, want 3; body=%s", mainResp.Total, mainBody)
+	}
+	foundMissing := false
+	foundNoIndex := false
+	for _, artifact := range mainResp.Artifacts {
+		switch artifact.ID {
+		case "payments-missing-runbook":
+			foundMissing = true
+			if artifact.Exists || artifact.Digest != "" || artifact.Bytes != 0 {
+				t.Fatalf("missing artifact should be flagged deleted: %+v", artifact)
+			}
+		case "payments-tf-noindex":
+			foundNoIndex = true
+			if artifact.Index {
+				t.Fatalf("terraform artifact should have index=false: %+v", artifact)
+			}
+		}
+		if strings.Contains(artifact.Path, "dev-openapi.yaml") {
+			t.Fatalf("main branch should not include dev artifact: %+v", artifact)
+		}
+	}
+	if !foundMissing || !foundNoIndex {
+		t.Fatalf("expected deleted and no-index artifacts in main response: %+v", mainResp.Artifacts)
+	}
+
+	devBody := workspaceTestGet(t, app, "/workspace/context/artifacts?project_id=payments&branch=dev", http.StatusOK)
+	var devResp workspaceContextArtifactsResponse
+	if err := json.Unmarshal(devBody, &devResp); err != nil {
+		t.Fatal(err)
+	}
+	if devResp.Total != 1 || devResp.Artifacts[0].Branch != "dev" || !strings.Contains(devResp.Artifacts[0].Path, "dev-openapi.yaml") {
+		t.Fatalf("dev branch artifacts=%+v, want only dev include", devResp.Artifacts)
+	}
+
+	indexOnlyBody := workspaceTestGet(t, app, "/workspace/context/artifacts?project_id=payments&branch=main&index_only=true", http.StatusOK)
+	var indexOnlyResp workspaceContextArtifactsResponse
+	if err := json.Unmarshal(indexOnlyBody, &indexOnlyResp); err != nil {
+		t.Fatal(err)
+	}
+	for _, artifact := range indexOnlyResp.Artifacts {
+		if artifact.ID == "payments-tf-noindex" {
+			t.Fatalf("index_only response leaked index=false artifact: %+v", indexOnlyResp.Artifacts)
+		}
+	}
+}
+
+func TestWorkspaceContextArtifactsReindexFiltersByIDAndKind(t *testing.T) {
+	cfg, closeFn := newWorkspaceTestConfig(t)
+	defer closeFn()
+	app := fiber.New()
+	RegisterWorkspaceAPI(app, cfg)
+
+	apiPath, _, err := workspaceFilePath(cfg, "payments", "main", "artifacts/api/openapi.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(apiPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(apiPath, []byte("openapi: 3.0.0\npaths:\n  /health:\n    get:\n      summary: Health\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ddlPath, _, err := workspaceFilePath(cfg, "payments", "main", "artifacts/db/schema.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(ddlPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ddlPath, []byte("CREATE TABLE invoices(id text primary key);\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	registry := workspaceContextArtifactRegistry{
+		Version: workspaceArtifactRegistryVersion,
+		Artifacts: []workspaceContextArtifactRequest{
+			{
+				ID:        "payments-openapi",
+				ProjectID: "payments",
+				Branch:    "main",
+				Path:      "artifacts/api/openapi.yaml",
+				Kind:      "openapi",
+			},
+			{
+				ID:        "payments-ddl",
+				ProjectID: "payments",
+				Branch:    "main",
+				Path:      "artifacts/db/schema.sql",
+				Kind:      "ddl",
+			},
+		},
+	}
+	raw, _ := json.MarshalIndent(registry, "", "  ")
+	if err := os.MkdirAll(filepath.Dir(workspaceContextArtifactRegistryPath(cfg)), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(workspaceContextArtifactRegistryPath(cfg), append(raw, '\n'), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	body, status := workspaceTestPost(t, app, "/workspace/context/artifacts/reindex", map[string]any{
+		"project_id":          "payments",
+		"branch":              "main",
+		"generation":          "artifacts-gen-selective",
+		"chunk_strategy":      "paragraph",
+		"min_chunk_chars":     1,
+		"activate_generation": true,
+		"artifact_ids":        []string{"payments-ddl"},
+		"kinds":               []string{"ddl"},
+	})
+	if status != http.StatusOK {
+		t.Fatalf("selective artifact reindex status=%d body=%s", status, body)
+	}
+	var reindexResp workspaceReindexArtifactsResponse
+	if err := json.Unmarshal(body, &reindexResp); err != nil {
+		t.Fatal(err)
+	}
+	if len(reindexResp.Artifacts) != 1 || reindexResp.Artifacts[0].ID != "payments-ddl" {
+		t.Fatalf("reindexed artifacts=%+v, want only ddl artifact", reindexResp.Artifacts)
+	}
+	if len(reindexResp.Results) != 1 {
+		t.Fatalf("reindex results=%d, want 1", len(reindexResp.Results))
+	}
+	search := (&mcpHandler{cfg: cfg}).executeToolInner(context.Background(), nil, "workspace_search", map[string]any{
+		"project_id":   "payments",
+		"branch":       "main",
+		"search_query": "invoices primary key",
+		"search_type":  "CHUNKS_LEXICAL",
+	})
+	if search.IsError || !strings.Contains(search.Content[0].Text, "artifacts/db/schema.sql") {
+		t.Fatalf("ddl artifact search failed or missing source: %+v", search.Content)
+	}
+	if strings.Contains(search.Content[0].Text, "artifacts/api/openapi.yaml") {
+		t.Fatalf("selective reindex should not surface openapi artifact: %+v", search.Content)
+	}
+
+	body, status = workspaceTestPost(t, app, "/workspace/context/artifacts/reindex", map[string]any{
+		"project_id":   "payments",
+		"branch":       "main",
+		"generation":   "artifacts-gen-empty",
+		"artifact_ids": []string{"missing-id"},
+	})
+	if status != http.StatusBadRequest || !strings.Contains(string(body), "no matching context artifacts") {
+		t.Fatalf("missing artifact id should fail deterministically: status=%d body=%s", status, body)
+	}
+}
+
+func boolPtr(v bool) *bool {
+	return &v
+}
+
 func TestWorkspaceSearchHonorsProjectRBAC(t *testing.T) {
 	cfg, closeFn := newWorkspaceACLTestConfig(t)
 	defer closeFn()
@@ -1240,6 +1504,200 @@ func TestWorkspaceConflictsDetectsFilesystemDrift(t *testing.T) {
 	})
 	if mcpResp.IsError || !strings.Contains(mcpResp.Content[0].Text, "filesystem_truth_wins") {
 		t.Fatalf("workspace_conflicts MCP failed: %+v", mcpResp.Content)
+	}
+}
+
+func TestWorkspaceConflictsMissingActiveGenerationIsActionable(t *testing.T) {
+	cfg, closeFn := newWorkspaceTestConfig(t)
+	defer closeFn()
+	app := fiber.New()
+	RegisterWorkspaceAPI(app, cfg)
+
+	body := workspaceTestGet(t, app, "/workspace/conflicts?project_id=payments&branch=main", http.StatusOK)
+	var resp workspaceConflictResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.HasConflicts {
+		t.Fatalf("has_conflicts=false; body=%s", body)
+	}
+	if resp.ActiveGeneration != "" {
+		t.Fatalf("active_generation=%q, want empty", resp.ActiveGeneration)
+	}
+	if !workspaceConflictHasAction(resp.RecommendedActions, "workspace_reconcile") {
+		t.Fatalf("recommended_actions=%v, want workspace_reconcile guidance", resp.RecommendedActions)
+	}
+}
+
+func TestWorkspaceConflictsIncludeWatcherAndJobSignals(t *testing.T) {
+	cfg, closeFn := newWorkspaceTestConfig(t)
+	defer closeFn()
+	cfg.WorkspaceWatcher = NewWorkspaceWatchState()
+	app := fiber.New()
+	RegisterWorkspaceAPI(app, cfg)
+
+	body, status := workspaceTestPost(t, app, "/workspace/write", map[string]any{
+		"project_id":          "payments",
+		"branch":              "main",
+		"generation":          "conflict-signal-gen-1",
+		"path":                "docs/ops.md",
+		"text":                "# Ops\n\nIndexed baseline.",
+		"chunk_strategy":      "paragraph",
+		"min_chunk_chars":     1,
+		"activate_generation": true,
+	})
+	if status != http.StatusOK {
+		t.Fatalf("baseline write status=%d body=%s", status, body)
+	}
+
+	cfg.WorkspaceWatcher.recordBranchError(workspaceWatchKey{ProjectID: "payments", Branch: "main"}, errors.New("watcher backlog"))
+
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	for _, job := range []workspaceIndexJob{
+		{
+			ID:        "job_failed_conflicts",
+			Status:    workspaceIndexJobFailed,
+			Attempts:  1,
+			CreatedAt: now,
+			UpdatedAt: now,
+			LastError: "embed timeout",
+			Request: workspaceIndexJobPayload{
+				Operation:  "reconcile",
+				ProjectID:  "payments",
+				Branch:     "main",
+				Generation: "conflict-gen-failed",
+			},
+		},
+		{
+			ID:           "job_dead_conflicts",
+			Status:       workspaceIndexJobDeadLetter,
+			Attempts:     3,
+			CreatedAt:    now,
+			UpdatedAt:    now,
+			DeadLetterAt: now,
+			LastError:    "panic in worker",
+			Request: workspaceIndexJobPayload{
+				Operation:  "reconcile",
+				ProjectID:  "payments",
+				Branch:     "main",
+				Generation: "conflict-gen-dead",
+			},
+		},
+	} {
+		if err := saveWorkspaceIndexJobPath(workspaceIndexJobPath(cfg, "payments", "main", job.ID), job); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	body = workspaceTestGet(t, app, "/workspace/conflicts?project_id=payments&branch=main", http.StatusOK)
+	var resp workspaceConflictResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.HasConflicts {
+		t.Fatalf("has_conflicts=false; body=%s", body)
+	}
+	if resp.Watcher.LastError != "watcher backlog" || !resp.Watcher.Pending {
+		t.Fatalf("watcher=%+v, want pending watcher error", resp.Watcher)
+	}
+	if resp.JobsByStatus[string(workspaceIndexJobFailed)] != 1 || resp.JobsByStatus[string(workspaceIndexJobDeadLetter)] != 1 {
+		t.Fatalf("jobs_by_status=%v, want failed=1 dead_letter=1", resp.JobsByStatus)
+	}
+	for _, want := range []string{"watcher error state", "failed entries", "dead_letter entries"} {
+		if !workspaceConflictHasAction(resp.RecommendedActions, want) {
+			t.Fatalf("recommended_actions=%v, want substring %q", resp.RecommendedActions, want)
+		}
+	}
+}
+
+func TestWorkspaceConflictsAfterRevertRequireReconcileToClearDrift(t *testing.T) {
+	cfg, closeFn := newWorkspaceTestConfig(t)
+	defer closeFn()
+	app := fiber.New()
+	RegisterWorkspaceAPI(app, cfg)
+
+	body, status := workspaceTestPost(t, app, "/workspace/write", map[string]any{
+		"project_id":          "payments",
+		"branch":              "main",
+		"generation":          "conflict-revert-gen-1",
+		"path":                "docs/a.md",
+		"text":                "# A\n\nOriginal content.",
+		"chunk_strategy":      "paragraph",
+		"min_chunk_chars":     1,
+		"activate_generation": true,
+	})
+	if status != http.StatusOK {
+		t.Fatalf("write gen1 status=%d body=%s", status, body)
+	}
+	body, status = workspaceTestPost(t, app, "/workspace/commit", map[string]any{
+		"project_id": "payments",
+		"branch":     "main",
+		"message":    "original",
+	})
+	if status != http.StatusOK {
+		t.Fatalf("commit original status=%d body=%s", status, body)
+	}
+	var first workspaceCommitRecord
+	if err := json.Unmarshal(body, &first); err != nil {
+		t.Fatal(err)
+	}
+
+	body, status = workspaceTestPost(t, app, "/workspace/write", map[string]any{
+		"project_id":          "payments",
+		"branch":              "main",
+		"generation":          "conflict-revert-gen-2",
+		"path":                "docs/a.md",
+		"text":                "# A\n\nChanged content.",
+		"chunk_strategy":      "paragraph",
+		"min_chunk_chars":     1,
+		"activate_generation": true,
+	})
+	if status != http.StatusOK {
+		t.Fatalf("write gen2 status=%d body=%s", status, body)
+	}
+
+	body, status = workspaceTestPost(t, app, "/workspace/revert", map[string]any{
+		"project_id": "payments",
+		"branch":     "main",
+		"commit_id":  first.CommitID,
+	})
+	if status != http.StatusOK {
+		t.Fatalf("revert status=%d body=%s", status, body)
+	}
+
+	conflictBody := workspaceTestGet(t, app, "/workspace/conflicts?project_id=payments&branch=main", http.StatusOK)
+	var conflictResp workspaceConflictResponse
+	if err := json.Unmarshal(conflictBody, &conflictResp); err != nil {
+		t.Fatal(err)
+	}
+	if !conflictResp.HasConflicts || !workspaceConflictHasPath(conflictResp.DirtyPaths, "docs/a.md") {
+		t.Fatalf("conflicts after revert=%+v", conflictResp)
+	}
+	if !workspaceConflictHasAction(conflictResp.RecommendedActions, "workspace_reconcile") {
+		t.Fatalf("recommended_actions=%v, want reconcile guidance", conflictResp.RecommendedActions)
+	}
+
+	body, status = workspaceTestPost(t, app, "/workspace/reconcile", map[string]any{
+		"project_id":          "payments",
+		"branch":              "main",
+		"generation":          "conflict-revert-gen-3",
+		"chunk_strategy":      "paragraph",
+		"min_chunk_chars":     1,
+		"activate_generation": true,
+	})
+	if status != http.StatusOK {
+		t.Fatalf("reconcile status=%d body=%s", status, body)
+	}
+
+	conflictBody = workspaceTestGet(t, app, "/workspace/conflicts?project_id=payments&branch=main", http.StatusOK)
+	if err := json.Unmarshal(conflictBody, &conflictResp); err != nil {
+		t.Fatal(err)
+	}
+	if conflictResp.HasConflicts {
+		t.Fatalf("expected conflicts to clear after reconcile: %+v", conflictResp)
+	}
+	if !workspaceConflictHasAction(conflictResp.RecommendedActions, "No action required") {
+		t.Fatalf("recommended_actions=%v, want no-op guidance", conflictResp.RecommendedActions)
 	}
 }
 
@@ -1948,9 +2406,29 @@ func TestWorkspaceMCPSearchResolvesActiveCollectionAndFreshness(t *testing.T) {
 	if contract["read_tool"] != "workspace_read" || contract["exact_read_required"] != true {
 		t.Fatalf("answer contract=%+v, want workspace_read exact-read rule", contract)
 	}
+	requiredFields, ok := contract["required_fields"].([]any)
+	if !ok {
+		t.Fatalf("answer contract missing required_fields slice: %+v", contract)
+	}
+	for _, want := range []string{
+		"project_id", "branch", "path", "generation", "collection",
+		"heading_path", "chunk_id", "vector_id", "source_uri",
+	} {
+		if !workspaceAnySliceContainsString(requiredFields, want) {
+			t.Fatalf("answer contract required_fields missing %q: %+v", want, requiredFields)
+		}
+	}
 	citation := first["citation"].(map[string]any)
 	if citation["path"] != "docs/payment.md" || citation["generation"] != "gen-active" || citation["collection"] != "payments_active" {
 		t.Fatalf("citation=%+v, want exact source metadata", citation)
+	}
+	for _, field := range []string{"source_id", "project_id", "branch", "path", "generation", "collection", "chunk_id", "vector_id", "source_uri", "read_tool", "read_args"} {
+		if _, ok := citation[field]; !ok {
+			t.Fatalf("citation missing %q: %+v", field, citation)
+		}
+	}
+	if citation["stale"] != false || citation["potentially_stale"] != false {
+		t.Fatalf("fresh citation flags wrong: %+v", citation)
 	}
 	readArgs := citation["read_args"].(map[string]any)
 	if readArgs["project_id"] != "payments" || readArgs["path"] != "docs/payment.md" {
@@ -1966,6 +2444,58 @@ func TestWorkspaceMCPSearchResolvesActiveCollectionAndFreshness(t *testing.T) {
 	}
 	if readResp.Citation.SourceURI == "" || len(readResp.Citations) == 0 {
 		t.Fatalf("read response missing citation contract: %+v", readResp.Citation)
+	}
+}
+
+func TestWorkspaceReadResponseReturnsChunkCitationsWithHeadingAnchors(t *testing.T) {
+	cfg, closeFn := newWorkspaceTestConfig(t)
+	defer closeFn()
+	h := &mcpHandler{cfg: cfg}
+
+	write := h.executeToolInner(context.Background(), nil, "workspace_write", map[string]any{
+		"project_id":          "payments",
+		"branch":              "main",
+		"generation":          "gen-headings",
+		"collection":          "payments_headings",
+		"path":                "docs/runbook.md",
+		"text":                "# Runbook\n\nIntro summary.\n\n## Retry Policy\n\nRetry policy exact anchor.\n",
+		"chunk_strategy":      "paragraph",
+		"min_chunk_chars":     1,
+		"activate_generation": true,
+	})
+	if write.IsError {
+		t.Fatalf("workspace_write error: %+v", write.Content)
+	}
+
+	read := h.executeToolInner(context.Background(), nil, "workspace_read", map[string]any{
+		"project_id": "payments",
+		"branch":     "main",
+		"path":       "docs/runbook.md",
+	})
+	if read.IsError {
+		t.Fatalf("workspace_read error: %+v", read.Content)
+	}
+	var resp workspaceReadResponse
+	if err := json.Unmarshal([]byte(read.Content[0].Text), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Citations) == 0 {
+		t.Fatalf("workspace_read returned no chunk citations: %+v", resp)
+	}
+	var anchored bool
+	for _, citation := range resp.Citations {
+		if citation.ProjectID != "payments" || citation.Branch != "main" || citation.Path != "docs/runbook.md" {
+			t.Fatalf("chunk citation source mismatch: %+v", citation)
+		}
+		if citation.SourceURI == "" || citation.ReadTool != "workspace_read" {
+			t.Fatalf("chunk citation missing source uri or read tool: %+v", citation)
+		}
+		if citation.HeadingAnchor != "" && strings.Contains(citation.SourceURI, "#") {
+			anchored = true
+		}
+	}
+	if !anchored {
+		t.Fatalf("expected at least one anchored chunk citation: %+v", resp.Citations)
 	}
 }
 
@@ -2020,6 +2550,11 @@ func TestWorkspaceMCPSearchMarksExplicitOldGenerationStale(t *testing.T) {
 	freshness := resp["freshness"].(map[string]any)
 	if freshness["stale"] != true || freshness["reason"] != "requested_generation_is_not_active" {
 		t.Fatalf("freshness=%+v, want stale requested_generation_is_not_active", freshness)
+	}
+	first := resp["results"].([]any)[0].(map[string]any)
+	citation := first["citation"].(map[string]any)
+	if citation["stale"] != true || citation["potentially_stale"] != false {
+		t.Fatalf("stale citation flags wrong: %+v", citation)
 	}
 	if resp["collection"] != "payments_old" {
 		t.Fatalf("collection=%v, want payments_old", resp["collection"])
@@ -2206,6 +2741,11 @@ func TestWorkspaceMCPSearchFreshnessUsesProjectBranchWatcherStatus(t *testing.T)
 	}
 	if freshness["watcher_branch_pending"] != true {
 		t.Fatalf("watcher_branch_pending missing: %+v", freshness)
+	}
+	first := resp["results"].([]any)[0].(map[string]any)
+	citation := first["citation"].(map[string]any)
+	if citation["stale"] != false || citation["potentially_stale"] != true {
+		t.Fatalf("pending watcher citation flags wrong: %+v", citation)
 	}
 }
 
@@ -2552,12 +3092,30 @@ func workspaceConflictHasPath(paths []workspaceConflictPath, path string) bool {
 	return false
 }
 
+func workspaceConflictHasAction(actions []string, want string) bool {
+	for _, action := range actions {
+		if strings.Contains(action, want) {
+			return true
+		}
+	}
+	return false
+}
+
 func workspaceContextProjectIDSet(projects []workspaceProjectContext) map[string]bool {
 	out := map[string]bool{}
 	for _, project := range projects {
 		out[project.ProjectID] = true
 	}
 	return out
+}
+
+func workspaceAnySliceContainsString(xs []any, want string) bool {
+	for _, x := range xs {
+		if s, ok := x.(string); ok && s == want {
+			return true
+		}
+	}
+	return false
 }
 
 func waitForWorkspaceCondition(t *testing.T, timeout time.Duration, ok func() bool) {

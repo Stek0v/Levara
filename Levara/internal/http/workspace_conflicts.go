@@ -139,7 +139,13 @@ func workspaceConflicts(_ context.Context, cfg APIConfig, req workspaceConflictR
 	sortWorkspaceConflictPaths(resp.DirtyPaths)
 	sortWorkspaceConflictPaths(resp.UnindexedPaths)
 	sortWorkspaceConflictPaths(resp.MissingIndexedPaths)
-	resp.HasConflicts = len(resp.DirtyPaths) > 0 || len(resp.UnindexedPaths) > 0 || len(resp.MissingIndexedPaths) > 0 || resp.Watcher.Pending
+	resp.HasConflicts = len(resp.DirtyPaths) > 0 ||
+		len(resp.UnindexedPaths) > 0 ||
+		len(resp.MissingIndexedPaths) > 0 ||
+		resp.Watcher.Pending ||
+		resp.Watcher.LastError != "" ||
+		resp.JobsByStatus[string(workspaceIndexJobFailed)] > 0 ||
+		resp.JobsByStatus[string(workspaceIndexJobDeadLetter)] > 0
 	resp.RecommendedActions = workspaceConflictRecommendedActions(resp)
 	return resp, nil
 }
@@ -192,6 +198,12 @@ func workspaceConflictRecommendedActions(resp workspaceConflictResponse) []strin
 	}
 	if resp.Watcher.Pending {
 		actions = append(actions, "Wait for watcher debounce/worker drain or manually reconcile before answering from search.")
+	}
+	if resp.Watcher.LastError != "" {
+		actions = append(actions, "Inspect watcher error state, clear the filesystem/index inconsistency, then reconcile before relying on active generation answers.")
+	}
+	if resp.JobsByStatus[string(workspaceIndexJobFailed)] > 0 {
+		actions = append(actions, "Inspect workspace_index_jobs failed entries and rerun reconcile after fixing the underlying indexing error.")
 	}
 	if resp.JobsByStatus[string(workspaceIndexJobDeadLetter)] > 0 {
 		actions = append(actions, "Inspect workspace_index_jobs dead_letter entries, fix the root cause, then retry or enqueue a fresh generation.")

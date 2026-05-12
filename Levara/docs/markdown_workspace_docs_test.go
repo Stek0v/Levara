@@ -2,8 +2,10 @@ package docs
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -125,5 +127,144 @@ func TestMarkdownWorkspaceOpsExamples(t *testing.T) {
 	}
 	if !strings.Contains(string(alertsRaw), "LevaraWorkspaceDeadLetters") {
 		t.Fatal("prometheus alerts missing dead-letter alert")
+	}
+}
+
+func TestMarkdownWorkspaceUserScenarios(t *testing.T) {
+	raw, err := os.ReadFile("markdown-workspace-user-scenarios.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+
+	scenarios := regexp.MustCompile(`(?m)^### S([0-2][0-9]|30)\. `).FindAllStringSubmatch(text, -1)
+	if len(scenarios) != 30 {
+		t.Fatalf("scenario count=%d, want 30", len(scenarios))
+	}
+	for i := 1; i <= 30; i++ {
+		want := regexp.MustCompile(`(?m)^### S` + regexp.QuoteMeta(fmt.Sprintf("%02d", i)) + `\. `)
+		if !want.MatchString(text) {
+			t.Fatalf("scenario S%02d missing", i)
+		}
+	}
+
+	for _, section := range []string{
+		"## Solo Workflows",
+		"## Team Workflows",
+		"Автотесты:",
+		"Corner cases:",
+	} {
+		if !strings.Contains(text, section) {
+			t.Fatalf("scenario doc missing %q", section)
+		}
+	}
+
+	for _, tool := range []string{
+		"workspace_context",
+		"workspace_search",
+		"workspace_read",
+		"workspace_write",
+		"workspace_commit",
+		"workspace_revert",
+		"workspace_conflicts",
+		"workspace_context_artifacts",
+		"workspace_reindex_artifacts",
+		"workspace_ops_status",
+		"workspace_gc",
+	} {
+		if !strings.Contains(text, tool) {
+			t.Fatalf("scenario doc missing tool reference %q", tool)
+		}
+	}
+
+	for _, pathRef := range []string{
+		"Levara/internal/http/workspace_test.go::TestWorkspaceAPIWriteReadAndReindexUseFilesystemTruth",
+		"Levara/internal/http/workspace_eval_test.go::TestWorkspaceRetrievalQualityEval",
+		"Levara/cmd/cli/workspace_e2e_test.go::TestWorkspaceCLIFullCycleWriteSearchCommitRevert",
+		"Levara/pkg/agenthosts/install_test.go::TestInstallWritesBackupAndPreservesExistingConfig",
+		"Levara/internal/store/hnsw_race_test.go::TestHNSW_ReinsertDeletedEntryRefreshesEntryLayer",
+	} {
+		if !strings.Contains(text, pathRef) {
+			t.Fatalf("scenario doc missing test path %q", pathRef)
+		}
+	}
+}
+
+func TestMarkdownWorkspaceCapabilityParity(t *testing.T) {
+	raw, err := os.ReadFile("markdown-workspace-capability-parity.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	for _, required := range []string{
+		"| Access preflight | `POST /workspace/access/check` | `not exposed` | `workspace_access_check` | `intentional-gap` |",
+		"| Bootstrap context | `GET /workspace/context` | `levara workspace context` | `workspace_context` | `parity` |",
+		"| Exact read | `GET /workspace/read` | `levara workspace read` | `workspace_read` | `parity` |",
+		"| Indexed write | `POST /workspace/write` | `levara workspace write` | `workspace_write` | `parity` |",
+		"| Run start | `POST /workspace/runs/start` | `levara workspace run start` | `workspace_run_start` | `parity` |",
+		"| Commit | `POST /workspace/commit` | `levara workspace commit` | `workspace_commit` | `parity` |",
+		"| Revert | `POST /workspace/revert` | `levara workspace revert` | `workspace_revert` | `parity` |",
+		"| GC / dry-run | `POST /workspace/gc` | `levara workspace gc` | `workspace_gc` | `parity` |",
+		"| Search by active generation | `GET /search` plus workspace resolution in server layer | `levara search ...` | `workspace_search` | `functional-parity` |",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("capability parity doc missing row %q", required)
+		}
+	}
+
+	for _, section := range []string{
+		"## Parity Table",
+		"## Intentional Gaps",
+		"## DoD For Future Parity Work",
+	} {
+		if !strings.Contains(text, section) {
+			t.Fatalf("capability parity doc missing %q", section)
+		}
+	}
+}
+
+func TestMarkdownWorkspaceAnswerContractDoc(t *testing.T) {
+	raw, err := os.ReadFile("markdown-workspace-answer-contract.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	for _, required := range []string{
+		"`workspace_search`",
+		"`workspace_read`",
+		"`answer_contract.required = true`",
+		"`answer_contract.read_tool = \"workspace_read\"`",
+		"`source_uri`",
+		"`stale`",
+		"`potentially_stale`",
+		"`workspace://<project>/<branch>/<path>#<anchor>`",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("answer contract doc missing %q", required)
+		}
+	}
+}
+
+func TestMarkdownWorkspaceConflictModelDoc(t *testing.T) {
+	raw, err := os.ReadFile("markdown-workspace-conflict-model.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	for _, required := range []string{
+		"`filesystem_truth_wins`",
+		"`expected_file_digest`",
+		"`workspace_conflicts.has_conflicts=true`",
+		"`workspace_revert`",
+		"`workspace_reconcile`",
+		"`dirty_paths`",
+		"`unindexed_paths`",
+		"`missing_indexed_paths`",
+		"`dead_letter`",
+		"`failed`",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("conflict model doc missing %q", required)
+		}
 	}
 }
