@@ -1327,6 +1327,11 @@ func TestWorkspaceWatcherDebouncesAndReconcilesFilesystemChanges(t *testing.T) {
 		return false
 	})
 
+	waitForWorkspaceCondition(t, 2*time.Second, func() bool {
+		status := cfg.WorkspaceWatcher.Snapshot()
+		return status.ReconcileCount > 0 && strings.HasPrefix(status.LastGeneration, "test-watch-")
+	})
+
 	status := cfg.WorkspaceWatcher.Snapshot()
 	if !status.Enabled {
 		t.Fatal("watcher status should be enabled")
