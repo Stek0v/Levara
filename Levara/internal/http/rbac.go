@@ -252,7 +252,7 @@ func GetAllowedDatasetIDs(db *sql.DB, ctx context.Context, userID string) []stri
 		return nil
 	}
 	defer rows.Close()
-	var ids []string
+	ids := []string{}
 	for rows.Next() {
 		var id string
 		rows.Scan(&id)

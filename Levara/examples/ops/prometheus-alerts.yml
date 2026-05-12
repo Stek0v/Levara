@@ -1,0 +1,29 @@
+groups:
+  - name: levara-workspace
+    rules:
+      - alert: LevaraWorkspaceDeadLetters
+        expr: levara_workspace_index_dead_letters > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Levara workspace indexing has dead-letter jobs
+          description: Inspect workspace_ops_status and workspace_index_jobs, fix the root cause, then retry or enqueue a fresh generation.
+
+      - alert: LevaraWorkspaceIndexLag
+        expr: levara_workspace_index_job_max_lag_seconds > 300
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Levara workspace indexing backlog is stale
+          description: Pending or failed indexing work has exceeded five minutes.
+
+      - alert: LevaraWorkspaceWatcherPending
+        expr: levara_workspace_watcher_pending_branches > 0
+        for: 15m
+        labels:
+          severity: info
+        annotations:
+          summary: Levara workspace watcher has pending branches
+          description: Watcher debounce or async worker may be lagging behind Markdown filesystem truth.

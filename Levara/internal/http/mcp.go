@@ -3,9 +3,10 @@
 // Compatible with Claude Code, Cursor, Cline, and any MCP client.
 //
 // Transport: Streamable HTTP (preferred)
-//   POST /mcp — JSON-RPC requests + notifications
-//   GET  /mcp — SSE stream for server-initiated messages
-//   DELETE /mcp — terminate session
+//
+//	POST /mcp — JSON-RPC requests + notifications
+//	GET  /mcp — SSE stream for server-initiated messages
+//	DELETE /mcp — terminate session
 //
 // Session management via Mcp-Session-Id header.
 package http
@@ -24,13 +25,13 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/stek0v/levara/internal/metrics"
+	"github.com/stek0v/levara/pipeline"
 	"github.com/stek0v/levara/pkg/llm"
 	"github.com/stek0v/levara/pkg/mcp"
 	"github.com/stek0v/levara/pkg/orchestrator"
 	"github.com/stek0v/levara/pkg/rerank"
 	"github.com/stek0v/levara/pkg/router"
 	"github.com/stek0v/levara/pkg/runreg"
-	"github.com/stek0v/levara/pipeline"
 )
 
 // F-4 wave 1b: the canonical type definitions live in pkg/mcp now. Local
@@ -315,6 +316,47 @@ func (h *mcpHandler) SearchCapabilities() router.Capabilities {
 	return capabilitiesFromConfig(h.cfg)
 }
 
+// AllowedDatasetIDs implements mcp.Deps: resolves the caller's dataset/project
+// scopes from the per-call MCP context. Nil means no filtering, matching REST.
+func (h *mcpHandler) AllowedDatasetIDs(ctx context.Context) []string {
+	userID, _ := ctx.Value(mcpUserIDKey).(string)
+	return GetAllowedDatasetIDs(h.cfg.DB, ctx, userID)
+}
+
+// ListLexicalCollections implements mcp.Deps: returns collections with a BM25
+// index, independent of whether the vector CollectionManager is configured.
+func (h *mcpHandler) ListLexicalCollections() []string {
+	if h.cfg.BM25Indexes == nil {
+		return nil
+	}
+	names := make([]string, 0, len(h.cfg.BM25Indexes))
+	for name := range h.cfg.BM25Indexes {
+		names = append(names, name)
+	}
+	return names
+}
+
+// LexicalSearch implements mcp.Deps: forwards to the shared BM25 index map.
+func (h *mcpHandler) LexicalSearch(collection, query string, topK int) ([]mcp.LexicalResult, error) {
+	if h.cfg.BM25Indexes == nil {
+		return nil, nil
+	}
+	idx := h.cfg.BM25Indexes[collection]
+	if idx == nil {
+		return nil, nil
+	}
+	results := idx.Search(query, topK)
+	out := make([]mcp.LexicalResult, 0, len(results))
+	for _, r := range results {
+		out = append(out, mcp.LexicalResult{
+			ID:       r.ID,
+			Score:    r.Score,
+			Metadata: []byte(r.Metadata),
+		})
+	}
+	return out, nil
+}
+
 // DoSync implements mcp.Deps: orchestrates a bidirectional sync operation
 // with a remote Levara instance, wrapping all the internal/http sync helpers
 // (SyncManifestFromRemote, SyncPull, syncPush, syncPullCollections,
@@ -377,8 +419,62 @@ func (h *mcpHandler) getOrValidateSession(sessionID string) *mcpSession {
 }
 
 // createSession creates a new MCP session and returns its ID.
-func (h *mcpHandler) createSession() string {
-	return h.sessions.Create().ID
+func (h *mcpHandler) createSession(userID string) string {
+	sess := h.sessions.Create()
+	sess.UserID = userID
+	return sess.ID
+}
+
+func (h *mcpHandler) authenticateMCPRequest(c *fiber.Ctx) (string, error) {
+	if apiKey := firstNonEmpty(c.Get("X-API-Key"), c.Get("X-Api-Key")); apiKey != "" {
+		if h.cfg.DB == nil {
+			return "", fmt.Errorf("database required for API key auth")
+		}
+		userID, _ := verifyAPIKey(h.cfg.DB, apiKey)
+		if userID == "" {
+			return "", fmt.Errorf("invalid API key")
+		}
+		return userID, nil
+	}
+
+	token := bearerToken(c.Get("Authorization"))
+	if token == "" {
+		token = c.Cookies("auth_token")
+	}
+	if token == "" {
+		if h.cfg.RequireAuth {
+			return "", fmt.Errorf("authorization required")
+		}
+		return "", nil
+	}
+	if h.cfg.JWTSecret == "" {
+		return "", fmt.Errorf("JWT secret not configured")
+	}
+	payload, ok := verifyJWT(token, h.cfg.JWTSecret)
+	if !ok {
+		return "", fmt.Errorf("invalid token")
+	}
+	return payload.Sub, nil
+}
+
+func bearerToken(header string) string {
+	if header == "" {
+		return ""
+	}
+	token := strings.TrimPrefix(header, "Bearer ")
+	if token == "null" || token == "undefined" {
+		return ""
+	}
+	return token
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // deleteSession removes a session.
@@ -423,7 +519,15 @@ func (h *mcpHandler) handleRPC(c *fiber.Ctx) error {
 
 	switch req.Method {
 	case "initialize":
-		sid := h.createSession()
+		userID, authErr := h.authenticateMCPRequest(c)
+		if authErr != nil {
+			return c.Status(fiber.StatusUnauthorized).JSON(jsonRPCResponse{
+				JSONRPC: "2.0",
+				ID:      req.ID,
+				Error:   &rpcError{Code: -32001, Message: authErr.Error()},
+			})
+		}
+		sid := h.createSession(userID)
 		c.Set("Mcp-Session-Id", sid)
 		return c.JSON(jsonRPCResponse{
 			JSONRPC: "2.0",
@@ -508,6 +612,7 @@ func (h *mcpHandler) handleToolCall(c *fiber.Ctx, req jsonRPCRequest) error {
 func (h *mcpHandler) executeTool(ctx context.Context, sess *mcpSession, name string, args map[string]any) mcpToolResult {
 	toolStart := time.Now()
 	result := h.executeToolInner(ctx, sess, name, args)
+	h.auditWorkspaceTool(ctx, name, args, result)
 	duration := time.Since(toolStart).Seconds()
 	metrics.MCPToolDuration.WithLabelValues(name).Observe(duration)
 	status := "ok"
@@ -550,6 +655,56 @@ func (h *mcpHandler) executeToolInner(ctx context.Context, sess *mcpSession, nam
 		return h.toolCognify(ctx, args)
 	case "search":
 		return h.toolSearch(ctx, args)
+	case "workspace_access_check":
+		return h.toolWorkspaceAccessCheck(ctx, args)
+	case "workspace_context":
+		return h.toolWorkspaceContext(ctx, args)
+	case "workspace_audit_log":
+		return h.toolWorkspaceAuditLog(ctx, args)
+	case "workspace_ops_status":
+		return h.toolWorkspaceOpsStatus(ctx, args)
+	case "workspace_context_artifacts":
+		return h.toolWorkspaceContextArtifacts(ctx, args)
+	case "workspace_reindex_artifacts":
+		return h.toolWorkspaceReindexArtifacts(ctx, args)
+	case "workspace_conflicts":
+		return h.toolWorkspaceConflicts(ctx, args)
+	case "workspace_search":
+		return h.toolWorkspaceSearch(ctx, args)
+	case "workspace_index":
+		return h.toolWorkspaceIndex(ctx, args)
+	case "workspace_read":
+		return h.toolWorkspaceRead(ctx, args)
+	case "workspace_write":
+		return h.toolWorkspaceWrite(ctx, args)
+	case "workspace_reindex_paths":
+		return h.toolWorkspaceReindex(ctx, args)
+	case "workspace_reconcile":
+		return h.toolWorkspaceReconcile(ctx, args)
+	case "workspace_index_jobs":
+		return h.toolWorkspaceIndexJobs(ctx, args)
+	case "workspace_enqueue_index_job":
+		return h.toolWorkspaceEnqueueIndexJob(ctx, args)
+	case "workspace_retry_index_job":
+		return h.toolWorkspaceRetryIndexJob(ctx, args)
+	case "workspace_watch_status":
+		return h.toolWorkspaceWatchStatus(ctx, args)
+	case "workspace_run_start":
+		return h.toolWorkspaceRunStart(ctx, args)
+	case "workspace_run_get":
+		return h.toolWorkspaceRunGet(ctx, args)
+	case "workspace_commit":
+		return h.toolWorkspaceCommit(ctx, args)
+	case "workspace_log":
+		return h.toolWorkspaceLog(ctx, args)
+	case "workspace_revert":
+		return h.toolWorkspaceRevert(ctx, args)
+	case "workspace_delete":
+		return h.toolWorkspaceDelete(ctx, args)
+	case "workspace_gc":
+		return h.toolWorkspaceGC(ctx, args)
+	case "workspace_manifest":
+		return h.toolWorkspaceManifest(ctx, args)
 	case "list_data":
 		return h.toolListData(ctx, args)
 	case "delete":
@@ -958,10 +1113,14 @@ func syncPush(ctx context.Context, cfg APIConfig, remoteURL string, types []stri
 
 	if shouldSync("memories") && cfg.DB != nil {
 		var memories []syncMemory
-		query := Q(`SELECT id, key, value, type, owner_id, collection_name, created_at, updated_at FROM memories ORDER BY updated_at`)
+		query := Q(`SELECT id, key, value, type, owner_id, collection_name,
+			 COALESCE(room,''), COALESCE(hall,''), is_pinned, pin_priority,
+			 created_at, updated_at FROM memories ORDER BY updated_at`)
 		args := []any{}
 		if since != "" {
-			query = Q(`SELECT id, key, value, type, owner_id, collection_name, created_at, updated_at FROM memories WHERE updated_at > $1 ORDER BY updated_at`)
+			query = Q(`SELECT id, key, value, type, owner_id, collection_name,
+				 COALESCE(room,''), COALESCE(hall,''), is_pinned, pin_priority,
+				 created_at, updated_at FROM memories WHERE updated_at > $1 ORDER BY updated_at`)
 			args = []any{since}
 		}
 		rows, err := cfg.DB.QueryContext(ctx, query, args...)
@@ -969,7 +1128,8 @@ func syncPush(ctx context.Context, cfg APIConfig, remoteURL string, types []stri
 			defer rows.Close()
 			for rows.Next() {
 				var m syncMemory
-				rows.Scan(&m.ID, &m.Key, &m.Value, &m.Type, &m.OwnerID, &m.CollectionName, &m.CreatedAt, &m.UpdatedAt)
+				rows.Scan(&m.ID, &m.Key, &m.Value, &m.Type, &m.OwnerID, &m.CollectionName,
+					&m.Room, &m.Hall, &m.IsPinned, &m.PinPriority, &m.CreatedAt, &m.UpdatedAt)
 				memories = append(memories, m)
 			}
 		}
@@ -991,21 +1151,27 @@ func syncPush(ctx context.Context, cfg APIConfig, remoteURL string, types []stri
 
 	if shouldSync("graph") && cfg.DB != nil {
 		var g syncGraph
-		nodeRows, err := cfg.DB.QueryContext(ctx, Q(`SELECT id, name, type, description, properties FROM graph_nodes`))
+		nodeRows, err := cfg.DB.QueryContext(ctx,
+			Q(`SELECT id, name, type, COALESCE(description,''), COALESCE(properties,'{}'), COALESCE(dataset_id,'') FROM graph_nodes`))
 		if err == nil {
 			defer nodeRows.Close()
 			for nodeRows.Next() {
 				var n syncGraphNode
-				nodeRows.Scan(&n.ID, &n.Name, &n.Type, &n.Description, &n.Properties)
+				nodeRows.Scan(&n.ID, &n.Name, &n.Type, &n.Description, &n.Properties, &n.DatasetID)
 				g.Nodes = append(g.Nodes, n)
 			}
 		}
-		edgeRows, err := cfg.DB.QueryContext(ctx, Q(`SELECT id, source_id, target_id, relationship_name, properties FROM graph_edges`))
+		edgeRows, err := cfg.DB.QueryContext(ctx,
+			Q(`SELECT id, source_id, target_id, relationship_name, COALESCE(properties,'{}'),
+				  COALESCE(valid_from,''), COALESCE(valid_until,''), COALESCE(superseded_by,''),
+				  COALESCE(confidence,1.0), COALESCE(dataset_id,'')
+			   FROM graph_edges`))
 		if err == nil {
 			defer edgeRows.Close()
 			for edgeRows.Next() {
 				var e syncGraphEdge
-				edgeRows.Scan(&e.ID, &e.SourceID, &e.TargetID, &e.RelationshipName, &e.Properties)
+				edgeRows.Scan(&e.ID, &e.SourceID, &e.TargetID, &e.RelationshipName, &e.Properties,
+					&e.ValidFrom, &e.ValidUntil, &e.SupersededBy, &e.Confidence, &e.DatasetID)
 				g.Edges = append(g.Edges, e)
 			}
 		}
@@ -1230,14 +1396,12 @@ func MCPHealthHandler() fiber.Handler {
 	}
 }
 
-
 // toolListCommunities is a thin shim over mcp.ToolListCommunities. F-4
 // wave 3n moved the body (SQL query + JSON marshal) into pkg/mcp. No
 // new Deps methods — DB() and Q() were already in the interface.
 func (h *mcpHandler) toolListCommunities(ctx context.Context, args map[string]any) mcpToolResult {
 	return mcp.ToolListCommunities(ctx, h, args)
 }
-
 
 // toolCheckDrift is a thin shim over mcp.ToolCheckDrift. F-4 wave 3o
 // moved the body into pkg/mcp using CollectionMeta so pkg/mcp stays free

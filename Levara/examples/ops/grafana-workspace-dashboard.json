@@ -1,0 +1,38 @@
+{
+  "title": "Levara Markdown Workspace",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Dead-letter Jobs",
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+      "targets": [{"expr": "levara_workspace_index_dead_letters"}]
+    },
+    {
+      "type": "stat",
+      "title": "Max Index Lag Seconds",
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+      "targets": [{"expr": "levara_workspace_index_job_max_lag_seconds"}]
+    },
+    {
+      "type": "stat",
+      "title": "Watcher Pending Branches",
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+      "targets": [{"expr": "levara_workspace_watcher_pending_branches"}]
+    },
+    {
+      "type": "timeseries",
+      "title": "Index Jobs by Status",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+      "targets": [{"expr": "levara_workspace_index_jobs"}]
+    },
+    {
+      "type": "timeseries",
+      "title": "Audit Events",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+      "targets": [{"expr": "sum by (operation, result) (rate(levara_workspace_audit_events_total[5m]))"}]
+    }
+  ]
+}

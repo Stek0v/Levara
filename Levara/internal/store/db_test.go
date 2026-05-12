@@ -184,6 +184,54 @@ func TestInsertInsertDeleteWALRecovery(t *testing.T) {
 	}
 }
 
+func TestRepeatedInsertSameIDReplacesSearchVector(t *testing.T) {
+	dir, _ := os.MkdirTemp("", "levara-upsert-search-test-*")
+	defer os.RemoveAll(dir)
+
+	db, err := NewLevara(2, dir+"/meta.bin")
+	if err != nil {
+		t.Fatalf("NewLevara: %v", err)
+	}
+	defer db.Close()
+
+	oldVec := []float32{1, 0}
+	newVec := []float32{0, 1}
+	if err := db.Insert("same-id", oldVec, map[string]any{"version": 1}); err != nil {
+		t.Fatalf("Insert old: %v", err)
+	}
+	if err := db.Insert("same-id", newVec, map[string]any{"version": 2}); err != nil {
+		t.Fatalf("Insert replacement: %v", err)
+	}
+	if err := db.Insert("old-neighbor", []float32{1, 0}, map[string]any{"version": "old-neighbor"}); err != nil {
+		t.Fatalf("Insert neighbor: %v", err)
+	}
+
+	waitForSearchTop(t, db, []float32{0, 1}, "same-id")
+	waitForSearchTop(t, db, []float32{1, 0}, "old-neighbor")
+
+	_, meta, exists := db.Get("same-id")
+	if !exists {
+		t.Fatal("same-id should exist after replacement insert")
+	}
+	if got := string(meta); got == "" || !contains(got, `"version":2`) {
+		t.Fatalf("replacement metadata not visible, got %q", got)
+	}
+}
+
+func waitForSearchTop(t *testing.T, db *Levara, query []float32, wantID string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	var last []VectroRecord
+	for time.Now().Before(deadline) {
+		last = db.Search(query, 2)
+		if len(last) > 0 && last[0].ID == wantID {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("top search result = %v, want %s", last, wantID)
+}
+
 // contains is a tiny helper so we don't pull strings in the test file for one call.
 func contains(s, sub string) bool {
 	for i := 0; i+len(sub) <= len(s); i++ {

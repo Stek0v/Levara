@@ -230,7 +230,7 @@ func (h *HNSWIndex) Add(vector []float32, id string, idx uint32) {
 	h.Lock()
 	defer h.Unlock()
 
-	if _, exists := h.Nodes[id]; exists {
+	if existing, exists := h.Nodes[id]; exists && !h.isDeleted(existing.ArenaOffset) {
 		return
 	}
 

@@ -106,6 +106,13 @@ func TestToolDescriptors_OutputSchemaCoverage(t *testing.T) {
 		"save_chat", "recall_chat", "search_chats",
 		"get_project_context", "set_context", "add_feedback",
 		"codify", "doctor", "heartbeat",
+		"workspace_access_check", "workspace_context", "workspace_audit_log", "workspace_context_artifacts",
+		"workspace_reindex_artifacts", "workspace_ops_status", "workspace_conflicts",
+		"workspace_search", "workspace_index", "workspace_delete", "workspace_gc", "workspace_manifest",
+		"workspace_read", "workspace_write", "workspace_reindex_paths",
+		"workspace_reconcile", "workspace_index_jobs", "workspace_enqueue_index_job", "workspace_retry_index_job",
+		"workspace_watch_status", "workspace_run_start", "workspace_run_get",
+		"workspace_commit", "workspace_log", "workspace_revert",
 	}
 	byName := make(map[string]Tool)
 	for _, tool := range ToolDescriptors() {
@@ -157,6 +164,13 @@ func TestToolDescriptors_RequiredCoreTools(t *testing.T) {
 	required := []string{
 		"cognify", "search", "list_data", "delete",
 		"save_memory", "recall_memory", "set_context",
+		"workspace_access_check", "workspace_context", "workspace_audit_log", "workspace_context_artifacts",
+		"workspace_reindex_artifacts", "workspace_ops_status", "workspace_conflicts",
+		"workspace_search", "workspace_index", "workspace_delete", "workspace_gc", "workspace_manifest",
+		"workspace_read", "workspace_write", "workspace_reindex_paths",
+		"workspace_reconcile", "workspace_index_jobs", "workspace_enqueue_index_job", "workspace_retry_index_job",
+		"workspace_watch_status", "workspace_run_start", "workspace_run_get",
+		"workspace_commit", "workspace_log", "workspace_revert",
 	}
 	have := make(map[string]struct{})
 	for _, t := range ToolDescriptors() {

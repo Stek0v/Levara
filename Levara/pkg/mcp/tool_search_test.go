@@ -119,6 +119,164 @@ func TestToolSearch_DefaultBranchReturnsResults(t *testing.T) {
 	}
 }
 
+func TestToolSearch_LexicalBranchDoesNotRequireEmbedding(t *testing.T) {
+	var lexicalCalled int32
+	deps := &fakeDeps{
+		lexicalCollections: []string{"default"},
+		searchPipelineFn: func(bool) SearchPipeline {
+			t.Fatal("CHUNKS_LEXICAL should not build a vector search pipeline")
+			return nil
+		},
+		lexicalFn: func(collection, query string, topK int) ([]LexicalResult, error) {
+			atomic.AddInt32(&lexicalCalled, 1)
+			if collection != "default" {
+				t.Errorf("collection=%q, want default", collection)
+			}
+			if query != "exact keyword" {
+				t.Errorf("query=%q, want exact keyword", query)
+			}
+			return []LexicalResult{
+				{ID: "lex-1", Score: 3.5, Metadata: []byte(`{"text":"lexical"}`)},
+			}, nil
+		},
+	}
+
+	res := ToolSearch(context.Background(), deps, map[string]any{
+		"search_query": "exact keyword",
+		"search_type":  "CHUNKS_LEXICAL",
+	})
+	if res.IsError {
+		t.Fatalf("unexpected IsError: %q", res.Content[0].Text)
+	}
+	if atomic.LoadInt32(&lexicalCalled) != 1 {
+		t.Fatalf("LexicalSearch calls=%d, want 1", lexicalCalled)
+	}
+	resp := decodeSearchResp(t, res)
+	results := resp["results"].([]any)
+	if len(results) != 1 {
+		t.Fatalf("got %d lexical results, want 1", len(results))
+	}
+	if got := results[0].(map[string]any)["id"]; got != "lex-1" {
+		t.Errorf("id=%v, want lex-1", got)
+	}
+}
+
+func TestToolSearch_FiltersByAllowedDatasetIDs(t *testing.T) {
+	deps := &fakeDeps{
+		allowedDatasetIDs:  []string{"project-b"},
+		lexicalCollections: []string{"kb"},
+		lexicalFn: func(collection, query string, topK int) ([]LexicalResult, error) {
+			return []LexicalResult{
+				{ID: "a", Score: 5, Metadata: []byte(`{"text":"a","dataset_id":"project-a"}`)},
+				{ID: "b", Score: 4, Metadata: []byte(`{"text":"b","dataset_id":"project-b"}`)},
+				{ID: "legacy", Score: 3, Metadata: []byte(`{"text":"legacy"}`)},
+			}, nil
+		},
+	}
+
+	res := ToolSearch(context.Background(), deps, map[string]any{
+		"search_query": "anchor",
+		"search_type":  "CHUNKS_LEXICAL",
+		"top_k":        float64(10),
+	})
+	if res.IsError {
+		t.Fatalf("unexpected IsError: %q", res.Content[0].Text)
+	}
+	resp := decodeSearchResp(t, res)
+	results := resp["results"].([]any)
+	if len(results) != 2 {
+		t.Fatalf("got %d results, want project-b + legacy", len(results))
+	}
+	if got := results[0].(map[string]any)["id"]; got != "b" {
+		t.Fatalf("first id=%v, want b", got)
+	}
+	if got := results[1].(map[string]any)["id"]; got != "legacy" {
+		t.Fatalf("second id=%v, want legacy", got)
+	}
+}
+
+func TestToolSearch_FiltersWorkspaceProjectIDFallback(t *testing.T) {
+	deps := &fakeDeps{
+		allowedDatasetIDs:  []string{"payments"},
+		lexicalCollections: []string{"kb"},
+		lexicalFn: func(collection, query string, topK int) ([]LexicalResult, error) {
+			return []LexicalResult{
+				{ID: "forbidden", Score: 5, Metadata: []byte(`{"text":"other","project_id":"other"}`)},
+				{ID: "allowed", Score: 4, Metadata: []byte(`{"text":"payments","project_id":"payments"}`)},
+			}, nil
+		},
+	}
+
+	res := ToolSearch(context.Background(), deps, map[string]any{
+		"search_query": "anchor",
+		"search_type":  "CHUNKS_LEXICAL",
+	})
+	resp := decodeSearchResp(t, res)
+	results := resp["results"].([]any)
+	if len(results) != 1 {
+		t.Fatalf("got %d results, want 1", len(results))
+	}
+	if got := results[0].(map[string]any)["id"]; got != "allowed" {
+		t.Fatalf("id=%v, want allowed", got)
+	}
+}
+
+func TestToolSearch_HybridBranchFusesVectorAndLexical(t *testing.T) {
+	var byTextCalled, lexicalCalled int32
+	fakePipe := &fakeSearchPipeline{
+		byText: func(ctx context.Context, coll, query string, topK int) ([]pipeline.ScoredResult, error) {
+			atomic.AddInt32(&byTextCalled, 1)
+			if topK != searchDefaultTopK*2 {
+				t.Errorf("hybrid vector topK=%d, want %d", topK, searchDefaultTopK*2)
+			}
+			return []pipeline.ScoredResult{
+				scoredRes("both", 0.95),
+				scoredRes("vector-only", 0.90),
+			}, nil
+		},
+	}
+	deps := &fakeDeps{
+		collections:      []string{"default"},
+		hasColls:         true,
+		searchPipelineFn: func(bool) SearchPipeline { return fakePipe },
+		lexicalFn: func(collection, query string, topK int) ([]LexicalResult, error) {
+			atomic.AddInt32(&lexicalCalled, 1)
+			if topK != searchDefaultTopK*2 {
+				t.Errorf("hybrid lexical topK=%d, want %d", topK, searchDefaultTopK*2)
+			}
+			return []LexicalResult{
+				{ID: "both", Score: 7, Metadata: []byte(`{"text":"both lexical"}`)},
+				{ID: "lexical-only", Score: 6, Metadata: []byte(`{"text":"lexical only"}`)},
+			}, nil
+		},
+	}
+
+	res := ToolSearch(context.Background(), deps, map[string]any{
+		"search_query": "q",
+		"search_type":  "HYBRID",
+	})
+	if atomic.LoadInt32(&byTextCalled) != 1 {
+		t.Fatalf("SearchByText calls=%d, want 1", byTextCalled)
+	}
+	if atomic.LoadInt32(&lexicalCalled) != 1 {
+		t.Fatalf("LexicalSearch calls=%d, want 1", lexicalCalled)
+	}
+	resp := decodeSearchResp(t, res)
+	results := resp["results"].([]any)
+	if len(results) != 3 {
+		t.Fatalf("got %d hybrid results, want 3", len(results))
+	}
+	seen := map[string]bool{}
+	for _, item := range results {
+		seen[item.(map[string]any)["id"].(string)] = true
+	}
+	for _, id := range []string{"both", "vector-only", "lexical-only"} {
+		if !seen[id] {
+			t.Errorf("hybrid result %q missing from fused results: %v", id, results)
+		}
+	}
+}
+
 func TestToolSearch_TopKCaps(t *testing.T) {
 	results := []pipeline.ScoredResult{}
 	for i := 0; i < 20; i++ {
@@ -146,6 +304,32 @@ func TestToolSearch_TopKCaps(t *testing.T) {
 	}
 }
 
+func TestToolSearch_TopKAcceptsIntegerArgs(t *testing.T) {
+	var gotTopK int32
+	deps := &fakeDeps{
+		lexicalCollections: []string{"kb"},
+		lexicalFn: func(collection, query string, topK int) ([]LexicalResult, error) {
+			atomic.StoreInt32(&gotTopK, int32(topK))
+			return []LexicalResult{
+				{ID: "a", Score: 3, Metadata: []byte(`{"text":"a"}`)},
+				{ID: "b", Score: 2, Metadata: []byte(`{"text":"b"}`)},
+				{ID: "c", Score: 1, Metadata: []byte(`{"text":"c"}`)},
+			}, nil
+		},
+	}
+	res := ToolSearch(context.Background(), deps, map[string]any{
+		"search_query": "q",
+		"search_type":  "CHUNKS_LEXICAL",
+		"top_k":        3,
+	})
+	if res.IsError {
+		t.Fatalf("ToolSearch error: %+v", res.Content)
+	}
+	if atomic.LoadInt32(&gotTopK) != 3 {
+		t.Fatalf("topK=%d, want 3", gotTopK)
+	}
+}
+
 func TestToolSearch_RerankBranch(t *testing.T) {
 	var byTextCalled, byTextWithRerankCalled int32
 	fakePipe := &fakeSearchPipeline{
@@ -160,8 +344,8 @@ func TestToolSearch_RerankBranch(t *testing.T) {
 		},
 	}
 	deps := &fakeDeps{
-		collections:      []string{"default"},
-		hasColls:         true,
+		collections: []string{"default"},
+		hasColls:    true,
 		searchPipelineFn: func(doRerank bool) SearchPipeline {
 			if !doRerank {
 				t.Error("doRerank should be true when rerank:true")
@@ -379,6 +563,32 @@ func TestToolSearch_MetadataFilterOverfetchAndDrop(t *testing.T) {
 	}
 }
 
+func TestToolSearch_MetadataFilterDoesNotFallbackToUnfiltered(t *testing.T) {
+	fakePipe := &fakeSearchPipeline{
+		byText: func(ctx context.Context, coll, query string, topK int) ([]pipeline.ScoredResult, error) {
+			return []pipeline.ScoredResult{
+				{ID: "1", Score: 0.9, Metadata: json.RawMessage(`{"room":"beta","tags":["public"]}`)},
+				{ID: "2", Score: 0.8, Metadata: json.RawMessage(`{"room":"gamma","tags":["public"]}`)},
+			}, nil
+		},
+	}
+	deps := &fakeDeps{
+		collections:      []string{"default"},
+		hasColls:         true,
+		searchPipelineFn: func(bool) SearchPipeline { return fakePipe },
+	}
+	res := ToolSearch(context.Background(), deps, map[string]any{
+		"search_query": "q",
+		"search_type":  "BASIC",
+		"room":         "alpha",
+	})
+	resp := decodeSearchResp(t, res)
+	out := resp["results"].([]any)
+	if len(out) != 0 {
+		t.Fatalf("strict room filter returned %d unfiltered results: %v", len(out), out)
+	}
+}
+
 func TestToolSearch_EmptyResultsEncodesAsEmptyArray(t *testing.T) {
 	// No results → response.results must be [], not omitted / null.
 	fakePipe := &fakeSearchPipeline{}
@@ -527,3 +737,16 @@ func TestParseSearchArgs_Overrides(t *testing.T) {
 	}
 }
 
+func TestParseSearchArgs_HybridWeights(t *testing.T) {
+	a := parseSearchArgs(map[string]any{
+		"search_query":  "q",
+		"vector_weight": float64(2.5),
+		"bm25_weight":   float64(4),
+	})
+	if a.vectorWeight != 2.5 {
+		t.Errorf("vectorWeight=%v, want 2.5", a.vectorWeight)
+	}
+	if a.bm25Weight != 4 {
+		t.Errorf("bm25Weight=%v, want 4", a.bm25Weight)
+	}
+}

@@ -24,8 +24,14 @@ import (
 type APIConfig struct {
 	PostgresDSN   string
 	StoragePath   string
-	EmbedEndpoint string
-	EmbedModel    string
+	WorkspacePath string
+	JWTSecret     string
+	RequireAuth   bool
+	// WorkspaceWatcher exposes polling watcher status to REST/MCP observability
+	// endpoints. Nil means watcher status is unavailable/disabled.
+	WorkspaceWatcher *WorkspaceWatchState
+	EmbedEndpoint    string
+	EmbedModel       string
 	// EmbedClient is a shared *embed.Client initialised once in main.go and reused
 	// across all handlers that call the default embed endpoint. Before T3 each
 	// search/cognify handler constructed a new Client per request — fresh http
@@ -68,6 +74,9 @@ func RegisterAPI(app fiber.Router, cfg APIConfig) {
 	if cfg.StoragePath == "" {
 		cfg.StoragePath = "data/uploads"
 	}
+	if cfg.WorkspacePath == "" {
+		cfg.WorkspacePath = "data/workspace"
+	}
 	// BL-2: log MkdirAll failures so ops can see permission / disk-full
 	// issues before the first upload attempt returns a cryptic 500. We
 	// don't fail startup — readonly filesystems are a legit deployment
@@ -75,6 +84,9 @@ func RegisterAPI(app fiber.Router, cfg APIConfig) {
 	// its own error when it actually tries to write.
 	if err := os.MkdirAll(cfg.StoragePath, 0755); err != nil {
 		log.Printf("[api] MkdirAll %q: %v (uploads may fail)", cfg.StoragePath, err)
+	}
+	if err := os.MkdirAll(cfg.WorkspacePath, 0755); err != nil {
+		log.Printf("[api] MkdirAll %q: %v (workspace indexing may fail)", cfg.WorkspacePath, err)
 	}
 
 	// U1: Health is registered as public route in main.go (before JWT middleware)
@@ -146,6 +158,9 @@ func RegisterAPI(app fiber.Router, cfg APIConfig) {
 
 	// U20: Cross-instance sync
 	RegisterSyncAPI(app, cfg)
+
+	// U20b: Markdown-native workspace indexing
+	RegisterWorkspaceAPI(app, cfg)
 
 	// U21: Search feedback
 	RegisterFeedbackAPI(app, cfg)

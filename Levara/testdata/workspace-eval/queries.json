@@ -1,0 +1,50 @@
+[
+  {
+    "id": "payment_exact",
+    "query": "payment-timeout-mitigation retry budget",
+    "expected_path": "docs/runbooks/payment-timeouts.md",
+    "expected_heading": "Mitigation",
+    "types": ["CHUNKS_LEXICAL", "HYBRID"]
+  },
+  {
+    "id": "payment_paraphrase",
+    "query": "checkout waits too long after release and customers see authorization failures",
+    "expected_path": "docs/runbooks/payment-timeouts.md",
+    "expected_heading": "Prior Learning",
+    "types": ["CHUNKS", "HYBRID"]
+  },
+  {
+    "id": "auth_rotation",
+    "query": "login sessions fail after jwks signing key rotation",
+    "expected_path": "docs/auth/token-rotation.md",
+    "expected_heading": "Incident Playbook",
+    "types": ["CHUNKS_LEXICAL", "CHUNKS", "HYBRID"]
+  },
+  {
+    "id": "deploy_canary",
+    "query": "disable feature flag when canary release has elevated errors",
+    "expected_path": "docs/deploy/canary-rollout.md",
+    "expected_heading": "Rollback",
+    "types": ["CHUNKS_LEXICAL", "CHUNKS", "HYBRID"]
+  },
+  {
+    "id": "db_schema",
+    "query": "postgres migration add nullable column before backfill",
+    "expected_path": "artifacts/db/orders-schema.md",
+    "expected_heading": "Migration Safety",
+    "types": ["CHUNKS_LEXICAL", "CHUNKS", "HYBRID"]
+  },
+  {
+    "id": "api_contract",
+    "query": "openapi endpoint version compatibility for invoices refunds",
+    "expected_path": "artifacts/api/billing-openapi.md",
+    "expected_heading": "Endpoints",
+    "types": ["CHUNKS_LEXICAL", "CHUNKS", "HYBRID"]
+  },
+  {
+    "id": "russian_no_hit",
+    "query": "неизвестный русский запрос без совпадений",
+    "expected_path": "",
+    "types": ["CHUNKS_LEXICAL"]
+  }
+]

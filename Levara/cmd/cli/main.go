@@ -24,6 +24,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -96,6 +97,8 @@ func main() {
 		cmdCache(args)
 	case "git":
 		cmdGit(args)
+	case "workspace":
+		cmdWorkspace(args)
 	case "help", "--help", "-h":
 		printUsage()
 	default:
@@ -333,10 +336,11 @@ func cmdCognify(args []string) {
 func cmdSearch(args []string) {
 	queryType := flagValue(args, "--type", "CHUNKS")
 	topK := flagValue(args, "--top-k", "10")
+	collection := flagValue(args, "--collection", "")
 	positional := positionalArgs(args)
 
 	if len(positional) == 0 {
-		fatalf("usage: levara search <query> [--type=CHUNKS] [--top-k=10]")
+		fatalf("usage: levara search <query> [--type=CHUNKS] [--top-k=10] [--collection=name]")
 	}
 	query := strings.Join(positional, " ")
 
@@ -344,6 +348,9 @@ func cmdSearch(args []string) {
 		"query_text": query,
 		"query_type": queryType,
 		"top_k":      jsonNumber(topK),
+	}
+	if collection != "" {
+		payload["collection"] = collection
 	}
 
 	body, status := doPost(baseURL+"/search/text", payload)
@@ -570,7 +577,7 @@ func cmdGitAnalyze(args []string) {
 	limit := flagValue(args, "--limit", "100")
 
 	payload := map[string]any{
-		"name":      "analyze_commits",
+		"name": "analyze_commits",
 		"arguments": map[string]any{
 			"repo_path": repo,
 			"since":     since,
@@ -628,7 +635,7 @@ func cmdGitSearch(args []string) {
 	query := strings.Join(positional, " ")
 
 	payload := map[string]any{
-		"name":      "git_search",
+		"name": "git_search",
 		"arguments": map[string]any{
 			"query": query,
 		},
@@ -674,6 +681,668 @@ func cmdGitSearch(args []string) {
 	fmt.Printf("%s\n", body)
 }
 
+// ── workspace ───────────────────────────────────────────────────────────────
+
+func cmdWorkspace(args []string) {
+	if len(args) == 0 {
+		fatalf("usage: levara workspace [index|delete|gc|manifest] ...")
+	}
+	sub := args[0]
+	args = args[1:]
+
+	switch sub {
+	case "index":
+		cmdWorkspaceIndex(args)
+	case "read":
+		cmdWorkspaceRead(args)
+	case "write":
+		cmdWorkspaceWrite(args)
+	case "reindex":
+		cmdWorkspaceReindex(args)
+	case "reconcile":
+		cmdWorkspaceReconcile(args)
+	case "watch-status":
+		cmdWorkspaceWatchStatus(args)
+	case "context":
+		cmdWorkspaceContext(args)
+	case "ops-status":
+		cmdWorkspaceOpsStatus(args)
+	case "conflicts":
+		cmdWorkspaceConflicts(args)
+	case "run":
+		cmdWorkspaceRun(args)
+	case "commit":
+		cmdWorkspaceCommit(args)
+	case "log":
+		cmdWorkspaceLog(args)
+	case "revert":
+		cmdWorkspaceRevert(args)
+	case "delete":
+		cmdWorkspaceDelete(args)
+	case "gc":
+		cmdWorkspaceGC(args)
+	case "manifest":
+		cmdWorkspaceManifest(args)
+	default:
+		fatalf("unknown workspace subcommand: %s\nUsage: levara workspace [index|read|write|reindex|reconcile|context|ops-status|conflicts|watch-status|run|commit|log|revert|delete|gc|manifest]", sub)
+	}
+}
+
+func cmdWorkspaceIndex(args []string) {
+	projectID := flagValue(args, "--project", "")
+	branch := flagValue(args, "--branch", "main")
+	generation := flagValue(args, "--generation", "")
+	collection := flagValue(args, "--collection", "")
+	room := flagValue(args, "--room", "")
+	tags := splitCSV(flagValue(args, "--tags", ""))
+	title := flagValue(args, "--title", "")
+	documentID := flagValue(args, "--document-id", "")
+	commitHash := flagValue(args, "--commit", "")
+	chunkStrategy := flagValue(args, "--chunk-strategy", "")
+	minChunkChars := flagValue(args, "--min-chunk-chars", "")
+	maxChunkChars := flagValue(args, "--max-chunk-chars", "")
+	activate := hasFlag(args, "--activate")
+	positional := positionalArgs(args)
+
+	if projectID == "" || generation == "" || len(positional) == 0 {
+		fatalf("usage: levara workspace index <file.md> --project=<id> --generation=<id> [--branch=main] [--activate]")
+	}
+	filePath := positional[0]
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		fatalf("read file: %v", err)
+	}
+
+	payload := map[string]any{
+		"project_id":          projectID,
+		"branch":              branch,
+		"generation":          generation,
+		"path":                filepath.ToSlash(filePath),
+		"text":                string(data),
+		"activate_generation": activate,
+	}
+	if collection != "" {
+		payload["collection"] = collection
+	}
+	if room != "" {
+		payload["room"] = room
+	}
+	if len(tags) > 0 {
+		payload["tags"] = tags
+	}
+	if title != "" {
+		payload["title"] = title
+	}
+	if documentID != "" {
+		payload["document_id"] = documentID
+	}
+	if commitHash != "" {
+		payload["commit_hash"] = commitHash
+	}
+	if chunkStrategy != "" {
+		payload["chunk_strategy"] = chunkStrategy
+	}
+	if minChunkChars != "" {
+		payload["min_chunk_chars"] = jsonNumber(minChunkChars)
+	}
+	if maxChunkChars != "" {
+		payload["max_chunk_chars"] = jsonNumber(maxChunkChars)
+	}
+
+	body, status := doPost(baseURL+"/workspace/index", payload)
+	if status >= 400 {
+		fatalf("workspace index failed (%d): %s", status, body)
+	}
+	var resp map[string]any
+	_ = json.Unmarshal(body, &resp)
+	result, _ := resp["result"].(map[string]any)
+	chunks, _ := result["chunks_created"].(float64)
+	collectionName, _ := result["collection"].(string)
+	manifest, _ := resp["manifest_path"].(string)
+	fmt.Printf("%s%sOK%s  indexed %s → %d chunk(s) in %q\n", colorBold, colorGreen, colorReset, filePath, int(chunks), collectionName)
+	if manifest != "" {
+		fmt.Printf("%smanifest:%s %s\n", colorDim, colorReset, manifest)
+	}
+}
+
+func cmdWorkspaceDelete(args []string) {
+	projectID := flagValue(args, "--project", "")
+	branch := flagValue(args, "--branch", "main")
+	generation := flagValue(args, "--generation", "")
+	collection := flagValue(args, "--collection", "")
+	positional := positionalArgs(args)
+	if projectID == "" || generation == "" || len(positional) == 0 {
+		fatalf("usage: levara workspace delete <path.md> --project=<id> --generation=<id> [--branch=main]")
+	}
+	payload := map[string]any{
+		"project_id": projectID,
+		"branch":     branch,
+		"generation": generation,
+		"path":       filepath.ToSlash(positional[0]),
+	}
+	if collection != "" {
+		payload["collection"] = collection
+	}
+
+	body, status := doPost(baseURL+"/workspace/delete", payload)
+	if status >= 400 {
+		fatalf("workspace delete failed (%d): %s", status, body)
+	}
+	var resp struct {
+		DeletedVectorIDs []string `json:"deleted_vector_ids"`
+	}
+	_ = json.Unmarshal(body, &resp)
+	fmt.Printf("%s%sOK%s  deleted %d vector(s)\n", colorBold, colorGreen, colorReset, len(resp.DeletedVectorIDs))
+}
+
+func cmdWorkspaceRead(args []string) {
+	projectID := flagValue(args, "--project", "")
+	branch := flagValue(args, "--branch", "main")
+	positional := positionalArgs(args)
+	if projectID == "" || len(positional) == 0 {
+		fatalf("usage: levara workspace read <path.md> --project=<id> [--branch=main]")
+	}
+	endpoint := fmt.Sprintf("%s/workspace/read?project_id=%s&branch=%s&path=%s",
+		baseURL, url.QueryEscape(projectID), url.QueryEscape(branch), url.QueryEscape(filepath.ToSlash(positional[0])))
+	body, status := doGet(endpoint)
+	if status >= 400 {
+		fatalf("workspace read failed (%d): %s", status, body)
+	}
+	var resp struct {
+		Text string `json:"text"`
+	}
+	_ = json.Unmarshal(body, &resp)
+	fmt.Print(resp.Text)
+}
+
+func cmdWorkspaceWrite(args []string) {
+	projectID := flagValue(args, "--project", "")
+	branch := flagValue(args, "--branch", "main")
+	generation := flagValue(args, "--generation", "")
+	collection := flagValue(args, "--collection", "")
+	room := flagValue(args, "--room", "")
+	tags := splitCSV(flagValue(args, "--tags", ""))
+	chunkStrategy := flagValue(args, "--chunk-strategy", "")
+	minChunkChars := flagValue(args, "--min-chunk-chars", "")
+	maxChunkChars := flagValue(args, "--max-chunk-chars", "")
+	activate := hasFlag(args, "--activate")
+	noIndex := hasFlag(args, "--no-index")
+	positional := positionalArgs(args)
+	if projectID == "" || len(positional) == 0 {
+		fatalf("usage: levara workspace write <path.md> --project=<id> [--generation=<id>] [--no-index]")
+	}
+	data, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		fatalf("read stdin: %v", err)
+	}
+	payload := map[string]any{
+		"project_id": projectID,
+		"branch":     branch,
+		"path":       filepath.ToSlash(positional[0]),
+		"text":       string(data),
+	}
+	if noIndex {
+		payload["index"] = false
+	}
+	if generation != "" {
+		payload["generation"] = generation
+		payload["activate_generation"] = activate
+	}
+	if collection != "" {
+		payload["collection"] = collection
+	}
+	if room != "" {
+		payload["room"] = room
+	}
+	if len(tags) > 0 {
+		payload["tags"] = tags
+	}
+	if chunkStrategy != "" {
+		payload["chunk_strategy"] = chunkStrategy
+	}
+	if minChunkChars != "" {
+		payload["min_chunk_chars"] = jsonNumber(minChunkChars)
+	}
+	if maxChunkChars != "" {
+		payload["max_chunk_chars"] = jsonNumber(maxChunkChars)
+	}
+
+	body, status := doPost(baseURL+"/workspace/write", payload)
+	if status >= 400 {
+		fatalf("workspace write failed (%d): %s", status, body)
+	}
+	var resp struct {
+		Bytes   int `json:"bytes"`
+		Indexed *struct {
+			Result struct {
+				ChunksCreated int    `json:"chunks_created"`
+				Collection    string `json:"collection"`
+			} `json:"result"`
+		} `json:"indexed"`
+	}
+	_ = json.Unmarshal(body, &resp)
+	if resp.Indexed != nil {
+		fmt.Printf("%s%sOK%s  wrote %d byte(s), indexed %d chunk(s) in %q\n",
+			colorBold, colorGreen, colorReset, resp.Bytes, resp.Indexed.Result.ChunksCreated, resp.Indexed.Result.Collection)
+		return
+	}
+	fmt.Printf("%s%sOK%s  wrote %d byte(s)\n", colorBold, colorGreen, colorReset, resp.Bytes)
+}
+
+func cmdWorkspaceReindex(args []string) {
+	projectID := flagValue(args, "--project", "")
+	branch := flagValue(args, "--branch", "main")
+	generation := flagValue(args, "--generation", "")
+	collection := flagValue(args, "--collection", "")
+	chunkStrategy := flagValue(args, "--chunk-strategy", "")
+	minChunkChars := flagValue(args, "--min-chunk-chars", "")
+	maxChunkChars := flagValue(args, "--max-chunk-chars", "")
+	activate := hasFlag(args, "--activate")
+	positional := positionalArgs(args)
+	if projectID == "" || generation == "" || len(positional) == 0 {
+		fatalf("usage: levara workspace reindex <path.md>... --project=<id> --generation=<id> [--branch=main] [--chunk-strategy=paragraph]")
+	}
+	paths := make([]string, 0, len(positional))
+	for _, path := range positional {
+		paths = append(paths, filepath.ToSlash(path))
+	}
+	payload := map[string]any{
+		"project_id":          projectID,
+		"branch":              branch,
+		"generation":          generation,
+		"paths":               paths,
+		"activate_generation": activate,
+	}
+	if collection != "" {
+		payload["collection"] = collection
+	}
+	if chunkStrategy != "" {
+		payload["chunk_strategy"] = chunkStrategy
+	}
+	if minChunkChars != "" {
+		payload["min_chunk_chars"] = jsonNumber(minChunkChars)
+	}
+	if maxChunkChars != "" {
+		payload["max_chunk_chars"] = jsonNumber(maxChunkChars)
+	}
+	body, status := doPost(baseURL+"/workspace/reindex", payload)
+	if status >= 400 {
+		fatalf("workspace reindex failed (%d): %s", status, body)
+	}
+	var resp struct {
+		Results []map[string]any `json:"results"`
+	}
+	_ = json.Unmarshal(body, &resp)
+	fmt.Printf("%s%sOK%s  reindexed %d path(s)\n", colorBold, colorGreen, colorReset, len(resp.Results))
+}
+
+func cmdWorkspaceReconcile(args []string) {
+	projectID := flagValue(args, "--project", "")
+	branch := flagValue(args, "--branch", "main")
+	generation := flagValue(args, "--generation", "")
+	collection := flagValue(args, "--collection", "")
+	chunkStrategy := flagValue(args, "--chunk-strategy", "")
+	minChunkChars := flagValue(args, "--min-chunk-chars", "")
+	maxChunkChars := flagValue(args, "--max-chunk-chars", "")
+	activate := !hasFlag(args, "--no-activate")
+	positional := positionalArgs(args)
+	if projectID == "" || generation == "" {
+		fatalf("usage: levara workspace reconcile --project=<id> --generation=<id> [--chunk-strategy=paragraph] [path.md...]")
+	}
+	paths := make([]string, 0, len(positional))
+	for _, path := range positional {
+		paths = append(paths, filepath.ToSlash(path))
+	}
+	payload := map[string]any{
+		"project_id":          projectID,
+		"branch":              branch,
+		"generation":          generation,
+		"activate_generation": activate,
+	}
+	if len(paths) > 0 {
+		payload["paths"] = paths
+	}
+	if collection != "" {
+		payload["collection"] = collection
+	}
+	if chunkStrategy != "" {
+		payload["chunk_strategy"] = chunkStrategy
+	}
+	if minChunkChars != "" {
+		payload["min_chunk_chars"] = jsonNumber(minChunkChars)
+	}
+	if maxChunkChars != "" {
+		payload["max_chunk_chars"] = jsonNumber(maxChunkChars)
+	}
+	body, status := doPost(baseURL+"/workspace/reconcile", payload)
+	if status >= 400 {
+		fatalf("workspace reconcile failed (%d): %s", status, body)
+	}
+	var resp struct {
+		Paths []string         `json:"paths"`
+		Items []map[string]any `json:"results"`
+	}
+	_ = json.Unmarshal(body, &resp)
+	fmt.Printf("%s%sOK%s  reconciled %d path(s), %d result(s)\n", colorBold, colorGreen, colorReset, len(resp.Paths), len(resp.Items))
+}
+
+func cmdWorkspaceWatchStatus(args []string) {
+	body, status := doGet(baseURL + "/workspace/watch/status")
+	if status >= 400 {
+		fatalf("workspace watch-status failed (%d): %s", status, body)
+	}
+	var resp map[string]any
+	_ = json.Unmarshal(body, &resp)
+	pretty, _ := json.MarshalIndent(resp, "", "  ")
+	fmt.Println(string(pretty))
+}
+
+func cmdWorkspaceContext(args []string) {
+	projectID := flagValue(args, "--project", "")
+	branch := flagValue(args, "--branch", "")
+	endpoint := baseURL + "/workspace/context"
+	q := url.Values{}
+	if projectID != "" {
+		q.Set("project_id", projectID)
+	}
+	if branch != "" {
+		q.Set("branch", branch)
+	}
+	if encoded := q.Encode(); encoded != "" {
+		endpoint += "?" + encoded
+	}
+	body, status := doGet(endpoint)
+	if status >= 400 {
+		fatalf("workspace context failed (%d): %s", status, body)
+	}
+	printJSON(body)
+}
+
+func cmdWorkspaceOpsStatus(args []string) {
+	projectID := flagValue(args, "--project", "")
+	branch := flagValue(args, "--branch", "")
+	endpoint := baseURL + "/workspace/ops/status"
+	q := url.Values{}
+	if projectID != "" {
+		q.Set("project_id", projectID)
+	}
+	if branch != "" {
+		q.Set("branch", branch)
+	}
+	if encoded := q.Encode(); encoded != "" {
+		endpoint += "?" + encoded
+	}
+	body, status := doGet(endpoint)
+	if status >= 400 {
+		fatalf("workspace ops-status failed (%d): %s", status, body)
+	}
+	printJSON(body)
+}
+
+func cmdWorkspaceConflicts(args []string) {
+	projectID := flagValue(args, "--project", "")
+	branch := flagValue(args, "--branch", "main")
+	if projectID == "" {
+		fatalf("usage: levara workspace conflicts --project=<id> [--branch=main]")
+	}
+	endpoint := fmt.Sprintf("%s/workspace/conflicts?project_id=%s&branch=%s",
+		baseURL, url.QueryEscape(projectID), url.QueryEscape(branch))
+	body, status := doGet(endpoint)
+	if status >= 400 {
+		fatalf("workspace conflicts failed (%d): %s", status, body)
+	}
+	printJSON(body)
+}
+
+func cmdWorkspaceRun(args []string) {
+	if len(args) == 0 {
+		fatalf("usage: levara workspace run [start|get] ...")
+	}
+	sub := args[0]
+	args = args[1:]
+	switch sub {
+	case "start":
+		cmdWorkspaceRunStart(args)
+	case "get":
+		cmdWorkspaceRunGet(args)
+	default:
+		fatalf("unknown workspace run subcommand: %s\nUsage: levara workspace run [start|get]", sub)
+	}
+}
+
+func cmdWorkspaceRunStart(args []string) {
+	projectID := flagValue(args, "--project", "")
+	branch := flagValue(args, "--branch", "main")
+	runID := flagValue(args, "--run-id", "")
+	command := flagValue(args, "--cmd", "")
+	result := flagValue(args, "--result", "")
+	prompt := flagValue(args, "--prompt", "")
+	if hasFlag(args, "--prompt-stdin") {
+		data, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			fatalf("read stdin: %v", err)
+		}
+		prompt = string(data)
+	}
+	if projectID == "" {
+		fatalf("usage: levara workspace run start --project=<id> [--cmd=...] [--prompt-stdin]")
+	}
+	payload := map[string]any{
+		"project_id": projectID,
+		"branch":     branch,
+	}
+	if runID != "" {
+		payload["run_id"] = runID
+	}
+	if prompt != "" {
+		payload["prompt"] = prompt
+	}
+	if command != "" {
+		payload["command"] = command
+	}
+	if result != "" {
+		payload["result"] = result
+	}
+	body, status := doPost(baseURL+"/workspace/runs/start", payload)
+	if status >= 400 {
+		fatalf("workspace run start failed (%d): %s", status, body)
+	}
+	var resp struct {
+		RunID string `json:"run_id"`
+		Path  string `json:"path"`
+	}
+	_ = json.Unmarshal(body, &resp)
+	fmt.Printf("%s%sOK%s  run %s at %s\n", colorBold, colorGreen, colorReset, resp.RunID, resp.Path)
+}
+
+func cmdWorkspaceRunGet(args []string) {
+	projectID := flagValue(args, "--project", "")
+	branch := flagValue(args, "--branch", "main")
+	runID := flagValue(args, "--run-id", "")
+	positional := positionalArgs(args)
+	if runID == "" && len(positional) > 0 {
+		runID = positional[0]
+	}
+	if projectID == "" || runID == "" {
+		fatalf("usage: levara workspace run get <run-id> --project=<id> [--branch=main]")
+	}
+	endpoint := fmt.Sprintf("%s/workspace/runs/get?project_id=%s&branch=%s&run_id=%s",
+		baseURL, url.QueryEscape(projectID), url.QueryEscape(branch), url.QueryEscape(runID))
+	body, status := doGet(endpoint)
+	if status >= 400 {
+		fatalf("workspace run get failed (%d): %s", status, body)
+	}
+	var resp map[string]any
+	_ = json.Unmarshal(body, &resp)
+	pretty, _ := json.MarshalIndent(resp, "", "  ")
+	fmt.Println(string(pretty))
+}
+
+func cmdWorkspaceCommit(args []string) {
+	projectID := flagValue(args, "--project", "")
+	branch := flagValue(args, "--branch", "main")
+	message := flagValue(args, "--message", "")
+	author := flagValue(args, "--author", "")
+	if projectID == "" {
+		fatalf("usage: levara workspace commit --project=<id> [--message=...] [--author=...]")
+	}
+	body, status := doPost(baseURL+"/workspace/commit", map[string]any{
+		"project_id": projectID,
+		"branch":     branch,
+		"message":    message,
+		"author":     author,
+	})
+	if status >= 400 {
+		fatalf("workspace commit failed (%d): %s", status, body)
+	}
+	var resp struct {
+		CommitID string `json:"commit_id"`
+		Files    []any  `json:"files"`
+	}
+	_ = json.Unmarshal(body, &resp)
+	fmt.Printf("%s%sOK%s  commit %s captured %d file(s)\n", colorBold, colorGreen, colorReset, resp.CommitID, len(resp.Files))
+}
+
+func cmdWorkspaceLog(args []string) {
+	projectID := flagValue(args, "--project", "")
+	branch := flagValue(args, "--branch", "main")
+	if projectID == "" {
+		fatalf("usage: levara workspace log --project=<id> [--branch=main]")
+	}
+	endpoint := fmt.Sprintf("%s/workspace/log?project_id=%s&branch=%s",
+		baseURL, url.QueryEscape(projectID), url.QueryEscape(branch))
+	body, status := doGet(endpoint)
+	if status >= 400 {
+		fatalf("workspace log failed (%d): %s", status, body)
+	}
+	var resp struct {
+		Commits []struct {
+			CommitID  string `json:"commit_id"`
+			CreatedAt string `json:"created_at"`
+			Message   string `json:"message"`
+			Files     []any  `json:"files"`
+		} `json:"commits"`
+	}
+	_ = json.Unmarshal(body, &resp)
+	if len(resp.Commits) == 0 {
+		fmt.Println("No commits.")
+		return
+	}
+	fmt.Printf("\n%s%-38s %-20s %-7s %s%s\n", colorBold, "COMMIT", "CREATED", "FILES", "MESSAGE", colorReset)
+	fmt.Println(strings.Repeat("─", 90))
+	for _, c := range resp.Commits {
+		fmt.Printf("%-38s %-20s %-7d %s\n", c.CommitID, c.CreatedAt, len(c.Files), c.Message)
+	}
+}
+
+func cmdWorkspaceRevert(args []string) {
+	projectID := flagValue(args, "--project", "")
+	branch := flagValue(args, "--branch", "main")
+	commitID := flagValue(args, "--commit", "")
+	generation := flagValue(args, "--generation", "")
+	collection := flagValue(args, "--collection", "")
+	chunkStrategy := flagValue(args, "--chunk-strategy", "")
+	minChunkChars := flagValue(args, "--min-chunk-chars", "")
+	maxChunkChars := flagValue(args, "--max-chunk-chars", "")
+	reindex := hasFlag(args, "--reindex")
+	activate := !hasFlag(args, "--no-activate")
+	positional := positionalArgs(args)
+	if commitID == "" && len(positional) > 0 {
+		commitID = positional[0]
+	}
+	if projectID == "" || commitID == "" {
+		fatalf("usage: levara workspace revert <commit-id> --project=<id> [--branch=main] [--reindex --generation=<id>]")
+	}
+	payload := map[string]any{
+		"project_id": projectID,
+		"branch":     branch,
+		"commit_id":  commitID,
+	}
+	if reindex {
+		payload["reindex"] = true
+		payload["activate_generation"] = activate
+	}
+	if generation != "" {
+		payload["generation"] = generation
+	}
+	if collection != "" {
+		payload["collection"] = collection
+	}
+	if chunkStrategy != "" {
+		payload["chunk_strategy"] = chunkStrategy
+	}
+	if minChunkChars != "" {
+		payload["min_chunk_chars"] = jsonNumber(minChunkChars)
+	}
+	if maxChunkChars != "" {
+		payload["max_chunk_chars"] = jsonNumber(maxChunkChars)
+	}
+	body, status := doPost(baseURL+"/workspace/revert", payload)
+	if status >= 400 {
+		fatalf("workspace revert failed (%d): %s", status, body)
+	}
+	var resp struct {
+		Files   []any `json:"files"`
+		Indexed *struct {
+			Paths []string `json:"paths"`
+		} `json:"indexed"`
+	}
+	_ = json.Unmarshal(body, &resp)
+	if resp.Indexed != nil {
+		fmt.Printf("%s%sOK%s  reverted to %s (%d file(s)), reindexed %d path(s)\n",
+			colorBold, colorGreen, colorReset, commitID, len(resp.Files), len(resp.Indexed.Paths))
+		return
+	}
+	fmt.Printf("%s%sOK%s  reverted to %s (%d file(s))\n", colorBold, colorGreen, colorReset, commitID, len(resp.Files))
+}
+
+func cmdWorkspaceGC(args []string) {
+	projectID := flagValue(args, "--project", "")
+	branch := flagValue(args, "--branch", "main")
+	dryRun := hasFlag(args, "--dry-run")
+	if projectID == "" {
+		fatalf("usage: levara workspace gc --project=<id> [--branch=main] [--dry-run]")
+	}
+	body, status := doPost(baseURL+"/workspace/gc", map[string]any{
+		"project_id": projectID,
+		"branch":     branch,
+		"dry_run":    dryRun,
+	})
+	if status >= 400 {
+		fatalf("workspace gc failed (%d): %s", status, body)
+	}
+	var resp map[string]any
+	_ = json.Unmarshal(body, &resp)
+	result, _ := resp["result"].(map[string]any)
+	gens, _ := result["generations"].([]any)
+	dropped, _ := result["dropped_collections"].([]any)
+	deleted, _ := result["deleted_vector_ids"].([]any)
+	mode := "removed"
+	if dryRun {
+		mode = "would remove"
+	}
+	fmt.Printf("%s%sOK%s  gc %s %d generation(s), dropped %d collection(s), deleted %d vector(s)\n",
+		colorBold, colorGreen, colorReset, mode, len(gens), len(dropped), len(deleted))
+}
+
+func cmdWorkspaceManifest(args []string) {
+	projectID := flagValue(args, "--project", "")
+	branch := flagValue(args, "--branch", "main")
+	if projectID == "" {
+		fatalf("usage: levara workspace manifest --project=<id> [--branch=main]")
+	}
+	endpoint := fmt.Sprintf("%s/workspace/manifest?project_id=%s&branch=%s",
+		baseURL, url.QueryEscape(projectID), url.QueryEscape(branch))
+	body, status := doGet(endpoint)
+	if status >= 400 {
+		fatalf("workspace manifest failed (%d): %s", status, body)
+	}
+	var resp map[string]any
+	_ = json.Unmarshal(body, &resp)
+	pretty, _ := json.MarshalIndent(resp, "", "  ")
+	fmt.Println(string(pretty))
+}
+
 // ── HTTP helpers ────────────────────────────────────────────────────────────
 
 func doGet(url string) ([]byte, int) {
@@ -700,6 +1369,16 @@ func doPost(url string, payload map[string]any) ([]byte, int) {
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	return body, resp.StatusCode
+}
+
+func printJSON(body []byte) {
+	var resp map[string]any
+	if err := json.Unmarshal(body, &resp); err != nil {
+		fmt.Println(string(body))
+		return
+	}
+	pretty, _ := json.MarshalIndent(resp, "", "  ")
+	fmt.Println(string(pretty))
 }
 
 func applyAuth(req *http.Request) {
@@ -748,6 +1427,21 @@ func positionalArgs(args []string) []string {
 	return out
 }
 
+func splitCSV(s string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
 // jsonNumber parses a string to a JSON number (int).
 func jsonNumber(s string) int {
 	var n int
@@ -781,11 +1475,28 @@ Commands:
   health   [--details]                       Server health check
   add      <file|url|text> [--dataset=name]  Ingest data
   cognify  [--dataset=name] [--collection=name] [--wait]  Run cognify pipeline
-  search   <query> [--type=CHUNKS] [--top-k=10]           Semantic search
+  search   <query> [--type=CHUNKS] [--top-k=10] [--collection=name]
   datasets [list|create <name>|delete <id>]  Manage datasets
   cache    stats                             LLM cache statistics
   git      analyze [--repo=.] [--since=...] [--limit=100]  Analyze git commits
   git      search <query>                    Search analyzed commits
+  workspace index <file.md> --project=<id> --generation=<id> [--activate]
+  workspace read <path.md> --project=<id> [--branch=main]
+  workspace write <path.md> --project=<id> [--generation=<id>] < content.md
+  workspace reindex <path.md>... --project=<id> --generation=<id>
+  workspace reconcile --project=<id> --generation=<id> [path.md...]
+  workspace context [--project=<id>] [--branch=main]
+  workspace ops-status [--project=<id>] [--branch=main]
+  workspace conflicts --project=<id> [--branch=main]
+  workspace watch-status
+  workspace run start --project=<id> [--cmd=...] [--prompt-stdin]
+  workspace run get <run-id> --project=<id>
+  workspace commit --project=<id> [--message=...]
+  workspace log --project=<id>
+  workspace revert <commit-id> --project=<id>
+  workspace delete <path.md> --project=<id> --generation=<id>
+  workspace gc --project=<id> [--branch=main] [--dry-run]
+  workspace manifest --project=<id> [--branch=main]
 
 Global flags:
   --url=<url>      API base URL (default: $LEVARA_URL or http://localhost:8080/api/v1)

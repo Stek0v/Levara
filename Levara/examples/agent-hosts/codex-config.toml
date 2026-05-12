@@ -1,0 +1,5 @@
+[mcp_servers.levara]
+url = "http://localhost:8080/mcp"
+
+[mcp_servers.levara.headers]
+Authorization = "Bearer ${LEVARA_TOKEN}"
