@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/stek0v/levara/pipeline"
+	"github.com/stek0v/levara/pkg/bm25"
 	"github.com/stek0v/levara/pkg/graphrank"
 	"github.com/stek0v/levara/pkg/router"
 )
@@ -125,6 +126,8 @@ type searchArgs struct {
 	doMultiQuery  bool
 	doDedup       bool
 	doGraphRerank bool
+	vectorWeight  float64
+	bm25Weight    float64
 }
 
 // parseSearchArgs pulls values from the args map, applying the
@@ -132,16 +135,18 @@ type searchArgs struct {
 // those touch deployment state (router.Capabilities).
 func parseSearchArgs(args map[string]any) searchArgs {
 	out := searchArgs{
-		searchType: "AUTO",
-		mode:       "auto",
-		topK:       searchDefaultTopK,
-		doDedup:    true, // enabled by default
+		searchType:   "AUTO",
+		mode:         "auto",
+		topK:         searchDefaultTopK,
+		doDedup:      true, // enabled by default
+		vectorWeight: 1.0,
+		bm25Weight:   1.0,
 	}
 	out.query, _ = args["search_query"].(string)
 	if st, _ := args["search_type"].(string); st != "" {
 		out.searchType = st
 	}
-	if tk, ok := args["top_k"].(float64); ok {
+	if tk, ok := numericArg(args["top_k"]); ok && tk > 0 {
 		out.topK = int(tk)
 	}
 	out.collection, _ = args["collection"].(string)
@@ -160,10 +165,34 @@ func parseSearchArgs(args map[string]any) searchArgs {
 		out.doDedup = dd
 	}
 	out.doGraphRerank, _ = args["graph_rerank"].(bool)
+	if w, ok := numericArg(args["vector_weight"]); ok {
+		out.vectorWeight = w
+	}
+	if w, ok := numericArg(args["bm25_weight"]); ok {
+		out.bm25Weight = w
+	}
 	if m, _ := args["mode"].(string); m != "" {
 		out.mode = m
 	}
 	return out
+}
+
+func numericArg(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case float32:
+		return float64(n), true
+	case int:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	case json.Number:
+		f, err := n.Float64()
+		return f, err == nil
+	default:
+		return 0, false
+	}
 }
 
 // applyModeGating coerces search_type when mode restricts it. Returns
@@ -204,17 +233,37 @@ func applyTypeFlags(searchType string, a *searchArgs) {
 	}
 }
 
-// ToolSearch runs a vector-based search (+ optional rerank / graph /
-// multi-query variants) and returns a JSON payload with the top
-// results plus routing metadata.
+func isLexicalSearchType(searchType string) bool {
+	return strings.ToUpper(searchType) == "CHUNKS_LEXICAL"
+}
+
+func isHybridSearchType(searchType string) bool {
+	switch strings.ToUpper(searchType) {
+	case "HYBRID", "WEIGHTED_HYBRID":
+		return true
+	default:
+		return false
+	}
+}
+
+func searchNeedsVector(a searchArgs) bool {
+	if isLexicalSearchType(a.searchType) {
+		return false
+	}
+	return true
+}
+
+// ToolSearch runs vector, lexical, or hybrid search (+ optional rerank / graph /
+// multi-query variants for vector search) and returns a JSON payload with the
+// top results plus routing metadata.
 //
 // High-level flow:
 //  1. Parse args + apply mode gating (rag/graph modes restrict
 //     search_type).
 //  2. If search_type is AUTO/FEELING_LUCKY, consult the router with
 //     the deployment's capabilities.
-//  3. Build a SearchPipeline via Deps. nil → "embedding not
-//     configured" short-circuit.
+//  3. Build a SearchPipeline via Deps when the selected strategy needs vectors.
+//     nil → "embedding not configured" short-circuit for vector strategies.
 //  4. For each collection (configured filter or all), dispatch on the
 //     flag combination and execute the matching strategy.
 //  5. Dedup (when enabled), apply room/tags post-filter, cap at topK.
@@ -249,8 +298,11 @@ func ToolSearch(ctx context.Context, deps Deps, args map[string]any) ToolResult 
 
 	applyTypeFlags(a.searchType, &a)
 
-	sp := deps.NewSearchPipeline(a.doRerank)
-	if sp == nil {
+	var sp SearchPipeline
+	if searchNeedsVector(a) {
+		sp = deps.NewSearchPipeline(a.doRerank)
+	}
+	if searchNeedsVector(a) && sp == nil {
 		return ToolResult{Content: []Content{{
 			Type: "text",
 			Text: "No results (embedding service not configured)",
@@ -260,6 +312,8 @@ func ToolSearch(ctx context.Context, deps Deps, args map[string]any) ToolResult 
 	var colls []string
 	if a.collection != "" {
 		colls = []string{a.collection}
+	} else if isLexicalSearchType(a.searchType) {
+		colls = deps.ListLexicalCollections()
 	} else {
 		colls = deps.ListCollections()
 	}
@@ -269,6 +323,7 @@ func ToolSearch(ctx context.Context, deps Deps, args map[string]any) ToolResult 
 	if hasMetaFilter {
 		fetchK = a.topK * searchMetaOverfetchFactor
 	}
+	allowedDatasetIDs := deps.AllowedDatasetIDs(ctx)
 
 	var results []map[string]any
 	wasReranked := false
@@ -284,6 +339,9 @@ func ToolSearch(ctx context.Context, deps Deps, args map[string]any) ToolResult 
 		}
 
 		for _, r := range res {
+			if !searchMetadataAllowed(r.Metadata, allowedDatasetIDs) {
+				continue
+			}
 			if hasMetaFilter && !ChunkMetaMatches(r.Metadata, a.roomFilter, a.tagFilters) {
 				continue
 			}
@@ -325,6 +383,37 @@ func ToolSearch(ctx context.Context, deps Deps, args map[string]any) ToolResult 
 	return ToolResult{Content: []Content{{Type: "text", Text: string(out)}}}
 }
 
+func searchMetadataAllowed(metadata json.RawMessage, allowedIDs []string) bool {
+	if allowedIDs == nil {
+		return true
+	}
+	dsID := searchMetadataDatasetID(metadata)
+	if dsID == "" {
+		return true
+	}
+	for _, allowed := range allowedIDs {
+		if dsID == allowed {
+			return true
+		}
+	}
+	return false
+}
+
+func searchMetadataDatasetID(metadata json.RawMessage) string {
+	if len(metadata) == 0 {
+		return ""
+	}
+	var m map[string]any
+	if err := json.Unmarshal(metadata, &m); err != nil {
+		return ""
+	}
+	if dsID, _ := m["dataset_id"].(string); dsID != "" {
+		return dsID
+	}
+	projectID, _ := m["project_id"].(string)
+	return projectID
+}
+
 // runSearchStrategy dispatches to one of the five search branches
 // based on the flag combination. Returns the results and whether a
 // rerank actually ran (only the WithRerank branch may set this true).
@@ -332,6 +421,10 @@ func ToolSearch(ctx context.Context, deps Deps, args map[string]any) ToolResult 
 // continues to the next collection, matching pre-refactor behavior.
 func runSearchStrategy(ctx context.Context, deps Deps, sp SearchPipeline, coll, query string, fetchK int, a searchArgs) (results []pipeline.ScoredResult, reranked bool) {
 	switch {
+	case isLexicalSearchType(a.searchType):
+		return runLexicalSearch(deps, coll, query, fetchK), false
+	case isHybridSearchType(a.searchType):
+		return runHybridSearch(ctx, deps, sp, coll, query, fetchK, a), false
 	case a.doParentChild:
 		res, err := sp.SearchByTextParentChild(ctx, coll, query, fetchK)
 		if err != nil {
@@ -377,4 +470,66 @@ func runSearchStrategy(ctx context.Context, deps Deps, sp SearchPipeline, coll, 
 		}
 		return res, false
 	}
+}
+
+func runLexicalSearch(deps Deps, coll, query string, fetchK int) []pipeline.ScoredResult {
+	results, err := deps.LexicalSearch(coll, query, fetchK)
+	if err != nil {
+		return nil
+	}
+	out := make([]pipeline.ScoredResult, 0, len(results))
+	for _, r := range results {
+		out = append(out, pipeline.ScoredResult{
+			ID:       r.ID,
+			Score:    float32(r.Score),
+			Metadata: json.RawMessage(r.Metadata),
+		})
+	}
+	return out
+}
+
+func runHybridSearch(ctx context.Context, deps Deps, sp SearchPipeline, coll, query string, fetchK int, a searchArgs) []pipeline.ScoredResult {
+	if sp == nil {
+		return nil
+	}
+	fusionK := fetchK * 2
+	if fusionK < fetchK {
+		fusionK = fetchK
+	}
+	vectorResults, err := sp.SearchByText(ctx, coll, query, fusionK)
+	if err != nil {
+		return nil
+	}
+	lexicalResults, err := deps.LexicalSearch(coll, query, fusionK)
+	if err != nil {
+		return nil
+	}
+
+	vr := make([]bm25.VectorResult, 0, len(vectorResults))
+	for _, r := range vectorResults {
+		vr = append(vr, bm25.VectorResult{
+			ID:       r.ID,
+			Score:    r.Score,
+			Metadata: string(r.Metadata),
+		})
+	}
+	br := make([]bm25.Result, 0, len(lexicalResults))
+	for _, r := range lexicalResults {
+		br = append(br, bm25.Result{
+			ID:       r.ID,
+			Score:    r.Score,
+			Metadata: string(r.Metadata),
+		})
+	}
+
+	hybrid := bm25.HybridSearch(vr, br, fetchK, a.vectorWeight, a.bm25Weight)
+	out := make([]pipeline.ScoredResult, 0, len(hybrid))
+	for _, r := range hybrid {
+		out = append(out, pipeline.ScoredResult{
+			ID:       r.ID,
+			Score:    float32(r.FusedScore),
+			Metadata: json.RawMessage(r.Metadata),
+		})
+	}
+	return out
 }

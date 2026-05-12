@@ -64,10 +64,13 @@ type fakeDeps struct {
 	//     that exercise ToolSearch install a fakeSearchPipeline here.
 	//   llmProvider / llmModel — returned by LLMProvider / LLMModel.
 	//   capabilities          — returned by SearchCapabilities.
-	searchPipelineFn func(doRerank bool) SearchPipeline
-	llmProvider      llm.Provider
-	llmModel         string
-	capabilities     router.Capabilities
+	searchPipelineFn   func(doRerank bool) SearchPipeline
+	llmProvider        llm.Provider
+	llmModel           string
+	capabilities       router.Capabilities
+	allowedDatasetIDs  []string
+	lexicalCollections []string
+	lexicalFn          func(collection, query string, topK int) ([]LexicalResult, error)
 
 	// collectionMetas is keyed by collection name. Tests that exercise
 	// toolGetProjectContext or toolCheckDrift populate this map.
@@ -223,8 +226,23 @@ func (f *fakeDeps) NewSearchPipeline(doRerank bool) SearchPipeline {
 }
 
 func (f *fakeDeps) LLMProvider() llm.Provider               { return f.llmProvider }
-func (f *fakeDeps) LLMModel() string                         { return f.llmModel }
-func (f *fakeDeps) SearchCapabilities() router.Capabilities  { return f.capabilities }
+func (f *fakeDeps) LLMModel() string                        { return f.llmModel }
+func (f *fakeDeps) SearchCapabilities() router.Capabilities { return f.capabilities }
+func (f *fakeDeps) AllowedDatasetIDs(context.Context) []string {
+	return f.allowedDatasetIDs
+}
+func (f *fakeDeps) ListLexicalCollections() []string {
+	if f.lexicalCollections != nil {
+		return f.lexicalCollections
+	}
+	return f.collections
+}
+func (f *fakeDeps) LexicalSearch(collection, query string, topK int) ([]LexicalResult, error) {
+	if f.lexicalFn != nil {
+		return f.lexicalFn(collection, query, topK)
+	}
+	return nil, nil
+}
 func (f *fakeDeps) CollectionMeta(name string) CollectionInfo {
 	if f.collectionMetas == nil {
 		return CollectionInfo{}
@@ -284,24 +302,24 @@ func (p *fakeSearchPipeline) RerankEnabled() bool { return p.rerankEnabled }
 // HasCollections defaults to false, matching an unconfigured deployment.
 type nilDBDeps struct{}
 
-func (nilDBDeps) DB() *sql.DB                                                  { return nil }
-func (nilDBDeps) Q(q string) string                                            { return q }
-func (nilDBDeps) HasCollections() bool                                         { return false }
-func (nilDBDeps) ListCollections() []string                                    { return nil }
-func (nilDBDeps) StoragePath() string                                          { return "" }
-func (nilDBDeps) CollectionExists(string) bool                                 { return false }
-func (nilDBDeps) EmbedAvailable() bool                                         { return false }
-func (nilDBDeps) Embed(context.Context, string) ([]float32, error)             { return nil, nil }
-func (nilDBDeps) EmbedBatch(context.Context, []string) ([][]float32, error)    { return nil, nil }
-func (nilDBDeps) CollectionInsert(string, string, []float32, any) error        { return nil }
+func (nilDBDeps) DB() *sql.DB                                               { return nil }
+func (nilDBDeps) Q(q string) string                                         { return q }
+func (nilDBDeps) HasCollections() bool                                      { return false }
+func (nilDBDeps) ListCollections() []string                                 { return nil }
+func (nilDBDeps) StoragePath() string                                       { return "" }
+func (nilDBDeps) CollectionExists(string) bool                              { return false }
+func (nilDBDeps) EmbedAvailable() bool                                      { return false }
+func (nilDBDeps) Embed(context.Context, string) ([]float32, error)          { return nil, nil }
+func (nilDBDeps) EmbedBatch(context.Context, []string) ([][]float32, error) { return nil, nil }
+func (nilDBDeps) CollectionInsert(string, string, []float32, any) error     { return nil }
 func (nilDBDeps) CollectionSearch(string, []float32, int) ([]SearchResult, error) {
 	return nil, nil
 }
-func (nilDBDeps) Runs() *runreg.Registry                { return runreg.New() }
-func (nilDBDeps) BaseCognifyConfig() orchestrator.Config { return orchestrator.Config{} }
-func (nilDBDeps) EmbedEndpoint() string                   { return "" }
-func (nilDBDeps) EmbedModel() string                      { return "" }
-func (nilDBDeps) OntologyPromptSuffix(string) string     { return "" }
+func (nilDBDeps) Runs() *runreg.Registry                                             { return runreg.New() }
+func (nilDBDeps) BaseCognifyConfig() orchestrator.Config                             { return orchestrator.Config{} }
+func (nilDBDeps) EmbedEndpoint() string                                              { return "" }
+func (nilDBDeps) EmbedModel() string                                                 { return "" }
+func (nilDBDeps) OntologyPromptSuffix(string) string                                 { return "" }
 func (nilDBDeps) PersistPipelineStatus(string, string, string, int, int, int, int64) {}
 func (nilDBDeps) LogHeartbeat(string, any)                                           {}
 func (nilDBDeps) RunPipeline(context.Context, []string, orchestrator.Config, chan<- orchestrator.Progress) error {
@@ -311,7 +329,14 @@ func (nilDBDeps) NewSearchPipeline(bool) SearchPipeline   { return nil }
 func (nilDBDeps) LLMProvider() llm.Provider               { return nil }
 func (nilDBDeps) LLMModel() string                        { return "" }
 func (nilDBDeps) SearchCapabilities() router.Capabilities { return router.Capabilities{} }
-func (nilDBDeps) CollectionMeta(string) CollectionInfo    { return CollectionInfo{} }
+func (nilDBDeps) AllowedDatasetIDs(context.Context) []string {
+	return nil
+}
+func (nilDBDeps) ListLexicalCollections() []string { return nil }
+func (nilDBDeps) LexicalSearch(string, string, int) ([]LexicalResult, error) {
+	return nil, nil
+}
+func (nilDBDeps) CollectionMeta(string) CollectionInfo { return CollectionInfo{} }
 func (nilDBDeps) DoSync(context.Context, string, string, []string, string, []string) (map[string]any, map[string]any, error) {
 	return map[string]any{}, map[string]any{}, nil
 }
@@ -1106,7 +1131,10 @@ func TestToolGetFeedbackStats_AggregatesAll(t *testing.T) {
 	// Seed 3 feedback rows (ratings 1, 3, 5) → total=3, avg=3, worst
 	// query is the rating=1 row.
 	deps := setupFeedbackTestDB(t)
-	rows := []struct{ id, q string; r int }{
+	rows := []struct {
+		id, q string
+		r     int
+	}{
 		{"f1", "bad search", 1},
 		{"f2", "ok search", 3},
 		{"f3", "great search", 5},

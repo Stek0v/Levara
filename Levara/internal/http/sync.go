@@ -99,6 +99,10 @@ type syncMemory struct {
 	Type           string `json:"type"`
 	OwnerID        string `json:"owner_id"`
 	CollectionName string `json:"collection_name"`
+	Room           string `json:"room"`
+	Hall           string `json:"hall"`
+	IsPinned       bool   `json:"is_pinned"`
+	PinPriority    int    `json:"pin_priority"`
 	CreatedAt      string `json:"created_at"`
 	UpdatedAt      string `json:"updated_at"`
 }
@@ -120,11 +124,15 @@ func syncExportMemoriesHandler(cfg APIConfig) fiber.Handler {
 		var err error
 		if since != "" {
 			rows, err = cfg.DB.QueryContext(ctx,
-				Q(`SELECT id, key, value, type, owner_id, collection_name, created_at, updated_at
+				Q(`SELECT id, key, value, type, owner_id, collection_name,
+					 COALESCE(room,''), COALESCE(hall,''), is_pinned, pin_priority,
+					 created_at, updated_at
 					 FROM memories WHERE updated_at > $1 ORDER BY updated_at`), since)
 		} else {
 			rows, err = cfg.DB.QueryContext(ctx,
-				Q(`SELECT id, key, value, type, owner_id, collection_name, created_at, updated_at
+				Q(`SELECT id, key, value, type, owner_id, collection_name,
+					 COALESCE(room,''), COALESCE(hall,''), is_pinned, pin_priority,
+					 created_at, updated_at
 					 FROM memories ORDER BY updated_at`))
 		}
 		if err != nil {
@@ -134,7 +142,8 @@ func syncExportMemoriesHandler(cfg APIConfig) fiber.Handler {
 		var result []syncMemory
 		for rows.Next() {
 			var m syncMemory
-			rows.Scan(&m.ID, &m.Key, &m.Value, &m.Type, &m.OwnerID, &m.CollectionName, &m.CreatedAt, &m.UpdatedAt)
+			rows.Scan(&m.ID, &m.Key, &m.Value, &m.Type, &m.OwnerID, &m.CollectionName,
+				&m.Room, &m.Hall, &m.IsPinned, &m.PinPriority, &m.CreatedAt, &m.UpdatedAt)
 			result = append(result, m)
 		}
 		if result == nil {
@@ -170,10 +179,16 @@ func syncImportMemoriesHandler(cfg APIConfig) fiber.Handler {
 				continue
 			}
 
-			q, qargs := QArgs(`INSERT INTO memories (id, key, value, type, owner_id, collection_name, created_at, updated_at)
-				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-				 ON CONFLICT(key, owner_id) DO UPDATE SET value = $3, type = $4, collection_name = $6, updated_at = $8`,
-				m.ID, m.Key, m.Value, m.Type, m.OwnerID, m.CollectionName, m.CreatedAt, m.UpdatedAt)
+			q, qargs := QArgs(`INSERT INTO memories (
+					id, key, value, type, owner_id, collection_name, room, hall,
+					is_pinned, pin_priority, created_at, updated_at
+				)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+				 ON CONFLICT(key, owner_id) DO UPDATE SET
+					value = $3, type = $4, collection_name = $6, room = $7, hall = $8,
+					is_pinned = $9, pin_priority = $10, updated_at = $12`,
+				m.ID, m.Key, m.Value, m.Type, m.OwnerID, m.CollectionName,
+				m.Room, m.Hall, m.IsPinned, m.PinPriority, m.CreatedAt, m.UpdatedAt)
 			if _, err := cfg.DB.ExecContext(ctx, q, qargs...); err == nil {
 				imported++
 			}
@@ -212,9 +227,11 @@ func syncImportMemoriesHandler(cfg APIConfig) fiber.Handler {
 					if m.CollectionName != "" {
 						memColl = "_memories_" + m.CollectionName
 					}
-					meta, _ := json.Marshal(map[string]string{
+					meta, _ := json.Marshal(map[string]any{
 						"key": m.Key, "value": m.Value, "type": m.Type,
 						"collection": m.CollectionName, "memory_id": m.ID,
+						"room": m.Room, "hall": m.Hall,
+						"is_pinned": m.IsPinned, "pin_priority": m.PinPriority,
 					})
 					if err := cfg.Collections.Insert(memColl, m.ID, vec, meta); err == nil {
 						embedded++
@@ -327,14 +344,20 @@ type syncGraphNode struct {
 	Type        string `json:"type"`
 	Description string `json:"description"`
 	Properties  string `json:"properties"` // JSON string
+	DatasetID   string `json:"dataset_id"`
 }
 
 type syncGraphEdge struct {
-	ID               string `json:"id"`
-	SourceID         string `json:"source_id"`
-	TargetID         string `json:"target_id"`
-	RelationshipName string `json:"relationship_name"`
-	Properties       string `json:"properties"` // JSON string
+	ID               string  `json:"id"`
+	SourceID         string  `json:"source_id"`
+	TargetID         string  `json:"target_id"`
+	RelationshipName string  `json:"relationship_name"`
+	Properties       string  `json:"properties"` // JSON string
+	ValidFrom        string  `json:"valid_from,omitempty"`
+	ValidUntil       string  `json:"valid_until,omitempty"`
+	SupersededBy     string  `json:"superseded_by,omitempty"`
+	Confidence       float64 `json:"confidence"`
+	DatasetID        string  `json:"dataset_id"`
 }
 
 func syncExportGraphHandler(cfg APIConfig) fiber.Handler {
@@ -348,12 +371,12 @@ func syncExportGraphHandler(cfg APIConfig) fiber.Handler {
 		g := syncGraph{}
 
 		nodeRows, err := cfg.DB.QueryContext(ctx,
-			Q(`SELECT id, name, type, COALESCE(description,''), COALESCE(properties,'{}') FROM graph_nodes`))
+			Q(`SELECT id, name, type, COALESCE(description,''), COALESCE(properties,'{}'), COALESCE(dataset_id,'') FROM graph_nodes`))
 		if err == nil {
 			defer nodeRows.Close()
 			for nodeRows.Next() {
 				var n syncGraphNode
-				if err := nodeRows.Scan(&n.ID, &n.Name, &n.Type, &n.Description, &n.Properties); err != nil {
+				if err := nodeRows.Scan(&n.ID, &n.Name, &n.Type, &n.Description, &n.Properties, &n.DatasetID); err != nil {
 					continue
 				}
 				g.Nodes = append(g.Nodes, n)
@@ -364,12 +387,16 @@ func syncExportGraphHandler(cfg APIConfig) fiber.Handler {
 		}
 
 		edgeRows, err := cfg.DB.QueryContext(ctx,
-			Q(`SELECT id, source_id, target_id, relationship_name, COALESCE(properties,'{}') FROM graph_edges`))
+			Q(`SELECT id, source_id, target_id, relationship_name, COALESCE(properties,'{}'),
+				  COALESCE(valid_from,''), COALESCE(valid_until,''), COALESCE(superseded_by,''),
+				  COALESCE(confidence,1.0), COALESCE(dataset_id,'')
+			   FROM graph_edges`))
 		if err == nil {
 			defer edgeRows.Close()
 			for edgeRows.Next() {
 				var e syncGraphEdge
-				if err := edgeRows.Scan(&e.ID, &e.SourceID, &e.TargetID, &e.RelationshipName, &e.Properties); err != nil {
+				if err := edgeRows.Scan(&e.ID, &e.SourceID, &e.TargetID, &e.RelationshipName, &e.Properties,
+					&e.ValidFrom, &e.ValidUntil, &e.SupersededBy, &e.Confidence, &e.DatasetID); err != nil {
 					continue
 				}
 				g.Edges = append(g.Edges, e)
@@ -399,20 +426,31 @@ func syncImportGraphHandler(cfg APIConfig) fiber.Handler {
 		nodesImported, edgesImported := 0, 0
 
 		for _, n := range g.Nodes {
-			q, qargs := QArgs(`INSERT INTO graph_nodes (id, name, type, description, properties)
-				 VALUES ($1, $2, $3, $4, $5)
-				 ON CONFLICT(id) DO UPDATE SET name = $2, type = $3, description = $4, properties = $5`,
-				n.ID, n.Name, n.Type, n.Description, n.Properties)
+			q, qargs := QArgs(`INSERT INTO graph_nodes (id, name, type, description, properties, dataset_id)
+				 VALUES ($1, $2, $3, $4, $5, $6)
+				 ON CONFLICT(id) DO UPDATE SET
+					name = $2, type = $3, description = $4, properties = $5, dataset_id = $6`,
+				n.ID, n.Name, n.Type, n.Description, n.Properties, n.DatasetID)
 			if _, err := cfg.DB.ExecContext(ctx, q, qargs...); err == nil {
 				nodesImported++
 			}
 		}
 
 		for _, e := range g.Edges {
-			q, qargs := QArgs(`INSERT INTO graph_edges (id, source_id, target_id, relationship_name, properties)
-				 VALUES ($1, $2, $3, $4, $5)
-				 ON CONFLICT(id) DO UPDATE SET source_id = $2, target_id = $3, relationship_name = $4, properties = $5`,
-				e.ID, e.SourceID, e.TargetID, e.RelationshipName, e.Properties)
+			if e.Confidence == 0 {
+				e.Confidence = 1.0
+			}
+			q, qargs := QArgs(`INSERT INTO graph_edges (
+					id, source_id, target_id, relationship_name, properties,
+					valid_from, valid_until, superseded_by, confidence, dataset_id
+				)
+				 VALUES ($1, $2, $3, $4, $5, nullif($6,''), nullif($7,''), $8, $9, $10)
+				 ON CONFLICT(id) DO UPDATE SET
+					source_id = $2, target_id = $3, relationship_name = $4, properties = $5,
+					valid_from = nullif($6,''), valid_until = nullif($7,''), superseded_by = $8,
+					confidence = $9, dataset_id = $10`,
+				e.ID, e.SourceID, e.TargetID, e.RelationshipName, e.Properties,
+				e.ValidFrom, e.ValidUntil, e.SupersededBy, e.Confidence, e.DatasetID)
 			if _, err := cfg.DB.ExecContext(ctx, q, qargs...); err == nil {
 				edgesImported++
 			}
@@ -690,10 +728,16 @@ func SyncPull(cfg APIConfig, remoteURL string, types []string, since string) map
 						skipped++
 						continue
 					}
-					q, qargs := QArgs(`INSERT INTO memories (id, key, value, type, owner_id, collection_name, created_at, updated_at)
-							 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-							 ON CONFLICT(key, owner_id) DO UPDATE SET value = $3, type = $4, collection_name = $6, updated_at = $8`,
-						m.ID, m.Key, m.Value, m.Type, m.OwnerID, m.CollectionName, m.CreatedAt, m.UpdatedAt)
+					q, qargs := QArgs(`INSERT INTO memories (
+								id, key, value, type, owner_id, collection_name, room, hall,
+								is_pinned, pin_priority, created_at, updated_at
+							)
+							 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+							 ON CONFLICT(key, owner_id) DO UPDATE SET
+								value = $3, type = $4, collection_name = $6, room = $7, hall = $8,
+								is_pinned = $9, pin_priority = $10, updated_at = $12`,
+						m.ID, m.Key, m.Value, m.Type, m.OwnerID, m.CollectionName,
+						m.Room, m.Hall, m.IsPinned, m.PinPriority, m.CreatedAt, m.UpdatedAt)
 					if _, err := cfg.DB.ExecContext(bgCtx, q, qargs...); err == nil {
 						imported++
 					}
@@ -748,19 +792,30 @@ func SyncPull(cfg APIConfig, remoteURL string, types []string, since string) map
 			if json.Unmarshal(body, &g) == nil {
 				nodesImported, edgesImported := 0, 0
 				for _, n := range g.Nodes {
-					q, qargs := QArgs(`INSERT INTO graph_nodes (id, name, type, description, properties)
-							 VALUES ($1, $2, $3, $4, $5)
-							 ON CONFLICT(id) DO UPDATE SET name = $2, type = $3, description = $4, properties = $5`,
-						n.ID, n.Name, n.Type, n.Description, n.Properties)
+					q, qargs := QArgs(`INSERT INTO graph_nodes (id, name, type, description, properties, dataset_id)
+							 VALUES ($1, $2, $3, $4, $5, $6)
+							 ON CONFLICT(id) DO UPDATE SET
+								name = $2, type = $3, description = $4, properties = $5, dataset_id = $6`,
+						n.ID, n.Name, n.Type, n.Description, n.Properties, n.DatasetID)
 					if _, err := cfg.DB.ExecContext(bgCtx, q, qargs...); err == nil {
 						nodesImported++
 					}
 				}
 				for _, e := range g.Edges {
-					q, qargs := QArgs(`INSERT INTO graph_edges (id, source_id, target_id, relationship_name, properties)
-							 VALUES ($1, $2, $3, $4, $5)
-							 ON CONFLICT(id) DO UPDATE SET source_id = $2, target_id = $3, relationship_name = $4, properties = $5`,
-						e.ID, e.SourceID, e.TargetID, e.RelationshipName, e.Properties)
+					if e.Confidence == 0 {
+						e.Confidence = 1.0
+					}
+					q, qargs := QArgs(`INSERT INTO graph_edges (
+								id, source_id, target_id, relationship_name, properties,
+								valid_from, valid_until, superseded_by, confidence, dataset_id
+							)
+							 VALUES ($1, $2, $3, $4, $5, nullif($6,''), nullif($7,''), $8, $9, $10)
+							 ON CONFLICT(id) DO UPDATE SET
+								source_id = $2, target_id = $3, relationship_name = $4, properties = $5,
+								valid_from = nullif($6,''), valid_until = nullif($7,''), superseded_by = $8,
+								confidence = $9, dataset_id = $10`,
+						e.ID, e.SourceID, e.TargetID, e.RelationshipName, e.Properties,
+						e.ValidFrom, e.ValidUntil, e.SupersededBy, e.Confidence, e.DatasetID)
 					if _, err := cfg.DB.ExecContext(bgCtx, q, qargs...); err == nil {
 						edgesImported++
 					}

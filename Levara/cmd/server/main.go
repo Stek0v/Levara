@@ -113,6 +113,49 @@ func versionPayload() fiber.Map {
 	}
 }
 
+func workspaceWatchEnabled() bool {
+	v := strings.TrimSpace(os.Getenv("LEVARA_WORKSPACE_WATCH"))
+	return v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes")
+}
+
+func workspaceIndexWorkerEnabled() bool {
+	v := strings.TrimSpace(os.Getenv("LEVARA_WORKSPACE_INDEX_WORKER"))
+	return v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes")
+}
+
+func workspaceWatchAsyncIndexEnabled() bool {
+	v := strings.TrimSpace(os.Getenv("LEVARA_WORKSPACE_WATCH_ASYNC_INDEX"))
+	return v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes")
+}
+
+func durationEnv(key string, fallback time.Duration) time.Duration {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(v)
+	if err == nil && d > 0 {
+		return d
+	}
+	n, err := strconv.Atoi(v)
+	if err == nil && n > 0 {
+		return time.Duration(n) * time.Second
+	}
+	return fallback
+}
+
+func intEnv(key string, fallback int) int {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return fallback
+	}
+	return n
+}
+
 func main() {
 	bootstrap := flag.Bool("bootstrap", false, "Bootstrap the Raft cluster (Leader only)")
 	standalone := flag.Bool("standalone", true, "Standalone mode: WAL-only, no Raft consensus (fastest)")
@@ -611,11 +654,15 @@ func main() {
 	// substitute strategies without touching NewDefaultStrategyRegistry.
 	searchStrategies := vectorHttp.NewDefaultStrategyRegistry()
 	rerankCfg := rerankConfigFromEnv()
+	workspaceWatcher := vectorHttp.NewWorkspaceWatchState()
 
-	// Protected routes: Levara API (datasets, upload, cognify, search)
-	vectorHttp.RegisterAPI(api, vectorHttp.APIConfig{
+	apiCfg := vectorHttp.APIConfig{
 		PostgresDSN:      pgDSN,
 		StoragePath:      *dataDir + "/uploads",
+		WorkspacePath:    *dataDir + "/workspace",
+		JWTSecret:        authCfg.JWTSecret,
+		RequireAuth:      *requireAuth,
+		WorkspaceWatcher: workspaceWatcher,
 		EmbedEndpoint:    embedEndpoint,
 		EmbedModel:       embedModel,
 		EmbedClient:      sharedEmbed,
@@ -634,22 +681,57 @@ func main() {
 		AdaptiveWeights:  adaptiveWeights,
 		Runs:             runs,
 		SearchStrategies: searchStrategies,
-	})
+	}
+
+	// Protected routes: Levara API (datasets, upload, cognify, search)
+	vectorHttp.RegisterAPI(api, apiCfg)
+
+	mcpCfg := vectorHttp.APIConfig{
+		EmbedEndpoint:    embedEndpoint,
+		EmbedModel:       embedModel,
+		EmbedClient:      sharedEmbed,
+		WorkspacePath:    *dataDir + "/workspace",
+		JWTSecret:        authCfg.JWTSecret,
+		RequireAuth:      *requireAuth,
+		WorkspaceWatcher: workspaceWatcher,
+		Collections:      colManager,
+		DB:               pgDB,
+		BM25Indexes:      grpcSvc.BM25Indexes(),
+		LLMCache:         llmCache,
+		RerankEndpoint:   rerankCfg.Endpoint,
+		RerankModel:      rerankCfg.Model,
+		RerankTimeoutMs:  rerankCfg.TimeoutMs,
+		Runs:             runs,
+	}
 
 	// MCP (Model Context Protocol) server — JSON-RPC 2.0 for AI agent integration
-	vectorHttp.RegisterMCPAPI(app, vectorHttp.APIConfig{
-		EmbedEndpoint:   embedEndpoint,
-		EmbedModel:      embedModel,
-		EmbedClient:     sharedEmbed,
-		Collections:     colManager,
-		DB:              pgDB,
-		BM25Indexes:     grpcSvc.BM25Indexes(),
-		LLMCache:        llmCache,
-		RerankEndpoint:  rerankCfg.Endpoint,
-		RerankModel:     rerankCfg.Model,
-		RerankTimeoutMs: rerankCfg.TimeoutMs,
-		Runs:            runs,
-	})
+	vectorHttp.RegisterMCPAPI(app, mcpCfg)
+
+	if workspaceIndexWorkerEnabled() {
+		stopWorkspaceIndexWorker := vectorHttp.StartWorkspaceIndexWorker(context.Background(), apiCfg, vectorHttp.WorkspaceIndexWorkerOptions{
+			Interval:    durationEnv("LEVARA_WORKSPACE_INDEX_WORKER_INTERVAL", 2*time.Second),
+			Backoff:     durationEnv("LEVARA_WORKSPACE_INDEX_WORKER_BACKOFF", 5*time.Second),
+			MaxAttempts: intEnv("LEVARA_WORKSPACE_INDEX_WORKER_MAX_ATTEMPTS", 3),
+		})
+		defer stopWorkspaceIndexWorker()
+		log.Printf("workspace index worker enabled for %s", apiCfg.WorkspacePath)
+	}
+
+	if workspaceWatchEnabled() {
+		stopWorkspaceWatcher := vectorHttp.StartWorkspaceWatcher(context.Background(), apiCfg, vectorHttp.WorkspaceWatchOptions{
+			Interval:      durationEnv("LEVARA_WORKSPACE_WATCH_INTERVAL", 2*time.Second),
+			Debounce:      durationEnv("LEVARA_WORKSPACE_WATCH_DEBOUNCE", 1500*time.Millisecond),
+			ChunkStrategy: os.Getenv("LEVARA_WORKSPACE_WATCH_CHUNK_STRATEGY"),
+			MinChunkChars: intEnv("LEVARA_WORKSPACE_WATCH_MIN_CHARS", 0),
+			MaxChunkChars: intEnv("LEVARA_WORKSPACE_WATCH_MAX_CHARS", 0),
+			AsyncIndex:    workspaceWatchAsyncIndexEnabled(),
+		})
+		defer stopWorkspaceWatcher()
+		log.Printf("workspace watcher enabled for %s", apiCfg.WorkspacePath)
+		if workspaceWatchAsyncIndexEnabled() {
+			log.Printf("workspace watcher async indexing enabled; start LEVARA_WORKSPACE_INDEX_WORKER=1 to process queued jobs")
+		}
+	}
 
 	// Cache stats endpoint
 	api.Get("/cache/stats", func(c *fiber.Ctx) error {

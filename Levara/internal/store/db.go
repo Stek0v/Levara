@@ -266,6 +266,7 @@ func (db *Levara) Insert(id string, vector []float32, data any) error {
 		return fmt.Errorf("wal write: %w", err)
 	}
 
+	db.replaceExistingLocked(id)
 	db.index[id] = idx
 	if int(idx) >= len(db.revIndex) {
 		newSlice := make([]string, int(idx)+1024)
@@ -310,6 +311,7 @@ func (db *Levara) insertInMemory(id string, vector []float32, loc FileLocation) 
 		return err
 	}
 
+	db.replaceExistingLocked(id)
 	db.index[id] = idx
 	if int(idx) >= len(db.revIndex) {
 		newSlice := make([]string, int(idx)+1024)
@@ -376,6 +378,8 @@ func (db *Levara) BatchInsert(records []BatchItem) []error {
 			errs = append(errs, fmt.Errorf("%s: wal: %w", d.rec.ID, err))
 			continue
 		}
+		db.replaceExistingLocked(d.rec.ID)
+		toIndex = removePendingItemsByID(toIndex, d.rec.ID)
 		db.index[d.rec.ID] = idx
 		if int(idx) >= len(db.revIndex) {
 			ns := make([]string, int(idx)+1024)
@@ -517,16 +521,45 @@ func (db *Levara) Delete(id string) error {
 	}
 
 	// Also remove from pending vectors (if not yet indexed)
-	db.pendingMu.Lock()
-	for i, p := range db.pendingVecs {
-		if p.id == id {
-			db.pendingVecs = append(db.pendingVecs[:i], db.pendingVecs[i+1:]...)
-			break
-		}
-	}
-	db.pendingMu.Unlock()
+	db.removePendingByID(id)
 
 	return nil
+}
+
+// replaceExistingLocked makes Insert behave like an upsert for search purposes.
+// db.mu must be held by the caller. Arena slots remain allocated, but the old
+// HNSW node is tombstoned and any not-yet-indexed pending entry is removed so a
+// repeated ID cannot keep ranking with its stale vector.
+func (db *Levara) replaceExistingLocked(id string) {
+	oldIdx, ok := db.index[id]
+	if !ok {
+		return
+	}
+	if int(oldIdx) < len(db.revIndex) {
+		db.revIndex[oldIdx] = ""
+	}
+	delete(db.metaLocs, oldIdx)
+	db.hnsw.MarkDeleted(oldIdx)
+	db.removePendingByID(id)
+}
+
+func (db *Levara) removePendingByID(id string) {
+	db.pendingMu.Lock()
+	defer db.pendingMu.Unlock()
+	db.pendingVecs = removePendingItemsByID(db.pendingVecs, id)
+}
+
+func removePendingItemsByID(items []pendingItem, id string) []pendingItem {
+	if len(items) == 0 {
+		return items
+	}
+	out := items[:0]
+	for _, p := range items {
+		if p.id != id {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // BatchDelete removes multiple records by ID.

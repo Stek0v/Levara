@@ -30,30 +30,30 @@ import (
 //   - wave 3d: + StoragePath (toolAdd)
 //   - wave 3e: + CollectionExists (toolSetContext)
 //   - wave 3i: + EmbedAvailable + Embed + CollectionInsert + CollectionSearch
-//              (toolSaveMemory + toolRecallMemory) — first AI seam. Types
-//              stay small ([]float32 and SearchResult) so pkg/mcp doesn't
-//              import pkg/embed or internal/store.
+//     (toolSaveMemory + toolRecallMemory) — first AI seam. Types
+//     stay small ([]float32 and SearchResult) so pkg/mcp doesn't
+//     import pkg/embed or internal/store.
 //   - wave 3j: + Runs + BaseCognifyConfig + OntologyPromptSuffix +
-//              PersistPipelineStatus + LogHeartbeat + RunPipeline
-//              (toolCognify + toolCognifyStatus). BaseCognifyConfig brings
-//              in pkg/orchestrator as a new pkg/mcp import; Runs brings in
-//              pkg/runreg. RunPipeline abstracts orchestrator.Run so the
-//              cognify goroutine is testable without the real LLM/embed
-//              stack.
+//     PersistPipelineStatus + LogHeartbeat + RunPipeline
+//     (toolCognify + toolCognifyStatus). BaseCognifyConfig brings
+//     in pkg/orchestrator as a new pkg/mcp import; Runs brings in
+//     pkg/runreg. RunPipeline abstracts orchestrator.Run so the
+//     cognify goroutine is testable without the real LLM/embed
+//     stack.
 //   - wave 3k: + NewSearchPipeline + LLMProvider + LLMModel +
-//              SearchCapabilities (toolSearch). NewSearchPipeline returns
-//              a SearchPipeline interface (defined in this package) so
-//              production wraps *pipeline.SearchPipeline while tests
-//              supply a stub. Pkg/mcp now imports pipeline + router +
-//              llm; graphrank stays inside tool_search.go (used only
-//              there).
+//     SearchCapabilities (toolSearch). NewSearchPipeline returns
+//     a SearchPipeline interface (defined in this package) so
+//     production wraps *pipeline.SearchPipeline while tests
+//     supply a stub. Pkg/mcp now imports pipeline + router +
+//     llm; graphrank stays inside tool_search.go (used only
+//     there).
 //   - wave 3o: + CollectionMeta (toolGetProjectContext + toolCheckDrift).
-//              Returns CollectionInfo value type so pkg/mcp stays free of
-//              internal/store.CollectionMeta pointer.
+//     Returns CollectionInfo value type so pkg/mcp stays free of
+//     internal/store.CollectionMeta pointer.
 //   - wave 3q: + DoSync (toolSync). One high-level method absorbs all
-//              internal/http sync helpers (SyncPull, syncPush,
-//              syncPullCollections, syncPushCollections) so pkg/mcp doesn't
-//              need to know about APIConfig or *store.CollectionManager.
+//     internal/http sync helpers (SyncPull, syncPush,
+//     syncPullCollections, syncPushCollections) so pkg/mcp doesn't
+//     need to know about APIConfig or *store.CollectionManager.
 type Deps interface {
 	// DB returns the shared *sql.DB used for palace / datasets / graph
 	// tables. May be nil when no PostgresDSN is configured — tool
@@ -175,6 +175,17 @@ type Deps interface {
 	// relatively expensive call — the production implementation hits
 	// the DB to detect communities.
 	SearchCapabilities() router.Capabilities
+	// AllowedDatasetIDs returns the dataset/project scopes visible to the
+	// caller represented by ctx. Nil means no filtering (dev mode, anonymous,
+	// or superuser); an empty non-nil slice means fail closed.
+	AllowedDatasetIDs(ctx context.Context) []string
+	// ListLexicalCollections returns collection names known to the lexical
+	// index. It may differ from ListCollections on deployments that have BM25
+	// indexes but no vector engine.
+	ListLexicalCollections() []string
+	// LexicalSearch performs a BM25/keyword search against one collection.
+	// Returns an empty slice when the collection has no lexical index.
+	LexicalSearch(collection, query string, topK int) ([]LexicalResult, error)
 	// CollectionMeta returns observable metadata for a named collection.
 	// Returns zero CollectionInfo when the collection doesn't exist or
 	// HasCollections() is false. Used by toolGetProjectContext and
@@ -225,6 +236,14 @@ type SearchResult struct {
 	ID    string
 	Score float32
 	Data  []byte
+}
+
+// LexicalResult is one BM25/keyword hit returned by Deps.LexicalSearch.
+// Score follows BM25 convention: higher is better.
+type LexicalResult struct {
+	ID       string
+	Score    float64
+	Metadata []byte
 }
 
 // CollectionInfo is the observable metadata for a single collection

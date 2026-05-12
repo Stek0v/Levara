@@ -260,6 +260,9 @@ func extractDatasetID(r fiber.Map) string {
 		m = v
 	}
 	dsID, _ := m["dataset_id"].(string)
+	if dsID == "" {
+		dsID, _ = m["project_id"].(string)
+	}
 	return dsID
 }
 

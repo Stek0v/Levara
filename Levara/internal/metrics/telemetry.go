@@ -189,6 +189,44 @@ var (
 		Name: "levara_external_call_timeouts_total",
 		Help: "Outbound dependency calls that exceeded their request-scoped deadline",
 	}, []string{"target", "op"})
+
+	// 16. Markdown workspace operational health. These gauges are refreshed by
+	// workspace ops/status and by indexing job transitions; audit events are
+	// counted at write time.
+	WorkspaceIndexJobs = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "levara_workspace_index_jobs",
+		Help: "Durable workspace indexing jobs by status",
+	}, []string{"status"})
+
+	WorkspaceIndexJobMaxLagSeconds = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "levara_workspace_index_job_max_lag_seconds",
+		Help: "Maximum age in seconds among pending/failed workspace indexing jobs",
+	})
+
+	WorkspaceIndexDeadLetters = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "levara_workspace_index_dead_letters",
+		Help: "Number of workspace indexing jobs currently in dead_letter status",
+	})
+
+	WorkspaceWatcherPendingBranches = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "levara_workspace_watcher_pending_branches",
+		Help: "Number of workspace project/branch trees with pending watcher reconciliation",
+	})
+
+	WorkspaceWatcherErrors = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "levara_workspace_watcher_errors",
+		Help: "Workspace watcher error count recorded in the current process/status file",
+	})
+
+	WorkspaceAuditEventsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "levara_workspace_audit_events_total",
+		Help: "Workspace audit events by source, operation, and result",
+	}, []string{"source", "operation", "result"})
+
+	WorkspaceAuditStoredEvents = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "levara_workspace_audit_stored_events",
+		Help: "Number of sanitized workspace audit events found on disk by the last ops/status refresh",
+	})
 )
 
 func init() {
@@ -227,6 +265,22 @@ func init() {
 			ExternalCallDuration.WithLabelValues(ts[0], ts[1], result)
 		}
 		ExternalCallTimeouts.WithLabelValues(ts[0], ts[1])
+	}
+
+	for _, status := range []string{"pending", "running", "completed", "failed", "dead_letter"} {
+		WorkspaceIndexJobs.WithLabelValues(status)
+	}
+	for _, source := range []string{"rest", "mcp"} {
+		for _, operation := range []string{
+			"access_check", "audit", "audit_log", "commit", "conflicts", "context", "delete", "enqueue_index_job", "gc",
+			"context_artifacts", "index", "index_jobs", "log", "manifest", "ops_status", "read", "reindex",
+			"reindex_artifacts", "reconcile", "retry_index_job", "revert", "run_get", "run_start", "search",
+			"watch_status", "write",
+		} {
+			for _, result := range []string{"success", "failure", "denied"} {
+				WorkspaceAuditEventsTotal.WithLabelValues(source, operation, result)
+			}
+		}
 	}
 }
 
