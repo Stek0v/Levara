@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -104,6 +105,73 @@ func TestHNSW_ConcurrentSearchAdd_NoRace(t *testing.T) {
 	}
 	t.Logf("completed %d searches / %d inserts in %v without data race",
 		searches.Load(), inserts.Load(), duration)
+}
+
+func TestHNSW_ReinsertDeletedEntryRefreshesEntryLayer(t *testing.T) {
+	arena := NewVectorArena(3)
+	idx := NewHNSWIndex(arena, DefaultHNSWConfig())
+	levelRolls := []float64{
+		0.8,      // replacement gets layer 0
+		0.8,      // first neighbor gets layer 0
+		0.2, 0.8, // second neighbor gets layer 1
+	}
+	idx.randFloat64 = func() float64 {
+		if len(levelRolls) == 0 {
+			return 0.8
+		}
+		next := levelRolls[0]
+		levelRolls = levelRolls[1:]
+		return next
+	}
+
+	oldVec := []float32{1, 0, 0}
+	oldOffset, err := arena.Add(oldVec)
+	if err != nil {
+		t.Fatalf("old arena Add: %v", err)
+	}
+	oldEntry := &HNSWNode{
+		ID:          "same-id",
+		Layer:       3,
+		Connections: make([][]uint32, 4),
+		ArenaOffset: oldOffset,
+	}
+	idx.Nodes[oldEntry.ID] = oldEntry
+	idx.registerNode(oldEntry)
+	idx.EntryNodeID = oldEntry.ID
+	idx.MaxLayer = oldEntry.Layer
+	idx.MarkDeleted(oldOffset)
+
+	replacementVec := []float32{0, 1, 0}
+	replacementOffset, err := arena.Add(replacementVec)
+	if err != nil {
+		t.Fatalf("replacement arena Add: %v", err)
+	}
+	idx.Add(replacementVec, "same-id", replacementOffset)
+
+	entry := idx.Nodes[idx.EntryNodeID]
+	if entry == nil {
+		t.Fatal("entry node should exist after replacing deleted entry")
+	}
+	if idx.MaxLayer > entry.Layer {
+		t.Fatalf("stale MaxLayer=%d exceeds entry layer=%d", idx.MaxLayer, entry.Layer)
+	}
+
+	for i := 0; i < 8; i++ {
+		vec := []float32{float32(i + 1), float32(i % 2), 1}
+		offset, err := arena.Add(vec)
+		if err != nil {
+			t.Fatalf("neighbor arena Add: %v", err)
+		}
+		idx.Add(vec, fmt.Sprintf("neighbor-%d", i), offset)
+	}
+
+	results := idx.Search(replacementVec, 3)
+	for _, result := range results {
+		if result.ID == "same-id" {
+			return
+		}
+	}
+	t.Fatalf("replacement ID missing from search results: %+v", results)
 }
 
 // uuidish builds a short deterministic id without needing UUIDv4.
