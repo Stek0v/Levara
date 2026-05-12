@@ -488,6 +488,121 @@ func TestWorkspaceContextRespectsACLProjectList(t *testing.T) {
 	}
 }
 
+func TestWorkspaceAPIViewerRoleMatrixForWorkspaceOps(t *testing.T) {
+	cfg, closeFn := newWorkspaceACLTestConfig(t)
+	defer closeFn()
+	seedWorkspaceACL(t, cfg.DB, "user-a", "user-b", "payments", RoleViewer)
+
+	ownerApp := workspaceACLApp("user-a", cfg)
+	body, status := workspaceTestPost(t, ownerApp, "/workspace/write", map[string]any{
+		"project_id":          "payments",
+		"branch":              "main",
+		"generation":          "acl-viewer-gen-1",
+		"collection":          "acl_viewer_gen_1",
+		"path":                "docs/viewer.md",
+		"text":                "# Viewer\n\nShared viewer anchor.",
+		"chunk_strategy":      "paragraph",
+		"min_chunk_chars":     1,
+		"activate_generation": true,
+	})
+	if status != http.StatusOK {
+		t.Fatalf("owner write status=%d body=%s", status, body)
+	}
+	body, status = workspaceTestPost(t, ownerApp, "/workspace/commit", map[string]any{
+		"project_id": "payments",
+		"branch":     "main",
+		"message":    "viewer-baseline",
+	})
+	if status != http.StatusOK {
+		t.Fatalf("owner commit status=%d body=%s", status, body)
+	}
+	var commit workspaceCommitRecord
+	if err := json.Unmarshal(body, &commit); err != nil {
+		t.Fatal(err)
+	}
+
+	viewerApp := workspaceACLApp("user-b", cfg)
+	for _, endpoint := range []string{
+		"/workspace/context?project_id=payments&branch=main",
+		"/workspace/ops/status?project_id=payments&branch=main",
+		"/workspace/conflicts?project_id=payments&branch=main",
+		"/workspace/read?project_id=payments&branch=main&path=docs/viewer.md",
+	} {
+		if got := workspaceTestGet(t, viewerApp, endpoint, http.StatusOK); len(got) == 0 {
+			t.Fatalf("viewer endpoint %s returned empty body", endpoint)
+		}
+	}
+
+	body, status = workspaceTestPost(t, viewerApp, "/workspace/commit", map[string]any{
+		"project_id": "payments",
+		"branch":     "main",
+		"message":    "viewer-should-fail",
+	})
+	if status != http.StatusForbidden {
+		t.Fatalf("viewer commit status=%d body=%s", status, body)
+	}
+
+	body, status = workspaceTestPost(t, viewerApp, "/workspace/revert", map[string]any{
+		"project_id": "payments",
+		"branch":     "main",
+		"commit_id":  commit.CommitID,
+	})
+	if status != http.StatusForbidden {
+		t.Fatalf("viewer revert status=%d body=%s", status, body)
+	}
+
+	body, status = workspaceTestPost(t, viewerApp, "/workspace/gc", map[string]any{
+		"project_id": "payments",
+		"branch":     "main",
+		"dry_run":    true,
+	})
+	if status != http.StatusForbidden {
+		t.Fatalf("viewer gc status=%d body=%s", status, body)
+	}
+}
+
+func TestWorkspaceAPIForeignProjectEndpointsDoNotLeakMetadata(t *testing.T) {
+	cfg, closeFn := newWorkspaceACLTestConfig(t)
+	defer closeFn()
+	seedWorkspaceACL(t, cfg.DB, "user-a", "user-b", "payments", "")
+
+	ownerApp := workspaceACLApp("user-a", cfg)
+	body, status := workspaceTestPost(t, ownerApp, "/workspace/write", map[string]any{
+		"project_id":          "payments",
+		"branch":              "main",
+		"generation":          "acl-hidden-gen",
+		"collection":          "acl_hidden_collection",
+		"path":                "docs/private.md",
+		"text":                "# Hidden\n\nSensitive ACL anchor.",
+		"chunk_strategy":      "paragraph",
+		"min_chunk_chars":     1,
+		"activate_generation": true,
+	})
+	if status != http.StatusOK {
+		t.Fatalf("owner write status=%d body=%s", status, body)
+	}
+
+	foreignApp := workspaceACLApp("user-b", cfg)
+	for _, endpoint := range []string{
+		"/workspace/context?project_id=payments&branch=main",
+		"/workspace/ops/status?project_id=payments&branch=main",
+		"/workspace/conflicts?project_id=payments&branch=main",
+		"/workspace/audit?project_id=payments&limit=20",
+	} {
+		body = workspaceTestGet(t, foreignApp, endpoint, http.StatusForbidden)
+		for _, forbidden := range []string{
+			"docs/private.md",
+			"Sensitive ACL anchor",
+			"acl-hidden-gen",
+			"acl_hidden_collection",
+		} {
+			if bytes.Contains(body, []byte(forbidden)) {
+				t.Fatalf("endpoint %s leaked %q in body=%s", endpoint, forbidden, body)
+			}
+		}
+	}
+}
+
 func TestWorkspaceContextReportsCorruptManifestPerProject(t *testing.T) {
 	cfg, closeFn := newWorkspaceTestConfig(t)
 	defer closeFn()
@@ -2778,6 +2893,52 @@ func TestWorkspaceMCPAccessDeniedForForeignProject(t *testing.T) {
 	}
 	if bytes.Contains([]byte(res.Content[0].Text), []byte("Hidden")) || bytes.Contains([]byte(res.Content[0].Text), []byte("docs/private.md")) {
 		t.Fatalf("MCP denial leaked file details: %s", res.Content[0].Text)
+	}
+}
+
+func TestWorkspaceMCPForeignProjectOpsDoNotLeakMetadata(t *testing.T) {
+	cfg, closeFn := newWorkspaceACLTestConfig(t)
+	defer closeFn()
+	seedWorkspaceACL(t, cfg.DB, "user-a", "user-b", "payments", "")
+
+	ownerCtx := context.WithValue(context.Background(), mcpUserIDKey, "user-a")
+	h := &mcpHandler{cfg: cfg}
+	write := h.executeToolInner(ownerCtx, nil, "workspace_write", map[string]any{
+		"project_id":          "payments",
+		"branch":              "main",
+		"generation":          "mcp-hidden-gen",
+		"collection":          "mcp_hidden_collection",
+		"path":                "docs/private-ops.md",
+		"text":                "# Private Ops\n\nMCP hidden metadata anchor.",
+		"chunk_strategy":      "paragraph",
+		"min_chunk_chars":     1,
+		"activate_generation": true,
+	})
+	if write.IsError {
+		t.Fatalf("owner workspace_write error: %+v", write.Content)
+	}
+
+	foreignCtx := context.WithValue(context.Background(), mcpUserIDKey, "user-b")
+	for _, tool := range []string{"workspace_context", "workspace_ops_status", "workspace_conflicts", "workspace_audit_log"} {
+		res := h.executeToolInner(foreignCtx, nil, tool, map[string]any{
+			"project_id": "payments",
+			"branch":     "main",
+			"limit":      20,
+		})
+		if !res.IsError {
+			t.Fatalf("foreign %s should fail: %+v", tool, res.Content)
+		}
+		body := []byte(res.Content[0].Text)
+		for _, forbidden := range [][]byte{
+			[]byte("docs/private-ops.md"),
+			[]byte("MCP hidden metadata anchor"),
+			[]byte("mcp-hidden-gen"),
+			[]byte("mcp_hidden_collection"),
+		} {
+			if bytes.Contains(body, forbidden) {
+				t.Fatalf("tool %s leaked %q in %s", tool, forbidden, body)
+			}
+		}
 	}
 }
 

@@ -13,18 +13,18 @@
 | Context artifacts reindex | `POST /workspace/context/artifacts/reindex` | `not exposed` | `workspace_reindex_artifacts` | `intentional-gap` |
 | Ops status | `GET /workspace/ops/status` | `levara workspace ops-status` | `workspace_ops_status` | `parity` |
 | Conflict report | `GET /workspace/conflicts` | `levara workspace conflicts` | `workspace_conflicts` | `parity` |
-| Manifest read | `GET /workspace/manifest` | `levara workspace manifest` | `not exposed` | `intentional-gap` |
+| Manifest read | `GET /workspace/manifest` | `levara workspace manifest` | `workspace_manifest` | `parity` |
 | Exact read | `GET /workspace/read` | `levara workspace read` | `workspace_read` | `parity` |
 | Indexed write | `POST /workspace/write` | `levara workspace write` | `workspace_write` | `parity` |
-| Direct index file | `POST /workspace/index` | `levara workspace index` | `not exposed` | `intentional-gap` |
-| Delete indexed path | `POST /workspace/delete` | `levara workspace delete` | `not exposed` | `intentional-gap` |
-| Reindex paths | `POST /workspace/reindex` | `levara workspace reindex` | `not exposed` | `intentional-gap` |
-| Reconcile generation | `POST /workspace/reconcile` | `levara workspace reconcile` | `not exposed` | `intentional-gap` |
-| Watch status | `GET /workspace/watch/status` | `levara workspace watch-status` | `not exposed` | `intentional-gap` |
+| Direct index file | `POST /workspace/index` | `levara workspace index` | `workspace_index` | `parity` |
+| Delete indexed path | `POST /workspace/delete` | `levara workspace delete` | `workspace_delete` | `parity` |
+| Reindex paths | `POST /workspace/reindex` | `levara workspace reindex` | `workspace_reindex_paths` | `parity` |
+| Reconcile generation | `POST /workspace/reconcile` | `levara workspace reconcile` | `workspace_reconcile` | `parity` |
+| Watch status | `GET /workspace/watch/status` | `levara workspace watch-status` | `workspace_watch_status` | `parity` |
 | Run start | `POST /workspace/runs/start` | `levara workspace run start` | `workspace_run_start` | `parity` |
 | Run get | `GET /workspace/runs/get` | `levara workspace run get` | `workspace_run_get` | `parity` |
 | Commit | `POST /workspace/commit` | `levara workspace commit` | `workspace_commit` | `parity` |
-| Log | `GET /workspace/log` | `levara workspace log` | `not exposed` | `intentional-gap` |
+| Log | `GET /workspace/log` | `levara workspace log` | `workspace_log` | `parity` |
 | Revert | `POST /workspace/revert` | `levara workspace revert` | `workspace_revert` | `parity` |
 | GC / dry-run | `POST /workspace/gc` | `levara workspace gc` | `workspace_gc` | `parity` |
 | Search by active generation | `GET /search` plus workspace resolution in server layer | `levara search ...` | `workspace_search` | `functional-parity` |
@@ -33,7 +33,7 @@
 
 - `workspace_access_check` и `workspace_audit_log` не вынесены в CLI, потому что это агентские и ops-oriented capability, а не ежедневный authoring flow.
 - `workspace_context_artifacts` и `workspace_reindex_artifacts` сейчас доступны через `REST` и `MCP`, но не обёрнуты в CLI. Это нормальный следующий CLI task, а не пробел в серверной логике.
-- `index`, `delete`, `reindex`, `reconcile`, `manifest`, `watch-status`, `log` не имеют отдельных MCP tools, потому что agent-facing contract строится вокруг `workspace_write`, `workspace_search`, `workspace_read`, `workspace_commit`, `workspace_revert`, `workspace_gc`.
+- Несмотря на наличие parity, `workspace_index`, `workspace_delete`, `workspace_reindex_paths`, `workspace_reconcile`, `workspace_manifest`, `workspace_watch_status` и `workspace_log` остаются низкоуровневыми tools. Для обычного agent flow предпочтительны `workspace_context`, `workspace_search`, `workspace_read`, `workspace_write`, `workspace_commit`, `workspace_revert`, `workspace_conflicts` и `workspace_gc`.
 
 ## DoD For Future Parity Work
 
