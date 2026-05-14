@@ -373,7 +373,7 @@ def main() -> int:
     headers = {"Content-Type": "application/json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
-    search_url = f"{levara_url.rstrip('/')}/api/v1/search"
+    search_url = f"{levara_url.rstrip('/')}/api/v1/search/text"
 
     latencies_ms: list[float] = []
     ndcgs: list[float] = []
