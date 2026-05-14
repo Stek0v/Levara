@@ -14,6 +14,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -49,12 +50,30 @@ type UnifiedSearchRequest struct {
 	Domain            string   `json:"domain"`          // Optional: filter to collections tagged with this domain
 	SessionID         string   `json:"session_id"`      // Conversational memory: load prior interactions
 	Tags              []string `json:"tags"`            // Optional: filter results by metadata tags
-	Rerank            bool     `json:"rerank"`          // Optional: rerank results via cross-encoder
+	// Rerank is tri-state: nil = use server default (default-on when
+	// RerankEndpoint is configured), explicit false = opt out, explicit
+	// true = force on. Phase 2 (2026-05-14) flipped the default from
+	// opt-in to default-on; clients that previously omitted the flag now
+	// get reranked results automatically.
+	Rerank            *bool    `json:"rerank,omitempty"`
 	IncludeDebug      bool     `json:"include_debug"`   // Optional: envelope list responses with debug metadata
 	StrictGrounded    bool     `json:"strict_grounded"` // Optional: abstain if no evidence_ids
 	VerifyResults     bool     `json:"verify_results"`  // Optional: verify metadata JSON and filter malformed rows
 	MinScore          float64  `json:"min_score"`       // Optional: drop hits below this score
 	AllowedDatasetIDs []string `json:"-"`               // RBAC: nil = no filtering (dev mode)
+}
+
+// rerankWanted resolves the tri-state Rerank flag against the server
+// config. nil = default-on iff a RerankEndpoint is configured; explicit
+// true forces on (still requires endpoint); explicit false opts out.
+func rerankWanted(flag *bool, endpoint string) bool {
+	if endpoint == "" {
+		return false
+	}
+	if flag == nil {
+		return true
+	}
+	return *flag
 }
 
 // isQueryWordRune reports whether r is part of a meaningful query token.
@@ -381,9 +400,11 @@ func chunksSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 	ctx, cancel := searchRequestContext(c)
 	defer cancel()
 
-	// Create reranker if requested and endpoint configured
+	// Create reranker if requested and endpoint configured. Phase 2: when
+	// req.Rerank is nil and an endpoint is configured, rerank is on by
+	// default; only an explicit "rerank": false disables it.
 	var rerankClient *rerank.Client
-	if req.Rerank && cfg.RerankEndpoint != "" {
+	if rerankWanted(req.Rerank, cfg.RerankEndpoint) {
 		rerankClient = rerank.NewClient(cfg.RerankEndpoint, cfg.RerankModel, 0, cfg.RerankTimeoutMs)
 	}
 
@@ -411,9 +432,41 @@ func chunksSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 			var err error
 			rerankedThisCall := false
 			if rerankClient != nil && rerankClient.Enabled() {
-				results, rerankedThisCall, err = sp.SearchByTextWithRerank(ctx, coll, sq, req.TopK)
+				// Phase 2: cap the rerank pass at RerankBudgetMs. On budget
+				// overrun the pipeline's existing graceful-degradation path
+				// returns the vector-order ranking; we relabel the outcome
+				// here so dashboards can distinguish "rerank slow" (budget)
+				// from "rerank broken" (error).
+				rerankCtx := ctx
+				var cancelRerank context.CancelFunc
+				if cfg.RerankBudgetMs > 0 {
+					rerankCtx, cancelRerank = context.WithTimeout(ctx, time.Duration(cfg.RerankBudgetMs)*time.Millisecond)
+				}
+				results, rerankedThisCall, err = sp.SearchByTextWithRerank(rerankCtx, coll, sq, req.TopK)
+				deadlineHit := cancelRerank != nil && errors.Is(rerankCtx.Err(), context.DeadlineExceeded)
+				if cancelRerank != nil {
+					cancelRerank()
+				}
+				noText := errors.Is(err, pipeline.ErrNoTextToRerank)
+				if noText {
+					// Pipeline already returned vector-order results; clear the
+					// sentinel so downstream `if err != nil { continue }` keeps
+					// them.
+					err = nil
+				}
+				switch {
+				case rerankedThisCall:
+					metrics.RerankInvocations.WithLabelValues("ok").Inc()
+				case deadlineHit:
+					metrics.RerankInvocations.WithLabelValues("budget").Inc()
+				case noText:
+					metrics.RerankInvocations.WithLabelValues("no_text").Inc()
+				default:
+					metrics.RerankInvocations.WithLabelValues("error").Inc()
+				}
 			} else {
 				results, err = sp.SearchByText(ctx, coll, sq, req.TopK)
+				metrics.RerankInvocations.WithLabelValues("disabled").Inc()
 			}
 			if err != nil {
 				continue
@@ -509,7 +562,7 @@ func hybridSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 	defer cancel()
 
 	var rerankClient *rerank.Client
-	if req.Rerank && cfg.RerankEndpoint != "" {
+	if rerankWanted(req.Rerank, cfg.RerankEndpoint) {
 		rerankClient = rerank.NewClient(cfg.RerankEndpoint, cfg.RerankModel, 0, cfg.RerankTimeoutMs)
 	}
 

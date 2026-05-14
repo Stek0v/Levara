@@ -132,6 +132,17 @@ Benchmarked on i7-7700 @ 3.60 GHz, Linux 6.8, dim=1024, gRPC transport.
 | 14 | `STRUCTURED` | Structured metadata filtering + vector search |
 | 15 | `GIT` | Git repository analysis and code search |
 
+### Reranking (default-on)
+
+Phase 2 ships a cross-encoder reranker that runs by default whenever
+`RERANK_ENDPOINT` is configured. Clients do not need to set any flag —
+search responses carry a per-result `reranked: true` to indicate which
+rows were reordered by the sidecar. To opt out, send `"rerank": false`
+in the `/api/v1/search` body. See `docs/api-reference.md` and
+`docs/phase2-rerank-default-design.md` for the tri-state semantics,
+latency budget (`RERANK_BUDGET_MS`, default 1500ms) and the
+`levara_rerank_invocations_total{outcome=...}` Prometheus counter.
+
 ## MCP Integration
 
 Levara exposes an MCP (Model Context Protocol) server for seamless integration with Claude Desktop, Cursor, and other MCP-compatible clients.

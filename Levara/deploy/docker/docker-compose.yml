@@ -16,6 +16,24 @@ services:
       - HTTP_PORT=8080
       - GRPC_PORT=50051
       - MCP_ENABLED=true
+      - RERANK_ENDPOINT=${RERANK_ENDPOINT:-}
+      - RERANK_MODEL=${RERANK_MODEL:-mmini-L12-int8}
+      - RERANK_BUDGET_MS=${RERANK_BUDGET_MS:-1500}
+    restart: unless-stopped
+
+  rerank:
+    profiles: ["rerank"]
+    build:
+      context: ../rerank
+      dockerfile: Dockerfile
+    ports:
+      - "9100:9100"
+    volumes:
+      - ${RERANK_MODEL_HOST_DIR:-/models/mmini-L12-int8}:/models/mmini-L12-int8:ro
+    environment:
+      - RERANK_MODEL_DIR=/models/mmini-L12-int8
+      - RERANK_MODEL_FILE=model_quantized.onnx
+      - OMP_NUM_THREADS=${OMP_NUM_THREADS:-4}
     restart: unless-stopped
 
   prometheus:

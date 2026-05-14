@@ -66,6 +66,11 @@ func NewDefaultStrategyRegistry() *StrategyRegistry {
 	r.Register(funcStrategy{name: "RAG_COMPLETION", fn: ragCompletionSearch})
 	r.Register(funcStrategy{name: "SUMMARIES", fn: summariesSearch})
 	r.Register(funcStrategy{name: "CHUNKS_LEXICAL", fn: bm25Search})
+	// "BM25" is documented in the OpenAPI/Swagger comment and api-reference.md
+	// as a valid query_type but the registered handler name was "CHUNKS_LEXICAL"
+	// only — clients sending "BM25" silently fell back to CHUNKS (vector path).
+	// Alias the documented name to the lexical handler so the docs are honest.
+	r.Register(funcStrategy{name: "BM25", fn: bm25Search})
 	r.Register(funcStrategy{name: "HYBRID", fn: hybridSearch})
 	r.Register(funcStrategy{name: "WEIGHTED_HYBRID", fn: hybridSearch})
 	r.Register(funcStrategy{name: "TEMPORAL", fn: temporalSearch})
