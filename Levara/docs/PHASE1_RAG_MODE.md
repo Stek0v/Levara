@@ -220,11 +220,21 @@ func (p *SearchPipeline) SearchByTextWithRerank(ctx context.Context, collection,
 
 **Конфигурация (environment):**
 ```
-RERANK_ENDPOINT=http://localhost:8787/rerank   # пустая строка = выключен
-RERANK_MODEL=bge-reranker-v2-m3
+RERANK_ENDPOINT=http://localhost:9100/rerank   # пустая строка = выключен
+RERANK_MODEL=mmini-L12-int8                    # Phase 1.5 winner (ONNX INT8, 118 MB, ~330ms p50 на Pi 5)
+RERANK_BUDGET_MS=1500                          # Phase 2: cap rerank pass; on overrun → fallback к vector order
+RERANK_TIMEOUT_MS=5000                         # per-request HTTP client timeout
 ```
 
-**Graceful degradation:** Если reranker недоступен (timeout, 5xx), SearchByTextWithRerank логирует warning и возвращает результаты без reranking (fallback к исходному порядку). Не ломает поиск.
+**Phase 2 (2026-05-14):** rerank теперь default-on, когда `RERANK_ENDPOINT`
+задан. Поле `rerank` в `/api/v1/search` стало tri-state:
+- `nil` (поле отсутствует) → server-default (on, если endpoint настроен)
+- `true` → принудительно on (всё равно требует endpoint)
+- `false` → явный opt-out
+
+Phase 1.5 selected `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` ONNX INT8 как Pi 5 default (rubq NDCG=0.796/p50=2.98s, scidocs NDCG=0.705/p50=0.33s, RSS peak 1.43GB). См. `docs/phase2-rerank-default-design.md`.
+
+**Graceful degradation:** Если reranker недоступен (timeout, 5xx, budget exceeded), SearchByTextWithRerank логирует warning и возвращает результаты без reranking (fallback к исходному порядку). Не ломает поиск. Outcomes видны в Prometheus: `levara_rerank_invocations_total{outcome=ok|budget|error|disabled}`.
 
 ---
 

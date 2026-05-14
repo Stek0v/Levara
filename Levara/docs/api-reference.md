@@ -139,6 +139,29 @@ Response:
 }
 ```
 
+#### Rerank (Phase 2, default-on)
+
+When `RERANK_ENDPOINT` is configured server-side, the unified text search
+endpoint (`POST /api/v1/search` with `query_text` body) reranks results
+through a cross-encoder by default. Clients control this via a tri-state
+`rerank` field:
+
+| value | meaning |
+|---|---|
+| field omitted / `null` | server default — on iff `RERANK_ENDPOINT` is set |
+| `true` | force on (still requires endpoint) |
+| `false` | explicit opt-out |
+
+Phase 1.5 default model: `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1`,
+ONNX INT8 (Pi 5 winner; see `docs/phase2-rerank-default-design.md`).
+
+Latency budget cap: `RERANK_BUDGET_MS` (default 1500). On overrun the
+search returns the vector-order ranking and emits
+`levara_rerank_invocations_total{outcome="budget"}`. Other outcomes:
+`ok`, `error`, `disabled`, `no_text` (Phase 2.1 — candidates returned
+but none carried a `text`/`name` field in metadata, so the rerank pass
+had nothing to score; distinct from `error` to surface data-shape gaps).
+
 #### Get by ID
 
 ```

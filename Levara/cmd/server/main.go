@@ -162,7 +162,11 @@ func main() {
 	dim := flag.Int("dim", 128, "Vector dimension size (must match embedding model output)")
 	port := flag.Int("port", 8080, "HTTP API port")
 	numShardsFlag := flag.Int("shards", 3, "Number of shards")
-	dataDir := flag.String("data-dir", "data", "Directory for persistent data storage")
+	defaultDataDir := "data"
+	if envDir := strings.TrimSpace(os.Getenv("LEVARA_DATA_DIR")); envDir != "" {
+		defaultDataDir = envDir
+	}
+	dataDir := flag.String("data-dir", defaultDataDir, "Directory for persistent data storage (overrides $LEVARA_DATA_DIR)")
 	grpcPort := flag.Int("grpc-port", 50051, "gRPC API port (0 to disable)")
 	hnswM := flag.Int("hnsw-m", 16, "HNSW M parameter: max neighbors per node")
 	hnswEfMult := flag.Int("hnsw-ef-mult", 8, "HNSW efSearch multiplier: efSearch = k * this value")
@@ -678,6 +682,7 @@ func main() {
 		RerankEndpoint:   rerankCfg.Endpoint,
 		RerankModel:      rerankCfg.Model,
 		RerankTimeoutMs:  rerankCfg.TimeoutMs,
+		RerankBudgetMs:   rerankCfg.BudgetMs,
 		AdaptiveWeights:  adaptiveWeights,
 		Runs:             runs,
 		SearchStrategies: searchStrategies,
@@ -701,6 +706,7 @@ func main() {
 		RerankEndpoint:   rerankCfg.Endpoint,
 		RerankModel:      rerankCfg.Model,
 		RerankTimeoutMs:  rerankCfg.TimeoutMs,
+		RerankBudgetMs:   rerankCfg.BudgetMs,
 		Runs:             runs,
 	}
 

@@ -199,6 +199,15 @@ export interface SearchRequest {
   collection?: string
   domain?: string
   tags?: string[]
+  /**
+   * Cross-encoder rerank, tri-state. Phase 2 (2026-05-14):
+   *   omit       — server default (on iff RERANK_ENDPOINT is configured)
+   *   true       — force on (still requires endpoint)
+   *   false      — explicit opt-out
+   * Don't expose this as a default UI toggle — rerank should be on by
+   * default whenever the server has a reranker; surface it only in an
+   * Advanced section for debugging.
+   */
   rerank?: boolean
   session_id?: string
 }

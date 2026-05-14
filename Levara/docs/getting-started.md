@@ -104,6 +104,12 @@ levara search "How does the architecture work?" --type=GRAPH_COMPLETION --datase
 levara search "knowledge graph engine" --type=HYBRID --dataset=demo
 ```
 
+If you deploy the rerank sidecar (`deploy/rerank/`) and set
+`RERANK_ENDPOINT`, every text search reranks by default — no flag
+needed. Each result returns `reranked: true` when the cross-encoder
+reordered it. Send `"rerank": false` only if you specifically want to
+skip it (e.g. latency-sensitive automation).
+
 ## Configuration
 
 ### Environment Variables
@@ -116,6 +122,11 @@ export VECTOR_DIM=768
 export LLM_PROVIDER=ollama
 export LLM_MODEL=qwen3.5:latest
 export OLLAMA_URL=http://127.0.0.1:11434
+
+# Optional: cross-encoder reranker (Phase 2, default-on when set)
+export RERANK_ENDPOINT=http://localhost:9100/rerank
+export RERANK_MODEL=mmini-L12-int8
+export RERANK_BUDGET_MS=1500
 ```
 
 ### With Neo4j

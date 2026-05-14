@@ -54,9 +54,12 @@ type APIConfig struct {
 	FileStorage storage.Storage
 	Logger      *observe.Logger // structured logger (nil = use log.Printf fallback)
 	// Reranker configuration (optional, all empty = disabled)
-	RerankEndpoint  string // e.g., "http://localhost:8787/rerank"
-	RerankModel     string // e.g., "bge-reranker-v2-m3"
+	RerankEndpoint  string // e.g., "http://localhost:9100/rerank"
+	RerankModel     string // e.g., "mmini-L12-int8"
 	RerankTimeoutMs int    // HTTP timeout in ms, 0 = default 5000ms
+	// RerankBudgetMs caps total time spent on the rerank pass; on overshoot
+	// the search falls back to the un-reranked ranking. 0 = no budget.
+	RerankBudgetMs int
 	// Adaptive router (feedback-driven weight learning)
 	AdaptiveWeights *router.AdaptiveWeights // nil = no adaptive routing
 	// Runs tracks background cognify / analyze-commits pipelines. Must be

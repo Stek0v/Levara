@@ -190,7 +190,26 @@ var (
 		Help: "Outbound dependency calls that exceeded their request-scoped deadline",
 	}, []string{"target", "op"})
 
-	// 16. Markdown workspace operational health. These gauges are refreshed by
+	// 16. Phase 2 rerank-by-default. Single outcome counter tracks the
+	// chunk-search handler's per-sub-query rerank decision. {outcome}:
+	//   ok        — reranker called, results came back, ranking reordered.
+	//   budget    — RERANK_BUDGET_MS elapsed before the reranker replied;
+	//               handler fell back to the un-reranked ranking.
+	//   error     — reranker returned an error (5xx, malformed, network);
+	//               handler fell back gracefully.
+	//   disabled  — rerank skipped because endpoint unset OR client
+	//               opted out with explicit `"rerank": false`.
+	//   no_text   — Phase 2.1: candidates returned but none carried a
+	//               `text`/`name` field in metadata, so there was nothing to
+	//               feed the cross-encoder. Distinct from `error` so dashboards
+	//               can flag data-shape gaps (memory chunks storing payload
+	//               under `value`) without raising a real rerank alarm.
+	RerankInvocations = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "levara_rerank_invocations_total",
+		Help: "Chunk-search rerank attempts by outcome (ok|budget|error|disabled|no_text)",
+	}, []string{"outcome"})
+
+	// 17. Markdown workspace operational health. These gauges are refreshed by
 	// workspace ops/status and by indexing job transitions; audit events are
 	// counted at write time.
 	WorkspaceIndexJobs = promauto.NewGaugeVec(prometheus.GaugeOpts{
@@ -265,6 +284,12 @@ func init() {
 			ExternalCallDuration.WithLabelValues(ts[0], ts[1], result)
 		}
 		ExternalCallTimeouts.WithLabelValues(ts[0], ts[1])
+	}
+
+	// Eager-init Phase 2 rerank outcomes so /metrics shows the full label
+	// space from process start.
+	for _, outcome := range []string{"ok", "budget", "error", "disabled"} {
+		RerankInvocations.WithLabelValues(outcome)
 	}
 
 	for _, status := range []string{"pending", "running", "completed", "failed", "dead_letter"} {

@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 
@@ -10,6 +11,14 @@ import (
 	"github.com/stek0v/levara/pkg/embed"
 	"github.com/stek0v/levara/pkg/rerank"
 )
+
+// ErrNoTextToRerank signals that candidates were found but none carried a
+// `text`/`name` field in metadata, so the rerank pass had nothing to score.
+// Callers receive vector-order results AND this error so they can distinguish
+// "rerank silently skipped because data shape" from a real rerank failure.
+// Phase 2.1 (2026-05-15): added to disambiguate the `error` outcome counter
+// from the `no_text` outcome.
+var ErrNoTextToRerank = errors.New("pipeline: no text in candidate metadata")
 
 // SearchPipeline orchestrates the full search path:
 // embed query → vector search (in-process) → return results.
@@ -104,12 +113,13 @@ func (p *SearchPipeline) SearchByTextWithRerank(ctx context.Context, collection,
 		}
 	}
 
-	// If no text to rerank, return vector order
+	// If no text to rerank, return vector order with a sentinel error so the
+	// caller can distinguish this from a real rerank failure (5xx, timeout).
 	if !hasText {
 		if len(candidates) > limit {
 			candidates = candidates[:limit]
 		}
-		return candidates, false, nil
+		return candidates, false, ErrNoTextToRerank
 	}
 
 	rerankedResults, rerankErr := p.reranker.Rerank(ctx, queryText, docs)
