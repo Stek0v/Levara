@@ -331,16 +331,18 @@ func TestToolSearch_TopKAcceptsIntegerArgs(t *testing.T) {
 }
 
 func TestToolSearch_RerankBranch(t *testing.T) {
-	var byTextCalled, byTextWithRerankCalled int32
+	// Phase 2.5: rerank branch must call SearchByText (overfetch) and then
+	// ApplyRerank — never the deprecated single-call SearchByTextWithRerank.
+	var byTextCalled, applyRerankCalled int32
 	fakePipe := &fakeSearchPipeline{
 		rerankEnabled: true,
 		byText: func(ctx context.Context, coll, query string, topK int) ([]pipeline.ScoredResult, error) {
 			atomic.AddInt32(&byTextCalled, 1)
-			return nil, nil
+			return []pipeline.ScoredResult{scoredRes("r1", 0.95)}, nil
 		},
-		byTextWithRerank: func(ctx context.Context, coll, query string, topK int) ([]pipeline.ScoredResult, bool, error) {
-			atomic.AddInt32(&byTextWithRerankCalled, 1)
-			return []pipeline.ScoredResult{scoredRes("r1", 0.95)}, true, nil
+		applyRerank: func(ctx context.Context, query string, in []pipeline.ScoredResult, topK int) (bool, []pipeline.ScoredResult) {
+			atomic.AddInt32(&applyRerankCalled, 1)
+			return true, in
 		},
 	}
 	deps := &fakeDeps{
@@ -357,11 +359,11 @@ func TestToolSearch_RerankBranch(t *testing.T) {
 		"search_query": "q",
 		"search_type":  "RERANK",
 	})
-	if atomic.LoadInt32(&byTextCalled) != 0 {
-		t.Error("SearchByText should not be called in rerank branch")
+	if atomic.LoadInt32(&byTextCalled) != 1 {
+		t.Errorf("SearchByText (overfetch) called %d times, want 1", byTextCalled)
 	}
-	if atomic.LoadInt32(&byTextWithRerankCalled) != 1 {
-		t.Errorf("SearchByTextWithRerank called %d times, want 1", byTextWithRerankCalled)
+	if atomic.LoadInt32(&applyRerankCalled) != 1 {
+		t.Errorf("ApplyRerank called %d times, want 1", applyRerankCalled)
 	}
 	resp := decodeSearchResp(t, res)
 	if resp["reranked"] != true {
@@ -372,16 +374,16 @@ func TestToolSearch_RerankBranch(t *testing.T) {
 func TestToolSearch_RerankFallsBackWhenDisabled(t *testing.T) {
 	// doRerank=true but RerankEnabled()=false → fall through to
 	// default SearchByText branch. reranked stays false.
-	var byTextCalled, byTextWithRerankCalled int32
+	var byTextCalled, applyRerankCalled int32
 	fakePipe := &fakeSearchPipeline{
 		rerankEnabled: false,
 		byText: func(ctx context.Context, coll, query string, topK int) ([]pipeline.ScoredResult, error) {
 			atomic.AddInt32(&byTextCalled, 1)
 			return []pipeline.ScoredResult{scoredRes("a", 0.9)}, nil
 		},
-		byTextWithRerank: func(ctx context.Context, coll, query string, topK int) ([]pipeline.ScoredResult, bool, error) {
-			atomic.AddInt32(&byTextWithRerankCalled, 1)
-			return nil, true, nil
+		applyRerank: func(ctx context.Context, query string, in []pipeline.ScoredResult, topK int) (bool, []pipeline.ScoredResult) {
+			atomic.AddInt32(&applyRerankCalled, 1)
+			return true, in
 		},
 	}
 	deps := &fakeDeps{
@@ -393,8 +395,8 @@ func TestToolSearch_RerankFallsBackWhenDisabled(t *testing.T) {
 		"search_query": "q",
 		"search_type":  "RERANK",
 	})
-	if atomic.LoadInt32(&byTextWithRerankCalled) != 0 {
-		t.Error("SearchByTextWithRerank called despite RerankEnabled=false")
+	if atomic.LoadInt32(&applyRerankCalled) != 0 {
+		t.Error("ApplyRerank called despite RerankEnabled=false")
 	}
 	if atomic.LoadInt32(&byTextCalled) != 1 {
 		t.Errorf("SearchByText called %d times, want 1 (fallback)", byTextCalled)

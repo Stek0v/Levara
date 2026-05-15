@@ -218,11 +218,12 @@ type SearchPipeline interface {
 	// SearchByTextMultiQuery generates n rewritten queries via the
 	// given provider/model and merges their results.
 	SearchByTextMultiQuery(ctx context.Context, collection, query string, topK int, provider llm.Provider, model string, n int) ([]pipeline.ScoredResult, error)
-	// SearchByTextWithRerank runs vector search then cross-encoder
-	// rerank when RerankEnabled() is true. The reranked bool in the
-	// return tells the caller whether rerank actually ran (it may be
-	// skipped when the endpoint is unreachable).
-	SearchByTextWithRerank(ctx context.Context, collection, query string, topK int) (results []pipeline.ScoredResult, reranked bool, err error)
+	// ApplyRerank reranks an ACL-prefiltered slice against `query` using
+	// the configured cross-encoder. Returns (reranked, ordered) — true
+	// only when the sidecar successfully scored at least one row. Callers
+	// MUST ACL-filter `in` first; passing unfiltered candidates leaks
+	// forbidden text to the third-party reranker (see Phase 2.5 RCA).
+	ApplyRerank(ctx context.Context, query string, in []pipeline.ScoredResult, topK int) (bool, []pipeline.ScoredResult)
 	// RerankEnabled reports whether the underlying rerank client is
 	// configured + reachable. Callers gate the rerank branch on this.
 	RerankEnabled() bool

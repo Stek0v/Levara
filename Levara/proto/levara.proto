@@ -516,6 +516,14 @@ message SearchByTextReq {
   string rerank_model = 7;
   int32 rerank_budget_ms = 8;   // 0 → 1500ms default
   int32 rerank_timeout_ms = 9;  // 0 → 5000ms default
+  // Phase 2.5: adaptive gate. >0 skips the sidecar when vector-score spread
+  // between the top and bottom candidate already exceeds the threshold.
+  float rerank_score_gap_threshold = 10;
+  // ACL pre-filter: drop candidates whose metadata.dataset_id is outside
+  // this set BEFORE the rerank sidecar sees them. nil/empty = no filter
+  // (dev mode). JWT-scoped clients MUST set this to the dataset IDs
+  // visible to the caller.
+  repeated string allowed_dataset_ids = 11;
 }
 
 message BatchSearchByTextReq {

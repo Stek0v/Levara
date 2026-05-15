@@ -3890,8 +3890,16 @@ type SearchByTextReq struct {
 	RerankModel     string `protobuf:"bytes,7,opt,name=rerank_model,json=rerankModel,proto3" json:"rerank_model,omitempty"`
 	RerankBudgetMs  int32  `protobuf:"varint,8,opt,name=rerank_budget_ms,json=rerankBudgetMs,proto3" json:"rerank_budget_ms,omitempty"`    // 0 → 1500ms default
 	RerankTimeoutMs int32  `protobuf:"varint,9,opt,name=rerank_timeout_ms,json=rerankTimeoutMs,proto3" json:"rerank_timeout_ms,omitempty"` // 0 → 5000ms default
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// Phase 2.5: adaptive gate. >0 skips the sidecar when vector-score spread
+	// between the top and bottom candidate already exceeds the threshold.
+	RerankScoreGapThreshold float32 `protobuf:"fixed32,10,opt,name=rerank_score_gap_threshold,json=rerankScoreGapThreshold,proto3" json:"rerank_score_gap_threshold,omitempty"`
+	// ACL pre-filter: drop candidates whose metadata.dataset_id is outside
+	// this set BEFORE the rerank sidecar sees them. nil/empty = no filter
+	// (dev mode). JWT-scoped clients MUST set this to the dataset IDs
+	// visible to the caller.
+	AllowedDatasetIds []string `protobuf:"bytes,11,rep,name=allowed_dataset_ids,json=allowedDatasetIds,proto3" json:"allowed_dataset_ids,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *SearchByTextReq) Reset() {
@@ -3985,6 +3993,20 @@ func (x *SearchByTextReq) GetRerankTimeoutMs() int32 {
 		return x.RerankTimeoutMs
 	}
 	return 0
+}
+
+func (x *SearchByTextReq) GetRerankScoreGapThreshold() float32 {
+	if x != nil {
+		return x.RerankScoreGapThreshold
+	}
+	return 0
+}
+
+func (x *SearchByTextReq) GetAllowedDatasetIds() []string {
+	if x != nil {
+		return x.AllowedDatasetIds
+	}
+	return nil
 }
 
 type BatchSearchByTextReq struct {
@@ -7171,7 +7193,7 @@ const file_levara_proto_rawDesc = "" +
 	"\x0eneo4j_edges_ms\x18\v \x01(\x03R\fneo4jEdgesMs\x12$\n" +
 	"\x0eembed_index_ms\x18\f \x01(\x03R\fembedIndexMs\x12\x19\n" +
 	"\btotal_ms\x18\r \x01(\x03R\atotalMs\x12\x16\n" +
-	"\x06errors\x18\x0e \x03(\tR\x06errors\"\xcf\x02\n" +
+	"\x06errors\x18\x0e \x03(\tR\x06errors\"\xbc\x03\n" +
 	"\x0fSearchByTextReq\x12\x1e\n" +
 	"\n" +
 	"collection\x18\x01 \x01(\tR\n" +
@@ -7185,7 +7207,10 @@ const file_levara_proto_rawDesc = "" +
 	"\x0frerank_endpoint\x18\x06 \x01(\tR\x0ererankEndpoint\x12!\n" +
 	"\frerank_model\x18\a \x01(\tR\vrerankModel\x12(\n" +
 	"\x10rerank_budget_ms\x18\b \x01(\x05R\x0ererankBudgetMs\x12*\n" +
-	"\x11rerank_timeout_ms\x18\t \x01(\x05R\x0frerankTimeoutMs\"\xad\x01\n" +
+	"\x11rerank_timeout_ms\x18\t \x01(\x05R\x0frerankTimeoutMs\x12;\n" +
+	"\x1arerank_score_gap_threshold\x18\n" +
+	" \x01(\x02R\x17rerankScoreGapThreshold\x12.\n" +
+	"\x13allowed_dataset_ids\x18\v \x03(\tR\x11allowedDatasetIds\"\xad\x01\n" +
 	"\x14BatchSearchByTextReq\x12\x1e\n" +
 	"\n" +
 	"collection\x18\x01 \x01(\tR\n" +

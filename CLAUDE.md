@@ -50,7 +50,9 @@ Human → reads .md files directly in repo
 | `DB_HOST` / `DB_USERNAME` / `DB_PASSWORD` / `DB_NAME` / `DB_PORT` | Postgres DSN parts (unused when `DB_PROVIDER=sqlite`). | cognee/cognee/cognee_db/5432 |
 | `NEO4J_URL` / `NEO4J_USER` / `NEO4J_PASSWORD` / `NEO4J_DATABASE` | Optional graph store; SQL fallback in pkg/graphdb when absent. | "" |
 | `LLM_RATE_LIMIT_REQUESTS` / `LLM_RATE_LIMIT_INTERVAL` | Outbound LLM rate caps (per-second). | "" |
-| `RERANK_ENDPOINT` / `RERANK_MODEL` | Cross-encoder reranker; disabled when unset. | "" |
+| `RERANK_ENDPOINT` / `RERANK_MODEL` | Cross-encoder reranker; disabled when unset. Phase 2 (2026-05-14): rerank is default-on when endpoint configured; clients tri-state via `"rerank": true\|false\|omit`. | "" |
+| `RERANK_BUDGET_MS` / `RERANK_TIMEOUT_MS` | Phase 2 budget for the rerank pass (fallback to vector order on overrun) and per-request HTTP client timeout. | 1500 / 5000 |
+| `RERANK_SCORE_GAP_THRESHOLD` | Phase 2.5: adaptive gate. When > 0 and the top-bottom candidate score spread exceeds it, the cross-encoder call is skipped (outcome=`skipped_gap`). 0 = unconditional rerank. | 0 |
 
 ## Rate limits (T2, 20.04)
 

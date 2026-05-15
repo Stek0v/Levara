@@ -276,7 +276,52 @@ def chaos_sidecar():
 
 
 @pytest.fixture(scope="module")
-def levara_server(chaos_sidecar):
+def embed_stub():
+    """OpenAI-compatible /v1/embeddings server returning a deterministic
+    4-dim vector. Lets cognify finish indexing without a real Ollama —
+    rerank path needs vectors in HNSW so searches return hits and the
+    outcome counter exercises the rerank branch."""
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    import threading
+
+    class _Handler(BaseHTTPRequestHandler):
+        def log_message(self, *_args, **_kwargs):  # silence stdout
+            return
+
+        def do_POST(self):
+            length = int(self.headers.get("Content-Length", "0"))
+            raw = self.rfile.read(length) if length else b"{}"
+            try:
+                body = json.loads(raw or b"{}")
+            except json.JSONDecodeError:
+                body = {}
+            inputs = body.get("input") or [""]
+            if isinstance(inputs, str):
+                inputs = [inputs]
+            data = [
+                {"embedding": [1.0, 0.0, 0.0, 0.0], "index": i}
+                for i, _ in enumerate(inputs)
+            ]
+            payload = json.dumps({"data": data, "model": "stub"}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    port = srv.server_address[1]
+    t = threading.Thread(target=srv.serve_forever, daemon=True)
+    t.start()
+    try:
+        yield f"http://127.0.0.1:{port}/v1/embeddings"
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+@pytest.fixture(scope="module")
+def levara_server(chaos_sidecar, embed_stub):
     port = _free_port()
     env = {
         **os.environ,
@@ -284,12 +329,19 @@ def levara_server(chaos_sidecar):
         "RERANK_MODEL": "chaos",
         "RERANK_BUDGET_MS": "5000",
         "RERANK_TIMEOUT_MS": "10000",
+        "EMBEDDING_ENDPOINT": embed_stub,
+        "EMBEDDING_MODEL": "stub",
         "HTTP_PORT": str(port),
         "PORT": str(port),
         "DB_PROVIDER": os.environ.get("DB_PROVIDER", "sqlite"),
+        "RATE_LIMIT_USER_MAX": "100000",
     }
     proc = subprocess.Popen(
-        _resolve_server_cmd(),
+        _resolve_server_cmd() + [
+            "-port", str(port),
+            "-grpc-port", "0",
+            "-dim", "4",  # matches embed_stub vector dimension
+        ],
         cwd=str(REPO_ROOT),
         env=env,
     )
@@ -344,7 +396,7 @@ def test_soak_no_leak(levara_server):
     assert docs, "expected at least one doc from SciDocs fixture"
     assert queries, "expected at least one query from SciDocs fixture"
 
-    seed_collection(base_url=base, collection=COLLECTION, docs=docs)
+    seed_collection(base_url=base, collection=COLLECTION, docs=docs, cognify_timeout_s=300.0)
 
     # Give indexer a moment after cognify completes.
     time.sleep(2.0)
@@ -465,11 +517,13 @@ def test_soak_no_leak(levara_server):
 
     # Number of successful searches AFTER baseline (the rerank-bearing ops).
     # We compare against outcome counter delta scraped from /metrics.
-    expected_outcome_count = search_iters - sum(
-        1 for entry in timeline if entry[0] == WARMUP
-    ) * 0  # no-op; warmup searches counted in baseline_outcomes already
-    # Cleaner: search_iters includes warmup searches, which baseline already
-    # captured. So delta should equal (search_iters - warmup_searches).
+    #
+    # Invariant: every post-baseline search must produce AT LEAST one rerank
+    # outcome increment — that's what catches silent drops in the rerank path.
+    # We can't use strict equality because chunksSearch iterates over
+    # `subQueries × collections` (DecomposeQuery may split one query into
+    # several) and bumps the outcome counter per inner iteration. A single
+    # /search/text call therefore legitimately produces ≥1 counter ticks.
     warmup_searches = sum(
         1 for i in range(WARMUP) if not (insert_every and i % insert_every == 0)
     )
@@ -494,10 +548,12 @@ def test_soak_no_leak(levara_server):
         )
 
     # No silent drops first — if this fails, the leak numbers are noise.
-    if int(outcome_delta_total) != int(expected_outcome_count):
+    # See expected_outcome_count comment: equality would be wrong (sub-query
+    # decomposition fans out the counter), so we assert the lower bound.
+    if int(outcome_delta_total) < int(expected_outcome_count):
         print(_dump_timeline(), flush=True)
-    assert int(outcome_delta_total) == int(expected_outcome_count), (
-        f"rerank outcome counter desync: scraped Δ={outcome_delta_total} "
+    assert int(outcome_delta_total) >= int(expected_outcome_count), (
+        f"rerank outcome counter undercount: scraped Δ={outcome_delta_total} "
         f"but ran {expected_outcome_count} reranked searches post-baseline. "
         f"Indicates silent drops in /api/v1/search/text rerank path."
     )

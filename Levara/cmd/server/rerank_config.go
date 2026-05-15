@@ -6,10 +6,11 @@ import (
 )
 
 type rerankConfig struct {
-	Endpoint  string
-	Model     string
-	TimeoutMs int
-	BudgetMs  int
+	Endpoint           string
+	Model              string
+	TimeoutMs          int
+	BudgetMs           int
+	ScoreGapThreshold  float32
 }
 
 func rerankConfigFromEnv() rerankConfig {
@@ -26,6 +27,11 @@ func rerankConfigFromEnv() rerankConfig {
 	if raw := os.Getenv("RERANK_BUDGET_MS"); raw != "" {
 		if budgetMs, err := strconv.Atoi(raw); err == nil && budgetMs > 0 {
 			cfg.BudgetMs = budgetMs
+		}
+	}
+	if raw := os.Getenv("RERANK_SCORE_GAP_THRESHOLD"); raw != "" {
+		if v, err := strconv.ParseFloat(raw, 32); err == nil && v > 0 {
+			cfg.ScoreGapThreshold = float32(v)
 		}
 	}
 	return cfg

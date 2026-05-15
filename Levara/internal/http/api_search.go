@@ -461,6 +461,13 @@ func chunksSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 		subQueries = []string{req.QueryText}
 	}
 
+	// Record sub-query × collection fan-out for capacity planning. The
+	// rerank outcome counter is bumped per inner iteration, so dashboards
+	// translating outcome-delta back into request count must divide by the
+	// mean of this histogram. See docs/phase2-rerank-default-design.md
+	// ("Sub-query fan-out").
+	metrics.SearchChunksSubqueryFanout.Observe(float64(len(subQueries) * len(colls)))
+
 	var allResults []fiber.Map
 	seen := map[string]bool{}
 	// A.2 (20.04 review): track per-result reranked status. The previous
@@ -689,66 +696,10 @@ func applyRerankToScored(
 	in []pipeline.ScoredResult,
 	topK int,
 ) (bool, []pipeline.ScoredResult) {
-	if len(in) == 0 {
-		return false, in
-	}
-	docs := make([]string, 0, len(in))
-	idxMap := make([]int, 0, len(in))
-	for i, r := range in {
-		if t := pipeline.ExtractText(r.Metadata); t != "" {
-			docs = append(docs, t)
-			idxMap = append(idxMap, i)
-		}
-	}
-	trim := func(s []pipeline.ScoredResult) []pipeline.ScoredResult {
-		if len(s) > topK {
-			return s[:topK]
-		}
-		return s
-	}
-	if len(docs) == 0 {
-		metrics.RerankInvocations.WithLabelValues("no_text").Inc()
-		return false, trim(in)
-	}
-
-	rerankCtx := ctx
-	var cancelRerank context.CancelFunc
-	if cfg.RerankBudgetMs > 0 {
-		rerankCtx, cancelRerank = context.WithTimeout(ctx, time.Duration(cfg.RerankBudgetMs)*time.Millisecond)
-	}
-	scored, err := rerankClient.Rerank(rerankCtx, query, docs)
-	deadlineHit := cancelRerank != nil && errors.Is(rerankCtx.Err(), context.DeadlineExceeded)
-	if cancelRerank != nil {
-		cancelRerank()
-	}
-	switch {
-	case err == nil && len(scored) > 0:
-		metrics.RerankInvocations.WithLabelValues("ok").Inc()
-		placed := make(map[int]bool, len(scored))
-		out := make([]pipeline.ScoredResult, 0, len(in))
-		for _, s := range scored {
-			if s.Index < 0 || s.Index >= len(idxMap) {
-				continue
-			}
-			orig := idxMap[s.Index]
-			if placed[orig] {
-				continue
-			}
-			placed[orig] = true
-			out = append(out, in[orig])
-		}
-		for i, r := range in {
-			if !placed[i] {
-				out = append(out, r)
-			}
-		}
-		return true, trim(out)
-	case deadlineHit:
-		metrics.RerankInvocations.WithLabelValues("budget").Inc()
-	default:
-		metrics.RerankInvocations.WithLabelValues("error").Inc()
-	}
-	return false, trim(in)
+	return pipeline.ApplyRerankToScored(ctx, pipeline.ApplyRerankConfig{
+		BudgetMs:          cfg.RerankBudgetMs,
+		ScoreGapThreshold: cfg.RerankScoreGapThreshold,
+	}, rerankClient, query, in, topK)
 }
 
 // hybridApplyRerank scores the fused candidates with the configured
@@ -778,6 +729,20 @@ func hybridApplyRerank(
 	if len(docs) == 0 {
 		metrics.RerankInvocations.WithLabelValues("no_text").Inc()
 		return
+	}
+
+	// Adaptive gate (HYBRID variant): same idea as applyRerankToScored,
+	// but the score axis is `fused_score` from the RRF pass instead of a
+	// raw vector score. When RRF already produced a wide spread between
+	// the top and bottom candidate, the sidecar wouldn't move the head of
+	// the list — skip the round-trip.
+	if cfg.RerankScoreGapThreshold > 0 && len(rows) >= 2 {
+		topFS, _ := rows[0]["fused_score"].(float64)
+		botFS, _ := rows[len(rows)-1]["fused_score"].(float64)
+		if float32(topFS-botFS) > cfg.RerankScoreGapThreshold {
+			metrics.RerankInvocations.WithLabelValues("skipped_gap").Inc()
+			return
+		}
 	}
 
 	rerankCtx := ctx

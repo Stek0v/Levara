@@ -264,8 +264,8 @@ type fakeSearchPipeline struct {
 	byText            func(ctx context.Context, coll, query string, topK int) ([]pipeline.ScoredResult, error)
 	byTextParentChild func(ctx context.Context, coll, query string, topK int) ([]pipeline.ScoredResult, error)
 	byTextMultiQuery  func(ctx context.Context, coll, query string, topK int, p llm.Provider, model string, n int) ([]pipeline.ScoredResult, error)
-	byTextWithRerank  func(ctx context.Context, coll, query string, topK int) ([]pipeline.ScoredResult, bool, error)
-	rerankEnabled     bool
+	applyRerank   func(ctx context.Context, query string, in []pipeline.ScoredResult, topK int) (bool, []pipeline.ScoredResult)
+	rerankEnabled bool
 }
 
 func (p *fakeSearchPipeline) SearchByText(ctx context.Context, coll, query string, topK int) ([]pipeline.ScoredResult, error) {
@@ -289,11 +289,14 @@ func (p *fakeSearchPipeline) SearchByTextMultiQuery(ctx context.Context, coll, q
 	return nil, nil
 }
 
-func (p *fakeSearchPipeline) SearchByTextWithRerank(ctx context.Context, coll, query string, topK int) ([]pipeline.ScoredResult, bool, error) {
-	if p.byTextWithRerank != nil {
-		return p.byTextWithRerank(ctx, coll, query, topK)
+func (p *fakeSearchPipeline) ApplyRerank(ctx context.Context, query string, in []pipeline.ScoredResult, topK int) (bool, []pipeline.ScoredResult) {
+	if p.applyRerank != nil {
+		return p.applyRerank(ctx, query, in, topK)
 	}
-	return nil, false, nil
+	if topK > 0 && len(in) > topK {
+		in = in[:topK]
+	}
+	return false, in
 }
 
 func (p *fakeSearchPipeline) RerankEnabled() bool { return p.rerankEnabled }
