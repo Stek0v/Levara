@@ -736,10 +736,12 @@ func hybridApplyRerank(
 	// raw vector score. When RRF already produced a wide spread between
 	// the top and bottom candidate, the sidecar wouldn't move the head of
 	// the list — skip the round-trip.
-	if cfg.RerankScoreGapThreshold > 0 && len(rows) >= 2 {
+	if len(rows) >= 2 {
 		topFS, _ := rows[0]["fused_score"].(float64)
 		botFS, _ := rows[len(rows)-1]["fused_score"].(float64)
-		if float32(topFS-botFS) > cfg.RerankScoreGapThreshold {
+		spread := topFS - botFS
+		metrics.RerankScoreSpread.WithLabelValues("rrf").Observe(spread)
+		if cfg.RerankScoreGapThreshold > 0 && float32(spread) > cfg.RerankScoreGapThreshold {
 			metrics.RerankInvocations.WithLabelValues("skipped_gap").Inc()
 			return
 		}

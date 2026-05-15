@@ -250,12 +250,25 @@ distinct from `disabled` (config-off) and `ok` (sidecar reordered).
 The label is eager-initialised in `metrics.telemetry.init()` so
 dashboards see it from process start.
 
-**Operational guidance:** start at 0 (gate off), then tune by
-inspecting `histogram_quantile(0.5, rate(...))` of `rerank_score - vector_score`
-and pick a threshold that catches the "already confident" cases.
-A practical starting point on SciDocs-shaped traffic is in the 0.15–0.25
-range for cosine vectors; HYBRID `fused_score` runs in a different
-range and needs its own measurement.
+**Operational guidance:** start at 0 (gate off). The new histogram
+`levara_rerank_score_spread{axis="vector"|"rrf"}` (added 2026-05-15)
+samples the top-bottom candidate gap on every rerank call, including
+the `skipped_gap` path, so the empirical distribution is visible
+without enabling the gate. Calibrate by:
+
+```promql
+# Median spread under real traffic
+histogram_quantile(0.5, sum by (le, axis) (rate(levara_rerank_score_spread_bucket[1h])))
+
+# Share of requests already "confident" at threshold T
+sum(rate(levara_rerank_score_spread_bucket{axis="vector", le="0.15"}[1h]))
+  / sum(rate(levara_rerank_score_spread_count{axis="vector"}[1h]))
+```
+
+A practical starting point on SciDocs-shaped traffic is in the
+0.15–0.25 range for cosine vectors; HYBRID `fused_score` runs in a
+different range — set the `rrf` threshold separately once both
+axes have populated bucket counts.
 
 ### 3. Sub-query fan-out histogram
 

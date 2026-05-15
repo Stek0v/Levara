@@ -222,6 +222,20 @@ var (
 		Buckets: []float64{1, 2, 3, 5, 8, 13, 21},
 	})
 
+	// RerankScoreSpread records the top-bottom candidate score gap observed
+	// by ApplyRerankToScored just BEFORE the adaptive-gate decision. Sampled
+	// on every rerank call (including the skipped_gap path) so an operator
+	// can calibrate RERANK_SCORE_GAP_THRESHOLD against the empirical
+	// distribution. The "axis" label disambiguates vector-similarity gaps
+	// (chunksSearch / gRPC / MCP path) from RRF fused_score gaps (HYBRID),
+	// which live on entirely different scales. Bucket edges are tuned to
+	// cosine vectors in [-1, 1] — adjust if the embed model switches.
+	RerankScoreSpread = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "levara_rerank_score_spread",
+		Help:    "Top-bottom candidate score gap observed before the adaptive rerank gate",
+		Buckets: []float64{0.01, 0.025, 0.05, 0.1, 0.15, 0.2, 0.3, 0.5, 0.75, 1.0},
+	}, []string{"axis"})
+
 	// 17. Markdown workspace operational health. These gauges are refreshed by
 	// workspace ops/status and by indexing job transitions; audit events are
 	// counted at write time.
@@ -304,6 +318,14 @@ func init() {
 	// (Phase 2.5 follow-up: adaptive score-gap gate) join the original four.
 	for _, outcome := range []string{"ok", "budget", "error", "disabled", "no_text", "skipped_gap"} {
 		RerankInvocations.WithLabelValues(outcome)
+	}
+
+	// Eager-init both score-spread axes so the histogram appears in /metrics
+	// from process start. Calibration dashboards distinguish "vector" (raw
+	// cosine similarity from chunksSearch / gRPC / MCP) from "rrf"
+	// (HYBRID fused_score from the RRF pass).
+	for _, axis := range []string{"vector", "rrf"} {
+		RerankScoreSpread.WithLabelValues(axis)
 	}
 
 	for _, status := range []string{"pending", "running", "completed", "failed", "dead_letter"} {
