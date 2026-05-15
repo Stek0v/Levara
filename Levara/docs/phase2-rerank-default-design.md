@@ -165,39 +165,42 @@ or HybridSearch), so v2 has nothing to wire in this phase.
 **Tests that pin this contract:** `TestGRPC_SearchByText_Rerank` and
 `TestGRPC_HybridSearch_Rerank` in `internal/grpc/rerank_test.go`.
 
-## ACL (known limitation, 2026-05-15)
+## ACL pre-rerank (Phase 2.5 fix, 2026-05-15)
 
-`filterByAllowedDatasets` runs **after** the rerank pass in `chunksSearch`
-(and in every other handler that supports rerank). The sequence is:
+`filterByAllowedDatasets` now runs **before** the rerank pass in both
+`chunksSearch` and `hybridSearch`. The new sequence is:
 
 ```
-vector search → candidates
-              → rerank sidecar (sees ALL candidates, incl. forbidden datasets)
+vector search → overfetch candidates
+              → filterByAllowedDatasets (drops forbidden datasets)
+              → rerank sidecar (sees ONLY allowed candidates)
               → reorder
-              → filterByAllowedDatasets (drops forbidden from response)
+              → trim to TopK
 ```
 
-The user-visible response is correctly ACL-filtered, but the sidecar
-receives document text from datasets the requester is not authorized to
-read.
+Implementation:
+- `chunksSearch` switched off `sp.SearchByTextWithRerank` (which had
+  the ACL leak baked in). It now calls `sp.SearchByText` with an
+  overfetch budget, applies `filterScoredByAllowedDatasets` against the
+  raw metadata, then runs the shared `applyRerankToScored` helper on
+  the filtered slice.
+- `hybridSearch` moves `filterByAllowedDatasets` to *before* the
+  `hybridApplyRerank` call. A second (idempotent) ACL pass after rerank
+  is kept for defense-in-depth.
 
-**Impact:** low while `RERANK_ENDPOINT` points to a localhost or
-same-LAN sidecar (Pi 5 default). **High** the moment it points to a
-third-party service (Cohere/Voyage/etc.) — that path would exfiltrate
-forbidden chunks even though the response hides them.
-
-**Mitigation today:** treat the sidecar as a trust-equivalent peer of
-Levara itself. Never set `RERANK_ENDPOINT` to a service outside the
-trust boundary without first moving the ACL filter pre-rerank.
+The Phase 3 plan to plumb `AllowedDatasetIDs` into `pipeline.SearchPipeline`
+is no longer needed — the HTTP layer owns the filter and the pipeline
+stays unaware of dataset semantics.
 
 **Test that pins this contract:**
-`TestChunksSearch_RerankSeesForbiddenDocs_KnownLimitation` in
-`internal/http/rerank_budget_test.go`. It deliberately asserts the
-current (leaky) behavior so that any refactor moving the ACL filter
-pre-rerank fails loudly and forces an explicit update to this doc.
+`TestChunksSearch_RerankPreFiltersForbiddenDocs` in
+`internal/http/rerank_budget_test.go` — taps the sidecar HTTP path and
+fails the test if any forbidden document text reaches it.
 
-**Phase 3 fix:** plumb `AllowedDatasetIDs` into `pipeline.SearchPipeline`
-so vector candidates are filtered before they ever leave the host.
+**Operational implication:** `RERANK_ENDPOINT` may now safely point at
+a third-party reranker (Cohere/Voyage/etc.) without leaking chunks
+across the trust boundary. The handler will only ship documents from
+datasets the JWT-resolved user owns or has been shared.
 
 ## Done-when
 

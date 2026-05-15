@@ -261,6 +261,49 @@ func filterByAllowedDatasets(results []fiber.Map, allowedIDs []string) []fiber.M
 	return filtered
 }
 
+// filterScoredByAllowedDatasets drops pipeline.ScoredResult rows whose
+// metadata names a dataset outside allowedIDs. Used to ACL-filter
+// vector candidates BEFORE they are shipped to the rerank sidecar —
+// prevents forbidden chunks leaking to a third-party reranker even
+// when the user-visible response will hide them.
+func filterScoredByAllowedDatasets(results []pipeline.ScoredResult, allowedIDs []string) []pipeline.ScoredResult {
+	if allowedIDs == nil {
+		return results
+	}
+	allowed := make(map[string]bool, len(allowedIDs))
+	for _, id := range allowedIDs {
+		allowed[id] = true
+	}
+	filtered := results[:0]
+	for _, r := range results {
+		dsID := extractDatasetIDFromRaw(r.Metadata)
+		if dsID == "" || allowed[dsID] {
+			filtered = append(filtered, r)
+		}
+	}
+	return filtered
+}
+
+// extractDatasetIDFromRaw is the pipeline.ScoredResult counterpart of
+// extractDatasetID — same `dataset_id → project_id` fallback rule,
+// applied to raw metadata JSON before it gets boxed into a fiber.Map.
+func extractDatasetIDFromRaw(meta json.RawMessage) string {
+	if len(meta) == 0 {
+		return ""
+	}
+	var m map[string]any
+	if err := json.Unmarshal(meta, &m); err != nil {
+		return ""
+	}
+	if d, ok := m["dataset_id"].(string); ok && d != "" {
+		return d
+	}
+	if d, ok := m["project_id"].(string); ok {
+		return d
+	}
+	return ""
+}
+
 // extractDatasetID extracts dataset_id from a result's metadata field.
 func extractDatasetID(r fiber.Map) string {
 	meta, ok := r["metadata"]
@@ -432,38 +475,23 @@ func chunksSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 			var err error
 			rerankedThisCall := false
 			if rerankClient != nil && rerankClient.Enabled() {
-				// Phase 2: cap the rerank pass at RerankBudgetMs. On budget
-				// overrun the pipeline's existing graceful-degradation path
-				// returns the vector-order ranking; we relabel the outcome
-				// here so dashboards can distinguish "rerank slow" (budget)
-				// from "rerank broken" (error).
-				rerankCtx := ctx
-				var cancelRerank context.CancelFunc
-				if cfg.RerankBudgetMs > 0 {
-					rerankCtx, cancelRerank = context.WithTimeout(ctx, time.Duration(cfg.RerankBudgetMs)*time.Millisecond)
+				// ACL pre-rerank: overfetch, filter by allowed datasets,
+				// THEN rerank. This guarantees the sidecar never sees text
+				// from datasets the requester is not authorized to read —
+				// critical when RERANK_ENDPOINT points to a third-party
+				// service. Replaces the old sp.SearchByTextWithRerank call,
+				// which leaked forbidden chunks to the reranker (the
+				// response was filtered, but the sidecar already saw them).
+				overfetch := req.TopK * 3
+				if overfetch < 10 {
+					overfetch = 10
 				}
-				results, rerankedThisCall, err = sp.SearchByTextWithRerank(rerankCtx, coll, sq, req.TopK)
-				deadlineHit := cancelRerank != nil && errors.Is(rerankCtx.Err(), context.DeadlineExceeded)
-				if cancelRerank != nil {
-					cancelRerank()
+				raw, rerr := sp.SearchByText(ctx, coll, sq, overfetch)
+				if rerr != nil {
+					continue
 				}
-				noText := errors.Is(err, pipeline.ErrNoTextToRerank)
-				if noText {
-					// Pipeline already returned vector-order results; clear the
-					// sentinel so downstream `if err != nil { continue }` keeps
-					// them.
-					err = nil
-				}
-				switch {
-				case rerankedThisCall:
-					metrics.RerankInvocations.WithLabelValues("ok").Inc()
-				case deadlineHit:
-					metrics.RerankInvocations.WithLabelValues("budget").Inc()
-				case noText:
-					metrics.RerankInvocations.WithLabelValues("no_text").Inc()
-				default:
-					metrics.RerankInvocations.WithLabelValues("error").Inc()
-				}
+				filtered := filterScoredByAllowedDatasets(raw, req.AllowedDatasetIDs)
+				rerankedThisCall, results = applyRerankToScored(ctx, cfg, rerankClient, sq, filtered, req.TopK)
 			} else {
 				results, err = sp.SearchByText(ctx, coll, sq, req.TopK)
 				metrics.RerankInvocations.WithLabelValues("disabled").Inc()
@@ -619,6 +647,13 @@ func hybridSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 		}
 	}
 
+	// ACL pre-rerank: drop forbidden datasets BEFORE shipping text to the
+	// rerank sidecar. The trailing filterByAllowedDatasets call below stays
+	// for defense-in-depth, but this one is the load-bearing fix — once a
+	// forbidden chunk leaves the host it has leaked, even if the response
+	// hides it.
+	allResults = filterByAllowedDatasets(allResults, req.AllowedDatasetIDs)
+
 	// Phase 2.5: rerank the fused candidates when configured. Mirrors the
 	// chunksSearch outcome scheme (ok|budget|error|no_text|disabled) so the
 	// same dashboards/alerts work across paths.
@@ -628,7 +663,7 @@ func hybridSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 		metrics.RerankInvocations.WithLabelValues("disabled").Inc()
 	}
 
-	// RBAC post-filter
+	// RBAC defense-in-depth (already filtered above; no-op when ids unchanged)
 	allResults = filterByAllowedDatasets(allResults, req.AllowedDatasetIDs)
 
 	// Tag-based post-filter
@@ -638,6 +673,82 @@ func hybridSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 		allResults = allResults[:req.TopK]
 	}
 	return respondSearchItems(c, req, "HYBRID", allResults)
+}
+
+// applyRerankToScored reranks an already-ACL-filtered slice of
+// pipeline.ScoredResult against `query`. Returns (reranked, ordered)
+// — `reranked=true` only when the sidecar successfully scored at
+// least one row. On budget/error/no_text the input order is
+// preserved (graceful degradation) and the right outcome counter
+// is bumped, mirroring chunksSearch's previous in-pipeline path.
+func applyRerankToScored(
+	ctx context.Context,
+	cfg APIConfig,
+	rerankClient *rerank.Client,
+	query string,
+	in []pipeline.ScoredResult,
+	topK int,
+) (bool, []pipeline.ScoredResult) {
+	if len(in) == 0 {
+		return false, in
+	}
+	docs := make([]string, 0, len(in))
+	idxMap := make([]int, 0, len(in))
+	for i, r := range in {
+		if t := pipeline.ExtractText(r.Metadata); t != "" {
+			docs = append(docs, t)
+			idxMap = append(idxMap, i)
+		}
+	}
+	trim := func(s []pipeline.ScoredResult) []pipeline.ScoredResult {
+		if len(s) > topK {
+			return s[:topK]
+		}
+		return s
+	}
+	if len(docs) == 0 {
+		metrics.RerankInvocations.WithLabelValues("no_text").Inc()
+		return false, trim(in)
+	}
+
+	rerankCtx := ctx
+	var cancelRerank context.CancelFunc
+	if cfg.RerankBudgetMs > 0 {
+		rerankCtx, cancelRerank = context.WithTimeout(ctx, time.Duration(cfg.RerankBudgetMs)*time.Millisecond)
+	}
+	scored, err := rerankClient.Rerank(rerankCtx, query, docs)
+	deadlineHit := cancelRerank != nil && errors.Is(rerankCtx.Err(), context.DeadlineExceeded)
+	if cancelRerank != nil {
+		cancelRerank()
+	}
+	switch {
+	case err == nil && len(scored) > 0:
+		metrics.RerankInvocations.WithLabelValues("ok").Inc()
+		placed := make(map[int]bool, len(scored))
+		out := make([]pipeline.ScoredResult, 0, len(in))
+		for _, s := range scored {
+			if s.Index < 0 || s.Index >= len(idxMap) {
+				continue
+			}
+			orig := idxMap[s.Index]
+			if placed[orig] {
+				continue
+			}
+			placed[orig] = true
+			out = append(out, in[orig])
+		}
+		for i, r := range in {
+			if !placed[i] {
+				out = append(out, r)
+			}
+		}
+		return true, trim(out)
+	case deadlineHit:
+		metrics.RerankInvocations.WithLabelValues("budget").Inc()
+	default:
+		metrics.RerankInvocations.WithLabelValues("error").Inc()
+	}
+	return false, trim(in)
 }
 
 // hybridApplyRerank scores the fused candidates with the configured
