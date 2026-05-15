@@ -3883,8 +3883,15 @@ type SearchByTextReq struct {
 	TopK          int32                  `protobuf:"varint,3,opt,name=top_k,json=topK,proto3" json:"top_k,omitempty"`
 	EmbedEndpoint string                 `protobuf:"bytes,4,opt,name=embed_endpoint,json=embedEndpoint,proto3" json:"embed_endpoint,omitempty"` // e.g. "http://localhost:9001/v1/embeddings"
 	EmbedModel    string                 `protobuf:"bytes,5,opt,name=embed_model,json=embedModel,proto3" json:"embed_model,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// Phase 2.5 rerank wiring. Opt-in: set rerank_endpoint to enable.
+	// gRPC has no Service-level config, so the client supplies endpoint+model
+	// (unlike the HTTP path which uses server env vars).
+	RerankEndpoint  string `protobuf:"bytes,6,opt,name=rerank_endpoint,json=rerankEndpoint,proto3" json:"rerank_endpoint,omitempty"`
+	RerankModel     string `protobuf:"bytes,7,opt,name=rerank_model,json=rerankModel,proto3" json:"rerank_model,omitempty"`
+	RerankBudgetMs  int32  `protobuf:"varint,8,opt,name=rerank_budget_ms,json=rerankBudgetMs,proto3" json:"rerank_budget_ms,omitempty"`    // 0 → 1500ms default
+	RerankTimeoutMs int32  `protobuf:"varint,9,opt,name=rerank_timeout_ms,json=rerankTimeoutMs,proto3" json:"rerank_timeout_ms,omitempty"` // 0 → 5000ms default
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *SearchByTextReq) Reset() {
@@ -3950,6 +3957,34 @@ func (x *SearchByTextReq) GetEmbedModel() string {
 		return x.EmbedModel
 	}
 	return ""
+}
+
+func (x *SearchByTextReq) GetRerankEndpoint() string {
+	if x != nil {
+		return x.RerankEndpoint
+	}
+	return ""
+}
+
+func (x *SearchByTextReq) GetRerankModel() string {
+	if x != nil {
+		return x.RerankModel
+	}
+	return ""
+}
+
+func (x *SearchByTextReq) GetRerankBudgetMs() int32 {
+	if x != nil {
+		return x.RerankBudgetMs
+	}
+	return 0
+}
+
+func (x *SearchByTextReq) GetRerankTimeoutMs() int32 {
+	if x != nil {
+		return x.RerankTimeoutMs
+	}
+	return 0
 }
 
 type BatchSearchByTextReq struct {
@@ -6519,8 +6554,13 @@ type HybridSearchReq struct {
 	EmbedModel    string                 `protobuf:"bytes,5,opt,name=embed_model,json=embedModel,proto3" json:"embed_model,omitempty"`
 	VectorWeight  float32                `protobuf:"fixed32,6,opt,name=vector_weight,json=vectorWeight,proto3" json:"vector_weight,omitempty"` // RRF weight for vector (default 1.0)
 	Bm25Weight    float32                `protobuf:"fixed32,7,opt,name=bm25_weight,json=bm25Weight,proto3" json:"bm25_weight,omitempty"`       // RRF weight for BM25 (default 1.0)
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// Phase 2.5 rerank wiring. Opt-in: set rerank_endpoint to enable.
+	RerankEndpoint  string `protobuf:"bytes,8,opt,name=rerank_endpoint,json=rerankEndpoint,proto3" json:"rerank_endpoint,omitempty"`
+	RerankModel     string `protobuf:"bytes,9,opt,name=rerank_model,json=rerankModel,proto3" json:"rerank_model,omitempty"`
+	RerankBudgetMs  int32  `protobuf:"varint,10,opt,name=rerank_budget_ms,json=rerankBudgetMs,proto3" json:"rerank_budget_ms,omitempty"`    // 0 → 1500ms default
+	RerankTimeoutMs int32  `protobuf:"varint,11,opt,name=rerank_timeout_ms,json=rerankTimeoutMs,proto3" json:"rerank_timeout_ms,omitempty"` // 0 → 5000ms default
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *HybridSearchReq) Reset() {
@@ -6598,6 +6638,34 @@ func (x *HybridSearchReq) GetVectorWeight() float32 {
 func (x *HybridSearchReq) GetBm25Weight() float32 {
 	if x != nil {
 		return x.Bm25Weight
+	}
+	return 0
+}
+
+func (x *HybridSearchReq) GetRerankEndpoint() string {
+	if x != nil {
+		return x.RerankEndpoint
+	}
+	return ""
+}
+
+func (x *HybridSearchReq) GetRerankModel() string {
+	if x != nil {
+		return x.RerankModel
+	}
+	return ""
+}
+
+func (x *HybridSearchReq) GetRerankBudgetMs() int32 {
+	if x != nil {
+		return x.RerankBudgetMs
+	}
+	return 0
+}
+
+func (x *HybridSearchReq) GetRerankTimeoutMs() int32 {
+	if x != nil {
+		return x.RerankTimeoutMs
 	}
 	return 0
 }
@@ -7103,7 +7171,7 @@ const file_levara_proto_rawDesc = "" +
 	"\x0eneo4j_edges_ms\x18\v \x01(\x03R\fneo4jEdgesMs\x12$\n" +
 	"\x0eembed_index_ms\x18\f \x01(\x03R\fembedIndexMs\x12\x19\n" +
 	"\btotal_ms\x18\r \x01(\x03R\atotalMs\x12\x16\n" +
-	"\x06errors\x18\x0e \x03(\tR\x06errors\"\xad\x01\n" +
+	"\x06errors\x18\x0e \x03(\tR\x06errors\"\xcf\x02\n" +
 	"\x0fSearchByTextReq\x12\x1e\n" +
 	"\n" +
 	"collection\x18\x01 \x01(\tR\n" +
@@ -7113,7 +7181,11 @@ const file_levara_proto_rawDesc = "" +
 	"\x05top_k\x18\x03 \x01(\x05R\x04topK\x12%\n" +
 	"\x0eembed_endpoint\x18\x04 \x01(\tR\rembedEndpoint\x12\x1f\n" +
 	"\vembed_model\x18\x05 \x01(\tR\n" +
-	"embedModel\"\xad\x01\n" +
+	"embedModel\x12'\n" +
+	"\x0frerank_endpoint\x18\x06 \x01(\tR\x0ererankEndpoint\x12!\n" +
+	"\frerank_model\x18\a \x01(\tR\vrerankModel\x12(\n" +
+	"\x10rerank_budget_ms\x18\b \x01(\x05R\x0ererankBudgetMs\x12*\n" +
+	"\x11rerank_timeout_ms\x18\t \x01(\x05R\x0frerankTimeoutMs\"\xad\x01\n" +
 	"\x14BatchSearchByTextReq\x12\x1e\n" +
 	"\n" +
 	"collection\x18\x01 \x01(\tR\n" +
@@ -7366,7 +7438,7 @@ const file_levara_proto_rawDesc = "" +
 	"BM25Result\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x14\n" +
 	"\x05score\x18\x02 \x01(\x01R\x05score\x12#\n" +
-	"\rmetadata_json\x18\x03 \x01(\tR\fmetadataJson\"\xf3\x01\n" +
+	"\rmetadata_json\x18\x03 \x01(\tR\fmetadataJson\"\x95\x03\n" +
 	"\x0fHybridSearchReq\x12\x1e\n" +
 	"\n" +
 	"collection\x18\x01 \x01(\tR\n" +
@@ -7379,7 +7451,12 @@ const file_levara_proto_rawDesc = "" +
 	"embedModel\x12#\n" +
 	"\rvector_weight\x18\x06 \x01(\x02R\fvectorWeight\x12\x1f\n" +
 	"\vbm25_weight\x18\a \x01(\x02R\n" +
-	"bm25Weight\"E\n" +
+	"bm25Weight\x12'\n" +
+	"\x0frerank_endpoint\x18\b \x01(\tR\x0ererankEndpoint\x12!\n" +
+	"\frerank_model\x18\t \x01(\tR\vrerankModel\x12(\n" +
+	"\x10rerank_budget_ms\x18\n" +
+	" \x01(\x05R\x0ererankBudgetMs\x12*\n" +
+	"\x11rerank_timeout_ms\x18\v \x01(\x05R\x0frerankTimeoutMs\"E\n" +
 	"\x10HybridSearchResp\x121\n" +
 	"\aresults\x18\x01 \x03(\v2\x17.levara.v1.HybridResultR\aresults\"\xe4\x01\n" +
 	"\fHybridResult\x12\x0e\n" +

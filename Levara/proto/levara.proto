@@ -509,6 +509,13 @@ message SearchByTextReq {
   int32 top_k = 3;
   string embed_endpoint = 4;  // e.g. "http://localhost:9001/v1/embeddings"
   string embed_model = 5;
+  // Phase 2.5 rerank wiring. Opt-in: set rerank_endpoint to enable.
+  // gRPC has no Service-level config, so the client supplies endpoint+model
+  // (unlike the HTTP path which uses server env vars).
+  string rerank_endpoint = 6;
+  string rerank_model = 7;
+  int32 rerank_budget_ms = 8;   // 0 → 1500ms default
+  int32 rerank_timeout_ms = 9;  // 0 → 5000ms default
 }
 
 message BatchSearchByTextReq {
@@ -819,6 +826,11 @@ message HybridSearchReq {
   string embed_model = 5;
   float vector_weight = 6;       // RRF weight for vector (default 1.0)
   float bm25_weight = 7;         // RRF weight for BM25 (default 1.0)
+  // Phase 2.5 rerank wiring. Opt-in: set rerank_endpoint to enable.
+  string rerank_endpoint = 8;
+  string rerank_model = 9;
+  int32 rerank_budget_ms = 10;   // 0 → 1500ms default
+  int32 rerank_timeout_ms = 11;  // 0 → 5000ms default
 }
 
 message HybridSearchResp {
