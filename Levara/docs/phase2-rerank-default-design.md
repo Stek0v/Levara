@@ -141,24 +141,29 @@ the `ok` counter increments, and every returned row carries
 `reranked: true`. A refactor that regresses HYBRID back to skip-rerank
 fails loudly and must explicitly update this section.
 
-## gRPC scope (Phase 2, 2026-05-15)
+## gRPC rerank (Phase 2.5, 2026-05-15)
 
-Phase 2 rerank is HTTP-only. Neither `proto/levara.proto` (v1) nor
-`proto/levara_v2.proto` (v2) carries a `rerank` field on any `Search*`
-request, and `internal/grpc/` contains no rerank references. gRPC
-clients fundamentally cannot opt into rerank in this phase — they
-always get the pre-rerank vector order. Adding rerank to gRPC is a
-Phase 2.5+ task and requires:
+gRPC v1 carries opt-in rerank fields on `SearchByTextReq` and
+`HybridSearchReq` (`rerank_endpoint`, `rerank_model`, `rerank_budget_ms`,
+`rerank_timeout_ms`). When `rerank_endpoint` is set, the handler:
 
-1. A `rerank` field on the request messages that need it (Search,
-   SearchByText, HybridSearch, ...).
-2. The same tri-state semantics as the HTTP `*bool` flag.
-3. Mirrored budget/outcome counter handling in the gRPC service
-   methods.
+1. Calls `pipeline.SearchByTextWithRerank` (for SearchByText) or runs
+   the same fused → extract-text → sidecar → reorder pass as
+   `hybridApplyRerank` (for HybridSearch).
+2. Wraps the rerank call in `context.WithTimeout(budget)`.
+3. Increments `levara_rerank_invocations_total{outcome=...}` with the
+   same scheme as HTTP (`ok|budget|error|no_text|disabled`).
 
-The proto file is the contract — `grep -rn rerank proto/` returning
-zero lines is the assertion. If you add the field, update this
-section.
+**Deviation from HTTP tri-state:** the gRPC `Service` holds no config
+object, so there is no server-side default rerank endpoint to fall back
+to. Rerank is therefore strict opt-in via the request — empty endpoint
+= no rerank, no tri-state nil/true/false distinction needed.
+
+`proto/levara_v2.proto` only exposes raw-vector `Search` (no SearchByText
+or HybridSearch), so v2 has nothing to wire in this phase.
+
+**Tests that pin this contract:** `TestGRPC_SearchByText_Rerank` and
+`TestGRPC_HybridSearch_Rerank` in `internal/grpc/rerank_test.go`.
 
 ## ACL (known limitation, 2026-05-15)
 

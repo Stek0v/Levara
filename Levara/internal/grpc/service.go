@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -25,6 +26,8 @@ import (
 	"github.com/stek0v/levara/pkg/graphdb"
 	"github.com/stek0v/levara/pkg/llmcache"
 	"github.com/stek0v/levara/pkg/orchestrator"
+	"github.com/stek0v/levara/pkg/rerank"
+	"github.com/stek0v/levara/internal/metrics"
 	"github.com/stek0v/levara/pipeline"
 	pb "github.com/stek0v/levara/proto/pb"
 	"google.golang.org/grpc/codes"
@@ -882,9 +885,47 @@ func (s *Service) SearchByText(ctx context.Context, req *pb.SearchByTextReq) (*p
 	}
 
 	embedClient := embed.NewClient(req.EmbedEndpoint, model, 16, 1)
-	sp := pipeline.NewSearchPipeline(embedClient, s.collections, nil)
 
-	results, err := sp.SearchByText(ctx, req.Collection, req.QueryText, topK)
+	var rerankClient *rerank.Client
+	if req.RerankEndpoint != "" {
+		timeoutMs := int(req.RerankTimeoutMs)
+		if timeoutMs <= 0 {
+			timeoutMs = 5000
+		}
+		rerankClient = rerank.NewClient(req.RerankEndpoint, req.RerankModel, 0, timeoutMs)
+	}
+	sp := pipeline.NewSearchPipeline(embedClient, s.collections, rerankClient)
+
+	var results []pipeline.ScoredResult
+	var err error
+	if rerankClient != nil && rerankClient.Enabled() {
+		budgetMs := int(req.RerankBudgetMs)
+		if budgetMs <= 0 {
+			budgetMs = 1500
+		}
+		rctx, cancel := context.WithTimeout(ctx, time.Duration(budgetMs)*time.Millisecond)
+		defer cancel()
+		var reranked bool
+		results, reranked, err = sp.SearchByTextWithRerank(rctx, req.Collection, req.QueryText, topK)
+		switch {
+		case err == nil && reranked:
+			metrics.RerankInvocations.WithLabelValues("ok").Inc()
+		case errors.Is(err, pipeline.ErrNoTextToRerank):
+			metrics.RerankInvocations.WithLabelValues("no_text").Inc()
+			err = nil
+		case err != nil && errors.Is(rctx.Err(), context.DeadlineExceeded):
+			metrics.RerankInvocations.WithLabelValues("budget").Inc()
+			results, err = sp.SearchByText(ctx, req.Collection, req.QueryText, topK)
+		case err == nil && !reranked:
+			// Pipeline already swallowed the rerank error and returned vector order.
+			metrics.RerankInvocations.WithLabelValues("error").Inc()
+		}
+	} else {
+		results, err = sp.SearchByText(ctx, req.Collection, req.QueryText, topK)
+		if req.RerankEndpoint == "" {
+			metrics.RerankInvocations.WithLabelValues("disabled").Inc()
+		}
+	}
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "search: %v", err)
 	}
@@ -1405,7 +1446,72 @@ func (s *Service) HybridSearch(ctx context.Context, req *pb.HybridSearchReq) (*p
 	vw := float64(req.VectorWeight)
 	bw := float64(req.Bm25Weight)
 
-	hybridResults := bm25.HybridSearch(vsResult.results, bmResult.results, topK, vw, bw)
+	fuseTop := topK
+	if req.RerankEndpoint != "" {
+		fuseTop = topK * 2
+	}
+	hybridResults := bm25.HybridSearch(vsResult.results, bmResult.results, fuseTop, vw, bw)
+
+	// Phase 2.5: optional rerank pass over fused candidates. Mirrors
+	// hybridApplyRerank in internal/http/api_search.go.
+	if req.RerankEndpoint != "" && len(hybridResults) > 0 {
+		timeoutMs := int(req.RerankTimeoutMs)
+		if timeoutMs <= 0 {
+			timeoutMs = 5000
+		}
+		budgetMs := int(req.RerankBudgetMs)
+		if budgetMs <= 0 {
+			budgetMs = 1500
+		}
+		rc := rerank.NewClient(req.RerankEndpoint, req.RerankModel, 0, timeoutMs)
+		docs := make([]string, 0, len(hybridResults))
+		idxMap := make([]int, 0, len(hybridResults))
+		for i, r := range hybridResults {
+			if t := pipeline.ExtractText(json.RawMessage(r.Metadata)); t != "" {
+				docs = append(docs, t)
+				idxMap = append(idxMap, i)
+			}
+		}
+		if len(docs) == 0 {
+			metrics.RerankInvocations.WithLabelValues("no_text").Inc()
+		} else {
+			rctx, cancel := context.WithTimeout(ctx, time.Duration(budgetMs)*time.Millisecond)
+			ranked, rerr := rc.Rerank(rctx, req.QueryText, docs)
+			cancel()
+			switch {
+			case rerr == nil:
+				metrics.RerankInvocations.WithLabelValues("ok").Inc()
+				newOrder := make([]bm25.HybridResult, 0, len(hybridResults))
+				placed := make(map[int]bool, len(hybridResults))
+				for _, r := range ranked {
+					if r.Index < 0 || r.Index >= len(idxMap) {
+						continue
+					}
+					orig := idxMap[r.Index]
+					if placed[orig] {
+						continue
+					}
+					placed[orig] = true
+					newOrder = append(newOrder, hybridResults[orig])
+				}
+				for i, h := range hybridResults {
+					if !placed[i] {
+						newOrder = append(newOrder, h)
+					}
+				}
+				hybridResults = newOrder
+			case errors.Is(rctx.Err(), context.DeadlineExceeded):
+				metrics.RerankInvocations.WithLabelValues("budget").Inc()
+			default:
+				metrics.RerankInvocations.WithLabelValues("error").Inc()
+			}
+		}
+		if len(hybridResults) > topK {
+			hybridResults = hybridResults[:topK]
+		}
+	} else if req.RerankEndpoint == "" {
+		metrics.RerankInvocations.WithLabelValues("disabled").Inc()
+	}
 
 	pbResults := make([]*pb.HybridResult, len(hybridResults))
 	for i, r := range hybridResults {
