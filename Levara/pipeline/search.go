@@ -146,6 +146,13 @@ func (p *SearchPipeline) SearchByTextWithRerank(ctx context.Context, collection,
 }
 
 // extractText pulls the "text" field from metadata JSON.
+// ExtractText pulls a usable text payload out of a result's metadata
+// (looks for "text" first, then "name"). Returns "" when neither field
+// is present or the JSON fails to parse. Exported so other search paths
+// (e.g. hybridSearch) can mirror chunksSearch's rerank input shape
+// without duplicating the parsing rules.
+func ExtractText(metadata json.RawMessage) string { return extractText(metadata) }
+
 func extractText(metadata json.RawMessage) string {
 	if len(metadata) == 0 {
 		return ""

@@ -116,22 +116,30 @@ Lives at `deploy/rerank/` (Dockerfile + app.py + model files mounted from a volu
 - Should rerank apply to `dualsearch.go` and graph search too, or stay chunks-only for Phase 2? Recommend: chunks-only, expand in Phase 2.5.
 - ~~Should we expose the model behind a `/models/rerank` endpoint so clients can verify which variant is serving?~~ **Resolved (2026-05-15):** `GET /api/v1/models/rerank` returns `{enabled, endpoint, model, budget_ms}` — pure config echo, no sidecar round-trip. See `internal/http/rerank_info.go`.
 
-## HYBRID rerank scope (known limitation, 2026-05-15)
+## HYBRID rerank scope (Phase 2.5, 2026-05-15)
 
-`hybridSearch` in `internal/http/api_search.go` constructs a
-`rerank.Client` when `rerankWanted` returns true, but then calls
-`sp.SearchByText` instead of `sp.SearchByTextWithRerank`. The client
-is dead allocation; the sidecar is never hit.
+`hybridSearch` in `internal/http/api_search.go` overfetches `TopK*2`
+fused candidates from the RRF pass, then calls `hybridApplyRerank`
+which:
 
-This matches the Phase 2 scope decision (rerank = chunks-only) but
-is a foot-gun: a future contributor reading `hybridSearch` will see
-the client creation and assume rerank is wired. Phase 2.5 work should
-either remove the construction or call the rerank-aware path.
+1. Extracts text from each row's metadata using `pipeline.ExtractText`
+   (the same `text → name` rule as chunksSearch).
+2. Calls the rerank sidecar under a `RerankBudgetMs` context.
+3. Reorders `allResults` by sidecar score and stamps
+   `reranked: true` + `rerank_score` on placed rows.
+4. Increments `levara_rerank_invocations_total{outcome=...}` with the
+   same scheme as chunksSearch (`ok|budget|error|no_text|disabled`).
+
+Rows that lack a `text`/`name` payload are skipped from the rerank
+input; if every row is skipped, outcome=`no_text` and the fused order
+is preserved.
 
 **Test that pins this contract:**
-`TestHybridSearch_RerankIsIgnored_Phase2Limitation` in
-`internal/http/rerank_budget_test.go`. Fails loudly if a refactor
-wires rerank through HYBRID without updating this section.
+`TestHybridSearch_RerankApplied_Phase25` in
+`internal/http/rerank_budget_test.go`. Asserts the sidecar IS hit,
+the `ok` counter increments, and every returned row carries
+`reranked: true`. A refactor that regresses HYBRID back to skip-rerank
+fails loudly and must explicitly update this section.
 
 ## gRPC scope (Phase 2, 2026-05-15)
 

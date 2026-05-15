@@ -599,8 +599,13 @@ func hybridSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 			}
 		}
 
-		// Fuse with RRF
-		hybrid := bm25.HybridSearch(vr, br, req.TopK, 1.0, 1.0)
+		// Fuse with RRF — overfetch (TopK*2) to give the rerank pass headroom
+		// when one is configured.
+		fuseTop := req.TopK
+		if rerankClient != nil && rerankClient.Enabled() {
+			fuseTop = req.TopK * 2
+		}
+		hybrid := bm25.HybridSearch(vr, br, fuseTop, 1.0, 1.0)
 		for _, h := range hybrid {
 			allResults = append(allResults, fiber.Map{
 				"id":           h.ID,
@@ -609,8 +614,18 @@ func hybridSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 				"bm25_score":   h.BM25Score,
 				"collection":   coll,
 				"metadata":     json.RawMessage(h.Metadata),
+				"reranked":     false,
 			})
 		}
+	}
+
+	// Phase 2.5: rerank the fused candidates when configured. Mirrors the
+	// chunksSearch outcome scheme (ok|budget|error|no_text|disabled) so the
+	// same dashboards/alerts work across paths.
+	if rerankClient != nil && rerankClient.Enabled() && len(allResults) > 0 {
+		hybridApplyRerank(ctx, cfg, rerankClient, req.QueryText, &allResults)
+	} else if rerankWanted(req.Rerank, cfg.RerankEndpoint) {
+		metrics.RerankInvocations.WithLabelValues("disabled").Inc()
 	}
 
 	// RBAC post-filter
@@ -623,6 +638,78 @@ func hybridSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 		allResults = allResults[:req.TopK]
 	}
 	return respondSearchItems(c, req, "HYBRID", allResults)
+}
+
+// hybridApplyRerank scores the fused candidates with the configured
+// cross-encoder, reorders allResults in-place, and tags each row with
+// `reranked: true|false`. On any failure (no text, budget exceeded,
+// transport error) the original RRF order survives — graceful degradation
+// matches chunksSearch.
+func hybridApplyRerank(
+	ctx context.Context,
+	cfg APIConfig,
+	rerankClient *rerank.Client,
+	queryText string,
+	allResults *[]fiber.Map,
+) {
+	rows := *allResults
+	docs := make([]string, 0, len(rows))
+	mapping := make([]int, 0, len(rows))
+	for i, r := range rows {
+		meta, _ := r["metadata"].(json.RawMessage)
+		txt := pipeline.ExtractText(meta)
+		if txt == "" {
+			continue
+		}
+		docs = append(docs, txt)
+		mapping = append(mapping, i)
+	}
+	if len(docs) == 0 {
+		metrics.RerankInvocations.WithLabelValues("no_text").Inc()
+		return
+	}
+
+	rerankCtx := ctx
+	var cancelRerank context.CancelFunc
+	if cfg.RerankBudgetMs > 0 {
+		rerankCtx, cancelRerank = context.WithTimeout(ctx, time.Duration(cfg.RerankBudgetMs)*time.Millisecond)
+	}
+	scored, err := rerankClient.Rerank(rerankCtx, queryText, docs)
+	deadlineHit := cancelRerank != nil && errors.Is(rerankCtx.Err(), context.DeadlineExceeded)
+	if cancelRerank != nil {
+		cancelRerank()
+	}
+
+	switch {
+	case err == nil && len(scored) > 0:
+		// scored is sorted by relevance desc — rebuild allResults in that
+		// order, then append the rows we couldn't rerank (no text) to the
+		// tail with reranked:false.
+		placed := make(map[int]bool, len(scored))
+		out := make([]fiber.Map, 0, len(rows))
+		for _, s := range scored {
+			if s.Index < 0 || s.Index >= len(mapping) {
+				continue
+			}
+			origIdx := mapping[s.Index]
+			row := rows[origIdx]
+			row["rerank_score"] = s.Score
+			row["reranked"] = true
+			out = append(out, row)
+			placed[origIdx] = true
+		}
+		for i, r := range rows {
+			if !placed[i] {
+				out = append(out, r)
+			}
+		}
+		*allResults = out
+		metrics.RerankInvocations.WithLabelValues("ok").Inc()
+	case deadlineHit:
+		metrics.RerankInvocations.WithLabelValues("budget").Inc()
+	default:
+		metrics.RerankInvocations.WithLabelValues("error").Inc()
+	}
 }
 
 func temporalSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
