@@ -491,20 +491,20 @@ func TestChunksSearch_RerankBudget_ConcurrentDegradesCleanly(t *testing.T) {
 	}
 }
 
-// SECURITY contract (current behavior, documents a known limitation):
-// filterByAllowedDatasets runs AFTER the rerank pass, which means the
-// rerank sidecar receives document text from datasets the requester is
-// NOT authorized to see. This test pins that behavior so a future
-// refactor that moves the ACL filter pre-rerank fails loudly here and
-// the doc/release notes get updated explicitly.
+// SECURITY contract (Phase 2.5 fix, 2026-05-15):
+// filterByAllowedDatasets now runs BEFORE the rerank pass. The rerank
+// sidecar must NEVER receive document text from datasets the requester
+// is not authorized to read — critical when RERANK_ENDPOINT points to a
+// third-party service (Cohere/Voyage/etc.), where a leaked chunk has
+// effectively left the trust boundary regardless of what the response
+// hides.
 //
-// Mitigation today: deploy the reranker on the same host as Levara
-// (Pi 5 default) and never point RERANK_ENDPOINT at a third-party
-// service. Tracked in docs/phase2-rerank-default-design.md §ACL.
-func TestChunksSearch_RerankSeesForbiddenDocs_KnownLimitation(t *testing.T) {
+// This test inverts the old TestChunksSearch_RerankSeesForbiddenDocs_KnownLimitation
+// assertion: it fails loudly if a forbidden doc ever reaches the
+// sidecar.
+func TestChunksSearch_RerankPreFiltersForbiddenDocs(t *testing.T) {
 	env := newSearchTestEnv(t)
 
-	// Capture every document the sidecar receives.
 	var (
 		mu       sync.Mutex
 		seenDocs []string
@@ -530,10 +530,17 @@ func TestChunksSearch_RerankSeesForbiddenDocs_KnownLimitation(t *testing.T) {
 	env.cfg.RerankModel = "test-rerank"
 	env.cfg.RerankTimeoutMs = 5000
 	env.cfg.RerankBudgetMs = 5000
-	env.start()
+
+	// Seed RBAC tables: user-a owns "allowed", "secret" is owned by
+	// someone else and not shared. GetAllowedDatasetIDs(user-a) → ["allowed"].
+	env.insertUser("user-a", "user-a@test", false)
+	env.insertUser("user-b", "user-b@test", false)
+	env.insertDataset("allowed", "user-a")
+	env.insertDataset("secret", "user-b")
+
+	env.startWithUser("user-a")
 
 	vec := []float32{1, 0, 0, 0}
-	// e1 belongs to dataset "allowed", e2 to "secret". Same collection.
 	env.insertVector("entities", "e1", vec, map[string]any{
 		"text": "allowed-doc-content", "dataset_id": "allowed",
 	})
@@ -541,17 +548,6 @@ func TestChunksSearch_RerankSeesForbiddenDocs_KnownLimitation(t *testing.T) {
 		"text": "SECRET-doc-content", "dataset_id": "secret",
 	})
 
-	// Caller is restricted to "allowed" only — "secret" must not appear
-	// in the response, but with today's post-rerank filter the sidecar
-	// still receives it. The handler reads AllowedDatasetIDs from the
-	// JWT in production; in the test fixture we wire it directly via a
-	// per-request field by sending it through a query param hook —
-	// since UnifiedSearchRequest.AllowedDatasetIDs is json:"-", we can't
-	// set it through the JSON body, so we simulate the path by sending
-	// a search and then asserting the leak surface independently.
-	//
-	// Instead of pinning that the handler enforces ACL (it does, post-
-	// rerank), we pin the surface: the sidecar saw the SECRET text.
 	status, _ := postSearchAny(t, env, map[string]any{
 		"query_text": "doc",
 		"query_type": "CHUNKS",
@@ -563,15 +559,10 @@ func TestChunksSearch_RerankSeesForbiddenDocs_KnownLimitation(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	var sawSecret bool
 	for _, d := range seenDocs {
 		if contains(d, "SECRET") {
-			sawSecret = true
-			break
+			t.Fatalf("rerank sidecar received forbidden doc %q — ACL pre-filter regressed; seenDocs=%v", d, seenDocs)
 		}
-	}
-	if !sawSecret {
-		t.Fatalf("expected sidecar to receive SECRET doc (current behavior leaks across ACL); seenDocs=%v", seenDocs)
 	}
 }
 
