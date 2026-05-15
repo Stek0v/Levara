@@ -1,6 +1,6 @@
 # Post-Phase 2.5 Roadmap
 
-Создан: 2026-05-15. Последний апдейт: 2026-05-15.
+Создан: 2026-05-15. Последний апдейт: 2026-05-16.
 
 План работ после закрытия Phase 2.5 (миграция HTTP/gRPC/MCP на общий
 `pipeline.ApplyRerankToScored`, удаление `SearchByTextWithRerank`).
@@ -140,6 +140,51 @@ Pi отстаёт от `main` — там нет общего helper + новых
 
 - ⚪ `mfs` → `memoryfs` Phase 1 ship (закрыть in-memory only)
 - ⚪ Подключить `Levara` MCP как кросс-проектный backend вместо `mem0`
+- 🟢 mem0 Variant B health check (2026-05-16): `MemoryFSVectorStore.__init__`
+  делает `GET /health` на :7777 и fail-fast с понятной ошибкой, runbook
+  в `docs/mem0-variant-b-runbook.md`. `levara.py` default dim 1024→768
+  (выравнивание с реальным Pi state — все 19 prod collections 768-dim).
+
+### P3.3 — MCP audit log (новый)
+
+Сейчас `mcp_observability.go` показывает runtime state агенту, но
+**история вызовов MCP tools нигде не пишется**: нет request_id, нет
+per-agent counter'а, нет latency histogram, нет audit trail. Слепая
+зона для дебага «почему память не нашлась», биллинга, безопасности
+и регрессий.
+
+- ⚪ Hook в `internal/http/mcp.go:594` (`handleToolCall`): wrap
+  `time.Now() + defer recordAudit(...)`.
+- ⚪ Schema (JSON line): `{ts, request_id, session_id, agent_id, tool,
+  args (sanitized, ≤256ch per field), latency_ms, outcome, result_size,
+  error_code, error_message}`. Outcome enum: `ok | client_error |
+  server_error | timeout | unauthorized | rate_limited`.
+- ⚪ Sanitization: truncate >256ch, drop `vector`/`embedding`/`*_token`/
+  `password`/`secret`/`api_key`, vectors → `"<vector len=N norm=X>"`.
+- ⚪ Prometheus: `levara_mcp_tool_calls_total{tool,agent_bucket,outcome}` +
+  `levara_mcp_tool_latency_ms{tool,outcome}` (buckets
+  `[5,10,25,50,100,250,500,1000,2500,5000]`) + `levara_mcp_tool_result_bytes`.
+  Agent label через existing `user_bucket.go` (top-N + `_other`).
+- ⚪ Retention: `audit/mcp-YYYY-MM-DD.log` daily roll, gzip, keep 30d.
+- ⚪ Server flag `-mcp-audit-log <path>` (`""` = stderr).
+
+Estimate: ~250 строк Go + тесты sanitization. Не блокер, но критично
+перед расширением MCP surface на внешних агентов.
+
+---
+
+## Operational backlog
+
+### Embedding dim canonical = 768 (2026-05-16)
+
+- 🟢 Решено: keep 768 (`nomic-embed-text-v2-moe`). Все 19 production
+  коллекций на Pi 10.23.0.53:8090 уже 768. Переэмбеддинг на 1024 не
+  даёт quality win и стоит overhead на 315 записей.
+- 🟢 `mem0/vector_stores/levara.py` default dim 1024→768.
+- ⚪ Поднять Mac-сервер с `EMBEDDING_MODEL=nomic-embed-text-v2-moe`
+  при следующем старте.
+- ⚪ Prune 51 эфемерной `_memories_test_*` коллекции на Pi (97 записей
+  leftover). Требует explicit go — destructive на shared.
 
 ---
 
