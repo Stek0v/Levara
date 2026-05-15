@@ -1367,6 +1367,188 @@ func TestWorkspaceIndexWorkerBackoffAndDeadLetter(t *testing.T) {
 	}
 }
 
+func TestWorkspaceIndexWorkerRestartRecoversOrphanedRunningJob(t *testing.T) {
+	cfg, closeFn := newWorkspaceTestConfig(t)
+	defer closeFn()
+
+	filePath, _, err := workspaceFilePath(cfg, "payments", "main", "docs/recover.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filePath, []byte("# Recover\n\nRecovered after restart."), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	stale := time.Now().UTC().Add(-time.Minute).Format(time.RFC3339Nano)
+	job := workspaceIndexJob{
+		ID:             "job_running_recover",
+		IdempotencyKey: "recover-key",
+		Status:         workspaceIndexJobRunning,
+		Attempts:       1,
+		CreatedAt:      stale,
+		UpdatedAt:      stale,
+		StartedAt:      stale,
+		Request: workspaceIndexJobPayload{
+			Operation:          "reconcile",
+			ProjectID:          "payments",
+			Branch:             "main",
+			Generation:         "recover-gen-1",
+			ChunkStrategy:      "paragraph",
+			MinChunkChars:      1,
+			ActivateGeneration: true,
+		},
+	}
+	if err := saveWorkspaceIndexJobPath(workspaceIndexJobPath(cfg, "payments", "main", job.ID), job); err != nil {
+		t.Fatal(err)
+	}
+
+	opts := normalizeWorkspaceIndexWorkerOptions(WorkspaceIndexWorkerOptions{
+		Backoff:      time.Millisecond,
+		RunningLease: 10 * time.Millisecond,
+		MaxAttempts:  3,
+		Logf:         t.Logf,
+	})
+	workspaceIndexWorkerTick(context.Background(), cfg, opts)
+
+	recovered, err := loadWorkspaceIndexJobPath(workspaceIndexJobPath(cfg, "payments", "main", job.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered.Status != workspaceIndexJobCompleted || recovered.Attempts != 2 || recovered.LastError != "" {
+		t.Fatalf("recovered job=%+v, want completed attempts=2", recovered)
+	}
+	manifest, _, err := loadWorkspaceManifest(cfg, "payments", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.ActiveGeneration != "recover-gen-1" {
+		t.Fatalf("active generation=%q, want recover-gen-1", manifest.ActiveGeneration)
+	}
+}
+
+func TestWorkspaceFailedReconcileDoesNotReplaceActiveGeneration(t *testing.T) {
+	cfg, closeFn := newWorkspaceTestConfig(t)
+	defer closeFn()
+	app := fiber.New()
+	RegisterWorkspaceAPI(app, cfg)
+
+	body, status := workspaceTestPost(t, app, "/workspace/write", map[string]any{
+		"project_id":          "payments",
+		"branch":              "main",
+		"generation":          "stable-gen-1",
+		"path":                "docs/stable.md",
+		"text":                "# Stable\n\nStable active generation.",
+		"chunk_strategy":      "paragraph",
+		"min_chunk_chars":     1,
+		"activate_generation": true,
+	})
+	if status != http.StatusOK {
+		t.Fatalf("baseline write status=%d body=%s", status, body)
+	}
+
+	job, err := enqueueWorkspaceIndexJobFromPayload(cfg, workspaceIndexJobPayload{
+		Operation:          "reindex",
+		ProjectID:          "payments",
+		Branch:             "main",
+		Generation:         "broken-gen-2",
+		Paths:              []string{"docs/missing.md"},
+		ChunkStrategy:      "paragraph",
+		MinChunkChars:      1,
+		ActivateGeneration: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspaceIndexWorkerTick(context.Background(), cfg, normalizeWorkspaceIndexWorkerOptions(WorkspaceIndexWorkerOptions{
+		Backoff:     time.Millisecond,
+		MaxAttempts: 2,
+		Logf:        t.Logf,
+	}))
+
+	failed, err := loadWorkspaceIndexJobPath(workspaceIndexJobPath(cfg, "payments", "main", job.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if failed.Status != workspaceIndexJobFailed && failed.Status != workspaceIndexJobDeadLetter {
+		t.Fatalf("failed job=%+v, want failed/dead_letter", failed)
+	}
+	manifest, _, err := loadWorkspaceManifest(cfg, "payments", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.ActiveGeneration != "stable-gen-1" {
+		t.Fatalf("active generation drifted to %q after failed reindex", manifest.ActiveGeneration)
+	}
+}
+
+func TestWorkspaceRetryDeadLetterJobAfterFixSucceeds(t *testing.T) {
+	cfg, closeFn := newWorkspaceTestConfig(t)
+	defer closeFn()
+
+	job, err := enqueueWorkspaceIndexJobFromPayload(cfg, workspaceIndexJobPayload{
+		Operation:          "reindex",
+		ProjectID:          "payments",
+		Branch:             "main",
+		Generation:         "dead-retry-gen",
+		Paths:              []string{"docs/retry-missing.md"},
+		ChunkStrategy:      "paragraph",
+		MinChunkChars:      1,
+		ActivateGeneration: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts := normalizeWorkspaceIndexWorkerOptions(WorkspaceIndexWorkerOptions{
+		Backoff:     time.Millisecond,
+		MaxAttempts: 2,
+		Logf:        t.Logf,
+	})
+	workspaceIndexWorkerTick(context.Background(), cfg, opts)
+	time.Sleep(2 * time.Millisecond)
+	workspaceIndexWorkerTick(context.Background(), cfg, opts)
+
+	dead, err := loadWorkspaceIndexJobPath(workspaceIndexJobPath(cfg, "payments", "main", job.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dead.Status != workspaceIndexJobDeadLetter {
+		t.Fatalf("dead job=%+v, want dead_letter", dead)
+	}
+
+	filePath, _, err := workspaceFilePath(cfg, "payments", "main", "docs/retry-missing.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filePath, []byte("# Retry Missing\n\nRecovered dead-letter job."), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := retryWorkspaceIndexJob(context.Background(), cfg, workspaceRetryIndexJobRequest{
+		ProjectID: "payments",
+		Branch:    "main",
+		JobID:     job.ID,
+	})
+	if err != nil {
+		t.Fatalf("retry dead-letter job err=%v result=%+v", err, resp)
+	}
+	if resp.Job.Status != workspaceIndexJobCompleted || resp.Job.Attempts != 3 || resp.Job.LastError != "" {
+		t.Fatalf("retried dead-letter job=%+v, want completed attempts=3", resp.Job)
+	}
+	manifest, _, err := loadWorkspaceManifest(cfg, "payments", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.ActiveGeneration != "dead-retry-gen" {
+		t.Fatalf("active generation=%q, want dead-retry-gen", manifest.ActiveGeneration)
+	}
+}
+
 func TestWorkspaceOpsStatusReportsJobsWatcherAuditAndMetrics(t *testing.T) {
 	cfg, closeFn := newWorkspaceTestConfig(t)
 	defer closeFn()

@@ -76,10 +76,11 @@ type workspaceRetryIndexJobResponse struct {
 }
 
 type WorkspaceIndexWorkerOptions struct {
-	Interval    time.Duration
-	Backoff     time.Duration
-	MaxAttempts int
-	Logf        func(format string, args ...any)
+	Interval     time.Duration
+	Backoff      time.Duration
+	RunningLease time.Duration
+	MaxAttempts  int
+	Logf         func(format string, args ...any)
 }
 
 func beginWorkspaceIndexJob(cfg APIConfig, payload workspaceIndexJobPayload) (workspaceIndexJob, error) {
@@ -386,6 +387,9 @@ func normalizeWorkspaceIndexWorkerOptions(opts WorkspaceIndexWorkerOptions) Work
 	if opts.Backoff <= 0 {
 		opts.Backoff = 5 * time.Second
 	}
+	if opts.RunningLease <= 0 {
+		opts.RunningLease = 30 * time.Second
+	}
 	if opts.MaxAttempts <= 0 {
 		opts.MaxAttempts = 3
 	}
@@ -411,12 +415,24 @@ func workspaceIndexWorkerLoop(ctx context.Context, cfg APIConfig, opts Workspace
 }
 
 func workspaceIndexWorkerTick(ctx context.Context, cfg APIConfig, opts WorkspaceIndexWorkerOptions) {
+	opts = normalizeWorkspaceIndexWorkerOptions(opts)
 	jobs, err := listAllWorkspaceIndexJobs(cfg)
 	if err != nil {
 		opts.Logf("[workspace-index-worker] list jobs failed: %v", err)
 		return
 	}
 	now := time.Now().UTC()
+	for i := range jobs {
+		recovered, changed, err := recoverWorkspaceRunningJob(cfg, jobs[i], now, opts)
+		if err != nil {
+			opts.Logf("[workspace-index-worker] recover running job %s failed: %v", jobs[i].ID, err)
+			continue
+		}
+		if changed {
+			opts.Logf("[workspace-index-worker] recovered orphaned running job %s", recovered.ID)
+			jobs[i] = recovered
+		}
+	}
 	for _, job := range jobs {
 		if !workspaceIndexJobDue(job, now) {
 			continue
@@ -428,6 +444,40 @@ func workspaceIndexWorkerTick(ctx context.Context, cfg APIConfig, opts Workspace
 		}
 		opts.Logf("[workspace-index-worker] job %s completed", done.ID)
 	}
+}
+
+func recoverWorkspaceRunningJob(cfg APIConfig, job workspaceIndexJob, now time.Time, opts WorkspaceIndexWorkerOptions) (workspaceIndexJob, bool, error) {
+	if job.Status != workspaceIndexJobRunning {
+		return job, false, nil
+	}
+	staleAt := job.UpdatedAt
+	if staleAt == "" {
+		staleAt = job.StartedAt
+	}
+	if staleAt == "" {
+		staleAt = job.CreatedAt
+	}
+	lastSeen, err := parseWorkspaceIndexJobTime(staleAt)
+	if err != nil {
+		lastSeen = time.Time{}
+	}
+	if !lastSeen.IsZero() && lastSeen.Add(opts.RunningLease).After(now) {
+		return job, false, nil
+	}
+	recovered := job
+	recovered.Status = workspaceIndexJobFailed
+	recovered.FinishedAt = now.Format(time.RFC3339Nano)
+	recovered.UpdatedAt = recovered.FinishedAt
+	recovered.NextRunAt = recovered.FinishedAt
+	recovered.DeadLetterAt = ""
+	if recovered.LastError == "" {
+		recovered.LastError = "worker restart recovery: job was left running without completion"
+	}
+	if err := saveWorkspaceIndexJobPath(workspaceIndexJobPath(cfg, recovered.Request.ProjectID, recovered.Request.Branch, recovered.ID), recovered); err != nil {
+		return job, false, err
+	}
+	refreshWorkspaceOperationalMetrics(cfg)
+	return recovered, true, nil
 }
 
 func listAllWorkspaceIndexJobs(cfg APIConfig) ([]workspaceIndexJob, error) {
@@ -488,6 +538,21 @@ func workspaceIndexJobDue(job workspaceIndexJob, now time.Time) bool {
 	default:
 		return false
 	}
+}
+
+func parseWorkspaceIndexJobTime(value string) (time.Time, error) {
+	if value == "" {
+		return time.Time{}, errors.New("empty time")
+	}
+	t, err := time.Parse(time.RFC3339Nano, value)
+	if err == nil {
+		return t.UTC(), nil
+	}
+	t, err = time.Parse(time.RFC3339, value)
+	if err == nil {
+		return t.UTC(), nil
+	}
+	return time.Time{}, err
 }
 
 func workspaceIndexJobBackoff(base time.Duration, attempts int) time.Duration {
