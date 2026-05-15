@@ -108,11 +108,26 @@ Pi отстаёт от `main` — там нет общего helper + новых
 
 ## P4 — gRPC v1 deprecation
 
-3-месячное окно `cognevra.v1` → `cognevra.v2` истекает летом 2026.
+3-месячное окно `levara.v1` → `levara.v2` истекает летом 2026.
 
-- ⚪ Аудит v1-клиентов (WebUI, mem0, `sync_levara` CLI)
-- ⚪ Миграция всех клиентов на v2
-- ⚪ Решение: удалить v1 регистрацию или продлить окно с явной датой
+- 🟢 Аудит клиентов и surface (2026-05-15):
+  - **Реальные gRPC-клиенты вне репо:** только `cognee-plugin/levara_adapter`
+    (Python, port 50051). Использует 13 RPC: `HasCollection`,
+    `CreateCollection`, `BatchInsert`, `GetByID`, `Search`, `Delete`,
+    `ListCollections`, `DropCollection`, `ProcessTriplets`, `ChunkText`,
+    `HashFiles`, `ListDirectory`, `AggregateSearch`.
+  - **WebUI**: REST/HTTP only — gRPC не использует.
+  - **mem0**: REST/HTTP только (через MemoryFS REST + Levara HTTP).
+  - **sync_levara CLI**: HTTP-only (`/api/v1/...`).
+  - **v2 surface** покрывает 8 RPC из 47 в v1: только Insert (+alias),
+    BatchInsert, Delete, Search, Info. **Из 13 RPC cognee-plugin v2
+    покрывает 3** (BatchInsert, Search, Delete).
+- 🟢 **Решение (2026-05-15)**: применили вариант (b). v2 = минимальный
+  canonical write subset (Insert/BatchInsert/Delete/Search/Info), v1 =
+  long-term для всех остальных RPC. Deprecation окно v1 снято.
+  Альтернативы (a) и (c) рассмотрены и отвергнуты.
+- 🟢 `CLAUDE.md` обновлён: `levara.v1` / `levara.v2` вместо
+  устаревшего `cognevra.*`, зафиксирован новый статус deprecation.
 
 ---
 
