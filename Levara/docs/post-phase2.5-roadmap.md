@@ -34,10 +34,14 @@ finishing-touch'и не сделаны.
   cooperation от MemoryFS.
 - ⚪ ACL на уровне `POST /v1/commit`, не на уровне Levara dataset_id
   (живёт в memoryfs репо).
-- 🟡 Reconciliation tool: восстановление индексов Levara из `.md`-корпуса
-  как disposable derivatives. **Phase 1 (dry-run) готов 2026-05-15** —
-  `cmd/reconcile/main.go`, парсит MemoryFS frontmatter + body, 14/14
-  записей на тестовом корпусе. Phase 2 (HTTP writer) — отдельный заход.
+- 🟢 Reconciliation tool: восстановление индексов Levara из `.md`-корпуса
+  как disposable derivatives. **Phase 1 + Phase 2 готовы 2026-05-15** —
+  `cmd/reconcile/main.go` парсит MemoryFS frontmatter + body (14/14 на
+  тестовом корпусе) и под `-apply` POST-ит каждую запись в
+  `/api/v1/add`. Флаги: `-corpus`, `-levara-url`, `-token`/$`LEVARA_JWT`,
+  `-dataset`, `-type`, `-since`, `-timeout`. Документация для
+  пользователя и админа — `docs/reconcile-guide.md`. Cross-repo
+  cleanup (30+ legacy write-endpoints) — отдельный заход.
 - ⚪ MemoryFS persistence (Phase 1 ship) — сейчас in-memory only, см.
   `local_net/docs/superpowers/specs/2026-05-10-memory-stack-rca-design.md`.
 
