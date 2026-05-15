@@ -202,9 +202,86 @@ a third-party reranker (Cohere/Voyage/etc.) without leaking chunks
 across the trust boundary. The handler will only ship documents from
 datasets the JWT-resolved user owns or has been shared.
 
+## Phase 2.5 follow-ups (2026-05-15)
+
+Three known-debt items spotted during the soak validation and folded
+into the same PR.
+
+### 1. `pipeline.SearchByTextWithRerank` deprecation — DONE 2026-05-15
+
+The legacy method has been **deleted**. All callers now go through
+the shared helper `pipeline.ApplyRerankToScored` (in
+`pipeline/rerank_apply.go`), which centralises the
+overfetch → ACL pre-filter → score-gap gate → cross-encoder →
+graceful-degradation logic.
+
+**Migrations completed:**
+
+| Surface | File | New flow |
+|---|---|---|
+| HTTP `chunksSearch` / hybrid | `internal/http/api_search.go` | already on the new path since Phase 2.5; `applyRerankToScored` now a thin wrapper over `pipeline.ApplyRerankToScored` |
+| gRPC `SearchByText` | `internal/grpc/service.go` | overfetch via `sp.SearchByText` → `pipeline.FilterScoredByAllowedDatasets` → `pipeline.ApplyRerankToScored`. Two new proto fields: `rerank_score_gap_threshold` (10) and `allowed_dataset_ids` (11) |
+| MCP `search` tool | `pkg/mcp/tool_search.go` | same shape; `Deps.AllowedDatasetIDs(ctx)` plumbs the JWT scope into `runSearchStrategy`. Interface change: `SearchPipeline.SearchByTextWithRerank` → `SearchPipeline.ApplyRerank(ctx, query, in, topK)` |
+
+**Shared helper location:** `pipeline/rerank_apply.go` —
+`ApplyRerankToScored(ctx, ApplyRerankConfig, *rerank.Client, query, []ScoredResult, topK) (bool, []ScoredResult)`
+plus `FilterScoredByAllowedDatasets([]ScoredResult, []string) []ScoredResult`.
+
+**ACL guarantee:** `RERANK_ENDPOINT` can now safely point at
+third-party rerankers (Cohere/Voyage) from any surface — forbidden
+chunks are filtered out before the sidecar sees them, on every
+code path.
+
+### 2. Adaptive rerank score-gap gate
+
+New env knob `RERANK_SCORE_GAP_THRESHOLD` (`float`, default 0 = off)
+plumbed through `cmd/server/rerank_config.go` →
+`APIConfig.RerankScoreGapThreshold`. When set and the spread between
+the top and bottom candidate exceeds it, the cross-encoder call is
+skipped:
+
+- `applyRerankToScored` (chunksSearch path): gap measured on
+  `ScoredResult.Score` (raw vector similarity).
+- `hybridApplyRerank` (HYBRID path): gap measured on the
+  `fused_score` produced by RRF.
+
+Skipped calls record `levara_rerank_invocations_total{outcome="skipped_gap"}`,
+distinct from `disabled` (config-off) and `ok` (sidecar reordered).
+The label is eager-initialised in `metrics.telemetry.init()` so
+dashboards see it from process start.
+
+**Operational guidance:** start at 0 (gate off), then tune by
+inspecting `histogram_quantile(0.5, rate(...))` of `rerank_score - vector_score`
+and pick a threshold that catches the "already confident" cases.
+A practical starting point on SciDocs-shaped traffic is in the 0.15–0.25
+range for cosine vectors; HYBRID `fused_score` runs in a different
+range and needs its own measurement.
+
+### 3. Sub-query fan-out histogram
+
+New metric `levara_search_chunks_subquery_fanout` (histogram with
+buckets `1,2,3,5,8,13,21`) records `len(subQueries) * len(colls)`
+per `chunksSearch` request. Driven by `graph.DecomposeQuery` —
+multi-clause queries fan out, and that fan-out multiplies the
+rerank outcome counter relative to request count.
+
+**Why it matters:** `levara_rerank_invocations_total` increments
+per inner iteration, not per HTTP request. Dashboards translating
+outcome-delta back into request count must divide by the mean of
+this histogram. Capacity planning for the rerank sidecar should
+size against `outcome-ok-rate × P95(fanout)` rather than against
+the request rate alone.
+
+The soak test (`deploy/rerank/test_soak.py`) already asserts the
+counter-delta lower bound (≥ search count) precisely because of
+this fan-out; strict equality would over-fit.
+
 ## Done-when
 
 - Default search returns reranked results without any flag from the client.
 - A failing/slow reranker never degrades search latency below the budget.
 - Prometheus shows rerank invocation/outcome breakdown.
 - Docs and WebUI no longer treat rerank as advanced/experimental.
+- Phase 2.5 follow-ups: legacy method deprecated, adaptive gate
+  available behind env, fan-out histogram exposed for capacity
+  planning.

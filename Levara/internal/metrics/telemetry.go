@@ -206,8 +206,21 @@ var (
 	//               under `value`) without raising a real rerank alarm.
 	RerankInvocations = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "levara_rerank_invocations_total",
-		Help: "Chunk-search rerank attempts by outcome (ok|budget|error|disabled|no_text)",
+		Help: "Chunk-search rerank attempts by outcome (ok|budget|error|disabled|no_text|skipped_gap)",
 	}, []string{"outcome"})
+
+	// SearchChunksSubqueryFanout records how many (sub-query × collection)
+	// inner iterations a single chunksSearch call dispatched. Drives capacity
+	// planning for the rerank sidecar: a query that decomposes into N sub-
+	// queries against M collections fans out outcome-counter increments by
+	// N*M, so dashboards comparing request count to outcome-delta must
+	// divide by the mean of this histogram. Buckets cover the realistic
+	// SciDocs/BEIR range — anything ≥10 is "the planner went off the rails".
+	SearchChunksSubqueryFanout = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name:    "levara_search_chunks_subquery_fanout",
+		Help:    "Inner (sub-query × collection) iterations per chunksSearch request",
+		Buckets: []float64{1, 2, 3, 5, 8, 13, 21},
+	})
 
 	// 17. Markdown workspace operational health. These gauges are refreshed by
 	// workspace ops/status and by indexing job transitions; audit events are
@@ -287,8 +300,9 @@ func init() {
 	}
 
 	// Eager-init Phase 2 rerank outcomes so /metrics shows the full label
-	// space from process start.
-	for _, outcome := range []string{"ok", "budget", "error", "disabled"} {
+	// space from process start. `no_text` (Phase 2.1) and `skipped_gap`
+	// (Phase 2.5 follow-up: adaptive score-gap gate) join the original four.
+	for _, outcome := range []string{"ok", "budget", "error", "disabled", "no_text", "skipped_gap"} {
 		RerankInvocations.WithLabelValues(outcome)
 	}
 

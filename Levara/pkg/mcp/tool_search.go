@@ -326,7 +326,7 @@ func ToolSearch(ctx context.Context, deps Deps, args map[string]any) ToolResult 
 	wasReranked := false
 
 	for _, coll := range colls {
-		res, reranked := runSearchStrategy(ctx, deps, sp, coll, a.query, fetchK, a)
+		res, reranked := runSearchStrategy(ctx, deps, sp, coll, a.query, fetchK, a, allowedDatasetIDs)
 		if reranked {
 			wasReranked = true
 		}
@@ -416,7 +416,7 @@ func searchMetadataDatasetID(metadata json.RawMessage) string {
 // rerank actually ran (only the WithRerank branch may set this true).
 // Errors from the pipeline are swallowed per branch — the caller
 // continues to the next collection, matching pre-refactor behavior.
-func runSearchStrategy(ctx context.Context, deps Deps, sp SearchPipeline, coll, query string, fetchK int, a searchArgs) (results []pipeline.ScoredResult, reranked bool) {
+func runSearchStrategy(ctx context.Context, deps Deps, sp SearchPipeline, coll, query string, fetchK int, a searchArgs, allowedDatasetIDs []string) (results []pipeline.ScoredResult, reranked bool) {
 	switch {
 	case isLexicalSearchType(a.searchType):
 		return runLexicalSearch(deps, coll, query, fetchK), false
@@ -436,11 +436,21 @@ func runSearchStrategy(ctx context.Context, deps Deps, sp SearchPipeline, coll, 
 		}
 		return res, false
 	case a.doRerank && sp.RerankEnabled():
-		res, rr, err := sp.SearchByTextWithRerank(ctx, coll, query, fetchK)
+		// Phase 2.5: overfetch → ACL pre-filter → shared rerank helper.
+		// Mirrors internal/http chunksSearch so forbidden chunks never
+		// reach the third-party reranker even when the JWT scope hides
+		// them from the response.
+		overfetch := fetchK * 3
+		if overfetch < 10 {
+			overfetch = 10
+		}
+		candidates, err := sp.SearchByText(ctx, coll, query, overfetch)
 		if err != nil {
 			return nil, false
 		}
-		return res, rr
+		filtered := pipeline.FilterScoredByAllowedDatasets(candidates, allowedDatasetIDs)
+		rr, ordered := sp.ApplyRerank(ctx, query, filtered, fetchK)
+		return ordered, rr
 	case a.doGraphRerank && deps.DB() != nil:
 		res, err := sp.SearchByText(ctx, coll, query, fetchK)
 		if err != nil || len(res) == 0 {

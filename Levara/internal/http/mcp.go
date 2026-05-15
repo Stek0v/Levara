@@ -257,6 +257,7 @@ func (h *mcpHandler) RunPipeline(ctx context.Context, texts []string, cfg orches
 type searchPipelineAdapter struct {
 	sp           *pipeline.SearchPipeline
 	rerankClient *rerank.Client
+	rerankCfg    pipeline.ApplyRerankConfig
 }
 
 func (a *searchPipelineAdapter) SearchByText(ctx context.Context, coll, query string, topK int) ([]pipeline.ScoredResult, error) {
@@ -271,8 +272,8 @@ func (a *searchPipelineAdapter) SearchByTextMultiQuery(ctx context.Context, coll
 	return a.sp.SearchByTextMultiQuery(ctx, coll, query, topK, provider, model, n)
 }
 
-func (a *searchPipelineAdapter) SearchByTextWithRerank(ctx context.Context, coll, query string, topK int) ([]pipeline.ScoredResult, bool, error) {
-	return a.sp.SearchByTextWithRerank(ctx, coll, query, topK)
+func (a *searchPipelineAdapter) ApplyRerank(ctx context.Context, query string, in []pipeline.ScoredResult, topK int) (bool, []pipeline.ScoredResult) {
+	return pipeline.ApplyRerankToScored(ctx, a.rerankCfg, a.rerankClient, query, in, topK)
 }
 
 func (a *searchPipelineAdapter) RerankEnabled() bool {
@@ -297,7 +298,14 @@ func (h *mcpHandler) NewSearchPipeline(doRerank bool) mcp.SearchPipeline {
 		rerankClient = rerank.NewClient(h.cfg.RerankEndpoint, h.cfg.RerankModel, 0, h.cfg.RerankTimeoutMs)
 	}
 	sp := pipeline.NewSearchPipeline(embedClient, h.cfg.Collections, rerankClient)
-	return &searchPipelineAdapter{sp: sp, rerankClient: rerankClient}
+	return &searchPipelineAdapter{
+		sp:           sp,
+		rerankClient: rerankClient,
+		rerankCfg: pipeline.ApplyRerankConfig{
+			BudgetMs:          h.cfg.RerankBudgetMs,
+			ScoreGapThreshold: h.cfg.RerankScoreGapThreshold,
+		},
+	}
 }
 
 // LLMProvider implements mcp.Deps: forwards the cfg field for the

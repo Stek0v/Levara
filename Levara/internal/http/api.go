@@ -60,6 +60,12 @@ type APIConfig struct {
 	// RerankBudgetMs caps total time spent on the rerank pass; on overshoot
 	// the search falls back to the un-reranked ranking. 0 = no budget.
 	RerankBudgetMs int
+	// RerankScoreGapThreshold gates the cross-encoder pass on candidate
+	// confidence. When > 0 and the spread between the top and bottom
+	// candidate vector/fused score exceeds the threshold, the ranking is
+	// already considered confident and the sidecar call is skipped —
+	// outcome=skipped_gap. 0 (default) keeps the unconditional behaviour.
+	RerankScoreGapThreshold float32
 	// Adaptive router (feedback-driven weight learning)
 	AdaptiveWeights *router.AdaptiveWeights // nil = no adaptive routing
 	// Runs tracks background cognify / analyze-commits pipelines. Must be

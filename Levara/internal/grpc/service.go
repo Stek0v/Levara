@@ -899,29 +899,36 @@ func (s *Service) SearchByText(ctx context.Context, req *pb.SearchByTextReq) (*p
 	var results []pipeline.ScoredResult
 	var err error
 	if rerankClient != nil && rerankClient.Enabled() {
+		// Phase 2.5 path: overfetch → ACL pre-filter → shared
+		// pipeline.ApplyRerankToScored. Mirrors internal/http/api_search.go
+		// chunksSearch so forbidden chunks never reach the third-party
+		// reranker, even when the JWT scope hides them from the response.
 		budgetMs := int(req.RerankBudgetMs)
 		if budgetMs <= 0 {
 			budgetMs = 1500
 		}
-		rctx, cancel := context.WithTimeout(ctx, time.Duration(budgetMs)*time.Millisecond)
-		defer cancel()
-		var reranked bool
-		results, reranked, err = sp.SearchByTextWithRerank(rctx, req.Collection, req.QueryText, topK)
-		switch {
-		case err == nil && reranked:
-			metrics.RerankInvocations.WithLabelValues("ok").Inc()
-		case errors.Is(err, pipeline.ErrNoTextToRerank):
-			metrics.RerankInvocations.WithLabelValues("no_text").Inc()
-			err = nil
-		case err != nil && errors.Is(rctx.Err(), context.DeadlineExceeded):
-			metrics.RerankInvocations.WithLabelValues("budget").Inc()
-			results, err = sp.SearchByText(ctx, req.Collection, req.QueryText, topK)
-		case err == nil && !reranked:
-			// Pipeline already swallowed the rerank error and returned vector order.
-			metrics.RerankInvocations.WithLabelValues("error").Inc()
+		overfetch := topK * 3
+		if overfetch < 10 {
+			overfetch = 10
+		}
+		candidates, fetchErr := sp.SearchByText(ctx, req.Collection, req.QueryText, overfetch)
+		if fetchErr != nil {
+			err = fetchErr
+		} else {
+			filtered := pipeline.FilterScoredByAllowedDatasets(candidates, req.AllowedDatasetIds)
+			_, results = pipeline.ApplyRerankToScored(ctx, pipeline.ApplyRerankConfig{
+				BudgetMs:          budgetMs,
+				ScoreGapThreshold: req.RerankScoreGapThreshold,
+			}, rerankClient, req.QueryText, filtered, topK)
 		}
 	} else {
 		results, err = sp.SearchByText(ctx, req.Collection, req.QueryText, topK)
+		if err == nil {
+			results = pipeline.FilterScoredByAllowedDatasets(results, req.AllowedDatasetIds)
+			if len(results) > topK {
+				results = results[:topK]
+			}
+		}
 		if req.RerankEndpoint == "" {
 			metrics.RerankInvocations.WithLabelValues("disabled").Inc()
 		}
