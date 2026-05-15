@@ -26,12 +26,24 @@
 Variant B уже работает (mem0 пишет через MemoryFS REST), но
 finishing-touch'и не сделаны.
 
-- ⚪ Убрать прямые записи в Levara из всех legacy-путей (только
-  MemoryFS → Levara индексирование через gRPC). **Аудит 2026-05-15**:
-  30+ write endpoints в `internal/http/` (`/memories`, `/add`,
-  `/cognify`, `/memify`, `/sync/import/*`, `/datasets`, `/collections`,
-  `/notebooks/*`, `/feedback`, etc.). Кросс-репная работа — требует
-  cooperation от MemoryFS.
+- 🟡 Убрать прямые записи в Levara из legacy-путей **агентской
+  памяти** (mem0 / cross-project recall). **Скоп уточнён 2026-05-15**:
+  - 🟢 mem0 Variant A retired (`OpenMem/third_party/mem0` commit
+    `ff4340f`): `insert`/`update`/`delete` → `NotImplementedError`,
+    `"levara"` provider удалён из factory + config schema. Variant B
+    (MemoryFS REST) остаётся единственным write-путём.
+  - ⚪ cognee-plugin (`cognee-plugin/LevaraAdapter.py`) — 6 прямых
+    gRPC writes (`CreateCollection`, `BatchInsert`, `Delete`,
+    `DropCollection`, `ProcessTriplets`, `ChunkText`). Блокер —
+    миграция требует sync с cognee командой.
+  - **Не входит в P0**: `/workspace/*` (12 endpoints) — это **родной
+    markdown-native workspace Levara** (`docs/markdown-native-workspace.md`,
+    commit `4915f8b`), параллельный MemoryFS слой для ADR/runbooks,
+    активно развивается. WebUI/admin-only, внешних вызывателей нет.
+    Объединение двух markdown-слоёв — отдельный design-вопрос.
+  - **Не входит в P0**: `/notebooks/*`, `/datasets`, `/cognify`,
+    `/feedback`, `/sync/import/*` — first-party WebUI/admin surface,
+    не legacy direct-write от агентов.
 - ⚪ ACL на уровне `POST /v1/commit`, не на уровне Levara dataset_id
   (живёт в memoryfs репо).
 - 🟢 Reconciliation tool: восстановление индексов Levara из `.md`-корпуса
