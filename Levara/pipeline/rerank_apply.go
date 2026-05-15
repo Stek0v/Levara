@@ -103,8 +103,10 @@ func ApplyRerankToScored(
 		return false, trim(in)
 	}
 
-	if cfg.ScoreGapThreshold > 0 && len(in) >= 2 {
-		if in[0].Score-in[len(in)-1].Score > cfg.ScoreGapThreshold {
+	if len(in) >= 2 {
+		spread := in[0].Score - in[len(in)-1].Score
+		metrics.RerankScoreSpread.WithLabelValues("vector").Observe(float64(spread))
+		if cfg.ScoreGapThreshold > 0 && spread > cfg.ScoreGapThreshold {
 			metrics.RerankInvocations.WithLabelValues("skipped_gap").Inc()
 			return false, trim(in)
 		}

@@ -12,10 +12,11 @@
 
 ## Hygiene (вне приоритезации)
 
-- ⚪ Закоммитить незавершённые workspace-патчи отдельным коммитом
-  (`internal/http/workspace_jobs.go` +73, `workspace_test.go` +182)
-- ⚪ Добавить `webui/test-results/` в `.gitignore` и коммитнуть
-  удаление 11 PNG-артефактов Playwright
+- 🟢 Закоммитить незавершённые workspace-патчи (commit `a476cdc`,
+  2026-05-15) — workspace index worker recovery lease 30s, тесты в
+  `workspace_test.go`.
+- 🟢 `webui/test-results/` + `playwright-report/` в `.gitignore`,
+  11 PNG удалены (commit `a55e2c3`, 2026-05-15).
 
 ---
 
@@ -40,12 +41,16 @@ finishing-touch'и не сделаны.
 `RERANK_SCORE_GAP_THRESHOLD` поставлен по умолчанию в 0 (gate off).
 Без калибровки фича — мёртвый код.
 
-- ⚪ На soak/prod собрать гистограмму `score(top) - score(bottom)`
-  по реальному трафику (chunks + hybrid пути отдельно)
-- ⚪ Подобрать порог, при котором `levara_rerank_invocations_total{outcome="skipped_gap"}`
-  ≥ 20% без падения NDCG@10 на BEIR
+- 🟢 Гистограмма spread на проде (2026-05-15): метрика
+  `levara_rerank_score_spread{axis="vector"|"rrf"}` пишет gap до
+  решения gate; eager-init обеих осей; calibration PromQL в
+  `docs/phase2-rerank-default-design.md`.
+- ⚪ Снять реальные распределения после деплоя на Mac/Pi
+  (нужны bucket counts >0 для axis=vector и axis=rrf).
+- ⚪ Подобрать порог при котором `skipped_gap` ≥ 20% без падения
+  NDCG@10 на BEIR.
 - ⚪ Прокинуть выбранный default в `cmd/server/rerank_config.go`
-  (или оставить 0 + документировать рекомендации в `phase2-rerank-default-design.md`)
+  (или оставить 0 + документировать рекомендации).
 
 ---
 
