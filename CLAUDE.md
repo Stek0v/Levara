@@ -127,20 +127,29 @@ curl -s localhost:8080/metrics | grep 'levara_http_requests_total\|levara_rate_l
 
 ## gRPC v1 + v2 (T10)
 
-Both services register on the same :50051 listener. `cognevra.v1.CognevraService`
-is the legacy surface; `cognevra.v2.CognevraServiceV2` adds a typed `ErrorDetail`
-and aliases `Add`/`Save`/`Create` for `Insert` during the 3-month deprecation window.
+Both services register on the same :50051 listener. `levara.v1.LevaraService`
+is the canonical surface (47 RPCs — write, read, cognify, graph, hybrid
+search). `levara.v2.LevaraServiceV2` is a minimal **write-only subset**
+(Insert, BatchInsert, Delete, Search, Info) with typed `ErrorDetail`
+and `Add`/`Save`/`Create` aliases for Insert.
+
+**Deprecation status (revised 2026-05-15):** v2 is NOT replacing v1.
+The 3-month deprecation window for v1 (originally planned in 20.04
+tasks D11) is dropped — v2 surface is too thin to cover real clients
+(e.g. cognee-plugin uses 13 v1 RPCs; only 3 exist in v2). v1 remains
+long-term; v2 is positioned as a minimal canonical write API for new
+clients that don't need graph/cognify endpoints.
 
 ```bash
-# v1 (still default)
+# v1 (canonical, all RPCs)
 grpcurl -H "authorization: Bearer $TOKEN" -plaintext \
   -d '{"collection":"c","id":"1","vector":[0.1,0.2]}' \
-  localhost:50051 cognevra.v1.CognevraService/Insert
+  localhost:50051 levara.v1.LevaraService/Insert
 
-# v2 (new)
+# v2 (minimal write subset)
 grpcurl -H "authorization: Bearer $TOKEN" -plaintext \
   -d '{"collection":"c","id":"1","vector":[0.1,0.2]}' \
-  localhost:50051 cognevra.v2.CognevraServiceV2/Insert
+  localhost:50051 levara.v2.LevaraServiceV2/Insert
 ```
 
 ## Key Benchmark Results
