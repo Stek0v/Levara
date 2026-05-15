@@ -45,6 +45,13 @@ type Service struct {
 	bm25Mu         sync.RWMutex
 	graphCaches    map[string]*graphdb.CachedWriter
 	graphCacheMu   sync.Mutex
+	// Shared embed client + defaults (T3 / P3.1). When req.EmbedEndpoint is
+	// empty the handlers fall back to embedClient so gRPC traffic can reuse
+	// the same TCP pool as HTTP/MCP. Per-request endpoints still build their
+	// own *embed.Client.
+	embedClient    *embed.Client
+	embedEndpoint  string
+	embedModel     string
 }
 
 // NewService creates a gRPC service backed by CollectionManager.
@@ -57,6 +64,39 @@ func NewService(collections *store.CollectionManager, cluster *store.Cluster, di
 		bm25Indexes: make(map[string]*bm25.Index),
 		graphCaches: make(map[string]*graphdb.CachedWriter),
 	}
+}
+
+// SetEmbedDefaults wires the process-wide *embed.Client (T3 shared pool) plus
+// the env-provided endpoint/model fallback. Handlers use this when the request
+// omits embed_endpoint. Called once at startup from cmd/server/main.go.
+func (s *Service) SetEmbedDefaults(client *embed.Client, endpoint, model string) {
+	s.embedClient = client
+	s.embedEndpoint = endpoint
+	s.embedModel = model
+}
+
+// resolveEmbedClient returns the shared embed client when the request omits
+// embed_endpoint, otherwise constructs a per-request one. Mirrors the orchestrator
+// pattern (pkg/orchestrator/pipeline.go) so gRPC stops fanning out fresh HTTP
+// pools on every search.
+func (s *Service) resolveEmbedClient(reqEndpoint, reqModel string, batchSize, concurrency int) (*embed.Client, error) {
+	if reqEndpoint == "" {
+		if s.embedClient == nil {
+			return nil, status.Errorf(codes.InvalidArgument, "embed_endpoint required (no server default configured)")
+		}
+		return s.embedClient, nil
+	}
+	model := reqModel
+	if model == "" {
+		model = "text-embedding-3-small"
+	}
+	if batchSize <= 0 {
+		batchSize = 16
+	}
+	if concurrency <= 0 {
+		concurrency = 1
+	}
+	return embed.NewClient(reqEndpoint, model, batchSize, concurrency), nil
 }
 
 // BM25Indexes returns the shared BM25 index map for HTTP handlers.
@@ -522,23 +562,10 @@ func (s *Service) DeduplicateGraph(_ context.Context, req *pb.DeduplicateGraphRe
 // BatchEmbedAndIndex embeds texts and inserts vectors into collections in one call.
 // Replaces Python's index_data_points asyncio.gather pattern with Go goroutines.
 func (s *Service) BatchEmbedAndIndex(ctx context.Context, req *pb.BatchEmbedAndIndexReq) (*pb.BatchEmbedAndIndexResp, error) {
-	if req.EmbedEndpoint == "" {
-		return nil, status.Errorf(codes.InvalidArgument, "embed_endpoint is required")
+	embedClient, err := s.resolveEmbedClient(req.EmbedEndpoint, req.EmbedModel, int(req.BatchSize), int(req.Concurrency))
+	if err != nil {
+		return nil, err
 	}
-	batchSize := int(req.BatchSize)
-	if batchSize <= 0 {
-		batchSize = 16
-	}
-	concurrency := int(req.Concurrency)
-	if concurrency <= 0 {
-		concurrency = 3
-	}
-	model := req.EmbedModel
-	if model == "" {
-		model = "text-embedding-3-small"
-	}
-
-	embedClient := embed.NewClient(req.EmbedEndpoint, model, batchSize, concurrency)
 
 	var totalEmbedded, totalIndexed, collectionsCreated int32
 	var errs []string
@@ -701,16 +728,11 @@ func (s *Service) ParallelWriteDataPoints(ctx context.Context, req *pb.ParallelW
 
 	// --- Prepare embed client (if configured) ---
 	var embedClient *embed.Client
-	if req.EmbedEndpoint != "" {
-		batchSize := int(req.EmbedBatchSize)
-		if batchSize <= 0 {
-			batchSize = 16
+	if req.EmbedEndpoint != "" || s.embedClient != nil {
+		ec, err := s.resolveEmbedClient(req.EmbedEndpoint, req.EmbedModel, int(req.EmbedBatchSize), 3)
+		if err == nil {
+			embedClient = ec
 		}
-		model := req.EmbedModel
-		if model == "" {
-			model = "text-embedding-3-small"
-		}
-		embedClient = embed.NewClient(req.EmbedEndpoint, model, batchSize, 3)
 	}
 
 	// --- Phase 1: Neo4j (atomic nodes+edges) || embed+index nodes ---
@@ -871,20 +893,16 @@ func (s *Service) SearchByText(ctx context.Context, req *pb.SearchByTextReq) (*p
 	if req.Collection == "" || req.QueryText == "" {
 		return nil, status.Errorf(codes.InvalidArgument, "collection and query_text required")
 	}
-	if req.EmbedEndpoint == "" {
-		return nil, status.Errorf(codes.InvalidArgument, "embed_endpoint required")
-	}
 
 	topK := int(req.TopK)
 	if topK <= 0 {
 		topK = 10
 	}
-	model := req.EmbedModel
-	if model == "" {
-		model = "text-embedding-3-small"
-	}
 
-	embedClient := embed.NewClient(req.EmbedEndpoint, model, 16, 1)
+	embedClient, err := s.resolveEmbedClient(req.EmbedEndpoint, req.EmbedModel, 16, 1)
+	if err != nil {
+		return nil, err
+	}
 
 	var rerankClient *rerank.Client
 	if req.RerankEndpoint != "" {
@@ -897,7 +915,6 @@ func (s *Service) SearchByText(ctx context.Context, req *pb.SearchByTextReq) (*p
 	sp := pipeline.NewSearchPipeline(embedClient, s.collections, rerankClient)
 
 	var results []pipeline.ScoredResult
-	var err error
 	if rerankClient != nil && rerankClient.Enabled() {
 		// Phase 2.5 path: overfetch → ACL pre-filter → shared
 		// pipeline.ApplyRerankToScored. Mirrors internal/http/api_search.go
@@ -954,20 +971,16 @@ func (s *Service) BatchSearchByText(ctx context.Context, req *pb.BatchSearchByTe
 	if req.Collection == "" || len(req.Queries) == 0 {
 		return nil, status.Errorf(codes.InvalidArgument, "collection and queries required")
 	}
-	if req.EmbedEndpoint == "" {
-		return nil, status.Errorf(codes.InvalidArgument, "embed_endpoint required")
-	}
 
 	topK := int(req.TopK)
 	if topK <= 0 {
 		topK = 10
 	}
-	model := req.EmbedModel
-	if model == "" {
-		model = "text-embedding-3-small"
-	}
 
-	embedClient := embed.NewClient(req.EmbedEndpoint, model, 16, 3)
+	embedClient, err := s.resolveEmbedClient(req.EmbedEndpoint, req.EmbedModel, 16, 3)
+	if err != nil {
+		return nil, err
+	}
 	sp := pipeline.NewSearchPipeline(embedClient, s.collections, nil)
 
 	batchResults, err := sp.BatchSearchByText(ctx, req.Collection, req.Queries, topK)
@@ -1121,8 +1134,8 @@ func (s *Service) GraphCompletionSearch(ctx context.Context, req *pb.GraphComple
 	totalStart := time.Now()
 	resp := &pb.GraphCompletionSearchResp{}
 
-	if req.QueryText == "" || req.EmbedEndpoint == "" {
-		return nil, status.Errorf(codes.InvalidArgument, "query_text and embed_endpoint required")
+	if req.QueryText == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "query_text required")
 	}
 
 	vectorTopK := int(req.VectorTopK)
@@ -1137,12 +1150,11 @@ func (s *Service) GraphCompletionSearch(ctx context.Context, req *pb.GraphComple
 	if penalty <= 0 {
 		penalty = graph.DefaultDistancePenalty
 	}
-	model := req.EmbedModel
-	if model == "" {
-		model = "text-embedding-3-small"
-	}
 
-	embedClient := embed.NewClient(req.EmbedEndpoint, model, 16, 1)
+	embedClient, err := s.resolveEmbedClient(req.EmbedEndpoint, req.EmbedModel, 16, 1)
+	if err != nil {
+		return nil, err
+	}
 
 	// --- Step 1: Embed query ---
 	embedStart := time.Now()
@@ -1382,17 +1394,18 @@ func (s *Service) BM25Search(_ context.Context, req *pb.BM25SearchReq) (*pb.BM25
 
 // HybridSearch combines vector similarity + BM25 lexical search via Reciprocal Rank Fusion.
 func (s *Service) HybridSearch(ctx context.Context, req *pb.HybridSearchReq) (*pb.HybridSearchResp, error) {
-	if req.Collection == "" || req.QueryText == "" || req.EmbedEndpoint == "" {
-		return nil, status.Errorf(codes.InvalidArgument, "collection, query_text, embed_endpoint required")
+	if req.Collection == "" || req.QueryText == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "collection and query_text required")
 	}
 
 	topK := int(req.TopK)
 	if topK <= 0 {
 		topK = 10
 	}
-	model := req.EmbedModel
-	if model == "" {
-		model = "text-embedding-3-small"
+
+	embedClient, err := s.resolveEmbedClient(req.EmbedEndpoint, req.EmbedModel, 16, 1)
+	if err != nil {
+		return nil, err
 	}
 
 	// Run vector search + BM25 search in parallel
@@ -1409,7 +1422,6 @@ func (s *Service) HybridSearch(ctx context.Context, req *pb.HybridSearchReq) (*p
 
 	// Vector search goroutine
 	go func() {
-		embedClient := embed.NewClient(req.EmbedEndpoint, model, 16, 1)
 		vec, err := embedClient.EmbedSingle(ctx, req.QueryText)
 		if err != nil {
 			vsCh <- vsOut{err: err}
@@ -1554,6 +1566,7 @@ func (s *Service) PipelineCognify(req *pb.PipelineCognifyReq, stream pb.LevaraSe
 		LLMConcurrency:  int(req.LlmConcurrency),
 		EmbedEndpoint:   req.EmbedEndpoint,
 		EmbedModel:      req.EmbedModel,
+		EmbedClient:     s.embedClient,
 		Neo4jURL:        req.Neo4JUrl,
 		Neo4jUser:       req.Neo4JUser,
 		Neo4jPassword:   req.Neo4JPassword,
@@ -1632,24 +1645,23 @@ func (s *Service) SemanticDedup(_ context.Context, req *pb.SemanticDedupReq) (*p
 
 // MultiQuerySearch decomposes a complex query, runs parallel searches, merges results.
 func (s *Service) MultiQuerySearch(ctx context.Context, req *pb.MultiQuerySearchReq) (*pb.MultiQuerySearchResp, error) {
-	if req.QueryText == "" || req.Collection == "" || req.EmbedEndpoint == "" {
-		return nil, status.Errorf(codes.InvalidArgument, "query_text, collection, embed_endpoint required")
+	if req.QueryText == "" || req.Collection == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "query_text and collection required")
 	}
 
 	topK := int(req.TopK)
 	if topK <= 0 {
 		topK = 10
 	}
-	model := req.EmbedModel
-	if model == "" {
-		model = "text-embedding-3-small"
-	}
 
 	// Decompose query
 	subQueries := graph.DecomposeQuery(req.QueryText)
 
 	// Parallel search for each sub-query
-	embedClient := embed.NewClient(req.EmbedEndpoint, model, 16, len(subQueries))
+	embedClient, err := s.resolveEmbedClient(req.EmbedEndpoint, req.EmbedModel, 16, len(subQueries))
+	if err != nil {
+		return nil, err
+	}
 	sp := pipeline.NewSearchPipeline(embedClient, s.collections, nil)
 
 	type searchOut struct {

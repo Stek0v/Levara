@@ -653,6 +653,7 @@ func main() {
 	// reembed migration, per-collection dual-search, gRPC request-driven params)
 	// still construct their own client.
 	sharedEmbed := embed.NewClient(embedEndpoint, embedModel, 16, 3)
+	grpcSvc.SetEmbedDefaults(sharedEmbed, embedEndpoint, embedModel)
 
 	// Shared search-strategy registry (T5) — owned by main so tests can
 	// substitute strategies without touching NewDefaultStrategyRegistry.
