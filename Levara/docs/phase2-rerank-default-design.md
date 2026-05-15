@@ -114,7 +114,7 @@ Lives at `deploy/rerank/` (Dockerfile + app.py + model files mounted from a volu
 ## Open questions
 
 - Should rerank apply to `dualsearch.go` and graph search too, or stay chunks-only for Phase 2? Recommend: chunks-only, expand in Phase 2.5.
-- Should we expose the model behind a `/models/rerank` endpoint so clients can verify which variant is serving? Recommend: yes, cheap to add.
+- ~~Should we expose the model behind a `/models/rerank` endpoint so clients can verify which variant is serving?~~ **Resolved (2026-05-15):** `GET /api/v1/models/rerank` returns `{enabled, endpoint, model, budget_ms}` — pure config echo, no sidecar round-trip. See `internal/http/rerank_info.go`.
 
 ## HYBRID rerank scope (known limitation, 2026-05-15)
 
