@@ -32,10 +32,20 @@ finishing-touch'и не сделаны.
     `ff4340f`): `insert`/`update`/`delete` → `NotImplementedError`,
     `"levara"` provider удалён из factory + config schema. Variant B
     (MemoryFS REST) остаётся единственным write-путём.
-  - ⚪ cognee-plugin (`cognee-plugin/LevaraAdapter.py`) — 6 прямых
-    gRPC writes (`CreateCollection`, `BatchInsert`, `Delete`,
-    `DropCollection`, `ProcessTriplets`, `ChunkText`). Блокер —
-    миграция требует sync с cognee командой.
+  - 🔵 cognee-plugin (`cognee-plugin/levara_adapter/LevaraAdapter.py`)
+    — 6 прямых gRPC writes (`CreateCollection`, `BatchInsert`,
+    `Delete`, `DropCollection`, `ProcessTriplets`; `ChunkText` —
+    stateless compute, не требует миграции). **Design surface
+    зафиксирован 2026-05-15**:
+    - Маппинг DataPoint(vector+payload) → MemoryFS `.md`: нерешён
+      (per-chunk file vs per-document with chunk sections).
+    - `ProcessTriplets` → MemoryFS Phase 5 `/v1/entities/*` —
+      существует только в `_archive/.../memoryfs-planning`.
+    - Reads (Search/Retrieve/HasCollection/BatchSearch/AggregateSearch)
+      остаются прямыми к Levara — как mem0 Variant B.
+    Блокеры: MemoryFS Phase 1 (persistence) + Phase 5 (entities)
+    + cognee VectorDBInterface compatibility. Действовать после
+    Phase 1 ship.
   - **Не входит в P0**: `/workspace/*` (12 endpoints) — это **родной
     markdown-native workspace Levara** (`docs/markdown-native-workspace.md`,
     commit `4915f8b`), параллельный MemoryFS слой для ADR/runbooks,
@@ -44,8 +54,12 @@ finishing-touch'и не сделаны.
   - **Не входит в P0**: `/notebooks/*`, `/datasets`, `/cognify`,
     `/feedback`, `/sync/import/*` — first-party WebUI/admin surface,
     не legacy direct-write от агентов.
-- ⚪ ACL на уровне `POST /v1/commit`, не на уровне Levara dataset_id
-  (живёт в memoryfs репо).
+- 🔵 ACL на уровне `POST /v1/commit` (живёт в memoryfs репо).
+  **Проверено 2026-05-15**: `acl::check(subject, Action::Commit, "**",
+  policy)` уже реализован в `_archive/2026-05-10/LevaraOs/memoryfs-planning/
+  crates/core/src/api.rs:343`. Блокер — Phase 1 ship: код в архиве,
+  бинарь без persistence (см. CLAUDE.md). Когда MemoryFS выйдет из
+  in-memory режима — достать код, ревью policy schema, ship.
 - 🟢 Reconciliation tool: восстановление индексов Levara из `.md`-корпуса
   как disposable derivatives. **Phase 1 + Phase 2 готовы 2026-05-15** —
   `cmd/reconcile/main.go` парсит MemoryFS frontmatter + body (14/14 на
