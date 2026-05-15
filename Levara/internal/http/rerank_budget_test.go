@@ -583,19 +583,22 @@ func TestChunksSearch_RerankSeesForbiddenDocs_KnownLimitation(t *testing.T) {
 // the rerank client through HYBRID either updates the doc or fails
 // loudly here.
 //
-// Side-finding worth noting: hybridSearch in api_search.go *creates*
-// a rerank.Client when wanted, then never invokes it — `sp.SearchByText`
-// runs without the rerank step. The client construction is currently
-// dead allocation. A Phase 2.5 fix should either remove the
-// construction or call SearchByTextWithRerank.
-func TestHybridSearch_RerankIsIgnored_Phase2Limitation(t *testing.T) {
+// Phase 2.5 (2026-05-15): rerank now flows through HYBRID. Sidecar is
+// hit, fused candidates get re-ordered by relevance score, and the
+// outcome counter increments — mirroring chunksSearch.
+//
+// If a refactor regresses HYBRID back to skip-rerank, this test fails
+// loudly: either fix the regression or downgrade the design doc.
+func TestHybridSearch_RerankApplied_Phase25(t *testing.T) {
 	env := newSearchTestEnv(t)
 
 	hit := false
+	// Score doc 1 higher than doc 0 so a successful rerank flips the
+	// natural fused order and we can detect it from the response.
 	tripwire := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hit = true
 		w.WriteHeader(200)
-		w.Write([]byte(`{"results":[]}`))
+		w.Write([]byte(`{"results":[{"index":1,"relevance_score":0.95},{"index":0,"relevance_score":0.10}]}`))
 	}))
 	t.Cleanup(tripwire.Close)
 
@@ -609,13 +612,10 @@ func TestHybridSearch_RerankIsIgnored_Phase2Limitation(t *testing.T) {
 	env.insertVector("entities", "e1", vec, map[string]any{"text": "alpha"})
 	env.insertVector("entities", "e2", vec, map[string]any{"text": "beta"})
 
-	totalBefore := 0.0
-	for _, out := range []string{"ok", "budget", "error", "disabled"} {
-		totalBefore += testutil.ToFloat64(metrics.RerankInvocations.WithLabelValues(out))
-	}
+	okBefore := testutil.ToFloat64(metrics.RerankInvocations.WithLabelValues("ok"))
 
 	rerankTrue := true
-	status, _ := postSearchAny(t, env, map[string]any{
+	status, body := postSearchAny(t, env, map[string]any{
 		"query_text": "alpha",
 		"query_type": "HYBRID",
 		"collection": "entities",
@@ -625,14 +625,28 @@ func TestHybridSearch_RerankIsIgnored_Phase2Limitation(t *testing.T) {
 	if status != 200 {
 		t.Fatalf("status=%d, want 200", status)
 	}
-	if hit {
-		t.Fatal("sidecar was called for query_type=HYBRID — Phase 2 scopes rerank to chunks-only; update phase2-rerank-default-design.md if this is intentional")
+	if !hit {
+		t.Fatal("sidecar was NOT called for query_type=HYBRID — Phase 2.5 wires rerank through HYBRID; if intentionally reverted, update phase2-rerank-default-design.md")
 	}
-	totalAfter := 0.0
-	for _, out := range []string{"ok", "budget", "error", "disabled"} {
-		totalAfter += testutil.ToFloat64(metrics.RerankInvocations.WithLabelValues(out))
+	okAfter := testutil.ToFloat64(metrics.RerankInvocations.WithLabelValues("ok"))
+	if okAfter <= okBefore {
+		t.Fatalf("HYBRID rerank=ok counter did not increment: before=%v after=%v", okBefore, okAfter)
 	}
-	if totalAfter != totalBefore {
-		t.Fatalf("HYBRID path touched rerank counters: before=%v after=%v", totalBefore, totalAfter)
+
+	// Each result row must carry reranked:true after a successful pass.
+	bodyMap, _ := body.(map[string]any)
+	rows, ok := bodyMap["items"].([]any)
+	if !ok {
+		// Legacy array envelope (no include_debug=true).
+		rows, ok = body.([]any)
+	}
+	if !ok || len(rows) == 0 {
+		t.Fatalf("expected non-empty items, got %v", body)
+	}
+	for i, row := range rows {
+		m, _ := row.(map[string]any)
+		if m["reranked"] != true {
+			t.Fatalf("row %d: reranked=%v want true", i, m["reranked"])
+		}
 	}
 }
