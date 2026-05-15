@@ -74,10 +74,19 @@ Pi отстаёт от `main` — там нет общего helper + новых
 
 Параллель сегодняшней работе с rerank: централизовать embed-вызовы.
 
-- ⚪ Аудит callers старого embed-клиента в `pipeline/`
-- ⚪ Общий helper в стиле `pipeline/rerank_apply.go`
-- ⚪ Миграция HTTP/gRPC/MCP
-- ⚪ Удалить deprecated клиент
+- 🟢 Аудит callers старого embed-клиента (2026-05-15): 8 inline
+  `embed.NewClient` в `internal/grpc/service.go`, 3 fallback в
+  `pkg/orchestrator/pipeline.go`, остальные — pkg/community + tests.
+- 🟢 Общий helper (2026-05-15): `Service.resolveEmbedClient` в
+  `internal/grpc/service.go:75` — возвращает shared `*embed.Client`,
+  когда `req.EmbedEndpoint == ""`, иначе строит per-request.
+- 🟢 Миграция gRPC (2026-05-15): все 8 inline `embed.NewClient`
+  заменены на `resolveEmbedClient`. `PipelineCognify` теперь передаёт
+  shared client в `orchestrator.Config.EmbedClient`. HTTP/MCP уже
+  использовали `cfg.EmbedClient` (T3).
+- ⚪ Закрыть оставшиеся orchestrator-fallback `embed.NewClient` в
+  `pkg/orchestrator/pipeline.go:407/594/863` — требуют чтобы все
+  callers всегда передавали `cfg.EmbedClient`.
 
 ### P3.2 — Memory MCPs transition
 
