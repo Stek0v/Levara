@@ -84,9 +84,13 @@ Pi отстаёт от `main` — там нет общего helper + новых
   заменены на `resolveEmbedClient`. `PipelineCognify` теперь передаёт
   shared client в `orchestrator.Config.EmbedClient`. HTTP/MCP уже
   использовали `cfg.EmbedClient` (T3).
-- ⚪ Закрыть оставшиеся orchestrator-fallback `embed.NewClient` в
-  `pkg/orchestrator/pipeline.go:407/594/863` — требуют чтобы все
-  callers всегда передавали `cfg.EmbedClient`.
+- 🟢 Audit orchestrator-fallback `embed.NewClient`
+  (`pkg/orchestrator/pipeline.go:407/594/863`, 2026-05-15): все три
+  production callers (HTTP `api_cognify.go:141`, gRPC `service.go:1561`,
+  MCP `mcp.go:205`) передают `cfg.EmbedClient`. Fallback оставлен как
+  graceful-path для тестов оркестратора, что зафиксировано в docstring
+  `Config.EmbedClient`. Deprecated клиент удалять незачем — он и так
+  используется только из shared helper'а.
 
 ### P3.2 — Memory MCPs transition
 
