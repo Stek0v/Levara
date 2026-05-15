@@ -162,6 +162,27 @@ search returns the vector-order ranking and emits
 but none carried a `text`/`name` field in metadata, so the rerank pass
 had nothing to score; distinct from `error` to surface data-shape gaps).
 
+#### Rerank info
+
+```
+GET /api/v1/models/rerank
+```
+
+Returns the configured reranker so clients/dashboards can confirm which
+variant is serving:
+
+```json
+{
+  "enabled": true,
+  "endpoint": "http://rerank:9100/rerank",
+  "model": "mmini-L12-int8",
+  "budget_ms": 1500
+}
+```
+
+`enabled` is `false` when `RERANK_ENDPOINT` is unset; the other fields are
+echoed verbatim from server config (no sidecar round-trip).
+
 #### Get by ID
 
 ```

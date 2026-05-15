@@ -137,6 +137,10 @@ func RegisterAPI(app fiber.Router, cfg APIConfig) {
 	app.Get("/collections/:name/meta", collectionMetaHandler(cfg))
 	app.Put("/collections/:name/meta", collectionMetaUpdateHandler(cfg))
 
+	// Phase 2: rerank info surface (resolves design open question — clients
+	// need a cheap way to confirm which reranker variant is configured).
+	app.Get("/models/rerank", rerankInfoHandler(cfg))
+
 	// U12: Re-embedding migration
 	RegisterReembedAPI(app, cfg)
 
