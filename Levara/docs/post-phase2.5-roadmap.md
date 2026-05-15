@@ -58,13 +58,18 @@ finishing-touch'и не сделаны.
 
 Pi отстаёт от `main` — там нет общего helper + новых proto-полей.
 
-- ⚪ `make arm64` локально, `sync_levara` на Pi
-- ⚪ Smoke на Pi: HTTP `/api/v1/search`, gRPC `SearchByText`,
-  MCP `search` — все три должны идти через `ApplyRerankToScored`
+- 🟢 `make arm64` + scp на Pi (2026-05-15): новый бинарь содержит
+  Phase 2.5 миграцию rerank + P3.1 shared embed pool + новые proto-поля
+  `rerank_score_gap_threshold` + `allowed_dataset_ids`. PID 236141 на
+  :8090. Старый бинарь сохранён как `levara.bak.20260515-2018`.
+- 🟢 Smoke на Pi: `/api/v1/collections` отвечает, метрика
+  `levara_rerank_score_spread{axis="vector"|"rrf"}` зарегистрирована и
+  начала писать buckets для калибровки.
 - ⚪ Запустить soak на Pi с `RERANK_SCORE_GAP_THRESHOLD>0`
-  для калибровки P1
+  для калибровки P1 (сейчас порог 0 = gate off, gate решит после
+  снятия распределения).
 - ⚪ Сверить Prometheus метрики Pi vs Mac (особенно
-  `levara_search_chunks_subquery_fanout`)
+  `levara_search_chunks_subquery_fanout`).
 
 ---
 
