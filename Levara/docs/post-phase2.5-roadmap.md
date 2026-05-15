@@ -27,12 +27,19 @@ Variant B уже работает (mem0 пишет через MemoryFS REST), н
 finishing-touch'и не сделаны.
 
 - ⚪ Убрать прямые записи в Levara из всех legacy-путей (только
-  MemoryFS → Levara индексирование через gRPC)
+  MemoryFS → Levara индексирование через gRPC). **Аудит 2026-05-15**:
+  30+ write endpoints в `internal/http/` (`/memories`, `/add`,
+  `/cognify`, `/memify`, `/sync/import/*`, `/datasets`, `/collections`,
+  `/notebooks/*`, `/feedback`, etc.). Кросс-репная работа — требует
+  cooperation от MemoryFS.
 - ⚪ ACL на уровне `POST /v1/commit`, не на уровне Levara dataset_id
-- ⚪ Reconciliation tool: восстановление индексов Levara из `.md`-корпуса
-  как disposable derivatives
+  (живёт в memoryfs репо).
+- 🟡 Reconciliation tool: восстановление индексов Levara из `.md`-корпуса
+  как disposable derivatives. **Phase 1 (dry-run) готов 2026-05-15** —
+  `cmd/reconcile/main.go`, парсит MemoryFS frontmatter + body, 14/14
+  записей на тестовом корпусе. Phase 2 (HTTP writer) — отдельный заход.
 - ⚪ MemoryFS persistence (Phase 1 ship) — сейчас in-memory only, см.
-  `local_net/docs/superpowers/specs/2026-05-10-memory-stack-rca-design.md`
+  `local_net/docs/superpowers/specs/2026-05-10-memory-stack-rca-design.md`.
 
 ---
 
