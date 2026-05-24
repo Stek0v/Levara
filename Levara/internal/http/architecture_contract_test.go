@@ -75,10 +75,11 @@ func TestSchemaInventoryCoversCoreTables(t *testing.T) {
 		if obj.Kind != SchemaTable {
 			continue
 		}
-		if byProvider[obj.Provider] == nil {
-			byProvider[obj.Provider] = map[string]bool{}
+		p := DBProvider(obj.Provider)
+		if byProvider[p] == nil {
+			byProvider[p] = map[string]bool{}
 		}
-		byProvider[obj.Provider][obj.Name] = true
+		byProvider[p][obj.Name] = true
 	}
 
 	coreTables := []string{
