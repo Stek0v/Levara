@@ -13,16 +13,45 @@ import (
 )
 
 func validate(c contract.Contract, outDir, repoRoot string) error {
-	if err := compareFile(c, outDir, "contract.json", renderJSONBytes); err != nil {
+	// Adopt the committed file's GitRev/GeneratedAt before comparing. The
+	// generator embeds HEAD, but HEAD advances every time we commit the
+	// regenerated artefact — comparing the live HEAD against a committed
+	// file would flap on every PR. Drift detection compares structural
+	// content only.
+	cmp := c
+	cmp.GitRev = readContractField(outDir, "git_rev", c.GitRev)
+	cmp.GeneratedAt = readContractField(outDir, "generated_at", c.GeneratedAt)
+
+	if err := compareFile(cmp, outDir, "contract.json", renderJSONBytes); err != nil {
 		return err
 	}
-	if err := compareFile(c, outDir, "api-contract.md", renderMarkdownBytes); err != nil {
+	if err := compareFile(cmp, outDir, "api-contract.md", renderMarkdownBytes); err != nil {
 		return err
 	}
 	if err := validateDeploymentMatrix(c, repoRoot); err != nil {
 		return err
 	}
 	return nil
+}
+
+func readContractField(outDir, field, fallback string) string {
+	raw, err := os.ReadFile(filepath.Join(outDir, "contract.json"))
+	if err != nil {
+		return fallback
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return fallback
+	}
+	v, ok := m[field]
+	if !ok {
+		return fallback
+	}
+	var s string
+	if err := json.Unmarshal(v, &s); err != nil {
+		return fallback
+	}
+	return s
 }
 
 type rendererFn func(contract.Contract) ([]byte, error)
