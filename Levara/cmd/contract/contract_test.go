@@ -73,3 +73,27 @@ func TestRenderMarkdownByteIdentical(t *testing.T) {
 		t.Fatal("missing sections")
 	}
 }
+
+func TestRewriteAgentsMD(t *testing.T) {
+	dir := t.TempDir()
+	src := "# Title\n\n## MCP Tools\n\n<!-- BEGIN: contract-mcp -->\nstale\n<!-- END: contract-mcp -->\n"
+	path := dir + "/AGENTS.md"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c := collect("rev-1", "2026-05-24T00:00:00Z")
+	if err := rewriteAgentsMD(c, dir); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(path)
+	s := string(got)
+	if !strings.Contains(s, "# Title") {
+		t.Fatal("clobbered preamble")
+	}
+	if strings.Contains(s, "stale") {
+		t.Fatal("did not replace stale content")
+	}
+	if !strings.Contains(s, "| search |") {
+		t.Fatal("did not insert MCP table")
+	}
+}
