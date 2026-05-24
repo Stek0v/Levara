@@ -4,11 +4,19 @@ on:
   pull_request:
     paths:
       - 'Levara/**'
+      - 'docs/api-contract.md'
+      - 'docs/contract.json'
+      - 'docs/deployment-matrix.md'
+      - 'AGENTS.md'
       - '.github/workflows/go-ci.yml'
   push:
     branches: [main]
     paths:
       - 'Levara/**'
+      - 'docs/api-contract.md'
+      - 'docs/contract.json'
+      - 'docs/deployment-matrix.md'
+      - 'AGENTS.md'
       - '.github/workflows/go-ci.yml'
 
 defaults:
