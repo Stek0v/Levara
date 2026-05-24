@@ -1,22 +1,23 @@
 package http
 
-import "strings"
+import (
+	"strings"
 
-// SchemaObjectKind describes the migration object represented by a statement.
-type SchemaObjectKind string
-
-const (
-	SchemaTable SchemaObjectKind = "table"
-	SchemaIndex SchemaObjectKind = "index"
-	SchemaAlter SchemaObjectKind = "alter"
+	"github.com/stek0v/levara/internal/contract"
 )
 
-// SchemaObject is a compact inventory entry derived from migration statements.
-type SchemaObject struct {
-	Kind     SchemaObjectKind
-	Name     string
-	Provider DBProvider
-}
+// SchemaObject is a type alias for contract.SchemaObject so inventory entries
+// are interchangeable with the canonical contract type.
+type SchemaObject = contract.SchemaObject
+
+// SchemaKind is a type alias for string kept for readability at call sites.
+type SchemaKind = string
+
+const (
+	SchemaTable SchemaKind = "table"
+	SchemaIndex SchemaKind = "index"
+	SchemaAlter SchemaKind = "alter"
+)
 
 // SchemaInventory returns table/index/alter inventory for PostgreSQL and
 // SQLite migrations. It is intentionally derived from the migration statements
@@ -35,12 +36,12 @@ func schemaInventoryFor(provider DBProvider, stmts []string) []SchemaObject {
 		if !ok {
 			continue
 		}
-		out = append(out, SchemaObject{Kind: kind, Name: name, Provider: provider})
+		out = append(out, SchemaObject{Kind: kind, Name: name, Provider: string(provider)})
 	}
 	return out
 }
 
-func classifySchemaStatement(stmt string) (SchemaObjectKind, string, bool) {
+func classifySchemaStatement(stmt string) (SchemaKind, string, bool) {
 	fields := strings.Fields(strings.TrimSpace(stmt))
 	if len(fields) < 3 {
 		return "", "", false
