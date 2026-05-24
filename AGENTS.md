@@ -195,4 +195,71 @@ explicitly opted in via `types=["collections"]` + `collections=[...]`).
 ## MCP Tools
 
 <!-- BEGIN: contract-mcp -->
+
+| Tool | Group | Status |
+|---|---|---|
+| add |  | canonical |
+| add_feedback |  | canonical |
+| analyze_commits |  | canonical |
+| check_drift |  | canonical |
+| codify |  | canonical |
+| cognify |  | canonical |
+| cognify_status |  | canonical |
+| cross_search |  | canonical |
+| delete |  | canonical |
+| diary_read |  | canonical |
+| diary_write |  | canonical |
+| doctor |  | canonical |
+| get_feedback_stats |  | canonical |
+| get_project_context |  | canonical |
+| git_search |  | canonical |
+| heartbeat |  | canonical |
+| ingestion_status |  | canonical |
+| levara_instructions |  | canonical |
+| list_communities |  | canonical |
+| list_data |  | canonical |
+| list_memories |  | canonical |
+| pin_memory |  | canonical |
+| prune |  | canonical |
+| prune_graph |  | canonical |
+| query_entity |  | canonical |
+| recall_chat |  | canonical |
+| recall_memory |  | canonical |
+| recent_errors |  | canonical |
+| runtime_stats |  | canonical |
+| save_chat |  | canonical |
+| save_memory |  | canonical |
+| search |  | canonical |
+| search_chats |  | canonical |
+| set_context |  | canonical |
+| sync |  | canonical |
+| sync_status |  | canonical |
+| unpin_memory |  | canonical |
+| wake_up |  | canonical |
+| workspace_access_check |  | canonical |
+| workspace_audit_log |  | canonical |
+| workspace_commit |  | canonical |
+| workspace_conflicts |  | canonical |
+| workspace_context |  | canonical |
+| workspace_context_artifacts |  | canonical |
+| workspace_delete |  | canonical |
+| workspace_enqueue_index_job |  | canonical |
+| workspace_gc |  | canonical |
+| workspace_index |  | canonical |
+| workspace_index_jobs |  | canonical |
+| workspace_log |  | canonical |
+| workspace_manifest |  | canonical |
+| workspace_ops_status |  | canonical |
+| workspace_read |  | canonical |
+| workspace_reconcile |  | canonical |
+| workspace_reindex_artifacts |  | canonical |
+| workspace_reindex_paths |  | canonical |
+| workspace_retry_index_job |  | canonical |
+| workspace_revert |  | canonical |
+| workspace_run_get |  | canonical |
+| workspace_run_start |  | canonical |
+| workspace_search |  | canonical |
+| workspace_watch_status |  | canonical |
+| workspace_write |  | canonical |
+
 <!-- END: contract-mcp -->

@@ -58,6 +58,15 @@ func gitCommitTime() string {
 	return strings.TrimSpace(string(out))
 }
 
-// Stubs — filled in by tasks 7–11.
-func writeAll(c contract.Contract, outDir, repoRoot string) error { return nil }
+func writeAll(c contract.Contract, outDir, repoRoot string) error {
+	if err := writeJSON(c, outDir); err != nil {
+		return err
+	}
+	if err := writeMarkdown(c, outDir); err != nil {
+		return err
+	}
+	return rewriteAgentsMD(c, repoRoot)
+}
+
+// Stub — filled in by task 11.
 func validate(c contract.Contract, outDir, repoRoot string) error { return nil }
