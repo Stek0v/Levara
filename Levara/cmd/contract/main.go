@@ -67,6 +67,3 @@ func writeAll(c contract.Contract, outDir, repoRoot string) error {
 	}
 	return rewriteAgentsMD(c, repoRoot)
 }
-
-// Stub — filled in by task 11.
-func validate(c contract.Contract, outDir, repoRoot string) error { return nil }
