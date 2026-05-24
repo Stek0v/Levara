@@ -189,3 +189,10 @@ explicitly opted in via `types=["collections"]` + `collections=[...]`).
 4. **Saving code snippets** — store the *decision* and *why*, not the implementation.
 5. **Forgetting `set_context` at session start** — saves end up in the wrong collection.
 6. **Saving relative dates** — always convert "yesterday" / "last week" to absolute ISO date in value.
+
+---
+
+## MCP Tools
+
+<!-- BEGIN: contract-mcp -->
+<!-- END: contract-mcp -->
