@@ -38,3 +38,15 @@ func TestToolDescriptorsArchitectureContract(t *testing.T) {
 		}
 	}
 }
+
+func TestMCPInventoryCoversCritical(t *testing.T) {
+	got := map[string]bool{}
+	for _, m := range MCPInventory() {
+		got[m.Name] = true
+	}
+	for _, name := range []string{"search", "save_memory", "wake_up", "set_context"} {
+		if !got[name] {
+			t.Fatalf("MCPInventory missing %s", name)
+		}
+	}
+}
