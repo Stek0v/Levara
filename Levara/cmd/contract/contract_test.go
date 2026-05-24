@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/json"
+	"os"
 	"sort"
 	"testing"
 )
@@ -25,4 +27,26 @@ func TestCollectIsDeterministic(t *testing.T) {
 	}
 	t.Logf("counts: rest=%d grpc=%d mcp=%d schema=%d",
 		len(a.REST), len(a.GRPC), len(a.MCP), len(a.Schema))
+}
+
+func TestRenderJSONByteIdentical(t *testing.T) {
+	dir := t.TempDir()
+	c := collect("rev-1", "2026-05-24T00:00:00Z")
+	if err := writeJSON(c, dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSON(c, dir); err != nil {
+		t.Fatal(err)
+	}
+	b1, err := os.ReadFile(dir + "/contract.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !json.Valid(b1) {
+		t.Fatal("invalid JSON")
+	}
+	b2, _ := os.ReadFile(dir + "/contract.json")
+	if string(b1) != string(b2) {
+		t.Fatal("two writes differ")
+	}
 }
