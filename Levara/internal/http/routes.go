@@ -1,24 +1,22 @@
 package http
 
-// APIStatus describes the architectural role of a REST endpoint.
-type APIStatus string
-
-const (
-	APICanonical APIStatus = "canonical"
-	APILegacy    APIStatus = "legacy_compat"
-	APIAlias     APIStatus = "alias"
-	APIOps       APIStatus = "ops"
-)
+import "github.com/stek0v/levara/internal/contract"
 
 // RouteSpec is the stable REST route inventory used by architecture tests and
 // generated docs. Keep this list in sync with RegisterAPI and main.go protected
 // vector routes when adding or removing public API surface.
-type RouteSpec struct {
-	Method string
-	Path   string
-	Status APIStatus
-	Group  string
-}
+type RouteSpec = contract.RESTRoute
+
+// APIStatus describes the architectural role of a REST endpoint.
+type APIStatus = contract.Status
+
+const (
+	APICanonical  = contract.StatusCanonical
+	APILegacy     = contract.StatusLegacy
+	APIAlias      = contract.StatusAlias
+	APIOps        = contract.StatusOps
+	APIDeprecated = contract.StatusDeprecated
+)
 
 // RESTRouteInventory returns the canonical REST contract for /api/v1 routes
 // registered by RegisterAPI plus the protected legacy vector compatibility
