@@ -74,6 +74,31 @@ func TestRenderMarkdownByteIdentical(t *testing.T) {
 	}
 }
 
+func TestValidateDetectsDrift(t *testing.T) {
+	dir := t.TempDir()
+	c := collect("rev-1", "2026-05-24T00:00:00Z")
+	// Seed an AGENTS.md with markers so writeAll succeeds even though we don't read it back.
+	if err := os.WriteFile(dir+"/AGENTS.md",
+		[]byte("<!-- BEGIN: contract-mcp -->\n<!-- END: contract-mcp -->\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeAll(c, dir, dir); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := validate(c, dir, dir); err != nil {
+		t.Fatalf("validate clean: %v", err)
+	}
+
+	// Mutate disk: drift introduced.
+	if err := os.WriteFile(dir+"/contract.json", []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := validate(c, dir, dir); err == nil {
+		t.Fatal("validate did not detect drift")
+	}
+}
+
 func TestRewriteAgentsMD(t *testing.T) {
 	dir := t.TempDir()
 	src := "# Title\n\n## MCP Tools\n\n<!-- BEGIN: contract-mcp -->\nstale\n<!-- END: contract-mcp -->\n"

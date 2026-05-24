@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 
@@ -12,11 +11,10 @@ func writeJSON(c contract.Contract, outDir string) error {
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return err
 	}
-	b, err := json.MarshalIndent(c, "", "  ")
+	b, err := renderJSONBytes(c)
 	if err != nil {
 		return err
 	}
-	b = append(b, '\n')
 	return atomicWrite(filepath.Join(outDir, "contract.json"), b)
 }
 
