@@ -18,6 +18,7 @@ import (
 	"github.com/stek0v/levara/pkg/router"
 	"github.com/stek0v/levara/pkg/runreg"
 	"github.com/stek0v/levara/pkg/storage"
+	"github.com/stek0v/levara/pkg/workspace"
 )
 
 // APIConfig holds configuration for Levara API endpoints.
@@ -80,12 +81,7 @@ type APIConfig struct {
 
 // RegisterAPI registers all Levara endpoints on the Fiber app.
 func RegisterAPI(app fiber.Router, cfg APIConfig) {
-	if cfg.StoragePath == "" {
-		cfg.StoragePath = "data/uploads"
-	}
-	if cfg.WorkspacePath == "" {
-		cfg.WorkspacePath = "data/workspace"
-	}
+	cfg.StoragePath, cfg.WorkspacePath = workspace.ResolveRuntimePaths(cfg.StoragePath, cfg.WorkspacePath)
 	// BL-2: log MkdirAll failures so ops can see permission / disk-full
 	// issues before the first upload attempt returns a cryptic 500. We
 	// don't fail startup — readonly filesystems are a legit deployment

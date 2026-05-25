@@ -1345,7 +1345,7 @@ func loadWorkspaceManifest(cfg APIConfig, projectID, branch string) (*workspace.
 }
 
 func workspaceManifestPath(cfg APIConfig, projectID, branch string) string {
-	return filepath.Join(workspaceRoot(cfg), ".kb", "manifests", safeWorkspaceID(projectID)+"__"+safeWorkspaceID(branch)+".json")
+	return workspace.ManifestPath(workspaceRoot(cfg), projectID, branch)
 }
 
 func workspaceRoot(cfg APIConfig) string {
@@ -1356,7 +1356,7 @@ func workspaceRoot(cfg APIConfig) string {
 }
 
 func workspaceProjectRoot(cfg APIConfig, projectID, branch string) string {
-	return filepath.Join(workspaceRoot(cfg), "projects", safeWorkspaceID(projectID), safeWorkspaceID(branch))
+	return workspace.ProjectRoot(workspaceRoot(cfg), projectID, branch)
 }
 
 func workspaceFilePath(cfg APIConfig, projectID, branch, path string) (string, string, error) {
@@ -1891,10 +1891,7 @@ func workspaceSearchEnrichedResults(raw any, target workspaceSearchTarget, fresh
 }
 
 func defaultBranch(branch string) string {
-	if branch == "" {
-		return "main"
-	}
-	return branch
+	return workspace.DefaultBranch(branch)
 }
 
 func digestText(text string) string {
@@ -1903,23 +1900,7 @@ func digestText(text string) string {
 }
 
 func safeWorkspaceID(s string) string {
-	if s == "" {
-		return "default"
-	}
-	var b strings.Builder
-	for _, r := range s {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
-			b.WriteRune(r)
-		default:
-			b.WriteByte('_')
-		}
-	}
-	out := strings.Trim(b.String(), "_")
-	if out == "" {
-		return "default"
-	}
-	return out
+	return workspace.SafeID(s)
 }
 
 func (h *mcpHandler) toolWorkspaceSearch(ctx context.Context, args map[string]any) mcpToolResult {
