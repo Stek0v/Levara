@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-05-24T14:11:26+03:00",
-  "git_rev": "15f7cbbb1ac829e44f88347eb573e7663d5eb619",
+  "generated_at": "2026-05-25T11:56:57+03:00",
+  "git_rev": "9292eeef90863ffba4c9303888a1d8a5bce52b2f",
   "rest": [
     {
       "method": "POST",
@@ -905,254 +905,317 @@
   "mcp": [
     {
       "name": "add",
+      "group": "data",
       "status": "canonical"
     },
     {
       "name": "add_feedback",
+      "group": "feedback",
       "status": "canonical"
     },
     {
       "name": "analyze_commits",
+      "group": "git",
       "status": "canonical"
     },
     {
       "name": "check_drift",
+      "group": "data",
       "status": "canonical"
     },
     {
       "name": "codify",
+      "group": "cognify",
       "status": "canonical"
     },
     {
       "name": "cognify",
+      "group": "cognify",
       "status": "canonical"
     },
     {
       "name": "cognify_status",
+      "group": "cognify",
       "status": "canonical"
     },
     {
       "name": "cross_search",
+      "group": "search",
       "status": "canonical"
     },
     {
       "name": "delete",
+      "group": "data",
       "status": "canonical"
     },
     {
       "name": "diary_read",
+      "group": "diary",
       "status": "canonical"
     },
     {
       "name": "diary_write",
+      "group": "diary",
       "status": "canonical"
     },
     {
       "name": "doctor",
+      "group": "ops",
       "status": "canonical"
     },
     {
       "name": "get_feedback_stats",
+      "group": "feedback",
       "status": "canonical"
     },
     {
       "name": "get_project_context",
+      "group": "context",
       "status": "canonical"
     },
     {
       "name": "git_search",
+      "group": "git",
       "status": "canonical"
     },
     {
       "name": "heartbeat",
+      "group": "ops",
       "status": "canonical"
     },
     {
       "name": "ingestion_status",
+      "group": "ops",
       "status": "canonical"
     },
     {
       "name": "levara_instructions",
+      "group": "ops",
       "status": "canonical"
     },
     {
       "name": "list_communities",
+      "group": "search",
       "status": "canonical"
     },
     {
       "name": "list_data",
+      "group": "data",
       "status": "canonical"
     },
     {
       "name": "list_memories",
+      "group": "memory",
       "status": "canonical"
     },
     {
       "name": "pin_memory",
+      "group": "memory",
       "status": "canonical"
     },
     {
       "name": "prune",
+      "group": "data",
       "status": "canonical"
     },
     {
       "name": "prune_graph",
+      "group": "git",
       "status": "canonical"
     },
     {
       "name": "query_entity",
+      "group": "search",
       "status": "canonical"
     },
     {
       "name": "recall_chat",
+      "group": "chat",
       "status": "canonical"
     },
     {
       "name": "recall_memory",
+      "group": "memory",
       "status": "canonical"
     },
     {
       "name": "recent_errors",
+      "group": "ops",
       "status": "canonical"
     },
     {
       "name": "runtime_stats",
+      "group": "ops",
       "status": "canonical"
     },
     {
       "name": "save_chat",
+      "group": "chat",
       "status": "canonical"
     },
     {
       "name": "save_memory",
+      "group": "memory",
       "status": "canonical"
     },
     {
       "name": "search",
+      "group": "search",
       "status": "canonical"
     },
     {
       "name": "search_chats",
+      "group": "chat",
       "status": "canonical"
     },
     {
       "name": "set_context",
+      "group": "context",
       "status": "canonical"
     },
     {
       "name": "sync",
+      "group": "sync",
       "status": "canonical"
     },
     {
       "name": "sync_status",
+      "group": "sync",
       "status": "canonical"
     },
     {
       "name": "unpin_memory",
+      "group": "memory",
       "status": "canonical"
     },
     {
       "name": "wake_up",
+      "group": "memory",
       "status": "canonical"
     },
     {
       "name": "workspace_access_check",
+      "group": "workspace",
       "status": "canonical"
     },
     {
       "name": "workspace_audit_log",
+      "group": "workspace",
       "status": "canonical"
     },
     {
       "name": "workspace_commit",
+      "group": "workspace",
       "status": "canonical"
     },
     {
       "name": "workspace_conflicts",
+      "group": "workspace",
       "status": "canonical"
     },
     {
       "name": "workspace_context",
+      "group": "workspace",
       "status": "canonical"
     },
     {
       "name": "workspace_context_artifacts",
+      "group": "workspace",
       "status": "canonical"
     },
     {
       "name": "workspace_delete",
+      "group": "workspace",
       "status": "canonical"
     },
     {
       "name": "workspace_enqueue_index_job",
+      "group": "workspace",
       "status": "canonical"
     },
     {
       "name": "workspace_gc",
+      "group": "workspace",
       "status": "canonical"
     },
     {
       "name": "workspace_index",
+      "group": "workspace",
       "status": "canonical"
     },
     {
       "name": "workspace_index_jobs",
+      "group": "workspace",
       "status": "canonical"
     },
     {
       "name": "workspace_log",
+      "group": "workspace",
       "status": "canonical"
     },
     {
       "name": "workspace_manifest",
+      "group": "workspace",
       "status": "canonical"
     },
     {
       "name": "workspace_ops_status",
+      "group": "workspace",
       "status": "canonical"
     },
     {
       "name": "workspace_read",
+      "group": "workspace",
       "status": "canonical"
     },
     {
       "name": "workspace_reconcile",
+      "group": "workspace",
       "status": "canonical"
     },
     {
       "name": "workspace_reindex_artifacts",
+      "group": "workspace",
       "status": "canonical"
     },
     {
       "name": "workspace_reindex_paths",
+      "group": "workspace",
       "status": "canonical"
     },
     {
       "name": "workspace_retry_index_job",
+      "group": "workspace",
       "status": "canonical"
     },
     {
       "name": "workspace_revert",
+      "group": "workspace",
       "status": "canonical"
     },
     {
       "name": "workspace_run_get",
+      "group": "workspace",
       "status": "canonical"
     },
     {
       "name": "workspace_run_start",
+      "group": "workspace",
       "status": "canonical"
     },
     {
       "name": "workspace_search",
+      "group": "workspace",
       "status": "canonical"
     },
     {
       "name": "workspace_watch_status",
+      "group": "workspace",
       "status": "canonical"
     },
     {
       "name": "workspace_write",
+      "group": "workspace",
       "status": "canonical"
     }
   ],

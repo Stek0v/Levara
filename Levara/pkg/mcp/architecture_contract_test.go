@@ -50,3 +50,11 @@ func TestMCPInventoryCoversCritical(t *testing.T) {
 		}
 	}
 }
+
+func TestMCPInventoryEveryToolGrouped(t *testing.T) {
+	for _, m := range MCPInventory() {
+		if m.Group == "" {
+			t.Fatalf("tool %s has no group — add it to groupByName in inventory.go", m.Name)
+		}
+	}
+}
