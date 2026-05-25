@@ -52,7 +52,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"flag"
 	"fmt"
 	"log"
@@ -62,13 +61,8 @@ import (
 	"strings"
 	"time"
 
-	"path/filepath"
-
-	"github.com/gofiber/swagger"
-	"github.com/hashicorp/raft"
 	_ "github.com/jackc/pgx/v5/stdlib"       // pgx via database/sql (binary protocol, prepared stmts)
 	_ "github.com/ncruces/go-sqlite3/driver" // pure-Go SQLite driver (no CGO, ARM64 ready)
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/stek0v/levara/internal/cluster"
 	vectorGrpc "github.com/stek0v/levara/internal/grpc"
 	"github.com/stek0v/levara/internal/metrics"
@@ -77,17 +71,12 @@ import (
 	_ "github.com/stek0v/levara/docs" // swaggo-generated OpenAPI spec (T13)
 	"github.com/stek0v/levara/pkg/embed"
 	"github.com/stek0v/levara/pkg/graphdb"
-	"github.com/stek0v/levara/pkg/ingest"
 	"github.com/stek0v/levara/pkg/llmcache"
 	"github.com/stek0v/levara/pkg/observe"
 	"github.com/stek0v/levara/pkg/router"
 	"github.com/stek0v/levara/pkg/runreg"
-	"github.com/stek0v/levara/pkg/storage"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/adaptor"
-	"github.com/gofiber/fiber/v2/middleware/cors"
-	"github.com/gofiber/fiber/v2/middleware/logger"
 
 	vectorHttp "github.com/stek0v/levara/internal/http"
 )
@@ -196,20 +185,7 @@ func main() {
 	// ---------------------------------------------------------------
 	// Storage backend (P3.5): STORAGE_BACKEND=local|s3
 	// ---------------------------------------------------------------
-	storagePath := *dataDir + "/uploads"
-	fileStore, storeErr := storage.NewFromEnv(storagePath)
-	if storeErr != nil {
-		log.Fatalf("storage init: %v", storeErr)
-	}
-	storageBackend := strings.ToLower(os.Getenv("STORAGE_BACKEND"))
-	srvLog.Info("storage backend ready", map[string]any{"backend": storageBackend, "path": storagePath})
-	if storageBackend == "s3" {
-		srvLog.Info("S3 storage enabled for upload hot-path", map[string]any{
-			"hot_path":     "/api/v1/add -> ingest + mirror to cfg.FileStorage",
-			"location_uri": "storage://<key> for non-local backend",
-			"storage_path": storagePath,
-		})
-	}
+	fileStore, storageBackend, _ := initStorageBackend(*dataDir, srvLog)
 
 	hnswCfg := store.HNSWConfig{
 		M:            *hnswM,
@@ -236,126 +212,27 @@ func main() {
 		log.Printf("Levara Raft consensus mode")
 	}
 
-	var shards []store.ShardHandler
-
-	for i := range numShards {
-		dbPath := fmt.Sprintf("%s/%s/shard_%d/meta.bin", *dataDir, nodeID, i)
-		db, err := store.NewLevara(*dim, dbPath, hnswCfg)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		if *standalone {
-			shards = append(shards, &cluster.DirectNode{DB: db}) // Repl set after replServer created
-		} else {
-			raftNode, err := cluster.NewRaftNode(i, nodeID, *dataDir+"/"+nodeID, basePort+i, db,
-				cluster.WithBindAddr(*raftAddr))
-			if err != nil {
-				log.Fatal(err)
-			}
-
-			if *bootstrap {
-				configuration := raft.Configuration{
-					Servers: []raft.Server{
-						{
-							ID:      raft.ServerID(fmt.Sprintf("%s-shard-%d", nodeID, i)),
-							Address: raft.ServerAddress(fmt.Sprintf("%s:%d", *raftAddr, basePort+i)),
-						},
-					},
-				}
-				raftNode.Raft.BootstrapCluster(configuration)
-			}
-			shards = append(shards, raftNode)
-		}
-	}
-
-	c := store.NewCluster(shards)
-
-	// ---------------------------------------------------------------
-	// Replication setup
-	// ---------------------------------------------------------------
-	// Get a reference DB for replication (shard 0's underlying DB)
-	var replDB *store.Levara
-	if len(shards) > 0 {
-		switch s := shards[0].(type) {
-		case *cluster.DirectNode:
-			replDB = s.DB
-		case *cluster.RaftNode:
-			replDB = s.DB
-		}
-	}
-
-	var replServer *cluster.ReplicationServer
-	if replDB != nil {
-		replServer = cluster.NewReplicationServer(nodeID, nil, replDB)
-		if *joinAddr != "" {
-			replServer.SetRole("replica")
-			replServer.SetPrimaryAddr(*joinAddr)
-			log.Printf("Levara replica mode — joining primary at %s", *joinAddr)
-		} else {
-			replServer.SetRole("primary")
-			log.Printf("Levara primary mode — accepting replicas")
-		}
-		// Wire replication to all DirectNode shards
-		for _, shard := range shards {
-			if dn, ok := shard.(*cluster.DirectNode); ok {
-				dn.Repl = replServer
-			}
-		}
-	}
-
-	app := fiber.New()
-	app.Use(cors.New(cors.Config{
-		AllowOrigins:     "http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000,http://127.0.0.1:3001,http://localhost:8080,http://localhost:8081",
-		AllowMethods:     "GET,POST,PUT,DELETE,PATCH,OPTIONS",
-		AllowHeaders:     "Origin,Content-Type,Accept,Authorization,X-Api-Key",
-		AllowCredentials: true,
-	}))
-	app.Use(logger.New())
-
-	handler := vectorHttp.NewHandler(c, *dim)
-	app.Get("/metrics", adaptor.HTTPHandler(promhttp.Handler()))
-
-	// Swagger UI (T13). Public in dev so anyone can explore; in prod we
-	// could gate behind a JWT admin middleware, but for now we let
-	// operators flip it off entirely by not setting ENV=dev. Regenerate
-	// docs/swagger.{json,yaml} via `make swag`.
-	if strings.EqualFold(os.Getenv("ENV"), "dev") || os.Getenv("ENV") == "" {
-		app.Get("/swagger/*", swagger.HandlerDefault)
-	}
-
-	// Root-level health for frontend compatibility
-	app.Get("/health", func(c *fiber.Ctx) error {
-		return c.JSON(fiber.Map{"status": "ready", "health": "healthy", "version": "levara-go"})
+	vectorRuntime := initVectorRuntime(vectorRuntimeConfig{
+		Dim:        *dim,
+		DataDir:    *dataDir,
+		NodeID:     nodeID,
+		NumShards:  numShards,
+		Standalone: *standalone,
+		Bootstrap:  *bootstrap,
+		RaftAddr:   *raftAddr,
+		RaftPort:   basePort,
+		JoinAddr:   *joinAddr,
+		HNSW:       hnswCfg,
 	})
+	shards := vectorRuntime.Shards
+	c := vectorRuntime.Cluster
+	replServer := vectorRuntime.Replication
+	replDB := replicationDB(shards)
 
-	// Build/version probe — consumed by the Qwen3 doctor drift-assertion (349f6e1)
-	// and by ops scripts to verify the deployed git SHA without parsing /metrics.
-	versionHandler := func(c *fiber.Ctx) error { return c.JSON(versionPayload()) }
-	app.Get("/version", versionHandler)
-
-	// ---------------------------------------------------------------
-	// Cluster replication endpoints
-	// ---------------------------------------------------------------
-	if replServer != nil {
-		app.Get("/cluster/wal/stream", adaptor.HTTPHandlerFunc(replServer.HandleStreamWAL))
-		app.Get("/cluster/snapshot", adaptor.HTTPHandlerFunc(replServer.HandleSnapshot))
-		app.Get("/cluster/state", adaptor.HTTPHandlerFunc(replServer.HandleClusterState))
-	}
-
-	// Cloud API compatibility: /api/datasets → /api/v1/datasets (cloudFetch strips /v1)
-	cloudApi := app.Group("/api")
-	cloudApi.Get("/datasets", func(c *fiber.Ctx) error {
-		return c.Redirect("/api/v1/datasets", 307)
-	})
-	cloudApi.Get("/datasets/:id/data", func(c *fiber.Ctx) error {
-		return c.Redirect("/api/v1/datasets/"+c.Params("id")+"/data", 307)
-	})
-	cloudApi.Get("/health", func(c *fiber.Ctx) error {
-		return c.JSON(fiber.Map{"status": "ready", "health": "healthy", "version": "levara-go"})
-	})
-
-	api := app.Group("/api/v1")
+	httpRuntime := initHTTPRuntime(c, *dim, replServer, errTracker)
+	app := httpRuntime.App
+	api := httpRuntime.API
+	handler := httpRuntime.VectorHandler
 
 	// Neo4j schema bootstrap is one-time at startup. Per-request handlers
 	// should not execute DDL for latency and side-effect reasons.
@@ -380,29 +257,7 @@ func main() {
 		// DB set after pgDB init below
 	}
 
-	// Public routes (no auth required)
-	api.Get("/info", handler.Info)
-	api.Get("/health", func(c *fiber.Ctx) error {
-		return c.JSON(fiber.Map{"status": "ready", "health": "healthy", "version": "levara-go"})
-	})
-	api.Get("/version", versionHandler)
-	api.Post("/checks/connection", func(c *fiber.Ctx) error {
-		return c.JSON(fiber.Map{"status": "connected"})
-	})
 	// api.Get("/visualize", ...) — moved below after DB init to include cfg.DB
-
-	// Error tracking endpoint (P3.4 observability)
-	api.Get("/errors", func(c *fiber.Ctx) error {
-		limit := c.QueryInt("limit", 50)
-		return c.JSON(fiber.Map{
-			"errors": errTracker.Recent(limit),
-			"total":  errTracker.Count(),
-		})
-	})
-	api.Delete("/errors", func(c *fiber.Ctx) error {
-		errTracker.Clear()
-		return c.JSON(fiber.Map{"cleared": true})
-	})
 
 	// Initialize CollectionManager for native collections (used by gRPC + the
 	// collection-aware HTTP write/search/delete paths).
@@ -416,93 +271,9 @@ func main() {
 	// for backward compatibility.
 	handler.SetCollections(colManager)
 
-	// Database connection pool (shared across all HTTP handlers)
-	// DB_PROVIDER: "sqlite" (embedded, no external server) or "postgres" (default)
-	pgDSN := ""
-	var pgDB *sql.DB
-	dbProvider := os.Getenv("DB_PROVIDER")
-
-	if dbProvider == "sqlite" {
-		// SQLite mode: pure-Go, no CGO, ARM64 ready (Raspberry Pi)
-		vectorHttp.SetDBProvider(vectorHttp.DBSQLite)
-		ingest.SetSQLiteMode(true)
-		dbPath := os.Getenv("DB_PATH")
-		if dbPath == "" {
-			dbPath = filepath.Join(*dataDir, "levara.db")
-		}
-		// Ensure parent directory exists
-		os.MkdirAll(filepath.Dir(dbPath), 0755)
-
-		var dbErr error
-		// ncruces/go-sqlite3: connection string with pragma query params
-		// ncruces/go-sqlite3: pragma params become part of filename — this is by design.
-		// Use simple WAL pragma only to keep filename manageable.
-		// ncruces/go-sqlite3: use file: URI with pragmas (file: prefix prevents
-		// pragma params from becoming part of the literal filename on disk)
-		dsn := "file:" + dbPath + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
-		pgDB, dbErr = sql.Open("sqlite3", dsn)
-		log.Printf("SQLite DSN: %s", dsn)
-		if dbErr != nil {
-			log.Printf("SQLite init warning: %v (running without DB)", dbErr)
-		} else {
-			// Allow multiple connections — ncruces driver may close connections
-			// after use; pool needs room to create replacements
-			pgDB.SetMaxOpenConns(4)
-			pgDB.SetMaxIdleConns(4)
-			pgDB.SetConnMaxLifetime(0)
-			pgDB.SetConnMaxIdleTime(0)
-			if err := pgDB.Ping(); err != nil {
-				log.Printf("SQLite ping warning: %v (running without DB)", err)
-				pgDB.Close()
-				pgDB = nil
-			} else {
-				log.Printf("SQLite database ready: %s", dbPath)
-				if err := vectorHttp.MigrateSchema(pgDB); err != nil {
-					log.Printf("Schema migration warning: %v", err)
-				}
-			}
-		}
-	} else if dbHost := os.Getenv("DB_HOST"); dbHost != "" {
-		// PostgreSQL mode (default)
-		vectorHttp.SetDBProvider(vectorHttp.DBPostgres)
-		dbUser := os.Getenv("DB_USERNAME")
-		if dbUser == "" {
-			dbUser = "levara"
-		}
-		dbPass := os.Getenv("DB_PASSWORD")
-		if dbPass == "" {
-			dbPass = "levara"
-		}
-		dbName := os.Getenv("DB_NAME")
-		if dbName == "" {
-			dbName = "levara_db"
-		}
-		dbPort := os.Getenv("DB_PORT")
-		if dbPort == "" {
-			dbPort = "5432"
-		}
-		pgDSN = fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable", dbUser, dbPass, dbHost, dbPort, dbName)
-
-		var dbErr error
-		pgDB, dbErr = sql.Open("pgx", pgDSN)
-		if dbErr != nil {
-			log.Printf("PostgreSQL pool init warning: %v (running without DB)", dbErr)
-		} else {
-			pgDB.SetMaxOpenConns(25)
-			pgDB.SetMaxIdleConns(10)
-			pgDB.SetConnMaxLifetime(5 * time.Minute)
-			if err := pgDB.Ping(); err != nil {
-				log.Printf("PostgreSQL ping warning: %v (running without DB)", err)
-				pgDB.Close()
-				pgDB = nil
-			} else {
-				log.Printf("PostgreSQL connection pool ready (max_open=25, max_idle=10)")
-				if err := vectorHttp.MigrateSchema(pgDB); err != nil {
-					log.Printf("Schema migration warning: %v", err)
-				}
-			}
-		}
-	}
+	sqlRuntime := initSQLRuntime(*dataDir)
+	pgDSN := sqlRuntime.DSN
+	pgDB := sqlRuntime.DB
 	vizCfg.DB = pgDB // PostgreSQL/SQLite fallback for graph visualization
 	api.Get("/visualize", vectorHttp.VisualizeHTML(&vizCfg))
 	if pgDB != nil {
@@ -662,49 +433,49 @@ func main() {
 	workspaceWatcher := vectorHttp.NewWorkspaceWatchState()
 
 	apiCfg := vectorHttp.APIConfig{
-		PostgresDSN:      pgDSN,
-		StoragePath:      *dataDir + "/uploads",
-		WorkspacePath:    *dataDir + "/workspace",
-		JWTSecret:        authCfg.JWTSecret,
-		RequireAuth:      *requireAuth,
-		WorkspaceWatcher: workspaceWatcher,
-		EmbedEndpoint:    embedEndpoint,
-		EmbedModel:       embedModel,
-		EmbedClient:      sharedEmbed,
-		Collections:      colManager,
-		Neo4jCfg:         vizCfg,
-		DB:               pgDB,
-		BM25Indexes:      grpcSvc.BM25Indexes(),
-		LLMCache:         llmCache,
-		LLMProvider:      llmProvider,
-		ErrorTracker:     errTracker,
-		FileStorage:      fileStore,
-		Logger:           srvLog,
+		PostgresDSN:             pgDSN,
+		StoragePath:             *dataDir + "/uploads",
+		WorkspacePath:           *dataDir + "/workspace",
+		JWTSecret:               authCfg.JWTSecret,
+		RequireAuth:             *requireAuth,
+		WorkspaceWatcher:        workspaceWatcher,
+		EmbedEndpoint:           embedEndpoint,
+		EmbedModel:              embedModel,
+		EmbedClient:             sharedEmbed,
+		Collections:             colManager,
+		Neo4jCfg:                vizCfg,
+		DB:                      pgDB,
+		BM25Indexes:             grpcSvc.BM25Indexes(),
+		LLMCache:                llmCache,
+		LLMProvider:             llmProvider,
+		ErrorTracker:            errTracker,
+		FileStorage:             fileStore,
+		Logger:                  srvLog,
 		RerankEndpoint:          rerankCfg.Endpoint,
 		RerankModel:             rerankCfg.Model,
 		RerankTimeoutMs:         rerankCfg.TimeoutMs,
 		RerankBudgetMs:          rerankCfg.BudgetMs,
 		RerankScoreGapThreshold: rerankCfg.ScoreGapThreshold,
 		AdaptiveWeights:         adaptiveWeights,
-		Runs:             runs,
-		SearchStrategies: searchStrategies,
+		Runs:                    runs,
+		SearchStrategies:        searchStrategies,
 	}
 
 	// Protected routes: Levara API (datasets, upload, cognify, search)
 	vectorHttp.RegisterAPI(api, apiCfg)
 
 	mcpCfg := vectorHttp.APIConfig{
-		EmbedEndpoint:    embedEndpoint,
-		EmbedModel:       embedModel,
-		EmbedClient:      sharedEmbed,
-		WorkspacePath:    *dataDir + "/workspace",
-		JWTSecret:        authCfg.JWTSecret,
-		RequireAuth:      *requireAuth,
-		WorkspaceWatcher: workspaceWatcher,
-		Collections:      colManager,
-		DB:               pgDB,
-		BM25Indexes:      grpcSvc.BM25Indexes(),
-		LLMCache:         llmCache,
+		EmbedEndpoint:           embedEndpoint,
+		EmbedModel:              embedModel,
+		EmbedClient:             sharedEmbed,
+		WorkspacePath:           *dataDir + "/workspace",
+		JWTSecret:               authCfg.JWTSecret,
+		RequireAuth:             *requireAuth,
+		WorkspaceWatcher:        workspaceWatcher,
+		Collections:             colManager,
+		DB:                      pgDB,
+		BM25Indexes:             grpcSvc.BM25Indexes(),
+		LLMCache:                llmCache,
 		RerankEndpoint:          rerankCfg.Endpoint,
 		RerankModel:             rerankCfg.Model,
 		RerankTimeoutMs:         rerankCfg.TimeoutMs,

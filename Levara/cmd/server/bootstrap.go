@@ -7,32 +7,319 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/adaptor"
+	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/gofiber/fiber/v2/middleware/logger"
+	"github.com/gofiber/swagger"
+	"github.com/hashicorp/raft"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"google.golang.org/grpc"
 
 	"github.com/stek0v/levara/internal/cluster"
 	vectorGrpc "github.com/stek0v/levara/internal/grpc"
+	vectorHttp "github.com/stek0v/levara/internal/http"
 	"github.com/stek0v/levara/internal/store"
 	"github.com/stek0v/levara/pkg/embed"
 	"github.com/stek0v/levara/pkg/graphdb"
+	"github.com/stek0v/levara/pkg/ingest"
 	"github.com/stek0v/levara/pkg/llm"
 	"github.com/stek0v/levara/pkg/llmcache"
 	"github.com/stek0v/levara/pkg/llmproxy"
 	"github.com/stek0v/levara/pkg/observe"
+	"github.com/stek0v/levara/pkg/storage"
 	pb "github.com/stek0v/levara/proto/pb"
 	pbv2 "github.com/stek0v/levara/proto/pb/v2"
 )
+
+func initStorageBackend(dataDir string, srvLog *observe.Logger) (storage.Storage, string, string) {
+	storagePath := dataDir + "/uploads"
+	fileStore, err := storage.NewFromEnv(storagePath)
+	if err != nil {
+		log.Fatalf("storage init: %v", err)
+	}
+	storageBackend := strings.ToLower(os.Getenv("STORAGE_BACKEND"))
+	if srvLog != nil {
+		srvLog.Info("storage backend ready", map[string]any{"backend": storageBackend, "path": storagePath})
+		if storageBackend == "s3" {
+			srvLog.Info("S3 storage enabled for upload hot-path", map[string]any{
+				"hot_path":     "/api/v1/add -> ingest + mirror to cfg.FileStorage",
+				"location_uri": "storage://<key> for non-local backend",
+				"storage_path": storagePath,
+			})
+		}
+	}
+	return fileStore, storageBackend, storagePath
+}
+
+type sqlRuntime struct {
+	DSN string
+	DB  *sql.DB
+}
+
+func initSQLRuntime(dataDir string) sqlRuntime {
+	dbProvider := os.Getenv("DB_PROVIDER")
+	if dbProvider == "sqlite" {
+		return initSQLiteRuntime(dataDir)
+	}
+	if os.Getenv("DB_HOST") != "" {
+		return initPostgresRuntime()
+	}
+	return sqlRuntime{}
+}
+
+type vectorRuntime struct {
+	Shards      []store.ShardHandler
+	Cluster     *store.Cluster
+	Replication *cluster.ReplicationServer
+}
+
+type vectorRuntimeConfig struct {
+	Dim        int
+	DataDir    string
+	NodeID     string
+	NumShards  int
+	Standalone bool
+	Bootstrap  bool
+	RaftAddr   string
+	RaftPort   int
+	JoinAddr   string
+	HNSW       store.HNSWConfig
+}
+
+func initVectorRuntime(cfg vectorRuntimeConfig) vectorRuntime {
+	var shards []store.ShardHandler
+	for i := range cfg.NumShards {
+		dbPath := fmt.Sprintf("%s/%s/shard_%d/meta.bin", cfg.DataDir, cfg.NodeID, i)
+		db, err := store.NewLevara(cfg.Dim, dbPath, cfg.HNSW)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		if cfg.Standalone {
+			shards = append(shards, &cluster.DirectNode{DB: db})
+			continue
+		}
+		raftNode, err := cluster.NewRaftNode(i, cfg.NodeID, cfg.DataDir+"/"+cfg.NodeID, cfg.RaftPort+i, db,
+			cluster.WithBindAddr(cfg.RaftAddr))
+		if err != nil {
+			log.Fatal(err)
+		}
+		if cfg.Bootstrap {
+			configuration := raft.Configuration{
+				Servers: []raft.Server{{
+					ID:      raft.ServerID(fmt.Sprintf("%s-shard-%d", cfg.NodeID, i)),
+					Address: raft.ServerAddress(fmt.Sprintf("%s:%d", cfg.RaftAddr, cfg.RaftPort+i)),
+				}},
+			}
+			raftNode.Raft.BootstrapCluster(configuration)
+		}
+		shards = append(shards, raftNode)
+	}
+
+	replServer := initReplicationServer(cfg.NodeID, cfg.JoinAddr, shards)
+	return vectorRuntime{
+		Shards:      shards,
+		Cluster:     store.NewCluster(shards),
+		Replication: replServer,
+	}
+}
+
+func initReplicationServer(nodeID, joinAddr string, shards []store.ShardHandler) *cluster.ReplicationServer {
+	replDB := replicationDB(shards)
+	if replDB == nil {
+		return nil
+	}
+	replServer := cluster.NewReplicationServer(nodeID, nil, replDB)
+	if joinAddr != "" {
+		replServer.SetRole("replica")
+		replServer.SetPrimaryAddr(joinAddr)
+		log.Printf("Levara replica mode — joining primary at %s", joinAddr)
+	} else {
+		replServer.SetRole("primary")
+		log.Printf("Levara primary mode — accepting replicas")
+	}
+	for _, shard := range shards {
+		if dn, ok := shard.(*cluster.DirectNode); ok {
+			dn.Repl = replServer
+		}
+	}
+	return replServer
+}
+
+func replicationDB(shards []store.ShardHandler) *store.Levara {
+	if len(shards) == 0 {
+		return nil
+	}
+	switch s := shards[0].(type) {
+	case *cluster.DirectNode:
+		return s.DB
+	case *cluster.RaftNode:
+		return s.DB
+	default:
+		return nil
+	}
+}
+
+type httpRuntime struct {
+	App            *fiber.App
+	API            fiber.Router
+	VectorHandler  *vectorHttp.Handler
+	VersionHandler fiber.Handler
+}
+
+func initHTTPRuntime(clusterStore *store.Cluster, dim int, replServer *cluster.ReplicationServer, errTracker *observe.ErrorTracker) httpRuntime {
+	app := fiber.New()
+	app.Use(cors.New(cors.Config{
+		AllowOrigins:     "http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000,http://127.0.0.1:3001,http://localhost:8080,http://localhost:8081",
+		AllowMethods:     "GET,POST,PUT,DELETE,PATCH,OPTIONS",
+		AllowHeaders:     "Origin,Content-Type,Accept,Authorization,X-Api-Key",
+		AllowCredentials: true,
+	}))
+	app.Use(logger.New())
+
+	handler := vectorHttp.NewHandler(clusterStore, dim)
+	app.Get("/metrics", adaptor.HTTPHandler(promhttp.Handler()))
+	if strings.EqualFold(os.Getenv("ENV"), "dev") || os.Getenv("ENV") == "" {
+		app.Get("/swagger/*", swagger.HandlerDefault)
+	}
+	app.Get("/health", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{"status": "ready", "health": "healthy", "version": "levara-go"})
+	})
+	versionHandler := func(c *fiber.Ctx) error { return c.JSON(versionPayload()) }
+	app.Get("/version", versionHandler)
+
+	if replServer != nil {
+		app.Get("/cluster/wal/stream", adaptor.HTTPHandlerFunc(replServer.HandleStreamWAL))
+		app.Get("/cluster/snapshot", adaptor.HTTPHandlerFunc(replServer.HandleSnapshot))
+		app.Get("/cluster/state", adaptor.HTTPHandlerFunc(replServer.HandleClusterState))
+	}
+
+	cloudApi := app.Group("/api")
+	cloudApi.Get("/datasets", func(c *fiber.Ctx) error {
+		return c.Redirect("/api/v1/datasets", 307)
+	})
+	cloudApi.Get("/datasets/:id/data", func(c *fiber.Ctx) error {
+		return c.Redirect("/api/v1/datasets/"+c.Params("id")+"/data", 307)
+	})
+	cloudApi.Get("/health", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{"status": "ready", "health": "healthy", "version": "levara-go"})
+	})
+
+	api := app.Group("/api/v1")
+	api.Get("/info", handler.Info)
+	api.Get("/health", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{"status": "ready", "health": "healthy", "version": "levara-go"})
+	})
+	api.Get("/version", versionHandler)
+	api.Post("/checks/connection", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{"status": "connected"})
+	})
+	api.Get("/errors", func(c *fiber.Ctx) error {
+		limit := c.QueryInt("limit", 50)
+		return c.JSON(fiber.Map{
+			"errors": errTracker.Recent(limit),
+			"total":  errTracker.Count(),
+		})
+	})
+	api.Delete("/errors", func(c *fiber.Ctx) error {
+		errTracker.Clear()
+		return c.JSON(fiber.Map{"cleared": true})
+	})
+
+	return httpRuntime{
+		App:            app,
+		API:            api,
+		VectorHandler:  handler,
+		VersionHandler: versionHandler,
+	}
+}
+
+func initSQLiteRuntime(dataDir string) sqlRuntime {
+	vectorHttp.SetDBProvider(vectorHttp.DBSQLite)
+	ingest.SetSQLiteMode(true)
+	dbPath := os.Getenv("DB_PATH")
+	if dbPath == "" {
+		dbPath = filepath.Join(dataDir, "levara.db")
+	}
+	_ = os.MkdirAll(filepath.Dir(dbPath), 0755)
+
+	dsn := "file:" + dbPath + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
+	db, err := sql.Open("sqlite3", dsn)
+	log.Printf("SQLite DSN: %s", dsn)
+	if err != nil {
+		log.Printf("SQLite init warning: %v (running without DB)", err)
+		return sqlRuntime{}
+	}
+	db.SetMaxOpenConns(4)
+	db.SetMaxIdleConns(4)
+	db.SetConnMaxLifetime(0)
+	db.SetConnMaxIdleTime(0)
+	if err := db.Ping(); err != nil {
+		log.Printf("SQLite ping warning: %v (running without DB)", err)
+		db.Close()
+		return sqlRuntime{}
+	}
+	log.Printf("SQLite database ready: %s", dbPath)
+	if err := vectorHttp.MigrateSchema(db); err != nil {
+		log.Printf("Schema migration warning: %v", err)
+	}
+	return sqlRuntime{DB: db}
+}
+
+func initPostgresRuntime() sqlRuntime {
+	vectorHttp.SetDBProvider(vectorHttp.DBPostgres)
+	dbUser := os.Getenv("DB_USERNAME")
+	if dbUser == "" {
+		dbUser = "levara"
+	}
+	dbPass := os.Getenv("DB_PASSWORD")
+	if dbPass == "" {
+		dbPass = "levara"
+	}
+	dbName := os.Getenv("DB_NAME")
+	if dbName == "" {
+		dbName = "levara_db"
+	}
+	dbPort := os.Getenv("DB_PORT")
+	if dbPort == "" {
+		dbPort = "5432"
+	}
+	dbHost := os.Getenv("DB_HOST")
+	dsn := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable", dbUser, dbPass, dbHost, dbPort, dbName)
+
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		log.Printf("PostgreSQL pool init warning: %v (running without DB)", err)
+		return sqlRuntime{DSN: dsn}
+	}
+	db.SetMaxOpenConns(25)
+	db.SetMaxIdleConns(10)
+	db.SetConnMaxLifetime(5 * time.Minute)
+	if err := db.Ping(); err != nil {
+		log.Printf("PostgreSQL ping warning: %v (running without DB)", err)
+		db.Close()
+		return sqlRuntime{DSN: dsn}
+	}
+	log.Printf("PostgreSQL connection pool ready (max_open=25, max_idle=10)")
+	if err := vectorHttp.MigrateSchema(db); err != nil {
+		log.Printf("Schema migration warning: %v", err)
+	}
+	return sqlRuntime{DSN: dsn, DB: db}
+}
 
 // initLLMProvider wires the multi-provider abstraction from env vars
 // (LLM_PROVIDER, LLM_ENDPOINT, LLM_API_KEY) and optionally wraps it with
@@ -303,18 +590,18 @@ func registerHealthDetails(app *fiber.App, deps healthDeps) {
 // needs. Defined here so the registration site is one parameter rather
 // than a long positional list.
 type healthDeps struct {
-	port           int
-	grpcPort       int
-	dim            int
-	pgDB           interface{ Ping() error }
-	neo4jURL       string
-	neo4jUser      string
-	neo4jPassword  string
-	neo4jDatabase  string
-	embedEndpoint  string
-	embedModel     string
-	llmProvider    llm.Provider
-	colManager     *store.CollectionManager
+	port          int
+	grpcPort      int
+	dim           int
+	pgDB          interface{ Ping() error }
+	neo4jURL      string
+	neo4jUser     string
+	neo4jPassword string
+	neo4jDatabase string
+	embedEndpoint string
+	embedModel    string
+	llmProvider   llm.Provider
+	colManager    *store.CollectionManager
 }
 
 // probeEmbedService tries a handful of well-known health paths under the
