@@ -94,34 +94,22 @@ def seed_if_needed(target: runner.Target, collection: str) -> dict:
         return {"reused": True, "count": current}
     runner.stderr(f"[seed] ingesting {expected} chunks into {collection}")
     corpus = memory_palace.load_corpus()
-    # Re-tag each record's metadata room into the per-record room so
-    # /search room-filter actually selects on per-chunk metadata
-    # (not just on the request's room tag). The seeder already
-    # encodes room into metadata; we forward it as the chunk's
-    # add-time room so it's indexed for filter overfetch.
-    batch_size = 64
-    written = 0
-    # Group corpus by room to send one batch per room, attaching
-    # the room tag at request level. This is what makes the
-    # downstream `room` filter on /search meaningful for P5.
-    by_room: dict[str, list[dict[str, str]]] = {}
-    import json as _json
-    for rec in corpus:
-        meta = _json.loads(rec["metadata"])
-        by_room.setdefault(meta["room"], []).append(rec)
-    for room_name, recs in by_room.items():
-        for i in range(0, len(recs), batch_size):
-            batch = recs[i : i + batch_size]
-            runner.add_texts(
-                target,
-                collection,
-                batch,
-                room=room_name,
-                tags=["loadprofile", "p5", "palace", room_name],
-            )
-            written += len(batch)
-        runner.stderr(f"[seed] room={room_name}: {len(recs)} records")
-    return {"reused": False, "count": written}
+    # Single-batch ingest. P5's earlier per-room batching attached the
+    # room tag at request level, but /cognify doesn't propagate
+    # room/tags to chunks (see runner.add_texts note) — the room
+    # filter at query time relies on per-text content semantics, not
+    # on add-time metadata. So batching by room buys nothing and
+    # exposes the cross-batch chunk-ID collision bug on unpatched
+    # Levara (Pi b4fface). Send everything in one call to keep the
+    # uuid5 text index unique.
+    runner.add_texts(
+        target,
+        collection,
+        corpus,
+        room="palace",
+        tags=["loadprofile", "p5", "palace"],
+    )
+    return {"reused": False, "count": len(corpus)}
 
 
 def run(
