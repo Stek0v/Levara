@@ -1,4 +1,4 @@
-.PHONY: all build run test benchmark clean docker arm64 proto proto-go proto-python swag
+.PHONY: all build run test benchmark clean docker arm64 proto proto-go proto-python swag contract contract-check
 
 # Regenerate OpenAPI spec from swaggo annotations (T13).
 # Requires `go install github.com/swaggo/swag/cmd/swag@latest` once.
@@ -97,3 +97,14 @@ clean:
 	@rm -rf bin/
 	@rm -f *.snap
 	@echo "Clean complete."
+
+# Regenerate canonical API contract artefacts (docs/api-contract.md,
+# docs/contract.json, AGENTS.md MCP section) from the in-tree inventories.
+contract:
+	@go run ./cmd/contract generate -out ../docs -repo ..
+
+# CI gate: fail when committed contract artefacts drift from current
+# inventories or when docs/deployment-matrix.md references an unknown
+# REST endpoint.
+contract-check:
+	@go run ./cmd/contract validate -out ../docs -repo ..

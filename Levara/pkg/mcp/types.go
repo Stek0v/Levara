@@ -53,6 +53,8 @@ type Tool struct {
 	Description  string         `json:"description"`
 	InputSchema  map[string]any `json:"inputSchema"`
 	OutputSchema map[string]any `json:"outputSchema,omitempty"`
+	Group        string         `json:"group,omitempty"`  // optional — e.g. "memory", "graph", "search"
+	Status       string         `json:"status,omitempty"` // empty => "canonical"
 }
 
 // Content is one chunk of MCP tool output. Today we only emit "text"; future
