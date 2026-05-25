@@ -309,6 +309,56 @@ def add_texts(
     raise TimeoutError(f"cognify run {run_id} did not complete in {poll_timeout_s}s")
 
 
+def _embed_local(query: str) -> list[float]:
+    """Embed `query` via the URL in LEVARA_PRE_EMBED_URL (Ollama or
+    OpenAI-compatible POST /v1/embeddings). The model used is
+    LEVARA_PRE_EMBED_MODEL (default 'nomic-embed-text-v2-moe').
+
+    Bypass for the Pi de809b71 binary regression where server-side
+    /api/v1/search/text serialises a nil result slice as literal JSON
+    `null` when the in-process embed step silently errors. See
+    docs/reviews/pi-search-text-null.md (memory).
+    """
+    url = os.environ["LEVARA_PRE_EMBED_URL"]
+    model = os.environ.get("LEVARA_PRE_EMBED_MODEL", "nomic-embed-text-v2-moe")
+    resp = http_request(
+        "POST",
+        url,
+        headers={"Content-Type": "application/json"},
+        body={"input": [query], "model": model},
+    )
+    data = resp.get("data")
+    if isinstance(data, list) and data and isinstance(data[0], dict):
+        return [float(x) for x in data[0]["embedding"]]
+    embs = resp.get("embeddings")
+    if isinstance(embs, list) and embs:
+        return [float(x) for x in embs[0]]
+    raise RuntimeError(f"embed response shape unrecognised: {list(resp.keys())[:5]}")
+
+
+def _rerank_local(query: str, documents: list[str], target: Target) -> list[dict[str, Any]]:
+    """Score (query, document) pairs against the rerank sidecar.
+    Returns the sidecar response shape: [{index, relevance_score}, ...]
+    sorted by score descending."""
+    resp = http_request(
+        "POST",
+        target.rerank_endpoint,
+        headers={"Content-Type": "application/json"},
+        body={"query": query, "documents": documents},
+    )
+    results = resp.get("results") or []
+    return sorted(results, key=lambda r: r.get("relevance_score", 0.0), reverse=True)
+
+
+def _result_text(hit: dict[str, Any]) -> str:
+    meta = hit.get("metadata")
+    if isinstance(meta, dict):
+        t = meta.get("text")
+        if isinstance(t, str):
+            return t
+    return ""
+
+
 def search_pair(
     target: Target,
     collection: str,
@@ -323,12 +373,26 @@ def search_pair(
     so the analyzer has both the production (post-rerank) order and
     the vector-only order to compute score_gap and top1_changed.
 
+    Two transport modes:
+    - Default: server-side /api/v1/search/text with rerank flag. Works
+      on .64 (main branch binary) — Levara embeds query, runs vector
+      search, optionally calls rerank sidecar, returns sorted hits.
+    - LEVARA_PRE_EMBED_URL set: client-side. Embed locally via Ollama,
+      POST /api/v1/search with the vector (legacy handler, never
+      reranks), then call the rerank sidecar from this process for
+      the with_rerank pair. Needed on Pi (de809b71) where server-side
+      /search/text returns literal JSON `null`.
+
     Returns a dict shaped:
         {
           "with_rerank": {<server response>, latency_ms: ...},
           "no_rerank":   {<server response>, latency_ms: ...},
         }
     """
+    if os.environ.get("LEVARA_PRE_EMBED_URL"):
+        return _search_pair_pre_embed(
+            target, collection, query, top_k=top_k, room=room, tags=tags
+        )
     out: dict[str, Any] = {}
     for label, rerank in (("with_rerank", True), ("no_rerank", False)):
         body = {
@@ -357,6 +421,68 @@ def search_pair(
             "response": resp,
         }
     return out
+
+
+def _search_pair_pre_embed(
+    target: Target,
+    collection: str,
+    query: str,
+    *,
+    top_k: int,
+    room: str | None,
+    tags: list[str] | None,
+) -> dict[str, Any]:
+    """Client-side equivalent of search_pair for the Pi /search/text
+    bypass. Overfetches 3× top_k for vector candidates, reranks
+    locally via the sidecar, then projects both views back into the
+    {results: [...]} envelope the analyzer expects."""
+    overfetch = max(top_k * 3, 30)
+    t_no_r0 = time.monotonic()
+    vector = _embed_local(query)
+    body = {"collection": collection, "vector": vector, "top_k": overfetch}
+    raw = http_request(
+        "POST", target.url("/api/v1/search"), headers=target.headers(), body=body
+    )
+    no_r_hits = raw.get("results") if isinstance(raw, dict) else None
+    if not isinstance(no_r_hits, list):
+        no_r_hits = []
+    no_r_top = no_r_hits[:top_k]
+    no_r_latency = int((time.monotonic() - t_no_r0) * 1000)
+
+    t_r0 = time.monotonic()
+    with_r_hits: list[dict[str, Any]] = no_r_top
+    if no_r_hits and target.rerank_endpoint:
+        docs = [_result_text(h) for h in no_r_hits]
+        # Drop empty-text candidates — rerank sidecar would score them
+        # against the query meaninglessly. The original chunksSearch
+        # path passes the text from metadata.text, and skips silently
+        # when extractText returns "" (see ExtractText in pipeline).
+        idx_keep = [i for i, t in enumerate(docs) if t]
+        if idx_keep:
+            kept_docs = [docs[i] for i in idx_keep]
+            scored = _rerank_local(query, kept_docs, target)
+            ordered: list[dict[str, Any]] = []
+            for s in scored:
+                local_idx = s.get("index")
+                if not isinstance(local_idx, int) or local_idx >= len(idx_keep):
+                    continue
+                hit = dict(no_r_hits[idx_keep[local_idx]])
+                hit["score"] = float(s.get("relevance_score", 0.0))
+                hit["reranked"] = True
+                ordered.append(hit)
+            with_r_hits = ordered[:top_k]
+    with_r_latency = int((time.monotonic() - t_r0) * 1000)
+
+    return {
+        "no_rerank": {
+            "latency_ms": no_r_latency,
+            "response": {"results": no_r_top},
+        },
+        "with_rerank": {
+            "latency_ms": no_r_latency + with_r_latency,
+            "response": {"results": with_r_hits},
+        },
+    }
 
 
 # ── Score extraction (analyzer-side helpers used inline) ────────────
