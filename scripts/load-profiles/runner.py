@@ -362,11 +362,24 @@ def search_pair(
 # ── Score extraction (analyzer-side helpers used inline) ────────────
 
 
-def extract_score_vector(no_rerank_resp: dict[str, Any]) -> list[float]:
+def extract_score_vector(no_rerank_resp: Any) -> list[float]:
     """Pull the ordered vector-only score list from a `rerank=false`
-    /search response. Server returns hits under one of two keys
-    (`results` or `chunks`) depending on strategy — we accept both."""
-    items = no_rerank_resp.get("results") or no_rerank_resp.get("chunks") or []
+    /search response.
+
+    Three response shapes seen in the wild:
+    - bare JSON array (legacy contract, current default for /search/text
+      when include_debug=false; can be literal null on zero hits)
+    - {results: [...]} envelope (some strategies)
+    - {chunks: [...]} envelope (older alias)
+    """
+    if no_rerank_resp is None:
+        return []
+    if isinstance(no_rerank_resp, list):
+        items = no_rerank_resp
+    elif isinstance(no_rerank_resp, dict):
+        items = no_rerank_resp.get("results") or no_rerank_resp.get("chunks") or no_rerank_resp.get("items") or []
+    else:
+        return []
     return [float(item.get("score", 0.0)) for item in items if isinstance(item, dict)]
 
 
@@ -391,17 +404,28 @@ def gap_features(scores: list[float]) -> dict[str, float]:
     return f
 
 
-def top_changed(
-    with_rerank_resp: dict[str, Any], no_rerank_resp: dict[str, Any]
-) -> bool | None:
+def _hits_from(resp: Any) -> list[dict[str, Any]]:
+    if resp is None:
+        return []
+    if isinstance(resp, list):
+        return [h for h in resp if isinstance(h, dict)]
+    if isinstance(resp, dict):
+        for key in ("results", "chunks", "items"):
+            v = resp.get(key)
+            if isinstance(v, list):
+                return [h for h in v if isinstance(h, dict)]
+    return []
+
+
+def top_changed(with_rerank_resp: Any, no_rerank_resp: Any) -> bool | None:
     """True iff the top-1 id differs between rerank=on and rerank=off.
     None if either response is empty (signal absent → can't compare)."""
-    a = with_rerank_resp.get("results") or with_rerank_resp.get("chunks") or []
-    b = no_rerank_resp.get("results") or no_rerank_resp.get("chunks") or []
+    a = _hits_from(with_rerank_resp)
+    b = _hits_from(no_rerank_resp)
     if not a or not b:
         return None
-    ida = (a[0] or {}).get("id")
-    idb = (b[0] or {}).get("id")
+    ida = a[0].get("id")
+    idb = b[0].get("id")
     if ida is None or idb is None:
         return None
     return ida != idb
@@ -437,10 +461,8 @@ def build_query_record(
         "latency_no_rerank_ms": pair["no_rerank"]["latency_ms"],
         "latency_with_rerank_ms": pair["with_rerank"]["latency_ms"],
         "scores_vector": scores_vec,
-        "n_hits_no_rerank": len(no_r.get("results") or no_r.get("chunks") or []),
-        "n_hits_with_rerank": len(
-            with_r.get("results") or with_r.get("chunks") or []
-        ),
+        "n_hits_no_rerank": len(_hits_from(no_r)),
+        "n_hits_with_rerank": len(_hits_from(with_r)),
         "top_changed_by_rerank": top_changed(with_r, no_r),
         "rerank_outcome": _outcome_from_response(with_r),
     }
@@ -450,16 +472,16 @@ def build_query_record(
     return rec
 
 
-def _outcome_from_response(resp: dict[str, Any]) -> str:
+def _outcome_from_response(resp: Any) -> str:
     """Infer rerank outcome from response shape. Server doesn't echo
     the metric outcome name directly, but the per-hit `reranked` flag
     plus the rerank_skip_reason hint (when present) is enough."""
-    if "rerank_skip_reason" in resp:
+    if isinstance(resp, dict) and "rerank_skip_reason" in resp:
         return str(resp["rerank_skip_reason"])
-    hits = resp.get("results") or resp.get("chunks") or []
+    hits = _hits_from(resp)
     if not hits:
         return "no_results"
-    any_reranked = any((h or {}).get("reranked") for h in hits if isinstance(h, dict))
+    any_reranked = any(h.get("reranked") for h in hits)
     return "reranked" if any_reranked else "fallback"
 
 
