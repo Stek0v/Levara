@@ -174,19 +174,20 @@ class JsonlWriter:
 # ── Preflight & namespace guard ─────────────────────────────────────
 
 
-def preflight(target: Target) -> dict[str, Any]:
+def preflight(target: Target, *, require_rerank: bool = True) -> dict[str, Any]:
     """Verify auth + collect server-side capabilities.
 
     Populates target.embed_model / rerank_endpoint / rerank_enabled
-    from /api/v1/rerank/info and /api/v1/info. Raises if rerank isn't
-    configured — every load profile needs it (without it there's
-    nothing to calibrate).
+    from /api/v1/models/rerank and /api/v1/info. Raises if rerank
+    isn't configured and require_rerank is True — every calibration
+    profile needs it. Pass require_rerank=False for smoke tests
+    against dev environments without a configured reranker.
     """
     info = http_request("GET", target.url("/api/v1/info"), headers=target.headers())
     rerank_info: dict[str, Any] = {}
     try:
         rerank_info = http_request(
-            "GET", target.url("/api/v1/rerank/info"), headers=target.headers()
+            "GET", target.url("/api/v1/models/rerank"), headers=target.headers()
         )
     except HttpError as e:
         if e.status != 404:
@@ -195,11 +196,13 @@ def preflight(target: Target) -> dict[str, Any]:
         "embed_model", ""
     )
     target.rerank_endpoint = rerank_info.get("endpoint", "")
-    target.rerank_enabled = bool(target.rerank_endpoint)
-    if not target.rerank_enabled:
+    target.rerank_enabled = bool(rerank_info.get("enabled")) or bool(
+        target.rerank_endpoint
+    )
+    if not target.rerank_enabled and require_rerank:
         raise RuntimeError(
-            f"target {target.name}: RERANK_ENDPOINT not configured — "
-            f"profile output would be useless for gate calibration"
+            f"target {target.name}: rerank not configured — calibration "
+            f"output would be useless (pass --no-rerank for smoke runs)"
         )
     return {"info": info, "rerank_info": rerank_info}
 
@@ -244,22 +247,66 @@ def add_texts(
     *,
     room: str | None = None,
     tags: list[str] | None = None,
+    poll_timeout_s: float = 600.0,
+    poll_interval_s: float = 2.0,
 ) -> dict[str, Any]:
-    """Push a batch through /api/v1/add (cognify=false to keep ingest
-    deterministic — we want raw chunks indexed, not LLM-extracted
-    entities). Each doc must carry id + text; metadata is optional."""
+    """Ingest a batch of pre-chunked text into a named HNSW collection
+    via /api/v1/cognify with skip_graph=true (RAG mode).
+
+    This is the only canonical write path on b4fface: /api/v1/add
+    routes into dataset ingest and never touches the HNSW collection
+    store. Cognify with skip_graph runs only chunk → embed → HNSW
+    insert (+ BM25), with no LLM entity extraction or graph writes —
+    deterministic and clean for calibration corpora.
+
+    Note: server-side chunking may further split each `text` if it
+    exceeds MaxChunkChars (~2KB). For the load-profile corpora we keep
+    chunks under that boundary so the index size matches doc count.
+
+    The room/tags params are kept for API symmetry but cognify HTTP
+    doesn't propagate them per-doc; per-record metadata in `docs[i]`
+    is also unused by cognify. Filtered-search profiles (P5) rely on
+    the corpus-side room embedding in the text itself, not on
+    metadata tags. We log a warning if room/tags are provided here.
+    """
+    if room or tags:
+        stderr(
+            "[add_texts] note: room/tags not propagated to cognify; "
+            "rely on per-text content for filter semantics"
+        )
+    texts = [d["text"] for d in docs]
     body: dict[str, Any] = {
+        "texts": texts,
         "collection": collection,
-        "documents": docs,
-        "cognify": False,
+        "skip_graph": True,
+        "runInBackground": True,
     }
-    if room:
-        body["room"] = room
-    if tags:
-        body["tags"] = tags
-    return http_request(
-        "POST", target.url("/api/v1/add"), headers=target.headers(), body=body
+    resp = http_request(
+        "POST", target.url("/api/v1/cognify"), headers=target.headers(), body=body
     )
+    run_id = resp.get("pipeline_run_id") or resp.get("run_id")
+    if not run_id:
+        # already_processed or other terminal-on-arrival case
+        return resp
+    deadline = time.monotonic() + poll_timeout_s
+    last_stage = ""
+    while time.monotonic() < deadline:
+        status = http_request(
+            "GET",
+            target.url(f"/api/v1/cognify/{run_id}/status"),
+            headers=target.headers(),
+        )
+        state = (status.get("status") or "").upper()
+        stage = status.get("stage") or ""
+        if stage and stage != last_stage:
+            stderr(f"[cognify] {collection} run={run_id[:8]} stage={stage}")
+            last_stage = stage
+        if state in ("COMPLETED", "SUCCESS", "DONE"):
+            return {"status": "ok", "run_id": run_id, "chunks": len(texts), "result": status}
+        if state in ("FAILED", "ERROR"):
+            raise RuntimeError(f"cognify run {run_id} failed: {status}")
+        time.sleep(poll_interval_s)
+    raise TimeoutError(f"cognify run {run_id} did not complete in {poll_timeout_s}s")
 
 
 def search_pair(
@@ -296,8 +343,14 @@ def search_pair(
         if tags:
             body["tags"] = tags
         t0 = time.monotonic()
+        # /search/text is the canonical text-search route on b4fface;
+        # /search is shadowed by the legacy vector-only handler that
+        # demands a pre-computed embedding vector.
         resp = http_request(
-            "POST", target.url("/api/v1/search"), headers=target.headers(), body=body
+            "POST",
+            target.url("/api/v1/search/text"),
+            headers=target.headers(),
+            body=body,
         )
         out[label] = {
             "latency_ms": int((time.monotonic() - t0) * 1000),
