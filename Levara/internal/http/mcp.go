@@ -26,6 +26,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/stek0v/levara/internal/metrics"
 	"github.com/stek0v/levara/pipeline"
+	"github.com/stek0v/levara/pkg/audit"
 	"github.com/stek0v/levara/pkg/llm"
 	"github.com/stek0v/levara/pkg/mcp"
 	"github.com/stek0v/levara/pkg/orchestrator"
@@ -621,14 +622,100 @@ func (h *mcpHandler) executeTool(ctx context.Context, sess *mcpSession, name str
 	toolStart := time.Now()
 	result := h.executeToolInner(ctx, sess, name, args)
 	h.auditWorkspaceTool(ctx, name, args, result)
-	duration := time.Since(toolStart).Seconds()
-	metrics.MCPToolDuration.WithLabelValues(name).Observe(duration)
+	duration := time.Since(toolStart)
+	metrics.MCPToolDuration.WithLabelValues(name).Observe(duration.Seconds())
 	status := "ok"
 	if result.IsError {
 		status = "error"
 	}
 	metrics.MCPToolRequests.WithLabelValues(name, status).Inc()
+	h.recordMCPAudit(ctx, sess, name, args, result, duration)
 	return result
+}
+
+// recordMCPAudit emits the per-call audit entry (P3.3) plus the
+// outcome-labelled Prometheus counters. Both the JSONL writer and the
+// new metrics live behind APIConfig so they can be disabled in tests
+// without changing call-sites.
+func (h *mcpHandler) recordMCPAudit(ctx context.Context, sess *mcpSession, name string, args map[string]any, result mcpToolResult, duration time.Duration) {
+	outcome := classifyOutcome(result)
+	agentID := ""
+	sessionID := ""
+	if sess != nil {
+		agentID = sess.UserID
+		sessionID = sess.ID
+	}
+	if agentID == "" {
+		if userID, _ := ctx.Value(mcpUserIDKey).(string); userID != "" {
+			agentID = userID
+		}
+	}
+	agentBucket := "unknown"
+	if h.cfg.MCPAgentBucket != nil {
+		h.cfg.MCPAgentBucket.Observe(agentID)
+		agentBucket = h.cfg.MCPAgentBucket.Label(agentID)
+	}
+
+	resultSize := resultPayloadSize(result)
+	metrics.MCPToolCalls.WithLabelValues(name, agentBucket, string(outcome)).Inc()
+	metrics.MCPToolLatencyMS.WithLabelValues(name, string(outcome)).Observe(float64(duration.Milliseconds()))
+	metrics.MCPToolResultBytes.WithLabelValues(name).Observe(float64(resultSize))
+
+	if h.cfg.MCPAudit == nil {
+		return
+	}
+	entry := audit.Entry{
+		TS:         time.Now().UTC().Format(time.RFC3339Nano),
+		SessionID:  sessionID,
+		AgentID:    agentID,
+		Tool:       name,
+		Args:       audit.SanitizeArgs(args),
+		LatencyMS:  duration.Milliseconds(),
+		Outcome:    outcome,
+		ResultSize: resultSize,
+	}
+	if outcome != audit.OutcomeOK && len(result.Content) > 0 {
+		entry.ErrorMessage = truncateAuditField(result.Content[0].Text)
+	}
+	h.cfg.MCPAudit.Log(entry)
+}
+
+func classifyOutcome(r mcpToolResult) audit.Outcome {
+	if !r.IsError {
+		return audit.OutcomeOK
+	}
+	if len(r.Content) == 0 {
+		return audit.OutcomeServerError
+	}
+	low := strings.ToLower(r.Content[0].Text)
+	switch {
+	case strings.Contains(low, "timeout"), strings.Contains(low, "deadline exceeded"):
+		return audit.OutcomeTimeout
+	case strings.Contains(low, "unauthorized"), strings.Contains(low, "forbidden"), strings.Contains(low, "permission denied"):
+		return audit.OutcomeUnauthorized
+	case strings.Contains(low, "rate limit"), strings.Contains(low, "too many requests"):
+		return audit.OutcomeRateLimited
+	case strings.Contains(low, "invalid"), strings.Contains(low, "missing"), strings.Contains(low, "bad request"):
+		return audit.OutcomeClientError
+	default:
+		return audit.OutcomeServerError
+	}
+}
+
+func resultPayloadSize(r mcpToolResult) int {
+	var n int
+	for _, c := range r.Content {
+		n += len(c.Text)
+	}
+	return n
+}
+
+func truncateAuditField(s string) string {
+	const lim = 256
+	if len(s) <= lim {
+		return s
+	}
+	return s[:lim] + "…"
 }
 
 func (h *mcpHandler) executeToolInner(ctx context.Context, sess *mcpSession, name string, args map[string]any) mcpToolResult {
