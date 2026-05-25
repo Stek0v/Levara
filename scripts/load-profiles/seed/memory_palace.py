@@ -169,6 +169,16 @@ def load_corpus(per_room_per_hall: int = 12) -> list[dict[str, str]]:
                 tpl = rng.choice(TEMPLATES[hall])
                 text = _fill(tpl, rng, room)
                 rec_id = f"mem:{room}:{hall}:{i:03d}"
+                # Prefix each record with a room/hall preamble so the
+                # text clears Levara's default MinChunkChars=80 floor
+                # in the paragraph-merged chunker. Without this, all
+                # 576 records (33-100 chars) get dropped at chunk time
+                # and the collection ends up empty. The preamble also
+                # gives the embedder useful per-record context.
+                text = (
+                    f"[room={room} hall={hall}] {hall} memory in the "
+                    f"{room} subsystem (record {rec_id}). {text}"
+                )
                 out.append(
                     {
                         "id": rec_id,
