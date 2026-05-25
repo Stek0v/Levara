@@ -52,12 +52,12 @@ def seed_if_needed(target: runner.Target, collection: str) -> dict:
     try:
         info = runner.http_request(
             "GET",
-            target.url(f"/api/v1/collections/{collection}/info"),
+            target.url(f"/api/v1/collections/{collection}/meta"),
             headers=target.headers(),
         )
     except runner.HttpError:
         info = {}
-    current = int(info.get("count", 0)) if isinstance(info, dict) else 0
+    current = int(info.get("record_count", info.get("count", 0))) if isinstance(info, dict) else 0
     if current >= int(expected * 0.95):
         runner.stderr(
             f"[seed] {collection} has {current} chunks (expected {expected}), skipping"
