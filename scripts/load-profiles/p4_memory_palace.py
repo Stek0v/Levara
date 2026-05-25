@@ -57,21 +57,19 @@ def seed_if_needed(target: runner.Target, collection: str) -> dict:
         return {"reused": True, "count": current}
     runner.stderr(f"[seed] ingesting {expected} chunks into {collection}")
     corpus = memory_palace.load_corpus()
-    batch_size = 64
-    written = 0
-    for i in range(0, len(corpus), batch_size):
-        batch = corpus[i : i + batch_size]
-        runner.add_texts(
-            target,
-            collection,
-            batch,
-            room="memory",
-            tags=["loadprofile", "p4", "palace"],
-        )
-        written += len(batch)
-        if written % (batch_size * 4) == 0:
-            runner.stderr(f"[seed] {written}/{len(corpus)}")
-    return {"reused": False, "count": written}
+    # Single-batch ingest. Chunk IDs are uuid5("doc-{i}-{chunkIndex}")
+    # where i is the text index within the /cognify call; submitting
+    # everything in one call keeps i unique and avoids cross-batch
+    # collisions on Levara builds that don't carry the per-run-prefix
+    # fix (Pi b4fface).
+    runner.add_texts(
+        target,
+        collection,
+        corpus,
+        room="memory",
+        tags=["loadprofile", "p4", "palace"],
+    )
+    return {"reused": False, "count": len(corpus)}
 
 
 def run(
