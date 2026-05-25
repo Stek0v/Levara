@@ -67,13 +67,13 @@ SOURCES: list[tuple[str, str, str, int]] = [
     (
         "js_lodash_debounce",
         "js",
-        "https://raw.githubusercontent.com/lodash/lodash/4.17.21/debounce.js",
+        "https://raw.githubusercontent.com/lodash/lodash/4.17.21-npm/debounce.js",
         2_000,
     ),
     (
         "js_lodash_throttle",
         "js",
-        "https://raw.githubusercontent.com/lodash/lodash/4.17.21/throttle.js",
+        "https://raw.githubusercontent.com/lodash/lodash/4.17.21-npm/throttle.js",
         1_500,
     ),
 ]
