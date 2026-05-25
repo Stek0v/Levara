@@ -173,6 +173,7 @@ func main() {
 	raftAddr := flag.String("raft-addr", "127.0.0.1", "Raft bind address (e.g. 0.0.0.0 or 10.23.0.53)")
 	raftPortBase := flag.Int("raft-port", 9000, "Base port for Raft (shard N listens on base+N)")
 	joinAddr := flag.String("join-addr", "", "Primary node address to join as replica (e.g. 10.23.0.53:8080)")
+	mcpAuditPath := flag.String("mcp-audit-log", "", "Directory for daily-rolled MCP audit logs (empty = stderr; '-' disables)")
 
 	flag.Parse()
 
@@ -482,6 +483,8 @@ func main() {
 		RerankBudgetMs:          rerankCfg.BudgetMs,
 		RerankScoreGapThreshold: rerankCfg.ScoreGapThreshold,
 		Runs:                    runs,
+		MCPAudit:                initMCPAuditSink(*mcpAuditPath, srvLog),
+		MCPAgentBucket:          metrics.NewUserBucket(20, time.Minute),
 	}
 
 	// MCP (Model Context Protocol) server — JSON-RPC 2.0 for AI agent integration

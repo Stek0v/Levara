@@ -74,6 +74,26 @@ var (
 		Help: "Number of active MCP sessions",
 	})
 
+	// MCP audit-log metrics — finer-grained companions to MCPToolRequests
+	// and MCPToolDuration. Outcome is the closed enum from pkg/audit;
+	// agent_bucket is bounded via UserBucket (top-N + "other"/"anon").
+	MCPToolCalls = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "levara_mcp_tool_calls_total",
+		Help: "MCP tool calls by tool, agent bucket, and outcome",
+	}, []string{"tool", "agent_bucket", "outcome"})
+
+	MCPToolLatencyMS = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "levara_mcp_tool_latency_ms",
+		Help:    "MCP tool call latency (ms) by tool and outcome",
+		Buckets: []float64{5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000},
+	}, []string{"tool", "outcome"})
+
+	MCPToolResultBytes = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "levara_mcp_tool_result_bytes",
+		Help:    "MCP tool result payload size in bytes",
+		Buckets: []float64{64, 256, 1024, 4096, 16384, 65536, 262144, 1048576},
+	}, []string{"tool"})
+
 	// 6. Embedding metrics
 	EmbedDuration = promauto.NewHistogram(prometheus.HistogramOpts{
 		Name:    "levara_embed_duration_seconds",

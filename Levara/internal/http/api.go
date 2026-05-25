@@ -9,7 +9,9 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/stek0v/levara/internal/metrics"
 	"github.com/stek0v/levara/internal/store"
+	"github.com/stek0v/levara/pkg/audit"
 	"github.com/stek0v/levara/pkg/bm25"
 	"github.com/stek0v/levara/pkg/embed"
 	"github.com/stek0v/levara/pkg/llm"
@@ -77,6 +79,13 @@ type APIConfig struct {
 	// nil the searchHandler constructs a default registry on demand — main
 	// wiring sets this explicitly so tests can override with stubs.
 	SearchStrategies *StrategyRegistry
+	// MCPAudit records every MCP tool call (sanitized args, latency, outcome,
+	// result size) to its configured writer. Nil disables audit logging —
+	// metrics still emit, but no JSONL trail is kept.
+	MCPAudit audit.Sink
+	// MCPAgentBucket bounds agent_id cardinality on MCP audit metrics. Nil
+	// degrades to a fixed "unknown" label.
+	MCPAgentBucket *metrics.UserBucket
 }
 
 // RegisterAPI registers all Levara endpoints on the Fiber app.

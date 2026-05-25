@@ -39,6 +39,7 @@ import (
 	"github.com/stek0v/levara/pkg/llm"
 	"github.com/stek0v/levara/pkg/llmcache"
 	"github.com/stek0v/levara/pkg/llmproxy"
+	"github.com/stek0v/levara/pkg/audit"
 	"github.com/stek0v/levara/pkg/observe"
 	"github.com/stek0v/levara/pkg/storage"
 	pb "github.com/stek0v/levara/proto/pb"
@@ -602,6 +603,25 @@ type healthDeps struct {
 	embedModel    string
 	llmProvider   llm.Provider
 	colManager    *store.CollectionManager
+}
+
+// initMCPAuditSink resolves the -mcp-audit-log flag into an audit.Sink.
+// "" → JSONL on stderr (zero-config default). "-" → disabled (nil).
+// Anything else is treated as a directory for daily-rolled, gzipped logs.
+func initMCPAuditSink(path string, log *observe.Logger) audit.Sink {
+	switch path {
+	case "-":
+		return nil
+	case "":
+		return audit.NewLogger(nil) // stderr
+	}
+	fl, err := audit.NewFileLogger(path, 30)
+	if err != nil {
+		log.Warn("mcp_audit_init_failed", map[string]any{"path": path, "err": err.Error()})
+		return audit.NewLogger(nil)
+	}
+	log.Info("mcp_audit_log_ready", map[string]any{"path": path, "retention_days": 30})
+	return fl
 }
 
 // probeEmbedService tries a handful of well-known health paths under the
