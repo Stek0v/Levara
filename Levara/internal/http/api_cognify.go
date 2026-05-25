@@ -52,6 +52,11 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 			Collection      string   `json:"collection"`
 			RunInBackground bool     `json:"runInBackground"`
 			SessionID       string   `json:"session_id"`
+			// SkipGraph enables RAG-mode ingest: chunk → embed → HNSW only,
+			// no LLM entity extraction, no graph writes. Surfaces the
+			// orchestrator's existing SkipGraph flag (pipeline.go:93) so
+			// callers can opt into the fastest deterministic ingest path.
+			SkipGraph bool `json:"skip_graph"`
 		}
 		c.BodyParser(&req)
 
@@ -153,7 +158,8 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 			Collection:       collection,
 			Collections:      cfg.Collections,
 			BM25Indexes:      cfg.BM25Indexes,
-			GenerateTriplets: true,
+			GenerateTriplets: !req.SkipGraph,
+			SkipGraph:        req.SkipGraph,
 			SystemPrompt:     sessionContext,
 			DatasetID: func() string {
 				if len(allDatasetIDs) > 0 {
