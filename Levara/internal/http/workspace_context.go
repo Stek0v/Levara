@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"os"
-	"path/filepath"
 	"sort"
 
 	"github.com/gofiber/fiber/v2"
@@ -137,19 +136,7 @@ func workspaceContextProjectIDs(ctx context.Context, cfg APIConfig, userID, expl
 }
 
 func workspaceLocalProjectIDs(cfg APIConfig) []string {
-	root := filepath.Join(workspaceRoot(cfg), "projects")
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return []string{}
-	}
-	var ids []string
-	for _, entry := range entries {
-		if entry.IsDir() {
-			ids = append(ids, entry.Name())
-		}
-	}
-	sort.Strings(ids)
-	return ids
+	return workspace.ListLocalProjects(workspaceRoot(cfg))
 }
 
 func workspaceDBProjectIDs(ctx context.Context, db *sql.DB, userID string) ([]string, error) {
@@ -198,20 +185,7 @@ func workspaceContextBranches(ctx context.Context, cfg APIConfig, projectID, bra
 }
 
 func workspaceLocalBranches(cfg APIConfig, projectID string) []string {
-	root := workspaceProjectRoot(cfg, projectID, "")
-	root = filepath.Dir(root)
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return []string{}
-	}
-	var branches []string
-	for _, entry := range entries {
-		if entry.IsDir() {
-			branches = append(branches, entry.Name())
-		}
-	}
-	sort.Strings(branches)
-	return branches
+	return workspace.ListLocalBranches(workspaceRoot(cfg), projectID)
 }
 
 func workspaceContextBranch(reqCtx context.Context, cfg APIConfig, projectID, branch string, watch WorkspaceWatchStatus) workspaceBranchContext {
