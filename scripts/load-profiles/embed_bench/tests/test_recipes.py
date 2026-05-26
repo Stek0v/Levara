@@ -1,6 +1,6 @@
 import pytest
 
-from scripts.load_profiles.embed_bench.recipes import RECIPES, get_recipe
+from embed_bench.recipes import RECIPES, get_recipe
 
 
 def test_three_recipes_present():
