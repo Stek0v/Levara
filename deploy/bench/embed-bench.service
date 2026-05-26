@@ -8,7 +8,7 @@ User=stek0v
 WorkingDirectory=/home/stek0v/embed-bench/scripts/load-profiles
 Environment=PYTHONUNBUFFERED=1
 Environment=HF_HOME=/home/stek0v/embed-bench/hf-cache
-ExecStart=/home/stek0v/embed-bench/venv/bin/uvicorn embed_bench.server:app --host 127.0.0.1 --port 9101 --workers 1
+ExecStart=/home/stek0v/embed-bench/venv/bin/uvicorn embed_bench.server:app --host 0.0.0.0 --port 9101 --workers 1
 Restart=on-failure
 RestartSec=3
 
