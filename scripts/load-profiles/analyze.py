@@ -39,6 +39,43 @@ def pct(values: list[float], p: float) -> float:
     return arr[lo] + (arr[hi] - arr[lo]) * (i - lo)
 
 
+def group_by_model(recs: list[dict]) -> dict[str, list[dict]]:
+    out: dict[str, list[dict]] = {}
+    for r in recs:
+        m = r.get("embed_model") or "_unknown"
+        out.setdefault(m, []).append(r)
+    return out
+
+
+def summarize_quality(recs: list[dict]) -> dict:
+    if not recs:
+        return {"n": 0, "mean_recall_top5": 0.0, "top1_keyword_hit_rate": 0.0}
+    hits = [int(r.get("keyword_hits_top5", 0)) for r in recs]
+    top1 = [bool(r.get("top1_keyword_hit", False)) for r in recs]
+    return {
+        "n": len(recs),
+        "mean_recall_top5": sum(hits) / len(hits),
+        "top1_keyword_hit_rate": sum(1 for x in top1 if x) / len(top1),
+    }
+
+
+def render_cross_model_markdown(by_model: dict[str, list[dict]]) -> str:
+    lines = ["## Cross-model comparison", ""]
+    lines.append("| model | n | mean_recall_top5 | top1_keyword_hit_rate | p50 gap | p50 lat_no_rerank_ms | p50 lat_with_rerank_ms |")
+    lines.append("|---|---|---|---|---|---|---|")
+    for model in sorted(by_model):
+        recs = by_model[model]
+        q = summarize_quality(recs)
+        gaps = [float(r.get("score_gap_top_bottom", 0.0)) for r in recs]
+        lat_no = [float(r.get("latency_no_rerank_ms", 0.0)) for r in recs]
+        lat_w = [float(r.get("latency_with_rerank_ms", 0.0)) for r in recs]
+        lines.append(
+            f"| {model} | {q['n']} | {q['mean_recall_top5']:.3f} | {q['top1_keyword_hit_rate']:.3f} "
+            f"| {pct(gaps, 50):.4f} | {pct(lat_no, 50):.1f} | {pct(lat_w, 50):.1f} |"
+        )
+    return "\n".join(lines)
+
+
 def load(path: str) -> list[dict]:
     out: list[dict] = []
     with open(path) as f:
@@ -196,6 +233,7 @@ def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("paths", nargs="+", help="JSONL output files (any number)")
     p.add_argument("--json", action="store_true", help="also emit JSON summary on stdout")
+    p.add_argument("--by-model", action="store_true", help="group records by embed_model and emit per-model + cross-model report")
     args = p.parse_args()
 
     profiles: dict[str, list[dict]] = {}
@@ -217,6 +255,19 @@ def main() -> int:
     threshold_sweep(profiles)
     precision_loss_sweep(profiles)
     recommend(profiles)
+
+    if args.by_model:
+        all_recs: list[dict] = []
+        for path in args.paths:
+            all_recs.extend(load(path))
+        by_model = group_by_model(all_recs)
+        for model, recs in sorted(by_model.items()):
+            print(f"\n=== model: {model} (n={len(recs)}) ===")
+            profiles_m = per_profile(recs)
+            print_profile(f"{model}", profiles_m)
+            threshold_sweep({model: recs})
+        print()
+        print(render_cross_model_markdown(by_model))
 
     if args.json:
         summary = {
