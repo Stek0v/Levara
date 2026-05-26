@@ -1,0 +1,25 @@
+[Unit]
+Description=Levara bench instance (model calibration)
+After=network-online.target embed-bench.service ollama.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=stek0v
+WorkingDirectory=/home/stek0v/levara-bench
+Environment=DB_PROVIDER=sqlite
+Environment=DB_PATH=/home/stek0v/levara-bench/data/levara.db
+Environment=EMBEDDING_ENDPOINT=http://127.0.0.1:9101/v1/embeddings
+Environment=LLM_PROVIDER=openai
+Environment=LLM_ENDPOINT=http://127.0.0.1:11434/v1
+Environment=LLM_MODEL=qwen3:0.6b
+Environment=RERANK_ENDPOINT=http://127.0.0.1:9100/rerank
+Environment=RERANK_MODEL=mmini-L12-int8
+Environment=RERANK_BUDGET_MS=5000
+Environment=LOG_LEVEL=INFO
+ExecStart=/home/stek0v/levara-bench/levara -standalone=true -port=8091 -grpc-port=0 -data-dir=/home/stek0v/levara-bench/data -node-id=pi-bench
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
