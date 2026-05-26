@@ -67,6 +67,7 @@ ExecStart=/home/stek0v/levara-bench/levara -standalone=true -port=8091 -grpc-por
   rsync -a --delete scripts/ "$PI_USER@$PI_HOST:/home/stek0v/embed-bench/scripts/" >/dev/null
   rsync -a deploy/bench/embed-bench.service "$PI_USER@$PI_HOST:/tmp/embed-bench.service" >/dev/null
   ssh "$PI_USER@$PI_HOST" "sudo install -m 0644 /tmp/embed-bench.service /etc/systemd/system/embed-bench.service && sudo systemctl daemon-reload && sudo systemctl restart embed-bench.service"
+  sleep 8
   ssh "$PI_USER@$PI_HOST" "python3 /home/stek0v/embed-bench/scripts/load-profiles/preflight_model.py --model $short --host 127.0.0.1" \
     || { echo "preflight failed for $short, skipping" >&2; stop_bench; return 1; }
 
