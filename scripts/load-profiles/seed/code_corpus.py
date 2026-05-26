@@ -266,13 +266,17 @@ def seed_via_cognify(
     poll_seconds: float = 2.0,
     timeout_seconds: float = 1800.0,
 ) -> dict:
-    """Seed `collection` by submitting the joined corpus to /api/v1/cognify.
+    """Seed `collection` by submitting the chunk corpus to /api/v1/cognify
+    with skip_graph=true (RAG mode — chunk → embed → HNSW+BM25 insert,
+    no LLM entity extraction).
 
-    Runs the FULL Levara pipeline (chunk -> LLM entity extraction -> dedup
-    -> embed -> write HNSW+BM25+graph+WAL) so the bench is honest.
+    Delegates to runner.add_texts which is the canonical, known-good
+    cognify payload shape used by p4/p5 (texts:[...], collection,
+    skip_graph=true, runInBackground=true) and polls the run via
+    /api/v1/cognify/{run_id}/status. The original implementation sent
+    {dataset, text} which the server rejects with `no texts to cognify`.
     """
     import sys
-    import time
     from pathlib import Path
 
     load_profiles_root = Path(__file__).resolve().parents[1]
@@ -280,36 +284,13 @@ def seed_via_cognify(
         sys.path.insert(0, str(load_profiles_root))
     import runner
 
-    text = "\n\n=====\n\n".join(c["text"] for c in chunks)
-
-    resp = runner.http_request(
-        "POST",
-        target.url("/api/v1/cognify"),
-        headers=target.headers(),
-        body={"dataset": collection, "dataset_name": collection, "text": text},
-        timeout=60.0,
+    return runner.add_texts(
+        target,
+        collection,
+        chunks,
+        poll_timeout_s=timeout_seconds,
+        poll_interval_s=poll_seconds,
     )
-    run_id = resp.get("run_id") or resp.get("id")
-    if not run_id:
-        raise RuntimeError(f"cognify did not return run_id: {resp!r}")
-
-    print(f"[cognify] run_id={run_id} polling...", file=sys.stderr)
-    start = time.time()
-    while True:
-        if time.time() - start > timeout_seconds:
-            raise TimeoutError(f"cognify {run_id} did not terminate in {timeout_seconds}s")
-        status = runner.http_request(
-            "GET",
-            target.url(f"/api/v1/cognify/status/{run_id}"),
-            headers=target.headers(),
-        )
-        state = (status.get("status") or status.get("state") or "").lower()
-        if state in ("done", "completed", "success"):
-            print(f"[cognify] done in {time.time()-start:.1f}s", file=sys.stderr)
-            return status
-        if state in ("error", "failed"):
-            raise RuntimeError(f"cognify failed: {status!r}")
-        time.sleep(poll_seconds)
 
 
 # Mixed query set with explicit `target_kind` tag so the analyzer
