@@ -78,8 +78,11 @@ def run(
     rounds: int,
     sleep_ms: int,
     top_k: int,
+    model: str = "",
+    embed_dim: int = 0,
+    collection_override: str = "",
 ) -> None:
-    collection = runner.profile_collection(PROFILE_ID)
+    collection = collection_override or runner.profile_collection(PROFILE_ID)
     runner.assert_namespace(target, PROFILE_ID)
     seed_info = seed_if_needed(target, collection)
     writer = runner.JsonlWriter(out_path)
@@ -116,6 +119,13 @@ def run(
                         "round": round_idx,
                         "seed_reused": seed_info.get("reused", False),
                         "corpus_fingerprint": memory_palace.corpus_fingerprint(),
+                        "embed_model": model or target.embed_model,
+                        "embed_dim": embed_dim,
+                        "expected_keywords": q.get("expected_keywords", []),
+                        **runner.keyword_metrics(
+                            pair["no_rerank"]["response"],
+                            expected_keywords=q.get("expected_keywords", []),
+                        ),
                     },
                 )
                 writer.write(rec)
@@ -144,6 +154,9 @@ def main() -> int:
     )
     p.add_argument("--target-name", default=DEFAULT_TARGET_NAME)
     p.add_argument("--target-url", default=DEFAULT_TARGET_URL)
+    p.add_argument("--model", default="", help="embed model short (potion/granite/jina); used for JSONL fields")
+    p.add_argument("--embed-dim", type=int, default=0, help="expected embedding dim (JSONL only)")
+    p.add_argument("--collection-override", default="", help="if set, use this collection name instead of the default")
     args = p.parse_args()
 
     target = runner.Target(
@@ -156,7 +169,16 @@ def main() -> int:
         f"[preflight] target={target.name} embed={target.embed_model} "
         f"rerank={target.rerank_endpoint}"
     )
-    run(target, args.out, args.rounds, args.sleep_ms, args.top_k)
+    run(
+        target,
+        args.out,
+        args.rounds,
+        args.sleep_ms,
+        args.top_k,
+        model=args.model,
+        embed_dim=args.embed_dim,
+        collection_override=args.collection_override,
+    )
     return 0
 
 
