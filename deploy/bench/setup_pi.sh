@@ -19,7 +19,7 @@ rsync -a --delete "$REPO_DIR/scripts/" "$EMBED_DIR/scripts/"
 
 JWT_FILE=/etc/systemd/system/levara-bench.service.d/jwt.conf
 if [ ! -f "$JWT_FILE" ]; then
-  SECRET=$(head -c 32 /dev/urandom | xxd -p -c 32)
+  SECRET=$(openssl rand -hex 32)
   sudo mkdir -p "$(dirname "$JWT_FILE")"
   sudo tee "$JWT_FILE" >/dev/null <<EOF
 [Service]
