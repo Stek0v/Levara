@@ -230,6 +230,92 @@ func (cm *CollectionManager) Drop(name string) error {
 	return os.RemoveAll(colDir)
 }
 
+// Rename atomically renames a collection on disk. The collection is briefly
+// closed during the rename — readers/writers calling Get/Insert against the
+// old name during this window will see "not found" (the maps are updated
+// only after the on-disk rename + reopen succeeds). Used by the
+// blue-green embed-model migration (see docs/MIGRATION-EMBED-POTION.md
+// Phase 4.5) where the shadow collection is promoted to the live name
+// in a sub-second window.
+func (cm *CollectionManager) Rename(oldName, newName string) error {
+	if oldName == "" || newName == "" {
+		return fmt.Errorf("collection name must be non-empty")
+	}
+	if oldName == newName {
+		return fmt.Errorf("source and target names are identical: %q", oldName)
+	}
+	// Guard against path traversal. Collection names map directly to a
+	// directory under cm.basePath; a "../" or "/" in the name would let
+	// callers point Rename outside the collections root.
+	for _, n := range []string{oldName, newName} {
+		if strings.ContainsAny(n, "/\\") || n == "." || n == ".." || strings.Contains(n, "..") {
+			return fmt.Errorf("invalid collection name: %q", n)
+		}
+	}
+
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+
+	db, exists := cm.collections[oldName]
+	if !exists {
+		return fmt.Errorf("collection %q not found", oldName)
+	}
+	if _, taken := cm.collections[newName]; taken {
+		return fmt.Errorf("target collection %q already exists", newName)
+	}
+
+	// Belt-and-braces: if the target directory exists on disk but isn't in
+	// our in-memory map, we'd happily clobber it with os.Rename. Refuse.
+	newDir := filepath.Join(cm.basePath, newName)
+	if _, err := os.Stat(newDir); err == nil {
+		return fmt.Errorf("target collection directory %q already exists on disk", newName)
+	}
+
+	// Close the live db to release WAL/disk file handles before renaming
+	// the directory. If reopen fails after rename, we restore the original
+	// state by renaming back — best-effort, since a failure here means the
+	// on-disk layout no longer matches the in-memory map.
+	if err := db.Close(); err != nil {
+		return fmt.Errorf("close source for rename: %w", err)
+	}
+	delete(cm.collections, oldName)
+
+	oldDir := filepath.Join(cm.basePath, oldName)
+	if err := os.Rename(oldDir, newDir); err != nil {
+		// Try to reopen the source under its old name so the manager isn't
+		// left with a dangling entry. If this fails too, the caller has a
+		// real on-disk problem and needs to restart.
+		dbPath := filepath.Join(oldDir, "meta.bin")
+		if reopened, rErr := NewLevara(db.dim, dbPath, cm.hnswCfg); rErr == nil {
+			cm.collections[oldName] = reopened
+		}
+		return fmt.Errorf("rename %q→%q on disk: %w", oldName, newName, err)
+	}
+
+	newDbPath := filepath.Join(newDir, "meta.bin")
+	reopened, err := NewLevara(db.dim, newDbPath, cm.hnswCfg)
+	if err != nil {
+		// Roll back the directory rename. If THAT fails, the collection is
+		// stranded under the new on-disk name but absent from the map —
+		// the operator will need to restart Levara so NewCollectionManager
+		// re-discovers it.
+		_ = os.Rename(newDir, oldDir)
+		return fmt.Errorf("reopen %q after rename: %w", newName, err)
+	}
+	cm.collections[newName] = reopened
+
+	// Update meta to reflect the new name. Old meta is removed from the
+	// map; the on-disk meta file is re-saved under the new directory.
+	if m, ok := cm.metas[oldName]; ok {
+		m.Name = newName
+		cm.metas[newName] = m
+		_ = saveCollectionMeta(newDir, m)
+	}
+	delete(cm.metas, oldName)
+
+	return nil
+}
+
 // List returns sorted collection names.
 func (cm *CollectionManager) List() []string {
 	cm.mu.RLock()

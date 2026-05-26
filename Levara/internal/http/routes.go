@@ -50,6 +50,7 @@ func RESTRouteInventory() []RouteSpec {
 		{Method: "DELETE", Path: "/collections/:name", Status: APICanonical, Group: "collections"},
 		{Method: "GET", Path: "/collections/:name/meta", Status: APICanonical, Group: "collections"},
 		{Method: "PUT", Path: "/collections/:name/meta", Status: APICanonical, Group: "collections"},
+		{Method: "POST", Path: "/collections/:name/rename", Status: APICanonical, Group: "collections"},
 		{Method: "GET", Path: "/models/rerank", Status: APICanonical, Group: "models"},
 		{Method: "POST", Path: "/reembed", Status: APICanonical, Group: "collections"},
 		{Method: "GET", Path: "/reembed/:runId/status", Status: APICanonical, Group: "collections"},
