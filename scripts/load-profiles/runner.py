@@ -196,6 +196,13 @@ def preflight(target: Target, *, require_rerank: bool = True) -> dict[str, Any]:
         "embed_model", ""
     )
     target.rerank_endpoint = rerank_info.get("endpoint", "")
+    # Allow the orchestrator to override the rerank URL — needed when
+    # the server reports a loopback address (e.g. http://127.0.0.1:9100
+    # on Pi bench) but the caller is off-box. Cf. LEVARA_PRE_EMBED_URL,
+    # which exists for the same reason on the embed sidecar.
+    override = os.environ.get("LEVARA_RERANK_URL", "").strip()
+    if override:
+        target.rerank_endpoint = override
     target.rerank_enabled = bool(rerank_info.get("enabled")) or bool(
         target.rerank_endpoint
     )
