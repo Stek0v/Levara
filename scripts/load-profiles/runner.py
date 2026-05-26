@@ -557,6 +557,45 @@ def top_changed(with_rerank_resp: Any, no_rerank_resp: Any) -> bool | None:
     return ida != idb
 
 
+def keyword_metrics(resp: Any, *, expected_keywords: list[str]) -> dict[str, Any]:
+    """Light-weight retrieval-quality metric.
+
+    keyword_hits_top5: distinct expected_keywords (case-insensitive substring)
+        appearing in any top-5 hit text. Each keyword counts at most once.
+
+    top1_keyword_hit: any expected_keyword in top-1 text.
+    """
+    hits = _hits_from(resp)[:5]
+    if not hits or not expected_keywords:
+        return {"keyword_hits_top5": 0, "top1_keyword_hit": False}
+    needles = [k.lower() for k in expected_keywords]
+
+    def _text_of(h: dict[str, Any]) -> str:
+        m = h.get("metadata")
+        if isinstance(m, dict):
+            return str(m.get("text", "")).lower()
+        if isinstance(m, str):
+            try:
+                inner = json.loads(m)
+                if isinstance(inner, dict):
+                    return str(inner.get("text", "")).lower()
+            except Exception:
+                return ""
+        return ""
+
+    top1_text = _text_of(hits[0])
+    top1_hit = any(n in top1_text for n in needles)
+
+    found: set[str] = set()
+    for h in hits:
+        text = _text_of(h)
+        for n in needles:
+            if n in text:
+                found.add(n)
+
+    return {"keyword_hits_top5": len(found), "top1_keyword_hit": top1_hit}
+
+
 # ── Convenience: build a record ready for JSONL ────────────────────
 
 
