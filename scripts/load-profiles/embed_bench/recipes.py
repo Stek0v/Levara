@@ -33,6 +33,14 @@ RECIPES: dict[str, Recipe] = {
         dim=384,
         openai_name="granite-97m-multilingual-r2",
     ),
+    "nomic": Recipe(
+        short="nomic",
+        repo="nomic-ai/nomic-embed-text-v2-moe",
+        backend="transformers",
+        dim=768,
+        openai_name="nomic-embed-text-v2-moe",
+        trust_remote_code=True,
+    ),
     "jina": Recipe(
         short="jina",
         repo="jinaai/jina-embeddings-v5-omni-nano",

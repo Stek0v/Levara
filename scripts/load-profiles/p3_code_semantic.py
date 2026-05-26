@@ -85,8 +85,9 @@ def run(
     rounds: int,
     sleep_ms: int,
     top_k: int,
+    collection_override: str | None = None,
 ) -> None:
-    collection = runner.profile_collection(PROFILE_ID)
+    collection = collection_override or runner.profile_collection(PROFILE_ID)
     runner.assert_namespace(target, PROFILE_ID)
     seed_info = seed_if_needed(target, collection)
     writer = runner.JsonlWriter(out_path)
@@ -150,6 +151,12 @@ def main() -> int:
     )
     p.add_argument("--target-name", default=DEFAULT_TARGET_NAME)
     p.add_argument("--target-url", default=DEFAULT_TARGET_URL)
+    p.add_argument("--collection-override", default=None,
+                   help="override the profile_collection name (used by multi-model sweep)")
+    p.add_argument("--model", default=None,
+                   help="informational: embedding short-name (recorded into JSONL)")
+    p.add_argument("--embed-dim", type=int, default=None,
+                   help="informational: embedding dimension")
     args = p.parse_args()
 
     target = runner.Target(
@@ -162,7 +169,8 @@ def main() -> int:
         f"[preflight] target={target.name} embed={target.embed_model} "
         f"rerank={target.rerank_endpoint}"
     )
-    run(target, args.out, args.rounds, args.sleep_ms, args.top_k)
+    run(target, args.out, args.rounds, args.sleep_ms, args.top_k,
+        collection_override=args.collection_override)
     return 0
 
 
