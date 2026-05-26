@@ -1,0 +1,7 @@
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+transformers==4.46.0
+torch==2.4.1
+model2vec==0.4.0
+numpy==1.26.4
+pydantic==2.9.2
