@@ -10,7 +10,7 @@ set -euo pipefail
 PI_HOST="${PI_HOST:-10.23.0.53}"
 PI_USER="${PI_USER:-stek0v}"
 OUT_DIR="${OUT_DIR:-scripts/load-profiles/out}"
-DEFAULT_MODELS=(potion granite jina)
+DEFAULT_MODELS=(nomic potion granite)
 MODELS_ARR=(${MODELS:-${DEFAULT_MODELS[@]}})
 if [ $# -gt 0 ]; then
   MODELS_ARR=("$@")
@@ -47,6 +47,7 @@ run_one_model() {
   case "$short" in
     potion)  OPENAI="potion-code-16M";              DIM=256 ;;
     granite) OPENAI="granite-97m-multilingual-r2";  DIM=384 ;;
+    nomic)   OPENAI="nomic-embed-text-v2-moe";      DIM=768 ;;
     jina)    OPENAI="jina-omni-nano";               DIM=512 ;;
     *) echo "unknown model: $short" >&2; exit 2 ;;
   esac
@@ -72,6 +73,7 @@ ExecStart=/home/stek0v/levara-bench/levara -standalone=true -port=8091 -grpc-por
     || { echo "preflight failed for $short, skipping" >&2; stop_bench; return 1; }
 
   local TARGET_URL="http://$PI_HOST:8091"
+  local COLL_P3="loadprofile_p3_main_$short"
   local COLL_P4="loadprofile_p4_main_$short"
   local COLL_P5="loadprofile_p5_main_$short"
 
@@ -101,9 +103,17 @@ ExecStart=/home/stek0v/levara-bench/levara -standalone=true -port=8091 -grpc-por
   # 700ms gives margin for retry/jitter and avoids 429s.
   local SEARCH_SLEEP_MS=700
 
-  echo "[seed] $COLL_P4 + $COLL_P5"
+  echo "[seed] $COLL_P3 + $COLL_P4 + $COLL_P5"
+  python3 scripts/load-profiles/seed_one.py --target-url "$TARGET_URL" --collection "$COLL_P3"
   python3 scripts/load-profiles/seed_one.py --target-url "$TARGET_URL" --collection "$COLL_P4"
   python3 scripts/load-profiles/seed_one.py --target-url "$TARGET_URL" --collection "$COLL_P5"
+
+  echo "[run] p3 / $short"
+  python3 scripts/load-profiles/p3_code_semantic.py \
+    --target-name bench --target-url "$TARGET_URL" \
+    --collection-override "$COLL_P3" \
+    --sleep-ms "$SEARCH_SLEEP_MS" \
+    --out "$OUT_DIR/p3_$short.jsonl"
 
   echo "[run] p4 / $short"
   python3 scripts/load-profiles/p4_memory_palace.py \
@@ -131,7 +141,8 @@ for m in "${MODELS_ARR[@]}"; do
 done
 
 echo "=== analyze ==="
-python3 scripts/load-profiles/analyze.py --by-model "$OUT_DIR"/p?_*.jsonl \
+python3 scripts/load-profiles/analyze.py --by-model \
+  "$OUT_DIR"/p3_*.jsonl "$OUT_DIR"/p4_*.jsonl "$OUT_DIR"/p5_*.jsonl \
   > docs/load-profile-analysis-pi-multimodel.md
 
 echo "OK. Output: docs/load-profile-analysis-pi-multimodel.md"
