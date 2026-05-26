@@ -259,7 +259,13 @@ def main() -> int:
     if args.by_model:
         all_recs: list[dict] = []
         for path in args.paths:
-            all_recs.extend(load(path))
+            recs = load(path)
+            base = os.path.basename(path).split(".")[0]
+            inferred = base.split("_", 1)[1] if "_" in base else ""
+            for r in recs:
+                if not r.get("embed_model"):
+                    r["embed_model"] = r.get("embedding_model") or inferred or "_unknown"
+            all_recs.extend(recs)
         by_model = group_by_model(all_recs)
         for model, recs in sorted(by_model.items()):
             print(f"\n=== model: {model} (n={len(recs)}) ===")
