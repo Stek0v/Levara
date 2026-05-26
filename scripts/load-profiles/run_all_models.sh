@@ -64,12 +64,41 @@ ExecStart=/home/stek0v/levara-bench/levara -standalone=true -port=8091 -grpc-por
   restart_bench
   sleep 10
 
-  python3 scripts/load-profiles/preflight_model.py --model "$short" --host "$PI_HOST" \
+  rsync -a --delete scripts/ "$PI_USER@$PI_HOST:/home/stek0v/embed-bench/scripts/" >/dev/null
+  rsync -a deploy/bench/embed-bench.service "$PI_USER@$PI_HOST:/tmp/embed-bench.service" >/dev/null
+  ssh "$PI_USER@$PI_HOST" "sudo install -m 0644 /tmp/embed-bench.service /etc/systemd/system/embed-bench.service && sudo systemctl daemon-reload && sudo systemctl restart embed-bench.service"
+  ssh "$PI_USER@$PI_HOST" "python3 /home/stek0v/embed-bench/scripts/load-profiles/preflight_model.py --model $short --host 127.0.0.1" \
     || { echo "preflight failed for $short, skipping" >&2; stop_bench; return 1; }
 
   local TARGET_URL="http://$PI_HOST:8091"
   local COLL_P4="loadprofile_p4_main_$short"
   local COLL_P5="loadprofile_p5_main_$short"
+
+  # Pre-embed bypass for /api/v1/search/text null bug on Pi:
+  # runner._search_pair_pre_embed picks up these env vars and calls
+  # the embed-bench sidecar from the Mac directly, then POSTs the
+  # pre-computed vector to /api/v1/search (which is unaffected by
+  # the chunksSearch null-result regression). Sidecar binds 0.0.0.0
+  # so it's reachable from the Mac.
+  export LEVARA_PRE_EMBED_URL="http://$PI_HOST:9101/v1/embeddings"
+  export LEVARA_PRE_EMBED_MODEL="$short"
+
+  # Rerank sidecar on Pi binds 127.0.0.1:9100 (it was launched
+  # ad-hoc, not via systemd, so we can't safely rebind it from here).
+  # Open an SSH local-forward so http://127.0.0.1:9100/rerank on the
+  # Mac tunnels to the Pi's loopback, then point the runner at it
+  # via LEVARA_RERANK_URL (overrides the server-reported endpoint
+  # which would resolve to the Mac's own loopback otherwise).
+  if ! lsof -i :9100 -sTCP:LISTEN -t >/dev/null 2>&1; then
+    ssh -fN -L 9100:127.0.0.1:9100 "$PI_USER@$PI_HOST"
+  fi
+  export LEVARA_RERANK_URL="http://127.0.0.1:9100/rerank"
+
+  # Bench Levara enforces 100 req/min per-user JWT (T2). Each query
+  # in p4/p5 issues two /search calls (rerank=true + rerank=false),
+  # so 600ms between iterations ≈ the budget but offers no slack;
+  # 700ms gives margin for retry/jitter and avoids 429s.
+  local SEARCH_SLEEP_MS=700
 
   echo "[seed] $COLL_P4 + $COLL_P5"
   python3 scripts/load-profiles/seed_one.py --target-url "$TARGET_URL" --collection "$COLL_P4"
@@ -80,6 +109,7 @@ ExecStart=/home/stek0v/levara-bench/levara -standalone=true -port=8091 -grpc-por
     --target-name bench --target-url "$TARGET_URL" \
     --model "$short" --embed-dim "$DIM" \
     --collection-override "$COLL_P4" \
+    --sleep-ms "$SEARCH_SLEEP_MS" \
     --out "$OUT_DIR/p4_$short.jsonl"
 
   echo "[run] p5 / $short"
@@ -87,7 +117,10 @@ ExecStart=/home/stek0v/levara-bench/levara -standalone=true -port=8091 -grpc-por
     --target-name bench --target-url "$TARGET_URL" \
     --model "$short" --embed-dim "$DIM" \
     --collection-override "$COLL_P5" \
+    --sleep-ms "$SEARCH_SLEEP_MS" \
     --out "$OUT_DIR/p5_$short.jsonl"
+
+  unset LEVARA_PRE_EMBED_URL LEVARA_PRE_EMBED_MODEL LEVARA_RERANK_URL
 
   stop_bench
 }
