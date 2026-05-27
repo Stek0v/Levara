@@ -12,7 +12,7 @@ from dataclasses import dataclass
 class Recipe:
     short: str
     repo: str
-    backend: str  # "transformers" | "model2vec"
+    backend: str  # "transformers" | "model2vec" | "onnx"
     dim: int
     openai_name: str
     trust_remote_code: bool = False
@@ -43,10 +43,10 @@ RECIPES: dict[str, Recipe] = {
     ),
     "jina": Recipe(
         short="jina",
-        repo="jinaai/jina-embeddings-v5-omni-nano",
-        backend="transformers",
-        dim=512,
-        openai_name="jina-omni-nano",
+        repo="jinaai/jina-embeddings-v5-text-nano-retrieval",
+        backend="onnx",
+        dim=768,
+        openai_name="jina-v5-text-nano-retrieval",
         trust_remote_code=True,
     ),
 }
