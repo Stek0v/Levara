@@ -596,13 +596,25 @@ func syncImportCollectionHandler(cfg APIConfig) fiber.Handler {
 			bgCtx, bgCancel := backgroundTaskContext()
 			defer bgCancel()
 
+			// Split records that exceed the embed context into overlapping
+			// chunks; records that fit pass through unchanged. Each unit is
+			// embedded and stored as its own vector.
+			units, skippedNoText := expandRecordsToUnits(export.Records, reembedMaxRunes, reembedMaxRunes/5)
+			status.Skipped += skippedNoText
+			if len(units) == 0 {
+				status.Status = "COMPLETED"
+				status.Message = "no embeddable text in records"
+				return
+			}
+			status.Total = len(units)
+
 			// Custom batch size means we keep constructing a one-off
 			// client here — production-shared cfg.EmbedClient uses
 			// batchSize=16 which is wrong for the bulk re-embed path.
 			embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, batchSize, 3)
 
 			// Auto-detect target dimension
-			testVecs, err := embedClient.EmbedTexts(bgCtx, []string{export.Records[0].Text})
+			testVecs, err := embedClient.EmbedTexts(bgCtx, []string{units[0].text})
 			if err != nil || len(testVecs) == 0 {
 				status.Status = "FAILED"
 				status.Message = fmt.Sprintf("embed test failed: %v", err)
@@ -619,20 +631,20 @@ func syncImportCollectionHandler(cfg APIConfig) fiber.Handler {
 				}
 			}
 
-			log.Printf("[sync-import] %s: %d records, source=%s/%d → target=%s/%d",
-				export.Collection, len(export.Records), export.SourceModel, export.SourceDim, cfg.EmbedModel, targetDim)
+			log.Printf("[sync-import] %s: %d records → %d units, source=%s/%d → target=%s/%d",
+				export.Collection, len(export.Records), len(units), export.SourceModel, export.SourceDim, cfg.EmbedModel, targetDim)
 
 			// Process in batches
-			for i := 0; i < len(export.Records); i += batchSize {
+			for i := 0; i < len(units); i += batchSize {
 				end := i + batchSize
-				if end > len(export.Records) {
-					end = len(export.Records)
+				if end > len(units) {
+					end = len(units)
 				}
-				batch := export.Records[i:end]
+				batch := units[i:end]
 
 				texts := make([]string, len(batch))
-				for j, r := range batch {
-					texts[j] = r.Text
+				for j, u := range batch {
+					texts[j] = u.text
 				}
 
 				vecs, err := embedClient.EmbedTexts(bgCtx, texts)
@@ -644,7 +656,7 @@ func syncImportCollectionHandler(cfg APIConfig) fiber.Handler {
 
 				for j, vec := range vecs {
 					if j < len(batch) {
-						if err := cfg.Collections.Insert(export.Collection, batch[j].ID, vec, batch[j].Metadata); err != nil {
+						if err := cfg.Collections.Insert(export.Collection, batch[j].id, vec, batch[j].meta); err != nil {
 							status.Failed++
 						} else {
 							status.Processed++
@@ -657,8 +669,8 @@ func syncImportCollectionHandler(cfg APIConfig) fiber.Handler {
 
 			status.Status = "COMPLETED"
 			status.ElapsedMs = time.Since(start).Milliseconds()
-			status.Message = fmt.Sprintf("imported %d/%d records (%s dim=%d → %s dim=%d) in %dms",
-				status.Processed, status.Total, export.SourceModel, export.SourceDim, cfg.EmbedModel, targetDim, status.ElapsedMs)
+			status.Message = fmt.Sprintf("imported %d/%d units from %d records (%s dim=%d → %s dim=%d) in %dms",
+				status.Processed, len(units), len(export.Records), export.SourceModel, export.SourceDim, cfg.EmbedModel, targetDim, status.ElapsedMs)
 			log.Printf("[sync-import] %s", status.Message)
 		}()
 
