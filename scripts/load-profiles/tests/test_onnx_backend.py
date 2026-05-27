@@ -77,3 +77,24 @@ def test_last_token_pool_picks_last_real_token_per_row():
         [1.0, 1.0, 0.0, 0.0],
     ])
     assert torch.equal(pooled, expected)
+
+
+def test_embed_returns_l2_normalized_vectors():
+    # Probe + embed both return non-unit vectors; expect ‖v‖ ≈ 1 in output.
+    hidden_probe = torch.tensor([[[3.0, 4.0, 0.0, 0.0]]])  # ‖·‖=5
+    hidden_run = torch.tensor([[[6.0, 8.0, 0.0, 0.0]]])    # ‖·‖=10
+    tok = MagicMock()
+    tok.return_value = {"input_ids": torch.tensor([[1]]), "attention_mask": torch.tensor([[1]])}
+    model = MagicMock()
+    # First call: probe (during __init__). Second call: embed().
+    model.side_effect = [
+        MagicMock(last_hidden_state=hidden_probe),
+        MagicMock(last_hidden_state=hidden_run),
+    ]
+    with patch("optimum.onnxruntime.ORTModelForFeatureExtraction.from_pretrained", return_value=model), \
+         patch("transformers.AutoTokenizer.from_pretrained", return_value=tok):
+        backend = ONNXBackend(_make_recipe(dim=4))
+
+    out = backend.embed(["hello"])
+    norm = sum(x * x for x in out[0]) ** 0.5
+    assert abs(norm - 1.0) < 1e-5
