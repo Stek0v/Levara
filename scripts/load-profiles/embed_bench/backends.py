@@ -79,6 +79,46 @@ class Model2VecBackend:
         return np.asarray(arr).astype(float).tolist()
 
 
+class ONNXBackend:
+    def __init__(self, recipe: Recipe):
+        from optimum.onnxruntime import ORTModelForFeatureExtraction
+        from transformers import AutoTokenizer
+        import torch
+
+        self._torch = torch
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            recipe.repo, trust_remote_code=recipe.trust_remote_code,
+        )
+        self.model = ORTModelForFeatureExtraction.from_pretrained(
+            recipe.repo,
+            subfolder="onnx",
+            file_name="model.onnx",
+            provider="CPUExecutionProvider",
+            trust_remote_code=recipe.trust_remote_code,
+        )
+        with torch.no_grad():
+            inputs = self.tokenizer(["dim probe"], padding=True, truncation=True, return_tensors="pt")
+            out = self.model(**inputs)
+            pooled = self._last_token_pool(out.last_hidden_state, inputs["attention_mask"])
+            self.dim = int(pooled.shape[-1])
+
+    def _last_token_pool(self, last_hidden_state, attention_mask):
+        seq_lens = attention_mask.sum(dim=1) - 1
+        seq_lens = seq_lens.clamp(min=0)
+        batch_idx = self._torch.arange(last_hidden_state.size(0))
+        return last_hidden_state[batch_idx, seq_lens]
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        with self._torch.no_grad():
+            inputs = self.tokenizer(
+                texts, padding=True, truncation=True, max_length=512, return_tensors="pt",
+            )
+            out = self.model(**inputs)
+            pooled = self._last_token_pool(out.last_hidden_state, inputs["attention_mask"])
+            normed = self._torch.nn.functional.normalize(pooled, p=2, dim=1)
+            return normed.cpu().tolist()
+
+
 def make_backend(recipe: Recipe) -> Backend:
     if recipe.backend == "transformers":
         return TransformersBackend(recipe)
