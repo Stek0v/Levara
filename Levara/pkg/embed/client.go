@@ -53,6 +53,17 @@ func (c *Client) WithCache(cache *Cache) *Client {
 	return c
 }
 
+// WithTimeout overrides the per-request HTTP timeout (default 30s). Bulk
+// re-embedding of large document chunks on modest hardware can take far longer
+// than embedding short memory texts, so that path opts into a larger timeout.
+// A non-positive d leaves the existing timeout unchanged.
+func (c *Client) WithTimeout(d time.Duration) *Client {
+	if d > 0 {
+		c.httpClient.Timeout = d
+	}
+	return c
+}
+
 // embeddingRequest is the OpenAI-compatible request format.
 type embeddingRequest struct {
 	Input []string `json:"input"`

@@ -11,9 +11,12 @@ func TestExpandRecordsToUnits_ShortPassthrough(t *testing.T) {
 	recs := []syncCollectionRecord{
 		{ID: "rec-1", Text: "short text", Metadata: json.RawMessage(`{"text":"short text","k":1}`)},
 	}
-	units, skipped := expandRecordsToUnits(recs, 100, 20)
+	units, skipped, chunked := expandRecordsToUnits(recs, 100, 20)
 	if skipped != 0 {
 		t.Fatalf("skipped = %d, want 0", skipped)
+	}
+	if chunked {
+		t.Errorf("chunked = true, want false for short passthrough record")
 	}
 	if len(units) != 1 {
 		t.Fatalf("len(units) = %d, want 1", len(units))
@@ -35,9 +38,12 @@ func TestExpandRecordsToUnits_LongSplits(t *testing.T) {
 	recs := []syncCollectionRecord{
 		{ID: "doc-A", Text: long, Metadata: json.RawMessage(`{"text":"FULL DOCUMENT"}`)},
 	}
-	units, skipped := expandRecordsToUnits(recs, maxRunes, maxRunes/5)
+	units, skipped, chunked := expandRecordsToUnits(recs, maxRunes, maxRunes/5)
 	if skipped != 0 {
 		t.Fatalf("skipped = %d, want 0", skipped)
+	}
+	if !chunked {
+		t.Errorf("chunked = false, want true when a record was split")
 	}
 	if len(units) < 2 {
 		t.Fatalf("len(units) = %d, want >= 2 chunks", len(units))
@@ -78,9 +84,12 @@ func TestExpandRecordsToUnits_SkipsOversizedWhitespace(t *testing.T) {
 	recs := []syncCollectionRecord{
 		{ID: "blank", Text: strings.Repeat(" ", 500), Metadata: json.RawMessage(`{}`)},
 	}
-	units, skipped := expandRecordsToUnits(recs, 100, 20)
+	units, skipped, chunked := expandRecordsToUnits(recs, 100, 20)
 	if skipped != 1 {
 		t.Errorf("skipped = %d, want 1", skipped)
+	}
+	if chunked {
+		t.Errorf("chunked = true, want false when oversized record produced no chunks")
 	}
 	if len(units) != 0 {
 		t.Errorf("len(units) = %d, want 0", len(units))

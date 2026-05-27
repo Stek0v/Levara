@@ -582,7 +582,6 @@ func syncImportCollectionHandler(cfg APIConfig) fiber.Handler {
 		}
 		syncImportRuns.Store(runID, status)
 
-		batchSize := 50
 
 		go func() {
 			defer func() {
@@ -599,7 +598,7 @@ func syncImportCollectionHandler(cfg APIConfig) fiber.Handler {
 			// Split records that exceed the embed context into overlapping
 			// chunks; records that fit pass through unchanged. Each unit is
 			// embedded and stored as its own vector.
-			units, skippedNoText := expandRecordsToUnits(export.Records, reembedMaxRunes, reembedMaxRunes/5)
+			units, skippedNoText, chunked := expandRecordsToUnits(export.Records, reembedMaxRunes, reembedMaxRunes/5)
 			status.Skipped += skippedNoText
 			if len(units) == 0 {
 				status.Status = "COMPLETED"
@@ -608,10 +607,19 @@ func syncImportCollectionHandler(cfg APIConfig) fiber.Handler {
 			}
 			status.Total = len(units)
 
-			// Custom batch size means we keep constructing a one-off
-			// client here — production-shared cfg.EmbedClient uses
-			// batchSize=16 which is wrong for the bulk re-embed path.
-			embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, batchSize, 3)
+			// Re-embed throughput is tuned to unit size. Short memory texts
+			// keep the high-throughput defaults (batch 50, concurrency 3).
+			// When a document was split into large chunks, a batch of 50 at
+			// concurrency 3 overruns the embed client's 30s HTTP timeout on
+			// modest hardware (Ollama on a Pi), so shrink the batch, drop to
+			// sequential, and extend the timeout for that path only.
+			// WithTimeout(0) is a no-op, leaving the default for the fast path.
+			batchSize, embedConcurrency, embedTimeout := 50, 3, time.Duration(0)
+			if chunked {
+				batchSize, embedConcurrency, embedTimeout = 16, 1, 5*time.Minute
+			}
+			embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, batchSize, embedConcurrency).
+				WithTimeout(embedTimeout)
 
 			// Auto-detect target dimension
 			testVecs, err := embedClient.EmbedTexts(bgCtx, []string{units[0].text})
