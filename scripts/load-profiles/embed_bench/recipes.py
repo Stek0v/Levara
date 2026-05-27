@@ -16,6 +16,7 @@ class Recipe:
     dim: int
     openai_name: str
     trust_remote_code: bool = False
+    onnx_file_name: str = "model.onnx"
 
 
 RECIPES: dict[str, Recipe] = {
@@ -48,6 +49,7 @@ RECIPES: dict[str, Recipe] = {
         dim=768,
         openai_name="jina-v5-text-nano-retrieval",
         trust_remote_code=True,
+        onnx_file_name="model_quantized.onnx",
     ),
 }
 
