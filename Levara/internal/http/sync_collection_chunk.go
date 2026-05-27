@@ -34,11 +34,14 @@ type embedUnit struct {
 // expandRecordsToUnits turns import records into embeddable units. Records whose
 // text fits maxRunes pass through unchanged. Oversized records are split with
 // the shared sliding chunker (snap-to-sentence on) into units with deterministic
-// chunk IDs and chunk-scoped metadata. Returns the units and the count of
-// records dropped because they held no embeddable text.
-func expandRecordsToUnits(records []syncCollectionRecord, maxRunes, overlap int) ([]embedUnit, int) {
+// chunk IDs and chunk-scoped metadata. Returns the units, the count of records
+// dropped because they held no embeddable text, and whether any record was
+// split into chunks (the caller uses this to pick conservative embed settings,
+// since large chunks embed far slower than short records).
+func expandRecordsToUnits(records []syncCollectionRecord, maxRunes, overlap int) ([]embedUnit, int, bool) {
 	units := make([]embedUnit, 0, len(records))
 	skipped := 0
+	chunked := false
 	for _, r := range records {
 		if utf8.RuneCountInString(r.Text) <= maxRunes {
 			units = append(units, embedUnit{id: r.ID, text: r.Text, meta: r.Metadata})
@@ -49,6 +52,7 @@ func expandRecordsToUnits(records []syncCollectionRecord, maxRunes, overlap int)
 			skipped++
 			continue
 		}
+		chunked = true
 		for _, ch := range chunks {
 			units = append(units, embedUnit{
 				id:   ch.ID,
@@ -57,7 +61,7 @@ func expandRecordsToUnits(records []syncCollectionRecord, maxRunes, overlap int)
 			})
 		}
 	}
-	return units, skipped
+	return units, skipped, chunked
 }
 
 // chunkMeta builds metadata for a chunk. When the source metadata is a JSON
