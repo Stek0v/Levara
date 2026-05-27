@@ -92,7 +92,7 @@ class ONNXBackend:
         self.model = ORTModelForFeatureExtraction.from_pretrained(
             recipe.repo,
             subfolder="onnx",
-            file_name="model.onnx",
+            file_name=recipe.onnx_file_name,
             provider="CPUExecutionProvider",
             trust_remote_code=recipe.trust_remote_code,
         )
