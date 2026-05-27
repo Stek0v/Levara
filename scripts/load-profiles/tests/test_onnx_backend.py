@@ -98,3 +98,16 @@ def test_embed_returns_l2_normalized_vectors():
     out = backend.embed(["hello"])
     norm = sum(x * x for x in out[0]) ** 0.5
     assert abs(norm - 1.0) < 1e-5
+
+
+def test_dim_mismatch_raises_value_error():
+    # Recipe says dim=4, probe returns dim=7 → must raise.
+    hidden = torch.tensor([[[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7]]])
+    tok = MagicMock()
+    tok.return_value = {"input_ids": torch.tensor([[1]]), "attention_mask": torch.tensor([[1]])}
+    model = MagicMock()
+    model.return_value = MagicMock(last_hidden_state=hidden)
+    with patch("optimum.onnxruntime.ORTModelForFeatureExtraction.from_pretrained", return_value=model), \
+         patch("transformers.AutoTokenizer.from_pretrained", return_value=tok):
+        with pytest.raises(ValueError, match="recipe dim mismatch"):
+            ONNXBackend(_make_recipe(dim=4))
