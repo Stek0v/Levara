@@ -111,3 +111,19 @@ def test_dim_mismatch_raises_value_error():
          patch("transformers.AutoTokenizer.from_pretrained", return_value=tok):
         with pytest.raises(ValueError, match="recipe dim mismatch"):
             ONNXBackend(_make_recipe(dim=4))
+
+
+from embed_bench.backends import make_backend
+
+
+def test_make_backend_dispatches_onnx_recipe():
+    recipe = _make_recipe(dim=4)
+    hidden = torch.tensor([[[0.1, 0.2, 0.3, 0.4]]])
+    tok = MagicMock()
+    tok.return_value = {"input_ids": torch.tensor([[1]]), "attention_mask": torch.tensor([[1]])}
+    model = MagicMock()
+    model.return_value = MagicMock(last_hidden_state=hidden)
+    with patch("optimum.onnxruntime.ORTModelForFeatureExtraction.from_pretrained", return_value=model), \
+         patch("transformers.AutoTokenizer.from_pretrained", return_value=tok):
+        backend = make_backend(recipe)
+    assert isinstance(backend, ONNXBackend)

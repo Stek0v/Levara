@@ -129,4 +129,6 @@ def make_backend(recipe: Recipe) -> Backend:
         return TransformersBackend(recipe)
     if recipe.backend == "model2vec":
         return Model2VecBackend(recipe)
+    if recipe.backend == "onnx":
+        return ONNXBackend(recipe)
     raise ValueError(f"unknown backend {recipe.backend!r}")
