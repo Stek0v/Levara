@@ -9,7 +9,7 @@ User=stek0v
 WorkingDirectory=/home/stek0v/levara-bench
 Environment=DB_PROVIDER=sqlite
 Environment=DB_PATH=/home/stek0v/levara-bench/data/levara.db
-Environment=EMBEDDING_ENDPOINT=http://127.0.0.1:9101/v1/embeddings
+Environment=EMBEDDING_ENDPOINT=http://127.0.0.1:9201/v1/embeddings
 Environment=LLM_PROVIDER=openai
 Environment=LLM_ENDPOINT=http://127.0.0.1:11434/v1
 Environment=LLM_MODEL=qwen3:0.6b

@@ -22,7 +22,7 @@ class Checks:
     expected_dim: int
     expected_openai_name: str
     host: str = "10.23.0.53"
-    sidecar_port: int = 9101
+    sidecar_port: int = 9201
     bench_port: int = 8091
     rerank_port: int = 9100
     ollama_port: int = 11434
