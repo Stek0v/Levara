@@ -49,7 +49,7 @@ RECIPES: dict[str, Recipe] = {
         dim=768,
         openai_name="jina-v5-text-nano-retrieval",
         trust_remote_code=True,
-        onnx_file_name="model_quantized.onnx",
+        onnx_file_name="model_fp16.onnx",
     ),
 }
 
