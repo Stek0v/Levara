@@ -68,7 +68,21 @@ ExecStart=/home/stek0v/levara-bench/levara -standalone=true -port=8091 -grpc-por
   rsync -a --delete scripts/ "$PI_USER@$PI_HOST:/home/stek0v/embed-bench/scripts/" >/dev/null
   rsync -a deploy/bench/embed-bench.service "$PI_USER@$PI_HOST:/tmp/embed-bench.service" >/dev/null
   ssh "$PI_USER@$PI_HOST" "sudo install -m 0644 /tmp/embed-bench.service /etc/systemd/system/embed-bench.service && sudo systemctl daemon-reload && sudo systemctl restart embed-bench.service"
-  sleep 8
+
+  # Wait for sidecar /health. Cold-start time varies wildly per backend
+  # (model2vec <5s, transformers ~30s, ONNX with first-run weight pull
+  # >5min). Poll for up to 10 minutes before giving up.
+  local SIDECAR_URL="http://$PI_HOST:9201/health"
+  local DEADLINE=$(( $(date +%s) + 600 ))
+  while ! curl -fsS --max-time 3 "$SIDECAR_URL" >/dev/null 2>&1; do
+    if [ $(date +%s) -ge $DEADLINE ]; then
+      echo "sidecar /health did not respond within 10 min, skipping" >&2
+      stop_bench
+      return 1
+    fi
+    sleep 5
+  done
+
   ssh "$PI_USER@$PI_HOST" "python3 /home/stek0v/embed-bench/scripts/load-profiles/preflight_model.py --model $short --host 127.0.0.1" \
     || { echo "preflight failed for $short, skipping" >&2; stop_bench; return 1; }
 
