@@ -7,7 +7,7 @@ Isolated from production `levara.service` on :8090. Lifecycle controlled by
 
 | Service | Port | Notes |
 |---------|------|-------|
-| `embed-bench` | 9101 | FastAPI sidecar; serves `/v1/embeddings` for whatever model drop-in selects |
+| `embed-bench` | 9201 | FastAPI sidecar; serves `/v1/embeddings` for whatever model drop-in selects (was 9101, moved 2026-05-27 because prod `embed-potion.service` now owns 9101) |
 | `levara-bench` | 8091 | Levara in sqlite mode; consumes embed-bench |
 
 `embed-bench` runs from `WorkingDirectory=/home/stek0v/embed-bench/scripts/load-profiles`

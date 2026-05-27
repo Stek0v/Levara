@@ -83,7 +83,7 @@ ExecStart=/home/stek0v/levara-bench/levara -standalone=true -port=8091 -grpc-por
   # pre-computed vector to /api/v1/search (which is unaffected by
   # the chunksSearch null-result regression). Sidecar binds 0.0.0.0
   # so it's reachable from the Mac.
-  export LEVARA_PRE_EMBED_URL="http://$PI_HOST:9101/v1/embeddings"
+  export LEVARA_PRE_EMBED_URL="http://$PI_HOST:9201/v1/embeddings"
   export LEVARA_PRE_EMBED_MODEL="$short"
 
   # Rerank sidecar on Pi binds 127.0.0.1:9100 (it was launched
