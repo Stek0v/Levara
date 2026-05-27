@@ -4,6 +4,7 @@ package http
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -151,12 +152,18 @@ func reembedHandler(cfg APIConfig) fiber.Handler {
 			}
 			log.Printf("[reembed] %s → %s: %d records, model=%s", req.SourceCollection, req.TargetCollection, len(ids), model)
 
-			// 2. Extract text from metadata for re-embedding
+			// 2. Extract text from metadata for re-embedding.
+			// mem0 wraps payload as JSON-string of base64({"value":"…", …}). Without
+			// unwrapping, the shared envelope header dominates mean-pool embeddings
+			// (potion-code-16M) and distinct records collapse to near-identical vectors.
 			texts := make([]string, len(ids))
 			for i, meta := range metas {
+				if v, ok := unwrapMem0Envelope(meta); ok {
+					texts[i] = v
+					continue
+				}
 				var m map[string]any
 				if json.Unmarshal(meta, &m) == nil {
-					// Try common text fields
 					for _, key := range []string{"text", "name", "description", "content"} {
 						if v, ok := m[key].(string); ok && v != "" {
 							texts[i] = v
@@ -165,7 +172,7 @@ func reembedHandler(cfg APIConfig) fiber.Handler {
 					}
 				}
 				if texts[i] == "" {
-					texts[i] = string(meta) // fallback: raw metadata as text
+					texts[i] = string(meta)
 				}
 			}
 
@@ -287,4 +294,27 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// unwrapMem0Envelope returns the inner "value" field when meta is the
+// mem0 envelope shape: JSON-string-literal of base64 of
+// {"collection":"","key":"…","memory_id":"…","type":"…","value":"…"}.
+// Returns ok=false for any non-matching shape so the caller falls back
+// to the previous extraction path.
+func unwrapMem0Envelope(meta []byte) (string, bool) {
+	var b64 string
+	if err := json.Unmarshal(meta, &b64); err != nil {
+		return "", false
+	}
+	raw, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		return "", false
+	}
+	var env struct {
+		Value string `json:"value"`
+	}
+	if err := json.Unmarshal(raw, &env); err != nil || env.Value == "" {
+		return "", false
+	}
+	return env.Value, true
 }
