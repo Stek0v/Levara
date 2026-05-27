@@ -96,11 +96,10 @@ class ONNXBackend:
             provider="CPUExecutionProvider",
             trust_remote_code=recipe.trust_remote_code,
         )
-        with torch.no_grad():
-            inputs = self.tokenizer(["dim probe"], padding=True, truncation=True, return_tensors="pt")
-            out = self.model(**inputs)
-            pooled = self._last_token_pool(out.last_hidden_state, inputs["attention_mask"])
-            self.dim = int(pooled.shape[-1])
+        inputs = self.tokenizer(["dim probe"], padding=True, truncation=True, return_tensors="pt")
+        out = self.model(**inputs)
+        pooled = self._last_token_pool(out.last_hidden_state, inputs["attention_mask"])
+        self.dim = int(pooled.shape[-1])
         if self.dim != recipe.dim:
             raise ValueError(
                 f"recipe dim mismatch: {recipe.repo} produced {self.dim}-d, "
@@ -114,14 +113,13 @@ class ONNXBackend:
         return last_hidden_state[batch_idx, seq_lens]
 
     def embed(self, texts: list[str]) -> list[list[float]]:
-        with self._torch.no_grad():
-            inputs = self.tokenizer(
-                texts, padding=True, truncation=True, max_length=512, return_tensors="pt",
-            )
-            out = self.model(**inputs)
-            pooled = self._last_token_pool(out.last_hidden_state, inputs["attention_mask"])
-            normed = self._torch.nn.functional.normalize(pooled, p=2, dim=1)
-            return normed.cpu().tolist()
+        inputs = self.tokenizer(
+            texts, padding=True, truncation=True, max_length=512, return_tensors="pt",
+        )
+        out = self.model(**inputs)
+        pooled = self._last_token_pool(out.last_hidden_state, inputs["attention_mask"])
+        normed = self._torch.nn.functional.normalize(pooled, p=2, dim=1)
+        return normed.cpu().tolist()
 
 
 def make_backend(recipe: Recipe) -> Backend:
