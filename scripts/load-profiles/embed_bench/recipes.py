@@ -44,12 +44,11 @@ RECIPES: dict[str, Recipe] = {
     ),
     "jina": Recipe(
         short="jina",
-        repo="jinaai/jina-embeddings-v5-text-nano-retrieval",
-        backend="onnx",
-        dim=768,
-        openai_name="jina-v5-text-nano-retrieval",
+        repo="jinaai/jina-embeddings-v2-small-en",
+        backend="transformers",
+        dim=512,
+        openai_name="jina-v2-small-en",
         trust_remote_code=True,
-        onnx_file_name="model_fp16.onnx",
     ),
 }
 
