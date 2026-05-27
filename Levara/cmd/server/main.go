@@ -146,6 +146,13 @@ func intEnv(key string, fallback int) int {
 }
 
 func main() {
+	if len(os.Args) >= 2 && os.Args[1] == "mcp" {
+		if err := runMCPStdio(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "mcp:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	bootstrap := flag.Bool("bootstrap", false, "Bootstrap the Raft cluster (Leader only)")
 	standalone := flag.Bool("standalone", true, "Standalone mode: WAL-only, no Raft consensus (fastest)")
 	dim := flag.Int("dim", 128, "Vector dimension size (must match embedding model output)")
