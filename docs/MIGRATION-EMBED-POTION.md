@@ -93,19 +93,35 @@ Done locally and on Pi 5 :8091. Nothing here touches :8090.
 | 1.1.c | Parity-check script — `scripts/reembed/parity_check.py` | ✅ done 2026-05-26 |
 | 1.1.d | Baseline snapshot script — `scripts/reembed/snapshot_baseline.py` | ✅ done 2026-05-26 |
 | 1.1.e | Atomic rename support in Levara (see §1.3) | ✅ done 2026-05-26 — `POST /collections/:name/rename` (option A), store + handler tests green |
-| 1.1.f | Potion embed-server on prod-class host | ⏳ pending host decision |
-| 1.1.g | Real-data smoke via pg_dump of one prod collection | ⏳ pending user GO |
+| 1.1.f | Potion embed-server on prod-class host | ✅ done 2026-05-26 — Pi :9101, systemd `embed-potion.service`, model2vec/potion-code-16M, 235MB RSS |
+| 1.1.g | Real-data smoke via pg_dump of one prod collection | ✅ done 2026-05-26 — see §2.1 (path adapted: Levara isn't pg-backed for vectors, smoke is HTTP-only) |
 
 ### 1.2 Potion embed-server host
 
-Default per user decision 2026-05-26: amd64 prod host, model2vec
-backend, OpenAI-compatible `/v1/embeddings` interface (so existing
-`pkg/embed.Client` works unchanged). Sidecar service, separate port
-from prod Levara. Concrete deployment recipe TBD when host is
-provisioned.
+**Decision 2026-05-26 (revised):** Pi 5 (`10.23.0.53:9101`).
+model2vec backend, OpenAI-compatible `/v1/embeddings`, same recipe
+as the Mac sidecar (`scripts/load-profiles/embed_bench/`). Pi already
+runs prod Levara :8090, so embed sidecar lives co-located on the same
+host — no network hop between Levara and the embedder during re-embed.
 
-Pi 5 sidecar at :9101 stays as it is — useful for bench validation,
-not in the prod path.
+Why Pi and not a separate amd64 host:
+- arm64 + model2vec works (verified on Mac arm64); single matmul, no
+  GPU needed.
+- Resident set ~270MB — fits Pi 5 RAM budget alongside Levara + mem0.
+- Existing rerank sidecar at :9100 establishes the pattern.
+- Avoids provisioning a new host for what is, post-migration, a steady
+  low-QPS service.
+
+Deployment recipe (executed 2026-05-26):
+1. `tar czf embed_bench-pi.tgz scripts/load-profiles/embed_bench/` (sans `.venv*` and `__pycache__`) + `scp` to Pi → extract at `~/embed_bench/`.
+2. On Pi: `python3 -m venv ~/embed_bench/.venv-potion && pip install fastapi==0.115.0 uvicorn==0.32.0 model2vec==0.4.0 numpy==1.26.4 pydantic==2.9.2` (pip CLI for uvicorn isn't dropped by default; service uses `python -m uvicorn`).
+3. Pre-warm: `python -c "from model2vec import StaticModel; StaticModel.from_pretrained('minishlab/potion-code-16M')"` (~1m HF download, cached in `~/.cache/huggingface`).
+4. systemd unit `/etc/systemd/system/embed-potion.service` — see §3.6. Loopback bind, `EMBED_BENCH_MODEL=potion`, `Restart=on-failure`, logs to `/var/log/embed-potion.log`, sandboxed (`ProtectSystem=strict`, `ProtectHome=read-only`, RW only on HF cache + log).
+5. Smoke verified: `curl 127.0.0.1:9101/health` on Pi → `{"model":"potion-code-16M","dim":256,"ram_mb":235,"backend":"model2vec"}`; `/v1/embeddings` returns 256-d vector.
+
+**Constraint:** sidecar MUST NOT share env or ports with Levara :8090.
+Independent process, independent systemd unit, independent venv. If
+the embedder OOMs or crashes loop, Levara stays untouched.
 
 ### 1.3 **BLOCKER**: atomic collection rename
 
@@ -157,20 +173,47 @@ cleanly, revisit and tighten if everything is sailing through.
 
 ## Phase 2 — Pre-flight on prod (one read-only operation)
 
-### 2.1 pg_dump of one collection (requires user GO)
+### 2.1 Real-data embed smoke (executed 2026-05-26)
 
-Pick the smallest collection from §0.2. On prod host:
+**Architecture correction:** the original pg_dump → pg_restore recipe
+doesn't apply — Levara stores vector data as arena/WAL/HNSW files on
+disk, not in a Postgres chunks table. The Postgres on 5433 holds only
+metadata (datasets, users, settings). Replacement smoke is HTTP-only:
 
 ```bash
-ssh prod 'pg_dump -Fc -t "<chunks_table>" \
-  --where="collection=\"<smallest_coll>\"" \
-  -U cognee cognee_db > /tmp/<coll>.dump'
-scp prod:/tmp/<coll>.dump bench:/tmp/
-ssh bench 'pg_restore --data-only --table=<chunks_table> /tmp/<coll>.dump'
+# 1. Inventory (read-only)
+curl http://10.23.0.53:8090/api/v1/collections | jq 'sort_by(.record_count)'
+
+# 2. Export smallest non-trivial collection (read-only on prod)
+curl http://10.23.0.53:8090/api/v1/sync/export/collection/_memories_default \
+  > mem-export.json
+
+# 3. Decode the corpus texts and embed via Pi:9101 (over SSH tunnel from Mac):
+ssh -fN -L 19101:127.0.0.1:9101 stek0v@10.23.0.53
+curl -X POST http://127.0.0.1:19101/v1/embeddings \
+  -d '{"input":[...10 decoded texts...],"model":"potion-code-16M"}'
 ```
 
-This is the **only** prod operation in Phase 2 and is strictly
-read-only on prod.
+**Smoke pass criteria (all green 2026-05-26 against `_memories_default`, 10 records):**
+- dim == 256 on every vector ✓
+- all values finite, L2 == 1.0 (model2vec normalises output) ✓
+- batch=10 latency 45.6ms (≈4.56ms/embed on arm64 Pi 5) ✓
+- distinct texts → distinct vectors (cos in [0.54, 0.88], no collapse) ✓
+- identical text twice → cos == 1.000000 (deterministic) ✓
+- duplicate records in source → identical embeddings ✓
+
+**Prod side-effects:** none. Source `_memories_default` unmodified;
+no shadow collection left behind.
+
+**Gotcha caught during smoke (`[[discovery-reembed-field-names]]`):**
+`/reembed` reads `target_model`, `target_endpoint`, `target_dim` —
+NOT `target_embedding_*`. Wrong field names silently fall back to the
+server's global embed config and produce a successful-looking run with
+the **original** model. Always verify the response payload's
+`target_model` and `dim 768→…` substring before trusting the run.
+
+This is the **only** prod operation in Phase 2 (export endpoint is
+read-only on prod).
 
 ### 2.2 Smoke on real-shaped data
 
@@ -359,7 +402,7 @@ via re-cognify after the flip.
 - [x] §1.3 atomic rename endpoint shipped + tested (2026-05-26)
 - [x] §1.1.c parity script written (2026-05-26) — dry-run on bench data pending
 - [x] §1.1.d baseline snapshot script written (2026-05-26) — dry-run on bench data pending
-- [ ] §1.1.f potion embed-server reachable from prod Levara
-- [ ] §1.1.g user GO on pg_dump of one prod collection
+- [x] §1.1.f potion embed-server reachable from prod Levara (Pi `127.0.0.1:9101`, systemd, 2026-05-26)
+- [x] §1.1.g real-data smoke on one prod collection (2026-05-26, HTTP path; pg_dump approach retired — see §2.1)
 - [ ] §1.4 parity thresholds reviewed by user
 - [ ] Phase 2 smoke on real-data passes thresholds

@@ -2,6 +2,7 @@ package http
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -140,6 +141,46 @@ func TestReembed_RequiresEmbedEndpointAndModel(t *testing.T) {
 	if status != 400 {
 		t.Errorf("status = %d, want 400", status)
 	}
+}
+
+func TestUnwrapMem0Envelope(t *testing.T) {
+	mkEnvelope := func(value string) []byte {
+		inner, _ := json.Marshal(map[string]string{
+			"collection": "", "key": "k", "memory_id": "id", "type": "t", "value": value,
+		})
+		b64 := base64.StdEncoding.EncodeToString(inner)
+		quoted, _ := json.Marshal(b64)
+		return quoted
+	}
+
+	t.Run("envelope with value extracts inner", func(t *testing.T) {
+		got, ok := unwrapMem0Envelope(mkEnvelope("hello world"))
+		if !ok || got != "hello world" {
+			t.Fatalf("got=%q ok=%v, want hello world/true", got, ok)
+		}
+	})
+	t.Run("empty value falls through", func(t *testing.T) {
+		if _, ok := unwrapMem0Envelope(mkEnvelope("")); ok {
+			t.Fatal("empty value must return ok=false")
+		}
+	})
+	t.Run("plain json object falls through", func(t *testing.T) {
+		if _, ok := unwrapMem0Envelope([]byte(`{"text":"hi"}`)); ok {
+			t.Fatal("plain map must return ok=false")
+		}
+	})
+	t.Run("plain string non-base64 falls through", func(t *testing.T) {
+		if _, ok := unwrapMem0Envelope([]byte(`"not base64!!"`)); ok {
+			t.Fatal("non-b64 string must return ok=false")
+		}
+	})
+	t.Run("base64 of non-envelope json falls through", func(t *testing.T) {
+		b64 := base64.StdEncoding.EncodeToString([]byte(`{"other":"x"}`))
+		quoted, _ := json.Marshal(b64)
+		if _, ok := unwrapMem0Envelope(quoted); ok {
+			t.Fatal("envelope without value must return ok=false")
+		}
+	})
 }
 
 func TestReembedStatus_UnknownRunReturns404(t *testing.T) {
