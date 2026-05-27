@@ -101,6 +101,11 @@ class ONNXBackend:
             out = self.model(**inputs)
             pooled = self._last_token_pool(out.last_hidden_state, inputs["attention_mask"])
             self.dim = int(pooled.shape[-1])
+        if self.dim != recipe.dim:
+            raise ValueError(
+                f"recipe dim mismatch: {recipe.repo} produced {self.dim}-d, "
+                f"recipe said {recipe.dim}"
+            )
 
     def _last_token_pool(self, last_hidden_state, attention_mask):
         seq_lens = attention_mask.sum(dim=1) - 1
