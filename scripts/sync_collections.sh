@@ -26,8 +26,14 @@
 #   INCLUDE_SYSTEM=1     include "_"-prefixed system collections
 #   ONLY="a b c"         sync only these named collections (space-separated)
 #   BATCH_RECORDS=200    records per import request (guards the body-size limit;
-#                        lower it if a document-heavy collection trips HTTP 413)
+#                        lower it if a document-heavy collection trips HTTP 413
+#                        or a "broken pipe")
 #   POLL_TIMEOUT=600     seconds to wait for each import run to finish
+#
+# Note: the receiver re-embeds each record's full text as a single vector, so
+# collections whose records hold whole documents (e.g. an "uploads" staging
+# collection) can fail with "input length exceeds the context length" — those
+# need chunking upstream, not a sync setting.
 #
 set -uo pipefail
 
@@ -129,7 +135,11 @@ for name in names:
         try:
             started = req("POST", f"{TO}/sync/import/collection", TO_KEY, chunk)
         except urllib.error.HTTPError as ex:
-            err = f"HTTP {ex.code} on chunk@{i} (lower BATCH_RECORDS?)"
+            err = f"HTTP {ex.code} on chunk@{i} (body too big? lower BATCH_RECORDS)"
+            break
+        except urllib.error.URLError as ex:
+            # Broken pipe / reset usually means the chunk exceeded the body limit.
+            err = f"{ex.reason} on chunk@{i} (body too big? lower BATCH_RECORDS)"
             break
         except Exception as ex:
             err = str(ex)
