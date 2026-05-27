@@ -48,7 +48,7 @@ run_one_model() {
     potion)  OPENAI="potion-code-16M";              DIM=256 ;;
     granite) OPENAI="granite-97m-multilingual-r2";  DIM=384 ;;
     nomic)   OPENAI="nomic-embed-text-v2-moe";      DIM=768 ;;
-    jina)    OPENAI="jina-omni-nano";               DIM=512 ;;
+    jina)    OPENAI="jina-v5-text-nano-retrieval";  DIM=768 ;;
     *) echo "unknown model: $short" >&2; exit 2 ;;
   esac
 
