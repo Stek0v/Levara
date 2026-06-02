@@ -293,6 +293,22 @@ var (
 		Name: "levara_workspace_audit_stored_events",
 		Help: "Number of sanitized workspace audit events found on disk by the last ops/status refresh",
 	})
+
+	// 18. Memory consolidation pipeline.
+	ConsolidationRuns = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "levara_consolidation_runs_total",
+		Help: "Consolidation runs by outcome (ok/error/revert).",
+	}, []string{"outcome"})
+
+	ConsolidationClusters = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "levara_consolidation_clusters_total",
+		Help: "Clusters discovered across consolidation runs.",
+	})
+
+	ConsolidationActions = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "levara_consolidation_actions_total",
+		Help: "Consolidation actions planned/applied (merge + abstract).",
+	})
 )
 
 func init() {
