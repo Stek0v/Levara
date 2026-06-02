@@ -140,3 +140,40 @@ Observations:
 - [2] consolidate dry_run on `levara` (256) → candidates=25, clusters=1, server alive (was: crash).
 - [3] consolidate dry_run on `local-net` (768) → safe no-op, candidates=28, clusters=0, server alive (was: crash).
 - Stability: NRestarts=0, 0 panics, 54 `potion-code-16M status=ok` embeds, running SHA `2cffe43`.
+
+## Heavy quality harness (2026-06-03, `scripts/consol_quality.py`)
+
+The 3-defect fix (commit `e4344d5`) was built fresh for arm64, deployed to the
+Pi (binary SHA1 `b659306991aa…`, backup at `levara.bak.20260603-005228`), and
+validated end-to-end by a new cross-domain quality harness. **16/16 PASS.**
+
+- **Module A — recall before/after a real `consolidate(dry_run=false)`.** Seeds
+  ~18 records with known facts across 5 rooms (auth/deploy/mcp/embed/kg) plus
+  corner records (RETRACTED note, code-keywords, number-dense), into a
+  throwaway collection, runs 6 hard cross-domain queries with ground truth,
+  consolidates for real, re-measures, then tears the collection down. Result:
+  2 merge clusters fired, **fact-recall 1.00 → 1.00, ZERO ground-truth facts
+  lost**, cross-domain query intact.
+- **Module B — coverage-guard corner cases.** B1 exercises the guard function
+  deterministically (dropped/invented number → reject; entity fraction at/over
+  10% tolerance; code-keyword drop within tolerance). B2 runs adversarial
+  clusters through live potion + DeepSeek: tight cluster → MERGE (cos 0.9978),
+  oversized 7-record cluster → SKIP("too large"), related pair → abstract
+  preserving every number. All pass.
+- **Module C — live prod smoke (dry_run).** 10 real collections, no crash,
+  server healthy after. The deployed fix is **visibly live**: `levara` →
+  `skip: cluster too large for abstraction (12 > 6)`; `localllm` alternately
+  `skip: dropped 2/12 source entities (17% > 10%): [REPL Real]` or a clean
+  abstract depending on DeepSeek run (guard as designed).
+
+### F-quality.1 — latent embedding mismatch in the consolidation edge-builder
+`collectionNeighbors.Edges` embeds **`r.Value` only** (`tool_consolidate.go:140`),
+but `save_memory` indexes **`embed(key + " " + value)`** (`indexMemoryAsync`). A
+long memory `key` therefore pollutes the stored vector relative to the value-only
+query vector, sinking even near-identical records below `TauLow` and starving the
+clusterer. In prod keys are short so the effect is mild, but it means
+consolidation under-clusters when keys carry significant text. Surfaced because
+the harness's first fixture used long unique keys → `clusters=0`; shortening keys
+restored expected clustering. **Follow-up:** make `Edges` embed `key+" "+value`
+to match the index (or have both embed `value` only) so edge geometry matches
+recall geometry.
