@@ -728,7 +728,7 @@ func (h *mcpHandler) executeToolInner(ctx context.Context, sess *mcpSession, nam
 		}
 	case "save_memory", "recall_memory", "list_memories",
 		"wake_up", "pin_memory", "unpin_memory",
-		"diary_write", "diary_read":
+		"diary_write", "diary_read", "consolidate":
 		// Memory tools: only inject session default, NOT "default" fallback.
 		// Empty collection → global _memories (backward compatible with Pi data).
 		if _, ok := args["collection"]; !ok || args["collection"] == "" {
@@ -826,6 +826,8 @@ func (h *mcpHandler) executeToolInner(ctx context.Context, sess *mcpSession, nam
 		return h.toolRecallMemory(ctx, args)
 	case "list_memories":
 		return h.toolListMemories(ctx, args)
+	case "consolidate":
+		return h.toolConsolidate(ctx, args)
 	case "save_chat":
 		return h.toolSaveChat(ctx, args)
 	case "recall_chat":
@@ -964,6 +966,10 @@ func (h *mcpHandler) toolRecallMemory(ctx context.Context, args map[string]any) 
 // toolListMemories is a thin shim over mcp.ToolListMemories (F-4 wave 3f).
 func (h *mcpHandler) toolListMemories(ctx context.Context, args map[string]any) mcpToolResult {
 	return mcp.ToolListMemories(ctx, h, args)
+}
+
+func (h *mcpHandler) toolConsolidate(ctx context.Context, args map[string]any) mcpToolResult {
+	return mcp.ToolConsolidate(ctx, h, args)
 }
 
 // ── Chat History handlers ──
