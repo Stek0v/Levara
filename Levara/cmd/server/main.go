@@ -69,8 +69,10 @@ import (
 	"github.com/stek0v/levara/internal/store"
 
 	_ "github.com/stek0v/levara/docs" // swaggo-generated OpenAPI spec (T13)
+	"github.com/stek0v/levara/pkg/consolidate"
 	"github.com/stek0v/levara/pkg/embed"
 	"github.com/stek0v/levara/pkg/graphdb"
+	"github.com/stek0v/levara/pkg/mcp"
 	"github.com/stek0v/levara/pkg/llmcache"
 	"github.com/stek0v/levara/pkg/observe"
 	"github.com/stek0v/levara/pkg/router"
@@ -496,6 +498,19 @@ func main() {
 
 	// MCP (Model Context Protocol) server — JSON-RPC 2.0 for AI agent integration
 	vectorHttp.RegisterMCPAPI(app, mcpCfg)
+
+	// Opt-in background memory-consolidation janitor. Off unless
+	// CONSOLIDATION_INTERVAL is a positive Go duration (e.g. "30m"). Sweeps
+	// every non-internal collection against its own _memories_<c> sidecar.
+	if v := os.Getenv("CONSOLIDATION_INTERVAL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			stop := consolidate.StartJanitor(context.Background(), mcp.NewConsolidationRunner(vectorHttp.NewMCPDeps(mcpCfg)), d)
+			defer stop()
+			log.Printf("consolidation janitor enabled (interval=%s)", d)
+		} else {
+			log.Printf("CONSOLIDATION_INTERVAL=%q invalid; janitor disabled", v)
+		}
+	}
 
 	if workspaceIndexWorkerEnabled() {
 		stopWorkspaceIndexWorker := vectorHttp.StartWorkspaceIndexWorker(context.Background(), apiCfg, vectorHttp.WorkspaceIndexWorkerOptions{

@@ -72,6 +72,13 @@ func RegisterMCPAPI(app fiber.Router, cfg APIConfig) {
 	go handler.sessionCleanupLoop()
 }
 
+// NewMCPDeps builds a server-scoped mcp.Deps from an APIConfig, independent of
+// any HTTP/SSE session. Used by background workers (e.g. the consolidation
+// janitor) that must call MCP tool adapters outside a request lifecycle.
+func NewMCPDeps(cfg APIConfig) mcp.Deps {
+	return &mcpHandler{cfg: cfg, sessions: mcp.NewSessionStore()}
+}
+
 // mcpSession is a type alias for the canonical mcp.Session — all session
 // state and lifecycle now lives in pkg/mcp (F-4 wave 2). See pkg/mcp/session.go.
 type mcpSession = mcp.Session
