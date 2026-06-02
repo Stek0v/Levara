@@ -56,3 +56,11 @@ func TestAbstractValue_PropagatesLLMError(t *testing.T) {
 		t.Fatal("err = nil, want propagated llm error")
 	}
 }
+
+func TestAbstractValue_RejectsEmptySources(t *testing.T) {
+	s := fakeSummarizer{out: "anything the model says"}
+	_, err := AbstractValue(context.Background(), s, nil)
+	if err == nil {
+		t.Fatal("err = nil, want error for empty sources")
+	}
+}

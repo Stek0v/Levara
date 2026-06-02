@@ -26,6 +26,9 @@ var (
 // On any violation (or LLM error) it returns an error and the caller leaves the
 // cluster untouched.
 func AbstractValue(ctx context.Context, s Summarizer, sources []string) (string, error) {
+	if len(sources) == 0 {
+		return "", fmt.Errorf("consolidate: no sources")
+	}
 	out, err := s.Summarize(ctx, sources)
 	if err != nil {
 		return "", err
