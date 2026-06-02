@@ -486,6 +486,7 @@ func main() {
 		DB:                      pgDB,
 		BM25Indexes:             grpcSvc.BM25Indexes(),
 		LLMCache:                llmCache,
+		LLMProvider:             llmProvider,
 		RerankEndpoint:          rerankCfg.Endpoint,
 		RerankModel:             rerankCfg.Model,
 		RerankTimeoutMs:         rerankCfg.TimeoutMs,
