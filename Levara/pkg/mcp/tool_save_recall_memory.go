@@ -175,6 +175,7 @@ func ToolRecallMemory(ctx context.Context, deps Deps, args map[string]any) ToolR
 	collectionName, _ := args["collection"].(string)
 	room, _ := args["room"].(string)
 	hall, _ := args["hall"].(string)
+	includeSuperseded, _ := args["include_superseded"].(bool)
 	ownerID := extractOwnerID(ctx)
 
 	db := deps.DB()
@@ -190,7 +191,7 @@ func ToolRecallMemory(ctx context.Context, deps Deps, args map[string]any) ToolR
 	}
 
 	// Strategy 2: SQL LIKE.
-	return recallViaSQLLike(ctx, db, deps.Q, query, collectionName, room, hall, ownerID)
+	return recallViaSQLLike(ctx, db, deps.Q, query, collectionName, room, hall, ownerID, includeSuperseded)
 }
 
 // recallViaVectorSearch attempts vector-semantic recall. Returns
@@ -225,7 +226,7 @@ func recallViaVectorSearch(ctx context.Context, deps Deps, collectionName, query
 // match scoped to the caller's owner, with optional collection /
 // room / hall filters. Always terminating — either returns rows,
 // a "no results" message, or a SQL error surfaced as IsError.
-func recallViaSQLLike(ctx context.Context, db *sql.DB, rewrite func(string) string, query, collectionName, room, hall, ownerID string) ToolResult {
+func recallViaSQLLike(ctx context.Context, db *sql.DB, rewrite func(string) string, query, collectionName, room, hall, ownerID string, includeSuperseded bool) ToolResult {
 	pattern := "%" + query + "%"
 	var conds []string
 	var qargs []any
@@ -249,7 +250,12 @@ func recallViaSQLLike(ctx context.Context, db *sql.DB, rewrite func(string) stri
 	if hall != "" {
 		conds = append(conds, fmt.Sprintf("hall = $%d", pos))
 		qargs = append(qargs, hall)
+		pos++
 	}
+	if !includeSuperseded {
+		conds = append(conds, "superseded_by = ''")
+	}
+	_ = pos // keep pos in scope; no further binds after this point
 	sqlStr := fmt.Sprintf(`
 		SELECT id, key, value, type, owner_id, room, hall, created_at, updated_at
 		FROM memories WHERE %s ORDER BY updated_at DESC LIMIT %d
