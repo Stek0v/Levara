@@ -72,6 +72,13 @@ func RegisterMCPAPI(app fiber.Router, cfg APIConfig) {
 	go handler.sessionCleanupLoop()
 }
 
+// NewMCPDeps builds a server-scoped mcp.Deps from an APIConfig, independent of
+// any HTTP/SSE session. Used by background workers (e.g. the consolidation
+// janitor) that must call MCP tool adapters outside a request lifecycle.
+func NewMCPDeps(cfg APIConfig) mcp.Deps {
+	return &mcpHandler{cfg: cfg, sessions: mcp.NewSessionStore()}
+}
+
 // mcpSession is a type alias for the canonical mcp.Session — all session
 // state and lifecycle now lives in pkg/mcp (F-4 wave 2). See pkg/mcp/session.go.
 type mcpSession = mcp.Session
@@ -728,7 +735,7 @@ func (h *mcpHandler) executeToolInner(ctx context.Context, sess *mcpSession, nam
 		}
 	case "save_memory", "recall_memory", "list_memories",
 		"wake_up", "pin_memory", "unpin_memory",
-		"diary_write", "diary_read":
+		"diary_write", "diary_read", "consolidate":
 		// Memory tools: only inject session default, NOT "default" fallback.
 		// Empty collection → global _memories (backward compatible with Pi data).
 		if _, ok := args["collection"]; !ok || args["collection"] == "" {
@@ -826,6 +833,10 @@ func (h *mcpHandler) executeToolInner(ctx context.Context, sess *mcpSession, nam
 		return h.toolRecallMemory(ctx, args)
 	case "list_memories":
 		return h.toolListMemories(ctx, args)
+	case "consolidate":
+		return h.toolConsolidate(ctx, args)
+	case "consolidation_revert":
+		return h.toolConsolidationRevert(ctx, args)
 	case "save_chat":
 		return h.toolSaveChat(ctx, args)
 	case "recall_chat":
@@ -964,6 +975,14 @@ func (h *mcpHandler) toolRecallMemory(ctx context.Context, args map[string]any) 
 // toolListMemories is a thin shim over mcp.ToolListMemories (F-4 wave 3f).
 func (h *mcpHandler) toolListMemories(ctx context.Context, args map[string]any) mcpToolResult {
 	return mcp.ToolListMemories(ctx, h, args)
+}
+
+func (h *mcpHandler) toolConsolidate(ctx context.Context, args map[string]any) mcpToolResult {
+	return mcp.ToolConsolidate(ctx, h, args)
+}
+
+func (h *mcpHandler) toolConsolidationRevert(ctx context.Context, args map[string]any) mcpToolResult {
+	return mcp.ToolConsolidationRevert(ctx, h, args)
 }
 
 // ── Chat History handlers ──

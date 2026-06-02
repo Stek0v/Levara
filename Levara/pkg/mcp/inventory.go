@@ -41,6 +41,8 @@ var groupByName = map[string]string{
 	"save_memory":         "memory",
 	"recall_memory":       "memory",
 	"list_memories":       "memory",
+	"consolidate":              "memory",
+	"consolidation_revert":    "memory",
 	"wake_up":             "memory",
 	"pin_memory":          "memory",
 	"unpin_memory":        "memory",

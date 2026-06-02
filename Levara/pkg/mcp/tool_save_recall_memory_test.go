@@ -35,6 +35,7 @@ func setupSaveRecallMemoryDB(t *testing.T) *fakeDeps {
 		collection_name TEXT, room TEXT, hall TEXT,
 		is_pinned INTEGER DEFAULT 0, pin_priority INTEGER DEFAULT 0,
 		created_at TEXT, updated_at TEXT,
+		superseded_by TEXT DEFAULT '',
 		UNIQUE(key, owner_id)
 	)`
 	if _, err := db.Exec(stmt); err != nil {
@@ -407,5 +408,27 @@ func TestToolRecallMemory_CollectionFilterPersists(t *testing.T) {
 	json.Unmarshal([]byte(got.Content[0].Text), &items)
 	if len(items) != 1 || items[0]["key"] != "a" {
 		t.Errorf("got %+v, want single 'a'", items)
+	}
+}
+
+func TestToolRecallMemory_HidesSuperseded(t *testing.T) {
+	deps := setupSaveRecallMemoryDB(t)
+	ctx := context.Background()
+
+	ToolSaveMemory(ctx, deps, map[string]any{"key": "active", "value": "potion sidecar fact"})
+	ToolSaveMemory(ctx, deps, map[string]any{"key": "old", "value": "potion sidecar fact"})
+	if _, err := deps.db.Exec(`UPDATE memories SET superseded_by = 'x' WHERE key = 'old'`); err != nil {
+		t.Fatalf("mark superseded: %v", err)
+	}
+
+	got := ToolRecallMemory(ctx, deps, map[string]any{"query": "potion sidecar"})
+	if got.IsError {
+		t.Fatalf("recall errored: %s", got.Content[0].Text)
+	}
+	if strings.Contains(got.Content[0].Text, "old") {
+		t.Errorf("recall returned superseded row 'old': %s", got.Content[0].Text)
+	}
+	if !strings.Contains(got.Content[0].Text, "active") {
+		t.Errorf("recall dropped active row: %s", got.Content[0].Text)
 	}
 }

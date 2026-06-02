@@ -2,6 +2,8 @@
 package http
 
 import (
+	"strings"
+
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -57,6 +59,37 @@ func collectionDeleteHandler(cfg APIConfig) fiber.Handler {
 		}
 		cfg.Collections.Drop(name)
 		return c.SendStatus(204)
+	}
+}
+
+func collectionRenameHandler(cfg APIConfig) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		if cfg.Collections == nil {
+			return c.Status(503).JSON(fiber.Map{"detail": "collections not configured"})
+		}
+		oldName := c.Params("name")
+		var req struct {
+			NewName string `json:"new_name"`
+		}
+		if err := c.BodyParser(&req); err != nil || req.NewName == "" {
+			return c.Status(400).JSON(fiber.Map{"detail": "new_name required"})
+		}
+		if err := cfg.Collections.Rename(oldName, req.NewName); err != nil {
+			msg := err.Error()
+			// Map known classes of error to appropriate status codes so
+			// the migration runbook can distinguish "retry" from "stop".
+			switch {
+			case strings.Contains(msg, "not found"):
+				return c.Status(404).JSON(fiber.Map{"detail": msg})
+			case strings.Contains(msg, "already exists"), strings.Contains(msg, "identical"):
+				return c.Status(409).JSON(fiber.Map{"detail": msg})
+			case strings.Contains(msg, "invalid"), strings.Contains(msg, "must be non-empty"):
+				return c.Status(400).JSON(fiber.Map{"detail": msg})
+			default:
+				return c.Status(500).JSON(fiber.Map{"detail": msg})
+			}
+		}
+		return c.JSON(cfg.Collections.GetMeta(req.NewName))
 	}
 }
 

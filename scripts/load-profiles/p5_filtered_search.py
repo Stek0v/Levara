@@ -1,0 +1,225 @@
+#!/usr/bin/env python3
+"""Profile P5 — filtered search (room / tag pre-filter).
+
+Target: 10.23.0.53 (Pi, light host).
+
+Reuses the deterministic memory-palace corpus from P4 but every
+query is paired with a `room` filter that exercises Levara's
+overfetch-and-filter HNSW path. Calibration value:
+
+  - The filter shrinks the candidate set the bi-encoder sees, which
+    changes the shape of the score distribution feeding the rerank
+    gate. The gate threshold tuned on unfiltered traffic may behave
+    differently under filters; P5 is what surfaces that.
+  - Some queries pair a `room` with mismatched semantic content
+    ("auth-room query about deploy") so the bi-encoder will return
+    weak matches inside the filter — exactly the case where rerank
+    has the most or least to offer.
+
+Output: JSONL at $LOADPROFILE_OUT or ./out/p5.jsonl. Each record
+carries `filter_room` so the analyzer can compare gap distributions
+filter-on vs filter-off (cross-referenced against P4's same-corpus
+output).
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import runner  # noqa: E402
+from seed import memory_palace  # noqa: E402
+
+PROFILE_ID = "p5"
+DEFAULT_TARGET_URL = "http://10.23.0.53:8080"
+DEFAULT_TARGET_NAME = "pi"
+
+
+# Filter-aware queries. Each is a (room, query, kind) triple. The
+# kinds are:
+#   on-topic     — query matches the filter room semantically
+#   off-topic    — query is about a different room (filter forces a
+#                  weak set; rerank has little to work with)
+#   broad-room   — query is general and applies to most records
+#                  within the room (close-call rerank regime)
+FILTERED_QUERIES: list[dict[str, str]] = [
+    {"id": "q01", "room": "auth", "text": "JWT secret rotation", "kind": "on-topic"},
+    {"id": "q02", "room": "auth", "text": "service account login flow", "kind": "on-topic"},
+    {"id": "q03", "room": "auth", "text": "p99 latency spike", "kind": "off-topic"},
+    {"id": "q04", "room": "auth", "text": "recent changes", "kind": "broad-room"},
+    {"id": "q05", "room": "deploy", "text": "host migration", "kind": "on-topic"},
+    {"id": "q06", "room": "deploy", "text": "config rollback", "kind": "on-topic"},
+    {"id": "q07", "room": "deploy", "text": "JWT secret rotation", "kind": "off-topic"},
+    {"id": "q08", "room": "deploy", "text": "what happened recently", "kind": "broad-room"},
+    {"id": "q09", "room": "rerank", "text": "score gap threshold", "kind": "on-topic"},
+    {"id": "q10", "room": "rerank", "text": "GPU memory fragmentation", "kind": "on-topic"},
+    {"id": "q11", "room": "rerank", "text": "user preferences for UI", "kind": "off-topic"},
+    {"id": "q12", "room": "rerank", "text": "decisions made", "kind": "broad-room"},
+    {"id": "q13", "room": "ingest", "text": "WAL fsync batching", "kind": "on-topic"},
+    {"id": "q14", "room": "ingest", "text": "embedding dim mismatch", "kind": "on-topic"},
+    {"id": "q15", "room": "ingest", "text": "auth tokens", "kind": "off-topic"},
+    {"id": "q16", "room": "ingest", "text": "facts about this subsystem", "kind": "broad-room"},
+    {"id": "q17", "room": "mcp", "text": "tool group classification", "kind": "on-topic"},
+    {"id": "q18", "room": "mcp", "text": "audit log rotation", "kind": "on-topic"},
+    {"id": "q19", "room": "graph", "text": "neo4j edge supersession", "kind": "on-topic"},
+    {"id": "q20", "room": "graph", "text": "JWT secret", "kind": "off-topic"},
+    {"id": "q21", "room": "ui", "text": "dashboard layout", "kind": "on-topic"},
+    {"id": "q22", "room": "observability", "text": "p99 grafana board", "kind": "on-topic"},
+    {"id": "q23", "room": "observability", "text": "lasagne recipe", "kind": "off-topic"},
+    {"id": "q24", "room": "observability", "text": "preferences", "kind": "broad-room"},
+]
+
+
+def seed_if_needed(target: runner.Target, collection: str) -> dict:
+    expected = len(memory_palace.load_corpus())
+    info = {}
+    try:
+        info = runner.http_request(
+            "GET",
+            target.url(f"/api/v1/collections/{collection}/meta"),
+            headers=target.headers(),
+        )
+    except runner.HttpError:
+        info = {}
+    current = int(info.get("record_count", info.get("count", 0))) if isinstance(info, dict) else 0
+    if current >= int(expected * 0.95):
+        runner.stderr(
+            f"[seed] {collection} has {current} chunks (expected {expected}), skipping"
+        )
+        return {"reused": True, "count": current}
+    runner.stderr(f"[seed] ingesting {expected} chunks into {collection}")
+    corpus = memory_palace.load_corpus()
+    # Single-batch ingest. P5's earlier per-room batching attached the
+    # room tag at request level, but /cognify doesn't propagate
+    # room/tags to chunks (see runner.add_texts note) — the room
+    # filter at query time relies on per-text content semantics, not
+    # on add-time metadata. So batching by room buys nothing and
+    # exposes the cross-batch chunk-ID collision bug on unpatched
+    # Levara (Pi b4fface). Send everything in one call to keep the
+    # uuid5 text index unique.
+    runner.add_texts(
+        target,
+        collection,
+        corpus,
+        room="palace",
+        tags=["loadprofile", "p5", "palace"],
+    )
+    return {"reused": False, "count": len(corpus)}
+
+
+def run(
+    target: runner.Target,
+    out_path: str,
+    rounds: int,
+    sleep_ms: int,
+    top_k: int,
+    model: str = "",
+    embed_dim: int = 0,
+    collection_override: str = "",
+) -> None:
+    collection = collection_override or runner.profile_collection(PROFILE_ID)
+    runner.assert_namespace(target, PROFILE_ID)
+    seed_info = seed_if_needed(target, collection)
+    writer = runner.JsonlWriter(out_path)
+    sent = 0
+    errors = 0
+    try:
+        for round_idx in range(rounds):
+            for q in FILTERED_QUERIES:
+                try:
+                    pair = runner.search_pair(
+                        target,
+                        collection,
+                        q["text"],
+                        top_k=top_k,
+                        query_type="CHUNKS",
+                        room=q["room"],
+                    )
+                except runner.HttpError as e:
+                    errors += 1
+                    runner.stderr(f"[search] {q['id']}: {e}")
+                    continue
+                rec = runner.build_query_record(
+                    profile_id=PROFILE_ID,
+                    target=target,
+                    query_id=f"{q['id']}_r{round_idx}",
+                    query_text=q["text"],
+                    collection=collection,
+                    query_type="CHUNKS",
+                    pair=pair,
+                    extra={
+                        "query_kind": q["kind"],
+                        "filter_room": q["room"],
+                        "round": round_idx,
+                        "seed_reused": seed_info.get("reused", False),
+                        "corpus_fingerprint": memory_palace.corpus_fingerprint(),
+                        "embed_model": model or target.embed_model,
+                        "embed_dim": embed_dim,
+                        "expected_keywords": q.get("expected_keywords", []),
+                        **runner.keyword_metrics(
+                            pair["no_rerank"]["response"],
+                            expected_keywords=q.get("expected_keywords", []),
+                        ),
+                    },
+                )
+                writer.write(rec)
+                sent += 1
+                if sleep_ms > 0:
+                    time.sleep(sleep_ms / 1000.0)
+            runner.stderr(f"[run] round {round_idx + 1}/{rounds} done ({sent} queries)")
+    finally:
+        writer.close()
+    runner.stderr(
+        f"[done] queries={sent} errors={errors} out={out_path} "
+        f"dropped={writer.dropped}"
+    )
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(description="P5 filtered-search load profile")
+    p.add_argument("--rounds", type=int, default=15)
+    p.add_argument("--top-k", type=int, default=10)
+    p.add_argument("--sleep-ms", type=int, default=400)
+    p.add_argument(
+        "--out",
+        default=os.environ.get(
+            "LOADPROFILE_OUT", str(Path("out") / f"{PROFILE_ID}.jsonl")
+        ),
+    )
+    p.add_argument("--target-name", default=DEFAULT_TARGET_NAME)
+    p.add_argument("--target-url", default=DEFAULT_TARGET_URL)
+    p.add_argument("--model", default="", help="embed model short (potion/granite/jina); used for JSONL fields")
+    p.add_argument("--embed-dim", type=int, default=0, help="expected embedding dim (JSONL only)")
+    p.add_argument("--collection-override", default="", help="if set, use this collection name instead of the default")
+    args = p.parse_args()
+
+    target = runner.Target(
+        name=args.target_name,
+        base_url=args.target_url,
+        token=runner.load_token_from_env_or_file(args.target_name),
+    )
+    runner.preflight(target)
+    runner.stderr(
+        f"[preflight] target={target.name} embed={target.embed_model} "
+        f"rerank={target.rerank_endpoint}"
+    )
+    run(
+        target,
+        args.out,
+        args.rounds,
+        args.sleep_ms,
+        args.top_k,
+        model=args.model,
+        embed_dim=args.embed_dim,
+        collection_override=args.collection_override,
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
