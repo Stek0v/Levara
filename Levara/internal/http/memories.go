@@ -119,7 +119,7 @@ func listMemoriesHandler(cfg APIConfig) fiber.Handler {
 		if filterType != "" {
 			rows, err := cfg.DB.QueryContext(context.Background(),
 				Q(`SELECT id, key, value, type, owner_id, created_at, updated_at
-				 FROM memories WHERE type = $1 AND (owner_id = $2 OR owner_id = '')
+				 FROM memories WHERE type = $1 AND (owner_id = $2 OR owner_id = '') AND superseded_by = ''
 				 ORDER BY updated_at DESC LIMIT 100`), filterType, ownerID)
 			if err != nil {
 				return c.JSON([]any{})
@@ -129,7 +129,7 @@ func listMemoriesHandler(cfg APIConfig) fiber.Handler {
 		} else {
 			rows, err := cfg.DB.QueryContext(context.Background(),
 				Q(`SELECT id, key, value, type, owner_id, created_at, updated_at
-				 FROM memories WHERE owner_id = $1 OR owner_id = ''
+				 FROM memories WHERE (owner_id = $1 OR owner_id = '') AND superseded_by = ''
 				 ORDER BY updated_at DESC LIMIT 100`), ownerID)
 			if err != nil {
 				return c.JSON([]any{})
