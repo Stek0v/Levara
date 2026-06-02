@@ -314,13 +314,15 @@ search(search_query="...", room="auth", tags=["security"])
 - `sync(remote_url="http://10.23.0.53:8080/api/v1", direction="pull")`
 - CLI: `sync_levara` / `man_levara`
 
-### Полный список MCP tools (25)
+### Полный список MCP tools (27)
 
 **Knowledge graph & search:** `cognify`, `cognify_status`, `search`, `cross_search`, `query_entity`, `analyze_commits`, `git_search`, `codify`
 
 **Data:** `add`, `list_data`, `delete`, `prune`
 
 **Memory (palace):** `save_memory`, `recall_memory`, `list_memories`, `pin_memory`, `unpin_memory`, `wake_up`, `diary_write`, `diary_read`
+
+**Memory consolidation (System2):** `consolidate`, `consolidation_revert` — periodically compress a collection's memory: cluster near-duplicate/related records, then mechanically **merge** (cosine ≥ 0.97, keep newest) or LLM-**abstract** (0.85 ≤ cosine < 0.97) them into one record. Reversible: sources are superseded + archived (not deleted), restorable via `consolidation_revert(run_id)`. `consolidate(collection, room?, hall?, dry_run=true)` previews by default. Runs on demand or via the opt-in background janitor (`CONSOLIDATION_INTERVAL`). Superseded records are hidden from `recall`/`list_memories`/`wake_up` unless `include_superseded=true`.
 
 **Chat history:** `save_chat`, `recall_chat`, `search_chats`
 
