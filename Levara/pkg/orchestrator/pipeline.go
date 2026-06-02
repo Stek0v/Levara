@@ -23,6 +23,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/stek0v/levara/pkg/chunker"
 	"github.com/stek0v/levara/pkg/bm25"
 	"github.com/stek0v/levara/pkg/classify"
@@ -211,12 +213,22 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 
 	snapSentence := cfg.SnapToSentence == nil || *cfg.SnapToSentence // default true
 
+	// When the caller doesn't set DocumentID, derive a per-run prefix so
+	// chunk IDs from independent /cognify calls can't collide on the
+	// deterministic uuid5("doc-{i}-{chunkIndex}") path. Without this, two
+	// batches of N texts both produce docIDs "doc-0".."doc-N-1" and the
+	// HNSW upsert silently dedupes the second batch.
+	runPrefix := ""
+	if cfg.DocumentID == "" {
+		runPrefix = uuid.New().String()
+	}
+
 	var allChunks []indexedChunk
 	var allParentChunks []indexedChunk // parent chunks for parent-child mode
 	for i, text := range texts {
 		docID := cfg.DocumentID
 		if docID == "" {
-			docID = fmt.Sprintf("doc-%d", i)
+			docID = fmt.Sprintf("%s-doc-%d", runPrefix, i)
 		}
 
 		// Detect sections in source text

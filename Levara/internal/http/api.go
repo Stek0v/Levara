@@ -147,6 +147,7 @@ func RegisterAPI(app fiber.Router, cfg APIConfig) {
 	app.Delete("/collections/:name", collectionDeleteHandler(cfg))
 	app.Get("/collections/:name/meta", collectionMetaHandler(cfg))
 	app.Put("/collections/:name/meta", collectionMetaUpdateHandler(cfg))
+	app.Post("/collections/:name/rename", collectionRenameHandler(cfg))
 
 	// Phase 2: rerank info surface (resolves design open question — clients
 	// need a cheap way to confirm which reranker variant is configured).
