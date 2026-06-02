@@ -15,6 +15,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -239,6 +240,51 @@ func ToolConsolidate(ctx context.Context, deps Deps, args map[string]any) ToolRe
 	return okResult(fmt.Sprintf(
 		"consolidate %s: run=%s candidates=%d clusters=%d actions=%d skipped=%d",
 		mode, runID, res.Candidates, res.Clusters, len(res.Actions), res.Skipped))
+}
+
+// consolidationRunner is the consolidate.Runner used by the background
+// janitor. RunOnce sweeps every non-internal collection, consolidating each
+// against its own _memories_<c> vector sidecar. Failures on one collection are
+// aggregated but never abort the sweep.
+type consolidationRunner struct {
+	deps Deps
+}
+
+// NewConsolidationRunner builds a consolidate.Runner over the given Deps for
+// the background janitor (see consolidate.StartJanitor).
+func NewConsolidationRunner(deps Deps) *consolidationRunner {
+	return &consolidationRunner{deps: deps}
+}
+
+// RunOnce enumerates collections via Deps.ListCollections, skips internal
+// _memories* sidecars, and runs a non-dry consolidation pass per collection.
+func (r *consolidationRunner) RunOnce(ctx context.Context) error {
+	var errs []error
+	for _, c := range r.deps.ListCollections() {
+		// Skip internal vector sidecars: the janitor iterates logical
+		// collections and resolves each one's _memories_<c> sidecar via
+		// memoryCollectionName below.
+		if strings.HasPrefix(c, "_memories") {
+			continue
+		}
+		runID := uuid.New().String()
+		_, err := consolidate.Run(ctx, consolidate.Params{
+			Store:      &sqlStore{deps: r.deps, collection: c},
+			Neighbors:  &collectionNeighbors{deps: r.deps, collection: memoryCollectionName(c)},
+			Summarizer: &llmSummarizer{deps: r.deps},
+			Cfg:        consolidate.DefaultConfig(),
+			Collection: c,
+			RunID:      runID,
+			DryRun:     false,
+		})
+		if err != nil {
+			metrics.ConsolidationRuns.WithLabelValues("error").Inc()
+			errs = append(errs, fmt.Errorf("%s: %w", c, err))
+			continue
+		}
+		metrics.ConsolidationRuns.WithLabelValues("ok").Inc()
+	}
+	return errors.Join(errs...)
 }
 
 // Revert undoes a consolidation run identified by runID:

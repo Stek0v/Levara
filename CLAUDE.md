@@ -53,6 +53,7 @@ Human → reads .md files directly in repo
 | `RERANK_ENDPOINT` / `RERANK_MODEL` | Cross-encoder reranker; disabled when unset. Phase 2 (2026-05-14): rerank is default-on when endpoint configured; clients tri-state via `"rerank": true\|false\|omit`. | "" |
 | `RERANK_BUDGET_MS` / `RERANK_TIMEOUT_MS` | Phase 2 budget for the rerank pass (fallback to vector order on overrun) and per-request HTTP client timeout. | 1500 / 5000 |
 | `RERANK_SCORE_GAP_THRESHOLD` | Phase 2.5: adaptive gate. When > 0 and the top-bottom candidate score spread exceeds it, the cross-encoder call is skipped (outcome=`skipped_gap`). 0 = unconditional rerank. | 0 |
+| `CONSOLIDATION_INTERVAL` | Background memory-consolidation janitor tick interval (Go duration, e.g. 30m). Unset/empty = janitor off. | "" |
 
 ## Rate limits (T2, 20.04)
 
