@@ -16,6 +16,33 @@ func randVecForTest(dim int) []float32 {
 	return v
 }
 
+// TestCollectionSearchDimMismatchReturnsError guards the crash where a query
+// vector whose dimension differs from the collection's reaches dist()/vek32.Dot
+// and panics "slices must be of equal length", taking down the whole process.
+// This happens in prod when a 768-dim embedder queries a 256-dim memory sidecar
+// (consolidate, recall). Search must return an error instead.
+func TestCollectionSearchDimMismatchReturnsError(t *testing.T) {
+	dir, _ := os.MkdirTemp("", "levara-dimguard-*")
+	defer os.RemoveAll(dir)
+
+	cm, err := NewCollectionManager(64, dir)
+	if err != nil {
+		t.Fatalf("NewCollectionManager: %v", err)
+	}
+	defer func() { _ = cm.Close() }()
+
+	if err := cm.Create("c"); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := cm.Insert("c", "r1", randVecForTest(64), map[string]any{"text": "x"}); err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+
+	if _, err := cm.Search("c", randVecForTest(32), 5); err == nil {
+		t.Fatal("Search with mismatched query dim should return an error, got nil")
+	}
+}
+
 func TestCollectionCRUD(t *testing.T) {
 	dir, _ := os.MkdirTemp("", "levara-col-test-*")
 	defer os.RemoveAll(dir)
