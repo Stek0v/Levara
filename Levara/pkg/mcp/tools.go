@@ -923,6 +923,21 @@ func ToolDescriptors() []Tool {
 			},
 		},
 		{
+			Name:         "consolidate",
+			Description:  "Consolidate near-duplicate/related memories in a collection: cluster, then merge (deterministic) or abstract (LLM). Reversible. dry_run defaults true.",
+			OutputSchema: statusMessageSchema(),
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"collection": map[string]any{"type": "string", "description": "Collection to consolidate."},
+					"room":       map[string]any{"type": "string", "description": "Optional room scope."},
+					"hall":       map[string]any{"type": "string", "description": "Optional hall scope."},
+					"dry_run":    map[string]any{"type": "boolean", "description": "Preview only, no writes. Default true."},
+				},
+				"required": []string{"collection"},
+			},
+		},
+		{
 			Name:        "wake_up",
 			Description: "Load critical context at session start: pinned memories (priority-ordered) + top entities from knowledge graph (active edges only). Token budget enforced (~200 by default). Cheap alternative to get_project_context.",
 			OutputSchema: objectSchema(map[string]any{
