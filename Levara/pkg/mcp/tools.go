@@ -938,6 +938,18 @@ func ToolDescriptors() []Tool {
 			},
 		},
 		{
+			Name:         "consolidation_revert",
+			Description:  "Reverse a consolidation run: reactivate superseded source memories and delete generated semantic records. Full reversibility.",
+			OutputSchema: statusMessageSchema(),
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"run_id": map[string]any{"type": "string", "description": "Consolidation run ID to reverse (returned by consolidate)."},
+				},
+				"required": []string{"run_id"},
+			},
+		},
+		{
 			Name:        "wake_up",
 			Description: "Load critical context at session start: pinned memories (priority-ordered) + top entities from knowledge graph (active edges only). Token budget enforced (~200 by default). Cheap alternative to get_project_context.",
 			OutputSchema: objectSchema(map[string]any{

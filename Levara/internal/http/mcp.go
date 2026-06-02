@@ -828,6 +828,8 @@ func (h *mcpHandler) executeToolInner(ctx context.Context, sess *mcpSession, nam
 		return h.toolListMemories(ctx, args)
 	case "consolidate":
 		return h.toolConsolidate(ctx, args)
+	case "consolidation_revert":
+		return h.toolConsolidationRevert(ctx, args)
 	case "save_chat":
 		return h.toolSaveChat(ctx, args)
 	case "recall_chat":
@@ -970,6 +972,10 @@ func (h *mcpHandler) toolListMemories(ctx context.Context, args map[string]any) 
 
 func (h *mcpHandler) toolConsolidate(ctx context.Context, args map[string]any) mcpToolResult {
 	return mcp.ToolConsolidate(ctx, h, args)
+}
+
+func (h *mcpHandler) toolConsolidationRevert(ctx context.Context, args map[string]any) mcpToolResult {
+	return mcp.ToolConsolidationRevert(ctx, h, args)
 }
 
 // ── Chat History handlers ──

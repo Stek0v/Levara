@@ -4,11 +4,23 @@ import (
 	"context"
 	"database/sql"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 
 	_ "github.com/ncruces/go-sqlite3/driver"
 )
+
+// parseRunID extracts the run ID from a consolidate result string like
+// "consolidate applied: run=<id> candidates=...".
+func parseRunID(t *testing.T, text string) string {
+	t.Helper()
+	m := regexp.MustCompile(`run=(\S+)`).FindStringSubmatch(text)
+	if len(m) < 2 {
+		t.Fatalf("parseRunID: no run=<id> token in %q", text)
+	}
+	return m[1]
+}
 
 // setupConsolidateDB builds a memories table that includes the
 // consolidation columns the tool reads/writes (tier, valid_until,
@@ -140,5 +152,31 @@ func TestToolConsolidate_AppliesMerge(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatalf("superseded %d rows, want exactly 1", n)
+	}
+}
+
+func TestToolConsolidationRevert_RestoresState(t *testing.T) {
+	deps := newConsolidateDeps(t)
+	ctx := context.Background()
+
+	got := ToolConsolidate(ctx, deps, map[string]any{"collection": "levara", "dry_run": false})
+	if got.IsError {
+		t.Fatalf("consolidate errored: %s", got.Content[0].Text)
+	}
+	runID := parseRunID(t, got.Content[0].Text)
+
+	rev := ToolConsolidationRevert(ctx, deps, map[string]any{"run_id": runID})
+	if rev.IsError {
+		t.Fatalf("revert errored: %s", rev.Content[0].Text)
+	}
+
+	var active, semantic int
+	deps.db.QueryRow(`SELECT COUNT(*) FROM memories WHERE superseded_by=''`).Scan(&active)
+	deps.db.QueryRow(`SELECT COUNT(*) FROM memories WHERE tier='semantic' AND consolidation_run_id=?`, runID).Scan(&semantic)
+	if active != 2 {
+		t.Errorf("active rows after revert = %d, want 2", active)
+	}
+	if semantic != 0 {
+		t.Errorf("semantic rows after revert = %d, want 0", semantic)
 	}
 }

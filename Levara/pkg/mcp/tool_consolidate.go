@@ -241,6 +241,41 @@ func ToolConsolidate(ctx context.Context, deps Deps, args map[string]any) ToolRe
 		mode, runID, res.Candidates, res.Clusters, len(res.Actions), res.Skipped))
 }
 
+// Revert undoes a consolidation run identified by runID:
+//  1. Reactivates source rows that were superseded during the run.
+//  2. Deletes synthetic semantic records created during the run.
+//
+// sqlStore.collection is not used here; Revert operates purely by
+// consolidation_run_id so a zero-value collection field is fine.
+func (s *sqlStore) Revert(ctx context.Context, runID string) error {
+	// Reactivate superseded source rows from this run.
+	if _, err := s.deps.DB().ExecContext(ctx, s.deps.Q(
+		`UPDATE memories SET superseded_by='', valid_until=NULL, consolidation_run_id=''
+		 WHERE consolidation_run_id=$1 AND superseded_by<>''`), runID); err != nil {
+		return err
+	}
+	// Delete generated semantic records from this run.
+	if _, err := s.deps.DB().ExecContext(ctx, s.deps.Q(
+		`DELETE FROM memories WHERE consolidation_run_id=$1 AND tier='semantic'`), runID); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ToolConsolidationRevert reverses a consolidation run: reactivates
+// superseded source memories and deletes generated semantic records.
+func ToolConsolidationRevert(ctx context.Context, deps Deps, args map[string]any) ToolResult {
+	runID, _ := args["run_id"].(string)
+	if runID == "" {
+		return errResult("'run_id' required")
+	}
+	if err := (&sqlStore{deps: deps}).Revert(ctx, runID); err != nil {
+		return errResult("revert: " + err.Error())
+	}
+	metrics.ConsolidationRuns.WithLabelValues("revert").Inc()
+	return okResult("consolidation reverted: run=" + runID)
+}
+
 // nowTS / parseTS use RFC3339 to match the format ToolSaveMemory writes for
 // created_at/updated_at.
 func nowTS() string { return time.Now().UTC().Format(time.RFC3339) }
