@@ -64,3 +64,24 @@ func TestAbstractValue_RejectsEmptySources(t *testing.T) {
 		t.Fatal("err = nil, want error for empty sources")
 	}
 }
+
+// A single dropped capitalized token in a large entity set is within tolerance
+// (entity coverage is fraction-based, not all-or-nothing). 1/12 ≈ 8% ≤ 10%.
+func TestAbstractValue_AllowsSmallFractionEntityDrop(t *testing.T) {
+	sources := []string{
+		"Levara Pi DeepSeek Potion Hnsw Wal Bm25 Rrf Cognify Neo Postgres Repl run here",
+	}
+	s := fakeSummarizer{out: "Levara Pi DeepSeek Potion Hnsw Wal Bm25 Rrf Cognify Neo Postgres summary"}
+	if _, err := AbstractValue(context.Background(), s, sources); err != nil {
+		t.Fatalf("err = %v, want nil (8%% entity drop within tolerance)", err)
+	}
+}
+
+// Dropping a large fraction of entities still fails the guard. 1/3 ≈ 33% > 10%.
+func TestAbstractValue_RejectsLargeFractionEntityDrop(t *testing.T) {
+	sources := []string{"Levara Pi DeepSeek"}
+	s := fakeSummarizer{out: "Levara Pi only"} // drops DeepSeek
+	if _, err := AbstractValue(context.Background(), s, sources); err == nil {
+		t.Fatal("err = nil, want reject (33% entity drop exceeds tolerance)")
+	}
+}

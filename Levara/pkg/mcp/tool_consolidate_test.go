@@ -92,6 +92,18 @@ func newConsolidateDeps(t *testing.T) *fakeDeps {
 	return deps
 }
 
+func TestSummaryMaxTokens_ScalesAndClamps(t *testing.T) {
+	if got := summaryMaxTokens([]string{"short"}); got != 512 {
+		t.Errorf("small sources -> %d, want floor 512", got)
+	}
+	if got := summaryMaxTokens([]string{strings.Repeat("a", 20000)}); got != 4096 {
+		t.Errorf("huge sources -> %d, want cap 4096", got)
+	}
+	if got := summaryMaxTokens([]string{strings.Repeat("a", 3000)}); got != 1256 {
+		t.Errorf("mid sources (3000 chars) -> %d, want 3000/3+256=1256", got)
+	}
+}
+
 func TestToolConsolidate_RequiresCollection(t *testing.T) {
 	deps := setupConsolidateDB(t)
 	got := ToolConsolidate(context.Background(), deps, map[string]any{})
