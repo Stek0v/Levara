@@ -261,6 +261,11 @@ var schemaStatements = []string{
 	// room    — narrow topic within collection (auth, deploy, mcp, ocr-bench)
 	// hall    — controlled memory genre: fact|event|decision|preference|advice|discovery
 	// is_pinned/pin_priority — wake_up critical-facts mechanism
+	// superseded_by      — id of the record that replaced this one (''=active)
+	// valid_until        — when this record stopped being current (NULL=open-ended)
+	// consolidated_from  — JSON array of source ids for a generated semantic record (''=otherwise)
+	// consolidation_run_id — run id stamped on generated records and superseded sources
+	// tier               — raw|consolidated|semantic
 	`CREATE TABLE IF NOT EXISTS memories (
 		id TEXT PRIMARY KEY,
 		key TEXT NOT NULL,
@@ -272,6 +277,11 @@ var schemaStatements = []string{
 		hall TEXT NOT NULL DEFAULT '',
 		is_pinned BOOLEAN NOT NULL DEFAULT FALSE,
 		pin_priority INTEGER NOT NULL DEFAULT 0,
+		superseded_by TEXT NOT NULL DEFAULT '',
+		valid_until TIMESTAMPTZ,
+		consolidated_from TEXT NOT NULL DEFAULT '',
+		consolidation_run_id TEXT NOT NULL DEFAULT '',
+		tier TEXT NOT NULL DEFAULT 'raw',
 		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 	)`,
@@ -284,6 +294,11 @@ var schemaStatements = []string{
 	`ALTER TABLE memories ADD COLUMN IF NOT EXISTS hall TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE memories ADD COLUMN IF NOT EXISTS is_pinned BOOLEAN NOT NULL DEFAULT FALSE`,
 	`ALTER TABLE memories ADD COLUMN IF NOT EXISTS pin_priority INTEGER NOT NULL DEFAULT 0`,
+	`ALTER TABLE memories ADD COLUMN IF NOT EXISTS superseded_by TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE memories ADD COLUMN IF NOT EXISTS valid_until TIMESTAMPTZ`,
+	`ALTER TABLE memories ADD COLUMN IF NOT EXISTS consolidated_from TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE memories ADD COLUMN IF NOT EXISTS consolidation_run_id TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE memories ADD COLUMN IF NOT EXISTS tier TEXT NOT NULL DEFAULT 'raw'`,
 	`ALTER TABLE data ADD COLUMN IF NOT EXISTS room TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE graph_edges ADD COLUMN IF NOT EXISTS valid_from TIMESTAMPTZ`,
 	`ALTER TABLE graph_edges ADD COLUMN IF NOT EXISTS valid_until TIMESTAMPTZ`,
@@ -587,6 +602,11 @@ var schemaSQLiteStatements = []string{
 		hall TEXT NOT NULL DEFAULT '',
 		is_pinned INTEGER NOT NULL DEFAULT 0,
 		pin_priority INTEGER NOT NULL DEFAULT 0,
+		superseded_by TEXT NOT NULL DEFAULT '',
+		valid_until TEXT,
+		consolidated_from TEXT NOT NULL DEFAULT '',
+		consolidation_run_id TEXT NOT NULL DEFAULT '',
+		tier TEXT NOT NULL DEFAULT 'raw',
 		created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 	)`,
@@ -637,6 +657,11 @@ var schemaSQLiteStatements = []string{
 	`ALTER TABLE memories ADD COLUMN hall TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE memories ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0`,
 	`ALTER TABLE memories ADD COLUMN pin_priority INTEGER NOT NULL DEFAULT 0`,
+	`ALTER TABLE memories ADD COLUMN superseded_by TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE memories ADD COLUMN valid_until TEXT`,
+	`ALTER TABLE memories ADD COLUMN consolidated_from TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE memories ADD COLUMN consolidation_run_id TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE memories ADD COLUMN tier TEXT NOT NULL DEFAULT 'raw'`,
 	`ALTER TABLE graph_edges ADD COLUMN valid_from TEXT`,
 	`ALTER TABLE graph_edges ADD COLUMN valid_until TEXT`,
 	`ALTER TABLE graph_edges ADD COLUMN superseded_by TEXT NOT NULL DEFAULT ''`,
