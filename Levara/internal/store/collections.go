@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,12 @@ import (
 	"sync"
 	"time"
 )
+
+// ErrDimMismatch is returned by Search when the query vector's dimension
+// differs from the collection's. Callers (consolidate, recall) use errors.Is
+// to distinguish a genuine embed-incompatible collection from other failures
+// and surface it instead of degrading to a silent empty result.
+var ErrDimMismatch = errors.New("query dimension mismatch")
 
 // CollectionMeta stores metadata about a collection's embedding configuration.
 // Persisted as collection_meta.json in each collection directory.
@@ -485,7 +492,7 @@ func (cm *CollectionManager) Search(collection string, query []float32, topK int
 	// with no recover(), crashing the whole process — e.g. a 768-dim embedder
 	// querying a 256-dim memory collection (consolidate, recall).
 	if len(query) != db.dim {
-		return nil, fmt.Errorf("query dim %d != collection %q dim %d", len(query), collection, db.dim)
+		return nil, fmt.Errorf("%w: query dim %d != collection %q dim %d", ErrDimMismatch, len(query), collection, db.dim)
 	}
 	return db.Search(query, topK), nil
 }

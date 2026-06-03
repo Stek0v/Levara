@@ -3,11 +3,13 @@ package mcp
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"regexp"
 	"strings"
 	"testing"
 
+	"github.com/stek0v/levara/internal/store"
 	"github.com/stek0v/levara/pkg/consolidate"
 
 	_ "github.com/ncruces/go-sqlite3/driver"
@@ -120,6 +122,31 @@ func TestEdges_EmbedsKeyPlusValue(t *testing.T) {
 	want := "pi-potion-sidecar runs on port 9101"
 	if len(embedded) != 1 || embedded[0] != want {
 		t.Errorf("embedded = %q, want exactly [%q] (key+\" \"+value, matching indexMemoryAsync)", embedded, want)
+	}
+}
+
+// TestToolConsolidate_SurfacesDimIncompatible guards P1.2: a collection whose
+// vectors are a different dimension than the server embedder makes every
+// CollectionSearch fail with store.ErrDimMismatch. The tool must surface that
+// as a visible note (not a silent clusters=0) while still returning a clean,
+// non-error result so a multi-collection sweep / the janitor keep going.
+func TestToolConsolidate_SurfacesDimIncompatible(t *testing.T) {
+	deps := newConsolidateDeps(t)
+	deps.searchFn = func(_ string, _ []float32, _ int) ([]SearchResult, error) {
+		return nil, fmt.Errorf("%w: query dim 768 != collection \"_memories_levara\" dim 256", store.ErrDimMismatch)
+	}
+
+	got := ToolConsolidate(context.Background(), deps, map[string]any{
+		"collection": "levara", "dry_run": true,
+	})
+	if got.IsError {
+		t.Fatalf("dim-incompat must degrade cleanly, got IsError: %q", got.Content[0].Text)
+	}
+	if !strings.Contains(got.Content[0].Text, "dim") || !strings.Contains(strings.ToLower(got.Content[0].Text), "incompat") {
+		t.Errorf("text = %q, want a dim-incompatible note", got.Content[0].Text)
+	}
+	if !strings.Contains(got.Content[0].Text, "clusters=0") {
+		t.Errorf("text = %q, want clusters=0 (no edges built)", got.Content[0].Text)
 	}
 }
 
