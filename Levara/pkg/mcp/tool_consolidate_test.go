@@ -9,6 +9,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
+	"github.com/stek0v/levara/internal/metrics"
 	"github.com/stek0v/levara/internal/store"
 	"github.com/stek0v/levara/pkg/consolidate"
 
@@ -170,7 +173,7 @@ func TestToolConsolidate_RequiresCollection(t *testing.T) {
 	}
 }
 
-// seedBaseDup inserts a base-store memory row (collection_name='') — the rows
+// seedBaseDup inserts a base-store memory row (collection_name=”) — the rows
 // that live in the unprefixed _memories vector collection.
 func seedBaseDup(t *testing.T, deps *fakeDeps, id, value, created string) {
 	t.Helper()
@@ -184,7 +187,7 @@ func seedBaseDup(t *testing.T, deps *fakeDeps, id, value, created string) {
 }
 
 // TestToolConsolidate_TargetsBaseStore guards P2.2: the base memory store keeps
-// its rows at collection_name='' and indexes them in the unprefixed '_memories'
+// its rows at collection_name=” and indexes them in the unprefixed '_memories'
 // vector collection. It was unreachable via on-demand consolidate because the
 // tool rejects an empty 'collection' arg. Callers must be able to target it
 // explicitly by its vector-collection name ('_memories'), which maps to the
@@ -326,4 +329,33 @@ func TestConsolidationSkipCategory(t *testing.T) {
 			t.Errorf("consolidationSkipCategory(%q) = %q, want %q", c.reason, got, c.want)
 		}
 	}
+}
+
+// Integration: a real merge consolidation must record one char_density
+// observation under kind=merge (guards the handler's Densities[i] wiring).
+func TestToolConsolidate_ObservesCharDensity(t *testing.T) {
+	deps := newConsolidateDeps(t)
+	obs := metrics.ConsolidationCharDensity.WithLabelValues("merge")
+	before := histSampleCount(t, obs)
+
+	got := ToolConsolidate(context.Background(), deps, map[string]any{"collection": "levara", "dry_run": false})
+	if got.IsError {
+		t.Fatalf("consolidate errored: %s", got.Content[0].Text)
+	}
+	if after := histSampleCount(t, obs); after != before+1 {
+		t.Errorf("char_density{merge} sample count = %d, want %d (one merge action)", after, before+1)
+	}
+}
+
+func histSampleCount(t *testing.T, obs prometheus.Observer) uint64 {
+	t.Helper()
+	m, ok := obs.(prometheus.Metric)
+	if !ok {
+		t.Fatalf("observer %T is not a prometheus.Metric", obs)
+	}
+	var dm dto.Metric
+	if err := m.Write(&dm); err != nil {
+		t.Fatalf("metric write: %v", err)
+	}
+	return dm.GetHistogram().GetSampleCount()
 }
