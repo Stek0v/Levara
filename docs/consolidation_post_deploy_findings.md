@@ -65,7 +65,7 @@ panics on a mismatched query. Memory collections aren't sharded today, so it's
 not hit — but it's a latent DoS if a sharded collection ever gets a mismatched
 query. Consider a guard inside `db.Search` itself (defense in depth).
 
-### P2.5 `skipped=1` on `_memories_levara` — skip reason not logged
+### P2.5 `skipped=1` on `_memories_levara` — skip reason not logged — FIXED
 Validation [2]: candidates=25, clusters=1, actions=0, skipped=1. One cluster
 was found but skipped, with no recorded reason (coverage-guard rejection? merge
 skip? borderline cosine?). Log the skip reason so dry-runs are interpretable.
@@ -82,16 +82,22 @@ swallows the error as `Skipped++`). Exact reasons:
   entity → reject. False-positive: `REPL` is not a meaning-bearing entity here.
 
 Two real defects surfaced (both worth fixing, neither is data loss since
-dry_run writes nothing):
-1. **`entityRe` too crude** (`\b[A-Z][A-Za-z0-9]+\b`) — flags any
+dry_run writes nothing) — **all three items below now FIXED:**
+1. **`entityRe` too crude** (`\b[A-Z][A-Za-z0-9]+\b`) — flagged any
    capitalized word (`REPL`, `CREATE`, `NULL`, sentence starts) as an entity,
-   causing false rejects. Add a stopword list / length-or-frequency gate.
+   causing false rejects. **FIXED:** `isEntityToken` gates entity counting
+   through a `nonEntityStopwords` set (common English + code/SQL keywords);
+   digit-bearing and mixed-case identifiers (DeepSeek, Bm25) always count, real
+   acronyms (HNSW) still count. Regression tests
+   `TestAbstractValue_IgnoresStopwordCapitalizedTokens` /
+   `TestAbstractValue_RealAcronymStillCounts`.
 2. **No over-cluster / LLM-input bound** — 14 long records in one abstract
-   cluster always overflow `max_tokens=512` and always skip. Raise TauLow for
-   long records, cap abstract-cluster size, or scale `MaxTokens` from total
-   source length.
-3. **Skip reason not surfaced** — return the guard reason in the `consolidate`
-   result/run-note; without it this diagnosis required an out-of-band repro.
+   cluster always overflow `max_tokens=512` and always skip. **FIXED in
+   `e4344d5`:** `MaxAbstractSize` cap skips oversized clusters before the LLM
+   call with reason "cluster too large for abstraction (N > M)".
+3. **Skip reason not surfaced** — **FIXED in `e4344d5`:** `run.go` records
+   `res.Skips[]{SourceIDs, Reason}` and `tool_consolidate` renders
+   `skip [ids]: reason` in the result text.
 
 ## P3 — Hygiene / lower priority
 
