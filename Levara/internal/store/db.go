@@ -441,6 +441,16 @@ func (db *Levara) Get(id string) ([]float32, []byte, bool) {
 // Records not yet indexed (pending async HNSW insert) are covered by a brute-force fallback.
 // Results are sorted by descending cosine similarity.
 func (db *Levara) Search(query []float32, topK int) []VectroRecord {
+	// Defense in depth (findings P2.4): the sharded search path
+	// (Cluster.Search -> ShardHandler.Search -> here) reaches dist()/vek32.Dot
+	// with no dim check, so a query whose dimension differs from this shard's
+	// would panic "slices must be of equal length" and take down the process.
+	// Search returns no error, so degrade to an empty result like the other
+	// guard clauses rather than crashing.
+	if len(query) != db.dim {
+		return nil
+	}
+
 	normQ := normalizeVec(query)
 
 	// HNSW search (indexed records).

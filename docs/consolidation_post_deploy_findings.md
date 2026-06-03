@@ -63,12 +63,19 @@ via the coverage guard. Token-set based (numbers + words), so a shared header
 can't mask a distinct body. Tests `TestPlan_EnvelopeCollapseDowngradesToAbstract`
 / `TestPlan_NearDuplicateStillMerges`.
 
-### P2.4 Latent crash path: `shard.go:126` raw `db.Search` has no dim guard
+### P2.4 Latent crash path: `shard.go:126` raw `db.Search` has no dim guard — FIXED
 Fix #1 guards `CollectionManager.Search` (the memory/consolidate path). The
 sharded path (`shard.go:126` → `s.Search`) calls raw `db.Search`, which still
-panics on a mismatched query. Memory collections aren't sharded today, so it's
-not hit — but it's a latent DoS if a sharded collection ever gets a mismatched
-query. Consider a guard inside `db.Search` itself (defense in depth).
+panicked on a mismatched query. Memory collections aren't sharded today, so it
+wasn't hit — but it was a latent DoS if a sharded collection ever got a
+mismatched query.
+
+**Fixed:** `Levara.Search` now opens with `if len(query) != db.dim { return nil }`,
+matching the existing empty-query/empty-entry guard clauses (Search returns no
+error, so a mismatch degrades to an empty result instead of panicking in
+`dist`/`vek32.Dot`). Test `TestDBSearchDimMismatchNoPanic` in
+`internal/store/db_dimguard_test.go` inserts a 64-dim vector then searches with a
+32-dim query and asserts no panic / zero results.
 
 ### P2.5 `skipped=1` on `_memories_levara` — skip reason not logged — FIXED
 Validation [2]: candidates=25, clusters=1, actions=0, skipped=1. One cluster
