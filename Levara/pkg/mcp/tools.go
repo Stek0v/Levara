@@ -929,7 +929,7 @@ func ToolDescriptors() []Tool {
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"collection": map[string]any{"type": "string", "description": "Collection to consolidate."},
+					"collection": map[string]any{"type": "string", "description": "Collection to consolidate. Use '_memories' to target the base memory store (records saved with no pinned context)."},
 					"room":       map[string]any{"type": "string", "description": "Optional room scope."},
 					"hall":       map[string]any{"type": "string", "description": "Optional hall scope."},
 					"dry_run":    map[string]any{"type": "boolean", "description": "Preview only, no writes. Default true."},
