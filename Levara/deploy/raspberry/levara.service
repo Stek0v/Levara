@@ -1,8 +1,8 @@
 [Unit]
 Description=Levara Memory Server
 Documentation=https://github.com/stek0v/levara
-After=network-online.target ollama.service
-Wants=network-online.target
+After=network-online.target ollama.service embed-potion.service
+Wants=network-online.target embed-potion.service
 Requires=ollama.service
 
 [Service]
@@ -14,7 +14,7 @@ EnvironmentFile=/etc/levara/levara.env
 
 ExecStart=/usr/local/bin/levara \
     -standalone=true \
-    -dim=768 \
+    -dim=256 \
     -shards=1 \
     -port=8080 \
     -grpc-port=0 \
