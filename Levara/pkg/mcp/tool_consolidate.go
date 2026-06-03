@@ -137,7 +137,11 @@ func (n *collectionNeighbors) Edges(ctx context.Context, recs []consolidate.Memo
 	seen := make(map[string]struct{})
 	var edges []consolidate.SimEdge
 	for _, r := range recs {
-		vec, err := n.deps.Embed(ctx, r.Value)
+		// Embed key+value to match indexMemoryAsync (tool_save_recall_memory.go),
+		// which indexes Embed(key+" "+value). A value-only query vector is
+		// asymmetric against the key+value stored vectors and systematically
+		// under-scores records whose key carries text, starving the clusterer.
+		vec, err := n.deps.Embed(ctx, r.Key+" "+r.Value)
 		if err != nil {
 			continue // skip this candidate; partial graph is fine
 		}
@@ -194,12 +198,31 @@ func (l *llmSummarizer) Summarize(ctx context.Context, sources []string) (string
 		Model:       l.deps.LLMModel(),
 		Messages:    []llm.Message{{Role: "user", Content: b.String()}},
 		Temperature: 0,
-		MaxTokens:   512,
+		MaxTokens:   summaryMaxTokens(sources),
 	})
 	if err != nil {
 		return "", err
 	}
 	return strings.TrimSpace(resp.Content), nil
+}
+
+// summaryMaxTokens scales the completion budget to the combined source length
+// so a multi-note abstraction isn't truncated mid-sentence (which dropped facts
+// and triggered the coverage guard — findings P2.5). ~3 chars/token is a
+// conservative estimate for mixed Latin/Cyrillic; clamped to [512, 4096].
+func summaryMaxTokens(sources []string) int {
+	total := 0
+	for _, s := range sources {
+		total += len(s)
+	}
+	tok := total/3 + 256
+	if tok < 512 {
+		return 512
+	}
+	if tok > 4096 {
+		return 4096
+	}
+	return tok
 }
 
 // ToolConsolidate clusters and consolidates near-duplicate/related memories
@@ -237,9 +260,13 @@ func ToolConsolidate(ctx context.Context, deps Deps, args map[string]any) ToolRe
 	if dryRun {
 		mode = "dry_run"
 	}
-	return okResult(fmt.Sprintf(
+	text := fmt.Sprintf(
 		"consolidate %s: run=%s candidates=%d clusters=%d actions=%d skipped=%d",
-		mode, runID, res.Candidates, res.Clusters, len(res.Actions), res.Skipped))
+		mode, runID, res.Candidates, res.Clusters, len(res.Actions), res.Skipped)
+	for _, sk := range res.Skips {
+		text += fmt.Sprintf("\n  skip [%s]: %s", strings.Join(sk.SourceIDs, ","), sk.Reason)
+	}
+	return okResult(text)
 }
 
 // consolidationRunner is the consolidate.Runner used by the background
