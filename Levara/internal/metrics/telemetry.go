@@ -315,6 +315,13 @@ var (
 		Help: "Clusters skipped during consolidation, by reason category " +
 			"(oversized/llm_budget/coverage_guard/other).",
 	}, []string{"reason"})
+
+	ConsolidationCharDensity = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name: "levara_consolidation_char_density",
+		Help: "Survivor chars / total source chars per consolidation action, by " +
+			"kind (merge/abstract). Low values flag aggressive compression / loss.",
+		Buckets: []float64{0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.25, 1.5},
+	}, []string{"kind"})
 )
 
 func init() {
@@ -328,6 +335,10 @@ func init() {
 	for _, r := range []string{"oversized", "llm_budget", "coverage_guard", "other"} {
 		ConsolidationSkipped.WithLabelValues(r)
 	}
+	// Materialize both char-density action kinds so the histogram series exist
+	// from process start.
+	ConsolidationCharDensity.WithLabelValues("merge")
+	ConsolidationCharDensity.WithLabelValues("abstract")
 
 	// Eagerly materialize RAG verify-stack series at 0 across the known
 	// search types and reasons so dashboards/alerts can reference a stable

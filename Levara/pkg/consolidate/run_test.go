@@ -169,6 +169,56 @@ func TestRun_LLMCallBudgetCapsAbstractions(t *testing.T) {
 	}
 }
 
+// actionCharDensity reports survivor chars / total source chars, the
+// compression ratio used to flag over-aggressive consolidation (findings P3.3).
+func TestActionCharDensity(t *testing.T) {
+	byID := map[string]MemoryRecord{
+		"a": {ID: "a", Value: "1234567890"},  // 10 chars
+		"b": {ID: "b", Value: "abcdefghij"},  // 10 chars
+		"c": {ID: "c", Value: "klmnopqrst"},  // 10 chars
+	}
+	// Merge: survivor "a" (10) kept, total = a+b = 20 → 0.5.
+	merge := Action{Kind: ActionMerge, SurvivorID: "a", SourceIDs: []string{"b"}}
+	if got := actionCharDensity(merge, byID); got != 0.5 {
+		t.Errorf("merge density = %v, want 0.5", got)
+	}
+	// Abstract: NewValue 6 chars, sources b+c = 20 → 0.3.
+	abs := Action{Kind: ActionAbstract, NewValue: "synced", SourceIDs: []string{"b", "c"}}
+	if got := actionCharDensity(abs, byID); got != 0.3 {
+		t.Errorf("abstract density = %v, want 0.3", got)
+	}
+	// Degenerate: no source chars → 0, no divide-by-zero.
+	empty := Action{Kind: ActionAbstract, NewValue: "x", SourceIDs: []string{"missing"}}
+	if got := actionCharDensity(empty, byID); got != 0 {
+		t.Errorf("empty-source density = %v, want 0", got)
+	}
+}
+
+// Run reports a per-action char-density aligned with Actions so the handler can
+// observe the compression ratio without re-loading source values (findings P3.3).
+func TestRun_ReportsCharDensities(t *testing.T) {
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	store := &fakeStore{recs: []MemoryRecord{
+		{ID: "a", Value: "1234567890", CreatedAt: t0},
+		{ID: "b", Value: "1234567890", CreatedAt: t0.Add(time.Hour)},
+	}}
+	neigh := fakeNeighbors{edges: []SimEdge{{A: "a", B: "b", Score: 0.99}}} // tight → merge
+	res, err := Run(context.Background(), Params{
+		Store: store, Neighbors: neigh, Summarizer: fakeSummarizer{out: "x"},
+		Cfg: DefaultConfig(), RunID: "run", DryRun: true,
+	})
+	if err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	if len(res.Densities) != len(res.Actions) {
+		t.Fatalf("Densities=%d Actions=%d, want aligned", len(res.Densities), len(res.Actions))
+	}
+	// Identical 10-char records, newest survives: 10 / 20 = 0.5.
+	if len(res.Densities) != 1 || res.Densities[0] != 0.5 {
+		t.Errorf("Densities = %v, want [0.5]", res.Densities)
+	}
+}
+
 // When the coverage guard rejects an abstraction, the run records the concrete
 // reason instead of silently bumping a counter (findings P2.5).
 func TestRun_RecordsGuardSkipReason(t *testing.T) {

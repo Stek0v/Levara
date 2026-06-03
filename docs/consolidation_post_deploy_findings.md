@@ -159,8 +159,14 @@ Key present in chat history, Pi bash history, and `~/levara/levara.env` (mode
   the consolidate handler; all four eager-init at 0. Makes the budget cap
   observable (`llm_budget` fires when a sweep hits the cap). Categorizer:
   `consolidationSkipCategory`, test `TestConsolidationSkipCategory`.
-- Still open: `char_density` metrics; Phase C janitor enablement
-  (`CONSOLIDATION_INTERVAL`) once on-demand behavior is trusted.
+- **`char_density` metric — FIXED (code).** `levara_consolidation_char_density`
+  histogram (label `kind`=merge/abstract) observes survivor-chars / total-
+  source-chars per action — a low ratio flags aggressive compression / loss.
+  Computed in the engine (`actionCharDensity`, returned via `Result.Densities`
+  aligned with `Actions`) and observed in the handler. Buckets 0.1–1.5; both
+  kinds eager-init. Tests `TestActionCharDensity`, `TestRun_ReportsCharDensities`.
+- Still open: Phase C janitor enablement (`CONSOLIDATION_INTERVAL`) once
+  on-demand behavior is trusted. **All P3.3 code items are now done.**
 
 ## Full 256 sweep (2026-06-02, dry_run, DeepSeek live)
 

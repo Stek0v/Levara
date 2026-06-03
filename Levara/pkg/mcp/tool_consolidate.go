@@ -278,6 +278,9 @@ func ToolConsolidate(ctx context.Context, deps Deps, args map[string]any) ToolRe
 	metrics.ConsolidationRuns.WithLabelValues("ok").Inc()
 	metrics.ConsolidationClusters.Add(float64(res.Clusters))
 	metrics.ConsolidationActions.Add(float64(len(res.Actions)))
+	for i, a := range res.Actions {
+		metrics.ConsolidationCharDensity.WithLabelValues(string(a.Kind)).Observe(res.Densities[i])
+	}
 
 	mode := "applied"
 	if dryRun {
