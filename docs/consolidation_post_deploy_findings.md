@@ -165,8 +165,17 @@ Key present in chat history, Pi bash history, and `~/levara/levara.env` (mode
   Computed in the engine (`actionCharDensity`, returned via `Result.Densities`
   aligned with `Actions`) and observed in the handler. Buckets 0.1–1.5; both
   kinds eager-init. Tests `TestActionCharDensity`, `TestRun_ReportsCharDensities`.
+- **Budget scope — decided per-collection (2026-06-03).** `MaxLLMCalls` is
+  scoped to one `Run()` = one collection, not one janitor sweep. A full sweep of
+  N collections can therefore make up to N×24 calls. Decision: keep per-collection
+  (it bounds a single pathological collection's blast radius; on-demand
+  `ToolConsolidate` is always one collection, so per-collection is the right scope
+  there too). A sweep-level budget is only meaningful once the janitor is enabled,
+  so it is deferred to — and paired with — Phase C janitor enablement rather than
+  added now against a risk that does not yet exist.
 - Still open: Phase C janitor enablement (`CONSOLIDATION_INTERVAL`) once
-  on-demand behavior is trusted. **All P3.3 code items are now done.**
+  on-demand behavior is trusted; add the per-sweep LLM budget at that time.
+  **All P3.3 code items are now done.**
 
 ## Full 256 sweep (2026-06-02, dry_run, DeepSeek live)
 
