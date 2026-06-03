@@ -65,6 +65,10 @@ type CollectionManager struct {
 	dim         int
 	basePath    string
 	hnswCfg     HNSWConfig
+	// defaultModel is stamped onto collections auto-created via the lazy
+	// Insert -> getOrCreate path so they don't end up with an empty
+	// embedding_model (findings P2.1). Set from the server's EMBEDDING_MODEL.
+	defaultModel string
 }
 
 // NewCollectionManager creates a manager for named collections.
@@ -167,9 +171,24 @@ func NewCollectionManager(dim int, basePath string, cfg ...HNSWConfig) (*Collect
 	return cm, nil
 }
 
+// SetDefaultModel sets the embedding model stamped onto collections created
+// through the lazy auto-create path (Create / getOrCreate). Wired from the
+// server's EMBEDDING_MODEL after construction so sidecar collections born from
+// a memory write carry their embedder instead of an empty string (P2.1).
+func (cm *CollectionManager) SetDefaultModel(model string) {
+	cm.mu.Lock()
+	cm.defaultModel = model
+	cm.mu.Unlock()
+}
+
 // Create creates a new collection. Returns error if it already exists.
+// It stamps the manager's configured default embedding model so lazily
+// auto-created collections don't end up with empty embedder metadata (P2.1).
 func (cm *CollectionManager) Create(name string) error {
-	return cm.CreateWithMeta(name, "", "")
+	cm.mu.RLock()
+	model := cm.defaultModel
+	cm.mu.RUnlock()
+	return cm.CreateWithMeta(name, model, "")
 }
 
 // CreateWithMeta creates a collection with embedding model metadata.
