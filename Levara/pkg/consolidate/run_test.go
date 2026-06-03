@@ -123,6 +123,52 @@ func TestRun_SkipsOversizedAbstractCluster(t *testing.T) {
 	}
 }
 
+// A per-run LLM-call budget caps how many abstract clusters reach the
+// Summarizer (DeepSeek) in one sweep. Once the budget is spent, remaining
+// abstract clusters are skipped with an explicit reason instead of running up
+// unbounded LLM cost on a large collection (findings P3.3).
+func TestRun_LLMCallBudgetCapsAbstractions(t *testing.T) {
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	// Three independent 2-record clusters, all classified abstract (edges at
+	// 0.92, between TauLow and TauHigh). Lowercase, number-free values so the
+	// coverage guard never rejects — this isolates the budget logic.
+	recs := []MemoryRecord{
+		{ID: "a", Value: "alpha apple", CreatedAt: t0},
+		{ID: "b", Value: "alpha apricot", CreatedAt: t0.Add(time.Hour)},
+		{ID: "c", Value: "beta banana", CreatedAt: t0.Add(2 * time.Hour)},
+		{ID: "d", Value: "beta berry", CreatedAt: t0.Add(3 * time.Hour)},
+		{ID: "e", Value: "gamma grape", CreatedAt: t0.Add(4 * time.Hour)},
+		{ID: "f", Value: "gamma guava", CreatedAt: t0.Add(5 * time.Hour)},
+	}
+	edges := []SimEdge{
+		{A: "a", B: "b", Score: 0.92},
+		{A: "c", B: "d", Score: 0.92},
+		{A: "e", B: "f", Score: 0.92},
+	}
+	cfg := DefaultConfig()
+	cfg.MaxLLMCalls = 2
+	spy := &spySummarizer{out: "consolidated"}
+	res, err := Run(context.Background(), Params{
+		Store: &fakeStore{recs: recs}, Neighbors: fakeNeighbors{edges: edges}, Summarizer: spy,
+		Cfg: cfg, RunID: "run", DryRun: true,
+	})
+	if err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	if spy.calls != 2 {
+		t.Errorf("summarizer called %d times, want 2 (budget cap)", spy.calls)
+	}
+	if len(res.Actions) != 2 {
+		t.Errorf("actions = %d, want 2 (budget cap)", len(res.Actions))
+	}
+	if res.Skipped != 1 || len(res.Skips) != 1 {
+		t.Fatalf("Skipped=%d Skips=%+v, want exactly 1", res.Skipped, res.Skips)
+	}
+	if !strings.Contains(res.Skips[0].Reason, "budget") {
+		t.Errorf("reason = %q, want it to mention 'budget'", res.Skips[0].Reason)
+	}
+}
+
 // When the coverage guard rejects an abstraction, the run records the concrete
 // reason instead of silently bumping a counter (findings P2.5).
 func TestRun_RecordsGuardSkipReason(t *testing.T) {
