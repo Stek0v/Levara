@@ -50,13 +50,18 @@ empty `collection` arg (`tool_consolidate.go:209`). So the largest memory store
 is unreachable via on-demand consolidate; only the janitor (`RunOnce`, prefix
 sweep) touches it. Add a way to target the base store explicitly.
 
-### P2.3 potion mem0-envelope collapse → false-merge risk in consolidation
+### P2.3 potion mem0-envelope collapse → false-merge risk — FIXED (`7b7a315`)
 Known issue (`discovery_potion_mem0_envelope_collapse`): potion embeddings
 converge (cos ≈ 0.9999996) for mem0 records sharing a long common header. Since
-consolidation clusters by cosine ≥ 0.85 / merges at ≥ 0.97, envelope collapse
-could cause INCORRECT merges of semantically different records. Watch for
-suspiciously large/over-eager clusters on mem0-sourced collections; consider a
-content-diff guard before merge.
+consolidation merges mechanically at cosine ≥ TauHigh, envelope collapse could
+cause INCORRECT merges of semantically different records (keep newest, supersede
+the rest → distinct bodies silently lost). **Fix:** `mergeSafe` content-diff
+guard in `Plan` — a cosine-tight cluster is mechanically merged only if every
+source's tokens are ≥85% subsumed by the survivor (`MaxMergeLossFraction=0.15`);
+otherwise it is downgraded to an LLM abstraction, which preserves every source
+via the coverage guard. Token-set based (numbers + words), so a shared header
+can't mask a distinct body. Tests `TestPlan_EnvelopeCollapseDowngradesToAbstract`
+/ `TestPlan_NearDuplicateStillMerges`.
 
 ### P2.4 Latent crash path: `shard.go:126` raw `db.Search` has no dim guard
 Fix #1 guards `CollectionManager.Search` (the memory/consolidate path). The
