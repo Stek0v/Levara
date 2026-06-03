@@ -184,3 +184,10 @@ text equals `key+" "+value` (fails under the old value-only path). Variant B
 considered and deferred — cleaner for dedup semantics but a larger change that
 shifts the tuned `TauLow/TauHigh` geometry; revisit only if key-pollution is
 shown to hurt dedup quality.
+
+**Deployed + re-validated (2026-06-03).** Built arm64, deployed to Pi (Build ID
+`740f576fd658…`, backup `levara.bak.20260603-065120`), health 200. Full harness
+re-run against the live fixed binary: **16/16 PASS, exit 0.** Module A engaged
+(candidates=18, clusters=2, actions=2), fact-recall held 1.00 → 1.00, zero
+ground-truth facts lost. Prod clean afterward (0 leftover `qual_fixture` rows),
+`NRestarts=0`, service active.
