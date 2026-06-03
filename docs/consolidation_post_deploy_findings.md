@@ -9,13 +9,29 @@ pre-existing issues the fixes exposed or left for follow-up.
 
 ## P1 — High priority
 
-### P1.1 Fix #2 lives only on the Pi, not in version control / IaC
-The prod fix is in the systemd unit (`/etc/systemd/system/levara.service`,
+### P1.1 Fix #2 lives only on the Pi, not in version control / IaC — FIXED (2026-06-04)
+The prod fix was in the systemd unit (`/etc/systemd/system/levara.service`,
 `-dim=256`) and `~/levara/levara.env` (`EMBEDDING_ENDPOINT`/`EMBEDDING_MODEL`).
-If the Pi is reprovisioned, the binary default (`-dim=768`) and empty embed
-config come back → half-migrated state returns. Bake potion-256 defaults into
-the deployment config / repo so the fix survives reprovisioning.
-Backups taken: `*.bak.20260602-232659` (binary, env, unit).
+If the Pi were reprovisioned, the repo IaC (still nomic-768) would restore a
+half-migrated state.
+
+**Fixed:** potion-256 baked into the repo deployment artifacts:
+- `Raspberry/levara.service` (prod mirror) + `Levara/deploy/raspberry/levara.service`
+  (generic template): `-dim=768` → `-dim=256`; both now `Wants`/`After`
+  `embed-potion.service` (weak dep — an embedder crash must not take Levara down).
+- `Raspberry/levara.env` + `Levara/deploy/raspberry/levara.env`:
+  `EMBEDDING_ENDPOINT=http://localhost:9101/v1/embeddings`,
+  `EMBEDDING_MODEL=potion-code-16M`; nomic kept as a commented revert fallback.
+- **New** `deploy/bench/embed-potion.service`: the prod potion sidecar unit
+  (loopback `:9101`, `EMBED_BENCH_MODEL=potion`, sandboxed) so reprovisioning
+  brings up the embedder too — without it, Levara would point at a `:9101` that
+  doesn't exist. Modeled on the existing `embed-bench.service`.
+
+A fresh checkout now provisions Levara + sidecar at potion-256 with no manual
+patching. Backups of the live Pi config remain: `*.bak.20260602-232659`.
+Not yet applied to the running Pi (these are repo artifacts; prod already runs
+the equivalent live config). Binary `-dim` default stays 128 (generic); every
+unit passes `-dim` explicitly, so the default is never the prod value.
 
 ### P1.2 Silent error-swallowing hides incompatible collections — FIXED (`01fd0fe`)
 `tool_consolidate.go` used to do `if err != nil { continue }`. Now that a dim
