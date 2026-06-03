@@ -153,6 +153,12 @@ Key present in chat history, Pi bash history, and `~/levara/levara.env` (mode
   `"LLM call budget exhausted (N calls)"` instead of being charged/truncated.
   0 = unbounded (back-compat). Oversized-cluster skip precedes the budget check,
   so it never consumes budget. Test: `TestRun_LLMCallBudgetCapsAbstractions`.
+- **Skipped-cluster metric — FIXED (code, 3ecf9c6).**
+  `levara_consolidation_skipped_total{reason}` with bounded reason categories
+  (`oversized`/`llm_budget`/`coverage_guard`/`other`), incremented per skip in
+  the consolidate handler; all four eager-init at 0. Makes the budget cap
+  observable (`llm_budget` fires when a sweep hits the cap). Categorizer:
+  `consolidationSkipCategory`, test `TestConsolidationSkipCategory`.
 - Still open: `char_density` metrics; Phase C janitor enablement
   (`CONSOLIDATION_INTERVAL`) once on-demand behavior is trusted.
 
