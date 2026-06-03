@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 // Summarizer turns a cluster's source values into one consolidated statement.
@@ -15,11 +16,70 @@ type Summarizer interface {
 var (
 	numberRe = regexp.MustCompile(`\d+`)
 	// Capitalized multi-char tokens: crude entity proxy (Pi, Levara, DeepSeek...).
-	// It also matches all-caps code/SQL keywords (REPL, NULL, CREATE), which a
-	// faithful summary may legitimately reword — hence the fraction tolerance
-	// below rather than an all-or-nothing entity check (findings P2.5).
+	// It deliberately over-matches; isEntityToken then filters the noise it picks
+	// up — sentence-start common words and code/SQL keywords (findings P2.5).
 	entityRe = regexp.MustCompile(`\b[A-Z][A-Za-z0-9]+\b`)
 )
+
+// nonEntityStopwords are capitalized tokens entityRe matches that carry no entity
+// meaning: common English words (frequent at sentence starts) and code/SQL
+// keywords. A faithful summary routinely rewords these away, so counting their
+// omission against entity coverage produced false rejects — the live `localllm`
+// cluster was rejected purely for dropping "REPL"/"Real"/"NULL" (findings P2.5).
+// Keys are lowercased; matching is case-insensitive.
+var nonEntityStopwords = map[string]bool{
+	// common English function/sentence-start words
+	"the": true, "this": true, "that": true, "these": true, "those": true,
+	"there": true, "then": true, "their": true, "them": true, "they": true,
+	"when": true, "where": true, "while": true, "what": true, "which": true,
+	"who": true, "whom": true, "why": true, "how": true, "and": true, "but": true,
+	"nor": true, "not": true, "for": true, "from": true, "into": true, "onto": true,
+	"over": true, "under": true, "after": true, "before": true, "with": true,
+	"been": true, "being": true, "have": true, "has": true, "had": true,
+	"does": true, "did": true, "can": true, "could": true, "may": true,
+	"might": true, "must": true, "shall": true, "should": true, "will": true,
+	"would": true, "its": true, "all": true, "any": true, "each": true,
+	"both": true, "more": true, "most": true, "other": true, "some": true,
+	"such": true, "only": true, "own": true, "same": true, "than": true,
+	"too": true, "very": true, "just": true, "now": true, "new": true,
+	"also": true, "real": true, "use": true, "used": true, "using": true,
+	"add": true, "added": true, "set": true, "get": true, "got": true,
+	"run": true, "runs": true, "note": true, "see": true, "here": true,
+	"yes": true, "are": true, "was": true, "were": true,
+	// code / SQL keywords
+	"repl": true, "null": true, "nil": true, "true": true, "false": true,
+	"void": true, "select": true, "insert": true, "update": true, "delete": true,
+	"create": true, "drop": true, "alter": true, "table": true, "join": true,
+	"group": true, "order": true, "limit": true, "return": true, "func": true,
+	"const": true, "let": true, "var": true, "todo": true, "fixme": true,
+}
+
+// isEntityToken decides whether a capitalized token entityRe matched is a
+// meaning-bearing entity (Levara, DeepSeek, HNSW) versus stopword noise
+// (Real, REPL, The). Digit-bearing or genuinely mixed-case identifiers are
+// always entities — dictionary words never look like that — so the stopword
+// gate only applies to plain-capitalized and all-caps tokens.
+func isEntityToken(tok string) bool {
+	hasDigit, allUpper, hasInnerUpper := false, true, false
+	for i, r := range tok {
+		switch {
+		case unicode.IsDigit(r):
+			hasDigit = true
+		case unicode.IsLetter(r) && !unicode.IsUpper(r):
+			allUpper = false
+		}
+		if i > 0 && unicode.IsUpper(r) {
+			hasInnerUpper = true
+		}
+	}
+	if hasDigit {
+		return true
+	}
+	if hasInnerUpper && !allUpper { // camelCase identifier: DeepSeek, OpenAI
+		return true
+	}
+	return !nonEntityStopwords[strings.ToLower(tok)]
+}
 
 // MaxEntityDropFraction is the share of source entity tokens a summary may omit
 // before the coverage guard rejects it. Numbers remain all-or-nothing; only the
@@ -60,8 +120,8 @@ func AbstractValue(ctx context.Context, s Summarizer, sources []string) (string,
 		}
 	}
 
-	srcEnts := tokenSet(entityRe, sources...)
-	outEnts := tokenSet(entityRe, out)
+	srcEnts := entitySet(sources...)
+	outEnts := entitySet(out)
 	var dropped []string
 	for e := range srcEnts {
 		if !outEnts[e] {
@@ -83,6 +143,18 @@ func tokenSet(re *regexp.Regexp, texts ...string) map[string]bool {
 	for _, t := range texts {
 		for _, m := range re.FindAllString(t, -1) {
 			set[m] = true
+		}
+	}
+	return set
+}
+
+// entitySet returns the meaning-bearing capitalized tokens, dropping the
+// stopword noise entityRe over-matches (see isEntityToken).
+func entitySet(texts ...string) map[string]bool {
+	set := map[string]bool{}
+	for tok := range tokenSet(entityRe, texts...) {
+		if isEntityToken(tok) {
+			set[tok] = true
 		}
 	}
 	return set
