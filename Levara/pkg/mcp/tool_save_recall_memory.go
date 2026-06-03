@@ -29,14 +29,18 @@ const (
 	saveMemoryEmbedTimeout = 30 * time.Second
 )
 
+// baseMemoryCollection is the vector-collection name for the base memory
+// store — the rows kept at collection_name='' (no pinned context).
+const baseMemoryCollection = "_memories"
+
 // memoryCollectionName returns the vector-collection name where
 // memory embeddings live. "_memories" by default, with per-collection
 // shards like "_memories_levara" when the user pinned a context.
 func memoryCollectionName(collectionName string) string {
 	if collectionName != "" {
-		return "_memories_" + collectionName
+		return baseMemoryCollection + "_" + collectionName
 	}
-	return "_memories"
+	return baseMemoryCollection
 }
 
 // ToolSaveMemory upserts a memory into the memories table and, when

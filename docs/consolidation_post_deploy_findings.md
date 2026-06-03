@@ -44,11 +44,19 @@ by a path that didn't record the embedder. Investigate metadata integrity for
 collection creation; these 3 are also cleanup candidates (2 are Phase-A sandbox
 leftovers, 1 is a stale hyphen-dup of the live `_memories_local_net`).
 
-### P2.2 Base `_memories` store (128 records) can't be consolidated on-demand
-`memoryCollectionName("")` → `_memories`, but the consolidate tool rejects an
-empty `collection` arg (`tool_consolidate.go:209`). So the largest memory store
-is unreachable via on-demand consolidate; only the janitor (`RunOnce`, prefix
-sweep) touches it. Add a way to target the base store explicitly.
+### P2.2 Base `_memories` store (128 records) can't be consolidated on-demand — FIXED
+`memoryCollectionName("")` → `_memories`, but the consolidate tool rejected an
+empty `collection` arg. So the largest memory store was unreachable via
+on-demand consolidate; only the janitor (`RunOnce`, prefix sweep) touched it.
+
+**Fixed:** callers target the base store explicitly by its vector-collection
+name `_memories`. `ToolConsolidate` translates that sentinel to the empty SQL
+`collection_name=''` filter (`sqlCollection`), so `sqlStore`, the neighbor
+collection, and `Params.Collection` all resolve to the base store rather than a
+literal `collection_name='_memories'` (which matches nothing). Empty `collection`
+is still rejected (no accidental base-store consolidation); the error and tool
+schema now point at `_memories`. Added `baseMemoryCollection` const. Test
+`TestToolConsolidate_TargetsBaseStore`.
 
 ### P2.3 potion mem0-envelope collapse → false-merge risk — FIXED (`7b7a315`)
 Known issue (`discovery_potion_mem0_envelope_collapse`): potion embeddings

@@ -243,7 +243,16 @@ func summaryMaxTokens(sources []string) int {
 func ToolConsolidate(ctx context.Context, deps Deps, args map[string]any) ToolResult {
 	collection, _ := args["collection"].(string)
 	if collection == "" {
-		return errResult("'collection' required")
+		return errResult("'collection' required (use '_memories' to target the base memory store)")
+	}
+	// The base memory store keeps its rows at collection_name='' and indexes
+	// them in the unprefixed '_memories' vector collection. memoryCollectionName("")
+	// maps back to '_memories', so callers target it explicitly by that name; we
+	// translate it to the empty SQL filter so the largest store is reachable via
+	// on-demand consolidate, not just the janitor sweep (findings P2.2).
+	sqlCollection := collection
+	if collection == baseMemoryCollection {
+		sqlCollection = ""
 	}
 	room, _ := args["room"].(string)
 	hall, _ := args["hall"].(string)
@@ -253,13 +262,13 @@ func ToolConsolidate(ctx context.Context, deps Deps, args map[string]any) ToolRe
 	}
 	runID := uuid.New().String()
 
-	nbr := &collectionNeighbors{deps: deps, collection: memoryCollectionName(collection)}
+	nbr := &collectionNeighbors{deps: deps, collection: memoryCollectionName(sqlCollection)}
 	res, err := consolidate.Run(ctx, consolidate.Params{
-		Store:      &sqlStore{deps: deps, collection: collection},
+		Store:      &sqlStore{deps: deps, collection: sqlCollection},
 		Neighbors:  nbr,
 		Summarizer: &llmSummarizer{deps: deps},
 		Cfg:        consolidate.DefaultConfig(),
-		Collection: collection, Room: room, Hall: hall,
+		Collection: sqlCollection, Room: room, Hall: hall,
 		RunID: runID, DryRun: dryRun,
 	})
 	if err != nil {
