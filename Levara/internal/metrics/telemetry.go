@@ -309,6 +309,12 @@ var (
 		Name: "levara_consolidation_actions_total",
 		Help: "Consolidation actions planned/applied (merge + abstract).",
 	})
+
+	ConsolidationSkipped = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "levara_consolidation_skipped_total",
+		Help: "Clusters skipped during consolidation, by reason category " +
+			"(oversized/llm_budget/coverage_guard/other).",
+	}, []string{"reason"})
 )
 
 func init() {
@@ -316,6 +322,12 @@ func init() {
 	// hides them just because no recovery has happened in this process.
 	WALRecoveriesTotal.WithLabelValues("ok")
 	WALRecoveriesTotal.WithLabelValues("fail")
+
+	// Materialize the consolidation skip-reason categories at 0 so a dashboard
+	// can chart "budget exhausted" before the first time it ever fires.
+	for _, r := range []string{"oversized", "llm_budget", "coverage_guard", "other"} {
+		ConsolidationSkipped.WithLabelValues(r)
+	}
 
 	// Eagerly materialize RAG verify-stack series at 0 across the known
 	// search types and reasons so dashboards/alerts can reference a stable

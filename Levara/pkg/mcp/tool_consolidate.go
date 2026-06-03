@@ -294,9 +294,30 @@ func ToolConsolidate(ctx context.Context, deps Deps, args map[string]any) ToolRe
 			collection)
 	}
 	for _, sk := range res.Skips {
+		metrics.ConsolidationSkipped.WithLabelValues(consolidationSkipCategory(sk.Reason)).Inc()
 		text += fmt.Sprintf("\n  skip [%s]: %s", strings.Join(sk.SourceIDs, ","), sk.Reason)
 	}
 	return okResult(text)
+}
+
+// consolidationSkipCategory buckets a free-form skip reason into a bounded label
+// for the levara_consolidation_skipped_total metric. The reason strings carry
+// counts and IDs (high cardinality), so we classify by the stable phrase the
+// pipeline emits rather than exporting the raw text.
+func consolidationSkipCategory(reason string) string {
+	switch {
+	case strings.Contains(reason, "too large"):
+		return "oversized"
+	case strings.Contains(reason, "budget"):
+		return "llm_budget"
+	case strings.Contains(reason, "summary dropped"),
+		strings.Contains(reason, "summary invented"),
+		strings.Contains(reason, "empty summary"),
+		strings.Contains(reason, "no sources"):
+		return "coverage_guard"
+	default:
+		return "other"
+	}
 }
 
 // consolidationRunner is the consolidate.Runner used by the background

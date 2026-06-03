@@ -305,3 +305,25 @@ func TestToolConsolidationRevert_RestoresState(t *testing.T) {
 		t.Errorf("semantic rows after revert = %d, want 0", semantic)
 	}
 }
+
+func TestConsolidationSkipCategory(t *testing.T) {
+	cases := []struct {
+		reason string
+		want   string
+	}{
+		{"cluster too large for abstraction (7 > 6)", "oversized"},
+		{"LLM call budget exhausted (24 calls)", "llm_budget"},
+		{"consolidate: summary dropped source number \"256\"", "coverage_guard"},
+		{"consolidate: summary invented number \"99\"", "coverage_guard"},
+		{"consolidate: summary dropped 3/4 source entities (75% > 10%): [Pi Levara]", "coverage_guard"},
+		{"consolidate: empty summary", "coverage_guard"},
+		{"consolidate: no sources", "coverage_guard"},
+		{"some unexpected backend failure", "other"},
+		{"", "other"},
+	}
+	for _, c := range cases {
+		if got := consolidationSkipCategory(c.reason); got != c.want {
+			t.Errorf("consolidationSkipCategory(%q) = %q, want %q", c.reason, got, c.want)
+		}
+	}
+}
