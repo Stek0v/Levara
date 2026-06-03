@@ -37,12 +37,27 @@ have caused duplicate saves or "memory not found" false negatives.
 
 ## P2 — Medium priority
 
-### P2.1 `model=''` metadata on 3 straggler memory collections
+### P2.1 `model=''` metadata on 3 straggler memory collections — FIXED (code) / cleanup pending
 `_memories_consol_sandbox`, `_memories_consol_sb1`, `_memories_local-net` are at
 768 with empty `embedding_model`. Empty model metadata means they were created
-by a path that didn't record the embedder. Investigate metadata integrity for
-collection creation; these 3 are also cleanup candidates (2 are Phase-A sandbox
-leftovers, 1 is a stale hyphen-dup of the live `_memories_local_net`).
+by a path that didn't record the embedder.
+
+**Root cause:** the lazy auto-create path `CollectionManager.Insert → getOrCreate
+→ Create` stamped `embedding_model=''` because the manager had no notion of the
+configured embedder. The `_memories_*` sidecars written by `indexMemoryAsync`
+take exactly this path, so every memory write into a fresh context minted a
+straggler.
+
+**Fixed (code):** `CollectionManager` gained a `defaultModel` field +
+`SetDefaultModel`, wired from `EMBEDDING_MODEL` in `cmd/server/main.go`. `Create`
+now stamps it, so lazily auto-created collections carry the embedder. Test
+`TestLazyCreateStampsDefaultModel`. Explicit `CreateWithDim`/`CreateWithMeta`
+callers (which already pass a model) are unaffected.
+
+**Cleanup pending (prod data):** the 3 existing stragglers still carry `''` —
+this fix only prevents new ones. They are deletion candidates (2 Phase-A sandbox
+leftovers; 1 stale hyphen-dup of the live `_memories_local_net`). Handle on the
+next Pi touch.
 
 ### P2.2 Base `_memories` store (128 records) can't be consolidated on-demand — FIXED
 `memoryCollectionName("")` → `_memories`, but the consolidate tool rejected an

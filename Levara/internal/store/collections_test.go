@@ -51,6 +51,38 @@ func TestCollectionSearchDimMismatchReturnsError(t *testing.T) {
 	}
 }
 
+// TestLazyCreateStampsDefaultModel guards P2.1: collections auto-created by the
+// lazy Insert -> getOrCreate -> Create path (e.g. the _memories_* sidecars
+// written by indexMemoryAsync) recorded an empty embedding_model, leaving
+// straggler collections with no embedder metadata. When a default model is
+// configured, lazy auto-creation must stamp it onto the collection meta.
+func TestLazyCreateStampsDefaultModel(t *testing.T) {
+	dir, _ := os.MkdirTemp("", "levara-defaultmodel-*")
+	defer os.RemoveAll(dir)
+
+	cm, err := NewCollectionManager(64, dir)
+	if err != nil {
+		t.Fatalf("NewCollectionManager: %v", err)
+	}
+	defer func() { _ = cm.Close() }()
+	cm.SetDefaultModel("potion-code-16M")
+
+	// Insert into a brand-new collection — no explicit Create, so this exercises
+	// the lazy getOrCreate path that previously stamped embedding_model=''.
+	if err := cm.Insert("_memories_newctx", "r1", randVecForTest(64), map[string]any{"text": "x"}); err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+
+	meta := cm.GetMeta("_memories_newctx")
+	if meta == nil {
+		t.Fatal("GetMeta returned nil for lazily-created collection")
+	}
+	if meta.EmbeddingModel != "potion-code-16M" {
+		t.Errorf("EmbeddingModel = %q, want %q (lazy create must stamp the configured default)",
+			meta.EmbeddingModel, "potion-code-16M")
+	}
+}
+
 func TestCollectionCRUD(t *testing.T) {
 	dir, _ := os.MkdirTemp("", "levara-col-test-*")
 	defer os.RemoveAll(dir)

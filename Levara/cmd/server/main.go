@@ -331,6 +331,10 @@ func main() {
 	if embedModel == "" {
 		embedModel = "text-embedding-3-small"
 	}
+	// Stamp the configured embedder onto collections auto-created by the lazy
+	// Insert path (e.g. _memories_* sidecars from a memory write) so they don't
+	// inherit empty embedding_model metadata (findings P2.1).
+	colManager.SetDefaultModel(embedModel)
 
 	// Auth endpoints (public — no JWT required)
 	jwtSecret := os.Getenv("JWT_SECRET")
