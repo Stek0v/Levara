@@ -107,7 +107,19 @@ func Run(ctx context.Context, p Params) (Result, error) {
 			}
 			// Per-run LLM budget: once the cap is hit, skip the remaining
 			// abstract clusters rather than fan out unbounded DeepSeek cost on
-			// a large collection (findings P3.3).
+			// a large collection (findings P3.3). Semantics:
+			//   - Scope is per Run() = per collection, not per janitor sweep.
+			//   - Counts ATTEMPTS, not successes: llmCalls++ precedes the call,
+			//     so a coverage-guard rejection still consumes budget (the
+			//     DeepSeek request was already made). This keeps the cap a true
+			//     ceiling on outbound calls; counting only successes would let a
+			//     reject-heavy collection exceed it.
+			//   - Under exhaustion the surviving subset is order-dependent
+			//     (arbitrary), but self-heals across applied reruns: successful
+			//     abstractions supersede their sources, which then drop out of
+			//     Candidates, so the next run reaches the previously-skipped
+			//     clusters. dry_run previews do not progress (nothing applied).
+			//     Exhaustion is observable via the llm_budget skip metric.
 			if p.Cfg.MaxLLMCalls > 0 && llmCalls >= p.Cfg.MaxLLMCalls {
 				res.Skips = append(res.Skips, Skip{
 					SourceIDs: a.SourceIDs,
