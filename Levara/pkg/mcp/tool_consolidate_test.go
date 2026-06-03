@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stek0v/levara/pkg/consolidate"
+
 	_ "github.com/ncruces/go-sqlite3/driver"
 )
 
@@ -90,6 +92,35 @@ func newConsolidateDeps(t *testing.T) *fakeDeps {
 		}, nil
 	}
 	return deps
+}
+
+// TestEdges_EmbedsKeyPlusValue guards F-quality.1: the edge-builder must embed
+// the same key+" "+value text that indexMemoryAsync indexes, otherwise the
+// value-only query vector is asymmetric against the stored key+value vectors and
+// under-clusters records whose key carries text.
+func TestEdges_EmbedsKeyPlusValue(t *testing.T) {
+	var embedded []string
+	deps := &fakeDeps{
+		embedAvailable: true,
+		embedFn: func(_ context.Context, text string) ([]float32, error) {
+			embedded = append(embedded, text)
+			return []float32{1, 0, 0}, nil
+		},
+		searchFn: func(_ string, _ []float32, _ int) ([]SearchResult, error) {
+			return nil, nil
+		},
+	}
+	n := &collectionNeighbors{deps: deps, collection: "_memories_levara"}
+	recs := []consolidate.MemoryRecord{
+		{ID: "a", Key: "pi-potion-sidecar", Value: "runs on port 9101"},
+	}
+	if _, err := n.Edges(context.Background(), recs, consolidate.DefaultConfig()); err != nil {
+		t.Fatalf("Edges: %v", err)
+	}
+	want := "pi-potion-sidecar runs on port 9101"
+	if len(embedded) != 1 || embedded[0] != want {
+		t.Errorf("embedded = %q, want exactly [%q] (key+\" \"+value, matching indexMemoryAsync)", embedded, want)
+	}
 }
 
 func TestSummaryMaxTokens_ScalesAndClamps(t *testing.T) {
