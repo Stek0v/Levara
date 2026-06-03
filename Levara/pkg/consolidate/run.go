@@ -41,8 +41,34 @@ type Result struct {
 	Candidates int
 	Clusters   int
 	Actions    []Action
-	Skipped    int    // == len(Skips); kept for backward-compatible summaries
-	Skips      []Skip // per-cluster skip reasons
+	Densities  []float64 // char-retention ratio per Action, aligned with Actions
+	Skipped    int       // == len(Skips); kept for backward-compatible summaries
+	Skips      []Skip    // per-cluster skip reasons
+}
+
+// actionCharDensity is survivor chars / total source chars for one action — the
+// compression ratio that flags over-aggressive consolidation. For a merge the
+// survivor is the kept record and the total spans every cluster member; for an
+// abstraction the survivor is the synthesized text and the total spans the
+// superseded sources. Returns 0 (not NaN) when the sources carry no characters.
+func actionCharDensity(a Action, byID map[string]MemoryRecord) float64 {
+	var survivorChars int
+	ids := a.SourceIDs
+	switch a.Kind {
+	case ActionMerge:
+		survivorChars = len(byID[a.SurvivorID].Value)
+		ids = append([]string{a.SurvivorID}, a.SourceIDs...)
+	case ActionAbstract:
+		survivorChars = len(a.NewValue)
+	}
+	total := 0
+	for _, id := range ids {
+		total += len(byID[id].Value)
+	}
+	if total == 0 {
+		return 0
+	}
+	return float64(survivorChars) / float64(total)
 }
 
 // Run executes the full pipeline: load → edges → cluster → plan → (fill LLM) → apply.
@@ -102,6 +128,7 @@ func Run(ctx context.Context, p Params) (Result, error) {
 			a.NewValue = val
 		}
 		final = append(final, a)
+		res.Densities = append(res.Densities, actionCharDensity(a, byID))
 	}
 	res.Actions = final
 	res.Skipped = len(res.Skips)
