@@ -137,7 +137,11 @@ func (n *collectionNeighbors) Edges(ctx context.Context, recs []consolidate.Memo
 	seen := make(map[string]struct{})
 	var edges []consolidate.SimEdge
 	for _, r := range recs {
-		vec, err := n.deps.Embed(ctx, r.Value)
+		// Embed key+value to match indexMemoryAsync (tool_save_recall_memory.go),
+		// which indexes Embed(key+" "+value). A value-only query vector is
+		// asymmetric against the key+value stored vectors and systematically
+		// under-scores records whose key carries text, starving the clusterer.
+		vec, err := n.deps.Embed(ctx, r.Key+" "+r.Value)
 		if err != nil {
 			continue // skip this candidate; partial graph is fine
 		}

@@ -166,14 +166,21 @@ validated end-to-end by a new cross-domain quality harness. **16/16 PASS.**
   `skip: dropped 2/12 source entities (17% > 10%): [REPL Real]` or a clean
   abstract depending on DeepSeek run (guard as designed).
 
-### F-quality.1 — latent embedding mismatch in the consolidation edge-builder
-`collectionNeighbors.Edges` embeds **`r.Value` only** (`tool_consolidate.go:140`),
+### F-quality.1 — latent embedding mismatch in the consolidation edge-builder — FIXED
+`collectionNeighbors.Edges` embedded **`r.Value` only** (`tool_consolidate.go:140`),
 but `save_memory` indexes **`embed(key + " " + value)`** (`indexMemoryAsync`). A
-long memory `key` therefore pollutes the stored vector relative to the value-only
+long memory `key` therefore polluted the stored vector relative to the value-only
 query vector, sinking even near-identical records below `TauLow` and starving the
-clusterer. In prod keys are short so the effect is mild, but it means
-consolidation under-clusters when keys carry significant text. Surfaced because
+clusterer. In prod keys are short so the effect was mild, but it meant
+consolidation under-clustered when keys carry significant text. Surfaced because
 the harness's first fixture used long unique keys → `clusters=0`; shortening keys
-restored expected clustering. **Follow-up:** make `Edges` embed `key+" "+value`
-to match the index (or have both embed `value` only) so edge geometry matches
-recall geometry.
+restored expected clustering.
+
+**Fix (Variant A):** `Edges` now embeds `r.Key+" "+r.Value`, matching the index,
+so edge geometry is symmetric and consistent with both the stored vectors and
+`recall`. Regression test `TestEdges_EmbedsKeyPlusValue` asserts the embedded
+text equals `key+" "+value` (fails under the old value-only path). Variant B
+(value-only on both sides via in-process pairwise cosine, dropping HNSW) was
+considered and deferred — cleaner for dedup semantics but a larger change that
+shifts the tuned `TauLow/TauHigh` geometry; revisit only if key-pollution is
+shown to hurt dedup quality.
