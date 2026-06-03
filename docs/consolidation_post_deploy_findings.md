@@ -17,13 +17,17 @@ config come back → half-migrated state returns. Bake potion-256 defaults into
 the deployment config / repo so the fix survives reprovisioning.
 Backups taken: `*.bak.20260602-232659` (binary, env, unit).
 
-### P1.2 Silent error-swallowing hides incompatible collections
-`tool_consolidate.go:144-146` does `if err != nil { continue }`. Now that a dim
-mismatch returns an error (Fix #1), a 768 collection produces `clusters=0` with
+### P1.2 Silent error-swallowing hides incompatible collections — FIXED (`01fd0fe`)
+`tool_consolidate.go` used to do `if err != nil { continue }`. Now that a dim
+mismatch returns an error (Fix #1), a 768 collection produced `clusters=0` with
 NO operator-visible signal that the collection is embed-incompatible. Observed
 directly in validation check [3] (`local-net`: candidates=28, clusters=0).
-Need: surface "collection dim incompatible with server embedder" as a
-warning/metric/run-note, not a silent zero.
+**Fix:** `store.ErrDimMismatch` sentinel (Search wraps with `%w`); the
+edge-builder detects it once via `errors.Is`, flags
+`collectionNeighbors.dimMismatch`, and `ToolConsolidate` emits a visible
+warning note + `ConsolidationRuns{dim_incompatible}` metric while still
+returning a clean non-error result (sweep/janitor keep going). Regression test
+`TestToolConsolidate_SurfacesDimIncompatible`.
 
 ### P1.3 Recall quality during the half-migrated window is unaudited
 Before the fix, the server queried at 768 against 256 memory collections. Recall
