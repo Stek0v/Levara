@@ -65,6 +65,7 @@ func Run(ctx context.Context, p Params) (Result, error) {
 
 	res := Result{Candidates: len(recs), Clusters: len(clusters)}
 	var final []Action
+	llmCalls := 0
 	for _, a := range actions {
 		if a.Kind == ActionAbstract {
 			// Oversized clusters always overflow the LLM token budget and
@@ -78,10 +79,21 @@ func Run(ctx context.Context, p Params) (Result, error) {
 				})
 				continue
 			}
+			// Per-run LLM budget: once the cap is hit, skip the remaining
+			// abstract clusters rather than fan out unbounded DeepSeek cost on
+			// a large collection (findings P3.3).
+			if p.Cfg.MaxLLMCalls > 0 && llmCalls >= p.Cfg.MaxLLMCalls {
+				res.Skips = append(res.Skips, Skip{
+					SourceIDs: a.SourceIDs,
+					Reason:    fmt.Sprintf("LLM call budget exhausted (%d calls)", p.Cfg.MaxLLMCalls),
+				})
+				continue
+			}
 			sources := make([]string, 0, len(a.SourceIDs))
 			for _, id := range a.SourceIDs {
 				sources = append(sources, byID[id].Value)
 			}
+			llmCalls++
 			val, err := AbstractValue(ctx, p.Summarizer, sources)
 			if err != nil {
 				res.Skips = append(res.Skips, Skip{SourceIDs: a.SourceIDs, Reason: err.Error()})
