@@ -147,8 +147,14 @@ Key present in chat history, Pi bash history, and `~/levara/levara.env` (mode
 600). Rotation recommended; never commit to git.
 
 ### P3.3 Deferred enhancements (pre-existing backlog)
-Per-run LLM budget cap for consolidation; `char_density` metrics; Phase C
-janitor enablement (`CONSOLIDATION_INTERVAL`) once on-demand behavior is trusted.
+- **Per-run LLM budget cap — FIXED (code, 624f9de).** `Config.MaxLLMCalls`
+  (default 24) caps abstract Summarizer (DeepSeek) calls per `Run`; abstract
+  clusters beyond the cap are recorded as `Skips` with reason
+  `"LLM call budget exhausted (N calls)"` instead of being charged/truncated.
+  0 = unbounded (back-compat). Oversized-cluster skip precedes the budget check,
+  so it never consumes budget. Test: `TestRun_LLMCallBudgetCapsAbstractions`.
+- Still open: `char_density` metrics; Phase C janitor enablement
+  (`CONSOLIDATION_INTERVAL`) once on-demand behavior is trusted.
 
 ## Full 256 sweep (2026-06-02, dry_run, DeepSeek live)
 
