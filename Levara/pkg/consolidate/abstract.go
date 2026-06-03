@@ -15,13 +15,21 @@ type Summarizer interface {
 var (
 	numberRe = regexp.MustCompile(`\d+`)
 	// Capitalized multi-char tokens: crude entity proxy (Pi, Levara, DeepSeek...).
+	// It also matches all-caps code/SQL keywords (REPL, NULL, CREATE), which a
+	// faithful summary may legitimately reword — hence the fraction tolerance
+	// below rather than an all-or-nothing entity check (findings P2.5).
 	entityRe = regexp.MustCompile(`\b[A-Z][A-Za-z0-9]+\b`)
 )
+
+// MaxEntityDropFraction is the share of source entity tokens a summary may omit
+// before the coverage guard rejects it. Numbers remain all-or-nothing; only the
+// noisier capitalized-token signal is fraction-gated.
+const MaxEntityDropFraction = 0.10
 
 // AbstractValue calls the Summarizer and enforces the coverage guard:
 //   - every number present in the sources must appear in the output;
 //   - every number in the output must appear in some source (no invented numbers);
-//   - every capitalized entity token in the sources must appear in the output.
+//   - at most MaxEntityDropFraction of source entity tokens may be omitted.
 //
 // On any violation (or LLM error) it returns an error and the caller leaves the
 // cluster untouched.
@@ -54,9 +62,16 @@ func AbstractValue(ctx context.Context, s Summarizer, sources []string) (string,
 
 	srcEnts := tokenSet(entityRe, sources...)
 	outEnts := tokenSet(entityRe, out)
+	var dropped []string
 	for e := range srcEnts {
 		if !outEnts[e] {
-			return "", fmt.Errorf("consolidate: summary dropped source entity %q", e)
+			dropped = append(dropped, e)
+		}
+	}
+	if n := len(srcEnts); n > 0 {
+		if frac := float64(len(dropped)) / float64(n); frac > MaxEntityDropFraction {
+			return "", fmt.Errorf("consolidate: summary dropped %d/%d source entities (%.0f%% > %.0f%%): %v",
+				len(dropped), n, frac*100, MaxEntityDropFraction*100, dropped)
 		}
 	}
 

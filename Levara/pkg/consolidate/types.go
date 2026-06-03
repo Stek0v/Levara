@@ -46,12 +46,18 @@ type Action struct {
 
 // Config holds tunable thresholds.
 type Config struct {
-	TauLow  float64 // cluster edge threshold
-	TauHigh float64 // mechanical-merge gate
-	TopK    int     // neighbors fetched per candidate when building the graph
+	TauLow          float64 // cluster edge threshold
+	TauHigh         float64 // mechanical-merge gate
+	TopK            int     // neighbors fetched per candidate when building the graph
+	MaxAbstractSize int     // max records in an abstract cluster; larger ones are skipped (0 = unbounded)
 }
 
 // DefaultConfig returns the production defaults.
+//
+// TauLow is 0.90 (not 0.85): the looser threshold over-clustered topically
+// adjacent but distinct notes into one giant abstract cluster (findings P2.5).
+// MaxAbstractSize caps how many records a single LLM abstraction may cover;
+// beyond it the cluster is skipped rather than truncated into a guard failure.
 func DefaultConfig() Config {
-	return Config{TauLow: 0.85, TauHigh: 0.97, TopK: 8}
+	return Config{TauLow: 0.90, TauHigh: 0.97, TopK: 8, MaxAbstractSize: 6}
 }

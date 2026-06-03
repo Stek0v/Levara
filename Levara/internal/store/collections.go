@@ -480,6 +480,13 @@ func (cm *CollectionManager) Search(collection string, query []float32, topK int
 	if err != nil {
 		return nil, err
 	}
+	// Guard against a query whose dimension differs from the collection's.
+	// Without this, dist()/vek32.Dot panics "slices must be of equal length"
+	// with no recover(), crashing the whole process — e.g. a 768-dim embedder
+	// querying a 256-dim memory collection (consolidate, recall).
+	if len(query) != db.dim {
+		return nil, fmt.Errorf("query dim %d != collection %q dim %d", len(query), collection, db.dim)
+	}
 	return db.Search(query, topK), nil
 }
 
