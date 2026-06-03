@@ -169,13 +169,125 @@ func TestRun_LLMCallBudgetCapsAbstractions(t *testing.T) {
 	}
 }
 
+// MaxLLMCalls == 0 means unbounded: every abstract cluster reaches the
+// Summarizer (back-compat for callers that build Config by hand).
+func TestRun_LLMBudgetZeroIsUnbounded(t *testing.T) {
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	recs := []MemoryRecord{
+		{ID: "a", Value: "alpha apple", CreatedAt: t0},
+		{ID: "b", Value: "alpha apricot", CreatedAt: t0.Add(time.Hour)},
+		{ID: "c", Value: "beta banana", CreatedAt: t0.Add(2 * time.Hour)},
+		{ID: "d", Value: "beta berry", CreatedAt: t0.Add(3 * time.Hour)},
+		{ID: "e", Value: "gamma grape", CreatedAt: t0.Add(4 * time.Hour)},
+		{ID: "f", Value: "gamma guava", CreatedAt: t0.Add(5 * time.Hour)},
+	}
+	edges := []SimEdge{{A: "a", B: "b", Score: 0.92}, {A: "c", B: "d", Score: 0.92}, {A: "e", B: "f", Score: 0.92}}
+	cfg := DefaultConfig()
+	cfg.MaxLLMCalls = 0 // unbounded
+	spy := &spySummarizer{out: "consolidated"}
+	res, err := Run(context.Background(), Params{
+		Store: &fakeStore{recs: recs}, Neighbors: fakeNeighbors{edges: edges}, Summarizer: spy,
+		Cfg: cfg, RunID: "run", DryRun: true,
+	})
+	if err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	if spy.calls != 3 {
+		t.Errorf("summarizer called %d times, want 3 (0 = unbounded)", spy.calls)
+	}
+	if res.Skipped != 0 {
+		t.Errorf("Skipped = %d, want 0 (no budget cap)", res.Skipped)
+	}
+}
+
+// Merge clusters never touch the Summarizer, so they must not consume the LLM
+// budget: with a mix of merges and abstractions, the cap applies only to the
+// abstractions.
+func TestRun_LLMBudgetIgnoresMerges(t *testing.T) {
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	recs := []MemoryRecord{
+		{ID: "m1", Value: "identical", CreatedAt: t0}, // tight pair → merge
+		{ID: "m2", Value: "identical", CreatedAt: t0.Add(time.Hour)},
+		{ID: "a", Value: "alpha apple", CreatedAt: t0.Add(2 * time.Hour)}, // abstract
+		{ID: "b", Value: "alpha apricot", CreatedAt: t0.Add(3 * time.Hour)},
+		{ID: "c", Value: "beta banana", CreatedAt: t0.Add(4 * time.Hour)}, // abstract
+		{ID: "d", Value: "beta berry", CreatedAt: t0.Add(5 * time.Hour)},
+	}
+	edges := []SimEdge{
+		{A: "m1", B: "m2", Score: 0.99}, // ≥ TauHigh → merge
+		{A: "a", B: "b", Score: 0.92},
+		{A: "c", B: "d", Score: 0.92},
+	}
+	cfg := DefaultConfig()
+	cfg.MaxLLMCalls = 2 // enough for both abstractions; the merge must not eat into it
+	spy := &spySummarizer{out: "consolidated"}
+	res, err := Run(context.Background(), Params{
+		Store: &fakeStore{recs: recs}, Neighbors: fakeNeighbors{edges: edges}, Summarizer: spy,
+		Cfg: cfg, RunID: "run", DryRun: true,
+	})
+	if err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	if spy.calls != 2 {
+		t.Errorf("summarizer called %d times, want 2 (both abstractions; merge is free)", spy.calls)
+	}
+	if res.Skipped != 0 {
+		t.Errorf("Skipped = %d, want 0 (budget covers both abstractions)", res.Skipped)
+	}
+	// 1 merge + 2 abstract = 3 actions, none skipped for budget.
+	if len(res.Actions) != 3 {
+		t.Errorf("actions = %d, want 3", len(res.Actions))
+	}
+}
+
+// The budget counts LLM attempts, not successes: an abstraction the coverage
+// guard rejects still made the DeepSeek call, so it must consume budget.
+func TestRun_LLMBudgetCountsRejectedAttempts(t *testing.T) {
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	recs := []MemoryRecord{
+		{ID: "a", Value: "value 111", CreatedAt: t0}, // numbers → guard rejects a dropping summary
+		{ID: "b", Value: "value 222", CreatedAt: t0.Add(time.Hour)},
+		{ID: "c", Value: "value 333", CreatedAt: t0.Add(2 * time.Hour)},
+		{ID: "d", Value: "value 444", CreatedAt: t0.Add(3 * time.Hour)},
+	}
+	edges := []SimEdge{{A: "a", B: "b", Score: 0.92}, {A: "c", B: "d", Score: 0.92}}
+	cfg := DefaultConfig()
+	cfg.MaxLLMCalls = 1
+	spy := &spySummarizer{out: "lossy"} // drops every source number → guard rejects
+	res, err := Run(context.Background(), Params{
+		Store: &fakeStore{recs: recs}, Neighbors: fakeNeighbors{edges: edges}, Summarizer: spy,
+		Cfg: cfg, RunID: "run", DryRun: true,
+	})
+	if err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	if spy.calls != 1 {
+		t.Errorf("summarizer called %d times, want 1 (budget caps attempts even when rejected)", spy.calls)
+	}
+	// One cluster: the rejected attempt (coverage_guard). Other: never attempted (budget).
+	if res.Skipped != 2 || len(res.Skips) != 2 {
+		t.Fatalf("Skipped=%d Skips=%+v, want 2", res.Skipped, res.Skips)
+	}
+	var guard, budget int
+	for _, sk := range res.Skips {
+		if strings.Contains(sk.Reason, "budget") {
+			budget++
+		} else {
+			guard++
+		}
+	}
+	if guard != 1 || budget != 1 {
+		t.Errorf("skip reasons: guard=%d budget=%d, want 1 each", guard, budget)
+	}
+}
+
 // actionCharDensity reports survivor chars / total source chars, the
 // compression ratio used to flag over-aggressive consolidation (findings P3.3).
 func TestActionCharDensity(t *testing.T) {
 	byID := map[string]MemoryRecord{
-		"a": {ID: "a", Value: "1234567890"},  // 10 chars
-		"b": {ID: "b", Value: "abcdefghij"},  // 10 chars
-		"c": {ID: "c", Value: "klmnopqrst"},  // 10 chars
+		"a": {ID: "a", Value: "1234567890"}, // 10 chars
+		"b": {ID: "b", Value: "abcdefghij"}, // 10 chars
+		"c": {ID: "c", Value: "klmnopqrst"}, // 10 chars
 	}
 	// Merge: survivor "a" (10) kept, total = a+b = 20 → 0.5.
 	merge := Action{Kind: ActionMerge, SurvivorID: "a", SourceIDs: []string{"b"}}
