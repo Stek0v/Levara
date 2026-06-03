@@ -1,6 +1,10 @@
 package consolidate
 
-import "sort"
+import (
+	"regexp"
+	"sort"
+	"strings"
+)
 
 // Plan classifies each cluster into a consolidation Action.
 // A cluster whose every internal edge >= TauHigh is a mechanical merge
@@ -23,14 +27,21 @@ func Plan(recs map[string]MemoryRecord, clusters []Cluster, cfg Config) []Action
 					sources = append(sources, id)
 				}
 			}
-			actions = append(actions, Action{
-				Kind:       ActionMerge,
-				SurvivorID: survivor,
-				SourceIDs:  sources,
-				Room:       recs[survivor].Room,
-				Hall:       recs[survivor].Hall,
-			})
-			continue
+			// A high cosine alone is not enough to mechanically supersede a
+			// source: potion envelope-collapse scores records sharing a long
+			// header >= TauHigh despite distinct bodies. Only merge when the
+			// survivor actually subsumes each source's content; otherwise fall
+			// through to a content-preserving abstraction (findings P2.3).
+			if mergeSafe(recs[survivor].Value, sources, recs, cfg.MaxMergeLossFraction) {
+				actions = append(actions, Action{
+					Kind:       ActionMerge,
+					SurvivorID: survivor,
+					SourceIDs:  sources,
+					Room:       recs[survivor].Room,
+					Hall:       recs[survivor].Hall,
+				})
+				continue
+			}
 		}
 
 		actions = append(actions, Action{
@@ -41,6 +52,45 @@ func Plan(recs map[string]MemoryRecord, clusters []Cluster, cfg Config) []Action
 		})
 	}
 	return actions
+}
+
+var wordRe = regexp.MustCompile(`[a-z0-9]+`)
+
+func contentTokens(s string) map[string]bool {
+	set := map[string]bool{}
+	for _, t := range wordRe.FindAllString(strings.ToLower(s), -1) {
+		set[t] = true
+	}
+	return set
+}
+
+// mergeSafe reports whether a mechanical merge would preserve the cluster's
+// content. A merge keeps only the survivor's value and supersedes every source,
+// so any source token absent from the survivor is information the merge would
+// drop. If any source loses more than maxLoss of its tokens, the merge is
+// unsafe (suspected envelope-collapse) and the caller abstracts instead.
+// maxLoss <= 0 disables the guard (preserves cosine-only merge behavior).
+func mergeSafe(survivorVal string, sources []string, recs map[string]MemoryRecord, maxLoss float64) bool {
+	if maxLoss <= 0 {
+		return true
+	}
+	sv := contentTokens(survivorVal)
+	for _, id := range sources {
+		src := contentTokens(recs[id].Value)
+		if len(src) == 0 {
+			continue
+		}
+		var lost int
+		for tok := range src {
+			if !sv[tok] {
+				lost++
+			}
+		}
+		if float64(lost)/float64(len(src)) > maxLoss {
+			return false
+		}
+	}
+	return true
 }
 
 func allTight(edges []SimEdge, tauHigh float64) bool {
