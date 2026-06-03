@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"fmt"
 	"math/rand"
 	"os"
@@ -38,8 +39,15 @@ func TestCollectionSearchDimMismatchReturnsError(t *testing.T) {
 		t.Fatalf("Insert: %v", err)
 	}
 
-	if _, err := cm.Search("c", randVecForTest(32), 5); err == nil {
+	_, err = cm.Search("c", randVecForTest(32), 5)
+	if err == nil {
 		t.Fatal("Search with mismatched query dim should return an error, got nil")
+	}
+	// Callers (consolidate) must be able to recognize a dim mismatch
+	// distinctly from other errors to surface "collection incompatible"
+	// instead of a silent clusters=0.
+	if !errors.Is(err, ErrDimMismatch) {
+		t.Fatalf("Search dim-mismatch error not detectable via errors.Is(ErrDimMismatch): %v", err)
 	}
 }
 

@@ -23,6 +23,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/stek0v/levara/internal/metrics"
+	"github.com/stek0v/levara/internal/store"
 	"github.com/stek0v/levara/pkg/consolidate"
 	"github.com/stek0v/levara/pkg/llm"
 )
@@ -121,6 +122,11 @@ func (s *sqlStore) Apply(ctx context.Context, runID string, actions []consolidat
 type collectionNeighbors struct {
 	deps       Deps
 	collection string
+	// dimMismatch is set when CollectionSearch reports the collection's
+	// vectors are a different dimension than the server embedder. Every
+	// candidate then fails the same way, yielding an empty graph; the flag
+	// lets ToolConsolidate surface "incompatible" instead of a silent zero.
+	dimMismatch bool
 }
 
 func (n *collectionNeighbors) Edges(ctx context.Context, recs []consolidate.MemoryRecord, cfg consolidate.Config) ([]consolidate.SimEdge, error) {
@@ -147,6 +153,13 @@ func (n *collectionNeighbors) Edges(ctx context.Context, recs []consolidate.Memo
 		}
 		results, err := n.deps.CollectionSearch(n.collection, vec, cfg.TopK+1)
 		if err != nil {
+			// A dim mismatch is a collection-level condition: every candidate
+			// will fail identically, so flag it once and stop building edges
+			// rather than silently returning an empty graph (finding P1.2).
+			if errors.Is(err, store.ErrDimMismatch) {
+				n.dimMismatch = true
+				return nil, nil
+			}
 			continue
 		}
 		for _, res := range results {
@@ -240,9 +253,10 @@ func ToolConsolidate(ctx context.Context, deps Deps, args map[string]any) ToolRe
 	}
 	runID := uuid.New().String()
 
+	nbr := &collectionNeighbors{deps: deps, collection: memoryCollectionName(collection)}
 	res, err := consolidate.Run(ctx, consolidate.Params{
 		Store:      &sqlStore{deps: deps, collection: collection},
-		Neighbors:  &collectionNeighbors{deps: deps, collection: memoryCollectionName(collection)},
+		Neighbors:  nbr,
 		Summarizer: &llmSummarizer{deps: deps},
 		Cfg:        consolidate.DefaultConfig(),
 		Collection: collection, Room: room, Hall: hall,
@@ -263,6 +277,13 @@ func ToolConsolidate(ctx context.Context, deps Deps, args map[string]any) ToolRe
 	text := fmt.Sprintf(
 		"consolidate %s: run=%s candidates=%d clusters=%d actions=%d skipped=%d",
 		mode, runID, res.Candidates, res.Clusters, len(res.Actions), res.Skipped)
+	if nbr.dimMismatch {
+		metrics.ConsolidationRuns.WithLabelValues("dim_incompatible").Inc()
+		text += fmt.Sprintf(
+			"\n  warning: collection %q is dim-incompatible with the server embedder "+
+				"(vectors indexed at a different dimension) — no edges built; re-embed it to consolidate",
+			collection)
+	}
 	for _, sk := range res.Skips {
 		text += fmt.Sprintf("\n  skip [%s]: %s", strings.Join(sk.SourceIDs, ","), sk.Reason)
 	}
