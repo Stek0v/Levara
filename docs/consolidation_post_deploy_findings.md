@@ -184,9 +184,29 @@ now stamps it, so lazily auto-created collections carry the embedder. Test
 callers (which already pass a model) are unaffected.
 
 **Cleanup pending (prod data):** the 3 existing stragglers still carry `''` —
-this fix only prevents new ones. They are deletion candidates (2 Phase-A sandbox
-leftovers; 1 stale hyphen-dup of the live `_memories_local_net`). Handle on the
-next Pi touch.
+this fix only prevents new ones.
+
+**Cleanup executed on prod 2026-06-04** (snapshot `pre-p2.1-20260604-050909.tar.gz`,
+sha `277801d3…`):
+- `_memories_consol_sandbox` (3 vec / 0 SQL rows) and `_memories_consol_sb1`
+  (8 / 0) — confirmed empty Phase-A sandbox leftovers → **deleted**.
+- `_memories_local-net` was **NOT** a deletable straggler: 10 vectors but **28
+  real cross-project decision rows** in the memories table (TrustTunnel runbook,
+  RPi5 fan, mem0 embedder, csoc.space tuning …). Misclassified in the original
+  plan. Instead of deleting, **re-embedded 768→256** (potion-code-16M) via
+  `POST /reembed` → atomic rename swap: old 768 kept as
+  `_memories_local-net__nomic_archive`, potion-256 promoted to the canonical
+  name. Functional search confirmed (top hit `trusttunnel-setup`).
+  Residual gap: only 10 of the 28 SQL rows ever had vectors, and orphan-GC then
+  removed 5 vectors with no live SQL row, leaving 5 searchable. Re-vectorizing
+  the remaining SQL rows from source is a separate follow-up (save/index path).
+- Note the `_memories_local_net` (underscore) is a *different*, healthy 256
+  collection — left untouched.
+
+This was bundled with the P3.1 / P1.4 prod GC (below): 12 `test-*` upload
+fixtures deleted, 87 orphan vectors reaped to 0. Pi was redeployed with the
+record-delete binary (sha `8376a297…`) first, since orphan-GC needs
+`DELETE /collections/:name/records/:id`.
 
 ### P2.2 Base `_memories` store (128 records) can't be consolidated on-demand — FIXED
 `memoryCollectionName("")` → `_memories`, but the consolidate tool rejected an
