@@ -329,18 +329,25 @@ func consolidationSkipCategory(reason string) string {
 // aggregated but never abort the sweep.
 type consolidationRunner struct {
 	deps Deps
+	// maxLLMCallsPerSweep caps total Summarizer (LLM/DeepSeek) calls across all
+	// collections in one RunOnce. DefaultConfig.MaxLLMCalls is PER collection,
+	// so an N-collection sweep can otherwise fan out up to N×24 calls. 0 =
+	// unbounded (legacy per-collection-only behaviour). See RunOnce.
+	maxLLMCallsPerSweep int
 }
 
 // NewConsolidationRunner builds a consolidate.Runner over the given Deps for
-// the background janitor (see consolidate.StartJanitor).
-func NewConsolidationRunner(deps Deps) *consolidationRunner {
-	return &consolidationRunner{deps: deps}
+// the background janitor (see consolidate.StartJanitor). maxLLMCallsPerSweep
+// bounds total LLM calls across the whole sweep (0 = unbounded).
+func NewConsolidationRunner(deps Deps, maxLLMCallsPerSweep int) *consolidationRunner {
+	return &consolidationRunner{deps: deps, maxLLMCallsPerSweep: maxLLMCallsPerSweep}
 }
 
 // RunOnce enumerates collections via Deps.ListCollections, skips internal
 // _memories* sidecars, and runs a non-dry consolidation pass per collection.
 func (r *consolidationRunner) RunOnce(ctx context.Context) error {
 	var errs []error
+	spent := 0 // LLM calls consumed so far this sweep
 	for _, c := range r.deps.ListCollections() {
 		// Skip internal vector sidecars: the janitor iterates logical
 		// collections and resolves each one's _memories_<c> sidecar via
@@ -348,12 +355,30 @@ func (r *consolidationRunner) RunOnce(ctx context.Context) error {
 		if strings.HasPrefix(c, "_memories") {
 			continue
 		}
+		cfg := consolidate.DefaultConfig()
+		// Sweep-wide LLM budget (CONSOLIDATION_MAX_LLM_CALLS_PER_SWEEP): clamp
+		// each collection's per-run budget to what's left in the sweep. Once the
+		// sweep budget is exhausted, skip the remaining collections this tick —
+		// the next janitor tick resumes them, and consolidation is incremental
+		// (applied abstractions supersede their sources, so re-runs reach the
+		// previously-skipped clusters). Trade-off: a skipped collection's free
+		// merges also wait for the next tick; acceptable for a cost-control cap.
+		if r.maxLLMCallsPerSweep > 0 {
+			remaining := r.maxLLMCallsPerSweep - spent
+			if remaining <= 0 {
+				metrics.ConsolidationRuns.WithLabelValues("skipped_llm_budget").Inc()
+				continue
+			}
+			if remaining < cfg.MaxLLMCalls {
+				cfg.MaxLLMCalls = remaining
+			}
+		}
 		runID := uuid.New().String()
-		_, err := consolidate.Run(ctx, consolidate.Params{
+		res, err := consolidate.Run(ctx, consolidate.Params{
 			Store:      &sqlStore{deps: r.deps, collection: c},
 			Neighbors:  &collectionNeighbors{deps: r.deps, collection: memoryCollectionName(c)},
 			Summarizer: &llmSummarizer{deps: r.deps},
-			Cfg:        consolidate.DefaultConfig(),
+			Cfg:        cfg,
 			Collection: c,
 			RunID:      runID,
 			DryRun:     false,
@@ -363,6 +388,7 @@ func (r *consolidationRunner) RunOnce(ctx context.Context) error {
 			errs = append(errs, fmt.Errorf("%s: %w", c, err))
 			continue
 		}
+		spent += res.LLMCalls
 		metrics.ConsolidationRuns.WithLabelValues("ok").Inc()
 	}
 	return errors.Join(errs...)

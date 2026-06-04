@@ -54,6 +54,7 @@ Human → reads .md files directly in repo
 | `RERANK_BUDGET_MS` / `RERANK_TIMEOUT_MS` | Phase 2 budget for the rerank pass (fallback to vector order on overrun) and per-request HTTP client timeout. | 1500 / 5000 |
 | `RERANK_SCORE_GAP_THRESHOLD` | Phase 2.5: adaptive gate. When > 0 and the top-bottom candidate score spread exceeds it, the cross-encoder call is skipped (outcome=`skipped_gap`). 0 = unconditional rerank. | 0 |
 | `CONSOLIDATION_INTERVAL` | Background memory-consolidation janitor tick interval (Go duration, e.g. 30m). Unset/empty = janitor off. | "" |
+| `CONSOLIDATION_MAX_LLM_CALLS_PER_SWEEP` | Sweep-wide cap on Summarizer (LLM) calls across all collections in one janitor tick. `DefaultConfig.MaxLLMCalls` (24) is per-collection, so an N-collection sweep can otherwise fan out N×24 calls; this clamps each run's budget to what's left and skips remaining collections once exhausted (resumed next tick). 0/unset = unbounded. | 0 |
 
 ## Rate limits (T2, 20.04)
 
