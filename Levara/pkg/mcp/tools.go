@@ -1363,6 +1363,38 @@ func ToolDescriptors() []Tool {
 			},
 		},
 		{
+			Name:        "reconcile_memory",
+			Description: "Verify (and optionally repair) SQL↔vector consistency for the memory palace. The SQL memories table is the source of truth; each _memories_* sidecar should hold one vector per live row. Reports missing_vector (SQL row with no vector) and orphan_vector (vector with no live row). Dry-run by default; apply=true re-embeds missing vectors under their canonical id, and apply+delete_orphans removes orphan vectors. The durable backstop to per-write index verification.",
+			OutputSchema: objectSchema(map[string]any{
+				"apply":                booleanProp("Whether mutations were applied."),
+				"delete_orphans":       booleanProp("Whether orphan vectors were deleted."),
+				"sidecars_scanned":     integerProp("Number of _memories_* sidecars examined."),
+				"total_missing":        integerProp("SQL rows with no vector."),
+				"total_orphan":         integerProp("Vectors with no live SQL row."),
+				"total_repaired":       integerProp("Missing vectors re-embedded and inserted."),
+				"total_repair_failed":  integerProp("Repairs that failed (embed/insert error)."),
+				"total_orphan_deleted": integerProp("Orphan vectors deleted."),
+				"sidecars": arrayOfObjectsProp(objectSchema(map[string]any{
+					"sidecar":        stringProp("Vector collection name."),
+					"sql_rows":       integerProp("Live SQL rows for this context."),
+					"vectors_before": integerProp("Vectors present before reconcile."),
+					"missing_vector": integerProp("SQL rows lacking a vector."),
+					"orphan_vector":  integerProp("Vectors lacking a SQL row."),
+					"repaired":       integerProp("Vectors re-created this run."),
+					"repair_failed":  integerProp("Failed repairs this run."),
+					"orphan_deleted": integerProp("Orphans deleted this run."),
+				}), "Per-sidecar findings."),
+			}),
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"collection":     map[string]any{"type": "string", "description": "Limit to one logical context (e.g. 'levara'); empty = all sidecars."},
+					"apply":          map[string]any{"type": "boolean", "default": false, "description": "Re-embed and insert missing vectors. Default false (dry-run)."},
+					"delete_orphans": map[string]any{"type": "boolean", "default": false, "description": "With apply, also delete orphan vectors. Default false."},
+				},
+			},
+		},
+		{
 			Name:        "sync_status",
 			Description: "Summarize recent sync events per direction (push|pull) from heartbeats: count, last-seen-at, last remote URL, and the most recent N events. Sync emits a heartbeat on success only — answers 'did sync run lately?' rather than 'did sync fail?'.",
 			OutputSchema: objectSchema(map[string]any{

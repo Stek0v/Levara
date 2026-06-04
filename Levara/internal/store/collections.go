@@ -516,6 +516,21 @@ func (cm *CollectionManager) Search(collection string, query []float32, topK int
 	return db.Search(query, topK), nil
 }
 
+// HasRecord reports whether a record with the given id exists in the
+// collection's index. This is a synchronous map lookup (db.Get), NOT a
+// vector search — so it reflects the write the instant Insert returns,
+// before the async HNSW indexer has linked the node. Used by the memory
+// write path to verify a just-inserted vector actually landed.
+// Returns false when the collection is absent or the id is unknown.
+func (cm *CollectionManager) HasRecord(collection, id string) bool {
+	db, err := cm.Get(collection)
+	if err != nil {
+		return false
+	}
+	_, _, ok := db.Get(id)
+	return ok
+}
+
 // Delete removes a record from a collection.
 func (cm *CollectionManager) Delete(collection, id string) error {
 	db, err := cm.Get(collection)

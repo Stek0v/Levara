@@ -74,6 +74,7 @@ var groupByName = map[string]string{
 	"runtime_stats":       "ops",
 	"ingestion_status":    "ops",
 	"recent_errors":       "ops",
+	"reconcile_memory":    "ops",
 	"heartbeat":           "ops",
 	"analyze_commits":     "git",
 	"git_search":          "git",
