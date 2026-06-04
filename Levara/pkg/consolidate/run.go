@@ -44,6 +44,7 @@ type Result struct {
 	Densities  []float64 // char-retention ratio per Action, aligned with Actions
 	Skipped    int       // == len(Skips); kept for backward-compatible summaries
 	Skips      []Skip    // per-cluster skip reasons
+	LLMCalls   int       // Summarizer (LLM) calls attempted this run; lets a multi-collection sweep enforce a budget across runs
 }
 
 // actionCharDensity is survivor chars / total source chars for one action — the
@@ -144,6 +145,7 @@ func Run(ctx context.Context, p Params) (Result, error) {
 	}
 	res.Actions = final
 	res.Skipped = len(res.Skips)
+	res.LLMCalls = llmCalls
 
 	if !p.DryRun && len(final) > 0 {
 		if err := p.Store.Apply(ctx, p.RunID, final); err != nil {

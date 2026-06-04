@@ -7,6 +7,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -14,9 +15,109 @@ import (
 	"github.com/stek0v/levara/internal/metrics"
 	"github.com/stek0v/levara/internal/store"
 	"github.com/stek0v/levara/pkg/consolidate"
+	"github.com/stek0v/levara/pkg/llm"
 
 	_ "github.com/ncruces/go-sqlite3/driver"
 )
+
+// countingProvider counts ChatCompletion calls and returns a fixed, faithful
+// summary. The test seeds lowercase number-free sources so the coverage guard
+// never rejects — each abstract cluster therefore costs exactly one counted
+// call, making the count a clean proxy for sweep-wide LLM spend.
+type countingProvider struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (p *countingProvider) ChatCompletion(_ context.Context, _ llm.CompletionRequest) (*llm.CompletionResponse, error) {
+	p.mu.Lock()
+	p.calls++
+	p.mu.Unlock()
+	return &llm.CompletionResponse{Content: "consolidated summary"}, nil
+}
+
+func (p *countingProvider) Name() string { return "counting" }
+
+// seedDupInColl inserts a raw, non-superseded, unpinned memory row in an
+// explicit collection (seedDup hardcodes 'levara').
+func seedDupInColl(t *testing.T, deps *fakeDeps, id, collection, value, created string) {
+	t.Helper()
+	_, err := deps.db.Exec(
+		`INSERT INTO memories (id, key, value, type, owner_id, collection_name, room, hall, is_pinned, created_at, updated_at, superseded_by, tier)
+		 VALUES (?, ?, ?, 'project', '', ?, '', '', 0, ?, ?, '', 'raw')`,
+		id, "k-"+id, value, collection, created, created)
+	if err != nil {
+		t.Fatalf("seed %s/%s: %v", collection, id, err)
+	}
+}
+
+// TestConsolidationRunner_SweepWideLLMBudget guards the per-sweep LLM cap: the
+// janitor runs consolidate.Run on every collection with a PER-collection budget
+// (DefaultConfig.MaxLLMCalls=24), so an N-collection sweep can fan out up to
+// N×24 DeepSeek calls. With a sweep-wide cap of 2 across three abstract-only
+// collections, the total must hold at 2 (one collection skipped) — without the
+// cap the default budget would let all three fire.
+func TestConsolidationRunner_SweepWideLLMBudget(t *testing.T) {
+	deps := setupConsolidateDB(t)
+	colls := []string{"c1", "c2", "c3"}
+	for _, c := range colls {
+		seedDupInColl(t, deps, c+"-a", c, "alpha apple", "2026-01-01T00:00:00Z")
+		seedDupInColl(t, deps, c+"-b", c, "alpha apricot", "2026-01-02T00:00:00Z")
+	}
+	deps.collections = colls
+	deps.hasColls = true
+	deps.embedAvailable = true
+	deps.embedFn = func(_ context.Context, _ string) ([]float32, error) {
+		return []float32{1, 0, 0}, nil
+	}
+	// Each sidecar returns its own pair at an abstract-range score (0.92 ∈
+	// [TauLow, TauHigh)), so every collection yields one abstract cluster.
+	deps.searchFn = func(collection string, _ []float32, _ int) ([]SearchResult, error) {
+		c := strings.TrimPrefix(collection, "_memories_")
+		return []SearchResult{{ID: c + "-a", Score: 0.92}, {ID: c + "-b", Score: 0.92}}, nil
+	}
+	prov := &countingProvider{}
+	deps.llmProvider = prov
+
+	r := NewConsolidationRunner(deps, 2) // sweep cap = 2 LLM calls
+	if err := r.RunOnce(context.Background()); err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if prov.calls != 2 {
+		t.Errorf("LLM calls across sweep = %d, want 2 (sweep-wide cap); per-collection default would allow 3", prov.calls)
+	}
+}
+
+// TestConsolidationRunner_SweepBudgetZeroUnbounded: a zero/unset sweep cap keeps
+// the legacy per-collection-only behaviour — every abstract collection fires.
+func TestConsolidationRunner_SweepBudgetZeroUnbounded(t *testing.T) {
+	deps := setupConsolidateDB(t)
+	colls := []string{"c1", "c2", "c3"}
+	for _, c := range colls {
+		seedDupInColl(t, deps, c+"-a", c, "alpha apple", "2026-01-01T00:00:00Z")
+		seedDupInColl(t, deps, c+"-b", c, "alpha apricot", "2026-01-02T00:00:00Z")
+	}
+	deps.collections = colls
+	deps.hasColls = true
+	deps.embedAvailable = true
+	deps.embedFn = func(_ context.Context, _ string) ([]float32, error) {
+		return []float32{1, 0, 0}, nil
+	}
+	deps.searchFn = func(collection string, _ []float32, _ int) ([]SearchResult, error) {
+		c := strings.TrimPrefix(collection, "_memories_")
+		return []SearchResult{{ID: c + "-a", Score: 0.92}, {ID: c + "-b", Score: 0.92}}, nil
+	}
+	prov := &countingProvider{}
+	deps.llmProvider = prov
+
+	r := NewConsolidationRunner(deps, 0) // 0 = unbounded sweep
+	if err := r.RunOnce(context.Background()); err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if prov.calls != 3 {
+		t.Errorf("LLM calls = %d, want 3 (no sweep cap → all collections fire)", prov.calls)
+	}
+}
 
 // parseRunID extracts the run ID from a consolidate result string like
 // "consolidate applied: run=<id> candidates=...".

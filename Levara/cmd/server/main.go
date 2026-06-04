@@ -509,9 +509,12 @@ func main() {
 	// every non-internal collection against its own _memories_<c> sidecar.
 	if v := os.Getenv("CONSOLIDATION_INTERVAL"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d > 0 {
-			stop := consolidate.StartJanitor(context.Background(), mcp.NewConsolidationRunner(vectorHttp.NewMCPDeps(mcpCfg)), d)
+			// DefaultConfig.MaxLLMCalls is per-collection; this caps total LLM
+			// calls across the whole sweep (0/unset = unbounded).
+			sweepBudget := intEnv("CONSOLIDATION_MAX_LLM_CALLS_PER_SWEEP", 0)
+			stop := consolidate.StartJanitor(context.Background(), mcp.NewConsolidationRunner(vectorHttp.NewMCPDeps(mcpCfg), sweepBudget), d)
 			defer stop()
-			log.Printf("consolidation janitor enabled (interval=%s)", d)
+			log.Printf("consolidation janitor enabled (interval=%s, max_llm_calls_per_sweep=%d)", d, sweepBudget)
 		} else {
 			log.Printf("CONSOLIDATION_INTERVAL=%q invalid; janitor disabled", v)
 		}
