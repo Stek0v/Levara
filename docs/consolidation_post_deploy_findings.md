@@ -84,9 +84,85 @@ have caused duplicate saves or "memory not found" false negatives.
    damage; close P1.3. Otherwise list the dup keys for manual merge via
    `consolidate` (the dedup tool this whole effort built).
 
-**Status:** runbook ready; prod read not executed (MCP read blocked this
-session). Low expected blast radius — migrated memory collections are tiny
-(UB-main 4 recs) and the window is ~6 days of low write volume.
+**Status: CLOSED — audit executed 2026-06-04, zero window damage.**
+
+Read path: `levara-pi` `list_memories` returned `[]` (owner-filtered to the
+bridge's JWT identity, which doesn't own the migrated records). Bypassed via
+owner-blind `GET /api/v1/sync/export/memories` (sync.go:110 — raw
+`SELECT … FROM memories`, no owner predicate) — one read covers all stores.
+
+Findings (342 live-256 memory rows across all contexts):
+- Window `[2026-05-27 → 2026-06-02]` contains records in **one** store only:
+  `local-net`, 28 rows, all at the **single** timestamp `2026-05-27T08:24:30Z`
+  → the owner_id-fix bulk re-import, not organic per-saves.
+- **0 duplicates** by `(collection, room, hall, value)` in the window;
+  **0 repeated keys**. The recall-before-empty-save → re-save pattern this
+  audit was hunting did not occur.
+- Root reason the window is near-empty: a cutover is a **re-embed in place**;
+  it does not insert rows, so `created_at` is unchanged. Only an actual
+  re-import (local-net) lands rows in the window, and that batch is dup-free.
+- The pre-existing UB-main duplicate pair (`prod_admin_credentials`,
+  `prod_server_access`) predates the window and is unchanged — not window damage.
+
+Side observations promoted to tracked findings: SQL-vs-vector count divergence
+→ **P1.4** (below); 51 junk `test_*` collections → **P3.1**.
+
+### P1.4 SQL-vs-vector record-count divergence on memory stores — OPEN (found 2026-06-04)
+Surfaced by the P1.3 audit. The memories SQL table (`collection_name`) and the
+physical `_memories_*` vector store (`record_count` from `GET /collections`)
+disagree for several stores:
+
+| context | SQL rows | vector record_count |
+|---|---|---|
+| `UB-main` | 2 | 4 |
+| `cerbalab.ru` | 3 | 7 |
+| `local-net` | 28 | 10 (hyphen store) |
+| `default` | 9 | 10 |
+| `localllm` | 13 | 14 |
+
+(others — `levara` 25/25, `qvant` 8/8, `yandex_direct` 14/14, `new_db` 1/1,
+`localllm-e2e-test` 33/33 — match exactly.)
+
+**ROOT-CAUSED 2026-06-04 — two distinct causes:**
+
+**Cause A — orphaned vectors (vector count > SQL count).** Confirmed by decoding
+each `_memories_*` vector's base64 metadata and diffing `memory_id` against the
+SQL `memories.id` set: orphans == (vectors − SQL rows) exactly for every store —
+UB-main 4/2 (2 orphans), default 10/9 (1), localllm 14/13 (1), cerbalab.ru 7/3 (4).
+Mechanism (`pkg/mcp/tool_save_recall_memory.go`): `ToolSaveMemory` mints a fresh
+`uuid` per call (L95), upserts SQL by `ON CONFLICT(key,owner_id)` so there is
+always exactly **one** row per (key,owner), but `indexMemoryAsync` (L124/L154)
+inserts the vector under that **fresh** uuid and never deletes the prior vector.
+So every re-save of an existing key leaves a stale vector in HNSW. Orphans ==
+historical re-save count. **These orphans are live in vector recall** and point at
+a `memory_id` that no longer exists in SQL → stale/failed hydration. Real
+integrity bug, not cosmetic.
+
+**Cause B — under-vectorized re-import (SQL count > vector count).** `local-net`
+(hyphen store): 28 SQL rows from the 2026-05-27 owner_id-fix re-import, but only
+10 vectors — the re-embed step skipped rows (the hyphen store is the un-migrated
+768/`model=''` straggler). Overlaps P2.1 (this store is slated for deletion).
+
+**FIX IMPLEMENTED 2026-06-04 (Cause A):**
+- *Code* — `ToolSaveMemory` now upserts with `RETURNING id` and indexes the
+  vector under that **canonical** row id (fresh uuid on insert, existing id on
+  conflict). A re-save overwrites the same vector in place
+  (`store.replaceExistingLocked` tombstones the prior node), so no new orphans
+  accrete. Regression test `TestToolSaveMemory_ReSaveReusesStableVectorID`
+  asserts both inserts share the canonical SQL id.
+- *Primitive* — new `DELETE /collections/:name/records/:id` endpoint
+  (`collectionRecordDeleteHandler`, 204/404) exposes per-vector delete, which
+  prod had no REST surface for. Tests in `collections_record_delete_test.go`.
+- *One-time GC* — `scripts/orphan_gc.py` enumerates each `_memories_*`
+  collection, flags vectors whose id ∉ live `memories.id` (owner-blind via
+  `/sync/export/*`), prints the table, deletes via the new endpoint under
+  `--apply`. **Dry-run by default**; prod run deferred to the destructive batch
+  (snapshot + Pi auth) alongside P2.1.
+
+**Cause B** is left to P2.1 (the `local-net` straggler is slated for deletion;
+re-vectorizing an about-to-be-dropped `model=''` store is wasted work).
+
+Does not affect P1.3 (window dup-saves, independent of total counts).
 
 ## P2 — Medium priority
 
@@ -189,11 +265,30 @@ dry_run writes nothing) — **all three items below now FIXED:**
 
 ## P3 — Hygiene / lower priority
 
-### P3.1 203 live junk 768 test/benchmark collections
+### P3.1 Junk test/benchmark collections
 `rag_*`, `slide_*`, `rerank_*`, `regr_*`, `pc_*`, `pcs_*`, `mixed_*`, `snap_*`,
 `sec_*`, `dedup_*`, `dedrel_*`, `ctx_*`, `test-*`, etc. Now harmless no-ops on
 search post-cutover, but they pollute the instance and any future global sweep.
 Add a TTL / cleanup policy for test collections.
+
+**Scope confirmed on prod 2026-06-04** (P1.3 audit, via owner-blind
+`GET /sync/export/memories`): **51 `test_*` collections** in the memories table
+(single-digit rows each — `test_4552e0ef` 5, `test_56c6f24a` 5, most 1–2), on top
+of the ~203 junk-768 vector collections seen locally. Enumerate the memory side
+by grouping the export on `collection_name | startswith("test_")`; the vector
+side via `GET /collections`. Local-first; deletion only after a snapshot.
+
+**Cleanup policy — implemented (`scripts/test_collections_gc.py`).** Dry-run by
+default. KEEPs a collection unless ALL hold: (1) name matches the junk pattern
+(`--pattern`, default `^test[_-]`, case-insensitive), (2) idle ≥ `--ttl-days`
+(default 7; `0` disables the age guard for pure name-match runs), and (3) it is
+not an internal sidecar (`_memories*` always skipped). Reads `GET /collections`
+(name / record_count / created_at / updated_at), prints the candidate table, and
+only issues `DELETE /collections/<name>` under `--apply`. Mirrors `orphan_gc.py`'s
+curl helpers and `--base` convention (defaults to local `:8081`). Prod execution
+against the 51 `test_*` collections is **gated to the destructive batch (P2.1),
+which needs a snapshot + per-time Pi auth** — it is not run as part of code
+landing.
 
 ### P3.2 DeepSeek API key exposure (security)
 Key present in chat history, Pi bash history, and `~/levara/levara.env` (mode
