@@ -30,6 +30,13 @@ type APIConfig struct {
 	WorkspacePath string
 	JWTSecret     string
 	RequireAuth   bool
+	// Version is the build SHA (cmd/server.GitSHA) surfaced in the sync
+	// manifest so a pull/push can warn on instance version skew.
+	Version string
+	// SyncToken is the bearer token injected into outbound cross-instance
+	// sync requests (manifest/export/import). Empty = unauthenticated (the
+	// pre-existing behaviour) — required when the remote enforces auth.
+	SyncToken string
 	// WorkspaceWatcher exposes polling watcher status to REST/MCP observability
 	// endpoints. Nil means watcher status is unavailable/disabled.
 	WorkspaceWatcher *WorkspaceWatchState
