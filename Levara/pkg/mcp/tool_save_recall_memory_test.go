@@ -227,6 +227,51 @@ func TestToolSaveMemory_EmbedPathFiresGoroutine(t *testing.T) {
 	}
 }
 
+func TestToolSaveMemory_ReSaveReusesStableVectorID(t *testing.T) {
+	// P1.4 regression: a re-save of the same (key, owner) must index the
+	// vector under the SAME id both times — the canonical SQL row id — so
+	// the second Insert overwrites the first vector in place instead of
+	// leaving an orphan in HNSW. Pre-fix, ToolSaveMemory minted a fresh
+	// uuid per call and indexed under it, so each re-save accreted a stale
+	// vector (vectors > SQL rows).
+	deps := setupSaveRecallMemoryDB(t)
+	deps.embedAvailable = true
+	deps.embedFn = func(ctx context.Context, text string) ([]float32, error) {
+		return []float32{1, 2, 3}, nil
+	}
+
+	ctx := context.Background()
+	ToolSaveMemory(ctx, deps, map[string]any{"key": "k", "value": "v1", "collection": "levara"})
+	ToolSaveMemory(ctx, deps, map[string]any{"key": "k", "value": "v2", "collection": "levara"})
+
+	// Poll for both background Inserts to land.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(deps.getInserted()) >= 2 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	inserted := deps.getInserted()
+	if len(inserted) != 2 {
+		t.Fatalf("CollectionInsert called %d times, want 2", len(inserted))
+	}
+	if inserted[0].id != inserted[1].id {
+		t.Errorf("re-save indexed under different vector ids %q != %q; orphan vector left in HNSW",
+			inserted[0].id, inserted[1].id)
+	}
+
+	// The stable id must be the canonical SQL row id, so vector recall can
+	// hydrate back to a live memories row.
+	var rowID string
+	if err := deps.db.QueryRow(`SELECT id FROM memories WHERE key = 'k'`).Scan(&rowID); err != nil {
+		t.Fatalf("scan row id: %v", err)
+	}
+	if inserted[1].id != rowID {
+		t.Errorf("vector id %q != canonical SQL row id %q", inserted[1].id, rowID)
+	}
+}
+
 func TestToolSaveMemory_NoEmbedSkipsGoroutine(t *testing.T) {
 	// With EmbedAvailable=false, no Embed call happens. The tool still
 	// returns success — the vector-index is optional.

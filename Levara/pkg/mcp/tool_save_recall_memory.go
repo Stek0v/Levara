@@ -104,24 +104,33 @@ func ToolSaveMemory(ctx context.Context, deps Deps, args map[string]any) ToolRes
 	// Reused-value columns (value/type/collection_name/room/hall/
 	// is_pinned/pin_priority/updated_at) get their own placeholders in
 	// the DO UPDATE SET clause — wave 3f/3g pattern to avoid QArgs.
-	_, err := db.ExecContext(ctx, deps.Q(`
+	//
+	// RETURNING id yields the *canonical* row id: the freshly minted uuid
+	// on a real insert, or the pre-existing row's id on conflict. We index
+	// the vector under that canonical id (P1.4 fix) so a re-save overwrites
+	// the prior vector in place instead of leaving an orphan in HNSW —
+	// CollectionInsert replaces by id (store.replaceExistingLocked).
+	canonicalID := id
+	err := db.QueryRowContext(ctx, deps.Q(`
 		INSERT INTO memories (id, key, value, type, owner_id, collection_name, room, hall, is_pinned, pin_priority, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		ON CONFLICT(key, owner_id) DO UPDATE SET value = $13, type = $14, collection_name = $15, room = $16, hall = $17, is_pinned = $18, pin_priority = $19, updated_at = $20
+		RETURNING id
 	`),
 		id, key, value, memType, ownerID, collectionName, room, hall, pinInt, pinPriority, now, now,
-		value, memType, collectionName, room, hall, pinInt, pinPriority, now)
+		value, memType, collectionName, room, hall, pinInt, pinPriority, now).Scan(&canonicalID)
 	if err != nil {
 		// Swallow DB errors — matches pre-refactor best-effort contract.
 		// The pre-refactor version logged via cfg.Logger if available;
 		// logger is deliberately not on Deps (small surface > observability
 		// plumbing). Callers reading this code can add Logger() later if
-		// needed.
-		_ = err
+		// needed. On a failed RETURNING the local uuid stays as the id —
+		// no worse than the pre-fix behavior.
+		canonicalID = id
 	}
 
 	if deps.EmbedAvailable() {
-		indexMemoryAsync(deps, collectionName, id, key, value, memType)
+		indexMemoryAsync(deps, collectionName, canonicalID, key, value, memType)
 	}
 
 	return ToolResult{Content: []Content{{
