@@ -159,8 +159,12 @@ integrity bug, not cosmetic.
   `--apply`. **Dry-run by default**; prod run deferred to the destructive batch
   (snapshot + Pi auth) alongside P2.1.
 
-**Cause B** is left to P2.1 (the `local-net` straggler is slated for deletion;
-re-vectorizing an about-to-be-dropped `model=''` store is wasted work).
+**Cause B RESOLVED 2026-06-04 (P2.1).** The original plan to drop `local-net`
+was wrong — it held 28 real cross-project decision rows (see P2.1 below). Instead
+the store was re-embedded 768→256 and the 23 rows that never had vectors were
+rebuilt from SQL truth via `scripts/rebuild_memory_vectors.py` (mirrors
+`indexMemoryAsync`: vector=embed(key+" "+value), id=canonical SQL row id). All 28
+SQL rows now have a matching potion-256 vector; 0 missing.
 
 Does not affect P1.3 (window dup-saves, independent of total counts).
 
@@ -197,9 +201,15 @@ sha `277801d3…`):
   `POST /reembed` → atomic rename swap: old 768 kept as
   `_memories_local-net__nomic_archive`, potion-256 promoted to the canonical
   name. Functional search confirmed (top hit `trusttunnel-setup`).
-  Residual gap: only 10 of the 28 SQL rows ever had vectors, and orphan-GC then
-  removed 5 vectors with no live SQL row, leaving 5 searchable. Re-vectorizing
-  the remaining SQL rows from source is a separate follow-up (save/index path).
+  Residual gap (interim): only 10 of the 28 SQL rows ever had vectors, and
+  orphan-GC then removed 5 vectors with no live SQL row, leaving 5 searchable.
+  **Follow-up completed 2026-06-04** — `scripts/rebuild_memory_vectors.py`
+  re-embedded the 23 missing rows from the SQL `memories` truth (exactly as
+  `indexMemoryAsync`: vector=embed(key+" "+value), id=canonical SQL row id,
+  metadata={key,value,type,collection,memory_id}) and inserted them under their
+  canonical ids. `_memories_local-net` now reports **28 vectors for 28 SQL rows**
+  (0 missing); functional search ("Keenetic router VPN routing") returns the
+  routing/TrustTunnel records as top hits. This closes Cause B for local-net.
 - Note the `_memories_local_net` (underscore) is a *different*, healthy 256
   collection — left untouched.
 
