@@ -45,11 +45,48 @@ warning note + `ConsolidationRuns{dim_incompatible}` metric while still
 returning a clean non-error result (sweep/janitor keep going). Regression test
 `TestToolConsolidate_SurfacesDimIncompatible`.
 
-### P1.3 Recall quality during the half-migrated window is unaudited
+### P1.3 Recall quality during the half-migrated window is unaudited — RUNBOOK (2026-06-04)
 Before the fix, the server queried at 768 against 256 memory collections. Recall
 on those either returned nothing or errored. Question for audit: were any
 memory writes/decisions made while recall was silently returning empty? Could
 have caused duplicate saves or "memory not found" false negatives.
+
+**Window reconstruction (from local memory + docs, no prod touch):**
+- The empty-recall failure mode predates the cutover: `chunksSearch`
+  (`api_search.go`) swallowed embed/search errors → `nil` allResults →
+  JSON `null` (see `discovery_pi_search_text_null`, observed 2026-05-25).
+  After a collection flipped to 256d while the server still embedded queries
+  at nomic-768, every recall on it dim-mismatched and returned empty — silently,
+  until Fix #1 (dim crash guard) + Fix #2 (server→potion-256) landed 2026-06-02.
+- Per-collection risk window = `[collection cutover date → 2026-06-02]`.
+  Known cutovers: `_memories_UB-main` 2026-05-27 (first); `uploads`,
+  `uploads_chunktest`, `memory-compare` 2026-05-28; "more `_memories_*`"
+  same batch (full set must be enumerated on prod). Only **migrated** memory
+  collections are at risk, and only **after** their own cutover.
+- Note: `_memories_UB-main` already held two textual-duplicate pairs at
+  migration time (`prod_admin_credentials`, `prod_server_access` — 4 records,
+  2 facts ×2). Those predate the window; do not count them as window damage,
+  but they show duplicate-saving is a real pattern in these stores.
+
+**Audit procedure (read-only; run via `levara-pi` MCP, no SSH/secrets):**
+1. Enumerate `_memories_*` collections with `embedding_dim` and the timestamp
+   they became 256d (the cutover). Yields the at-risk set + each window.
+2. For each, `list_memories(collection=X)`; bucket records by `created_at`
+   into the window `[cutover, 2026-06-02]` vs outside.
+3. Duplicate detection: within each collection, flag window-created records
+   whose (room, hall, value) is a near-duplicate of an earlier record — the
+   signature of a recall-before-save that returned empty and re-saved.
+4. False-negative pass: no durable signal exists for "memory not found" at
+   read time; settle for the dup-save proxy above. Record any window record
+   that re-states a pre-window fact as a likely false-negative re-entry.
+5. Report: per-collection {window record count, suspected dup count, examples}.
+   Zero window dups across all migrated stores ⇒ window caused no memory
+   damage; close P1.3. Otherwise list the dup keys for manual merge via
+   `consolidate` (the dedup tool this whole effort built).
+
+**Status:** runbook ready; prod read not executed (MCP read blocked this
+session). Low expected blast radius — migrated memory collections are tiny
+(UB-main 4 recs) and the window is ~6 days of low write volume.
 
 ## P2 — Medium priority
 
