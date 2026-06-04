@@ -62,6 +62,28 @@ func collectionDeleteHandler(cfg APIConfig) fiber.Handler {
 	}
 }
 
+// collectionRecordDeleteHandler removes a single vector by id from a
+// collection — the per-record primitive the P1.4 orphan-vector GC uses
+// to delete vectors whose memory_id no longer exists in the SQL memories
+// table. 204 on success, 404 when the id (or collection) is absent.
+func collectionRecordDeleteHandler(cfg APIConfig) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		name := c.Params("name")
+		id := c.Params("id")
+		if cfg.Collections == nil {
+			return c.Status(503).JSON(fiber.Map{"detail": "collections not configured"})
+		}
+		if err := cfg.Collections.Delete(name, id); err != nil {
+			msg := err.Error()
+			if strings.Contains(msg, "not found") {
+				return c.Status(404).JSON(fiber.Map{"detail": msg})
+			}
+			return c.Status(500).JSON(fiber.Map{"detail": msg})
+		}
+		return c.SendStatus(204)
+	}
+}
+
 func collectionRenameHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		if cfg.Collections == nil {

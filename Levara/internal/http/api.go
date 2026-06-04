@@ -145,6 +145,7 @@ func RegisterAPI(app fiber.Router, cfg APIConfig) {
 	app.Get("/collections", collectionsListHandler(cfg))
 	app.Post("/collections", collectionCreateHandler(cfg))
 	app.Delete("/collections/:name", collectionDeleteHandler(cfg))
+	app.Delete("/collections/:name/records/:id", collectionRecordDeleteHandler(cfg))
 	app.Get("/collections/:name/meta", collectionMetaHandler(cfg))
 	app.Put("/collections/:name/meta", collectionMetaUpdateHandler(cfg))
 	app.Post("/collections/:name/rename", collectionRenameHandler(cfg))
