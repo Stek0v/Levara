@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -404,7 +405,7 @@ func (h *mcpHandler) LexicalSearch(collection, query string, topK int) ([]mcp.Le
 // syncPushCollections) so pkg/mcp doesn't need to know about APIConfig or
 // *store.CollectionManager. Added in F-4 wave 3q for toolSync.
 func (h *mcpHandler) DoSync(ctx context.Context, remoteURL, direction string, types []string, since string, collections []string) (map[string]any, map[string]any, error) {
-	rawManifest, err := SyncManifestFromRemote(remoteURL)
+	rawManifest, err := SyncManifestFromRemote(remoteURL, h.cfg.SyncToken)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -415,6 +416,17 @@ func (h *mcpHandler) DoSync(ctx context.Context, remoteURL, direction string, ty
 		if b, err := json.Marshal(rawManifest); err == nil {
 			json.Unmarshal(b, &manifest)
 		}
+	}
+
+	// Version skew check (warn-and-continue): a binary mismatch between the
+	// two instances can mean incompatible schema/protocol. We don't block the
+	// sync — only surface a warning so the operator can investigate.
+	var versionWarning string
+	if rawManifest != nil && rawManifest.Version != "" && h.cfg.Version != "" &&
+		rawManifest.Version != h.cfg.Version {
+		versionWarning = fmt.Sprintf("Levara version mismatch: local=%s remote=%s — proceeding with sync",
+			h.cfg.Version, rawManifest.Version)
+		log.Printf("[sync] %s", versionWarning)
 	}
 
 	var result map[string]any
@@ -428,6 +440,12 @@ func (h *mcpHandler) DoSync(ctx context.Context, remoteURL, direction string, ty
 		if containsType(types, "collections") && len(collections) > 0 {
 			result["collections_sync"] = syncPushCollections(ctx, h.cfg, remoteURL, collections)
 		}
+	}
+	if versionWarning != "" {
+		if result == nil {
+			result = map[string]any{}
+		}
+		result["version_warning"] = versionWarning
 	}
 	return result, manifest, nil
 }
@@ -1276,7 +1294,7 @@ func syncPush(ctx context.Context, cfg APIConfig, remoteURL string, types []stri
 		}
 		if len(memories) > 0 {
 			body, _ := json.Marshal(memories)
-			resp, err := client.Post(remoteURL+"/sync/import/memories", "application/json", strings.NewReader(string(body)))
+			resp, err := syncAuthPost(client, remoteURL+"/sync/import/memories", "application/json", string(body), cfg.SyncToken)
 			if err != nil {
 				results["memories_error"] = err.Error()
 			} else {
@@ -1318,7 +1336,7 @@ func syncPush(ctx context.Context, cfg APIConfig, remoteURL string, types []stri
 		}
 		if len(g.Nodes) > 0 || len(g.Edges) > 0 {
 			body, _ := json.Marshal(g)
-			resp, err := client.Post(remoteURL+"/sync/import/graph", "application/json", strings.NewReader(string(body)))
+			resp, err := syncAuthPost(client, remoteURL+"/sync/import/graph", "application/json", string(body), cfg.SyncToken)
 			if err != nil {
 				results["graph_error"] = err.Error()
 			} else {
@@ -1349,7 +1367,7 @@ func syncPullCollections(cfg APIConfig, remoteURL string, collections []string) 
 	results := map[string]any{}
 
 	for _, coll := range collections {
-		resp, err := client.Get(remoteURL + "/sync/export/collection/" + coll)
+		resp, err := syncAuthGet(client, remoteURL+"/sync/export/collection/"+coll, cfg.SyncToken)
 		if err != nil {
 			results[coll] = map[string]string{"error": err.Error()}
 			continue
@@ -1358,10 +1376,12 @@ func syncPullCollections(cfg APIConfig, remoteURL string, collections []string) 
 		resp.Body.Close()
 
 		// POST to local import endpoint
-		importResp, err := client.Post(
+		importResp, err := syncAuthPost(
+			client,
 			"http://localhost:"+fmt.Sprintf("%d", 8080)+"/api/v1/sync/import/collection",
 			"application/json",
-			strings.NewReader(string(body)),
+			string(body),
+			cfg.SyncToken,
 		)
 		if err != nil {
 			// Fallback: import directly in-process if local HTTP fails
@@ -1417,7 +1437,7 @@ func syncPushCollections(ctx context.Context, cfg APIConfig, remoteURL string, c
 		}
 
 		body, _ := json.Marshal(export)
-		resp, err := client.Post(remoteURL+"/sync/import/collection", "application/json", strings.NewReader(string(body)))
+		resp, err := syncAuthPost(client, remoteURL+"/sync/import/collection", "application/json", string(body), cfg.SyncToken)
 		if err != nil {
 			results[coll] = map[string]string{"error": err.Error()}
 			continue

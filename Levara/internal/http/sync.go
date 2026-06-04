@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -38,6 +39,7 @@ func RegisterSyncAPI(app fiber.Router, cfg APIConfig) {
 // ── Manifest ──
 
 type syncManifest struct {
+	Version      string               `json:"version"`
 	EmbedModel   string               `json:"embed_model"`
 	EmbedDim     int                  `json:"embed_dim"`
 	Memories     syncCount            `json:"memories"`
@@ -65,6 +67,7 @@ func syncManifestHandler(cfg APIConfig) fiber.Handler {
 		defer cancel()
 
 		m := syncManifest{
+			Version:    cfg.Version,
 			EmbedModel: cfg.EmbedModel,
 		}
 		if cfg.Collections != nil {
@@ -683,6 +686,36 @@ func syncImportCollectionStatusHandler() fiber.Handler {
 	}
 }
 
+// ── Authenticated sync transport ──
+
+// syncAuthGet performs a GET, attaching an Authorization: Bearer header
+// when token is non-empty. Empty token preserves the original
+// unauthenticated behaviour (remote with auth disabled).
+func syncAuthGet(client *http.Client, url, token string) (*http.Response, error) {
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	return client.Do(req)
+}
+
+// syncAuthPost performs a POST with the given body, attaching an
+// Authorization: Bearer header when token is non-empty.
+func syncAuthPost(client *http.Client, url, contentType, body, token string) (*http.Response, error) {
+	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", contentType)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	return client.Do(req)
+}
+
 // ── Sync Pull (client-side: fetch from remote, import locally) ──
 
 // SyncPull fetches data from a remote Levara instance and imports it locally.
@@ -710,7 +743,7 @@ func SyncPull(cfg APIConfig, remoteURL string, types []string, since string) map
 		if since != "" {
 			url += "?since=" + since
 		}
-		resp, err := client.Get(url)
+		resp, err := syncAuthGet(client, url, cfg.SyncToken)
 		if err != nil {
 			results["memories_error"] = err.Error()
 		} else {
@@ -754,7 +787,7 @@ func SyncPull(cfg APIConfig, remoteURL string, types []string, since string) map
 		if since != "" {
 			url += "?since=" + since
 		}
-		resp, err := client.Get(url)
+		resp, err := syncAuthGet(client, url, cfg.SyncToken)
 		if err != nil {
 			results["interactions_error"] = err.Error()
 		} else {
@@ -782,7 +815,7 @@ func SyncPull(cfg APIConfig, remoteURL string, types []string, since string) map
 	}
 
 	if shouldSync("graph") {
-		resp, err := client.Get(remoteURL + "/sync/export/graph")
+		resp, err := syncAuthGet(client, remoteURL+"/sync/export/graph", cfg.SyncToken)
 		if err != nil {
 			results["graph_error"] = err.Error()
 		} else {
@@ -832,9 +865,10 @@ func SyncPull(cfg APIConfig, remoteURL string, types []string, since string) map
 }
 
 // SyncManifestFromRemote fetches the manifest from a remote Levara instance.
-func SyncManifestFromRemote(remoteURL string) (*syncManifest, error) {
+// token is attached as Authorization: Bearer when non-empty.
+func SyncManifestFromRemote(remoteURL, token string) (*syncManifest, error) {
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(remoteURL + "/sync/manifest")
+	resp, err := syncAuthGet(client, remoteURL+"/sync/manifest", token)
 	if err != nil {
 		return nil, fmt.Errorf("failed to reach remote: %w", err)
 	}
