@@ -458,17 +458,17 @@ func TestToolRecallMemory_SQLFallbackNoMatch(t *testing.T) {
 	}
 }
 
-func TestToolRecallMemory_RoomFilterSkipsVectorPath(t *testing.T) {
-	// With a room filter, vector search is skipped (room/hall aren't
-	// indexed in vector metadata). This is the correctness guarantee
-	// for structural filters — only SQL path runs.
+func TestToolRecallMemory_RoomFilterFallsBackToSQLLike(t *testing.T) {
+	// Under a room filter, vector search still runs (its hits are hydrated
+	// through SQL so the filter applies authoritatively). When the vector
+	// path yields no usable hit, recall falls back to the SQL LIKE path and
+	// the literal substring match is still returned.
 	deps := setupSaveRecallMemoryDB(t)
 	deps.embedAvailable = true
-	var embedCalled atomic.Bool
 	deps.embedFn = func(ctx context.Context, text string) ([]float32, error) {
-		embedCalled.Store(true)
 		return []float32{1, 2, 3}, nil
 	}
+	// searchFn left nil → CollectionSearch returns no hits → SQL fallback.
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	deps.db.Exec(`INSERT INTO memories (id, key, value, type, owner_id, collection_name, room, hall, created_at, updated_at)
@@ -481,14 +481,78 @@ func TestToolRecallMemory_RoomFilterSkipsVectorPath(t *testing.T) {
 	if got.IsError {
 		t.Fatalf("IsError = true")
 	}
+	var items []map[string]any
+	json.Unmarshal([]byte(got.Content[0].Text), &items)
+	if len(items) != 1 || items[0]["key"] != "k1" {
+		t.Errorf("got %+v from SQL fallback, want single 'k1'", items)
+	}
+}
 
-	if embedCalled.Load() {
-		t.Errorf("Embed called despite room filter; vector path must be skipped")
+func TestToolRecallMemory_RoomFilterUsesVectorHydration(t *testing.T) {
+	// Regression: a room filter must NOT downgrade recall to literal
+	// substring matching. A semantic query that is not a substring of
+	// key/value still finds the row via vector search, with the room
+	// filter applied authoritatively against SQL (and other-room vector
+	// hits excluded).
+	deps := setupSaveRecallMemoryDB(t)
+	deps.embedAvailable = true
+	deps.embedFn = func(ctx context.Context, text string) ([]float32, error) {
+		return []float32{1, 2, 3}, nil
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	// Neither value contains the query phrase — only a vector hit can find it.
+	deps.db.Exec(`INSERT INTO memories (id, key, value, type, owner_id, collection_name, room, hall, created_at, updated_at)
+		VALUES ('m1', 'potion-fact', 'model2vec sidecar on loopback', 'fact', '', '', 'embed', 'fact', ?, ?)`, now, now)
+	deps.db.Exec(`INSERT INTO memories (id, key, value, type, owner_id, collection_name, room, hall, created_at, updated_at)
+		VALUES ('m2', 'other', 'unrelated note', 'fact', '', '', 'auth', 'fact', ?, ?)`, now, now)
+	deps.searchFn = func(collection string, q []float32, k int) ([]SearchResult, error) {
+		return []SearchResult{{ID: "m1", Score: 0.9}, {ID: "m2", Score: 0.8}}, nil
+	}
+
+	got := ToolRecallMemory(context.Background(), deps, map[string]any{
+		"query": "embedding model service", // not a substring of any row
+		"room":  "embed",
+	})
+	if got.IsError {
+		t.Fatalf("IsError = true: %s", got.Content[0].Text)
+	}
+	var items []map[string]any
+	if err := json.Unmarshal([]byte(got.Content[0].Text), &items); err != nil {
+		t.Fatalf("unmarshal: %v (content=%q)", err, got.Content[0].Text)
+	}
+	if len(items) != 1 || items[0]["key"] != "potion-fact" {
+		t.Fatalf("got %+v, want single 'potion-fact' (vector hit, room=embed)", items)
+	}
+}
+
+func TestToolRecallMemory_HallFilterUsesVectorHydration(t *testing.T) {
+	// Same guarantee on the hall axis: a hall filter keeps semantic recall
+	// and excludes vector hits whose hall differs.
+	deps := setupSaveRecallMemoryDB(t)
+	deps.embedAvailable = true
+	deps.embedFn = func(ctx context.Context, text string) ([]float32, error) {
+		return []float32{1, 2, 3}, nil
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	deps.db.Exec(`INSERT INTO memories (id, key, value, type, owner_id, collection_name, room, hall, created_at, updated_at)
+		VALUES ('d1', 'decided-x', 'chose sqlite over postgres', 'project', '', '', 'db', 'decision', ?, ?)`, now, now)
+	deps.db.Exec(`INSERT INTO memories (id, key, value, type, owner_id, collection_name, room, hall, created_at, updated_at)
+		VALUES ('f1', 'fact-x', 'chose sqlite over postgres', 'project', '', '', 'db', 'fact', ?, ?)`, now, now)
+	deps.searchFn = func(collection string, q []float32, k int) ([]SearchResult, error) {
+		return []SearchResult{{ID: "d1", Score: 0.9}, {ID: "f1", Score: 0.85}}, nil
+	}
+
+	got := ToolRecallMemory(context.Background(), deps, map[string]any{
+		"query": "storage engine selection",
+		"hall":  "decision",
+	})
+	if got.IsError {
+		t.Fatalf("IsError = true: %s", got.Content[0].Text)
 	}
 	var items []map[string]any
 	json.Unmarshal([]byte(got.Content[0].Text), &items)
-	if len(items) != 1 {
-		t.Errorf("got %d items from SQL path, want 1", len(items))
+	if len(items) != 1 || items[0]["key"] != "decided-x" {
+		t.Fatalf("got %+v, want single 'decided-x' (hall=decision)", items)
 	}
 }
 

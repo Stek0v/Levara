@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -217,13 +218,19 @@ func reportMemoryDivergence(deps Deps, collection, id, reason, detail string) {
 // ToolRecallMemory returns memory rows matching a query.
 //
 // Two strategies, in order:
-//  1. Vector semantic search — ONLY when no room/hall filter is given
-//     AND embedding is available. Skipped when any structural filter
-//     is present since historical vector metadata doesn't include
-//     room/hall and would produce false positives.
+//  1. Vector semantic search — runs whenever embedding is available,
+//     INCLUDING under a room/hall filter. With no filter it returns the
+//     vector metadata directly. With a room/hall filter the hits are
+//     hydrated through SQL so the filter applies authoritatively (SQL is
+//     the source of truth for room/hall/owner/superseded) while semantic
+//     ranking is preserved. Previously any filter forced strategy 2 and
+//     silently degraded recall to literal-substring matching, so a
+//     semantic query that wasn't a verbatim substring of key/value
+//     returned nothing even when a matching row existed.
 //  2. SQL LIKE on key + value, scoped to the caller's owner_id (or
 //     shared empty-owner rows), with optional collection/room/hall
-//     filters. Always runs as fallback.
+//     filters. Runs when embedding is unavailable or the vector path
+//     yields no usable hit.
 //
 // Nil DB returns "[]" rather than an error — matches the read-only
 // contract of other list tools.
@@ -246,9 +253,15 @@ func ToolRecallMemory(ctx context.Context, deps Deps, args map[string]any) ToolR
 		return ToolResult{Content: []Content{{Type: "text", Text: "[]"}}}
 	}
 
-	// Strategy 1: vector search when no structural filter.
-	if room == "" && hall == "" && deps.EmbedAvailable() {
-		if res, ok := recallViaVectorSearch(ctx, deps, collectionName, query); ok {
+	// Strategy 1: vector semantic search. The filtered variant hydrates
+	// hits through SQL so room/hall are enforced authoritatively without
+	// losing semantic recall.
+	if deps.EmbedAvailable() {
+		if room == "" && hall == "" {
+			if res, ok := recallViaVectorSearch(ctx, deps, collectionName, query); ok {
+				return res
+			}
+		} else if res, ok := recallViaVectorFiltered(ctx, deps, db, deps.Q, query, collectionName, room, hall, ownerID, includeSuperseded); ok {
 			return res
 		}
 	}
@@ -285,18 +298,16 @@ func recallViaVectorSearch(ctx context.Context, deps Deps, collectionName, query
 	return ToolResult{Content: []Content{{Type: "text", Text: string(out)}}}, true
 }
 
-// recallViaSQLLike runs the structural-filter path: key/value LIKE
-// match scoped to the caller's owner, with optional collection /
-// room / hall filters. Always terminating — either returns rows,
-// a "no results" message, or a SQL error surfaced as IsError.
-func recallViaSQLLike(ctx context.Context, db *sql.DB, rewrite func(string) string, query, collectionName, room, hall, ownerID string, includeSuperseded bool) ToolResult {
-	pattern := "%" + query + "%"
-	var conds []string
-	var qargs []any
-	pos := 1
-	conds = append(conds, fmt.Sprintf("(key LIKE $%d OR value LIKE $%d)", pos, pos+1))
-	qargs = append(qargs, pattern, pattern)
-	pos += 2
+// memoryRowColumns is the SELECT list shared by the SQL recall paths so
+// recallViaSQLLike and recallViaVectorFiltered hydrate an identical shape.
+const memoryRowColumns = "id, key, value, type, owner_id, room, hall, created_at, updated_at"
+
+// appendMemoryFilters appends the structural filters shared by both SQL
+// recall paths — owner scope, then optional collection/room/hall, then
+// the superseded guard — starting at placeholder position pos. Keeping it
+// in one place ensures the LIKE-fallback and vector-hydration paths filter
+// identically. Returns the grown conds/qargs and the next free position.
+func appendMemoryFilters(conds []string, qargs []any, pos int, collectionName, room, hall, ownerID string, includeSuperseded bool) ([]string, []any, int) {
 	conds = append(conds, fmt.Sprintf("(owner_id = $%d OR owner_id = '')", pos))
 	qargs = append(qargs, ownerID)
 	pos++
@@ -318,21 +329,12 @@ func recallViaSQLLike(ctx context.Context, db *sql.DB, rewrite func(string) stri
 	if !includeSuperseded {
 		conds = append(conds, "superseded_by = ''")
 	}
-	_ = pos // keep pos in scope; no further binds after this point
-	sqlStr := fmt.Sprintf(`
-		SELECT id, key, value, type, owner_id, room, hall, created_at, updated_at
-		FROM memories WHERE %s ORDER BY updated_at DESC LIMIT %d
-	`, strings.Join(conds, " AND "), recallMemorySQLLimit)
+	return conds, qargs, pos
+}
 
-	rows, err := db.QueryContext(ctx, rewrite(sqlStr), qargs...)
-	if err != nil {
-		return ToolResult{
-			Content: []Content{{Type: "text", Text: fmt.Sprintf("Error: %s", err.Error())}},
-			IsError: true,
-		}
-	}
-	defer rows.Close()
-
+// scanMemoryRows decodes rows from a memoryRowColumns SELECT into the JSON
+// shape both recall SQL paths return.
+func scanMemoryRows(rows *sql.Rows) []map[string]any {
 	var results []map[string]any
 	for rows.Next() {
 		var id, key, value, typ, oid, rm, hl, ca, ua string
@@ -345,7 +347,100 @@ func recallViaSQLLike(ctx context.Context, db *sql.DB, rewrite func(string) stri
 			"created_at": ca, "updated_at": ua,
 		})
 	}
+	return results
+}
 
+// recallViaVectorFiltered runs semantic recall under a room/hall filter.
+// Vector search ranks candidates, then SQL hydrates them with the
+// structural filters applied authoritatively (SQL is the source of truth
+// for room/hall/owner/superseded), preserving vector rank order. Old
+// vectors whose metadata predates room/hall propagation still filter
+// correctly because the filter runs on the SQL row keyed by the vector id.
+// Returns (result, true) on hit; (_, false) to fall through to SQL LIKE —
+// embed/search errors and an empty filtered set are all soft misses.
+func recallViaVectorFiltered(ctx context.Context, deps Deps, db *sql.DB, rewrite func(string) string, query, collectionName, room, hall, ownerID string, includeSuperseded bool) (ToolResult, bool) {
+	vec, err := deps.Embed(ctx, query)
+	if err != nil {
+		return ToolResult{}, false
+	}
+	results, err := deps.CollectionSearch(memoryCollectionName(collectionName), vec, recallMemoryVectorTopK)
+	if err != nil || len(results) == 0 {
+		return ToolResult{}, false
+	}
+
+	// Candidate ids in vector-rank order (de-duped). The vector record id
+	// is the canonical SQL row id (see indexMemoryAsync), so it keys the
+	// hydration directly.
+	rank := make(map[string]int, len(results))
+	ids := make([]string, 0, len(results))
+	for i, r := range results {
+		if r.ID == "" {
+			continue
+		}
+		if _, seen := rank[r.ID]; seen {
+			continue
+		}
+		rank[r.ID] = i
+		ids = append(ids, r.ID)
+	}
+	if len(ids) == 0 {
+		return ToolResult{}, false
+	}
+
+	placeholders := make([]string, len(ids))
+	qargs := make([]any, 0, len(ids)+4)
+	pos := 1
+	for i, id := range ids {
+		placeholders[i] = fmt.Sprintf("$%d", pos)
+		qargs = append(qargs, id)
+		pos++
+	}
+	conds := []string{fmt.Sprintf("id IN (%s)", strings.Join(placeholders, ", "))}
+	conds, qargs, _ = appendMemoryFilters(conds, qargs, pos, collectionName, room, hall, ownerID, includeSuperseded)
+	sqlStr := fmt.Sprintf(`SELECT %s FROM memories WHERE %s`, memoryRowColumns, strings.Join(conds, " AND "))
+
+	rows, err := db.QueryContext(ctx, rewrite(sqlStr), qargs...)
+	if err != nil {
+		return ToolResult{}, false
+	}
+	defer rows.Close()
+	out := scanMemoryRows(rows)
+	if len(out) == 0 {
+		return ToolResult{}, false
+	}
+
+	// SQL IN doesn't preserve order — restore vector-similarity ranking.
+	sort.SliceStable(out, func(i, j int) bool {
+		return rank[out[i]["id"].(string)] < rank[out[j]["id"].(string)]
+	})
+	payload, _ := json.MarshalIndent(out, "", "  ")
+	return ToolResult{Content: []Content{{Type: "text", Text: string(payload)}}}, true
+}
+
+// recallViaSQLLike runs the structural-filter path: key/value LIKE
+// match scoped to the caller's owner, with optional collection /
+// room / hall filters. Always terminating — either returns rows,
+// a "no results" message, or a SQL error surfaced as IsError.
+func recallViaSQLLike(ctx context.Context, db *sql.DB, rewrite func(string) string, query, collectionName, room, hall, ownerID string, includeSuperseded bool) ToolResult {
+	pattern := "%" + query + "%"
+	conds := []string{"(key LIKE $1 OR value LIKE $2)"}
+	qargs := []any{pattern, pattern}
+	conds, qargs, _ = appendMemoryFilters(conds, qargs, 3, collectionName, room, hall, ownerID, includeSuperseded)
+	sqlStr := fmt.Sprintf(`
+		SELECT %s
+		FROM memories WHERE %s ORDER BY updated_at DESC LIMIT %d
+	`, memoryRowColumns, strings.Join(conds, " AND "), recallMemorySQLLimit)
+
+	rows, err := db.QueryContext(ctx, rewrite(sqlStr), qargs...)
+	if err != nil {
+		return ToolResult{
+			Content: []Content{{Type: "text", Text: fmt.Sprintf("Error: %s", err.Error())}},
+			IsError: true,
+		}
+	}
+	defer rows.Close()
+
+	results := scanMemoryRows(rows)
 	if len(results) == 0 {
 		return ToolResult{Content: []Content{{Type: "text", Text: "No memories found matching query."}}}
 	}
