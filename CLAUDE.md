@@ -311,8 +311,8 @@ search(search_query="...", room="auth", tags=["security"])
 
 ### Sync (Mac ↔ Pi)
 
-- Mac (`localhost:8081`) ↔ Pi (`10.23.0.53:8080`)
-- `sync(remote_url="http://10.23.0.53:8080/api/v1", direction="pull")`
+- Mac (`localhost:8081`) ↔ Pi (`10.23.0.53:8090`)
+- `sync(remote_url="http://10.23.0.53:8090/api/v1", direction="pull")`
 - CLI: `sync_levara` / `man_levara`
 
 ### Полный список MCP tools (27)
