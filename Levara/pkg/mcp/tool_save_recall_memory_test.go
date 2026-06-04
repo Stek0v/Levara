@@ -4,8 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -294,6 +296,112 @@ func TestToolSaveMemory_NoEmbedSkipsGoroutine(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	if embedCalled.Load() {
 		t.Errorf("Embed called despite EmbedAvailable=false")
+	}
+}
+
+func TestToolSaveMemory_DivergenceOnMissingAfterInsert(t *testing.T) {
+	// When the vector does not verify present after insert (CollectionHasRecord
+	// stays false), the write path must NOT stay silent: it retries the
+	// insert once and then emits a "memory_index_divergence" heartbeat with
+	// reason=missing_after_insert. SQL row is the source of truth and stays
+	// committed regardless.
+	deps := setupSaveRecallMemoryDB(t)
+	deps.embedAvailable = true
+	deps.embedFn = func(ctx context.Context, text string) ([]float32, error) {
+		return []float32{1, 2, 3}, nil
+	}
+	deps.hasRecordFn = func(collection, id string) bool { return false } // never verifies
+
+	var mu sync.Mutex
+	var diverged []map[string]any
+	deps.heartbeatFn = func(eventType string, payload any) {
+		if eventType != "memory_index_divergence" {
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if m, ok := payload.(map[string]any); ok {
+			diverged = append(diverged, m)
+		}
+	}
+
+	ToolSaveMemory(context.Background(), deps, map[string]any{
+		"key": "k", "value": "v", "collection": "levara",
+	})
+
+	// Poll for the divergence heartbeat.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		n := len(diverged)
+		mu.Unlock()
+		if n > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(diverged) != 1 {
+		t.Fatalf("memory_index_divergence emitted %d times, want 1", len(diverged))
+	}
+	if diverged[0]["reason"] != "missing_after_insert" {
+		t.Errorf("reason = %v, want missing_after_insert", diverged[0]["reason"])
+	}
+	// Retry-once means two insert attempts were made.
+	if n := len(deps.getInserted()); n != memoryIndexMaxAttempts {
+		t.Errorf("CollectionInsert called %d times, want %d (retry-once)", n, memoryIndexMaxAttempts)
+	}
+}
+
+func TestToolSaveMemory_DivergenceOnEmbedFail(t *testing.T) {
+	// An embed failure must surface as a divergence heartbeat (reason
+	// embed_failed) and skip the insert entirely — not vanish silently.
+	deps := setupSaveRecallMemoryDB(t)
+	deps.embedAvailable = true
+	deps.embedFn = func(ctx context.Context, text string) ([]float32, error) {
+		return nil, errors.New("embed service down")
+	}
+
+	var mu sync.Mutex
+	var reason string
+	deps.heartbeatFn = func(eventType string, payload any) {
+		if eventType != "memory_index_divergence" {
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if m, ok := payload.(map[string]any); ok {
+			reason, _ = m["reason"].(string)
+		}
+	}
+
+	got := ToolSaveMemory(context.Background(), deps, map[string]any{
+		"key": "k", "value": "v",
+	})
+	if got.IsError {
+		t.Fatalf("save returned IsError on embed failure; SQL write must still succeed")
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		r := reason
+		mu.Unlock()
+		if r != "" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if reason != "embed_failed" {
+		t.Errorf("divergence reason = %q, want embed_failed", reason)
+	}
+	if n := len(deps.getInserted()); n != 0 {
+		t.Errorf("CollectionInsert called %d times on embed failure, want 0", n)
 	}
 }
 

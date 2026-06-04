@@ -165,6 +165,17 @@ func (h *mcpHandler) CollectionInsert(collection, id string, vec []float32, meta
 	return h.cfg.Collections.Insert(collection, id, vec, meta)
 }
 
+// CollectionHasRecord implements mcp.Deps: synchronous by-id membership
+// check (CollectionManager.HasRecord). Reflects the write the moment
+// CollectionInsert returns, so the memory write path can verify the
+// vector actually landed without racing the async HNSW indexer.
+func (h *mcpHandler) CollectionHasRecord(collection, id string) bool {
+	if h.cfg.Collections == nil {
+		return false
+	}
+	return h.cfg.Collections.HasRecord(collection, id)
+}
+
 // CollectionSearch implements mcp.Deps: forwards to the shared
 // CollectionManager and adapts the internal VectroRecord type to
 // pkg/mcp.SearchResult so tool bodies don't need to import
@@ -247,7 +258,21 @@ func (h *mcpHandler) PersistPipelineStatus(datasetID, collection, status string,
 // LogHeartbeat implements mcp.Deps: forwards to the handler's own
 // heartbeat logger (in mcp_doctor.go). Defined on *mcpHandler to reach
 // the DB through cfg.
+//
+// The "memory_index_divergence" event type is the SQL↔vector consistency
+// signal emitted by the memory write path (pkg/mcp stays free of an
+// internal/metrics import — this is the seam). We mirror it to Prometheus
+// here so the divergence is both queryable (heartbeats table) and alertable.
 func (h *mcpHandler) LogHeartbeat(eventType string, payload any) {
+	if eventType == "memory_index_divergence" {
+		reason := "unknown"
+		if m, ok := payload.(map[string]any); ok {
+			if r, ok := m["reason"].(string); ok && r != "" {
+				reason = r
+			}
+		}
+		metrics.MemoryIndexDivergence.WithLabelValues(reason).Inc()
+	}
 	h.logHeartbeat(eventType, payload)
 }
 
@@ -879,6 +904,8 @@ func (h *mcpHandler) executeToolInner(ctx context.Context, sess *mcpSession, nam
 		return h.toolIngestionStatus(ctx, args)
 	case "recent_errors":
 		return h.toolRecentErrors(ctx, args)
+	case "reconcile_memory":
+		return h.toolReconcileMemory(ctx, args)
 	case "sync_status":
 		return h.toolSyncStatus(ctx, args)
 	case "levara_instructions":

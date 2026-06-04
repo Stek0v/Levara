@@ -74,6 +74,26 @@ var (
 		Help: "Number of active MCP sessions",
 	})
 
+	// Memory SQL↔vector consistency. The SQL `memories` row is the source
+	// of truth; its vector in the `_memories_*` sidecar is written by an
+	// async side effect (indexMemoryAsync). These track when those two
+	// diverge so a silent index gap (the P1.4/Cause-B class of bug) is
+	// observable instead of invisible.
+	//
+	// MemoryIndexDivergence is bumped per save_memory when the post-insert
+	// read-back fails. reason ∈ {embed_failed, insert_failed, missing_after_insert}.
+	MemoryIndexDivergence = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "levara_memory_index_divergence_total",
+		Help: "save_memory writes whose vector did not land/verify, by reason",
+	}, []string{"reason"})
+
+	// MemoryReconcile is bumped by the reconcile_memory sweep, per sidecar
+	// finding. outcome ∈ {ok, missing_vector, orphan_vector, repaired, repair_failed, orphan_deleted}.
+	MemoryReconcile = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "levara_memory_reconcile_total",
+		Help: "reconcile_memory findings by outcome",
+	}, []string{"outcome"})
+
 	// MCP audit-log metrics — finer-grained companions to MCPToolRequests
 	// and MCPToolDuration. Outcome is the closed enum from pkg/audit;
 	// agent_bucket is bounded via UserBucket (top-N + "other"/"anon").

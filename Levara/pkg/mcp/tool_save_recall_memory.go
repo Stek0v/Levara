@@ -143,13 +143,25 @@ func ToolSaveMemory(ctx context.Context, deps Deps, args map[string]any) ToolRes
 // Uses context.Background() with a timeout so the embed call isn't
 // cancelled when the tool's ctx completes (MCP clients may close
 // connections immediately after receiving the save confirmation).
+//
+// The SQL row is already committed (source of truth); this goroutine
+// makes the vector match it. Every failure mode is verified rather than
+// swallowed: an embed error, an insert error, or a vector that isn't
+// present on read-back all emit a "memory_index_divergence" heartbeat
+// (mirrored to levara_memory_index_divergence_total) so the SQL↔vector
+// gap that motivated P1.4/Cause-B is observable instead of silent. The
+// insert+verify is retried once before giving up — the reconcile_memory
+// sweep is the durable backstop for whatever still slips through.
 func indexMemoryAsync(deps Deps, collectionName, id, key, value, memType string) {
 	go func() {
 		embedCtx, cancel := context.WithTimeout(context.Background(), saveMemoryEmbedTimeout)
 		defer cancel()
 
+		sidecar := memoryCollectionName(collectionName)
+
 		vec, err := deps.Embed(embedCtx, key+" "+value)
 		if err != nil {
+			reportMemoryDivergence(deps, sidecar, id, "embed_failed", err.Error())
 			return
 		}
 
@@ -160,8 +172,46 @@ func indexMemoryAsync(deps Deps, collectionName, id, key, value, memType string)
 			"collection": collectionName,
 			"memory_id":  id,
 		})
-		_ = deps.CollectionInsert(memoryCollectionName(collectionName), id, vec, meta)
+
+		// Insert, then verify the vector actually landed under the canonical
+		// id (synchronous index lookup, not a vector search — see
+		// CollectionHasRecord). Retry once on failure.
+		for attempt := 1; attempt <= memoryIndexMaxAttempts; attempt++ {
+			insErr := deps.CollectionInsert(sidecar, id, vec, meta)
+			if insErr != nil {
+				if attempt == memoryIndexMaxAttempts {
+					reportMemoryDivergence(deps, sidecar, id, "insert_failed", insErr.Error())
+				}
+				continue
+			}
+			if deps.CollectionHasRecord(sidecar, id) {
+				return // verified present — SQL and vector agree
+			}
+			if attempt == memoryIndexMaxAttempts {
+				reportMemoryDivergence(deps, sidecar, id, "missing_after_insert", "vector absent on read-back")
+			}
+		}
 	}()
+}
+
+// memoryIndexMaxAttempts bounds the insert+verify retry loop in
+// indexMemoryAsync. One retry covers a transient collection/disk hiccup;
+// reconcile_memory is the durable backstop beyond that.
+const memoryIndexMaxAttempts = 2
+
+// reportMemoryDivergence records a single SQL↔vector mismatch for the
+// memory write path. Routed through LogHeartbeat (the pkg/mcp
+// observability seam) so the row is queryable via the heartbeat tools and
+// mirrored to Prometheus by the concrete handler — pkg/mcp keeps no
+// internal/metrics dependency.
+func reportMemoryDivergence(deps Deps, collection, id, reason, detail string) {
+	deps.LogHeartbeat("memory_index_divergence", map[string]any{
+		"collection": collection,
+		"memory_id":  id,
+		"reason":     reason,
+		"detail":     Truncate(detail, memoryValueLogMaxLen),
+		"at":         time.Now().UTC().Format(time.RFC3339),
+	})
 }
 
 // ToolRecallMemory returns memory rows matching a query.
