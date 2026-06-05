@@ -1,0 +1,32 @@
+# Prod embed sidecar for Levara potion-256 (Pi 10.23.0.53).
+# Serves potion-code-16M (256d, model2vec) on loopback :9101; Levara :8090 reads
+# embeddings from here (EMBEDDING_ENDPOINT=http://localhost:9101/v1/embeddings).
+# Loopback-only + Wants (not Requires) from levara.service so an embedder crash
+# never takes Levara down. See docs/MIGRATION-EMBED-POTION.md §1.2 / findings P1.1.
+# Install: /etc/systemd/system/embed-potion.service
+[Unit]
+Description=Levara embed sidecar (potion-code-16M, 256d)
+After=network-online.target
+
+[Service]
+Type=simple
+User=stek0v
+WorkingDirectory=/home/stek0v/embed-bench/scripts/load-profiles
+Environment=PYTHONUNBUFFERED=1
+Environment=HF_HOME=/home/stek0v/embed-bench/hf-cache
+# Selects the potion recipe (minishlab/potion-code-16M, dim=256) in embed_bench.server.
+Environment=EMBED_BENCH_MODEL=potion
+# Loopback bind: the embedder MUST NOT be reachable off-host (constraint §1.2).
+ExecStart=/home/stek0v/embed-bench/venv/bin/uvicorn embed_bench.server:app --host 127.0.0.1 --port 9101 --workers 1
+Restart=on-failure
+RestartSec=3
+
+# Sandboxing (§3.6): read-only system, RW only on the HF cache.
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+NoNewPrivileges=true
+ReadWritePaths=/home/stek0v/embed-bench/hf-cache
+
+[Install]
+WantedBy=multi-user.target

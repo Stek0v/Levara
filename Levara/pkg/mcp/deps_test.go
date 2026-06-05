@@ -37,6 +37,11 @@ type fakeDeps struct {
 	embedAvailable bool
 	embedFn        func(ctx context.Context, text string) ([]float32, error)
 	searchFn       func(collection string, q []float32, k int) ([]SearchResult, error)
+	// hasRecordFn overrides CollectionHasRecord for failure-injection
+	// tests (e.g. simulate a vector that didn't land). When nil, the stub
+	// answers from the observed CollectionInsert calls — so a normal save
+	// verifies as present.
+	hasRecordFn func(collection, id string) bool
 
 	// insertedRows is guarded by insertedMu because ToolSaveMemory
 	// writes via a goroutine; tests that read it must use getInserted.
@@ -160,6 +165,23 @@ func (f *fakeDeps) getInserted() []insertedRow {
 	out := make([]insertedRow, len(f.insertedRows))
 	copy(out, f.insertedRows)
 	return out
+}
+
+// CollectionHasRecord reflects the observed inserts by default (a saved
+// memory verifies as present), or defers to hasRecordFn when a test wants
+// to simulate a divergence.
+func (f *fakeDeps) CollectionHasRecord(collection, id string) bool {
+	if f.hasRecordFn != nil {
+		return f.hasRecordFn(collection, id)
+	}
+	f.insertedMu.Lock()
+	defer f.insertedMu.Unlock()
+	for _, r := range f.insertedRows {
+		if r.collection == collection && r.id == id {
+			return true
+		}
+	}
+	return false
 }
 
 func (f *fakeDeps) CollectionSearch(collection string, q []float32, k int) ([]SearchResult, error) {
@@ -315,6 +337,7 @@ func (nilDBDeps) EmbedAvailable() bool                                      { re
 func (nilDBDeps) Embed(context.Context, string) ([]float32, error)          { return nil, nil }
 func (nilDBDeps) EmbedBatch(context.Context, []string) ([][]float32, error) { return nil, nil }
 func (nilDBDeps) CollectionInsert(string, string, []float32, any) error     { return nil }
+func (nilDBDeps) CollectionHasRecord(string, string) bool                   { return false }
 func (nilDBDeps) CollectionSearch(string, []float32, int) ([]SearchResult, error) {
 	return nil, nil
 }

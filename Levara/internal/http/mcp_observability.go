@@ -11,7 +11,10 @@ import (
 	"encoding/json"
 	"os"
 	"runtime"
+	"strings"
 	"time"
+
+	"github.com/stek0v/levara/internal/metrics"
 )
 
 // toolRuntimeStats returns a compact snapshot of the running instance:
@@ -305,6 +308,173 @@ func (h *mcpHandler) toolSyncStatus(ctx context.Context, args map[string]any) mc
 	data, _ := json.MarshalIndent(map[string]any{
 		"by_direction": byDir,
 		"events":       events,
+	}, "", "  ")
+	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(data)}}}
+}
+
+// memorySidecarName mirrors pkg/mcp.memoryCollectionName: the vector
+// collection backing memories at a given logical context. "" (no pinned
+// context) maps to "_memories", otherwise "_memories_<context>".
+func memorySidecarName(collectionName string) string {
+	if collectionName == "" {
+		return "_memories"
+	}
+	return "_memories_" + collectionName
+}
+
+// toolReconcileMemory systematically verifies SQL↔vector consistency for
+// the memory palace and (optionally) repairs it. The SQL `memories` table
+// is the source of truth; each `_memories_*` sidecar should hold exactly
+// one vector per live row of the matching collection_name. This is the
+// durable backstop to the per-write verification in indexMemoryAsync: it
+// catches gaps that predate the check, slipped through a crash, or were
+// left by a botched migration (the Cause-B class).
+//
+// Two divergence kinds per sidecar:
+//   - missing_vector: a SQL row whose id is absent from the sidecar.
+//     With apply=true, re-embedded (embed(key+" "+value)) and inserted
+//     under the canonical id — exactly as the live save path does.
+//   - orphan_vector: a sidecar id with no live SQL row. Reported always;
+//     deleted only with apply=true AND delete_orphans=true.
+//
+// Dry-run by default (apply=false): reports counts and a capped sample
+// without mutating anything. Read-only and safe to call routinely.
+func (h *mcpHandler) toolReconcileMemory(ctx context.Context, args map[string]any) mcpToolResult {
+	if h.cfg.DB == nil {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: `{"error":"no database configured"}`}}, IsError: true}
+	}
+	if h.cfg.Collections == nil {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: `{"error":"collections not configured"}`}}, IsError: true}
+	}
+
+	onlyCollection, _ := args["collection"].(string)
+	apply, _ := args["apply"].(bool)
+	deleteOrphans, _ := args["delete_orphans"].(bool)
+
+	// 1. SQL truth: every memory row, grouped by its sidecar. Mirrors the
+	//    /sync/export/memories projection (owner-blind — consistency is a
+	//    per-id property, not a per-owner one).
+	type memRow struct{ id, key, value, mtype string }
+	bySidecar := map[string][]memRow{}
+	rows, err := h.cfg.DB.QueryContext(ctx,
+		Q(`SELECT id, key, value, type, collection_name FROM memories`))
+	if err != nil {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: `{"error":"memories query failed"}`}}, IsError: true}
+	}
+	for rows.Next() {
+		var r memRow
+		var coll string
+		if err := rows.Scan(&r.id, &r.key, &r.value, &r.mtype, &coll); err != nil {
+			continue
+		}
+		sc := memorySidecarName(coll)
+		if onlyCollection != "" && sc != memorySidecarName(onlyCollection) {
+			continue
+		}
+		bySidecar[sc] = append(bySidecar[sc], r)
+	}
+	rows.Close()
+
+	type sidecarReport struct {
+		Sidecar       string   `json:"sidecar"`
+		SQLRows       int      `json:"sql_rows"`
+		VectorsBefore int      `json:"vectors_before"`
+		Missing       int      `json:"missing_vector"`
+		Orphan        int      `json:"orphan_vector"`
+		Repaired      int      `json:"repaired"`
+		RepairFailed  int      `json:"repair_failed"`
+		OrphanDeleted int      `json:"orphan_deleted"`
+		Sample        []string `json:"sample,omitempty"`
+	}
+
+	const sampleCap = 10
+	var reports []sidecarReport
+	totMissing, totOrphan, totRepaired, totFailed, totDeleted := 0, 0, 0, 0, 0
+
+	for sidecar, memRows := range bySidecar {
+		ids, _, _, allErr := h.cfg.Collections.AllRecords(sidecar)
+		present := map[string]bool{}
+		if allErr == nil {
+			for _, id := range ids {
+				present[id] = true
+			}
+		}
+		sqlIDs := map[string]bool{}
+		rep := sidecarReport{Sidecar: sidecar, SQLRows: len(memRows), VectorsBefore: len(present)}
+
+		// missing_vector: SQL row with no vector.
+		for _, mr := range memRows {
+			sqlIDs[mr.id] = true
+			if present[mr.id] {
+				continue
+			}
+			rep.Missing++
+			metrics.MemoryReconcile.WithLabelValues("missing_vector").Inc()
+			if len(rep.Sample) < sampleCap {
+				rep.Sample = append(rep.Sample, "missing:"+mr.key)
+			}
+			if !apply {
+				continue
+			}
+			vec, embErr := h.Embed(ctx, mr.key+" "+mr.value)
+			if embErr != nil {
+				rep.RepairFailed++
+				metrics.MemoryReconcile.WithLabelValues("repair_failed").Inc()
+				continue
+			}
+			meta, _ := json.Marshal(map[string]string{
+				"key": mr.key, "value": mr.value, "type": mr.mtype,
+				"collection": strings.TrimPrefix(strings.TrimPrefix(sidecar, "_memories_"), "_memories"),
+				"memory_id":  mr.id,
+			})
+			if insErr := h.cfg.Collections.Insert(sidecar, mr.id, vec, meta); insErr != nil {
+				rep.RepairFailed++
+				metrics.MemoryReconcile.WithLabelValues("repair_failed").Inc()
+				continue
+			}
+			rep.Repaired++
+			metrics.MemoryReconcile.WithLabelValues("repaired").Inc()
+		}
+
+		// orphan_vector: sidecar id with no live SQL row.
+		for id := range present {
+			if sqlIDs[id] {
+				continue
+			}
+			rep.Orphan++
+			metrics.MemoryReconcile.WithLabelValues("orphan_vector").Inc()
+			if len(rep.Sample) < sampleCap {
+				rep.Sample = append(rep.Sample, "orphan:"+id)
+			}
+			if apply && deleteOrphans {
+				if delErr := h.cfg.Collections.Delete(sidecar, id); delErr == nil {
+					rep.OrphanDeleted++
+					metrics.MemoryReconcile.WithLabelValues("orphan_deleted").Inc()
+				}
+			}
+		}
+
+		if rep.Missing == 0 && rep.Orphan == 0 {
+			metrics.MemoryReconcile.WithLabelValues("ok").Inc()
+		}
+		totMissing += rep.Missing
+		totOrphan += rep.Orphan
+		totRepaired += rep.Repaired
+		totFailed += rep.RepairFailed
+		totDeleted += rep.OrphanDeleted
+		reports = append(reports, rep)
+	}
+
+	data, _ := json.MarshalIndent(map[string]any{
+		"apply":              apply,
+		"delete_orphans":     deleteOrphans,
+		"sidecars_scanned":   len(reports),
+		"total_missing":      totMissing,
+		"total_orphan":       totOrphan,
+		"total_repaired":     totRepaired,
+		"total_repair_failed": totFailed,
+		"total_orphan_deleted": totDeleted,
+		"sidecars":           reports,
 	}, "", "  ")
 	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(data)}}}
 }

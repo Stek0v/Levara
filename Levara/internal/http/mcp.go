@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -70,6 +71,13 @@ func RegisterMCPAPI(app fiber.Router, cfg APIConfig) {
 	app.Get("/mcp", handler.handleSSEStream)
 	app.Delete("/mcp", handler.handleDeleteSession)
 	go handler.sessionCleanupLoop()
+}
+
+// NewMCPDeps builds a server-scoped mcp.Deps from an APIConfig, independent of
+// any HTTP/SSE session. Used by background workers (e.g. the consolidation
+// janitor) that must call MCP tool adapters outside a request lifecycle.
+func NewMCPDeps(cfg APIConfig) mcp.Deps {
+	return &mcpHandler{cfg: cfg, sessions: mcp.NewSessionStore()}
 }
 
 // mcpSession is a type alias for the canonical mcp.Session — all session
@@ -158,6 +166,17 @@ func (h *mcpHandler) CollectionInsert(collection, id string, vec []float32, meta
 	return h.cfg.Collections.Insert(collection, id, vec, meta)
 }
 
+// CollectionHasRecord implements mcp.Deps: synchronous by-id membership
+// check (CollectionManager.HasRecord). Reflects the write the moment
+// CollectionInsert returns, so the memory write path can verify the
+// vector actually landed without racing the async HNSW indexer.
+func (h *mcpHandler) CollectionHasRecord(collection, id string) bool {
+	if h.cfg.Collections == nil {
+		return false
+	}
+	return h.cfg.Collections.HasRecord(collection, id)
+}
+
 // CollectionSearch implements mcp.Deps: forwards to the shared
 // CollectionManager and adapts the internal VectroRecord type to
 // pkg/mcp.SearchResult so tool bodies don't need to import
@@ -240,7 +259,21 @@ func (h *mcpHandler) PersistPipelineStatus(datasetID, collection, status string,
 // LogHeartbeat implements mcp.Deps: forwards to the handler's own
 // heartbeat logger (in mcp_doctor.go). Defined on *mcpHandler to reach
 // the DB through cfg.
+//
+// The "memory_index_divergence" event type is the SQL↔vector consistency
+// signal emitted by the memory write path (pkg/mcp stays free of an
+// internal/metrics import — this is the seam). We mirror it to Prometheus
+// here so the divergence is both queryable (heartbeats table) and alertable.
 func (h *mcpHandler) LogHeartbeat(eventType string, payload any) {
+	if eventType == "memory_index_divergence" {
+		reason := "unknown"
+		if m, ok := payload.(map[string]any); ok {
+			if r, ok := m["reason"].(string); ok && r != "" {
+				reason = r
+			}
+		}
+		metrics.MemoryIndexDivergence.WithLabelValues(reason).Inc()
+	}
 	h.logHeartbeat(eventType, payload)
 }
 
@@ -372,7 +405,7 @@ func (h *mcpHandler) LexicalSearch(collection, query string, topK int) ([]mcp.Le
 // syncPushCollections) so pkg/mcp doesn't need to know about APIConfig or
 // *store.CollectionManager. Added in F-4 wave 3q for toolSync.
 func (h *mcpHandler) DoSync(ctx context.Context, remoteURL, direction string, types []string, since string, collections []string) (map[string]any, map[string]any, error) {
-	rawManifest, err := SyncManifestFromRemote(remoteURL)
+	rawManifest, err := SyncManifestFromRemote(remoteURL, h.cfg.SyncToken)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -383,6 +416,17 @@ func (h *mcpHandler) DoSync(ctx context.Context, remoteURL, direction string, ty
 		if b, err := json.Marshal(rawManifest); err == nil {
 			json.Unmarshal(b, &manifest)
 		}
+	}
+
+	// Version skew check (warn-and-continue): a binary mismatch between the
+	// two instances can mean incompatible schema/protocol. We don't block the
+	// sync — only surface a warning so the operator can investigate.
+	var versionWarning string
+	if rawManifest != nil && rawManifest.Version != "" && h.cfg.Version != "" &&
+		rawManifest.Version != h.cfg.Version {
+		versionWarning = fmt.Sprintf("Levara version mismatch: local=%s remote=%s — proceeding with sync",
+			h.cfg.Version, rawManifest.Version)
+		log.Printf("[sync] %s", versionWarning)
 	}
 
 	var result map[string]any
@@ -396,6 +440,12 @@ func (h *mcpHandler) DoSync(ctx context.Context, remoteURL, direction string, ty
 		if containsType(types, "collections") && len(collections) > 0 {
 			result["collections_sync"] = syncPushCollections(ctx, h.cfg, remoteURL, collections)
 		}
+	}
+	if versionWarning != "" {
+		if result == nil {
+			result = map[string]any{}
+		}
+		result["version_warning"] = versionWarning
 	}
 	return result, manifest, nil
 }
@@ -728,7 +778,7 @@ func (h *mcpHandler) executeToolInner(ctx context.Context, sess *mcpSession, nam
 		}
 	case "save_memory", "recall_memory", "list_memories",
 		"wake_up", "pin_memory", "unpin_memory",
-		"diary_write", "diary_read":
+		"diary_write", "diary_read", "consolidate":
 		// Memory tools: only inject session default, NOT "default" fallback.
 		// Empty collection → global _memories (backward compatible with Pi data).
 		if _, ok := args["collection"]; !ok || args["collection"] == "" {
@@ -826,6 +876,10 @@ func (h *mcpHandler) executeToolInner(ctx context.Context, sess *mcpSession, nam
 		return h.toolRecallMemory(ctx, args)
 	case "list_memories":
 		return h.toolListMemories(ctx, args)
+	case "consolidate":
+		return h.toolConsolidate(ctx, args)
+	case "consolidation_revert":
+		return h.toolConsolidationRevert(ctx, args)
 	case "save_chat":
 		return h.toolSaveChat(ctx, args)
 	case "recall_chat":
@@ -868,6 +922,8 @@ func (h *mcpHandler) executeToolInner(ctx context.Context, sess *mcpSession, nam
 		return h.toolIngestionStatus(ctx, args)
 	case "recent_errors":
 		return h.toolRecentErrors(ctx, args)
+	case "reconcile_memory":
+		return h.toolReconcileMemory(ctx, args)
 	case "sync_status":
 		return h.toolSyncStatus(ctx, args)
 	case "levara_instructions":
@@ -964,6 +1020,14 @@ func (h *mcpHandler) toolRecallMemory(ctx context.Context, args map[string]any) 
 // toolListMemories is a thin shim over mcp.ToolListMemories (F-4 wave 3f).
 func (h *mcpHandler) toolListMemories(ctx context.Context, args map[string]any) mcpToolResult {
 	return mcp.ToolListMemories(ctx, h, args)
+}
+
+func (h *mcpHandler) toolConsolidate(ctx context.Context, args map[string]any) mcpToolResult {
+	return mcp.ToolConsolidate(ctx, h, args)
+}
+
+func (h *mcpHandler) toolConsolidationRevert(ctx context.Context, args map[string]any) mcpToolResult {
+	return mcp.ToolConsolidationRevert(ctx, h, args)
 }
 
 // ── Chat History handlers ──
@@ -1230,7 +1294,7 @@ func syncPush(ctx context.Context, cfg APIConfig, remoteURL string, types []stri
 		}
 		if len(memories) > 0 {
 			body, _ := json.Marshal(memories)
-			resp, err := client.Post(remoteURL+"/sync/import/memories", "application/json", strings.NewReader(string(body)))
+			resp, err := syncAuthPost(client, remoteURL+"/sync/import/memories", "application/json", string(body), cfg.SyncToken)
 			if err != nil {
 				results["memories_error"] = err.Error()
 			} else {
@@ -1272,7 +1336,7 @@ func syncPush(ctx context.Context, cfg APIConfig, remoteURL string, types []stri
 		}
 		if len(g.Nodes) > 0 || len(g.Edges) > 0 {
 			body, _ := json.Marshal(g)
-			resp, err := client.Post(remoteURL+"/sync/import/graph", "application/json", strings.NewReader(string(body)))
+			resp, err := syncAuthPost(client, remoteURL+"/sync/import/graph", "application/json", string(body), cfg.SyncToken)
 			if err != nil {
 				results["graph_error"] = err.Error()
 			} else {
@@ -1303,7 +1367,7 @@ func syncPullCollections(cfg APIConfig, remoteURL string, collections []string) 
 	results := map[string]any{}
 
 	for _, coll := range collections {
-		resp, err := client.Get(remoteURL + "/sync/export/collection/" + coll)
+		resp, err := syncAuthGet(client, remoteURL+"/sync/export/collection/"+coll, cfg.SyncToken)
 		if err != nil {
 			results[coll] = map[string]string{"error": err.Error()}
 			continue
@@ -1312,10 +1376,12 @@ func syncPullCollections(cfg APIConfig, remoteURL string, collections []string) 
 		resp.Body.Close()
 
 		// POST to local import endpoint
-		importResp, err := client.Post(
+		importResp, err := syncAuthPost(
+			client,
 			"http://localhost:"+fmt.Sprintf("%d", 8080)+"/api/v1/sync/import/collection",
 			"application/json",
-			strings.NewReader(string(body)),
+			string(body),
+			cfg.SyncToken,
 		)
 		if err != nil {
 			// Fallback: import directly in-process if local HTTP fails
@@ -1371,7 +1437,7 @@ func syncPushCollections(ctx context.Context, cfg APIConfig, remoteURL string, c
 		}
 
 		body, _ := json.Marshal(export)
-		resp, err := client.Post(remoteURL+"/sync/import/collection", "application/json", strings.NewReader(string(body)))
+		resp, err := syncAuthPost(client, remoteURL+"/sync/import/collection", "application/json", string(body), cfg.SyncToken)
 		if err != nil {
 			results[coll] = map[string]string{"error": err.Error()}
 			continue

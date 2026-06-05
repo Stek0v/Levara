@@ -4,8 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -35,6 +37,7 @@ func setupSaveRecallMemoryDB(t *testing.T) *fakeDeps {
 		collection_name TEXT, room TEXT, hall TEXT,
 		is_pinned INTEGER DEFAULT 0, pin_priority INTEGER DEFAULT 0,
 		created_at TEXT, updated_at TEXT,
+		superseded_by TEXT DEFAULT '',
 		UNIQUE(key, owner_id)
 	)`
 	if _, err := db.Exec(stmt); err != nil {
@@ -226,6 +229,51 @@ func TestToolSaveMemory_EmbedPathFiresGoroutine(t *testing.T) {
 	}
 }
 
+func TestToolSaveMemory_ReSaveReusesStableVectorID(t *testing.T) {
+	// P1.4 regression: a re-save of the same (key, owner) must index the
+	// vector under the SAME id both times — the canonical SQL row id — so
+	// the second Insert overwrites the first vector in place instead of
+	// leaving an orphan in HNSW. Pre-fix, ToolSaveMemory minted a fresh
+	// uuid per call and indexed under it, so each re-save accreted a stale
+	// vector (vectors > SQL rows).
+	deps := setupSaveRecallMemoryDB(t)
+	deps.embedAvailable = true
+	deps.embedFn = func(ctx context.Context, text string) ([]float32, error) {
+		return []float32{1, 2, 3}, nil
+	}
+
+	ctx := context.Background()
+	ToolSaveMemory(ctx, deps, map[string]any{"key": "k", "value": "v1", "collection": "levara"})
+	ToolSaveMemory(ctx, deps, map[string]any{"key": "k", "value": "v2", "collection": "levara"})
+
+	// Poll for both background Inserts to land.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(deps.getInserted()) >= 2 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	inserted := deps.getInserted()
+	if len(inserted) != 2 {
+		t.Fatalf("CollectionInsert called %d times, want 2", len(inserted))
+	}
+	if inserted[0].id != inserted[1].id {
+		t.Errorf("re-save indexed under different vector ids %q != %q; orphan vector left in HNSW",
+			inserted[0].id, inserted[1].id)
+	}
+
+	// The stable id must be the canonical SQL row id, so vector recall can
+	// hydrate back to a live memories row.
+	var rowID string
+	if err := deps.db.QueryRow(`SELECT id FROM memories WHERE key = 'k'`).Scan(&rowID); err != nil {
+		t.Fatalf("scan row id: %v", err)
+	}
+	if inserted[1].id != rowID {
+		t.Errorf("vector id %q != canonical SQL row id %q", inserted[1].id, rowID)
+	}
+}
+
 func TestToolSaveMemory_NoEmbedSkipsGoroutine(t *testing.T) {
 	// With EmbedAvailable=false, no Embed call happens. The tool still
 	// returns success — the vector-index is optional.
@@ -248,6 +296,112 @@ func TestToolSaveMemory_NoEmbedSkipsGoroutine(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	if embedCalled.Load() {
 		t.Errorf("Embed called despite EmbedAvailable=false")
+	}
+}
+
+func TestToolSaveMemory_DivergenceOnMissingAfterInsert(t *testing.T) {
+	// When the vector does not verify present after insert (CollectionHasRecord
+	// stays false), the write path must NOT stay silent: it retries the
+	// insert once and then emits a "memory_index_divergence" heartbeat with
+	// reason=missing_after_insert. SQL row is the source of truth and stays
+	// committed regardless.
+	deps := setupSaveRecallMemoryDB(t)
+	deps.embedAvailable = true
+	deps.embedFn = func(ctx context.Context, text string) ([]float32, error) {
+		return []float32{1, 2, 3}, nil
+	}
+	deps.hasRecordFn = func(collection, id string) bool { return false } // never verifies
+
+	var mu sync.Mutex
+	var diverged []map[string]any
+	deps.heartbeatFn = func(eventType string, payload any) {
+		if eventType != "memory_index_divergence" {
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if m, ok := payload.(map[string]any); ok {
+			diverged = append(diverged, m)
+		}
+	}
+
+	ToolSaveMemory(context.Background(), deps, map[string]any{
+		"key": "k", "value": "v", "collection": "levara",
+	})
+
+	// Poll for the divergence heartbeat.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		n := len(diverged)
+		mu.Unlock()
+		if n > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(diverged) != 1 {
+		t.Fatalf("memory_index_divergence emitted %d times, want 1", len(diverged))
+	}
+	if diverged[0]["reason"] != "missing_after_insert" {
+		t.Errorf("reason = %v, want missing_after_insert", diverged[0]["reason"])
+	}
+	// Retry-once means two insert attempts were made.
+	if n := len(deps.getInserted()); n != memoryIndexMaxAttempts {
+		t.Errorf("CollectionInsert called %d times, want %d (retry-once)", n, memoryIndexMaxAttempts)
+	}
+}
+
+func TestToolSaveMemory_DivergenceOnEmbedFail(t *testing.T) {
+	// An embed failure must surface as a divergence heartbeat (reason
+	// embed_failed) and skip the insert entirely — not vanish silently.
+	deps := setupSaveRecallMemoryDB(t)
+	deps.embedAvailable = true
+	deps.embedFn = func(ctx context.Context, text string) ([]float32, error) {
+		return nil, errors.New("embed service down")
+	}
+
+	var mu sync.Mutex
+	var reason string
+	deps.heartbeatFn = func(eventType string, payload any) {
+		if eventType != "memory_index_divergence" {
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if m, ok := payload.(map[string]any); ok {
+			reason, _ = m["reason"].(string)
+		}
+	}
+
+	got := ToolSaveMemory(context.Background(), deps, map[string]any{
+		"key": "k", "value": "v",
+	})
+	if got.IsError {
+		t.Fatalf("save returned IsError on embed failure; SQL write must still succeed")
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		r := reason
+		mu.Unlock()
+		if r != "" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if reason != "embed_failed" {
+		t.Errorf("divergence reason = %q, want embed_failed", reason)
+	}
+	if n := len(deps.getInserted()); n != 0 {
+		t.Errorf("CollectionInsert called %d times on embed failure, want 0", n)
 	}
 }
 
@@ -304,17 +458,17 @@ func TestToolRecallMemory_SQLFallbackNoMatch(t *testing.T) {
 	}
 }
 
-func TestToolRecallMemory_RoomFilterSkipsVectorPath(t *testing.T) {
-	// With a room filter, vector search is skipped (room/hall aren't
-	// indexed in vector metadata). This is the correctness guarantee
-	// for structural filters — only SQL path runs.
+func TestToolRecallMemory_RoomFilterFallsBackToSQLLike(t *testing.T) {
+	// Under a room filter, vector search still runs (its hits are hydrated
+	// through SQL so the filter applies authoritatively). When the vector
+	// path yields no usable hit, recall falls back to the SQL LIKE path and
+	// the literal substring match is still returned.
 	deps := setupSaveRecallMemoryDB(t)
 	deps.embedAvailable = true
-	var embedCalled atomic.Bool
 	deps.embedFn = func(ctx context.Context, text string) ([]float32, error) {
-		embedCalled.Store(true)
 		return []float32{1, 2, 3}, nil
 	}
+	// searchFn left nil → CollectionSearch returns no hits → SQL fallback.
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	deps.db.Exec(`INSERT INTO memories (id, key, value, type, owner_id, collection_name, room, hall, created_at, updated_at)
@@ -327,14 +481,78 @@ func TestToolRecallMemory_RoomFilterSkipsVectorPath(t *testing.T) {
 	if got.IsError {
 		t.Fatalf("IsError = true")
 	}
+	var items []map[string]any
+	json.Unmarshal([]byte(got.Content[0].Text), &items)
+	if len(items) != 1 || items[0]["key"] != "k1" {
+		t.Errorf("got %+v from SQL fallback, want single 'k1'", items)
+	}
+}
 
-	if embedCalled.Load() {
-		t.Errorf("Embed called despite room filter; vector path must be skipped")
+func TestToolRecallMemory_RoomFilterUsesVectorHydration(t *testing.T) {
+	// Regression: a room filter must NOT downgrade recall to literal
+	// substring matching. A semantic query that is not a substring of
+	// key/value still finds the row via vector search, with the room
+	// filter applied authoritatively against SQL (and other-room vector
+	// hits excluded).
+	deps := setupSaveRecallMemoryDB(t)
+	deps.embedAvailable = true
+	deps.embedFn = func(ctx context.Context, text string) ([]float32, error) {
+		return []float32{1, 2, 3}, nil
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	// Neither value contains the query phrase — only a vector hit can find it.
+	deps.db.Exec(`INSERT INTO memories (id, key, value, type, owner_id, collection_name, room, hall, created_at, updated_at)
+		VALUES ('m1', 'potion-fact', 'model2vec sidecar on loopback', 'fact', '', '', 'embed', 'fact', ?, ?)`, now, now)
+	deps.db.Exec(`INSERT INTO memories (id, key, value, type, owner_id, collection_name, room, hall, created_at, updated_at)
+		VALUES ('m2', 'other', 'unrelated note', 'fact', '', '', 'auth', 'fact', ?, ?)`, now, now)
+	deps.searchFn = func(collection string, q []float32, k int) ([]SearchResult, error) {
+		return []SearchResult{{ID: "m1", Score: 0.9}, {ID: "m2", Score: 0.8}}, nil
+	}
+
+	got := ToolRecallMemory(context.Background(), deps, map[string]any{
+		"query": "embedding model service", // not a substring of any row
+		"room":  "embed",
+	})
+	if got.IsError {
+		t.Fatalf("IsError = true: %s", got.Content[0].Text)
+	}
+	var items []map[string]any
+	if err := json.Unmarshal([]byte(got.Content[0].Text), &items); err != nil {
+		t.Fatalf("unmarshal: %v (content=%q)", err, got.Content[0].Text)
+	}
+	if len(items) != 1 || items[0]["key"] != "potion-fact" {
+		t.Fatalf("got %+v, want single 'potion-fact' (vector hit, room=embed)", items)
+	}
+}
+
+func TestToolRecallMemory_HallFilterUsesVectorHydration(t *testing.T) {
+	// Same guarantee on the hall axis: a hall filter keeps semantic recall
+	// and excludes vector hits whose hall differs.
+	deps := setupSaveRecallMemoryDB(t)
+	deps.embedAvailable = true
+	deps.embedFn = func(ctx context.Context, text string) ([]float32, error) {
+		return []float32{1, 2, 3}, nil
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	deps.db.Exec(`INSERT INTO memories (id, key, value, type, owner_id, collection_name, room, hall, created_at, updated_at)
+		VALUES ('d1', 'decided-x', 'chose sqlite over postgres', 'project', '', '', 'db', 'decision', ?, ?)`, now, now)
+	deps.db.Exec(`INSERT INTO memories (id, key, value, type, owner_id, collection_name, room, hall, created_at, updated_at)
+		VALUES ('f1', 'fact-x', 'chose sqlite over postgres', 'project', '', '', 'db', 'fact', ?, ?)`, now, now)
+	deps.searchFn = func(collection string, q []float32, k int) ([]SearchResult, error) {
+		return []SearchResult{{ID: "d1", Score: 0.9}, {ID: "f1", Score: 0.85}}, nil
+	}
+
+	got := ToolRecallMemory(context.Background(), deps, map[string]any{
+		"query": "storage engine selection",
+		"hall":  "decision",
+	})
+	if got.IsError {
+		t.Fatalf("IsError = true: %s", got.Content[0].Text)
 	}
 	var items []map[string]any
 	json.Unmarshal([]byte(got.Content[0].Text), &items)
-	if len(items) != 1 {
-		t.Errorf("got %d items from SQL path, want 1", len(items))
+	if len(items) != 1 || items[0]["key"] != "decided-x" {
+		t.Fatalf("got %+v, want single 'decided-x' (hall=decision)", items)
 	}
 }
 
@@ -407,5 +625,27 @@ func TestToolRecallMemory_CollectionFilterPersists(t *testing.T) {
 	json.Unmarshal([]byte(got.Content[0].Text), &items)
 	if len(items) != 1 || items[0]["key"] != "a" {
 		t.Errorf("got %+v, want single 'a'", items)
+	}
+}
+
+func TestToolRecallMemory_HidesSuperseded(t *testing.T) {
+	deps := setupSaveRecallMemoryDB(t)
+	ctx := context.Background()
+
+	ToolSaveMemory(ctx, deps, map[string]any{"key": "active", "value": "potion sidecar fact"})
+	ToolSaveMemory(ctx, deps, map[string]any{"key": "old", "value": "potion sidecar fact"})
+	if _, err := deps.db.Exec(`UPDATE memories SET superseded_by = 'x' WHERE key = 'old'`); err != nil {
+		t.Fatalf("mark superseded: %v", err)
+	}
+
+	got := ToolRecallMemory(ctx, deps, map[string]any{"query": "potion sidecar"})
+	if got.IsError {
+		t.Fatalf("recall errored: %s", got.Content[0].Text)
+	}
+	if strings.Contains(got.Content[0].Text, "old") {
+		t.Errorf("recall returned superseded row 'old': %s", got.Content[0].Text)
+	}
+	if !strings.Contains(got.Content[0].Text, "active") {
+		t.Errorf("recall dropped active row: %s", got.Content[0].Text)
 	}
 }

@@ -16,6 +16,8 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/stek0v/levara/internal/metrics"
+	accesspkg "github.com/stek0v/levara/pkg/access"
+	"github.com/stek0v/levara/pkg/audit"
 )
 
 type workspaceAccessCheckRequest struct {
@@ -145,77 +147,35 @@ func workspaceAuditLogHandler(cfg APIConfig) fiber.Handler {
 }
 
 func workspaceAccessCheck(ctx context.Context, db *sql.DB, userID, projectID string, access workspaceAccessLevel, apiKeyPerms string) (workspaceAccessCheckResponse, error) {
-	if access == "" {
-		access = workspaceAccessRead
+	decision, err := workspaceAccessDecision(ctx, db, userID, projectID, access, apiKeyPerms)
+	if err != nil {
+		return workspaceAccessCheckResponse{}, err
 	}
-	resp := workspaceAccessCheckResponse{
+	return workspaceAccessCheckResponse{
 		ProjectID:     projectID,
 		UserID:        userID,
 		Access:        string(access),
-		Authenticated: userID != "",
-		APIKeyAllowed: workspaceAPIKeyAllows(apiKeyPerms, access),
-	}
-	if projectID == "" {
-		resp.Allowed = true
-		resp.Reason = "project_id_not_required"
-		return resp, nil
-	}
-	if !resp.APIKeyAllowed {
-		resp.Reason = "api_key_permissions_denied"
-		return resp, nil
-	}
-	if db == nil || userID == "" {
-		resp.Allowed = true
-		resp.Role = RoleAdmin
-		resp.Reason = "dev_mode"
-		resp.DevMode = true
-		return resp, nil
-	}
+		Allowed:       decision.Allowed,
+		Role:          decision.Role,
+		Reason:        decision.Reason,
+		DevMode:       decision.DevMode,
+		Authenticated: decision.Authenticated,
+		APIKeyAllowed: decision.APIKeyAllowed,
+	}, nil
+}
 
-	var isSuperuser bool
-	if err := db.QueryRowContext(ctx, Q("SELECT COALESCE(is_superuser, false) FROM users WHERE id = $1"), userID).Scan(&isSuperuser); err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return resp, err
-	}
-	if isSuperuser {
-		resp.Allowed = true
-		resp.Role = RoleAdmin
-		resp.Reason = "superuser"
-		return resp, nil
-	}
+type accessDB = *sql.DB
 
-	var ownerID string
-	err := db.QueryRowContext(ctx, Q("SELECT COALESCE(owner_id, '') FROM datasets WHERE id = $1"), projectID).Scan(&ownerID)
-	if errors.Is(err, sql.ErrNoRows) {
-		resp.Reason = "denied"
-		return resp, nil
+func workspaceAccessDecision(ctx context.Context, db accessDB, userID, projectID string, access workspaceAccessLevel, apiKeyPerms string) (accesspkg.Decision, error) {
+	if access == "" {
+		access = workspaceAccessRead
 	}
-	if err != nil {
-		return resp, err
-	}
-	if ownerID == "" || ownerID == userID {
-		resp.Allowed = true
-		resp.Role = RoleAdmin
-		resp.Reason = "owner"
-		return resp, nil
-	}
-
-	var role string
-	err = db.QueryRowContext(ctx, Q("SELECT role FROM dataset_shares WHERE dataset_id = $1 AND user_id = $2"), projectID, userID).Scan(&role)
-	if errors.Is(err, sql.ErrNoRows) {
-		resp.Reason = "denied"
-		return resp, nil
-	}
-	if err != nil {
-		return resp, err
-	}
-	resp.Role = strings.ToLower(role)
-	resp.Allowed = workspaceRoleAllows(role, access)
-	if resp.Allowed {
-		resp.Reason = "shared_" + resp.Role
-	} else {
-		resp.Reason = "role_insufficient"
-	}
-	return resp, nil
+	return accesspkg.SQLPolicy{DB: db, Q: Q}.AuthorizeWorkspace(ctx, accesspkg.WorkspaceRequest{
+		UserID:            userID,
+		ProjectID:         projectID,
+		Action:            string(access),
+		APIKeyPermissions: apiKeyPerms,
+	})
 }
 
 func workspaceAccessLevelFromString(access string) (workspaceAccessLevel, error) {
@@ -261,6 +221,22 @@ func recordWorkspaceAuditEvent(cfg APIConfig, event workspaceAuditEvent) error {
 		return err
 	}
 	metrics.WorkspaceAuditEventsTotal.WithLabelValues(event.Source, event.Operation, event.Result).Inc()
+	if cfg.WorkspaceAuditSink != nil {
+		cfg.WorkspaceAuditSink.LogEvent(audit.Event{
+			TS:      event.At,
+			Source:  "workspace." + event.Source,
+			Type:    event.Operation,
+			Subject: event.ProjectID,
+			ActorID: event.UserID,
+			Outcome: event.Result,
+			Metadata: map[string]any{
+				"branch": event.Branch,
+				"access": event.Access,
+				"status": event.Status,
+				"error":  event.Error,
+			},
+		})
+	}
 	return nil
 }
 

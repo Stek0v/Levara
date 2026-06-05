@@ -4,6 +4,8 @@ Date: 2026-05-11
 
 This document turns the markdown-native workspace architecture into copyable
 operator recipes for solo development, a shared team server, and Mac/Pi sync.
+For the broader product ladder and enterprise layering plan, see
+`docs/product-ladder.md` and `docs/adr/002-product-ladder-and-layering.md`.
 
 ## 1. Single-Node Development
 

@@ -4,6 +4,7 @@ package http
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -22,13 +23,26 @@ func RegisterTenantAPI(app fiber.Router, cfg APIConfig) {
 }
 
 // TenantMiddleware resolves the active tenant for the current user.
-// Priority: X-Tenant-Id header > user's single tenant > empty (no isolation).
+// Priority: verified X-Tenant-Id header > user's single tenant > empty (no isolation).
 // Sets c.Locals("tenant_id") for downstream handlers.
 func TenantMiddleware(db *sql.DB) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		// 1. Explicit header
 		tenantID := c.Get("X-Tenant-Id")
 		if tenantID != "" {
+			if db != nil {
+				userID, _ := c.Locals("user_id").(string)
+				if userID == "" {
+					return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"detail": "tenant membership required"})
+				}
+				member, err := tenantUserIsMember(c.UserContext(), db, userID, tenantID)
+				if err != nil {
+					return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"detail": "tenant membership check failed"})
+				}
+				if !member {
+					return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"detail": "not a member of this tenant"})
+				}
+			}
 			c.Locals("tenant_id", tenantID)
 			return c.Next()
 		}
@@ -38,7 +52,7 @@ func TenantMiddleware(db *sql.DB) fiber.Handler {
 		if userID != "" && db != nil {
 			var tid string
 			// If user belongs to exactly one tenant, auto-select it
-			err := db.QueryRowContext(context.Background(),
+			err := db.QueryRowContext(c.UserContext(),
 				Q(`SELECT tenant_id FROM user_tenant WHERE user_id = $1 LIMIT 1`), userID,
 			).Scan(&tid)
 			if err == nil && tid != "" {
@@ -61,11 +75,35 @@ func ResolveTenantID(c *fiber.Ctx) string {
 // If tenant_id is set: filters by owner's tenant membership.
 // If empty: no filtering (dev mode / single-user).
 func TenantFilter(tenantID string) string {
+	clause, _ := TenantFilterSQL(tenantID, 1)
+	return clause
+}
+
+// TenantFilterSQL returns a tenant-isolation SQL clause plus bind args.
+func TenantFilterSQL(tenantID string, startIdx int) (string, []any) {
 	if tenantID == "" {
-		return ""
+		return "", nil
 	}
-	// Filter datasets/data to users belonging to the same tenant
-	return " AND owner_id IN (SELECT user_id FROM user_tenant WHERE tenant_id = '" + tenantID + "')"
+	if startIdx <= 0 {
+		startIdx = 1
+	}
+	placeholder := fmt.Sprintf("$%d", startIdx)
+	if GetDBProvider() == DBSQLite {
+		placeholder = "?"
+	}
+	return " AND owner_id IN (SELECT user_id FROM user_tenant WHERE tenant_id = " + placeholder + ")", []any{tenantID}
+}
+
+func tenantUserIsMember(ctx context.Context, db *sql.DB, userID, tenantID string) (bool, error) {
+	if db == nil || userID == "" || tenantID == "" {
+		return false, nil
+	}
+	var exists int
+	err := db.QueryRowContext(ctx,
+		Q(`SELECT COUNT(*) FROM user_tenant WHERE user_id = $1 AND tenant_id = $2`),
+		userID, tenantID,
+	).Scan(&exists)
+	return exists > 0, err
 }
 
 // CollectionPrefix returns the tenant-scoped collection name.
