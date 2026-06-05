@@ -27,11 +27,13 @@ runtime.
 - [x] Workspace audit can mirror sanitized events into a generic `audit.EventSink`.
 - [x] Full testing scenario design added for profiles, layers, release gates,
   and enterprise readiness.
-- [ ] Access-policy extraction is mostly done — workspace authorization,
-  dataset visibility/access, superuser lookup, dataset-share management, and
-  tenant membership now live in `pkg/access`. Remaining inline decisions:
-  tenant auto-select default (`tenants.go`), the tenant SQL filter fragment,
-  and the `acl.permission_type` check.
+- [x] Access-policy extraction complete — workspace authorization, dataset
+  visibility/access, superuser lookup, dataset-share management, tenant
+  membership, tenant auto-select (`SQLPolicy.DefaultTenantForUser`), the tenant
+  SQL filter fragment (`access.TenantOwnerFilterSQL`), and the
+  `acl.permission_type` vocabulary (`access.ValidPermissionType` /
+  `PermissionTypes`) now live in `pkg/access`. `internal/http/tenants.go`
+  delegates every policy decision; handlers only adapt request/response.
 - [x] Runtime profiles fail fast in strict mode (`LEVARA_PROFILE_STRICT=1`):
   unsafe `team`/`enterprise` configs exit non-zero. Warning-only remains the
   default during migration.
@@ -82,7 +84,7 @@ REST/MCP behavior.
 
 Acceptance criteria:
 
-- [ ] HTTP handlers adapt request/response only; they do not decide policy.
+- [x] HTTP handlers adapt request/response only; they do not decide policy.
 - [x] MCP workspace tools and REST workspace routes share the same policy code.
 - [x] Existing public REST/MCP/gRPC contracts remain unchanged.
 
