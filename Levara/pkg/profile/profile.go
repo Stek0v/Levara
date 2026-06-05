@@ -20,6 +20,11 @@ type Config struct {
 	SyncTokenSet   bool
 	TenantEnforced bool
 	AuditSinkSet   bool
+	// SSOBridgeConfigured reports that an enterprise identity bridge (OIDC/SAML)
+	// is wired. It satisfies the enterprise auth requirement in lieu of local
+	// required auth: an SSO-fronted deployment authenticates at the bridge, so
+	// RequireAuth may be off without weakening the profile.
+	SSOBridgeConfigured bool
 }
 
 // Finding levels. Warnings are advisory; errors are fatal in strict mode.
@@ -100,7 +105,7 @@ func validate(cfg Config, level string) []Finding {
 		if !isPostgres(cfg) {
 			findings = append(findings, require("enterprise_requires_postgres", "enterprise profile should use Postgres or managed SQL"))
 		}
-		if !cfg.RequireAuth {
+		if !cfg.RequireAuth && !cfg.SSOBridgeConfigured {
 			findings = append(findings, require("enterprise_requires_auth", "enterprise profile should run with required auth or an SSO bridge"))
 		}
 		if !cfg.JWTSecretSet {

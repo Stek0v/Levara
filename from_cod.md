@@ -111,8 +111,10 @@ Acceptance criteria:
 
 - [x] Policy code never reads Fiber locals directly.
 - [x] Tests can construct actors without HTTP requests.
-- [ ] Per-agent credentials can be modeled without adding handler-specific
-  branches.
+- [x] Per-agent credentials can be modeled without adding handler-specific
+  branches (Phase 4B: `access.Provisioner` provisions principals — including
+  per-agent ones — by mutating the shared `users`/`user_tenant` tables that
+  `SQLPolicy` already reads; no per-handler branch).
 
 ### Phase 3A: Runtime Profile Enforcement
 
@@ -214,19 +216,34 @@ Acceptance criteria:
 
 Goal: add enterprise identity as adapters, not as handler logic.
 
-- [ ] Define OIDC/SAML bridge interface that maps external subject to Levara
-  principal.
-- [ ] Define SCIM provisioning interface for users, groups, and tenant
-  memberships.
-- [ ] Add contract tests for external subject mapping and deactivation.
-- [ ] Keep JWT/API-key local auth as the default for `personal`, `solo_pro`,
-  and `team`.
+- [x] Define OIDC/SAML bridge interface that maps external subject to Levara
+  principal (`access.IdentityBridge` + `ExternalIdentity`→`Principal`;
+  `LocalIdentityBridge` default no-ops external auth, `MappedIdentityBridge` +
+  `SubjectResolver` is the reusable reference; protocol-agnostic so OIDC and
+  SAML share one seam).
+- [x] Define SCIM provisioning interface for users, groups, and tenant
+  memberships (`access.Provisioner`: `ProvisionUser`/`DeactivateUser`/
+  `SyncTenantMembership`; `NoopProvisioner` default, `SQLProvisioner` reference
+  reconciles `users`/`user_tenant` in a tx).
+- [x] Add contract tests for external subject mapping and deactivation
+  (`pkg/access/sso_test.go` subject mapping + validation; `provisioning_test.go`
+  deactivation denied through `AuthorizeWorkspace`/`Authorize` incl. superuser,
+  tenant set-diff sync).
+- [x] Keep JWT/API-key local auth as the default for `personal`, `solo_pro`,
+  and `team` (default deployment wires `LocalIdentityBridge` + `NoopProvisioner`;
+  no SSO unless `LEVARA_SSO_BRIDGE` is set).
 
 Acceptance criteria:
 
-- [ ] Enterprise SSO can be added without changing core search, memory,
-  workspace, or MCP tool code.
-- [ ] Deactivated users lose access through the shared policy layer.
+- [x] Enterprise SSO can be added without changing core search, memory,
+  workspace, or MCP tool code (the bridge/provisioner are constructed at the
+  auth/provisioning seam; the rest of the system keeps seeing a plain `Actor`
+  and the existing `users`/`user_tenant` tables — no new table/migration, so
+  the API contract is unchanged).
+- [x] Deactivated users lose access through the shared policy layer
+  (`SQLPolicy.IsActive` gate in `AuthorizeWorkspace` + the dataset branch of
+  `Authorize`; `users.is_active = false` denies with reason `user_inactive`
+  before ownership/share/superuser are considered).
 
 ### Phase 4C: Enterprise Storage And KMS
 

@@ -66,6 +66,18 @@ func (p SQLPolicy) AuthorizeWorkspace(ctx context.Context, req WorkspaceRequest)
 		return decision, nil
 	}
 
+	// Deactivated accounts lose access here, in the shared policy layer: a user
+	// deprovisioned by SCIM (users.is_active = false) is denied regardless of
+	// ownership, share role, or superuser status. This runs only for
+	// authenticated requests against a real DB — dev-mode and anonymous paths
+	// already returned above.
+	if active, err := p.IsActive(ctx, req.UserID); err != nil {
+		return decision, err
+	} else if !active {
+		decision.Reason = "user_inactive"
+		return decision, nil
+	}
+
 	q := p.rewrite
 	if super, err := p.IsSuperuser(ctx, req.UserID); err != nil {
 		return decision, err
@@ -143,6 +155,28 @@ func (p SQLPolicy) IsSuperuser(ctx context.Context, userID string) (bool, error)
 		return false, err
 	}
 	return isSuperuser, nil
+}
+
+// IsActive reports whether userID's account is active. It is the canonical
+// activation lookup the policy facades route through so a SCIM-deprovisioned
+// user (users.is_active = false) is denied everywhere. A nil DB or empty user
+// is "active" (dev-mode/anonymous never reach the gate), and a missing user row
+// is fail-open active (COALESCE default true) — the deny path is an explicit
+// is_active = false, not the mere absence of a row, matching IsSuperuser's
+// ErrNoRows handling. Only a real query failure returns an error.
+func (p SQLPolicy) IsActive(ctx context.Context, userID string) (bool, error) {
+	if p.DB == nil || userID == "" {
+		return true, nil
+	}
+	var active bool
+	err := p.DB.QueryRowContext(ctx, p.rewrite("SELECT COALESCE(is_active, true) FROM users WHERE id = $1"), userID).Scan(&active)
+	if errors.Is(err, sql.ErrNoRows) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return active, nil
 }
 
 // AllowedDatasetIDs returns dataset IDs the user owns or has been granted.

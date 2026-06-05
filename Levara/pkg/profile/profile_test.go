@@ -86,6 +86,37 @@ func TestValidateStrictEnterpriseFailsFast(t *testing.T) {
 	}
 }
 
+func TestValidateEnterpriseSSOBridgeSatisfiesAuth(t *testing.T) {
+	// An SSO-fronted enterprise authenticates at the bridge, so a configured
+	// bridge satisfies the auth requirement even with RequireAuth off.
+	safe := ValidateStrict(Config{
+		Profile: Enterprise, DBProvider: "postgres", HasDB: true,
+		RequireAuth: false, SSOBridgeConfigured: true,
+		JWTSecretSet: true, TenantEnforced: true, AuditSinkSet: true,
+	})
+	if HasError(safe) {
+		t.Fatalf("enterprise with SSO bridge in lieu of required auth unexpectedly fatal: %+v", safe)
+	}
+
+	// With neither required auth nor an SSO bridge, the auth finding fires.
+	bad := ValidateStrict(Config{
+		Profile: Enterprise, DBProvider: "postgres", HasDB: true,
+		JWTSecretSet: true, TenantEnforced: true, AuditSinkSet: true,
+	})
+	if !HasError(bad) {
+		t.Fatalf("enterprise without auth or SSO bridge not fatal: %+v", bad)
+	}
+	foundAuth := false
+	for _, f := range bad {
+		if f.Code == "enterprise_requires_auth" {
+			foundAuth = true
+		}
+	}
+	if !foundAuth {
+		t.Fatalf("expected enterprise_requires_auth finding, got %+v", bad)
+	}
+}
+
 func TestValidateStrictSoloProSyncWithoutTokenFailsFast(t *testing.T) {
 	got := ValidateStrict(Config{Profile: SoloPro, SyncEnabled: true})
 	if !HasError(got) {
