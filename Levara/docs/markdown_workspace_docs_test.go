@@ -101,6 +101,30 @@ func TestMarkdownWorkspaceDeploymentRecipeLinksExist(t *testing.T) {
 	}
 }
 
+func TestFullTestingScenariosCoversProductLadder(t *testing.T) {
+	raw, err := os.ReadFile("full-testing-scenarios.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	for _, required := range []string{
+		"Personal / Local",
+		"Solo Pro",
+		"Team",
+		"Enterprise",
+		"TenantFilterSQL",
+		"workspace_context -> workspace_write -> workspace_search",
+		"pkg/access",
+		"LEVARA_PROFILE=enterprise",
+		"Release Gates",
+		"Automation Backlog",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("full-testing-scenarios.md missing %q", required)
+		}
+	}
+}
+
 func TestMarkdownWorkspaceOpsExamples(t *testing.T) {
 	dashboardRaw, err := os.ReadFile(filepath.Join("..", "examples", "ops", "grafana-workspace-dashboard.json"))
 	if err != nil {
