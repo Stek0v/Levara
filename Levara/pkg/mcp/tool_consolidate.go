@@ -44,16 +44,15 @@ func (s *sqlStore) Candidates(ctx context.Context, collection, room, hall string
 		"tier = 'raw'",
 	}
 	qargs := []any{collection}
-	pos := 2
+	// Placeholder index is always len(qargs)+1 before appending, so adding
+	// more optional conditions later stays correct without tracking a counter.
 	if room != "" {
-		conds = append(conds, fmt.Sprintf("room = $%d", pos))
+		conds = append(conds, fmt.Sprintf("room = $%d", len(qargs)+1))
 		qargs = append(qargs, room)
-		pos++
 	}
 	if hall != "" {
-		conds = append(conds, fmt.Sprintf("hall = $%d", pos))
+		conds = append(conds, fmt.Sprintf("hall = $%d", len(qargs)+1))
 		qargs = append(qargs, hall)
-		pos++
 	}
 	q := s.deps.Q(fmt.Sprintf(
 		`SELECT id, key, value, room, hall, created_at FROM memories WHERE %s`,
