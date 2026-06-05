@@ -251,7 +251,7 @@ func filterByAllowedDatasets(results []fiber.Map, allowedIDs []string) []fiber.M
 	for _, id := range allowedIDs {
 		allowed[id] = true
 	}
-	var filtered []fiber.Map
+	filtered := []fiber.Map{}
 	for _, r := range results {
 		dsID := extractDatasetID(r)
 		if dsID == "" || allowed[dsID] {
@@ -468,8 +468,10 @@ func chunksSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 	// ("Sub-query fan-out").
 	metrics.SearchChunksSubqueryFanout.Observe(float64(len(subQueries) * len(colls)))
 
-	var allResults []fiber.Map
+	allResults := []fiber.Map{}
 	seen := map[string]bool{}
+	var lastErr error
+	attempts := 0
 	// A.2 (20.04 review): track per-result reranked status. The previous
 	// global wasReranked bool flipped on the first sub-query that managed
 	// a rerank pass and then mislabelled every later result that DIDN'T
@@ -493,17 +495,23 @@ func chunksSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 				if overfetch < 10 {
 					overfetch = 10
 				}
+				attempts++
 				raw, rerr := sp.SearchByText(ctx, coll, sq, overfetch)
 				if rerr != nil {
+					lastErr = rerr
+					log.Printf("chunksSearch: SearchByText(coll=%s, sq=%q) [rerank path]: %v", coll, sq, rerr)
 					continue
 				}
 				filtered := filterScoredByAllowedDatasets(raw, req.AllowedDatasetIDs)
 				rerankedThisCall, results = applyRerankToScored(ctx, cfg, rerankClient, sq, filtered, req.TopK)
 			} else {
+				attempts++
 				results, err = sp.SearchByText(ctx, coll, sq, req.TopK)
 				metrics.RerankInvocations.WithLabelValues("disabled").Inc()
 			}
 			if err != nil {
+				lastErr = err
+				log.Printf("chunksSearch: SearchByText(coll=%s, sq=%q): %v", coll, sq, err)
 				continue
 			}
 			for _, r := range results {
@@ -554,6 +562,15 @@ func chunksSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 
 	if len(allResults) > req.TopK {
 		allResults = allResults[:req.TopK]
+	}
+
+	if attempts > 0 && len(allResults) == 0 && lastErr != nil {
+		log.Printf("chunksSearch: all %d SearchByText attempts failed; last error: %v", attempts, lastErr)
+		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{
+			"error":    "search backend unavailable",
+			"detail":   lastErr.Error(),
+			"attempts": attempts,
+		})
 	}
 
 	return respondSearchItems(c, req, "CHUNKS", allResults)
