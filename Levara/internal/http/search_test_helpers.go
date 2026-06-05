@@ -147,6 +147,7 @@ CREATE TABLE community_members (
 CREATE TABLE users (
 	id TEXT PRIMARY KEY,
 	email TEXT,
+	is_active INTEGER NOT NULL DEFAULT 1,
 	is_superuser INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE datasets (

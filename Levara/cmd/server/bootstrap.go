@@ -708,16 +708,26 @@ func runtimeDBProvider(db *sql.DB) string {
 // flag, and the MCP audit path so the env reads stay co-located here.
 func buildRuntimeProfileConfig(db *sql.DB, requireAuth bool, mcpAuditPath string) profile.Config {
 	return profile.Config{
-		Profile:        os.Getenv("LEVARA_PROFILE"),
-		DBProvider:     runtimeDBProvider(db),
-		HasDB:          db != nil,
-		RequireAuth:    requireAuth,
-		JWTSecretSet:   strings.TrimSpace(os.Getenv("JWT_SECRET")) != "",
-		SyncEnabled:    strings.TrimSpace(os.Getenv("LEVARA_SYNC_REMOTE_URL")) != "",
-		SyncTokenSet:   strings.TrimSpace(os.Getenv("LEVARA_TOKEN")) != "",
-		TenantEnforced: truthyEnv("LEVARA_TENANT_ENFORCED"),
-		AuditSinkSet:   auditSinkConfigured(mcpAuditPath),
+		Profile:             os.Getenv("LEVARA_PROFILE"),
+		DBProvider:          runtimeDBProvider(db),
+		HasDB:               db != nil,
+		RequireAuth:         requireAuth,
+		JWTSecretSet:        strings.TrimSpace(os.Getenv("JWT_SECRET")) != "",
+		SyncEnabled:         strings.TrimSpace(os.Getenv("LEVARA_SYNC_REMOTE_URL")) != "",
+		SyncTokenSet:        strings.TrimSpace(os.Getenv("LEVARA_TOKEN")) != "",
+		TenantEnforced:      truthyEnv("LEVARA_TENANT_ENFORCED"),
+		AuditSinkSet:        auditSinkConfigured(mcpAuditPath),
+		SSOBridgeConfigured: ssoBridgeConfigured(),
 	}
+}
+
+// ssoBridgeConfigured reports whether an enterprise identity bridge (OIDC/SAML)
+// is wired, gated by LEVARA_SSO_BRIDGE. It satisfies the enterprise auth
+// requirement in profile validation in lieu of local required auth — an
+// SSO-fronted deployment authenticates at the bridge. The flag only feeds
+// validation today; no bridge is instantiated until the protocol adapters land.
+func ssoBridgeConfigured() bool {
+	return truthyEnv("LEVARA_SSO_BRIDGE")
 }
 
 // auditSinkConfigured mirrors initMCPAuditSink's enabling rule for profile

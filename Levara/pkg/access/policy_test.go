@@ -215,6 +215,44 @@ func TestIsSuperuser(t *testing.T) {
 	}
 }
 
+func TestIsActive(t *testing.T) {
+	db := newPolicyTestDB(t)
+	policy := SQLPolicy{DB: db, Q: sqliteQ}
+	ctx := context.Background()
+
+	// Deactivate user-a so the gate has an inactive row to find.
+	if _, err := db.Exec(`UPDATE users SET is_active = 0 WHERE id = 'user-a'`); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name   string
+		userID string
+		want   bool
+	}{
+		{"active user", "user-b", true},
+		{"deactivated user", "user-a", false},
+		{"missing user fails open active", "ghost", true},
+		{"empty user is active", "", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := policy.IsActive(ctx, tc.userID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want {
+				t.Fatalf("IsActive(%q)=%v, want %v", tc.userID, got, tc.want)
+			}
+		})
+	}
+
+	// A nil DB never queries and treats everyone as active — dev/single-user mode.
+	if got, err := (SQLPolicy{}).IsActive(ctx, "user-a"); !got || err != nil {
+		t.Fatalf("nil-db IsActive=%v,%v want true,nil", got, err)
+	}
+}
+
 func newPolicyTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	db, err := sql.Open("sqlite3", t.TempDir()+"/access.db")
@@ -223,7 +261,7 @@ func newPolicyTestDB(t *testing.T) *sql.DB {
 	}
 	t.Cleanup(func() { db.Close() })
 	for _, stmt := range []string{
-		`CREATE TABLE users (id TEXT PRIMARY KEY, is_superuser INTEGER NOT NULL DEFAULT 0)`,
+		`CREATE TABLE users (id TEXT PRIMARY KEY, is_active INTEGER NOT NULL DEFAULT 1, is_superuser INTEGER NOT NULL DEFAULT 0)`,
 		`CREATE TABLE datasets (id TEXT PRIMARY KEY, owner_id TEXT)`,
 		`CREATE TABLE dataset_shares (id TEXT PRIMARY KEY, dataset_id TEXT, user_id TEXT, role TEXT)`,
 		`INSERT INTO users(id, is_superuser) VALUES ('user-a', 0), ('user-b', 0), ('user-c', 0), ('root', 1)`,
