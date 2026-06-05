@@ -72,9 +72,10 @@ import (
 	"github.com/stek0v/levara/pkg/consolidate"
 	"github.com/stek0v/levara/pkg/embed"
 	"github.com/stek0v/levara/pkg/graphdb"
-	"github.com/stek0v/levara/pkg/mcp"
 	"github.com/stek0v/levara/pkg/llmcache"
+	"github.com/stek0v/levara/pkg/mcp"
 	"github.com/stek0v/levara/pkg/observe"
+	"github.com/stek0v/levara/pkg/profile"
 	"github.com/stek0v/levara/pkg/router"
 	"github.com/stek0v/levara/pkg/runreg"
 
@@ -284,6 +285,17 @@ func main() {
 	sqlRuntime := initSQLRuntime(*dataDir)
 	pgDSN := sqlRuntime.DSN
 	pgDB := sqlRuntime.DB
+	warnRuntimeProfile(srvLog, profile.Config{
+		Profile:        os.Getenv("LEVARA_PROFILE"),
+		DBProvider:     runtimeDBProvider(pgDB),
+		HasDB:          pgDB != nil,
+		RequireAuth:    *requireAuth,
+		JWTSecretSet:   strings.TrimSpace(os.Getenv("JWT_SECRET")) != "",
+		SyncEnabled:    strings.TrimSpace(os.Getenv("LEVARA_SYNC_REMOTE_URL")) != "",
+		SyncTokenSet:   strings.TrimSpace(os.Getenv("LEVARA_TOKEN")) != "",
+		TenantEnforced: truthyEnv("LEVARA_TENANT_ENFORCED"),
+		AuditSinkSet:   *mcpAuditPath != "-" && (*mcpAuditPath != "" || truthyEnv("LEVARA_WORKSPACE_AUDIT_EXPORT")),
+	})
 	vizCfg.DB = pgDB // PostgreSQL/SQLite fallback for graph visualization
 	api.Get("/visualize", vectorHttp.VisualizeHTML(&vizCfg))
 	if pgDB != nil {
