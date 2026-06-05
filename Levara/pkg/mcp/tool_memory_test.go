@@ -285,6 +285,169 @@ func TestToolUnpinMemory_ClearsFlagsOnRealRow(t *testing.T) {
 	}
 }
 
+// ── ToolDeleteMemory ──
+
+func TestToolDeleteMemory_RequiresKey(t *testing.T) {
+	deps := setupMemoryTestDB(t)
+	got := ToolDeleteMemory(context.Background(), deps, map[string]any{})
+	if !got.IsError {
+		t.Fatalf("missing key: IsError = false, want true")
+	}
+	if !strings.Contains(got.Content[0].Text, "'key' required") {
+		t.Errorf("content = %q, want 'key' required", got.Content[0].Text)
+	}
+}
+
+func TestToolDeleteMemory_NilDBIsError(t *testing.T) {
+	got := ToolDeleteMemory(context.Background(), nilDBDeps{}, map[string]any{"key": "k"})
+	if !got.IsError {
+		t.Fatalf("nil DB: IsError = false, want true")
+	}
+	if !strings.Contains(got.Content[0].Text, "database not configured") {
+		t.Errorf("content = %q", got.Content[0].Text)
+	}
+}
+
+func TestToolDeleteMemory_NoMatchingRowIsError(t *testing.T) {
+	// Deleting a non-existent key is IsError (like pin, unlike the
+	// idempotent unpin) — delete is a state change and the caller needs
+	// to know it had no effect.
+	deps := setupMemoryTestDB(t)
+
+	got := ToolDeleteMemory(context.Background(), deps, map[string]any{"key": "ghost"})
+	if !got.IsError {
+		t.Fatalf("missing row: IsError = false, want true")
+	}
+	if !strings.Contains(got.Content[0].Text, "No memory matched key ghost") {
+		t.Errorf("content = %q", got.Content[0].Text)
+	}
+}
+
+func TestToolDeleteMemory_HappyPathRemovesRow(t *testing.T) {
+	// Delete removes the SQL row and reports the count.
+	deps := setupMemoryTestDB(t)
+	seedMemory(t, deps.db, "m1", "stale", "v", "fact", "", "", "", "", 0, 0)
+
+	got := ToolDeleteMemory(context.Background(), deps, map[string]any{"key": "stale"})
+	if got.IsError {
+		t.Fatalf("IsError = true; content=%+v", got.Content)
+	}
+	if !strings.Contains(got.Content[0].Text, "Deleted stale (1 record(s))") {
+		t.Errorf("content = %q", got.Content[0].Text)
+	}
+
+	var n int
+	deps.db.QueryRow("SELECT COUNT(*) FROM memories WHERE key = 'stale'").Scan(&n)
+	if n != 0 {
+		t.Errorf("rows after delete = %d, want 0", n)
+	}
+}
+
+func TestToolDeleteMemory_OwnershipScoped(t *testing.T) {
+	// Caller deletes only its own rows and shared (empty-owner) rows;
+	// another user's row with the same key survives. Three rows with the
+	// same key but distinct owner_ids is a valid production state under
+	// UNIQUE(key, owner_id).
+	deps := setupMemoryTestDB(t)
+	seedMemory(t, deps.db, "m1", "secret", "mine", "fact", "alice", "", "", "", 0, 0)
+	seedMemory(t, deps.db, "m2", "secret", "theirs", "fact", "bob", "", "", "", 0, 0)
+	seedMemory(t, deps.db, "m3", "secret", "shared", "fact", "", "", "", "", 0, 0)
+
+	ctx := context.WithValue(context.Background(), UserIDKey, "alice")
+	got := ToolDeleteMemory(ctx, deps, map[string]any{"key": "secret"})
+	if got.IsError {
+		t.Fatalf("IsError = true; content=%+v", got.Content)
+	}
+	if !strings.Contains(got.Content[0].Text, "Deleted secret (2 record(s))") {
+		t.Errorf("content = %q, want 2 records", got.Content[0].Text)
+	}
+
+	// Only bob's row remains.
+	var remaining string
+	if err := deps.db.QueryRow("SELECT owner_id FROM memories WHERE key = 'secret'").Scan(&remaining); err != nil {
+		t.Fatalf("expected bob's row to survive: %v", err)
+	}
+	if remaining != "bob" {
+		t.Errorf("surviving owner = %q, want bob", remaining)
+	}
+}
+
+func TestToolDeleteMemory_CollectionFilterNarrows(t *testing.T) {
+	// An optional collection narrows the delete to one pinned-context
+	// shard. Two same-key rows with distinct owner_ids (valid under
+	// UNIQUE(key, owner_id)) sit in different collections; the filter
+	// keeps the non-matching one.
+	deps := setupMemoryTestDB(t)
+	seedMemory(t, deps.db, "m1", "dup", "in-levara", "fact", "", "levara", "", "", 0, 0)
+	seedMemory(t, deps.db, "m2", "dup", "in-other", "fact", "alice", "other", "", "", 0, 0)
+
+	ctx := context.WithValue(context.Background(), UserIDKey, "alice")
+	got := ToolDeleteMemory(ctx, deps, map[string]any{"key": "dup", "collection": "levara"})
+	if got.IsError {
+		t.Fatalf("IsError = true; content=%+v", got.Content)
+	}
+	if !strings.Contains(got.Content[0].Text, "Deleted dup (1 record(s))") {
+		t.Errorf("content = %q, want 1 record", got.Content[0].Text)
+	}
+
+	var coll string
+	if err := deps.db.QueryRow("SELECT collection_name FROM memories WHERE key = 'dup'").Scan(&coll); err != nil {
+		t.Fatalf("expected the 'other' row to survive: %v", err)
+	}
+	if coll != "other" {
+		t.Errorf("surviving collection = %q, want other", coll)
+	}
+}
+
+func TestToolDeleteMemory_DropsVectorSidecar(t *testing.T) {
+	// When collections are configured, the matching vector sidecar entry
+	// is dropped so the record stops surfacing in recall. The sidecar name
+	// derives from the row's collection_name via memoryCollectionName.
+	deps := setupMemoryTestDB(t)
+	deps.hasColls = true
+	seedMemory(t, deps.db, "m1", "base", "v", "fact", "", "", "", "", 0, 0)
+	seedMemory(t, deps.db, "m2", "shard", "v", "fact", "", "levara", "", "", 0, 0)
+	// Pretend both vectors were previously indexed.
+	deps.CollectionInsert("_memories", "m1", []float32{1}, nil)
+	deps.CollectionInsert("_memories_levara", "m2", []float32{1}, nil)
+
+	if got := ToolDeleteMemory(context.Background(), deps, map[string]any{"key": "base"}); got.IsError {
+		t.Fatalf("delete base IsError; content=%+v", got.Content)
+	}
+	if got := ToolDeleteMemory(context.Background(), deps, map[string]any{"key": "shard"}); got.IsError {
+		t.Fatalf("delete shard IsError; content=%+v", got.Content)
+	}
+
+	deleted := deps.getDeleted()
+	want := map[string]string{"_memories": "m1", "_memories_levara": "m2"}
+	if len(deleted) != 2 {
+		t.Fatalf("CollectionDelete calls = %d, want 2 (%+v)", len(deleted), deleted)
+	}
+	for _, d := range deleted {
+		if want[d.collection] != d.id {
+			t.Errorf("unexpected sidecar delete %s/%s", d.collection, d.id)
+		}
+	}
+	// And the records no longer verify as present.
+	if deps.CollectionHasRecord("_memories", "m1") {
+		t.Errorf("_memories/m1 still present after delete")
+	}
+}
+
+func TestToolDeleteMemory_NoVectorWhenCollectionsAbsent(t *testing.T) {
+	// With collections unconfigured the SQL delete still succeeds and no
+	// vector delete is attempted (HasCollections gate).
+	deps := setupMemoryTestDB(t) // hasColls=false
+	seedMemory(t, deps.db, "m1", "k", "v", "fact", "", "", "", "", 0, 0)
+
+	if got := ToolDeleteMemory(context.Background(), deps, map[string]any{"key": "k"}); got.IsError {
+		t.Fatalf("IsError = true; content=%+v", got.Content)
+	}
+	if d := deps.getDeleted(); len(d) != 0 {
+		t.Errorf("CollectionDelete called %d times, want 0 when collections absent", len(d))
+	}
+}
+
 // ── ToolWakeUp ──
 
 // setupWakeUpTestDB builds both memories and graph tables so ToolWakeUp

@@ -31,6 +31,11 @@ type CollectionDeps interface {
 	ListCollections() []string
 	CollectionExists(name string) bool
 	CollectionInsert(collection, id string, vec []float32, meta any) error
+	// CollectionDelete tombstones a single record by id (CollectionManager.
+	// Delete). Used by delete_memory to drop the vector sidecar entry when a
+	// memory row is removed, so it stops surfacing in recall. Missing
+	// collection/id is a no-op, not an error.
+	CollectionDelete(collection, id string) error
 	CollectionSearch(collection string, query []float32, topK int) ([]SearchResult, error)
 	// CollectionHasRecord reports whether id exists in collection via a
 	// synchronous index lookup (not a vector search), so it is true the

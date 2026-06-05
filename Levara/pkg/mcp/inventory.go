@@ -46,6 +46,7 @@ var groupByName = map[string]string{
 	"wake_up":             "memory",
 	"pin_memory":          "memory",
 	"unpin_memory":        "memory",
+	"delete_memory":       "memory",
 	"search":              "search",
 	"cross_search":        "search",
 	"query_entity":        "search",
