@@ -166,6 +166,18 @@ func (h *mcpHandler) CollectionInsert(collection, id string, vec []float32, meta
 	return h.cfg.Collections.Insert(collection, id, vec, meta)
 }
 
+// CollectionDelete implements mcp.Deps: tombstones a record by id in the
+// given collection (same path as reconcile_memory's orphan-vector cleanup).
+// Used by delete_memory to drop a memory's vector sidecar entry so it stops
+// surfacing in recall. Returns an error only when collections are
+// unconfigured — a missing id resolves to a no-op inside the manager.
+func (h *mcpHandler) CollectionDelete(collection, id string) error {
+	if h.cfg.Collections == nil {
+		return fmt.Errorf("collections not configured")
+	}
+	return h.cfg.Collections.Delete(collection, id)
+}
+
 // CollectionHasRecord implements mcp.Deps: synchronous by-id membership
 // check (CollectionManager.HasRecord). Reflects the write the moment
 // CollectionInsert returns, so the memory write path can verify the
@@ -906,6 +918,8 @@ func (h *mcpHandler) executeToolInner(ctx context.Context, sess *mcpSession, nam
 		return h.toolPinMemory(ctx, args)
 	case "unpin_memory":
 		return h.toolUnpinMemory(ctx, args)
+	case "delete_memory":
+		return h.toolDeleteMemory(ctx, args)
 	case "query_entity":
 		return h.toolQueryEntity(ctx, args)
 	case "diary_write":

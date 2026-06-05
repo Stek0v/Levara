@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-06-05T13:54:21+03:00",
-  "git_rev": "fad362a5975086bec87784f6fc300310b82ebff1",
+  "generated_at": "2026-06-05T23:14:08+03:00",
+  "git_rev": "b507188f10ec0963597ceb57e5a778085657de5c",
   "rest": [
     {
       "method": "POST",
@@ -968,6 +968,11 @@
     {
       "name": "delete",
       "group": "data",
+      "status": "canonical"
+    },
+    {
+      "name": "delete_memory",
+      "group": "memory",
       "status": "canonical"
     },
     {

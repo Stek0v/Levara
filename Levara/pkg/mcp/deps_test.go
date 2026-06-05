@@ -45,8 +45,11 @@ type fakeDeps struct {
 
 	// insertedRows is guarded by insertedMu because ToolSaveMemory
 	// writes via a goroutine; tests that read it must use getInserted.
+	// deletedRows records CollectionDelete calls (same mutex) so
+	// delete_memory tests can assert the vector sidecar drop happened.
 	insertedMu   sync.Mutex
 	insertedRows []insertedRow
+	deletedRows  []deletedRow
 
 	// Cognify stubs. Tests that exercise ToolCognify install:
 	//   runs        — a *runreg.Registry to observe status transitions
@@ -93,6 +96,12 @@ type insertedRow struct {
 	id         string
 	vec        []float32
 	meta       any
+}
+
+// deletedRow records a single CollectionDelete call.
+type deletedRow struct {
+	collection string
+	id         string
 }
 
 func (f *fakeDeps) DB() *sql.DB { return f.db }
@@ -164,6 +173,33 @@ func (f *fakeDeps) getInserted() []insertedRow {
 	defer f.insertedMu.Unlock()
 	out := make([]insertedRow, len(f.insertedRows))
 	copy(out, f.insertedRows)
+	return out
+}
+
+// CollectionDelete records the call and drops any matching inserted row so
+// CollectionHasRecord reflects the deletion. Never errors (the real manager
+// tombstones a missing id to a no-op).
+func (f *fakeDeps) CollectionDelete(collection, id string) error {
+	f.insertedMu.Lock()
+	defer f.insertedMu.Unlock()
+	f.deletedRows = append(f.deletedRows, deletedRow{collection, id})
+	kept := f.insertedRows[:0]
+	for _, r := range f.insertedRows {
+		if r.collection == collection && r.id == id {
+			continue
+		}
+		kept = append(kept, r)
+	}
+	f.insertedRows = kept
+	return nil
+}
+
+// getDeleted returns a snapshot of observed CollectionDelete calls.
+func (f *fakeDeps) getDeleted() []deletedRow {
+	f.insertedMu.Lock()
+	defer f.insertedMu.Unlock()
+	out := make([]deletedRow, len(f.deletedRows))
+	copy(out, f.deletedRows)
 	return out
 }
 
@@ -337,6 +373,7 @@ func (nilDBDeps) EmbedAvailable() bool                                      { re
 func (nilDBDeps) Embed(context.Context, string) ([]float32, error)          { return nil, nil }
 func (nilDBDeps) EmbedBatch(context.Context, []string) ([][]float32, error) { return nil, nil }
 func (nilDBDeps) CollectionInsert(string, string, []float32, any) error     { return nil }
+func (nilDBDeps) CollectionDelete(string, string) error                     { return nil }
 func (nilDBDeps) CollectionHasRecord(string, string) bool                   { return false }
 func (nilDBDeps) CollectionSearch(string, []float32, int) ([]SearchResult, error) {
 	return nil, nil

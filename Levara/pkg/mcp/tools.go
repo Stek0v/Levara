@@ -993,6 +993,19 @@ func ToolDescriptors() []Tool {
 			},
 		},
 		{
+			Name:         "delete_memory",
+			Description:  "Permanently delete a memory by key — removes both the stored row and its vector so it no longer surfaces in recall. Scoped to your own (or shared) memories. Optional collection narrows the delete to one pinned-context shard. Reports an error if no memory matched.",
+			OutputSchema: statusMessageSchema(),
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"key":        map[string]any{"type": "string", "description": "Memory key to delete"},
+					"collection": map[string]any{"type": "string", "description": "Optional: only delete the row in this pinned-context collection."},
+				},
+				"required": []string{"key"},
+			},
+		},
+		{
 			Name:        "query_entity",
 			Description: "Query all knowledge-graph facts about an entity. By default returns only currently-valid edges. Optional as_of returns the snapshot at a past time.",
 			OutputSchema: objectSchema(map[string]any{

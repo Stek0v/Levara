@@ -34,6 +34,10 @@ func (h *mcpHandler) toolUnpinMemory(ctx context.Context, args map[string]any) m
 	return mcp.ToolUnpinMemory(ctx, h, args)
 }
 
+func (h *mcpHandler) toolDeleteMemory(ctx context.Context, args map[string]any) mcpToolResult {
+	return mcp.ToolDeleteMemory(ctx, h, args)
+}
+
 // ── query_entity ──
 
 // toolQueryEntity is a thin shim over mcp.ToolQueryEntity (F-4 wave 3h).
