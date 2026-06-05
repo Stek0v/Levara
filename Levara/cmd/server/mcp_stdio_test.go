@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // fakeMCPBackend captures forwarded requests and returns scripted bodies.
@@ -186,6 +187,83 @@ func TestBridge_BackendErrorSurfacesAsJSONRPCError(t *testing.T) {
 	msg, _ := errObj["message"].(string)
 	if !strings.Contains(msg, "503") {
 		t.Errorf("error.message = %q, want it to include 503 status", msg)
+	}
+}
+
+// Regression: the symptom that left "Calling levara…" spinning for an hour was
+// the bridge replying to a failed forward with id=null. An MCP client matches
+// responses to requests by id, so the pending call never resolves. The error
+// must carry the original request id.
+func TestBridge_ErrorResponseEchoesRequestID(t *testing.T) {
+	fake, srv := newFakeMCPBackend()
+	defer srv.Close()
+	fake.failStatus = 503
+	fake.responses = [][]byte{[]byte(`upstream down`)}
+
+	br := &bridge{backend: srv.URL + "/mcp", client: srv.Client()}
+	in := strings.NewReader(`{"jsonrpc":"2.0","id":7,"method":"tools/call"}` + "\n")
+	var out bytes.Buffer
+	if err := br.run(in, &out); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	var r map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out.String())), &r); err != nil {
+		t.Fatalf("output not JSON: %v (%q)", err, out.String())
+	}
+	if id, _ := r["id"].(float64); id != 7 {
+		t.Errorf("error response id = %v (%T), want 7 — client matches by id", r["id"], r["id"])
+	}
+}
+
+// A string request id must round-trip unquoted-and-then-requoted correctly.
+func TestBridge_ErrorResponseEchoesStringID(t *testing.T) {
+	fake, srv := newFakeMCPBackend()
+	defer srv.Close()
+	fake.failStatus = 500
+	fake.responses = [][]byte{[]byte(`boom`)}
+
+	br := &bridge{backend: srv.URL + "/mcp", client: srv.Client()}
+	in := strings.NewReader(`{"jsonrpc":"2.0","id":"abc-1","method":"ping"}` + "\n")
+	var out bytes.Buffer
+	_ = br.run(in, &out)
+	var r map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out.String())), &r); err != nil {
+		t.Fatalf("output not JSON: %v (%q)", err, out.String())
+	}
+	if id, _ := r["id"].(string); id != "abc-1" {
+		t.Errorf("error response id = %v, want \"abc-1\"", r["id"])
+	}
+}
+
+// After a transport failure (backend gone) the cached session id must be
+// cleared so the next request doesn't replay a session the restarted backend
+// has never heard of.
+func TestBridge_TransportErrorClearsSession(t *testing.T) {
+	br := &bridge{
+		backend: "http://127.0.0.1:1/mcp", // port 1: connection refused, fast
+		client:  &http.Client{Timeout: 2 * time.Second},
+	}
+	br.sessionID = "stale-session"
+	if _, err := br.forward([]byte(`{"jsonrpc":"2.0","id":1,"method":"ping"}`)); err == nil {
+		t.Fatal("expected a transport error against an unreachable backend")
+	}
+	if br.sessionID != "" {
+		t.Errorf("sessionID = %q, want cleared after transport error", br.sessionID)
+	}
+}
+
+func TestRequestID(t *testing.T) {
+	cases := map[string]string{
+		`{"id":42,"method":"x"}`:      "42",
+		`{"id":"s","method":"x"}`:     `"s"`,
+		`{"method":"notify"}`:         "null", // notification: no id
+		`not json at all`:             "null",
+		`{"id":null,"method":"ping"}`: "null",
+	}
+	for in, want := range cases {
+		if got := string(requestID([]byte(in))); got != want {
+			t.Errorf("requestID(%s) = %s, want %s", in, got, want)
+		}
 	}
 }
 
