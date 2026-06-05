@@ -32,6 +32,76 @@ func TestValidateSoloProSyncTokenWarning(t *testing.T) {
 	assertFindingCodes(t, got, map[string]bool{"solo_pro_sync_without_token": true})
 }
 
+func TestValidateStrictPersonalAndSoloProAreNotFatal(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  Config
+	}{
+		{"personal", Config{Profile: Personal}},
+		{"personal ignores missing db/auth", Config{Profile: Personal, DBProvider: "sqlite"}},
+		{"solo_pro without sync", Config{Profile: SoloPro}},
+		{"solo_pro sync with token", Config{Profile: SoloPro, SyncEnabled: true, SyncTokenSet: true}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ValidateStrict(tc.cfg)
+			if HasError(got) {
+				t.Fatalf("ValidateStrict(%s) fatal findings=%+v, want none", tc.name, got)
+			}
+		})
+	}
+}
+
+func TestValidateStrictTeamFailsFast(t *testing.T) {
+	got := ValidateStrict(Config{Profile: Team, DBProvider: "sqlite", HasDB: true})
+	if !HasError(got) {
+		t.Fatalf("strict team with sqlite/no-auth not fatal: %+v", got)
+	}
+	for _, f := range got {
+		if f.Level != LevelError {
+			t.Fatalf("strict team finding %+v not error-level", f)
+		}
+	}
+
+	// A fully-configured team is safe even in strict mode.
+	safe := ValidateStrict(Config{Profile: Team, DBProvider: "postgres", HasDB: true, RequireAuth: true, JWTSecretSet: true})
+	if HasError(safe) {
+		t.Fatalf("strict team with postgres/auth/jwt unexpectedly fatal: %+v", safe)
+	}
+}
+
+func TestValidateStrictEnterpriseFailsFast(t *testing.T) {
+	// Missing tenant enforcement + audit sink despite postgres/auth/jwt.
+	got := ValidateStrict(Config{Profile: Enterprise, DBProvider: "postgres", HasDB: true, RequireAuth: true, JWTSecretSet: true})
+	if !HasError(got) {
+		t.Fatalf("strict enterprise without tenant/audit not fatal: %+v", got)
+	}
+
+	safe := ValidateStrict(Config{
+		Profile: Enterprise, DBProvider: "postgres", HasDB: true,
+		RequireAuth: true, JWTSecretSet: true, TenantEnforced: true, AuditSinkSet: true,
+	})
+	if HasError(safe) {
+		t.Fatalf("fully configured strict enterprise unexpectedly fatal: %+v", safe)
+	}
+}
+
+func TestValidateStrictSoloProSyncWithoutTokenFailsFast(t *testing.T) {
+	got := ValidateStrict(Config{Profile: SoloPro, SyncEnabled: true})
+	if !HasError(got) {
+		t.Fatalf("strict solo_pro sync without token not fatal: %+v", got)
+	}
+}
+
+func TestValidateRemainsWarnOnly(t *testing.T) {
+	// The default Validate must never produce error-level findings — strict
+	// mode is opt-in and warn-only behavior stays available during migration.
+	got := Validate(Config{Profile: Enterprise, DBProvider: "sqlite", HasDB: true})
+	if len(got) == 0 || HasError(got) {
+		t.Fatalf("Validate enterprise findings=%+v, want non-empty warn-only", got)
+	}
+}
+
 func assertFindingCodes(t *testing.T, got []Finding, want map[string]bool) {
 	t.Helper()
 	if len(got) != len(want) {

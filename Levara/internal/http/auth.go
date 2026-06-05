@@ -19,6 +19,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"golang.org/x/crypto/bcrypt"
 
+	accesspkg "github.com/stek0v/levara/pkg/access"
 	vectorAuth "github.com/stek0v/levara/pkg/auth"
 )
 
@@ -71,10 +72,10 @@ type jwtHeader struct {
 }
 
 type jwtPayload struct {
-	Sub   string `json:"sub"`   // user ID
+	Sub   string `json:"sub"` // user ID
 	Email string `json:"email"`
-	Exp   int64  `json:"exp"`   // expiry timestamp
-	Iat   int64  `json:"iat"`   // issued at
+	Exp   int64  `json:"exp"` // expiry timestamp
+	Iat   int64  `json:"iat"` // issued at
 }
 
 func createJWT(userID, email, secret string) string {
@@ -335,10 +336,10 @@ func JWTMiddleware(secret string, requireAuth bool) fiber.Handler {
 			// auth_db may be wrapped in a struct (to prevent fasthttp io.Closer auto-close)
 			authDB := extractAuthDB(c)
 			if authDB != nil {
-				userID, perms := verifyAPIKey(authDB, apiKey)
-				if userID != "" {
-					c.Locals("user_id", userID)
-					c.Locals("api_key_permissions", perms)
+				id := verifyAPIKey(authDB, apiKey)
+				if id.Valid() {
+					c.Locals("user_id", id.UserID)
+					c.Locals("api_key_permissions", id.Permissions)
 					return c.Next()
 				}
 			}
@@ -378,21 +379,22 @@ func JWTMiddleware(secret string, requireAuth bool) fiber.Handler {
 	}
 }
 
-// verifyAPIKey checks X-API-Key against api_keys table.
-// Returns (user_id, permissions) if valid, ("", "") if not.
-func verifyAPIKey(db *sql.DB, key string) (string, string) {
+// verifyAPIKey checks X-API-Key against api_keys table. Token hashing and the
+// key→user lookup stay here in the auth layer; the result is returned as the
+// transport-independent accesspkg.APIKeyIdentity (zero value when invalid).
+func verifyAPIKey(db *sql.DB, key string) accesspkg.APIKeyIdentity {
 	h := sha256Hash(key)
 	var userID, permissions string
 	err := db.QueryRow(
 		Q(`SELECT user_id, permissions FROM api_keys WHERE key_hash = $1 AND revoked = FALSE`), h,
 	).Scan(&userID, &permissions)
 	if err != nil {
-		return "", ""
+		return accesspkg.APIKeyIdentity{}
 	}
 	// Update last_used
 	db.Exec(Q(`UPDATE api_keys SET last_used = $1 WHERE key_hash = $2`),
 		time.Now().UTC().Format(time.RFC3339), h)
-	return userID, permissions
+	return accesspkg.APIKeyIdentity{UserID: userID, Permissions: permissions}
 }
 
 func sha256Hash(s string) string {

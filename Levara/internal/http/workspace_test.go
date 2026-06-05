@@ -18,6 +18,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stek0v/levara/internal/metrics"
 	"github.com/stek0v/levara/internal/store"
+	accesspkg "github.com/stek0v/levara/pkg/access"
 	"github.com/stek0v/levara/pkg/bm25"
 	mcppkg "github.com/stek0v/levara/pkg/mcp"
 	"github.com/stek0v/levara/pkg/workspace"
@@ -217,11 +218,11 @@ func TestWorkspaceAPIAccessDeniedDoesNotRevealFilesystemState(t *testing.T) {
 	cfg, closeFn := newWorkspaceACLTestConfig(t)
 	defer closeFn()
 	seedWorkspaceACL(t, cfg.DB, "user-a", "user-b", "payments", "")
-	allowed, err := checkWorkspaceAccess(context.Background(), cfg.DB, "user-b", "payments", workspaceAccessRead)
+	decision, err := authorizeWorkspace(context.Background(), cfg.DB, accesspkg.Actor{UserID: "user-b"}, "payments", workspaceAccessRead)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if allowed {
+	if decision.Allowed {
 		t.Fatal("direct ACL check allowed foreign project")
 	}
 

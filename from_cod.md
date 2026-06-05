@@ -27,10 +27,14 @@ runtime.
 - [x] Workspace audit can mirror sanitized events into a generic `audit.EventSink`.
 - [x] Full testing scenario design added for profiles, layers, release gates,
   and enterprise readiness.
-- [ ] Access-policy extraction is not complete: several decisions still live in
-  `internal/http`.
-- [ ] Runtime profiles are warning-only; unsafe `team` and `enterprise`
-  configurations do not fail fast yet.
+- [ ] Access-policy extraction is mostly done — workspace authorization,
+  dataset visibility/access, superuser lookup, dataset-share management, and
+  tenant membership now live in `pkg/access`. Remaining inline decisions:
+  tenant auto-select default (`tenants.go`), the tenant SQL filter fragment,
+  and the `acl.permission_type` check.
+- [x] Runtime profiles fail fast in strict mode (`LEVARA_PROFILE_STRICT=1`):
+  unsafe `team`/`enterprise` configs exit non-zero. Warning-only remains the
+  default during migration.
 - [ ] Enterprise adapters are documented but not implemented.
 
 ## Main Architectural Finding
@@ -59,47 +63,52 @@ REST/MCP behavior.
 - [x] Add policy tests for workspace role decisions.
 - [x] Move workspace access check through `access.SQLPolicy`.
 - [x] Move dataset visibility helpers into `pkg/access`.
-- [ ] Move tenant membership checks out of `internal/http/tenants.go` into
-  `pkg/access` or a new `pkg/identity`.
-- [ ] Move API-key permission parsing from HTTP helpers into `pkg/access`.
-- [ ] Replace remaining `workspaceAPIKeyAllows` / `workspaceRoleAllows` helper
+- [x] Move tenant membership checks out of `internal/http/tenants.go` into
+  `pkg/access` (`SQLPolicy.IsTenantMember`).
+- [x] Move API-key permission parsing from HTTP helpers into `pkg/access`
+  (`access.APIKeyAllows`).
+- [x] Replace remaining `workspaceAPIKeyAllows` / `workspaceRoleAllows` helper
   paths with shared `pkg/access` functions.
-- [ ] Add a single policy facade:
+- [x] Add a single policy facade:
 
   ```go
   Authorize(ctx, Actor, Resource, Action) (Decision, error)
   ```
 
-- [ ] Add parity tests proving REST and MCP workspace tools use equivalent
+- [x] Add parity tests proving REST and MCP workspace tools use equivalent
   access behavior.
-- [ ] Add non-leakage tests for denied REST and MCP operations: no private
+- [x] Add non-leakage tests for denied REST and MCP operations: no private
   path, snippet, query text, collection name, or tenant ID in denied responses.
 
 Acceptance criteria:
 
 - [ ] HTTP handlers adapt request/response only; they do not decide policy.
-- [ ] MCP workspace tools and REST workspace routes share the same policy code.
-- [ ] Existing public REST/MCP/gRPC contracts remain unchanged.
+- [x] MCP workspace tools and REST workspace routes share the same policy code.
+- [x] Existing public REST/MCP/gRPC contracts remain unchanged.
 
 ### Phase 2B: Split Identity From Transport
 
 Goal: make authn/authz data accessible without tying it to Fiber middleware.
 
-- [ ] Introduce `pkg/identity` or an `identity` subpackage under `pkg/access`.
-- [ ] Define `Actor` with user ID, API-key permissions, tenant ID, auth method,
+- [x] Introduce an identity home under `pkg/access` (`pkg/access/identity.go`)
+  instead of a separate `pkg/identity` — `Actor` already lives in `pkg/access`,
+  so identity shapes are grouped there.
+- [x] Define `Actor` with user ID, API-key permissions, tenant ID, auth method,
   and superuser flag.
-- [ ] Add a request adapter in `internal/http` that constructs `Actor` from
-  Fiber locals.
-- [ ] Add an MCP adapter that constructs the same `Actor` shape from MCP
-  session/context.
-- [ ] Move superuser lookup behind the identity/access package.
-- [ ] Move API-key verification result shape into identity/access, while
-  leaving token parsing in the current auth layer until later.
+- [x] Add a request adapter in `internal/http` that constructs `Actor` from
+  Fiber locals (`workspaceActorFromFiber`).
+- [x] Add an MCP adapter that constructs the same `Actor` shape from MCP
+  session/context (`workspaceActorFromMCP`).
+- [x] Move superuser lookup behind the identity/access package
+  (`SQLPolicy.IsSuperuser`; `policy.go` ×2 + `rbac.go` now route through it).
+- [x] Move API-key verification result shape into identity/access
+  (`access.APIKeyIdentity` + `.Actor()`); `verifyAPIKey` keeps token hashing and
+  the key→user query in the auth layer but returns the typed shape.
 
 Acceptance criteria:
 
-- [ ] Policy code never reads Fiber locals directly.
-- [ ] Tests can construct actors without HTTP requests.
+- [x] Policy code never reads Fiber locals directly.
+- [x] Tests can construct actors without HTTP requests.
 - [ ] Per-agent credentials can be modeled without adding handler-specific
   branches.
 
@@ -109,29 +118,29 @@ Goal: turn `LEVARA_PROFILE` from warning-only into controlled validation.
 
 - [x] Add `pkg/profile`.
 - [x] Wire profile validation into server startup as warnings.
-- [ ] Add a strict mode flag or env var, for example:
+- [x] Add a strict mode flag or env var, for example:
 
   ```bash
   LEVARA_PROFILE_STRICT=1
   ```
 
-- [ ] In strict mode, make `team` fail fast unless Postgres, required auth, and
+- [x] In strict mode, make `team` fail fast unless Postgres, required auth, and
   stable `JWT_SECRET` are configured.
-- [ ] In strict mode, make `enterprise` fail fast unless Postgres, required auth
+- [x] In strict mode, make `enterprise` fail fast unless Postgres, required auth
   or SSO bridge, tenant enforcement, stable signing config, and audit sink are
   configured.
-- [ ] Keep `personal` permissive: SQLite/local filesystem/no auth by default.
-- [ ] Keep `solo_pro` permissive except when sync is configured without stable
+- [x] Keep `personal` permissive: SQLite/local filesystem/no auth by default.
+- [x] Keep `solo_pro` permissive except when sync is configured without stable
   credentials.
-- [ ] Add profile smoke tests for `personal`, `solo_pro`, `team`, and
+- [x] Add profile smoke tests for `personal`, `solo_pro`, `team`, and
   `enterprise`.
 
 Acceptance criteria:
 
-- [ ] `personal` starts without Postgres and without auth.
-- [ ] `team` refuses unsafe config in strict mode.
-- [ ] `enterprise` refuses unsafe tenant/audit/auth config in strict mode.
-- [ ] Warning-only behavior remains available during migration.
+- [x] `personal` starts without Postgres and without auth.
+- [x] `team` refuses unsafe config in strict mode.
+- [x] `enterprise` refuses unsafe tenant/audit/auth config in strict mode.
+- [x] Warning-only behavior remains available during migration.
 
 ### Phase 3B: Config Grouping
 
@@ -221,8 +230,8 @@ Acceptance criteria:
 - [ ] Add `make test-commit` for S0-S4 focused checks.
 - [ ] Add `make test-release-candidate` for profile smoke, sync/backup,
   workspace eval, and Pi smoke gates.
-- [ ] Add strict profile tests under `pkg/profile` and `cmd/server`.
-- [ ] Add REST/MCP policy parity tests under `internal/http`.
+- [x] Add strict profile tests under `pkg/profile` and `cmd/server`.
+- [x] Add REST/MCP policy parity tests under `internal/http`.
 - [ ] Add enterprise audit export contract tests under `pkg/audit`.
 - [ ] Add tenant isolation negative tests covering graph/search/workspace
   surfaces.
@@ -231,12 +240,12 @@ Acceptance criteria:
 
 Recommended next sprint scope:
 
-1. [ ] Create `pkg/access.Actor`, `Resource`, and generic `Authorize` facade.
-2. [ ] Move tenant membership helper into `pkg/access`.
-3. [ ] Replace remaining HTTP-local workspace permission helpers with
+1. [x] Create `pkg/access.Actor`, `Resource`, and generic `Authorize` facade.
+2. [x] Move tenant membership helper into `pkg/access`.
+3. [x] Replace remaining HTTP-local workspace permission helpers with
    `pkg/access`.
-4. [ ] Add REST/MCP parity tests for workspace read/write/search/audit.
-5. [ ] Add `LEVARA_PROFILE_STRICT=1` and fail-fast tests for `team` and
+4. [x] Add REST/MCP parity tests for workspace read/write/search/audit.
+5. [x] Add `LEVARA_PROFILE_STRICT=1` and fail-fast tests for `team` and
    `enterprise`.
 
 Do not start OIDC, SCIM, KMS, or SIEM work before the shared policy and strict

@@ -67,11 +67,9 @@ func (p SQLPolicy) AuthorizeWorkspace(ctx context.Context, req WorkspaceRequest)
 	}
 
 	q := p.rewrite
-	var isSuperuser bool
-	if err := p.DB.QueryRowContext(ctx, q("SELECT COALESCE(is_superuser, false) FROM users WHERE id = $1"), req.UserID).Scan(&isSuperuser); err != nil && !errors.Is(err, sql.ErrNoRows) {
+	if super, err := p.IsSuperuser(ctx, req.UserID); err != nil {
 		return decision, err
-	}
-	if isSuperuser {
+	} else if super {
 		decision.Allowed = true
 		decision.Role = RoleAdmin
 		decision.Reason = "superuser"
@@ -127,6 +125,26 @@ func (p SQLPolicy) rewriteArgs(query string, args ...any) (string, []any) {
 	return p.rewrite(query), args
 }
 
+// IsSuperuser reports whether userID carries the global superuser flag. A nil
+// DB, an empty user, or a missing user row are all "not a superuser" — only a
+// real query failure returns an error. This is the single canonical superuser
+// lookup; AuthorizeWorkspace, AllowedDatasetIDs, and HTTP handlers route
+// through it instead of re-issuing the query.
+func (p SQLPolicy) IsSuperuser(ctx context.Context, userID string) (bool, error) {
+	if p.DB == nil || userID == "" {
+		return false, nil
+	}
+	var isSuperuser bool
+	err := p.DB.QueryRowContext(ctx, p.rewrite("SELECT COALESCE(is_superuser, false) FROM users WHERE id = $1"), userID).Scan(&isSuperuser)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return isSuperuser, nil
+}
+
 // AllowedDatasetIDs returns dataset IDs the user owns or has been granted.
 // Nil means no filtering, matching the existing Levara search contract for
 // dev mode, anonymous requests, superusers, and SQL fallback errors.
@@ -135,9 +153,7 @@ func (p SQLPolicy) AllowedDatasetIDs(ctx context.Context, userID string) []strin
 		return nil
 	}
 
-	var isSuperuser bool
-	_ = p.DB.QueryRowContext(ctx, p.rewrite("SELECT COALESCE(is_superuser, false) FROM users WHERE id = $1"), userID).Scan(&isSuperuser)
-	if isSuperuser {
+	if super, _ := p.IsSuperuser(ctx, userID); super {
 		return nil
 	}
 
@@ -177,6 +193,26 @@ func (p SQLPolicy) CanAccessDataset(ctx context.Context, datasetID, userID strin
 	var shareID string
 	_ = p.DB.QueryRowContext(ctx, p.rewrite("SELECT id FROM dataset_shares WHERE dataset_id = $1 AND user_id = $2"), datasetID, userID).Scan(&shareID)
 	return shareID != ""
+}
+
+// CanManageDatasetShares reports whether granterID may grant or revoke shares
+// on datasetID: the dataset owner, or a user holding an admin share. Mirrors
+// the prior inline HTTP checks exactly — a missing dataset row leaves owner
+// empty (so a non-owner falls through to the share-role check), and only an
+// exact admin share grants management rights. A nil DB yields false; the share
+// handlers already special-case the no-DB path before calling.
+func (p SQLPolicy) CanManageDatasetShares(ctx context.Context, datasetID, granterID string) bool {
+	if p.DB == nil {
+		return false
+	}
+	var ownerID string
+	_ = p.DB.QueryRowContext(ctx, p.rewrite("SELECT owner_id FROM datasets WHERE id = $1"), datasetID).Scan(&ownerID)
+	if ownerID == granterID {
+		return true
+	}
+	var role string
+	_ = p.DB.QueryRowContext(ctx, p.rewrite("SELECT role FROM dataset_shares WHERE dataset_id = $1 AND user_id = $2"), datasetID, granterID).Scan(&role)
+	return role == RoleAdmin
 }
 
 func APIKeyAllows(perms, action string) bool {

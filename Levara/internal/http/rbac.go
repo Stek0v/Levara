@@ -100,18 +100,9 @@ func datasetShareCreateHandler(cfg APIConfig) fiber.Handler {
 			return c.Status(503).JSON(fiber.Map{"detail": "database required for sharing"})
 		}
 
-		// Check granter owns the dataset
-		var ownerID string
-		cfg.DB.QueryRowContext(ctx,
-			Q("SELECT owner_id FROM datasets WHERE id = $1"), dsID).Scan(&ownerID)
-		if ownerID != granterID {
-			// Check if granter has admin share
-			var grantRole string
-			cfg.DB.QueryRowContext(ctx,
-				Q("SELECT role FROM dataset_shares WHERE dataset_id = $1 AND user_id = $2"), dsID, granterID).Scan(&grantRole)
-			if grantRole != RoleAdmin {
-				return c.Status(403).JSON(fiber.Map{"detail": "only owner or admin can share"})
-			}
+		// Only the dataset owner or an admin-share holder can grant shares.
+		if !(accesspkg.SQLPolicy{DB: cfg.DB, Q: Q}).CanManageDatasetShares(ctx, dsID, granterID) {
+			return c.Status(403).JSON(fiber.Map{"detail": "only owner or admin can share"})
 		}
 
 		// Resolve user by email if needed
@@ -156,17 +147,9 @@ func datasetShareDeleteHandler(cfg APIConfig) fiber.Handler {
 			return c.JSON(fiber.Map{"deleted": true})
 		}
 
-		// Only owner or admin can revoke
-		var ownerID string
-		cfg.DB.QueryRowContext(ctx,
-			Q("SELECT owner_id FROM datasets WHERE id = $1"), dsID).Scan(&ownerID)
-		if ownerID != userID {
-			var role string
-			cfg.DB.QueryRowContext(ctx,
-				Q("SELECT role FROM dataset_shares WHERE dataset_id = $1 AND user_id = $2"), dsID, userID).Scan(&role)
-			if role != RoleAdmin {
-				return c.Status(403).JSON(fiber.Map{"detail": "only owner or admin can revoke shares"})
-			}
+		// Only the dataset owner or an admin-share holder can revoke shares.
+		if !(accesspkg.SQLPolicy{DB: cfg.DB, Q: Q}).CanManageDatasetShares(ctx, dsID, userID) {
+			return c.Status(403).JSON(fiber.Map{"detail": "only owner or admin can revoke shares"})
 		}
 
 		cfg.DB.ExecContext(ctx, Q("DELETE FROM dataset_shares WHERE id = $1"), shareID)
@@ -192,10 +175,8 @@ func permissionsMeHandler(cfg APIConfig) fiber.Handler {
 			})
 		}
 
-		// Check if superuser
-		var isSuperuser bool
-		cfg.DB.QueryRowContext(ctx,
-			Q("SELECT is_superuser FROM users WHERE id = $1"), userID).Scan(&isSuperuser)
+		// Check if superuser (shared access-policy lookup)
+		isSuperuser, _ := accesspkg.SQLPolicy{DB: cfg.DB, Q: Q}.IsSuperuser(ctx, userID)
 
 		globalRole := RoleEditor
 		if isSuperuser {

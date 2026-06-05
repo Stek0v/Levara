@@ -285,7 +285,8 @@ func main() {
 	sqlRuntime := initSQLRuntime(*dataDir)
 	pgDSN := sqlRuntime.DSN
 	pgDB := sqlRuntime.DB
-	warnRuntimeProfile(srvLog, profile.Config{
+	profileStrict := truthyEnv("LEVARA_PROFILE_STRICT")
+	if enforceRuntimeProfile(srvLog, profile.Config{
 		Profile:        os.Getenv("LEVARA_PROFILE"),
 		DBProvider:     runtimeDBProvider(pgDB),
 		HasDB:          pgDB != nil,
@@ -295,7 +296,13 @@ func main() {
 		SyncTokenSet:   strings.TrimSpace(os.Getenv("LEVARA_TOKEN")) != "",
 		TenantEnforced: truthyEnv("LEVARA_TENANT_ENFORCED"),
 		AuditSinkSet:   *mcpAuditPath != "-" && (*mcpAuditPath != "" || truthyEnv("LEVARA_WORKSPACE_AUDIT_EXPORT")),
-	})
+	}, profileStrict) {
+		srvLog.Error("runtime_profile_strict_fatal", nil, map[string]any{
+			"profile": profile.Normalize(os.Getenv("LEVARA_PROFILE")),
+			"hint":    "fix the profile requirements above or unset LEVARA_PROFILE_STRICT to start in warn-only mode",
+		})
+		os.Exit(1)
+	}
 	vizCfg.DB = pgDB // PostgreSQL/SQLite fallback for graph visualization
 	api.Get("/visualize", vectorHttp.VisualizeHTML(&vizCfg))
 	if pgDB != nil {
