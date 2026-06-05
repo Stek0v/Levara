@@ -146,25 +146,35 @@ Acceptance criteria:
 
 Goal: reduce `APIConfig` service-locator pressure before enterprise adapters.
 
-- [ ] Split config into typed groups:
-  - [ ] `IdentityConfig`
-  - [ ] `AccessConfig`
-  - [ ] `WorkspaceConfig`
-  - [ ] `SearchConfig`
-  - [ ] `StorageConfig`
-  - [ ] `AuditConfig`
-  - [ ] `ProfileConfig`
-- [ ] Keep `APIConfig` as the compatibility wrapper during migration.
-- [ ] Move profile validation input construction out of `cmd/server/main.go`
-  into a small bootstrap helper.
-- [ ] Add tests that profile validation receives the same config facts after
-  grouping.
+- [x] Split config into typed groups (projections of the flat `APIConfig` in
+  `internal/http/config_groups.go`):
+  - [x] `IdentityConfig` — JWTSecret, RequireAuth, SyncToken, Version.
+  - [x] `AccessConfig` — shared `*sql.DB` for policy decisions.
+  - [x] `WorkspaceConfig` — WorkspacePath, WorkspaceWatcher.
+  - [x] `SearchConfig` — embed/collections/BM25/LLM/rerank/router/strategies.
+  - [x] `StorageConfig` — PostgresDSN, StoragePath, FileStorage.
+  - [x] `AuditConfig` — MCPAudit, WorkspaceAuditSink, MCPAgentBucket.
+  - [x] `ProfileConfig` — `profile.Config` built by the bootstrap helper; its
+    facts are env/runtime-derived so it lives at the cmd/server layer, not as a
+    pure `APIConfig` subset.
+- [x] Keep `APIConfig` as the compatibility wrapper during migration (stays flat
+  with all fields + `cfg.Identity()/.Access()/.Workspace()/.Search()/.Storage()/.Audit()`
+  projections; no call site or struct literal changed).
+- [x] Move profile validation input construction out of `cmd/server/main.go`
+  into a small bootstrap helper (`buildRuntimeProfileConfig` + `auditSinkConfigured`).
+- [x] Add tests that profile validation receives the same config facts after
+  grouping (`internal/http/config_groups_test.go` round-trip guard;
+  `cmd/server/profile_config_test.go` same-facts + audit-sink truth table).
 
 Acceptance criteria:
 
-- [ ] Adding an enterprise adapter does not require threading unrelated fields
-  through HTTP handlers.
-- [ ] Server startup remains readable and testable.
+- [x] Adding an enterprise adapter does not require threading unrelated fields
+  through HTTP handlers — a new adapter takes the narrow group it needs (e.g.
+  `AuditConfig`) instead of the whole locator. Handler migration to the groups
+  is incremental from here.
+- [x] Server startup remains readable and testable — the profile-fact mapping is
+  now a single named, unit-tested seam instead of an inline literal in startup
+  wiring.
 
 ### Phase 4A: Enterprise Audit Adapter Boundary
 

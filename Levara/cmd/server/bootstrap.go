@@ -669,6 +669,34 @@ func runtimeDBProvider(db *sql.DB) string {
 	return "postgres"
 }
 
+// buildRuntimeProfileConfig assembles the profile.Config validated at startup
+// from the resolved runtime facts plus the relevant env vars. Phase 3B moved
+// this off the main() call path so the env→profile-fact mapping is a single
+// named, unit-testable seam (the "ProfileConfig" group) instead of a literal
+// buried in startup wiring. It takes the already-resolved DB handle, the auth
+// flag, and the MCP audit path so the env reads stay co-located here.
+func buildRuntimeProfileConfig(db *sql.DB, requireAuth bool, mcpAuditPath string) profile.Config {
+	return profile.Config{
+		Profile:        os.Getenv("LEVARA_PROFILE"),
+		DBProvider:     runtimeDBProvider(db),
+		HasDB:          db != nil,
+		RequireAuth:    requireAuth,
+		JWTSecretSet:   strings.TrimSpace(os.Getenv("JWT_SECRET")) != "",
+		SyncEnabled:    strings.TrimSpace(os.Getenv("LEVARA_SYNC_REMOTE_URL")) != "",
+		SyncTokenSet:   strings.TrimSpace(os.Getenv("LEVARA_TOKEN")) != "",
+		TenantEnforced: truthyEnv("LEVARA_TENANT_ENFORCED"),
+		AuditSinkSet:   auditSinkConfigured(mcpAuditPath),
+	}
+}
+
+// auditSinkConfigured mirrors initMCPAuditSink's enabling rule for profile
+// validation: an audit sink is considered present unless the MCP audit path is
+// explicitly disabled ("-"), with the default ("") path counting only when
+// workspace audit export is independently turned on.
+func auditSinkConfigured(mcpAuditPath string) bool {
+	return mcpAuditPath != "-" && (mcpAuditPath != "" || truthyEnv("LEVARA_WORKSPACE_AUDIT_EXPORT"))
+}
+
 func truthyEnv(key string) bool {
 	v := strings.TrimSpace(os.Getenv(key))
 	return v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes")
