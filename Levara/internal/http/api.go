@@ -90,6 +90,10 @@ type APIConfig struct {
 	// result size) to its configured writer. Nil disables audit logging —
 	// metrics still emit, but no JSONL trail is kept.
 	MCPAudit audit.Sink
+	// WorkspaceAuditSink mirrors sanitized workspace audit events to an optional
+	// generic audit boundary for future enterprise export. Local JSONL audit
+	// remains the source exposed by workspace_audit_log.
+	WorkspaceAuditSink audit.EventSink
 	// MCPAgentBucket bounds agent_id cardinality on MCP audit metrics. Nil
 	// degrades to a fixed "unknown" label.
 	MCPAgentBucket *metrics.UserBucket

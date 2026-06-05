@@ -68,6 +68,32 @@ type Sink interface {
 	Log(Entry)
 }
 
+// Event is a generic audit event for non-MCP surfaces such as workspace,
+// profile validation, and future enterprise export sinks.
+type Event struct {
+	TS       string         `json:"ts"`
+	Source   string         `json:"source"`
+	Type     string         `json:"type"`
+	Subject  string         `json:"subject,omitempty"`
+	ActorID  string         `json:"actor_id,omitempty"`
+	Outcome  string         `json:"outcome,omitempty"`
+	Metadata map[string]any `json:"metadata,omitempty"`
+}
+
+// EventSink is the generic audit-export boundary. Implementations may write
+// JSONL, forward to a SIEM/log pipeline, or fan out to multiple destinations.
+type EventSink interface {
+	LogEvent(Event)
+}
+
+type EventSinkFunc func(Event)
+
+func (f EventSinkFunc) LogEvent(e Event) {
+	if f != nil {
+		f(e)
+	}
+}
+
 // Logger serializes Entry values to JSON lines on the configured writer.
 // All exported methods are safe for concurrent use.
 type Logger struct {
@@ -197,12 +223,12 @@ func truncate(s string) string {
 // gzipped to .log.gz, and a new file is opened. Files older than
 // retentionDays are pruned at rotation time.
 type FileLogger struct {
-	dir            string
-	retentionDays  int
-	mu             sync.Mutex
-	currentDay     string
-	currentFile    *os.File
-	currentLogger  *Logger
+	dir           string
+	retentionDays int
+	mu            sync.Mutex
+	currentDay    string
+	currentFile   *os.File
+	currentLogger *Logger
 }
 
 // NewFileLogger opens (or creates) a daily-rolling audit log under dir.
