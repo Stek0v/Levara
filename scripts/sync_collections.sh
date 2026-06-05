@@ -30,10 +30,11 @@
 #                        or a "broken pipe")
 #   POLL_TIMEOUT=600     seconds to wait for each import run to finish
 #
-# Note: the receiver re-embeds each record's full text as a single vector, so
-# collections whose records hold whole documents (e.g. an "uploads" staging
-# collection) can fail with "input length exceeds the context length" — those
-# need chunking upstream, not a sync setting.
+# Note: the receiver re-embeds collection records and, on current servers,
+# splits oversized records into overlapping units before embedding. If an older
+# receiver still reports "input length exceeds the context length", upgrade the
+# receiver before lowering BATCH_RECORDS; BATCH_RECORDS only limits HTTP body
+# size, not embed context size.
 #
 set -uo pipefail
 
