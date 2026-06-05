@@ -4,7 +4,6 @@ package http
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -49,15 +48,11 @@ func TenantMiddleware(db *sql.DB) fiber.Handler {
 			return c.Next()
 		}
 
-		// 2. Resolve from user's tenant memberships
+		// 2. Resolve from user's tenant memberships (policy decides; a query
+		// failure leaves the request in the no-isolation path, as before).
 		userID, _ := c.Locals("user_id").(string)
 		if userID != "" && db != nil {
-			var tid string
-			// If user belongs to exactly one tenant, auto-select it
-			err := db.QueryRowContext(c.UserContext(),
-				Q(`SELECT tenant_id FROM user_tenant WHERE user_id = $1 LIMIT 1`), userID,
-			).Scan(&tid)
-			if err == nil && tid != "" {
+			if tid, _ := tenantDefaultForUser(c.UserContext(), db, userID); tid != "" {
 				c.Locals("tenant_id", tid)
 			}
 		}
@@ -81,19 +76,11 @@ func TenantFilter(tenantID string) string {
 	return clause
 }
 
-// TenantFilterSQL returns a tenant-isolation SQL clause plus bind args.
+// TenantFilterSQL returns a tenant-isolation SQL clause plus bind args. The
+// clause shape and placeholder dialect are decided by the shared policy in
+// pkg/access; only the sqlite-vs-positional choice is a transport detail.
 func TenantFilterSQL(tenantID string, startIdx int) (string, []any) {
-	if tenantID == "" {
-		return "", nil
-	}
-	if startIdx <= 0 {
-		startIdx = 1
-	}
-	placeholder := fmt.Sprintf("$%d", startIdx)
-	if GetDBProvider() == DBSQLite {
-		placeholder = "?"
-	}
-	return " AND owner_id IN (SELECT user_id FROM user_tenant WHERE tenant_id = " + placeholder + ")", []any{tenantID}
+	return accesspkg.TenantOwnerFilterSQL(tenantID, startIdx, GetDBProvider() == DBSQLite)
 }
 
 // tenantUserIsMember delegates the membership decision to the shared
@@ -101,6 +88,13 @@ func TenantFilterSQL(tenantID string, startIdx int) (string, []any) {
 // authorization SQL of their own.
 func tenantUserIsMember(ctx context.Context, db *sql.DB, userID, tenantID string) (bool, error) {
 	return accesspkg.SQLPolicy{DB: db, Q: Q}.IsTenantMember(ctx, userID, tenantID)
+}
+
+// tenantDefaultForUser delegates the auto-select decision (which tenant to
+// activate when no X-Tenant-Id header is present) to the shared policy, keeping
+// the middleware free of tenant-resolution SQL.
+func tenantDefaultForUser(ctx context.Context, db *sql.DB, userID string) (string, error) {
+	return accesspkg.SQLPolicy{DB: db, Q: Q}.DefaultTenantForUser(ctx, userID)
 }
 
 // CollectionPrefix returns the tenant-scoped collection name.
@@ -252,8 +246,7 @@ func aclGrantHandler(cfg APIConfig) fiber.Handler {
 		if req.PrincipalID == "" || req.DatasetID == "" || req.PermissionType == "" {
 			return c.Status(400).JSON(fiber.Map{"detail": "principal_id, dataset_id, permission_type required"})
 		}
-		valid := map[string]bool{"read": true, "write": true, "delete": true, "share": true}
-		if !valid[req.PermissionType] {
+		if !accesspkg.ValidPermissionType(req.PermissionType) {
 			return c.Status(400).JSON(fiber.Map{"detail": "permission_type must be read, write, delete, or share"})
 		}
 		id := uuid.New().String()
@@ -274,7 +267,10 @@ func aclCheckHandler(cfg APIConfig) fiber.Handler {
 		if userID == "" || datasetID == "" {
 			return c.Status(400).JSON(fiber.Map{"detail": "user_id and dataset_id query params required"})
 		}
-		perms := map[string]bool{"read": false, "write": false, "delete": false, "share": false}
+		perms := map[string]bool{}
+		for _, pt := range accesspkg.PermissionTypes() {
+			perms[pt] = false
+		}
 		if cfg.DB != nil {
 			rows, err := cfg.DB.QueryContext(context.Background(),
 				Q("SELECT permission_type FROM acl WHERE principal_id = $1 AND dataset_id = $2"), userID, datasetID)
