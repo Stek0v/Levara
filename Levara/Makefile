@@ -1,4 +1,4 @@
-.PHONY: all build run test benchmark clean docker arm64 proto proto-go proto-python swag contract contract-check
+.PHONY: all build run test test-commit test-release-candidate benchmark clean docker arm64 proto proto-go proto-python swag contract contract-check
 
 # Regenerate OpenAPI spec from swaggo annotations (T13).
 # Requires `go install github.com/swaggo/swag/cmd/swag@latest` once.
@@ -39,6 +39,45 @@ test:
 benchmark:
 	@echo "Running Benchmark Suite..."
 	@go run ./cmd/benchmark/main.go
+
+# --- Test gates (docs/full-testing-scenarios.md) ---
+
+# Every-commit gate: the focused S0-S4 suites a change must pass before it is
+# committed. Ordered cheapest-first so a static/docs slip fails fast. Each suite
+# is its own recipe line, so the first failure aborts the target.
+test-commit:
+	@echo "[S0] static + docs"
+	@git diff --check
+	@go test ./docs
+	@echo "[S1] unit packages (access, profile, audit, workspace, mcp)"
+	@go test ./pkg/access ./pkg/profile ./pkg/audit ./pkg/workspace ./pkg/mcp
+	@echo "[S2] core engine (store, vectorstore, bm25)"
+	@go test ./internal/store ./pkg/vectorstore ./pkg/bm25
+	@echo "[S3] HTTP / MCP surface (internal/http)"
+	@go test ./internal/http
+	@echo "[S4] server bootstrap (cmd/server)"
+	@go test ./cmd/server
+	@echo "test-commit: S0-S4 green."
+
+# Release-candidate gate: the heavier, ship-decision checks. Runs fresh
+# (-count=1, no cached results) over profile smoke, sync + backup, and the
+# workspace retrieval-quality eval. Pi-hardware smoke and the two-server S3 mock
+# harness are NOT automated here — they remain manual per the runbook; this
+# target logs that rather than silently implying full coverage.
+test-release-candidate:
+	@echo "[RC] profile smoke (pkg/profile + cmd/server runtime profile/audit)"
+	@go test -count=1 ./pkg/profile
+	@go test -count=1 ./cmd/server -run 'Profile|AuditSink'
+	@echo "[RC] sync flow (internal/http TestSync*)"
+	@go test -count=1 ./internal/http -run 'TestSync'
+	@echo "[RC] backup / restore (pkg/backup)"
+	@go test -count=1 ./pkg/backup
+	@echo "[RC] workspace retrieval-quality eval"
+	@go test -count=1 ./internal/http -run 'TestWorkspaceRetrievalQualityEval|TestWorkspaceEvalMetricsEmpty'
+	@echo "test-release-candidate: automated gates green."
+	@echo "NOTE: not automated by this target (run manually — see docs/full-testing-scenarios.md):"
+	@echo "  - Pi-hardware edge smoke (10.23.0.53)"
+	@echo "  - two-server sync/backup mock harness (S3 cross-instance)"
 
 # --- Cross-compile ---
 

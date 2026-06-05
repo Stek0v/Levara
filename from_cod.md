@@ -252,15 +252,15 @@ Acceptance criteria:
 - [x] Add docs coverage for the product-ladder testing plan.
 - [x] Validate focused packages after current PR merges:
   `go test ./internal/http ./pkg/embed ./cmd/server`.
-- [ ] Add `make test-commit` for S0-S4 focused checks.
-- [ ] Add `make test-release-candidate` for profile smoke, sync/backup,
+- [x] Add `make test-commit` for S0-S4 focused checks.
+- [x] Add `make test-release-candidate` for profile smoke, sync/backup,
   workspace eval, and Pi smoke gates.
 - [x] Add strict profile tests under `pkg/profile` and `cmd/server`.
 - [x] Add REST/MCP policy parity tests under `internal/http`.
 - [x] Add enterprise audit export contract tests under `pkg/audit`
   (`export_test.go`: no-block/backpressure, retry-then-deliver, fail-after-retries,
   no-leak sanitization, JSONL write, retention prune).
-- [ ] Add tenant isolation negative tests covering graph/search/workspace
+- [x] Add tenant isolation negative tests covering graph/search/workspace
   surfaces.
 
 ## Immediate Next Sprint
