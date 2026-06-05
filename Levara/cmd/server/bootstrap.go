@@ -625,6 +625,37 @@ func initMCPAuditSink(path string, log *observe.Logger) audit.Sink {
 	return fl
 }
 
+// initWorkspaceAuditExporter constructs the optional enterprise audit-export
+// adapter that workspace handlers mirror sanitized events into (Phase 4A). It
+// is enabled by LEVARA_WORKSPACE_AUDIT_EXPORT (truthy) — the same flag profile
+// validation reads via auditSinkConfigured, so "export configured" stays a
+// single source of truth. Events are written as daily-rolled, gzipped JSONL
+// under LEVARA_WORKSPACE_AUDIT_EXPORT_DIR, defaulting to <dataDir>/audit/
+// workspace; retention is LEVARA_WORKSPACE_AUDIT_RETENTION_DAYS (default 30).
+//
+// Returns nil when disabled or on init failure — a broken audit sink must never
+// abort startup, matching the "audit failures are observable but do not break
+// core operations" acceptance. The returned *audit.AsyncExporter is both the
+// EventSink to wire into APIConfig.WorkspaceAuditSink and the closer to drain
+// on shutdown.
+func initWorkspaceAuditExporter(dataDir string, log *observe.Logger) *audit.AsyncExporter {
+	if !truthyEnv("LEVARA_WORKSPACE_AUDIT_EXPORT") {
+		return nil
+	}
+	dir := strings.TrimSpace(os.Getenv("LEVARA_WORKSPACE_AUDIT_EXPORT_DIR"))
+	if dir == "" {
+		dir = filepath.Join(dataDir, "audit", "workspace")
+	}
+	retention := intEnv("LEVARA_WORKSPACE_AUDIT_RETENTION_DAYS", 30)
+	exp, err := audit.NewJSONLExporter(dir, retention, audit.ExportConfig{})
+	if err != nil {
+		log.Warn("workspace_audit_export_init_failed", map[string]any{"dir": dir, "err": err.Error()})
+		return nil
+	}
+	log.Info("workspace_audit_export_ready", map[string]any{"dir": dir, "retention_days": retention})
+	return exp
+}
+
 // evaluateRuntimeProfile is the pure decision core for profile validation: it
 // returns the findings to log and whether startup must fail fast. In strict
 // mode the profile requirements are error-level and any of them is fatal; the

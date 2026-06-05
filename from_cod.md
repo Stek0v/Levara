@@ -184,18 +184,31 @@ Goal: prepare audit export without hard-coding SIEM behavior.
 
 - [x] Add generic `audit.EventSink`.
 - [x] Mirror sanitized workspace audit events into optional `WorkspaceAuditSink`.
-- [ ] Add an audit adapter interface with retry/backpressure semantics.
-- [ ] Add local JSONL export adapter as the first concrete implementation.
-- [ ] Add tests proving audit export never blocks or breaks a user request.
-- [ ] Add tests proving exported audit events contain no markdown content,
-  private file paths, raw search snippets, secrets, or raw tokens.
-- [ ] Add retention configuration proposal and tests for local audit files.
+- [x] Add an audit adapter interface with retry/backpressure semantics
+  (`audit.Exporter` + `AsyncExporter`: bounded buffer, drop-on-full backpressure
+  with a `Dropped` counter, bounded retry with doubling backoff capped at 2s,
+  `ExportStats` for observability).
+- [x] Add local JSONL export adapter as the first concrete implementation
+  (`audit.EventFileSink` daily-rolled `audit-YYYY-MM-DD.jsonl` + gzip-on-rotation;
+  `audit.NewJSONLExporter` wires it behind the `AsyncExporter`). Wired into
+  startup via `initWorkspaceAuditExporter` (gated on `LEVARA_WORKSPACE_AUDIT_EXPORT`).
+- [x] Add tests proving audit export never blocks or breaks a user request
+  (`TestAsyncExporterNeverBlocks`: a wedged sink still returns LogEvent in µs and
+  sheds the overflow as drops).
+- [x] Add tests proving exported audit events contain no markdown content,
+  private file paths, raw search snippets, secrets, or raw tokens
+  (`TestSanitizeEventScrubsLeaks` + `SanitizeEvent` defense-in-depth at the boundary).
+- [x] Add retention configuration proposal and tests for local audit files
+  (`LEVARA_WORKSPACE_AUDIT_RETENTION_DAYS`, default 30; `TestEventFileSinkRetentionPrunes`).
 
 Acceptance criteria:
 
-- [ ] Enterprise audit export can be plugged in without editing workspace
-  handlers.
-- [ ] Audit failures are observable but do not break core operations.
+- [x] Enterprise audit export can be plugged in without editing workspace
+  handlers (the adapter drops into the existing `WorkspaceAuditSink` slot; only
+  bootstrap wiring changed, no handler edits).
+- [x] Audit failures are observable but do not break core operations (delivery
+  is async + best-effort with drop/retry/failed counters; a failed init returns
+  nil and startup continues).
 
 ### Phase 4B: Enterprise Identity Adapters
 
@@ -244,7 +257,9 @@ Acceptance criteria:
   workspace eval, and Pi smoke gates.
 - [x] Add strict profile tests under `pkg/profile` and `cmd/server`.
 - [x] Add REST/MCP policy parity tests under `internal/http`.
-- [ ] Add enterprise audit export contract tests under `pkg/audit`.
+- [x] Add enterprise audit export contract tests under `pkg/audit`
+  (`export_test.go`: no-block/backpressure, retry-then-deliver, fail-after-retries,
+  no-leak sanitization, JSONL write, retention prune).
 - [ ] Add tenant isolation negative tests covering graph/search/workspace
   surfaces.
 
