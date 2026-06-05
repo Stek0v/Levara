@@ -55,10 +55,10 @@ func ToolListMemories(ctx context.Context, deps Deps, args map[string]any) ToolR
 		qargs = append(qargs, hall)
 	}
 
+	conds = append(conds, "superseded_by = ''")
+
 	sqlStr := `SELECT id, key, value, type, owner_id, room, hall, is_pinned, pin_priority, created_at, updated_at FROM memories`
-	if len(conds) > 0 {
-		sqlStr += " WHERE " + strings.Join(conds, " AND ")
-	}
+	sqlStr += " WHERE " + strings.Join(conds, " AND ")
 	sqlStr += fmt.Sprintf(" ORDER BY updated_at DESC LIMIT %d", listMemoriesCap)
 
 	rows, err := db.QueryContext(ctx, deps.Q(sqlStr), qargs...)
@@ -250,7 +250,7 @@ func ToolWakeUp(ctx context.Context, deps Deps, args map[string]any) ToolResult 
 // shared owner) in priority-desc order.
 func wakeUpPinned(ctx context.Context, db *sql.DB, rewrite func(string) string, ownerID, collectionName string) []map[string]any {
 	sqlStr := `SELECT key, value, hall, room, pin_priority FROM memories
-		WHERE is_pinned = 1 AND (owner_id = $1 OR owner_id = '')`
+		WHERE is_pinned = 1 AND (owner_id = $1 OR owner_id = '') AND superseded_by = ''`
 	qargs := []any{ownerID}
 	if collectionName != "" {
 		sqlStr += " AND collection_name = $2"

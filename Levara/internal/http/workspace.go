@@ -3,7 +3,6 @@ package http
 import (
 	"context"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -16,6 +15,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
+	accesspkg "github.com/stek0v/levara/pkg/access"
 	"github.com/stek0v/levara/pkg/bm25"
 	"github.com/stek0v/levara/pkg/embed"
 	"github.com/stek0v/levara/pkg/vectorstore"
@@ -638,61 +638,16 @@ func authorizeWorkspaceMCP(ctx context.Context, cfg APIConfig, projectID string,
 }
 
 func workspaceAPIKeyAllows(perms string, access workspaceAccessLevel) bool {
-	if perms == "" {
-		return true
-	}
-	perms = strings.ToLower(perms)
-	if access == workspaceAccessRead {
-		return strings.Contains(perms, "read") || strings.Contains(perms, "write") || strings.Contains(perms, "admin")
-	}
-	return strings.Contains(perms, "write") || strings.Contains(perms, "admin")
+	return accesspkg.APIKeyAllows(perms, string(access))
 }
 
-func checkWorkspaceAccess(ctx context.Context, db *sql.DB, userID, projectID string, access workspaceAccessLevel) (bool, error) {
-	if db == nil || userID == "" || projectID == "" {
-		return true, nil
-	}
-
-	var isSuperuser bool
-	_ = db.QueryRowContext(ctx, Q("SELECT COALESCE(is_superuser, false) FROM users WHERE id = $1"), userID).Scan(&isSuperuser)
-	if isSuperuser {
-		return true, nil
-	}
-
-	var ownerID string
-	err := db.QueryRowContext(ctx, Q("SELECT COALESCE(owner_id, '') FROM datasets WHERE id = $1"), projectID).Scan(&ownerID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	if ownerID == "" || ownerID == userID {
-		return true, nil
-	}
-
-	var role string
-	err = db.QueryRowContext(ctx, Q("SELECT role FROM dataset_shares WHERE dataset_id = $1 AND user_id = $2"), projectID, userID).Scan(&role)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	return workspaceRoleAllows(role, access), nil
+func checkWorkspaceAccess(ctx context.Context, db accessDB, userID, projectID string, access workspaceAccessLevel) (bool, error) {
+	decision, err := workspaceAccessDecision(ctx, db, userID, projectID, access, "")
+	return decision.Allowed, err
 }
 
 func workspaceRoleAllows(role string, access workspaceAccessLevel) bool {
-	switch strings.ToLower(role) {
-	case RoleAdmin:
-		return true
-	case RoleEditor:
-		return access == workspaceAccessRead || access == workspaceAccessWrite
-	case RoleViewer:
-		return access == workspaceAccessRead
-	default:
-		return false
-	}
+	return accesspkg.RoleAllows(role, string(access))
 }
 
 func indexWorkspaceMarkdown(ctx context.Context, cfg APIConfig, req workspaceIndexRequest) (workspaceIndexResponse, error) {

@@ -9,6 +9,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
+	accesspkg "github.com/stek0v/levara/pkg/access"
 )
 
 // Role constants
@@ -233,53 +234,12 @@ func permissionsMeHandler(cfg APIConfig) fiber.Handler {
 // Returns nil if db is nil or userID is empty (dev mode = no filtering).
 // Superusers (is_superuser=true) get nil (= see everything).
 func GetAllowedDatasetIDs(db *sql.DB, ctx context.Context, userID string) []string {
-	if db == nil || userID == "" {
-		return nil // nil = no filtering (dev mode)
-	}
-
-	// Superuser bypass: see all datasets
-	var isSuperuser bool
-	db.QueryRowContext(ctx, Q("SELECT COALESCE(is_superuser, false) FROM users WHERE id = $1"), userID).Scan(&isSuperuser)
-	if isSuperuser {
-		return nil // nil = no filtering
-	}
-
-	allowedSQL, allowedArgs := QArgs(`SELECT DISTINCT d.id FROM datasets d
-		 LEFT JOIN dataset_shares s ON s.dataset_id = d.id AND s.user_id = $1
-		 WHERE d.owner_id = $1 OR d.owner_id = '' OR d.owner_id IS NULL OR s.id IS NOT NULL`, userID)
-	rows, err := db.QueryContext(ctx, allowedSQL, allowedArgs...)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
-	ids := []string{}
-	for rows.Next() {
-		var id string
-		rows.Scan(&id)
-		ids = append(ids, id)
-	}
-	return ids
+	return accesspkg.SQLPolicy{DB: db, Q: Q, QA: QArgs}.AllowedDatasetIDs(ctx, userID)
 }
 
 // CheckDatasetAccess verifies the user can access a dataset (owner, shared, or no-auth mode).
 func CheckDatasetAccess(db *sql.DB, c *fiber.Ctx, datasetID, userID string) bool {
-	if db == nil || userID == "" {
-		return true // dev mode
-	}
 	ctx, cancel := requestContextWithTimeout(c, timeoutFromEnvMs("HTTP_REQUEST_TIMEOUT_MS", defaultAPIRequestTimeout))
 	defer cancel()
-
-	// Owner check
-	var ownerID string
-	db.QueryRowContext(ctx,
-		Q("SELECT owner_id FROM datasets WHERE id = $1"), datasetID).Scan(&ownerID)
-	if ownerID == "" || ownerID == userID {
-		return true
-	}
-
-	// Share check
-	var shareID string
-	db.QueryRowContext(ctx,
-		Q("SELECT id FROM dataset_shares WHERE dataset_id = $1 AND user_id = $2"), datasetID, userID).Scan(&shareID)
-	return shareID != ""
+	return accesspkg.SQLPolicy{DB: db, Q: Q, QA: QArgs}.CanAccessDataset(ctx, datasetID, userID)
 }
