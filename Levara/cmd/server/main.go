@@ -286,17 +286,7 @@ func main() {
 	pgDSN := sqlRuntime.DSN
 	pgDB := sqlRuntime.DB
 	profileStrict := truthyEnv("LEVARA_PROFILE_STRICT")
-	if enforceRuntimeProfile(srvLog, profile.Config{
-		Profile:        os.Getenv("LEVARA_PROFILE"),
-		DBProvider:     runtimeDBProvider(pgDB),
-		HasDB:          pgDB != nil,
-		RequireAuth:    *requireAuth,
-		JWTSecretSet:   strings.TrimSpace(os.Getenv("JWT_SECRET")) != "",
-		SyncEnabled:    strings.TrimSpace(os.Getenv("LEVARA_SYNC_REMOTE_URL")) != "",
-		SyncTokenSet:   strings.TrimSpace(os.Getenv("LEVARA_TOKEN")) != "",
-		TenantEnforced: truthyEnv("LEVARA_TENANT_ENFORCED"),
-		AuditSinkSet:   *mcpAuditPath != "-" && (*mcpAuditPath != "" || truthyEnv("LEVARA_WORKSPACE_AUDIT_EXPORT")),
-	}, profileStrict) {
+	if enforceRuntimeProfile(srvLog, buildRuntimeProfileConfig(pgDB, *requireAuth, *mcpAuditPath), profileStrict) {
 		srvLog.Error("runtime_profile_strict_fatal", nil, map[string]any{
 			"profile": profile.Normalize(os.Getenv("LEVARA_PROFILE")),
 			"hint":    "fix the profile requirements above or unset LEVARA_PROFILE_STRICT to start in warn-only mode",
