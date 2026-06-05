@@ -1109,10 +1109,20 @@ func graphContextFromPostgres(ctx context.Context, cfg APIConfig, names []string
 	// Build query with optional dataset_id filter
 	var dsFilter string
 	if allowedDatasetIDs != nil {
-		dsPlaceholders := make([]string, len(allowedDatasetIDs))
+		// Build two independent placeholder sets — one per endpoint. Q()
+		// rewrites $N to positional '?' for the sqlite dialect, where each '?'
+		// consumes the next arg rather than referring back to a reused index;
+		// reusing one placeholder set across both IN clauses would emit more
+		// '?' than args and fail with "expected N arguments, got M". Appending
+		// the ids once per endpoint keeps the count aligned on both dialects.
+		srcPlaceholders := make([]string, len(allowedDatasetIDs))
 		for i, id := range allowedDatasetIDs {
-			idx := len(names) + i + 1
-			dsPlaceholders[i] = fmt.Sprintf("$%d", idx)
+			srcPlaceholders[i] = fmt.Sprintf("$%d", len(args)+1)
+			args = append(args, id)
+		}
+		tgtPlaceholders := make([]string, len(allowedDatasetIDs))
+		for i, id := range allowedDatasetIDs {
+			tgtPlaceholders[i] = fmt.Sprintf("$%d", len(args)+1)
 			args = append(args, id)
 		}
 		// Filter both endpoints (gn = source, gn2 = target). A cross-dataset
@@ -1120,7 +1130,7 @@ func graphContextFromPostgres(ctx context.Context, cfg APIConfig, names []string
 		dsFilter = fmt.Sprintf(
 			" AND (gn.dataset_id IS NULL OR gn.dataset_id = '' OR gn.dataset_id IN (%s))"+
 				" AND (gn2.dataset_id IS NULL OR gn2.dataset_id = '' OR gn2.dataset_id IN (%s))",
-			strings.Join(dsPlaceholders, ","), strings.Join(dsPlaceholders, ","))
+			strings.Join(srcPlaceholders, ","), strings.Join(tgtPlaceholders, ","))
 	}
 
 	limitIdx := len(args) + 1
