@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 const (
@@ -177,5 +178,23 @@ func BenchmarkEmbedSingle(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		client.EmbedSingle(ctx, "тестовый текст для бенчмарка эмбеддинга")
+	}
+}
+
+func TestWithTimeoutOverridesDefault(t *testing.T) {
+	c := NewClient("http://localhost:9001/v1/embeddings", embedModel, 16, 1)
+	if c.httpClient.Timeout != 30*time.Second {
+		t.Fatalf("default timeout = %v, want 30s", c.httpClient.Timeout)
+	}
+	if got := c.WithTimeout(5 * time.Minute); got != c {
+		t.Errorf("WithTimeout should return the same client for chaining")
+	}
+	if c.httpClient.Timeout != 5*time.Minute {
+		t.Errorf("timeout = %v, want 5m after WithTimeout", c.httpClient.Timeout)
+	}
+	// Non-positive duration must leave the timeout unchanged.
+	c.WithTimeout(0)
+	if c.httpClient.Timeout != 5*time.Minute {
+		t.Errorf("timeout = %v, want unchanged 5m after WithTimeout(0)", c.httpClient.Timeout)
 	}
 }
