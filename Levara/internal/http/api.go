@@ -30,6 +30,13 @@ type APIConfig struct {
 	WorkspacePath string
 	JWTSecret     string
 	RequireAuth   bool
+	// Version is the build SHA (cmd/server.GitSHA) surfaced in the sync
+	// manifest so a pull/push can warn on instance version skew.
+	Version string
+	// SyncToken is the bearer token injected into outbound cross-instance
+	// sync requests (manifest/export/import). Empty = unauthenticated (the
+	// pre-existing behaviour) — required when the remote enforces auth.
+	SyncToken string
 	// WorkspaceWatcher exposes polling watcher status to REST/MCP observability
 	// endpoints. Nil means watcher status is unavailable/disabled.
 	WorkspaceWatcher *WorkspaceWatchState
@@ -83,6 +90,10 @@ type APIConfig struct {
 	// result size) to its configured writer. Nil disables audit logging —
 	// metrics still emit, but no JSONL trail is kept.
 	MCPAudit audit.Sink
+	// WorkspaceAuditSink mirrors sanitized workspace audit events to an optional
+	// generic audit boundary for future enterprise export. Local JSONL audit
+	// remains the source exposed by workspace_audit_log.
+	WorkspaceAuditSink audit.EventSink
 	// MCPAgentBucket bounds agent_id cardinality on MCP audit metrics. Nil
 	// degrades to a fixed "unknown" label.
 	MCPAgentBucket *metrics.UserBucket
@@ -145,8 +156,10 @@ func RegisterAPI(app fiber.Router, cfg APIConfig) {
 	app.Get("/collections", collectionsListHandler(cfg))
 	app.Post("/collections", collectionCreateHandler(cfg))
 	app.Delete("/collections/:name", collectionDeleteHandler(cfg))
+	app.Delete("/collections/:name/records/:id", collectionRecordDeleteHandler(cfg))
 	app.Get("/collections/:name/meta", collectionMetaHandler(cfg))
 	app.Put("/collections/:name/meta", collectionMetaUpdateHandler(cfg))
+	app.Post("/collections/:name/rename", collectionRenameHandler(cfg))
 
 	// Phase 2: rerank info surface (resolves design open question — clients
 	// need a cheap way to confirm which reranker variant is configured).

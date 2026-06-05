@@ -78,6 +78,10 @@ parsing `/metrics`:
 - `runtime_stats` — collections, embed/llm/rerank config, process state.
 - `ingestion_status` — in-flight + recent cognify/codify/analyze runs.
 - `recent_errors` — failed runs + doctor checks reporting `fail`.
+- `reconcile_memory` — verify (and optionally repair) SQL↔vector
+  consistency across `_memories_*` sidecars. Dry-run by default; `apply`
+  re-embeds missing vectors, `delete_orphans` reaps vectors with no live
+  SQL row. The durable backstop to per-write index verification.
 - `sync_status` — last sync per direction (push/pull) from heartbeats.
 - `doctor` — full health check across dependencies.
 - `heartbeat` — recent system events log.

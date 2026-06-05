@@ -69,10 +69,13 @@ import (
 	"github.com/stek0v/levara/internal/store"
 
 	_ "github.com/stek0v/levara/docs" // swaggo-generated OpenAPI spec (T13)
+	"github.com/stek0v/levara/pkg/consolidate"
 	"github.com/stek0v/levara/pkg/embed"
 	"github.com/stek0v/levara/pkg/graphdb"
 	"github.com/stek0v/levara/pkg/llmcache"
+	"github.com/stek0v/levara/pkg/mcp"
 	"github.com/stek0v/levara/pkg/observe"
+	"github.com/stek0v/levara/pkg/profile"
 	"github.com/stek0v/levara/pkg/router"
 	"github.com/stek0v/levara/pkg/runreg"
 
@@ -146,6 +149,13 @@ func intEnv(key string, fallback int) int {
 }
 
 func main() {
+	if len(os.Args) >= 2 && os.Args[1] == "mcp" {
+		if err := runMCPStdio(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "mcp:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	bootstrap := flag.Bool("bootstrap", false, "Bootstrap the Raft cluster (Leader only)")
 	standalone := flag.Bool("standalone", true, "Standalone mode: WAL-only, no Raft consensus (fastest)")
 	dim := flag.Int("dim", 128, "Vector dimension size (must match embedding model output)")
@@ -275,6 +285,17 @@ func main() {
 	sqlRuntime := initSQLRuntime(*dataDir)
 	pgDSN := sqlRuntime.DSN
 	pgDB := sqlRuntime.DB
+	warnRuntimeProfile(srvLog, profile.Config{
+		Profile:        os.Getenv("LEVARA_PROFILE"),
+		DBProvider:     runtimeDBProvider(pgDB),
+		HasDB:          pgDB != nil,
+		RequireAuth:    *requireAuth,
+		JWTSecretSet:   strings.TrimSpace(os.Getenv("JWT_SECRET")) != "",
+		SyncEnabled:    strings.TrimSpace(os.Getenv("LEVARA_SYNC_REMOTE_URL")) != "",
+		SyncTokenSet:   strings.TrimSpace(os.Getenv("LEVARA_TOKEN")) != "",
+		TenantEnforced: truthyEnv("LEVARA_TENANT_ENFORCED"),
+		AuditSinkSet:   *mcpAuditPath != "-" && (*mcpAuditPath != "" || truthyEnv("LEVARA_WORKSPACE_AUDIT_EXPORT")),
+	})
 	vizCfg.DB = pgDB // PostgreSQL/SQLite fallback for graph visualization
 	api.Get("/visualize", vectorHttp.VisualizeHTML(&vizCfg))
 	if pgDB != nil {
@@ -322,6 +343,10 @@ func main() {
 	if embedModel == "" {
 		embedModel = "text-embedding-3-small"
 	}
+	// Stamp the configured embedder onto collections auto-created by the lazy
+	// Insert path (e.g. _memories_* sidecars from a memory write) so they don't
+	// inherit empty embedding_model metadata (findings P2.1).
+	colManager.SetDefaultModel(embedModel)
 
 	// Auth endpoints (public — no JWT required)
 	jwtSecret := os.Getenv("JWT_SECRET")
@@ -439,6 +464,8 @@ func main() {
 		WorkspacePath:           *dataDir + "/workspace",
 		JWTSecret:               authCfg.JWTSecret,
 		RequireAuth:             *requireAuth,
+		Version:                 GitSHA,
+		SyncToken:               os.Getenv("LEVARA_TOKEN"),
 		WorkspaceWatcher:        workspaceWatcher,
 		EmbedEndpoint:           embedEndpoint,
 		EmbedModel:              embedModel,
@@ -472,11 +499,14 @@ func main() {
 		WorkspacePath:           *dataDir + "/workspace",
 		JWTSecret:               authCfg.JWTSecret,
 		RequireAuth:             *requireAuth,
+		Version:                 GitSHA,
+		SyncToken:               os.Getenv("LEVARA_TOKEN"),
 		WorkspaceWatcher:        workspaceWatcher,
 		Collections:             colManager,
 		DB:                      pgDB,
 		BM25Indexes:             grpcSvc.BM25Indexes(),
 		LLMCache:                llmCache,
+		LLMProvider:             llmProvider,
 		RerankEndpoint:          rerankCfg.Endpoint,
 		RerankModel:             rerankCfg.Model,
 		RerankTimeoutMs:         rerankCfg.TimeoutMs,
@@ -489,6 +519,22 @@ func main() {
 
 	// MCP (Model Context Protocol) server — JSON-RPC 2.0 for AI agent integration
 	vectorHttp.RegisterMCPAPI(app, mcpCfg)
+
+	// Opt-in background memory-consolidation janitor. Off unless
+	// CONSOLIDATION_INTERVAL is a positive Go duration (e.g. "30m"). Sweeps
+	// every non-internal collection against its own _memories_<c> sidecar.
+	if v := os.Getenv("CONSOLIDATION_INTERVAL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			// DefaultConfig.MaxLLMCalls is per-collection; this caps total LLM
+			// calls across the whole sweep (0/unset = unbounded).
+			sweepBudget := intEnv("CONSOLIDATION_MAX_LLM_CALLS_PER_SWEEP", 0)
+			stop := consolidate.StartJanitor(context.Background(), mcp.NewConsolidationRunner(vectorHttp.NewMCPDeps(mcpCfg), sweepBudget), d)
+			defer stop()
+			log.Printf("consolidation janitor enabled (interval=%s, max_llm_calls_per_sweep=%d)", d, sweepBudget)
+		} else {
+			log.Printf("CONSOLIDATION_INTERVAL=%q invalid; janitor disabled", v)
+		}
+	}
 
 	if workspaceIndexWorkerEnabled() {
 		stopWorkspaceIndexWorker := vectorHttp.StartWorkspaceIndexWorker(context.Background(), apiCfg, vectorHttp.WorkspaceIndexWorkerOptions{

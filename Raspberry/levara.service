@@ -1,53 +1,34 @@
+# Реальный деплой на Pi (10.23.0.53), node-id=pi1, проверено 2026-05-27.
+# Embed-конфиг приведён к potion-256 (2026-06-04, см. docs/MIGRATION-EMBED-POTION.md
+# Phase 5 + findings P1.1): -dim=256 + potion sidecar :9101.
+# Установка: /etc/systemd/system/levara.service (+ drop-in levara.service.d/rerank.conf).
 [Unit]
-Description=Levara Memory Server
-Documentation=https://github.com/stek0v/levara
-After=network-online.target ollama.service
-Wants=network-online.target
-Requires=ollama.service
+Description=Levara MCP Knowledge Engine
+After=network-online.target ollama.service embed-potion.service
+# Wants (не Requires) для эмбеддера: его падение НЕ должно ронять Levara
+# (констрейнт MIGRATION-EMBED-POTION §1.2 — "если эмбеддер крашится, Levara untouched").
+Wants=network-online.target ollama.service embed-potion.service
 
 [Service]
 Type=simple
-User=levara
-Group=levara
-
-EnvironmentFile=/etc/levara/levara.env
-
-ExecStart=/usr/local/bin/levara \
-    -standalone=true \
-    -dim=768 \
-    -shards=1 \
-    -port=8080 \
-    -grpc-port=0 \
-    -data-dir=/var/lib/levara/data
-
-ExecStartPost=/bin/sh -c 'sleep 3 && curl -sf http://localhost:8080/health > /dev/null || exit 1'
-
+User=stek0v
+WorkingDirectory=/home/stek0v/levara
+Environment=DB_PROVIDER=sqlite
+Environment=DB_PATH=/home/stek0v/levara/data/levara.db
+# Embed: potion-code-16M (256d, model2vec) via co-located sidecar на loopback :9101.
+# Legacy (до 2026-06-04): EMBEDDING_ENDPOINT=http://localhost:11434/v1/embeddings,
+# EMBEDDING_MODEL=nomic-embed-text-v2-moe (768d) — decommissioned, см. Phase 5 §5.
+Environment=EMBEDDING_ENDPOINT=http://localhost:9101/v1/embeddings
+Environment=EMBEDDING_MODEL=potion-code-16M
+Environment=LLM_PROVIDER=openai
+Environment=LLM_ENDPOINT=http://localhost:11434/v1
+Environment=LLM_MODEL=qwen3:0.6b
+Environment=VISION_ENDPOINT=http://10.23.0.101:8081/api/v1/ocr
+Environment=LOG_LEVEL=INFO
+ExecStartPre=/bin/sleep 5
+ExecStart=/home/stek0v/levara/levara -standalone=true -dim=256 -shards=1 -port=8090 -grpc-port=0 -data-dir=/home/stek0v/levara/data -node-id=pi1
 Restart=always
 RestartSec=5
-StartLimitIntervalSec=300
-StartLimitBurst=5
-
-# Watchdog
-WatchdogSec=30
-
-# Resource limits
-MemoryMax=2G
-MemoryHigh=1536M
-CPUQuota=300%
-LimitNOFILE=65536
-
-# Security hardening
-WorkingDirectory=/var/lib/levara
-ReadWritePaths=/var/lib/levara /var/log/levara
-ProtectSystem=strict
-ProtectHome=true
-PrivateTmp=true
-NoNewPrivileges=true
-
-# Logging
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=levara
 
 [Install]
 WantedBy=multi-user.target

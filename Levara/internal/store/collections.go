@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,12 @@ import (
 	"sync"
 	"time"
 )
+
+// ErrDimMismatch is returned by Search when the query vector's dimension
+// differs from the collection's. Callers (consolidate, recall) use errors.Is
+// to distinguish a genuine embed-incompatible collection from other failures
+// and surface it instead of degrading to a silent empty result.
+var ErrDimMismatch = errors.New("query dimension mismatch")
 
 // CollectionMeta stores metadata about a collection's embedding configuration.
 // Persisted as collection_meta.json in each collection directory.
@@ -58,6 +65,10 @@ type CollectionManager struct {
 	dim         int
 	basePath    string
 	hnswCfg     HNSWConfig
+	// defaultModel is stamped onto collections auto-created via the lazy
+	// Insert -> getOrCreate path so they don't end up with an empty
+	// embedding_model (findings P2.1). Set from the server's EMBEDDING_MODEL.
+	defaultModel string
 }
 
 // NewCollectionManager creates a manager for named collections.
@@ -160,9 +171,24 @@ func NewCollectionManager(dim int, basePath string, cfg ...HNSWConfig) (*Collect
 	return cm, nil
 }
 
+// SetDefaultModel sets the embedding model stamped onto collections created
+// through the lazy auto-create path (Create / getOrCreate). Wired from the
+// server's EMBEDDING_MODEL after construction so sidecar collections born from
+// a memory write carry their embedder instead of an empty string (P2.1).
+func (cm *CollectionManager) SetDefaultModel(model string) {
+	cm.mu.Lock()
+	cm.defaultModel = model
+	cm.mu.Unlock()
+}
+
 // Create creates a new collection. Returns error if it already exists.
+// It stamps the manager's configured default embedding model so lazily
+// auto-created collections don't end up with empty embedder metadata (P2.1).
 func (cm *CollectionManager) Create(name string) error {
-	return cm.CreateWithMeta(name, "", "")
+	cm.mu.RLock()
+	model := cm.defaultModel
+	cm.mu.RUnlock()
+	return cm.CreateWithMeta(name, model, "")
 }
 
 // CreateWithMeta creates a collection with embedding model metadata.
@@ -228,6 +254,92 @@ func (cm *CollectionManager) Drop(name string) error {
 
 	colDir := filepath.Join(cm.basePath, name)
 	return os.RemoveAll(colDir)
+}
+
+// Rename atomically renames a collection on disk. The collection is briefly
+// closed during the rename — readers/writers calling Get/Insert against the
+// old name during this window will see "not found" (the maps are updated
+// only after the on-disk rename + reopen succeeds). Used by the
+// blue-green embed-model migration (see docs/MIGRATION-EMBED-POTION.md
+// Phase 4.5) where the shadow collection is promoted to the live name
+// in a sub-second window.
+func (cm *CollectionManager) Rename(oldName, newName string) error {
+	if oldName == "" || newName == "" {
+		return fmt.Errorf("collection name must be non-empty")
+	}
+	if oldName == newName {
+		return fmt.Errorf("source and target names are identical: %q", oldName)
+	}
+	// Guard against path traversal. Collection names map directly to a
+	// directory under cm.basePath; a "../" or "/" in the name would let
+	// callers point Rename outside the collections root.
+	for _, n := range []string{oldName, newName} {
+		if strings.ContainsAny(n, "/\\") || n == "." || n == ".." || strings.Contains(n, "..") {
+			return fmt.Errorf("invalid collection name: %q", n)
+		}
+	}
+
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+
+	db, exists := cm.collections[oldName]
+	if !exists {
+		return fmt.Errorf("collection %q not found", oldName)
+	}
+	if _, taken := cm.collections[newName]; taken {
+		return fmt.Errorf("target collection %q already exists", newName)
+	}
+
+	// Belt-and-braces: if the target directory exists on disk but isn't in
+	// our in-memory map, we'd happily clobber it with os.Rename. Refuse.
+	newDir := filepath.Join(cm.basePath, newName)
+	if _, err := os.Stat(newDir); err == nil {
+		return fmt.Errorf("target collection directory %q already exists on disk", newName)
+	}
+
+	// Close the live db to release WAL/disk file handles before renaming
+	// the directory. If reopen fails after rename, we restore the original
+	// state by renaming back — best-effort, since a failure here means the
+	// on-disk layout no longer matches the in-memory map.
+	if err := db.Close(); err != nil {
+		return fmt.Errorf("close source for rename: %w", err)
+	}
+	delete(cm.collections, oldName)
+
+	oldDir := filepath.Join(cm.basePath, oldName)
+	if err := os.Rename(oldDir, newDir); err != nil {
+		// Try to reopen the source under its old name so the manager isn't
+		// left with a dangling entry. If this fails too, the caller has a
+		// real on-disk problem and needs to restart.
+		dbPath := filepath.Join(oldDir, "meta.bin")
+		if reopened, rErr := NewLevara(db.dim, dbPath, cm.hnswCfg); rErr == nil {
+			cm.collections[oldName] = reopened
+		}
+		return fmt.Errorf("rename %q→%q on disk: %w", oldName, newName, err)
+	}
+
+	newDbPath := filepath.Join(newDir, "meta.bin")
+	reopened, err := NewLevara(db.dim, newDbPath, cm.hnswCfg)
+	if err != nil {
+		// Roll back the directory rename. If THAT fails, the collection is
+		// stranded under the new on-disk name but absent from the map —
+		// the operator will need to restart Levara so NewCollectionManager
+		// re-discovers it.
+		_ = os.Rename(newDir, oldDir)
+		return fmt.Errorf("reopen %q after rename: %w", newName, err)
+	}
+	cm.collections[newName] = reopened
+
+	// Update meta to reflect the new name. Old meta is removed from the
+	// map; the on-disk meta file is re-saved under the new directory.
+	if m, ok := cm.metas[oldName]; ok {
+		m.Name = newName
+		cm.metas[newName] = m
+		_ = saveCollectionMeta(newDir, m)
+	}
+	delete(cm.metas, oldName)
+
+	return nil
 }
 
 // List returns sorted collection names.
@@ -394,7 +506,29 @@ func (cm *CollectionManager) Search(collection string, query []float32, topK int
 	if err != nil {
 		return nil, err
 	}
+	// Guard against a query whose dimension differs from the collection's.
+	// Without this, dist()/vek32.Dot panics "slices must be of equal length"
+	// with no recover(), crashing the whole process — e.g. a 768-dim embedder
+	// querying a 256-dim memory collection (consolidate, recall).
+	if len(query) != db.dim {
+		return nil, fmt.Errorf("%w: query dim %d != collection %q dim %d", ErrDimMismatch, len(query), collection, db.dim)
+	}
 	return db.Search(query, topK), nil
+}
+
+// HasRecord reports whether a record with the given id exists in the
+// collection's index. This is a synchronous map lookup (db.Get), NOT a
+// vector search — so it reflects the write the instant Insert returns,
+// before the async HNSW indexer has linked the node. Used by the memory
+// write path to verify a just-inserted vector actually landed.
+// Returns false when the collection is absent or the id is unknown.
+func (cm *CollectionManager) HasRecord(collection, id string) bool {
+	db, err := cm.Get(collection)
+	if err != nil {
+		return false
+	}
+	_, _, ok := db.Get(id)
+	return ok
 }
 
 // Delete removes a record from a collection.

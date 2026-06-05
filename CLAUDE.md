@@ -53,6 +53,8 @@ Human → reads .md files directly in repo
 | `RERANK_ENDPOINT` / `RERANK_MODEL` | Cross-encoder reranker; disabled when unset. Phase 2 (2026-05-14): rerank is default-on when endpoint configured; clients tri-state via `"rerank": true\|false\|omit`. | "" |
 | `RERANK_BUDGET_MS` / `RERANK_TIMEOUT_MS` | Phase 2 budget for the rerank pass (fallback to vector order on overrun) and per-request HTTP client timeout. | 1500 / 5000 |
 | `RERANK_SCORE_GAP_THRESHOLD` | Phase 2.5: adaptive gate. When > 0 and the top-bottom candidate score spread exceeds it, the cross-encoder call is skipped (outcome=`skipped_gap`). 0 = unconditional rerank. | 0 |
+| `CONSOLIDATION_INTERVAL` | Background memory-consolidation janitor tick interval (Go duration, e.g. 30m). Unset/empty = janitor off. | "" |
+| `CONSOLIDATION_MAX_LLM_CALLS_PER_SWEEP` | Sweep-wide cap on Summarizer (LLM) calls across all collections in one janitor tick. `DefaultConfig.MaxLLMCalls` (24) is per-collection, so an N-collection sweep can otherwise fan out N×24 calls; this clamps each run's budget to what's left and skips remaining collections once exhausted (resumed next tick). 0/unset = unbounded. | 0 |
 
 ## Rate limits (T2, 20.04)
 
@@ -309,17 +311,19 @@ search(search_query="...", room="auth", tags=["security"])
 
 ### Sync (Mac ↔ Pi)
 
-- Mac (`localhost:8081`) ↔ Pi (`10.23.0.53:8080`)
-- `sync(remote_url="http://10.23.0.53:8080/api/v1", direction="pull")`
+- Mac (`localhost:8081`) ↔ Pi (`10.23.0.53:8090`)
+- `sync(remote_url="http://10.23.0.53:8090/api/v1", direction="pull")`
 - CLI: `sync_levara` / `man_levara`
 
-### Полный список MCP tools (25)
+### Полный список MCP tools (27)
 
 **Knowledge graph & search:** `cognify`, `cognify_status`, `search`, `cross_search`, `query_entity`, `analyze_commits`, `git_search`, `codify`
 
 **Data:** `add`, `list_data`, `delete`, `prune`
 
 **Memory (palace):** `save_memory`, `recall_memory`, `list_memories`, `pin_memory`, `unpin_memory`, `wake_up`, `diary_write`, `diary_read`
+
+**Memory consolidation (System2):** `consolidate`, `consolidation_revert` — periodically compress a collection's memory: cluster near-duplicate/related records, then mechanically **merge** (cosine ≥ 0.97, keep newest) or LLM-**abstract** (0.85 ≤ cosine < 0.97) them into one record. Reversible: sources are superseded + archived (not deleted), restorable via `consolidation_revert(run_id)`. `consolidate(collection, room?, hall?, dry_run=true)` previews by default. Runs on demand or via the opt-in background janitor (`CONSOLIDATION_INTERVAL`). Superseded records are hidden from `recall`/`list_memories`/`wake_up` unless `include_superseded=true`.
 
 **Chat history:** `save_chat`, `recall_chat`, `search_chats`
 

@@ -74,6 +74,26 @@ var (
 		Help: "Number of active MCP sessions",
 	})
 
+	// Memory SQL↔vector consistency. The SQL `memories` row is the source
+	// of truth; its vector in the `_memories_*` sidecar is written by an
+	// async side effect (indexMemoryAsync). These track when those two
+	// diverge so a silent index gap (the P1.4/Cause-B class of bug) is
+	// observable instead of invisible.
+	//
+	// MemoryIndexDivergence is bumped per save_memory when the post-insert
+	// read-back fails. reason ∈ {embed_failed, insert_failed, missing_after_insert}.
+	MemoryIndexDivergence = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "levara_memory_index_divergence_total",
+		Help: "save_memory writes whose vector did not land/verify, by reason",
+	}, []string{"reason"})
+
+	// MemoryReconcile is bumped by the reconcile_memory sweep, per sidecar
+	// finding. outcome ∈ {ok, missing_vector, orphan_vector, repaired, repair_failed, orphan_deleted}.
+	MemoryReconcile = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "levara_memory_reconcile_total",
+		Help: "reconcile_memory findings by outcome",
+	}, []string{"outcome"})
+
 	// MCP audit-log metrics — finer-grained companions to MCPToolRequests
 	// and MCPToolDuration. Outcome is the closed enum from pkg/audit;
 	// agent_bucket is bounded via UserBucket (top-N + "other"/"anon").
@@ -293,6 +313,35 @@ var (
 		Name: "levara_workspace_audit_stored_events",
 		Help: "Number of sanitized workspace audit events found on disk by the last ops/status refresh",
 	})
+
+	// 18. Memory consolidation pipeline.
+	ConsolidationRuns = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "levara_consolidation_runs_total",
+		Help: "Consolidation runs by outcome (ok/error/revert).",
+	}, []string{"outcome"})
+
+	ConsolidationClusters = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "levara_consolidation_clusters_total",
+		Help: "Clusters discovered across consolidation runs.",
+	})
+
+	ConsolidationActions = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "levara_consolidation_actions_total",
+		Help: "Consolidation actions planned/applied (merge + abstract).",
+	})
+
+	ConsolidationSkipped = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "levara_consolidation_skipped_total",
+		Help: "Clusters skipped during consolidation, by reason category " +
+			"(oversized/llm_budget/coverage_guard/other).",
+	}, []string{"reason"})
+
+	ConsolidationCharDensity = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name: "levara_consolidation_char_density",
+		Help: "Survivor chars / total source chars per consolidation action, by " +
+			"kind (merge/abstract). Low values flag aggressive compression / loss.",
+		Buckets: []float64{0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.25, 1.5},
+	}, []string{"kind"})
 )
 
 func init() {
@@ -300,6 +349,16 @@ func init() {
 	// hides them just because no recovery has happened in this process.
 	WALRecoveriesTotal.WithLabelValues("ok")
 	WALRecoveriesTotal.WithLabelValues("fail")
+
+	// Materialize the consolidation skip-reason categories at 0 so a dashboard
+	// can chart "budget exhausted" before the first time it ever fires.
+	for _, r := range []string{"oversized", "llm_budget", "coverage_guard", "other"} {
+		ConsolidationSkipped.WithLabelValues(r)
+	}
+	// Materialize both char-density action kinds so the histogram series exist
+	// from process start.
+	ConsolidationCharDensity.WithLabelValues("merge")
+	ConsolidationCharDensity.WithLabelValues("abstract")
 
 	// Eagerly materialize RAG verify-stack series at 0 across the known
 	// search types and reasons so dashboards/alerts can reference a stable
