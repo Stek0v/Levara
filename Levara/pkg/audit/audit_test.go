@@ -91,6 +91,15 @@ func TestLoggerWritesJSONLine(t *testing.T) {
 	}
 }
 
+func TestEventSinkFunc(t *testing.T) {
+	var got Event
+	sink := EventSinkFunc(func(e Event) { got = e })
+	sink.LogEvent(Event{Source: "workspace", Type: "write", Subject: "payments"})
+	if got.Source != "workspace" || got.Type != "write" || got.Subject != "payments" {
+		t.Fatalf("event=%+v, want forwarded event", got)
+	}
+}
+
 func TestFileLoggerRotatesAndPrunes(t *testing.T) {
 	dir := t.TempDir()
 	fl, err := NewFileLogger(dir, 30)

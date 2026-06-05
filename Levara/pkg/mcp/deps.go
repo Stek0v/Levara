@@ -32,6 +32,10 @@ type CollectionDeps interface {
 	CollectionExists(name string) bool
 	CollectionInsert(collection, id string, vec []float32, meta any) error
 	CollectionSearch(collection string, query []float32, topK int) ([]SearchResult, error)
+	// CollectionHasRecord reports whether id exists in collection via a
+	// synchronous index lookup (not a vector search), so it is true the
+	// instant CollectionInsert returns. Used to verify memory writes landed.
+	CollectionHasRecord(collection, id string) bool
 	CollectionMeta(name string) CollectionInfo
 }
 

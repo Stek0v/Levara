@@ -33,14 +33,15 @@ import (
 	vectorGrpc "github.com/stek0v/levara/internal/grpc"
 	vectorHttp "github.com/stek0v/levara/internal/http"
 	"github.com/stek0v/levara/internal/store"
+	"github.com/stek0v/levara/pkg/audit"
 	"github.com/stek0v/levara/pkg/embed"
 	"github.com/stek0v/levara/pkg/graphdb"
 	"github.com/stek0v/levara/pkg/ingest"
 	"github.com/stek0v/levara/pkg/llm"
 	"github.com/stek0v/levara/pkg/llmcache"
 	"github.com/stek0v/levara/pkg/llmproxy"
-	"github.com/stek0v/levara/pkg/audit"
 	"github.com/stek0v/levara/pkg/observe"
+	"github.com/stek0v/levara/pkg/profile"
 	"github.com/stek0v/levara/pkg/storage"
 	pb "github.com/stek0v/levara/proto/pb"
 	pbv2 "github.com/stek0v/levara/proto/pb/v2"
@@ -622,6 +623,31 @@ func initMCPAuditSink(path string, log *observe.Logger) audit.Sink {
 	}
 	log.Info("mcp_audit_log_ready", map[string]any{"path": path, "retention_days": 30})
 	return fl
+}
+
+func warnRuntimeProfile(log *observe.Logger, cfg profile.Config) {
+	for _, finding := range profile.Validate(cfg) {
+		log.Warn("runtime_profile_warning", map[string]any{
+			"profile": profile.Normalize(cfg.Profile),
+			"code":    finding.Code,
+			"message": finding.Message,
+		})
+	}
+}
+
+func runtimeDBProvider(db *sql.DB) string {
+	if db == nil {
+		return ""
+	}
+	if os.Getenv("DB_PROVIDER") == "sqlite" {
+		return "sqlite"
+	}
+	return "postgres"
+}
+
+func truthyEnv(key string) bool {
+	v := strings.TrimSpace(os.Getenv(key))
+	return v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes")
 }
 
 // probeEmbedService tries a handful of well-known health paths under the

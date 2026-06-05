@@ -73,3 +73,8 @@ posttests/bier/mac_results/
 .remember/
 _archived/
 .claude/
+
+# understand-anything knowledge-graph artifacts (regenerated via /understand)
+Levara/.understand-anything/
+# Generated architecture digest (regenerated via graph-to-for_cod.cjs)
+for_cod.md
