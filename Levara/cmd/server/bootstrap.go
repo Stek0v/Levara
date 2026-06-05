@@ -625,14 +625,38 @@ func initMCPAuditSink(path string, log *observe.Logger) audit.Sink {
 	return fl
 }
 
-func warnRuntimeProfile(log *observe.Logger, cfg profile.Config) {
-	for _, finding := range profile.Validate(cfg) {
-		log.Warn("runtime_profile_warning", map[string]any{
+// evaluateRuntimeProfile is the pure decision core for profile validation: it
+// returns the findings to log and whether startup must fail fast. In strict
+// mode the profile requirements are error-level and any of them is fatal; the
+// default warn-only mode is never fatal. Kept side-effect-free so it can be
+// unit-tested without a logger or a running server.
+func evaluateRuntimeProfile(cfg profile.Config, strict bool) (findings []profile.Finding, fatal bool) {
+	if strict {
+		findings = profile.ValidateStrict(cfg)
+		return findings, profile.HasError(findings)
+	}
+	return profile.Validate(cfg), false
+}
+
+// enforceRuntimeProfile logs each finding (error-level findings via Error,
+// warnings via Warn) and reports whether strict mode demands a fail-fast exit.
+// The caller owns the os.Exit so this stays testable.
+func enforceRuntimeProfile(log *observe.Logger, cfg profile.Config, strict bool) bool {
+	findings, fatal := evaluateRuntimeProfile(cfg, strict)
+	for _, finding := range findings {
+		fields := map[string]any{
 			"profile": profile.Normalize(cfg.Profile),
 			"code":    finding.Code,
 			"message": finding.Message,
-		})
+			"strict":  strict,
+		}
+		if finding.Level == profile.LevelError {
+			log.Error("runtime_profile_error", nil, fields)
+		} else {
+			log.Warn("runtime_profile_warning", fields)
+		}
 	}
+	return fatal
 }
 
 func runtimeDBProvider(db *sql.DB) string {

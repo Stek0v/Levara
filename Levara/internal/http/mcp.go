@@ -489,11 +489,11 @@ func (h *mcpHandler) authenticateMCPRequest(c *fiber.Ctx) (string, error) {
 		if h.cfg.DB == nil {
 			return "", fmt.Errorf("database required for API key auth")
 		}
-		userID, _ := verifyAPIKey(h.cfg.DB, apiKey)
-		if userID == "" {
+		id := verifyAPIKey(h.cfg.DB, apiKey)
+		if !id.Valid() {
 			return "", fmt.Errorf("invalid API key")
 		}
-		return userID, nil
+		return id.UserID, nil
 	}
 
 	token := bearerToken(c.Get("Authorization"))

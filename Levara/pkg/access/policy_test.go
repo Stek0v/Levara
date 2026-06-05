@@ -149,6 +149,72 @@ func TestCanAccessDataset(t *testing.T) {
 	}
 }
 
+func TestCanManageDatasetShares(t *testing.T) {
+	db := newPolicyTestDB(t)
+	// user-d holds an admin share on payments; user-b is only a viewer.
+	if _, err := db.Exec(`INSERT INTO dataset_shares(id, dataset_id, user_id, role) VALUES ('share-d', 'payments', 'user-d', 'admin')`); err != nil {
+		t.Fatal(err)
+	}
+	policy := SQLPolicy{DB: db, Q: sqliteQ}
+	ctx := context.Background()
+
+	cases := []struct {
+		name      string
+		granterID string
+		want      bool
+	}{
+		{"owner manages", "user-a", true},
+		{"admin share manages", "user-d", true},
+		{"viewer cannot manage", "user-b", false},
+		{"foreigner cannot manage", "user-c", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := policy.CanManageDatasetShares(ctx, "payments", tc.granterID); got != tc.want {
+				t.Fatalf("CanManageDatasetShares(payments, %q)=%v, want %v", tc.granterID, got, tc.want)
+			}
+		})
+	}
+
+	// No DB means sharing is unavailable; handlers special-case this earlier.
+	if (SQLPolicy{}).CanManageDatasetShares(ctx, "payments", "user-a") {
+		t.Fatal("nil-db CanManageDatasetShares must be false")
+	}
+}
+
+func TestIsSuperuser(t *testing.T) {
+	db := newPolicyTestDB(t)
+	policy := SQLPolicy{DB: db, Q: sqliteQ}
+	ctx := context.Background()
+
+	cases := []struct {
+		name   string
+		userID string
+		want   bool
+	}{
+		{"superuser", "root", true},
+		{"regular user", "user-a", false},
+		{"missing user is not super", "ghost", false},
+		{"empty user is not super", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := policy.IsSuperuser(ctx, tc.userID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want {
+				t.Fatalf("IsSuperuser(%q)=%v, want %v", tc.userID, got, tc.want)
+			}
+		})
+	}
+
+	// A nil DB never queries and never errors — dev/single-user mode.
+	if got, err := (SQLPolicy{}).IsSuperuser(ctx, "root"); got || err != nil {
+		t.Fatalf("nil-db IsSuperuser=%v,%v want false,nil", got, err)
+	}
+}
+
 func newPolicyTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	db, err := sql.Open("sqlite3", t.TempDir()+"/access.db")
