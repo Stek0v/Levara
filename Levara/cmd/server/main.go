@@ -69,6 +69,7 @@ import (
 	"github.com/stek0v/levara/internal/store"
 
 	_ "github.com/stek0v/levara/docs" // swaggo-generated OpenAPI spec (T13)
+	"github.com/stek0v/levara/pkg/audit"
 	"github.com/stek0v/levara/pkg/consolidate"
 	"github.com/stek0v/levara/pkg/embed"
 	"github.com/stek0v/levara/pkg/graphdb"
@@ -455,6 +456,16 @@ func main() {
 	rerankCfg := rerankConfigFromEnv()
 	workspaceWatcher := vectorHttp.NewWorkspaceWatchState()
 
+	// Optional enterprise audit-export adapter (Phase 4A). When enabled it sits
+	// in the WorkspaceAuditSink slot the workspace handlers already mirror
+	// sanitized events into — pluggable without editing those handlers. Shared
+	// (concurrency-safe) across the REST and MCP configs; drained on shutdown.
+	var wsAuditSink audit.EventSink
+	if wsAuditExporter := initWorkspaceAuditExporter(*dataDir, srvLog); wsAuditExporter != nil {
+		wsAuditSink = wsAuditExporter
+		defer wsAuditExporter.Close()
+	}
+
 	apiCfg := vectorHttp.APIConfig{
 		PostgresDSN:             pgDSN,
 		StoragePath:             *dataDir + "/uploads",
@@ -484,6 +495,7 @@ func main() {
 		AdaptiveWeights:         adaptiveWeights,
 		Runs:                    runs,
 		SearchStrategies:        searchStrategies,
+		WorkspaceAuditSink:      wsAuditSink,
 	}
 
 	// Protected routes: Levara API (datasets, upload, cognify, search)
@@ -512,6 +524,7 @@ func main() {
 		Runs:                    runs,
 		MCPAudit:                initMCPAuditSink(*mcpAuditPath, srvLog),
 		MCPAgentBucket:          metrics.NewUserBucket(20, time.Minute),
+		WorkspaceAuditSink:      wsAuditSink,
 	}
 
 	// MCP (Model Context Protocol) server — JSON-RPC 2.0 for AI agent integration
