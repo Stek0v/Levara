@@ -9,6 +9,8 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
+
+	accesspkg "github.com/stek0v/levara/pkg/access"
 )
 
 func RegisterTenantAPI(app fiber.Router, cfg APIConfig) {
@@ -94,16 +96,11 @@ func TenantFilterSQL(tenantID string, startIdx int) (string, []any) {
 	return " AND owner_id IN (SELECT user_id FROM user_tenant WHERE tenant_id = " + placeholder + ")", []any{tenantID}
 }
 
+// tenantUserIsMember delegates the membership decision to the shared
+// transport-independent policy in pkg/access so REST handlers do not embed
+// authorization SQL of their own.
 func tenantUserIsMember(ctx context.Context, db *sql.DB, userID, tenantID string) (bool, error) {
-	if db == nil || userID == "" || tenantID == "" {
-		return false, nil
-	}
-	var exists int
-	err := db.QueryRowContext(ctx,
-		Q(`SELECT COUNT(*) FROM user_tenant WHERE user_id = $1 AND tenant_id = $2`),
-		userID, tenantID,
-	).Scan(&exists)
-	return exists > 0, err
+	return accesspkg.SQLPolicy{DB: db, Q: Q}.IsTenantMember(ctx, userID, tenantID)
 }
 
 // CollectionPrefix returns the tenant-scoped collection name.
@@ -129,11 +126,8 @@ func tenantSelectHandler(cfg APIConfig) fiber.Handler {
 		// Verify user belongs to this tenant
 		userID, _ := c.Locals("user_id").(string)
 		if cfg.DB != nil && userID != "" {
-			var exists int
-			cfg.DB.QueryRowContext(context.Background(),
-				Q(`SELECT COUNT(*) FROM user_tenant WHERE user_id = $1 AND tenant_id = $2`),
-				userID, req.TenantID).Scan(&exists)
-			if exists == 0 {
+			member, err := tenantUserIsMember(c.UserContext(), cfg.DB, userID, req.TenantID)
+			if err != nil || !member {
 				return c.Status(403).JSON(fiber.Map{"detail": "not a member of this tenant"})
 			}
 		}

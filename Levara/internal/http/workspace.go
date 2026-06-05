@@ -604,50 +604,62 @@ func workspaceRevertHandler(cfg APIConfig) fiber.Handler {
 	}
 }
 
-func authorizeWorkspaceFiber(c *fiber.Ctx, cfg APIConfig, projectID string, access workspaceAccessLevel) error {
+// workspaceActorFromFiber builds the transport-independent access.Actor from
+// Fiber locals so REST handlers carry the same principal shape as MCP.
+func workspaceActorFromFiber(c *fiber.Ctx) accesspkg.Actor {
+	userID, _ := c.Locals("user_id").(string)
+	perms, _ := c.Locals("api_key_permissions").(string)
+	tenantID, _ := c.Locals("tenant_id").(string)
+	return accesspkg.Actor{UserID: userID, APIKeyPermissions: perms, TenantID: tenantID}
+}
+
+// workspaceActorFromMCP builds the access.Actor from MCP session context. MCP
+// sessions carry only the resolved user id; API-key permissions are an HTTP
+// edge concern, so they stay empty here (no api-key gate for MCP).
+func workspaceActorFromMCP(ctx context.Context) accesspkg.Actor {
+	userID, _ := ctx.Value(mcpUserIDKey).(string)
+	return accesspkg.Actor{UserID: userID}
+}
+
+// authorizeWorkspace is the single shared decision used by both transports.
+// REST and MCP differ only in how they build the Actor; the policy code is the
+// same, satisfying REST/MCP workspace parity.
+func authorizeWorkspace(ctx context.Context, db accessDB, actor accesspkg.Actor, projectID string, level workspaceAccessLevel) (accesspkg.Decision, error) {
+	if level == "" {
+		level = workspaceAccessRead
+	}
+	return accesspkg.SQLPolicy{DB: db, Q: Q}.Authorize(ctx, actor, accesspkg.Resource{
+		Kind: accesspkg.ResourceWorkspace,
+		ID:   projectID,
+	}, string(level))
+}
+
+func authorizeWorkspaceFiber(c *fiber.Ctx, cfg APIConfig, projectID string, level workspaceAccessLevel) error {
 	if projectID == "" {
 		return nil
 	}
-	if perms, _ := c.Locals("api_key_permissions").(string); !workspaceAPIKeyAllows(perms, access) {
-		return fiber.NewError(fiber.StatusForbidden, errWorkspaceAccessDenied.Error())
-	}
-	userID, _ := c.Locals("user_id").(string)
-	allowed, err := checkWorkspaceAccess(c.UserContext(), cfg.DB, userID, projectID, access)
+	decision, err := authorizeWorkspace(c.UserContext(), cfg.DB, workspaceActorFromFiber(c), projectID, level)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "workspace access check failed")
 	}
-	if !allowed {
+	if !decision.Allowed {
 		return fiber.NewError(fiber.StatusForbidden, errWorkspaceAccessDenied.Error())
 	}
 	return nil
 }
 
-func authorizeWorkspaceMCP(ctx context.Context, cfg APIConfig, projectID string, access workspaceAccessLevel) error {
+func authorizeWorkspaceMCP(ctx context.Context, cfg APIConfig, projectID string, level workspaceAccessLevel) error {
 	if projectID == "" {
 		return nil
 	}
-	userID, _ := ctx.Value(mcpUserIDKey).(string)
-	allowed, err := checkWorkspaceAccess(ctx, cfg.DB, userID, projectID, access)
+	decision, err := authorizeWorkspace(ctx, cfg.DB, workspaceActorFromMCP(ctx), projectID, level)
 	if err != nil {
 		return err
 	}
-	if !allowed {
+	if !decision.Allowed {
 		return errWorkspaceAccessDenied
 	}
 	return nil
-}
-
-func workspaceAPIKeyAllows(perms string, access workspaceAccessLevel) bool {
-	return accesspkg.APIKeyAllows(perms, string(access))
-}
-
-func checkWorkspaceAccess(ctx context.Context, db accessDB, userID, projectID string, access workspaceAccessLevel) (bool, error) {
-	decision, err := workspaceAccessDecision(ctx, db, userID, projectID, access, "")
-	return decision.Allowed, err
-}
-
-func workspaceRoleAllows(role string, access workspaceAccessLevel) bool {
-	return accesspkg.RoleAllows(role, string(access))
 }
 
 func indexWorkspaceMarkdown(ctx context.Context, cfg APIConfig, req workspaceIndexRequest) (workspaceIndexResponse, error) {

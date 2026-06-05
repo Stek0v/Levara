@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-05-25T11:56:57+03:00",
-  "git_rev": "9292eeef90863ffba4c9303888a1d8a5bce52b2f",
+  "generated_at": "2026-06-05T13:54:21+03:00",
+  "git_rev": "fad362a5975086bec87784f6fc300310b82ebff1",
   "rest": [
     {
       "method": "POST",
@@ -71,6 +71,18 @@
     {
       "method": "PUT",
       "path": "/collections/:name/meta",
+      "status": "canonical",
+      "group": "collections"
+    },
+    {
+      "method": "DELETE",
+      "path": "/collections/:name/records/:id",
+      "status": "canonical",
+      "group": "collections"
+    },
+    {
+      "method": "POST",
+      "path": "/collections/:name/rename",
       "status": "canonical",
       "group": "collections"
     },
@@ -939,6 +951,16 @@
       "status": "canonical"
     },
     {
+      "name": "consolidate",
+      "group": "memory",
+      "status": "canonical"
+    },
+    {
+      "name": "consolidation_revert",
+      "group": "memory",
+      "status": "canonical"
+    },
+    {
       "name": "cross_search",
       "group": "search",
       "status": "canonical"
@@ -1040,6 +1062,11 @@
     },
     {
       "name": "recent_errors",
+      "group": "ops",
+      "status": "canonical"
+    },
+    {
+      "name": "reconcile_memory",
       "group": "ops",
       "status": "canonical"
     },
@@ -1259,6 +1286,31 @@
       "provider": "postgres",
       "kind": "alter",
       "name": "graph_nodes"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "memories"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "memories"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "memories"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "memories"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "memories"
     },
     {
       "provider": "postgres",
@@ -1604,6 +1656,31 @@
       "provider": "sqlite",
       "kind": "alter",
       "name": "graph_nodes"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "memories"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "memories"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "memories"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "memories"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "memories"
     },
     {
       "provider": "sqlite",
