@@ -21,6 +21,7 @@ func TestBuildRuntimeProfileConfigSameFacts(t *testing.T) {
 	t.Setenv("LEVARA_TOKEN", "lk_token")
 	t.Setenv("LEVARA_TENANT_ENFORCED", "1")
 	t.Setenv("LEVARA_WORKSPACE_AUDIT_EXPORT", "")
+	t.Setenv("LEVARA_SSO_BRIDGE", "1")
 
 	// A non-nil *sql.DB is what main() passes once SQL runtime is up; the helper
 	// only checks it for nil and reads DB_PROVIDER, so an empty handle is fine
@@ -29,15 +30,16 @@ func TestBuildRuntimeProfileConfigSameFacts(t *testing.T) {
 
 	got := buildRuntimeProfileConfig(db, true, "/var/log/levara/audit")
 	want := profile.Config{
-		Profile:        "enterprise",
-		DBProvider:     "postgres",
-		HasDB:          true,
-		RequireAuth:    true,
-		JWTSecretSet:   true,
-		SyncEnabled:    true,
-		SyncTokenSet:   true,
-		TenantEnforced: true,
-		AuditSinkSet:   true,
+		Profile:             "enterprise",
+		DBProvider:          "postgres",
+		HasDB:               true,
+		RequireAuth:         true,
+		JWTSecretSet:        true,
+		SyncEnabled:         true,
+		SyncTokenSet:        true,
+		TenantEnforced:      true,
+		AuditSinkSet:        true,
+		SSOBridgeConfigured: true,
 	}
 	if got != want {
 		t.Fatalf("buildRuntimeProfileConfig facts drifted\n got=%+v\nwant=%+v", got, want)
@@ -54,11 +56,36 @@ func TestBuildRuntimeProfileConfigPersonalDefaults(t *testing.T) {
 	t.Setenv("LEVARA_TOKEN", "")
 	t.Setenv("LEVARA_TENANT_ENFORCED", "")
 	t.Setenv("LEVARA_WORKSPACE_AUDIT_EXPORT", "")
+	t.Setenv("LEVARA_SSO_BRIDGE", "")
 
 	got := buildRuntimeProfileConfig(nil, false, "-")
 	want := profile.Config{} // all zero: no DB, no auth, no sync, audit disabled
 	if got != want {
 		t.Fatalf("personal defaults drifted\n got=%+v\nwant=%+v", got, want)
+	}
+}
+
+// TestSSOBridgeConfigured pins the LEVARA_SSO_BRIDGE truth table the enterprise
+// auth requirement relies on, so the bridge flag and the env read stay in sync.
+func TestSSOBridgeConfigured(t *testing.T) {
+	cases := []struct {
+		val  string
+		want bool
+	}{
+		{"1", true},
+		{"true", true},
+		{"yes", true},
+		{"", false},
+		{"0", false},
+		{"off", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.val, func(t *testing.T) {
+			t.Setenv("LEVARA_SSO_BRIDGE", tc.val)
+			if got := ssoBridgeConfigured(); got != tc.want {
+				t.Fatalf("ssoBridgeConfigured() with LEVARA_SSO_BRIDGE=%q = %v, want %v", tc.val, got, tc.want)
+			}
+		})
 	}
 }
 
