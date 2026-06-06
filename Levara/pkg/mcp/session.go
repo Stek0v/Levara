@@ -90,6 +90,37 @@ func (s *SessionStore) Create() *Session {
 	return sess
 }
 
+// Adopt returns the session for id, creating one under that exact id if it
+// doesn't already exist. Unlike Create (which mints a fresh server-side id),
+// Adopt honors a client-supplied id. It exists to transparently re-establish
+// a session after the in-memory store was reset — e.g. a backend restart wipes
+// every session, then a client replays its old Mcp-Session-Id. Without Adopt
+// that replay hits an unknown id and the handler 404s, which the Claude Code
+// MCP client surfaces as a hang mid tool-call instead of re-initializing. The
+// adopted session starts with an empty UserID; the caller rebinds the owner
+// from the request's JWT. Idempotent and thread-safe; an empty id falls back
+// to Create.
+func (s *SessionStore) Adopt(id string) *Session {
+	if id == "" {
+		return s.Create()
+	}
+	s.mu.Lock()
+	if existing, ok := s.sessions[id]; ok {
+		s.mu.Unlock()
+		return existing
+	}
+	sess := &Session{
+		ID:        id,
+		CreatedAt: time.Now(),
+		SSECh:     make(chan []byte, 100),
+	}
+	s.sessions[id] = sess
+	count := len(s.sessions)
+	s.mu.Unlock()
+	s.notifyCount(count)
+	return sess
+}
+
 // Delete removes the session and closes its SSECh. Calling on an absent ID
 // is a no-op (idempotent — lets callers retry cleanly on network hiccups).
 // OnCountChange fires only when the store size actually changed.
