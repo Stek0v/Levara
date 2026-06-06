@@ -8,6 +8,8 @@ package http
 
 import (
 	"bufio"
+	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -24,6 +26,36 @@ import (
 	"github.com/stek0v/levara/pkg/orchestrator"
 	"github.com/stek0v/levara/pkg/runreg"
 )
+
+// ensureCognifyDataset get-or-creates a per-(owner,collection) dataset owned
+// by the caller and returns its id, so chunks/graph rows this run stamps are
+// reachable through search's RBAC gate (filterByAllowedDatasets keeps a hit
+// only when its dataset_id is "" or in the caller's allowed-set). An
+// unregistered ephemeral runID belongs to neither, so without this every
+// cognified chunk is silently dropped on read-back. Mirrors the MCP-surface
+// helper ensureCognifyDatasetID (pkg/mcp/tool_cognify.go). Best-effort: any
+// DB error falls back to the ephemeral id unchanged.
+func ensureCognifyDataset(ctx context.Context, db *sql.DB, owner, collection, fallbackID string) string {
+	name := fmt.Sprintf("__cognify__:%s:%s", owner, collection)
+
+	var existing string
+	if err := db.QueryRowContext(ctx, Q(`SELECT id FROM datasets WHERE name = $1`), name).Scan(&existing); err == nil && existing != "" {
+		return existing
+	}
+
+	now := time.Now().UTC()
+	if _, err := db.ExecContext(ctx,
+		Q(`INSERT INTO datasets (id, name, owner_id, created_at, updated_at)
+		   VALUES ($1, $2, $3, $4, $5) ON CONFLICT (name) DO NOTHING`),
+		fallbackID, name, owner, now, now); err != nil {
+		return fallbackID
+	}
+	var resolved string
+	if err := db.QueryRowContext(ctx, Q(`SELECT id FROM datasets WHERE name = $1`), name).Scan(&resolved); err == nil && resolved != "" {
+		return resolved
+	}
+	return fallbackID
+}
 
 // cognifyHandler — POST /cognify. Kicks off an async pipeline and returns
 // a run ID immediately; progress is available via /cognify/:id/status
@@ -140,33 +172,40 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 		}
 		userID, _ := c.Locals("user_id").(string)
 
+		// Resolve the dataset id chunks/graph rows are stamped with. An
+		// explicit dataset wins; otherwise register a per-(owner,collection)
+		// cognify dataset owned by the caller so search's RBAC gate
+		// (filterByAllowedDatasets) does not silently drop every chunk this
+		// run produces. A bare ephemeral runID is in no caller's allowed-set.
+		effectiveDatasetID := runID
+		if len(allDatasetIDs) > 0 {
+			effectiveDatasetID = allDatasetIDs[0]
+		} else if cfg.DB != nil {
+			effectiveDatasetID = ensureCognifyDataset(reqCtx, cfg.DB, userID, collection, runID)
+		}
+
 		// Build orchestrator config from server config + request overrides
 		pipeCfg := orchestrator.Config{
-			ChunkStrategy:    "merged",
-			MinChunkChars:    50,
-			MaxChunkChars:    2000,
-			LLMEndpoint:      os.Getenv("LLM_ENDPOINT"),
-			LLMModel:         os.Getenv("LLM_MODEL"),
-			LLMConcurrency:   1,
-			EmbedEndpoint:    cfg.EmbedEndpoint,
-			EmbedModel:       cfg.EmbedModel,
-			EmbedClient:      cfg.EmbedClient, // T3 follow-up: reuse shared TCP pool through the pipeline
-			Neo4jURL:         cfg.Neo4jCfg.Neo4jURL,
-			Neo4jUser:        cfg.Neo4jCfg.Neo4jUser,
-			Neo4jPassword:    cfg.Neo4jCfg.Neo4jPassword,
-			Neo4jDatabase:    cfg.Neo4jCfg.Neo4jDatabase,
-			Collection:       collection,
-			Collections:      cfg.Collections,
-			BM25Indexes:      cfg.BM25Indexes,
-			GenerateTriplets: !req.SkipGraph,
-			SkipGraph:        req.SkipGraph,
-			SystemPrompt:     sessionContext,
-			DatasetID: func() string {
-				if len(allDatasetIDs) > 0 {
-					return allDatasetIDs[0]
-				}
-				return runID
-			}(),
+			ChunkStrategy:       "merged",
+			MinChunkChars:       50,
+			MaxChunkChars:       2000,
+			LLMEndpoint:         os.Getenv("LLM_ENDPOINT"),
+			LLMModel:            os.Getenv("LLM_MODEL"),
+			LLMConcurrency:      1,
+			EmbedEndpoint:       cfg.EmbedEndpoint,
+			EmbedModel:          cfg.EmbedModel,
+			EmbedClient:         cfg.EmbedClient, // T3 follow-up: reuse shared TCP pool through the pipeline
+			Neo4jURL:            cfg.Neo4jCfg.Neo4jURL,
+			Neo4jUser:           cfg.Neo4jCfg.Neo4jUser,
+			Neo4jPassword:       cfg.Neo4jCfg.Neo4jPassword,
+			Neo4jDatabase:       cfg.Neo4jCfg.Neo4jDatabase,
+			Collection:          collection,
+			Collections:         cfg.Collections,
+			BM25Indexes:         cfg.BM25Indexes,
+			GenerateTriplets:    !req.SkipGraph,
+			SkipGraph:           req.SkipGraph,
+			SystemPrompt:        sessionContext,
+			DatasetID:           effectiveDatasetID,
 			DB:                  cfg.DB,
 			LLMCache:            cfg.LLMCache,
 			LLMProvider:         cfg.LLMProvider,

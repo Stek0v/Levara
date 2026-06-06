@@ -2,7 +2,9 @@ package mcp
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -347,6 +349,101 @@ func TestToolCognify_DefaultCollectionWhenEmpty(t *testing.T) {
 	}
 	if captured.DatasetID != runID {
 		t.Errorf("DatasetID=%q, want runID=%q", captured.DatasetID, runID)
+	}
+}
+
+// setupCognifyDatasetDB returns a fakeDeps backed by an in-memory sqlite DB
+// carrying the datasets schema ensureCognifyDatasetID writes (name UNIQUE so
+// the ON CONFLICT(name) clause has an index to fire against).
+func setupCognifyDatasetDB(t *testing.T) *fakeDeps {
+	t.Helper()
+	f, _ := os.CreateTemp("", "mcp-cognify-ds-*.db")
+	path := f.Name()
+	f.Close()
+
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() {
+		db.Close()
+		os.Remove(path)
+	})
+
+	if _, err := db.Exec(`CREATE TABLE datasets (
+		id TEXT PRIMARY KEY, name TEXT UNIQUE, owner_id TEXT,
+		created_at TEXT, updated_at TEXT
+	)`); err != nil {
+		t.Fatalf("create datasets: %v", err)
+	}
+	return &fakeDeps{db: db}
+}
+
+// ctxWithUser tags a context with the MCP user id the same way the HTTP
+// handler does on auth, so extractOwnerID(ctx) resolves to owner.
+func ctxWithUser(owner string) context.Context {
+	return context.WithValue(context.Background(), UserIDKey, owner)
+}
+
+func TestEnsureCognifyDatasetID_GetOrCreateIsIdempotent(t *testing.T) {
+	deps := setupCognifyDatasetDB(t)
+	ctx := ctxWithUser("alice")
+
+	// First call creates a row and returns the fallback id (the runID it
+	// was seeded with). Second call into the same (owner, collection) must
+	// reuse it — same id back, and no second datasets row accreted.
+	id1 := ensureCognifyDatasetID(ctx, deps, "run-1", "docs")
+	id2 := ensureCognifyDatasetID(ctx, deps, "run-2", "docs")
+
+	if id1 != "run-1" {
+		t.Errorf("first id = %q, want the fallback run-1 (it created the row)", id1)
+	}
+	if id2 != id1 {
+		t.Errorf("second id = %q, want %q (reuse, not a fresh runID)", id2, id1)
+	}
+
+	var rows int
+	if err := deps.db.QueryRow(
+		"SELECT COUNT(*) FROM datasets WHERE name = '__cognify__:alice:docs'").Scan(&rows); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if rows != 1 {
+		t.Errorf("datasets rows = %d, want exactly 1 (no per-run accretion)", rows)
+	}
+}
+
+func TestEnsureCognifyDatasetID_ScopesByOwnerAndCollection(t *testing.T) {
+	deps := setupCognifyDatasetDB(t)
+
+	alice := ensureCognifyDatasetID(ctxWithUser("alice"), deps, "r-a", "docs")
+	bob := ensureCognifyDatasetID(ctxWithUser("bob"), deps, "r-b", "docs")
+	aliceOther := ensureCognifyDatasetID(ctxWithUser("alice"), deps, "r-a2", "notes")
+
+	if alice == bob {
+		t.Errorf("alice and bob share dataset id %q; owner scoping broken", alice)
+	}
+	if alice == aliceOther {
+		t.Errorf("alice's docs and notes share id %q; collection scoping broken", alice)
+	}
+
+	// The row alice created is owned by alice, not anonymous — without this
+	// the RBAC gate would still drop her chunks.
+	var owner string
+	if err := deps.db.QueryRow(
+		"SELECT owner_id FROM datasets WHERE id = ?", alice).Scan(&owner); err != nil {
+		t.Fatalf("select owner: %v", err)
+	}
+	if owner != "alice" {
+		t.Errorf("owner_id = %q, want alice", owner)
+	}
+}
+
+func TestEnsureCognifyDatasetID_NilDBFallsBack(t *testing.T) {
+	// No DB → RBAC is inert (every chunk already passes), so the helper
+	// returns the ephemeral id unchanged rather than touching a nil *sql.DB.
+	got := ensureCognifyDatasetID(context.Background(), nilDBDeps{}, "run-x", "docs")
+	if got != "run-x" {
+		t.Errorf("got %q, want fallback run-x when DB is nil", got)
 	}
 }
 

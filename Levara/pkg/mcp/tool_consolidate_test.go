@@ -201,7 +201,7 @@ func newConsolidateDeps(t *testing.T) *fakeDeps {
 }
 
 // TestEdges_EmbedsKeyPlusValue guards F-quality.1: the edge-builder must embed
-// the same key+" "+value text that indexMemoryAsync indexes, otherwise the
+// the same key+" "+value text that indexMemorySync indexes, otherwise the
 // value-only query vector is asymmetric against the stored key+value vectors and
 // under-clusters records whose key carries text.
 func TestEdges_EmbedsKeyPlusValue(t *testing.T) {
@@ -225,7 +225,7 @@ func TestEdges_EmbedsKeyPlusValue(t *testing.T) {
 	}
 	want := "pi-potion-sidecar runs on port 9101"
 	if len(embedded) != 1 || embedded[0] != want {
-		t.Errorf("embedded = %q, want exactly [%q] (key+\" \"+value, matching indexMemoryAsync)", embedded, want)
+		t.Errorf("embedded = %q, want exactly [%q] (key+\" \"+value, matching indexMemorySync)", embedded, want)
 	}
 }
 
