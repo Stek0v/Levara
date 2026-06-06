@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 
 	"github.com/gofiber/fiber/v2"
+	accesspkg "github.com/stek0v/levara/pkg/access"
 )
 
 // requireSuperuser returns nil when the caller's JWT resolves to a user
@@ -30,10 +31,8 @@ func requireSuperuser(c *fiber.Ctx, cfg APIConfig) error {
 		return c.Status(fiber.StatusForbidden).
 			JSON(fiber.Map{"detail": "superuser role required"})
 	}
-	var isSuperuser bool
-	if err := cfg.DB.QueryRowContext(c.Context(),
-		Q("SELECT COALESCE(is_superuser, false) FROM users WHERE id = $1"),
-		userID).Scan(&isSuperuser); err != nil {
+	isSuperuser, err := (accesspkg.SQLPolicy{DB: cfg.DB, Q: Q}).IsSuperuser(c.Context(), userID)
+	if err != nil {
 		return c.Status(fiber.StatusForbidden).
 			JSON(fiber.Map{"detail": "superuser role required"})
 	}
