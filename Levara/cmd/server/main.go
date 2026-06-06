@@ -185,8 +185,17 @@ func main() {
 	raftPortBase := flag.Int("raft-port", 9000, "Base port for Raft (shard N listens on base+N)")
 	joinAddr := flag.String("join-addr", "", "Primary node address to join as replica (e.g. 10.23.0.53:8080)")
 	mcpAuditPath := flag.String("mcp-audit-log", "", "Directory for daily-rolled MCP audit logs (empty = stderr; '-' disables)")
+	configCheck := flag.Bool("config-check", false, "Validate the resolved profile/config from env + flags and exit (no listeners, no DB, no network)")
 
 	flag.Parse()
+
+	// Dry-run config validation: resolve and check the runtime profile, then
+	// exit. Runs before any external init (storage, vector, SQL, listeners) so
+	// an operator — or `make profile-smoke` — can verify a profile preset with
+	// no services up. Exit 0 = acceptable, 1 = strict-mode fatal.
+	if *configCheck {
+		os.Exit(runConfigCheck(os.Stdout, *requireAuth, *mcpAuditPath, truthyEnv("LEVARA_PROFILE_STRICT")))
+	}
 
 	// ---------------------------------------------------------------
 	// Structured logging + error tracker (P3.4)

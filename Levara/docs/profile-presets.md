@@ -102,8 +102,20 @@ Recommended checks before committing profile or deployment changes:
 
 ```bash
 make profile-config-check
+make profile-smoke
 make test-commit
 make test-release-candidate
+```
+
+`make profile-smoke` builds the server and runs each non-enterprise preset
+(`personal`, `solo_pro`, `team`) through `server -config-check` — a dry run that
+validates the resolved profile from env + flags and exits without opening
+listeners, a database, or any network connection. Use it to confirm a preset is
+internally consistent before deploying. For a single preset:
+
+```bash
+set -a; source deploy/profiles/personal.local.env.example; set +a
+./levara-server -config-check
 ```
 
 `make test-release-candidate` does not replace manual Pi and multi-node sync

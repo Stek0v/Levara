@@ -9,6 +9,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -707,10 +708,21 @@ func runtimeDBProvider(db *sql.DB) string {
 // buried in startup wiring. It takes the already-resolved DB handle, the auth
 // flag, and the MCP audit path so the env reads stay co-located here.
 func buildRuntimeProfileConfig(db *sql.DB, requireAuth bool, mcpAuditPath string) profile.Config {
+	cfg := profileConfigEnvFacts(requireAuth, mcpAuditPath)
+	cfg.DBProvider = runtimeDBProvider(db)
+	cfg.HasDB = db != nil
+	return cfg
+}
+
+// profileConfigEnvFacts fills the profile.Config fields derived purely from env
+// vars plus the auth flag and the MCP audit path. It is the single env→profile
+// mapping shared by the live-startup path (buildRuntimeProfileConfig) and the
+// -config-check dry run (buildConfigCheckProfileConfig); the two differ only in
+// how the DB-derived fields (DBProvider, HasDB) are resolved, which the callers
+// set afterwards.
+func profileConfigEnvFacts(requireAuth bool, mcpAuditPath string) profile.Config {
 	return profile.Config{
 		Profile:             os.Getenv("LEVARA_PROFILE"),
-		DBProvider:          runtimeDBProvider(db),
-		HasDB:               db != nil,
 		RequireAuth:         requireAuth,
 		JWTSecretSet:        strings.TrimSpace(os.Getenv("JWT_SECRET")) != "",
 		SyncEnabled:         strings.TrimSpace(os.Getenv("LEVARA_SYNC_REMOTE_URL")) != "",
@@ -719,6 +731,50 @@ func buildRuntimeProfileConfig(db *sql.DB, requireAuth bool, mcpAuditPath string
 		AuditSinkSet:        auditSinkConfigured(mcpAuditPath),
 		SSOBridgeConfigured: ssoBridgeConfigured(),
 	}
+}
+
+// configCheckDBProvider derives the DB provider for the -config-check dry run
+// from env alone (no live handle): "sqlite" when explicitly selected, otherwise
+// "postgres" — the bootstrap default that initSQLRuntime would resolve.
+func configCheckDBProvider() string {
+	if os.Getenv("DB_PROVIDER") == "sqlite" {
+		return "sqlite"
+	}
+	return "postgres"
+}
+
+// buildConfigCheckProfileConfig assembles the profile.Config for the
+// -config-check dry run from env + flags only. Unlike buildRuntimeProfileConfig
+// it never opens a database: it validates the *declared* configuration
+// (DBProvider from DB_PROVIDER, HasDB assumed true) so an operator can verify a
+// profile preset before any service — DB, embedder, listeners — is brought up.
+func buildConfigCheckProfileConfig(requireAuth bool, mcpAuditPath string) profile.Config {
+	cfg := profileConfigEnvFacts(requireAuth, mcpAuditPath)
+	cfg.DBProvider = configCheckDBProvider()
+	cfg.HasDB = true
+	return cfg
+}
+
+// runConfigCheck implements the -config-check dry run: it resolves the runtime
+// profile config from env + flags, evaluates it (strict or warn-only), writes a
+// human-readable report to w, and returns a process exit code — 0 when the
+// configuration is acceptable, 1 when strict mode finds a fatal error. It opens
+// no listeners, no DB connection, and makes no network calls, so it is safe to
+// run anywhere, including CI and the `make profile-smoke` target.
+func runConfigCheck(w io.Writer, requireAuth bool, mcpAuditPath string, strict bool) int {
+	cfg := buildConfigCheckProfileConfig(requireAuth, mcpAuditPath)
+	findings, fatal := evaluateRuntimeProfile(cfg, strict)
+	fmt.Fprintf(w, "profile: %s (strict=%v, db_provider=%s, require_auth=%v)\n",
+		profile.Normalize(cfg.Profile), strict, cfg.DBProvider, cfg.RequireAuth)
+	for _, f := range findings {
+		fmt.Fprintf(w, "  [%s] %s: %s\n", f.Level, f.Code, f.Message)
+	}
+	if fatal {
+		fmt.Fprintln(w, "config-check: FAIL (strict-mode profile errors)")
+		return 1
+	}
+	fmt.Fprintln(w, "config-check: OK")
+	return 0
 }
 
 // ssoBridgeConfigured reports whether an enterprise identity bridge (OIDC/SAML)

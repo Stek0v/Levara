@@ -1,7 +1,9 @@
 # ADR-002: Product Ladder And Layer Boundaries
 
 Date: 2026-06-05
-Status: accepted; implementation in progress
+Status: accepted; layer split, profile validation, and product presets complete.
+Concrete enterprise backends (raw OIDC/SAML/SCIM, KMS/BYOK, corporate object
+storage) remain follow-up — see Current Follow-up Decisions.
 
 ## Context
 
@@ -91,8 +93,9 @@ engineering boundary:
    into access-layer helpers.
 9. [x] Add enterprise storage, retention, and KMS/BYOK adapter contracts.
 10. [x] Add optional OIDC verified-claims adapter above `IdentityBridge`.
-11. [ ] Add product presets/runbooks for Personal, Solo Pro, Team, and
-    Enterprise.
+11. [x] Add product presets/runbooks for Personal, Solo Pro, Team, and
+    Enterprise (`deploy/profiles/*.env.example`, `docs/profile-presets.md`,
+    `server -config-check` / `make profile-smoke`).
 
 ## Acceptance Criteria
 
@@ -111,7 +114,7 @@ engineering boundary:
   search or indexing packages.
 - [x] OIDC adapter code stays outside core search, indexing, and workspace
   handlers.
-- [ ] Product presets prove each tier can be operated without reading unrelated
+- [x] Product presets prove each tier can be operated without reading unrelated
   tier documentation.
 
 ## Current Follow-up Decisions
