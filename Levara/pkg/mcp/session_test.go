@@ -33,6 +33,52 @@ func TestSessionStore_CreateGetDelete(t *testing.T) {
 	}
 }
 
+func TestSessionStore_Adopt_HonorsClientID(t *testing.T) {
+	s := NewSessionStore()
+	const clientID = "mcp-from-a-previous-process"
+	sess := s.Adopt(clientID)
+	if sess.ID != clientID {
+		t.Errorf("Adopt minted id %q, want the client-supplied %q", sess.ID, clientID)
+	}
+	if got := s.Get(clientID); got != sess {
+		t.Error("adopted session not retrievable by its id")
+	}
+	if s.Count() != 1 {
+		t.Errorf("Count = %d, want 1", s.Count())
+	}
+	// SSECh must be usable (non-nil, buffered) like a Create()d session.
+	select {
+	case sess.SSECh <- []byte("x"):
+	default:
+		t.Error("adopted session SSECh not writable")
+	}
+}
+
+func TestSessionStore_Adopt_Idempotent(t *testing.T) {
+	s := NewSessionStore()
+	const clientID = "mcp-replayed"
+	first := s.Adopt(clientID)
+	first.UserID = "alice"
+	second := s.Adopt(clientID)
+	if first != second {
+		t.Error("second Adopt of the same id returned a different session")
+	}
+	if second.UserID != "alice" {
+		t.Errorf("re-adopt clobbered owner: UserID = %q, want alice", second.UserID)
+	}
+	if s.Count() != 1 {
+		t.Errorf("Count = %d, want 1 (no accretion on re-adopt)", s.Count())
+	}
+}
+
+func TestSessionStore_Adopt_EmptyIDFallsBackToCreate(t *testing.T) {
+	s := NewSessionStore()
+	sess := s.Adopt("")
+	if !strings.HasPrefix(sess.ID, "mcp-") {
+		t.Errorf("Adopt(\"\") id = %q, want a freshly-minted mcp- id", sess.ID)
+	}
+}
+
 func TestSessionStore_GetEmptyIDReturnsNil(t *testing.T) {
 	s := NewSessionStore()
 	if s.Get("") != nil {

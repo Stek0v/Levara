@@ -496,6 +496,18 @@ func (h *mcpHandler) createSession(userID string) string {
 	return sess.ID
 }
 
+// adoptSession re-establishes a session under a client-supplied id (e.g. one
+// replayed after a backend restart wiped the in-memory store), binding its
+// owner to userID when known. Returns the session — existing or freshly
+// adopted. See SessionStore.Adopt for the lifecycle rationale.
+func (h *mcpHandler) adoptSession(sessionID, userID string) *mcpSession {
+	sess := h.sessions.Adopt(sessionID)
+	if userID != "" {
+		sess.UserID = userID
+	}
+	return sess
+}
+
 func (h *mcpHandler) authenticateMCPRequest(c *fiber.Ctx) (string, error) {
 	if apiKey := firstNonEmpty(c.Get("X-API-Key"), c.Get("X-Api-Key")); apiKey != "" {
 		if h.cfg.DB == nil {
@@ -575,11 +587,23 @@ func (h *mcpHandler) handleRPC(c *fiber.Ctx) error {
 		return c.SendStatus(202)
 	}
 
-	// Session validation for non-initialize requests
+	// Session validation for non-initialize requests. A session-id the store
+	// doesn't recognise almost always means the in-memory store was reset (a
+	// backend restart) and the client is replaying a now-stale id. Bouncing it
+	// with a bare 404 is spec-correct ("re-initialize"), but the Claude Code
+	// MCP client doesn't auto-recover mid tool-call — it surfaces the 404 as a
+	// hang. So instead of 404 we adopt the replayed id and rebind its owner
+	// from the request's own JWT (authoritative, survives a store reset),
+	// making restarts transparent. Only fall back to 404 when we can't even
+	// establish an owner (auth error under require-auth).
 	sessionID := c.Get("Mcp-Session-Id")
 	if req.Method != "initialize" && sessionID != "" {
 		if h.getOrValidateSession(sessionID) == nil {
-			return c.SendStatus(404) // invalid session → client should re-initialize
+			userID, authErr := h.authenticateMCPRequest(c)
+			if authErr != nil {
+				return c.SendStatus(404) // can't re-establish owner → client should re-initialize
+			}
+			h.adoptSession(sessionID, userID)
 		}
 	}
 
@@ -666,12 +690,27 @@ func (h *mcpHandler) handleToolCall(c *fiber.Ctx, req jsonRPCRequest) error {
 		})
 	}
 
-	// Inject user ID from session for isolation
+	// Resolve the owner for isolation. Prefer the request's own JWT/API-key —
+	// it's authoritative and survives a session-store reset — and fall back to
+	// the session binding only when the request carries no identity. This also
+	// closes the owner_id='' footgun where a client that dropped its
+	// Mcp-Session-Id would otherwise write records with no owner.
 	toolCtx := context.Background()
 	sessionID := c.Get("Mcp-Session-Id")
 	sess := h.getOrValidateSession(sessionID)
-	if sess != nil && sess.UserID != "" {
-		toolCtx = context.WithValue(toolCtx, mcpUserIDKey, sess.UserID)
+	userID := ""
+	if uid, err := h.authenticateMCPRequest(c); err == nil && uid != "" {
+		userID = uid
+	} else if sess != nil {
+		userID = sess.UserID
+	}
+	if userID != "" {
+		toolCtx = context.WithValue(toolCtx, mcpUserIDKey, userID)
+		// Keep the session's owner in sync so audit/set_context agree with the
+		// identity the tool actually ran as.
+		if sess != nil && sess.UserID == "" {
+			sess.UserID = userID
+		}
 	}
 
 	result := h.executeTool(toolCtx, sess, params.Name, params.Arguments)
