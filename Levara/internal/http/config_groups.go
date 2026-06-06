@@ -17,6 +17,10 @@
 // ungrouped on the wrapper: they are used by every handler regardless of
 // concern, so bundling them into one group would not narrow any adapter's
 // surface.
+//
+// Rule for new code: accept the narrowest group that covers the concern. Use
+// APIConfig only for compatibility registration code or handlers that genuinely
+// combine multiple concerns.
 package http
 
 import (

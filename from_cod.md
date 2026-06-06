@@ -185,7 +185,7 @@ accepting narrow groups.
     `SearchConfig` inputs.
 - [ ] Avoid a big-bang rewrite. Migrate one group at a time and keep tests
   focused.
-- [ ] Add a convention: new handlers/adapters must accept a narrow config group
+- [x] Add a convention: new handlers/adapters must accept a narrow config group
   unless they genuinely need multiple groups.
 - [ ] Keep `APIConfig` as compatibility wrapper until call sites shrink
   naturally.
