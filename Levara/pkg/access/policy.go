@@ -210,6 +210,53 @@ func (p SQLPolicy) AllowedDatasetIDs(ctx context.Context, userID string) []strin
 	return ids
 }
 
+// VisibleDatasetIDs returns the concrete dataset IDs visible to userID,
+// ordered by id. Unlike AllowedDatasetIDs, this method is not a search
+// fail-open filter helper: SQL errors are returned to the caller. Anonymous,
+// nil-DB, and superuser callers preserve existing workspace-context semantics
+// by returning every dataset id.
+func (p SQLPolicy) VisibleDatasetIDs(ctx context.Context, userID string) ([]string, error) {
+	if p.DB == nil {
+		return nil, nil
+	}
+	showAll := userID == ""
+	if !showAll {
+		super, err := p.IsSuperuser(ctx, userID)
+		if err != nil {
+			return nil, err
+		}
+		showAll = super
+	}
+
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if showAll {
+		rows, err = p.DB.QueryContext(ctx, p.rewrite("SELECT id FROM datasets ORDER BY id"))
+	} else {
+		query, args := p.rewriteArgs(`SELECT DISTINCT d.id FROM datasets d
+			LEFT JOIN dataset_shares s ON s.dataset_id = d.id AND s.user_id = $1
+			WHERE d.owner_id = $1 OR d.owner_id = '' OR d.owner_id IS NULL OR s.id IS NOT NULL
+			ORDER BY d.id`, userID)
+		rows, err = p.DB.QueryContext(ctx, query, args...)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 // CanAccessDataset preserves the existing Levara dataset access semantics:
 // no DB or no user means dev-mode allow; an empty owner is public; any share
 // row grants access regardless of role.

@@ -8,6 +8,7 @@ import (
 	"sort"
 
 	"github.com/gofiber/fiber/v2"
+	accesspkg "github.com/stek0v/levara/pkg/access"
 	"github.com/stek0v/levara/pkg/workspace"
 )
 
@@ -140,34 +141,7 @@ func workspaceLocalProjectIDs(cfg APIConfig) []string {
 }
 
 func workspaceDBProjectIDs(ctx context.Context, db *sql.DB, userID string) ([]string, error) {
-	var isSuperuser bool
-	if err := db.QueryRowContext(ctx, Q("SELECT COALESCE(is_superuser, false) FROM users WHERE id = $1"), userID).Scan(&isSuperuser); err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return nil, err
-	}
-	var rows *sql.Rows
-	var err error
-	if isSuperuser {
-		rows, err = db.QueryContext(ctx, Q("SELECT id FROM datasets ORDER BY id"))
-	} else {
-		query, args := QArgs(`SELECT DISTINCT d.id FROM datasets d
-			LEFT JOIN dataset_shares s ON s.dataset_id = d.id AND s.user_id = $1
-			WHERE d.owner_id = $1 OR d.owner_id = '' OR d.owner_id IS NULL OR s.id IS NOT NULL
-			ORDER BY d.id`, userID)
-		rows, err = db.QueryContext(ctx, query, args...)
-	}
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	return ids, rows.Err()
+	return accesspkg.SQLPolicy{DB: db, Q: Q, QA: QArgs}.VisibleDatasetIDs(ctx, userID)
 }
 
 func workspaceContextBranches(ctx context.Context, cfg APIConfig, projectID, branchFilter string, watch WorkspaceWatchStatus) []workspaceBranchContext {

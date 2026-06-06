@@ -1,7 +1,7 @@
 # ADR-002: Product Ladder And Layer Boundaries
 
 Date: 2026-06-05
-Status: proposed
+Status: accepted; implementation in progress
 
 ## Context
 
@@ -10,15 +10,15 @@ HTTP, gRPC, MCP, vector search, graph storage, memory, workspace, sync, and
 observability surfaces. The repository also contains working markdown workspace
 recipes for single-node development, team servers, and Mac/Pi sync.
 
-That is enough for a strong agent-memory product, but the codebase currently
-mixes some product-layer concerns into transport handlers. In particular,
-auth, RBAC, tenant, and workspace access decisions are partly implemented in
-`internal/http`. MCP is already cleaner: `pkg/mcp` exposes small
+That is enough for a strong agent-memory product, but the initial codebase mixed
+some product-layer concerns into transport handlers. In particular, auth, RBAC,
+tenant, and workspace access decisions were partly implemented in
+`internal/http`. MCP was already cleaner: `pkg/mcp` exposes small
 capability-oriented interfaces and keeps tool bodies transport-independent.
 
 ## Decision
 
-Levara will be documented and evolved as one core engine with layered product
+Levara is documented and evolved as one core engine with layered product
 profiles:
 
 1. Personal / Local.
@@ -33,8 +33,7 @@ engineering boundary:
   mechanics.
 - Agent memory packages own MCP-facing memory, wake-up, diary, and workspace
   behavior.
-- Identity and access must move behind a transport-independent policy service
-  before enterprise features are added.
+- Identity and access move behind a transport-independent policy service.
 - Workspace remains a domain layer where Markdown files are the source of
   truth and vector/BM25 indexes are disposable derivatives.
 - Enterprise capabilities must be adapters attached to identity, access,
@@ -53,42 +52,72 @@ engineering boundary:
 
 ## Consequences
 
-- The first implementation step is documentation and profile planning only.
-- The next code step should extract `pkg/access` or `pkg/identity` without
+- The first implementation step was documentation and profile planning.
+- The first code step extracted `pkg/access` and profile validation without
   changing public API behavior.
-- `LEVARA_PROFILE=personal|solo_pro|team|enterprise` is a future proposal, not
-  a current runtime contract.
-- Enterprise work is blocked on tenant hardening and a shared policy service.
+- `LEVARA_PROFILE=personal|solo_pro|team|enterprise` is now a runtime profile
+  validation interface.
+- `LEVARA_PROFILE_STRICT=1` is now the fail-fast gate for unsafe team and
+  enterprise profile combinations.
+- Enterprise audit and identity work may proceed through adapter boundaries
+  because tenant hardening and the shared policy service foundation exist.
+- Enterprise storage/KMS work remains blocked on a dedicated adapter contract.
 - Existing REST, MCP, and gRPC contracts remain stable while the internals are
   separated.
 
 ## Non-goals
 
 - No REST, MCP, gRPC, SQL schema, or CLI wire-shape changes in this ADR.
-- No immediate implementation of OIDC, SAML, SCIM, KMS, SIEM, or retention.
 - No split into separate binaries or editions.
 - No rewrite of the vector, graph, cognify, or workspace indexing paths.
+- No direct embedding of OIDC, SAML, SCIM, KMS, SIEM, or retention behavior in
+  HTTP handlers.
 
 ## Implementation Roadmap
 
-1. Land `docs/product-ladder.md` and this ADR.
-2. Add policy-service tests that capture current workspace and dataset access
-   behavior.
-3. Move access decisions from `internal/http` handlers into the policy service.
-4. Wire HTTP and MCP to the same service.
-5. Add profile validation after the policy service is stable.
-6. Add enterprise adapters only through the new identity, access, audit, and
-   storage boundaries.
+1. [x] Land `docs/product-ladder.md` and this ADR.
+2. [x] Add policy-service tests that capture current workspace and dataset
+   access behavior.
+3. [x] Move workspace, dataset, tenant, API-key permission, and activation
+   decisions into `pkg/access`.
+4. [x] Wire REST and MCP workspace decisions to the same policy path.
+5. [x] Add profile validation and strict-mode fail-fast behavior.
+6. [x] Add audit export boundary through `pkg/audit`.
+7. [x] Add identity bridge and provisioning seams through `pkg/access`.
+8. [ ] Move remaining HTTP-owned dataset-list/workspace-context visibility SQL
+   into access-layer helpers.
+9. [ ] Add enterprise storage, retention, and KMS/BYOK adapter contracts.
+10. [ ] Add product presets/runbooks for Personal, Solo Pro, Team, and
+    Enterprise.
 
 ## Acceptance Criteria
 
-- Personal/local remains simple: SQLite, local filesystem, MCP, no auth
+- [x] Personal/local remains simple: SQLite, local filesystem, MCP, no auth
   requirement by default.
-- Team profile requires Postgres, stable auth secret, and per-user/per-agent
-  credentials.
-- Enterprise profile requires tenant enforcement and audit export readiness.
-- Tenant selection is membership-checked before it affects resource visibility.
-- Tenant filters are parameterized and cannot be constructed by string
+- [x] Team profile requires Postgres, stable auth secret, and per-user/per-agent
+  credentials in strict mode.
+- [x] Enterprise profile requires tenant enforcement and audit export readiness
+  in strict mode.
+- [x] Tenant selection is membership-checked before it affects resource
+  visibility.
+- [x] Tenant filters are parameterized and cannot be constructed by string
   concatenation.
-- One policy decision path is shared by REST and MCP workspace operations.
+- [x] One policy decision path is shared by REST and MCP workspace operations.
+- [ ] Enterprise storage/KMS adapters exist without importing into core search
+  or indexing packages.
+- [ ] Product presets prove each tier can be operated without reading unrelated
+  tier documentation.
 
+## Current Follow-up Decisions
+
+The remaining architectural decisions are intentionally smaller than the
+original layer split:
+
+- Whether concrete OIDC/SAML/SCIM protocol adapters live in-tree or as
+  deployment-side plugins.
+- The object-storage metadata contract for retention, legal hold, tenant scope,
+  digest, and encryption key reference.
+- The KMS/BYOK hook shape and whether key wrapping happens in storage adapters
+  or in a separate secret-management package.
+- The migration path from flat `APIConfig` plus projections to handlers that
+  accept only narrow typed config groups.

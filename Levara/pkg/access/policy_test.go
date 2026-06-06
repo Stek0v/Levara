@@ -122,6 +122,53 @@ func TestAllowedDatasetIDs(t *testing.T) {
 	}
 }
 
+func TestVisibleDatasetIDs(t *testing.T) {
+	db := newPolicyTestDB(t)
+	policy := SQLPolicy{DB: db, Q: sqliteQ, QA: sqliteQArgs}
+	ctx := context.Background()
+
+	got, err := policy.VisibleDatasetIDs(ctx, "user-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"owned-b", "payments", "public"}
+	if len(got) != len(want) {
+		t.Fatalf("visible=%v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("visible=%v, want ordered %v", got, want)
+		}
+	}
+
+	got, err = policy.VisibleDatasetIDs(ctx, "root")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want = []string{"owned-b", "payments", "public"}
+	if len(got) != len(want) {
+		t.Fatalf("superuser visible=%v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("superuser visible=%v, want ordered %v", got, want)
+		}
+	}
+
+	got, err = policy.VisibleDatasetIDs(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("anonymous visible=%v, want all %v", got, want)
+	}
+
+	got, err = (SQLPolicy{}).VisibleDatasetIDs(ctx, "user-b")
+	if err != nil || got != nil {
+		t.Fatalf("nil-db visible=%v err=%v, want nil nil", got, err)
+	}
+}
+
 func TestCanAccessDataset(t *testing.T) {
 	db := newPolicyTestDB(t)
 	policy := SQLPolicy{DB: db, Q: sqliteQ, QA: sqliteQArgs}

@@ -1,15 +1,18 @@
 # From Codex: Layer Split Status And Next Tasks
 
-Date: 2026-06-05
-Status: active backlog
+Date: 2026-06-06
+Status: active completion plan
 
 This file captures the current state after the product-ladder work and lists
-the next implementation tasks. Mark completed items with `[x]` as they land.
+the remaining tasks required to bring the layer/product split to 100%.
+Mark completed items with `[x]` as they land.
 
 ## Current Status
 
-The layer split is past the planning-only stage, but not yet fully enforced at
-runtime.
+The layer split is no longer planning-only. Access, profile validation, audit
+export, and identity-adapter seams exist in code. The remaining work is to
+finish product packaging, remove the last HTTP-owned policy queries, implement
+enterprise storage/KMS boundaries, and keep docs aligned with runtime behavior.
 
 - [x] Product ladder documented for `personal`, `solo_pro`, `team`, and
   `enterprise`.
@@ -37,22 +40,234 @@ runtime.
 - [x] Runtime profiles fail fast in strict mode (`LEVARA_PROFILE_STRICT=1`):
   unsafe `team`/`enterprise` configs exit non-zero. Warning-only remains the
   default during migration.
-- [ ] Enterprise adapters are documented but not implemented.
+- [x] Enterprise audit export adapter boundary is implemented.
+- [x] Enterprise identity adapter seams are implemented.
+- [ ] Enterprise storage, object-retention, and KMS/BYOK adapters are not
+  implemented.
+- [ ] Product packaging by audience is incomplete: profiles exist, but there is
+  no one-command preset/runbook bundle per target audience.
+- [x] Canonical docs were stale: `product-ladder.md` and ADR-002 still
+  describe implemented behavior as future/proposed unless updated in this
+  completion pass.
 
 ## Main Architectural Finding
 
 Levara already has the right primitives for the product ladder. The remaining
-work is mostly boundary work:
+work is mostly product hardening and boundary cleanup:
 
-- HTTP handlers still know too much about users, tenants, API keys, DB tables,
-  and profile safety.
+- Some HTTP handlers still know too much about users, dataset visibility, and
+  share tables. `workspace_context.go`, `api_datasets.go`, `api_admin.go`, and
+  parts of `rbac.go` still issue access-shaped SQL directly instead of going
+  through a query/facade on `pkg/access`.
 - MCP is closer to the desired shape because `pkg/mcp` already uses capability
   interfaces. That pattern should be copied into access, identity, audit, and
   workspace service boundaries.
-- `APIConfig` is still a broad service locator. It should be split gradually
-  into typed config groups before enterprise adapters are added.
-- Tenant hardening has started, but enterprise readiness requires tenant
-  enforcement to be explicit, testable, and fail-fast.
+- `APIConfig` now has typed projections, but it is still a broad compatibility
+  wrapper. New code can use narrow groups, but existing handlers still mostly
+  depend on the flat locator.
+- Tenant hardening is substantially better, but enterprise readiness also needs
+  storage/KMS guarantees and operator-facing profile packaging.
+
+## 100% Completion Definition
+
+The layer/product split is complete when all of the following are true:
+
+1. **Docs match code:** canonical docs describe implemented profile, access,
+   audit, identity, and testing behavior accurately.
+2. **Product presets exist:** each audience has a runnable profile preset:
+   Personal, Solo Pro, Team, Enterprise.
+3. **HTTP policy cleanup is complete:** HTTP handlers adapt request/response and
+   call `pkg/access`; no handler owns access-shaped SQL unless it is pure CRUD
+   listing data for an already-authorized admin/user view.
+4. **Enterprise storage/KMS seam exists:** object storage, retention metadata,
+   and KMS/BYOK hooks are adapter contracts with tests.
+5. **Release gates enforce the ladder:** `make test-commit` and
+   `make test-release-candidate` cover the profile matrix and enterprise
+   readiness boundaries.
+6. **No public contract regression:** REST, MCP, gRPC, and CLI wire contracts
+   remain stable unless a later ADR explicitly proposes a versioned change.
+
+## Completion Roadmap
+
+### C0: Synchronize Canonical Docs
+
+Goal: remove stale planning/proposal language and make docs decision-ready for
+the current implementation state.
+
+- [x] Update `Levara/docs/product-ladder.md` from planning/proposal language to
+  implemented-foundation status.
+- [x] Mark `LEVARA_PROFILE` and `LEVARA_PROFILE_STRICT=1` as real runtime
+  interfaces, not future proposals.
+- [x] Move access/profile/audit/identity items from "future/hardening" columns
+  into "implemented foundation" where applicable.
+- [x] Keep storage/KMS/SIEM/protocol SSO clearly marked as remaining work.
+- [x] Update ADR-002 from proposed-only wording to accepted/evolving wording,
+  including the fact that Phases 2A, 2B, 3A, 3B, 4A, and 4B have landed.
+- [x] Add a "remaining decisions" note for Phase 4C storage/KMS and product
+  packaging.
+- [x] Run docs tests after edits.
+
+Acceptance criteria:
+
+- [x] A reader can tell which profile/layer behavior exists today.
+- [x] A reader can tell which enterprise pieces are only seams/contracts.
+- [x] No doc says `LEVARA_PROFILE` is future-only.
+
+### C1: Product Presets And Operator UX
+
+Goal: turn the profile ladder into runnable deployment choices for each target
+audience.
+
+- [ ] Add sample env files or recipes:
+  - [ ] `personal.local.env.example`
+  - [ ] `solo_pro.sync.env.example`
+  - [ ] `team.postgres.env.example`
+  - [ ] `enterprise.strict.env.example`
+- [ ] Add a short profile matrix document or section that maps:
+  - [ ] required services;
+  - [ ] expected auth mode;
+  - [ ] storage mode;
+  - [ ] audit mode;
+  - [ ] startup failure conditions.
+- [ ] Add a lightweight local smoke script or Make target that starts each
+  non-enterprise profile in dry-run/config-check mode once such mode exists.
+- [ ] Add explicit guidance for single developer + AI agents:
+  local MCP, no required auth, SQLite, workspace root, memory palace.
+- [ ] Add explicit guidance for corporate teams:
+  strict mode, Postgres, tenant enforcement, audit export, provisioning bridge,
+  stable signing config.
+
+Acceptance criteria:
+
+- [ ] A solo developer can start Personal without reading enterprise docs.
+- [ ] A team operator can see why Postgres/auth/JWT are required.
+- [ ] Enterprise docs do not imply unsupported KMS/object-storage features are
+  already production-ready.
+
+### C2: HTTP Policy Cleanup
+
+Goal: finish the boundary so HTTP handlers do not own access-shaped SQL.
+
+- [x] Add `SQLPolicy.VisibleDatasetIDs(ctx, actor)` or equivalent typed method
+  that can replace direct list visibility queries in:
+  - [x] `internal/http/workspace_context.go`
+  - [ ] `internal/http/api_datasets.go`
+- [ ] Add `SQLPolicy.ListVisibleDatasets(ctx, actor)` or a narrow access-layer
+  query helper returning DTO-neutral records for dataset list endpoints.
+- [ ] Route `api_admin.go` superuser checks through `SQLPolicy.IsSuperuser`
+  or a shared admin policy helper.
+- [ ] Move share-management validation in `rbac.go` fully behind access-layer
+  helpers:
+  - [ ] role vocabulary;
+  - [ ] grant/revoke permission decision;
+  - [ ] target user lookup policy boundary, if it becomes permission-sensitive.
+- [ ] Add grep-based or unit guard to catch new direct `is_superuser`,
+  `dataset_shares`, and `user_tenant` policy reads in `internal/http` outside
+  approved CRUD/schema/test files.
+
+Acceptance criteria:
+
+- [ ] Access decisions are testable without Fiber.
+- [ ] HTTP handlers own parsing/status codes/DTOs only.
+- [ ] Existing route behavior and response shapes do not change.
+
+### C3: APIConfig Migration From Projection To Narrow Inputs
+
+Goal: move from "flat service locator with projections" to handlers/adapters
+accepting narrow groups.
+
+- [ ] Pick one low-risk surface and migrate it first:
+  - [ ] workspace audit exporter wiring uses `AuditConfig`;
+  - [ ] tenant middleware/access helpers use `AccessConfig`;
+  - [ ] sync manifest uses `IdentityConfig`.
+- [ ] Avoid a big-bang rewrite. Migrate one group at a time and keep tests
+  focused.
+- [ ] Add a convention: new handlers/adapters must accept a narrow config group
+  unless they genuinely need multiple groups.
+- [ ] Keep `APIConfig` as compatibility wrapper until call sites shrink
+  naturally.
+
+Acceptance criteria:
+
+- [ ] At least one production handler path no longer accepts full `APIConfig`
+  when it only needs one concern.
+- [ ] New enterprise adapters do not depend on full `APIConfig`.
+
+### C4: Enterprise Storage/KMS Boundary
+
+Goal: implement Phase 4C without touching vector/BM25/graph/cognify core.
+
+- [ ] Review current `pkg/storage` interface and upload/raw-object call sites.
+- [ ] Define object metadata shape:
+  - [ ] retention class;
+  - [ ] legal hold flag;
+  - [ ] encryption key reference;
+  - [ ] content digest;
+  - [ ] tenant/project scope.
+- [ ] Define storage adapter contract for:
+  - [ ] local filesystem;
+  - [ ] S3-compatible object storage;
+  - [ ] future GCS/Azure compatibility.
+- [ ] Define KMS/BYOK hook contract:
+  - [ ] encrypt data key;
+  - [ ] decrypt data key;
+  - [ ] rotate key reference;
+  - [ ] report key metadata without exposing key material.
+- [ ] Add contract tests:
+  - [ ] idempotent delete;
+  - [ ] presigned/direct read behavior;
+  - [ ] retention metadata preserved;
+  - [ ] legal hold blocks delete where expected;
+  - [ ] KMS hook called without leaking plaintext keys;
+  - [ ] adapter failure is observable and does not corrupt core indexes.
+
+Acceptance criteria:
+
+- [ ] Enterprise storage can be implemented as an adapter.
+- [ ] Personal/local storage remains simple and does not require KMS.
+- [ ] Core search/indexing packages do not import enterprise storage/KMS code.
+
+### C5: Enterprise Protocol Adapters
+
+Goal: move from generic SSO/SCIM seams to concrete optional integrations.
+
+- [ ] Decide whether concrete OIDC/SAML/SCIM adapters belong in-tree or as
+  optional build/deploy packages.
+- [ ] If in-tree, add OIDC adapter first:
+  - [ ] verified token/session input;
+  - [ ] issuer/subject mapping;
+  - [ ] group-to-tenant mapping;
+  - [ ] tests with local fixtures only.
+- [ ] Add SCIM HTTP surface only after an ADR or route contract proposal.
+- [ ] Keep protocol-specific code out of core engine and workspace handlers.
+
+Acceptance criteria:
+
+- [ ] `pkg/access.IdentityBridge` remains the policy-facing seam.
+- [ ] Protocol adapters can be disabled entirely for Personal/Solo/Team.
+
+### C6: Release Gate Completion
+
+Goal: make the 100% state enforceable.
+
+- [ ] Add checks that docs profile status and `from_cod.md` completion state do
+  not drift from code-owned profile constants.
+- [ ] Expand `make test-release-candidate` when storage/KMS contracts land.
+- [ ] Add a CI-friendly target for profile config validation without starting
+  external services.
+- [ ] Add security-diff checklist for changes touching:
+  - [ ] access;
+  - [ ] tenant;
+  - [ ] audit export;
+  - [ ] storage/KMS;
+  - [ ] MCP memory ownership.
+
+Acceptance criteria:
+
+- [ ] A PR that weakens tenant/auth/audit profile guarantees fails a focused
+  test.
+- [ ] A PR that reintroduces policy SQL into HTTP is caught by review tooling
+  or tests.
 
 ## Recommended Implementation Order
 
@@ -308,4 +523,3 @@ profile validation are stable.
 - `Levara/cmd/server/bootstrap.go`
 - `Levara/pkg/audit/audit.go`
 - `Levara/pkg/mcp/*`
-
