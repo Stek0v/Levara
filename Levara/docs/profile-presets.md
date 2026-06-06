@@ -101,9 +101,13 @@ concrete production backends remain follow-up work tracked after C4.
 Recommended checks before committing profile or deployment changes:
 
 ```bash
+make profile-config-check
 make test-commit
 make test-release-candidate
 ```
 
 `make test-release-candidate` does not replace manual Pi and multi-node sync
 smoke tests; it documents that gap in its output.
+
+For access, tenant, audit export, storage/KMS, and MCP memory ownership changes,
+also use `docs/security-diff-checklist.md`.
