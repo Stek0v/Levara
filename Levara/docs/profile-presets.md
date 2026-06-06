@@ -81,9 +81,10 @@ Required runtime facts:
 
 Use Enterprise when tenant governance, central identity, audit export, and
 corporate storage controls matter. The current implementation has tenant
-hardening, strict profile checks, audit export, and SSO/SCIM seams. Concrete
-protocol adapters, SIEM sinks, KMS/BYOK, legal hold, and corporate object
-storage remain follow-up work.
+hardening, strict profile checks, audit export, SSO/SCIM seams, and storage/KMS
+adapter contracts. Concrete protocol adapters, SIEM sinks, KMS/BYOK
+implementations, legal-hold enforcement, and corporate object storage backends
+remain follow-up work.
 
 Start from:
 
@@ -92,8 +93,8 @@ cp deploy/profiles/enterprise.strict.env.example .env
 ```
 
 Do not treat the Enterprise preset as proof that KMS/BYOK or corporate object
-storage is already production-ready. Those are adapter contracts still tracked
-in `from_cod.md` under C4.
+storage is already production-ready. The adapter contracts are in place; the
+concrete production backends remain follow-up work tracked after C4.
 
 ## Validation
 

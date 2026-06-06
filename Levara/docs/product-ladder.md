@@ -1,13 +1,13 @@
 # Levara Product Ladder
 
 Date: 2026-06-06
-Status: implemented foundation; storage/KMS and product presets pending
+Status: implemented foundation; concrete enterprise adapters and product presets pending
 
 This document translates the current Levara architecture into a product ladder.
 It started as a planning document. The foundation has since moved into code:
 access policy, runtime profile validation, audit export, and enterprise
-identity seams now exist. The remaining work is product packaging, HTTP policy
-cleanup, and enterprise storage/KMS adapters.
+identity seams and storage/KMS adapter contracts now exist. The remaining work
+is product packaging and concrete enterprise protocol/storage integrations.
 
 ## Goal
 
@@ -30,8 +30,8 @@ profiles or adapters.
 |---|---|---|---|---|---|
 | Personal / Local | One developer using Codex, Claude, Cursor, or similar agents | SQLite, local filesystem, local MCP, auth optional | MCP tools, memory palace, workspace context/search/read/write, local BM25/vector search, local manifests and jobs, permissive `personal` profile | One-command profile preset, clearer local backup, local config-check command | None required |
 | Solo Pro | One power user with several machines or a Mac/Pi setup | SQLite or Postgres, local or S3-compatible storage, sync enabled | Cross-instance sync, backups, API keys, Prometheus metrics, optional S3 backend, `solo_pro` sync-token validation | Sync conflict guidance, backup/restore recipes, personal ops dashboard, preset env file | Managed backup target, hosted edge relay |
-| Team | Small team with humans and AI agents sharing project workspaces | Postgres, required auth, per-agent tokens, shared workspace root | JWT/API keys, dataset/project shares, shared `pkg/access` policy facade, workspace ACL preflight, workspace audit, async indexing jobs, strict-profile fail-fast | Finish HTTP dataset/list visibility cleanup, profile preset/runbook, admin/operator UI | Centralized log sink, team admin UI |
-| Enterprise | Corporate teams with compliance and central governance | Postgres or managed SQL, object storage, required auth or SSO bridge, enforced tenants | Tenant membership checks, tenant-safe SQL fragments, strict-profile fail-fast, audit export boundary with async JSONL adapter, SSO/SCIM adapter seams | Corporate storage/KMS/BYOK contract, concrete protocol adapters, retention/legal-hold model, SIEM adapter | OIDC/SAML protocol adapter, SCIM HTTP surface, KMS/BYOK, SIEM export, S3/GCS/Azure Blob, legal hold |
+| Team | Small team with humans and AI agents sharing project workspaces | Postgres, required auth, per-agent tokens, shared workspace root | JWT/API keys, dataset/project shares, shared `pkg/access` policy facade, workspace ACL preflight, workspace audit, async indexing jobs, strict-profile fail-fast | Profile preset/runbook, admin/operator UI | Centralized log sink, team admin UI |
+| Enterprise | Corporate teams with compliance and central governance | Postgres or managed SQL, object storage, required auth or SSO bridge, enforced tenants | Tenant membership checks, tenant-safe SQL fragments, strict-profile fail-fast, audit export boundary with async JSONL adapter, SSO/SCIM adapter seams, storage/KMS contract shapes | Concrete protocol adapters, concrete corporate storage/KMS/BYOK backends, SIEM adapter | OIDC/SAML protocol adapter, SCIM HTTP surface, KMS/BYOK implementations, SIEM export, S3/GCS/Azure Blob adapters, legal hold enforcement in concrete backends |
 
 ## Capability Placement
 
@@ -51,7 +51,7 @@ profiles or adapters.
 | Dataset/project sharing | access layer | no default | optional | yes | yes |
 | Tenant isolation | access layer | no default | no default | optional | required |
 | Workspace audit | audit layer | optional | yes | yes | yes, exportable |
-| OIDC/SAML/SCIM/KMS/SIEM | enterprise adapters | no | no | no | partial: identity/audit seams implemented; KMS/SIEM/storage pending |
+| OIDC/SAML/SCIM/KMS/SIEM | enterprise adapters | no | no | no | partial: identity/audit/storage/KMS seams implemented; concrete protocol, SIEM, and storage backends pending |
 
 ## Target Runtime Profiles
 
@@ -95,13 +95,10 @@ code:
 
 Remaining debt:
 
-- Some HTTP handlers still issue access-shaped SQL directly for dataset lists,
-  workspace context project visibility, and admin checks. Those should move to
-  `pkg/access` helpers without changing response shapes.
 - `APIConfig` still exists as a broad wrapper; typed groups are projections,
   not a full call-site migration.
-- Enterprise storage/KMS/BYOK and object-retention behavior are not yet
-  implemented.
+- Enterprise storage/KMS/BYOK contract shapes exist, but concrete corporate
+  backends are not yet implemented.
 - Product presets/runbooks per audience are not yet complete.
 
 ## Roadmap
@@ -116,13 +113,13 @@ Remaining debt:
 
 ### Phase 2: access policy extraction
 
-- Status: mostly complete; final HTTP visibility cleanup remains.
+- Status: complete for the current HTTP policy boundary.
 - `pkg/access` now owns `Actor`, `Resource`, `Authorize`, tenant membership,
   activation checks, API-key permission checks, and identity/provisioning
   shapes.
 - REST/MCP workspace parity tests exist.
-- Remaining work: move the last dataset-list/workspace-context visibility SQL
-  from `internal/http` into access-layer helpers.
+- Boundary guard tests now prevent new direct policy SQL in HTTP handlers
+  outside the approved compatibility files.
 
 ### Phase 3: runtime profiles
 
@@ -137,10 +134,10 @@ Remaining debt:
 
 - Status: partial.
 - Complete foundation: audit export boundary, async JSONL exporter, SSO bridge
-  interface, SCIM-shaped provisioner interface.
-- Remaining work: concrete protocol adapters, SIEM sink, KMS/BYOK hooks, and
-  corporate object-storage contract for streaming, presigned reads, retention
-  metadata, and legal hold.
+  interface, SCIM-shaped provisioner interface, storage metadata contract,
+  direct-read contract, and KMS/BYOK hook contract.
+- Remaining work: concrete protocol adapters, SIEM sink, and concrete
+  corporate storage/KMS backends for S3/GCS/Azure-style object stores.
 
 ## Acceptance Criteria For Future Implementation
 
@@ -153,6 +150,7 @@ Remaining debt:
 - [x] Denied team and enterprise operations have focused non-leakage coverage.
 - [x] Existing REST, MCP, and gRPC clients continue to work during policy
   extraction.
-- [ ] Corporate storage/KMS/retention adapters are implemented and tested.
+- [x] Corporate storage/KMS/retention adapter contracts are implemented and
+  tested.
 - [ ] Product presets make each tier runnable without reading unrelated tier
   documentation.
