@@ -160,7 +160,7 @@ Goal: finish the boundary so HTTP handlers do not own access-shaped SQL.
   helpers:
   - [x] role vocabulary;
   - [x] grant/revoke permission decision;
-  - [ ] target user lookup policy boundary, if it becomes permission-sensitive.
+  - [x] target user lookup policy boundary, if it becomes permission-sensitive.
 - [ ] Add grep-based or unit guard to catch new direct `is_superuser`,
   `dataset_shares`, and `user_tenant` policy reads in `internal/http` outside
   approved CRUD/schema/test files.

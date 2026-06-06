@@ -106,16 +106,14 @@ func datasetShareCreateHandler(cfg APIConfig) fiber.Handler {
 			return c.Status(403).JSON(fiber.Map{"detail": "only owner or admin can share"})
 		}
 
-		// Resolve user by email if needed
-		targetUserID := req.UserID
-		if targetUserID == "" && req.Email != "" {
-			cfg.DB.QueryRowContext(ctx,
-				Q("SELECT id FROM users WHERE email = $1"), req.Email).Scan(&targetUserID)
-			if targetUserID == "" {
-				return c.Status(404).JSON(fiber.Map{"detail": "user not found"})
-			}
+		targetUserID, err := (accesspkg.SQLPolicy{DB: cfg.DB, Q: Q}).ResolveUserID(ctx, req.UserID, req.Email)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"detail": "user lookup failed: " + err.Error()})
 		}
 		if targetUserID == "" {
+			if req.Email != "" {
+				return c.Status(404).JSON(fiber.Map{"detail": "user not found"})
+			}
 			return c.Status(400).JSON(fiber.Map{"detail": "user_id or email required"})
 		}
 
@@ -124,7 +122,7 @@ func datasetShareCreateHandler(cfg APIConfig) fiber.Handler {
 			 VALUES ($1, $2, $3, $4, $5, NOW())
 			 ON CONFLICT (dataset_id, user_id) DO UPDATE SET role = $4`,
 			shareID, dsID, targetUserID, req.Role, granterID)
-		_, err := cfg.DB.ExecContext(ctx, upsertSQL, upsertArgs...)
+		_, err = cfg.DB.ExecContext(ctx, upsertSQL, upsertArgs...)
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"detail": "share failed: " + err.Error()})
 		}

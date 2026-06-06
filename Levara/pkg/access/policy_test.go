@@ -300,6 +300,25 @@ func TestShareGrantRevokePolicyMethods(t *testing.T) {
 	}
 }
 
+func TestResolveUserID(t *testing.T) {
+	db := newPolicyTestDB(t)
+	policy := SQLPolicy{DB: db, Q: sqliteQ}
+	ctx := context.Background()
+
+	if got, err := policy.ResolveUserID(ctx, "explicit", "user-b@example.com"); err != nil || got != "explicit" {
+		t.Fatalf("explicit ResolveUserID=%q err=%v, want explicit nil", got, err)
+	}
+	if got, err := policy.ResolveUserID(ctx, "", "user-b@example.com"); err != nil || got != "user-b" {
+		t.Fatalf("email ResolveUserID=%q err=%v, want user-b nil", got, err)
+	}
+	if got, err := policy.ResolveUserID(ctx, "", "missing@example.com"); err != nil || got != "" {
+		t.Fatalf("missing ResolveUserID=%q err=%v, want empty nil", got, err)
+	}
+	if got, err := (SQLPolicy{}).ResolveUserID(ctx, "", "user-b@example.com"); err != nil || got != "" {
+		t.Fatalf("nil-db ResolveUserID=%q err=%v, want empty nil", got, err)
+	}
+}
+
 func TestValidRole(t *testing.T) {
 	for _, role := range []string{RoleAdmin, RoleEditor, RoleViewer, "ADMIN"} {
 		if !ValidRole(role) {
@@ -392,10 +411,10 @@ func newPolicyTestDB(t *testing.T) *sql.DB {
 	}
 	t.Cleanup(func() { db.Close() })
 	for _, stmt := range []string{
-		`CREATE TABLE users (id TEXT PRIMARY KEY, is_active INTEGER NOT NULL DEFAULT 1, is_superuser INTEGER NOT NULL DEFAULT 0)`,
+		`CREATE TABLE users (id TEXT PRIMARY KEY, email TEXT DEFAULT '', is_active INTEGER NOT NULL DEFAULT 1, is_superuser INTEGER NOT NULL DEFAULT 0)`,
 		`CREATE TABLE datasets (id TEXT PRIMARY KEY, name TEXT DEFAULT '', owner_id TEXT, created_at TEXT DEFAULT '')`,
 		`CREATE TABLE dataset_shares (id TEXT PRIMARY KEY, dataset_id TEXT, user_id TEXT, role TEXT)`,
-		`INSERT INTO users(id, is_superuser) VALUES ('user-a', 0), ('user-b', 0), ('user-c', 0), ('root', 1)`,
+		`INSERT INTO users(id, email, is_superuser) VALUES ('user-a', 'user-a@example.com', 0), ('user-b', 'user-b@example.com', 0), ('user-c', 'user-c@example.com', 0), ('root', 'root@example.com', 1)`,
 		`INSERT INTO datasets(id, name, owner_id, created_at) VALUES ('payments', 'Payments', 'user-a', '2026-01-01T00:00:00Z')`,
 		`INSERT INTO datasets(id, name, owner_id, created_at) VALUES ('owned-b', 'Owned B', 'user-b', '2026-01-02T00:00:00Z')`,
 		`INSERT INTO datasets(id, name, owner_id, created_at) VALUES ('public', 'Public', '', '2026-01-03T00:00:00Z')`,
