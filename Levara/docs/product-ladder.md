@@ -1,13 +1,15 @@
 # Levara Product Ladder
 
 Date: 2026-06-06
-Status: implemented foundation; concrete enterprise adapters and product presets pending
+Status: implemented foundation and product presets; concrete enterprise adapters pending
 
 This document translates the current Levara architecture into a product ladder.
 It started as a planning document. The foundation has since moved into code:
 access policy, runtime profile validation, audit export, and enterprise
-identity seams and storage/KMS adapter contracts now exist. The remaining work
-is product packaging and concrete enterprise protocol/storage integrations.
+identity seams and storage/KMS adapter contracts now exist, and each tier ships
+a runnable preset (`deploy/profiles/*.env.example` + `docs/profile-presets.md`,
+validated by `server -config-check` / `make profile-smoke`). The remaining work
+is concrete enterprise protocol/storage integrations.
 
 ## Goal
 
@@ -152,5 +154,6 @@ Remaining debt:
   extraction.
 - [x] Corporate storage/KMS/retention adapter contracts are implemented and
   tested.
-- [ ] Product presets make each tier runnable without reading unrelated tier
-  documentation.
+- [x] Product presets make each tier runnable without reading unrelated tier
+  documentation (`deploy/profiles/*.env.example` + `docs/profile-presets.md`,
+  validated per tier by `server -config-check` / `make profile-smoke`).

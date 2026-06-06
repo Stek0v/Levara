@@ -1,4 +1,4 @@
-.PHONY: all build run test test-commit test-release-candidate profile-config-check benchmark clean docker arm64 proto proto-go proto-python swag contract contract-check
+.PHONY: all build run test test-commit test-release-candidate profile-config-check profile-smoke benchmark clean docker arm64 proto proto-go proto-python swag contract contract-check
 
 # Regenerate OpenAPI spec from swaggo annotations (T13).
 # Requires `go install github.com/swaggo/swag/cmd/swag@latest` once.
@@ -87,7 +87,14 @@ test-release-candidate:
 # external services.
 profile-config-check:
 	@go test -count=1 ./pkg/profile
-	@go test -count=1 ./cmd/server -run 'Profile|BuildRuntimeProfileConfig'
+	@go test -count=1 ./cmd/server -run 'Profile|BuildRuntimeProfileConfig|ConfigCheck'
+
+# Operator-facing preset smoke: build the server and run each non-enterprise
+# preset (personal, solo_pro, team) through `-config-check`. Complements
+# profile-config-check (which unit-tests the decision core) by exercising the
+# real binary against the shipped deploy/profiles/*.env.example files.
+profile-smoke:
+	@bash deploy/profiles/smoke.sh
 
 # --- Cross-compile ---
 

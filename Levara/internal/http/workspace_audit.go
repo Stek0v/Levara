@@ -221,23 +221,34 @@ func recordWorkspaceAuditEvent(cfg APIConfig, event workspaceAuditEvent) error {
 		return err
 	}
 	metrics.WorkspaceAuditEventsTotal.WithLabelValues(event.Source, event.Operation, event.Result).Inc()
-	if cfg.WorkspaceAuditSink != nil {
-		cfg.WorkspaceAuditSink.LogEvent(audit.Event{
-			TS:      event.At,
-			Source:  "workspace." + event.Source,
-			Type:    event.Operation,
-			Subject: event.ProjectID,
-			ActorID: event.UserID,
-			Outcome: event.Result,
-			Metadata: map[string]any{
-				"branch": event.Branch,
-				"access": event.Access,
-				"status": event.Status,
-				"error":  event.Error,
-			},
-		})
-	}
+	mirrorWorkspaceAuditEvent(cfg.Audit(), event)
 	return nil
+}
+
+// mirrorWorkspaceAuditEvent forwards a workspace-domain audit event to the
+// optional generic enterprise-export sink, mapping domain fields onto the
+// transport-independent audit.Event shape. It consumes only the narrow
+// AuditConfig group (not the full APIConfig) so enterprise audit wiring does
+// not depend on the flat compatibility wrapper (from_cod.md C3). A nil sink —
+// the default Personal/Solo Pro case — is a no-op.
+func mirrorWorkspaceAuditEvent(ac AuditConfig, event workspaceAuditEvent) {
+	if ac.WorkspaceAuditSink == nil {
+		return
+	}
+	ac.WorkspaceAuditSink.LogEvent(audit.Event{
+		TS:      event.At,
+		Source:  "workspace." + event.Source,
+		Type:    event.Operation,
+		Subject: event.ProjectID,
+		ActorID: event.UserID,
+		Outcome: event.Result,
+		Metadata: map[string]any{
+			"branch": event.Branch,
+			"access": event.Access,
+			"status": event.Status,
+			"error":  event.Error,
+		},
+	})
 }
 
 func listWorkspaceAuditEvents(cfg APIConfig, req workspaceAuditListRequest) (workspaceAuditLogResponse, error) {
