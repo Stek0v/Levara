@@ -181,7 +181,8 @@ accepting narrow groups.
 - [x] Pick one low-risk surface and migrate it first:
   - [ ] workspace audit exporter wiring uses `AuditConfig`;
   - [x] tenant middleware/access helpers use `AccessConfig`;
-  - [ ] sync manifest uses `IdentityConfig`.
+  - [x] sync manifest uses `IdentityConfig` plus narrow `AccessConfig` and
+    `SearchConfig` inputs.
 - [ ] Avoid a big-bang rewrite. Migrate one group at a time and keep tests
   focused.
 - [ ] Add a convention: new handlers/adapters must accept a narrow config group
