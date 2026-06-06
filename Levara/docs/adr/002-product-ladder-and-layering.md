@@ -61,7 +61,8 @@ engineering boundary:
   enterprise profile combinations.
 - Enterprise audit and identity work may proceed through adapter boundaries
   because tenant hardening and the shared policy service foundation exist.
-- Enterprise storage/KMS work remains blocked on a dedicated adapter contract.
+- Enterprise storage/KMS work now has a dedicated adapter contract; concrete
+  corporate backends remain follow-up implementation.
 - Existing REST, MCP, and gRPC contracts remain stable while the internals are
   separated.
 
@@ -84,9 +85,9 @@ engineering boundary:
 5. [x] Add profile validation and strict-mode fail-fast behavior.
 6. [x] Add audit export boundary through `pkg/audit`.
 7. [x] Add identity bridge and provisioning seams through `pkg/access`.
-8. [ ] Move remaining HTTP-owned dataset-list/workspace-context visibility SQL
+8. [x] Move remaining HTTP-owned dataset-list/workspace-context visibility SQL
    into access-layer helpers.
-9. [ ] Add enterprise storage, retention, and KMS/BYOK adapter contracts.
+9. [x] Add enterprise storage, retention, and KMS/BYOK adapter contracts.
 10. [ ] Add product presets/runbooks for Personal, Solo Pro, Team, and
     Enterprise.
 
@@ -103,7 +104,7 @@ engineering boundary:
 - [x] Tenant filters are parameterized and cannot be constructed by string
   concatenation.
 - [x] One policy decision path is shared by REST and MCP workspace operations.
-- [ ] Enterprise storage/KMS adapters exist without importing into core search
+- [x] Enterprise storage/KMS adapter contracts exist without importing into core search
   or indexing packages.
 - [ ] Product presets prove each tier can be operated without reading unrelated
   tier documentation.
@@ -115,9 +116,9 @@ original layer split:
 
 - Whether concrete OIDC/SAML/SCIM protocol adapters live in-tree or as
   deployment-side plugins.
-- The object-storage metadata contract for retention, legal hold, tenant scope,
-  digest, and encryption key reference.
-- The KMS/BYOK hook shape and whether key wrapping happens in storage adapters
-  or in a separate secret-management package.
+- Whether concrete storage/KMS backends live in-tree or as deploy-side adapter
+  packages.
+- Whether key wrapping is orchestrated by concrete storage adapters or by a
+  separate secret-management package above the `pkg/storage` contract.
 - The migration path from flat `APIConfig` plus projections to handlers that
   accept only narrow typed config groups.

@@ -42,8 +42,8 @@ enterprise storage/KMS boundaries, and keep docs aligned with runtime behavior.
   default during migration.
 - [x] Enterprise audit export adapter boundary is implemented.
 - [x] Enterprise identity adapter seams are implemented.
-- [ ] Enterprise storage, object-retention, and KMS/BYOK adapters are not
-  implemented.
+- [x] Enterprise storage, object-retention, and KMS/BYOK adapter contracts are
+  implemented; concrete corporate backends remain C6 packaging/adapter work.
 - [ ] Product packaging by audience is incomplete: profiles exist, but there is
   no one-command preset/runbook bundle per target audience.
 - [x] Canonical docs were stale: `product-ladder.md` and ADR-002 still
@@ -200,35 +200,35 @@ Acceptance criteria:
 
 Goal: implement Phase 4C without touching vector/BM25/graph/cognify core.
 
-- [ ] Review current `pkg/storage` interface and upload/raw-object call sites.
-- [ ] Define object metadata shape:
-  - [ ] retention class;
-  - [ ] legal hold flag;
-  - [ ] encryption key reference;
-  - [ ] content digest;
-  - [ ] tenant/project scope.
-- [ ] Define storage adapter contract for:
-  - [ ] local filesystem;
-  - [ ] S3-compatible object storage;
-  - [ ] future GCS/Azure compatibility.
-- [ ] Define KMS/BYOK hook contract:
-  - [ ] encrypt data key;
-  - [ ] decrypt data key;
-  - [ ] rotate key reference;
-  - [ ] report key metadata without exposing key material.
-- [ ] Add contract tests:
-  - [ ] idempotent delete;
-  - [ ] presigned/direct read behavior;
-  - [ ] retention metadata preserved;
-  - [ ] legal hold blocks delete where expected;
-  - [ ] KMS hook called without leaking plaintext keys;
-  - [ ] adapter failure is observable and does not corrupt core indexes.
+- [x] Review current `pkg/storage` interface and upload/raw-object call sites.
+- [x] Define object metadata shape:
+  - [x] retention class;
+  - [x] legal hold flag;
+  - [x] encryption key reference;
+  - [x] content digest;
+  - [x] tenant/project scope.
+- [x] Define storage adapter contract for:
+  - [x] local filesystem;
+  - [x] S3-compatible object storage;
+  - [x] future GCS/Azure compatibility.
+- [x] Define KMS/BYOK hook contract:
+  - [x] encrypt data key;
+  - [x] decrypt data key;
+  - [x] rotate key reference;
+  - [x] report key metadata without exposing key material.
+- [x] Add contract tests:
+  - [x] idempotent delete;
+  - [x] presigned/direct read behavior;
+  - [x] retention metadata preserved;
+  - [x] legal hold blocks delete where expected;
+  - [x] KMS hook called without leaking plaintext keys;
+  - [x] adapter failure is observable and does not corrupt core indexes.
 
 Acceptance criteria:
 
-- [ ] Enterprise storage can be implemented as an adapter.
-- [ ] Personal/local storage remains simple and does not require KMS.
-- [ ] Core search/indexing packages do not import enterprise storage/KMS code.
+- [x] Enterprise storage can be implemented as an adapter.
+- [x] Personal/local storage remains simple and does not require KMS.
+- [x] Core search/indexing packages do not import enterprise storage/KMS code.
 
 ### C5: Enterprise Protocol Adapters
 
@@ -467,19 +467,19 @@ Acceptance criteria:
 
 Goal: prepare corporate object storage and key management.
 
-- [ ] Review current storage abstraction and identify where retention metadata
+- [x] Review current storage abstraction and identify where retention metadata
   and encrypted object metadata belong.
-- [ ] Define object-storage adapter contract for S3/GCS/Azure-compatible
+- [x] Define object-storage adapter contract for S3/GCS/Azure-compatible
   backends.
-- [ ] Define KMS/BYOK hook contract for secrets and object metadata.
-- [ ] Add tests for presigned reads, idempotent deletes, retention metadata, and
+- [x] Define KMS/BYOK hook contract for secrets and object metadata.
+- [x] Add tests for presigned reads, idempotent deletes, retention metadata, and
   adapter failure behavior.
 
 Acceptance criteria:
 
-- [ ] Enterprise storage adapters do not touch vector, BM25, graph, or cognify
+- [x] Enterprise storage adapters do not touch vector, BM25, graph, or cognify
   algorithms.
-- [ ] Personal/local filesystem storage remains simple.
+- [x] Personal/local filesystem storage remains simple.
 
 ## Testing Tasks
 
