@@ -176,10 +176,11 @@ func TestToolSaveMemory_TruncatesValueInMessage(t *testing.T) {
 	}
 }
 
-func TestToolSaveMemory_EmbedPathFiresGoroutine(t *testing.T) {
-	// With EmbedAvailable=true, a background goroutine calls Embed and
-	// CollectionInsert. The tool returns immediately; the indexing
-	// happens off the critical path. We poll briefly for the side effect.
+func TestToolSaveMemory_EmbedPathIndexesVector(t *testing.T) {
+	// With EmbedAvailable=true, ToolSaveMemory calls Embed and
+	// CollectionInsert synchronously, so the vector is in the collection by
+	// the time the tool returns (closing the recall-after-save race). We
+	// still poll defensively rather than asserting strict ordering.
 	deps := setupSaveRecallMemoryDB(t)
 	deps.embedAvailable = true
 	var embedCalled atomic.Bool

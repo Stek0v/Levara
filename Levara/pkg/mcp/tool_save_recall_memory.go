@@ -25,8 +25,10 @@ const (
 	// recallMemoryVectorTopK is the topK passed to CollectionSearch in
 	// the vector-semantic path.
 	recallMemoryVectorTopK = 10
-	// saveMemoryEmbedTimeout caps the goroutine that runs after the
-	// tool returns. Decouples client latency from the embed service.
+	// saveMemoryEmbedTimeout is the hard ceiling on the synchronous
+	// embed+index step. A healthy local embed returns in milliseconds; this
+	// only bites when the embed service is stuck, bounding how long a save
+	// can block before it degrades to a divergence heartbeat.
 	saveMemoryEmbedTimeout = 30 * time.Second
 )
 
@@ -45,13 +47,15 @@ func memoryCollectionName(collectionName string) string {
 }
 
 // ToolSaveMemory upserts a memory into the memories table and, when
-// embedding is available, fires a background goroutine that vector-
-// indexes the key+value pair for later semantic recall.
+// embedding is available, vector-indexes the key+value pair synchronously
+// so the record is immediately recallable (including under a room/hall
+// filter — see indexMemorySync for why this is no longer a goroutine).
 //
-// The SQL path is the source of truth: the success message returns
-// after DB commit. The vector index is fire-and-forget with its own
-// context (decoupled from the client's ctx so a fast MCP return
-// doesn't cancel indexing mid-flight).
+// The SQL path is the source of truth: the row is committed before the
+// vector index step, and the save still succeeds even if indexing fails
+// (the failure surfaces as a divergence heartbeat, not an error). Indexing
+// runs under a detached, bounded context so a fast MCP client disconnect
+// can't cancel it mid-flight.
 //
 // Pre-refactor reused placeholders ($3, $4, $6, $7, $8, $9, $10, $12
 // in both VALUES and DO UPDATE SET). Rewrote to unique placeholders
@@ -131,7 +135,7 @@ func ToolSaveMemory(ctx context.Context, deps Deps, args map[string]any) ToolRes
 	}
 
 	if deps.EmbedAvailable() {
-		indexMemoryAsync(deps, collectionName, canonicalID, key, value, memType)
+		indexMemorySync(deps, collectionName, canonicalID, key, value, memType)
 	}
 
 	return ToolResult{Content: []Content{{
@@ -140,63 +144,70 @@ func ToolSaveMemory(ctx context.Context, deps Deps, args map[string]any) ToolRes
 	}}}
 }
 
-// indexMemoryAsync fires the vector-index side effect in a goroutine.
-// Uses context.Background() with a timeout so the embed call isn't
-// cancelled when the tool's ctx completes (MCP clients may close
-// connections immediately after receiving the save confirmation).
+// indexMemorySync vector-indexes the memory inline — before ToolSaveMemory
+// returns — so the fresh record is immediately discoverable by semantic
+// recall, including filtered recall_memory(query, room=…).
 //
-// The SQL row is already committed (source of truth); this goroutine
-// makes the vector match it. Every failure mode is verified rather than
-// swallowed: an embed error, an insert error, or a vector that isn't
-// present on read-back all emit a "memory_index_divergence" heartbeat
-// (mirrored to levara_memory_index_divergence_total) so the SQL↔vector
-// gap that motivated P1.4/Cause-B is observable instead of silent. The
-// insert+verify is retried once before giving up — the reconcile_memory
-// sweep is the durable backstop for whatever still slips through.
-func indexMemoryAsync(deps Deps, collectionName, id, key, value, memType string) {
-	go func() {
-		embedCtx, cancel := context.WithTimeout(context.Background(), saveMemoryEmbedTimeout)
-		defer cancel()
+// This used to run in a goroutine. The embed window between the synchronous
+// SQL commit and the asynchronous vector insert was a race: a recall fired
+// right after a save found nothing via the vector path (the vector wasn't in
+// the collection yet) and fell through to the literal SQL-LIKE fallback,
+// which misses any paraphrased/semantic query. Indexing synchronously closes
+// that window so recall stays on the fast vector path instead of leaning on
+// the slower SQL substring scan.
+//
+// A detached, bounded context decouples the embed/insert from the caller's
+// ctx so an MCP client that closes its connection on receipt of the save
+// confirmation cannot cancel indexing mid-flight (the property the old
+// goroutine bought, kept here without the race). The SQL row is already
+// committed (source of truth) and the save still succeeds regardless; every
+// failure mode is verified rather than swallowed: an embed error, an insert
+// error, or a vector absent on read-back each emit a
+// "memory_index_divergence" heartbeat (mirrored to
+// levara_memory_index_divergence_total). The insert+verify is retried once;
+// the reconcile_memory sweep is the durable backstop beyond that.
+func indexMemorySync(deps Deps, collectionName, id, key, value, memType string) {
+	embedCtx, cancel := context.WithTimeout(context.Background(), saveMemoryEmbedTimeout)
+	defer cancel()
 
-		sidecar := memoryCollectionName(collectionName)
+	sidecar := memoryCollectionName(collectionName)
 
-		vec, err := deps.Embed(embedCtx, key+" "+value)
-		if err != nil {
-			reportMemoryDivergence(deps, sidecar, id, "embed_failed", err.Error())
-			return
-		}
+	vec, err := deps.Embed(embedCtx, key+" "+value)
+	if err != nil {
+		reportMemoryDivergence(deps, sidecar, id, "embed_failed", err.Error())
+		return
+	}
 
-		meta, _ := json.Marshal(map[string]string{
-			"key":        key,
-			"value":      value,
-			"type":       memType,
-			"collection": collectionName,
-			"memory_id":  id,
-		})
+	meta, _ := json.Marshal(map[string]string{
+		"key":        key,
+		"value":      value,
+		"type":       memType,
+		"collection": collectionName,
+		"memory_id":  id,
+	})
 
-		// Insert, then verify the vector actually landed under the canonical
-		// id (synchronous index lookup, not a vector search — see
-		// CollectionHasRecord). Retry once on failure.
-		for attempt := 1; attempt <= memoryIndexMaxAttempts; attempt++ {
-			insErr := deps.CollectionInsert(sidecar, id, vec, meta)
-			if insErr != nil {
-				if attempt == memoryIndexMaxAttempts {
-					reportMemoryDivergence(deps, sidecar, id, "insert_failed", insErr.Error())
-				}
-				continue
-			}
-			if deps.CollectionHasRecord(sidecar, id) {
-				return // verified present — SQL and vector agree
-			}
+	// Insert, then verify the vector actually landed under the canonical
+	// id (synchronous index lookup, not a vector search — see
+	// CollectionHasRecord). Retry once on failure.
+	for attempt := 1; attempt <= memoryIndexMaxAttempts; attempt++ {
+		insErr := deps.CollectionInsert(sidecar, id, vec, meta)
+		if insErr != nil {
 			if attempt == memoryIndexMaxAttempts {
-				reportMemoryDivergence(deps, sidecar, id, "missing_after_insert", "vector absent on read-back")
+				reportMemoryDivergence(deps, sidecar, id, "insert_failed", insErr.Error())
 			}
+			continue
 		}
-	}()
+		if deps.CollectionHasRecord(sidecar, id) {
+			return // verified present — SQL and vector agree
+		}
+		if attempt == memoryIndexMaxAttempts {
+			reportMemoryDivergence(deps, sidecar, id, "missing_after_insert", "vector absent on read-back")
+		}
+	}
 }
 
 // memoryIndexMaxAttempts bounds the insert+verify retry loop in
-// indexMemoryAsync. One retry covers a transient collection/disk hiccup;
+// indexMemorySync. One retry covers a transient collection/disk hiccup;
 // reconcile_memory is the durable backstop beyond that.
 const memoryIndexMaxAttempts = 2
 

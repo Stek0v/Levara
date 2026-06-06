@@ -67,7 +67,12 @@ func ToolCognify(ctx context.Context, deps Deps, args map[string]any) ToolResult
 	}
 
 	pipeCfg.Collection = collection
-	pipeCfg.DatasetID = runID
+	// Stamp chunks/graph rows with a dataset id that is *registered* in the
+	// `datasets` SQL table owned by the caller. A bare ephemeral runID is in
+	// no caller's RBAC allowed-set, so search's filterByAllowedDatasets would
+	// silently drop every chunk this run produces (the agent could not
+	// retrieve content it just cognified). See ensureCognifyDatasetID.
+	pipeCfg.DatasetID = ensureCognifyDatasetID(ctx, deps, runID, collection)
 	pipeCfg.GenerateTriplets = true
 	trueVal := true
 	pipeCfg.UseStructuredOutput = &trueVal
@@ -134,6 +139,49 @@ func ToolCognify(ctx context.Context, deps Deps, args map[string]any) ToolResult
 			Text: fmt.Sprintf("Cognify pipeline started. Run ID: %s. Use cognify_status tool to check progress.", runID),
 		}},
 	}
+}
+
+// ensureCognifyDatasetID returns the dataset id that cognify stamps onto
+// every chunk and graph row, guaranteeing it is registered in the `datasets`
+// SQL table owned by the calling user. Without registration, search's RBAC
+// gate (filterByAllowedDatasets) drops every freshly cognified chunk: an
+// unregistered id is in no caller's allowed-set, so an agent could never
+// retrieve content it just ingested (HTTP 200 + empty result, no error).
+//
+// One row is get-or-created per (owner, collection) — repeated cognify runs
+// into the same collection reuse it, so the datasets table does not accrete a
+// row per run. The "__cognify__:" name prefix avoids colliding with
+// human-created dataset names. Best-effort: any DB error (or a nil store,
+// where RBAC is inert and every chunk already passes) falls back to the
+// ephemeral id unchanged — no worse than the pre-fix behavior.
+func ensureCognifyDatasetID(ctx context.Context, deps Deps, fallbackID, collection string) string {
+	db := deps.DB()
+	if db == nil {
+		return fallbackID
+	}
+	owner := extractOwnerID(ctx)
+	name := fmt.Sprintf("__cognify__:%s:%s", owner, collection)
+
+	// Reuse an existing per-(owner,collection) cognify dataset if present.
+	var existing string
+	if err := db.QueryRowContext(ctx, deps.Q(`SELECT id FROM datasets WHERE name = $1`), name).Scan(&existing); err == nil && existing != "" {
+		return existing
+	}
+
+	now := time.Now().UTC()
+	// ON CONFLICT(name) DO NOTHING absorbs a concurrent create; the follow-up
+	// SELECT resolves whichever id won the race.
+	if _, err := db.ExecContext(ctx, deps.Q(
+		`INSERT INTO datasets (id, name, owner_id, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5) ON CONFLICT (name) DO NOTHING`),
+		fallbackID, name, owner, now, now); err != nil {
+		return fallbackID
+	}
+	var resolved string
+	if err := db.QueryRowContext(ctx, deps.Q(`SELECT id FROM datasets WHERE name = $1`), name).Scan(&resolved); err == nil && resolved != "" {
+		return resolved
+	}
+	return fallbackID
 }
 
 // runPipelineWithStatus drives the orchestrator to completion and
