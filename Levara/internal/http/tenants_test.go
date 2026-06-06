@@ -18,7 +18,7 @@ func TestTenantMiddlewareHeaderRequiresMembership(t *testing.T) {
 		c.Locals("user_id", "user-a")
 		return c.Next()
 	})
-	app.Use(TenantMiddleware(db))
+	app.Use(TenantMiddleware(AccessConfig{DB: db}))
 	app.Get("/tenant", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"tenant_id": ResolveTenantID(c)})
 	})
@@ -42,7 +42,7 @@ func TestTenantMiddlewareHeaderRejectsNonMember(t *testing.T) {
 		c.Locals("user_id", "user-a")
 		return c.Next()
 	})
-	app.Use(TenantMiddleware(db))
+	app.Use(TenantMiddleware(AccessConfig{DB: db}))
 	app.Get("/tenant", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"tenant_id": ResolveTenantID(c)})
 	})

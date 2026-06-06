@@ -178,9 +178,9 @@ Acceptance criteria:
 Goal: move from "flat service locator with projections" to handlers/adapters
 accepting narrow groups.
 
-- [ ] Pick one low-risk surface and migrate it first:
+- [x] Pick one low-risk surface and migrate it first:
   - [ ] workspace audit exporter wiring uses `AuditConfig`;
-  - [ ] tenant middleware/access helpers use `AccessConfig`;
+  - [x] tenant middleware/access helpers use `AccessConfig`;
   - [ ] sync manifest uses `IdentityConfig`.
 - [ ] Avoid a big-bang rewrite. Migrate one group at a time and keep tests
   focused.
@@ -191,7 +191,7 @@ accepting narrow groups.
 
 Acceptance criteria:
 
-- [ ] At least one production handler path no longer accepts full `APIConfig`
+- [x] At least one production handler path no longer accepts full `APIConfig`
   when it only needs one concern.
 - [ ] New enterprise adapters do not depend on full `APIConfig`.
 
