@@ -234,20 +234,21 @@ Acceptance criteria:
 
 Goal: move from generic SSO/SCIM seams to concrete optional integrations.
 
-- [ ] Decide whether concrete OIDC/SAML/SCIM adapters belong in-tree or as
-  optional build/deploy packages.
-- [ ] If in-tree, add OIDC adapter first:
-  - [ ] verified token/session input;
-  - [ ] issuer/subject mapping;
-  - [ ] group-to-tenant mapping;
-  - [ ] tests with local fixtures only.
-- [ ] Add SCIM HTTP surface only after an ADR or route contract proposal.
-- [ ] Keep protocol-specific code out of core engine and workspace handlers.
+- [x] Decide whether concrete OIDC/SAML/SCIM adapters belong in-tree or as
+  optional build/deploy packages: use optional in-tree adapter contracts first;
+  defer new HTTP protocol surfaces until ADR/route proposals exist.
+- [x] If in-tree, add OIDC adapter first:
+  - [x] verified token/session input;
+  - [x] issuer/subject mapping;
+  - [x] group-to-tenant mapping;
+  - [x] tests with local fixtures only.
+- [x] Keep SCIM HTTP surface deferred until an ADR or route contract proposal.
+- [x] Keep protocol-specific code out of core engine and workspace handlers.
 
 Acceptance criteria:
 
-- [ ] `pkg/access.IdentityBridge` remains the policy-facing seam.
-- [ ] Protocol adapters can be disabled entirely for Personal/Solo/Team.
+- [x] `pkg/access.IdentityBridge` remains the policy-facing seam.
+- [x] Protocol adapters can be disabled entirely for Personal/Solo/Team.
 
 ### C6: Release Gate Completion
 

@@ -61,6 +61,8 @@ engineering boundary:
   enterprise profile combinations.
 - Enterprise audit and identity work may proceed through adapter boundaries
   because tenant hardening and the shared policy service foundation exist.
+- OIDC has an optional in-tree verified-claims adapter above `IdentityBridge`;
+  raw token verification and HTTP protocol routes remain deploy/ADR work.
 - Enterprise storage/KMS work now has a dedicated adapter contract; concrete
   corporate backends remain follow-up implementation.
 - Existing REST, MCP, and gRPC contracts remain stable while the internals are
@@ -88,7 +90,8 @@ engineering boundary:
 8. [x] Move remaining HTTP-owned dataset-list/workspace-context visibility SQL
    into access-layer helpers.
 9. [x] Add enterprise storage, retention, and KMS/BYOK adapter contracts.
-10. [ ] Add product presets/runbooks for Personal, Solo Pro, Team, and
+10. [x] Add optional OIDC verified-claims adapter above `IdentityBridge`.
+11. [ ] Add product presets/runbooks for Personal, Solo Pro, Team, and
     Enterprise.
 
 ## Acceptance Criteria
@@ -104,8 +107,10 @@ engineering boundary:
 - [x] Tenant filters are parameterized and cannot be constructed by string
   concatenation.
 - [x] One policy decision path is shared by REST and MCP workspace operations.
-- [x] Enterprise storage/KMS adapter contracts exist without importing into core search
-  or indexing packages.
+- [x] Enterprise storage/KMS adapter contracts exist without importing into core
+  search or indexing packages.
+- [x] OIDC adapter code stays outside core search, indexing, and workspace
+  handlers.
 - [ ] Product presets prove each tier can be operated without reading unrelated
   tier documentation.
 
@@ -114,8 +119,8 @@ engineering boundary:
 The remaining architectural decisions are intentionally smaller than the
 original layer split:
 
-- Whether concrete OIDC/SAML/SCIM protocol adapters live in-tree or as
-  deployment-side plugins.
+- Whether raw OIDC token verification, SAML, and SCIM HTTP protocol surfaces
+  live in-tree or as deployment-side plugins.
 - Whether concrete storage/KMS backends live in-tree or as deploy-side adapter
   packages.
 - Whether key wrapping is orchestrated by concrete storage adapters or by a
