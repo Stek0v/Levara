@@ -158,7 +158,7 @@ Goal: finish the boundary so HTTP handlers do not own access-shaped SQL.
   or a shared admin policy helper.
 - [ ] Move share-management validation in `rbac.go` fully behind access-layer
   helpers:
-  - [ ] role vocabulary;
+  - [x] role vocabulary;
   - [ ] grant/revoke permission decision;
   - [ ] target user lookup policy boundary, if it becomes permission-sensitive.
 - [ ] Add grep-based or unit guard to catch new direct `is_superuser`,

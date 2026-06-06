@@ -12,11 +12,12 @@ import (
 	accesspkg "github.com/stek0v/levara/pkg/access"
 )
 
-// Role constants
+// Role aliases keep legacy internal/http tests and DTO construction readable
+// while the canonical role vocabulary lives in pkg/access.
 const (
-	RoleAdmin  = "admin"
-	RoleEditor = "editor"
-	RoleViewer = "viewer"
+	RoleAdmin  = accesspkg.RoleAdmin
+	RoleEditor = accesspkg.RoleEditor
+	RoleViewer = accesspkg.RoleViewer
 )
 
 type ShareDTO struct {
@@ -90,9 +91,9 @@ func datasetShareCreateHandler(cfg APIConfig) fiber.Handler {
 		}
 
 		if req.Role == "" {
-			req.Role = RoleViewer
+			req.Role = accesspkg.RoleViewer
 		}
-		if req.Role != RoleAdmin && req.Role != RoleEditor && req.Role != RoleViewer {
+		if !accesspkg.ValidRole(req.Role) {
 			return c.Status(400).JSON(fiber.Map{"detail": "role must be admin, editor, or viewer"})
 		}
 
@@ -178,9 +179,9 @@ func permissionsMeHandler(cfg APIConfig) fiber.Handler {
 		// Check if superuser (shared access-policy lookup)
 		isSuperuser, _ := accesspkg.SQLPolicy{DB: cfg.DB, Q: Q}.IsSuperuser(ctx, userID)
 
-		globalRole := RoleEditor
+		globalRole := accesspkg.RoleEditor
 		if isSuperuser {
-			globalRole = RoleAdmin
+			globalRole = accesspkg.RoleAdmin
 		}
 
 		// Get all dataset shares

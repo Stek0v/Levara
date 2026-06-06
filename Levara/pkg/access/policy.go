@@ -380,6 +380,15 @@ func RoleAllows(role, action string) bool {
 	}
 }
 
+func ValidRole(role string) bool {
+	switch strings.ToLower(role) {
+	case RoleAdmin, RoleEditor, RoleViewer:
+		return true
+	default:
+		return false
+	}
+}
+
 func normalizeAction(action string) string {
 	if strings.ToLower(action) == ActionWrite {
 		return ActionWrite

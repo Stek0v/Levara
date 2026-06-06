@@ -278,6 +278,19 @@ func TestCanManageDatasetShares(t *testing.T) {
 	}
 }
 
+func TestValidRole(t *testing.T) {
+	for _, role := range []string{RoleAdmin, RoleEditor, RoleViewer, "ADMIN"} {
+		if !ValidRole(role) {
+			t.Fatalf("ValidRole(%q)=false, want true", role)
+		}
+	}
+	for _, role := range []string{"", "owner", "reader", "delete"} {
+		if ValidRole(role) {
+			t.Fatalf("ValidRole(%q)=true, want false", role)
+		}
+	}
+}
+
 func TestIsSuperuser(t *testing.T) {
 	db := newPolicyTestDB(t)
 	policy := SQLPolicy{DB: db, Q: sqliteQ}
