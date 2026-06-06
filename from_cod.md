@@ -151,7 +151,7 @@ Goal: finish the boundary so HTTP handlers do not own access-shaped SQL.
 - [x] Add `SQLPolicy.VisibleDatasetIDs(ctx, actor)` or equivalent typed method
   that can replace direct list visibility queries in:
   - [x] `internal/http/workspace_context.go`
-- [x] `internal/http/api_datasets.go`
+  - [x] `internal/http/api_datasets.go`
 - [x] Add `SQLPolicy.ListVisibleDatasets(ctx, actor)` or a narrow access-layer
   query helper returning DTO-neutral records for dataset list endpoints.
 - [x] Route `api_admin.go` superuser checks through `SQLPolicy.IsSuperuser`
@@ -159,7 +159,7 @@ Goal: finish the boundary so HTTP handlers do not own access-shaped SQL.
 - [ ] Move share-management validation in `rbac.go` fully behind access-layer
   helpers:
   - [x] role vocabulary;
-  - [ ] grant/revoke permission decision;
+  - [x] grant/revoke permission decision;
   - [ ] target user lookup policy boundary, if it becomes permission-sensitive.
 - [ ] Add grep-based or unit guard to catch new direct `is_superuser`,
   `dataset_shares`, and `user_tenant` policy reads in `internal/http` outside
