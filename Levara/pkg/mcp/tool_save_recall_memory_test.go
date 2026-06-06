@@ -557,29 +557,96 @@ func TestToolRecallMemory_HallFilterUsesVectorHydration(t *testing.T) {
 	}
 }
 
-func TestToolRecallMemory_VectorPathReturnsMetaItems(t *testing.T) {
-	// No structural filter + embed available → vector path. Search
-	// results are unmarshalled from the Data field and returned.
+func TestToolRecallMemory_VectorPathHydratesFromSQL(t *testing.T) {
+	// No structural filter + embed available → vector path. The vector hit's
+	// id keys an authoritative SQL hydration (NOT a raw Data-field unmarshal),
+	// so the returned row carries the SQL columns and the owner/superseded
+	// guards apply uniformly with the filtered path.
 	deps := setupSaveRecallMemoryDB(t)
 	deps.embedAvailable = true
+	deps.embedFn = func(ctx context.Context, text string) ([]float32, error) {
+		return []float32{1, 2, 3}, nil
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	// Query is not a substring of the row → only a vector hit can find it.
+	deps.db.Exec(`INSERT INTO memories (id, key, value, type, owner_id, collection_name, room, hall, created_at, updated_at)
+		VALUES ('id1', 'hit', 'semantic match', 'fact', '', '', '', '', ?, ?)`, now, now)
 	deps.searchFn = func(collection string, q []float32, k int) ([]SearchResult, error) {
-		meta, _ := json.Marshal(map[string]string{
-			"key": "hit", "value": "semantic match", "type": "fact",
-		})
-		return []SearchResult{{ID: "id1", Score: 0.9, Data: meta}}, nil
+		return []SearchResult{{ID: "id1", Score: 0.9}}, nil
 	}
 
 	got := ToolRecallMemory(context.Background(), deps, map[string]any{"query": "anything"})
 	if got.IsError {
-		t.Fatalf("IsError = true")
+		t.Fatalf("IsError = true: %s", got.Content[0].Text)
 	}
 
-	var items []map[string]string
+	var items []map[string]any
 	if err := json.Unmarshal([]byte(got.Content[0].Text), &items); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	if len(items) != 1 || items[0]["key"] != "hit" {
-		t.Errorf("got %+v, want single 'hit'", items)
+		t.Errorf("got %+v, want single 'hit' (SQL-hydrated)", items)
+	}
+}
+
+func TestToolRecallMemory_VectorPathOwnershipScoped(t *testing.T) {
+	// Regression: the unfiltered (no room/hall) vector path must be scoped
+	// to the caller. Before the fix it returned vector hits' Data verbatim
+	// with NO owner filter, leaking another owner's rows. After the fix the
+	// hits are hydrated through SQL with the owner scope applied, so the
+	// caller sees only their own rows plus shared (empty-owner) rows.
+	deps := setupSaveRecallMemoryDB(t)
+	deps.embedAvailable = true
+	deps.embedFn = func(ctx context.Context, text string) ([]float32, error) {
+		return []float32{1, 2, 3}, nil
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	// None of the values contain the query phrase — vector-only retrieval.
+	deps.db.Exec(`INSERT INTO memories (id, key, value, type, owner_id, collection_name, room, hall, created_at, updated_at)
+		VALUES ('m1', 'alice-secret', 'private note one', 'fact', 'alice', '', '', '', ?, ?)`, now, now)
+	deps.db.Exec(`INSERT INTO memories (id, key, value, type, owner_id, collection_name, room, hall, created_at, updated_at)
+		VALUES ('m2', 'bob-secret', 'private note two', 'fact', 'bob', '', '', '', ?, ?)`, now, now)
+	deps.db.Exec(`INSERT INTO memories (id, key, value, type, owner_id, collection_name, room, hall, created_at, updated_at)
+		VALUES ('m3', 'shared-note', 'private note three', 'fact', '', '', '', '', ?, ?)`, now, now)
+	// Vector search surfaces ALL three — owner isolation must happen in SQL.
+	// Data payloads mirror the rows so the pre-fix Data-unmarshal path would
+	// have leaked bob's row (making this test red before the fix).
+	deps.searchFn = func(collection string, q []float32, k int) ([]SearchResult, error) {
+		mk := func(key string) json.RawMessage {
+			b, _ := json.Marshal(map[string]string{"key": key, "value": "leaked", "type": "fact"})
+			return b
+		}
+		return []SearchResult{
+			{ID: "m1", Score: 0.9, Data: mk("alice-secret")},
+			{ID: "m2", Score: 0.85, Data: mk("bob-secret")},
+			{ID: "m3", Score: 0.8, Data: mk("shared-note")},
+		}, nil
+	}
+
+	ctx := context.WithValue(context.Background(), UserIDKey, "alice")
+	got := ToolRecallMemory(ctx, deps, map[string]any{"query": "anything semantic"})
+	if got.IsError {
+		t.Fatalf("IsError = true: %s", got.Content[0].Text)
+	}
+	var items []map[string]any
+	if err := json.Unmarshal([]byte(got.Content[0].Text), &items); err != nil {
+		t.Fatalf("unmarshal: %v (content=%q)", err, got.Content[0].Text)
+	}
+	keys := map[string]bool{}
+	for _, it := range items {
+		keys[it["key"].(string)] = true
+	}
+	if keys["bob-secret"] {
+		t.Error("LEAK: bob's row visible to alice on the vector path")
+	}
+	if !keys["alice-secret"] {
+		t.Error("alice's own row missing")
+	}
+	if !keys["shared-note"] {
+		t.Error("shared (empty-owner) row missing")
+	}
+	if len(items) != 2 {
+		t.Errorf("got %d items, want 2 (alice + shared)", len(items))
 	}
 }
 

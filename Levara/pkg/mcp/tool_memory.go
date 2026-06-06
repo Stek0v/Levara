@@ -31,10 +31,17 @@ func ToolListMemories(ctx context.Context, deps Deps, args map[string]any) ToolR
 	collectionName, _ := args["collection"].(string)
 	room, _ := args["room"].(string)
 	hall, _ := args["hall"].(string)
+	ownerID := extractOwnerID(ctx)
 
 	var conds []string
 	var qargs []any
 	pos := 1
+	// Ownership scope: the caller's own rows plus shared (empty-owner) rows.
+	// Without this list_memories returned every owner's memories, leaking
+	// other users' rows on a shared deployment.
+	conds = append(conds, fmt.Sprintf("(owner_id = $%d OR owner_id = '')", pos))
+	qargs = append(qargs, ownerID)
+	pos++
 	if filterType != "" {
 		conds = append(conds, fmt.Sprintf("type = $%d", pos))
 		qargs = append(qargs, filterType)

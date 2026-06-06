@@ -139,3 +139,57 @@ func TestMCP_ToolCall_OwnerFromJWT(t *testing.T) {
 		t.Error("expected a tool result for an owner-resolved call")
 	}
 }
+
+// ── Empty Mcp-Session-Id read-isolation gap ──
+//
+// A request that omits the session header entirely (not just a stale one)
+// must be subject to the same auth gate as one that replays a stale id.
+// Otherwise an anonymous caller under require-auth could reach tools/list
+// and tools/call simply by NOT sending a session id — the auth/adopt block
+// only ran when sessionID != "".
+
+// No session header + no credentials under require-auth must 404 (not leak
+// the tool catalogue to an anonymous caller).
+func TestMCP_NoSessionHeader_RejectsAnonUnderRequireAuth(t *testing.T) {
+	app, _ := mcpAdoptApp(t, APIConfig{RequireAuth: true, JWTSecret: "test-secret-adopt"})
+
+	status, _ := postRPC(t, app,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`,
+		map[string]string{}) // no Mcp-Session-Id, no Authorization
+
+	if status != fiber.StatusNotFound {
+		t.Fatalf("status = %d, want 404 (anon tools/list with no session must be rejected)", status)
+	}
+}
+
+// No session header but a VALID Bearer under require-auth must still succeed —
+// dropping the session id is legitimate as long as the request authenticates.
+// Regression guard: this stays green before and after the fix.
+func TestMCP_NoSessionHeader_AllowsValidBearer(t *testing.T) {
+	const secret = "test-secret-adopt"
+	app, _ := mcpAdoptApp(t, APIConfig{RequireAuth: true, JWTSecret: secret})
+	token := createJWT("caller-2", "c2@example.com", secret)
+
+	status, body := postRPC(t, app,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`,
+		map[string]string{"Authorization": "Bearer " + token}) // no Mcp-Session-Id
+
+	if status != fiber.StatusOK {
+		t.Fatalf("status = %d, want 200 (valid Bearer, no session id); body=%s", status, body)
+	}
+}
+
+// No session header + no credentials under require-auth must also block
+// tools/call — closing the path where an anon caller ran a tool with
+// owner_id='' just by omitting the session id.
+func TestMCP_NoSessionHeader_RejectsAnonToolCall(t *testing.T) {
+	app, _ := mcpAdoptApp(t, APIConfig{RequireAuth: true, JWTSecret: "test-secret-adopt"})
+
+	status, _ := postRPC(t, app,
+		`{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"levara_instructions","arguments":{}}}`,
+		map[string]string{}) // no Mcp-Session-Id, no Authorization
+
+	if status != fiber.StatusNotFound {
+		t.Fatalf("status = %d, want 404 (anon tools/call with no session must be rejected)", status)
+	}
+}

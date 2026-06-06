@@ -153,6 +153,43 @@ func TestToolListMemories_FormatsPinnedAsBool(t *testing.T) {
 	}
 }
 
+func TestToolListMemories_OwnershipScoped(t *testing.T) {
+	// list_memories must be scoped to the caller: it returns the caller's
+	// own rows plus shared (empty-owner) rows, never another owner's. The
+	// owner comes from the request context (set by the HTTP handler on auth).
+	deps := setupMemoryTestDB(t)
+	seedMemory(t, deps.db, "m1", "alice-only", "v", "fact", "alice", "", "", "", 0, 0)
+	seedMemory(t, deps.db, "m2", "bob-only", "v", "fact", "bob", "", "", "", 0, 0)
+	seedMemory(t, deps.db, "m3", "shared", "v", "fact", "", "", "", "", 0, 0)
+
+	ctx := context.WithValue(context.Background(), UserIDKey, "alice")
+	got := ToolListMemories(ctx, deps, map[string]any{})
+	if got.IsError {
+		t.Fatalf("IsError = true: %s", got.Content[0].Text)
+	}
+	var items []map[string]any
+	if err := json.Unmarshal([]byte(got.Content[0].Text), &items); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	keys := map[string]bool{}
+	for _, it := range items {
+		keys[it["key"].(string)] = true
+	}
+	if !keys["alice-only"] {
+		t.Error("alice's own row missing")
+	}
+	if !keys["shared"] {
+		t.Error("shared (empty-owner) row missing")
+	}
+	if keys["bob-only"] {
+		t.Error("LEAK: bob's row visible to alice")
+	}
+	if len(items) != 2 {
+		t.Errorf("got %d items, want 2 (alice-only + shared)", len(items))
+	}
+}
+
 // ── ToolPinMemory ──
 
 func TestToolPinMemory_RequiresKey(t *testing.T) {
