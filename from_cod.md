@@ -118,30 +118,30 @@ Acceptance criteria:
 Goal: turn the profile ladder into runnable deployment choices for each target
 audience.
 
-- [ ] Add sample env files or recipes:
-  - [ ] `personal.local.env.example`
-  - [ ] `solo_pro.sync.env.example`
-  - [ ] `team.postgres.env.example`
-  - [ ] `enterprise.strict.env.example`
-- [ ] Add a short profile matrix document or section that maps:
-  - [ ] required services;
-  - [ ] expected auth mode;
-  - [ ] storage mode;
-  - [ ] audit mode;
-  - [ ] startup failure conditions.
+- [x] Add sample env files or recipes:
+  - [x] `personal.local.env.example`
+  - [x] `solo_pro.sync.env.example`
+  - [x] `team.postgres.env.example`
+  - [x] `enterprise.strict.env.example`
+- [x] Add a short profile matrix document or section that maps:
+  - [x] required services;
+  - [x] expected auth mode;
+  - [x] storage mode;
+  - [x] audit mode;
+  - [x] startup failure conditions.
 - [ ] Add a lightweight local smoke script or Make target that starts each
   non-enterprise profile in dry-run/config-check mode once such mode exists.
-- [ ] Add explicit guidance for single developer + AI agents:
+- [x] Add explicit guidance for single developer + AI agents:
   local MCP, no required auth, SQLite, workspace root, memory palace.
-- [ ] Add explicit guidance for corporate teams:
+- [x] Add explicit guidance for corporate teams:
   strict mode, Postgres, tenant enforcement, audit export, provisioning bridge,
   stable signing config.
 
 Acceptance criteria:
 
-- [ ] A solo developer can start Personal without reading enterprise docs.
-- [ ] A team operator can see why Postgres/auth/JWT are required.
-- [ ] Enterprise docs do not imply unsupported KMS/object-storage features are
+- [x] A solo developer can start Personal without reading enterprise docs.
+- [x] A team operator can see why Postgres/auth/JWT are required.
+- [x] Enterprise docs do not imply unsupported KMS/object-storage features are
   already production-ready.
 
 ### C2: HTTP Policy Cleanup

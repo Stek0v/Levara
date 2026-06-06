@@ -125,6 +125,37 @@ func TestFullTestingScenariosCoversProductLadder(t *testing.T) {
 	}
 }
 
+func TestProfilePresetsCoverProductLadder(t *testing.T) {
+	raw, err := os.ReadFile("profile-presets.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	for _, required := range []string{
+		"deploy/profiles/personal.local.env.example",
+		"deploy/profiles/solo_pro.sync.env.example",
+		"deploy/profiles/team.postgres.env.example",
+		"deploy/profiles/enterprise.strict.env.example",
+		"LEVARA_PROFILE_STRICT=1",
+		"KMS/BYOK",
+		"make test-release-candidate",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("profile-presets.md missing %q", required)
+		}
+	}
+	for _, rel := range []string{
+		"deploy/profiles/personal.local.env.example",
+		"deploy/profiles/solo_pro.sync.env.example",
+		"deploy/profiles/team.postgres.env.example",
+		"deploy/profiles/enterprise.strict.env.example",
+	} {
+		if _, err := os.Stat(filepath.Join("..", rel)); err != nil {
+			t.Fatalf("profile preset %s does not resolve: %v", rel, err)
+		}
+	}
+}
+
 func TestMarkdownWorkspaceOpsExamples(t *testing.T) {
 	dashboardRaw, err := os.ReadFile(filepath.Join("..", "examples", "ops", "grafana-workspace-dashboard.json"))
 	if err != nil {
