@@ -20,7 +20,7 @@ import (
 
 // RegisterSyncAPI registers sync export/import endpoints.
 func RegisterSyncAPI(app fiber.Router, cfg APIConfig) {
-	app.Get("/sync/manifest", syncManifestHandler(cfg))
+	app.Get("/sync/manifest", syncManifestHandler(cfg.Identity(), cfg.Access(), cfg.Search()))
 
 	app.Get("/sync/export/memories", syncExportMemoriesHandler(cfg))
 	app.Post("/sync/import/memories", syncImportMemoriesHandler(cfg))
@@ -61,17 +61,17 @@ type syncCollectionInfo struct {
 	Model   string `json:"model"`
 }
 
-func syncManifestHandler(cfg APIConfig) fiber.Handler {
+func syncManifestHandler(identityCfg IdentityConfig, accessCfg AccessConfig, searchCfg SearchConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		ctx, cancel := syncRequestContext(c)
 		defer cancel()
 
 		m := syncManifest{
-			Version:    cfg.Version,
-			EmbedModel: cfg.EmbedModel,
+			Version:    identityCfg.Version,
+			EmbedModel: searchCfg.EmbedModel,
 		}
-		if cfg.Collections != nil {
-			for _, meta := range cfg.Collections.ListWithMeta() {
+		if searchCfg.Collections != nil {
+			for _, meta := range searchCfg.Collections.ListWithMeta() {
 				if m.EmbedDim == 0 {
 					m.EmbedDim = meta.EmbeddingDim
 				}
@@ -81,13 +81,13 @@ func syncManifestHandler(cfg APIConfig) fiber.Handler {
 				})
 			}
 		}
-		if cfg.DB != nil {
-			cfg.DB.QueryRowContext(ctx, Q(`SELECT COUNT(*) FROM memories`)).Scan(&m.Memories.Count)
-			cfg.DB.QueryRowContext(ctx, Q(`SELECT COALESCE(MAX(updated_at),'') FROM memories`)).Scan(&m.Memories.LatestUpdated)
-			cfg.DB.QueryRowContext(ctx, Q(`SELECT COUNT(*) FROM interactions`)).Scan(&m.Interactions.Count)
-			cfg.DB.QueryRowContext(ctx, Q(`SELECT COALESCE(MAX(created_at),'') FROM interactions`)).Scan(&m.Interactions.LatestUpdated)
-			cfg.DB.QueryRowContext(ctx, Q(`SELECT COUNT(*) FROM graph_nodes`)).Scan(&m.GraphNodes.Count)
-			cfg.DB.QueryRowContext(ctx, Q(`SELECT COUNT(*) FROM graph_edges`)).Scan(&m.GraphEdges.Count)
+		if accessCfg.DB != nil {
+			accessCfg.DB.QueryRowContext(ctx, Q(`SELECT COUNT(*) FROM memories`)).Scan(&m.Memories.Count)
+			accessCfg.DB.QueryRowContext(ctx, Q(`SELECT COALESCE(MAX(updated_at),'') FROM memories`)).Scan(&m.Memories.LatestUpdated)
+			accessCfg.DB.QueryRowContext(ctx, Q(`SELECT COUNT(*) FROM interactions`)).Scan(&m.Interactions.Count)
+			accessCfg.DB.QueryRowContext(ctx, Q(`SELECT COALESCE(MAX(created_at),'') FROM interactions`)).Scan(&m.Interactions.LatestUpdated)
+			accessCfg.DB.QueryRowContext(ctx, Q(`SELECT COUNT(*) FROM graph_nodes`)).Scan(&m.GraphNodes.Count)
+			accessCfg.DB.QueryRowContext(ctx, Q(`SELECT COUNT(*) FROM graph_edges`)).Scan(&m.GraphEdges.Count)
 		}
 		return c.JSON(m)
 	}
