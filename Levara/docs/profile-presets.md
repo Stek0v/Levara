@@ -81,10 +81,10 @@ Required runtime facts:
 
 Use Enterprise when tenant governance, central identity, audit export, and
 corporate storage controls matter. The current implementation has tenant
-hardening, strict profile checks, audit export, SSO/SCIM seams, and storage/KMS
-adapter contracts. Concrete protocol adapters, SIEM sinks, KMS/BYOK
-implementations, legal-hold enforcement, and corporate object storage backends
-remain follow-up work.
+hardening, strict profile checks, audit export, an OIDC verified-claims adapter,
+SSO/SCIM seams, and storage/KMS adapter contracts. Raw OIDC token verification,
+SAML, SCIM HTTP surfaces, SIEM sinks, KMS/BYOK implementations, legal-hold
+enforcement, and corporate object storage backends remain follow-up work.
 
 Start from:
 

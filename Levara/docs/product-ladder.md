@@ -31,7 +31,7 @@ profiles or adapters.
 | Personal / Local | One developer using Codex, Claude, Cursor, or similar agents | SQLite, local filesystem, local MCP, auth optional | MCP tools, memory palace, workspace context/search/read/write, local BM25/vector search, local manifests and jobs, permissive `personal` profile | One-command profile preset, clearer local backup, local config-check command | None required |
 | Solo Pro | One power user with several machines or a Mac/Pi setup | SQLite or Postgres, local or S3-compatible storage, sync enabled | Cross-instance sync, backups, API keys, Prometheus metrics, optional S3 backend, `solo_pro` sync-token validation | Sync conflict guidance, backup/restore recipes, personal ops dashboard, preset env file | Managed backup target, hosted edge relay |
 | Team | Small team with humans and AI agents sharing project workspaces | Postgres, required auth, per-agent tokens, shared workspace root | JWT/API keys, dataset/project shares, shared `pkg/access` policy facade, workspace ACL preflight, workspace audit, async indexing jobs, strict-profile fail-fast | Profile preset/runbook, admin/operator UI | Centralized log sink, team admin UI |
-| Enterprise | Corporate teams with compliance and central governance | Postgres or managed SQL, object storage, required auth or SSO bridge, enforced tenants | Tenant membership checks, tenant-safe SQL fragments, strict-profile fail-fast, audit export boundary with async JSONL adapter, SSO/SCIM adapter seams, storage/KMS contract shapes | Concrete protocol adapters, concrete corporate storage/KMS/BYOK backends, SIEM adapter | OIDC/SAML protocol adapter, SCIM HTTP surface, KMS/BYOK implementations, SIEM export, S3/GCS/Azure Blob adapters, legal hold enforcement in concrete backends |
+| Enterprise | Corporate teams with compliance and central governance | Postgres or managed SQL, object storage, required auth or SSO bridge, enforced tenants | Tenant membership checks, tenant-safe SQL fragments, strict-profile fail-fast, audit export boundary with async JSONL adapter, OIDC verified-claims adapter, SSO/SCIM seams, storage/KMS contract shapes | Concrete SAML/SCIM protocol surfaces, concrete corporate storage/KMS/BYOK backends, SIEM adapter | SAML protocol adapter, SCIM HTTP surface, KMS/BYOK implementations, SIEM export, S3/GCS/Azure Blob adapters, legal hold enforcement in concrete backends |
 
 ## Capability Placement
 
@@ -51,7 +51,7 @@ profiles or adapters.
 | Dataset/project sharing | access layer | no default | optional | yes | yes |
 | Tenant isolation | access layer | no default | no default | optional | required |
 | Workspace audit | audit layer | optional | yes | yes | yes, exportable |
-| OIDC/SAML/SCIM/KMS/SIEM | enterprise adapters | no | no | no | partial: identity/audit/storage/KMS seams implemented; concrete protocol, SIEM, and storage backends pending |
+| OIDC/SAML/SCIM/KMS/SIEM | enterprise adapters | no | no | no | partial: OIDC verified-claims, identity/audit/storage/KMS seams implemented; SAML, SCIM HTTP, SIEM, and concrete storage backends pending |
 
 ## Target Runtime Profiles
 
@@ -134,10 +134,10 @@ Remaining debt:
 
 - Status: partial.
 - Complete foundation: audit export boundary, async JSONL exporter, SSO bridge
-  interface, SCIM-shaped provisioner interface, storage metadata contract,
-  direct-read contract, and KMS/BYOK hook contract.
-- Remaining work: concrete protocol adapters, SIEM sink, and concrete
-  corporate storage/KMS backends for S3/GCS/Azure-style object stores.
+  interface, OIDC verified-claims adapter, SCIM-shaped provisioner interface,
+  storage metadata contract, direct-read contract, and KMS/BYOK hook contract.
+- Remaining work: SAML/SCIM HTTP surfaces, SIEM sink, and concrete corporate
+  storage/KMS backends for S3/GCS/Azure-style object stores.
 
 ## Acceptance Criteria For Future Implementation
 
