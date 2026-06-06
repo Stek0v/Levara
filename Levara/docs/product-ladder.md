@@ -1,11 +1,13 @@
 # Levara Product Ladder
 
-Date: 2026-06-05
-Status: planning
+Date: 2026-06-06
+Status: implemented foundation; storage/KMS and product presets pending
 
 This document translates the current Levara architecture into a product ladder.
-It is intentionally documentation-only: no REST, MCP, gRPC, schema, or runtime
-contracts change as part of this plan.
+It started as a planning document. The foundation has since moved into code:
+access policy, runtime profile validation, audit export, and enterprise
+identity seams now exist. The remaining work is product packaging, HTTP policy
+cleanup, and enterprise storage/KMS adapters.
 
 ## Goal
 
@@ -24,12 +26,12 @@ profiles or adapters.
 
 ## Product Tiers
 
-| Tier | Audience | Default runtime | Included today | Hardening backlog | Future adapters |
+| Tier | Audience | Default runtime | Implemented foundation | Remaining hardening | Future adapters |
 |---|---|---|---|---|---|
-| Personal / Local | One developer using Codex, Claude, Cursor, or similar agents | SQLite, local filesystem, local MCP, auth optional | MCP tools, memory palace, workspace context/search/read/write, local BM25/vector search, local manifests and jobs | One-command profile preset, clearer local backup, config validation for missing embedder | None required |
-| Solo Pro | One power user with several machines or a Mac/Pi setup | SQLite or Postgres, local or S3-compatible storage, sync enabled | Cross-instance sync, backups, API keys, Prometheus metrics, optional S3 backend | Sync conflict guidance, backup/restore recipes, personal ops dashboard | Managed backup target, hosted edge relay |
-| Team | Small team with humans and AI agents sharing project workspaces | Postgres, required auth, per-agent tokens, shared workspace root | JWT/API keys, dataset/project shares, workspace ACL preflight, workspace audit, async indexing jobs, ops status | Dedicated access service, tenant-safe filters, stricter profile validation, audit retention policy | Centralized log sink, team admin UI |
-| Enterprise | Corporate teams with compliance and central governance | Postgres or managed SQL, object storage, required auth, enforced tenants | Foundational tables for users, tenants, ACL, audit, storage abstraction, metrics | Tenant enforcement, policy service, config fail-fast, external audit sink contract, retention model | OIDC/SAML, SCIM, KMS/BYOK, SIEM export, S3/GCS/Azure Blob, legal hold |
+| Personal / Local | One developer using Codex, Claude, Cursor, or similar agents | SQLite, local filesystem, local MCP, auth optional | MCP tools, memory palace, workspace context/search/read/write, local BM25/vector search, local manifests and jobs, permissive `personal` profile | One-command profile preset, clearer local backup, local config-check command | None required |
+| Solo Pro | One power user with several machines or a Mac/Pi setup | SQLite or Postgres, local or S3-compatible storage, sync enabled | Cross-instance sync, backups, API keys, Prometheus metrics, optional S3 backend, `solo_pro` sync-token validation | Sync conflict guidance, backup/restore recipes, personal ops dashboard, preset env file | Managed backup target, hosted edge relay |
+| Team | Small team with humans and AI agents sharing project workspaces | Postgres, required auth, per-agent tokens, shared workspace root | JWT/API keys, dataset/project shares, shared `pkg/access` policy facade, workspace ACL preflight, workspace audit, async indexing jobs, strict-profile fail-fast | Finish HTTP dataset/list visibility cleanup, profile preset/runbook, admin/operator UI | Centralized log sink, team admin UI |
+| Enterprise | Corporate teams with compliance and central governance | Postgres or managed SQL, object storage, required auth or SSO bridge, enforced tenants | Tenant membership checks, tenant-safe SQL fragments, strict-profile fail-fast, audit export boundary with async JSONL adapter, SSO/SCIM adapter seams | Corporate storage/KMS/BYOK contract, concrete protocol adapters, retention/legal-hold model, SIEM adapter | OIDC/SAML protocol adapter, SCIM HTTP surface, KMS/BYOK, SIEM export, S3/GCS/Azure Blob, legal hold |
 
 ## Capability Placement
 
@@ -49,88 +51,108 @@ profiles or adapters.
 | Dataset/project sharing | access layer | no default | optional | yes | yes |
 | Tenant isolation | access layer | no default | no default | optional | required |
 | Workspace audit | audit layer | optional | yes | yes | yes, exportable |
-| OIDC/SAML/SCIM/KMS/SIEM | enterprise adapters | no | no | no | yes |
+| OIDC/SAML/SCIM/KMS/SIEM | enterprise adapters | no | no | no | partial: identity/audit seams implemented; KMS/SIEM/storage pending |
 
 ## Target Runtime Profiles
 
-The future config interface should be explicit:
+The runtime profile interface is explicit:
 
 ```bash
 LEVARA_PROFILE=personal|solo_pro|team|enterprise
+LEVARA_PROFILE_STRICT=1  # optional fail-fast mode
 ```
 
-Profile behavior should be validation and defaults, not a forked codebase.
+Profile behavior is validation and defaults, not a forked codebase. By default
+Levara logs warnings so existing deployments keep starting during migration.
+When `LEVARA_PROFILE_STRICT=1` is set, unsafe `solo_pro`, `team`, and
+`enterprise` profile combinations fail fast at startup.
 
 | Profile | Required | Defaults | Must fail fast when |
 |---|---|---|---|
 | `personal` | writable data dir | SQLite, local storage, MCP enabled, auth optional | data dir cannot be created |
 | `solo_pro` | writable data dir, stable sync token when sync is enabled | SQLite or Postgres, optional S3, API keys available | sync is configured without credentials |
 | `team` | Postgres, stable `JWT_SECRET`, `-require-auth`, project shares | workspace audit, async index jobs, per-agent credentials | auth is disabled or DB is missing |
-| `enterprise` | Postgres, stable `JWT_SECRET` or SSO bridge, tenant enforcement, audit sink | required tenant context, retention policy, object storage | tenant enforcement, audit sink, or auth is missing |
+| `enterprise` | Postgres, stable `JWT_SECRET` or SSO bridge, tenant enforcement, audit sink | required tenant context, audit export, future retention/object storage | tenant enforcement, audit sink, auth/SSO, or stable signing config is missing |
 
-For now this is a proposal. Existing environment variables and CLI flags remain
-the only runtime contract.
+The profile variables above are current runtime behavior. They do not change
+REST, MCP, or gRPC wire contracts.
 
-## Current Architectural Debt
+## Current Architectural Status
 
-The current codebase has the right primitives, but some boundaries are not yet
-product-ready:
+The current codebase has the right primitives and several boundaries are now in
+code:
 
-- Auth, RBAC, tenant, and workspace policy logic are partially implemented in
-  `internal/http`, so policy decisions are tied to Fiber handlers.
+- `pkg/access` owns transport-independent actors, resources, authorization
+  decisions, tenant membership, API-key permission checks, and provisioning/
+  identity seams.
+- `pkg/profile` owns profile normalization and warning/strict validation.
+- `pkg/audit` owns generic audit export, async retry/backpressure, sanitization,
+  and a local JSONL export adapter.
+- `internal/http/config_groups.go` exposes typed projections of the broad
+  `APIConfig` compatibility wrapper.
 - MCP tool bodies already use capability interfaces in `pkg/mcp`; this is the
-  pattern to replicate for identity, access, memory, and workspace services.
-- Tenant selection currently needs hardening before enterprise use: tenant
-  headers must be membership-checked and tenant SQL filters must be
-  parameterized.
-- `APIConfig` is a broad service locator. Split runtime configuration into
-  identity, workspace, search, storage, observability, and profile config
-  groups before adding enterprise adapters.
-- Workspace audit exists and is intentionally sanitized, but enterprise needs
-  retention rules and export sinks rather than only local JSONL files.
+  pattern used for the access/audit adapter boundaries.
+
+Remaining debt:
+
+- Some HTTP handlers still issue access-shaped SQL directly for dataset lists,
+  workspace context project visibility, and admin checks. Those should move to
+  `pkg/access` helpers without changing response shapes.
+- `APIConfig` still exists as a broad wrapper; typed groups are projections,
+  not a full call-site migration.
+- Enterprise storage/KMS/BYOK and object-retention behavior are not yet
+  implemented.
+- Product presets/runbooks per audience are not yet complete.
 
 ## Roadmap
 
 ### Phase 1: product and architecture docs
 
-- Keep public REST, MCP, and gRPC contracts unchanged.
+- Status: complete.
+- Public REST, MCP, and gRPC contracts stayed unchanged.
 - Land this product ladder and ADR-002.
 - Cross-link with the markdown workspace deployment recipes and capability gate.
 - Record acceptance criteria for future profile behavior.
 
 ### Phase 2: access policy extraction
 
-- Add a transport-independent `pkg/access` or `pkg/identity` service.
-- Move user, API key, dataset share, workspace access, and tenant membership
-  decisions behind one `Authorize(actor, resource, action)` style boundary.
-- Keep current HTTP/MCP behavior unchanged while tests prove parity.
+- Status: mostly complete; final HTTP visibility cleanup remains.
+- `pkg/access` now owns `Actor`, `Resource`, `Authorize`, tenant membership,
+  activation checks, API-key permission checks, and identity/provisioning
+  shapes.
+- REST/MCP workspace parity tests exist.
+- Remaining work: move the last dataset-list/workspace-context visibility SQL
+  from `internal/http` into access-layer helpers.
 
 ### Phase 3: runtime profiles
 
-- Add `LEVARA_PROFILE=personal|solo_pro|team|enterprise`.
-- Implement profile validation only after Phase 2 isolates policy decisions.
-- Make unsafe production combinations fail fast, especially missing auth,
-  missing stable `JWT_SECRET`, missing Postgres for team/enterprise, and missing
-  tenant enforcement for enterprise.
+- Status: complete as a validation layer.
+- `LEVARA_PROFILE=personal|solo_pro|team|enterprise` is implemented.
+- `LEVARA_PROFILE_STRICT=1` is implemented.
+- Unsafe production combinations fail fast in strict mode, especially missing
+  auth/SSO, stable `JWT_SECRET`, Postgres for team/enterprise, tenant
+  enforcement, and audit sink for enterprise.
 
 ### Phase 4: enterprise adapters
 
-- Add OIDC/SAML login bridge and SCIM provisioning as adapters to the identity
-  layer.
-- Add KMS/BYOK envelope key hooks for secret and object-storage encryption.
-- Add external audit sinks for SIEM or log pipeline export.
-- Add corporate object-storage adapters after the storage interface is hardened
-  for streaming, presigned reads, and retention metadata.
+- Status: partial.
+- Complete foundation: audit export boundary, async JSONL exporter, SSO bridge
+  interface, SCIM-shaped provisioner interface.
+- Remaining work: concrete protocol adapters, SIEM sink, KMS/BYOK hooks, and
+  corporate object-storage contract for streaming, presigned reads, retention
+  metadata, and legal hold.
 
 ## Acceptance Criteria For Future Implementation
 
-- Personal profile starts with SQLite and no required auth.
-- Team profile refuses to start without Postgres, stable JWT secret, and auth.
-- Enterprise profile refuses to start without tenant enforcement and an audit
-  sink.
-- HTTP and MCP workspace access decisions share one policy implementation.
-- Denied team and enterprise operations do not leak project paths, snippets,
-  collection names, or tenant identifiers.
-- Existing REST, MCP, and gRPC clients continue to work during policy
+- [x] Personal profile starts with SQLite and no required auth.
+- [x] Team profile refuses to start without Postgres, stable JWT secret, and
+  auth in strict mode.
+- [x] Enterprise profile refuses to start without tenant enforcement and an
+  audit sink in strict mode.
+- [x] HTTP and MCP workspace access decisions share one policy implementation.
+- [x] Denied team and enterprise operations have focused non-leakage coverage.
+- [x] Existing REST, MCP, and gRPC clients continue to work during policy
   extraction.
-
+- [ ] Corporate storage/KMS/retention adapters are implemented and tested.
+- [ ] Product presets make each tier runnable without reading unrelated tier
+  documentation.
