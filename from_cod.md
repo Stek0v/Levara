@@ -156,20 +156,22 @@ Goal: finish the boundary so HTTP handlers do not own access-shaped SQL.
   query helper returning DTO-neutral records for dataset list endpoints.
 - [x] Route `api_admin.go` superuser checks through `SQLPolicy.IsSuperuser`
   or a shared admin policy helper.
-- [ ] Move share-management validation in `rbac.go` fully behind access-layer
+- [x] Move share-management validation in `rbac.go` fully behind access-layer
   helpers:
   - [x] role vocabulary;
   - [x] grant/revoke permission decision;
   - [x] target user lookup policy boundary, if it becomes permission-sensitive.
-- [ ] Add grep-based or unit guard to catch new direct `is_superuser`,
+- [x] Add grep-based or unit guard to catch new direct `is_superuser`,
   `dataset_shares`, and `user_tenant` policy reads in `internal/http` outside
   approved CRUD/schema/test files.
 
 Acceptance criteria:
 
-- [ ] Access decisions are testable without Fiber.
-- [ ] HTTP handlers own parsing/status codes/DTOs only.
-- [ ] Existing route behavior and response shapes do not change.
+- [x] Access decisions are testable without Fiber.
+- [x] HTTP handlers own parsing/status codes/DTOs only for the cleaned
+  visibility/admin/share-decision paths; remaining access-table SQL is limited
+  to approved CRUD/schema files by a guard test.
+- [x] Existing route behavior and response shapes do not change.
 
 ### C3: APIConfig Migration From Projection To Narrow Inputs
 
