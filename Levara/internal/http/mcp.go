@@ -587,22 +587,27 @@ func (h *mcpHandler) handleRPC(c *fiber.Ctx) error {
 		return c.SendStatus(202)
 	}
 
-	// Session validation for non-initialize requests. A session-id the store
-	// doesn't recognise almost always means the in-memory store was reset (a
-	// backend restart) and the client is replaying a now-stale id. Bouncing it
-	// with a bare 404 is spec-correct ("re-initialize"), but the Claude Code
-	// MCP client doesn't auto-recover mid tool-call — it surfaces the 404 as a
-	// hang. So instead of 404 we adopt the replayed id and rebind its owner
-	// from the request's own JWT (authoritative, survives a store reset),
-	// making restarts transparent. Only fall back to 404 when we can't even
-	// establish an owner (auth error under require-auth).
+	// Auth + session gate for non-initialize requests. Authenticate FIRST,
+	// unconditionally — a request that omits the session header is no more
+	// trusted than one replaying a stale id, so both must clear the same
+	// gate (otherwise an anonymous caller under require-auth could reach
+	// tools/list and tools/call simply by NOT sending a session id). When
+	// auth fails we 404 (client should re-initialize). `ping` is a transport
+	// liveness probe and stays unauthenticated like `initialize`.
+	//
+	// A session-id the store doesn't recognise almost always means the
+	// in-memory store was reset (a backend restart) and the client is
+	// replaying a now-stale id. Rather than 404 (which the Claude Code MCP
+	// client surfaces as a hang mid tool-call), we adopt the replayed id and
+	// rebind its owner from the just-verified identity, making restarts
+	// transparent.
 	sessionID := c.Get("Mcp-Session-Id")
-	if req.Method != "initialize" && sessionID != "" {
-		if h.getOrValidateSession(sessionID) == nil {
-			userID, authErr := h.authenticateMCPRequest(c)
-			if authErr != nil {
-				return c.SendStatus(404) // can't re-establish owner → client should re-initialize
-			}
+	if req.Method != "initialize" && req.Method != "ping" {
+		userID, authErr := h.authenticateMCPRequest(c)
+		if authErr != nil {
+			return c.SendStatus(404) // can't establish an owner → client should re-initialize
+		}
+		if sessionID != "" && h.getOrValidateSession(sessionID) == nil {
 			h.adoptSession(sessionID, userID)
 		}
 	}

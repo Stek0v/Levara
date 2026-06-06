@@ -264,49 +264,20 @@ func ToolRecallMemory(ctx context.Context, deps Deps, args map[string]any) ToolR
 		return ToolResult{Content: []Content{{Type: "text", Text: "[]"}}}
 	}
 
-	// Strategy 1: vector semantic search. The filtered variant hydrates
-	// hits through SQL so room/hall are enforced authoritatively without
-	// losing semantic recall.
+	// Strategy 1: vector semantic search, always hydrated through SQL so the
+	// owner scope (and any optional room/hall filter) is enforced
+	// authoritatively without losing semantic recall. The unfiltered path used
+	// to return vector hits' Data verbatim with no owner check, leaking other
+	// owners' rows; routing every recall through the SQL-hydrated path closes
+	// that. Empty/error is a soft miss → fall through to the SQL LIKE path.
 	if deps.EmbedAvailable() {
-		if room == "" && hall == "" {
-			if res, ok := recallViaVectorSearch(ctx, deps, collectionName, query); ok {
-				return res
-			}
-		} else if res, ok := recallViaVectorFiltered(ctx, deps, db, deps.Q, query, collectionName, room, hall, ownerID, includeSuperseded); ok {
+		if res, ok := recallViaVectorFiltered(ctx, deps, db, deps.Q, query, collectionName, room, hall, ownerID, includeSuperseded); ok {
 			return res
 		}
 	}
 
 	// Strategy 2: SQL LIKE.
 	return recallViaSQLLike(ctx, db, deps.Q, query, collectionName, room, hall, ownerID, includeSuperseded)
-}
-
-// recallViaVectorSearch attempts vector-semantic recall. Returns
-// (result, true) when results are found; (_, false) signals the
-// caller to fall through to the SQL path. Errors are treated as
-// soft misses — pre-refactor never surfaced embed/search errors.
-func recallViaVectorSearch(ctx context.Context, deps Deps, collectionName, query string) (ToolResult, bool) {
-	vec, err := deps.Embed(ctx, query)
-	if err != nil {
-		return ToolResult{}, false
-	}
-	results, err := deps.CollectionSearch(memoryCollectionName(collectionName), vec, recallMemoryVectorTopK)
-	if err != nil || len(results) == 0 {
-		return ToolResult{}, false
-	}
-
-	var items []map[string]string
-	for _, r := range results {
-		var meta map[string]string
-		if err := json.Unmarshal(r.Data, &meta); err == nil {
-			items = append(items, meta)
-		}
-	}
-	if len(items) == 0 {
-		return ToolResult{}, false
-	}
-	out, _ := json.MarshalIndent(items, "", "  ")
-	return ToolResult{Content: []Content{{Type: "text", Text: string(out)}}}, true
 }
 
 // memoryRowColumns is the SELECT list shared by the SQL recall paths so
