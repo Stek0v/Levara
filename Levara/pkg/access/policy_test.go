@@ -278,6 +278,28 @@ func TestCanManageDatasetShares(t *testing.T) {
 	}
 }
 
+func TestShareGrantRevokePolicyMethods(t *testing.T) {
+	db := newPolicyTestDB(t)
+	if _, err := db.Exec(`INSERT INTO dataset_shares(id, dataset_id, user_id, role) VALUES ('share-d', 'payments', 'user-d', 'admin')`); err != nil {
+		t.Fatal(err)
+	}
+	policy := SQLPolicy{DB: db, Q: sqliteQ}
+	ctx := context.Background()
+
+	if !policy.CanGrantDatasetShare(ctx, "payments", "user-a") {
+		t.Fatal("owner should be able to grant dataset shares")
+	}
+	if !policy.CanRevokeDatasetShare(ctx, "payments", "user-d") {
+		t.Fatal("admin-share holder should be able to revoke dataset shares")
+	}
+	if policy.CanGrantDatasetShare(ctx, "payments", "user-b") {
+		t.Fatal("viewer should not be able to grant dataset shares")
+	}
+	if policy.CanRevokeDatasetShare(ctx, "payments", "user-c") {
+		t.Fatal("foreign user should not be able to revoke dataset shares")
+	}
+}
+
 func TestValidRole(t *testing.T) {
 	for _, role := range []string{RoleAdmin, RoleEditor, RoleViewer, "ADMIN"} {
 		if !ValidRole(role) {

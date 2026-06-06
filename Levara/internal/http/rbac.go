@@ -102,7 +102,7 @@ func datasetShareCreateHandler(cfg APIConfig) fiber.Handler {
 		}
 
 		// Only the dataset owner or an admin-share holder can grant shares.
-		if !(accesspkg.SQLPolicy{DB: cfg.DB, Q: Q}).CanManageDatasetShares(ctx, dsID, granterID) {
+		if !(accesspkg.SQLPolicy{DB: cfg.DB, Q: Q}).CanGrantDatasetShare(ctx, dsID, granterID) {
 			return c.Status(403).JSON(fiber.Map{"detail": "only owner or admin can share"})
 		}
 
@@ -149,7 +149,7 @@ func datasetShareDeleteHandler(cfg APIConfig) fiber.Handler {
 		}
 
 		// Only the dataset owner or an admin-share holder can revoke shares.
-		if !(accesspkg.SQLPolicy{DB: cfg.DB, Q: Q}).CanManageDatasetShares(ctx, dsID, userID) {
+		if !(accesspkg.SQLPolicy{DB: cfg.DB, Q: Q}).CanRevokeDatasetShare(ctx, dsID, userID) {
 			return c.Status(403).JSON(fiber.Map{"detail": "only owner or admin can revoke shares"})
 		}
 

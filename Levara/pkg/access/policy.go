@@ -356,6 +356,21 @@ func (p SQLPolicy) CanManageDatasetShares(ctx context.Context, datasetID, grante
 	return role == RoleAdmin
 }
 
+// CanGrantDatasetShare reports whether actorID may create or update a share on
+// datasetID. It is currently the same policy as revoke/manage: dataset owner or
+// admin-share holder. Keeping a grant-specific method gives transports a
+// stable policy vocabulary without knowing the implementation detail.
+func (p SQLPolicy) CanGrantDatasetShare(ctx context.Context, datasetID, actorID string) bool {
+	return p.CanManageDatasetShares(ctx, datasetID, actorID)
+}
+
+// CanRevokeDatasetShare reports whether actorID may remove a share from
+// datasetID. It is currently the same policy as grant/manage: dataset owner or
+// admin-share holder.
+func (p SQLPolicy) CanRevokeDatasetShare(ctx context.Context, datasetID, actorID string) bool {
+	return p.CanManageDatasetShares(ctx, datasetID, actorID)
+}
+
 func APIKeyAllows(perms, action string) bool {
 	if perms == "" {
 		return true
