@@ -44,8 +44,10 @@ enterprise storage/KMS boundaries, and keep docs aligned with runtime behavior.
 - [x] Enterprise identity adapter seams are implemented.
 - [x] Enterprise storage, object-retention, and KMS/BYOK adapter contracts are
   implemented; concrete corporate backends remain C6 packaging/adapter work.
-- [ ] Product packaging by audience is incomplete: profiles exist, but there is
-  no one-command preset/runbook bundle per target audience.
+- [x] Product packaging by audience is complete: `deploy/profiles/*.env.example`
+  presets plus `docs/profile-presets.md` runbooks cover each tier, and
+  `server -config-check` / `make profile-smoke` give a one-command
+  per-audience validation path.
 - [x] Canonical docs were stale: `product-ladder.md` and ADR-002 still
   describe implemented behavior as future/proposed unless updated in this
   completion pass.
@@ -129,8 +131,11 @@ audience.
   - [x] storage mode;
   - [x] audit mode;
   - [x] startup failure conditions.
-- [ ] Add a lightweight local smoke script or Make target that starts each
+- [x] Add a lightweight local smoke script or Make target that starts each
   non-enterprise profile in dry-run/config-check mode once such mode exists.
+  `server -config-check` is the dry-run mode (resolves + validates the profile
+  from env/flags, opens no listeners/DB/network); `deploy/profiles/smoke.sh`
+  (`make profile-smoke`) runs personal/solo_pro/team presets through it.
 - [x] Add explicit guidance for single developer + AI agents:
   local MCP, no required auth, SQLite, workspace root, memory palace.
 - [x] Add explicit guidance for corporate teams:
@@ -179,22 +184,24 @@ Goal: move from "flat service locator with projections" to handlers/adapters
 accepting narrow groups.
 
 - [x] Pick one low-risk surface and migrate it first:
-  - [ ] workspace audit exporter wiring uses `AuditConfig`;
+  - [x] workspace audit exporter wiring uses `AuditConfig`
+    (`mirrorWorkspaceAuditEvent(cfg.Audit(), event)`);
   - [x] tenant middleware/access helpers use `AccessConfig`;
   - [x] sync manifest uses `IdentityConfig` plus narrow `AccessConfig` and
     `SearchConfig` inputs.
-- [ ] Avoid a big-bang rewrite. Migrate one group at a time and keep tests
+- [x] Avoid a big-bang rewrite. Migrate one group at a time and keep tests
   focused.
 - [x] Add a convention: new handlers/adapters must accept a narrow config group
   unless they genuinely need multiple groups.
-- [ ] Keep `APIConfig` as compatibility wrapper until call sites shrink
+- [x] Keep `APIConfig` as compatibility wrapper until call sites shrink
   naturally.
 
 Acceptance criteria:
 
 - [x] At least one production handler path no longer accepts full `APIConfig`
   when it only needs one concern.
-- [ ] New enterprise adapters do not depend on full `APIConfig`.
+- [x] New enterprise adapters do not depend on full `APIConfig`: the
+  workspace audit-export consumer takes the narrow `AuditConfig` group.
 
 ### C4: Enterprise Storage/KMS Boundary
 
