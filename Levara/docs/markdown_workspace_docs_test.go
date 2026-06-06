@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/stek0v/levara/pkg/profile"
 )
 
 func TestMarkdownWorkspaceAgentHostExamples(t *testing.T) {
@@ -152,6 +154,78 @@ func TestProfilePresetsCoverProductLadder(t *testing.T) {
 	} {
 		if _, err := os.Stat(filepath.Join("..", rel)); err != nil {
 			t.Fatalf("profile preset %s does not resolve: %v", rel, err)
+		}
+	}
+}
+
+func TestProductDocsDoNotDriftFromProfileConstants(t *testing.T) {
+	productRaw, err := os.ReadFile("product-ladder.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	presetsRaw, err := os.ReadFile("profile-presets.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fromCodRaw, err := os.ReadFile(filepath.Join("..", "..", "from_cod.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	product := string(productRaw)
+	presets := string(presetsRaw)
+	fromCod := string(fromCodRaw)
+
+	presetFiles := map[string]string{
+		profile.Personal:   "personal.local.env.example",
+		profile.SoloPro:    "solo_pro.sync.env.example",
+		profile.Team:       "team.postgres.env.example",
+		profile.Enterprise: "enterprise.strict.env.example",
+	}
+	for _, p := range []string{profile.Personal, profile.SoloPro, profile.Team, profile.Enterprise} {
+		if !strings.Contains(product, p) {
+			t.Fatalf("product-ladder.md missing profile constant %q", p)
+		}
+		if !strings.Contains(presets, p) {
+			t.Fatalf("profile-presets.md missing profile constant %q", p)
+		}
+		raw, err := os.ReadFile(filepath.Join("..", "deploy", "profiles", presetFiles[p]))
+		if err != nil {
+			t.Fatal(err)
+		}
+		env := "LEVARA_PROFILE=" + p
+		if !strings.Contains(string(raw), env) {
+			t.Fatalf("%s missing %q", presetFiles[p], env)
+		}
+	}
+	for _, completed := range []string{
+		"[x] Enterprise storage, object-retention, and KMS/BYOK adapter contracts",
+		"[x] `pkg/access.IdentityBridge` remains the policy-facing seam.",
+		"[x] Protocol adapters can be disabled entirely for Personal/Solo/Team.",
+	} {
+		if !strings.Contains(fromCod, completed) {
+			t.Fatalf("from_cod.md missing completed state %q", completed)
+		}
+	}
+}
+
+func TestSecurityDiffChecklistCoversLayeredRiskAreas(t *testing.T) {
+	raw, err := os.ReadFile("security-diff-checklist.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	for _, required := range []string{
+		"pkg/access",
+		"tenant",
+		"audit export",
+		"Storage/KMS",
+		"MCP Memory Ownership",
+		"make profile-config-check",
+		"make test-release-candidate",
+		"policy_boundary_test.go",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("security-diff-checklist.md missing %q", required)
 		}
 	}
 }

@@ -1,4 +1,4 @@
-.PHONY: all build run test test-commit test-release-candidate benchmark clean docker arm64 proto proto-go proto-python swag contract contract-check
+.PHONY: all build run test test-commit test-release-candidate profile-config-check benchmark clean docker arm64 proto proto-go proto-python swag contract contract-check
 
 # Regenerate OpenAPI spec from swaggo annotations (T13).
 # Requires `go install github.com/swaggo/swag/cmd/swag@latest` once.
@@ -68,6 +68,9 @@ test-release-candidate:
 	@echo "[RC] profile smoke (pkg/profile + cmd/server runtime profile/audit)"
 	@go test -count=1 ./pkg/profile
 	@go test -count=1 ./cmd/server -run 'Profile|AuditSink'
+	@echo "[RC] enterprise adapter contracts (access OIDC + storage/KMS)"
+	@go test -count=1 ./pkg/access -run 'IdentityBridge|OIDC|Provisioner'
+	@go test -count=1 ./pkg/storage -run 'Enterprise|KMS|S3|LocalStorage'
 	@echo "[RC] sync flow (internal/http TestSync*)"
 	@go test -count=1 ./internal/http -run 'TestSync'
 	@echo "[RC] backup / restore (pkg/backup)"
@@ -78,6 +81,13 @@ test-release-candidate:
 	@echo "NOTE: not automated by this target (run manually — see docs/full-testing-scenarios.md):"
 	@echo "  - Pi-hardware edge smoke (10.23.0.53)"
 	@echo "  - two-server sync/backup mock harness (S3 cross-instance)"
+
+# CI-friendly profile validation gate. This exercises profile requirements and
+# server bootstrap config assembly without starting Levara or connecting to
+# external services.
+profile-config-check:
+	@go test -count=1 ./pkg/profile
+	@go test -count=1 ./cmd/server -run 'Profile|BuildRuntimeProfileConfig'
 
 # --- Cross-compile ---
 

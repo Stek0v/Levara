@@ -254,23 +254,23 @@ Acceptance criteria:
 
 Goal: make the 100% state enforceable.
 
-- [ ] Add checks that docs profile status and `from_cod.md` completion state do
+- [x] Add checks that docs profile status and `from_cod.md` completion state do
   not drift from code-owned profile constants.
-- [ ] Expand `make test-release-candidate` when storage/KMS contracts land.
-- [ ] Add a CI-friendly target for profile config validation without starting
+- [x] Expand `make test-release-candidate` when storage/KMS contracts land.
+- [x] Add a CI-friendly target for profile config validation without starting
   external services.
-- [ ] Add security-diff checklist for changes touching:
-  - [ ] access;
-  - [ ] tenant;
-  - [ ] audit export;
-  - [ ] storage/KMS;
-  - [ ] MCP memory ownership.
+- [x] Add security-diff checklist for changes touching:
+  - [x] access;
+  - [x] tenant;
+  - [x] audit export;
+  - [x] storage/KMS;
+  - [x] MCP memory ownership.
 
 Acceptance criteria:
 
-- [ ] A PR that weakens tenant/auth/audit profile guarantees fails a focused
+- [x] A PR that weakens tenant/auth/audit profile guarantees fails a focused
   test.
-- [ ] A PR that reintroduces policy SQL into HTTP is caught by review tooling
+- [x] A PR that reintroduces policy SQL into HTTP is caught by review tooling
   or tests.
 
 ## Recommended Implementation Order
