@@ -154,7 +154,7 @@ Goal: finish the boundary so HTTP handlers do not own access-shaped SQL.
 - [x] `internal/http/api_datasets.go`
 - [x] Add `SQLPolicy.ListVisibleDatasets(ctx, actor)` or a narrow access-layer
   query helper returning DTO-neutral records for dataset list endpoints.
-- [ ] Route `api_admin.go` superuser checks through `SQLPolicy.IsSuperuser`
+- [x] Route `api_admin.go` superuser checks through `SQLPolicy.IsSuperuser`
   or a shared admin policy helper.
 - [ ] Move share-management validation in `rbac.go` fully behind access-layer
   helpers:
