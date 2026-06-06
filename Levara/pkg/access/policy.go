@@ -43,6 +43,14 @@ type Decision struct {
 	APIKeyAllowed bool
 }
 
+type VisibleDataset struct {
+	ID          string
+	Name        string
+	CreatedAt   string
+	OwnerID     string
+	RecordCount int
+}
+
 func (p SQLPolicy) AuthorizeWorkspace(ctx context.Context, req WorkspaceRequest) (Decision, error) {
 	action := normalizeAction(req.Action)
 	decision := Decision{
@@ -255,6 +263,58 @@ func (p SQLPolicy) VisibleDatasetIDs(ctx context.Context, userID string) ([]stri
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+// ListVisibleDatasets returns dataset-list rows visible to userID, preserving
+// the existing /datasets semantics: anonymous and superuser callers see every
+// dataset; regular users see owned, public, and shared datasets. The returned
+// shape is transport-neutral so HTTP can map it into its DTO without owning the
+// visibility policy SQL.
+func (p SQLPolicy) ListVisibleDatasets(ctx context.Context, userID string) ([]VisibleDataset, error) {
+	if p.DB == nil {
+		return nil, nil
+	}
+	showAll := userID == ""
+	if !showAll {
+		super, err := p.IsSuperuser(ctx, userID)
+		if err != nil {
+			return nil, err
+		}
+		showAll = super
+	}
+
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if showAll {
+		rows, err = p.DB.QueryContext(ctx,
+			p.rewrite(`SELECT d.id, d.name, d.created_at, COALESCE(d.owner_id,''), COUNT(dd.data_id)
+			 FROM datasets d LEFT JOIN dataset_data dd ON dd.dataset_id = d.id
+			 GROUP BY d.id ORDER BY d.created_at DESC`))
+	} else {
+		query, args := p.rewriteArgs(`SELECT DISTINCT d.id, d.name, d.created_at, COALESCE(d.owner_id,''), COUNT(dd.data_id)
+			 FROM datasets d
+			 LEFT JOIN dataset_shares s ON s.dataset_id = d.id AND s.user_id = $1
+			 LEFT JOIN dataset_data dd ON dd.dataset_id = d.id
+			 WHERE d.owner_id = $1 OR d.owner_id = '' OR d.owner_id IS NULL OR s.id IS NOT NULL
+			 GROUP BY d.id ORDER BY d.created_at DESC`, userID)
+		rows, err = p.DB.QueryContext(ctx, query, args...)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []VisibleDataset
+	for rows.Next() {
+		var d VisibleDataset
+		if err := rows.Scan(&d.ID, &d.Name, &d.CreatedAt, &d.OwnerID, &d.RecordCount); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
 }
 
 // CanAccessDataset preserves the existing Levara dataset access semantics:

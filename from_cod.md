@@ -151,8 +151,8 @@ Goal: finish the boundary so HTTP handlers do not own access-shaped SQL.
 - [x] Add `SQLPolicy.VisibleDatasetIDs(ctx, actor)` or equivalent typed method
   that can replace direct list visibility queries in:
   - [x] `internal/http/workspace_context.go`
-  - [ ] `internal/http/api_datasets.go`
-- [ ] Add `SQLPolicy.ListVisibleDatasets(ctx, actor)` or a narrow access-layer
+- [x] `internal/http/api_datasets.go`
+- [x] Add `SQLPolicy.ListVisibleDatasets(ctx, actor)` or a narrow access-layer
   query helper returning DTO-neutral records for dataset list endpoints.
 - [ ] Route `api_admin.go` superuser checks through `SQLPolicy.IsSuperuser`
   or a shared admin policy helper.

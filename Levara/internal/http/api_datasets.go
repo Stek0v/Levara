@@ -21,6 +21,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
+	accesspkg "github.com/stek0v/levara/pkg/access"
 )
 
 // ── U2: Datasets ──
@@ -64,30 +65,7 @@ func datasetsListHandler(cfg APIConfig) fiber.Handler {
 		}
 
 		userID, _ := c.Locals("user_id").(string)
-
-		var rows *sql.Rows
-		var err error
-		showAll := userID == ""
-		if !showAll && userID != "" {
-			// Check superuser — sees everything
-			var isSuperuser bool
-			cfg.DB.QueryRowContext(ctx, Q("SELECT COALESCE(is_superuser, false) FROM users WHERE id = $1"), userID).Scan(&isSuperuser)
-			showAll = isSuperuser
-		}
-		if showAll {
-			rows, err = cfg.DB.QueryContext(ctx,
-				Q(`SELECT d.id, d.name, d.created_at, COALESCE(d.owner_id,''), COUNT(dd.data_id)
-				 FROM datasets d LEFT JOIN dataset_data dd ON dd.dataset_id = d.id
-				 GROUP BY d.id ORDER BY d.created_at DESC`))
-		} else {
-			dsSQL, dsArgs := QArgs(`SELECT DISTINCT d.id, d.name, d.created_at, COALESCE(d.owner_id,''), COUNT(dd.data_id)
-				 FROM datasets d
-				 LEFT JOIN dataset_shares s ON s.dataset_id = d.id AND s.user_id = $1
-				 LEFT JOIN dataset_data dd ON dd.dataset_id = d.id
-				 WHERE d.owner_id = $1 OR d.owner_id = '' OR d.owner_id IS NULL OR s.id IS NOT NULL
-				 GROUP BY d.id ORDER BY d.created_at DESC`, userID)
-			rows, err = cfg.DB.QueryContext(ctx, dsSQL, dsArgs...)
-		}
+		visible, err := accesspkg.SQLPolicy{DB: cfg.DB, Q: Q, QA: QArgs}.ListVisibleDatasets(ctx, userID)
 		// BL-3: surface SQL errors instead of returning []. Silent empty
 		// responses made bad credentials / missing tables indistinguishable
 		// from an empty dataset list — the WebUI would render "no datasets"
@@ -97,18 +75,16 @@ func datasetsListHandler(cfg APIConfig) fiber.Handler {
 			return c.Status(fiber.StatusInternalServerError).
 				JSON(fiber.Map{"detail": "list datasets: " + err.Error()})
 		}
-		defer rows.Close()
 
-		var datasets []DatasetDTO
-		for rows.Next() {
-			var d DatasetDTO
-			var createdAt string
-			if err := rows.Scan(&d.ID, &d.Name, &createdAt, &d.OwnerID, &d.RecordCount); err != nil {
-				log.Printf("[datasets] scan row: %v", err)
-				continue
-			}
-			d.CreatedAt = createdAt
-			datasets = append(datasets, d)
+		datasets := make([]DatasetDTO, 0, len(visible))
+		for _, d := range visible {
+			datasets = append(datasets, DatasetDTO{
+				ID:          d.ID,
+				Name:        d.Name,
+				CreatedAt:   d.CreatedAt,
+				OwnerID:     d.OwnerID,
+				RecordCount: d.RecordCount,
+			})
 		}
 		if datasets == nil {
 			datasets = []DatasetDTO{}

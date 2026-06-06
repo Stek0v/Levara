@@ -169,6 +169,55 @@ func TestVisibleDatasetIDs(t *testing.T) {
 	}
 }
 
+func TestListVisibleDatasets(t *testing.T) {
+	db := newPolicyTestDB(t)
+	for _, stmt := range []string{
+		`CREATE TABLE dataset_data (dataset_id TEXT, data_id TEXT)`,
+		`INSERT INTO dataset_data(dataset_id, data_id) VALUES ('payments', 'd1'), ('payments', 'd2'), ('owned-b', 'd3')`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("exec %q: %v", stmt, err)
+		}
+	}
+	policy := SQLPolicy{DB: db, Q: sqliteQ, QA: sqliteQArgs}
+	ctx := context.Background()
+
+	got, err := policy.ListVisibleDatasets(ctx, "user-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]int{"payments": 2, "owned-b": 1, "public": 0}
+	if len(got) != len(want) {
+		t.Fatalf("visible datasets=%+v, want %d", got, len(want))
+	}
+	for _, d := range got {
+		if want[d.ID] != d.RecordCount {
+			t.Fatalf("dataset %s record_count=%d, want %d; all=%+v", d.ID, d.RecordCount, want[d.ID], got)
+		}
+	}
+
+	got, err = policy.ListVisibleDatasets(ctx, "root")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("superuser visible datasets=%+v, want all 3", got)
+	}
+
+	got, err = policy.ListVisibleDatasets(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("anonymous visible datasets=%+v, want all 3", got)
+	}
+
+	got, err = (SQLPolicy{}).ListVisibleDatasets(ctx, "user-b")
+	if err != nil || got != nil {
+		t.Fatalf("nil-db visible datasets=%+v err=%v, want nil nil", got, err)
+	}
+}
+
 func TestCanAccessDataset(t *testing.T) {
 	db := newPolicyTestDB(t)
 	policy := SQLPolicy{DB: db, Q: sqliteQ, QA: sqliteQArgs}
@@ -309,12 +358,12 @@ func newPolicyTestDB(t *testing.T) *sql.DB {
 	t.Cleanup(func() { db.Close() })
 	for _, stmt := range []string{
 		`CREATE TABLE users (id TEXT PRIMARY KEY, is_active INTEGER NOT NULL DEFAULT 1, is_superuser INTEGER NOT NULL DEFAULT 0)`,
-		`CREATE TABLE datasets (id TEXT PRIMARY KEY, owner_id TEXT)`,
+		`CREATE TABLE datasets (id TEXT PRIMARY KEY, name TEXT DEFAULT '', owner_id TEXT, created_at TEXT DEFAULT '')`,
 		`CREATE TABLE dataset_shares (id TEXT PRIMARY KEY, dataset_id TEXT, user_id TEXT, role TEXT)`,
 		`INSERT INTO users(id, is_superuser) VALUES ('user-a', 0), ('user-b', 0), ('user-c', 0), ('root', 1)`,
-		`INSERT INTO datasets(id, owner_id) VALUES ('payments', 'user-a')`,
-		`INSERT INTO datasets(id, owner_id) VALUES ('owned-b', 'user-b')`,
-		`INSERT INTO datasets(id, owner_id) VALUES ('public', '')`,
+		`INSERT INTO datasets(id, name, owner_id, created_at) VALUES ('payments', 'Payments', 'user-a', '2026-01-01T00:00:00Z')`,
+		`INSERT INTO datasets(id, name, owner_id, created_at) VALUES ('owned-b', 'Owned B', 'user-b', '2026-01-02T00:00:00Z')`,
+		`INSERT INTO datasets(id, name, owner_id, created_at) VALUES ('public', 'Public', '', '2026-01-03T00:00:00Z')`,
 		`INSERT INTO dataset_shares(id, dataset_id, user_id, role) VALUES ('share-b', 'payments', 'user-b', 'viewer')`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
