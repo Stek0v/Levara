@@ -44,7 +44,7 @@ func TestTenantIsolation_SearchForeignTenantHeaderRejectedNoLeak(t *testing.T) {
 		c.Locals("user_id", "user-a")
 		return c.Next()
 	})
-	app.Use(TenantMiddleware(db))
+	app.Use(TenantMiddleware(AccessConfig{DB: db}))
 	app.Post("/search/text", func(c *fiber.Ctx) error {
 		reached = true
 		downstreamTenant = ResolveTenantID(c)
@@ -172,7 +172,7 @@ func TestTenantIsolation_WorkspaceForeignTenantHeaderRejectedNoLeak(t *testing.T
 		c.Locals("user_id", "user-a")
 		return c.Next()
 	})
-	app.Use(TenantMiddleware(cfg.DB))
+	app.Use(TenantMiddleware(cfg.Access()))
 	RegisterWorkspaceAPI(app, cfg)
 
 	const foreignTenant = "tenant-b"

@@ -26,8 +26,9 @@ func RegisterTenantAPI(app fiber.Router, cfg APIConfig) {
 // TenantMiddleware resolves the active tenant for the current user.
 // Priority: verified X-Tenant-Id header > user's single tenant > empty (no isolation).
 // Sets c.Locals("tenant_id") for downstream handlers.
-func TenantMiddleware(db *sql.DB) fiber.Handler {
+func TenantMiddleware(accessCfg AccessConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		db := accessCfg.DB
 		// 1. Explicit header
 		tenantID := c.Get("X-Tenant-Id")
 		if tenantID != "" {

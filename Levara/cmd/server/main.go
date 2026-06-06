@@ -397,7 +397,7 @@ func main() {
 	api.Use(vectorHttp.PromInstrumentationMiddleware("api", userBucket))
 
 	// Tenant isolation middleware (resolves tenant from user or X-Tenant-Id header)
-	api.Use(vectorHttp.TenantMiddleware(pgDB))
+	api.Use(vectorHttp.TenantMiddleware(vectorHttp.AccessConfig{DB: pgDB}))
 
 	// API key management (requires auth)
 	vectorHttp.RegisterAPIKeyEndpoints(api, *authCfg)
