@@ -371,6 +371,28 @@ func (p SQLPolicy) CanRevokeDatasetShare(ctx context.Context, datasetID, actorID
 	return p.CanManageDatasetShares(ctx, datasetID, actorID)
 }
 
+// ResolveUserID returns explicitUserID when present, otherwise resolves email
+// through the users table. It is a principal-lookup boundary for handlers that
+// accept either a user_id or an email. An empty result with nil error means
+// "not found or not provided"; callers own HTTP status/DTO wording.
+func (p SQLPolicy) ResolveUserID(ctx context.Context, explicitUserID, email string) (string, error) {
+	if explicitUserID != "" {
+		return explicitUserID, nil
+	}
+	if p.DB == nil || email == "" {
+		return "", nil
+	}
+	var userID string
+	err := p.DB.QueryRowContext(ctx, p.rewrite("SELECT id FROM users WHERE email = $1"), email).Scan(&userID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return userID, nil
+}
+
 func APIKeyAllows(perms, action string) bool {
 	if perms == "" {
 		return true
