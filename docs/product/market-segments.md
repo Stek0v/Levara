@@ -1,4 +1,4 @@
-# LevaraOS Market Segments
+# Levara Market Segments
 
 This document turns the original campaign notes into a usable GTM map. It should
 stay aligned with `Levara/docs/marketing/*`, `Levara/docs/product-ladder.md`,

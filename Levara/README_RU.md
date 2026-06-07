@@ -61,7 +61,6 @@ go test ./docs ./pkg/profile ./pkg/access ./pkg/storage
 | `docs/profile-presets.md` | Правила конфигурации и fail-fast gates для профилей |
 | `docs/security/enterprise-readiness-checklist.md` | Security checklist перед Team/Enterprise rollout |
 | `docs/marketing/` | Маркетинговые материалы по сегментам |
-| `from_cod.md` | Рабочий список следующих задач по доведению layered-подхода |
 
 ## Разработка
 

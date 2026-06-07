@@ -5490,7 +5490,7 @@ type IngestDataReq struct {
 	Items       []*IngestItem          `protobuf:"bytes,1,rep,name=items,proto3" json:"items,omitempty"`
 	StoragePath string                 `protobuf:"bytes,2,opt,name=storage_path,json=storagePath,proto3" json:"storage_path,omitempty"` // base directory for file storage
 	// Optional: PostgreSQL for metadata persistence
-	PostgresDsn   string `protobuf:"bytes,3,opt,name=postgres_dsn,json=postgresDsn,proto3" json:"postgres_dsn,omitempty"` // e.g. "postgres://cognee:cognee@localhost:5433/cognee_db"
+	PostgresDsn   string `protobuf:"bytes,3,opt,name=postgres_dsn,json=postgresDsn,proto3" json:"postgres_dsn,omitempty"` // e.g. "postgres://levara:levara@localhost:5433/levara_db"
 	OwnerId       string `protobuf:"bytes,4,opt,name=owner_id,json=ownerId,proto3" json:"owner_id,omitempty"`             // user UUID
 	DatasetId     string `protobuf:"bytes,5,opt,name=dataset_id,json=datasetId,proto3" json:"dataset_id,omitempty"`       // dataset UUID
 	DatasetName   string `protobuf:"bytes,6,opt,name=dataset_name,json=datasetName,proto3" json:"dataset_name,omitempty"`

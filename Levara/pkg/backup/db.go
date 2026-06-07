@@ -40,7 +40,7 @@ func PgRestore(dsn, input string) error {
 func parseDSNToArgs(dsn string) []string {
 	// Handle both formats:
 	// postgres://user:pass@host:port/dbname
-	// host=localhost port=5433 user=levara password=levara dbname=levara
+	// host=localhost port=5433 user=levara password=<change-me> dbname=levara
 	var args []string
 
 	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {

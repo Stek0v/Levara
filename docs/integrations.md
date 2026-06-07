@@ -89,7 +89,7 @@ Knowledge graph: entities, relationships, temporal events.
 # CLI flags:
 -neo4j-url="bolt://localhost:7687"
 -neo4j-user=neo4j
--neo4j-password=password
+-neo4j-password=<change-me>
 -neo4j-database=neo4j
 ```
 
@@ -129,9 +129,9 @@ Metadata, users, datasets, sessions, ACL, notebooks.
 ### Настройка
 ```bash
 DB_HOST=localhost
-DB_USERNAME=cognee
-DB_PASSWORD=cognee
-DB_NAME=cognee_db
+DB_USERNAME=levara
+DB_PASSWORD=<change-me>
+DB_NAME=levara_db
 DB_PORT=5432
 ```
 
@@ -222,7 +222,7 @@ AWS_SECRET_ACCESS_KEY=secret...
 docker run -d --name minio \
   -p 9000:9000 -p 9001:9001 \
   -e MINIO_ROOT_USER=admin \
-  -e MINIO_ROOT_PASSWORD=password \
+  -e MINIO_ROOT_PASSWORD=<change-me> \
   minio/minio server /data --console-address ":9001"
 
 S3_ENDPOINT=http://localhost:9000
@@ -393,9 +393,9 @@ services:
   postgres:
     image: postgres:16
     environment:
-      POSTGRES_USER: cognee
-      POSTGRES_PASSWORD: cognee
-      POSTGRES_DB: cognee_db
+      POSTGRES_USER: levara
+      POSTGRES_PASSWORD: <change-me>
+      POSTGRES_DB: levara_db
     ports: ["5432:5432"]
 
   neo4j:
@@ -442,9 +442,9 @@ docker compose up -d levara postgres
 | `EMBEDDING_ENDPOINT` | URL embedding API | -- |
 | `EMBEDDING_MODEL` | Имя модели | -- |
 | `DB_HOST` | PostgreSQL host | -- |
-| `DB_USERNAME` | PG user | cognee |
-| `DB_PASSWORD` | PG password | cognee |
-| `DB_NAME` | PG database | cognee_db |
+| `DB_USERNAME` | PG user | levara |
+| `DB_PASSWORD` | PG password | `<change-me>` |
+| `DB_NAME` | PG database | levara_db |
 | `DB_PORT` | PG port | 5432 |
 | `WHISPER_ENDPOINT` | Whisper API URL | -- |
 | `WHISPER_API_KEY` | Whisper API key | -- |

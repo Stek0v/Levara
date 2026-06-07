@@ -167,13 +167,8 @@ func TestProductDocsDoNotDriftFromProfileConstants(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fromCodRaw, err := os.ReadFile(filepath.Join("..", "..", "from_cod.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
 	product := string(productRaw)
 	presets := string(presetsRaw)
-	fromCod := string(fromCodRaw)
 
 	presetFiles := map[string]string{
 		profile.Personal:   "personal.local.env.example",
@@ -197,13 +192,13 @@ func TestProductDocsDoNotDriftFromProfileConstants(t *testing.T) {
 			t.Fatalf("%s missing %q", presetFiles[p], env)
 		}
 	}
-	for _, completed := range []string{
-		"[x] Enterprise storage, object-retention, and KMS/BYOK adapter contracts",
-		"[x] `pkg/access.IdentityBridge` remains the policy-facing seam.",
-		"[x] Protocol adapters can be disabled entirely for Personal/Solo/Team.",
+	for _, implemented := range []string{
+		"storage/KMS adapter contracts now exist",
+		"OIDC verified-claims adapter",
+		"concrete enterprise protocol/storage integrations",
 	} {
-		if !strings.Contains(fromCod, completed) {
-			t.Fatalf("from_cod.md missing completed state %q", completed)
+		if !strings.Contains(product, implemented) {
+			t.Fatalf("product-ladder.md missing implemented state %q", implemented)
 		}
 	}
 }

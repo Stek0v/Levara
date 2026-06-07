@@ -2,7 +2,7 @@
 #
 # Includes:
 #   • Levara (HTTP :8080, gRPC :50051) — built from ./Levara.
-#     Defaults are auth-on/production; deploy-qwen-stack.sh creates JWT_SECRET.
+#     Defaults are auth-on/production; set JWT_SECRET in .env before startup.
 #   • qwen3-embed — Qwen3-Embedding 0.6B, OpenAI /v1/embeddings, :9001
 #   • qwen3-rerank-llm — Qwen3-Reranker 0.6B chat completions, :9002
 #   • qwen3-rerank-front — Cohere-compat adapter (pkg/rerank.Qwen3Client), :9003
@@ -33,7 +33,7 @@ services:
       - "8080:8080"
       - "50051:50051"
     environment:
-      # Auth. deploy-qwen-stack.sh generates JWT_SECRET into .env when absent.
+      # Auth. Generate once with `openssl rand -hex 32` and store in .env.
       JWT_SECRET: ${JWT_SECRET:-}
       # Swagger UI is hidden unless ENV=dev is explicitly selected.
       ENV: ${ENV:-production}

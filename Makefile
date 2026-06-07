@@ -1,7 +1,7 @@
 .PHONY: help build test test-commit test-release-candidate profile-config-check contract-check clean docker arm64
 
 help:
-	@echo "LevaraOS repository commands"
+	@echo "Levara repository commands"
 	@echo ""
 	@echo "  make build                  Build Levara server and CLI"
 	@echo "  make test                   Run Go tests in Levara/"

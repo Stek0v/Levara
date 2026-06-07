@@ -6,7 +6,7 @@ no SDK.
 
 ## Prerequisites
 
-The local LevaraOS stack must be running:
+The local Levara stack must be running:
 
 ```bash
 make stack-dev   # from the repo root

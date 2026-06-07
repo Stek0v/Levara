@@ -8,8 +8,7 @@ import (
 
 // TestMirrorWorkspaceAuditEventForwardsToSink pins the field mapping from the
 // workspace-domain event onto the generic audit.Event handed to the enterprise
-// export sink. The helper takes only the narrow AuditConfig group (from_cod.md
-// C3), never the full APIConfig.
+// export sink. The helper takes only the narrow AuditConfig group // C3), never the full APIConfig.
 func TestMirrorWorkspaceAuditEventForwardsToSink(t *testing.T) {
 	var got []audit.Event
 	ac := AuditConfig{

@@ -229,7 +229,7 @@ func recordWorkspaceAuditEvent(cfg APIConfig, event workspaceAuditEvent) error {
 // optional generic enterprise-export sink, mapping domain fields onto the
 // transport-independent audit.Event shape. It consumes only the narrow
 // AuditConfig group (not the full APIConfig) so enterprise audit wiring does
-// not depend on the flat compatibility wrapper (from_cod.md C3). A nil sink —
+// not depend on the flat compatibility wrapper (narrow config migration). A nil sink —
 // the default Personal/Solo Pro case — is a no-op.
 func mirrorWorkspaceAuditEvent(ac AuditConfig, event workspaceAuditEvent) {
 	if ac.WorkspaceAuditSink == nil {

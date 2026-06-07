@@ -41,7 +41,7 @@ Let downstream callers (agent, dashboard, API consumers) flip the gates on a per
 
 ## Phase 3 — Server-wide thresholds
 
-Once Phase 1 has produced 1–2 weeks of live confidence data and Phase 2 has shaken out client-visible regressions, set thresholds in `docker-compose.levaraos.yml`:
+Once Phase 1 has produced 1–2 weeks of live confidence data and Phase 2 has shaken out client-visible regressions, set thresholds in `docker-compose.yml`:
 
 ```yaml
 environment:

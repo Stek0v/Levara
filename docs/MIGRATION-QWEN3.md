@@ -356,7 +356,7 @@ After Phase 5 completes for every production collection:
 # Levara op — easiest is via a DB rename + restart:
 
 for COLL in docs knowledge_base research_notes; do
-  docker compose exec postgres psql -U cognee -d cognee_db <<EOF
+  docker compose exec postgres psql -U levara -d levara_db <<EOF
   UPDATE collections SET name = '${COLL}_v1_nomic' WHERE name = '$COLL';
   UPDATE collections SET name = '$COLL' WHERE name = '${COLL}_v2';
 EOF
