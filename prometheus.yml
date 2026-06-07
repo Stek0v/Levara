@@ -10,9 +10,3 @@ scrape_configs:
     static_configs:
       - targets: ['levara:8080']
     metrics_path: /metrics
-
-  - job_name: cognee
-    static_configs:
-      - targets: ['cognee:8000']
-    metrics_path: /health
-    scrape_interval: 30s

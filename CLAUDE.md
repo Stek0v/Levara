@@ -1,6 +1,6 @@
 # CLAUDE.md — Levara Agent Guide
 
-This repository is the LevaraOS codebase. The current engine lives in
+This repository is the Levara codebase. The current Go module lives in
 [`Levara/`](Levara/); legacy adapter experiments and pre-rebrand code have been
 removed from the working tree.
 

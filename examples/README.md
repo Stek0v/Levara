@@ -1,4 +1,4 @@
-# LevaraOS Examples
+# Levara Examples
 
 Self-contained starters that run against the local stack started by
 `make stack-dev`.

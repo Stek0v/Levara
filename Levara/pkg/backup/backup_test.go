@@ -26,7 +26,7 @@ func TestParseDSNToArgs_URIFormat(t *testing.T) {
 }
 
 func TestParseDSNToArgs_KeyValueFormat(t *testing.T) {
-	dsn := "host=localhost port=5433 user=levara password=secret dbname=levara"
+	dsn := "host=localhost port=5433 user=levara password=<test-secret> dbname=levara"
 	args := parseDSNToArgs(dsn)
 
 	want := []string{

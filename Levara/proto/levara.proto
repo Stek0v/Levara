@@ -712,7 +712,7 @@ message IngestDataReq {
   repeated IngestItem items = 1;
   string storage_path = 2;  // base directory for file storage
   // Optional: PostgreSQL for metadata persistence
-  string postgres_dsn = 3;  // e.g. "postgres://cognee:cognee@localhost:5433/cognee_db"
+  string postgres_dsn = 3;  // e.g. "postgres://levara:levara@localhost:5433/levara_db"
   string owner_id = 4;      // user UUID
   string dataset_id = 5;    // dataset UUID
   string dataset_name = 6;
