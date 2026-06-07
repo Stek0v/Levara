@@ -53,7 +53,7 @@ MTEB_SCIDOCS_PATH=/tmp/scidocs.jsonl python3 deploy/rerank/eval/dump_fixture.py
 `data`, `dataset_name`, `tags`) and then triggers `/api/v1/cognify`
 with the inline `texts` array against the target collection. These are
 the canonical ingest routes registered in
-`Levara/internal/http/api.go`; there is **no** direct
+`internal/http/api.go`; there is **no** direct
 vector-insert HTTP endpoint, so the cognify path is correct regardless
 of whether an embedding function is available client-side.
 

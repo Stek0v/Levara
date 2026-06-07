@@ -118,7 +118,7 @@ services:
   # ────────────────────────────────────────────────────────────
   qwen3-rerank-front:
     build:
-      context: ./Levara
+      context: .
       dockerfile: Dockerfile.qwen3rerank
     ports:
       - "9003:9003"

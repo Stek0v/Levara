@@ -22,7 +22,7 @@ code change there.
 ## Run
 
 ```bash
-make stack-dev                                        # in repo root
+docker compose up -d --build                                        # in repo root
 cd examples/rag-with-temporal-kg
 pip install -r requirements.txt
 python main.py
@@ -51,7 +51,7 @@ Levara's persistent LLM cache.
 
 ## Tuning
 
-- **LLM**: stack-dev defaults to `qwen2.5:1.5b` for footprint. Extraction
+- **LLM**: docker compose defaults to `qwen2.5:1.5b` for footprint. Extraction
   quality at that size is rough and edge counts vary across runs. For
   production-style demos, set `LLM_MODEL=qwen2.5:7b` (or `gpt-4o-mini` with
   an API key) in `.env` before bringing the stack up.

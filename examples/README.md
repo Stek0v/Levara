@@ -1,7 +1,7 @@
 # Levara Examples
 
 Self-contained starters that run against the local stack started by
-`make stack-dev`.
+`docker compose up -d --build`.
 
 | Example | Stack | What it shows |
 |---|---|---|

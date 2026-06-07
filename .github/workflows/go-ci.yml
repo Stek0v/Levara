@@ -3,7 +3,7 @@ name: go-ci
 on:
   pull_request:
     paths:
-      - 'Levara/**'
+      - '**'
       - 'docs/api-contract.md'
       - 'docs/contract.json'
       - 'docs/deployment-matrix.md'
@@ -12,16 +12,12 @@ on:
   push:
     branches: [main]
     paths:
-      - 'Levara/**'
+      - '**'
       - 'docs/api-contract.md'
       - 'docs/contract.json'
       - 'docs/deployment-matrix.md'
       - 'AGENTS.md'
       - '.github/workflows/go-ci.yml'
-
-defaults:
-  run:
-    working-directory: Levara
 
 jobs:
   vet-build:
@@ -31,8 +27,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: Levara/go.mod
-          cache-dependency-path: Levara/go.sum
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
       - run: go vet ./...
       - run: go build ./...
 
@@ -43,8 +39,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: Levara/go.mod
-          cache-dependency-path: Levara/go.sum
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
       - run: go test -count=1 ./...
 
   race:
@@ -54,8 +50,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: Levara/go.mod
-          cache-dependency-path: Levara/go.sum
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
       - run: go test -race -count=1 ./...
 
   lint:
@@ -65,12 +61,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: Levara/go.mod
-          cache-dependency-path: Levara/go.sum
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
       - uses: golangci/golangci-lint-action@v7
         with:
           version: v2.12.2
-          working-directory: Levara
           args: --timeout=5m
 
   contract:
@@ -80,6 +75,6 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: Levara/go.mod
-          cache-dependency-path: Levara/go.sum
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
       - run: make contract-check

@@ -195,7 +195,7 @@ class TestGitAnalyzer:
         """CLI `levara git analyze` exits with 0."""
         result = subprocess.run(
             ["./levara", "git", "analyze", "--limit=3"],
-            cwd="/Users/stek0v/src/levara/Levara",
+            cwd="/Users/stek0v/src/levara",
             capture_output=True,
             text=True,
             timeout=60,

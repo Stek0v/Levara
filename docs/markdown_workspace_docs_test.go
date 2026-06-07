@@ -302,11 +302,11 @@ func TestMarkdownWorkspaceUserScenarios(t *testing.T) {
 	}
 
 	for _, pathRef := range []string{
-		"Levara/internal/http/workspace_test.go::TestWorkspaceAPIWriteReadAndReindexUseFilesystemTruth",
-		"Levara/internal/http/workspace_eval_test.go::TestWorkspaceRetrievalQualityEval",
-		"Levara/cmd/cli/workspace_e2e_test.go::TestWorkspaceCLIFullCycleWriteSearchCommitRevert",
-		"Levara/pkg/agenthosts/install_test.go::TestInstallWritesBackupAndPreservesExistingConfig",
-		"Levara/internal/store/hnsw_race_test.go::TestHNSW_ReinsertDeletedEntryRefreshesEntryLayer",
+		"internal/http/workspace_test.go::TestWorkspaceAPIWriteReadAndReindexUseFilesystemTruth",
+		"internal/http/workspace_eval_test.go::TestWorkspaceRetrievalQualityEval",
+		"cmd/cli/workspace_e2e_test.go::TestWorkspaceCLIFullCycleWriteSearchCommitRevert",
+		"pkg/agenthosts/install_test.go::TestInstallWritesBackupAndPreservesExistingConfig",
+		"internal/store/hnsw_race_test.go::TestHNSW_ReinsertDeletedEntryRefreshesEntryLayer",
 	} {
 		if !strings.Contains(text, pathRef) {
 			t.Fatalf("scenario doc missing test path %q", pathRef)

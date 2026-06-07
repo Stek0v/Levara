@@ -14,20 +14,21 @@ build/
 .venv/
 venv/
 
-# Go
-bin/
-*.snap
-
 # Data
 data/
+data_768/
 *.db
-*.bin
+*.db-wal
+*.db-shm
+*.jsonl
+*.snap
 
 # IDE
 .idea/
 .vscode/
 *.swp
 *.swo
+*~
 
 # OS
 .DS_Store
@@ -36,7 +37,26 @@ Thumbs.db
 # Docker
 docker-compose.override.yml
 
+# Build
+vendor/
+bin/
+
+# Binaries (root-level only, not cmd/ directories)
+/levara
+/levara-server
+/levara-server-arm64
+/levara-arm64
+/levara-cli-arm64
+/levara-test
+/server
+/cli
+*.exe
+*.snap
+
 # Test
+*.test
+*.out
+coverage.html
 .pytest_cache/
 htmlcov/
 .coverage
@@ -45,19 +65,9 @@ htmlcov/
 logs/
 *.log
 
-# External dependencies
-cognee/
-
-# Build artifacts
-Levara/levara-server
-Levara/levara-server-arm64
-Levara/levara-arm64
-Levara/levara-cli-arm64
-Levara/levara-test
-Levara/server
-
-# Runtime vector store shards (regenerated on first run)
-Levara/data_768/
+# Proto generated (rebuild with make proto)
+*_pb2.py
+*_pb2_grpc.py
 
 # Session-local memory buffer used by the `remember` skill
 .remember/
@@ -65,6 +75,11 @@ _archived/
 .claude/
 
 # understand-anything knowledge-graph artifacts (regenerated via /understand)
-Levara/.understand-anything/
-# Generated architecture digest (regenerated via graph-to-for_cod.cjs)
+.understand-anything/
+
+# Generated architecture digest
 for_cod.md
+
+# Legacy local artifacts left behind by the pre-flattened `Levara/` module
+# layout. Do not add new source under this directory.
+/Levara/

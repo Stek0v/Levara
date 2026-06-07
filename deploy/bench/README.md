@@ -25,7 +25,7 @@ The uvicorn invocation is `uvicorn embed_bench.server:app` — **not**
 
 2. Cross-compile the Levara binary for arm64 and place it on the Pi:
    ```bash
-   GOOS=linux GOARCH=arm64 go build -o levara-arm64 ./Levara/cmd/server
+   GOOS=linux GOARCH=arm64 go build -o levara-arm64 ./cmd/server
    scp levara-arm64 stek0v@10.23.0.53:/home/stek0v/levara-bench/levara
    ```
 
