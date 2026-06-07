@@ -382,7 +382,7 @@ Ollama автоматически использует GPU если доступ
 ```yaml
 services:
   levara:
-    build: ./Levara
+    build: .
     ports: ["8080:8080", "50051:50051"]
     environment:
       - DB_HOST=postgres

@@ -15,30 +15,30 @@
 ## File Structure
 
 **New files:**
-- `Levara/pkg/consolidate/types.go` — engine data types (`MemoryRecord`, `SimEdge`, `Cluster`, `Action`, `Config`).
-- `Levara/pkg/consolidate/cluster.go` — union-find connected-components over thresholded similarity edges.
-- `Levara/pkg/consolidate/cluster_test.go`
-- `Levara/pkg/consolidate/plan.go` — `Plan()`: classify clusters into mechanical-merge vs LLM-abstract actions.
-- `Levara/pkg/consolidate/plan_test.go`
-- `Levara/pkg/consolidate/abstract.go` — LLM abstraction + anti-hallucination coverage guard.
-- `Levara/pkg/consolidate/abstract_test.go`
-- `Levara/pkg/mcp/tool_consolidate.go` — `ToolConsolidate`, `ToolConsolidationRevert`, Deps→engine adapters.
-- `Levara/pkg/mcp/tool_consolidate_test.go`
+- `pkg/consolidate/types.go` — engine data types (`MemoryRecord`, `SimEdge`, `Cluster`, `Action`, `Config`).
+- `pkg/consolidate/cluster.go` — union-find connected-components over thresholded similarity edges.
+- `pkg/consolidate/cluster_test.go`
+- `pkg/consolidate/plan.go` — `Plan()`: classify clusters into mechanical-merge vs LLM-abstract actions.
+- `pkg/consolidate/plan_test.go`
+- `pkg/consolidate/abstract.go` — LLM abstraction + anti-hallucination coverage guard.
+- `pkg/consolidate/abstract_test.go`
+- `pkg/mcp/tool_consolidate.go` — `ToolConsolidate`, `ToolConsolidationRevert`, Deps→engine adapters.
+- `pkg/mcp/tool_consolidate_test.go`
 
 **Modified files:**
-- `Levara/internal/http/schema.go` — add consolidation columns to `memories` (migration).
-- `Levara/pkg/mcp/tool_save_recall_memory.go` — hide superseded records in recall (default).
-- `Levara/internal/http/memories.go` — hide superseded records in list/wake_up (default).
-- `Levara/pkg/mcp/tools.go` — register `consolidate` + `consolidation_revert` descriptors.
-- `Levara/internal/http/mcp.go` — dispatch + handler wrappers for the two tools.
-- `Levara/internal/metrics/telemetry.go` — consolidation metrics.
-- `Levara/cmd/server/main.go` — start the consolidation janitor (background loop).
+- `internal/http/schema.go` — add consolidation columns to `memories` (migration).
+- `pkg/mcp/tool_save_recall_memory.go` — hide superseded records in recall (default).
+- `internal/http/memories.go` — hide superseded records in list/wake_up (default).
+- `pkg/mcp/tools.go` — register `consolidate` + `consolidation_revert` descriptors.
+- `internal/http/mcp.go` — dispatch + handler wrappers for the two tools.
+- `internal/metrics/telemetry.go` — consolidation metrics.
+- `cmd/server/main.go` — start the consolidation janitor (background loop).
 
 ---
 
 ## Conventions
 
-- All `go` / `go test` commands run from `Levara/` (the module root).
+- All `go` / `go test` commands run from `` (the module root).
 - Cosine: the `_memories` vector collection stores L2-normalized vectors; `CollectionSearch` returns `SearchResult` whose `Score` is cosine similarity in `[-1, 1]` (higher = more similar). **Task 5 Step 0 verifies this** before relying on it.
 - Thresholds (config defaults): `TauLow = 0.85` (cluster edge), `TauHigh = 0.97` (mechanical-merge gate).
 
@@ -47,11 +47,11 @@
 ## Task 1: Schema — consolidation columns on `memories`
 
 **Files:**
-- Modify: `Levara/internal/http/schema.go` (the `memories` `CREATE TABLE` near line 264, plus migration section)
+- Modify: `internal/http/schema.go` (the `memories` `CREATE TABLE` near line 264, plus migration section)
 
 - [ ] **Step 1: Read the current schema + migration mechanism**
 
-Read `Levara/internal/http/schema.go`. Confirm: (a) the `memories` `CREATE TABLE IF NOT EXISTS` block (≈ line 264), and (b) how the file applies additive column migrations to existing tables (search for `ADD COLUMN` in the file). Match whatever idempotent pattern already exists. If the file already does `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` for other tables, follow that exactly.
+Read `internal/http/schema.go`. Confirm: (a) the `memories` `CREATE TABLE IF NOT EXISTS` block (≈ line 264), and (b) how the file applies additive column migrations to existing tables (search for `ADD COLUMN` in the file). Match whatever idempotent pattern already exists. If the file already does `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` for other tables, follow that exactly.
 
 - [ ] **Step 2: Add columns to the base `CREATE TABLE memories`**
 
@@ -94,7 +94,7 @@ Expected: success, no errors.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Levara/internal/http/schema.go
+git add internal/http/schema.go
 git commit -m "feat(consolidate): add supersede/tier columns to memories table"
 ```
 
@@ -103,7 +103,7 @@ git commit -m "feat(consolidate): add supersede/tier columns to memories table"
 ## Task 2: Engine types
 
 **Files:**
-- Create: `Levara/pkg/consolidate/types.go`
+- Create: `pkg/consolidate/types.go`
 
 - [ ] **Step 1: Write the types**
 
@@ -175,7 +175,7 @@ Expected: success.
 - [ ] **Step 3: Commit**
 
 ```bash
-git add Levara/pkg/consolidate/types.go
+git add pkg/consolidate/types.go
 git commit -m "feat(consolidate): engine types"
 ```
 
@@ -184,8 +184,8 @@ git commit -m "feat(consolidate): engine types"
 ## Task 3: Clustering (union-find connected components)
 
 **Files:**
-- Create: `Levara/pkg/consolidate/cluster.go`
-- Test: `Levara/pkg/consolidate/cluster_test.go`
+- Create: `pkg/consolidate/cluster.go`
+- Test: `pkg/consolidate/cluster_test.go`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -310,7 +310,7 @@ Expected: PASS (both cases).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Levara/pkg/consolidate/cluster.go Levara/pkg/consolidate/cluster_test.go
+git add pkg/consolidate/cluster.go pkg/consolidate/cluster_test.go
 git commit -m "feat(consolidate): union-find clustering"
 ```
 
@@ -319,8 +319,8 @@ git commit -m "feat(consolidate): union-find clustering"
 ## Task 4: Plan — classify clusters into merge/abstract actions
 
 **Files:**
-- Create: `Levara/pkg/consolidate/plan.go`
-- Test: `Levara/pkg/consolidate/plan_test.go`
+- Create: `pkg/consolidate/plan.go`
+- Test: `pkg/consolidate/plan_test.go`
 
 The `Plan` function is pure: given records, their similarity clusters, and config, it produces `[]Action`. Abstraction text is filled later (it needs the LLM), so `Plan` marks abstract actions with empty `NewValue` and the caller fills them.
 
@@ -484,7 +484,7 @@ Expected: PASS (both cases).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Levara/pkg/consolidate/plan.go Levara/pkg/consolidate/plan_test.go
+git add pkg/consolidate/plan.go pkg/consolidate/plan_test.go
 git commit -m "feat(consolidate): classify clusters into merge/abstract actions"
 ```
 
@@ -493,8 +493,8 @@ git commit -m "feat(consolidate): classify clusters into merge/abstract actions"
 ## Task 5: LLM abstraction + anti-hallucination coverage guard
 
 **Files:**
-- Create: `Levara/pkg/consolidate/abstract.go`
-- Test: `Levara/pkg/consolidate/abstract_test.go`
+- Create: `pkg/consolidate/abstract.go`
+- Test: `pkg/consolidate/abstract_test.go`
 
 The guard rejects a synthesized record that drops any number or capitalized entity token present in the sources, or that introduces a number absent from all sources. On rejection the cluster stays raw.
 
@@ -653,7 +653,7 @@ Expected: PASS (all four cases).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Levara/pkg/consolidate/abstract.go Levara/pkg/consolidate/abstract_test.go
+git add pkg/consolidate/abstract.go pkg/consolidate/abstract_test.go
 git commit -m "feat(consolidate): LLM abstraction with coverage guard"
 ```
 
@@ -662,13 +662,13 @@ git commit -m "feat(consolidate): LLM abstraction with coverage guard"
 ## Task 6: Hide superseded records in recall / list / wake_up
 
 **Files:**
-- Modify: `Levara/pkg/mcp/tool_save_recall_memory.go` (the SQL-LIKE recall query)
-- Modify: `Levara/internal/http/memories.go` (list / wake_up queries)
-- Test: `Levara/pkg/mcp/tool_save_recall_memory_test.go` (add a case)
+- Modify: `pkg/mcp/tool_save_recall_memory.go` (the SQL-LIKE recall query)
+- Modify: `internal/http/memories.go` (list / wake_up queries)
+- Test: `pkg/mcp/tool_save_recall_memory_test.go` (add a case)
 
 - [ ] **Step 1: Write the failing test**
 
-Add to `Levara/pkg/mcp/tool_save_recall_memory_test.go`. First update `setupSaveRecallMemoryDB` to include the new column in its `CREATE TABLE` (add `superseded_by TEXT DEFAULT ''` to the statement). Then:
+Add to `pkg/mcp/tool_save_recall_memory_test.go`. First update `setupSaveRecallMemoryDB` to include the new column in its `CREATE TABLE` (add `superseded_by TEXT DEFAULT ''` to the statement). Then:
 
 ```go
 func TestToolRecallMemory_HidesSuperseded(t *testing.T) {
@@ -702,7 +702,7 @@ Expected: FAIL — superseded row `old` still appears.
 
 - [ ] **Step 3: Add the filter to the recall SQL**
 
-In `Levara/pkg/mcp/tool_save_recall_memory.go`, find the SQL-LIKE recall query (the `WHERE (key LIKE ... OR value LIKE ...)` clause). Add `AND superseded_by = ''` to the `WHERE`. If the handler accepts an `include_superseded` arg, only append the clause when it is not true:
+In `pkg/mcp/tool_save_recall_memory.go`, find the SQL-LIKE recall query (the `WHERE (key LIKE ... OR value LIKE ...)` clause). Add `AND superseded_by = ''` to the `WHERE`. If the handler accepts an `include_superseded` arg, only append the clause when it is not true:
 
 ```go
 includeSuperseded, _ := args["include_superseded"].(bool)
@@ -711,7 +711,7 @@ if !includeSuperseded {
 }
 ```
 
-Mirror the same `AND superseded_by = ''` default into the list and wake_up queries in `Levara/internal/http/memories.go` (pinned wake_up rows are never superseded, but add the clause for consistency).
+Mirror the same `AND superseded_by = ''` default into the list and wake_up queries in `internal/http/memories.go` (pinned wake_up rows are never superseded, but add the clause for consistency).
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -726,7 +726,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add Levara/pkg/mcp/tool_save_recall_memory.go Levara/pkg/mcp/tool_save_recall_memory_test.go Levara/internal/http/memories.go
+git add pkg/mcp/tool_save_recall_memory.go pkg/mcp/tool_save_recall_memory_test.go internal/http/memories.go
 git commit -m "feat(consolidate): hide superseded memories from recall/list/wake_up"
 ```
 
@@ -737,14 +737,14 @@ git commit -m "feat(consolidate): hide superseded memories from recall/list/wake
 This task wires the pure engine to live data. The engine driver `Run` is exercised with fakes; the MCP handler adapts `Deps`.
 
 **Files:**
-- Create: `Levara/pkg/consolidate/run.go` (driver + Store/Embedder/Neighbors interfaces)
-- Create: `Levara/pkg/consolidate/run_test.go`
-- Create: `Levara/pkg/mcp/tool_consolidate.go` (Deps adapters + `ToolConsolidate`)
-- Create: `Levara/pkg/mcp/tool_consolidate_test.go`
+- Create: `pkg/consolidate/run.go` (driver + Store/Embedder/Neighbors interfaces)
+- Create: `pkg/consolidate/run_test.go`
+- Create: `pkg/mcp/tool_consolidate.go` (Deps adapters + `ToolConsolidate`)
+- Create: `pkg/mcp/tool_consolidate_test.go`
 
 - [ ] **Step 0: Verify the `SearchResult.Score` semantics**
 
-Read `Levara/pkg/mcp/deps.go` (`SearchResult` definition) and `Levara/internal/store/hnsw.go` `Search`. Confirm `SearchResult.Score` is cosine similarity where higher = more similar. Record the exact field name/type; the adapter in Step 6 depends on it. If the score is a distance (lower = closer) instead, invert it in the adapter (`score = 1 - distance`).
+Read `pkg/mcp/deps.go` (`SearchResult` definition) and `internal/store/hnsw.go` `Search`. Confirm `SearchResult.Score` is cosine similarity where higher = more similar. Record the exact field name/type; the adapter in Step 6 depends on it. If the score is a distance (lower = closer) instead, invert it in the adapter (`score = 1 - distance`).
 
 - [ ] **Step 1: Write the failing test for the driver**
 
@@ -923,13 +923,13 @@ Expected: PASS (both cases).
 - [ ] **Step 5: Commit the engine**
 
 ```bash
-git add Levara/pkg/consolidate/run.go Levara/pkg/consolidate/run_test.go
+git add pkg/consolidate/run.go pkg/consolidate/run_test.go
 git commit -m "feat(consolidate): run driver over Store/Neighbors/Summarizer"
 ```
 
 - [ ] **Step 6: Write the Deps adapters + `ToolConsolidate`**
 
-Create `Levara/pkg/mcp/tool_consolidate.go`. The adapters implement the engine interfaces over `Deps`:
+Create `pkg/mcp/tool_consolidate.go`. The adapters implement the engine interfaces over `Deps`:
 - `sqlStore` — `Candidates` runs `SELECT id,key,value,room,hall,created_at FROM memories WHERE collection_name=? AND superseded_by='' AND is_pinned=0 [AND room=?] [AND hall=?]`; `Apply` runs, per action, the writes in Step 7's helper.
 - `collectionNeighbors` — for each record, `deps.Embed(value)` then `deps.CollectionSearch(memCollection, vec, cfg.TopK+1)`, emitting a `SimEdge` for each neighbor != self with `Score` from `SearchResult` (apply the inversion decided in Step 0 if needed). De-dupe undirected pairs.
 - `llmSummarizer` — builds a `pkg/llm` provider from server config and calls `ChatCompletion` with a strict prompt:
@@ -1019,7 +1019,7 @@ func (s *sqlStore) Apply(ctx context.Context, runID string, actions []consolidat
 
 - [ ] **Step 8: Write the `ToolConsolidate` integration test (temp SQLite)**
 
-In `Levara/pkg/mcp/tool_consolidate_test.go`, build a `fakeDeps` whose `memories` table includes the consolidation columns and whose `CollectionSearch`/`Embed` are stubbed so two rows are near-identical. Assert:
+In `pkg/mcp/tool_consolidate_test.go`, build a `fakeDeps` whose `memories` table includes the consolidation columns and whose `CollectionSearch`/`Embed` are stubbed so two rows are near-identical. Assert:
 - `dry_run=true` returns an action summary but leaves all rows active (`superseded_by=''`).
 - `dry_run=false` supersedes the older row (`superseded_by != ''`, `consolidation_run_id != ''`).
 
@@ -1027,7 +1027,7 @@ Follow the `setupSaveRecallMemoryDB` + `fakeDeps` pattern from `tool_save_recall
 
 - [ ] **Step 9: Register the tool**
 
-In `Levara/pkg/mcp/tools.go` add a descriptor to `ToolDescriptors()`:
+In `pkg/mcp/tools.go` add a descriptor to `ToolDescriptors()`:
 
 ```go
 {
@@ -1047,7 +1047,7 @@ In `Levara/pkg/mcp/tools.go` add a descriptor to `ToolDescriptors()`:
 },
 ```
 
-In `Levara/internal/http/mcp.go` add to `executeToolInner` the collection-injection case (add `"consolidate"` to the switch that injects `sess.DefaultCollection`), a dispatch case `case "consolidate": return h.toolConsolidate(ctx, args)`, and the wrapper:
+In `internal/http/mcp.go` add to `executeToolInner` the collection-injection case (add `"consolidate"` to the switch that injects `sess.DefaultCollection`), a dispatch case `case "consolidate": return h.toolConsolidate(ctx, args)`, and the wrapper:
 
 ```go
 func (h *mcpHandler) toolConsolidate(ctx context.Context, args map[string]any) mcpToolResult {
@@ -1063,7 +1063,7 @@ Expected: PASS.
 - [ ] **Step 11: Commit**
 
 ```bash
-git add Levara/pkg/consolidate/ Levara/pkg/mcp/tool_consolidate.go Levara/pkg/mcp/tool_consolidate_test.go Levara/pkg/mcp/tools.go Levara/internal/http/mcp.go
+git add pkg/consolidate/ pkg/mcp/tool_consolidate.go pkg/mcp/tool_consolidate_test.go pkg/mcp/tools.go internal/http/mcp.go
 git commit -m "feat(consolidate): consolidate MCP tool + Deps adapters"
 ```
 
@@ -1072,9 +1072,9 @@ git commit -m "feat(consolidate): consolidate MCP tool + Deps adapters"
 ## Task 8: `consolidation_revert` tool
 
 **Files:**
-- Modify: `Levara/pkg/mcp/tool_consolidate.go` (add `ToolConsolidationRevert` + `sqlStore.Revert`)
-- Modify: `Levara/pkg/mcp/tool_consolidate_test.go` (round-trip test)
-- Modify: `Levara/pkg/mcp/tools.go`, `Levara/internal/http/mcp.go` (register/dispatch)
+- Modify: `pkg/mcp/tool_consolidate.go` (add `ToolConsolidationRevert` + `sqlStore.Revert`)
+- Modify: `pkg/mcp/tool_consolidate_test.go` (round-trip test)
+- Modify: `pkg/mcp/tools.go`, `internal/http/mcp.go` (register/dispatch)
 
 - [ ] **Step 1: Write the failing round-trip test**
 
@@ -1154,7 +1154,7 @@ Expected: PASS (consolidate + revert round-trip).
 - [ ] **Step 6: Commit**
 
 ```bash
-git add Levara/pkg/mcp/tool_consolidate.go Levara/pkg/mcp/tool_consolidate_test.go Levara/pkg/mcp/tools.go Levara/internal/http/mcp.go
+git add pkg/mcp/tool_consolidate.go pkg/mcp/tool_consolidate_test.go pkg/mcp/tools.go internal/http/mcp.go
 git commit -m "feat(consolidate): consolidation_revert tool (reversible runs)"
 ```
 
@@ -1163,7 +1163,7 @@ git commit -m "feat(consolidate): consolidation_revert tool (reversible runs)"
 ## Task 9: Prometheus metrics
 
 **Files:**
-- Modify: `Levara/internal/metrics/telemetry.go`
+- Modify: `internal/metrics/telemetry.go`
 
 - [ ] **Step 1: Add metric declarations**
 
@@ -1196,7 +1196,7 @@ Expected: success.
 - [ ] **Step 3: Commit**
 
 ```bash
-git add Levara/internal/metrics/telemetry.go
+git add internal/metrics/telemetry.go
 git commit -m "feat(consolidate): prometheus metrics"
 ```
 
@@ -1205,9 +1205,9 @@ git commit -m "feat(consolidate): prometheus metrics"
 ## Task 10: Background janitor
 
 **Files:**
-- Create: `Levara/pkg/consolidate/janitor.go`
-- Create: `Levara/pkg/consolidate/janitor_test.go`
-- Modify: `Levara/cmd/server/main.go` (start the janitor)
+- Create: `pkg/consolidate/janitor.go`
+- Create: `pkg/consolidate/janitor_test.go`
+- Modify: `cmd/server/main.go` (start the janitor)
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1296,7 +1296,7 @@ Expected: PASS.
 
 - [ ] **Step 5: Wire a `Runner` over `Deps` and start it in main**
 
-In `Levara/pkg/mcp/tool_consolidate.go` add a `Runner` that iterates `deps.ListCollections()` and calls `consolidate.Run(... DryRun:false)` per collection (skipping internal `_memories*` collections), recording before/after active-row counts into the deferred density gauges if you choose to add them. In `Levara/cmd/server/main.go`, after services are constructed, start it behind an env flag so it's opt-in:
+In `pkg/mcp/tool_consolidate.go` add a `Runner` that iterates `deps.ListCollections()` and calls `consolidate.Run(... DryRun:false)` per collection (skipping internal `_memories*` collections), recording before/after active-row counts into the deferred density gauges if you choose to add them. In `cmd/server/main.go`, after services are constructed, start it behind an env flag so it's opt-in:
 
 ```go
 if os.Getenv("CONSOLIDATION_INTERVAL") != "" {
@@ -1318,7 +1318,7 @@ Expected: success / PASS.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add Levara/pkg/consolidate/janitor.go Levara/pkg/consolidate/janitor_test.go Levara/pkg/mcp/tool_consolidate.go Levara/cmd/server/main.go Levara/CLAUDE.md
+git add pkg/consolidate/janitor.go pkg/consolidate/janitor_test.go pkg/mcp/tool_consolidate.go cmd/server/main.go CLAUDE.md
 git commit -m "feat(consolidate): background janitor (opt-in via CONSOLIDATION_INTERVAL)"
 ```
 

@@ -13,25 +13,25 @@
 ## File Structure
 
 **New:**
-- `Levara/internal/contract/types.go` — shared `Status`, `Contract`, `RESTRoute`, `GRPCMethod`, `MCPTool`, `SchemaObject`
-- `Levara/internal/contract/types_test.go` — round-trip JSON + sort stability
-- `Levara/internal/grpc/inventory.go` — `GRPCInventory() []contract.GRPCMethod` walking `pb.File_levara_proto` + `pb.File_levara_v2_proto`
-- `Levara/internal/grpc/inventory_test.go` — descriptor coverage assertions
-- `Levara/cmd/contract/main.go` — CLI entrypoint (`generate` / `validate`)
-- `Levara/cmd/contract/collect.go` — composes inventories into `contract.Contract`
-- `Levara/cmd/contract/render_md.go` — writes `docs/api-contract.md`
-- `Levara/cmd/contract/render_json.go` — writes `docs/contract.json`
-- `Levara/cmd/contract/agents_md.go` — regenerates the MCP section between markers in `AGENTS.md`
-- `Levara/cmd/contract/validate.go` — drift + deployment-matrix link validation
-- `Levara/cmd/contract/contract_test.go` — determinism (two runs produce byte-identical output)
+- `internal/contract/types.go` — shared `Status`, `Contract`, `RESTRoute`, `GRPCMethod`, `MCPTool`, `SchemaObject`
+- `internal/contract/types_test.go` — round-trip JSON + sort stability
+- `internal/grpc/inventory.go` — `GRPCInventory() []contract.GRPCMethod` walking `pb.File_levara_proto` + `pb.File_levara_v2_proto`
+- `internal/grpc/inventory_test.go` — descriptor coverage assertions
+- `cmd/contract/main.go` — CLI entrypoint (`generate` / `validate`)
+- `cmd/contract/collect.go` — composes inventories into `contract.Contract`
+- `cmd/contract/render_md.go` — writes `docs/api-contract.md`
+- `cmd/contract/render_json.go` — writes `docs/contract.json`
+- `cmd/contract/agents_md.go` — regenerates the MCP section between markers in `AGENTS.md`
+- `cmd/contract/validate.go` — drift + deployment-matrix link validation
+- `cmd/contract/contract_test.go` — determinism (two runs produce byte-identical output)
 
 **Modified:**
-- `Levara/internal/http/routes.go` — switch type aliases to `contract.RESTRoute` / `contract.Status`
-- `Levara/internal/http/schema_inventory.go` — return `[]contract.SchemaObject`
-- `Levara/internal/http/architecture_contract_test.go` — adjust to shared types
-- `Levara/pkg/mcp/tools.go` (or wherever `ToolDescriptor` is defined) — extend with `Group` and `Status` fields
-- `Levara/pkg/mcp/architecture_contract_test.go` — add `MCPInventory()` coverage test
-- `Levara/Makefile` (create if absent) — `contract`, `contract-check` targets
+- `internal/http/routes.go` — switch type aliases to `contract.RESTRoute` / `contract.Status`
+- `internal/http/schema_inventory.go` — return `[]contract.SchemaObject`
+- `internal/http/architecture_contract_test.go` — adjust to shared types
+- `pkg/mcp/tools.go` (or wherever `ToolDescriptor` is defined) — extend with `Group` and `Status` fields
+- `pkg/mcp/architecture_contract_test.go` — add `MCPInventory()` coverage test
+- `Makefile` (create if absent) — `contract`, `contract-check` targets
 - `AGENTS.md` (repo root) — insert `<!-- BEGIN: contract-mcp -->` / `<!-- END: contract-mcp -->` markers (one-time bootstrap)
 
 ---
@@ -39,12 +39,12 @@
 ## Task 1: Bootstrap `internal/contract` package with shared types
 
 **Files:**
-- Create: `Levara/internal/contract/types.go`
-- Create: `Levara/internal/contract/types_test.go`
+- Create: `internal/contract/types.go`
+- Create: `internal/contract/types_test.go`
 
 - [ ] **Step 1: Write the failing test**
 
-`Levara/internal/contract/types_test.go`:
+`internal/contract/types_test.go`:
 
 ```go
 package contract
@@ -100,12 +100,12 @@ func TestRESTRouteSortStable(t *testing.T) {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd Levara && go test ./internal/contract/...`
+Run: `go test ./internal/contract/...`
 Expected: FAIL — package does not exist.
 
 - [ ] **Step 3: Write the package**
 
-`Levara/internal/contract/types.go`:
+`internal/contract/types.go`:
 
 ```go
 // Package contract holds the shared types produced by every inventory
@@ -206,13 +206,13 @@ func (s BySchemaObject) Less(i, j int) bool {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd Levara && go test ./internal/contract/...`
+Run: `go test ./internal/contract/...`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Levara/internal/contract/
+git add internal/contract/
 git commit -m "contract: add shared types package for SSOT inventories"
 ```
 
@@ -221,17 +221,17 @@ git commit -m "contract: add shared types package for SSOT inventories"
 ## Task 2: Migrate REST inventory to shared types
 
 **Files:**
-- Modify: `Levara/internal/http/routes.go`
-- Modify: `Levara/internal/http/architecture_contract_test.go`
+- Modify: `internal/http/routes.go`
+- Modify: `internal/http/architecture_contract_test.go`
 
 - [ ] **Step 1: Inspect existing routes.go**
 
-Run: `grep -n "type RouteSpec\|type APIStatus\|^const\|^var\|RESTRouteInventory" Levara/internal/http/routes.go`
+Run: `grep -n "type RouteSpec\|type APIStatus\|^const\|^var\|RESTRouteInventory" internal/http/routes.go`
 Confirm the existing names so the alias edit keeps callers compiling.
 
 - [ ] **Step 2: Replace local types with aliases to `contract`**
 
-In `Levara/internal/http/routes.go`, replace the existing `RouteSpec` struct and `APIStatus` enum with type aliases:
+In `internal/http/routes.go`, replace the existing `RouteSpec` struct and `APIStatus` enum with type aliases:
 
 ```go
 package http
@@ -254,18 +254,18 @@ Keep `RESTRouteInventory()` unchanged otherwise — only the declared types swap
 
 - [ ] **Step 3: Build to verify no caller broke**
 
-Run: `cd Levara && go build ./...`
+Run: `go build ./...`
 Expected: success.
 
 - [ ] **Step 4: Run existing REST contract tests**
 
-Run: `cd Levara && go test ./internal/http/ -run 'TestRESTRouteInventory'`
+Run: `go test ./internal/http/ -run 'TestRESTRouteInventory'`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Levara/internal/http/routes.go
+git add internal/http/routes.go
 git commit -m "http: alias RouteSpec/APIStatus to contract package types"
 ```
 
@@ -274,17 +274,17 @@ git commit -m "http: alias RouteSpec/APIStatus to contract package types"
 ## Task 3: Migrate Schema inventory to shared types
 
 **Files:**
-- Modify: `Levara/internal/http/schema_inventory.go`
-- Modify: `Levara/internal/http/architecture_contract_test.go`
+- Modify: `internal/http/schema_inventory.go`
+- Modify: `internal/http/architecture_contract_test.go`
 
 - [ ] **Step 1: Inspect existing schema_inventory.go**
 
-Run: `grep -n "type SchemaObject\|type DBProvider\|type SchemaKind\|SchemaInventory" Levara/internal/http/schema_inventory.go`
+Run: `grep -n "type SchemaObject\|type DBProvider\|type SchemaKind\|SchemaInventory" internal/http/schema_inventory.go`
 Note the exact type names and provider/kind constants.
 
 - [ ] **Step 2: Replace local types with aliases**
 
-In `Levara/internal/http/schema_inventory.go`:
+In `internal/http/schema_inventory.go`:
 
 ```go
 import "github.com/stek0v/levara/internal/contract"
@@ -305,20 +305,20 @@ Adjust any field references in `SchemaInventory()` so it writes to `Provider`/`K
 
 - [ ] **Step 3: Update existing contract test if any field shifted**
 
-Inspect `Levara/internal/http/architecture_contract_test.go` `TestSchemaInventoryCoversCoreTables` — current code uses `obj.Kind == SchemaTable` and `obj.Provider`. Confirm those still resolve through the aliases; no edit needed if names match.
+Inspect `internal/http/architecture_contract_test.go` `TestSchemaInventoryCoversCoreTables` — current code uses `obj.Kind == SchemaTable` and `obj.Provider`. Confirm those still resolve through the aliases; no edit needed if names match.
 
 - [ ] **Step 4: Build + test**
 
 Run:
 ```
-cd Levara && go build ./... && go test ./internal/http/ -run 'TestSchema'
+go build ./... && go test ./internal/http/ -run 'TestSchema'
 ```
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Levara/internal/http/schema_inventory.go Levara/internal/http/architecture_contract_test.go
+git add internal/http/schema_inventory.go internal/http/architecture_contract_test.go
 git commit -m "http: alias SchemaObject to contract package types"
 ```
 
@@ -327,17 +327,17 @@ git commit -m "http: alias SchemaObject to contract package types"
 ## Task 4: Add gRPC inventory walking proto descriptors
 
 **Files:**
-- Create: `Levara/internal/grpc/inventory.go`
-- Create: `Levara/internal/grpc/inventory_test.go`
+- Create: `internal/grpc/inventory.go`
+- Create: `internal/grpc/inventory_test.go`
 
 - [ ] **Step 1: Confirm v2 descriptor symbol**
 
-Run: `grep -rn "File_levara_v2_proto\|File_levara_proto" Levara/proto/pb`
+Run: `grep -rn "File_levara_v2_proto\|File_levara_proto" proto/pb`
 Expected: both symbols exist. Note the package paths so the import path is correct (likely `github.com/stek0v/levara/proto/pb`; v2 may live in `proto/pbv2`).
 
 - [ ] **Step 2: Write the failing test**
 
-`Levara/internal/grpc/inventory_test.go`:
+`internal/grpc/inventory_test.go`:
 
 ```go
 package grpc
@@ -377,12 +377,12 @@ func TestGRPCInventoryCoversV1Critical(t *testing.T) {
 
 - [ ] **Step 3: Run test (FAIL)**
 
-Run: `cd Levara && go test ./internal/grpc/ -run 'TestGRPCInventoryCoversV1Critical'`
+Run: `go test ./internal/grpc/ -run 'TestGRPCInventoryCoversV1Critical'`
 Expected: FAIL — `GRPCInventory` undefined.
 
 - [ ] **Step 4: Implement `GRPCInventory`**
 
-`Levara/internal/grpc/inventory.go`:
+`internal/grpc/inventory.go`:
 
 ```go
 package grpc
@@ -442,7 +442,7 @@ func classifyGRPC(service, method string) contract.Status {
 
 - [ ] **Step 5: Wire v2 descriptor (if it lives in a separate package)**
 
-Add `Levara/internal/grpc/inventory_v2.go`:
+Add `internal/grpc/inventory_v2.go`:
 
 ```go
 package grpc
@@ -461,13 +461,13 @@ If v2 lives in the same `pb` package, fold this into `inventory.go` and return `
 
 - [ ] **Step 6: Run test (PASS)**
 
-Run: `cd Levara && go test ./internal/grpc/ -run 'TestGRPCInventory'`
+Run: `go test ./internal/grpc/ -run 'TestGRPCInventory'`
 Expected: PASS.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add Levara/internal/grpc/inventory.go Levara/internal/grpc/inventory_v2.go Levara/internal/grpc/inventory_test.go
+git add internal/grpc/inventory.go internal/grpc/inventory_v2.go internal/grpc/inventory_test.go
 git commit -m "grpc: add GRPCInventory walking v1+v2 proto descriptors"
 ```
 
@@ -476,13 +476,13 @@ git commit -m "grpc: add GRPCInventory walking v1+v2 proto descriptors"
 ## Task 5: Extend MCP descriptors with Group/Status + add MCPInventory()
 
 **Files:**
-- Modify: `Levara/pkg/mcp/tools.go` (file defining `ToolDescriptor`)
-- Create: `Levara/pkg/mcp/inventory.go`
-- Modify: `Levara/pkg/mcp/architecture_contract_test.go`
+- Modify: `pkg/mcp/tools.go` (file defining `ToolDescriptor`)
+- Create: `pkg/mcp/inventory.go`
+- Modify: `pkg/mcp/architecture_contract_test.go`
 
 - [ ] **Step 1: Locate ToolDescriptor**
 
-Run: `grep -n "type ToolDescriptor\|func ToolDescriptors" Levara/pkg/mcp/*.go`
+Run: `grep -n "type ToolDescriptor\|func ToolDescriptors" pkg/mcp/*.go`
 Confirm the struct file.
 
 - [ ] **Step 2: Add Group/Status fields**
@@ -502,7 +502,7 @@ type ToolDescriptor struct {
 
 - [ ] **Step 3: Write the failing test**
 
-In `Levara/pkg/mcp/architecture_contract_test.go`, append:
+In `pkg/mcp/architecture_contract_test.go`, append:
 
 ```go
 func TestMCPInventoryCoversCritical(t *testing.T) {
@@ -520,12 +520,12 @@ func TestMCPInventoryCoversCritical(t *testing.T) {
 
 - [ ] **Step 4: Run test (FAIL)**
 
-Run: `cd Levara && go test ./pkg/mcp/ -run 'TestMCPInventoryCoversCritical'`
+Run: `go test ./pkg/mcp/ -run 'TestMCPInventoryCoversCritical'`
 Expected: FAIL — `MCPInventory` undefined.
 
 - [ ] **Step 5: Implement MCPInventory**
 
-`Levara/pkg/mcp/inventory.go`:
+`pkg/mcp/inventory.go`:
 
 ```go
 package mcp
@@ -557,13 +557,13 @@ func MCPInventory() []contract.MCPTool {
 
 - [ ] **Step 6: Run test (PASS)**
 
-Run: `cd Levara && go test ./pkg/mcp/ -run 'TestMCPInventoryCovers'`
+Run: `go test ./pkg/mcp/ -run 'TestMCPInventoryCovers'`
 Expected: PASS.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add Levara/pkg/mcp/tools.go Levara/pkg/mcp/inventory.go Levara/pkg/mcp/architecture_contract_test.go
+git add pkg/mcp/tools.go pkg/mcp/inventory.go pkg/mcp/architecture_contract_test.go
 git commit -m "mcp: add MCPInventory() built on ToolDescriptors"
 ```
 
@@ -572,13 +572,13 @@ git commit -m "mcp: add MCPInventory() built on ToolDescriptors"
 ## Task 6: `cmd/contract` skeleton + deterministic collect
 
 **Files:**
-- Create: `Levara/cmd/contract/main.go`
-- Create: `Levara/cmd/contract/collect.go`
-- Create: `Levara/cmd/contract/contract_test.go`
+- Create: `cmd/contract/main.go`
+- Create: `cmd/contract/collect.go`
+- Create: `cmd/contract/contract_test.go`
 
 - [ ] **Step 1: Write the failing test**
 
-`Levara/cmd/contract/contract_test.go`:
+`cmd/contract/contract_test.go`:
 
 ```go
 package main
@@ -611,12 +611,12 @@ func TestCollectIsDeterministic(t *testing.T) {
 
 - [ ] **Step 2: Run test (FAIL)**
 
-Run: `cd Levara && go test ./cmd/contract/...`
+Run: `go test ./cmd/contract/...`
 Expected: FAIL — package doesn't exist.
 
 - [ ] **Step 3: Implement collect**
 
-`Levara/cmd/contract/collect.go`:
+`cmd/contract/collect.go`:
 
 ```go
 package main
@@ -653,7 +653,7 @@ func collect(gitRev, generatedAt string) contract.Contract {
 
 - [ ] **Step 4: Implement main shell**
 
-`Levara/cmd/contract/main.go`:
+`cmd/contract/main.go`:
 
 ```go
 package main
@@ -723,13 +723,13 @@ Note: `writeAll` and `validate` are stubs here so the package builds; later task
 
 - [ ] **Step 5: Run test (PASS)**
 
-Run: `cd Levara && go test ./cmd/contract/...`
+Run: `go test ./cmd/contract/...`
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add Levara/cmd/contract/
+git add cmd/contract/
 git commit -m "cmd/contract: skeleton + deterministic collect"
 ```
 
@@ -738,12 +738,12 @@ git commit -m "cmd/contract: skeleton + deterministic collect"
 ## Task 7: Render `docs/contract.json` with atomic write
 
 **Files:**
-- Create: `Levara/cmd/contract/render_json.go`
-- Modify: `Levara/cmd/contract/contract_test.go`
+- Create: `cmd/contract/render_json.go`
+- Modify: `cmd/contract/contract_test.go`
 
 - [ ] **Step 1: Append failing test**
 
-In `Levara/cmd/contract/contract_test.go`:
+In `cmd/contract/contract_test.go`:
 
 ```go
 func TestRenderJSONByteIdentical(t *testing.T) {
@@ -773,12 +773,12 @@ Add imports `encoding/json`, `os` at the top.
 
 - [ ] **Step 2: Run test (FAIL)**
 
-Run: `cd Levara && go test ./cmd/contract/ -run TestRenderJSONByteIdentical`
+Run: `go test ./cmd/contract/ -run TestRenderJSONByteIdentical`
 Expected: FAIL — `writeJSON` undefined.
 
 - [ ] **Step 3: Implement writeJSON**
 
-`Levara/cmd/contract/render_json.go`:
+`cmd/contract/render_json.go`:
 
 ```go
 package main
@@ -814,13 +814,13 @@ func atomicWrite(dst string, data []byte) error {
 
 - [ ] **Step 4: Run test (PASS)**
 
-Run: `cd Levara && go test ./cmd/contract/ -run TestRenderJSONByteIdentical`
+Run: `go test ./cmd/contract/ -run TestRenderJSONByteIdentical`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Levara/cmd/contract/render_json.go Levara/cmd/contract/contract_test.go
+git add cmd/contract/render_json.go cmd/contract/contract_test.go
 git commit -m "cmd/contract: render contract.json with atomic write"
 ```
 
@@ -829,8 +829,8 @@ git commit -m "cmd/contract: render contract.json with atomic write"
 ## Task 8: Render `docs/api-contract.md`
 
 **Files:**
-- Create: `Levara/cmd/contract/render_md.go`
-- Modify: `Levara/cmd/contract/contract_test.go`
+- Create: `cmd/contract/render_md.go`
+- Modify: `cmd/contract/contract_test.go`
 
 - [ ] **Step 1: Append failing test**
 
@@ -862,12 +862,12 @@ Add `strings` import.
 
 - [ ] **Step 2: Run test (FAIL)**
 
-Run: `cd Levara && go test ./cmd/contract/ -run TestRenderMarkdown`
+Run: `go test ./cmd/contract/ -run TestRenderMarkdown`
 Expected: FAIL.
 
 - [ ] **Step 3: Implement writeMarkdown**
 
-`Levara/cmd/contract/render_md.go`:
+`cmd/contract/render_md.go`:
 
 ```go
 package main
@@ -913,13 +913,13 @@ func writeMarkdown(c contract.Contract, outDir string) error {
 
 - [ ] **Step 4: Run test (PASS)**
 
-Run: `cd Levara && go test ./cmd/contract/ -run TestRenderMarkdown`
+Run: `go test ./cmd/contract/ -run TestRenderMarkdown`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Levara/cmd/contract/render_md.go Levara/cmd/contract/contract_test.go
+git add cmd/contract/render_md.go cmd/contract/contract_test.go
 git commit -m "cmd/contract: render docs/api-contract.md"
 ```
 
@@ -928,8 +928,8 @@ git commit -m "cmd/contract: render docs/api-contract.md"
 ## Task 9: Regenerate MCP section of AGENTS.md between markers
 
 **Files:**
-- Create: `Levara/cmd/contract/agents_md.go`
-- Modify: `Levara/cmd/contract/contract_test.go`
+- Create: `cmd/contract/agents_md.go`
+- Modify: `cmd/contract/contract_test.go`
 - Bootstrap edit: repo-root `AGENTS.md`
 
 - [ ] **Step 1: Bootstrap markers in AGENTS.md (one-time manual edit)**
@@ -987,12 +987,12 @@ func TestRewriteAgentsMD(t *testing.T) {
 
 - [ ] **Step 3: Run test (FAIL)**
 
-Run: `cd Levara && go test ./cmd/contract/ -run TestRewriteAgentsMD`
+Run: `go test ./cmd/contract/ -run TestRewriteAgentsMD`
 Expected: FAIL.
 
 - [ ] **Step 4: Implement**
 
-`Levara/cmd/contract/agents_md.go`:
+`cmd/contract/agents_md.go`:
 
 ```go
 package main
@@ -1040,13 +1040,13 @@ func rewriteAgentsMD(c contract.Contract, repoRoot string) error {
 
 - [ ] **Step 5: Run test (PASS)**
 
-Run: `cd Levara && go test ./cmd/contract/ -run TestRewriteAgentsMD`
+Run: `go test ./cmd/contract/ -run TestRewriteAgentsMD`
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add Levara/cmd/contract/agents_md.go Levara/cmd/contract/contract_test.go
+git add cmd/contract/agents_md.go cmd/contract/contract_test.go
 git commit -m "cmd/contract: regenerate AGENTS.md MCP section between markers"
 ```
 
@@ -1055,7 +1055,7 @@ git commit -m "cmd/contract: regenerate AGENTS.md MCP section between markers"
 ## Task 10: Implement `writeAll` and wire `generate`
 
 **Files:**
-- Modify: `Levara/cmd/contract/main.go`
+- Modify: `cmd/contract/main.go`
 
 - [ ] **Step 1: Replace stubs in main.go**
 
@@ -1080,7 +1080,7 @@ And import `"github.com/stek0v/levara/internal/contract"`.
 From repo root:
 
 ```bash
-cd Levara && go run ./cmd/contract generate -out ../docs -repo ..
+go run ./cmd/contract generate -out ../docs -repo ..
 ```
 
 Expected: creates `docs/api-contract.md`, `docs/contract.json`, and rewrites the marker section in `AGENTS.md`.
@@ -1088,7 +1088,7 @@ Expected: creates `docs/api-contract.md`, `docs/contract.json`, and rewrites the
 - [ ] **Step 3: Re-run to confirm idempotence**
 
 ```bash
-cd Levara && go run ./cmd/contract generate -out ../docs -repo ..
+go run ./cmd/contract generate -out ../docs -repo ..
 git status -- docs AGENTS.md
 ```
 
@@ -1097,7 +1097,7 @@ Expected: second run produces zero git diff (no changes since last run).
 - [ ] **Step 4: Commit generated artefacts + main change**
 
 ```bash
-git add Levara/cmd/contract/main.go docs/api-contract.md docs/contract.json AGENTS.md
+git add cmd/contract/main.go docs/api-contract.md docs/contract.json AGENTS.md
 git commit -m "cmd/contract: first generated artefacts (REST/gRPC/MCP/schema)"
 ```
 
@@ -1106,8 +1106,8 @@ git commit -m "cmd/contract: first generated artefacts (REST/gRPC/MCP/schema)"
 ## Task 11: Implement `validate` (drift + deployment-matrix links)
 
 **Files:**
-- Create: `Levara/cmd/contract/validate.go`
-- Modify: `Levara/cmd/contract/main.go` (remove `validate` stub)
+- Create: `cmd/contract/validate.go`
+- Modify: `cmd/contract/main.go` (remove `validate` stub)
 
 - [ ] **Step 1: Append failing test**
 
@@ -1144,12 +1144,12 @@ func TestValidateDetectsDrift(t *testing.T) {
 
 - [ ] **Step 2: Run test (FAIL)**
 
-Run: `cd Levara && go test ./cmd/contract/ -run TestValidateDetectsDrift`
+Run: `go test ./cmd/contract/ -run TestValidateDetectsDrift`
 Expected: FAIL.
 
 - [ ] **Step 3: Implement validate**
 
-`Levara/cmd/contract/validate.go`:
+`cmd/contract/validate.go`:
 
 ```go
 package main
@@ -1286,7 +1286,7 @@ Remove the `validate` stub from `main.go`.
 
 - [ ] **Step 4: Run all cmd/contract tests (PASS)**
 
-Run: `cd Levara && go test ./cmd/contract/...`
+Run: `go test ./cmd/contract/...`
 Expected: PASS.
 
 - [ ] **Step 5: End-to-end validate**
@@ -1294,7 +1294,7 @@ Expected: PASS.
 From repo root after Task 10 commit:
 
 ```bash
-cd Levara && go run ./cmd/contract validate -out ../docs -repo ..
+go run ./cmd/contract validate -out ../docs -repo ..
 echo $?
 ```
 
@@ -1306,7 +1306,7 @@ Manually corrupt:
 
 ```bash
 echo "{}" > docs/contract.json
-cd Levara && go run ./cmd/contract validate -out ../docs -repo ..
+go run ./cmd/contract validate -out ../docs -repo ..
 ```
 
 Expected: non-zero exit, stderr says "contract.json drifted — run `make contract` and commit the result".
@@ -1314,13 +1314,13 @@ Expected: non-zero exit, stderr says "contract.json drifted — run `make contra
 Restore:
 
 ```bash
-cd Levara && go run ./cmd/contract generate -out ../docs -repo ..
+go run ./cmd/contract generate -out ../docs -repo ..
 ```
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add Levara/cmd/contract/validate.go Levara/cmd/contract/render_md.go Levara/cmd/contract/render_json.go Levara/cmd/contract/main.go Levara/cmd/contract/contract_test.go
+git add cmd/contract/validate.go cmd/contract/render_md.go cmd/contract/render_json.go cmd/contract/main.go cmd/contract/contract_test.go
 git commit -m "cmd/contract: validate drift + deployment-matrix endpoint refs"
 ```
 
@@ -1329,11 +1329,11 @@ git commit -m "cmd/contract: validate drift + deployment-matrix endpoint refs"
 ## Task 12: Makefile targets `contract` + `contract-check`
 
 **Files:**
-- Modify (or create): `Levara/Makefile`
+- Modify (or create): `Makefile`
 
 - [ ] **Step 1: Inspect existing Makefile**
 
-Run: `ls Levara/Makefile && grep -n '^\.PHONY\|^[a-z]\+:' Levara/Makefile 2>/dev/null || echo no-makefile`
+Run: `ls Makefile && grep -n '^\.PHONY\|^[a-z]\+:' Makefile 2>/dev/null || echo no-makefile`
 
 - [ ] **Step 2: Add targets**
 
@@ -1348,7 +1348,7 @@ contract-check:
 	go run ./cmd/contract validate -out ../docs -repo ..
 ```
 
-If it does not exist, create `Levara/Makefile`:
+If it does not exist, create `Makefile`:
 
 ```make
 .PHONY: contract contract-check
@@ -1363,14 +1363,14 @@ contract-check:
 
 Run:
 ```
-cd Levara && make contract && make contract-check
+make contract && make contract-check
 ```
 Expected: both succeed; `git status` shows no changes since artefacts are already current.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add Levara/Makefile
+git add Makefile
 git commit -m "make: add contract + contract-check targets"
 ```
 
@@ -1418,7 +1418,7 @@ jobs:
 
 Run:
 ```
-cd Levara && make contract-check
+make contract-check
 ```
 Expected: exit 0.
 
@@ -1437,7 +1437,7 @@ git commit -m "ci: gate PRs on architecture contract drift"
 
 Run:
 ```
-cd Levara && go build ./... && go test ./...
+go build ./... && go test ./...
 ```
 Expected: PASS.
 
@@ -1445,7 +1445,7 @@ Expected: PASS.
 
 Run:
 ```
-cd Levara && make contract && git status
+make contract && git status
 ```
 Expected: zero diff.
 
@@ -1470,4 +1470,4 @@ git commit -m "contract: regenerate artefacts after final integration check"
 - **Spec coverage:** All four artefacts (md, JSON, AGENTS.md section, deployment-matrix validation) are covered. SSOT, drift gate, deterministic output, atomic write — all present. Hybrid SSOT (Go inventories) implemented in Tasks 2–5. Migration plan order mirrors spec.
 - **Type consistency:** `Status`, `Contract`, `RESTRoute`, `GRPCMethod`, `MCPTool`, `SchemaObject` — defined in Task 1, used unchanged in 2/3/4/5/6+. Sort wrappers (`ByRESTRoute`, etc.) introduced once and reused.
 - **Open question deferred:** The spec leaves how to embed swaggo summaries open. This plan does not consume swaggo — it only uses the Go inventories. Adding swaggo enrichment is intentionally out of scope and can be a follow-up plan.
-- **Risk flagged:** `Levara/proto/pbv2` package may not exist in the current tree. Task 4 step 5 covers both cases — fold into pb or stub `loadV2File` to return nil.
+- **Risk flagged:** `proto/pbv2` package may not exist in the current tree. Task 4 step 5 covers both cases — fold into pb or stub `loadV2File` to return nil.

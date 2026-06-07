@@ -3,9 +3,9 @@
 > Persistent memory, search, and workspace infrastructure for AI agents, built as one Go binary.
 
 [![Go](https://img.shields.io/badge/Go-1.26+-00ADD8?logo=go&logoColor=white)](https://go.dev/)
-[![MCP](https://img.shields.io/badge/MCP-agent_memory-6E56CF)](Levara/docs/marketing/personal.md)
-[![Profiles](https://img.shields.io/badge/profiles-personal%20%7C%20solo%20pro%20%7C%20team%20%7C%20enterprise-111827)](Levara/docs/profile-presets.md)
-[![License](https://img.shields.io/badge/license-MIT-green)](Levara/LICENSE)
+[![MCP](https://img.shields.io/badge/MCP-agent_memory-6E56CF)](docs/marketing/personal.md)
+[![Profiles](https://img.shields.io/badge/profiles-personal%20%7C%20solo%20pro%20%7C%20team%20%7C%20enterprise-111827)](docs/profile-presets.md)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 Levara is the memory layer for humans working with AI agents. It combines an
 in-process HNSW vector engine, BM25, temporal knowledge graph storage, MCP tools,
@@ -14,10 +14,10 @@ an assistant can remember project facts, decisions, files, and team boundaries
 across sessions.
 
 <CardGroup cols={2}>
-  <Card title="For one developer" icon="user" href="Levara/docs/marketing/personal.md">
+  <Card title="For one developer" icon="user" href="docs/marketing/personal.md">
     Local SQLite, local files, MCP, memory palace, and no required auth by default.
   </Card>
-  <Card title="For teams" icon="users" href="Levara/docs/marketing/team.md">
+  <Card title="For teams" icon="users" href="docs/marketing/team.md">
     Postgres, required auth, dataset/project sharing, workspace ACL, audit, and per-agent credentials.
   </Card>
 </CardGroup>
@@ -61,9 +61,6 @@ those layers together:
   sync, config validation, Docker, ARM64 build, and release gates.
 
 ## Product Profiles
-
-The profile snippets assume the current working directory is `Levara/`, the Go
-module inside this repository.
 
 <Tabs>
   <Tab title="Personal">
@@ -129,22 +126,16 @@ backends, legal-hold enforcement in production object stores.
   </Tab>
 </Tabs>
 
-See [docs/profile-presets.md](Levara/docs/profile-presets.md) and
-[docs/product-ladder.md](Levara/docs/product-ladder.md) for the full product ladder.
+See [docs/profile-presets.md](docs/profile-presets.md) and
+[docs/product-ladder.md](docs/product-ladder.md) for the full product ladder.
 
 ## Quick Start
-
-Commands below are run from the Go module directory:
-
-```bash
-cd Levara
-```
 
 ### From Source
 
 ```bash
 git clone https://github.com/Stek0v/Levara.git
-cd Levara/Levara
+cd Levara
 
 go test ./pkg/profile ./cmd/server
 make build
@@ -157,7 +148,7 @@ cp deploy/profiles/personal.local.env.example .env
 ### With Docker
 
 ```bash
-cd Levara/Levara
+cd Levara
 docker compose up -d --build
 ```
 
@@ -176,8 +167,7 @@ docker compose up -d --build
 }
 ```
 
-Example host configs live in
-[Levara/examples/agent-hosts](Levara/examples/agent-hosts).
+Example host configs live in [examples/agent-hosts](examples/agent-hosts).
 
 ## Interfaces
 
@@ -237,7 +227,7 @@ flowchart TD
 ## Repository Map
 
 ```text
-Levara/
+
   cmd/
     server/          HTTP + gRPC + MCP server, profile/config validation
     cli/             Levara CLI
@@ -336,19 +326,19 @@ make contract-check
 ```
 
 For security-sensitive changes, use
-[docs/security-diff-checklist.md](Levara/docs/security-diff-checklist.md). It covers
+[docs/security-diff-checklist.md](docs/security-diff-checklist.md). It covers
 access, tenant isolation, audit export, storage/KMS, and MCP memory ownership.
 
 ## Marketing and Product Docs
 
 | Document | Audience |
 |---|---|
-| [docs/marketing/personal.md](Levara/docs/marketing/personal.md) | One developer using local AI agents |
-| [docs/marketing/solo-pro.md](Levara/docs/marketing/solo-pro.md) | Power user with several machines |
-| [docs/marketing/team.md](Levara/docs/marketing/team.md) | Small team with humans and agents |
-| [docs/marketing/enterprise.md](Levara/docs/marketing/enterprise.md) | Organizations with governance and audit needs |
-| [docs/product-ladder.md](Levara/docs/product-ladder.md) | Engineering/product source of truth for tier boundaries |
-| [docs/profile-presets.md](Levara/docs/profile-presets.md) | Concrete env presets and strict-mode behavior |
+| [docs/marketing/personal.md](docs/marketing/personal.md) | One developer using local AI agents |
+| [docs/marketing/solo-pro.md](docs/marketing/solo-pro.md) | Power user with several machines |
+| [docs/marketing/team.md](docs/marketing/team.md) | Small team with humans and agents |
+| [docs/marketing/enterprise.md](docs/marketing/enterprise.md) | Organizations with governance and audit needs |
+| [docs/product-ladder.md](docs/product-ladder.md) | Engineering/product source of truth for tier boundaries |
+| [docs/profile-presets.md](docs/profile-presets.md) | Concrete env presets and strict-mode behavior |
 
 ## Roadmap Honesty
 
@@ -363,7 +353,7 @@ hold enforcement in those backends.
 
 ## Contributing
 
-1. Read [docs/product-ladder.md](Levara/docs/product-ladder.md) before changing profile
+1. Read [docs/product-ladder.md](docs/product-ladder.md) before changing profile
    behavior or product claims.
 2. Keep public REST/MCP/gRPC contract changes explicit; run `make contract-check`.
 3. Keep policy decisions in `pkg/access`, not scattered through HTTP handlers.
@@ -372,4 +362,4 @@ hold enforcement in those backends.
 
 ## License
 
-MIT. See [LICENSE](Levara/LICENSE).
+MIT. See [LICENSE](LICENSE).

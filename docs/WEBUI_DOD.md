@@ -273,7 +273,7 @@
 ### T46. Monorepo или отдельный репо
 **DoD:**
 - [ ] Решение: **отдельный репо** `levara-webui` (Go backend и JS frontend имеют разные CI/CD, dependencies, release cycles)
-- [ ] Альтернатива: `Levara/webui/` monorepo — если команда маленькая и хочет atomic commits
+- [ ] Альтернатива: `webui/` monorepo — если команда маленькая и хочет atomic commits
 - [ ] Задокументировано: решение + обоснование
 - [ ] Связь: WebUI repo ссылается на OpenAPI spec из Levara repo (git submodule или API artifact)
 

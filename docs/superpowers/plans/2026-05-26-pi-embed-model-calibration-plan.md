@@ -1565,7 +1565,7 @@ Manual validation. Prove the full chain works before the overnight run.
 - [ ] **Step 1: Cross-compile Levara binary**
 
 ```bash
-cd Levara && GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o /tmp/levara-pi ./cmd/server
+GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o /tmp/levara-pi ./cmd/server
 file /tmp/levara-pi
 ```
 
@@ -1575,7 +1575,7 @@ Expected: ELF 64-bit LSB ARM aarch64.
 
 ```bash
 ssh stek0v@10.23.0.53 'mkdir -p /home/stek0v/levara-bench/data /home/stek0v/levara-source'
-rsync -a --delete --exclude='.git' --exclude='Levara/data' --exclude='out' \
+rsync -a --delete --exclude='.git' --exclude='data' --exclude='out' \
   ./ stek0v@10.23.0.53:/home/stek0v/levara-source/
 scp /tmp/levara-pi stek0v@10.23.0.53:/home/stek0v/levara-bench/levara
 ssh stek0v@10.23.0.53 'chmod +x /home/stek0v/levara-bench/levara && \

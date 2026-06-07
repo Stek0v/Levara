@@ -9,7 +9,7 @@ no SDK.
 The local Levara stack must be running:
 
 ```bash
-make stack-dev   # from the repo root
+docker compose up -d --build   # from the repo root
 ```
 
 This brings up Levara on `:8080` and Ollama on `:11434` with the
@@ -51,7 +51,7 @@ boot time (`embedding_dim=768`, cosine distance).
 ## Next steps
 
 - Swap `nomic-embed-text` for `text-embedding-3-large` by setting
-  `EMBEDDING_PROVIDER=openai` in `.env` and re-running `make stack-dev`.
+  `EMBEDDING_PROVIDER=openai` in `.env` and re-running `docker compose up -d --build`.
 - Use Levara's MCP surface (`POST /mcp`) for richer tools like
   `cognify`, `recall_memory`, and `query_entity` — call the
   `levara_instructions` tool first to get the agent contract.

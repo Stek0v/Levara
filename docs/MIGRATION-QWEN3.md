@@ -96,7 +96,7 @@ docker compose logs -f qwen3-embed qwen3-rerank-llm
   --batch-size 32 --parallel 4 --cont-batching &
 
 # Cohere-compat adapter on :9003 (from Levara repo)
-cd Levara && go build -o /tmp/qwen3rerank ./cmd/qwen3rerank
+go build -o /tmp/qwen3rerank ./cmd/qwen3rerank
 QWEN3_UPSTREAM=http://127.0.0.1:9002 \
 QWEN3_MODEL=qwen3-reranker-0.6b \
   /tmp/qwen3rerank &

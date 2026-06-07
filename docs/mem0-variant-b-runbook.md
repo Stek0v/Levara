@@ -57,7 +57,7 @@ mem0.search(query)
 ```
 RuntimeError: MemoryFS daemon unreachable at http://localhost:7777
   (ConnectionError: ...). Variant B writes require the MemoryFS Rust
-  daemon to be running. Either start it (see Levara/docs/mem0-variant-b-runbook.md)
+  daemon to be running. Either start it (see docs/mem0-variant-b-runbook.md)
   or pass require_daemon=False to defer the check to first write.
 ```
 
@@ -73,7 +73,7 @@ RuntimeError: MemoryFS daemon unreachable at http://localhost:7777
 
 ## Поднять MemoryFS daemon (когда Phase 1 будет готов)
 
-Сейчас бинарь в архиве: `_archive/2026-05-10/LevaraOs/memoryfs-planning/`.
+Сейчас бинарь в архиве: `_archive/2026-05-10/levara-memoryfs-planning/`.
 Когда Phase 1 ship выпустит persistence — порядок:
 
 ```bash
@@ -132,7 +132,7 @@ vector_store:
 |---|---|---|
 | `RuntimeError: MemoryFS daemon unreachable` на init | daemon не запущен | `cargo run -p memoryfs` или временно `require_daemon=False` + переключиться на `mem0` provider |
 | `mem0.add()` молча проходит, но `search()` ничего не находит | индексер MemoryFS не догнал, или Levara dim mismatch | `curl localhost:8080/api/v1/collections \| jq '.[]\|select(.name=="mem0")'` — проверить `embedding_dim` |
-| `Connection refused` на :8080 | Levara-сервер не поднят | `docker compose up -d` или `cd Levara && go run cmd/server/main.go` |
+| `Connection refused` на :8080 | Levara-сервер не поднят | `docker compose up -d` или `go run cmd/server/main.go` |
 | `401` от MemoryFS | `levara_api_key` истёк или не задан | передать `LEVARA_JWT` env |
 | Свежий insert не виден в `list(user_id=X)` | работает корректно — `list` теперь читает MemoryFS напрямую (`memories/{user_id}/`), не Levara top-k. Если файла нет в MemoryFS — `insert` не дошёл до commit | проверить логи MemoryFS commit |
 

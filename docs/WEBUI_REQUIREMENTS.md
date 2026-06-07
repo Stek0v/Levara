@@ -973,7 +973,7 @@ Background job → `POST /memories` (type: alert) → push notification
 
 | # | Задача | Приоритет | Оценка | Описание |
 |---|--------|:---------:|:------:|----------|
-| T46 | Monorepo или отдельный репо | P0 | Small | Решение: WebUI в `levara-webui/` отдельный repo или `Levara/webui/` monorepo |
+| T46 | Monorepo или отдельный репо | P0 | Small | Решение: WebUI в `levara-webui/` отдельный repo или `webui/` monorepo |
 | T47 | Linting + formatting | P0 | Medium | ESLint + Prettier + EditorConfig + Stylelint. Обязательные checks в CI |
 | T48 | PR pipeline | P0 | Medium | lint → typecheck → unit → build → (preview deploy). GitHub Actions |
 | T49 | Staging environment | P0 | Large | Auto-deploy PR → preview URL. Main → staging. Tag → production |

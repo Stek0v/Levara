@@ -3,7 +3,7 @@
 services:
   levara:
     build:
-      context: ./Levara
+      context: .
       platforms:
         - linux/arm64
     ports:

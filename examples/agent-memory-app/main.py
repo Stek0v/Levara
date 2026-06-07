@@ -1,6 +1,6 @@
 """agent-memory-app — minimal end-to-end Levara example.
 
-Runs against the local stack started by `make stack-dev`. Embeds three
+Runs against the local stack started by `docker compose up -d --build`. Embeds three
 short sentences with Ollama's nomic-embed-text, inserts them into the
 default `mem0` collection, then runs a semantic search and prints the
 ranked results.
@@ -71,5 +71,5 @@ if __name__ == "__main__":
         print(f"HTTP error: {exc.response.status_code} {exc.response.text}", file=sys.stderr)
         sys.exit(1)
     except requests.ConnectionError:
-        print("Cannot reach Levara/Ollama — run `make stack-dev` first.", file=sys.stderr)
+        print("Cannot reach Levara/Ollama — run `docker compose up -d --build` first.", file=sys.stderr)
         sys.exit(1)

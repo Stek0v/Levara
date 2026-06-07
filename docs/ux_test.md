@@ -256,7 +256,7 @@
 
 ## Блок 9: CI/CD (T46-T50)
 
-### T46. Repo structure — **Статус**: ✅ Done (Levara/webui/ monorepo)
+### T46. Repo structure — **Статус**: ✅ Done (webui/ monorepo)
 ### T47. Linting — **Статус**: ✅ Done (ESLint + Prettier + EditorConfig)
 - [ ] **TEST-T47-1**: .prettierrc exists
 - [ ] **TEST-T47-2**: .editorconfig exists

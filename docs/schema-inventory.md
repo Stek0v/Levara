@@ -2,9 +2,9 @@
 
 Дата: 2026-05-17.
 
-Источник истины: migration statements в `Levara/internal/http/schema.go`.
+Источник истины: migration statements в `internal/http/schema.go`.
 Кодовый инвентарь строится функцией `SchemaInventory()` в
-`Levara/internal/http/schema_inventory.go`; architecture tests проверяют
+`internal/http/schema_inventory.go`; architecture tests проверяют
 критичные таблицы для PostgreSQL и SQLite.
 
 ## Назначение
