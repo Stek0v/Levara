@@ -14,7 +14,7 @@ relevant file into your deployment environment and replace placeholder values.
 | `personal` | One developer with local AI agents | `deploy/profiles/personal.local.env.example` | writable data dir, optional embedder | auth optional | SQLite + local filesystem | local workspace audit optional | data dir cannot be used |
 | `solo_pro` | One power user syncing several machines | `deploy/profiles/solo_pro.sync.env.example` | writable data dir, stable sync token when sync is enabled | API key/bearer token for sync | SQLite or Postgres; local or S3-compatible storage | optional local export | strict mode fails when sync is configured without credentials |
 | `team` | Small team with humans and per-agent credentials | `deploy/profiles/team.postgres.env.example` | Postgres, stable `JWT_SECRET`, server started with `-require-auth` | JWT/API keys | Postgres metadata + shared workspace root | workspace audit export expected | strict mode fails without Postgres, required auth, or stable JWT secret |
-| `enterprise` | Corporate teams with tenant governance | `deploy/profiles/enterprise.strict.env.example` | Postgres, required auth or SSO bridge, tenant enforcement, audit export | required auth or SSO bridge | corporate storage/KMS adapters pending; local fallback only | audit export required | strict mode fails without Postgres, auth/SSO, stable signing config, tenant enforcement, or audit sink |
+| `enterprise` | Corporate teams with tenant governance | `deploy/profiles/enterprise.strict.env.example` | Postgres, required auth or SSO bridge, tenant enforcement, audit export | required auth or SSO bridge | storage/KMS contracts exist; concrete corporate backends pending | audit export required | strict mode fails without Postgres, auth/SSO, stable signing config, tenant enforcement, or audit sink |
 
 ## Personal / Local
 
@@ -102,16 +102,14 @@ Recommended checks before committing profile or deployment changes:
 
 ```bash
 make profile-config-check
-make profile-smoke
 make test-commit
 make test-release-candidate
 ```
 
-`make profile-smoke` builds the server and runs each non-enterprise preset
-(`personal`, `solo_pro`, `team`) through `server -config-check` — a dry run that
-validates the resolved profile from env + flags and exits without opening
-listeners, a database, or any network connection. Use it to confirm a preset is
-internally consistent before deploying. For a single preset:
+`make profile-config-check` exercises the profile validation code and server
+bootstrap config assembly without opening listeners, a database, or any network
+connection. Use `server -config-check` with a copied preset to confirm one
+deployment profile before starting it:
 
 ```bash
 set -a; source deploy/profiles/personal.local.env.example; set +a

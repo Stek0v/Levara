@@ -75,7 +75,7 @@ def _wait_http_ready(url: str, timeout_s: float = 60.0) -> None:
 
 def _resolve_server_cmd() -> list[str]:
     """Pick the cheapest server invocation available."""
-    for candidate in ("levara-server", "cognevra-server", "server"):
+    for candidate in ("levara-server", "server"):
         p = REPO_ROOT / candidate
         if p.is_file() and os.access(p, os.X_OK):
             return [str(p)]

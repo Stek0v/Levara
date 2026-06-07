@@ -123,7 +123,7 @@ func TestChunkBookParity(t *testing.T) {
 	// Try multiple paths (depends on where go test runs from)
 	paths := []string{
 		"../../../../Edvards_Dzanet_Uragan_r4_P61XH.txt",
-		"/home/stek0v/src/new_db/Edvards_Dzanet_Uragan_r4_P61XH.txt",
+		"/Users/stek0v/src/levara/Edvards_Dzanet_Uragan_r4_P61XH.txt",
 	}
 	var data []byte
 	var err error
@@ -221,7 +221,7 @@ func TestChunkIDUniqueAcrossDocuments(t *testing.T) {
 func BenchmarkChunkBook(b *testing.B) {
 	paths := []string{
 		"../../../../Edvards_Dzanet_Uragan_r4_P61XH.txt",
-		"/home/stek0v/src/new_db/Edvards_Dzanet_Uragan_r4_P61XH.txt",
+		"/Users/stek0v/src/levara/Edvards_Dzanet_Uragan_r4_P61XH.txt",
 	}
 	var data []byte
 	var err error

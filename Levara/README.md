@@ -1,407 +1,365 @@
 # Levara
 
-> High-performance knowledge graph engine for AI applications. Built in Go.
+> Persistent memory, search, and workspace infrastructure for AI agents, built as one Go binary.
 
-[![Go Version](https://img.shields.io/badge/Go-1.26+-blue.svg)](https://go.dev/)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Go](https://img.shields.io/badge/Go-1.26+-00ADD8?logo=go&logoColor=white)](https://go.dev/)
+[![MCP](https://img.shields.io/badge/MCP-agent_memory-6E56CF)](docs/marketing/personal.md)
+[![Profiles](https://img.shields.io/badge/profiles-personal%20%7C%20solo%20pro%20%7C%20team%20%7C%20enterprise-111827)](docs/profile-presets.md)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-## Overview
+Levara is the memory layer for humans working with AI agents. It combines an
+in-process HNSW vector engine, BM25, temporal knowledge graph storage, MCP tools,
+workspace-aware Markdown indexing, sync, audit, and runtime profile validation so
+an assistant can remember project facts, decisions, files, and team boundaries
+across sessions.
 
-Levara is a production-ready knowledge graph engine that transforms raw data into persistent, searchable knowledge graphs. It combines vector search (HNSW + AVX2 SIMD), BM25 full-text, a knowledge graph with temporal validity, a write-ahead log, and an LLM-powered cognify pipeline into a single Go binary.
+<CardGroup cols={2}>
+  <Card title="For one developer" icon="user" href="docs/marketing/personal.md">
+    Local SQLite, local files, MCP, memory palace, and no required auth by default.
+  </Card>
+  <Card title="For teams" icon="users" href="docs/marketing/team.md">
+    Postgres, required auth, dataset/project sharing, workspace ACL, audit, and per-agent credentials.
+  </Card>
+</CardGroup>
 
-Levara is the engine layer of **LevaraOS**, a unified persistent memory platform for AI agents and IDEs (Claude Code, Cursor). On top of the vector/graph core it ships a **memory palace** (durable agent memory with room × hall taxonomy), a **verifiable workspace** (Markdown-as-source-of-truth write layer), **System2 consolidation** (background memory compaction), and **Mac ↔ Pi sync**.
+> [!NOTE]
+> This README uses MDX-friendly structure (`<CardGroup>`, `<Card>`, `<Tabs>`,
+> `<Accordion>`) while remaining readable as plain Markdown on GitHub.
 
-**Key features:**
+## Why Levara
 
-- **15 search types** -- vector, graph, hybrid, temporal, chain-of-thought, NL-to-Cypher, and more
-- **22+ document formats** -- PDF, DOCX, audio transcription via Whisper, images, code, and more
-- **Multi-provider LLM** -- OpenAI, Anthropic, Ollama (local)
-- **MCP server** for Claude Desktop / Cursor / Claude Code -- 66 tools across graph, memory, workspace, and observability surfaces
-- **Memory palace** -- durable agent memory with room × hall taxonomy, pinning, diaries, and wake-up briefings
-- **Verifiable workspace (Variant B)** -- `.md` files are the source of truth; vector/graph indexes are disposable derivatives, with commits, ACL, and an audit log
-- **System2 consolidation** -- background janitor clusters near-duplicate memories and merges (cosine ≥ 0.97) or LLM-abstracts (0.85–0.97) them; fully reversible
-- **Knowledge graph with temporal validity** -- entity edges carry valid-from/valid-until windows and auto-supersede on update
-- **gRPC v1 + v2** -- canonical 47-RPC v1 surface plus a minimal write-only v2, both on `:50051`
-- **JWT auth + rate limiting** -- shared HS256 auth across HTTP and gRPC, per-user and per-IP token buckets
-- **Raft clustering** -- optional sharding and replication
-- **Cross-encoder + graph-aware reranking** -- Cohere-compatible reranker and α·vector + β·graph + γ·rerank fusion
-- **Louvain community detection** -- graph clustering for community-aware retrieval
-- **Mac ↔ Pi sync** -- bearer-authenticated bidirectional sync with version-skew detection
-- **SQLite + PostgreSQL** dual-database support
-- **ARM64 support** -- runs on Raspberry Pi
-- **S3 cloud storage** + Langfuse tracing
-- **Zero-copy arena allocator** -- minimizes GC pauses
-- **HNSW indexing** with AVX2 SIMD distance -- O(log N) ANN search
-- **WAL group commit** -- 100% crash recovery validated
-- **Prometheus metrics** -- Grafana-ready
+AI agents are only useful when they keep the right context. Chat history is too
+noisy, vector search alone loses provenance, and corporate teams need auth,
+tenant isolation, and audit before they can trust agent memory. Levara packages
+those layers together:
+
+| Layer | What it does | Key packages |
+|---|---|---|
+| Core engine | WAL-backed HNSW, arena storage, BM25, graph search, hybrid/rerank routing | `internal/store`, `pkg/bm25`, `pkg/vectorstore`, `pkg/graphstore`, `pkg/graphrank`, `pkg/router` |
+| Agent memory | MCP tools, memory palace, wake-up briefings, diaries, chat recall | `internal/http/mcp.go`, `pkg/mcp`, `pkg/consolidate` |
+| Workspace plane | Markdown-as-source-of-truth, workspace search/read/write/commit, audit, jobs | `pkg/workspace`, `internal/http/workspace*.go` |
+| Identity and access | JWT/API keys, RBAC, tenant membership, policy facade, OIDC verified-claims adapter | `pkg/access`, `pkg/auth`, `internal/http/auth.go` |
+| Enterprise adapters | Audit export, storage/KMS contracts, SSO/SCIM seams | `pkg/audit`, `pkg/storage`, `pkg/access` |
+
+## Highlights
+
+- **Agent memory that survives sessions**: `save_memory`, `recall_memory`,
+  `wake_up`, pins, room x hall taxonomy, and per-agent diaries.
+- **Verifiable workspace**: Markdown files are the source of truth; vector/graph
+  indexes are disposable derivatives with commit, conflict, audit, and reindex
+  flows.
+- **Search stack**: HNSW vector search, BM25 full text, hybrid RRF, graph-aware
+  reranking, temporal edges, NL-to-Cypher, and structured filters.
+- **MCP-first integration**: one `/mcp` endpoint for Claude Code, Cursor, Codex,
+  Cline, and other MCP clients.
+- **Product profiles**: `personal`, `solo_pro`, `team`, and `enterprise` model
+  the same codebase for different audiences.
+- **Enterprise boundaries without core pollution**: access policy, audit export,
+  OIDC verified claims, storage metadata, and KMS/BYOK hooks are adapter seams,
+  not logic embedded in search handlers.
+- **Operational shape**: Prometheus metrics, JSONL audit export, backup/restore,
+  sync, config validation, Docker, ARM64 build, and release gates.
+
+## Product Profiles
+
+<Tabs>
+  <Tab title="Personal">
+
+Use when a single developer wants local AI memory.
+
+```bash
+cp deploy/profiles/personal.local.env.example .env
+./levara-server -config-check
+./levara-server -standalone=true -dim=768 -port=8080
+```
+
+Default posture: SQLite, local filesystem, MCP/workspace enabled, auth optional.
+
+  </Tab>
+  <Tab title="Solo Pro">
+
+Use when one power user syncs memory across a laptop, home server, or Raspberry Pi.
+
+```bash
+cp deploy/profiles/solo_pro.sync.env.example .env
+# set LEVARA_SYNC_REMOTE_URL and LEVARA_TOKEN
+./levara-server -config-check
+```
+
+Default posture: local + sync, backups, optional S3-compatible storage, basic
+observability.
+
+  </Tab>
+  <Tab title="Team">
+
+Use when humans and agents share projects.
+
+```bash
+cp deploy/profiles/team.postgres.env.example .env
+# set POSTGRES_DSN and a stable JWT_SECRET
+./levara-server -require-auth -config-check
+./levara-server -require-auth
+```
+
+Default posture: Postgres, required auth, dataset/project sharing, workspace ACL,
+audit, and async indexing jobs.
+
+  </Tab>
+  <Tab title="Enterprise">
+
+Use for tenant governance, central identity, audit export, and adapter-based
+corporate integration.
+
+```bash
+cp deploy/profiles/enterprise.strict.env.example .env
+# configure Postgres, auth/SSO bridge, tenant enforcement, and audit sink
+./levara-server -require-auth -config-check
+```
+
+Implemented: tenant policy, strict profile validation, audit export boundary,
+OIDC verified-claims adapter, SCIM-shaped provisioning seam, storage/KMS adapter
+contracts.
+
+Still adapter work: SAML, SCIM HTTP surface, SIEM sink, concrete KMS/BYOK
+backends, legal-hold enforcement in production object stores.
+
+  </Tab>
+</Tabs>
+
+See [docs/profile-presets.md](docs/profile-presets.md) and
+[docs/product-ladder.md](docs/product-ladder.md) for the full product ladder.
 
 ## Quick Start
 
+### From Source
+
 ```bash
-# Download
-go install github.com/stek0v/levara/cmd/server@latest
+git clone https://github.com/Stek0v/Levara.git
+cd Levara/Levara
 
-# Start with SQLite (zero dependencies)
-./levara-server -standalone=true -dim=768 -port=8080
+go test ./pkg/profile ./cmd/server
+make build
 
-# Or with Docker
+cp deploy/profiles/personal.local.env.example .env
+./levara-server -config-check
+./levara-server -standalone=true -dim=768 -port=8080 -grpc-port=50051
+```
+
+### With Docker
+
+```bash
+cd Levara/Levara
 docker compose up -d --build
-# Levara: http://localhost:8080 | gRPC: localhost:50051
 ```
 
-## Architecture
-
-```
-Client --> Levara HTTP :8080 / gRPC :50051 (v1 + v2) / MCP
-              |
-   transport  |-- JWT auth (HS256, shared HTTP + gRPC) + rate limiting
-              |-- MCP server (66 tools)
-              |
-     storage  |-- HNSW Vector Index (in-process, AVX2 SIMD)
-              |-- WAL Durability (group commit, crash recovery 100%)
-              |-- Arena Memory Allocator (zero-copy, GC-free)
-              |-- PostgreSQL / SQLite
-              |-- Neo4j Graph DB (optional, SQL fallback)
-              |
-     compute  |-- BM25 Full-Text + Hybrid RRF
-              |-- Cognify pipeline (chunk -> extract -> dedup -> embed -> write)
-              |-- Cross-encoder + graph-aware reranking
-              |-- Louvain community detection
-              |-- LLM (OpenAI / Anthropic / Ollama)
-              |
-   platform   |-- Memory palace (room x hall, pins, diaries)
-              |-- Verifiable workspace (Variant B, .md source of truth)
-              |-- System2 consolidation (merge / abstract, reversible)
-              |-- Sync (Mac <-> Pi, bearer auth, version-skew warning)
-              |-- Raft cluster (optional sharding / replication)
-              |-- Prometheus Metrics
-```
-
-```
-Levara/
-  cmd/
-    server/         # HTTP + gRPC entry point (registers v1 + v2)
-    cli/            # levara CLI
-    backup/         # levara-backup (backup / restore)
-    reconcile/      # SQL <-> vector consistency tool
-    contract/       # MCP agent-contract codegen / check
-    agent-hosts/    # agent host registry tooling
-    loadtest/       # load testing
-    qwen3rerank/    # rerank sidecar helper
-  internal/
-    store/          # db, wal, hnsw, arena, disk, collections
-    http/           # REST router + 50+ handlers (search, cognify, mcp,
-                    #   auth, sync, workspace, ratelimit, observe)
-    grpc/           # service v1 (47 RPCs) + v2 + auth / ratelimit interceptors
-    cluster/        # Raft sharding / replication (shard, node, fsm)
-    metrics/        # Prometheus telemetry + bounded-cardinality user buckets
-    contract/       # MCP contract types
-  pkg/
-    orchestrator/   # cognify pipeline (chunk -> extract -> dedup -> embed -> write)
-    bm25/           # BM25 inverted index + hybrid RRF
-    graph/          # knowledge graph construction
-    graphdb/        # Neo4j integration + SQL fallback
-    graphstore/     # graph persistence
-    graphrank/      # graph-aware reranking (vector + graph + rerank)
-    community/      # Louvain community detection
-    rerank/         # cross-encoder reranking (Cohere-compatible)
-    router/         # smart search routing + adaptive weights
-    mcp/            # 66 MCP tools + Deps interface + output schemas
-    consolidate/    # System2 memory consolidation (merge / abstract)
-    workspace/      # verifiable memory workspace (Variant B)
-    auth/           # shared JWT verification
-    audit/          # audit log
-    embed/          # embedding providers
-    extract/        # entity extraction
-    chunker/        # document chunking
-    classify/       # text classification
-    fileio/         # file I/O (22+ formats)
-    fetch/          # URL / document fetching
-    ingest/         # ingestion pipeline
-    llm/            # LLM providers (OpenAI, Anthropic, Ollama)
-    llmcache/       # LLM response caching
-    llmproxy/       # LLM proxy / routing
-    observe/        # Langfuse tracing
-    ontology/       # ontology management
-    temporal/       # temporal validity / time-aware edges
-    aggregator/     # search result aggregation
-    audio/          # audio transcription (Whisper)
-    git/            # git repository analysis
-    storage/        # S3 cloud storage
-    vectorstore/    # vector store abstraction
-    backup/         # backup / restore library
-    runreg/         # background-run registry (TTL janitor)
-    agenthosts/     # agent host registry
-  proto/            # gRPC definitions (v1 + v2)
-  webui/            # Next.js 15 WebUI
-```
-
-## Performance
-
-Benchmarked on i7-7700 @ 3.60 GHz, Linux 6.8, dim=1024, gRPC transport.
-
-### Search Latency
-
-| Scale | p50 Latency | QPS | Notes |
-|-------|-------------|-----|-------|
-| 1K vectors | **0.99 ms** | **589** | HNSW + AVX2 |
-| 10K vectors | **7.88 ms** | **480** | +695% scale, +3.7% latency |
-| 100K vectors | **23.7 ms** | **143** | O(log N) stable |
-
-### vs LanceDB (1.4K real embeddings)
-
-| Metric | Levara | LanceDB | Speedup |
-|--------|--------|---------|---------|
-| Search p50 | **2.6 ms** | 9.1 ms | **3.5x** |
-| Concurrent QPS | **589** | 109 | **5.4x** |
-| Data ingestion | **0.08 ms/item** | 287+ ms | **3,379x** |
-| Scale 100K search | **23.7 ms** | 203.7 ms | **8.6x** |
-| Crash recovery | **100%** | N/A | Levara |
-
-**Levara** wins on read-heavy concurrent workloads. **LanceDB** wins on batch ingestion of raw vectors.
-
-## Search Types (15)
-
-| # | Type | Description |
-|---|------|-------------|
-| 1 | `VECTOR` | Cosine similarity nearest-neighbor search |
-| 2 | `GRAPH_COMPLETION` | Graph-aware search with entity relationship traversal |
-| 3 | `HYBRID` | Combined vector + BM25 full-text search |
-| 4 | `TEMPORAL` | Time-aware search across document versions |
-| 5 | `COT` | Chain-of-thought multi-step reasoning search |
-| 6 | `NL_CYPHER` | Natural language to Cypher query translation |
-| 7 | `ENTITY` | Named entity extraction and search |
-| 8 | `KEYWORD` | BM25 keyword-based full-text search |
-| 9 | `SUMMARY` | Document summarization search |
-| 10 | `CLASSIFICATION` | Text classification search |
-| 11 | `ONTOLOGY` | Ontology-guided semantic search |
-| 12 | `PROVENANCE` | Data lineage and source tracking |
-| 13 | `AGGREGATE` | Multi-source aggregated ranked search |
-| 14 | `STRUCTURED` | Structured metadata filtering + vector search |
-| 15 | `GIT` | Git repository analysis and code search |
-
-### Reranking (default-on)
-
-Phase 2 ships a cross-encoder reranker that runs by default whenever
-`RERANK_ENDPOINT` is configured. Clients do not need to set any flag --
-search responses carry a per-result `reranked: true` to indicate which
-rows were reordered by the sidecar. To opt out, send `"rerank": false`
-in the `/api/v1/search` body. An adaptive gate (`RERANK_SCORE_GAP_THRESHOLD`)
-can skip the cross-encoder when the candidate score spread is already wide.
-See `docs/api-reference.md` and `docs/phase2-rerank-default-design.md` for the
-tri-state semantics, latency budget (`RERANK_BUDGET_MS`, default 1500ms) and the
-`levara_rerank_invocations_total{outcome=...}` Prometheus counter.
-
-On top of the cross-encoder, `pkg/graphrank` fuses three signals --
-`α·vector + β·graph + γ·rerank` -- so graph-connected results are
-boosted alongside semantic relevance.
-
-## Subsystems
-
-### Memory palace
-
-A durable agent-memory layer addressed on two independent axes: **room**
-(*what* the memory is about -- a free-form subsystem/topic) and **hall**
-(*what kind* of memory -- a controlled vocabulary: `fact`, `event`,
-`decision`, `preference`, `advice`, `discovery`). Supports pinning critical
-facts for cheap `wake_up` briefings, per-agent diaries (isolated namespaces),
-and recall filtered by room/hall. Backed by the same HNSW + SQL stack, kept
-SQL ↔ vector consistent on every write with a `reconcile_memory` sweep.
-
-### Verifiable workspace (Variant B)
-
-A write layer where `.md` files are the source of truth and the Levara
-vector/graph indexes are disposable derivatives. Agents write through
-`workspace_write` + `workspace_commit`; the workspace then indexes the
-committed Markdown into Levara. Humans read the `.md` files directly in the
-repo. Ships ACL/access checks, an audit log, conflict detection, background
-index jobs, and reconcile/GC operations.
-
-### System2 consolidation
-
-A background janitor (opt-in via `CONSOLIDATION_INTERVAL`) periodically
-compresses a collection's memory: it clusters near-duplicate/related records,
-then mechanically **merges** them (cosine ≥ 0.97, keep newest) or
-LLM-**abstracts** them (0.85 ≤ cosine < 0.97) into a single record. Fully
-reversible -- sources are superseded and archived, not deleted, and restorable
-via `consolidation_revert(run_id)`. Run on demand with `consolidate(..., dry_run=true)`
-to preview.
-
-### Sync (Mac ↔ Pi)
-
-Bidirectional, bearer-authenticated sync between a local instance and an edge
-server (Raspberry Pi). `sync(remote_url=..., direction=pull|push)` reconciles
-collections; a version-skew check warns when the two binaries diverge.
-
-### gRPC v1 + v2
-
-Both services register on the same `:50051` listener. `levara.v1.LevaraService`
-is the canonical surface (47 RPCs -- write, read, cognify, graph, hybrid
-search). `levara.v2.LevaraServiceV2` is a minimal write-only subset (Insert,
-BatchInsert, Delete, Search, Info) with typed `ErrorDetail`. v1 is long-term;
-v2 is positioned as a minimal write API for new clients that don't need
-graph/cognify endpoints.
-
-## MCP Integration
-
-Levara exposes an MCP (Model Context Protocol) server for seamless integration
-with Claude Desktop, Cursor, Claude Code, and other MCP-compatible clients.
-**66 tools** are registered (`pkg/mcp/tools.go`), grouped by surface:
-
-| Surface | # | Tools |
-|---------|---|-------|
-| Knowledge graph & ingestion | 9 | `add`, `cognify`, `cognify_status`, `codify`, `list_data`, `delete`, `prune`, `prune_graph`, `ingestion_status` |
-| Search & retrieval | 6 | `search`, `cross_search`, `query_entity`, `list_communities`, `analyze_commits`, `git_search` |
-| Memory palace | 8 | `save_memory`, `recall_memory`, `list_memories`, `pin_memory`, `unpin_memory`, `wake_up`, `diary_write`, `diary_read` |
-| Consolidation (System2) | 3 | `consolidate`, `consolidation_revert`, `reconcile_memory` |
-| Chat history | 3 | `save_chat`, `recall_chat`, `search_chats` |
-| Verifiable workspace | 25 | `workspace_write`, `workspace_read`, `workspace_index`, `workspace_search`, `workspace_commit`, `workspace_log`, `workspace_revert`, `workspace_manifest`, `workspace_delete`, `workspace_reconcile`, `workspace_reindex_paths`, `workspace_reindex_artifacts`, `workspace_context_artifacts`, `workspace_index_jobs`, `workspace_enqueue_index_job`, `workspace_retry_index_job`, `workspace_watch_status`, `workspace_run_start`, `workspace_run_get`, `workspace_access_check`, `workspace_audit_log`, `workspace_ops_status`, `workspace_conflicts`, `workspace_context`, `workspace_gc` |
-| Context & sync | 7 | `set_context`, `get_project_context`, `sync`, `sync_status`, `add_feedback`, `get_feedback_stats`, `levara_instructions` |
-| Observability | 5 | `doctor`, `heartbeat`, `runtime_stats`, `recent_errors`, `check_drift` |
-
-### Configuration
-
-Add to your MCP client config:
+### Connect an MCP Client
 
 ```json
 {
   "mcpServers": {
     "levara": {
-      "url": "http://localhost:8080/mcp"
+      "url": "http://localhost:8080/mcp",
+      "headers": {
+        "Authorization": "Bearer ${LEVARA_TOKEN}"
+      }
     }
   }
 }
 ```
 
-## CLI
+Example host configs live in [examples/agent-hosts](examples/agent-hosts).
 
-```bash
-# Health check
-levara health
+## Interfaces
 
-# Add data
-levara add "Your text content here" --dataset=my_project
-levara add ./documents/ --dataset=my_project
+| Surface | Default | Purpose | Where to inspect |
+|---|---:|---|---|
+| HTTP REST | `:8080` | Datasets, ingest, search, auth, tenants, workspace, sync, notebooks, ops | `internal/http/api.go`, `internal/http/routes.go`, `docs/api-reference.md` |
+| MCP Streamable HTTP | `/mcp` | AI-agent tools for memory, search, workspace, sync, audit, observability | `internal/http/mcp.go`, `pkg/mcp` |
+| gRPC v1/v2 | `:50051` | Vector/search/cognify client API | `internal/grpc`, `proto/` |
+| CLI tools | local binaries | Server, backup, contract validation, host config install, load tests | `cmd/` |
+| Web UI | app package | Next.js operator/user UI | `webui/` |
 
-# Process into knowledge graph
-levara cognify --dataset=my_project --wait
+<Accordion title="Representative REST groups">
 
-# Search
-levara search "What is the main architecture?" --type=GRAPH_COMPLETION
-levara search "recent changes" --type=TEMPORAL --since=2025-01-01
+- `/api/v1/datasets`, `/api/v1/add`, `/api/v1/cognify`, `/api/v1/search/text`
+- `/api/v1/memories`, `/api/v1/sync/*`, `/api/v1/tenants/*`, `/api/v1/acl`
+- `/api/v1/workspace/*` for context, read, write, commit, audit, jobs, conflicts
+- `/api/v1/notebooks/*`, `/api/v1/ontologies`, `/api/v1/feedback`, `/metrics`
 
-# Dataset management
-levara datasets list
-levara datasets delete my_project
+</Accordion>
 
-# Git analysis
-levara git analyze --repo=. --since=2024-01-01
-levara git diff-summary --repo=. --branch=main
+<Accordion title="Representative MCP tools">
+
+- Memory: `save_memory`, `recall_memory`, `list_memories`, `pin_memory`, `wake_up`, `diary_write`, `diary_read`
+- Search/graph: `search`, `cross_search`, `query_entity`, `list_communities`, `git_search`, `analyze_commits`
+- Workspace: `workspace_context`, `workspace_read`, `workspace_write`, `workspace_commit`, `workspace_search`, `workspace_audit_log`
+- Ops: `doctor`, `runtime_stats`, `recent_errors`, `sync_status`, `workspace_ops_status`
+
+</Accordion>
+
+## Architecture
+
+```mermaid
+flowchart TD
+  Agent[AI agents and IDEs] --> MCP[MCP /mcp]
+  Apps[Apps and CLIs] --> REST[REST /api/v1]
+  SDKs[gRPC clients] --> GRPC[gRPC v1/v2]
+
+  MCP --> Access[pkg/access policy]
+  REST --> Access
+  GRPC --> Core[Core engine]
+  Access --> Workspace[Workspace plane]
+  Access --> Memory[Memory palace]
+  Access --> Core
+
+  Workspace --> Markdown[Markdown truth layer]
+  Workspace --> Jobs[Index jobs and audit]
+  Memory --> SQL[(SQLite/Postgres)]
+  Core --> HNSW[HNSW + WAL + arena]
+  Core --> BM25[BM25]
+  Core --> Graph[Temporal graph]
+
+  Audit[pkg/audit export] -.-> SIEM[Future SIEM adapters]
+  Storage[pkg/storage contracts] -.-> ObjectStore[Future S3/GCS/Azure/KMS]
+  Identity[OIDC verified claims / SCIM seam] -.-> Access
+```
+
+## Repository Map
+
+```text
+Levara/
+  cmd/
+    server/          HTTP + gRPC + MCP server, profile/config validation
+    cli/             Levara CLI
+    backup/          backup/restore command
+    contract/        REST/gRPC/MCP contract generation and drift checks
+    agent-hosts/     MCP host config installer
+    loadtest/        load testing utilities
+  internal/
+    store/           HNSW, WAL, mmap arena, collection manager
+    http/            Fiber REST API, MCP endpoint, auth, workspace, sync, RBAC
+    grpc/            gRPC v1/v2 services and interceptors
+    cluster/         optional Raft sharding/replication
+    metrics/         Prometheus metrics
+    contract/        generated contract inventory types
+  pkg/
+    access/          policy, tenant membership, identity bridges, OIDC adapter
+    audit/           audit sink/export contracts and JSONL exporter
+    bm25/            full-text index and hybrid retrieval
+    graphstore/      graph persistence
+    mcp/             MCP tool descriptors and tool implementations
+    orchestrator/    cognify pipeline: chunk -> extract -> dedup -> embed -> write
+    storage/         local/S3 storage plus enterprise metadata/KMS contracts
+    workspace/       Markdown workspace model and indexing helpers
+    profile/         runtime profile validation
+    llm/, embed/     LLM and embedding provider clients
+  deploy/profiles/   audience-specific env presets
+  docs/              API, architecture, product ladder, testing, marketing
+  proto/             protobuf definitions
+  webui/             Next.js 15 Web UI
 ```
 
 ## Configuration
 
-### Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `DB_PROVIDER` | `postgres` | Database backend (`sqlite` or `postgres`) |
-| `DATABASE_URL` | `data/levara.db` | Database connection string (SQLite) |
-| `VECTOR_DIM` | `768` | Vector dimensionality |
-| `HTTP_PORT` | `8080` | HTTP server port |
-| `GRPC_PORT` | `50051` | gRPC server port |
-| `JWT_SECRET` | _(auto)_ | Shared HS256 secret for HTTP + gRPC auth. Random 32 bytes on empty (fine for dev, **must be set in prod** so tokens survive restarts) |
-| `ENV` | _(unset)_ | `dev` enables `/swagger/*`; any other value disables it |
-| `NEO4J_URI` | _(disabled)_ | Neo4j connection URI (SQL fallback when absent) |
-| `LLM_PROVIDER` | `ollama` | LLM provider (`openai`, `anthropic`, `ollama`) |
-| `LLM_MODEL` | `qwen3.5:latest` | LLM model name |
-| `LLM_API_KEY` | _(none)_ | API key for OpenAI/Anthropic |
-| `OLLAMA_URL` | `http://127.0.0.1:11434` | Ollama server URL |
-| `EMBED_URL` | `http://localhost:9001` | Embedding server URL |
-| `RERANK_ENDPOINT` / `RERANK_MODEL` | _(disabled)_ | Cross-encoder reranker; default-on when endpoint set |
-| `RERANK_BUDGET_MS` / `RERANK_TIMEOUT_MS` | `1500` / `5000` | Rerank pass budget and per-request HTTP timeout |
-| `RERANK_SCORE_GAP_THRESHOLD` | `0` | Adaptive gate: skip rerank when candidate score spread exceeds it (0 = always rerank) |
-| `CONSOLIDATION_INTERVAL` | _(off)_ | Background consolidation janitor tick (Go duration, e.g. `30m`) |
-| `S3_BUCKET` | _(disabled)_ | S3 bucket for cloud storage |
-| `LANGFUSE_PUBLIC_KEY` | _(disabled)_ | Langfuse tracing public key |
-| `MCP_ENABLED` | `true` | Enable MCP server |
-| `HNSW_M` | `16` | Max HNSW connections per node |
-| `HNSW_EF_MULT` | `8` | efConstruction multiplier |
-| `HNSW_EF_MIN` | `32` | Minimum efSearch beam width |
-
-### CLI Flags
+### Runtime Profiles
 
 ```bash
-levara-server \
+LEVARA_PROFILE=personal|solo_pro|team|enterprise
+LEVARA_PROFILE_STRICT=1   # fail fast on unsafe team/enterprise configs
+```
+
+`-config-check` validates the resolved profile and exits before listeners, DB
+connections, or network services start.
+
+```bash
+./levara-server -config-check
+make profile-config-check
+```
+
+### Common Environment Variables
+
+| Variable | Purpose |
+|---|---|
+| `DB_PROVIDER` / `POSTGRES_DSN` / `DB_PATH` | Select Postgres or SQLite storage |
+| `JWT_SECRET` | Stable HS256 signing secret for auth-enabled deployments |
+| `LEVARA_TOKEN` | Sync/MCP bearer token in examples and sync flows |
+| `LEVARA_DATA_DIR` | Root data directory when `-data-dir` is not set |
+| `LEVARA_TENANT_ENFORCED` | Required for enterprise tenant isolation strict mode |
+| `LEVARA_WORKSPACE_AUDIT_EXPORT` / `_DIR` / `_RETENTION_DAYS` | Workspace audit export controls |
+| `LEVARA_WORKSPACE_WATCH` / `_INDEX_WORKER` | Workspace watcher and async index worker |
+| `EMBED_URL` / `EMBEDDING_ENDPOINT` / `EMBEDDING_MODEL` | Embedding service configuration |
+| `LLM_PROVIDER`, `LLM_MODEL`, `LLM_API_KEY`, `OLLAMA_URL` | LLM provider configuration |
+| `RERANK_ENDPOINT`, `RERANK_MODEL`, `RERANK_BUDGET_MS` | Cross-encoder reranker configuration |
+| `STORAGE_BACKEND`, `S3_BUCKET`, `STORAGE_PATH` | Raw object storage backend controls |
+| `LANGFUSE_PUBLIC_KEY` | Optional tracing integration |
+
+### Server Flags
+
+```bash
+./levara-server \
   -standalone=true \
   -dim=768 \
   -port=8080 \
   -grpc-port=50051 \
-  -hnsw-m=20 \
-  -hnsw-ef-mult=10 \
-  -hnsw-ef-min=50 \
-  -data-dir=./data
+  -data-dir=./data \
+  -require-auth=false \
+  -hnsw-m=16 \
+  -hnsw-ef-mult=8 \
+  -hnsw-ef-min=64
 ```
 
-## Deployment
-
-### Docker
+## Development
 
 ```bash
-docker compose up -d --build
+# Focused every-commit gate
+git diff --check
+make test-commit
+
+# Profile/config gate without external services
+make profile-config-check
+
+# Release-candidate local gate
+make test-release-candidate
+
+# Contract validation for REST/gRPC/MCP inventories
+make contract-check
 ```
 
-### Raspberry Pi (ARM64)
+For security-sensitive changes, use
+[docs/security-diff-checklist.md](docs/security-diff-checklist.md). It covers
+access, tenant isolation, audit export, storage/KMS, and MCP memory ownership.
 
-```bash
-# Cross-compile
-make arm64
+## Marketing and Product Docs
 
-# Copy to Pi
-scp levara-arm64 pi@raspberrypi:~/levara/
+| Document | Audience |
+|---|---|
+| [docs/marketing/personal.md](docs/marketing/personal.md) | One developer using local AI agents |
+| [docs/marketing/solo-pro.md](docs/marketing/solo-pro.md) | Power user with several machines |
+| [docs/marketing/team.md](docs/marketing/team.md) | Small team with humans and agents |
+| [docs/marketing/enterprise.md](docs/marketing/enterprise.md) | Organizations with governance and audit needs |
+| [docs/product-ladder.md](docs/product-ladder.md) | Engineering/product source of truth for tier boundaries |
+| [docs/profile-presets.md](docs/profile-presets.md) | Concrete env presets and strict-mode behavior |
 
-# Install as systemd service
-# See deploy/raspberry/ for full setup
-```
+## Roadmap Honesty
 
-### systemd
+Implemented foundations include local/solo/team profiles, access policy, tenant
+membership checks, workspace audit, async audit export, OIDC verified-claims
+adapter, SCIM-shaped provisioning seam, storage metadata contracts, and KMS/BYOK
+hook contracts.
 
-```ini
-[Unit]
-Description=Levara Knowledge Graph Engine
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=/opt/levara/levara-server -standalone=true -dim=768
-WorkingDirectory=/opt/levara
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
-
-## Monitoring
-
-Prometheus metrics at `http://localhost:8080/metrics`:
-
-- `levara_insert_requests_total` / `levara_insert_duration_seconds`
-- `levara_search_requests_total` / `levara_search_duration_seconds`
-- `levara_vectors_total`
-- `levara_wal_sync_duration_seconds`
-- `levara_arena_pages_allocated`
-- `levara_rate_limit_rejected_total{channel, bucket}`
-- `levara_rerank_invocations_total{outcome}`
-
-## API Reference
-
-See [docs/api-reference.md](docs/api-reference.md) for complete HTTP and gRPC API documentation.
+Still future adapter work: concrete SAML, SCIM HTTP routes, SIEM sinks,
+production KMS/BYOK implementations, corporate object-store backends, and legal
+hold enforcement in those backends.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, code style, and pull request guidelines.
+1. Read [docs/product-ladder.md](docs/product-ladder.md) before changing profile
+   behavior or product claims.
+2. Keep public REST/MCP/gRPC contract changes explicit; run `make contract-check`.
+3. Keep policy decisions in `pkg/access`, not scattered through HTTP handlers.
+4. Add tests at the layer boundary you touch.
+5. Run `make test-commit` before opening a PR.
 
 ## License
 
-[MIT](LICENSE)
+MIT. See [LICENSE](LICENSE).

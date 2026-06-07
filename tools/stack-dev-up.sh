@@ -57,7 +57,7 @@ log "Levara healthy"
 # matches as failures — so use a full read with output suppressed instead.
 if docker logs levara 2>&1 | grep -E "running without DB|PostgreSQL ping warning" > /dev/null; then
   warn "Levara is up but reports 'running without DB' — Postgres credentials"
-  warn "are likely out of sync (common after an upgrade from a Cognee-era"
+  warn "are likely out of sync (common after an upgrade from an older"
   warn "volume). Memory tools and auth will return 5xx until this is fixed."
   warn "Quick fix: 'make stack-dev-reset' wipes the postgres volume and reboots."
 fi

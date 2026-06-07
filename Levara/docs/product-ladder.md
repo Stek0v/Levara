@@ -8,7 +8,7 @@ It started as a planning document. The foundation has since moved into code:
 access policy, runtime profile validation, audit export, and enterprise
 identity seams and storage/KMS adapter contracts now exist, and each tier ships
 a runnable preset (`deploy/profiles/*.env.example` + `docs/profile-presets.md`,
-validated by `server -config-check` / `make profile-smoke`). The remaining work
+validated by `server -config-check` / `make profile-config-check`). The remaining work
 is concrete enterprise protocol/storage integrations.
 
 ## Goal
@@ -30,9 +30,9 @@ profiles or adapters.
 
 | Tier | Audience | Default runtime | Implemented foundation | Remaining hardening | Future adapters |
 |---|---|---|---|---|---|
-| Personal / Local | One developer using Codex, Claude, Cursor, or similar agents | SQLite, local filesystem, local MCP, auth optional | MCP tools, memory palace, workspace context/search/read/write, local BM25/vector search, local manifests and jobs, permissive `personal` profile | One-command profile preset, clearer local backup, local config-check command | None required |
-| Solo Pro | One power user with several machines or a Mac/Pi setup | SQLite or Postgres, local or S3-compatible storage, sync enabled | Cross-instance sync, backups, API keys, Prometheus metrics, optional S3 backend, `solo_pro` sync-token validation | Sync conflict guidance, backup/restore recipes, personal ops dashboard, preset env file | Managed backup target, hosted edge relay |
-| Team | Small team with humans and AI agents sharing project workspaces | Postgres, required auth, per-agent tokens, shared workspace root | JWT/API keys, dataset/project shares, shared `pkg/access` policy facade, workspace ACL preflight, workspace audit, async indexing jobs, strict-profile fail-fast | Profile preset/runbook, admin/operator UI | Centralized log sink, team admin UI |
+| Personal / Local | One developer using Codex, Claude, Cursor, or similar agents | SQLite, local filesystem, local MCP, auth optional | MCP tools, memory palace, workspace context/search/read/write, local BM25/vector search, local manifests and jobs, permissive `personal` profile, preset env, config-check | Clearer local backup runbook | None required |
+| Solo Pro | One power user with several machines or a Mac/Pi setup | SQLite or Postgres, local or S3-compatible storage, sync enabled | Cross-instance sync, backups, API keys, Prometheus metrics, optional S3 backend, `solo_pro` sync-token validation, preset env | Sync conflict guidance, personal ops dashboard | Managed backup target, hosted edge relay |
+| Team | Small team with humans and AI agents sharing project workspaces | Postgres, required auth, per-agent tokens, shared workspace root | JWT/API keys, dataset/project shares, shared `pkg/access` policy facade, workspace ACL preflight, workspace audit, async indexing jobs, strict-profile fail-fast, preset env | Admin/operator UI | Centralized log sink, team admin UI |
 | Enterprise | Corporate teams with compliance and central governance | Postgres or managed SQL, object storage, required auth or SSO bridge, enforced tenants | Tenant membership checks, tenant-safe SQL fragments, strict-profile fail-fast, audit export boundary with async JSONL adapter, OIDC verified-claims adapter, SSO/SCIM seams, storage/KMS contract shapes | Concrete SAML/SCIM protocol surfaces, concrete corporate storage/KMS/BYOK backends, SIEM adapter | SAML protocol adapter, SCIM HTTP surface, KMS/BYOK implementations, SIEM export, S3/GCS/Azure Blob adapters, legal hold enforcement in concrete backends |
 
 ## Capability Placement
@@ -101,7 +101,8 @@ Remaining debt:
   not a full call-site migration.
 - Enterprise storage/KMS/BYOK contract shapes exist, but concrete corporate
   backends are not yet implemented.
-- Product presets/runbooks per audience are not yet complete.
+- One-command packaged runbooks per audience are not yet complete; env presets
+  and config-check validation are implemented.
 
 ## Roadmap
 
@@ -156,4 +157,4 @@ Remaining debt:
   tested.
 - [x] Product presets make each tier runnable without reading unrelated tier
   documentation (`deploy/profiles/*.env.example` + `docs/profile-presets.md`,
-  validated per tier by `server -config-check` / `make profile-smoke`).
+  validated by `server -config-check` / `make profile-config-check`).

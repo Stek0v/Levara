@@ -18,14 +18,14 @@ func buildTestGraph() *Graph {
 	g.AddNode("n2", "HNSW", "Graph index algorithm", "Algorithm", "")
 	g.AddNode("n3", "WAL", "Write-Ahead Log", "Component", "")
 	g.AddNode("n4", "SIMD", "Single Instruction Multiple Data", "Technology", "")
-	g.AddNode("n5", "LanceDB", "Rust vector DB", "Software", "")
+	g.AddNode("n5", "ExternalSearchEngine", "External search engine", "Software", "")
 
 	// Edges
 	g.AddEdge("n1", "n2", "uses", "Levara uses HNSW for indexing", "etype_1")
 	g.AddEdge("n1", "n3", "has", "Levara has WAL for durability", "etype_2")
 	g.AddEdge("n1", "n4", "acceleratedBy", "Levara accelerated by SIMD", "etype_3")
-	g.AddEdge("n5", "n2", "uses", "LanceDB uses different index", "etype_1")
-	g.AddEdge("n1", "n5", "competesWith", "Levara competes with LanceDB", "etype_4")
+	g.AddEdge("n5", "n2", "uses", "ExternalSearchEngine uses a different index", "etype_1")
+	g.AddEdge("n1", "n5", "competesWith", "Levara competes with ExternalSearchEngine", "etype_4")
 
 	return g
 }

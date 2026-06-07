@@ -34,8 +34,8 @@ power the runtime drift tests also feed a generator that produces:
 
 - `docs/api-contract.md` — unified human-readable contract for all four
   surfaces.
-- `docs/contract.json` — machine-readable export for cross-repo
-  consumers (cognee-plugin, mem0 adapter, future ultrareview gates).
+- `docs/contract.json` — machine-readable export for external SDKs,
+  deployment adapters, and future review gates.
 - `AGENTS.md` MCP-tools section, regenerated in-place between markers.
 - Validation of `docs/deployment-matrix.md` references against the
   generated contract.

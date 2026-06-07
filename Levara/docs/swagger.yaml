@@ -1,6 +1,6 @@
 basePath: /api/v1
 definitions:
-  http.CogneeSearchRequest:
+  http.SearchRequest:
     properties:
       collection:
         description: Filter search to one collection (empty = all)
@@ -128,7 +128,7 @@ paths:
       consumes:
       - application/json
       - application/x-www-form-urlencoded
-      description: Accepts either form-encoded (Cognee frontend) or JSON body. On
+      description: Accepts either form-encoded (Levara Web UI) or JSON body. On
         success returns a 24h HS256 JWT in the response + a secure http-only cookie.
       parameters:
       - description: email + password
@@ -634,7 +634,7 @@ paths:
         name: body
         required: true
         schema:
-          $ref: '#/definitions/http.CogneeSearchRequest'
+          $ref: '#/definitions/http.SearchRequest'
       produces:
       - application/json
       responses:
@@ -662,7 +662,7 @@ paths:
         name: body
         required: true
         schema:
-          $ref: '#/definitions/http.CogneeSearchRequest'
+          $ref: '#/definitions/http.SearchRequest'
       produces:
       - application/json
       responses:

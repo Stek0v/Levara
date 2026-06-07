@@ -1,6 +1,6 @@
 # From Codex: Layer Split Status And Next Tasks
 
-Date: 2026-06-06
+Date: 2026-06-07
 Status: active completion plan
 
 This file captures the current state after the product-ladder work and lists
@@ -51,6 +51,10 @@ enterprise storage/KMS boundaries, and keep docs aligned with runtime behavior.
 - [x] Canonical docs were stale: `product-ladder.md` and ADR-002 still
   describe implemented behavior as future/proposed unless updated in this
   completion pass.
+- [x] Repository hygiene pass complete: legacy vector-database-era trees, stale
+  comparison benchmarks, generated runtime data, obsolete review logs, and
+  external integration prototypes were removed or rewritten so the repository
+  presents Levara as the only canonical product surface.
 
 ## Main Architectural Finding
 
@@ -279,6 +283,43 @@ Acceptance criteria:
   test.
 - [x] A PR that reintroduces policy SQL into HTTP is caught by review tooling
   or tests.
+
+### C7: Repository Hygiene And Positioning Cleanup
+
+Goal: remove non-Levara artifacts and stale naming before committing the
+README/marketing refresh.
+
+- [x] Remove legacy code trees and gitlinks that are not part of the current
+  Levara product surface: old prototype implementations, external comparison
+  repos, Raspberry-only packaging snapshots, root-level legacy tests, runtime
+  WAL artifacts, and stale archived reports.
+- [x] Remove stale comparison benchmark artifacts tied to old product names and
+  one-off external benchmark scripts.
+- [x] Rewrite root `README.md` as a concise LevaraOS portal and rewrite
+  `Levara/README.md` as the canonical MDX-friendly product/codebase README.
+- [x] Rewrite the Russian README as a current summary instead of a stale
+  benchmark-led document.
+- [x] Improve marketing docs by audience: Personal, Solo Pro, Team, Enterprise,
+  and the market-segment overview.
+- [x] Replace or remove stale mentions of old product names, old repository
+  paths, removed plugin names, deleted reports, and obsolete vector-database
+  type names.
+- [x] Keep `AGENTS.md` untouched by this cleanup because it contains an
+  existing user-side modification.
+- [x] Validate cleanup with repository scans for old names and terms.
+- [x] Run `git diff --check`.
+- [x] Run focused tests:
+  `go test ./docs ./pkg/profile ./pkg/access ./pkg/storage ./pkg/graph ./pkg/chunker`.
+- [x] Run `make profile-config-check`.
+- [x] Run `make contract-check`.
+
+Acceptance criteria:
+
+- [x] Search scans return no remaining hits for removed legacy names in the
+  checked docs/code surfaces.
+- [x] Current docs no longer point to deleted reports or removed folders.
+- [x] The cleaned repository still passes profile, contract, graph, storage,
+  access, docs, and chunker validation.
 
 ## Recommended Implementation Order
 

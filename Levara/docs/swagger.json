@@ -14,7 +14,7 @@
     "paths": {
         "/auth/login": {
             "post": {
-                "description": "Accepts either form-encoded (Cognee frontend) or JSON body. On success returns a 24h HS256 JWT in the response + a secure http-only cookie.",
+                "description": "Accepts either form-encoded (Levara Web UI) or JSON body. On success returns a 24h HS256 JWT in the response + a secure http-only cookie.",
                 "consumes": [
                     "application/json",
                     "application/x-www-form-urlencoded"
@@ -805,7 +805,7 @@
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/http.CogneeSearchRequest"
+                            "$ref": "#/definitions/http.SearchRequest"
                         }
                     }
                 ],
@@ -845,7 +845,7 @@
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/http.CogneeSearchRequest"
+                            "$ref": "#/definitions/http.SearchRequest"
                         }
                     }
                 ],
@@ -1104,7 +1104,7 @@
         }
     },
     "definitions": {
-        "http.CogneeSearchRequest": {
+        "http.SearchRequest": {
             "type": "object",
             "properties": {
                 "collection": {

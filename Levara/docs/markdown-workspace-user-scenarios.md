@@ -250,4 +250,4 @@ Corner cases: dry-run, backup path, invalid host name, preexisting Levara config
 
 - Сценарии `S01-S30` опираются на реальные acceptance/regression тесты, уже живущие в `internal/http`, `internal/store`, `pkg/agenthosts`, `cmd/cli` и `docs`.
 - Неавтоматизированных сценариев в этом списке сознательно нет: каждый сценарий привязан минимум к одному существующему тесту.
-- Operational warnings из GitHub Actions про `NornicDB` gitlink и Node 20 deprecation не относятся к функциональному контракту workspace, но должны быть закрыты отдельным CI-hygiene блоком.
+- Operational warnings из GitHub Actions не относятся к функциональному контракту workspace, но должны закрываться отдельным CI-hygiene блоком.

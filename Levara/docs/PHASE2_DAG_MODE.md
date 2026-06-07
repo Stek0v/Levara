@@ -320,7 +320,7 @@ type SummarizeConfig struct {
 4. LLM answer with community context
 
 ```go
-func communityLocalSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
+func communityLocalSearch(c *fiber.Ctx, cfg APIConfig, req SearchRequest) error {
     // Step 1: Vector search → entity names
     entityNames := vectorSearchEntities(ctx, cfg, req)
     
@@ -354,7 +354,7 @@ func communityLocalSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) 
 По паттерну cotSearch (`graph_search.go:290-409`), но с community summaries вместо sub-questions.
 
 ```go
-func communityGlobalSearch(c *fiber.Ctx, cfg APIConfig, req CogneeSearchRequest) error {
+func communityGlobalSearch(c *fiber.Ctx, cfg APIConfig, req SearchRequest) error {
     // Step 1: Vector search in _community_summaries → top-K relevant communities
     // Search highest available level first (broadest context)
     maxLevel := getMaxCommunityLevel(ctx, cfg.DB)

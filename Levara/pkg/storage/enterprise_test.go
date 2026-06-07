@@ -316,7 +316,7 @@ func TestEnterpriseStorageBoundary_CorePackagesDoNotImportStorage(t *testing.T) 
 					return err
 				}
 				text := string(body)
-				if strings.Contains(text, `"github.com/stek0v/cognevra/pkg/storage"`) {
+				if strings.Contains(text, `"github.com/stek0v/levara/pkg/storage"`) {
 					t.Fatalf("%s imports pkg/storage; enterprise storage must stay outside core algorithms", path)
 				}
 				return nil

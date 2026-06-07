@@ -120,7 +120,7 @@ disagree for several stores:
 | `default` | 9 | 10 |
 | `localllm` | 13 | 14 |
 
-(others — `levara` 25/25, `qvant` 8/8, `yandex_direct` 14/14, `new_db` 1/1,
+(others — `levara` 25/25, `qvant` 8/8, `yandex_direct` 14/14,
 `localllm-e2e-test` 33/33 — match exactly.)
 
 **ROOT-CAUSED 2026-06-04 — two distinct causes:**
