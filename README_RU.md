@@ -34,21 +34,18 @@ Levara помогает агентам сохранять решения, фак
 ## Быстрый старт
 
 ```bash
-cd Levara
 go run ./cmd/server -standalone=true -dim=768 -port=8080
 ```
 
 Для проверки продуктовых профилей:
 
 ```bash
-cd Levara
 make profile-config-check
 ```
 
 Для локального smoke-набора:
 
 ```bash
-cd Levara
 go test ./docs ./pkg/profile ./pkg/access ./pkg/storage
 ```
 
@@ -65,13 +62,12 @@ go test ./docs ./pkg/profile ./pkg/access ./pkg/storage
 ## Разработка
 
 ```bash
-cd Levara
 go test ./...
 make contract-check
 make profile-config-check
 ```
 
-Корневой `Makefile` делегирует основные команды в `Levara/`, поэтому из корня репозитория можно запускать `make test`, `make contract-check` и `make profile-config-check`.
+Корневой `Makefile` запускает основные команды напрямую из корня репозитория.
 
 ## Лицензия
 

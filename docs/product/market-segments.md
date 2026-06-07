@@ -1,8 +1,8 @@
 # Levara Market Segments
 
 This document turns the original campaign notes into a usable GTM map. It should
-stay aligned with `Levara/docs/marketing/*`, `Levara/docs/product-ladder.md`,
-and `Levara/docs/profile-presets.md`.
+stay aligned with `docs/marketing/*`, `docs/product-ladder.md`,
+and `docs/profile-presets.md`.
 
 ## Segment Map
 
@@ -92,12 +92,12 @@ and `Levara/docs/profile-presets.md`.
 
 | Asset | Reuse in |
 |---|---|
-| `Levara/README.md` first screen | all segments |
-| `Levara/docs/marketing/personal.md` | S1, S2 |
-| `Levara/docs/marketing/solo-pro.md` | S2, S5 |
-| `Levara/docs/marketing/team.md` | S4 |
-| `Levara/docs/marketing/enterprise.md` | enterprise discovery, security review |
-| `Levara/docs/security-diff-checklist.md` | Team/Enterprise trust |
+| `README.md` first screen | all segments |
+| `docs/marketing/personal.md` | S1, S2 |
+| `docs/marketing/solo-pro.md` | S2, S5 |
+| `docs/marketing/team.md` | S4 |
+| `docs/marketing/enterprise.md` | enterprise discovery, security review |
+| `docs/security-diff-checklist.md` | Team/Enterprise trust |
 
 ## Claim Guardrails
 

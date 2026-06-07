@@ -1,6 +1,6 @@
 """rag-with-temporal-kg — cognify + temporal knowledge graph demo.
 
-Runs against the local stack started by `make stack-dev`. Ingests two
+Runs against the local stack started by `docker compose up -d --build`. Ingests two
 texts that update the same exclusive relationship (`works_at`) for one
 entity, then demonstrates Levara's temporal knowledge graph by:
 
@@ -15,7 +15,7 @@ both the current edge (valid_until is NULL) and the historical edge
 Provider tip: extraction quality depends on the LLM. The default stack
 ships qwen2.5:1.5b for footprint reasons — it works but may need a few
 retries to produce stable JSON. For richer extraction, set LLM_MODEL to
-something larger (e.g. qwen2.5:7b) before `make stack-dev`.
+something larger (e.g. qwen2.5:7b) before `docker compose up -d --build`.
 """
 
 from __future__ import annotations
@@ -128,5 +128,5 @@ if __name__ == "__main__":
         print(f"HTTP error: {exc.response.status_code} {exc.response.text}", file=sys.stderr)
         sys.exit(1)
     except requests.ConnectionError:
-        print("Cannot reach Levara — run `make stack-dev` first.", file=sys.stderr)
+        print("Cannot reach Levara — run `docker compose up -d --build` first.", file=sys.stderr)
         sys.exit(1)

@@ -271,7 +271,7 @@ entire `AGENTS.md` body.
 ```makefile
 .PHONY: contract
 contract:
-	@cd Levara && go run ./cmd/contract -out ../docs
+	@go run ./cmd/contract -out ../docs
 
 .PHONY: contract-check
 contract-check: contract

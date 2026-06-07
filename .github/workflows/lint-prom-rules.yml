@@ -3,12 +3,12 @@ name: lint-prom-rules
 on:
   pull_request:
     paths:
-      - 'Levara/docs/prometheus-verify.rules.yml'
+      - 'docs/prometheus-verify.rules.yml'
       - '.github/workflows/lint-prom-rules.yml'
   push:
     branches: [main]
     paths:
-      - 'Levara/docs/prometheus-verify.rules.yml'
+      - 'docs/prometheus-verify.rules.yml'
       - '.github/workflows/lint-prom-rules.yml'
 
 jobs:
@@ -26,4 +26,4 @@ jobs:
           promtool --version
 
       - name: Validate verify-stack rules
-        run: promtool check rules Levara/docs/prometheus-verify.rules.yml
+        run: promtool check rules docs/prometheus-verify.rules.yml

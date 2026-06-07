@@ -1,7 +1,7 @@
 # docker-compose.qwen-stack.yml — One-command 3-Qwen stack for GPU host 10.23.0.64
 #
 # Includes:
-#   • Levara (HTTP :8080, gRPC :50051) — built from ./Levara.
+#   • Levara (HTTP :8080, gRPC :50051) — built from ..
 #     Defaults are auth-on/production; set JWT_SECRET in .env before startup.
 #   • qwen3-embed — Qwen3-Embedding 0.6B, OpenAI /v1/embeddings, :9001
 #   • qwen3-rerank-llm — Qwen3-Reranker 0.6B chat completions, :9002
@@ -26,7 +26,7 @@ services:
   # ──────────────────────────────────────────────────────────────
   levara:
     build:
-      context: ./Levara
+      context: .
       dockerfile: Dockerfile
     container_name: levara
     ports:
@@ -184,7 +184,7 @@ services:
   # ──────────────────────────────────────────────────────────────
   qwen3-rerank-front:
     build:
-      context: ./Levara
+      context: .
       dockerfile: Dockerfile.qwen3rerank
     container_name: qwen3-rerank-front
     ports:

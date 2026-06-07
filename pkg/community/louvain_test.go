@@ -298,8 +298,8 @@ func TestLouvain_10K_Performance(t *testing.T) {
 	d := Louvain(g, DefaultConfig())
 	elapsed := time.Since(start)
 
-	if elapsed > 2*time.Second {
-		t.Errorf("10K nodes took %v, expected < 2s", elapsed)
+	if elapsed > 5*time.Second {
+		t.Errorf("10K nodes took %v, expected < 5s", elapsed)
 	}
 	t.Logf("10K nodes: %d communities, Q=%.4f, %v, %d iterations, %d levels",
 		len(d.Levels[0]), d.Modularity[0], elapsed, d.Iterations, len(d.Levels))

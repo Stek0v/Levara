@@ -14,7 +14,7 @@
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
-cd "$here/../.." # -> Levara/ (module root)
+cd "$here/../.." # repository root / Go module root
 
 bin="$(mktemp -t levara-smoke.XXXXXX)"
 trap 'rm -f "$bin"' EXIT

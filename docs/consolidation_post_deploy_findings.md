@@ -16,10 +16,10 @@ If the Pi were reprovisioned, the repo IaC (still nomic-768) would restore a
 half-migrated state.
 
 **Fixed:** potion-256 baked into the repo deployment artifacts:
-- `Raspberry/levara.service` (prod mirror) + `Levara/deploy/raspberry/levara.service`
+- `Raspberry/levara.service` (prod mirror) + `deploy/raspberry/levara.service`
   (generic template): `-dim=768` → `-dim=256`; both now `Wants`/`After`
   `embed-potion.service` (weak dep — an embedder crash must not take Levara down).
-- `Raspberry/levara.env` + `Levara/deploy/raspberry/levara.env`:
+- `Raspberry/levara.env` + `deploy/raspberry/levara.env`:
   `EMBEDDING_ENDPOINT=http://localhost:9101/v1/embeddings`,
   `EMBEDDING_MODEL=potion-code-16M`; nomic kept as a commented revert fallback.
 - **New** `deploy/bench/embed-potion.service`: the prod potion sidecar unit

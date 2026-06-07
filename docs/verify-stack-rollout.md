@@ -136,8 +136,8 @@ histogram_quantile(0.5, sum by (search_type, le)
 
 ## Related code
 
-- `Levara/internal/http/confidence.go` — score blend, env parsing.
-- `Levara/internal/http/verify.go` — `min_score` + metadata filter, metrics emit.
-- `Levara/internal/http/evidence.go` — top-10 unique evidence IDs.
-- `Levara/internal/http/response_meta.go` — debug envelope toggle.
-- `Levara/internal/metrics/telemetry.go` (search for `RAGConfidence`) — series + eager init.
+- `internal/http/confidence.go` — score blend, env parsing.
+- `internal/http/verify.go` — `min_score` + metadata filter, metrics emit.
+- `internal/http/evidence.go` — top-10 unique evidence IDs.
+- `internal/http/response_meta.go` — debug envelope toggle.
+- `internal/metrics/telemetry.go` (search for `RAGConfidence`) — series + eager init.
