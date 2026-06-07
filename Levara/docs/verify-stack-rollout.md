@@ -25,7 +25,7 @@ Pick `LEVARA_RAG_ABSTAIN_THRESHOLD_<TYPE>` slightly below the 10th percentile of
 
 ## Phase 2 — Per-request opt-in (canary)
 
-Let downstream callers (agent, dashboard, API consumers) flip the gates on a per-request basis without changing the server config. The Cognevra MCP/HTTP API already accepts these fields on RAG endpoints:
+Let downstream callers (agent, dashboard, API consumers) flip the gates on a per-request basis without changing the server config. The Levara MCP/HTTP API already accepts these fields on RAG endpoints:
 
 ```json
 {

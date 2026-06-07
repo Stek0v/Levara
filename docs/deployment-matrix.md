@@ -24,7 +24,7 @@ flags и ops scripts.
   compatibility endpoints.
 - Unified semantic search should use `/api/v1/search/text` or the MCP `search`
   tool. `/api/v1/search` is retained as a frontend compatibility alias.
-- gRPC collection APIs are canonical for backend adapters such as Cognee.
+- gRPC collection APIs are canonical for backend adapters and SDK-style clients.
 - MCP is canonical for AI-agent memory workflows.
 
 ## Production Readiness Checklist
@@ -39,4 +39,3 @@ flags и ops scripts.
 | Storage | Local/S3 raw data access verified, including raw URL/download paths |
 | Observability | `/metrics`, `/health/details`, doctor tool, alerting/SLOs wired |
 | Backup | Backup/restore tested for SQL, vector data, uploads, and workspace state |
-

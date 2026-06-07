@@ -143,7 +143,7 @@ Three options to unblock:
 | option | what | cost | risk |
 |---|---|---|---|
 | **A. Add rename endpoint** | `POST /collections/:name/rename` → close Levara struct, `os.Rename` data dir, update metas map, reopen | 4-8h impl + tests; cleanest | rename-during-write races (need write lock) |
-| **B. Client-side alias** | Every consumer (mem0, cognee-plugin, MCP) gets new collection name `X__potion`. Old `X` retained read-only. No rename ever. | 0h Levara work, but N clients each need a config flip | fragile — easy to miss a consumer, drift across clients |
+| **B. Client-side alias** | Every consumer (MCP clients, sync jobs, external SDKs) gets new collection name `X__potion`. Old `X` retained read-only. No rename ever. | 0h Levara work, but N clients each need a config flip | fragile — easy to miss a consumer, drift across clients |
 | **C. Drop + recreate** | `DELETE X` then `reembed(source=X__potion → X)` — but source = old `X` is already gone. So really: copy `X__potion` records back into a new `X`. Not atomic — brief 404 window. | 1h | reads fail during gap; double the disk during overlap |
 
 **Recommendation: A.** B leaves the prod surface in a permanently

@@ -1,71 +1,111 @@
-Сегменты (по позиционированию Levara)
+# LevaraOS Market Segments
 
-  ┌─────┬──────────────────────────────────────────────────────────────┬─────────────────────────────────────────────────────────────────────────────────────────────┐
-  │  #  │                           Сегмент                            │                                  Что у Levara «зацепляет»                                   │
-  ├─────┼──────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────┤
-  │ S1  │ AI-agent devs (Claude Code / Cursor / Codex users)           │ MCP-первый дизайн, room×hall таксономия, per-agent diaries, wake_up budget                  │
-  ├─────┼──────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────┤
-  │ S2  │ Self-hosters / privacy-conscious devs                        │ Single Go binary, own-your-data, sync Mac↔Pi, без облака                                    │
-  ├─────┼──────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────┤
-  │ S3  │ RAG / KG researchers                                         │ Темпоральный граф (valid_until/superseded_by), BEIR-suite, adaptive rerank gate, hybrid RRF │
-  ├─────┼──────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────┤
-  │ S4  │ Стартапы 2-15 человек (заменяют Pinecone/Weaviate/mem0-saas) │ $0 self-hosted, 719 QPS на ноуте, 100% crash recovery, OpenAI-совместимый embedding API     │
-  ├─────┼──────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────┤
-  │ S5  │ Edge / IoT / on-device AI                                    │ Работает на Pi 5 8GB, model2vec/ONNX backends, 256d potion-варианты                         │
-  └─────┴──────────────────────────────────────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────────┘
+This document turns the original campaign notes into a usable GTM map. It should
+stay aligned with `Levara/docs/marketing/*`, `Levara/docs/product-ladder.md`,
+and `Levara/docs/profile-presets.md`.
 
-  ---
-  S1 — AI-agent devs
+## Segment Map
 
-  1. «Memory Palace for Claude» — гайд + лендинг, как заменить mem0/memorymesh на Levara за 10 минут. CTA: один curl-снипп + claude mcp add. KPI: installs, MCP-добавлений.
-  2. /recall Challenge — конкурс: покажи свой самый «спасительный» recall_memory; победители — лонгрид на блоге + Pi-комплект. KPI: UGC + звёзды на GitHub.
-  3. «Room×Hall» серия твитов/постов — 7 коротких постов про таксономию (fact/event/decision/preference/advice/discovery). Каждый с примером из реальной сессии. KPI:
-  impressions, follower-conv.
-  4. Comparison-bench «mem0 vs Levara» — публичный воспроизводимый бенчмарк (latency, recall@k, cost, privacy). KPI: HN-фронт, реддит /r/LocalLLaMA.
-  5. Cookbook: Subagent diaries — пример кода «как ревьюер-агент помнит свои прошлые ревью», workflow с diary_write/diary_read. KPI: cookbook-stars, форки.
+| Segment | ICP | Main pain | Levara hook | Best CTA |
+|---|---|---|---|---|
+| S1. AI-agent developers | Claude Code, Cursor, Codex, Cline users | agents forget project context between sessions | MCP-first memory palace, room x hall taxonomy, wake-up briefings, per-agent diaries | “Add Levara MCP and save your first decision” |
+| S2. Self-hosters and privacy-conscious developers | homelab, local-first, air-gapped users | SaaS memory is opaque or unacceptable | one Go binary, SQLite/local files, Mac-Pi sync, no required cloud | “Run local memory on your own disk” |
+| S3. RAG/KG researchers | retrieval, KG, temporal-memory builders | vector-only memory loses relationships and time | temporal KG, hybrid BM25/vector, graph-aware rerank, reproducible tests | “Use Levara as a temporal memory research harness” |
+| S4. Small startups and product teams | 2-15 person teams replacing hosted vector/memory SaaS | cost, control, and multi-agent collaboration | self-hosted Team profile, Postgres, auth, audit, workspace ACL | “Pilot shared agent memory for one project” |
+| S5. Edge/on-device AI | Pi, Jetson, local inference, field devices | memory must run near the agent and survive network loss | ARM64 build, local profiles, sync, local embeddings/LLMs | “Run memory at the edge” |
 
-  S2 — Self-hosters / privacy
+## Message Ladder
 
-  1. «Your memory, your disk» — манифест-пост против vendor-lock SaaS-memory. KPI: shares в /r/selfhosted, /r/homelab.
-  2. One-binary install демо — 60-секундный screencast: curl … && ./levara. Везде, где встречается «надо контейнер»: ответ-сравнение. KPI: video views, install conv.
-  3. Pi 5 home-server kit — партнёрка с продавцами Pi: «купи Pi → залей Levara + sync». Brand-bundle. KPI: kits sold.
-  4. Air-gap labs — серия туториалов: Levara в локалке без интернета, локальные LLM (Ollama), локальные embeddings. KPI: туториал-просмотры, GitHub stars от
-  offline-сообщества.
-  5. Sync deep-dive — статья + видео про Mac↔Pi sync (CRDT/WAL-tail, не Dropbox). KPI: dev.to / habr.com просмотры, RU-комьюнити подписчиков.
+| Audience | Short message | Proof to show | Avoid saying |
+|---|---|---|---|
+| Individual developers | “Your AI remembers the project without sending memory to a SaaS.” | Personal preset, MCP tools, local SQLite/files, Markdown workspace | “Enterprise-ready KMS” |
+| Power users | “One memory follows you across machines.” | Solo Pro sync token, backup/restore tests, Pi docs | “transparent multi-master cloud sync” unless implemented |
+| Teams | “Humans and agents share context with auth, ACL, and audit.” | Team strict profile, `pkg/access`, workspace audit, policy boundary tests | “SSO/SCIM complete” |
+| Enterprise | “Governed agent memory with clear adapter seams.” | enterprise strict checks, OIDC verified-claims adapter, audit export, storage/KMS contracts | “production SAML/SCIM/KMS/SIEM ready” |
 
-  S3 — RAG / KG researchers
+## Campaign Backlog
 
-  1. BEIR-leaderboard publish — выложить собственные числа на 6 датасетах, открыто, с воспроизводимыми скриптами (posttests/bier/). KPI: цитирования, mentions в arxiv-sanity.
-  2. «Temporal KG в одну строку» — paper-style пост: как whitelist relations + supersede автоматически даёт темпоральную валидность без Neo4j. KPI: academic Twitter/X,
-  citations.
-  3. Webinar: Adaptive rerank gate (Phase 2.5) — техдемо, как RERANK_SCORE_GAP_THRESHOLD экономит до 60% cross-encoder вызовов. KPI: webinar регистраций, post-конверсия в
-  trial.
-  4. Open dataset «memory-bench» — собрать публичный датасет «agent conversations + ground-truth recall queries», запушить на HF. KPI: HF downloads, упоминания.
-  5. Joint paper / preprint — соавторство с университетом (RU/EU): «KG-aware reranking for personal memory». KPI: arxiv-preprint, цитирования.
+### S1: AI-Agent Developers
 
-  S4 — Стартапы (anti-Pinecone)
+1. **Memory Palace for Claude/Codex/Cursor**
+   A 10-minute guide: start Levara, add MCP config, call `save_memory`, then
+   `wake_up`. KPI: installs, MCP configs added, GitHub stars.
+2. **Room x Hall content series**
+   Seven short posts explaining `fact`, `event`, `decision`, `preference`,
+   `advice`, `discovery`, and diaries. KPI: saves/bookmarks, docs clicks.
+3. **Recall challenge**
+   Ask users to share the most useful `recall_memory` that saved a session.
+   KPI: UGC, social reach, examples for docs.
+4. **Subagent diaries cookbook**
+   Show reviewer/planner/oncall agents keeping isolated memory namespaces.
+   KPI: forks, cookbook usage.
 
-  1. TCO-калькулятор — интерактивная страница: введите свои данные → сравнение $/мес Pinecone vs Weaviate-Cloud vs Levara-self-hosted. KPI: leads, sales-call booked.
-  2. Migration guide «from Pinecone в 1 час» — скрипт + блог-пост с конкретными API-маппингами. KPI: migrations выполненных (через telemetry opt-in).
-  3. «Crash-test» серия — видео где killaем процесс/диск/сеть — Levara восстанавливается со 100% (есть метрика из README). KPI: video shares.
-  4. Y Combinator / Indie Hackers AMA — основатель отвечает 1 неделю в /r/startups, Indie Hackers, на HN-launch-day. KPI: HN-фронт, signups.
-  5. Free-tier «forever» — community edition + публичный roadmap; pro = managed cloud + support SLA. KPI: free→paid conversion.
+### S2: Self-Hosters and Privacy
 
-  S5 — Edge / IoT
+1. **Your memory, your disk**
+   Manifest-style post against opaque SaaS memory. KPI: self-hosted/homelab
+   shares.
+2. **One-binary install demo**
+   60-second screencast: build, config-check, run, connect MCP. KPI: video views
+   and install conversion.
+3. **Mac-Pi sync deep dive**
+   Explain bearer-auth sync, version-skew warning, and backup boundaries. KPI:
+   Habr/dev.to views, Pi users.
+4. **Air-gap lab**
+   Tutorial for local embeddings + local LLM + Levara without external APIs.
+   KPI: offline/local-first community adoption.
 
-  1. «Levara on $80 hardware» — пост-бенчмарк: Pi 5 8GB, 4 модели (potion/granite/nomic/jina-fp16), RPS, RAM. (Прямо то, что мы сейчас и делаем!) KPI: makers community
-  shares.
-  2. Партнёрство с Jina / Nomic / minishlab — co-branded benchmark + cross-blog post про их модели на нашем движке. KPI: backlinks, joint announcements.
-  3. «Memory at the edge» серия для робототехников — Levara в ROS-стэке, memory для дронов/роботов. KPI: ROS-комьюнити mentions.
-  4. OnnxRuntime / model2vec showcase — гайд: как embed_bench из репо — это не только тест, это шаблон для собственного edge-стэка. KPI: репо-форки scripts/load-profiles/.
-  5. Hackathon: «Smallest agent that remembers» — спонсорский трек на embedded-AI хакатоне (Pi/Jetson). Приз = Pi-кит + статья. KPI: hackathon teams, demos.
+### S3: RAG/KG Researchers
 
-  ---
-  Cross-segment лэверы (использовать в любой кампании):
-  - Open-source, MIT-style → дёшево распространять
-  - Реальные performance-числа уже есть (719 QPS, 2.6ms, 100% recovery) → cred
-  - MCP + OpenAI embeddings совместимость → low-switching-cost истории
-  - RU-комьюнити (Habr, Pikabu, t.me-каналы) ещё мало затоптано конкурентами по сравнению с EN
+1. **Temporal KG demo**
+   Show edge supersession and `as_of` entity queries. KPI: research mentions.
+2. **Hybrid retrieval notebook**
+   Compare vector-only, BM25-only, hybrid RRF, and graph-aware rerank. KPI:
+   reproducible benchmark runs.
+3. **Memory-bench dataset proposal**
+   Public dataset of agent sessions and ground-truth recall queries. KPI:
+   dataset downloads and citations.
 
-  Скажи, какой сегмент раскрутить (расширенные брифы — целевые персоны, каналы, бюджеты, content-calendar), или хочешь сразу spec-doc в docs/marketing/ чтобы было checked-in?
+### S4: Small Startups and Product Teams
 
+1. **Agent memory with ACL and audit**
+   Team pilot guide: one project, two users, one agent token, workspace audit.
+   KPI: pilot starts.
+2. **TCO calculator**
+   Compare hosted memory/vector SaaS against self-hosted Levara. KPI: inbound
+   leads.
+3. **Crash/recovery demo**
+   Show WAL-backed recovery and backup restore, using only verified behavior.
+   KPI: founder/platform-team trust.
+
+### S5: Edge/On-Device AI
+
+1. **Levara on inexpensive hardware**
+   ARM64/Pi guide with local profile and memory sync. KPI: maker community
+   shares.
+2. **Local model stack**
+   Ollama + local embeddings + Levara memory. KPI: local-AI installs.
+3. **Smallest agent that remembers**
+   Hackathon/demo prompt for Pi/Jetson agents. KPI: demos and forks.
+
+## Cross-Segment Assets
+
+| Asset | Reuse in |
+|---|---|
+| `Levara/README.md` first screen | all segments |
+| `Levara/docs/marketing/personal.md` | S1, S2 |
+| `Levara/docs/marketing/solo-pro.md` | S2, S5 |
+| `Levara/docs/marketing/team.md` | S4 |
+| `Levara/docs/marketing/enterprise.md` | enterprise discovery, security review |
+| `Levara/docs/security-diff-checklist.md` | Team/Enterprise trust |
+
+## Claim Guardrails
+
+- Use “adapter contract”, “seam”, or “verified-claims adapter” for current
+  enterprise identity/storage/KMS work.
+- Do not claim production SAML, SCIM HTTP, SIEM, KMS/BYOK, Azure/GCS, or legal
+  hold backend support until those adapters exist and have tests.
+- Performance claims should link to a reproducible benchmark or be phrased as
+  historical benchmark results, not universal guarantees.
+- Product profile claims should be backed by `deploy/profiles/*` and
+  `pkg/profile` tests.

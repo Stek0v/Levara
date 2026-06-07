@@ -1,330 +1,46 @@
-# CLAUDE.md
+# CLAUDE.md — Levara Agent Guide
 
-## Project Overview
+This repository is the LevaraOS codebase. The current engine lives in
+[`Levara/`](Levara/); legacy adapter experiments and pre-rebrand code have been
+removed from the working tree.
 
-**LevaraOS** — unified persistent AI memory platform. Three integrated layers working as one system:
+For the canonical memory/MCP playbook, use [`AGENTS.md`](AGENTS.md). Keep the
+MCP tool catalog in `AGENTS.md` synchronized through the contract generator
+instead of editing tool inventories by hand.
 
-- **Levara** (engine): Go vector database — HNSW + BM25 + knowledge graph + WAL + cognify pipeline. Single codebase at `Levara/`. Grew from Cognevra which is now deprecated — no Cognevra references should remain.
-- **mem0** (agent API): high-level memory abstraction for agents and IDEs (Cursor, Claude Code). At `OpenMem/third_party/mem0/`. Writes go through MemoryFS (Variant B), reads go directly to Levara.
-- **MemoryFS** (unified write layer): Rust verifiable memory workspace at `memoryfs-planning/`. .md files are source of truth; Levara indexes are disposable derivatives. Serves REST on :7777, MCP on stdio.
+## Current Project Shape
 
-**Variant B data flow (active):**
-```
-Agent → mem0 add() → MemoryFS REST (PUT /v1/files + POST commit)
-  → .md file committed → MemoryFS indexes to Levara (gRPC)
-Agent → mem0 search() → Levara HTTP (direct, read-only)
-Human → reads .md files directly in repo
-```
-
-**Priorities:** (1) ~~consolidate Cognevra→Levara~~ done, (2) ~~integrate mem0↔Levara~~ done, (3) MemoryFS as unified write layer (Phase 3, in progress).
-
-**Primary user:** developer (stek0v), but multi-user/multi-agent by design.
-
-## Stack
-
-| Component | Port | Description |
-|-----------|------|-------------|
-| Levara server | 8080 (HTTP), 50051 (gRPC) | Go HNSW + BM25 + WAL, 118 endpoints, 25+ MCP tools |
-| MemoryFS | 7777 | Rust write layer — .md files, commits, ACL, indexing |
-| mem0 API | 8888 | Python memory layer, writes via MemoryFS, reads via Levara |
-| mem0 Dashboard | 3001 | Next.js admin UI |
-| mem0 Postgres | 8432 | mem0 metadata store |
-| WebUI | 3001 | Next.js 15, 12 routes, React Query, Playwright tests |
-| Ollama | 11434 | nomic-embed-text-v2-moe (768-dim), gemma3:4b |
-| DeepSeek V3.2 | API | LLM for cognify extraction + RAG answers |
-| PostgreSQL | 5433 | Metadata, datasets, memories, graph, feedback |
-| Neo4j | 7687 | Knowledge graph (optional, on test server) |
-| Prometheus | 9090 | Levara metrics |
-| Raspberry Pi | 10.23.0.53 | Edge server (Levara + mem0, needs update to latest) |
-
-## Required environment (post-20.04)
-
-| Env var | Purpose | Default |
-|---|---|---|
-| `JWT_SECRET` | Shared HS256 secret for HTTP + gRPC auth. Random 32 bytes generated on empty (fine for dev, **must be set in prod** so tokens survive restarts). | auto |
-| `ENV` | `dev` enables `/swagger/*`; any other value (or unset) disables it. | unset |
-| `EMBEDDING_ENDPOINT` / `EMBEDDING_MODEL` | Shared embed client config (T3). | "" / `text-embedding-3-small` |
-| `LLM_ENDPOINT` / `LLM_MODEL` / `LLM_API_KEY` / `LLM_PROVIDER` | LLM client config — provider=openai/ollama/anthropic. | "" |
-| `JWT_SECRET` (repeated) | gRPC clients must send it as `authorization: Bearer <jwt>` metadata. | — |
-| `DB_PROVIDER` | `postgres` (default) or `sqlite` (embedded, CGO-free). | postgres |
-| `DB_HOST` / `DB_USERNAME` / `DB_PASSWORD` / `DB_NAME` / `DB_PORT` | Postgres DSN parts (unused when `DB_PROVIDER=sqlite`). | cognee/cognee/cognee_db/5432 |
-| `NEO4J_URL` / `NEO4J_USER` / `NEO4J_PASSWORD` / `NEO4J_DATABASE` | Optional graph store; SQL fallback in pkg/graphdb when absent. | "" |
-| `LLM_RATE_LIMIT_REQUESTS` / `LLM_RATE_LIMIT_INTERVAL` | Outbound LLM rate caps (per-second). | "" |
-| `RERANK_ENDPOINT` / `RERANK_MODEL` | Cross-encoder reranker; disabled when unset. Phase 2 (2026-05-14): rerank is default-on when endpoint configured; clients tri-state via `"rerank": true\|false\|omit`. | "" |
-| `RERANK_BUDGET_MS` / `RERANK_TIMEOUT_MS` | Phase 2 budget for the rerank pass (fallback to vector order on overrun) and per-request HTTP client timeout. | 1500 / 5000 |
-| `RERANK_SCORE_GAP_THRESHOLD` | Phase 2.5: adaptive gate. When > 0 and the top-bottom candidate score spread exceeds it, the cross-encoder call is skipped (outcome=`skipped_gap`). 0 = unconditional rerank. | 0 |
-| `CONSOLIDATION_INTERVAL` | Background memory-consolidation janitor tick interval (Go duration, e.g. 30m). Unset/empty = janitor off. | "" |
-| `CONSOLIDATION_MAX_LLM_CALLS_PER_SWEEP` | Sweep-wide cap on Summarizer (LLM) calls across all collections in one janitor tick. `DefaultConfig.MaxLLMCalls` (24) is per-collection, so an N-collection sweep can otherwise fan out N×24 calls; this clamps each run's budget to what's left and skips remaining collections once exhausted (resumed next tick). 0/unset = unbounded. | 0 |
-
-## Rate limits (T2, 20.04)
-
-- `/auth/login` and `/auth/register` share a per-IP bucket: 10 req/min. Prevents credential stuffing; a legit user who just registered still has 9 login attempts in the same window.
-- All other `/api/v1/*` routes: per-user (JWT-resolved) 100 req/min with per-IP fallback for anonymous paths.
-- gRPC: per-peer-IP token bucket, 100 req/min, burst 20. `peer.Addr` is normalised to its IP so TCP reconnects can't mint fresh buckets.
-- `Prometheus` surfaces rejections via `levara_rate_limit_rejected_total{channel, bucket}`.
-
-## Project Structure
-
-```
-new_db/
-  docs/reviews/        # 20.04-review.md (audit), 20.04-tasks.md (plan)
-  docs/swagger.{json,yaml}  # generated by `make swag` (T13)
-  Levara/              # Go source (main project)
-    cmd/server/        # main.go entry point (HTTP + gRPC), registers v1+v2
-    cmd/backup/        # levara-backup CLI (backup/restore)
-    internal/store/    # db.go, wal.go, hnsw.go, arena.go, collections.go
-    internal/http/     # api.go (router), api_{datasets,cognify,search,upload,admin}.go,
-                       # graph_search.go, mcp.go, auth.go, ratelimit.go,
-                       # search_strategy.go (T5), observe_middleware.go (T17)
-    internal/grpc/     # service.go (v1, ~47 RPCs), service_v2.go (T10),
-                       # auth_interceptor.go (T19), ratelimit.go (T2)
-    internal/metrics/  # telemetry.go + user_bucket.go (T17 bounded cardinality)
-    pkg/auth/          # shared JWT VerifyJWT (used by HTTP + gRPC interceptors)
-    pkg/orchestrator/  # cognify pipeline (chunk→extract→dedup→embed→write)
-    pkg/bm25/          # BM25 inverted index + hybrid RRF
-    pkg/graphrank/     # graph-aware reranking (α*vector + β*graph + γ*rerank)
-    pkg/rerank/        # cross-encoder reranking (Cohere-compatible)
-    pkg/router/        # smart search routing + adaptive weights
-    pkg/community/     # Louvain community detection
-    pkg/runreg/        # background-run registry (TTL janitor on terminal runs)
-    pkg/mcp/           # 33 MCP tools + Deps interface + OutputSchema (T14)
-    pkg/backup/        # backup/restore library
-    proto/             # cognevra.proto (gRPC definitions)
-    webui/             # Next.js 15 WebUI (12 routes, 61 E2E tests)
-    docs/              # WEBUI_REQUIREMENTS.md, WEBUI_DOD.md, ux_test.md, fix.md
-  posttests/bier/      # BEIR benchmark suite (6 datasets)
-  tests/               # Python test suite
-```
+- Main README: [`Levara/README.md`](Levara/README.md)
+- Product ladder: [`Levara/docs/product-ladder.md`](Levara/docs/product-ladder.md)
+- Runtime profiles: [`Levara/docs/profile-presets.md`](Levara/docs/profile-presets.md)
+- Security review checklist: [`Levara/docs/security-diff-checklist.md`](Levara/docs/security-diff-checklist.md)
+- REST/gRPC/MCP contract artifacts: [`docs/api-contract.md`](docs/api-contract.md)
+  and [`docs/contract.json`](docs/contract.json)
 
 ## Development Commands
 
-```bash
-# Start services
-docker compose up -d --build
-
-# Run all tests (requires embed-server + Cognevra + Ollama)
-pytest tests/ -v -s
-
-# Run only vector DB tests (no LLM needed)
-pytest tests/test_rag_cases.py tests/test_comprehensive_comparison.py -v -s
-
-# Run LLM pipeline tests (needs Ollama with qwen3.5)
-pytest tests/test_rag_llm_cases.py -v -s
-
-# Check service health
-curl http://localhost:9001/health    # embed-server
-curl http://localhost:8080/metrics   # Cognevra
-curl http://127.0.0.1:11434/api/tags # Ollama
-
-# Rebuild Cognevra after Go changes
-docker compose down && docker compose up -d --build
-
-# Regenerate OpenAPI spec after swaggo comment changes (T13)
-cd Levara && make swag
-# → docs/swagger.{json,yaml}; UI at http://localhost:8080/swagger/ when ENV=dev
-
-# Prom metrics smoke test
-curl -s localhost:8080/metrics | grep 'levara_http_requests_total\|levara_rate_limit_rejected\|levara_cognify_panics'
-```
-
-## gRPC v1 + v2 (T10)
-
-Both services register on the same :50051 listener. `levara.v1.LevaraService`
-is the canonical surface (47 RPCs — write, read, cognify, graph, hybrid
-search). `levara.v2.LevaraServiceV2` is a minimal **write-only subset**
-(Insert, BatchInsert, Delete, Search, Info) with typed `ErrorDetail`
-and `Add`/`Save`/`Create` aliases for Insert.
-
-**Deprecation status (revised 2026-05-15):** v2 is NOT replacing v1.
-The 3-month deprecation window for v1 (originally planned in 20.04
-tasks D11) is dropped — v2 surface is too thin to cover real clients
-(e.g. cognee-plugin uses 13 v1 RPCs; only 3 exist in v2). v1 remains
-long-term; v2 is positioned as a minimal canonical write API for new
-clients that don't need graph/cognify endpoints.
+Run commands from the repository root unless a command explicitly changes into
+`Levara/`.
 
 ```bash
-# v1 (canonical, all RPCs)
-grpcurl -H "authorization: Bearer $TOKEN" -plaintext \
-  -d '{"collection":"c","id":"1","vector":[0.1,0.2]}' \
-  localhost:50051 levara.v1.LevaraService/Insert
-
-# v2 (minimal write subset)
-grpcurl -H "authorization: Bearer $TOKEN" -plaintext \
-  -d '{"collection":"c","id":"1","vector":[0.1,0.2]}' \
-  localhost:50051 levara.v2.LevaraServiceV2/Insert
+make build
+make test-commit
+make profile-config-check
+make contract-check
 ```
 
-## Key Benchmark Results
+For focused work inside the engine:
 
-| Metric | Cognevra | LanceDB | Winner |
-|--------|----------|---------|--------|
-| Search latency (mean) | **2.6 ms** | 9.1 ms | Cognevra (3.5x) |
-| Concurrent QPS | **719** | 150 | Cognevra (4.8x) |
-| Insert throughput | 741 dp/s | **5,067 dp/s** | LanceDB (6.8x) |
-| Scale 10K search | **2.6 ms** | 16.4 ms | Cognevra (6.3x) |
-| Crash recovery | **100%** | N/A | Cognevra |
-
-**Cognevra**: best for read-heavy concurrent API workloads (read:write > 100:1).
-**LanceDB**: best for batch ingestion, CRUD, simple deployments.
-
-## Test Architecture
-
-Tests bypass Cognee pipeline and hit Cognevra HTTP API + LanceDB Python API directly with the same pre-computed embeddings from embed-server. This isolates vector DB performance from LLM/pipeline overhead.
-
-Key shared components (duplicated across test files):
-- `load_and_chunk_book()` — paragraph-based chunking with chapter detection
-- `embed_texts()` — batch embedding via embed-server HTTP API
-- `cognevra_insert/search/delete()` — Cognevra HTTP helpers
-- `LanceRecord/LancePayload` — LanceDB Pydantic schema (dim=1024)
-- `QUERIES[]` — 15 semantic queries with expected keywords
-
-## Cognevra Write Path
-
-Insert throughput with group-commit WAL (measured 2026-04-16):
-
-| Workers | inserts/sec | Scaling |
-|---------|-------------|---------|
-| 1       | 188         | 1.0×    |
-| 4       | 816         | 4.3×    |
-| 8       | 1616        | 8.6×    |
-
-db.mu hold time is ~15μs per Insert (arena.Add + WAL buffer + map updates).
-JSON marshal and disk.Write are both outside the lock. WAL fsync (~5ms) is
-decoupled via group commit (fsyncLoop coalesces up to 16 requests or 2ms
-window). Concurrent writers scale linearly thanks to this.
-
-Remaining write-path costs:
-1. **WAL fsync** (~5ms amortized) — the dominant cost at single-writer
-2. **HTTP round-trip** (~2-5ms/batch) — microservice architecture tax
-3. **HNSW indexing** — async via indexerLoop, doesn't affect Insert latency
-
-## Conventions
-
-- Tests use `pytest.mark.asyncio` + `aiohttp.ClientSession` for async HTTP
-- Cognevra record IDs use prefixes for test isolation: `book:`, `comp:`, `rag:`, `llm:`
-- LanceDB uses temp directories (`tempfile.mkdtemp()`) per test to avoid state leakage
-- conftest.py stubs all Cognee dependencies via `sys.modules` injection
-- Qwen 3.5 via Ollama needs `/no_think` prefix + `num_predict: 3000-5000`
-
-## Important Notes
-
-- Cognevra supports native collections via `CollectionManager` — each collection is an independent HNSW+Arena+WAL stack. No prefix hacks needed.
-- NDCG/Recall metrics can be misleadingly low when multiple tests insert data with different prefixes — run in clean state (`docker compose down -v`) for accurate quality metrics.
-- Remote llama.cpp at `10.23.0.64:9004` is not always reachable. Use local Ollama at `127.0.0.1:11434`.
-
-## Levara MCP Memory — usage guide for Claude
-
-Levara MCP — это твой постоянный memory layer. Используй проактивно: цель — чтобы ничего из принятых решений и найденных проблем не терялось между сессиями.
-
-### Session start
-
-1. `set_context(collection="levara")` — установить рабочий проект для всей сессии (один раз).
-2. `wake_up(max_tokens=300)` — загрузить запиненные критические факты + top entities графа. Это **дешевле** чем `get_project_context` (~300 vs ~2K токенов) и хватает в 80% случаев.
-3. Если задача в незнакомой области — `recall_memory(query="тема")` или `recall_memory(query="...", room="...", hall="decision")` чтобы поднять уже принятые решения.
-
-### Mental model: room × hall
-
-Каждая память имеет две независимые оси. **Заполняй обе всегда когда сохраняешь** — пустые поля резко снижают полезность recall.
-
-| Ось | Что значит | Контролируется |
-|---|---|---|
-| `room` | *О чём* память: подсистема/тема внутри проекта | Свободная строка (auth, deploy, mcp, ocr-bench, kg-temporal, ...) |
-| `hall` | *Что это за* память: жанр факта | Контролируемый словарь (см. ниже) |
-
-**Hall vocabulary** (на неизвестном значении `save_memory` вернёт ошибку):
-
-| hall | когда использовать |
-|---|---|
-| `fact` | Объективная характеристика: версия, размерность, IP, путь, число. «Levara HNSW dim=1024» |
-| `event` | Что-то произошло в конкретный момент: deploy, merge, инцидент, бенчмарк. Всегда с датой в value. |
-| `decision` | Архитектурный/проектный выбор: «решили X вместо Y потому что Z». Будущему тебе важно знать **почему**. |
-| `preference` | Предпочтение пользователя: стиль, тон, инструменты, флаги. Кросс-проектное обычно. |
-| `advice` | Практическое правило: «перед X сделай Y». Reusable рекомендация. |
-| `discovery` | Найденный non-obvious инсайт/баг/гетча, который ты бы хотел вспомнить через полгода. |
-
-### Decision rules — когда Claude должен сохранять (без просьбы)
-
-Вот триггеры. На каждом — **немедленно** вызывай `save_memory` с правильным hall. Не жди завершения разговора.
-
-| Триггер | Что делать |
-|---|---|
-| Пользователь принял архитектурное решение («давай X, не Y», «оставляем sqlite») | `save_memory(hall="decision", room="<подсистема>")` с **why** в value |
-| Ты нашёл root cause бага после расследования | `save_memory(hall="discovery", room="<подсистема>")` с симптомом + причиной + фиксом |
-| Пользователь поправил твой подход или дал стилевое указание | `save_memory(hall="preference")`, `pin_memory(priority=10)` если глобально |
-| Появился новый сервис/endpoint/IP/порт | `save_memory(hall="fact")` + `pin_memory` если критическое |
-| Завершён значимый этап работы (фича, рефакторинг, релиз) | `save_memory(hall="event")` с датой в value, перечислением изменений |
-| Ты дал пользователю reusable рекомендацию которая может пригодиться снова | `save_memory(hall="advice")` |
-| Пользователь упомянул дедлайн, мерж-фриз, чужую зависимость | `save_memory(hall="event")` с абсолютной датой |
-
-**НЕ сохраняй:**
-- Код, пути к файлам, имена функций — это есть в git/grep, и при ренейме станет stale.
-- Git history, кто что коммитил — `git log` авторитетен.
-- Промежуточные шаги текущей задачи — это для TaskCreate, не memory.
-- Дублирующее то что уже есть в auto-memory CLAUDE.md (стиль ответов, no_skip_tests, и т.п.).
-
-### Pin policy
-
-`pin_memory(key, priority)` помечает запись как «всегда возвращай в `wake_up`». Используй экономно — wake_up обрезается по бюджету.
-
-| priority | для чего |
-|---|---|
-| **10** | Глобальные предпочтения пользователя (стиль, язык, ключевые правила) |
-| **8** | Критическая инфраструктура (endpoints, IPs, порты, версии) |
-| **5** | Текущие активные решения по основным подсистемам |
-| **1-3** | Опциональный контекст |
-
-Если в `wake_up` стало слишком много шума — `unpin_memory(key)` для устаревших.
-
-### Recall patterns
-
-| Сценарий | Команда |
-|---|---|
-| «Что мы решили по auth?» | `recall_memory(query="auth", hall="decision")` |
-| «Все мои стилевые предпочтения» | `list_memories(hall="preference")` |
-| «Какие баги мы находили в migrations?» | `recall_memory(query="migration", hall="discovery")` |
-| «Что есть по теме deploy?» | `list_memories(room="deploy")` |
-| «Через несколько проектов» | `cross_search(collections=["levara","other"])` |
-
-### Knowledge graph + temporal validity
-
-Когда `cognify` обработал текст — в графе появились entities/edges с временными окнами:
-- `query_entity(name="X")` — текущее состояние entity (только активные edges).
-- `query_entity(name="X", as_of="2026-01-01")` — снапшот на конкретную дату.
-- Edges с relation из whitelist (`assigned_to`, `role_is`, `status_is`, `located_in`, `lives_in`, `works_at`, `owns`, `reports_to`, `current_state`, `is_a`) автоматически супершедятся при добавлении нового — старые помечаются `valid_until=now, superseded_by=<new>`.
-
-### Per-agent diaries
-
-При запуске специализированных subagents (Explore, Plan, code-review):
-- `diary_write(agent="reviewer", key="...", value="...")` — запись в изолированный namespace `owner_id="agent:reviewer"`.
-- `diary_read(agent="reviewer", query="...")` — читает только свои записи, не загрязняет project memory.
-
-Используй когда subagent делает повторяющуюся работу (review, monitoring, planning) и хочет вести свой контекст между запусками.
-
-### Search с фильтром по metadata
-
-`search` теперь принимает `room` и `tags`. При наличии фильтра HNSW делает overfetch ×3 и отсеивает по chunk metadata. Используй когда коллекция большая и без фильтра вылезают результаты из других контекстов:
-```
-search(search_query="...", room="auth", tags=["security"])
+```bash
+cd Levara
+go test ./docs ./pkg/profile ./pkg/access ./pkg/storage
+make test-release-candidate
 ```
 
-`add` и `cognify` принимают те же `room`/`tags` чтобы chunks несли эту metadata.
+## Cleanup Policy
 
-### Sync (Mac ↔ Pi)
-
-- Mac (`localhost:8081`) ↔ Pi (`10.23.0.53:8090`)
-- `sync(remote_url="http://10.23.0.53:8090/api/v1", direction="pull")`
-- CLI: `sync_levara` / `man_levara`
-
-### Полный список MCP tools (27)
-
-**Knowledge graph & search:** `cognify`, `cognify_status`, `search`, `cross_search`, `query_entity`, `analyze_commits`, `git_search`, `codify`
-
-**Data:** `add`, `list_data`, `delete`, `prune`
-
-**Memory (palace):** `save_memory`, `recall_memory`, `list_memories`, `pin_memory`, `unpin_memory`, `wake_up`, `diary_write`, `diary_read`
-
-**Memory consolidation (System2):** `consolidate`, `consolidation_revert` — periodically compress a collection's memory: cluster near-duplicate/related records, then mechanically **merge** (cosine ≥ 0.97, keep newest) or LLM-**abstract** (0.85 ≤ cosine < 0.97) them into one record. Reversible: sources are superseded + archived (not deleted), restorable via `consolidation_revert(run_id)`. `consolidate(collection, room?, hall?, dry_run=true)` previews by default. Runs on demand or via the opt-in background janitor (`CONSOLIDATION_INTERVAL`). Superseded records are hidden from `recall`/`list_memories`/`wake_up` unless `include_superseded=true`.
-
-**Chat history:** `save_chat`, `recall_chat`, `search_chats`
-
-**Context & sync:** `set_context`, `get_project_context`, `sync`, `add_feedback`, `get_feedback_stats`
+- Do not reintroduce pre-Levara names, adapter experiments, or external
+  benchmark scaffolding into top-level docs.
+- Keep product claims aligned with `Levara/docs/product-ladder.md`.
+- Keep enterprise claims honest: SSO/storage/KMS/SIEM production backends are
+  adapter roadmap unless concrete implementations and tests exist.

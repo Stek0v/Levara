@@ -55,19 +55,9 @@ Levara/levara-arm64
 Levara/levara-cli-arm64
 Levara/levara-test
 Levara/server
-Levara/vectradb
-Levara-legacy/cli
-Levara-legacy/cognevra
-Levara-legacy/cognevra-arm64
-Levara-legacy/test-server
 
 # Runtime vector store shards (regenerated on first run)
-Levara-legacy/data_768/
 Levara/data_768/
-
-# Benchmark embeddings cache (regenerated on run, 10+ MB each)
-posttests/bier/*.npz
-posttests/bier/mac_results/
 
 # Session-local memory buffer used by the `remember` skill
 .remember/

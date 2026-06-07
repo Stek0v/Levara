@@ -248,10 +248,10 @@ Same tools, same protocol, same server. One Levara instance serves both Claude C
 
 ## Competitive Comparison
 
-| Feature | **Levara** | mem0 | Cognee | Zep | Basic MCP servers |
+| Feature | **Levara** | mem0 | Python KG stack | Zep | Basic MCP servers |
 |---------|-----------|------|--------|-----|-------------------|
 | **Language** | Go (single binary) | Python | Python | Go + Postgres | Python/Node |
-| **Deployment** | 1 process, 30MB | Python + Redis + Qdrant | Python + Neo4j + VectorDB | Go + Postgres | Script |
+| **Deployment** | 1 process, 30MB | Python + Redis + external search | Python + Neo4j + external search | Go + Postgres | Script |
 | **Runs on Pi 5** | **Yes (proven)** | No | No | No | Maybe |
 | **MCP tools** | **15** | 4-5 | 3-4 | 5-6 | 2-3 |
 | **Knowledge graph** | **Built-in** | No | Yes (Neo4j) | Partial | No |
@@ -264,7 +264,7 @@ Same tools, same protocol, same server. One Levara instance serves both Claude C
 | **Chat persistence** | **Built-in** | No | No | Yes | No |
 | **Crash recovery** | **WAL + snapshots** | Backend-dependent | Backend-dependent | Postgres | No |
 | **Multi-node** | **WAL shipping** | No | No | Postgres repl. | No |
-| **External dependencies** | **None** | Redis, Qdrant, Python | Neo4j, VectorDB, Python | Postgres | Varies |
+| **External dependencies** | **None** | Redis, external search, Python | Neo4j, external search, Python | Postgres | Varies |
 | **Search latency** | **2.6ms** | 10-50ms | 50-200ms | 10-30ms | N/A |
 | **Concurrent QPS** | **719** | ~50-100 | ~10-30 | ~100-200 | N/A |
 | **Price** | **Free** | Free / $99+/mo | Free | Free / paid | Free |
@@ -363,7 +363,7 @@ Replicas receive WAL entries in real-time (~10-50ms lag). Reads can go to any no
 ### Don't use Levara when:
 - You need managed cloud service with zero ops (use mem0 Cloud)
 - You need conversation-focused memory with user profiling (use Zep)
-- You already have Neo4j and want Cognee's mature Python pipeline
+- You already have a mature Python knowledge-graph pipeline around Neo4j
 - You only need simple key-value storage (use basic MCP memory server)
 
 ---
