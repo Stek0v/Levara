@@ -205,8 +205,11 @@ explicitly opted in via `types=["collections"]` + `collections=[...]`).
 | codify | cognify | canonical |
 | cognify | cognify | canonical |
 | cognify_status | cognify | canonical |
+| consolidate | memory | canonical |
+| consolidation_revert | memory | canonical |
 | cross_search | search | canonical |
 | delete | data | canonical |
+| delete_memory | memory | canonical |
 | diary_read | diary | canonical |
 | diary_write | diary | canonical |
 | doctor | ops | canonical |
@@ -226,6 +229,7 @@ explicitly opted in via `types=["collections"]` + `collections=[...]`).
 | recall_chat | chat | canonical |
 | recall_memory | memory | canonical |
 | recent_errors | ops | canonical |
+| reconcile_memory | ops | canonical |
 | runtime_stats | ops | canonical |
 | save_chat | chat | canonical |
 | save_memory | memory | canonical |
