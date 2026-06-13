@@ -2,7 +2,7 @@ package mcp
 
 import (
 	"context"
-	"fmt"
+	"strconv"
 )
 
 // ToolDeleteMemory permanently removes a memory by key — both the SQL row
@@ -100,8 +100,5 @@ func ToolDeleteMemory(ctx context.Context, deps Deps, args map[string]any) ToolR
 		}
 	}
 
-	return ToolResult{Content: []Content{{
-		Type: "text",
-		Text: fmt.Sprintf("Deleted %s (%d record(s))", key, len(targets)),
-	}}}
+	return statusResult(true, "Deleted "+key+" ("+strconv.Itoa(len(targets))+" record(s))")
 }
