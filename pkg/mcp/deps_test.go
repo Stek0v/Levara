@@ -322,8 +322,8 @@ type fakeSearchPipeline struct {
 	byText            func(ctx context.Context, coll, query string, topK int) ([]pipeline.ScoredResult, error)
 	byTextParentChild func(ctx context.Context, coll, query string, topK int) ([]pipeline.ScoredResult, error)
 	byTextMultiQuery  func(ctx context.Context, coll, query string, topK int, p llm.Provider, model string, n int) ([]pipeline.ScoredResult, error)
-	applyRerank   func(ctx context.Context, query string, in []pipeline.ScoredResult, topK int) (bool, []pipeline.ScoredResult)
-	rerankEnabled bool
+	applyRerank       func(ctx context.Context, query string, in []pipeline.ScoredResult, topK int) (bool, []pipeline.ScoredResult)
+	rerankEnabled     bool
 }
 
 func (p *fakeSearchPipeline) SearchByText(ctx context.Context, coll, query string, topK int) ([]pipeline.ScoredResult, error) {
@@ -673,7 +673,7 @@ func setupListDataTestDB(t *testing.T) *sql.DB {
 	return db
 }
 
-// parseListDataContent pulls the JSON array out of a ToolResult so
+// parseListDataContent pulls the JSON array envelope out of a ToolResult so
 // assertions can inspect individual items.
 func parseListDataContent(t *testing.T, res ToolResult) []map[string]any {
 	t.Helper()
@@ -683,11 +683,16 @@ func parseListDataContent(t *testing.T, res ToolResult) []map[string]any {
 	if len(res.Content) != 1 || res.Content[0].Type != "text" {
 		t.Fatalf("content = %+v, want single text item", res.Content)
 	}
-	var items []map[string]any
-	if err := json.Unmarshal([]byte(res.Content[0].Text), &items); err != nil {
+	var out struct {
+		Datasets []map[string]any `json:"datasets"`
+	}
+	if err := json.Unmarshal([]byte(res.Content[0].Text), &out); err != nil {
 		t.Fatalf("json unmarshal %q: %v", res.Content[0].Text, err)
 	}
-	return items
+	if out.Datasets == nil {
+		return []map[string]any{}
+	}
+	return out.Datasets
 }
 
 func TestToolListData_NoCollectionsReturnsEmpty(t *testing.T) {
@@ -698,8 +703,8 @@ func TestToolListData_NoCollectionsReturnsEmpty(t *testing.T) {
 	if got.IsError {
 		t.Fatalf("IsError = true, want false")
 	}
-	if len(got.Content) != 1 || got.Content[0].Text != "[]" {
-		t.Fatalf("content = %+v, want single text \"[]\"", got.Content)
+	if items := parseListDataContent(t, got); len(items) != 0 {
+		t.Fatalf("items = %+v, want empty list", items)
 	}
 }
 
@@ -919,14 +924,11 @@ func TestToolAdd_IngestSucceedsWithNilDB(t *testing.T) {
 		t.Fatalf("empty content")
 	}
 	text := got.Content[0].Text
-	if !strings.Contains(text, "dataset 'notes'") {
-		t.Errorf("content = %q, want dataset name 'notes'", text)
+	if !strings.Contains(text, "dataset_id") {
+		t.Errorf("content = %q, want dataset_id field", text)
 	}
-	if !strings.Contains(text, "items: 1") {
-		t.Errorf("content = %q, want 'items: 1'", text)
-	}
-	if !strings.Contains(text, "dataset_id:") {
-		t.Errorf("content = %q, want dataset_id to be mentioned", text)
+	if !strings.Contains(text, "Data ingested into dataset 'notes'") {
+		t.Errorf("content = %q, want dataset name in message", text)
 	}
 }
 

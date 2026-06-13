@@ -66,10 +66,7 @@ func ToolAddFeedback(ctx context.Context, deps Deps, args map[string]any) ToolRe
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 	`), id, query, resultID, collection, searchType, rating, comment, userID)
 
-	return ToolResult{Content: []Content{{
-		Type: "text",
-		Text: fmt.Sprintf("Feedback saved: rating=%d for query '%s'", rating, Truncate(query, feedbackQueryLogMaxLen)),
-	}}}
+	return statusResult(true, fmt.Sprintf("Feedback saved: rating=%d for query '%s'", rating, Truncate(query, feedbackQueryLogMaxLen)))
 }
 
 // ToolGetFeedbackStats aggregates the search_feedback table.
@@ -141,8 +138,5 @@ func ToolSetContext(sess *Session, deps Deps, args map[string]any) ToolResult {
 	if !exists {
 		status = "set (collection not yet created — will be used when data is added)"
 	}
-	return ToolResult{Content: []Content{{
-		Type: "text",
-		Text: fmt.Sprintf("Context %s: default collection = '%s'", status, collection),
-	}}}
+	return statusResult(true, fmt.Sprintf("Context %s: default collection = '%s'", status, collection))
 }

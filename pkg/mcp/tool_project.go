@@ -7,7 +7,6 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -137,7 +136,10 @@ func ToolGetProjectContext(ctx context.Context, deps Deps, args map[string]any) 
 		}
 	}
 
-	return ToolResult{Content: []Content{{Type: "text", Text: sb.String()}}}
+	return jsonResult(map[string]any{
+		"collection": collection,
+		"text":       sb.String(),
+	})
 }
 
 // driftResult mirrors embed.DriftCheckResult JSON shape without importing
@@ -164,7 +166,7 @@ type driftResult struct {
 // on a deployment-level constant (mirrors the two-step logic in the
 // pre-refactor mcpHandler.toolCheckDrift).
 //
-// Returns "[]" (empty JSON array, not IsError) when nothing is drifted.
+// Returns an empty drifted array when nothing is drifted.
 func ToolCheckDrift(ctx context.Context, deps Deps, args map[string]any) ToolResult {
 	// T6: narrow accessor — ToolCheckDrift only needs the model name.
 	currentModel := deps.EmbedModel()
@@ -214,6 +216,9 @@ func ToolCheckDrift(ctx context.Context, deps Deps, args map[string]any) ToolRes
 	if results == nil {
 		results = []driftResult{}
 	}
-	out, _ := json.MarshalIndent(results, "", "  ")
-	return ToolResult{Content: []Content{{Type: "text", Text: string(out)}}}
+	return jsonResult(map[string]any{
+		"current_model": currentModel,
+		"current_dim":   currentDim,
+		"drifted":       results,
+	})
 }

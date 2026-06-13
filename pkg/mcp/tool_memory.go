@@ -24,7 +24,7 @@ const listMemoriesCap = 100
 func ToolListMemories(ctx context.Context, deps Deps, args map[string]any) ToolResult {
 	db := deps.DB()
 	if db == nil {
-		return ToolResult{Content: []Content{{Type: "text", Text: "[]"}}}
+		return jsonResult(map[string]any{"memories": []any{}, "total": 0})
 	}
 
 	filterType, _ := args["type"].(string)
@@ -70,7 +70,7 @@ func ToolListMemories(ctx context.Context, deps Deps, args map[string]any) ToolR
 
 	rows, err := db.QueryContext(ctx, deps.Q(sqlStr), qargs...)
 	if err != nil {
-		return ToolResult{Content: []Content{{Type: "text", Text: "[]"}}}
+		return jsonResult(map[string]any{"memories": []any{}, "total": 0})
 	}
 	defer rows.Close()
 
@@ -90,10 +90,9 @@ func ToolListMemories(ctx context.Context, deps Deps, args map[string]any) ToolR
 	}
 
 	if results == nil {
-		return ToolResult{Content: []Content{{Type: "text", Text: "[]"}}}
+		return jsonResult(map[string]any{"memories": []any{}, "total": 0})
 	}
-	out, _ := json.MarshalIndent(results, "", "  ")
-	return ToolResult{Content: []Content{{Type: "text", Text: string(out)}}}
+	return jsonResult(map[string]any{"memories": results, "total": len(results)})
 }
 
 // extractOwnerID reads the MCP user ID from the request context (set by
@@ -151,10 +150,7 @@ func ToolPinMemory(ctx context.Context, deps Deps, args map[string]any) ToolResu
 			IsError: true,
 		}
 	}
-	return ToolResult{Content: []Content{{
-		Type: "text",
-		Text: fmt.Sprintf("Pinned %s (priority=%d)", key, priority),
-	}}}
+	return statusResult(true, fmt.Sprintf("Pinned %s (priority=%d)", key, priority))
 }
 
 // ToolUnpinMemory clears the pin flag and priority on a memory row.
@@ -189,7 +185,7 @@ func ToolUnpinMemory(ctx context.Context, deps Deps, args map[string]any) ToolRe
 			IsError: true,
 		}
 	}
-	return ToolResult{Content: []Content{{Type: "text", Text: "Unpinned " + key}}}
+	return statusResult(true, "Unpinned "+key)
 }
 
 // Defaults for ToolWakeUp. max_tokens caps total response size;
@@ -237,8 +233,11 @@ func ToolWakeUp(ctx context.Context, deps Deps, args map[string]any) ToolResult 
 		"max_tokens":   maxTokens,
 		"pinned":       pinned,
 		"top_entities": entities,
+		"tokens_used":  0,
 	}
 	out, _ := json.MarshalIndent(bundle, "", "  ")
+	bundle["tokens_used"] = len(out) / wakeUpCharsPerToken
+	out, _ = json.MarshalIndent(bundle, "", "  ")
 	if len(out) > maxChars {
 		// Drop entities first, then trim pinned to fit.
 		bundle["top_entities"] = []any{}
@@ -248,6 +247,8 @@ func ToolWakeUp(ctx context.Context, deps Deps, args map[string]any) ToolResult 
 			bundle["pinned"] = pinned
 			out, _ = json.MarshalIndent(bundle, "", "  ")
 		}
+		bundle["tokens_used"] = len(out) / wakeUpCharsPerToken
+		out, _ = json.MarshalIndent(bundle, "", "  ")
 	}
 
 	return ToolResult{Content: []Content{{Type: "text", Text: string(out)}}}
@@ -314,7 +315,7 @@ func wakeUpEntities(ctx context.Context, db *sql.DB, rewrite func(string) string
 			continue
 		}
 		out = append(out, map[string]any{
-			"name": name, "type": typ, "degree": deg,
+			"name": name, "type": typ, "edge_count": deg,
 		})
 	}
 	return out

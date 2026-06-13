@@ -46,6 +46,20 @@ func setupSaveRecallMemoryDB(t *testing.T) *fakeDeps {
 	return &fakeDeps{db: db}
 }
 
+func decodeRecallResults(t *testing.T, got ToolResult) []map[string]any {
+	t.Helper()
+	var out struct {
+		Results []map[string]any `json:"results"`
+	}
+	if err := json.Unmarshal([]byte(got.Content[0].Text), &out); err != nil {
+		t.Fatalf("unmarshal recall result: %v (content=%q)", err, got.Content[0].Text)
+	}
+	if out.Results == nil {
+		return []map[string]any{}
+	}
+	return out.Results
+}
+
 // ── ToolSaveMemory ──
 
 func TestToolSaveMemory_RequiresKeyAndValue(t *testing.T) {
@@ -421,8 +435,9 @@ func TestToolRecallMemory_NilDBReturnsEmpty(t *testing.T) {
 	if got.IsError {
 		t.Fatalf("nil DB: IsError = true, want false")
 	}
-	if got.Content[0].Text != "[]" {
-		t.Errorf("content = %q, want []", got.Content[0].Text)
+	items := decodeRecallResults(t, got)
+	if len(items) != 0 {
+		t.Errorf("got %+v, want empty results", items)
 	}
 }
 
@@ -439,10 +454,7 @@ func TestToolRecallMemory_SQLFallbackLikeMatch(t *testing.T) {
 		VALUES ('m2', 'deploy', 'staging pipeline', 'fact', '', '', '', '', ?, ?)`, now, now)
 
 	got := ToolRecallMemory(context.Background(), deps, map[string]any{"query": "OAuth"})
-	var items []map[string]any
-	if err := json.Unmarshal([]byte(got.Content[0].Text), &items); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
+	items := decodeRecallResults(t, got)
 	if len(items) != 1 || items[0]["key"] != "auth" {
 		t.Errorf("got %+v, want single 'auth' (matched via value)", items)
 	}
@@ -454,8 +466,9 @@ func TestToolRecallMemory_SQLFallbackNoMatch(t *testing.T) {
 	if got.IsError {
 		t.Fatalf("IsError = true")
 	}
-	if !strings.Contains(got.Content[0].Text, "No memories found") {
-		t.Errorf("content = %q", got.Content[0].Text)
+	items := decodeRecallResults(t, got)
+	if len(items) != 0 || !strings.Contains(got.Content[0].Text, "No memories found") {
+		t.Errorf("content = %q, want empty results with message", got.Content[0].Text)
 	}
 }
 
@@ -482,8 +495,7 @@ func TestToolRecallMemory_RoomFilterFallsBackToSQLLike(t *testing.T) {
 	if got.IsError {
 		t.Fatalf("IsError = true")
 	}
-	var items []map[string]any
-	json.Unmarshal([]byte(got.Content[0].Text), &items)
+	items := decodeRecallResults(t, got)
 	if len(items) != 1 || items[0]["key"] != "k1" {
 		t.Errorf("got %+v from SQL fallback, want single 'k1'", items)
 	}
@@ -517,10 +529,7 @@ func TestToolRecallMemory_RoomFilterUsesVectorHydration(t *testing.T) {
 	if got.IsError {
 		t.Fatalf("IsError = true: %s", got.Content[0].Text)
 	}
-	var items []map[string]any
-	if err := json.Unmarshal([]byte(got.Content[0].Text), &items); err != nil {
-		t.Fatalf("unmarshal: %v (content=%q)", err, got.Content[0].Text)
-	}
+	items := decodeRecallResults(t, got)
 	if len(items) != 1 || items[0]["key"] != "potion-fact" {
 		t.Fatalf("got %+v, want single 'potion-fact' (vector hit, room=embed)", items)
 	}
@@ -550,8 +559,7 @@ func TestToolRecallMemory_HallFilterUsesVectorHydration(t *testing.T) {
 	if got.IsError {
 		t.Fatalf("IsError = true: %s", got.Content[0].Text)
 	}
-	var items []map[string]any
-	json.Unmarshal([]byte(got.Content[0].Text), &items)
+	items := decodeRecallResults(t, got)
 	if len(items) != 1 || items[0]["key"] != "decided-x" {
 		t.Fatalf("got %+v, want single 'decided-x' (hall=decision)", items)
 	}
@@ -580,10 +588,7 @@ func TestToolRecallMemory_VectorPathHydratesFromSQL(t *testing.T) {
 		t.Fatalf("IsError = true: %s", got.Content[0].Text)
 	}
 
-	var items []map[string]any
-	if err := json.Unmarshal([]byte(got.Content[0].Text), &items); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
+	items := decodeRecallResults(t, got)
 	if len(items) != 1 || items[0]["key"] != "hit" {
 		t.Errorf("got %+v, want single 'hit' (SQL-hydrated)", items)
 	}
@@ -628,10 +633,7 @@ func TestToolRecallMemory_VectorPathOwnershipScoped(t *testing.T) {
 	if got.IsError {
 		t.Fatalf("IsError = true: %s", got.Content[0].Text)
 	}
-	var items []map[string]any
-	if err := json.Unmarshal([]byte(got.Content[0].Text), &items); err != nil {
-		t.Fatalf("unmarshal: %v (content=%q)", err, got.Content[0].Text)
-	}
+	items := decodeRecallResults(t, got)
 	keys := map[string]bool{}
 	for _, it := range items {
 		keys[it["key"].(string)] = true
@@ -667,10 +669,7 @@ func TestToolRecallMemory_VectorEmptyFallsThroughToSQL(t *testing.T) {
 	if got.IsError {
 		t.Fatalf("IsError = true")
 	}
-	var items []map[string]any
-	if err := json.Unmarshal([]byte(got.Content[0].Text), &items); err != nil {
-		t.Fatalf("unmarshal: %v (content=%q)", err, got.Content[0].Text)
-	}
+	items := decodeRecallResults(t, got)
 	if len(items) != 1 || items[0]["key"] != "target" {
 		t.Errorf("SQL fallback: got %+v, want single 'target'", items)
 	}
@@ -689,8 +688,7 @@ func TestToolRecallMemory_CollectionFilterPersists(t *testing.T) {
 		"query":      "match",
 		"collection": "levara",
 	})
-	var items []map[string]any
-	json.Unmarshal([]byte(got.Content[0].Text), &items)
+	items := decodeRecallResults(t, got)
 	if len(items) != 1 || items[0]["key"] != "a" {
 		t.Errorf("got %+v, want single 'a'", items)
 	}

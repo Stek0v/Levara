@@ -5,7 +5,6 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -63,19 +62,16 @@ func ToolDiaryWrite(ctx context.Context, deps Deps, args map[string]any) ToolRes
 			IsError: true,
 		}
 	}
-	return ToolResult{Content: []Content{{
-		Type: "text",
-		Text: fmt.Sprintf("Diary[%s] wrote %s", agent, key),
-	}}}
+	return statusResult(true, fmt.Sprintf("Diary[%s] wrote %s", agent, key))
 }
 
 // ToolDiaryRead returns diary entries for a subagent, optionally
 // filtered by query substring (matches key OR value) and/or
-// collection. Nil DB returns "[]" rather than an error.
+// collection.
 func ToolDiaryRead(ctx context.Context, deps Deps, args map[string]any) ToolResult {
 	db := deps.DB()
 	if db == nil {
-		return ToolResult{Content: []Content{{Type: "text", Text: "[]"}}}
+		return jsonResult(map[string]any{"entries": []any{}})
 	}
 	agent, _ := args["agent"].(string)
 	if agent == "" {
@@ -129,11 +125,10 @@ func ToolDiaryRead(ctx context.Context, deps Deps, args map[string]any) ToolResu
 		})
 	}
 	if entries == nil {
-		return ToolResult{Content: []Content{{
-			Type: "text",
-			Text: fmt.Sprintf("Diary[%s] is empty", agent),
-		}}}
+		return jsonResult(map[string]any{
+			"entries": []any{},
+			"message": fmt.Sprintf("Diary[%s] is empty", agent),
+		})
 	}
-	out, _ := json.MarshalIndent(entries, "", "  ")
-	return ToolResult{Content: []Content{{Type: "text", Text: string(out)}}}
+	return jsonResult(map[string]any{"entries": entries})
 }

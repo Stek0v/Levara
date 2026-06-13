@@ -210,9 +210,8 @@ func TestToolCheckDrift_NoDrift(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("unexpected IsError: %q", res.Content[0].Text)
 	}
-	// No drift → should be empty JSON array.
-	if strings.TrimSpace(res.Content[0].Text) != "[]" {
-		t.Errorf("expected [] for no drift, got %q", res.Content[0].Text)
+	if !strings.Contains(res.Content[0].Text, `"drifted": []`) {
+		t.Errorf("expected empty drifted array, got %q", res.Content[0].Text)
 	}
 }
 
@@ -248,7 +247,7 @@ func TestToolCheckDrift_EmptyCollectionSkipped(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("unexpected IsError: %q", res.Content[0].Text)
 	}
-	if strings.TrimSpace(res.Content[0].Text) != "[]" {
+	if !strings.Contains(res.Content[0].Text, `"drifted": []`) {
 		t.Errorf("empty collection should be skipped; got %q", res.Content[0].Text)
 	}
 }
@@ -265,7 +264,7 @@ func TestToolCheckDrift_InternalCollectionSkipped(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("unexpected IsError: %q", res.Content[0].Text)
 	}
-	if strings.TrimSpace(res.Content[0].Text) != "[]" {
+	if !strings.Contains(res.Content[0].Text, `"drifted": []`) {
 		t.Errorf("internal collection should be skipped; got %q", res.Content[0].Text)
 	}
 }

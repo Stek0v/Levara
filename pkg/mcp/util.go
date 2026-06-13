@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -39,4 +40,13 @@ func Truncate(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen-3] + "..."
+}
+
+func jsonResult(v any) ToolResult {
+	out, _ := json.MarshalIndent(v, "", "  ")
+	return ToolResult{Content: []Content{{Type: "text", Text: string(out)}}}
+}
+
+func statusResult(ok bool, message string) ToolResult {
+	return jsonResult(map[string]any{"ok": ok, "message": message})
 }

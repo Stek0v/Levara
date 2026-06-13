@@ -7,7 +7,6 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/stek0v/levara/pkg/community"
@@ -23,7 +22,7 @@ import (
 func ToolListCommunities(ctx context.Context, deps Deps, args map[string]any) ToolResult {
 	db := deps.DB()
 	if db == nil {
-		return ToolResult{Content: []Content{{Type: "text", Text: "[]"}}}
+		return jsonResult(map[string]any{"communities": []any{}})
 	}
 
 	limit := 20
@@ -55,7 +54,7 @@ func ToolListCommunities(ctx context.Context, deps Deps, args map[string]any) To
 
 	rows, err := db.QueryContext(ctx, query, queryArgs...)
 	if err != nil {
-		return ToolResult{Content: []Content{{Type: "text", Text: "[]"}}}
+		return jsonResult(map[string]any{"communities": []any{}})
 	}
 	defer rows.Close()
 
@@ -76,8 +75,7 @@ func ToolListCommunities(ctx context.Context, deps Deps, args map[string]any) To
 		communities = []map[string]any{}
 	}
 
-	out, _ := json.MarshalIndent(communities, "", "  ")
-	return ToolResult{Content: []Content{{Type: "text", Text: string(out)}}}
+	return jsonResult(map[string]any{"communities": communities})
 }
 
 // ToolPruneGraph removes superseded graph edges (and optionally orphan
@@ -91,7 +89,7 @@ func ToolListCommunities(ctx context.Context, deps Deps, args map[string]any) To
 func ToolPruneGraph(ctx context.Context, deps Deps, args map[string]any) ToolResult {
 	db := deps.DB()
 	if db == nil {
-		return ToolResult{Content: []Content{{Type: "text", Text: `{"edges_deleted":0}`}}}
+		return jsonResult(map[string]any{"edges_deleted": 0, "nodes_deleted": 0, "dry_run": true})
 	}
 
 	cfg := community.PruneConfig{
@@ -118,6 +116,11 @@ func ToolPruneGraph(ctx context.Context, deps Deps, args map[string]any) ToolRes
 	}
 
 	deps.LogHeartbeat("prune", result)
-	out, _ := json.MarshalIndent(result, "", "  ")
-	return ToolResult{Content: []Content{{Type: "text", Text: string(out)}}}
+	return jsonResult(map[string]any{
+		"edges_deleted":      result.EdgesDeleted,
+		"edges_would_delete": result.EdgesWouldDelete,
+		"orphan_nodes":       result.OrphanNodes,
+		"members_cleaned_up": result.MembersCleanedUp,
+		"dry_run":            cfg.DryRun,
+	})
 }
