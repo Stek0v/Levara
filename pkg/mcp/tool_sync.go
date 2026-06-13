@@ -9,7 +9,6 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 )
 
@@ -81,6 +80,5 @@ func ToolSync(ctx context.Context, deps Deps, args map[string]any) ToolResult {
 		"types":     types,
 	})
 
-	out, _ := json.MarshalIndent(result, "", "  ")
-	return ToolResult{Content: []Content{{Type: "text", Text: string(out)}}}
+	return jsonResult(result)
 }

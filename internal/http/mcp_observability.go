@@ -75,8 +75,7 @@ func (h *mcpHandler) toolRuntimeStats(ctx context.Context, args map[string]any) 
 		"snapshot_taken_at": time.Now().UTC().Format(time.RFC3339),
 	}
 
-	data, _ := json.MarshalIndent(out, "", "  ")
-	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(data)}}}
+	return mcpJSONResult(out)
 }
 
 // toolIngestionStatus surfaces in-flight and recently completed
@@ -139,10 +138,8 @@ func (h *mcpHandler) toolIngestionStatus(ctx context.Context, args map[string]an
 		},
 		"runs": filtered,
 	}
-	data, _ := json.MarshalIndent(out, "", "  ")
-	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(data)}}}
+	return mcpJSONResult(out)
 }
-
 
 // toolRecentErrors aggregates recent error signals from two sources:
 // FAILED background runs in the registry, and doctor heartbeats whose
@@ -225,11 +222,10 @@ func (h *mcpHandler) toolRecentErrors(ctx context.Context, args map[string]any) 
 		entries = entries[:limit]
 	}
 
-	data, _ := json.MarshalIndent(map[string]any{
+	return mcpJSONResult(map[string]any{
 		"count":  len(entries),
 		"errors": entries,
-	}, "", "  ")
-	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(data)}}}
+	})
 }
 
 // toolSyncStatus summarizes recent sync events per direction (push|pull)
@@ -305,11 +301,10 @@ func (h *mcpHandler) toolSyncStatus(ctx context.Context, args map[string]any) mc
 		})
 	}
 
-	data, _ := json.MarshalIndent(map[string]any{
+	return mcpJSONResult(map[string]any{
 		"by_direction": byDir,
 		"events":       events,
-	}, "", "  ")
-	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(data)}}}
+	})
 }
 
 // memorySidecarName mirrors pkg/mcp.memoryCollectionName: the vector
@@ -465,17 +460,15 @@ func (h *mcpHandler) toolReconcileMemory(ctx context.Context, args map[string]an
 		reports = append(reports, rep)
 	}
 
-	data, _ := json.MarshalIndent(map[string]any{
-		"apply":              apply,
-		"delete_orphans":     deleteOrphans,
-		"sidecars_scanned":   len(reports),
-		"total_missing":      totMissing,
-		"total_orphan":       totOrphan,
-		"total_repaired":     totRepaired,
-		"total_repair_failed": totFailed,
+	return mcpJSONResult(map[string]any{
+		"apply":                apply,
+		"delete_orphans":       deleteOrphans,
+		"sidecars_scanned":     len(reports),
+		"total_missing":        totMissing,
+		"total_orphan":         totOrphan,
+		"total_repaired":       totRepaired,
+		"total_repair_failed":  totFailed,
 		"total_orphan_deleted": totDeleted,
-		"sidecars":           reports,
-	}, "", "  ")
-	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(data)}}}
+		"sidecars":             reports,
+	})
 }
-

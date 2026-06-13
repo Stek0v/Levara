@@ -44,7 +44,10 @@ func Truncate(s string, maxLen int) string {
 
 func jsonResult(v any) ToolResult {
 	out, _ := json.MarshalIndent(v, "", "  ")
-	return ToolResult{Content: []Content{{Type: "text", Text: string(out)}}}
+	return ToolResult{
+		Content:           []Content{{Type: "text", Text: string(out)}},
+		StructuredContent: v,
+	}
 }
 
 func statusResult(ok bool, message string) ToolResult {

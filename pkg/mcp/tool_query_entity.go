@@ -25,10 +25,10 @@ const (
 // filtered by validity.
 //
 // Validity modes:
-//  - No "as_of": only currently-active edges (valid_until is NULL or
-//    in the future relative to CURRENT_TIMESTAMP).
-//  - "as_of" supplied: temporal snapshot — edges whose validity window
-//    (valid_from, valid_until) includes the given timestamp.
+//   - No "as_of": only currently-active edges (valid_until is NULL or
+//     in the future relative to CURRENT_TIMESTAMP).
+//   - "as_of" supplied: temporal snapshot — edges whose validity window
+//     (valid_from, valid_until) includes the given timestamp.
 //
 // Returns a not-found message (IsError=false) when the entity name
 // resolves to zero nodes — an unknown name is a reasonable query, not
@@ -78,8 +78,7 @@ func ToolQueryEntity(ctx context.Context, deps Deps, args map[string]any) ToolRe
 		"node_ids":   nodeIDs,
 		"edges":      edges,
 	}
-	out, _ := json.MarshalIndent(resp, "", "  ")
-	return ToolResult{Content: []Content{{Type: "text", Text: string(out)}}}
+	return jsonResult(resp)
 }
 
 // resolveEntityNodes returns the graph node IDs that share the given

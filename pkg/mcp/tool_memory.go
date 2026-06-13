@@ -251,7 +251,10 @@ func ToolWakeUp(ctx context.Context, deps Deps, args map[string]any) ToolResult 
 		out, _ = json.MarshalIndent(bundle, "", "  ")
 	}
 
-	return ToolResult{Content: []Content{{Type: "text", Text: string(out)}}}
+	return ToolResult{
+		Content:           []Content{{Type: "text", Text: string(out)}},
+		StructuredContent: bundle,
+	}
 }
 
 // wakeUpPinned loads pinned memories owned by ownerID (or the empty

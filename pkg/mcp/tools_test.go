@@ -330,6 +330,9 @@ func assertOutputSchema(t *testing.T, tool Tool, res ToolResult) {
 	if tool.OutputSchema == nil {
 		t.Fatalf("tool %q has no OutputSchema", tool.Name)
 	}
+	if res.StructuredContent == nil {
+		t.Fatalf("tool %q returned no structuredContent with OutputSchema", tool.Name)
+	}
 	if len(res.Content) == 0 {
 		t.Fatalf("tool %q returned no content", tool.Name)
 	}
@@ -338,8 +341,27 @@ func assertOutputSchema(t *testing.T, tool Tool, res ToolResult) {
 		t.Fatalf("tool %q returned non-object JSON: %v; raw=%q", tool.Name, err, res.Content[0].Text)
 	}
 	if err := validateJSONSchema(tool.OutputSchema, payload, "$"); err != nil {
-		t.Fatalf("tool %q output does not match OutputSchema: %v; raw=%s", tool.Name, err, res.Content[0].Text)
+		t.Fatalf("tool %q text mirror does not match OutputSchema: %v; raw=%s", tool.Name, err, res.Content[0].Text)
 	}
+	structured, err := normalizeJSONValue(res.StructuredContent)
+	if err != nil {
+		t.Fatalf("tool %q structuredContent is not JSON-serializable: %v", tool.Name, err)
+	}
+	if err := validateJSONSchema(tool.OutputSchema, structured, "$"); err != nil {
+		t.Fatalf("tool %q structuredContent does not match OutputSchema: %v; value=%#v", tool.Name, err, structured)
+	}
+}
+
+func normalizeJSONValue(v any) (any, error) {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	var out any
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func schemaProps(t *testing.T, schema map[string]any) map[string]any {
