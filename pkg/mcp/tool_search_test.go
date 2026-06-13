@@ -494,6 +494,13 @@ func TestToolSearch_AUTORoutesThroughRouter(t *testing.T) {
 	if routing["source"] != "routed" {
 		t.Errorf("routing.source=%v, want 'routed'", routing["source"])
 	}
+	alternatives, ok := routing["alternatives"].([]any)
+	if !ok {
+		t.Fatalf("routing.alternatives should be []any, got %T", routing["alternatives"])
+	}
+	if len(alternatives) != 0 {
+		t.Errorf("routing.alternatives len=%d, want 0", len(alternatives))
+	}
 }
 
 func TestToolSearch_ModeRagCoercesGraphType(t *testing.T) {
