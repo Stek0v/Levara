@@ -132,9 +132,9 @@ func TestToolSaveChat_SkipsInvalidMessages(t *testing.T) {
 		"session_id": "s1",
 		"messages": []any{
 			map[string]any{"role": "user", "content": "ok"},
-			map[string]any{"role": "user"},             // missing content
-			map[string]any{"content": "orphan"},         // missing role
-			"not-a-map",                                 // wrong type
+			map[string]any{"role": "user"},                // missing content
+			map[string]any{"content": "orphan"},           // missing role
+			"not-a-map",                                   // wrong type
 			map[string]any{"role": "user", "content": ""}, // empty content
 		},
 	})
@@ -166,8 +166,8 @@ func TestToolRecallChat_NilDBReturnsEmpty(t *testing.T) {
 	if got.IsError {
 		t.Fatalf("nil DB: IsError = true, want false")
 	}
-	if got.Content[0].Text != "[]" {
-		t.Errorf("content = %q, want []", got.Content[0].Text)
+	if msgs := decodeRecallChatMessages(t, got); len(msgs) != 0 {
+		t.Errorf("messages = %+v, want empty", msgs)
 	}
 }
 
@@ -197,10 +197,7 @@ func TestToolRecallChat_ExplodesRowsIntoMessages(t *testing.T) {
 	if got.IsError {
 		t.Fatalf("IsError = true")
 	}
-	var msgs []map[string]any
-	if err := json.Unmarshal([]byte(got.Content[0].Text), &msgs); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
+	msgs := decodeRecallChatMessages(t, got)
 	// Expect 3 messages: user(q1), assistant(r1), user(q2).
 	if len(msgs) != 3 {
 		t.Fatalf("got %d messages, want 3 (i1 emits 2 + i2 emits 1)", len(msgs))
@@ -224,8 +221,7 @@ func TestToolRecallChat_ScopesToSession(t *testing.T) {
 		('b', 's2', 'yours', '', '2026-01-01T00:00:00Z')`)
 
 	got := ToolRecallChat(context.Background(), deps, map[string]any{"session_id": "s1"})
-	var msgs []map[string]any
-	json.Unmarshal([]byte(got.Content[0].Text), &msgs)
+	msgs := decodeRecallChatMessages(t, got)
 	if len(msgs) != 1 || msgs[0]["content"] != "mine" {
 		t.Errorf("got %+v, want single 'mine'", msgs)
 	}
@@ -245,8 +241,8 @@ func TestToolSearchChats_NilDBReturnsEmpty(t *testing.T) {
 	if got.IsError {
 		t.Fatalf("nil DB: IsError = true, want false")
 	}
-	if got.Content[0].Text != "[]" {
-		t.Errorf("content = %q, want []", got.Content[0].Text)
+	if rows := decodeSearchChatRows(t, got); len(rows) != 0 {
+		t.Errorf("rows = %+v, want empty", rows)
 	}
 }
 
@@ -260,15 +256,13 @@ func TestToolSearchChats_MatchesQueryOrResponse(t *testing.T) {
 		('i3', 's1', 'nothing',     'matches', '2026-01-03T00:00:00Z')`)
 
 	got := ToolSearchChats(context.Background(), deps, map[string]any{"query": "hello"})
-	var rows []map[string]any
-	json.Unmarshal([]byte(got.Content[0].Text), &rows)
+	rows := decodeSearchChatRows(t, got)
 	if len(rows) != 1 || rows[0]["id"] != "i1" {
 		t.Errorf("hello query: got %+v, want single i1", rows)
 	}
 
 	got = ToolSearchChats(context.Background(), deps, map[string]any{"query": "planet"})
-	rows = nil
-	json.Unmarshal([]byte(got.Content[0].Text), &rows)
+	rows = decodeSearchChatRows(t, got)
 	if len(rows) != 1 || rows[0]["id"] != "i2" {
 		t.Errorf("planet query: got %+v, want single i2 (matched via response)", rows)
 	}
@@ -318,6 +312,48 @@ func setupDiaryTestDB(t *testing.T) *fakeDeps {
 		t.Fatalf("create: %v", err)
 	}
 	return &fakeDeps{db: db}
+}
+
+func decodeDiaryEntries(t *testing.T, got ToolResult) []map[string]any {
+	t.Helper()
+	var out struct {
+		Entries []map[string]any `json:"entries"`
+	}
+	if err := json.Unmarshal([]byte(got.Content[0].Text), &out); err != nil {
+		t.Fatalf("unmarshal diary_read result: %v (content=%q)", err, got.Content[0].Text)
+	}
+	if out.Entries == nil {
+		return []map[string]any{}
+	}
+	return out.Entries
+}
+
+func decodeRecallChatMessages(t *testing.T, got ToolResult) []map[string]any {
+	t.Helper()
+	var out struct {
+		Messages []map[string]any `json:"messages"`
+	}
+	if err := json.Unmarshal([]byte(got.Content[0].Text), &out); err != nil {
+		t.Fatalf("unmarshal recall_chat result: %v (content=%q)", err, got.Content[0].Text)
+	}
+	if out.Messages == nil {
+		return []map[string]any{}
+	}
+	return out.Messages
+}
+
+func decodeSearchChatRows(t *testing.T, got ToolResult) []map[string]any {
+	t.Helper()
+	var out struct {
+		Results []map[string]any `json:"results"`
+	}
+	if err := json.Unmarshal([]byte(got.Content[0].Text), &out); err != nil {
+		t.Fatalf("unmarshal search_chats result: %v (content=%q)", err, got.Content[0].Text)
+	}
+	if out.Results == nil {
+		return []map[string]any{}
+	}
+	return out.Results
 }
 
 func TestToolDiaryWrite_NilDBIsError(t *testing.T) {
@@ -428,8 +464,9 @@ func TestToolDiaryRead_NilDBReturnsEmpty(t *testing.T) {
 	if got.IsError {
 		t.Fatalf("nil DB: IsError = true, want false")
 	}
-	if got.Content[0].Text != "[]" {
-		t.Errorf("content = %q, want []", got.Content[0].Text)
+	entries := decodeDiaryEntries(t, got)
+	if len(entries) != 0 {
+		t.Errorf("got %+v, want empty entries", entries)
 	}
 }
 
@@ -469,8 +506,7 @@ func TestToolDiaryRead_ScopesToAgentOwner(t *testing.T) {
 	if got.IsError {
 		t.Fatalf("IsError = true")
 	}
-	var entries []map[string]any
-	json.Unmarshal([]byte(got.Content[0].Text), &entries)
+	entries := decodeDiaryEntries(t, got)
 	if len(entries) != 1 || entries[0]["key"] != "mine" {
 		t.Errorf("got %+v, want single 'mine' entry", entries)
 	}
@@ -489,8 +525,7 @@ func TestToolDiaryRead_QuerySubstringMatches(t *testing.T) {
 	got := ToolDiaryRead(context.Background(), deps, map[string]any{
 		"agent": "reviewer", "query": "login",
 	})
-	var entries []map[string]any
-	json.Unmarshal([]byte(got.Content[0].Text), &entries)
+	entries := decodeDiaryEntries(t, got)
 	if len(entries) != 1 || entries[0]["key"] != "auth-note" {
 		t.Errorf("got %+v, want single auth-note (matched via value)", entries)
 	}
@@ -509,8 +544,7 @@ func TestToolDiaryRead_CollectionFilter(t *testing.T) {
 	got := ToolDiaryRead(context.Background(), deps, map[string]any{
 		"agent": "reviewer", "collection": "levara",
 	})
-	var entries []map[string]any
-	json.Unmarshal([]byte(got.Content[0].Text), &entries)
+	entries := decodeDiaryEntries(t, got)
 	if len(entries) != 1 || entries[0]["key"] != "a" {
 		t.Errorf("got %+v, want single 'a' (filtered by collection)", entries)
 	}

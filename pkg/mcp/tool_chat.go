@@ -5,7 +5,6 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -80,10 +79,7 @@ func ToolSaveChat(ctx context.Context, deps Deps, args map[string]any) ToolResul
 		saved++
 	}
 
-	return ToolResult{Content: []Content{{
-		Type: "text",
-		Text: fmt.Sprintf("Saved %d messages to session %s", saved, sessionID),
-	}}}
+	return statusResult(true, fmt.Sprintf("Saved %d messages to session %s", saved, sessionID))
 }
 
 // ToolRecallChat returns the first recallChatLimit messages in the
@@ -106,7 +102,7 @@ func ToolRecallChat(ctx context.Context, deps Deps, args map[string]any) ToolRes
 	}
 	db := deps.DB()
 	if db == nil {
-		return ToolResult{Content: []Content{{Type: "text", Text: "[]"}}}
+		return jsonResult(map[string]any{"session_id": sessionID, "messages": []any{}})
 	}
 
 	rows, err := db.QueryContext(ctx, deps.Q(fmt.Sprintf(`
@@ -114,7 +110,7 @@ func ToolRecallChat(ctx context.Context, deps Deps, args map[string]any) ToolRes
 		WHERE session_id = $1 ORDER BY created_at LIMIT %d
 	`, recallChatLimit)), sessionID)
 	if err != nil {
-		return ToolResult{Content: []Content{{Type: "text", Text: "[]"}}}
+		return jsonResult(map[string]any{"session_id": sessionID, "messages": []any{}})
 	}
 	defer rows.Close()
 
@@ -137,10 +133,13 @@ func ToolRecallChat(ctx context.Context, deps Deps, args map[string]any) ToolRes
 	}
 
 	if len(messages) == 0 {
-		return ToolResult{Content: []Content{{Type: "text", Text: "No messages found for session."}}}
+		return jsonResult(map[string]any{
+			"session_id": sessionID,
+			"messages":   []any{},
+			"message":    "No messages found for session.",
+		})
 	}
-	out, _ := json.MarshalIndent(messages, "", "  ")
-	return ToolResult{Content: []Content{{Type: "text", Text: string(out)}}}
+	return jsonResult(map[string]any{"session_id": sessionID, "messages": messages})
 }
 
 // ToolSearchChats does a LIKE-based substring search across the
@@ -161,7 +160,7 @@ func ToolSearchChats(ctx context.Context, deps Deps, args map[string]any) ToolRe
 	}
 	db := deps.DB()
 	if db == nil {
-		return ToolResult{Content: []Content{{Type: "text", Text: "[]"}}}
+		return jsonResult(map[string]any{"results": []any{}})
 	}
 
 	pattern := "%" + query + "%"
@@ -171,7 +170,7 @@ func ToolSearchChats(ctx context.Context, deps Deps, args map[string]any) ToolRe
 		ORDER BY created_at DESC LIMIT %d
 	`, searchChatsLimit)), pattern, pattern)
 	if err != nil {
-		return ToolResult{Content: []Content{{Type: "text", Text: "[]"}}}
+		return jsonResult(map[string]any{"results": []any{}})
 	}
 	defer rows.Close()
 
@@ -183,12 +182,24 @@ func ToolSearchChats(ctx context.Context, deps Deps, args map[string]any) ToolRe
 		}
 		results = append(results, map[string]any{
 			"id": id, "session_id": sid, "query": q, "response": r, "created_at": ca,
+			"snippet": firstNonEmpty(q, r), "role": "chat", "score": 1.0,
 		})
 	}
 
 	if len(results) == 0 {
-		return ToolResult{Content: []Content{{Type: "text", Text: "No matching chats found."}}}
+		return jsonResult(map[string]any{
+			"results": []any{},
+			"message": "No matching chats found.",
+		})
 	}
-	out, _ := json.MarshalIndent(results, "", "  ")
-	return ToolResult{Content: []Content{{Type: "text", Text: string(out)}}}
+	return jsonResult(map[string]any{"results": results})
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }

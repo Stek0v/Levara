@@ -33,7 +33,7 @@ const (
 )
 
 // baseMemoryCollection is the vector-collection name for the base memory
-// store — the rows kept at collection_name='' (no pinned context).
+// store — the rows kept at collection_name=” (no pinned context).
 const baseMemoryCollection = "_memories"
 
 // memoryCollectionName returns the vector-collection name where
@@ -138,10 +138,7 @@ func ToolSaveMemory(ctx context.Context, deps Deps, args map[string]any) ToolRes
 		indexMemorySync(deps, collectionName, canonicalID, key, value, memType)
 	}
 
-	return ToolResult{Content: []Content{{
-		Type: "text",
-		Text: fmt.Sprintf("Memory saved: %s = %s (type: %s)", key, Truncate(value, memoryValueLogMaxLen), memType),
-	}}}
+	return statusResult(true, fmt.Sprintf("Memory saved: %s = %s (type: %s)", key, Truncate(value, memoryValueLogMaxLen), memType))
 }
 
 // indexMemorySync vector-indexes the memory inline — before ToolSaveMemory
@@ -261,7 +258,7 @@ func ToolRecallMemory(ctx context.Context, deps Deps, args map[string]any) ToolR
 
 	db := deps.DB()
 	if db == nil {
-		return ToolResult{Content: []Content{{Type: "text", Text: "[]"}}}
+		return jsonResult(map[string]any{"results": []any{}})
 	}
 
 	// Strategy 1: vector semantic search, always hydrated through SQL so the
@@ -395,8 +392,7 @@ func recallViaVectorFiltered(ctx context.Context, deps Deps, db *sql.DB, rewrite
 	sort.SliceStable(out, func(i, j int) bool {
 		return rank[out[i]["id"].(string)] < rank[out[j]["id"].(string)]
 	})
-	payload, _ := json.MarshalIndent(out, "", "  ")
-	return ToolResult{Content: []Content{{Type: "text", Text: string(payload)}}}, true
+	return jsonResult(map[string]any{"results": out}), true
 }
 
 // recallViaSQLLike runs the structural-filter path: key/value LIKE
@@ -424,8 +420,10 @@ func recallViaSQLLike(ctx context.Context, db *sql.DB, rewrite func(string) stri
 
 	results := scanMemoryRows(rows)
 	if len(results) == 0 {
-		return ToolResult{Content: []Content{{Type: "text", Text: "No memories found matching query."}}}
+		return jsonResult(map[string]any{
+			"results": []any{},
+			"message": "No memories found matching query.",
+		})
 	}
-	out, _ := json.MarshalIndent(results, "", "  ")
-	return ToolResult{Content: []Content{{Type: "text", Text: string(out)}}}
+	return jsonResult(map[string]any{"results": results})
 }

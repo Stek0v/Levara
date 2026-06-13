@@ -62,6 +62,20 @@ func setupCommunityDB(t *testing.T) *fakeDeps {
 	return &fakeDeps{db: db}
 }
 
+func decodeCommunities(t *testing.T, res ToolResult) []map[string]any {
+	t.Helper()
+	var out struct {
+		Communities []map[string]any `json:"communities"`
+	}
+	if err := json.Unmarshal([]byte(res.Content[0].Text), &out); err != nil {
+		t.Fatalf("response not JSON: %s", res.Content[0].Text)
+	}
+	if out.Communities == nil {
+		return []map[string]any{}
+	}
+	return out.Communities
+}
+
 // ── ToolListCommunities ──
 
 func TestToolListCommunities_NilDB(t *testing.T) {
@@ -69,8 +83,8 @@ func TestToolListCommunities_NilDB(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("unexpected IsError: %q", res.Content[0].Text)
 	}
-	if res.Content[0].Text != "[]" {
-		t.Errorf("want []  got %q", res.Content[0].Text)
+	if out := decodeCommunities(t, res); len(out) != 0 {
+		t.Errorf("want empty communities, got %+v", out)
 	}
 }
 
@@ -80,10 +94,7 @@ func TestToolListCommunities_EmptyTable(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("unexpected IsError: %q", res.Content[0].Text)
 	}
-	var out []map[string]any
-	if err := json.Unmarshal([]byte(res.Content[0].Text), &out); err != nil {
-		t.Fatalf("response not JSON: %s", res.Content[0].Text)
-	}
+	out := decodeCommunities(t, res)
 	if len(out) != 0 {
 		t.Errorf("expected empty array, got %d items", len(out))
 	}
@@ -100,10 +111,7 @@ func TestToolListCommunities_ReturnsRows(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("unexpected IsError: %q", res.Content[0].Text)
 	}
-	var out []map[string]any
-	if err := json.Unmarshal([]byte(res.Content[0].Text), &out); err != nil {
-		t.Fatalf("response not JSON: %s", res.Content[0].Text)
-	}
+	out := decodeCommunities(t, res)
 	if len(out) != 2 {
 		t.Errorf("expected 2 rows, got %d", len(out))
 	}
@@ -129,10 +137,7 @@ func TestToolListCommunities_LevelFilter(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("unexpected IsError: %q", res.Content[0].Text)
 	}
-	var out []map[string]any
-	if err := json.Unmarshal([]byte(res.Content[0].Text), &out); err != nil {
-		t.Fatalf("response not JSON: %s", res.Content[0].Text)
-	}
+	out := decodeCommunities(t, res)
 	// Only level=0 rows (c1, c3).
 	if len(out) != 2 {
 		t.Errorf("level filter: expected 2, got %d", len(out))
@@ -152,10 +157,7 @@ func TestToolListCommunities_MinMembersFilter(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("unexpected IsError: %q", res.Content[0].Text)
 	}
-	var out []map[string]any
-	if err := json.Unmarshal([]byte(res.Content[0].Text), &out); err != nil {
-		t.Fatalf("response not JSON: %s", res.Content[0].Text)
-	}
+	out := decodeCommunities(t, res)
 	if len(out) != 1 {
 		t.Errorf("min_members filter: expected 1, got %d", len(out))
 	}
