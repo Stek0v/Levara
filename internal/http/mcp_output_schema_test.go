@@ -54,10 +54,28 @@ func TestHTTPBackedToolOutputsMatchRegisteredSchemas_RoundTrip(t *testing.T) {
 				t.Fatalf("tool returned error: %s", tc.res.Content[0].Text)
 			}
 			if err := validateMCPOutputSchema(byName[tc.name].OutputSchema, tc.res.Content[0].Text, "$"); err != nil {
-				t.Fatalf("%s output does not match schema: %v\n%s", tc.name, err, tc.res.Content[0].Text)
+				t.Fatalf("%s text mirror does not match schema: %v\n%s", tc.name, err, tc.res.Content[0].Text)
+			}
+			if tc.res.StructuredContent == nil {
+				t.Fatalf("%s returned no structuredContent with OutputSchema", tc.name)
+			}
+			if err := validateMCPStructuredOutputSchema(byName[tc.name].OutputSchema, tc.res.StructuredContent, "$"); err != nil {
+				t.Fatalf("%s structuredContent does not match schema: %v\n%#v", tc.name, err, tc.res.StructuredContent)
 			}
 		})
 	}
+}
+
+func validateMCPStructuredOutputSchema(schema map[string]any, value any, path string) error {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Errorf("%s: non-JSON structuredContent: %w", path, err)
+	}
+	var payload any
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return fmt.Errorf("%s: invalid structuredContent JSON: %w", path, err)
+	}
+	return validateMCPValue(schema, payload, path)
 }
 
 func validateMCPOutputSchema(schema map[string]any, raw string, path string) error {

@@ -5,7 +5,6 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -278,6 +277,5 @@ func ToolCognifyStatus(deps Deps, args map[string]any) ToolResult {
 		return ToolResult{Content: []Content{{Type: "text", Text: fmt.Sprintf("Run %s not found.", runID)}}, IsError: true}
 	}
 
-	out, _ := json.MarshalIndent(val, "", "  ")
-	return ToolResult{Content: []Content{{Type: "text", Text: string(out)}}}
+	return jsonResult(val)
 }

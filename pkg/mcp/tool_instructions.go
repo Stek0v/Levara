@@ -8,10 +8,9 @@ package mcp
 
 import (
 	"context"
+	"crypto/sha256"
 	_ "embed"
 	"encoding/hex"
-	"encoding/json"
-	"crypto/sha256"
 )
 
 //go:embed agent_contract.md
@@ -42,6 +41,5 @@ func ToolLevaraInstructions(ctx context.Context, deps Deps, args map[string]any)
 		"content_sha":      AgentContractSHA(),
 		"content_markdown": agentContractMD,
 	}
-	data, _ := json.MarshalIndent(out, "", "  ")
-	return ToolResult{Content: []Content{{Type: "text", Text: string(data)}}}
+	return jsonResult(out)
 }

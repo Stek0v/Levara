@@ -10,7 +10,6 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
@@ -146,17 +145,16 @@ func ToolCrossSearch(ctx context.Context, deps Deps, args map[string]any) ToolRe
 	// inert in tests and pkg/mcp already depends on it transitively.
 	log.Printf("[cross-project] searched %d collections for query: %s", len(collections), Truncate(query, 50))
 
-	out, _ := json.MarshalIndent(map[string]any{
+	return jsonResult(map[string]any{
 		"results":     results,
 		"collections": collections,
 		"query":       query,
-	}, "", "  ")
-	return ToolResult{Content: []Content{{Type: "text", Text: string(out)}}}
+	})
 }
 
 // crossSearchMemoriesFor runs the SQL-LIKE scan of the memories table
 // scoped to collection + caller ownership. Caller-owned rows OR
-// shared (owner_id='') rows match. Sensitive keys are dropped.
+// shared (owner_id=”) rows match. Sensitive keys are dropped.
 // Errors surface as an empty slice — cross-search is best-effort per
 // collection.
 func crossSearchMemoriesFor(ctx context.Context, deps Deps, collection, query string, topK int) []map[string]any {
