@@ -90,54 +90,19 @@ func TestToolDescriptors_JSONMarshalsCleanly(t *testing.T) {
 	}
 }
 
-// Tools that return structured JSON in Content[0].Text should carry an
-// OutputSchema so MCP clients can validate the payload (T14). This test
-// enforces coverage on a curated set — new additions should either supply
-// OutputSchema or be justified here. Plain-text tools (codify verbose
-// prose, doctor human-readable report) aren't required to have one.
+// Every advertised tool must carry an OutputSchema so MCP clients can validate
+// the structuredContent returned from tools/call. This intentionally uses
+// tools/list as the source of truth: adding a new tool without a schema should
+// fail at the registry-contract layer before any client-specific smoke test.
 func TestToolDescriptors_OutputSchemaCoverage(t *testing.T) {
-	mustHaveSchema := []string{
-		// Original 18 (T14):
-		"cognify", "search", "cognify_status", "list_data", "delete",
-		"prune", "list_communities", "add", "save_memory", "recall_memory",
-		"list_memories", "wake_up", "pin_memory", "unpin_memory",
-		"query_entity", "cross_search", "sync", "get_feedback_stats",
-		// Docs polish (post-20.04): the previously plain-text tools
-		// gained schemas so MCP clients can validate every structured
-		// response. analyze_commits / git_search / codify produce search-
-		// shaped output; check_drift / prune_graph / doctor / heartbeat
-		// produce status / event lists; the chat + diary surfaces are
-		// the missing read paths from F-4 wave 3o.
-		"check_drift", "prune_graph", "analyze_commits", "git_search",
-		"diary_write", "diary_read",
-		"save_chat", "recall_chat", "search_chats",
-		"get_project_context", "set_context", "add_feedback",
-		"codify", "doctor", "heartbeat",
-		"workspace_access_check", "workspace_context", "workspace_audit_log", "workspace_context_artifacts",
-		"workspace_reindex_artifacts", "workspace_ops_status", "workspace_conflicts",
-		"workspace_search", "workspace_index", "workspace_delete", "workspace_gc", "workspace_manifest",
-		"workspace_read", "workspace_write", "workspace_reindex_paths",
-		"workspace_reconcile", "workspace_index_jobs", "workspace_enqueue_index_job", "workspace_retry_index_job",
-		"workspace_watch_status", "workspace_run_start", "workspace_run_get",
-		"workspace_commit", "workspace_log", "workspace_revert",
-	}
-	byName := make(map[string]Tool)
 	for _, tool := range ToolDescriptors() {
-		byName[tool.Name] = tool
-	}
-	for _, name := range mustHaveSchema {
-		tool, ok := byName[name]
-		if !ok {
-			t.Errorf("%q is in the coverage list but missing from the registry", name)
-			continue
-		}
 		if tool.OutputSchema == nil {
-			t.Errorf("tool %q lacks OutputSchema", name)
+			t.Errorf("tool %q lacks OutputSchema", tool.Name)
 			continue
 		}
 		if tool.OutputSchema["type"] != "object" {
 			t.Errorf("tool %q OutputSchema.type = %v, want 'object'",
-				name, tool.OutputSchema["type"])
+				tool.Name, tool.OutputSchema["type"])
 		}
 	}
 }
@@ -196,6 +161,7 @@ func TestToolOutputsMatchRegisteredSchemas_RoundTrip(t *testing.T) {
 	}
 
 	wakeDeps := setupWakeUpTestDB(t)
+	consolidateDeps := newConsolidateDeps(t)
 	dataDeps := &fakeDeps{
 		db:          setupListDataTestDB(t),
 		hasColls:    true,
@@ -259,6 +225,8 @@ func TestToolOutputsMatchRegisteredSchemas_RoundTrip(t *testing.T) {
 		{"pin_memory", ToolPinMemory(context.Background(), memoryDeps, map[string]any{"key": "alpha"})},
 		{"unpin_memory", ToolUnpinMemory(context.Background(), memoryDeps, map[string]any{"key": "alpha"})},
 		{"wake_up", ToolWakeUp(context.Background(), wakeDeps, map[string]any{})},
+		{"delete_memory", ToolDeleteMemory(context.Background(), memoryDeps, map[string]any{"key": "alpha"})},
+		{"consolidate", ToolConsolidate(context.Background(), consolidateDeps, map[string]any{"collection": "levara", "dry_run": true})},
 		{"diary_write", ToolDiaryWrite(context.Background(), diaryDeps, map[string]any{"agent": "reviewer", "key": "other", "value": "body"})},
 		{"diary_read", ToolDiaryRead(context.Background(), diaryDeps, map[string]any{"agent": "reviewer"})},
 		{"search", ToolSearch(context.Background(), searchDeps, map[string]any{"search_query": "hello", "search_type": "CHUNKS_LEXICAL"})},

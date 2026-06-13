@@ -446,5 +446,5 @@ func errResult(msg string) ToolResult {
 }
 
 func okResult(msg string) ToolResult {
-	return ToolResult{Content: []Content{{Type: "text", Text: msg}}}
+	return statusResult(true, msg)
 }
