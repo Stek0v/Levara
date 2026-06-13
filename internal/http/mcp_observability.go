@@ -267,7 +267,7 @@ func (h *mcpHandler) toolSyncStatus(ctx context.Context, args map[string]any) mc
 		Types     json.RawMessage `json:"types,omitempty"`
 		At        string          `json:"at"`
 	}
-	var events []evt
+	events := []evt{}
 
 	for rows.Next() {
 		var id, payload, createdAt string

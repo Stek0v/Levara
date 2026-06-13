@@ -172,6 +172,18 @@ func TestToolSyncStatus_NoDB(t *testing.T) {
 	}
 }
 
+func TestToolSyncStatus_NoEventsReturnsEmptyArray(t *testing.T) {
+	h, _ := observabilityTestHandler(t)
+	out := decodeText(t, h.toolSyncStatus(context.Background(), nil))
+	events, ok := out["events"].([]any)
+	if !ok {
+		t.Fatalf("events should be []any, got %T", out["events"])
+	}
+	if len(events) != 0 {
+		t.Fatalf("events len = %d, want 0", len(events))
+	}
+}
+
 func TestToolSyncStatus_GroupsByDirection(t *testing.T) {
 	h, db := observabilityTestHandler(t)
 	now := time.Now()

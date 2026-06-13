@@ -26,7 +26,11 @@ func attachSearchDebugMetadata(c *fiber.Ctx, payload fiber.Map) fiber.Map {
 		debug["strategy"] = rd.SearchType
 		debug["confidence"] = rd.Confidence
 		debug["reason"] = rd.Reason
-		debug["alternatives"] = rd.Alternatives
+		alternatives := rd.Alternatives
+		if alternatives == nil {
+			alternatives = []router.Alternative{}
+		}
+		debug["alternatives"] = alternatives
 	}
 	payload["debug"] = debug
 	return payload
