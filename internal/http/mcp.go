@@ -50,6 +50,14 @@ type (
 
 const mcpUserIDKey = mcp.UserIDKey
 
+func mcpJSONResult(v any) mcpToolResult {
+	data, _ := json.MarshalIndent(v, "", "  ")
+	return mcpToolResult{
+		Content:           []mcpContent{{Type: "text", Text: string(data)}},
+		StructuredContent: v,
+	}
+}
+
 // ── Tool definitions ──
 
 // mcpTools moved to pkg/mcp.ToolDescriptors() during F-4.

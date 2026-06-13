@@ -69,8 +69,9 @@ type Content struct {
 // an error message (e.g. validation failure) rather than data — distinct from
 // JSON-RPC level errors which use the RPCError envelope.
 type ToolResult struct {
-	Content []Content `json:"content"`
-	IsError bool      `json:"isError,omitempty"`
+	Content           []Content `json:"content"`
+	StructuredContent any       `json:"structuredContent,omitempty"`
+	IsError           bool      `json:"isError,omitempty"`
 }
 
 // ── Context keys ──

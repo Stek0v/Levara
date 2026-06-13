@@ -2151,11 +2151,7 @@ func (h *mcpHandler) toolWorkspaceManifest(ctx context.Context, args map[string]
 }
 
 func workspaceMCPJSON(v any) mcpToolResult {
-	data, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
-		return workspaceMCPError(err)
-	}
-	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(data)}}}
+	return mcpJSONResult(v)
 }
 
 func workspaceMCPError(err error) mcpToolResult {

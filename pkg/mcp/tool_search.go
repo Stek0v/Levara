@@ -376,8 +376,7 @@ func ToolSearch(ctx context.Context, deps Deps, args map[string]any) ToolResult 
 		}
 	}
 
-	out, _ := json.MarshalIndent(response, "", "  ")
-	return ToolResult{Content: []Content{{Type: "text", Text: string(out)}}}
+	return jsonResult(response)
 }
 
 func searchMetadataAllowed(metadata json.RawMessage, allowedIDs []string) bool {

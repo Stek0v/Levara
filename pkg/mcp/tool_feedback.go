@@ -5,7 +5,6 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -99,13 +98,12 @@ func ToolGetFeedbackStats(ctx context.Context, deps Deps, args map[string]any) T
 			deps.Q(`SELECT COALESCE(query,'') FROM search_feedback ORDER BY rating ASC LIMIT 1`)).Scan(&worstQuery)
 	}
 
-	out, _ := json.MarshalIndent(map[string]any{
+	return jsonResult(map[string]any{
 		"total":       total,
 		"avg_rating":  avgRating,
 		"worst_query": worstQuery,
 		"collection":  collection,
-	}, "", "  ")
-	return ToolResult{Content: []Content{{Type: "text", Text: string(out)}}}
+	})
 }
 
 // ToolSetContext binds a default collection to the caller's session.

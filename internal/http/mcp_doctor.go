@@ -106,10 +106,7 @@ func (h *mcpHandler) toolDoctor(ctx context.Context, args map[string]any) mcpToo
 	// Log heartbeat if DB available
 	h.logHeartbeat("doctor", report)
 
-	data, _ := json.MarshalIndent(report, "", "  ")
-	return mcpToolResult{
-		Content: []mcpContent{{Type: "text", Text: string(data)}},
-	}
+	return mcpJSONResult(report)
 }
 
 // ── Individual checks ──
@@ -621,11 +618,10 @@ func (h *mcpHandler) toolHeartbeat(ctx context.Context, args map[string]any) mcp
 		events = append(events, e)
 	}
 
-	data, _ := json.MarshalIndent(map[string]any{
+	return mcpJSONResult(map[string]any{
 		"count":  len(events),
 		"events": events,
-	}, "", "  ")
-	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: string(data)}}}
+	})
 }
 
 // ── Helpers ──
