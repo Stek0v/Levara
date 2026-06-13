@@ -2,8 +2,8 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 	"database/sql"
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -47,6 +47,20 @@ func setupMemoryTestDB(t *testing.T) *fakeDeps {
 	return &fakeDeps{db: db}
 }
 
+func decodeListMemories(t *testing.T, got ToolResult) []map[string]any {
+	t.Helper()
+	var out struct {
+		Memories []map[string]any `json:"memories"`
+	}
+	if err := json.Unmarshal([]byte(got.Content[0].Text), &out); err != nil {
+		t.Fatalf("unmarshal list_memories result: %v (content=%q)", err, got.Content[0].Text)
+	}
+	if out.Memories == nil {
+		return []map[string]any{}
+	}
+	return out.Memories
+}
+
 // seedMemory is a compact helper for inserting memory rows in tests.
 // Ignores errors since test setup should never hit real failures.
 func seedMemory(t *testing.T, db *sql.DB, id, key, value, typ, owner, coll, room, hall string, pinned int, prio int) {
@@ -65,25 +79,23 @@ func seedMemory(t *testing.T, db *sql.DB, id, key, value, typ, owner, coll, room
 // ── ToolListMemories ──
 
 func TestToolListMemories_NilDBReturnsEmpty(t *testing.T) {
-	// No DB configured → "[]" (not an error), so MCP clients that only
-	// read memory still work in deployments without the palace schema.
 	got := ToolListMemories(context.Background(), nilDBDeps{}, map[string]any{})
 	if got.IsError {
 		t.Fatalf("IsError = true, want false")
 	}
-	if got.Content[0].Text != "[]" {
-		t.Errorf("content = %q, want []", got.Content[0].Text)
+	items := decodeListMemories(t, got)
+	if len(items) != 0 {
+		t.Errorf("got %+v, want empty memories", items)
 	}
 }
 
 func TestToolListMemories_NoRowsReturnsEmpty(t *testing.T) {
-	// Empty DB (schema present but no rows) must still return "[]"
-	// rather than "null" — some JSON consumers choke on null arrays.
 	deps := setupMemoryTestDB(t)
 
 	got := ToolListMemories(context.Background(), deps, map[string]any{})
-	if got.Content[0].Text != "[]" {
-		t.Errorf("content = %q, want []", got.Content[0].Text)
+	items := decodeListMemories(t, got)
+	if len(items) != 0 {
+		t.Errorf("got %+v, want empty memories", items)
 	}
 }
 
@@ -95,10 +107,7 @@ func TestToolListMemories_TypeFilter(t *testing.T) {
 	seedMemory(t, deps.db, "m3", "k3", "v3", "project", "", "", "", "", 0, 0)
 
 	got := ToolListMemories(context.Background(), deps, map[string]any{"type": "project"})
-	var items []map[string]any
-	if err := json.Unmarshal([]byte(got.Content[0].Text), &items); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
+	items := decodeListMemories(t, got)
 	if len(items) != 2 {
 		t.Fatalf("got %d project items, want 2", len(items))
 	}
@@ -125,8 +134,7 @@ func TestToolListMemories_CombinedFilters(t *testing.T) {
 		"room":       "auth",
 		"hall":       "decision",
 	})
-	var items []map[string]any
-	json.Unmarshal([]byte(got.Content[0].Text), &items)
+	items := decodeListMemories(t, got)
 	if len(items) != 1 || items[0]["key"] != "a" {
 		t.Errorf("got %+v, want single m1/a", items)
 	}
@@ -140,8 +148,7 @@ func TestToolListMemories_FormatsPinnedAsBool(t *testing.T) {
 	seedMemory(t, deps.db, "m1", "k", "v", "project", "", "", "", "", 1, 10)
 
 	got := ToolListMemories(context.Background(), deps, map[string]any{})
-	var items []map[string]any
-	json.Unmarshal([]byte(got.Content[0].Text), &items)
+	items := decodeListMemories(t, got)
 	if len(items) != 1 {
 		t.Fatalf("got %d items, want 1", len(items))
 	}
@@ -167,10 +174,7 @@ func TestToolListMemories_OwnershipScoped(t *testing.T) {
 	if got.IsError {
 		t.Fatalf("IsError = true: %s", got.Content[0].Text)
 	}
-	var items []map[string]any
-	if err := json.Unmarshal([]byte(got.Content[0].Text), &items); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
+	items := decodeListMemories(t, got)
 
 	keys := map[string]bool{}
 	for _, it := range items {
@@ -629,7 +633,7 @@ func TestToolWakeUp_EntityDegreeCountsActiveEdges(t *testing.T) {
 	if top["name"] != "auth" {
 		t.Errorf("top entity = %v, want 'auth'", top["name"])
 	}
-	if int(top["degree"].(float64)) != 2 {
-		t.Errorf("auth degree = %v, want 2 (expired edge excluded)", top["degree"])
+	if int(top["edge_count"].(float64)) != 2 {
+		t.Errorf("auth edge_count = %v, want 2 (expired edge excluded)", top["edge_count"])
 	}
 }

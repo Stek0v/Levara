@@ -7,7 +7,6 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -83,10 +82,12 @@ func ToolAnalyzeCommits(ctx context.Context, deps Deps, args map[string]any) Too
 
 	pipeCfg := deps.BaseCognifyConfig()
 	if pipeCfg.EmbedEndpoint == "" {
-		return ToolResult{Content: []Content{{
-			Type: "text",
-			Text: fmt.Sprintf("Analyzed %d commits (no embedding service — text only):\n%s", len(commits), Truncate(text, analyzeCommitsTextOnlyPreview)),
-		}}}
+		return jsonResult(map[string]any{
+			"commits_analyzed": len(commits),
+			"entities":         0,
+			"edges":            0,
+			"summary":          Truncate(text, analyzeCommitsTextOnlyPreview),
+		})
 	}
 
 	// AnalyzeCommits historically built its pipeline config without
@@ -126,11 +127,13 @@ func ToolAnalyzeCommits(ctx context.Context, deps Deps, args map[string]any) Too
 		})
 	}()
 
-	return ToolResult{Content: []Content{{
-		Type: "text",
-		Text: fmt.Sprintf("Analyzed %d commits. Cognify pipeline started (run_id: %s). Use cognify_status to track.\n\nPreview:\n%s",
-			len(commits), runID, Truncate(text, analyzeCommitsCognifiedPreview)),
-	}}}
+	return jsonResult(map[string]any{
+		"commits_analyzed": len(commits),
+		"entities":         0,
+		"edges":            0,
+		"summary": fmt.Sprintf("Cognify pipeline started (run_id: %s). Preview:\n%s",
+			runID, Truncate(text, analyzeCommitsCognifiedPreview)),
+	})
 }
 
 // ToolGitSearch runs a vector search against the git_commits
@@ -172,7 +175,10 @@ func ToolGitSearch(ctx context.Context, deps Deps, args map[string]any) ToolResu
 	}
 
 	if len(res) == 0 {
-		return ToolResult{Content: []Content{{Type: "text", Text: "No matching commits found."}}}
+		return jsonResult(map[string]any{
+			"results": []any{},
+			"message": "No matching commits found.",
+		})
 	}
 
 	var results []map[string]any
@@ -183,6 +189,5 @@ func ToolGitSearch(ctx context.Context, deps Deps, args map[string]any) ToolResu
 			"metadata": string(r.Metadata),
 		})
 	}
-	out, _ := json.MarshalIndent(results, "", "  ")
-	return ToolResult{Content: []Content{{Type: "text", Text: string(out)}}}
+	return jsonResult(map[string]any{"results": results})
 }

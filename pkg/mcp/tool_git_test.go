@@ -100,9 +100,6 @@ func TestToolAnalyzeCommits_TextOnlyWhenNoEmbed(t *testing.T) {
 		t.Fatalf("unexpected IsError: %q", res.Content[0].Text)
 	}
 	text := res.Content[0].Text
-	if !strings.Contains(text, "Analyzed") || !strings.Contains(text, "text only") {
-		t.Errorf("text-only response wrong: %q", text)
-	}
 	// Initial commit message should be present.
 	if !strings.Contains(text, "initial") {
 		t.Errorf("preview missing commit subject; text=%q", text)
@@ -225,8 +222,10 @@ func TestToolAnalyzeCommits_LimitRespected(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("unexpected IsError: %q", res.Content[0].Text)
 	}
-	if !strings.Contains(res.Content[0].Text, "Analyzed 1 commits") {
-		t.Errorf("limit not respected; text=%q", res.Content[0].Text)
+	var out map[string]any
+	json.Unmarshal([]byte(res.Content[0].Text), &out)
+	if int(out["commits_analyzed"].(float64)) != 1 {
+		t.Errorf("limit not respected; content=%q", res.Content[0].Text)
 	}
 }
 
@@ -279,11 +278,11 @@ func TestToolGitSearch_TargetsGitCommitsCollection(t *testing.T) {
 	if gotTopK != gitSearchTopK {
 		t.Errorf("topK=%d, want %d", gotTopK, gitSearchTopK)
 	}
-	// Response should be a JSON array of hit objects.
-	var hits []map[string]any
-	if err := json.Unmarshal([]byte(res.Content[0].Text), &hits); err != nil {
+	var out map[string][]map[string]any
+	if err := json.Unmarshal([]byte(res.Content[0].Text), &out); err != nil {
 		t.Fatalf("response not JSON: %s", res.Content[0].Text)
 	}
+	hits := out["results"]
 	if len(hits) != 1 || hits[0]["id"] != "c1" {
 		t.Errorf("hits wrong: %+v", hits)
 	}
@@ -303,8 +302,8 @@ func TestToolGitSearch_NoResultsText(t *testing.T) {
 	if res.IsError {
 		t.Errorf("unexpected IsError: %q", res.Content[0].Text)
 	}
-	if res.Content[0].Text != "No matching commits found." {
-		t.Errorf("wrong text: %q", res.Content[0].Text)
+	if !strings.Contains(res.Content[0].Text, "No matching commits found") {
+		t.Errorf("wrong content: %q", res.Content[0].Text)
 	}
 }
 

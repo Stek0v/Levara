@@ -63,7 +63,7 @@ func searchResultItemSchema() map[string]any {
 		"score":      numberProp("Fused / rerank score — higher is better."),
 		"text":       stringProp("Snippet of chunk text or entity name."),
 		"collection": stringProp("Source collection."),
-		"metadata":   map[string]any{"type": "object", "description": "Chunk or entity metadata (room, tags, dataset_id, ...)."},
+		"metadata":   stringProp("Serialized chunk or entity metadata (room, tags, dataset_id, ...)."),
 	})
 }
 

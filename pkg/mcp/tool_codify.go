@@ -104,6 +104,7 @@ func ToolCodify(ctx context.Context, deps Deps, args map[string]any) ToolResult 
 		"language":  analysis.Language,
 		"entities":  len(analysis.Entities),
 		"relations": len(analysis.Relations),
+		"text":      fmt.Sprintf("%s: %d entities, %d relations", analysis.Language, len(analysis.Entities), len(analysis.Relations)),
 		"details":   analysis,
 	}, "", "  ")
 	return ToolResult{Content: []Content{{Type: "text", Text: string(out)}}}

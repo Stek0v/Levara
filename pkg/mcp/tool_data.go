@@ -33,7 +33,7 @@ func ToolDelete(ctx context.Context, deps Deps, args map[string]any) ToolResult 
 		db.ExecContext(ctx, deps.Q("DELETE FROM datasets WHERE id = $1"), dsID)
 	}
 
-	return ToolResult{Content: []Content{{Type: "text", Text: fmt.Sprintf("Dataset %s deleted.", dsID)}}}
+	return statusResult(true, fmt.Sprintf("Dataset %s deleted.", dsID))
 }
 
 // pruneTables lists every table cleared by ToolPrune, in the order the
@@ -60,7 +60,7 @@ func ToolPrune(ctx context.Context, deps Deps) ToolResult {
 			db.ExecContext(ctx, "DELETE FROM "+table)
 		}
 	}
-	return ToolResult{Content: []Content{{Type: "text", Text: "All data pruned."}}}
+	return statusResult(true, "All data pruned.")
 }
 
 // listDataItemCap is the LIMIT applied to the data / datasets SELECTs.
@@ -83,7 +83,7 @@ const (
 // items to the output.
 func ToolListData(ctx context.Context, deps Deps, args map[string]any) ToolResult {
 	if !deps.HasCollections() {
-		return ToolResult{Content: []Content{{Type: "text", Text: "[]"}}}
+		return jsonResult(map[string]any{"datasets": []any{}})
 	}
 
 	var wantTags []string
@@ -112,8 +112,7 @@ func ToolListData(ctx context.Context, deps Deps, args map[string]any) ToolResul
 		}
 	}
 
-	out, _ := json.MarshalIndent(items, "", "  ")
-	return ToolResult{Content: []Content{{Type: "text", Text: string(out)}}}
+	return jsonResult(map[string]any{"datasets": items})
 }
 
 // listDataFiltered runs the tag/room-scoped SELECT against the data
@@ -259,8 +258,14 @@ func ToolAdd(ctx context.Context, deps Deps, args map[string]any) ToolResult {
 		mw.WriteMetadata(context.Background(), results, mcpToolAddOwnerID, dsID, datasetName)
 	}
 
-	return ToolResult{Content: []Content{{
-		Type: "text",
-		Text: fmt.Sprintf("Data ingested into dataset '%s' (dataset_id: %s, items: %d). Use 'cognify' tool to build knowledge graph.", datasetName, dsID, len(results)),
-	}}}
+	dataID := ""
+	if len(results) > 0 {
+		dataID = results[0].ID
+	}
+	return jsonResult(map[string]any{
+		"dataset_id": dsID,
+		"data_id":    dataID,
+		"status":     "ingested",
+		"message":    fmt.Sprintf("Data ingested into dataset '%s' (items: %d). Use 'cognify' tool to build knowledge graph.", datasetName, len(results)),
+	})
 }
