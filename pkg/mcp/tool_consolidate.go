@@ -26,6 +26,7 @@ import (
 	"github.com/stek0v/levara/internal/store"
 	"github.com/stek0v/levara/pkg/consolidate"
 	"github.com/stek0v/levara/pkg/llm"
+	"github.com/stek0v/levara/pkg/sqlcompat"
 )
 
 // sqlStore adapts the SQL surface to consolidate.Store. collection is the
@@ -40,7 +41,7 @@ func (s *sqlStore) Candidates(ctx context.Context, collection, room, hall string
 	conds := []string{
 		"collection_name = $1",
 		"superseded_by = ''",
-		"is_pinned = 0",
+		sqlcompat.BoolFalse("is_pinned"),
 		"tier = 'raw'",
 	}
 	qargs := []any{collection}

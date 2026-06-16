@@ -33,7 +33,7 @@ func newSyncMemoryTestDB(t *testing.T) (*sql.DB, func()) {
 			pin_priority INTEGER NOT NULL DEFAULT 0,
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL,
-			UNIQUE(key, owner_id)
+			UNIQUE(key, owner_id, collection_name)
 		);
 	`); err != nil {
 		_ = db.Close()

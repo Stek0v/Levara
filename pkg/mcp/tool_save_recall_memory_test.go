@@ -16,7 +16,7 @@ import (
 )
 
 // setupSaveRecallMemoryDB builds the memories schema with the
-// UNIQUE(key, owner_id) constraint the upsert depends on.
+// UNIQUE(key, owner_id, collection_name) constraint the upsert depends on.
 func setupSaveRecallMemoryDB(t *testing.T) *fakeDeps {
 	t.Helper()
 	f, _ := os.CreateTemp("", "mcp-save-recall-test-*.db")
@@ -38,7 +38,7 @@ func setupSaveRecallMemoryDB(t *testing.T) *fakeDeps {
 		is_pinned INTEGER DEFAULT 0, pin_priority INTEGER DEFAULT 0,
 		created_at TEXT, updated_at TEXT,
 		superseded_by TEXT DEFAULT '',
-		UNIQUE(key, owner_id)
+		UNIQUE(key, owner_id, collection_name)
 	)`
 	if _, err := db.Exec(stmt); err != nil {
 		t.Fatalf("create: %v", err)
@@ -691,6 +691,40 @@ func TestToolRecallMemory_CollectionFilterPersists(t *testing.T) {
 	items := decodeRecallResults(t, got)
 	if len(items) != 1 || items[0]["key"] != "a" {
 		t.Errorf("got %+v, want single 'a'", items)
+	}
+}
+
+func TestToolSaveMemory_SameKeyDifferentCollections(t *testing.T) {
+	deps := setupSaveRecallMemoryDB(t)
+	ctx := context.Background()
+
+	r1 := ToolSaveMemory(ctx, deps, map[string]any{
+		"key": "stack", "value": "Go", "collection": "project-a", "hall": "fact",
+	})
+	r2 := ToolSaveMemory(ctx, deps, map[string]any{
+		"key": "stack", "value": "Python", "collection": "project-b", "hall": "fact",
+	})
+	if r1.IsError || r2.IsError {
+		t.Fatalf("save failed: %s / %s", r1.Content[0].Text, r2.Content[0].Text)
+	}
+
+	gotA := ToolRecallMemory(ctx, deps, map[string]any{"query": "stack", "collection": "project-a"})
+	gotB := ToolRecallMemory(ctx, deps, map[string]any{"query": "stack", "collection": "project-b"})
+	itemsA := decodeRecallResults(t, gotA)
+	itemsB := decodeRecallResults(t, gotB)
+	if len(itemsA) != 1 || !strings.Contains(itemsA[0]["value"].(string), "Go") {
+		t.Errorf("project-a: got %+v, want Go", itemsA)
+	}
+	if len(itemsB) != 1 || !strings.Contains(itemsB[0]["value"].(string), "Python") {
+		t.Errorf("project-b: got %+v, want Python", itemsB)
+	}
+
+	var n int
+	if err := deps.db.QueryRow(`SELECT COUNT(*) FROM memories WHERE key = 'stack'`).Scan(&n); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("rows for same key across collections = %d, want 2", n)
 	}
 }
 
