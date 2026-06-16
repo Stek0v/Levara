@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -56,12 +57,31 @@ func RegisterAuthAPI(app fiber.Router, cfg *AuthConfig) {
 	// minute. If you're tempted to split them per-route to give users more
 	// headroom on register/login separately, DON'T — the combined budget is
 	// the security guarantee we're trading UX for.
-	authLimiter := AuthRateLimiter(RateLimitConfig{})
+	authRL := authRateLimitFromEnv()
+	authLimiter := AuthRateLimiter(authRL)
 	app.Post("/auth/login", authLimiter, loginHandler(*cfg))
 	app.Post("/auth/register", authLimiter, registerHandler(*cfg))
 
 	// /auth/me — Levara frontend calls this to check current user after login
 	app.Get("/auth/me", authMeHandler(*cfg))
+}
+
+// authRateLimitFromEnv tunes the combined /auth/login + /auth/register bucket.
+// Defaults: 10 req/min per IP (credential-stuffing guard).
+// Dev/bench: RATE_LIMIT_AUTH_MAX=10000 (see deploy/profiles/local.postgres.env.example).
+func authRateLimitFromEnv() RateLimitConfig {
+	cfg := RateLimitConfig{}
+	if v := os.Getenv("RATE_LIMIT_AUTH_MAX"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.AuthMax = n
+		}
+	}
+	if v := os.Getenv("RATE_LIMIT_AUTH_WINDOW_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.AuthWindow = time.Duration(n) * time.Second
+		}
+	}
+	return cfg
 }
 
 // ── JWT helpers ──

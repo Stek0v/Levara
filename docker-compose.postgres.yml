@@ -1,0 +1,30 @@
+# Standalone PostgreSQL for local Levara dev / memory eval (port 5433).
+#
+#   docker compose -f docker-compose.postgres.yml up -d
+#   scripts/postgres-dev.sh status
+#
+# Credentials default to levara/levara/levara — override via .env.postgres.local
+# or POSTGRES_* env vars. Remote (10.23.0.64) uses levara-postgres with
+# levara_test/testpass; see deploy/profiles/remote-qwen.postgres.env.example.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: levara-pg
+    restart: unless-stopped
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-levara}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-levara}
+      POSTGRES_DB: ${POSTGRES_DB:-levara}
+    volumes:
+      - levara-pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-levara} -d ${POSTGRES_DB:-levara}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  levara-pg-data:

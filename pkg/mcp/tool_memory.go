@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/stek0v/levara/pkg/sqlcompat"
 )
 
 // listMemoriesCap bounds the rows returned by ToolListMemories.
@@ -77,14 +79,15 @@ func ToolListMemories(ctx context.Context, deps Deps, args map[string]any) ToolR
 	var results []map[string]any
 	for rows.Next() {
 		var id, key, value, typ, ownerID, rm, hl, ca, ua string
-		var pinned, prio int
+		var pinned bool
+		var prio int
 		if err := rows.Scan(&id, &key, &value, &typ, &ownerID, &rm, &hl, &pinned, &prio, &ca, &ua); err != nil {
 			continue
 		}
 		results = append(results, map[string]any{
 			"id": id, "key": key, "value": value, "type": typ,
 			"owner_id": ownerID, "room": rm, "hall": hl,
-			"is_pinned": pinned == 1, "pin_priority": prio,
+			"is_pinned": pinned, "pin_priority": prio,
 			"created_at": ca, "updated_at": ua,
 		})
 	}
@@ -260,8 +263,8 @@ func ToolWakeUp(ctx context.Context, deps Deps, args map[string]any) ToolResult 
 // wakeUpPinned loads pinned memories owned by ownerID (or the empty
 // shared owner) in priority-desc order.
 func wakeUpPinned(ctx context.Context, db *sql.DB, rewrite func(string) string, ownerID, collectionName string) []map[string]any {
-	sqlStr := `SELECT key, value, hall, room, pin_priority FROM memories
-		WHERE is_pinned = 1 AND (owner_id = $1 OR owner_id = '') AND superseded_by = ''`
+	sqlStr := fmt.Sprintf(`SELECT key, value, hall, room, pin_priority FROM memories
+		WHERE %s AND (owner_id = $1 OR owner_id = '') AND superseded_by = ''`, sqlcompat.BoolTrue("is_pinned"))
 	qargs := []any{ownerID}
 	if collectionName != "" {
 		sqlStr += " AND collection_name = $2"

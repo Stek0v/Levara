@@ -306,7 +306,7 @@ func setupDiaryTestDB(t *testing.T) *fakeDeps {
 		collection_name TEXT, room TEXT, hall TEXT,
 		is_pinned INTEGER DEFAULT 0, pin_priority INTEGER DEFAULT 0,
 		created_at TEXT, updated_at TEXT,
-		UNIQUE(key, owner_id)
+		UNIQUE(key, owner_id, collection_name)
 	)`
 	if _, err := db.Exec(stmt); err != nil {
 		t.Fatalf("create: %v", err)

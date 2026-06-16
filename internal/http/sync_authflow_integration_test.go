@@ -38,7 +38,7 @@ func newSyncIntegDB(t *testing.T, name string) *sql.DB {
 			hall TEXT NOT NULL DEFAULT '', is_pinned BOOLEAN NOT NULL DEFAULT FALSE,
 			pin_priority INTEGER NOT NULL DEFAULT 0,
 			created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-			UNIQUE(key, owner_id)
+			UNIQUE(key, owner_id, collection_name)
 		);
 		CREATE TABLE interactions (
 			id TEXT PRIMARY KEY, session_id TEXT, user_id TEXT, query TEXT,

@@ -52,10 +52,10 @@ func ToolDiaryWrite(ctx context.Context, deps Deps, args map[string]any) ToolRes
 	_, err := db.ExecContext(ctx, deps.Q(`
 		INSERT INTO memories (id, key, value, type, owner_id, collection_name, room, hall, is_pinned, pin_priority, created_at, updated_at)
 		VALUES ($1, $2, $3, 'diary', $4, $5, '', '', 0, 0, $6, $7)
-		ON CONFLICT(key, owner_id) DO UPDATE SET value = $8, collection_name = $9, updated_at = $10
+		ON CONFLICT(key, owner_id, collection_name) DO UPDATE SET value = $8, updated_at = $9
 	`),
 		id, key, value, owner, collectionName, now, now,
-		value, collectionName, now)
+		value, now)
 	if err != nil {
 		return ToolResult{
 			Content: []Content{{Type: "text", Text: "Error: " + err.Error()}},

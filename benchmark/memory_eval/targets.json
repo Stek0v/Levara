@@ -1,0 +1,32 @@
+[
+  {
+    "label": "local-mac",
+    "url": "http://localhost:8081",
+    "auth": true,
+    "latency": {
+      "save_p95_ms": 100,
+      "recall_p95_ms": 200,
+      "concurrent_wall_ms": 3000
+    }
+  },
+  {
+    "label": "qwen-64",
+    "url": "http://10.23.0.64:8080",
+    "auth": true,
+    "latency": {
+      "save_p95_ms": 200,
+      "recall_p95_ms": 200,
+      "concurrent_wall_ms": 8000
+    }
+  },
+  {
+    "label": "pi5",
+    "url": "http://10.23.0.53:8090",
+    "auth": true,
+    "latency": {
+      "save_p95_ms": 250,
+      "recall_p95_ms": 300,
+      "concurrent_wall_ms": 10000
+    }
+  }
+]

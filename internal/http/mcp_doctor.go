@@ -77,6 +77,9 @@ func (h *mcpHandler) toolDoctor(ctx context.Context, args map[string]any) mcpToo
 	// 8. Memory staleness
 	checks = append(checks, h.checkMemoryStaleness(ctx))
 
+	// 9. Memory upsert index (collection-scoped uniqueness)
+	checks = append(checks, h.checkMemoryUpsertIndex(ctx))
+
 	// Compute overall status
 	okCount, warnCount, failCount := 0, 0, 0
 	for _, c := range checks {
@@ -556,6 +559,42 @@ func (h *mcpHandler) checkMemoryStaleness(ctx context.Context) doctorCheck {
 		Status:  "ok",
 		Message: fmt.Sprintf("%d memories total, all updated within 30 days", totalMemories),
 	}
+}
+
+func (h *mcpHandler) checkMemoryUpsertIndex(ctx context.Context) doctorCheck {
+	if h.cfg.DB == nil {
+		return doctorCheck{Name: "memory_upsert_index", Status: "warn", Message: "No database configured"}
+	}
+
+	const want = "idx_memories_key_owner_coll"
+	if GetDBProvider() == DBPostgres {
+		var name string
+		err := h.cfg.DB.QueryRowContext(ctx, `
+			SELECT indexname FROM pg_indexes
+			WHERE tablename = 'memories' AND indexname = $1`, want).Scan(&name)
+		if err != nil {
+			return doctorCheck{
+				Name:        "memory_upsert_index",
+				Status:      "fail",
+				Message:     "Missing unique index idx_memories_key_owner_coll on memories(key, owner_id, collection_name)",
+				Remediation: "Restart levara to run schema migration, or CREATE UNIQUE INDEX idx_memories_key_owner_coll ON memories(key, owner_id, collection_name)",
+			}
+		}
+		return doctorCheck{Name: "memory_upsert_index", Status: "ok", Message: "Collection-scoped upsert index present"}
+	}
+
+	var name string
+	err := h.cfg.DB.QueryRowContext(ctx, `
+		SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?`, want).Scan(&name)
+	if err != nil {
+		return doctorCheck{
+			Name:        "memory_upsert_index",
+			Status:      "fail",
+			Message:     "Missing unique index idx_memories_key_owner_coll",
+			Remediation: "Restart levara to run schema migration",
+		}
+	}
+	return doctorCheck{Name: "memory_upsert_index", Status: "ok", Message: "Collection-scoped upsert index present"}
 }
 
 // ── Heartbeat logger ──
