@@ -49,8 +49,9 @@ func (c *RateLimitConfig) withDefaults() {
 // refresh are the only paths worth capping at 10/min; /auth/me is per-user.
 func AuthRateLimiter(cfg RateLimitConfig) fiber.Handler {
 	cfg.withDefaults()
+	max := cfg.AuthMax
 	return limiter.New(limiter.Config{
-		Max:        cfg.AuthMax,
+		Max:        max,
 		Expiration: cfg.AuthWindow,
 		KeyGenerator: func(c *fiber.Ctx) string {
 			return c.IP()

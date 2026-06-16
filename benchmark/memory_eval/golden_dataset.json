@@ -1,0 +1,213 @@
+{
+  "version": "2.0",
+  "description": "Golden retrieval + isolation scenarios for Levara memory eval (Mem0/Zep-aligned)",
+  "cases": [
+    {
+      "id": "sem_coffee",
+      "memory_type": "semantic",
+      "save": {"key": "drink_pref", "value": "User prefers black coffee without sugar", "room": "personal", "hall": "fact"},
+      "queries": [
+        {"query": "coffee", "expect_keys": ["drink_pref"], "expect_substrings": ["black coffee"]},
+        {"query": "drink_pref", "expect_keys": ["drink_pref"], "expect_substrings": ["black coffee"]}
+      ]
+    },
+    {
+      "id": "sem_city_migration",
+      "memory_type": "semantic",
+      "sequence": [
+        {"key": "home_city", "value": "User lives in Moscow", "room": "personal", "hall": "fact"},
+        {"key": "home_city", "value": "User moved to Berlin in June 2026", "room": "personal", "hall": "fact"}
+      ],
+      "queries": [
+        {"query": "home_city", "expect_keys": ["home_city"], "expect_substrings": ["Berlin"], "must_not_contain": ["Moscow"]}
+      ]
+    },
+    {
+      "id": "sem_paraphrase_commute",
+      "memory_type": "semantic",
+      "requires_embed": true,
+      "save": {"key": "commute_mode", "value": "User commutes to the office by bicycle every day unless it rains", "room": "personal", "hall": "fact"},
+      "distractor_saves": [
+        {"key": "dist_car", "value": "User sold their car in 2024 and does not drive to work", "room": "personal", "hall": "fact"},
+        {"key": "dist_bus", "value": "Public bus line 42 stops near the user's home", "room": "personal", "hall": "fact"},
+        {"key": "dist_train", "value": "Regional train schedule was updated last month", "room": "personal", "hall": "fact"}
+      ],
+      "queries": [
+        {
+          "query": "how does the user get to work",
+          "expect_keys": ["commute_mode"],
+          "expect_substrings": ["bicycle"],
+          "min_precision_at_3": 0.33,
+          "min_mrr": 0.33,
+          "note": "true paraphrase — key has no query tokens; needs vector embed"
+        }
+      ]
+    },
+    {
+      "id": "sem_paraphrase_language_ru",
+      "memory_type": "procedural",
+      "requires_embed": true,
+      "save": {"key": "response_language", "value": "Always respond in Russian unless the user writes in English", "room": "agent", "hall": "preference"},
+      "queries": [
+        {"query": "response_language", "expect_keys": ["response_language"], "expect_substrings": ["Russian"]},
+        {
+          "query": "preferred language for assistant replies",
+          "expect_keys": ["response_language"],
+          "expect_substrings": ["Russian"],
+          "requires_embed": true,
+          "note": "paraphrase without matching key substring"
+        }
+      ]
+    },
+    {
+      "id": "episodic_meeting",
+      "memory_type": "episodic",
+      "save": {"key": "tuesday_meeting", "value": "On Tuesday user asked to reschedule the 14:00 standup to 16:00", "room": "calendar", "hall": "event"},
+      "queries": [
+        {"query": "tuesday_meeting", "expect_keys": ["tuesday_meeting"], "expect_substrings": ["standup", "16:00"]}
+      ]
+    },
+    {
+      "id": "episodic_incident",
+      "memory_type": "episodic",
+      "save": {"key": "prod_incident_2026", "value": "2026-06-01 03:14 UTC: Postgres connection pool exhausted during deploy; rolled back release v2.3.1", "room": "ops", "hall": "event"},
+      "queries": [
+        {"query": "postgres pool deploy rollback", "expect_keys": ["prod_incident_2026"], "expect_substrings": ["v2.3.1"], "requires_embed": true}
+      ]
+    },
+    {
+      "id": "procedural_language",
+      "memory_type": "procedural",
+      "save": {"key": "response_language_legacy", "value": "Always respond in Russian unless the user writes in English", "room": "agent", "hall": "preference"},
+      "queries": [
+        {"query": "response_language_legacy", "expect_keys": ["response_language_legacy"], "expect_substrings": ["Russian"]}
+      ]
+    },
+    {
+      "id": "procedural_ci",
+      "memory_type": "procedural",
+      "save": {"key": "ci_gate", "value": "Never merge to main without green CI and at least one reviewer approval", "room": "workflow", "hall": "advice"},
+      "queries": [
+        {"query": "merge requirements main branch", "expect_keys": ["ci_gate"], "expect_substrings": ["CI"], "requires_embed": true}
+      ]
+    },
+    {
+      "id": "multihop_contract",
+      "memory_type": "multi_hop",
+      "saves": [
+        {"key": "client_acme_contract", "value": "Sent contract PDF to Acme Corp client yesterday", "room": "sales", "hall": "event"},
+        {"key": "client_acme_drink", "value": "Acme Corp contact prefers oat latte", "room": "sales", "hall": "fact"}
+      ],
+      "queries": [
+        {"query": "Acme", "expect_keys": ["client_acme_contract", "client_acme_drink"], "expect_substrings": ["contract", "oat latte"]},
+        {"query": "client_acme", "expect_keys": ["client_acme_contract", "client_acme_drink"], "min_hits": 2}
+      ]
+    },
+    {
+      "id": "multihop_yesterday_client",
+      "memory_type": "multi_hop",
+      "requires_embed": true,
+      "saves": [
+        {"key": "mh_contract", "value": "Yesterday emailed the signed MSA to Northwind Trading", "room": "northwind", "hall": "event"},
+        {"key": "mh_drink", "value": "Northwind buyer prefers espresso macchiato at meetings", "room": "northwind", "hall": "fact"}
+      ],
+      "queries": [
+        {
+          "query": "Northwind buyer drink preference macchiato",
+          "expect_keys": ["mh_drink"],
+          "expect_substrings": ["macchiato"],
+          "requires_embed": true
+        }
+      ]
+    },
+    {
+      "id": "hall_filter_decision",
+      "memory_type": "filter",
+      "saves": [
+        {"key": "auth_jwt_algo", "value": "JWT signed with RS256", "room": "auth", "hall": "decision"},
+        {"key": "auth_lib_pref", "value": "Prefer golang-jwt over jwx", "room": "auth", "hall": "preference"}
+      ],
+      "queries": [
+        {"query": "auth", "hall": "decision", "expect_keys": ["auth_jwt_algo"], "must_not_contain": ["jwx"]},
+        {"query": "auth", "hall": "preference", "expect_keys": ["auth_lib_pref"], "must_not_contain": ["RS256"]}
+      ]
+    },
+    {
+      "id": "room_filter_infra",
+      "memory_type": "filter",
+      "saves": [
+        {"key": "db_choice", "value": "Production metadata runs on PostgreSQL 16", "room": "infra", "hall": "decision"},
+        {"key": "ui_theme", "value": "Dashboard uses dark theme by default", "room": "ui", "hall": "preference"}
+      ],
+      "queries": [
+        {"query": "postgres", "room": "infra", "expect_keys": ["db_choice"], "must_not_contain": ["dark theme"]}
+      ]
+    },
+    {
+      "id": "noise_ok_message",
+      "memory_type": "edge",
+      "save": {"key": "noise_should_not_save", "value": "ok", "room": "chat", "hall": "fact", "optional": true},
+      "queries": [
+        {"query": "ok", "expect_keys": [], "note": "short noise — recall may return it if saved; agent should filter at write time"}
+      ]
+    },
+    {
+      "id": "unicode_emoji",
+      "memory_type": "edge",
+      "save": {"key": "deploy_status", "value": "Deploy succeeded 🚀 on staging ✅", "room": "deploy", "hall": "event"},
+      "queries": [
+        {"query": "deploy_status", "expect_keys": ["deploy_status"], "expect_substrings": ["🚀", "staging"]}
+      ]
+    },
+    {
+      "id": "long_value_snippet",
+      "memory_type": "edge",
+      "save": {
+        "key": "api_spec_excerpt",
+        "value": "OpenAPI excerpt: POST /api/v1/memories accepts key, value, room, hall, collection; returns 200 with canonical id. Rate limit 100 rpm per API key. Maximum value length tested at 4096 characters for agent memory payloads in production workloads.",
+        "room": "docs",
+        "hall": "fact"
+      },
+      "queries": [
+        {"query": "api_spec_excerpt", "expect_keys": ["api_spec_excerpt"], "expect_substrings": ["Rate limit 100 rpm"]}
+      ]
+    }
+  ],
+  "isolation_pairs": [
+    {
+      "id": "collection_isolation",
+      "tenant_a": {"collection": "tenant_a_eval", "key": "secret_stack", "value": "Tenant A uses Rust"},
+      "tenant_b": {"collection": "tenant_b_eval", "key": "secret_stack", "value": "Tenant B uses Python"},
+      "query_a": {"query": "secret_stack", "collection": "tenant_a_eval", "expect_substrings": ["Rust"], "must_not_contain": ["Python"]},
+      "query_b": {"query": "secret_stack", "collection": "tenant_b_eval", "expect_substrings": ["Python"], "must_not_contain": ["Rust"]}
+    }
+  ],
+  "owner_isolation": {
+    "key": "owner_classified",
+    "value": "Project Phoenix clearance level 5 — user-specific secret",
+    "room": "classified",
+    "hall": "fact",
+    "query": "Phoenix clearance",
+    "forbidden_substrings": ["Phoenix", "clearance level 5"]
+  },
+  "cross_session": {
+    "key": "cross_session_fact",
+    "value": "Session boundary test: warehouse location is Building C aisle 12",
+    "room": "logistics",
+    "hall": "fact",
+    "query": "Building C aisle",
+    "expect_substrings": ["Building C"]
+  },
+  "consolidation": {
+    "room": "weather",
+    "hall": "fact",
+    "key_prefix": "weather_obs",
+    "messages": 8,
+    "value_template": "User checked morning weather on day {n}: cloudy with temperature {n}+10C"
+  },
+  "context_efficiency": {
+    "pin_count": 6,
+    "value_template": "Pinned infra fact #{n}: production shard {n} runs on node-{n} with replication factor 3 and daily backup window 02:00-03:00 UTC.",
+    "max_tokens": 120
+  }
+}

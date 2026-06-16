@@ -36,15 +36,55 @@ def pytest_configure(config):
 class MCPTestClient:
     """Lightweight MCP JSON-RPC 2.0 client for testing."""
 
-    def __init__(self, base_url: str):
+    def __init__(self, base_url: str, auth_token: str | None = None):
         self.base_url = base_url.rstrip("/")
         self.mcp_url = f"{self.base_url}/mcp"
+        self.api_url = f"{self.base_url}/api/v1"
         self.session_id = None
         self._http = None
         self._rpc_id = 0
+        self.auth_token = auth_token
+
+    async def login_or_register(self, email: str | None = None, password: str | None = None) -> str:
+        """Login with existing creds; register once only if login fails."""
+        if self._http is None:
+            self._http = aiohttp.ClientSession()
+        email = email or os.environ.get("LEVARA_TEST_EMAIL", "memeval@bench.local")
+        password = password or os.environ.get("LEVARA_TEST_PASSWORD", "MemEval_Bench_Local_2026")
+        creds = {"email": email, "password": password}
+
+        async with self._http.post(f"{self.api_url}/auth/login", json=creds) as r:
+            if r.status == 200:
+                data = await r.json()
+                token = data.get("access_token") or data.get("token", "")
+                if token:
+                    self.auth_token = token
+                    return token
+
+        async with self._http.post(f"{self.api_url}/auth/register", json=creds) as r:
+            await r.read()
+
+        async with self._http.post(f"{self.api_url}/auth/login", json=creds) as r:
+            data = await r.json()
+            token = data.get("access_token") or data.get("token", "")
+            if not token:
+                raise RuntimeError(f"auth failed: {data}")
+            self.auth_token = token
+            return token
+
+    def _headers(self, extra: dict | None = None) -> dict:
+        h = {"Content-Type": "application/json"}
+        if self.session_id:
+            h["Mcp-Session-Id"] = self.session_id
+        if self.auth_token:
+            h["Authorization"] = f"Bearer {self.auth_token}"
+        if extra:
+            h.update(extra)
+        return h
 
     async def connect(self):
-        self._http = aiohttp.ClientSession()
+        if self._http is None:
+            self._http = aiohttp.ClientSession()
         # Initialize MCP session
         resp = await self._rpc("initialize", {
             "protocolVersion": "2025-03-26",
@@ -65,6 +105,8 @@ class MCPTestClient:
                 except Exception:
                     pass
             await self._http.close()
+            self._http = None
+            self.session_id = None
 
     async def _rpc(self, method: str, params: dict = None) -> dict:
         """Send JSON-RPC request, return result."""
@@ -73,9 +115,7 @@ class MCPTestClient:
         if params:
             body["params"] = params
 
-        headers = {"Content-Type": "application/json"}
-        if self.session_id:
-            headers["Mcp-Session-Id"] = self.session_id
+        headers = self._headers()
 
         async with self._http.post(self.mcp_url, json=body, headers=headers) as r:
             # Capture session ID from initialize
@@ -91,9 +131,7 @@ class MCPTestClient:
         body = {"jsonrpc": "2.0", "method": method}
         if params:
             body["params"] = params
-        headers = {"Content-Type": "application/json"}
-        if self.session_id:
-            headers["Mcp-Session-Id"] = self.session_id
+        headers = self._headers()
         async with self._http.post(self.mcp_url, json=body, headers=headers) as r:
             return r.status
 

@@ -159,7 +159,7 @@ func setupConsolidateDB(t *testing.T) *fakeDeps {
 		consolidated_from TEXT DEFAULT '',
 		consolidation_run_id TEXT DEFAULT '',
 		tier TEXT DEFAULT 'raw',
-		UNIQUE(key, owner_id)
+		UNIQUE(key, owner_id, collection_name)
 	)`
 	if _, err := db.Exec(stmt); err != nil {
 		t.Fatalf("create: %v", err)

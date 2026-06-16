@@ -285,7 +285,11 @@ var schemaStatements = []string{
 		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 	)`,
-	`CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_key_owner ON memories(key, owner_id)`,
+	// Upsert identity is (key, owner_id, collection_name) so the same key
+	// can exist in different pinned contexts without clobbering (P1 isolation).
+	`CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_key_owner_coll ON memories(key, owner_id, collection_name)`,
+	// Drop legacy index from deployments that predated collection-scoped upsert.
+	`DROP INDEX IF EXISTS idx_memories_key_owner`,
 	// Migrations for existing PG databases. ALTER TABLE must run BEFORE the
 	// dependent CREATE INDEX statements below — otherwise on an old DB the
 	// indexes reference columns that haven't been added yet, the migration
@@ -610,7 +614,11 @@ var schemaSQLiteStatements = []string{
 		created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 	)`,
-	`CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_key_owner ON memories(key, owner_id)`,
+	// Upsert identity is (key, owner_id, collection_name) so the same key
+	// can exist in different pinned contexts without clobbering (P1 isolation).
+	`CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_key_owner_coll ON memories(key, owner_id, collection_name)`,
+	// Drop legacy index from deployments that predated collection-scoped upsert.
+	`DROP INDEX IF EXISTS idx_memories_key_owner`,
 	// idx_memories_room/hall/pinned are created at the end of the
 	// schemaSQLiteStatements list, after the ALTER TABLE migrations that
 	// add the columns those indexes depend on.

@@ -101,11 +101,6 @@ func ToolSaveMemory(ctx context.Context, deps Deps, args map[string]any) ToolRes
 	now := time.Now().UTC().Format(time.RFC3339)
 	ownerID := extractOwnerID(ctx)
 
-	pinInt := 0
-	if pin {
-		pinInt = 1
-	}
-
 	// Reused-value columns (value/type/collection_name/room/hall/
 	// is_pinned/pin_priority/updated_at) get their own placeholders in
 	// the DO UPDATE SET clause — wave 3f/3g pattern to avoid QArgs.
@@ -119,19 +114,17 @@ func ToolSaveMemory(ctx context.Context, deps Deps, args map[string]any) ToolRes
 	err := db.QueryRowContext(ctx, deps.Q(`
 		INSERT INTO memories (id, key, value, type, owner_id, collection_name, room, hall, is_pinned, pin_priority, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-		ON CONFLICT(key, owner_id) DO UPDATE SET value = $13, type = $14, collection_name = $15, room = $16, hall = $17, is_pinned = $18, pin_priority = $19, updated_at = $20
+		ON CONFLICT(key, owner_id, collection_name) DO UPDATE SET value = $13, type = $14, room = $15, hall = $16, is_pinned = $17, pin_priority = $18, updated_at = $19
 		RETURNING id
 	`),
-		id, key, value, memType, ownerID, collectionName, room, hall, pinInt, pinPriority, now, now,
-		value, memType, collectionName, room, hall, pinInt, pinPriority, now).Scan(&canonicalID)
+		id, key, value, memType, ownerID, collectionName, room, hall, pin, pinPriority, now, now,
+		value, memType, room, hall, pin, pinPriority, now).Scan(&canonicalID)
 	if err != nil {
-		// Swallow DB errors — matches pre-refactor best-effort contract.
-		// The pre-refactor version logged via cfg.Logger if available;
-		// logger is deliberately not on Deps (small surface > observability
-		// plumbing). Callers reading this code can add Logger() later if
-		// needed. On a failed RETURNING the local uuid stays as the id —
-		// no worse than the pre-fix behavior.
-		canonicalID = id
+		reportMemoryPersistFailure(deps, key, ownerID, collectionName, err.Error())
+		return ToolResult{
+			Content: []Content{{Type: "text", Text: fmt.Sprintf("Error: memory save failed: %s", err.Error())}},
+			IsError: true,
+		}
 	}
 
 	if deps.EmbedAvailable() {
@@ -218,6 +211,18 @@ func reportMemoryDivergence(deps Deps, collection, id, reason, detail string) {
 		"collection": collection,
 		"memory_id":  id,
 		"reason":     reason,
+		"detail":     Truncate(detail, memoryValueLogMaxLen),
+		"at":         time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
+// reportMemoryPersistFailure records a SQL write failure for save_memory.
+// Surfaces in doctor/recent_errors instead of silently returning success.
+func reportMemoryPersistFailure(deps Deps, key, ownerID, collectionName, detail string) {
+	deps.LogHeartbeat("memory_persist_failure", map[string]any{
+		"key":        key,
+		"owner_id":   ownerID,
+		"collection": collectionName,
 		"detail":     Truncate(detail, memoryValueLogMaxLen),
 		"at":         time.Now().UTC().Format(time.RFC3339),
 	})

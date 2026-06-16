@@ -187,7 +187,7 @@ func syncImportMemoriesHandler(cfg APIConfig) fiber.Handler {
 					is_pinned, pin_priority, created_at, updated_at
 				)
 				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-				 ON CONFLICT(key, owner_id) DO UPDATE SET
+				 ON CONFLICT(key, owner_id, collection_name) DO UPDATE SET
 					value = $3, type = $4, collection_name = $6, room = $7, hall = $8,
 					is_pinned = $9, pin_priority = $10, updated_at = $12`,
 				m.ID, m.Key, m.Value, m.Type, m.OwnerID, m.CollectionName,
@@ -786,7 +786,7 @@ func SyncPull(cfg APIConfig, remoteURL string, types []string, since string) map
 								is_pinned, pin_priority, created_at, updated_at
 							)
 							 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-							 ON CONFLICT(key, owner_id) DO UPDATE SET
+							 ON CONFLICT(key, owner_id, collection_name) DO UPDATE SET
 								value = $3, type = $4, collection_name = $6, room = $7, hall = $8,
 								is_pinned = $9, pin_priority = $10, updated_at = $12`,
 						m.ID, m.Key, m.Value, m.Type, m.OwnerID, m.CollectionName,

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
+	pkgsqlcompat "github.com/stek0v/levara/pkg/sqlcompat"
 )
 
 // DBRef wraps *sql.DB to prevent fasthttp from calling Close() on it.
@@ -44,7 +45,14 @@ const (
 var activeDBProvider DBProvider = DBPostgres
 
 // SetDBProvider sets the active SQL dialect.
-func SetDBProvider(p DBProvider) { activeDBProvider = p }
+func SetDBProvider(p DBProvider) {
+	activeDBProvider = p
+	if p == DBPostgres {
+		pkgsqlcompat.SetProvider(pkgsqlcompat.Postgres)
+	} else {
+		pkgsqlcompat.SetProvider(pkgsqlcompat.SQLite)
+	}
+}
 
 // GetDBProvider returns the current SQL dialect.
 func GetDBProvider() DBProvider { return activeDBProvider }
@@ -135,3 +143,9 @@ func InPlaceholders(count int, startIdx int) string {
 	}
 	return "IN (" + strings.Join(parts, ",") + ")"
 }
+
+// SQLBoolTrue returns a dialect-correct predicate for a truthy boolean column.
+func SQLBoolTrue(column string) string { return pkgsqlcompat.BoolTrue(column) }
+
+// SQLBoolFalse returns a dialect-correct predicate for a falsy boolean column.
+func SQLBoolFalse(column string) string { return pkgsqlcompat.BoolFalse(column) }
