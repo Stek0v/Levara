@@ -239,6 +239,31 @@ export const levara = {
     return api<VSAQueryResponse>(`/api/v1/vsa/query?${q.toString()}`)
   },
 
+  // Embedding contract migration / ANN cutover
+  startEmbeddingMigration: (params: EmbeddingMigrationRequest) =>
+    api<EmbeddingMigrationStatus>('/api/v1/embedding-migrations', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    }),
+  embeddingMigrationStatus: (runId: string) =>
+    api<EmbeddingMigrationStatus>(`/api/v1/embedding-migrations/${encodeURIComponent(runId)}/status`),
+  retryEmbeddingMigration: (runId: string) =>
+    api<EmbeddingMigrationStatus>(`/api/v1/embedding-migrations/${encodeURIComponent(runId)}/retry`, { method: 'POST' }),
+  cutoverEmbeddingMigration: (runId: string, params: EmbeddingMigrationCutoverRequest) =>
+    api<EmbeddingMigrationCutoverResponse>(`/api/v1/embedding-migrations/${encodeURIComponent(runId)}/cutover`, {
+      method: 'POST',
+      body: JSON.stringify(params),
+    }),
+  embeddingDualWriteRules: () =>
+    api<EmbeddingDualWriteRulesResponse>('/api/v1/embedding-migrations/dual-write'),
+  disableEmbeddingDualWrite: (sourceCollection: string) =>
+    api<{ source_collection: string; status: string }>(`/api/v1/embedding-migrations/dual-write/${encodeURIComponent(sourceCollection)}`, { method: 'DELETE' }),
+  embeddingShadowRead: (params: EmbeddingShadowReadRequest) =>
+    api<EmbeddingShadowReadReport>('/api/v1/embedding-migrations/shadow-read', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    }),
+
   // Workspace indexing and operations
   workspaceOpsStatus: (params: WorkspaceScope) => {
     const q = workspaceScopeParams(params)
@@ -519,6 +544,134 @@ export interface VSACandidate {
 
 export interface VSAQueryResponse {
   candidates: VSACandidate[]
+}
+
+export interface EmbeddingMigrationRequest {
+  source_collection: string
+  target_collection: string
+  target_endpoint: string
+  target_model: string
+  target_dim: number
+  target_tokenizer?: string
+  target_pooling?: string
+  target_normalization?: string
+  target_metric?: string
+  batch_size?: number
+  max_attempts?: number
+  dry_run?: boolean
+  enable_dual_write?: boolean
+}
+
+export interface EmbeddingMigrationStatus {
+  run_id: string
+  status: string
+  source_collection: string
+  target_collection: string
+  target_model: string
+  target_dim: number
+  target_version?: string
+  total_records: number
+  processed: number
+  failed: number
+  last_processed_index?: number
+  checkpoint_id?: string
+  failed_ids?: string[]
+  attempts?: number
+  max_attempts?: number
+  elapsed_ms?: number
+  message?: string
+}
+
+export interface EmbeddingMigrationCutoverRequest {
+  archive_collection?: string
+  archive_suffix?: string
+  retention_days?: number
+}
+
+export interface EmbeddingMigrationCutoverResponse {
+  run_id: string
+  source_collection: string
+  promoted_collection: string
+  archive_collection: string
+  retention_until: string
+  status: string
+}
+
+export interface EmbeddingContract {
+  encoder?: string
+  tokenizer?: string
+  pooling?: string
+  normalization?: string
+  dim?: number
+  metric?: string
+}
+
+export interface EmbeddingDualWriteRule {
+  source_collection: string
+  target_collection: string
+  target_endpoint: string
+  target_model: string
+  target_contract?: EmbeddingContract
+  enabled: boolean
+  updated_at: string
+}
+
+export interface EmbeddingDualWriteRulesResponse {
+  rules: EmbeddingDualWriteRule[]
+}
+
+export interface EmbeddingShadowReadRequest {
+  source_collection: string
+  shadow_collection: string
+  queries: string[]
+  top_k?: number
+  source_endpoint?: string
+  shadow_endpoint?: string
+  source_model?: string
+  shadow_model?: string
+  min_mean_jaccard_at_k?: number
+  min_top1_stability?: number
+  max_shadow_empty_rate?: number
+  max_shadow_p95_latency_ms?: number
+  max_latency_ratio_p95?: number
+  max_mean_top_score_delta?: number
+  require_cutover_gate_pass?: boolean
+}
+
+export interface EmbeddingShadowReadRow {
+  query: string
+  source_ids: string[]
+  shadow_ids: string[]
+  jaccard_at_k: number
+  top1_match: boolean
+  source_empty: boolean
+  shadow_empty: boolean
+  source_top_score: number
+  shadow_top_score: number
+  top_score_delta: number
+  source_latency_ms: number
+  shadow_latency_ms: number
+}
+
+export interface EmbeddingShadowReadReport {
+  source_collection: string
+  shadow_collection: string
+  top_k: number
+  query_count: number
+  mean_jaccard_at_k: number
+  top1_stability: number
+  source_empty_rate: number
+  shadow_empty_rate: number
+  source_p50_ms: number
+  source_p95_ms: number
+  source_p99_ms: number
+  shadow_p50_ms: number
+  shadow_p95_ms: number
+  shadow_p99_ms: number
+  mean_top_score_delta: number
+  cutover_ready: boolean
+  gate_failures?: string[]
+  rows: EmbeddingShadowReadRow[]
 }
 
 export interface HealthDetails {

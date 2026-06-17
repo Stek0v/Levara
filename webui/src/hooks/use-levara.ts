@@ -8,6 +8,9 @@ import {
   type DatasetDataRow,
   type DatasetDataResponse,
   type DatasetGraph,
+  type EmbeddingMigrationCutoverRequest,
+  type EmbeddingMigrationRequest,
+  type EmbeddingShadowReadRequest,
   type GraphPathRequest,
   type VSAQueryRequest,
   type WorkspaceArtifactsRequest,
@@ -314,6 +317,82 @@ export function useVSARebuild() {
 export function useVSAQuery() {
   return useMutation({
     mutationFn: (params: VSAQueryRequest) => levara.queryVSA(params),
+  })
+}
+
+// ── Embedding migrations ──
+
+export function useEmbeddingDualWriteRules() {
+  return useQuery({
+    queryKey: ['embeddingDualWriteRules'],
+    queryFn: () => levara.embeddingDualWriteRules(),
+    staleTime: 10_000,
+    refetchInterval: 30_000,
+  })
+}
+
+export function useEmbeddingMigrationStatus(runId: string) {
+  return useQuery({
+    queryKey: ['embeddingMigrationStatus', runId],
+    queryFn: () => levara.embeddingMigrationStatus(runId),
+    enabled: Boolean(runId),
+    staleTime: 5_000,
+    refetchInterval: (query) => {
+      const status = query.state.data?.status
+      return status === 'RUNNING' || status === 'PENDING' ? 3_000 : false
+    },
+  })
+}
+
+export function useStartEmbeddingMigration() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (params: EmbeddingMigrationRequest) => levara.startEmbeddingMigration(params),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ['embeddingDualWriteRules'] })
+      qc.invalidateQueries({ queryKey: ['collections'] })
+      if (data.run_id) qc.invalidateQueries({ queryKey: ['embeddingMigrationStatus', data.run_id] })
+    },
+  })
+}
+
+export function useRetryEmbeddingMigration() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (runId: string) => levara.retryEmbeddingMigration(runId),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ['embeddingDualWriteRules'] })
+      if (data.run_id) qc.invalidateQueries({ queryKey: ['embeddingMigrationStatus', data.run_id] })
+    },
+  })
+}
+
+export function useCutoverEmbeddingMigration() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ runId, params }: { runId: string; params: EmbeddingMigrationCutoverRequest }) =>
+      levara.cutoverEmbeddingMigration(runId, params),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ['collections'] })
+      qc.invalidateQueries({ queryKey: ['embeddingDualWriteRules'] })
+      qc.invalidateQueries({ queryKey: ['embeddingMigrationStatus', data.run_id] })
+    },
+  })
+}
+
+export function useDisableEmbeddingDualWrite() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (sourceCollection: string) => levara.disableEmbeddingDualWrite(sourceCollection),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['embeddingDualWriteRules'] })
+    },
+  })
+}
+
+export function useEmbeddingShadowRead() {
+  return useMutation({
+    mutationFn: (params: EmbeddingShadowReadRequest) => levara.embeddingShadowRead(params),
   })
 }
 
