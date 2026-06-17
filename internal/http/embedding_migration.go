@@ -180,6 +180,8 @@ func RegisterEmbeddingMigrationAPI(app fiber.Router, cfg APIConfig) {
 	app.Get("/embedding-migrations/:runId/status", embeddingMigrationStatusHandler(cfg))
 	app.Post("/embedding-migrations/:runId/retry", embeddingMigrationRetryHandler(cfg))
 	app.Post("/embedding-migrations/:runId/cutover", embeddingMigrationCutoverHandler(cfg))
+	app.Get("/embedding-migrations/dual-write", embeddingMigrationDualWriteListHandler(cfg))
+	app.Delete("/embedding-migrations/dual-write/:source", embeddingMigrationDualWriteDisableHandler(cfg))
 	app.Post("/embedding-migrations/shadow-read", embeddingShadowReadHandler(cfg))
 }
 
@@ -297,6 +299,31 @@ func embeddingMigrationCutoverHandler(cfg APIConfig) fiber.Handler {
 			RetentionUntil:     retentionUntil.Format(time.RFC3339),
 			Status:             "CUTOVER_COMPLETED",
 		})
+	}
+}
+
+func embeddingMigrationDualWriteListHandler(cfg APIConfig) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		rules := readEmbeddingDualWriteRules(embeddingMigrationStoreDir(cfg))
+		out := make([]embeddingDualWriteRule, 0, len(rules))
+		for _, rule := range rules {
+			out = append(out, rule)
+		}
+		sort.Slice(out, func(i, j int) bool {
+			return out[i].SourceCollection < out[j].SourceCollection
+		})
+		return c.JSON(fiber.Map{"rules": out})
+	}
+}
+
+func embeddingMigrationDualWriteDisableHandler(cfg APIConfig) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		source := c.Params("source")
+		if source == "" {
+			return c.Status(400).JSON(fiber.Map{"detail": "source required"})
+		}
+		removeEmbeddingDualWriteRule(cfg, source)
+		return c.JSON(fiber.Map{"source_collection": source, "status": "disabled"})
 	}
 }
 

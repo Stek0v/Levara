@@ -457,6 +457,7 @@ T-TD1.3  Все страницы загружаются без console errors
 - [x] `enable_dual_write=true` включает source -> shadow dual-write window для новых records во время миграции
 - [x] Shadow-read gate: p95/p99 latency, top-score delta, threshold checks, `cutover_ready`, fail-closed `409`
 - [x] `POST /embedding-migrations/:runId/cutover` promotes shadow -> live, archives old live, writes retention metadata, disables dual-write rule
+- [x] `GET /embedding-migrations/dual-write` и `DELETE /embedding-migrations/dual-write/:source` inspect/disable active dual-write windows
 
 **Ограничения:**
 - raw vector API без metadata невозможно криптографически связать с encoder; Levara stamp-ит contract коллекции, но caller отвечает за корректность vector;
@@ -470,7 +471,7 @@ T-TD1.3  Все страницы загружаются без console errors
 - [x] cutover endpoint + rollback archive retention metadata
 - [ ] HNSW params (`M`, `efConstruction`, `efSearch`) включить в migration report
 - [ ] auto-resume interrupted RUNNING migrations after process restart
-- [ ] dual-write inspect/disable endpoint для завершения cutover window
+- [x] dual-write inspect/disable endpoint для завершения cutover window
 
 ---
 

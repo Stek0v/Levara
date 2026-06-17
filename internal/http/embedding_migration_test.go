@@ -239,6 +239,24 @@ func TestEmbeddingMigrationDualWriteCopiesNewSourceWrites(t *testing.T) {
 	if !cm.HasRecord("live__shadow", "delta-doc") {
 		t.Fatal("dual-write did not copy new source record to shadow")
 	}
+
+	status, rules := getMigrationJSON(t, app, "/api/v1/embedding-migrations/dual-write")
+	if status != 200 {
+		t.Fatalf("rules status=%d body=%v", status, rules)
+	}
+	if got, _ := rules["rules"].([]any); len(got) != 1 {
+		t.Fatalf("rules=%v, want one active rule", rules)
+	}
+	status, disabled := deleteMigrationJSON(t, app, "/api/v1/embedding-migrations/dual-write/live")
+	if status != 200 {
+		t.Fatalf("disable status=%d body=%v", status, disabled)
+	}
+	if err := cm.Insert("live", "epsilon-doc", []float32{0, 1}, map[string]any{"text": "epsilon"}); err != nil {
+		t.Fatalf("insert live epsilon: %v", err)
+	}
+	if cm.HasRecord("live__shadow", "epsilon-doc") {
+		t.Fatal("disabled dual-write still copied new source record")
+	}
 }
 
 func TestEmbeddingMigrationCutoverPromotesShadowAndArchivesLive(t *testing.T) {
@@ -487,16 +505,36 @@ func pollMigrationStatus(t *testing.T, app *fiber.App, runID string) map[string]
 
 func getMigrationStatus(t *testing.T, app *fiber.App, runID string) map[string]any {
 	t.Helper()
-	req := httptest.NewRequest("GET", "/api/v1/embedding-migrations/"+runID+"/status", nil)
+	_, body := getMigrationJSON(t, app, "/api/v1/embedding-migrations/"+runID+"/status")
+	return body
+}
+
+func getMigrationJSON(t *testing.T, app *fiber.App, path string) (int, map[string]any) {
+	t.Helper()
+	req := httptest.NewRequest("GET", path, nil)
 	resp, err := app.Test(req, -1)
 	if err != nil {
-		t.Fatalf("status request: %v", err)
+		t.Fatalf("get request: %v", err)
 	}
 	defer resp.Body.Close()
 	buf, _ := io.ReadAll(resp.Body)
 	var body map[string]any
 	_ = json.Unmarshal(buf, &body)
-	return body
+	return resp.StatusCode, body
+}
+
+func deleteMigrationJSON(t *testing.T, app *fiber.App, path string) (int, map[string]any) {
+	t.Helper()
+	req := httptest.NewRequest("DELETE", path, nil)
+	resp, err := app.Test(req, -1)
+	if err != nil {
+		t.Fatalf("delete request: %v", err)
+	}
+	defer resp.Body.Close()
+	buf, _ := io.ReadAll(resp.Body)
+	var body map[string]any
+	_ = json.Unmarshal(buf, &body)
+	return resp.StatusCode, body
 }
 
 func fakeShadowReadEmbedServer(t *testing.T) *httptest.Server {

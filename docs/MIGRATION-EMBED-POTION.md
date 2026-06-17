@@ -310,6 +310,20 @@ requires text to be recoverable from record metadata (`text`, `name`,
 `description`, `content`, or the mem0 envelope). Raw vector-only writes cannot
 be re-embedded into a different encoder space without source text.
 
+Inspect active dual-write windows:
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8090/api/v1/embedding-migrations/dual-write | jq .
+```
+
+Manual disable, if a window must be closed without cutover:
+
+```bash
+curl -s -X DELETE -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8090/api/v1/embedding-migrations/dual-write/${COLL} | jq .
+```
+
 If Levara restarts mid-migration, first check the restored status:
 
 ```bash
