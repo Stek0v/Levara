@@ -10,6 +10,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/stek0v/levara/pkg/graphdb"
+	"github.com/stek0v/levara/pkg/graphstore"
 )
 
 // GraphVisualizationConfig holds Neo4j connection for graph visualization.
@@ -46,24 +47,31 @@ type GraphDTO struct {
 // GET /api/v1/datasets/:id/graph
 func DatasetGraph(cfg GraphVisualizationConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		if cfg.Neo4jURL == "" {
-			return c.Status(503).JSON(fiber.Map{"detail": "Neo4j not configured"})
-		}
-
 		datasetID := c.Params("id")
 
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		writer, err := graphdb.NewWriter(ctx, cfg.Neo4jURL, cfg.Neo4jUser, cfg.Neo4jPassword, cfg.Neo4jDatabase)
-		if err != nil {
-			return c.Status(503).JSON(fiber.Map{"detail": fmt.Sprintf("neo4j: %v", err)})
-		}
-		defer writer.Close(ctx)
+		var result graphdb.GraphReadResult
+		var err error
+		if cfg.DB != nil {
+			result, err = graphstore.NewSQLGraphStore(cfg.DB).ReadFullGraph(ctx)
+			if err != nil {
+				return c.Status(500).JSON(fiber.Map{"detail": fmt.Sprintf("read sql graph: %v", err)})
+			}
+		} else if cfg.Neo4jURL != "" {
+			writer, err := graphdb.NewWriter(ctx, cfg.Neo4jURL, cfg.Neo4jUser, cfg.Neo4jPassword, cfg.Neo4jDatabase)
+			if err != nil {
+				return c.Status(503).JSON(fiber.Map{"detail": fmt.Sprintf("neo4j: %v", err)})
+			}
+			defer writer.Close(ctx)
 
-		result, err := writer.ReadFullGraph(ctx)
-		if err != nil {
-			return c.Status(500).JSON(fiber.Map{"detail": fmt.Sprintf("read graph: %v", err)})
+			result, err = writer.ReadFullGraph(ctx)
+			if err != nil {
+				return c.Status(500).JSON(fiber.Map{"detail": fmt.Sprintf("read graph: %v", err)})
+			}
+		} else {
+			return c.Status(503).JSON(fiber.Map{"detail": "graph store not configured"})
 		}
 
 		// Filter nodes by dataset_id if present
@@ -139,7 +147,11 @@ func VisualizeHTML(cfg *GraphVisualizationConfig) fiber.Handler {
 		// Fallback: read from PostgreSQL/SQLite graph_nodes + graph_edges
 		if len(result.Nodes) == 0 && cfg.DB != nil {
 			log.Printf("[visualize] falling back to SQL (neo4j=%q, db=%v)", cfg.Neo4jURL, cfg.DB != nil)
-			result = readGraphFromSQL(context.Background(), cfg.DB)
+			if r, err := graphstore.NewSQLGraphStore(cfg.DB).ReadFullGraph(context.Background()); err == nil {
+				result = r
+			} else {
+				log.Printf("[visualize] SQL fallback error: %v", err)
+			}
 			log.Printf("[visualize] SQL fallback returned %d nodes, %d edges", len(result.Nodes), len(result.Edges))
 		} else if cfg.DB == nil {
 			log.Printf("[visualize] WARNING: cfg.DB is nil, cannot use SQL fallback")

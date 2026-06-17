@@ -228,6 +228,9 @@ func RegisterAPI(app fiber.Router, cfg APIConfig) {
 
 	// T5: Graph path/traversal — shortest-path edges with as_of + cursor.
 	app.Get("/graph/path", graphPathHandler(cfg))
+
+	// VSA fact memory over SQL graph facts.
+	RegisterVSAAPI(app, cfg)
 }
 
 // ── U1: Health ──

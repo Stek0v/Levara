@@ -1,0 +1,42 @@
+{
+  "hooks": {
+    "AfterTool": [
+      {
+        "hooks": [
+          {
+            "command": "gortex hook --agent gemini",
+            "description": "Gortex graph context + stale-index hint",
+            "name": "gortex",
+            "timeout": 10000,
+            "type": "command"
+          }
+        ],
+        "matcher": "run_shell_command|search_file_content|glob"
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "command": "gortex hook --agent gemini",
+            "description": "Gortex session orientation",
+            "name": "gortex",
+            "timeout": 10000,
+            "type": "command"
+          }
+        ]
+      }
+    ]
+  },
+  "mcpServers": {
+    "gortex": {
+      "args": [
+        "mcp"
+      ],
+      "command": "gortex",
+      "env": {
+        "GORTEX_INDEX_WORKERS": "8"
+      }
+    }
+  }
+}
