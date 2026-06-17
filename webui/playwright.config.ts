@@ -12,7 +12,7 @@ export default defineConfig({
     trace: 'on-first-retry',
   },
   webServer: {
-    command: `LEVARA_API_URL=${process.env.LEVARA_API_URL || 'http://localhost:8081'} npm run dev -- -p 3001`,
+    command: `LEVARA_API_URL=${process.env.LEVARA_API_URL || 'http://127.0.0.1:8081'} npm run dev -- -p 3001`,
     port: 3001,
     reuseExistingServer: true,
     timeout: 30000,
