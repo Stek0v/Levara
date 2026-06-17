@@ -106,14 +106,21 @@ var (
 )
 
 type embeddingShadowReadRequest struct {
-	SourceCollection string   `json:"source_collection"`
-	ShadowCollection string   `json:"shadow_collection"`
-	Queries          []string `json:"queries"`
-	TopK             int      `json:"top_k"`
-	SourceEndpoint   string   `json:"source_endpoint"`
-	ShadowEndpoint   string   `json:"shadow_endpoint"`
-	SourceModel      string   `json:"source_model"`
-	ShadowModel      string   `json:"shadow_model"`
+	SourceCollection       string   `json:"source_collection"`
+	ShadowCollection       string   `json:"shadow_collection"`
+	Queries                []string `json:"queries"`
+	TopK                   int      `json:"top_k"`
+	SourceEndpoint         string   `json:"source_endpoint"`
+	ShadowEndpoint         string   `json:"shadow_endpoint"`
+	SourceModel            string   `json:"source_model"`
+	ShadowModel            string   `json:"shadow_model"`
+	MinMeanJaccardAtK      float64  `json:"min_mean_jaccard_at_k"`
+	MinTop1Stability       float64  `json:"min_top1_stability"`
+	MaxShadowEmptyRate     float64  `json:"max_shadow_empty_rate"`
+	MaxShadowP95LatencyMs  int64    `json:"max_shadow_p95_latency_ms"`
+	MaxLatencyRatioP95     float64  `json:"max_latency_ratio_p95"`
+	MaxMeanTopScoreDelta   float64  `json:"max_mean_top_score_delta"`
+	RequireCutoverGatePass bool     `json:"require_cutover_gate_pass"`
 }
 
 type embeddingShadowReadRow struct {
@@ -124,22 +131,32 @@ type embeddingShadowReadRow struct {
 	Top1Match       bool     `json:"top1_match"`
 	SourceEmpty     bool     `json:"source_empty"`
 	ShadowEmpty     bool     `json:"shadow_empty"`
+	SourceTopScore  float32  `json:"source_top_score"`
+	ShadowTopScore  float32  `json:"shadow_top_score"`
+	TopScoreDelta   float64  `json:"top_score_delta"`
 	SourceLatencyMs int64    `json:"source_latency_ms"`
 	ShadowLatencyMs int64    `json:"shadow_latency_ms"`
 }
 
 type embeddingShadowReadReport struct {
-	SourceCollection string                   `json:"source_collection"`
-	ShadowCollection string                   `json:"shadow_collection"`
-	TopK             int                      `json:"top_k"`
-	QueryCount       int                      `json:"query_count"`
-	MeanJaccardAtK   float64                  `json:"mean_jaccard_at_k"`
-	Top1Stability    float64                  `json:"top1_stability"`
-	SourceEmptyRate  float64                  `json:"source_empty_rate"`
-	ShadowEmptyRate  float64                  `json:"shadow_empty_rate"`
-	SourceP50Ms      int64                    `json:"source_p50_ms"`
-	ShadowP50Ms      int64                    `json:"shadow_p50_ms"`
-	Rows             []embeddingShadowReadRow `json:"rows"`
+	SourceCollection  string                   `json:"source_collection"`
+	ShadowCollection  string                   `json:"shadow_collection"`
+	TopK              int                      `json:"top_k"`
+	QueryCount        int                      `json:"query_count"`
+	MeanJaccardAtK    float64                  `json:"mean_jaccard_at_k"`
+	Top1Stability     float64                  `json:"top1_stability"`
+	SourceEmptyRate   float64                  `json:"source_empty_rate"`
+	ShadowEmptyRate   float64                  `json:"shadow_empty_rate"`
+	SourceP50Ms       int64                    `json:"source_p50_ms"`
+	SourceP95Ms       int64                    `json:"source_p95_ms"`
+	SourceP99Ms       int64                    `json:"source_p99_ms"`
+	ShadowP50Ms       int64                    `json:"shadow_p50_ms"`
+	ShadowP95Ms       int64                    `json:"shadow_p95_ms"`
+	ShadowP99Ms       int64                    `json:"shadow_p99_ms"`
+	MeanTopScoreDelta float64                  `json:"mean_top_score_delta"`
+	CutoverReady      bool                     `json:"cutover_ready"`
+	GateFailures      []string                 `json:"gate_failures,omitempty"`
+	Rows              []embeddingShadowReadRow `json:"rows"`
 }
 
 func RegisterEmbeddingMigrationAPI(app fiber.Router, cfg APIConfig) {
@@ -706,6 +723,9 @@ func embeddingShadowReadHandler(cfg APIConfig) fiber.Handler {
 		if err != nil {
 			return c.Status(400).JSON(fiber.Map{"detail": err.Error()})
 		}
+		if req.RequireCutoverGatePass && !report.CutoverReady {
+			return c.Status(409).JSON(report)
+		}
 		return c.JSON(report)
 	}
 }
@@ -725,34 +745,38 @@ func runEmbeddingShadowRead(ctx context.Context, cfg APIConfig, req embeddingSha
 	shadowClient := embed.NewClient(shadowEndpoint, shadowModel, 1, 1)
 	rows := make([]embeddingShadowReadRow, 0, len(req.Queries))
 	var sourceLatencies, shadowLatencies []int64
-	var jaccardSum float64
+	var jaccardSum, topScoreDeltaSum float64
 	var top1Matches, sourceEmpty, shadowEmpty int
 
 	for _, q := range req.Queries {
 		row := embeddingShadowReadRow{Query: q}
 
 		sourceStart := time.Now()
-		sourceIDs, err := embedAndSearchIDs(ctx, cfg, sourceClient, req.SourceCollection, q, req.TopK)
+		sourceResult, err := embedAndSearchIDs(ctx, cfg, sourceClient, req.SourceCollection, q, req.TopK)
 		row.SourceLatencyMs = time.Since(sourceStart).Milliseconds()
 		if err != nil {
-			sourceIDs = nil
+			sourceResult.IDs = nil
 		}
 
 		shadowStart := time.Now()
-		shadowIDs, err := embedAndSearchIDs(ctx, cfg, shadowClient, req.ShadowCollection, q, req.TopK)
+		shadowResult, err := embedAndSearchIDs(ctx, cfg, shadowClient, req.ShadowCollection, q, req.TopK)
 		row.ShadowLatencyMs = time.Since(shadowStart).Milliseconds()
 		if err != nil {
-			shadowIDs = nil
+			shadowResult.IDs = nil
 		}
 
-		row.SourceIDs = sourceIDs
-		row.ShadowIDs = shadowIDs
-		row.SourceEmpty = len(sourceIDs) == 0
-		row.ShadowEmpty = len(shadowIDs) == 0
-		row.Top1Match = len(sourceIDs) > 0 && len(shadowIDs) > 0 && sourceIDs[0] == shadowIDs[0]
-		row.JaccardAtK = jaccardStrings(sourceIDs, shadowIDs)
+		row.SourceIDs = sourceResult.IDs
+		row.ShadowIDs = shadowResult.IDs
+		row.SourceTopScore = sourceResult.TopScore
+		row.ShadowTopScore = shadowResult.TopScore
+		row.SourceEmpty = len(sourceResult.IDs) == 0
+		row.ShadowEmpty = len(shadowResult.IDs) == 0
+		row.Top1Match = len(sourceResult.IDs) > 0 && len(shadowResult.IDs) > 0 && sourceResult.IDs[0] == shadowResult.IDs[0]
+		row.JaccardAtK = jaccardStrings(sourceResult.IDs, shadowResult.IDs)
+		row.TopScoreDelta = absFloat64(float64(row.SourceTopScore - row.ShadowTopScore))
 
 		jaccardSum += row.JaccardAtK
+		topScoreDeltaSum += row.TopScoreDelta
 		if row.Top1Match {
 			top1Matches++
 		}
@@ -768,35 +792,51 @@ func runEmbeddingShadowRead(ctx context.Context, cfg APIConfig, req embeddingSha
 	}
 
 	n := float64(len(rows))
-	return embeddingShadowReadReport{
-		SourceCollection: req.SourceCollection,
-		ShadowCollection: req.ShadowCollection,
-		TopK:             req.TopK,
-		QueryCount:       len(rows),
-		MeanJaccardAtK:   jaccardSum / n,
-		Top1Stability:    float64(top1Matches) / n,
-		SourceEmptyRate:  float64(sourceEmpty) / n,
-		ShadowEmptyRate:  float64(shadowEmpty) / n,
-		SourceP50Ms:      p50Int64(sourceLatencies),
-		ShadowP50Ms:      p50Int64(shadowLatencies),
-		Rows:             rows,
-	}, nil
+	report := embeddingShadowReadReport{
+		SourceCollection:  req.SourceCollection,
+		ShadowCollection:  req.ShadowCollection,
+		TopK:              req.TopK,
+		QueryCount:        len(rows),
+		MeanJaccardAtK:    jaccardSum / n,
+		Top1Stability:     float64(top1Matches) / n,
+		SourceEmptyRate:   float64(sourceEmpty) / n,
+		ShadowEmptyRate:   float64(shadowEmpty) / n,
+		SourceP50Ms:       p50Int64(sourceLatencies),
+		SourceP95Ms:       percentileInt64(sourceLatencies, 0.95),
+		SourceP99Ms:       percentileInt64(sourceLatencies, 0.99),
+		ShadowP50Ms:       p50Int64(shadowLatencies),
+		ShadowP95Ms:       percentileInt64(shadowLatencies, 0.95),
+		ShadowP99Ms:       percentileInt64(shadowLatencies, 0.99),
+		MeanTopScoreDelta: topScoreDeltaSum / n,
+		Rows:              rows,
+	}
+	report.CutoverReady, report.GateFailures = evaluateShadowReadGate(req, report)
+	return report, nil
 }
 
-func embedAndSearchIDs(ctx context.Context, cfg APIConfig, client *embed.Client, collection, query string, topK int) ([]string, error) {
+type embeddingShadowSearchResult struct {
+	IDs      []string
+	TopScore float32
+}
+
+func embedAndSearchIDs(ctx context.Context, cfg APIConfig, client *embed.Client, collection, query string, topK int) (embeddingShadowSearchResult, error) {
 	vec, err := client.EmbedSingle(ctx, query)
 	if err != nil {
-		return nil, err
+		return embeddingShadowSearchResult{}, err
 	}
 	recs, err := cfg.Collections.Search(collection, vec, topK)
 	if err != nil {
-		return nil, err
+		return embeddingShadowSearchResult{}, err
 	}
 	ids := make([]string, 0, len(recs))
 	for _, r := range recs {
 		ids = append(ids, r.ID)
 	}
-	return ids, nil
+	out := embeddingShadowSearchResult{IDs: ids}
+	if len(recs) > 0 {
+		out.TopScore = recs[0].Score
+	}
+	return out, nil
 }
 
 func jaccardStrings(a, b []string) float64 {
@@ -823,12 +863,56 @@ func jaccardStrings(a, b []string) float64 {
 }
 
 func p50Int64(vals []int64) int64 {
+	return percentileInt64(vals, 0.50)
+}
+
+func percentileInt64(vals []int64, pct float64) int64 {
 	if len(vals) == 0 {
 		return 0
 	}
 	cp := append([]int64(nil), vals...)
 	sort.Slice(cp, func(i, j int) bool { return cp[i] < cp[j] })
-	return cp[len(cp)/2]
+	if pct <= 0 {
+		return cp[0]
+	}
+	if pct >= 1 {
+		return cp[len(cp)-1]
+	}
+	idx := int(float64(len(cp)-1) * pct)
+	return cp[idx]
+}
+
+func evaluateShadowReadGate(req embeddingShadowReadRequest, report embeddingShadowReadReport) (bool, []string) {
+	var failures []string
+	if req.MinMeanJaccardAtK > 0 && report.MeanJaccardAtK < req.MinMeanJaccardAtK {
+		failures = append(failures, fmt.Sprintf("mean_jaccard_at_k %.4f < %.4f", report.MeanJaccardAtK, req.MinMeanJaccardAtK))
+	}
+	if req.MinTop1Stability > 0 && report.Top1Stability < req.MinTop1Stability {
+		failures = append(failures, fmt.Sprintf("top1_stability %.4f < %.4f", report.Top1Stability, req.MinTop1Stability))
+	}
+	if req.MaxShadowEmptyRate > 0 && report.ShadowEmptyRate > req.MaxShadowEmptyRate {
+		failures = append(failures, fmt.Sprintf("shadow_empty_rate %.4f > %.4f", report.ShadowEmptyRate, req.MaxShadowEmptyRate))
+	}
+	if req.MaxShadowP95LatencyMs > 0 && report.ShadowP95Ms > req.MaxShadowP95LatencyMs {
+		failures = append(failures, fmt.Sprintf("shadow_p95_ms %d > %d", report.ShadowP95Ms, req.MaxShadowP95LatencyMs))
+	}
+	if req.MaxLatencyRatioP95 > 0 && report.SourceP95Ms > 0 {
+		ratio := float64(report.ShadowP95Ms) / float64(report.SourceP95Ms)
+		if ratio > req.MaxLatencyRatioP95 {
+			failures = append(failures, fmt.Sprintf("p95_latency_ratio %.4f > %.4f", ratio, req.MaxLatencyRatioP95))
+		}
+	}
+	if req.MaxMeanTopScoreDelta > 0 && report.MeanTopScoreDelta > req.MaxMeanTopScoreDelta {
+		failures = append(failures, fmt.Sprintf("mean_top_score_delta %.4f > %.4f", report.MeanTopScoreDelta, req.MaxMeanTopScoreDelta))
+	}
+	return len(failures) == 0, failures
+}
+
+func absFloat64(v float64) float64 {
+	if v < 0 {
+		return -v
+	}
+	return v
 }
 
 func modelFromMeta(meta *store.CollectionMeta) string {

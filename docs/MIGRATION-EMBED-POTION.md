@@ -352,12 +352,18 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
     \"source_collection\": \"${COLL}\",
     \"shadow_collection\": \"${SHADOW}\",
     \"queries\": [\"auth migration\", \"database checkpoint\", \"memory recall\"],
-    \"top_k\": 10
+    \"top_k\": 10,
+    \"min_mean_jaccard_at_k\": 0.6,
+    \"min_top1_stability\": 0.5,
+    \"max_shadow_empty_rate\": 0.05,
+    \"max_latency_ratio_p95\": 1.2,
+    \"require_cutover_gate_pass\": true
   }" | jq .
 ```
 
-Pass = Phase 4.5. Fail = stop, do not cut over, file issue with the
-diff report. Do NOT auto-rollback the shadow; keep it for inspection.
+Pass = HTTP 200 with `"cutover_ready": true`, then Phase 4.5. Fail = HTTP 409
+with `gate_failures`; stop, do not cut over, file issue with the diff report.
+Do NOT auto-rollback the shadow; keep it for inspection.
 
 ### 4.5 Atomic cutover (requires §1.3 option A)
 
