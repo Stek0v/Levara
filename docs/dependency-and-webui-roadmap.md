@@ -498,10 +498,10 @@ Levara хранит canonical fingerprint в `collection_meta.json` как
 - `enable_dual_write=true` включает best-effort source -> shadow dual-write window для новых records с текстом в metadata;
 - `POST /embedding-migrations/shadow-read` прогоняет один набор queries по live и shadow collection и возвращает Jaccard@k, top1 stability, empty-rate, p50/p95/p99 latency, top-score delta, `cutover_ready` и `gate_failures`.
 - `POST /embedding-migrations/:runId/cutover` promotes shadow -> live, archives old live, пишет archive retention metadata и отключает dual-write rule.
+- `GET /embedding-migrations/dual-write` и `DELETE /embedding-migrations/dual-write/:source` позволяют инспектировать и вручную выключать active dual-write windows.
 
 Оставшиеся product задачи:
 
-- dual-write inspect/disable endpoint для завершения cutover window;
 - richer score distribution histograms в shadow-read report;
 - ANN/HNSW params включить в migration report.
 - auto-resume interrupted RUNNING migrations after process restart.
