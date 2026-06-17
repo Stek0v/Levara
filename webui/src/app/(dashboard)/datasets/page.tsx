@@ -19,8 +19,9 @@ interface UploadedFile {
 }
 
 export default function DatasetsPage() {
-  const { data: datasetsRes, isLoading } = useDatasets()
+  const { data: datasetsRes, isLoading, isError, error, failureReason } = useDatasets()
   const datasets = datasetsRes?.data || []
+  const loadError = error || failureReason
 
   const createMutation = useCreateDataset()
   const deleteMutation = useDeleteDataset()
@@ -145,7 +146,7 @@ export default function DatasetsPage() {
     }
   }
 
-  if (isLoading) {
+  if (isLoading && !loadError) {
     return (
       <div>
         <h1 className="text-2xl font-bold mb-6">Datasets</h1>
@@ -165,11 +166,17 @@ export default function DatasetsPage() {
         </div>
       </div>
 
+      {(isError || loadError) && (
+        <div role="alert" className="mb-4 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200">
+          Failed to load datasets: {loadError instanceof Error ? loadError.message : 'Unknown error'}
+        </div>
+      )}
+
       {/* Create form */}
       {showCreate && (
         <div className="mb-4 p-4 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800">
-          <div className="flex gap-2">
-            <Input placeholder="Dataset name" value={newName} onChange={(e) => setNewName(e.target.value)}
+          <div className="flex items-end gap-2">
+            <Input label="Dataset name" placeholder="Dataset name" value={newName} onChange={(e) => setNewName(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleCreate()} />
             <Button onClick={handleCreate} disabled={!newName.trim()} loading={createMutation.isPending}>Create</Button>
             <Button variant="ghost" onClick={() => setShowCreate(false)}>Cancel</Button>
