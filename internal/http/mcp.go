@@ -484,11 +484,12 @@ func (h *mcpHandler) CollectionMeta(name string) mcp.CollectionInfo {
 		return mcp.CollectionInfo{}
 	}
 	return mcp.CollectionInfo{
-		Name:       m.Name,
-		Records:    m.RecordCount,
-		Dim:        m.EmbeddingDim,
-		Metric:     m.DistanceMetric,
-		EmbedModel: m.EmbeddingModel,
+		Name:         m.Name,
+		Records:      m.RecordCount,
+		Dim:          m.EmbeddingDim,
+		Metric:       m.DistanceMetric,
+		EmbedModel:   m.EmbeddingModel,
+		EmbedVersion: m.EmbeddingVersion,
 	}
 }
 

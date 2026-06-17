@@ -21,6 +21,10 @@ export function useSSE(url: string | null, options: SSEOptions = {}) {
   const esRef = useRef<EventSource | null>(null)
   const retryRef = useRef(0)
   const timerRef = useRef<ReturnType<typeof setTimeout>>(null)
+  // Stable reference to the connect function so the onerror handler
+  // inside connect's closure can schedule a reconnect without referencing
+  // the `connect` variable before it is assigned by useCallback (TDZ).
+  const connectRef = useRef<() => void>(() => {})
 
   // Stabilise callbacks across renders (M7 from the 2d15b38 review). If
   // consumers passed inline closures for onMessage/onError, they'd change
@@ -114,12 +118,18 @@ export function useSSE(url: string | null, options: SSEOptions = {}) {
         const delay = Math.min(1000 * Math.pow(2, retryRef.current - 1), 30000)
         const jitter = delay * 0.2 * (Math.random() - 0.5)
         setState((s) => ({ ...s, status: 'reconnecting', retryCount: retryRef.current }))
-        timerRef.current = setTimeout(connect, delay + jitter)
+        timerRef.current = setTimeout(() => connectRef.current(), delay + jitter)
       } else {
         setState((s) => ({ ...s, status: 'error', retryCount: retryRef.current }))
       }
     }
   }, [url, enabled, maxRetries])
+
+  // Keep connectRef in sync so the onerror handler can reschedule
+  // reconnects without referencing `connect` before assignment (TDZ).
+  useEffect(() => {
+    connectRef.current = connect
+  }, [connect])
 
   useEffect(() => {
     connect()

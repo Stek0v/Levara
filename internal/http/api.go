@@ -170,6 +170,7 @@ func RegisterAPI(app fiber.Router, cfg APIConfig) {
 
 	// U13: Dual-search across collections with different models/dims
 	RegisterDualSearchAPI(app, cfg)
+	RegisterEmbeddingMigrationAPI(app, cfg)
 
 	// U14: Prune endpoints (cleanup)
 	app.Post("/prune/data", pruneDataHandler(cfg))
@@ -192,6 +193,9 @@ func RegisterAPI(app fiber.Router, cfg APIConfig) {
 
 	// U20b: Markdown-native workspace indexing
 	RegisterWorkspaceAPI(app, cfg)
+
+	// U20c: MCP/Admin read-only observability
+	RegisterMCPAdminAPI(app, cfg)
 
 	// U21: Search feedback
 	RegisterFeedbackAPI(app, cfg)

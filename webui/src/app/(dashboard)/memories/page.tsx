@@ -83,7 +83,7 @@ export default function MemoriesPage() {
       ) : (
         <div className="space-y-2">
           {memories.map((m) => (
-            <div key={m.key} className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-3">
+            <div key={m.id || m.key} className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-3">
               <div className="flex items-center gap-2 mb-1">
                 <code className="text-xs text-gray-500 font-mono">{m.key}</code>
                 {m.type && <Badge variant={typeBadge(m.type)}>{m.type}</Badge>}

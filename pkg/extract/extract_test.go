@@ -24,25 +24,25 @@ import (
 
 func TestDetectFormat_ByExtension(t *testing.T) {
 	cases := map[string]string{
-		"file.pdf":      "pdf",
-		"doc.docx":      "docx",
-		"slides.pptx":   "pptx",
-		"book.xlsx":     "xlsx",
-		"page.html":     "html",
-		"page.HTM":      "html", // case-insensitive
-		"book.epub":     "epub",
-		"notes.txt":     "txt",
-		"README.md":     "md",
-		"data.json":     "json",
-		"feed.xml":      "xml",
-		"config.yaml":   "yaml",
-		"config.yml":    "yaml",
-		"data.csv":      "csv",
-		"sys.log":       "log",
-		"img.png":       "png",
-		"photo.jpg":     "jpg",
-		"photo.JPEG":    "jpg",
-		"anim.gif":      "gif",
+		"file.pdf":    "pdf",
+		"doc.docx":    "docx",
+		"slides.pptx": "pptx",
+		"book.xlsx":   "xlsx",
+		"page.html":   "html",
+		"page.HTM":    "html", // case-insensitive
+		"book.epub":   "epub",
+		"notes.txt":   "txt",
+		"README.md":   "md",
+		"data.json":   "json",
+		"feed.xml":    "xml",
+		"config.yaml": "yaml",
+		"config.yml":  "yaml",
+		"data.csv":    "csv",
+		"sys.log":     "log",
+		"img.png":     "png",
+		"photo.jpg":   "jpg",
+		"photo.JPEG":  "jpg",
+		"anim.gif":    "gif",
 	}
 	for name, want := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -76,8 +76,8 @@ func TestDetectFormat_MIMEFallback(t *testing.T) {
 		"application/vnd.openxmlformats-officedocument.wordprocessingml.document":   "docx",
 		"application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
 		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":         "xlsx",
-		"text/html":             "html",
-		"application/epub+zip":  "epub",
+		"text/html":            "html",
+		"application/epub+zip": "epub",
 	}
 	for mt, want := range cases {
 		got := detectFormat(nil, "", mt)

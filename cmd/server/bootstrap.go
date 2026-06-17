@@ -522,11 +522,14 @@ func registerHealthDetails(app *fiber.App, deps healthDeps) {
 	app.Get("/health/details", func(ctx *fiber.Ctx) error {
 		services := fiber.Map{}
 		services["backend"] = fiber.Map{"status": "connected", "version": "levara-go", "port": deps.port}
+		services["database"] = fiber.Map{"status": "not_configured", "provider": deps.dbProvider}
 
 		if deps.pgDB != nil {
 			if err := deps.pgDB.Ping(); err == nil {
+				services["database"] = fiber.Map{"status": "connected", "provider": deps.dbProvider}
 				services["postgres"] = fiber.Map{"status": "connected"}
 			} else {
+				services["database"] = fiber.Map{"status": "error", "provider": deps.dbProvider, "error": err.Error()}
 				services["postgres"] = fiber.Map{"status": "error", "error": err.Error()}
 			}
 		} else {
@@ -551,6 +554,12 @@ func registerHealthDetails(app *fiber.App, deps healthDeps) {
 			services["embed"] = probeEmbedService(deps.embedEndpoint, deps.embedModel)
 		} else {
 			services["embed"] = fiber.Map{"status": "not_configured"}
+		}
+
+		if deps.rerankEndpoint != "" {
+			services["rerank"] = fiber.Map{"status": "configured", "endpoint": deps.rerankEndpoint, "model": deps.rerankModel}
+		} else {
+			services["rerank"] = fiber.Map{"status": "not_configured"}
 		}
 
 		llmEP := os.Getenv("LLM_ENDPOINT")
@@ -594,6 +603,26 @@ func registerHealthDetails(app *fiber.App, deps healthDeps) {
 			services["whisper"] = fiber.Map{"status": "not_configured"}
 		}
 
+		storageBackend := deps.storageBackend
+		if storageBackend == "" {
+			storageBackend = "local"
+		}
+		services["storage"] = fiber.Map{"status": "ready", "backend": storageBackend, "path": deps.storagePath}
+		ocrBackend := strings.ToLower(strings.TrimSpace(os.Getenv("OCR_BACKEND")))
+		if ocrBackend == "" && strings.EqualFold(os.Getenv("TESSERACT_ENABLED"), "true") {
+			ocrBackend = "tesseract"
+		}
+		if ocrBackend == "tesseract" || ocrBackend == "tesseract-cli" {
+			services["ocr"] = fiber.Map{"status": "configured", "backend": "tesseract-cli", "binary": os.Getenv("TESSERACT_BINARY"), "lang": os.Getenv("TESSERACT_LANG")}
+		} else if ocrBackend == "gosseract" || ocrBackend == "tesseract-cgo" {
+			services["ocr"] = fiber.Map{"status": "configured", "backend": "gosseract", "lang": os.Getenv("TESSERACT_LANG")}
+		} else if visionEndpoint := os.Getenv("VISION_ENDPOINT"); visionEndpoint != "" {
+			services["ocr"] = fiber.Map{"status": "configured", "backend": "remote", "endpoint": visionEndpoint}
+		} else if visionModel := os.Getenv("VISION_MODEL"); visionModel != "" {
+			services["ocr"] = fiber.Map{"status": "configured", "backend": "ollama", "model": visionModel}
+		} else {
+			services["ocr"] = fiber.Map{"status": "not_configured", "backend": "vision"}
+		}
 		services["collections"] = fiber.Map{"status": "ready", "count": len(deps.colManager.List()), "dimension": deps.dim}
 		services["grpc"] = fiber.Map{"status": "listening", "port": deps.grpcPort}
 
@@ -605,18 +634,23 @@ func registerHealthDetails(app *fiber.App, deps healthDeps) {
 // needs. Defined here so the registration site is one parameter rather
 // than a long positional list.
 type healthDeps struct {
-	port          int
-	grpcPort      int
-	dim           int
-	pgDB          interface{ Ping() error }
-	neo4jURL      string
-	neo4jUser     string
-	neo4jPassword string
-	neo4jDatabase string
-	embedEndpoint string
-	embedModel    string
-	llmProvider   llm.Provider
-	colManager    *store.CollectionManager
+	port           int
+	grpcPort       int
+	dim            int
+	dbProvider     string
+	storageBackend string
+	storagePath    string
+	pgDB           interface{ Ping() error }
+	neo4jURL       string
+	neo4jUser      string
+	neo4jPassword  string
+	neo4jDatabase  string
+	embedEndpoint  string
+	embedModel     string
+	rerankEndpoint string
+	rerankModel    string
+	llmProvider    llm.Provider
+	colManager     *store.CollectionManager
 }
 
 // initMCPAuditSink resolves the -mcp-audit-log flag into an audit.Sink.

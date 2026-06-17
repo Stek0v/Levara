@@ -294,6 +294,7 @@ func RegisterWorkspaceAPI(app fiber.Router, cfg APIConfig) {
 	app.Post("/workspace/gc", workspaceGCHandler(cfg))
 	app.Get("/workspace/manifest", workspaceManifestHandler(cfg))
 	app.Get("/workspace/read", workspaceReadHandler(cfg))
+	app.Post("/workspace/search", workspaceSearchHandler(cfg))
 	app.Post("/workspace/write", workspaceWriteHandler(cfg))
 	app.Post("/workspace/reindex", workspaceReindexHandler(cfg))
 	app.Post("/workspace/reconcile", workspaceReconcileHandler(cfg))
@@ -398,6 +399,32 @@ func workspaceReadHandler(cfg APIConfig) fiber.Handler {
 		resp, err := readWorkspaceMarkdown(cfg, req)
 		if err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
+		return c.JSON(resp)
+	}
+}
+
+func workspaceSearchHandler(cfg APIConfig) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		var req workspaceSearchRequest
+		if err := c.BodyParser(&req); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
+		if err := authorizeWorkspaceFiber(c, cfg, req.ProjectID, workspaceAccessRead); err != nil {
+			return err
+		}
+		target, err := resolveWorkspaceSearchTarget(cfg, req)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
+		searchArgs, err := workspaceSearchArgs(req, target)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
+		inner := (&mcpHandler{cfg: cfg}).toolSearch(c.UserContext(), searchArgs)
+		resp := workspaceSearchResponse(req, target, workspaceSearchFreshnessFor(req, target, workspaceWatchStatus(cfg)), inner)
+		if inner.IsError {
+			return c.Status(fiber.StatusBadRequest).JSON(resp)
 		}
 		return c.JSON(resp)
 	}

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, startTransition } from 'react'
 import { useDatasets, useCreateDataset, useDeleteDataset, useUpload, useCognify } from '@/hooks/use-levara'
 import { useCognifyProgress, type CognifyProgress } from '@/hooks/use-sse'
 import { Button } from '@/components/ui/button'
@@ -27,7 +27,8 @@ export default function DatasetsPage() {
   const uploadMutation = useUpload()
   const cognifyMutation = useCognify()
 
-  const [dragOver, setDragOver] = useState(false)
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [_dragOver, setDragOver] = useState(false)
   const [newName, setNewName] = useState('')
   const [showCreate, setShowCreate] = useState(false)
   const [targetDataset, setTargetDataset] = useState<string>('')
@@ -48,14 +49,16 @@ export default function DatasetsPage() {
     const terminal = d._complete || d.status === 'COMPLETED' || d.status === 'FAILED'
     if (!terminal) return
     const ok = d.status !== 'FAILED'
-    setUploadedFiles((prev) =>
-      prev.map((f) =>
-        f.status === 'processing'
-          ? { ...f, status: ok ? ('ready' as const) : ('error' as const) }
-          : f,
-      ),
-    )
-    setActiveCognifyRunId(null)
+    startTransition(() => {
+      setUploadedFiles((prev) =>
+        prev.map((f) =>
+          f.status === 'processing'
+            ? { ...f, status: ok ? ('ready' as const) : ('error' as const) }
+            : f,
+        ),
+      )
+      setActiveCognifyRunId(null)
+    })
   }, [cognifyProgress.data])
 
   const handleUpload = async (files: FileList | File[]) => {
@@ -176,7 +179,7 @@ export default function DatasetsPage() {
 
       {/* Upload zone with dataset selector */}
       <div className="mb-6 p-6 bg-white dark:bg-gray-900 rounded-lg border-2 border-dashed transition-colors
-        ${dragOver ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/10' : 'border-gray-300 dark:border-gray-700'}"
+        ${_dragOver ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/10' : 'border-gray-300 dark:border-gray-700'}"
         onDragOver={(e) => { e.preventDefault(); setDragOver(true) }} onDragLeave={() => setDragOver(false)} onDrop={handleDrop}>
         <div className="flex flex-col md:flex-row items-center gap-4">
           <Upload className="h-8 w-8 text-gray-400 flex-shrink-0" />
