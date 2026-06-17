@@ -454,19 +454,21 @@ T-TD1.3  Все страницы загружаются без console errors
 - [x] `GET /embedding-migrations/:runId/status` возвращает progress/status/elapsed/checkpoint/dead-letter state
 - [x] `POST /embedding-migrations/:runId/retry` повторяет failed IDs до `max_attempts`
 - [x] Migration state persistится на диск: request/status/checkpoint/failed IDs восстанавливаются после process restart
+- [x] `enable_dual_write=true` включает source -> shadow dual-write window для новых records во время миграции
 
 **Ограничения:**
 - raw vector API без metadata невозможно криптографически связать с encoder; Levara stamp-ит contract коллекции, но caller отвечает за корректность vector;
 - non-object metadata не всегда можно расширить без изменения формы payload;
 - running job после process restart не продолжается автоматически; оператор должен проверить status и нажать retry/manual restart по runbook.
+- dual-write работает best-effort и требует текста в metadata (`text`, `name`, `description`, `content` или mem0 envelope).
 
 **Следующие задачи:**
-- [ ] dual-write window для новых/обновлённых docs
 - [x] shadow-read report: overlap@k, empty-rate, p50 latency
 - [ ] shadow-read расширить до score distribution и p95/p99 latency
 - [ ] cutover feature flag + rollback archive retention
 - [ ] HNSW params (`M`, `efConstruction`, `efSearch`) включить в migration report
 - [ ] auto-resume interrupted RUNNING migrations after process restart
+- [ ] dual-write inspect/disable endpoint для завершения cutover window
 
 ---
 

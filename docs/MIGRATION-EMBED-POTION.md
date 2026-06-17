@@ -282,7 +282,8 @@ RUN=$(curl -s -X POST -H "Authorization: Bearer $TOKEN" \
     \"target_endpoint\": \"http://prod-amd64:9102/v1/embeddings\",
     \"target_dim\": 256,
     \"batch_size\": 64,
-    \"max_attempts\": 3
+    \"max_attempts\": 3,
+    \"enable_dual_write\": true
   }" | jq -r .run_id)
 
 # Poll
@@ -302,6 +303,12 @@ done
 Legacy path: `POST /api/v1/reembed` still works for one-shot local jobs, but
 new production migrations should prefer `/embedding-migrations` because it
 exposes checkpoint/dead-letter state in the API.
+
+`enable_dual_write=true` keeps new source writes mirrored into the shadow
+collection after the target collection is prepared. This is best-effort and
+requires text to be recoverable from record metadata (`text`, `name`,
+`description`, `content`, or the mem0 envelope). Raw vector-only writes cannot
+be re-embedded into a different encoder space without source text.
 
 If Levara restarts mid-migration, first check the restored status:
 
