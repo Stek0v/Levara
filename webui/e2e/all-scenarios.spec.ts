@@ -19,7 +19,7 @@ test.describe('A. Navigation', () => {
   })
 
   test('A2. All routes respond 200', async ({ page }) => {
-    for (const r of ['/', '/search', '/chat', '/datasets', '/collections', '/memories', '/graph', '/notebooks', '/analytics', '/settings', '/login']) {
+    for (const r of ['/', '/search', '/chat', '/datasets', '/collections', '/memories', '/graph', '/notebooks', '/analytics', '/settings', '/workspace', '/sync', '/admin', '/onboarding', '/login']) {
       const res = await page.goto(r)
       expect(res?.status(), `${r}`).toBe(200)
     }
@@ -65,7 +65,7 @@ test.describe('B. Dashboard', () => {
 test.describe('C. Datasets', () => {
   test('C1. Page loads', async ({ page }) => {
     await page.goto('/datasets')
-    await expect(page.getByRole('heading', { name: 'Datasets' })).toBeVisible({ timeout: 10000 })
+    await expect(page.getByRole('heading', { name: 'Datasets', exact: true })).toBeVisible({ timeout: 10000 })
   })
 
   test('C2. Upload file via API', async ({}) => {
@@ -190,7 +190,7 @@ test.describe('F. Graph', () => {
 test.describe('G. Collections', () => {
   test('G1. Page loads', async ({ page }) => {
     await page.goto('/collections')
-    await expect(page.getByRole('heading', { name: 'Collections' })).toBeVisible({ timeout: 10000 })
+    await expect(page.getByRole('heading', { name: 'Collections', exact: true })).toBeVisible({ timeout: 10000 })
   })
 
   test('G2. Shows cards or empty', async ({ page }) => {
@@ -206,7 +206,7 @@ test.describe('G. Collections', () => {
 test.describe('H. Memories', () => {
   test('H1. Type filters', async ({ page }) => {
     await page.goto('/memories')
-    await expect(page.getByRole('heading', { name: 'Memories' })).toBeVisible({ timeout: 10000 })
+    await expect(page.getByRole('heading', { name: 'Memories', exact: true })).toBeVisible({ timeout: 10000 })
     await expect(page.getByRole('button', { name: 'all' })).toBeVisible()
     await expect(page.getByRole('button', { name: 'fact' })).toBeVisible()
   })
@@ -341,5 +341,18 @@ test.describe('N. Responsive', () => {
     await page.setViewportSize({ width: 1280, height: 800 })
     await page.goto('/')
     await expect(page.locator('aside')).toBeVisible()
+  })
+})
+
+// ═══════════ O. ADMIN OPS ═══════════
+
+test.describe('O. Admin Ops', () => {
+  test('O1. Embedding migration controls render', async ({ page }) => {
+    await page.goto('/admin')
+    await expect(page.getByRole('heading', { name: 'Admin' })).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText('Embedding Migration')).toBeVisible()
+    await expect(page.getByLabel('Source collection')).toBeVisible()
+    await expect(page.getByLabel('Target embedding model')).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Dual-write rules' })).toBeVisible()
   })
 })
