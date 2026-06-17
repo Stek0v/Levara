@@ -37,10 +37,13 @@ func RegisterMemoryAPI(app fiber.Router, cfg APIConfig) {
 func saveMemoryHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		var req struct {
-			Key     string `json:"key"`
-			Value   string `json:"value"`
-			Type    string `json:"type"`
-			OwnerID string `json:"owner_id"`
+			Key            string `json:"key"`
+			Value          string `json:"value"`
+			Type           string `json:"type"`
+			OwnerID        string `json:"owner_id"`
+			CollectionName string `json:"collection_name"`
+			Room           string `json:"room"`
+			Hall           string `json:"hall"`
 		}
 		if err := c.BodyParser(&req); err != nil {
 			return c.Status(400).JSON(fiber.Map{"detail": "invalid body"})
@@ -71,10 +74,12 @@ func saveMemoryHandler(cfg APIConfig) fiber.Handler {
 		now := time.Now().UTC().Format(time.RFC3339)
 
 		// Upsert: insert or update value+type+updated_at on conflict
-		upsertSQL := `INSERT INTO memories (id, key, value, type, owner_id, created_at, updated_at)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7)
-			 ON CONFLICT(key, owner_id) DO UPDATE SET value = $3, type = $4, updated_at = $7`
-		q, qargs := QArgs(upsertSQL, id, req.Key, req.Value, req.Type, req.OwnerID, now, now)
+		upsertSQL := `INSERT INTO memories (id, key, value, type, owner_id, collection_name, room, hall, created_at, updated_at)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			 ON CONFLICT(key, owner_id, collection_name) DO UPDATE SET value = $11, type = $12, room = $13, hall = $14, updated_at = $15`
+		q, qargs := QArgs(upsertSQL,
+			id, req.Key, req.Value, req.Type, req.OwnerID, req.CollectionName, req.Room, req.Hall, now, now,
+			req.Value, req.Type, req.Room, req.Hall, now)
 		_, err := cfg.DB.ExecContext(context.Background(), q, qargs...)
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"detail": "save failed: " + err.Error()})
@@ -296,7 +301,10 @@ func memoryEventsStreamHandler() fiber.Handler {
 	}
 }
 
-func scanMemoryRows(rows interface{ Next() bool; Scan(...any) error }) []fiber.Map {
+func scanMemoryRows(rows interface {
+	Next() bool
+	Scan(...any) error
+}) []fiber.Map {
 	var items []fiber.Map
 	for rows.Next() {
 		var id, key, value, typ, ownerID, ca, ua string

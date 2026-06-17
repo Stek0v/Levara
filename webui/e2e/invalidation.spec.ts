@@ -69,6 +69,6 @@ test.describe('React Query invalidation (T20)', () => {
 
     // Without page reload, the dataset should appear in the list thanks to
     // queryClient.invalidateQueries(['datasets']).
-    await expect(page.getByText('playwright-ds')).toBeVisible({ timeout: 5000 })
+    await expect(page.locator('main span.font-medium', { hasText: 'playwright-ds' })).toBeVisible({ timeout: 5000 })
   })
 })

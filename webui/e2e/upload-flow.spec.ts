@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test'
 import path from 'path'
 import fs from 'fs'
+import { authenticate } from './helpers'
 
 /**
  * Full upload flow E2E test — creates real files, uploads through UI,
@@ -22,6 +23,10 @@ test.afterAll(() => {
 })
 
 test.describe('Upload Flow', () => {
+  test.beforeEach(async ({ page }) => {
+    await authenticate(page)
+  })
+
   test('U1. Upload .md file via file input', async ({ page }) => {
     await page.goto('/datasets')
     await page.waitForTimeout(1000)

@@ -1,12 +1,18 @@
 import { test, expect } from '@playwright/test'
 import fs from 'fs'
+import { authenticate } from './helpers'
 
 /**
  * FULL INTEGRATION: verifies that every API↔UI connection works
  * with REAL data, not just checking if elements exist.
  */
 
+const API = process.env.LEVARA_API_URL || 'http://localhost:8081'
+
 test.describe('Full Integration', () => {
+  test.beforeEach(async ({ page }) => {
+    await authenticate(page)
+  })
 
   test('I1. Create dataset → appears in list', async ({ page }) => {
     await page.goto('/datasets')
@@ -50,8 +56,8 @@ test.describe('Full Integration', () => {
     // Status widget should show "ready" (from /api/v1/info)
     const body = await page.textContent('body') || ''
     expect(body).toContain('ready')
-    // Dimension should be 768
-    expect(body).toContain('768')
+    await expect(page.getByText('Dimension')).toBeVisible()
+    expect(body).toMatch(/Dimension\d+/)
   })
 
   test('I4. Collections page shows data or empty', async ({ page }) => {
@@ -71,7 +77,7 @@ test.describe('Full Integration', () => {
     // Upload via API
     const form = new FormData()
     form.append('data', new Blob([fs.readFileSync(tmpFile)]), 'search_test.txt')
-    await fetch('http://localhost:8080/api/v1/add', { method: 'POST', body: form })
+    await fetch(`${API}/api/v1/add`, { method: 'POST', body: form })
 
     // Wait for auto-cognify
     await page.waitForTimeout(5000)

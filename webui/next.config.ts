@@ -1,19 +1,21 @@
 import type { NextConfig } from "next";
 
+const levaraApiUrl = process.env.LEVARA_API_URL || 'http://localhost:8081'
+
 const nextConfig: NextConfig = {
   async rewrites() {
     return [
       {
         source: '/api/:path*',
-        destination: 'http://localhost:8081/api/:path*',
+        destination: `${levaraApiUrl}/api/:path*`,
       },
       {
         source: '/health',
-        destination: 'http://localhost:8081/health',
+        destination: `${levaraApiUrl}/health`,
       },
       {
         source: '/health/details',
-        destination: 'http://localhost:8081/health/details',
+        destination: `${levaraApiUrl}/health/details`,
       },
     ]
   },

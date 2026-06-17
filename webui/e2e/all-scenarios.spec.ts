@@ -1,8 +1,13 @@
 import { test, expect } from '@playwright/test'
 import path from 'path'
 import fs from 'fs'
+import { authenticate } from './helpers'
 
-const API = 'http://localhost:8080'
+const API = process.env.LEVARA_API_URL || 'http://localhost:8081'
+
+test.beforeEach(async ({ page }) => {
+  await authenticate(page)
+})
 
 // ═══════════ A. NAVIGATION ═══════════
 
@@ -22,7 +27,7 @@ test.describe('A. Navigation', () => {
 
   test('A3. Sidebar navigation', async ({ page }) => {
     await page.goto('/')
-    await page.getByRole('link', { name: 'Search' }).click()
+    await page.locator('aside').getByRole('link', { name: 'Search', exact: true }).click()
     await expect(page).toHaveURL('/search')
     await expect(page.getByRole('heading', { name: 'Search' })).toBeVisible()
   })

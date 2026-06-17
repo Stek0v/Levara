@@ -340,6 +340,7 @@ export function useWorkspaceManifest(params: WorkspaceScope = {}) {
   return useQuery({
     queryKey: ['workspaceManifest', params],
     queryFn: () => levara.workspaceManifest(params),
+    enabled: Boolean(params.project_id),
     staleTime: 10_000,
   })
 }
@@ -348,6 +349,7 @@ export function useWorkspaceJobs(params: WorkspaceScope & { status?: string } = 
   return useQuery({
     queryKey: ['workspaceJobs', params],
     queryFn: () => levara.workspaceJobs(params),
+    enabled: Boolean(params.project_id),
     staleTime: 10_000,
   })
 }
@@ -356,6 +358,7 @@ export function useWorkspaceArtifacts(params: WorkspaceArtifactsRequest = {}) {
   return useQuery({
     queryKey: ['workspaceArtifacts', params],
     queryFn: () => levara.workspaceArtifacts(params),
+    enabled: Boolean(params.project_id),
     staleTime: 10_000,
   })
 }
@@ -364,6 +367,7 @@ export function useWorkspaceConflicts(params: WorkspaceScope = {}) {
   return useQuery({
     queryKey: ['workspaceConflicts', params],
     queryFn: () => levara.workspaceConflicts(params),
+    enabled: Boolean(params.project_id),
     staleTime: 10_000,
   })
 }
@@ -372,6 +376,7 @@ export function useWorkspaceAudit(params: WorkspaceAuditRequest = {}) {
   return useQuery({
     queryKey: ['workspaceAudit', params],
     queryFn: () => levara.workspaceAudit(params),
+    enabled: Boolean(params.project_id),
     staleTime: 10_000,
   })
 }
