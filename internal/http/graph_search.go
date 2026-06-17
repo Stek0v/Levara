@@ -84,6 +84,11 @@ func graphCompletionSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest
 		// PostgreSQL fallback
 		graphContext = graphContextFromPostgres(ctx, cfg, entityNames, req.AllowedDatasetIDs)
 	}
+	if cfg.DB != nil && len(entityNames) > 0 {
+		if remaining := 20 - len(graphContext); remaining > 0 {
+			graphContext = append(graphContext, vsaGraphContext(ctx, cfg, entityNames, req.AllowedDatasetIDs, remaining)...)
+		}
+	}
 
 	threshold := ragAbstainThresholdFor("GRAPH_COMPLETION")
 	breakdown := buildConfidenceBreakdown(c, vectorChunks, threshold)
@@ -245,6 +250,11 @@ func contextExtensionSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchReques
 
 	// Merge all context
 	allContext := append(hop1Context, hop2Context...)
+	if cfg.DB != nil && len(entityNames) > 0 {
+		if remaining := 20 - len(allContext); remaining > 0 {
+			allContext = append(allContext, vsaGraphContext(ctx, cfg, entityNames, req.AllowedDatasetIDs, remaining)...)
+		}
+	}
 
 	threshold := ragAbstainThresholdFor("GRAPH_COMPLETION_CONTEXT_EXTENSION")
 	breakdown := buildConfidenceBreakdown(c, vectorChunks, threshold)

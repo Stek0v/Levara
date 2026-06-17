@@ -11,6 +11,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 
 	"github.com/stek0v/levara/pkg/graphdb"
+	"github.com/stek0v/levara/pkg/graphstore"
 )
 
 // graphPathHandler exposes graphdb.PathBetween over HTTP.
@@ -24,12 +25,6 @@ import (
 //	cursor      opaque continuation from previous response.next_cursor
 func graphPathHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		if cfg.Neo4jCfg.Neo4jURL == "" {
-			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
-				"error": "Neo4j not configured",
-			})
-		}
-
 		from := c.Query("from")
 		to := c.Query("to")
 		if from == "" || to == "" {
@@ -50,22 +45,38 @@ func graphPathHandler(cfg APIConfig) fiber.Handler {
 		queryCtx, cancel := context.WithTimeout(c.UserContext(), 10*time.Second)
 		defer cancel()
 
-		writer, err := graphdb.NewWriter(queryCtx, cfg.Neo4jCfg.Neo4jURL,
-			cfg.Neo4jCfg.Neo4jUser, cfg.Neo4jCfg.Neo4jPassword, cfg.Neo4jCfg.Neo4jDatabase)
-		if err != nil {
-			return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{
-				"error": "neo4j connect: " + err.Error(),
-			})
+		if cfg.DB != nil {
+			result, err := graphstore.NewSQLGraphStore(cfg.DB).PathBetween(queryCtx, q)
+			if err != nil {
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+					"error": err.Error(),
+				})
+			}
+			return c.JSON(result)
 		}
-		defer writer.Close(queryCtx)
 
-		result, err := writer.PathBetween(queryCtx, q)
-		if err != nil {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-				"error": err.Error(),
-			})
+		if cfg.Neo4jCfg.Neo4jURL != "" {
+			writer, err := graphdb.NewWriter(queryCtx, cfg.Neo4jCfg.Neo4jURL,
+				cfg.Neo4jCfg.Neo4jUser, cfg.Neo4jCfg.Neo4jPassword, cfg.Neo4jCfg.Neo4jDatabase)
+			if err != nil {
+				return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{
+					"error": "neo4j connect: " + err.Error(),
+				})
+			}
+			defer writer.Close(queryCtx)
+
+			result, err := writer.PathBetween(queryCtx, q)
+			if err != nil {
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+					"error": err.Error(),
+				})
+			}
+			return c.JSON(result)
 		}
-		return c.JSON(result)
+
+		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
+			"error": "graph store not configured",
+		})
 	}
 }
 

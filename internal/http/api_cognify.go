@@ -301,6 +301,9 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 			// Persist pipeline status to data table
 			PersistPipelineStatus(cfg.DB, pipeCfg.DatasetID, collection,
 				runStatus.Status, runStatus.Chunks, runStatus.Entities, runStatus.Edges, runStatus.ElapsedMs)
+			if runStatus.Status == "COMPLETED" && !pipeCfg.SkipGraph {
+				rebuildVSAMemory(bgCtx, cfg, pipeCfg.DatasetID, "cognify")
+			}
 
 			recordInteraction(bgCtx, cfg, sessionID, userID, strings.Join(texts, " "),
 				fmt.Sprintf("%d entities extracted", runStatus.Entities), "cognify")

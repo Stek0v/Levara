@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/stek0v/levara/internal/metrics"
+	"github.com/stek0v/levara/pkg/graphdb"
 )
 
 // PostgresGraphStore implements GraphStore using SQL JOINs and recursive CTEs.
@@ -22,6 +23,18 @@ func NewPostgresGraphStore(db *sql.DB) *PostgresGraphStore {
 }
 
 func (p *PostgresGraphStore) Close() error { return nil }
+
+func (p *PostgresGraphStore) ReadFullGraph(ctx context.Context) (graphdb.GraphReadResult, error) {
+	return NewSQLGraphStore(p.db).ReadFullGraph(ctx)
+}
+
+func (p *PostgresGraphStore) PathBetween(ctx context.Context, q graphdb.PathQuery) (graphdb.PathResult, error) {
+	return NewSQLGraphStore(p.db).PathBetween(ctx, q)
+}
+
+func (p *PostgresGraphStore) WriteGraph(ctx context.Context, datasetID string, nodes []NodeRecord, edges []EdgeRecord) BatchWriteResult {
+	return NewSQLGraphStore(p.db).WriteGraph(ctx, datasetID, nodes, edges)
+}
 
 func (p *PostgresGraphStore) Query1Hop(ctx context.Context, entityNames []string) ([]GraphContext, error) {
 	return p.QueryNHop(ctx, entityNames, 1)

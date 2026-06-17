@@ -149,6 +149,16 @@ func intEnv(key string, fallback int) int {
 	return n
 }
 
+// firstNonEmpty returns the first non-empty string (for flag/env fallback pattern).
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 func main() {
 	if len(os.Args) >= 2 && os.Args[1] == "mcp" {
 		if err := runMCPStdio(os.Args[2:]); err != nil {
@@ -186,8 +196,48 @@ func main() {
 	joinAddr := flag.String("join-addr", "", "Primary node address to join as replica (e.g. 10.23.0.53:8080)")
 	mcpAuditPath := flag.String("mcp-audit-log", "", "Directory for daily-rolled MCP audit logs (empty = stderr; '-' disables)")
 	configCheck := flag.Bool("config-check", false, "Validate the resolved profile/config from env + flags and exit (no listeners, no DB, no network)")
+	embedKeepalive := flag.String("embed-keepalive-interval", "10m", "Embed keep-alive ping interval (0 or negative to disable, e.g. 5m, 30m). Default 10m — prevents Ollama/vLLM eviction")
+	embedEndpointF := flag.String("embed-endpoint", os.Getenv("EMBEDDING_ENDPOINT"), "Embedding API endpoint URL (falls back to $EMBEDDING_ENDPOINT)")
+	embedModelF := flag.String("embed-model", firstNonEmpty(os.Getenv("EMBEDDING_MODEL"), "text-embedding-3-small"), "Embedding model name (falls back to $EMBEDDING_MODEL)")
+	embedRequire := flag.Bool("embed-require", false, "Fail startup if embedding endpoint is unreachable")
+	pgURL := flag.String("pg-url", os.Getenv("DATABASE_URL"), "PostgreSQL connection URL (falls back to $DATABASE_URL)")
+	profileName := flag.String("profile", "", "Functional profile: standalone, standalone-embed, or full (default)")
 
 	flag.Parse()
+
+	// Build a set of explicitly-provided flags so profile doesn't overwrite them.
+	provided := make(map[string]bool)
+	flag.Visit(func(f *flag.Flag) { provided[f.Name] = true })
+
+	// Apply functional profile — pre-sets flags for common use cases.
+	// Explicit flags always override profile defaults (checked via `provided`).
+	switch *profileName {
+	case "standalone":
+		if !provided["grpc-port"] { *grpcPort = 0 }
+		if !provided["require-auth"] { *requireAuth = false }
+		if !provided["raft-port"] { *raftPortBase = 0 }
+		if !provided["bootstrap"] { *bootstrap = false }
+		if !provided["join-addr"] { *joinAddr = "" }
+		if !provided["llm-proxy-port"] { *llmProxyPort = 0 }
+		if !provided["neo4j-url"] { *neo4jURL = "" }
+		if !provided["pg-url"] { *pgURL = "" }
+		if !provided["embed-endpoint"] { *embedEndpointF = "" }
+		log.Printf("Profile: standalone — Raft, gRPC, Neo4j, PG, LLM, auth, embed disabled")
+	case "standalone-embed":
+		if !provided["grpc-port"] { *grpcPort = 0 }
+		if !provided["require-auth"] { *requireAuth = false }
+		if !provided["raft-port"] { *raftPortBase = 0 }
+		if !provided["bootstrap"] { *bootstrap = false }
+		if !provided["join-addr"] { *joinAddr = "" }
+		if !provided["llm-proxy-port"] { *llmProxyPort = 0 }
+		if !provided["neo4j-url"] { *neo4jURL = "" }
+		if !provided["pg-url"] { *pgURL = "" }
+		log.Printf("Profile: standalone-embed — as standalone, embed left enabled")
+	case "full", "":
+		// all flags available (default)
+	default:
+		log.Fatalf("Unknown profile %q — valid: standalone, standalone-embed, full", *profileName)
+	}
 
 	// Dry-run config validation: resolve and check the runtime profile, then
 	// exit. Runs before any external init (storage, vector, SQL, listeners) so
@@ -292,7 +342,7 @@ func main() {
 	// for backward compatibility.
 	handler.SetCollections(colManager)
 
-	sqlRuntime := initSQLRuntime(*dataDir)
+	sqlRuntime := initSQLRuntime(*dataDir, *pgURL)
 	pgDSN := sqlRuntime.DSN
 	pgDB := sqlRuntime.DB
 	profileStrict := truthyEnv("LEVARA_PROFILE_STRICT")
@@ -345,10 +395,28 @@ func main() {
 		}
 	}
 
-	embedEndpoint := os.Getenv("EMBEDDING_ENDPOINT")
-	embedModel := os.Getenv("EMBEDDING_MODEL")
+	embedEndpoint := *embedEndpointF
+	embedModel := *embedModelF
 	if embedModel == "" {
 		embedModel = "text-embedding-3-small"
+	}
+	// Resolve keep-alive interval from flag; 0 or negative disables it.
+	keepaliveDur, err := time.ParseDuration(*embedKeepalive)
+	if err != nil || keepaliveDur <= 0 {
+		if *embedKeepalive != "0" {
+			log.Printf("embed-keepalive-interval: invalid or disabled (%q), keep-alive off", *embedKeepalive)
+		}
+		keepaliveDur = 0
+	}
+	// Embed-require: fail startup if embed endpoint is configured but unreachable.
+	if *embedRequire && embedEndpoint != "" {
+		ec := embed.NewClient(embedEndpoint, embedModel, 1, 1)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if _, perr := ec.EmbedSingle(ctx, "startup-check"); perr != nil {
+			log.Fatalf("embed-require: embedding endpoint unreachable: %v", perr)
+		}
+		log.Printf("embed-require: embedding endpoint reachable (%s/%s)", embedEndpoint, embedModel)
 	}
 	// Stamp the configured embedder onto collections auto-created by the lazy
 	// Insert path (e.g. _memories_* sidecars from a memory write) so they don't
@@ -635,7 +703,7 @@ func main() {
 	installGracefulShutdown(app, shards, colManager, pgDB, grpcServer)
 
 	// Embed model keep-alive ticker (Ollama eviction defence).
-	startEmbedKeepAlive(embedEndpoint, embedModel)
+	startEmbedKeepAlive(embedEndpoint, embedModel, keepaliveDur)
 
 	log.Fatal(app.Listen(addr))
 }

@@ -134,6 +134,8 @@ func RESTRouteInventory() []RouteSpec {
 		{Method: "POST", Path: "/search", Status: APIAlias, Group: "search"},
 		{Method: "GET", Path: "/heartbeats", Status: APIOps, Group: "ops"},
 		{Method: "GET", Path: "/graph/path", Status: APICanonical, Group: "graph"},
+		{Method: "POST", Path: "/vsa/rebuild", Status: APICanonical, Group: "vsa"},
+		{Method: "GET", Path: "/vsa/query", Status: APICanonical, Group: "vsa"},
 		{Method: "POST", Path: "/insert", Status: APILegacy, Group: "vector"},
 		{Method: "POST", Path: "/batch_insert", Status: APILegacy, Group: "vector"},
 		{Method: "POST", Path: "/delete", Status: APILegacy, Group: "vector"},

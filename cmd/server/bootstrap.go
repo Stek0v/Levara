@@ -73,13 +73,17 @@ type sqlRuntime struct {
 	DB  *sql.DB
 }
 
-func initSQLRuntime(dataDir string) sqlRuntime {
+func initSQLRuntime(dataDir string, pgURL string) sqlRuntime {
 	dbProvider := os.Getenv("DB_PROVIDER")
 	if dbProvider == "sqlite" {
 		return initSQLiteRuntime(dataDir)
 	}
+	// pg-url flag takes precedence over env vars.
+	if pgURL != "" {
+		return initPostgresRuntime(pgURL)
+	}
 	if os.Getenv("DB_HOST") != "" {
-		return initPostgresRuntime()
+		return initPostgresRuntime("")
 	}
 	return sqlRuntime{}
 }
@@ -283,26 +287,34 @@ func initSQLiteRuntime(dataDir string) sqlRuntime {
 	return sqlRuntime{DB: db}
 }
 
-func initPostgresRuntime() sqlRuntime {
+func initPostgresRuntime(pgURL string) sqlRuntime {
 	vectorHttp.SetDBProvider(vectorHttp.DBPostgres)
-	dbUser := os.Getenv("DB_USERNAME")
-	if dbUser == "" {
-		dbUser = "levara"
+
+	// pg-url flag takes precedence; fall back to component env vars.
+	var dsn string
+	if pgURL != "" {
+		dsn = pgURL
+		log.Printf("PostgreSQL DSN from --pg-url")
+	} else {
+		dbUser := os.Getenv("DB_USERNAME")
+		if dbUser == "" {
+			dbUser = "levara"
+		}
+		dbPass := os.Getenv("DB_PASSWORD")
+		if dbPass == "" {
+			dbPass = "levara"
+		}
+		dbName := os.Getenv("DB_NAME")
+		if dbName == "" {
+			dbName = "levara_db"
+		}
+		dbPort := os.Getenv("DB_PORT")
+		if dbPort == "" {
+			dbPort = "5432"
+		}
+		dbHost := os.Getenv("DB_HOST")
+		dsn = fmt.Sprintf("postgres://%s:***@%s:%s/%s?sslmode=disable", dbUser, dbHost, dbPort, dbName)
 	}
-	dbPass := os.Getenv("DB_PASSWORD")
-	if dbPass == "" {
-		dbPass = "levara"
-	}
-	dbName := os.Getenv("DB_NAME")
-	if dbName == "" {
-		dbName = "levara_db"
-	}
-	dbPort := os.Getenv("DB_PORT")
-	if dbPort == "" {
-		dbPort = "5432"
-	}
-	dbHost := os.Getenv("DB_HOST")
-	dsn := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable", dbUser, dbPass, dbHost, dbPort, dbName)
 
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
@@ -442,16 +454,16 @@ func startLLMProxyIfConfigured(llmProxyPort int, llmUpstream, dataDir, nodeID st
 	}
 }
 
-// startEmbedKeepAlive pings the embedding endpoint every 10 minutes so
-// Ollama / vLLM doesn't evict the model from VRAM during quiet periods.
-// No-op when embedEndpoint is empty.
-func startEmbedKeepAlive(embedEndpoint, embedModel string) {
-	if embedEndpoint == "" {
+// startEmbedKeepAlive pings the embedding endpoint on a configurable interval
+// so Ollama / vLLM doesn't evict the model from VRAM during quiet periods.
+// No-op when embedEndpoint is empty or interval is <= 0.
+func startEmbedKeepAlive(embedEndpoint, embedModel string, interval time.Duration) {
+	if embedEndpoint == "" || interval <= 0 {
 		return
 	}
 	go func() {
 		client := embed.NewClient(embedEndpoint, embedModel, 1, 1)
-		ticker := time.NewTicker(10 * time.Minute)
+		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for range ticker.C {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -461,7 +473,7 @@ func startEmbedKeepAlive(embedEndpoint, embedModel string) {
 			cancel()
 		}
 	}()
-	log.Printf("Embed keep-alive started (ping every 10min)")
+	log.Printf("Embed keep-alive started (ping every %v)", interval)
 }
 
 // installGracefulShutdown blocks-on-signal in a background goroutine and

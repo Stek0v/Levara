@@ -187,6 +187,27 @@ var schemaStatements = []string{
 	`CREATE INDEX IF NOT EXISTS idx_graph_edges_source ON graph_edges(source_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_graph_edges_target ON graph_edges(target_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_graph_edges_rel ON graph_edges(relationship_name)`,
+	`CREATE TABLE IF NOT EXISTS vsa_fact_shards (
+		id TEXT PRIMARY KEY,
+		dataset_id TEXT NOT NULL DEFAULT '',
+		predicate TEXT NOT NULL DEFAULT '',
+		shard_index INTEGER NOT NULL DEFAULT 0,
+		dim INTEGER NOT NULL DEFAULT 1024,
+		fact_count INTEGER NOT NULL DEFAULT 0,
+		vector_json JSONB NOT NULL DEFAULT '[]',
+		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_vsa_shards_predicate ON vsa_fact_shards(dataset_id, predicate)`,
+	`CREATE TABLE IF NOT EXISTS vsa_fact_members (
+		shard_id TEXT NOT NULL,
+		edge_id TEXT NOT NULL,
+		source_id TEXT NOT NULL DEFAULT '',
+		target_id TEXT NOT NULL DEFAULT '',
+		predicate TEXT NOT NULL DEFAULT '',
+		dataset_id TEXT NOT NULL DEFAULT '',
+		PRIMARY KEY (shard_id, edge_id)
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_vsa_members_lookup ON vsa_fact_members(dataset_id, predicate, source_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_notebooks_owner ON notebooks(owner_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_notebook_cells_notebook ON notebook_cells(notebook_id)`,
 
@@ -536,6 +557,27 @@ var schemaSQLiteStatements = []string{
 	`CREATE INDEX IF NOT EXISTS idx_graph_edges_source ON graph_edges(source_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_graph_edges_target ON graph_edges(target_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_graph_edges_rel ON graph_edges(relationship_name)`,
+	`CREATE TABLE IF NOT EXISTS vsa_fact_shards (
+		id TEXT PRIMARY KEY,
+		dataset_id TEXT NOT NULL DEFAULT '',
+		predicate TEXT NOT NULL DEFAULT '',
+		shard_index INTEGER NOT NULL DEFAULT 0,
+		dim INTEGER NOT NULL DEFAULT 1024,
+		fact_count INTEGER NOT NULL DEFAULT 0,
+		vector_json TEXT NOT NULL DEFAULT '[]',
+		updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_vsa_shards_predicate ON vsa_fact_shards(dataset_id, predicate)`,
+	`CREATE TABLE IF NOT EXISTS vsa_fact_members (
+		shard_id TEXT NOT NULL,
+		edge_id TEXT NOT NULL,
+		source_id TEXT NOT NULL DEFAULT '',
+		target_id TEXT NOT NULL DEFAULT '',
+		predicate TEXT NOT NULL DEFAULT '',
+		dataset_id TEXT NOT NULL DEFAULT '',
+		PRIMARY KEY (shard_id, edge_id)
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_vsa_members_lookup ON vsa_fact_members(dataset_id, predicate, source_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_notebooks_owner ON notebooks(owner_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_notebook_cells_notebook ON notebook_cells(notebook_id)`,
 

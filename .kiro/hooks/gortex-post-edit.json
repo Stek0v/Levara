@@ -1,0 +1,13 @@
+{
+  "name": "Gortex: Post-Edit Impact Check",
+  "version": "1.0.0",
+  "description": "After saving a source file, runs detect_changes and get_test_targets to show blast radius and which tests to run.",
+  "when": {
+    "type": "fileEdited",
+    "patterns": ["**/*.go", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.py", "**/*.rs", "**/*.java", "**/*.kt", "**/*.scala", "**/*.swift", "**/*.rb", "**/*.cs", "**/*.php"]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "A source file was just edited. Call Gortex detect_changes with scope unstaged to see which symbols were affected and the risk level. If symbols were changed, also call get_test_targets with those symbol IDs to identify which tests should be run. Briefly report the risk level and test commands."
+  }
+}

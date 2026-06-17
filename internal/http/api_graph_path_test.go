@@ -1,12 +1,14 @@
 package http
 
 import (
+	"database/sql"
 	"encoding/json"
 	"io"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/gofiber/fiber/v2"
+	_ "github.com/ncruces/go-sqlite3/driver"
 )
 
 func graphPathTestApp(cfg APIConfig) *fiber.App {
@@ -15,9 +17,9 @@ func graphPathTestApp(cfg APIConfig) *fiber.App {
 	return app
 }
 
-// When Neo4j is unconfigured the handler should answer 503 immediately rather
-// than try to dial; this protects deployments running without a graph store.
-func TestGraphPath_Neo4jUnconfigured(t *testing.T) {
+// When no graph store is configured the handler should answer 503 immediately
+// rather than try to dial anything.
+func TestGraphPath_GraphStoreUnconfigured(t *testing.T) {
 	app := graphPathTestApp(APIConfig{})
 	req := httptest.NewRequest("GET", "/graph/path?from=a&to=b", nil)
 	resp, err := app.Test(req, -1)
@@ -29,13 +31,8 @@ func TestGraphPath_Neo4jUnconfigured(t *testing.T) {
 	}
 }
 
-// Required-arg validation runs before the Neo4j connect attempt, so this
-// branch is reachable even without a configured graph store — but only by
-// the empty-config 503 above. To exercise 400 we set a URL so the 503 guard
-// passes; the connect attempt then fails after the arg check returns 400.
 func TestGraphPath_MissingArgs(t *testing.T) {
-	cfg := APIConfig{Neo4jCfg: GraphVisualizationConfig{Neo4jURL: "bolt://does-not-resolve.test:7687"}}
-	app := graphPathTestApp(cfg)
+	app := graphPathTestApp(APIConfig{})
 
 	cases := []string{
 		"/graph/path",
@@ -58,6 +55,84 @@ func TestGraphPath_MissingArgs(t *testing.T) {
 			t.Errorf("%s: expected error field, got %s", url, string(body))
 		}
 	}
+}
+
+func TestGraphPath_SQLFallback(t *testing.T) {
+	db := newGraphPathSQLiteDB(t)
+	app := graphPathTestApp(APIConfig{DB: db})
+
+	req := httptest.NewRequest("GET", "/graph/path?from=a&to=c&as_of=150&limit=1", nil)
+	resp, err := app.Test(req, -1)
+	if err != nil {
+		t.Fatalf("Test: %v", err)
+	}
+	if resp.StatusCode != fiber.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status=%d body=%s", resp.StatusCode, string(body))
+	}
+	var first struct {
+		Edges      []map[string]any `json:"edges"`
+		NextCursor string           `json:"next_cursor"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&first); err != nil {
+		t.Fatalf("decode first page: %v", err)
+	}
+	if len(first.Edges) != 1 || first.NextCursor == "" {
+		t.Fatalf("first page=%+v, want one edge and next cursor", first)
+	}
+
+	req = httptest.NewRequest("GET", "/graph/path?from=a&to=c&as_of=150&limit=1&cursor="+first.NextCursor, nil)
+	resp, err = app.Test(req, -1)
+	if err != nil {
+		t.Fatalf("Test page 2: %v", err)
+	}
+	var second struct {
+		Edges      []map[string]any `json:"edges"`
+		NextCursor string           `json:"next_cursor"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&second); err != nil {
+		t.Fatalf("decode second page: %v", err)
+	}
+	if len(second.Edges) != 1 || second.NextCursor != "" {
+		t.Fatalf("second page=%+v, want final one edge", second)
+	}
+}
+
+func newGraphPathSQLiteDB(t *testing.T) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite3", "file:"+t.TempDir()+"/path.db")
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.Exec(`
+		CREATE TABLE graph_nodes (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL DEFAULT '',
+			type TEXT NOT NULL DEFAULT '',
+			description TEXT NOT NULL DEFAULT '',
+			properties TEXT NOT NULL DEFAULT '{}',
+			dataset_id TEXT NOT NULL DEFAULT ''
+		);
+		CREATE TABLE graph_edges (
+			id TEXT PRIMARY KEY,
+			source_id TEXT NOT NULL,
+			target_id TEXT NOT NULL,
+			relationship_name TEXT NOT NULL DEFAULT '',
+			properties TEXT NOT NULL DEFAULT '{}',
+			valid_from TEXT,
+			valid_until TEXT,
+			dataset_id TEXT NOT NULL DEFAULT ''
+		);
+		INSERT INTO graph_nodes(id,name,type,dataset_id) VALUES ('a','A','Service','ds1'),('b','B','Service','ds1'),('c','C','Service','ds1');
+		INSERT INTO graph_edges(id,source_id,target_id,relationship_name,valid_from,valid_until,dataset_id) VALUES
+			('ab','a','b','calls','0',NULL,'ds1'),
+			('bc','b','c','calls','0',NULL,'ds1'),
+			('ac','a','c','expired','0','99','ds1');
+	`); err != nil {
+		t.Fatalf("seed sqlite: %v", err)
+	}
+	return db
 }
 
 func TestParseIntDefault(t *testing.T) {
