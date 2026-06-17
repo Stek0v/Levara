@@ -142,6 +142,54 @@ func TestEmbeddingMigrationManagedJobCompletes(t *testing.T) {
 	}
 }
 
+func TestEmbeddingMigrationDualWriteCopiesNewSourceWrites(t *testing.T) {
+	dir := t.TempDir()
+	cm, err := store.NewCollectionManager(2, dir)
+	if err != nil {
+		t.Fatalf("NewCollectionManager: %v", err)
+	}
+	defer cm.Close()
+	if err := cm.CreateWithDim("live", 2, "source-model", "cosine"); err != nil {
+		t.Fatalf("Create live: %v", err)
+	}
+	if err := cm.Insert("live", "alpha-doc", []float32{1, 0}, map[string]any{"text": "alpha"}); err != nil {
+		t.Fatalf("insert live alpha: %v", err)
+	}
+
+	embedSrv := fakeShadowReadEmbedServer(t)
+	defer embedSrv.Close()
+	app := fiber.New(fiber.Config{DisableStartupMessage: true})
+	RegisterEmbeddingMigrationAPI(app.Group("/api/v1"), APIConfig{
+		Collections:   cm,
+		EmbedEndpoint: embedSrv.URL + "/v1/embeddings",
+		StoragePath:   dir,
+	})
+
+	status, body := postMigrationJSON(t, app, "/api/v1/embedding-migrations", embeddingMigrationRequest{
+		SourceCollection: "live",
+		TargetCollection: "live__shadow",
+		TargetModel:      "shadow-model",
+		TargetDim:        2,
+		BatchSize:        1,
+		EnableDualWrite:  true,
+	})
+	if status != 200 {
+		t.Fatalf("start status=%d body=%v", status, body)
+	}
+	runID, _ := body["run_id"].(string)
+	final := pollMigrationStatus(t, app, runID)
+	if got, _ := final["status"].(string); got != "COMPLETED" {
+		t.Fatalf("final status=%v body=%v", got, final)
+	}
+
+	if err := cm.Insert("live", "delta-doc", []float32{0, 1}, map[string]any{"text": "delta"}); err != nil {
+		t.Fatalf("insert live delta: %v", err)
+	}
+	if !cm.HasRecord("live__shadow", "delta-doc") {
+		t.Fatal("dual-write did not copy new source record to shadow")
+	}
+}
+
 func TestEmbeddingMigrationStatusSurvivesRegistryLoss(t *testing.T) {
 	dir := t.TempDir()
 	cm, err := store.NewCollectionManager(2, dir)

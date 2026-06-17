@@ -31,6 +31,7 @@ type embeddingMigrationRequest struct {
 	BatchSize        int    `json:"batch_size"`
 	MaxAttempts      int    `json:"max_attempts"`
 	DryRun           bool   `json:"dry_run"`
+	EnableDualWrite  bool   `json:"enable_dual_write"`
 }
 
 type embeddingMigrationStatus struct {
@@ -89,7 +90,20 @@ type embeddingMigrationPersisted struct {
 	Status  embeddingMigrationStatusSnapshot `json:"status"`
 }
 
-var embeddingMigrationRuns sync.Map
+type embeddingDualWriteRule struct {
+	SourceCollection string               `json:"source_collection"`
+	TargetCollection string               `json:"target_collection"`
+	TargetEndpoint   string               `json:"target_endpoint"`
+	TargetModel      string               `json:"target_model"`
+	TargetContract   embcontract.Contract `json:"target_contract"`
+	Enabled          bool                 `json:"enabled"`
+	UpdatedAt        string               `json:"updated_at"`
+}
+
+var (
+	embeddingMigrationRuns       sync.Map
+	embeddingMigrationDualWriteM sync.Mutex
+)
 
 type embeddingShadowReadRequest struct {
 	SourceCollection string   `json:"source_collection"`
@@ -129,6 +143,7 @@ type embeddingShadowReadReport struct {
 }
 
 func RegisterEmbeddingMigrationAPI(app fiber.Router, cfg APIConfig) {
+	installEmbeddingMigrationDualWriteHook(cfg)
 	app.Post("/embedding-migrations", embeddingMigrationStartHandler(cfg))
 	app.Get("/embedding-migrations/:runId/status", embeddingMigrationStatusHandler(cfg))
 	app.Post("/embedding-migrations/:runId/retry", embeddingMigrationRetryHandler(cfg))
@@ -320,6 +335,105 @@ func (s *embeddingMigrationStatus) persist() {
 	}
 }
 
+func installEmbeddingMigrationDualWriteHook(cfg APIConfig) {
+	if cfg.Collections == nil || cfg.StoragePath == "" {
+		return
+	}
+	storeDir := embeddingMigrationStoreDir(cfg)
+	cfg.Collections.SetAfterInsertHook(func(collection, id string, meta any) {
+		rules := readEmbeddingDualWriteRules(storeDir)
+		rule, ok := rules[collection]
+		if !ok || !rule.Enabled || rule.TargetCollection == "" || rule.TargetCollection == collection {
+			return
+		}
+		raw := rawEmbeddingMigrationMetadata(meta)
+		text := textFromMigrationMetadata(raw)
+		if text == "" {
+			text = string(raw)
+		}
+		if text == "" {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		client := embed.NewClient(rule.TargetEndpoint, rule.TargetModel, 1, 2)
+		vec, err := client.EmbedSingle(ctx, text)
+		if err != nil {
+			log.Printf("[embedding-migrations] dual-write embed source=%s target=%s id=%s: %v", collection, rule.TargetCollection, id, err)
+			return
+		}
+		stamped := embcontract.StampMetadata(json.RawMessage(raw), rule.TargetContract)
+		if err := cfg.Collections.Insert(rule.TargetCollection, id, vec, stamped); err != nil {
+			log.Printf("[embedding-migrations] dual-write insert source=%s target=%s id=%s: %v", collection, rule.TargetCollection, id, err)
+		}
+	})
+}
+
+func persistEmbeddingDualWriteRule(cfg APIConfig, rule embeddingDualWriteRule) {
+	storeDir := embeddingMigrationStoreDir(cfg)
+	if storeDir == "" {
+		return
+	}
+	embeddingMigrationDualWriteM.Lock()
+	defer embeddingMigrationDualWriteM.Unlock()
+	rules := readEmbeddingDualWriteRules(storeDir)
+	rules[rule.SourceCollection] = rule
+	writeEmbeddingDualWriteRules(storeDir, rules)
+}
+
+func readEmbeddingDualWriteRules(storeDir string) map[string]embeddingDualWriteRule {
+	rules := map[string]embeddingDualWriteRule{}
+	if storeDir == "" {
+		return rules
+	}
+	raw, err := os.ReadFile(filepath.Join(storeDir, "dual_write_rules.json"))
+	if err != nil {
+		return rules
+	}
+	if err := json.Unmarshal(raw, &rules); err != nil {
+		log.Printf("[embedding-migrations] read dual-write rules: %v", err)
+		return map[string]embeddingDualWriteRule{}
+	}
+	return rules
+}
+
+func writeEmbeddingDualWriteRules(storeDir string, rules map[string]embeddingDualWriteRule) {
+	if err := os.MkdirAll(storeDir, 0755); err != nil {
+		log.Printf("[embedding-migrations] mkdir %q: %v", storeDir, err)
+		return
+	}
+	raw, err := json.MarshalIndent(rules, "", "  ")
+	if err != nil {
+		log.Printf("[embedding-migrations] marshal dual-write rules: %v", err)
+		return
+	}
+	path := filepath.Join(storeDir, "dual_write_rules.json")
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, raw, 0644); err != nil {
+		log.Printf("[embedding-migrations] write %q: %v", tmp, err)
+		return
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		log.Printf("[embedding-migrations] rename %q -> %q: %v", tmp, path, err)
+	}
+}
+
+func rawEmbeddingMigrationMetadata(meta any) []byte {
+	switch v := meta.(type) {
+	case nil:
+		return nil
+	case json.RawMessage:
+		return []byte(v)
+	case []byte:
+		return v
+	case string:
+		return []byte(v)
+	default:
+		raw, _ := json.Marshal(v)
+		return raw
+	}
+}
+
 func (s *embeddingMigrationStatus) snapshot() embeddingMigrationStatusSnapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -399,6 +513,17 @@ func runEmbeddingMigration(ctx context.Context, cfg APIConfig, run *embeddingMig
 	run.TargetVersion = contract.Fingerprint()
 	run.mu.Unlock()
 	run.persist()
+	if run.request.EnableDualWrite {
+		persistEmbeddingDualWriteRule(cfg, embeddingDualWriteRule{
+			SourceCollection: run.request.SourceCollection,
+			TargetCollection: run.request.TargetCollection,
+			TargetEndpoint:   run.request.TargetEndpoint,
+			TargetModel:      run.request.TargetModel,
+			TargetContract:   contract,
+			Enabled:          true,
+			UpdatedAt:        time.Now().UTC().Format(time.RFC3339),
+		})
+	}
 
 	for i := 0; i < len(units); i += run.request.BatchSize {
 		end := i + run.request.BatchSize
