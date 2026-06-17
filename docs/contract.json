@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-06-17T19:38:13+03:00",
-  "git_rev": "a0187a00ea6b9213f00b9fdffce55c26c47f68fe",
+  "generated_at": "2026-06-17T19:41:14+03:00",
+  "git_rev": "64aa8b7601e92fb736425ba389f39e96258bd3ad",
   "rest": [
     {
       "method": "POST",
@@ -203,6 +203,18 @@
     {
       "method": "GET",
       "path": "/embedding-migrations/:runId/status",
+      "status": "canonical",
+      "group": "collections"
+    },
+    {
+      "method": "GET",
+      "path": "/embedding-migrations/dual-write",
+      "status": "canonical",
+      "group": "collections"
+    },
+    {
+      "method": "DELETE",
+      "path": "/embedding-migrations/dual-write/:source",
       "status": "canonical",
       "group": "collections"
     },
