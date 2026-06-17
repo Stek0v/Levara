@@ -1,5 +1,4 @@
 import { test, expect } from '@playwright/test'
-import path from 'path'
 import fs from 'fs'
 
 /**
@@ -15,6 +14,7 @@ test.describe('Full Integration', () => {
 
     // Count existing datasets
     const bodyBefore = await page.textContent('body') || ''
+    void bodyBefore
 
     // Create new dataset
     await page.getByRole('button', { name: /New Dataset/i }).click()

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, startTransition } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { levara } from '@/lib/api'
 import { useCognifyProgress } from '@/hooks/use-sse'
@@ -68,8 +68,10 @@ export default function DatasetDetailPage() {
     if (!d) return
     const terminal = d._complete || d.status === 'COMPLETED' || d.status === 'FAILED'
     if (!terminal) return
-    setCognifyRunning(false)
-    setActiveCognifyRunId(null)
+    startTransition(() => {
+      setCognifyRunning(false)
+      setActiveCognifyRunId(null)
+    })
   }, [cognifyProgress.data])
 
   // datasets list + page data come from React Query now (see above). No
@@ -107,8 +109,8 @@ export default function DatasetDetailPage() {
     setSelected(new Set())
   }
 
-  const toggleSelect = (id: string) => { const n = new Set(selected); n.has(id) ? n.delete(id) : n.add(id); setSelected(n) }
-  const toggleAll = () => { selected.size === records.length ? setSelected(new Set()) : setSelected(new Set(records.map((r) => r.id))) }
+  const toggleSelect = (id: string) => { const n = new Set(selected); if (n.has(id)) { n.delete(id) } else { n.add(id) }; setSelected(n) }
+  const toggleAll = () => { if (selected.size === records.length) { setSelected(new Set()) } else { setSelected(new Set(records.map((r) => r.id))) } }
 
   const totalPages = Math.ceil(total / limit)
   const filtered = search ? records.filter((r) => (r.name || r.id).toLowerCase().includes(search.toLowerCase())) : records

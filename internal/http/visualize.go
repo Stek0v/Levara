@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
@@ -32,9 +33,13 @@ type GraphNodeDTO struct {
 
 // GraphEdgeDTO matches Levara's frontend expected format.
 type GraphEdgeDTO struct {
-	Source string `json:"source"`
-	Target string `json:"target"`
-	Label  string `json:"label"`
+	ID         string         `json:"id,omitempty"`
+	Source     string         `json:"source"`
+	Target     string         `json:"target"`
+	Label      string         `json:"label"`
+	ValidFrom  int64          `json:"valid_from,omitempty"`
+	ValidUntil *int64         `json:"valid_until,omitempty"`
+	Properties map[string]any `json:"properties,omitempty"`
 }
 
 // GraphDTO is the response format for graph visualization.
@@ -112,15 +117,49 @@ func DatasetGraph(cfg GraphVisualizationConfig) fiber.Handler {
 		}
 
 		for i, e := range filteredEdges {
+			validFrom, _ := int64Property(e.Properties, "valid_from")
+			validUntil, _ := int64PtrProperty(e.Properties, "valid_until")
+			id, _ := e.Properties["id"].(string)
 			dto.Edges[i] = GraphEdgeDTO{
-				Source: e.SourceID,
-				Target: e.TargetID,
-				Label:  e.RelationshipType,
+				ID:         id,
+				Source:     e.SourceID,
+				Target:     e.TargetID,
+				Label:      e.RelationshipType,
+				ValidFrom:  validFrom,
+				ValidUntil: validUntil,
+				Properties: e.Properties,
 			}
 		}
 
 		return c.JSON(dto)
 	}
+}
+
+func int64Property(props map[string]any, key string) (int64, bool) {
+	if props == nil {
+		return 0, false
+	}
+	switch v := props[key].(type) {
+	case int64:
+		return v, true
+	case int:
+		return int64(v), true
+	case float64:
+		return int64(v), true
+	case json.Number:
+		n, err := v.Int64()
+		return n, err == nil
+	default:
+		return 0, false
+	}
+}
+
+func int64PtrProperty(props map[string]any, key string) (*int64, bool) {
+	n, ok := int64Property(props, key)
+	if !ok {
+		return nil, false
+	}
+	return &n, true
 }
 
 // VisualizeHTML returns a self-contained HTML page with D3.js graph visualization.

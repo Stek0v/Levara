@@ -1,4 +1,4 @@
-.PHONY: all build run test test-commit test-release-candidate profile-config-check profile-smoke benchmark clean docker arm64 proto proto-go proto-python swag contract contract-check
+.PHONY: all build run test test-ocr test-ocr-gosseract test-cross-ocr test-commit test-release-candidate profile-config-check profile-smoke benchmark clean docker arm64 proto proto-go proto-python swag contract contract-check
 
 # Regenerate OpenAPI spec from swaggo annotations (T13).
 # Requires `go install github.com/swaggo/swag/cmd/swag@latest` once.
@@ -18,6 +18,9 @@ DOCKER_IMAGE=levara:latest
 GIT_SHA    := $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
 BUILD_TIME := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS    := -X main.GitSHA=$(GIT_SHA) -X main.BuildTime=$(BUILD_TIME)
+BREW_PREFIX ?= $(shell brew --prefix 2>/dev/null || echo /usr/local)
+OCR_CGO_CPPFLAGS ?= -I$(BREW_PREFIX)/opt/leptonica/include -I$(BREW_PREFIX)/opt/tesseract/include
+OCR_CGO_LDFLAGS  ?= -L$(BREW_PREFIX)/opt/leptonica/lib -L$(BREW_PREFIX)/opt/tesseract/lib
 
 all: build
 
@@ -35,6 +38,24 @@ run: build
 
 test:
 	@go test ./...
+
+test-ocr:
+	@go test -count=1 ./pkg/extract
+	@GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go test -c -o /tmp/levara-extract-darwin-amd64.test ./pkg/extract
+	@GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go test -c -o /tmp/levara-extract-darwin-arm64.test ./pkg/extract
+	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go test -c -o /tmp/levara-extract-linux-amd64.test ./pkg/extract
+	@GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go test -c -o /tmp/levara-extract-windows-amd64.test.exe ./pkg/extract
+	@GOOS=windows GOARCH=arm64 CGO_ENABLED=0 go test -c -o /tmp/levara-extract-windows-arm64.test.exe ./pkg/extract
+
+test-ocr-gosseract:
+	@CGO_CPPFLAGS="$(OCR_CGO_CPPFLAGS)" CGO_LDFLAGS="$(OCR_CGO_LDFLAGS)" go test -tags ocr -count=1 ./pkg/extract
+
+test-cross-ocr:
+	@GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -o /tmp/levara-server-darwin-amd64 ./cmd/server
+	@GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -o /tmp/levara-server-darwin-arm64 ./cmd/server
+	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o /tmp/levara-server-linux-amd64 ./cmd/server
+	@GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o /tmp/levara-server-windows-amd64.exe ./cmd/server
+	@GOOS=windows GOARCH=arm64 CGO_ENABLED=0 go build -o /tmp/levara-server-windows-arm64.exe ./cmd/server
 
 benchmark:
 	@echo "Running Benchmark Suite..."

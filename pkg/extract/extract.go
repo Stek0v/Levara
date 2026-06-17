@@ -295,6 +295,13 @@ func isImageFormat(format string) bool {
 // extractImage sends image to a vision model for OCR text extraction.
 // Uses VISION_MODEL via Ollama, or VISION_ENDPOINT for remote OCR.
 func extractImage(data []byte, filename string) (string, error) {
+	switch ocrBackend() {
+	case "tesseract", "tesseract-cli":
+		return extractImageTesseractCLI(data, filename)
+	case "gosseract", "tesseract-cgo":
+		return extractImageGosseract(data, filename)
+	}
+
 	visionEndpoint := os.Getenv("VISION_ENDPOINT")
 	if visionEndpoint != "" {
 		// Remote OCR: POST image to external endpoint
@@ -316,6 +323,14 @@ func extractImage(data []byte, filename string) (string, error) {
 	}
 
 	return extractImageOllama(data, baseURL, visionModel)
+}
+
+func ocrBackend() string {
+	backend := strings.ToLower(strings.TrimSpace(os.Getenv("OCR_BACKEND")))
+	if backend == "" && strings.EqualFold(os.Getenv("TESSERACT_ENABLED"), "true") {
+		return "tesseract"
+	}
+	return backend
 }
 
 func extractImageOllama(data []byte, baseURL, model string) (string, error) {

@@ -5,15 +5,15 @@ const nextConfig: NextConfig = {
     return [
       {
         source: '/api/:path*',
-        destination: 'http://localhost:8080/api/:path*',
+        destination: 'http://localhost:8081/api/:path*',
       },
       {
         source: '/health',
-        destination: 'http://localhost:8080/health',
+        destination: 'http://localhost:8081/health',
       },
       {
         source: '/health/details',
-        destination: 'http://localhost:8080/health/details',
+        destination: 'http://localhost:8081/health/details',
       },
     ]
   },

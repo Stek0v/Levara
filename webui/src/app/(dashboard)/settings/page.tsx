@@ -145,7 +145,7 @@ export default function SettingsPage() {
           </div>
           <div className="space-y-1 text-sm text-gray-500">
             <p>Levara WebUI v0.1.0</p>
-            <p>Backend: Levara Go HNSW + BM25 + Neo4j</p>
+            <p>Backend: Levara Go HNSW + BM25 + SQL graph + VSA; Neo4j optional</p>
             <p>© 2026</p>
           </div>
         </section>

@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/stek0v/levara/internal/store"
+	"github.com/stek0v/levara/pkg/embcontract"
 	"github.com/stek0v/levara/pkg/embed"
 	"github.com/stek0v/levara/pkg/rerank"
 )
@@ -44,9 +45,27 @@ func (p *SearchPipeline) SearchByText(ctx context.Context, collection, queryText
 	if err != nil {
 		return nil, fmt.Errorf("embed query: %w", err)
 	}
+	if err := p.validateQueryContract(collection, len(vec)); err != nil {
+		return nil, err
+	}
 
 	// Step 2: Vector search (IN-PROCESS — 0ms transport!)
 	return p.SearchByVector(collection, vec, limit)
+}
+
+func (p *SearchPipeline) validateQueryContract(collection string, dim int) error {
+	if p == nil || p.collections == nil || p.embedClient == nil {
+		return nil
+	}
+	meta := p.collections.GetMeta(collection)
+	if meta == nil || meta.EmbeddingModel == "" || meta.EmbeddingVersion == "" {
+		return nil
+	}
+	contract := embcontract.FromEnv(p.embedClient.Model(), dim, meta.DistanceMetric)
+	if got, want := contract.Fingerprint(), meta.EmbeddingVersion; got != want {
+		return fmt.Errorf("%w: query uses %s, collection %q expects %s", store.ErrEmbeddingContractMismatch, got, collection, want)
+	}
+	return nil
 }
 
 // SearchByVector searches with a pre-computed vector (no embedding step).
@@ -104,6 +123,9 @@ func (p *SearchPipeline) BatchSearchByText(ctx context.Context, collection strin
 	// Search each query (in-process, fast)
 	results := make([][]ScoredResult, len(queries))
 	for i, vec := range vecs {
+		if err := p.validateQueryContract(collection, len(vec)); err != nil {
+			return nil, fmt.Errorf("search query %d: %w", i, err)
+		}
 		res, err := p.SearchByVector(collection, vec, limit)
 		if err != nil {
 			return nil, fmt.Errorf("search query %d: %w", i, err)
