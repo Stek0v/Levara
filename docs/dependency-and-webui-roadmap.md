@@ -495,11 +495,12 @@ Levara хранит canonical fingerprint в `collection_meta.json` как
 - `GET /embedding-migrations/:runId/status` отдаёт progress, elapsed, checkpoint и failed IDs;
 - `POST /embedding-migrations/:runId/retry` повторяет failed records до `max_attempts`;
 - migration state persistится на диск: request/status/checkpoint/failed IDs восстанавливаются после process restart;
+- `enable_dual_write=true` включает best-effort source -> shadow dual-write window для новых records с текстом в metadata;
 - `POST /embedding-migrations/shadow-read` прогоняет один набор queries по live и shadow collection и возвращает Jaccard@k, top1 stability, empty-rate и p50 latency.
 
 Оставшиеся product задачи:
 
-- dual-write window для новых/обновлённых docs;
+- dual-write inspect/disable endpoint для завершения cutover window;
 - shadow-read score distribution, p95/p99 и cutover gate;
 - ANN/HNSW params включить в migration report.
 - auto-resume interrupted RUNNING migrations after process restart.

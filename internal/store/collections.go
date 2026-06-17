@@ -84,6 +84,7 @@ type CollectionManager struct {
 	// embedding_model (findings P2.1). Set from the server's EMBEDDING_MODEL.
 	defaultModel    string
 	defaultContract EmbeddingContract
+	afterInsertHook func(collection, id string, meta any)
 }
 
 // NewCollectionManager creates a manager for named collections.
@@ -204,6 +205,25 @@ func (cm *CollectionManager) SetDefaultEmbeddingContract(contract EmbeddingContr
 	cm.mu.Lock()
 	cm.defaultContract = contract.Normalized()
 	cm.mu.Unlock()
+}
+
+// SetAfterInsertHook registers a best-effort callback invoked after successful
+// collection writes. The hook runs outside CollectionManager locks and must not
+// mutate source records. It is used for temporary embedding migration
+// dual-write windows while a shadow ANN index catches up to live traffic.
+func (cm *CollectionManager) SetAfterInsertHook(hook func(collection, id string, meta any)) {
+	cm.mu.Lock()
+	cm.afterInsertHook = hook
+	cm.mu.Unlock()
+}
+
+func (cm *CollectionManager) afterInsert(collection, id string, meta any) {
+	cm.mu.RLock()
+	hook := cm.afterInsertHook
+	cm.mu.RUnlock()
+	if hook != nil {
+		hook(collection, id, meta)
+	}
 }
 
 // Create creates a new collection. Returns error if it already exists.
@@ -517,6 +537,7 @@ func (cm *CollectionManager) Insert(collection, id string, vec []float32, meta i
 		return err
 	}
 	cm.refreshRecordCount(collection, db)
+	cm.afterInsert(collection, id, meta)
 	return nil
 }
 
@@ -549,6 +570,11 @@ func (cm *CollectionManager) BatchInsert(collection string, records []BatchItem)
 	}
 	errs := db.BatchInsert(records)
 	cm.refreshRecordCount(collection, db)
+	if len(errs) == 0 {
+		for _, r := range records {
+			cm.afterInsert(collection, r.ID, r.Data)
+		}
+	}
 	return errs
 }
 
