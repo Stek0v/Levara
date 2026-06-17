@@ -34,6 +34,21 @@ type embeddingMigrationRequest struct {
 	EnableDualWrite  bool   `json:"enable_dual_write"`
 }
 
+type embeddingMigrationCutoverRequest struct {
+	ArchiveCollection string `json:"archive_collection"`
+	ArchiveSuffix     string `json:"archive_suffix"`
+	RetentionDays     int    `json:"retention_days"`
+}
+
+type embeddingMigrationCutoverResponse struct {
+	RunID              string `json:"run_id"`
+	SourceCollection   string `json:"source_collection"`
+	PromotedCollection string `json:"promoted_collection"`
+	ArchiveCollection  string `json:"archive_collection"`
+	RetentionUntil     string `json:"retention_until"`
+	Status             string `json:"status"`
+}
+
 type embeddingMigrationStatus struct {
 	mu                 sync.Mutex `json:"-"`
 	RunID              string     `json:"run_id"`
@@ -164,6 +179,7 @@ func RegisterEmbeddingMigrationAPI(app fiber.Router, cfg APIConfig) {
 	app.Post("/embedding-migrations", embeddingMigrationStartHandler(cfg))
 	app.Get("/embedding-migrations/:runId/status", embeddingMigrationStatusHandler(cfg))
 	app.Post("/embedding-migrations/:runId/retry", embeddingMigrationRetryHandler(cfg))
+	app.Post("/embedding-migrations/:runId/cutover", embeddingMigrationCutoverHandler(cfg))
 	app.Post("/embedding-migrations/shadow-read", embeddingShadowReadHandler(cfg))
 }
 
@@ -224,6 +240,63 @@ func embeddingMigrationRetryHandler(cfg APIConfig) fiber.Handler {
 
 		go runEmbeddingMigration(context.Background(), cfg, run, failed)
 		return c.JSON(run.snapshot())
+	}
+}
+
+func embeddingMigrationCutoverHandler(cfg APIConfig) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		if cfg.Collections == nil {
+			return c.Status(503).JSON(fiber.Map{"detail": "collections not configured"})
+		}
+		run, ok := loadEmbeddingMigrationRun(cfg, c.Params("runId"))
+		if !ok {
+			return c.Status(404).JSON(fiber.Map{"detail": "run not found"})
+		}
+		var req embeddingMigrationCutoverRequest
+		_ = c.BodyParser(&req)
+		run.mu.Lock()
+		status := run.Status
+		source := run.SourceCollection
+		target := run.TargetCollection
+		run.mu.Unlock()
+		if status != "COMPLETED" {
+			return c.Status(409).JSON(fiber.Map{"detail": "migration must be COMPLETED before cutover", "status": status})
+		}
+		if !cfg.Collections.Has(source) || !cfg.Collections.Has(target) {
+			return c.Status(404).JSON(fiber.Map{"detail": "source or target collection not found"})
+		}
+		archive := firstNonEmpty(req.ArchiveCollection, source+firstNonEmpty(req.ArchiveSuffix, "__archive_"+time.Now().UTC().Format("20060102T150405Z")))
+		retentionDays := req.RetentionDays
+		if retentionDays <= 0 {
+			retentionDays = 7
+		}
+		retentionUntil := time.Now().UTC().AddDate(0, 0, retentionDays)
+
+		if err := cfg.Collections.Rename(source, archive); err != nil {
+			return c.Status(409).JSON(fiber.Map{"detail": fmt.Sprintf("archive live collection: %v", err)})
+		}
+		if err := cfg.Collections.MarkArchive(archive, source, "embedding_migration_cutover", retentionUntil); err != nil {
+			_ = cfg.Collections.Rename(archive, source)
+			return c.Status(500).JSON(fiber.Map{"detail": fmt.Sprintf("mark archive: %v", err)})
+		}
+		if err := cfg.Collections.Rename(target, source); err != nil {
+			_ = cfg.Collections.Rename(archive, source)
+			return c.Status(500).JSON(fiber.Map{"detail": fmt.Sprintf("promote shadow collection: %v", err)})
+		}
+		removeEmbeddingDualWriteRule(cfg, source)
+		run.mu.Lock()
+		run.Status = "CUTOVER_COMPLETED"
+		run.Message = fmt.Sprintf("promoted %s to %s; archived previous live as %s", target, source, archive)
+		run.mu.Unlock()
+		run.persist()
+		return c.JSON(embeddingMigrationCutoverResponse{
+			RunID:              run.RunID,
+			SourceCollection:   source,
+			PromotedCollection: target,
+			ArchiveCollection:  archive,
+			RetentionUntil:     retentionUntil.Format(time.RFC3339),
+			Status:             "CUTOVER_COMPLETED",
+		})
 	}
 }
 
@@ -395,6 +468,18 @@ func persistEmbeddingDualWriteRule(cfg APIConfig, rule embeddingDualWriteRule) {
 	defer embeddingMigrationDualWriteM.Unlock()
 	rules := readEmbeddingDualWriteRules(storeDir)
 	rules[rule.SourceCollection] = rule
+	writeEmbeddingDualWriteRules(storeDir, rules)
+}
+
+func removeEmbeddingDualWriteRule(cfg APIConfig, sourceCollection string) {
+	storeDir := embeddingMigrationStoreDir(cfg)
+	if storeDir == "" || sourceCollection == "" {
+		return
+	}
+	embeddingMigrationDualWriteM.Lock()
+	defer embeddingMigrationDualWriteM.Unlock()
+	rules := readEmbeddingDualWriteRules(storeDir)
+	delete(rules, sourceCollection)
 	writeEmbeddingDualWriteRules(storeDir, rules)
 }
 

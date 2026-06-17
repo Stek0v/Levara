@@ -41,6 +41,9 @@ type CollectionMeta struct {
 	EmbeddingVersion  string             `json:"embedding_version,omitempty"`
 	EmbeddingContract *EmbeddingContract `json:"embedding_contract,omitempty"`
 	Domain            string             `json:"domain,omitempty"` // optional domain tag for routing (e.g., "medical", "scientific", "legal")
+	ArchivedFrom      string             `json:"archived_from,omitempty"`
+	ArchiveReason     string             `json:"archive_reason,omitempty"`
+	RetentionUntil    string             `json:"retention_until,omitempty"`
 	RecordCount       int                `json:"record_count"`
 	CreatedAt         string             `json:"created_at"`
 	UpdatedAt         string             `json:"updated_at"`
@@ -710,6 +713,24 @@ func (cm *CollectionManager) UpdateEmbeddingContract(name string, contract Embed
 	meta.DistanceMetric = contract.Metric
 	meta.EmbeddingVersion = contract.Fingerprint()
 	meta.EmbeddingContract = &contract
+	colDir := filepath.Join(cm.basePath, name)
+	return saveCollectionMeta(colDir, meta)
+}
+
+// MarkArchive annotates a renamed collection as a rollback/archive copy.
+func (cm *CollectionManager) MarkArchive(name, archivedFrom, reason string, retentionUntil time.Time) error {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+
+	meta, ok := cm.metas[name]
+	if !ok {
+		return fmt.Errorf("collection %q not found", name)
+	}
+	meta.ArchivedFrom = archivedFrom
+	meta.ArchiveReason = reason
+	if !retentionUntil.IsZero() {
+		meta.RetentionUntil = retentionUntil.UTC().Format(time.RFC3339)
+	}
 	colDir := filepath.Join(cm.basePath, name)
 	return saveCollectionMeta(colDir, meta)
 }
