@@ -365,30 +365,28 @@ Pass = HTTP 200 with `"cutover_ready": true`, then Phase 4.5. Fail = HTTP 409
 with `gate_failures`; stop, do not cut over, file issue with the diff report.
 Do NOT auto-rollback the shadow; keep it for inspection.
 
-### 4.5 Atomic cutover (requires §1.3 option A)
+### 4.5 Atomic cutover
 
 ```bash
-# Step 1: archive the current live collection
-curl -X POST -H "Authorization: Bearer $TOKEN" \
-  http://localhost:8090/api/v1/collections/${COLL}/rename \
-  -d "{\"new_name\": \"${ARCHIVE}\"}"
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8090/api/v1/embedding-migrations/${RUN}/cutover \
+  -d "{
+    \"archive_collection\": \"${ARCHIVE}\",
+    \"retention_days\": 7
+  }" | jq .
 
-# Step 2: promote shadow to live
-curl -X POST -H "Authorization: Bearer $TOKEN" \
-  http://localhost:8090/api/v1/collections/${SHADOW}/rename \
-  -d "{\"new_name\": \"${COLL}\"}"
-
-# Step 3: smoke 3 baseline queries against the new live collection
+# Smoke 3 baseline queries against the new live collection
 ./scripts/reembed/smoke.sh "${COLL}"
 ```
 
-The window between step 1 and step 2 is the only moment when reads of
-`${COLL}` fail. Rename is local file-system level — sub-second.
+The endpoint performs live -> archive, shadow -> live, archive retention
+metadata, and dual-write rule removal. If shadow promotion fails, Levara tries
+to roll the archive back to the live name and returns an error.
 
 ### 4.6 Post-cutover
 
-- Mark `${ARCHIVE}` with metadata `retention_until=NOW+7d` via `PUT
-  /collections/:name/meta`.
+- Verify `${ARCHIVE}` metadata has `archived_from=${COLL}` and
+  `retention_until`.
 - Update tracking doc with migration timestamp + parity numbers.
 
 ### 4.7 Rollback (within 7 days of any single collection)
