@@ -36,12 +36,15 @@ async function handleResponse<T>(res: Response, requestPath: string): Promise<T>
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
     const err = body.error || body
+    const message = typeof err === 'string'
+      ? err
+      : err.message || err.detail || res.statusText
     throw new ApiError(
       res.status,
-      err.code || `HTTP_${res.status}`,
-      err.message || err.detail || res.statusText,
-      err.traceId || res.headers.get('x-trace-id') || undefined,
-      err.retryable ?? res.status >= 500,
+      typeof err === 'string' ? `HTTP_${res.status}` : err.code || `HTTP_${res.status}`,
+      message,
+      typeof err === 'string' ? res.headers.get('x-trace-id') || undefined : err.traceId || res.headers.get('x-trace-id') || undefined,
+      typeof err === 'string' ? res.status >= 500 : err.retryable ?? res.status >= 500,
     )
   }
   const text = await res.text()
@@ -105,19 +108,19 @@ export const levara = {
 
   // Auth
   login: (email: string, password: string) =>
-    api<{ access_token: string; token_type: string }>('/api/v1/auth/login', {
+    api<{ access_token?: string; token?: string; token_type?: string }>('/api/v1/auth/login', {
       method: 'POST',
       body: JSON.stringify({ email, password }),
     }).then((res) => {
-      setAuthToken(res.access_token)
+      setAuthToken(res.access_token || res.token || null)
       return res
     }),
   register: (email: string, password: string, username?: string) =>
-    api<{ access_token: string; token_type: string }>('/api/v1/auth/register', {
+    api<{ access_token?: string; token?: string; token_type?: string }>('/api/v1/auth/register', {
       method: 'POST',
       body: JSON.stringify({ email, password, username }),
     }).then((res) => {
-      setAuthToken(res.access_token)
+      setAuthToken(res.access_token || res.token || null)
       return res
     }),
   me: () => api<{ id: string; email: string; username: string }>('/api/v1/auth/me'),

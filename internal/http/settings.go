@@ -14,6 +14,8 @@ import (
 
 // SettingsDTO matches Levara frontend expected format.
 type SettingsDTO struct {
+	Theme          string `json:"theme,omitempty"`
+	Locale         string `json:"locale,omitempty"`
 	LLMProvider    string `json:"llm_provider"`
 	LLMModel       string `json:"llm_model"`
 	LLMEndpoint    string `json:"llm_endpoint"`
@@ -96,6 +98,12 @@ func settingsPutHandler(cfg APIConfig) fiber.Handler {
 
 		// Fill defaults for empty fields
 		defaults := defaultSettings(cfg)
+		if req.Theme == "" {
+			req.Theme = defaults.Theme
+		}
+		if req.Locale == "" {
+			req.Locale = defaults.Locale
+		}
 		if req.LLMProvider == "" {
 			req.LLMProvider = defaults.LLMProvider
 		}
@@ -152,6 +160,8 @@ func defaultSettings(cfg APIConfig) SettingsDTO {
 	}
 
 	return SettingsDTO{
+		Theme:          "system",
+		Locale:         "ru",
 		LLMProvider:    llmProvider,
 		LLMModel:       llmModel,
 		LLMEndpoint:    llmEndpoint,
