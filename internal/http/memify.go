@@ -24,17 +24,16 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
-	"github.com/stek0v/levara/pkg/graph"
 	"github.com/stek0v/levara/pkg/graphdb"
-	"github.com/stek0v/levara/pkg/orchestrator"
+	"github.com/stek0v/levara/pkg/graphstore"
 )
 
 type memifyRequest struct {
-	Dataset          string   `json:"dataset"`
-	NodeNames        []string `json:"node_name"`
-	NodeType         string   `json:"node_type"`
-	RunInBackground  bool     `json:"run_in_background"`
-	EnrichmentTasks  []string `json:"enrichment_tasks"` // entity_consolidation, triplet_embeddings, rule_associations, summary_generation
+	Dataset         string   `json:"dataset"`
+	NodeNames       []string `json:"node_name"`
+	NodeType        string   `json:"node_type"`
+	RunInBackground bool     `json:"run_in_background"`
+	EnrichmentTasks []string `json:"enrichment_tasks"` // entity_consolidation, triplet_embeddings, rule_associations, summary_generation
 }
 
 type memifyRunStatus struct {
@@ -113,9 +112,8 @@ func memifyHandler(cfg APIConfig) fiber.Handler {
 			req.EnrichmentTasks = []string{"entity_consolidation", "triplet_embeddings"}
 		}
 
-		// Verify Neo4j is configured (memify works on existing graph)
-		if cfg.Neo4jCfg.Neo4jURL == "" {
-			return c.Status(400).JSON(fiber.Map{"detail": "Neo4j not configured — memify requires an existing knowledge graph"})
+		if cfg.DB == nil && cfg.Neo4jCfg.Neo4jURL == "" {
+			return c.Status(400).JSON(fiber.Map{"detail": "graph store not configured — memify requires an existing knowledge graph"})
 		}
 
 		runID := uuid.New().String()
@@ -131,22 +129,36 @@ func memifyHandler(cfg APIConfig) fiber.Handler {
 			start := time.Now()
 			ctx := context.Background()
 
-			// Stage 1: Extract subgraph from Neo4j
+			// Stage 1: Extract subgraph from the configured graph store.
 			status.Stage = "extracting"
-			writer, err := graphdb.NewWriter(ctx, cfg.Neo4jCfg.Neo4jURL, cfg.Neo4jCfg.Neo4jUser,
-				cfg.Neo4jCfg.Neo4jPassword, cfg.Neo4jCfg.Neo4jDatabase)
-			if err != nil {
-				status.Status = "FAILED"
-				status.Message = fmt.Sprintf("neo4j connect: %v", err)
-				return
-			}
-			defer writer.Close(ctx)
+			var graphStore graphstore.GraphStore
+			var graphResult graphdb.GraphReadResult
+			var err error
+			if cfg.DB != nil {
+				graphStore = graphstore.NewSQLGraphStore(cfg.DB)
+				graphResult, err = graphStore.ReadFullGraph(ctx)
+				if err != nil {
+					status.Status = "FAILED"
+					status.Message = fmt.Sprintf("sql graph read: %v", err)
+					return
+				}
+			} else {
+				writer, err := graphdb.NewWriter(ctx, cfg.Neo4jCfg.Neo4jURL, cfg.Neo4jCfg.Neo4jUser,
+					cfg.Neo4jCfg.Neo4jPassword, cfg.Neo4jCfg.Neo4jDatabase)
+				if err != nil {
+					status.Status = "FAILED"
+					status.Message = fmt.Sprintf("neo4j connect: %v", err)
+					return
+				}
+				defer writer.Close(ctx)
+				graphStore = graphstore.NewNeo4jGraphStore(writer)
 
-			graphResult, err := writer.ReadFullGraph(ctx)
-			if err != nil {
-				status.Status = "FAILED"
-				status.Message = fmt.Sprintf("graph read: %v", err)
-				return
+				graphResult, err = writer.ReadFullGraph(ctx)
+				if err != nil {
+					status.Status = "FAILED"
+					status.Message = fmt.Sprintf("graph read: %v", err)
+					return
+				}
 			}
 
 			// Filter nodes if requested
@@ -183,7 +195,11 @@ func memifyHandler(cfg APIConfig) fiber.Handler {
 
 				switch task {
 				case "entity_consolidation":
-					enriched := entityConsolidation(ctx, cfg, writer, nodes)
+					if graphStore == nil {
+						log.Printf("[memify] entity_consolidation skipped: graph store not configured")
+						continue
+					}
+					enriched := entityConsolidation(ctx, cfg, graphStore, req.Dataset, nodes)
 					status.Enriched += enriched
 
 				case "triplet_embeddings":
@@ -195,28 +211,41 @@ func memifyHandler(cfg APIConfig) fiber.Handler {
 					status.Enriched += enriched
 
 				case "summary_generation":
-					enriched := summaryGeneration(ctx, cfg, writer, nodes, graphResult.Edges)
+					if graphStore == nil {
+						log.Printf("[memify] summary_generation skipped: graph store not configured")
+						continue
+					}
+					enriched := summaryGeneration(ctx, cfg, graphStore, req.Dataset, nodes, graphResult.Edges)
 					status.Enriched += enriched
 				}
 			}
 
-			// Stage 3: PostgreSQL upsert (if configured)
-			if cfg.DB != nil {
+			// Stage 3: Persist the filtered graph back through the active store.
+			if graphStore != nil {
 				status.Stage = "persisting"
-				dedupNodes := make([]graph.DedupNode, len(nodes))
+				writeNodes := make([]graphstore.NodeRecord, len(nodes))
 				for i, n := range nodes {
 					name, _ := n.Properties["name"].(string)
 					desc, _ := n.Properties["description"].(string)
-					dedupNodes[i] = graph.DedupNode{ID: n.ID, Name: name, Type: n.Label, Description: desc}
-				}
-				dedupEdges := make([]graph.DedupEdge, len(graphResult.Edges))
-				for i, e := range graphResult.Edges {
-					dedupEdges[i] = graph.DedupEdge{
-						SourceID: e.SourceID, TargetID: e.TargetID,
-						RelationshipName: e.RelationshipType,
+					writeNodes[i] = graphstore.NodeRecord{
+						ID: n.ID, Name: name, Type: n.Label, Description: desc,
+						Properties: n.Properties,
 					}
 				}
-				orchestrator.UpsertGraphToPostgres(ctx, cfg.DB, req.Dataset, dedupNodes, dedupEdges)
+				writeEdges := make([]graphstore.EdgeRecord, len(graphResult.Edges))
+				for i, e := range graphResult.Edges {
+					writeEdges[i] = graphstore.EdgeRecord{
+						SourceID: e.SourceID, TargetID: e.TargetID,
+						RelationshipName: e.RelationshipType,
+						Properties:       e.Properties,
+					}
+				}
+				res := graphStore.WriteGraph(ctx, req.Dataset, writeNodes, writeEdges)
+				if len(res.Errors) > 0 {
+					log.Printf("[memify] graph persist errors: %v", res.Errors)
+				} else {
+					rebuildVSAMemory(ctx, cfg, req.Dataset, "memify")
+				}
 			}
 
 			status.Status = "COMPLETED"
@@ -241,7 +270,7 @@ func memifyHandler(cfg APIConfig) fiber.Handler {
 
 // entityConsolidation merges fragmented entity descriptions via LLM.
 // Finds nodes with similar names and asks LLM to merge descriptions.
-func entityConsolidation(ctx context.Context, cfg APIConfig, writer *graphdb.Writer, nodes []graphdb.ReadNode) int {
+func entityConsolidation(ctx context.Context, cfg APIConfig, graphStore graphstore.GraphStore, datasetID string, nodes []graphdb.ReadNode) int {
 	llmEndpoint := os.Getenv("LLM_ENDPOINT")
 	llmModel := os.Getenv("LLM_MODEL")
 	if llmEndpoint == "" || llmModel == "" {
@@ -287,12 +316,17 @@ func entityConsolidation(ctx context.Context, cfg APIConfig, writer *graphdb.Wri
 			continue
 		}
 
-		// Update the first node with merged description, Neo4j MERGE
+		// Update the first node with the merged description.
 		primary := group[0]
-		props := map[string]any{"description": merged}
-		writer.BatchWrite(ctx, []graphdb.NodeRecord{
-			{ID: primary.ID, Label: primary.Label, Properties: props},
+		name, _ := primary.Properties["name"].(string)
+		props := map[string]any{"name": name, "type": primary.Label, "description": merged}
+		res := graphStore.WriteGraph(ctx, datasetID, []graphstore.NodeRecord{
+			{ID: primary.ID, Name: name, Type: primary.Label, Description: merged, Properties: props},
 		}, nil)
+		if len(res.Errors) > 0 {
+			log.Printf("[memify] entity_consolidation write: %v", res.Errors)
+			continue
+		}
 		enriched++
 	}
 
@@ -386,7 +420,7 @@ func ruleAssociations(ctx context.Context, cfg APIConfig, nodes []graphdb.ReadNo
 }
 
 // summaryGeneration generates summaries for node clusters.
-func summaryGeneration(ctx context.Context, cfg APIConfig, writer *graphdb.Writer, nodes []graphdb.ReadNode, edges []graphdb.ReadEdge) int {
+func summaryGeneration(ctx context.Context, cfg APIConfig, graphStore graphstore.GraphStore, datasetID string, nodes []graphdb.ReadNode, edges []graphdb.ReadEdge) int {
 	llmEndpoint := os.Getenv("LLM_ENDPOINT")
 	llmModel := os.Getenv("LLM_MODEL")
 	if llmEndpoint == "" || llmModel == "" {
@@ -435,20 +469,25 @@ func summaryGeneration(ctx context.Context, cfg APIConfig, writer *graphdb.Write
 
 		summary := callLLM(ctx, httpClient, llmEndpoint, llmModel, prompt)
 		if summary != "" {
-			// Write summary as a new node
+			// Write summary as a new node.
 			summaryID := fmt.Sprintf("summary_%s_%s", nodeType, uuid.New().String()[:8])
-			writer.BatchWrite(ctx, []graphdb.NodeRecord{
+			props := map[string]any{
+				"name":        fmt.Sprintf("Summary: %s", nodeType),
+				"description": summary,
+				"type":        "TextSummary",
+				"source_type": nodeType,
+				"node_count":  len(group),
+			}
+			res := graphStore.WriteGraph(ctx, datasetID, []graphstore.NodeRecord{
 				{
-					ID: summaryID, Label: "TextSummary",
-					Properties: map[string]any{
-						"name":        fmt.Sprintf("Summary: %s", nodeType),
-						"description": summary,
-						"type":        "TextSummary",
-						"source_type": nodeType,
-						"node_count":  len(group),
-					},
+					ID: summaryID, Name: fmt.Sprintf("Summary: %s", nodeType),
+					Type: "TextSummary", Description: summary, Properties: props,
 				},
 			}, nil)
+			if len(res.Errors) > 0 {
+				log.Printf("[memify] summary_generation write: %v", res.Errors)
+				continue
+			}
 			enriched++
 		}
 	}
