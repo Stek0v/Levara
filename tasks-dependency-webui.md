@@ -456,6 +456,7 @@ T-TD1.3  Все страницы загружаются без console errors
 - [x] Migration state persistится на диск: request/status/checkpoint/failed IDs восстанавливаются после process restart
 - [x] `enable_dual_write=true` включает source -> shadow dual-write window для новых records во время миграции
 - [x] Shadow-read gate: p95/p99 latency, top-score delta, threshold checks, `cutover_ready`, fail-closed `409`
+- [x] `POST /embedding-migrations/:runId/cutover` promotes shadow -> live, archives old live, writes retention metadata, disables dual-write rule
 
 **Ограничения:**
 - raw vector API без metadata невозможно криптографически связать с encoder; Levara stamp-ит contract коллекции, но caller отвечает за корректность vector;
@@ -466,7 +467,7 @@ T-TD1.3  Все страницы загружаются без console errors
 **Следующие задачи:**
 - [x] shadow-read report: overlap@k, empty-rate, p50 latency
 - [x] shadow-read расширить до score distribution и p95/p99 latency
-- [ ] cutover feature flag + rollback archive retention
+- [x] cutover endpoint + rollback archive retention metadata
 - [ ] HNSW params (`M`, `efConstruction`, `efSearch`) включить в migration report
 - [ ] auto-resume interrupted RUNNING migrations after process restart
 - [ ] dual-write inspect/disable endpoint для завершения cutover window

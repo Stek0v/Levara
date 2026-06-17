@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-06-17T09:14:10+03:00",
-  "git_rev": "680543dcccc57d77560732167cfe6c9795ff5144",
+  "generated_at": "2026-06-17T19:38:13+03:00",
+  "git_rev": "a0187a00ea6b9213f00b9fdffce55c26c47f68fe",
   "rest": [
     {
       "method": "POST",
@@ -185,6 +185,12 @@
     {
       "method": "POST",
       "path": "/embedding-migrations",
+      "status": "canonical",
+      "group": "collections"
+    },
+    {
+      "method": "POST",
+      "path": "/embedding-migrations/:runId/cutover",
       "status": "canonical",
       "group": "collections"
     },

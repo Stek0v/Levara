@@ -59,6 +59,7 @@ func RESTRouteInventory() []RouteSpec {
 		{Method: "POST", Path: "/embedding-migrations", Status: APICanonical, Group: "collections"},
 		{Method: "GET", Path: "/embedding-migrations/:runId/status", Status: APICanonical, Group: "collections"},
 		{Method: "POST", Path: "/embedding-migrations/:runId/retry", Status: APICanonical, Group: "collections"},
+		{Method: "POST", Path: "/embedding-migrations/:runId/cutover", Status: APICanonical, Group: "collections"},
 		{Method: "POST", Path: "/embedding-migrations/shadow-read", Status: APICanonical, Group: "collections"},
 		{Method: "POST", Path: "/prune/data", Status: APIOps, Group: "admin"},
 		{Method: "POST", Path: "/prune/system", Status: APIOps, Group: "admin"},
