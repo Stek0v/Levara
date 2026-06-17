@@ -494,6 +494,7 @@ Levara хранит canonical fingerprint в `collection_meta.json` как
 - `POST /embedding-migrations` запускает managed migration job source -> target с batching, checkpoint, failed IDs и dead-letter status;
 - `GET /embedding-migrations/:runId/status` отдаёт progress, elapsed, checkpoint и failed IDs;
 - `POST /embedding-migrations/:runId/retry` повторяет failed records до `max_attempts`;
+- migration state persistится на диск: request/status/checkpoint/failed IDs восстанавливаются после process restart;
 - `POST /embedding-migrations/shadow-read` прогоняет один набор queries по live и shadow collection и возвращает Jaccard@k, top1 stability, empty-rate и p50 latency.
 
 Оставшиеся product задачи:
@@ -501,7 +502,7 @@ Levara хранит canonical fingerprint в `collection_meta.json` как
 - dual-write window для новых/обновлённых docs;
 - shadow-read score distribution, p95/p99 и cutover gate;
 - ANN/HNSW params включить в migration report.
-- persistent migration state: status/checkpoint/failed IDs survive process restart.
+- auto-resume interrupted RUNNING migrations after process restart.
 
 ## 6. Найденный WebUI technical debt
 

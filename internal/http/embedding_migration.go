@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
+	"os"
+	"path/filepath"
 	"sort"
 	"sync"
 	"time"
@@ -50,8 +53,9 @@ type embeddingMigrationStatus struct {
 	ElapsedMs          int64      `json:"elapsed_ms"`
 	Message            string     `json:"message,omitempty"`
 
-	request embeddingMigrationRequest
-	units   []embeddingMigrationUnit
+	request  embeddingMigrationRequest
+	units    []embeddingMigrationUnit
+	storeDir string
 }
 
 type embeddingMigrationStatusSnapshot struct {
@@ -78,6 +82,11 @@ type embeddingMigrationUnit struct {
 	ID   string
 	Text string
 	Meta []byte
+}
+
+type embeddingMigrationPersisted struct {
+	Request embeddingMigrationRequest        `json:"request"`
+	Status  embeddingMigrationStatusSnapshot `json:"status"`
 }
 
 var embeddingMigrationRuns sync.Map
@@ -121,7 +130,7 @@ type embeddingShadowReadReport struct {
 
 func RegisterEmbeddingMigrationAPI(app fiber.Router, cfg APIConfig) {
 	app.Post("/embedding-migrations", embeddingMigrationStartHandler(cfg))
-	app.Get("/embedding-migrations/:runId/status", embeddingMigrationStatusHandler())
+	app.Get("/embedding-migrations/:runId/status", embeddingMigrationStatusHandler(cfg))
 	app.Post("/embedding-migrations/:runId/retry", embeddingMigrationRetryHandler(cfg))
 	app.Post("/embedding-migrations/shadow-read", embeddingShadowReadHandler(cfg))
 }
@@ -135,35 +144,36 @@ func embeddingMigrationStartHandler(cfg APIConfig) fiber.Handler {
 		if err := validateEmbeddingMigrationRequest(cfg, &req); err != nil {
 			return c.Status(err.Code).JSON(fiber.Map{"detail": err.Message})
 		}
-		run := newEmbeddingMigrationRun(req)
+		run := newEmbeddingMigrationRun(req, embeddingMigrationStoreDir(cfg))
 		embeddingMigrationRuns.Store(run.RunID, run)
 		if req.DryRun {
 			run.Status = "DRY_RUN"
 			run.Message = "validated migration request; no records written"
+			run.persist()
 			return c.JSON(run.snapshot())
 		}
+		run.persist()
 		go runEmbeddingMigration(context.Background(), cfg, run, nil)
 		return c.JSON(run.snapshot())
 	}
 }
 
-func embeddingMigrationStatusHandler() fiber.Handler {
+func embeddingMigrationStatusHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		val, ok := embeddingMigrationRuns.Load(c.Params("runId"))
+		run, ok := loadEmbeddingMigrationRun(cfg, c.Params("runId"))
 		if !ok {
 			return c.Status(404).JSON(fiber.Map{"detail": "run not found"})
 		}
-		return c.JSON(val.(*embeddingMigrationStatus).snapshot())
+		return c.JSON(run.snapshot())
 	}
 }
 
 func embeddingMigrationRetryHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		val, ok := embeddingMigrationRuns.Load(c.Params("runId"))
+		run, ok := loadEmbeddingMigrationRun(cfg, c.Params("runId"))
 		if !ok {
 			return c.Status(404).JSON(fiber.Map{"detail": "run not found"})
 		}
-		run := val.(*embeddingMigrationStatus)
 		run.mu.Lock()
 		if len(run.FailedIDs) == 0 {
 			run.mu.Unlock()
@@ -178,6 +188,7 @@ func embeddingMigrationRetryHandler(cfg APIConfig) fiber.Handler {
 		run.FailedIDs = nil
 		run.Failed = 0
 		run.mu.Unlock()
+		run.persist()
 
 		go runEmbeddingMigration(context.Background(), cfg, run, failed)
 		return c.JSON(run.snapshot())
@@ -211,7 +222,7 @@ func validateEmbeddingMigrationRequest(cfg APIConfig, req *embeddingMigrationReq
 	return nil
 }
 
-func newEmbeddingMigrationRun(req embeddingMigrationRequest) *embeddingMigrationStatus {
+func newEmbeddingMigrationRun(req embeddingMigrationRequest, storeDir string) *embeddingMigrationStatus {
 	return &embeddingMigrationStatus{
 		RunID:            uuid.NewString(),
 		Status:           "QUEUED",
@@ -222,6 +233,90 @@ func newEmbeddingMigrationRun(req embeddingMigrationRequest) *embeddingMigration
 		Attempts:         0,
 		MaxAttempts:      req.MaxAttempts,
 		request:          req,
+		storeDir:         storeDir,
+	}
+}
+
+func loadEmbeddingMigrationRun(cfg APIConfig, runID string) (*embeddingMigrationStatus, bool) {
+	if val, ok := embeddingMigrationRuns.Load(runID); ok {
+		return val.(*embeddingMigrationStatus), true
+	}
+	run, err := readEmbeddingMigrationRun(embeddingMigrationStoreDir(cfg), runID)
+	if err != nil {
+		return nil, false
+	}
+	embeddingMigrationRuns.Store(run.RunID, run)
+	return run, true
+}
+
+func embeddingMigrationStoreDir(cfg APIConfig) string {
+	if cfg.StoragePath == "" {
+		return ""
+	}
+	return filepath.Join(cfg.StoragePath, "embedding_migrations")
+}
+
+func readEmbeddingMigrationRun(storeDir, runID string) (*embeddingMigrationStatus, error) {
+	if storeDir == "" || runID == "" {
+		return nil, os.ErrNotExist
+	}
+	raw, err := os.ReadFile(filepath.Join(storeDir, runID+".json"))
+	if err != nil {
+		return nil, err
+	}
+	var persisted embeddingMigrationPersisted
+	if err := json.Unmarshal(raw, &persisted); err != nil {
+		return nil, err
+	}
+	st := persisted.Status
+	return &embeddingMigrationStatus{
+		RunID:              st.RunID,
+		Status:             st.Status,
+		SourceCollection:   st.SourceCollection,
+		TargetCollection:   st.TargetCollection,
+		TargetModel:        st.TargetModel,
+		TargetDim:          st.TargetDim,
+		TargetVersion:      st.TargetVersion,
+		TotalRecords:       st.TotalRecords,
+		Processed:          st.Processed,
+		Failed:             st.Failed,
+		LastProcessedIndex: st.LastProcessedIndex,
+		CheckpointID:       st.CheckpointID,
+		FailedIDs:          append([]string(nil), st.FailedIDs...),
+		Attempts:           st.Attempts,
+		MaxAttempts:        st.MaxAttempts,
+		ElapsedMs:          st.ElapsedMs,
+		Message:            st.Message,
+		request:            persisted.Request,
+		storeDir:           storeDir,
+	}, nil
+}
+
+func (s *embeddingMigrationStatus) persist() {
+	if s.storeDir == "" {
+		return
+	}
+	payload := embeddingMigrationPersisted{
+		Request: s.request,
+		Status:  s.snapshot(),
+	}
+	raw, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		log.Printf("[embedding-migrations] marshal run %s: %v", s.RunID, err)
+		return
+	}
+	if err := os.MkdirAll(s.storeDir, 0755); err != nil {
+		log.Printf("[embedding-migrations] mkdir %q: %v", s.storeDir, err)
+		return
+	}
+	path := filepath.Join(s.storeDir, s.RunID+".json")
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, raw, 0644); err != nil {
+		log.Printf("[embedding-migrations] write %q: %v", tmp, err)
+		return
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		log.Printf("[embedding-migrations] rename %q -> %q: %v", tmp, path, err)
 	}
 }
 
@@ -255,6 +350,7 @@ func runEmbeddingMigration(ctx context.Context, cfg APIConfig, run *embeddingMig
 	run.Status = "RUNNING"
 	run.Attempts++
 	run.mu.Unlock()
+	run.persist()
 
 	units, err := loadEmbeddingMigrationUnits(cfg, run)
 	if err != nil {
@@ -268,6 +364,7 @@ func runEmbeddingMigration(ctx context.Context, cfg APIConfig, run *embeddingMig
 	run.units = units
 	run.TotalRecords = len(units)
 	run.mu.Unlock()
+	run.persist()
 	if len(units) == 0 {
 		run.complete(start, "no records to migrate")
 		return
@@ -301,6 +398,7 @@ func runEmbeddingMigration(ctx context.Context, cfg APIConfig, run *embeddingMig
 	run.TargetDim = targetDim
 	run.TargetVersion = contract.Fingerprint()
 	run.mu.Unlock()
+	run.persist()
 
 	for i := 0; i < len(units); i += run.request.BatchSize {
 		end := i + run.request.BatchSize
@@ -339,6 +437,7 @@ func runEmbeddingMigration(ctx context.Context, cfg APIConfig, run *embeddingMig
 		run.Message = fmt.Sprintf("migrated %d/%d records", run.Processed, run.TotalRecords)
 	}
 	run.mu.Unlock()
+	run.persist()
 }
 
 func loadEmbeddingMigrationUnits(cfg APIConfig, run *embeddingMigrationStatus) ([]embeddingMigrationUnit, error) {
@@ -402,27 +501,28 @@ func ensureMigrationTargetCollection(cfg APIConfig, name string, dim int, metric
 
 func (s *embeddingMigrationStatus) markProcessed(start time.Time, id string, idx int) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.Processed++
 	s.LastProcessedIndex = idx
 	s.CheckpointID = id
 	s.ElapsedMs = time.Since(start).Milliseconds()
+	s.mu.Unlock()
+	s.persist()
 }
 
 func (s *embeddingMigrationStatus) markFailedID(start time.Time, id string, idx int, msg string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.Failed++
 	s.FailedIDs = append(s.FailedIDs, id)
 	s.LastProcessedIndex = idx
 	s.CheckpointID = id
 	s.ElapsedMs = time.Since(start).Milliseconds()
 	s.Message = msg
+	s.mu.Unlock()
+	s.persist()
 }
 
 func (s *embeddingMigrationStatus) markBatchFailed(start time.Time, batch []embeddingMigrationUnit, idx int, msg string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	for _, u := range batch {
 		s.Failed++
 		s.FailedIDs = append(s.FailedIDs, u.ID)
@@ -433,22 +533,26 @@ func (s *embeddingMigrationStatus) markBatchFailed(start time.Time, batch []embe
 	}
 	s.ElapsedMs = time.Since(start).Milliseconds()
 	s.Message = msg
+	s.mu.Unlock()
+	s.persist()
 }
 
 func (s *embeddingMigrationStatus) fail(start time.Time, msg string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.Status = "FAILED"
 	s.ElapsedMs = time.Since(start).Milliseconds()
 	s.Message = msg
+	s.mu.Unlock()
+	s.persist()
 }
 
 func (s *embeddingMigrationStatus) complete(start time.Time, msg string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.Status = "COMPLETED"
 	s.ElapsedMs = time.Since(start).Milliseconds()
 	s.Message = msg
+	s.mu.Unlock()
+	s.persist()
 }
 
 func embeddingShadowReadHandler(cfg APIConfig) fiber.Handler {

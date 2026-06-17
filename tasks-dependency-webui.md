@@ -453,11 +453,12 @@ T-TD1.3  Все страницы загружаются без console errors
 - [x] `POST /embedding-migrations` запускает managed migration job: source -> target, target contract, batching, checkpoint, failed IDs
 - [x] `GET /embedding-migrations/:runId/status` возвращает progress/status/elapsed/checkpoint/dead-letter state
 - [x] `POST /embedding-migrations/:runId/retry` повторяет failed IDs до `max_attempts`
+- [x] Migration state persistится на диск: request/status/checkpoint/failed IDs восстанавливаются после process restart
 
 **Ограничения:**
 - raw vector API без metadata невозможно криптографически связать с encoder; Levara stamp-ит contract коллекции, но caller отвечает за корректность vector;
 - non-object metadata не всегда можно расширить без изменения формы payload;
-- managed migration registry пока in-memory; после рестарта run status/checkpoint не восстанавливается.
+- running job после process restart не продолжается автоматически; оператор должен проверить status и нажать retry/manual restart по runbook.
 
 **Следующие задачи:**
 - [ ] dual-write window для новых/обновлённых docs
@@ -465,7 +466,7 @@ T-TD1.3  Все страницы загружаются без console errors
 - [ ] shadow-read расширить до score distribution и p95/p99 latency
 - [ ] cutover feature flag + rollback archive retention
 - [ ] HNSW params (`M`, `efConstruction`, `efSearch`) включить в migration report
-- [ ] persistent migration state: status/checkpoint/failed IDs survive process restart
+- [ ] auto-resume interrupted RUNNING migrations after process restart
 
 ---
 

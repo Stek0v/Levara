@@ -265,7 +265,8 @@ PRE_COUNT=$(curl -s -H "Authorization: Bearer $TOKEN" \
 
 Preferred path: use the managed embedding migration API. It creates or updates
 the shadow collection with the target embedding contract, tracks progress, keeps
-the last checkpoint id, records failed ids, and allows retry before cutover.
+the last checkpoint id, records failed ids, persists run state under Levara's
+storage path, and allows retry before cutover even after a process restart.
 
 ```bash
 RUN=$(curl -s -X POST -H "Authorization: Bearer $TOKEN" \
@@ -301,6 +302,17 @@ done
 Legacy path: `POST /api/v1/reembed` still works for one-shot local jobs, but
 new production migrations should prefer `/embedding-migrations` because it
 exposes checkpoint/dead-letter state in the API.
+
+If Levara restarts mid-migration, first check the restored status:
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8090/api/v1/embedding-migrations/${RUN}/status | jq .
+```
+
+For `DEAD_LETTER`, call `/retry` as above. For a stale `RUNNING` run after a
+process restart, do not cut over; restart the collection migration into a fresh
+shadow collection or inspect the target count before deciding to continue.
 
 ### 4.3 Validate shadow
 
