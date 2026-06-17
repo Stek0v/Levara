@@ -83,6 +83,57 @@ func TestEmbeddingShadowReadRequiresQueries(t *testing.T) {
 	}
 }
 
+func TestEmbeddingShadowReadCutoverGateFailsClosed(t *testing.T) {
+	dir := t.TempDir()
+	cm, err := store.NewCollectionManager(2, dir)
+	if err != nil {
+		t.Fatalf("NewCollectionManager: %v", err)
+	}
+	defer cm.Close()
+	if err := cm.CreateWithDim("live", 2, "source-model", "cosine"); err != nil {
+		t.Fatalf("Create live: %v", err)
+	}
+	if err := cm.CreateWithDim("shadow", 2, "shadow-model", "cosine"); err != nil {
+		t.Fatalf("Create shadow: %v", err)
+	}
+	if err := cm.Insert("live", "alpha-doc", []float32{1, 0}, map[string]any{"text": "alpha"}); err != nil {
+		t.Fatalf("insert live alpha: %v", err)
+	}
+	if err := cm.Insert("live", "beta-doc", []float32{0, 1}, map[string]any{"text": "beta"}); err != nil {
+		t.Fatalf("insert live beta: %v", err)
+	}
+	if err := cm.Insert("shadow", "gamma-doc", []float32{0, 1}, map[string]any{"text": "gamma"}); err != nil {
+		t.Fatalf("insert shadow gamma: %v", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	embedSrv := fakeShadowReadEmbedServer(t)
+	defer embedSrv.Close()
+	app := fiber.New(fiber.Config{DisableStartupMessage: true})
+	RegisterEmbeddingMigrationAPI(app.Group("/api/v1"), APIConfig{
+		Collections:   cm,
+		EmbedEndpoint: embedSrv.URL + "/v1/embeddings",
+	})
+
+	status, body := postShadowRead(t, app, embeddingShadowReadRequest{
+		SourceCollection:       "live",
+		ShadowCollection:       "shadow",
+		Queries:                []string{"alpha"},
+		TopK:                   2,
+		MinMeanJaccardAtK:      0.9,
+		RequireCutoverGatePass: true,
+	})
+	if status != 409 {
+		t.Fatalf("status=%d body=%v, want 409", status, body)
+	}
+	if got, _ := body["cutover_ready"].(bool); got {
+		t.Fatalf("cutover_ready=true body=%v, want false", body)
+	}
+	if failures, _ := body["gate_failures"].([]any); len(failures) == 0 {
+		t.Fatalf("missing gate_failures: %v", body)
+	}
+}
+
 func TestEmbeddingMigrationManagedJobCompletes(t *testing.T) {
 	dir := t.TempDir()
 	cm, err := store.NewCollectionManager(2, dir)
