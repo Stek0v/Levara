@@ -13,6 +13,7 @@ require (
 	github.com/jackc/pgx/v5 v5.8.0
 	github.com/ncruces/go-sqlite3 v0.33.0
 	github.com/neo4j/neo4j-go-driver/v5 v5.28.4
+	github.com/otiai10/gosseract/v2 v2.4.1
 	github.com/prometheus/client_golang v1.23.2
 	github.com/prometheus/client_model v0.6.2
 	github.com/swaggo/swag v1.16.4
@@ -58,7 +59,6 @@ require (
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/ncruces/go-sqlite3-wasm v1.0.1-0.20260321101821-261d0f98d39c // indirect
 	github.com/ncruces/julianday v1.0.0 // indirect
-	github.com/otiai10/gosseract/v2 v2.4.1 // indirect
 	github.com/philhofer/fwd v1.1.3-0.20240916144458-20a13a1f6b7c // indirect
 	github.com/prometheus/common v0.66.1 // indirect
 	github.com/prometheus/procfs v0.16.1 // indirect

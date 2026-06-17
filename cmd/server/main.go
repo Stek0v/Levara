@@ -71,6 +71,7 @@ import (
 	_ "github.com/stek0v/levara/docs" // swaggo-generated OpenAPI spec (T13)
 	"github.com/stek0v/levara/pkg/audit"
 	"github.com/stek0v/levara/pkg/consolidate"
+	"github.com/stek0v/levara/pkg/embcontract"
 	"github.com/stek0v/levara/pkg/embed"
 	"github.com/stek0v/levara/pkg/graphdb"
 	"github.com/stek0v/levara/pkg/llmcache"
@@ -213,25 +214,59 @@ func main() {
 	// Explicit flags always override profile defaults (checked via `provided`).
 	switch *profileName {
 	case "standalone":
-		if !provided["grpc-port"] { *grpcPort = 0 }
-		if !provided["require-auth"] { *requireAuth = false }
-		if !provided["raft-port"] { *raftPortBase = 0 }
-		if !provided["bootstrap"] { *bootstrap = false }
-		if !provided["join-addr"] { *joinAddr = "" }
-		if !provided["llm-proxy-port"] { *llmProxyPort = 0 }
-		if !provided["neo4j-url"] { *neo4jURL = "" }
-		if !provided["pg-url"] { *pgURL = "" }
-		if !provided["embed-endpoint"] { *embedEndpointF = "" }
+		if !provided["grpc-port"] {
+			*grpcPort = 0
+		}
+		if !provided["require-auth"] {
+			*requireAuth = false
+		}
+		if !provided["raft-port"] {
+			*raftPortBase = 0
+		}
+		if !provided["bootstrap"] {
+			*bootstrap = false
+		}
+		if !provided["join-addr"] {
+			*joinAddr = ""
+		}
+		if !provided["llm-proxy-port"] {
+			*llmProxyPort = 0
+		}
+		if !provided["neo4j-url"] {
+			*neo4jURL = ""
+		}
+		if !provided["pg-url"] {
+			*pgURL = ""
+		}
+		if !provided["embed-endpoint"] {
+			*embedEndpointF = ""
+		}
 		log.Printf("Profile: standalone — Raft, gRPC, Neo4j, PG, LLM, auth, embed disabled")
 	case "standalone-embed":
-		if !provided["grpc-port"] { *grpcPort = 0 }
-		if !provided["require-auth"] { *requireAuth = false }
-		if !provided["raft-port"] { *raftPortBase = 0 }
-		if !provided["bootstrap"] { *bootstrap = false }
-		if !provided["join-addr"] { *joinAddr = "" }
-		if !provided["llm-proxy-port"] { *llmProxyPort = 0 }
-		if !provided["neo4j-url"] { *neo4jURL = "" }
-		if !provided["pg-url"] { *pgURL = "" }
+		if !provided["grpc-port"] {
+			*grpcPort = 0
+		}
+		if !provided["require-auth"] {
+			*requireAuth = false
+		}
+		if !provided["raft-port"] {
+			*raftPortBase = 0
+		}
+		if !provided["bootstrap"] {
+			*bootstrap = false
+		}
+		if !provided["join-addr"] {
+			*joinAddr = ""
+		}
+		if !provided["llm-proxy-port"] {
+			*llmProxyPort = 0
+		}
+		if !provided["neo4j-url"] {
+			*neo4jURL = ""
+		}
+		if !provided["pg-url"] {
+			*pgURL = ""
+		}
 		log.Printf("Profile: standalone-embed — as standalone, embed left enabled")
 	case "full", "":
 		// all flags available (default)
@@ -256,7 +291,7 @@ func main() {
 	// ---------------------------------------------------------------
 	// Storage backend (P3.5): STORAGE_BACKEND=local|s3
 	// ---------------------------------------------------------------
-	fileStore, storageBackend, _ := initStorageBackend(*dataDir, srvLog)
+	fileStore, storageBackend, storagePath := initStorageBackend(*dataDir, srvLog)
 
 	hnswCfg := store.HNSWConfig{
 		M:            *hnswM,
@@ -422,6 +457,7 @@ func main() {
 	// Insert path (e.g. _memories_* sidecars from a memory write) so they don't
 	// inherit empty embedding_model metadata (findings P2.1).
 	colManager.SetDefaultModel(embedModel)
+	colManager.SetDefaultEmbeddingContract(embcontract.FromEnv(embedModel, *dim, "cosine"))
 
 	// Auth endpoints (public — no JWT required)
 	jwtSecret := os.Getenv("JWT_SECRET")
@@ -658,18 +694,23 @@ func main() {
 	// Detailed /health/details with per-dependency probes lives in
 	// bootstrap.go.
 	registerHealthDetails(app, healthDeps{
-		port:          *port,
-		grpcPort:      *grpcPort,
-		dim:           *dim,
-		pgDB:          pgDB,
-		neo4jURL:      *neo4jURL,
-		neo4jUser:     *neo4jUser,
-		neo4jPassword: *neo4jPassword,
-		neo4jDatabase: *neo4jDatabase,
-		embedEndpoint: embedEndpoint,
-		embedModel:    embedModel,
-		llmProvider:   llmProvider,
-		colManager:    colManager,
+		port:           *port,
+		grpcPort:       *grpcPort,
+		dim:            *dim,
+		dbProvider:     string(vectorHttp.GetDBProvider()),
+		storageBackend: storageBackend,
+		storagePath:    storagePath,
+		pgDB:           pgDB,
+		neo4jURL:       *neo4jURL,
+		neo4jUser:      *neo4jUser,
+		neo4jPassword:  *neo4jPassword,
+		neo4jDatabase:  *neo4jDatabase,
+		embedEndpoint:  embedEndpoint,
+		embedModel:     embedModel,
+		rerankEndpoint: rerankCfg.Endpoint,
+		rerankModel:    rerankCfg.Model,
+		llmProvider:    llmProvider,
+		colManager:     colManager,
 	})
 
 	// gRPC server (v1 + v2) starts in a goroutine. nil when disabled.

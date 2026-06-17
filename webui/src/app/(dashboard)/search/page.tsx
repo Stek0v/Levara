@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Search as SearchIcon, Star, ChevronDown } from 'lucide-react'
+import { Search as SearchIcon, Star } from 'lucide-react'
 
 const SEARCH_MODES = [
   { value: 'AUTO', label: 'Auto', description: 'Smart routing' },

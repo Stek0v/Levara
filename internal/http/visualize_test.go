@@ -32,6 +32,9 @@ func TestDatasetGraph_SQLFallbackFiltersDataset(t *testing.T) {
 	if len(got.Edges) != 1 {
 		t.Fatalf("edges=%+v, want only ds-a edge whose endpoints are included", got.Edges)
 	}
+	if got.Edges[0].ID != "a-edge" || got.Edges[0].ValidFrom == 0 || got.Edges[0].ValidUntil == nil {
+		t.Fatalf("edge metadata=%+v, want id and temporal validity", got.Edges[0])
+	}
 	for _, n := range got.Nodes {
 		if n.Properties["dataset_id"] != "ds-a" {
 			t.Fatalf("node leaked from another dataset: %+v", n)
@@ -69,10 +72,10 @@ func newDatasetGraphSQLiteDB(t *testing.T) *sql.DB {
 			('a1','Alice','Person','ds-a'),
 			('a2','Acme','Org','ds-a'),
 			('b1','Bob','Person','ds-b');
-		INSERT INTO graph_edges(id,source_id,target_id,relationship_name,dataset_id) VALUES
-			('a-edge','a1','a2','works_at','ds-a'),
-			('cross-edge','a1','b1','knows','ds-a'),
-			('b-edge','b1','a2','mentions','ds-b');
+		INSERT INTO graph_edges(id,source_id,target_id,relationship_name,dataset_id,valid_from,valid_until) VALUES
+			('a-edge','a1','a2','works_at','ds-a','2026-01-01T00:00:00Z','2026-02-01T00:00:00Z'),
+			('cross-edge','a1','b1','knows','ds-a','2026-01-01T00:00:00Z',NULL),
+			('b-edge','b1','a2','mentions','ds-b','2026-01-01T00:00:00Z',NULL);
 	`); err != nil {
 		t.Fatalf("seed sqlite: %v", err)
 	}

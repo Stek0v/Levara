@@ -21,6 +21,8 @@ import (
 // RegisterSyncAPI registers sync export/import endpoints.
 func RegisterSyncAPI(app fiber.Router, cfg APIConfig) {
 	app.Get("/sync/manifest", syncManifestHandler(cfg.Identity(), cfg.Access(), cfg.Search()))
+	app.Post("/sync/run", syncRunHandler(cfg))
+	app.Get("/sync/status", syncStatusHandler(cfg))
 
 	app.Get("/sync/export/memories", syncExportMemoriesHandler(cfg))
 	app.Post("/sync/import/memories", syncImportMemoriesHandler(cfg))
@@ -34,6 +36,64 @@ func RegisterSyncAPI(app fiber.Router, cfg APIConfig) {
 	app.Get("/sync/export/collection/:name", syncExportCollectionHandler(cfg))
 	app.Post("/sync/import/collection", syncImportCollectionHandler(cfg))
 	app.Get("/sync/import/collection/:runId/status", syncImportCollectionStatusHandler())
+}
+
+type syncRunRequest struct {
+	RemoteURL   string   `json:"remote_url"`
+	Direction   string   `json:"direction"`
+	Types       []string `json:"types,omitempty"`
+	Since       string   `json:"since,omitempty"`
+	Collections []string `json:"collections,omitempty"`
+}
+
+func syncRunHandler(cfg APIConfig) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		var req syncRunRequest
+		if err := c.BodyParser(&req); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
+		if strings.TrimSpace(req.RemoteURL) == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "remote_url required"})
+		}
+		direction := strings.ToLower(strings.TrimSpace(req.Direction))
+		if direction == "" {
+			direction = "pull"
+		}
+		if direction != "pull" && direction != "push" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "direction must be pull or push"})
+		}
+		result, manifest, err := (&mcpHandler{cfg: cfg}).DoSync(c.UserContext(), strings.TrimRight(req.RemoteURL, "/"), direction, req.Types, req.Since, req.Collections)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
+		result["remote_manifest"] = manifest
+		if cfg.DB != nil {
+			(&mcpHandler{cfg: cfg}).LogHeartbeat("sync", map[string]any{
+				"direction": direction,
+				"remote":    strings.TrimRight(req.RemoteURL, "/"),
+				"types":     req.Types,
+			})
+		}
+		return c.JSON(result)
+	}
+}
+
+func syncStatusHandler(cfg APIConfig) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		limit := c.QueryInt("limit", 10)
+		result := (&mcpHandler{cfg: cfg}).toolSyncStatus(c.UserContext(), map[string]any{"limit": float64(limit)})
+		if len(result.Content) == 0 {
+			return c.JSON(fiber.Map{})
+		}
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(result.Content[0].Text), &payload); err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "sync status response decode failed"})
+		}
+		if result.IsError {
+			return c.Status(fiber.StatusBadRequest).JSON(payload)
+		}
+		return c.JSON(payload)
+	}
 }
 
 // ── Manifest ──
@@ -584,7 +644,6 @@ func syncImportCollectionHandler(cfg APIConfig) fiber.Handler {
 			Total:      len(export.Records),
 		}
 		syncImportRuns.Store(runID, status)
-
 
 		go func() {
 			defer func() {

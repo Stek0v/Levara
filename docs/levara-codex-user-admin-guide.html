@@ -1,0 +1,1004 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Levara для Codex, solo-пользователей и команд</title>
+  <style>
+    :root {
+      --bg: #f7f8fa;
+      --panel: #ffffff;
+      --text: #17202a;
+      --muted: #56616f;
+      --line: #dfe5ec;
+      --accent: #1f6feb;
+      --accent-soft: #e8f1ff;
+      --ok: #13795b;
+      --warn: #9a6700;
+      --code-bg: #101820;
+      --code-text: #e8edf3;
+      --shadow: 0 12px 32px rgba(23, 32, 42, 0.08);
+      --radius: 8px;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .shell {
+      display: grid;
+      grid-template-columns: 300px minmax(0, 1fr);
+      min-height: 100vh;
+    }
+
+    nav {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      padding: 28px 22px;
+      overflow: auto;
+      background: #111827;
+      color: #e5e7eb;
+      border-right: 1px solid #0b1220;
+    }
+
+    nav h2 {
+      margin: 0 0 8px;
+      font-size: 18px;
+      line-height: 1.25;
+    }
+
+    nav p {
+      margin: 0 0 22px;
+      color: #aab3c2;
+      font-size: 13px;
+    }
+
+    nav a {
+      display: block;
+      padding: 7px 0;
+      color: #dbeafe;
+      font-size: 14px;
+    }
+
+    nav .group {
+      margin: 18px 0 6px;
+      color: #91a3ba;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+    }
+
+    main {
+      width: 100%;
+      max-width: 1180px;
+      padding: 44px 52px 80px;
+    }
+
+    .hero {
+      padding: 38px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+
+    .hero h1 {
+      margin: 0 0 14px;
+      font-size: 40px;
+      line-height: 1.1;
+      letter-spacing: 0;
+    }
+
+    .hero p {
+      max-width: 850px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 18px;
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 22px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 30px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: #174ea6;
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    section {
+      margin-top: 34px;
+      padding: 30px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+    }
+
+    h2 {
+      margin: 0 0 16px;
+      font-size: 28px;
+      line-height: 1.25;
+      letter-spacing: 0;
+    }
+
+    h3 {
+      margin: 26px 0 10px;
+      font-size: 20px;
+      line-height: 1.3;
+      letter-spacing: 0;
+    }
+
+    h4 {
+      margin: 20px 0 8px;
+      font-size: 16px;
+      line-height: 1.35;
+      letter-spacing: 0;
+    }
+
+    p { margin: 0 0 14px; }
+    ul, ol { padding-left: 22px; margin: 10px 0 16px; }
+    li { margin: 5px 0; }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+      margin: 18px 0;
+    }
+
+    .grid.three {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .card {
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fbfcfe;
+    }
+
+    .card h3,
+    .card h4 {
+      margin-top: 0;
+    }
+
+    .note {
+      padding: 16px 18px;
+      border-left: 4px solid var(--accent);
+      background: var(--accent-soft);
+      border-radius: 0 var(--radius) var(--radius) 0;
+      color: #183b67;
+    }
+
+    .success {
+      border-left-color: var(--ok);
+      background: #e9f7f2;
+      color: #164b38;
+    }
+
+    .warning {
+      border-left-color: var(--warn);
+      background: #fff7df;
+      color: #5f4200;
+    }
+
+    code {
+      padding: 2px 5px;
+      background: #eef2f7;
+      border-radius: 5px;
+      color: #243244;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: .92em;
+    }
+
+    pre {
+      overflow: auto;
+      padding: 16px;
+      background: var(--code-bg);
+      color: var(--code-text);
+      border-radius: var(--radius);
+      line-height: 1.5;
+    }
+
+    pre code {
+      padding: 0;
+      background: transparent;
+      color: inherit;
+      font-size: 14px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 16px 0;
+      font-size: 14px;
+    }
+
+    th, td {
+      padding: 10px 12px;
+      text-align: left;
+      vertical-align: top;
+      border: 1px solid var(--line);
+    }
+
+    th {
+      background: #f0f4f8;
+      font-weight: 700;
+    }
+
+    .toc-hint {
+      margin-top: 18px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .diagram {
+      padding: 16px;
+      background: #f4f7fb;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      white-space: pre;
+      overflow: auto;
+      color: #263444;
+    }
+
+    @media (max-width: 920px) {
+      .shell { grid-template-columns: 1fr; }
+      nav {
+        position: relative;
+        height: auto;
+      }
+      main { padding: 26px 18px 60px; }
+      .hero { padding: 26px; }
+      .hero h1 { font-size: 30px; }
+      .grid,
+      .grid.three {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <nav>
+      <h2>Levara Guide</h2>
+      <p>Практическая документация для Codex, solo-пользователей и команд.</p>
+      <div class="group">Основы</div>
+      <a href="#overview">1. Что такое Levara</a>
+      <a href="#audience">2. Для кого</a>
+      <a href="#benefits">3. Что улучшается</a>
+      <a href="#concepts">4. Базовые понятия</a>
+      <div class="group">Настройка</div>
+      <a href="#architecture">5. Архитектура</a>
+      <a href="#solo-setup">6. Solo setup</a>
+      <a href="#codex-mcp">7. Codex MCP</a>
+      <a href="#team-setup">8. Team setup</a>
+      <a href="#ingestion">9. Код и документы</a>
+      <div class="group">Использование</div>
+      <a href="#daily-work">10. Ежедневная работа</a>
+      <a href="#rag">11. RAG, graph и VSA</a>
+      <a href="#memory">12. Memory practices</a>
+      <a href="#admin">13. Администрирование</a>
+      <a href="#monitoring">14. Мониторинг</a>
+      <a href="#backup">15. Backup и sync</a>
+      <a href="#security">16. Безопасность</a>
+      <a href="#scenarios">17. Сценарии пользы</a>
+      <a href="#prompts">18. Готовые prompts</a>
+      <a href="#checklists">19. Checklist внедрения</a>
+    </nav>
+
+    <main>
+      <header class="hero">
+        <h1>Levara для Codex, solo-пользователей и команд</h1>
+        <p>
+          Подробное практическое руководство: как настроить Levara, подключить Codex через MCP,
+          индексировать существующий код и документы, использовать память, RAG, SQL graph и VSA,
+          а также мониторить систему в solo и team deployment.
+        </p>
+        <div class="meta">
+          <span class="pill">Codex + MCP</span>
+          <span class="pill">SQL graph</span>
+          <span class="pill">VSA retrieval</span>
+          <span class="pill">Solo и team setup</span>
+          <span class="pill">Без обязательного Neo4j</span>
+        </div>
+        <p class="toc-hint">
+          Документ можно открыть напрямую как HTML-файл или опубликовать как статичную страницу.
+        </p>
+      </header>
+
+      <section id="overview">
+        <h2>1. Что такое Levara</h2>
+        <p>
+          Levara это долговременная проектная память для AI-агентов, MCP-клиентов и RAG-сценариев.
+          Она помогает Codex, Claude, Cursor, Cline и другим инструментам не терять контекст,
+          искать по коду и документам, помнить архитектурные решения и восстанавливать историю проекта
+          между сессиями.
+        </p>
+        <p>
+          Если коротко, Levara превращает репозиторий, документы, заметки, решения команды и историю работы
+          в структурированную память, доступную через REST и MCP.
+        </p>
+        <div class="grid three">
+          <div class="card">
+            <h3>Поиск</h3>
+            <p>Vector search, BM25 и workspace search помогают находить смысловые и точные совпадения.</p>
+          </div>
+          <div class="card">
+            <h3>Память</h3>
+            <p>Memory palace хранит факты, решения, открытия, советы и пользовательские предпочтения.</p>
+          </div>
+          <div class="card">
+            <h3>Связи</h3>
+            <p>SQL graph и VSA помогают отвечать на вопросы вида “что с чем связано”.</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="audience">
+        <h2>2. Для кого эта документация</h2>
+        <div class="grid">
+          <div class="card">
+            <h3>Solo-пользователь с Codex</h3>
+            <p>Вы один работаете над проектом и хотите, чтобы Codex:</p>
+            <ul>
+              <li>помнил архитектурные решения;</li>
+              <li>быстро находил нужные места в коде;</li>
+              <li>не просил заново объяснять проект;</li>
+              <li>искал по документам и заметкам;</li>
+              <li>понимал связи между подсистемами;</li>
+              <li>сохранял важные выводы после дебага.</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>Администратор команды</h3>
+            <p>Вы настраиваете Levara для нескольких разработчиков и хотите:</p>
+            <ul>
+              <li>подключить существующий код и документы;</li>
+              <li>дать разработчикам единый MCP memory layer;</li>
+              <li>контролировать доступы;</li>
+              <li>мониторить ingestion, indexing и search;</li>
+              <li>снизить зависимость от внешних сервисов;</li>
+              <li>дать AI-агентам надежную проектную память.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section id="benefits">
+        <h2>3. Что улучшается после включения SQL graph и VSA</h2>
+        <p>
+          Раньше граф знаний мог требовать отдельный Neo4j. Теперь основной путь может работать внутри SQL-базы
+          Levara, а VSA добавляет быстрый индекс связей поверх graph facts.
+        </p>
+        <div class="grid">
+          <div class="card">
+            <h3>Стабильность</h3>
+            <ul>
+              <li>меньше внешних зависимостей;</li>
+              <li>проще локальный запуск;</li>
+              <li>меньше точек отказа;</li>
+              <li>проще backup и sync;</li>
+              <li>меньше расхождений между памятью, графом и RAG.</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>Продуктивность</h3>
+            <ul>
+              <li>лучше ответы на вопросы “почему” и “как связано”;</li>
+              <li>быстрее восстановление контекста;</li>
+              <li>меньше повторного объяснения агенту;</li>
+              <li>лучше onboarding новых разработчиков;</li>
+              <li>контекстные code review и debug-сессии.</li>
+            </ul>
+          </div>
+        </div>
+        <div class="note success">
+          Практический смысл для пользователя: Levara становится не просто поиском по файлам,
+          а долговременной памятью проекта, которая хранит решения, связи и актуальный контекст.
+        </div>
+      </section>
+
+      <section id="concepts">
+        <h2>4. Базовые понятия</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Понятие</th>
+              <th>Что означает</th>
+              <th>Пример</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>Collection</code></td>
+              <td>Набор индексированных данных для поиска.</td>
+              <td><code>levara-code</code>, <code>project-docs</code>, <code>company-handbook</code></td>
+            </tr>
+            <tr>
+              <td><code>Dataset</code></td>
+              <td>Логическая группа данных, прав доступа и graph facts.</td>
+              <td><code>backend</code>, <code>frontend</code>, <code>project-alpha</code></td>
+            </tr>
+            <tr>
+              <td><code>Memory</code></td>
+              <td>Короткий устойчивый факт, решение, открытие, совет или preference.</td>
+              <td>“2026-06-17 chose SQL graph as default backend...”</td>
+            </tr>
+            <tr>
+              <td><code>Graph</code></td>
+              <td>Связи между сущностями проекта.</td>
+              <td><code>Levara -> uses -> SQLite</code></td>
+            </tr>
+            <tr>
+              <td><code>VSA</code></td>
+              <td>Быстрый внутренний индекс graph facts для поиска вероятных связей.</td>
+              <td>Поиск кандидатов для <code>subject + predicate -> object</code></td>
+            </tr>
+            <tr>
+              <td><code>MCP</code></td>
+              <td>Протокол, через который Codex и другие агенты используют Levara tools.</td>
+              <td><code>search</code>, <code>wake_up</code>, <code>save_memory</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="architecture">
+        <h2>5. Рекомендуемая архитектура</h2>
+        <h3>Solo setup</h3>
+        <div class="diagram">Codex Desktop / CLI
+        |
+        | MCP
+        v
+Levara local server
+        |
+        v
+SQLite + vector collections + SQL graph + VSA</div>
+        <p>Подходит для одного разработчика, локального ноутбука и проектов, где важна простота.</p>
+
+        <h3>Team setup</h3>
+        <div class="diagram">Developers / Codex / Cursor / Claude
+        |
+        | MCP / REST
+        v
+Shared Levara Server
+        |
+        v
+Postgres or SQLite
+        |
+        v
+Collections + SQL graph + VSA + memories + audit</div>
+        <p>Подходит для командного сервера, нескольких разработчиков, централизованного backup и мониторинга.</p>
+      </section>
+
+      <section id="solo-setup">
+        <h2>6. Установка для solo-пользователя</h2>
+        <h3>Клонировать проект</h3>
+        <pre><code>git clone https://github.com/Stek0v/Levara.git
+cd Levara</code></pre>
+
+        <h3>Собрать сервер</h3>
+        <pre><code>go build ./cmd/server</code></pre>
+
+        <h3>Запустить локально с SQLite</h3>
+        <pre><code>LEV_DB_PROVIDER=sqlite \
+LEV_DB_PATH=./levara.db \
+./server</code></pre>
+
+        <h3>Проверить health</h3>
+        <pre><code>curl http://localhost:8080/health</code></pre>
+
+        <div class="note">
+          Для solo-сценария SQLite обычно достаточно: меньше настройки, меньше внешних сервисов,
+          легче переносить и бэкапить.
+        </div>
+      </section>
+
+      <section id="codex-mcp">
+        <h2>7. Настройка MCP для Codex</h2>
+        <p>
+          Codex должен видеть Levara как MCP server. Точный способ зависит от окружения, но общий смысл один:
+          MCP client должен уметь обращаться к Levara API.
+        </p>
+        <h3>Пример <code>.mcp.json</code></h3>
+        <pre><code>{
+  "mcpServers": {
+    "levara": {
+      "command": "levara-mcp",
+      "args": [
+        "--url",
+        "http://localhost:8080/api/v1"
+      ]
+    }
+  }
+}</code></pre>
+
+        <h3>Проверить tools</h3>
+        <p>После подключения должны быть доступны инструменты:</p>
+        <ul>
+          <li><code>set_context</code></li>
+          <li><code>wake_up</code></li>
+          <li><code>save_memory</code></li>
+          <li><code>recall_memory</code></li>
+          <li><code>search</code></li>
+          <li><code>cognify</code></li>
+          <li><code>query_entity</code></li>
+          <li><code>workspace_index</code></li>
+          <li><code>workspace_search</code></li>
+        </ul>
+
+        <h3>Рекомендуемый старт каждой сессии</h3>
+        <pre><code>set_context(collection="levara")
+wake_up(max_tokens=300)</code></pre>
+        <p>Это загружает pinned memories и важный контекст проекта.</p>
+      </section>
+
+      <section id="team-setup">
+        <h2>8. Настройка для команды</h2>
+        <h3>Выбор базы</h3>
+        <div class="grid">
+          <div class="card">
+            <h3>SQLite</h3>
+            <p>Подходит для маленькой команды, proof of concept и single-machine deployment.</p>
+            <ul>
+              <li>самый простой старт;</li>
+              <li>минимум зависимостей;</li>
+              <li>хорошо для локальной разработки.</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>Postgres</h3>
+            <p>Подходит для нескольких разработчиков и централизованного сервера.</p>
+            <ul>
+              <li>лучше concurrency;</li>
+              <li>привычный backup;</li>
+              <li>удобнее для production-like deployment.</li>
+            </ul>
+          </div>
+        </div>
+
+        <h3>Пример env для Postgres</h3>
+        <pre><code>LEV_DB_PROVIDER=postgres
+POSTGRES_DSN=postgres://levara:password@localhost:5432/levara?sslmode=disable
+LEV_STORAGE_PATH=/var/lib/levara/storage
+LEV_WORKSPACE_PATH=/var/lib/levara/workspace</code></pre>
+
+        <h3>Рекомендуемые datasets</h3>
+        <pre><code>project-backend
+project-frontend
+project-docs
+project-infra
+company-handbook</code></pre>
+
+        <h3>Роли и доступы</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Группа</th>
+              <th>Write</th>
+              <th>Read</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Backend developers</td>
+              <td><code>project-backend</code></td>
+              <td><code>project-docs</code>, <code>company-handbook</code></td>
+            </tr>
+            <tr>
+              <td>Frontend developers</td>
+              <td><code>project-frontend</code></td>
+              <td><code>project-docs</code>, <code>company-handbook</code></td>
+            </tr>
+            <tr>
+              <td>Ops</td>
+              <td><code>project-infra</code></td>
+              <td><code>project-docs</code>, <code>company-handbook</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="ingestion">
+        <h2>9. Индексация существующего кода и документов</h2>
+        <h3>Индексировать workspace</h3>
+        <pre><code>workspace_index(root="/srv/repos/backend", dataset_id="project-backend")
+workspace_index(root="/srv/repos/frontend", dataset_id="project-frontend")</code></pre>
+
+        <h3>Добавить документы</h3>
+        <p>Рекомендуемые источники:</p>
+        <ul>
+          <li><code>README.md</code></li>
+          <li><code>AGENTS.md</code></li>
+          <li><code>CLAUDE.md</code></li>
+          <li><code>docs/architecture.md</code></li>
+          <li><code>docs/decisions.md</code></li>
+          <li><code>docs/runbooks.md</code></li>
+          <li>ADR и migration notes</li>
+        </ul>
+
+        <h3>Запустить cognify</h3>
+        <pre><code>cognify(collection="project-docs", dataset_id="project-docs")</code></pre>
+        <p>После этого Levara:</p>
+        <ul>
+          <li>разбивает документы на chunks;</li>
+          <li>извлекает сущности;</li>
+          <li>строит SQL graph;</li>
+          <li>перестраивает VSA индекс;</li>
+          <li>делает graph-aware RAG доступным для Codex.</li>
+        </ul>
+      </section>
+
+      <section id="daily-work">
+        <h2>10. Ежедневная работа</h2>
+        <h3>В начале дня</h3>
+        <pre><code>Восстанови контекст проекта через Levara и покажи последние важные решения.</code></pre>
+        <p>Агент обычно выполнит:</p>
+        <pre><code>set_context(collection="project-docs")
+wake_up(max_tokens=500)
+recall_memory(query="recent architecture decisions", hall="decision")</code></pre>
+
+        <h3>Перед изменением кода</h3>
+        <pre><code>Что нужно знать перед изменением sync?</code></pre>
+        <p>Levara может вернуть связанные memories, документы, graph entities и workspace results.</p>
+
+        <h3>После дебага</h3>
+        <pre><code>save_memory(
+  room="workspace",
+  hall="discovery",
+  value="2026-06-17 workspace indexing failed on stale artifact manifests; fix is to reindex artifacts before retrying failed jobs."
+)</code></pre>
+
+        <h3>После архитектурного решения</h3>
+        <pre><code>save_memory(
+  room="graph",
+  hall="decision",
+  value="2026-06-17 chose SQL graph over mandatory Neo4j because deployment must work locally and on small servers with fewer dependencies."
+)</code></pre>
+      </section>
+
+      <section id="rag">
+        <h2>11. Как работает RAG в Levara</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Сигнал</th>
+              <th>Для чего нужен</th>
+              <th>Пример вопроса</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Vector search</td>
+              <td>Семантически похожие chunks.</td>
+              <td>“Где обсуждалась эта идея?”</td>
+            </tr>
+            <tr>
+              <td>BM25</td>
+              <td>Точные совпадения и ключевые слова.</td>
+              <td>“Где используется LEV_DB_PROVIDER?”</td>
+            </tr>
+            <tr>
+              <td>SQL graph</td>
+              <td>Связи между сущностями.</td>
+              <td>“Что связано с SQLite?”</td>
+            </tr>
+            <tr>
+              <td>VSA</td>
+              <td>Быстрый поиск вероятных graph facts.</td>
+              <td>“Какие отношения есть у этой сущности?”</td>
+            </tr>
+            <tr>
+              <td>Memory palace</td>
+              <td>Решения, открытия, советы и preferences.</td>
+              <td>“Что мы решили раньше?”</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="note success">
+          Пользователь не обязан понимать VSA. Достаточно знать, что Levara лучше ищет связи и быстрее
+          восстанавливает контекст проекта.
+        </div>
+      </section>
+
+      <section id="memory">
+        <h2>12. Memory practices</h2>
+        <h3>Всегда указывать <code>room</code> и <code>hall</code></h3>
+        <p>Плохо:</p>
+        <pre><code>save_memory(value="SQLite лучше")</code></pre>
+        <p>Хорошо:</p>
+        <pre><code>save_memory(
+  room="storage",
+  hall="decision",
+  value="2026-06-17 chose SQLite for local-first deployments because it removes external DB dependency for solo users."
+)</code></pre>
+
+        <h3>Hall vocabulary</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Hall</th>
+              <th>Когда использовать</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td><code>fact</code></td><td>Стабильное объективное свойство.</td></tr>
+            <tr><td><code>decision</code></td><td>Архитектурное или проектное решение и причина.</td></tr>
+            <tr><td><code>discovery</code></td><td>Root cause, bug, gotcha или важное наблюдение.</td></tr>
+            <tr><td><code>advice</code></td><td>Повторно применимое практическое правило.</td></tr>
+            <tr><td><code>preference</code></td><td>Пользовательское предпочтение.</td></tr>
+            <tr><td><code>event</code></td><td>Событие с абсолютной датой.</td></tr>
+          </tbody>
+        </table>
+
+        <div class="note warning">
+          Не сохраняйте в memory секреты, большие куски кода, git history и пути файлов.
+          Для этого есть repository, workspace search и git.
+        </div>
+      </section>
+
+      <section id="admin">
+        <h2>13. Администрирование</h2>
+        <h3>Health</h3>
+        <pre><code>curl http://localhost:8080/health</code></pre>
+
+        <h3>Операционные MCP tools</h3>
+        <pre><code>ingestion_status
+recent_errors
+runtime_stats
+check_drift
+sync_status
+workspace_index_jobs</code></pre>
+
+        <h3>Проверка VSA вручную</h3>
+        <pre><code>curl -X POST http://localhost:8080/api/v1/vsa/rebuild \
+  -H "Content-Type: application/json" \
+  -d '{"dataset_id":"project-docs"}'</code></pre>
+        <pre><code>curl "http://localhost:8080/api/v1/vsa/query?dataset_id=project-docs&source_id=node-123&predicate=depends_on&top_k=5"</code></pre>
+      </section>
+
+      <section id="monitoring">
+        <h2>14. Мониторинг</h2>
+        <h3>Что мониторить</h3>
+        <div class="grid">
+          <div class="card">
+            <h3>API</h3>
+            <ul>
+              <li>health;</li>
+              <li>latency;</li>
+              <li>5xx errors;</li>
+              <li>auth failures.</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>Ingestion</h3>
+            <ul>
+              <li>pending jobs;</li>
+              <li>failed jobs;</li>
+              <li>retries;</li>
+              <li>processing time.</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>Search</h3>
+            <ul>
+              <li>latency;</li>
+              <li>zero-result rate;</li>
+              <li>confidence;</li>
+              <li>abstain rate.</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>Graph и VSA</h3>
+            <ul>
+              <li>graph nodes;</li>
+              <li>graph edges;</li>
+              <li>VSA shards;</li>
+              <li>VSA rebuild errors.</li>
+            </ul>
+          </div>
+        </div>
+
+        <h3>Пример operational dashboard</h3>
+        <pre><code>Levara API
+- health: ok
+- uptime: 7d
+- p95 latency: 80ms
+- 5xx rate: 0.1%
+
+Ingestion
+- pending jobs: 2
+- failed jobs: 0
+- last successful index: 2026-06-17 09:20
+
+Search
+- searches today: 814
+- zero-result rate: 4.2%
+- average confidence: 0.78
+- abstain rate: 7%
+
+Graph
+- nodes: 42,183
+- edges: 118,441
+- datasets: 12
+- temporal superseded edges: 3,912
+
+VSA
+- shards: 9,840
+- members: 118,441
+- last rebuild: 2026-06-17 09:21
+- rebuild errors: 0</code></pre>
+      </section>
+
+      <section id="backup">
+        <h2>15. Backup и sync</h2>
+        <h3>SQLite backup</h3>
+        <pre><code>sqlite3 levara.db ".backup levara-backup-$(date +%F).db"</code></pre>
+
+        <h3>Postgres backup</h3>
+        <pre><code>pg_dump "$POSTGRES_DSN" &gt; levara-$(date +%F).sql</code></pre>
+
+        <h3>Что важно сохранять</h3>
+        <ul>
+          <li><code>graph_nodes</code> и <code>graph_edges</code>;</li>
+          <li><code>memories</code>;</li>
+          <li><code>data</code> и <code>dataset_data</code>;</li>
+          <li>raw documents и storage;</li>
+          <li>vector collections, если их нельзя быстро пересоздать.</li>
+        </ul>
+        <p>
+          VSA можно перестроить из SQL graph, поэтому он важен для скорости, но не является самым критичным
+          источником истины.
+        </p>
+
+        <h3>Sync</h3>
+        <pre><code>sync(
+  remote_url="http://server:8080/api/v1",
+  direction="pull"
+)</code></pre>
+      </section>
+
+      <section id="security">
+        <h2>16. Безопасность</h2>
+        <h3>Рекомендации</h3>
+        <ul>
+          <li>Включить auth для командного сервера.</li>
+          <li>Использовать dataset-level access.</li>
+          <li>Разделять customer/project datasets.</li>
+          <li>Не давать всем write-доступ к общим memories.</li>
+          <li>Логировать MCP tool calls.</li>
+          <li>Не сохранять секреты в memory.</li>
+          <li>Не индексировать private keys, tokens и <code>.env</code>.</li>
+        </ul>
+
+        <h3>Рекомендуемый denylist</h3>
+        <pre><code>.env
+.env.*
+*.pem
+*.key
+id_rsa
+id_ed25519
+node_modules/
+dist/
+build/
+target/
+vendor/
+.git/</code></pre>
+      </section>
+
+      <section id="scenarios">
+        <h2>17. Практические сценарии пользы</h2>
+        <div class="grid">
+          <div class="card">
+            <h3>Новый разработчик</h3>
+            <p>Просит Levara объяснить архитектуру проекта, ключевые решения и связанные документы.</p>
+            <p><strong>Бонус:</strong> onboarding быстрее, меньше нагрузки на старших разработчиков.</p>
+          </div>
+          <div class="card">
+            <h3>Возврат через месяц</h3>
+            <p>Codex восстанавливает контекст: что делали по VSA, SQL graph и отказу от Neo4j.</p>
+            <p><strong>Бонус:</strong> меньше времени на восстановление истории.</p>
+          </div>
+          <div class="card">
+            <h3>Архитектурное изменение</h3>
+            <p>Levara показывает связанные решения, риски, файлы и graph dependencies.</p>
+            <p><strong>Бонус:</strong> решения принимаются на базе фактов.</p>
+          </div>
+          <div class="card">
+            <h3>Production incident</h3>
+            <p>Агент ищет previous discoveries, runbooks, recent errors и sync status.</p>
+            <p><strong>Бонус:</strong> быстрее root cause analysis.</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="prompts">
+        <h2>18. Готовые prompts</h2>
+        <h3>Начать работу</h3>
+        <pre><code>Используй Levara, восстанови контекст проекта и покажи 5 самых важных решений.</code></pre>
+
+        <h3>Найти архитектурное решение</h3>
+        <pre><code>Найди, что мы решили по SQL graph, VSA и отказу от Neo4j. Дай краткое резюме и риски.</code></pre>
+
+        <h3>Подготовиться к задаче</h3>
+        <pre><code>Перед тем как менять workspace indexing, найди связанные memories, документы, graph entities и прошлые баги.</code></pre>
+
+        <h3>После дебага</h3>
+        <pre><code>Сохрани root cause и reusable advice в Levara memory.</code></pre>
+
+        <h3>Перед PR</h3>
+        <pre><code>Проверь изменения с учетом проектных decisions, tests и связанных документов в Levara.</code></pre>
+
+        <h3>Для администратора</h3>
+        <pre><code>Проверь состояние Levara: ingestion, sync, recent errors, graph, VSA и workspace jobs.</code></pre>
+      </section>
+
+      <section id="checklists">
+        <h2>19. Checklist внедрения</h2>
+        <div class="grid">
+          <div class="card">
+            <h3>Solo</h3>
+            <ul>
+              <li>Собрать Levara.</li>
+              <li>Запустить с SQLite.</li>
+              <li>Подключить MCP к Codex.</li>
+              <li>Проиндексировать workspace.</li>
+              <li>Добавить docs.</li>
+              <li>Запустить cognify.</li>
+              <li>Сохранить первые decisions.</li>
+              <li>Проверить wake_up.</li>
+              <li>Проверить search.</li>
+              <li>Проверить graph-aware вопросы.</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>Team</h3>
+            <ul>
+              <li>Выбрать SQLite или Postgres.</li>
+              <li>Развернуть Levara server.</li>
+              <li>Настроить auth.</li>
+              <li>Создать datasets.</li>
+              <li>Настроить RBAC/sharing.</li>
+              <li>Индексировать repos.</li>
+              <li>Индексировать docs.</li>
+              <li>Запустить cognify.</li>
+              <li>Проверить SQL graph.</li>
+              <li>Проверить VSA rebuild.</li>
+              <li>Подключить MCP clients.</li>
+              <li>Настроить monitoring.</li>
+              <li>Настроить backup.</li>
+              <li>Описать memory policy для команды.</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="note success">
+          Главное сообщение для пользователей: Levara делает AI-агента полезнее не потому, что добавляет
+          еще один поиск, а потому что дает ему долговременную проектную память: решения, причины,
+          документы, связи, актуальные факты и прошлые открытия.
+        </div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

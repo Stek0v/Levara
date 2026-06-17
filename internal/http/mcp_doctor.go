@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/stek0v/levara/pkg/embcontract"
 	"github.com/stek0v/levara/pkg/graphdb"
 )
 
@@ -723,6 +724,11 @@ func (h *mcpHandler) checkEmbeddingDriftAssertion(ctx context.Context) doctorChe
 			Message: "Cannot check drift — EMBED_MODEL is empty",
 		}
 	}
+	currentContract := embcontract.FromEnv(currentModel, h.cfg.Collections.DefaultDim(), "cosine").Normalized()
+	currentVersion := ""
+	if !currentContract.Empty() {
+		currentVersion = currentContract.Fingerprint()
+	}
 
 	drifted := []string{}
 	for _, name := range h.ListCollections() {
@@ -734,6 +740,10 @@ func (h *mcpHandler) checkEmbeddingDriftAssertion(ctx context.Context) doctorChe
 		meta := h.CollectionMeta(name)
 		if meta.EmbedModel != "" && meta.EmbedModel != currentModel {
 			drifted = append(drifted, fmt.Sprintf("%s (was %s)", name, meta.EmbedModel))
+			continue
+		}
+		if meta.EmbedVersion != "" && currentVersion != "" && meta.EmbedVersion != currentVersion {
+			drifted = append(drifted, fmt.Sprintf("%s (embedding_version %s)", name, meta.EmbedVersion))
 		}
 	}
 

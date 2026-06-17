@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-06-05T23:14:08+03:00",
-  "git_rev": "b507188f10ec0963597ceb57e5a778085657de5c",
+  "generated_at": "2026-06-17T09:14:10+03:00",
+  "git_rev": "680543dcccc57d77560732167cfe6c9795ff5144",
   "rest": [
     {
       "method": "POST",
@@ -19,6 +19,24 @@
       "path": "/add",
       "status": "canonical",
       "group": "ingest"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/mcp/sessions",
+      "status": "canonical",
+      "group": "admin"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/mcp/summary",
+      "status": "canonical",
+      "group": "admin"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/mcp/tools",
+      "status": "canonical",
+      "group": "admin"
     },
     {
       "method": "POST",
@@ -163,6 +181,30 @@
       "path": "/delete",
       "status": "legacy_compat",
       "group": "vector"
+    },
+    {
+      "method": "POST",
+      "path": "/embedding-migrations",
+      "status": "canonical",
+      "group": "collections"
+    },
+    {
+      "method": "POST",
+      "path": "/embedding-migrations/:runId/retry",
+      "status": "canonical",
+      "group": "collections"
+    },
+    {
+      "method": "GET",
+      "path": "/embedding-migrations/:runId/status",
+      "status": "canonical",
+      "group": "collections"
+    },
+    {
+      "method": "POST",
+      "path": "/embedding-migrations/shadow-read",
+      "status": "canonical",
+      "group": "collections"
     },
     {
       "method": "GET",
@@ -483,6 +525,18 @@
       "group": "sync"
     },
     {
+      "method": "POST",
+      "path": "/sync/run",
+      "status": "canonical",
+      "group": "sync"
+    },
+    {
+      "method": "GET",
+      "path": "/sync/status",
+      "status": "canonical",
+      "group": "sync"
+    },
+    {
       "method": "GET",
       "path": "/tenants",
       "status": "canonical",
@@ -541,6 +595,24 @@
       "path": "/users/me/password",
       "status": "canonical",
       "group": "users"
+    },
+    {
+      "method": "GET",
+      "path": "/vsa/query",
+      "status": "canonical",
+      "group": "vsa"
+    },
+    {
+      "method": "POST",
+      "path": "/vsa/rebuild",
+      "status": "canonical",
+      "group": "vsa"
+    },
+    {
+      "method": "GET",
+      "path": "/vsa/status",
+      "status": "canonical",
+      "group": "vsa"
     },
     {
       "method": "POST",
@@ -671,6 +743,12 @@
     {
       "method": "POST",
       "path": "/workspace/runs/start",
+      "status": "canonical",
+      "group": "workspace"
+    },
+    {
+      "method": "POST",
+      "path": "/workspace/search",
       "status": "canonical",
       "group": "workspace"
     },
@@ -1499,6 +1577,16 @@
     },
     {
       "provider": "postgres",
+      "kind": "index",
+      "name": "idx_vsa_members_lookup"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_vsa_shards_predicate"
+    },
+    {
+      "provider": "postgres",
       "kind": "table",
       "name": "acl"
     },
@@ -1621,6 +1709,16 @@
       "provider": "postgres",
       "kind": "table",
       "name": "users"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "vsa_fact_members"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "vsa_fact_shards"
     },
     {
       "provider": "sqlite",
@@ -1859,6 +1957,16 @@
     },
     {
       "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_vsa_members_lookup"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_vsa_shards_predicate"
+    },
+    {
+      "provider": "sqlite",
       "kind": "table",
       "name": "acl"
     },
@@ -1981,6 +2089,16 @@
       "provider": "sqlite",
       "kind": "table",
       "name": "users"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "vsa_fact_members"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "vsa_fact_shards"
     }
   ]
 }

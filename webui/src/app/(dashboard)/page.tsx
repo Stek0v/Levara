@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { useInfo, useDatasets, useCollections } from '@/hooks/use-levara'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -49,18 +50,18 @@ export default function DashboardPage() {
       </div>
       <h2 className="text-lg font-semibold mb-3">Quick Actions</h2>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <a href="/datasets" className="flex items-center gap-3 p-4 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 hover:border-blue-300 dark:hover:border-blue-700 transition-colors">
+        <Link href="/datasets" className="flex items-center gap-3 p-4 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 hover:border-blue-300 dark:hover:border-blue-700 transition-colors">
           <Database className="h-8 w-8 text-blue-600" />
           <div><p className="font-medium">Upload Data</p><p className="text-sm text-gray-500">Drag & drop files to get started</p></div>
-        </a>
-        <a href="/search" className="flex items-center gap-3 p-4 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 hover:border-blue-300 dark:hover:border-blue-700 transition-colors">
+        </Link>
+        <Link href="/search" className="flex items-center gap-3 p-4 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 hover:border-blue-300 dark:hover:border-blue-700 transition-colors">
           <Search className="h-8 w-8 text-green-600" />
           <div><p className="font-medium">Search</p><p className="text-sm text-gray-500">Dense, Sparse, or Hybrid</p></div>
-        </a>
-        <a href="/chat" className="flex items-center gap-3 p-4 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 hover:border-blue-300 dark:hover:border-blue-700 transition-colors">
+        </Link>
+        <Link href="/chat" className="flex items-center gap-3 p-4 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 hover:border-blue-300 dark:hover:border-blue-700 transition-colors">
           <Brain className="h-8 w-8 text-purple-600" />
           <div><p className="font-medium">Chat (RAG)</p><p className="text-sm text-gray-500">Ask questions with AI answers</p></div>
-        </a>
+        </Link>
       </div>
     </div>
   )

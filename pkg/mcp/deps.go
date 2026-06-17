@@ -141,9 +141,10 @@ type LexicalResult struct {
 
 // CollectionInfo is observable collection metadata without internal pointers.
 type CollectionInfo struct {
-	Name       string
-	Records    int
-	Dim        int
-	Metric     string
-	EmbedModel string
+	Name         string
+	Records      int
+	Dim          int
+	Metric       string
+	EmbedModel   string
+	EmbedVersion string
 }

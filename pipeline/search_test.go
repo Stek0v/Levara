@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"errors"
 	"fmt"
 	"math/rand"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/stek0v/levara/internal/store"
+	"github.com/stek0v/levara/pkg/embcontract"
 	"github.com/stek0v/levara/pkg/embed"
 )
 
@@ -121,6 +123,23 @@ func TestSearchNonExistentCollection(t *testing.T) {
 	_, err := p.SearchByVector("nonexistent", randomVec(dim), 10)
 	if err == nil {
 		t.Fatal("Expected error for non-existent collection")
+	}
+}
+
+func TestSearchByTextRejectsQueryEmbeddingContractMismatch(t *testing.T) {
+	dim := 64
+	p, cm, cleanup := setupTestPipeline(t, dim)
+	defer cleanup()
+
+	indexContract := embcontract.Contract{Encoder: "index-encoder", Tokenizer: "tok-a", Pooling: "mean", Normalization: "l2", Dim: dim, Metric: "cosine"}
+	cm.SetDefaultEmbeddingContract(indexContract)
+	if err := cm.CreateWithDim("docs", dim, "index-encoder", "cosine"); err != nil {
+		t.Fatalf("CreateWithDim: %v", err)
+	}
+
+	err := p.validateQueryContract("docs", dim)
+	if !errors.Is(err, store.ErrEmbeddingContractMismatch) {
+		t.Fatalf("validateQueryContract error=%v, want ErrEmbeddingContractMismatch", err)
 	}
 }
 

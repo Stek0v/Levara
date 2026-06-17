@@ -30,8 +30,25 @@ type vsaQueryResponse struct {
 }
 
 func RegisterVSAAPI(app fiber.Router, cfg APIConfig) {
+	app.Get("/vsa/status", vsaStatusHandler(cfg))
 	app.Post("/vsa/rebuild", vsaRebuildHandler(cfg))
 	app.Get("/vsa/query", vsaQueryHandler(cfg))
+}
+
+func vsaStatusHandler(cfg APIConfig) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		if cfg.DB == nil {
+			return c.JSON(fiber.Map{
+				"available": false,
+				"reason":    "sql graph store unavailable",
+			})
+		}
+		stats, err := vsaStoreForDB(cfg.DB, 0, 0).Stats(c.Context())
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		}
+		return c.JSON(stats)
+	}
 }
 
 func vsaRebuildHandler(cfg APIConfig) fiber.Handler {

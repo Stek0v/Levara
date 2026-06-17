@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/stek0v/levara/pkg/embcontract"
 )
 
 // ErrDimMismatch is returned by Search when the query vector's dimension
@@ -18,18 +20,30 @@ import (
 // and surface it instead of degrading to a silent empty result.
 var ErrDimMismatch = errors.New("query dimension mismatch")
 
+// ErrEmbeddingContractMismatch is returned when a write carries an embedding
+// version that differs from the target collection's vector-space contract.
+var ErrEmbeddingContractMismatch = errors.New("embedding contract mismatch")
+
+const (
+	EmbeddingVersionMetaKey  = embcontract.MetadataVersionKey
+	EmbeddingContractMetaKey = embcontract.MetadataContractKey
+)
+
+type EmbeddingContract = embcontract.Contract
+
 // CollectionMeta stores metadata about a collection's embedding configuration.
 // Persisted as collection_meta.json in each collection directory.
 type CollectionMeta struct {
-	Name             string `json:"name"`
-	EmbeddingModel   string `json:"embedding_model"`
-	EmbeddingDim     int    `json:"embedding_dim"`
-	DistanceMetric   string `json:"distance_metric"` // cosine, l2, dot
-	EmbeddingVersion string `json:"embedding_version,omitempty"`
-	Domain           string `json:"domain,omitempty"` // optional domain tag for routing (e.g., "medical", "scientific", "legal")
-	RecordCount      int    `json:"record_count"`
-	CreatedAt        string `json:"created_at"`
-	UpdatedAt        string `json:"updated_at"`
+	Name              string             `json:"name"`
+	EmbeddingModel    string             `json:"embedding_model"`
+	EmbeddingDim      int                `json:"embedding_dim"`
+	DistanceMetric    string             `json:"distance_metric"` // cosine, l2, dot
+	EmbeddingVersion  string             `json:"embedding_version,omitempty"`
+	EmbeddingContract *EmbeddingContract `json:"embedding_contract,omitempty"`
+	Domain            string             `json:"domain,omitempty"` // optional domain tag for routing (e.g., "medical", "scientific", "legal")
+	RecordCount       int                `json:"record_count"`
+	CreatedAt         string             `json:"created_at"`
+	UpdatedAt         string             `json:"updated_at"`
 }
 
 const collectionMetaFile = "collection_meta.json"
@@ -68,7 +82,8 @@ type CollectionManager struct {
 	// defaultModel is stamped onto collections auto-created via the lazy
 	// Insert -> getOrCreate path so they don't end up with an empty
 	// embedding_model (findings P2.1). Set from the server's EMBEDDING_MODEL.
-	defaultModel string
+	defaultModel    string
+	defaultContract EmbeddingContract
 }
 
 // NewCollectionManager creates a manager for named collections.
@@ -128,6 +143,8 @@ func NewCollectionManager(dim int, basePath string, cfg ...HNSWConfig) (*Collect
 					CreatedAt:      time.Now().UTC().Format(time.RFC3339),
 				}
 				_ = saveCollectionMeta(colDir, meta)
+			} else {
+				ensureCollectionContract(meta)
 			}
 			meta.RecordCount = len(db.index)
 			cm.metas[name] = meta
@@ -181,6 +198,14 @@ func (cm *CollectionManager) SetDefaultModel(model string) {
 	cm.mu.Unlock()
 }
 
+// SetDefaultEmbeddingContract sets the vector-space contract stamped onto
+// lazily-created collections and records.
+func (cm *CollectionManager) SetDefaultEmbeddingContract(contract EmbeddingContract) {
+	cm.mu.Lock()
+	cm.defaultContract = contract.Normalized()
+	cm.mu.Unlock()
+}
+
 // Create creates a new collection. Returns error if it already exists.
 // It stamps the manager's configured default embedding model so lazily
 // auto-created collections don't end up with empty embedder metadata (P2.1).
@@ -225,12 +250,21 @@ func (cm *CollectionManager) CreateWithDim(name string, dim int, embeddingModel,
 	if distanceMetric == "" {
 		distanceMetric = "cosine"
 	}
+	contract := cm.defaultContract
+	if contract.Empty() || contract.Encoder != embeddingModel || contract.Dim != dim || contract.Metric != strings.ToLower(distanceMetric) {
+		contract = embcontract.FromEnv(embeddingModel, dim, distanceMetric)
+	}
+	contract = contract.Normalized()
 	meta := &CollectionMeta{
 		Name:           name,
 		EmbeddingModel: embeddingModel,
 		EmbeddingDim:   dim,
 		DistanceMetric: distanceMetric,
 		CreatedAt:      time.Now().UTC().Format(time.RFC3339),
+	}
+	if !contract.Empty() {
+		meta.EmbeddingVersion = contract.Fingerprint()
+		meta.EmbeddingContract = &contract
 	}
 	_ = saveCollectionMeta(colDir, meta)
 	cm.metas[name] = meta
@@ -459,11 +493,20 @@ func (cm *CollectionManager) DefaultDim() int {
 func (cm *CollectionManager) Insert(collection, id string, vec []float32, meta interface{}) error {
 	// Pre-check dimension against collection metadata
 	cm.mu.RLock()
-	if m, ok := cm.metas[collection]; ok && m.EmbeddingDim > 0 && len(vec) != m.EmbeddingDim {
+	m := cm.metas[collection]
+	if m == nil {
+		m = cm.defaultMetaForVectorLocked(collection, len(vec))
+	}
+	if m != nil && m.EmbeddingDim > 0 && len(vec) != m.EmbeddingDim {
 		cm.mu.RUnlock()
 		return fmt.Errorf("dimension mismatch: vector dim=%d, collection %q expects dim=%d (model=%s)",
 			len(vec), collection, m.EmbeddingDim, m.EmbeddingModel)
 	}
+	if err := validateEmbeddingContract(collection, m, meta); err != nil {
+		cm.mu.RUnlock()
+		return err
+	}
+	meta = stampEmbeddingMetadata(m, meta)
 	cm.mu.RUnlock()
 
 	db, err := cm.getOrCreate(collection)
@@ -479,6 +522,27 @@ func (cm *CollectionManager) Insert(collection, id string, vec []float32, meta i
 
 // BatchInsert inserts records into a collection (auto-creates if not exists).
 func (cm *CollectionManager) BatchInsert(collection string, records []BatchItem) []error {
+	cm.mu.RLock()
+	m := cm.metas[collection]
+	if m == nil && len(records) > 0 {
+		m = cm.defaultMetaForVectorLocked(collection, len(records[0].Vector))
+	}
+	for _, r := range records {
+		if m != nil && m.EmbeddingDim > 0 && len(r.Vector) != m.EmbeddingDim {
+			cm.mu.RUnlock()
+			return []error{fmt.Errorf("dimension mismatch: vector dim=%d, collection %q expects dim=%d (model=%s)",
+				len(r.Vector), collection, m.EmbeddingDim, m.EmbeddingModel)}
+		}
+		if err := validateEmbeddingContract(collection, m, r.Data); err != nil {
+			cm.mu.RUnlock()
+			return []error{err}
+		}
+	}
+	for i := range records {
+		records[i].Data = stampEmbeddingMetadata(m, records[i].Data)
+	}
+	cm.mu.RUnlock()
+
 	db, err := cm.getOrCreate(collection)
 	if err != nil {
 		return []error{err}
@@ -599,8 +663,89 @@ func (cm *CollectionManager) UpdateMeta(name string, model, distanceMetric, vers
 	if version != "" {
 		meta.EmbeddingVersion = version
 	}
+	ensureCollectionContract(meta)
 	colDir := filepath.Join(cm.basePath, name)
 	return saveCollectionMeta(colDir, meta)
+}
+
+// UpdateEmbeddingContract replaces the stored vector-space contract for a
+// collection after a successful re-embed or explicit operator metadata update.
+func (cm *CollectionManager) UpdateEmbeddingContract(name string, contract EmbeddingContract) error {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+
+	meta, ok := cm.metas[name]
+	if !ok {
+		return fmt.Errorf("collection %q not found", name)
+	}
+	contract = contract.Normalized()
+	meta.EmbeddingModel = contract.Encoder
+	meta.EmbeddingDim = contract.Dim
+	meta.DistanceMetric = contract.Metric
+	meta.EmbeddingVersion = contract.Fingerprint()
+	meta.EmbeddingContract = &contract
+	colDir := filepath.Join(cm.basePath, name)
+	return saveCollectionMeta(colDir, meta)
+}
+
+func ensureCollectionContract(meta *CollectionMeta) {
+	if meta == nil {
+		return
+	}
+	if meta.DistanceMetric == "" {
+		meta.DistanceMetric = "cosine"
+	}
+	contract := embcontract.FromEnv(meta.EmbeddingModel, meta.EmbeddingDim, meta.DistanceMetric).Normalized()
+	if contract.Empty() {
+		return
+	}
+	if meta.EmbeddingContract == nil {
+		meta.EmbeddingContract = &contract
+	}
+	if meta.EmbeddingVersion == "" {
+		meta.EmbeddingVersion = meta.EmbeddingContract.Fingerprint()
+	}
+}
+
+func validateEmbeddingContract(collection string, meta *CollectionMeta, recordMeta any) error {
+	if meta == nil || meta.EmbeddingVersion == "" {
+		return nil
+	}
+	incoming := embcontract.VersionFromMetadata(recordMeta)
+	if incoming == "" || incoming == meta.EmbeddingVersion {
+		return nil
+	}
+	return fmt.Errorf("%w: collection %q expects %s, record has %s", ErrEmbeddingContractMismatch, collection, meta.EmbeddingVersion, incoming)
+}
+
+func stampEmbeddingMetadata(meta *CollectionMeta, recordMeta any) any {
+	if meta == nil || meta.EmbeddingVersion == "" || meta.EmbeddingContract == nil {
+		return recordMeta
+	}
+	if embcontract.VersionFromMetadata(recordMeta) != "" {
+		return recordMeta
+	}
+	return embcontract.StampMetadata(recordMeta, *meta.EmbeddingContract)
+}
+
+func (cm *CollectionManager) defaultMetaForVectorLocked(collection string, dim int) *CollectionMeta {
+	contract := cm.defaultContract
+	if contract.Empty() {
+		contract = embcontract.FromEnv(cm.defaultModel, dim, "cosine")
+	}
+	contract.Dim = dim
+	contract = contract.Normalized()
+	if contract.Empty() {
+		return nil
+	}
+	return &CollectionMeta{
+		Name:              collection,
+		EmbeddingModel:    contract.Encoder,
+		EmbeddingDim:      dim,
+		DistanceMetric:    contract.Metric,
+		EmbeddingVersion:  contract.Fingerprint(),
+		EmbeddingContract: &contract,
+	}
 }
 
 // AllRecords returns all (id, vector, metadata) from a collection. Used for re-embedding.

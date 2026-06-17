@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/stek0v/levara/pkg/embcontract"
 )
 
 func collectionCreateHandler(cfg APIConfig) fiber.Handler {
@@ -13,16 +14,33 @@ func collectionCreateHandler(cfg APIConfig) fiber.Handler {
 			return c.Status(503).JSON(fiber.Map{"detail": "collections not configured"})
 		}
 		var req struct {
-			Name           string `json:"name"`
-			EmbeddingModel string `json:"embedding_model"`
-			EmbeddingDim   int    `json:"embedding_dim"`
-			DistanceMetric string `json:"distance_metric"`
+			Name               string `json:"name"`
+			EmbeddingModel     string `json:"embedding_model"`
+			EmbeddingDim       int    `json:"embedding_dim"`
+			DistanceMetric     string `json:"distance_metric"`
+			EmbeddingTokenizer string `json:"embedding_tokenizer"`
+			EmbeddingPooling   string `json:"embedding_pooling"`
+			EmbeddingNormalize string `json:"embedding_normalization"`
+			EmbeddingVersion   string `json:"embedding_version"`
 		}
 		if err := c.BodyParser(&req); err != nil || req.Name == "" {
 			return c.Status(400).JSON(fiber.Map{"detail": "name required"})
 		}
 		if err := cfg.Collections.CreateWithDim(req.Name, req.EmbeddingDim, req.EmbeddingModel, req.DistanceMetric); err != nil {
 			return c.Status(500).JSON(fiber.Map{"detail": err.Error()})
+		}
+		if req.EmbeddingVersion != "" || req.EmbeddingTokenizer != "" || req.EmbeddingPooling != "" || req.EmbeddingNormalize != "" {
+			contract := embcontract.Contract{
+				Encoder:       req.EmbeddingModel,
+				Tokenizer:     req.EmbeddingTokenizer,
+				Pooling:       req.EmbeddingPooling,
+				Normalization: req.EmbeddingNormalize,
+				Dim:           req.EmbeddingDim,
+				Metric:        req.DistanceMetric,
+			}
+			if err := cfg.Collections.UpdateEmbeddingContract(req.Name, contract); err != nil {
+				return c.Status(500).JSON(fiber.Map{"detail": err.Error()})
+			}
 		}
 		return c.Status(201).JSON(cfg.Collections.GetMeta(req.Name))
 	}
@@ -123,14 +141,33 @@ func collectionMetaUpdateHandler(cfg APIConfig) fiber.Handler {
 		}
 
 		var req struct {
-			EmbeddingModel   string `json:"embedding_model"`
-			DistanceMetric   string `json:"distance_metric"`
-			EmbeddingVersion string `json:"embedding_version"`
+			EmbeddingModel         string `json:"embedding_model"`
+			DistanceMetric         string `json:"distance_metric"`
+			EmbeddingVersion       string `json:"embedding_version"`
+			EmbeddingTokenizer     string `json:"embedding_tokenizer"`
+			EmbeddingPooling       string `json:"embedding_pooling"`
+			EmbeddingNormalization string `json:"embedding_normalization"`
 		}
 		c.BodyParser(&req)
 
 		if err := cfg.Collections.UpdateMeta(name, req.EmbeddingModel, req.DistanceMetric, req.EmbeddingVersion); err != nil {
 			return c.Status(404).JSON(fiber.Map{"detail": err.Error()})
+		}
+		if req.EmbeddingTokenizer != "" || req.EmbeddingPooling != "" || req.EmbeddingNormalization != "" {
+			meta := cfg.Collections.GetMeta(name)
+			if meta != nil {
+				contract := embcontract.Contract{
+					Encoder:       firstNonEmpty(req.EmbeddingModel, meta.EmbeddingModel),
+					Tokenizer:     req.EmbeddingTokenizer,
+					Pooling:       req.EmbeddingPooling,
+					Normalization: req.EmbeddingNormalization,
+					Dim:           meta.EmbeddingDim,
+					Metric:        firstNonEmpty(req.DistanceMetric, meta.DistanceMetric),
+				}
+				if err := cfg.Collections.UpdateEmbeddingContract(name, contract); err != nil {
+					return c.Status(404).JSON(fiber.Map{"detail": err.Error()})
+				}
+			}
 		}
 
 		return c.JSON(cfg.Collections.GetMeta(name))

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, startTransition } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import { levara, ApiError } from '@/lib/api'
 
@@ -28,7 +28,7 @@ export function useAuthGuard(): { checked: boolean } {
     // Don't probe on the login page itself — a 401 there would be normal
     // (user is logging in) and would create a redirect loop.
     if (pathname?.startsWith('/login')) {
-      setChecked(true)
+      startTransition(() => setChecked(true))
       return
     }
 

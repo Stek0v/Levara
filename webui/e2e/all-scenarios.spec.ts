@@ -63,7 +63,7 @@ test.describe('C. Datasets', () => {
     await expect(page.getByRole('heading', { name: 'Datasets' })).toBeVisible({ timeout: 10000 })
   })
 
-  test('C2. Upload file via API', async ({ page }) => {
+  test('C2. Upload file via API', async ({}) => {
     const p = path.join('/tmp', 'e2e_test.txt')
     fs.writeFileSync(p, 'E2E test document about climate change.')
     const form = new FormData()

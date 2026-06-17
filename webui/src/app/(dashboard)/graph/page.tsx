@@ -1,12 +1,13 @@
 'use client'
 
 import { useState, useEffect, useRef, useMemo } from 'react'
-import { useDatasets, useDatasetGraph } from '@/hooks/use-levara'
+import { useDatasets, useDatasetGraph, useGraphPath, useHealthDetails, useVSAStatus } from '@/hooks/use-levara'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Share2 } from 'lucide-react'
+import { Route, Search, Share2 } from 'lucide-react'
 import * as d3 from 'd3'
 import type { GraphNode, GraphEdge } from '@/lib/api'
 
@@ -14,7 +15,6 @@ import type { GraphNode, GraphEdge } from '@/lib/api'
 // canonical shape from @/lib/api. Before T7 this file redefined GNode
 // inline and pulled the data via raw fetch().
 type GNode = GraphNode
-type GEdge = GraphEdge
 interface SimNode extends d3.SimulationNodeDatum, GNode {}
 interface SimLink extends d3.SimulationLinkDatum<SimNode> { label: string }
 
@@ -23,23 +23,63 @@ const COLORS: Record<string, string> = {
   Entity: '#8b5cf6', TemporalEvent: '#ef4444', default: '#6b7280',
 }
 
+function formatValidity(edge: GraphEdge): string {
+  if (!edge.valid_from && !edge.valid_until) return ''
+  const from = edge.valid_from ? new Date(edge.valid_from * 1000).toISOString().slice(0, 10) : 'beginning'
+  const until = edge.valid_until ? new Date(edge.valid_until * 1000).toISOString().slice(0, 10) : 'open'
+  return `${from} -> ${until}`
+}
+
 export default function GraphPage() {
   const svgRef = useRef<SVGSVGElement>(null)
   const [dsId, setDsId] = useState('')
   const [selected, setSelected] = useState<GNode | null>(null)
   const [typeFilter, setTypeFilter] = useState<Set<string>>(new Set())
   const [search, setSearch] = useState('')
+  const [pathFrom, setPathFrom] = useState('')
+  const [pathTo, setPathTo] = useState('')
+  const [pathMaxHops, setPathMaxHops] = useState('4')
+  const [pathAsOf, setPathAsOf] = useState('')
 
   const { data: datasetsRes } = useDatasets()
   const datasets = datasetsRes?.data ?? []
   const { data: graph, isFetching: loading } = useDatasetGraph(dsId)
+  const { data: healthDetails } = useHealthDetails()
+  const { data: vsa } = useVSAStatus()
+  const graphPath = useGraphPath()
   const nodes = useMemo(() => graph?.nodes ?? [], [graph])
   const edges = useMemo(() => graph?.edges ?? [], [graph])
+  const nodeLookupResults = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    if (!q) return nodes.slice(0, 8)
+    return nodes
+      .filter((n) => n.name.toLowerCase().includes(q) || n.id.toLowerCase().includes(q))
+      .slice(0, 8)
+  }, [nodes, search])
+  const pathEdgeKeys = useMemo(
+    () => new Set((graphPath.data?.edges ?? []).map((e) => `${e.source_id}\x00${e.target_id}\x00${e.type}`)),
+    [graphPath.data?.edges],
+  )
 
   const load = (id: string) => {
     setDsId(id)
     setSelected(null)
+    graphPath.reset()
     // useDatasetGraph fires automatically on dsId change — no manual fetch.
+  }
+
+  const runPathSearch = (cursor?: string) => {
+    const from = pathFrom.trim()
+    const to = pathTo.trim()
+    if (!from || !to) return
+    graphPath.mutate({
+      from,
+      to,
+      max_hops: Math.max(1, Number.parseInt(pathMaxHops || '4', 10) || 4),
+      as_of: pathAsOf ? Number.parseInt(pathAsOf, 10) || undefined : undefined,
+      limit: 100,
+      cursor,
+    })
   }
 
   // Memoised derived state (M8 from the 2d15b38 review): without useMemo
@@ -85,18 +125,19 @@ export default function GraphPage() {
       .force('collision', d3.forceCollide().radius(25))
 
     const link = g.append('g').selectAll('line').data(sl).join('line')
-      .attr('stroke', '#d1d5db').attr('stroke-width', 1).attr('stroke-opacity', 0.6)
+      .attr('stroke', (d) => pathEdgeKeys.has(`${(d.source as SimNode).id}\x00${(d.target as SimNode).id}\x00${d.label}`) ? '#0891b2' : '#d1d5db')
+      .attr('stroke-width', (d) => pathEdgeKeys.has(`${(d.source as SimNode).id}\x00${(d.target as SimNode).id}\x00${d.label}`) ? 3 : 1)
+      .attr('stroke-opacity', (d) => pathEdgeKeys.size === 0 || pathEdgeKeys.has(`${(d.source as SimNode).id}\x00${(d.target as SimNode).id}\x00${d.label}`) ? 0.85 : 0.25)
     const linkLbl = g.append('g').selectAll('text').data(sl).join('text')
       .text((d) => d.label).attr('font-size', 8).attr('fill', '#9ca3af').attr('text-anchor', 'middle')
-    const node = g.append('g').selectAll('circle').data(sn).join('circle')
+    const node = g.append('g').selectAll<SVGCircleElement, SimNode>('circle').data(sn).join('circle')
       .attr('r', 8).attr('fill', (d) => COLORS[d.type] || COLORS.default)
       .attr('stroke', '#fff').attr('stroke-width', 1.5).attr('cursor', 'pointer')
       .on('click', (_, d) => setSelected(d))
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    node.call(d3.drag<any, SimNode>()
+    node.call(d3.drag<SVGCircleElement, SimNode>()
         .on('start', (e, d) => { if (!e.active) sim.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y })
         .on('drag', (e, d) => { d.fx = e.x; d.fy = e.y })
-        .on('end', (e, d) => { if (!e.active) sim.alphaTarget(0); d.fx = null; d.fy = null }) as any)
+        .on('end', (e, d) => { if (!e.active) sim.alphaTarget(0); d.fx = null; d.fy = null }))
     const lbl = g.append('g').selectAll('text').data(sn).join('text')
       .text((d) => d.name.length > 20 ? d.name.slice(0, 20) + '…' : d.name)
       .attr('font-size', 10).attr('dx', 12).attr('dy', 4).attr('fill', 'currentColor')
@@ -110,7 +151,7 @@ export default function GraphPage() {
       lbl.attr('x', (d) => d.x!).attr('y', (d) => d.y!)
     })
     return () => { sim.stop() }
-  }, [fNodes, fEdges])
+  }, [fNodes, fEdges, pathEdgeKeys])
 
   return (
     <div className="flex flex-col h-[calc(100vh-5rem)]">
@@ -129,7 +170,7 @@ export default function GraphPage() {
       {types.length > 0 && (
         <div className="flex gap-2 mb-3 flex-wrap">
           {types.map((t) => (
-            <button key={t} onClick={() => { const s = new Set(typeFilter); s.has(t) ? s.delete(t) : s.add(t); setTypeFilter(s) }}
+            <button key={t} onClick={() => { const s = new Set(typeFilter); if (s.has(t)) { s.delete(t) } else { s.add(t) }; setTypeFilter(s) }}
               className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium"
               style={{ backgroundColor: (!typeFilter.size || typeFilter.has(t)) ? (COLORS[t]||COLORS.default)+'20' : '#f3f4f6',
                 color: (!typeFilter.size || typeFilter.has(t)) ? COLORS[t]||COLORS.default : '#9ca3af' }}>
@@ -139,6 +180,63 @@ export default function GraphPage() {
           {typeFilter.size > 0 && <button onClick={() => setTypeFilter(new Set())} className="text-xs text-gray-400 hover:text-gray-600">Clear</button>}
         </div>
       )}
+
+      <div className="grid grid-cols-1 xl:grid-cols-[1fr_1.4fr] gap-3 mb-4">
+        <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-3">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Badge variant="info">SQL graph</Badge>
+            <Badge variant={healthDetails?.services?.neo4j?.status === 'connected' ? 'success' : 'default'}>
+              Neo4j {String(healthDetails?.services?.neo4j?.status || 'optional')}
+            </Badge>
+            <Badge variant={vsa?.available ? 'success' : 'default'}>
+              VSA {vsa?.available ? `${vsa.fact_count ?? 0} facts` : 'off'}
+            </Badge>
+          </div>
+        </div>
+        <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-3">
+          <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_86px_120px_auto] gap-2">
+            <Input placeholder="from node id" value={pathFrom} onChange={(e) => setPathFrom(e.target.value)} aria-label="Path from node id" />
+            <Input placeholder="to node id" value={pathTo} onChange={(e) => setPathTo(e.target.value)} aria-label="Path to node id" />
+            <Input value={pathMaxHops} onChange={(e) => setPathMaxHops(e.target.value)} inputMode="numeric" aria-label="Path max hops" />
+            <Input placeholder="as_of unix" value={pathAsOf} onChange={(e) => setPathAsOf(e.target.value)} inputMode="numeric" aria-label="Path as of unix seconds" />
+            <Button size="sm" onClick={() => runPathSearch()} loading={graphPath.isPending} disabled={!pathFrom.trim() || !pathTo.trim()}>
+              <Route className="h-4 w-4" />
+              Path
+            </Button>
+          </div>
+          {nodeLookupResults.length > 0 && (
+            <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2">
+              {nodeLookupResults.map((node) => (
+                <div key={node.id} className="flex items-center justify-between gap-2 rounded-md border border-gray-100 dark:border-gray-800 px-2 py-1.5">
+                  <button onClick={() => setSelected(node)} className="min-w-0 text-left">
+                    <span className="block truncate text-xs font-medium">{node.name}</span>
+                    <code className="block truncate text-[10px] text-gray-400">{node.id}</code>
+                  </button>
+                  <div className="flex gap-1">
+                    <Button variant="secondary" size="sm" onClick={() => setPathFrom(node.id)}>From</Button>
+                    <Button variant="secondary" size="sm" onClick={() => setPathTo(node.id)}>To</Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          {graphPath.isError && (
+            <p className="mt-2 text-xs text-red-600">{graphPath.error instanceof Error ? graphPath.error.message : 'Path search failed'}</p>
+          )}
+          {graphPath.data && (
+            <div className="mt-3 flex items-center gap-2 flex-wrap text-xs text-gray-500">
+              <Badge variant={(graphPath.data?.edges ?? []).length > 0 ? 'success' : 'default'}>{(graphPath.data?.edges ?? []).length} path edges</Badge>
+              {graphPath.data.as_of > 0 && <span>as_of={graphPath.data.as_of}</span>}
+              {graphPath.data.next_cursor && (
+                <Button variant="secondary" size="sm" onClick={() => runPathSearch(graphPath.data?.next_cursor)}>
+                  <Search className="h-4 w-4" />
+                  More
+                </Button>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
 
       <div className="flex-1 flex gap-4">
         <div className="flex-1 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 relative overflow-hidden">
@@ -164,7 +262,11 @@ export default function GraphPage() {
               {selected.type || 'Entity'}
             </Badge>
             <div className="mt-3 space-y-2 text-sm">
-              <div><span className="text-gray-500">ID:</span> <code className="text-xs break-all">{selected.id}</code></div>
+            <div><span className="text-gray-500">ID:</span> <code className="text-xs break-all">{selected.id}</code></div>
+              <div className="flex gap-2 pt-1">
+                <Button variant="secondary" size="sm" onClick={() => setPathFrom(selected.id)}>Set from</Button>
+                <Button variant="secondary" size="sm" onClick={() => setPathTo(selected.id)}>Set to</Button>
+              </div>
               {selected.properties && Object.entries(selected.properties).map(([k, v]) => (
                 <div key={k}><span className="text-gray-500">{k}:</span> <span className="ml-1">{String(v)}</span></div>
               ))}
@@ -175,9 +277,12 @@ export default function GraphPage() {
                 const otherId = e.source === selected.id ? e.target : e.source
                 const other = fNodes.find((n) => n.id === otherId)
                 return (
-                  <div key={i} className="text-xs text-gray-500 flex items-center gap-1">
-                    <span>→</span><Badge variant="default" className="text-[10px]">{e.label}</Badge>
-                    <button onClick={() => other && setSelected(other)} className="text-blue-600 hover:underline truncate">{other?.name || otherId}</button>
+                  <div key={i} className="text-xs text-gray-500">
+                    <div className="flex items-center gap-1">
+                      <span>→</span><Badge variant="default" className="text-[10px]">{e.label}</Badge>
+                      <button onClick={() => other && setSelected(other)} className="text-blue-600 hover:underline truncate">{other?.name || otherId}</button>
+                    </div>
+                    {formatValidity(e) && <p className="ml-4 mt-0.5 text-[10px] text-gray-400">{formatValidity(e)}</p>}
                   </div>
                 )
               })}

@@ -52,6 +52,35 @@ func TestVSAAPI_RebuildAndQuery(t *testing.T) {
 	if body.Candidates[0].TargetID != "n2" || body.Candidates[0].TargetName != "Bob" {
 		t.Fatalf("candidate=%+v, want Bob/n2", body.Candidates[0])
 	}
+
+	resp, err = app.Test(httptest.NewRequest("GET", "/vsa/status", nil), -1)
+	if err != nil {
+		t.Fatalf("GET /vsa/status: %v", err)
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("GET /vsa/status status=%d, want 200", resp.StatusCode)
+	}
+	var status struct {
+		Available   bool     `json:"available"`
+		Datasets    []string `json:"datasets"`
+		Predicates  []string `json:"predicates"`
+		ShardCount  int      `json:"shard_count"`
+		MemberCount int      `json:"member_count"`
+		FactCount   int      `json:"fact_count"`
+		MaxDim      int      `json:"max_dim"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		t.Fatalf("decode status: %v", err)
+	}
+	if !status.Available || status.ShardCount == 0 || status.MemberCount != 1 || status.FactCount != 1 || status.MaxDim != 128 {
+		t.Fatalf("status=%+v, want available with one ds-a fact at dim 128", status)
+	}
+	if len(status.Datasets) != 1 || status.Datasets[0] != "ds-a" {
+		t.Fatalf("datasets=%v, want [ds-a]", status.Datasets)
+	}
+	if len(status.Predicates) != 1 || status.Predicates[0] != "KNOWS" {
+		t.Fatalf("predicates=%v, want [KNOWS]", status.Predicates)
+	}
 }
 
 func TestVSAGraphContext_UsesDatasetFilter(t *testing.T) {

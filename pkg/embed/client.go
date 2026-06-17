@@ -53,6 +53,13 @@ func (c *Client) WithCache(cache *Cache) *Client {
 	return c
 }
 
+func (c *Client) Model() string {
+	if c == nil {
+		return ""
+	}
+	return c.model
+}
+
 // WithTimeout overrides the per-request HTTP timeout (default 30s). Bulk
 // re-embedding of large document chunks on modest hardware can take far longer
 // than embedding short memory texts, so that path opts into a larger timeout.

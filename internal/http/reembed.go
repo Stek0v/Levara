@@ -13,6 +13,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
+	"github.com/stek0v/levara/pkg/embcontract"
 	"github.com/stek0v/levara/pkg/embed"
 )
 
@@ -21,7 +22,11 @@ type reembedRequest struct {
 	TargetCollection string `json:"target_collection"`
 	TargetModel      string `json:"target_model"`
 	TargetEndpoint   string `json:"target_endpoint"` // optional, defaults to server embed endpoint
-	TargetDim        int    `json:"target_dim"`       // optional, auto-detect from first embed
+	TargetDim        int    `json:"target_dim"`      // optional, auto-detect from first embed
+	TargetTokenizer  string `json:"target_tokenizer"`
+	TargetPooling    string `json:"target_pooling"`
+	TargetNormalize  string `json:"target_normalization"`
+	TargetMetric     string `json:"target_metric"`
 	BatchSize        int    `json:"batch_size"`
 	DeleteSource     bool   `json:"delete_source"`
 }
@@ -195,10 +200,29 @@ func reembedHandler(cfg APIConfig) fiber.Handler {
 			}
 
 			// 4. Create target collection with correct dim
-			if err := cfg.Collections.CreateWithDim(req.TargetCollection, targetDim, model, "cosine"); err != nil {
+			metric := req.TargetMetric
+			if metric == "" {
+				metric = "cosine"
+			}
+			targetContract := embcontract.Contract{
+				Encoder:       model,
+				Tokenizer:     req.TargetTokenizer,
+				Pooling:       req.TargetPooling,
+				Normalization: req.TargetNormalize,
+				Dim:           targetDim,
+				Metric:        metric,
+			}.Normalized()
+			if err := cfg.Collections.CreateWithDim(req.TargetCollection, targetDim, model, metric); err != nil {
 				status.mu.Lock()
 				status.Status = "FAILED"
 				status.Message = fmt.Sprintf("create target: %v", err)
+				status.mu.Unlock()
+				return
+			}
+			if err := cfg.Collections.UpdateEmbeddingContract(req.TargetCollection, targetContract); err != nil {
+				status.mu.Lock()
+				status.Status = "FAILED"
+				status.Message = fmt.Sprintf("set target contract: %v", err)
 				status.mu.Unlock()
 				return
 			}
@@ -225,9 +249,9 @@ func reembedHandler(cfg APIConfig) fiber.Handler {
 
 				for j, vec := range vecs {
 					if j < len(batchIDs) {
-						metaStr := string(batchMetas[j])
+						stampedMeta := embcontract.StampMetadata(json.RawMessage(batchMetas[j]), targetContract)
 						status.mu.Lock()
-						if err := cfg.Collections.Insert(req.TargetCollection, batchIDs[j], vec, json.RawMessage(metaStr)); err != nil {
+						if err := cfg.Collections.Insert(req.TargetCollection, batchIDs[j], vec, stampedMeta); err != nil {
 							status.Failed++
 						} else {
 							status.Processed++

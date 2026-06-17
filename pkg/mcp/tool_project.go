@@ -9,6 +9,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	"github.com/stek0v/levara/pkg/embcontract"
 )
 
 // ToolGetProjectContext assembles a context summary for a collection:
@@ -146,13 +148,15 @@ func ToolGetProjectContext(ctx context.Context, deps Deps, args map[string]any) 
 // pkg/embed into pkg/mcp. The JSON keys are identical — callers parsing
 // the output of toolCheckDrift before and after the migration see no diff.
 type driftResult struct {
-	Collection    string `json:"collection"`
-	ExpectedModel string `json:"expected_model"`
-	ExpectedDim   int    `json:"expected_dim"`
-	ActualModel   string `json:"actual_model"`
-	ActualDim     int    `json:"actual_dim"`
-	IsDrifted     bool   `json:"is_drifted"`
-	RecordCount   int    `json:"record_count"`
+	Collection      string `json:"collection"`
+	ExpectedModel   string `json:"expected_model"`
+	ExpectedDim     int    `json:"expected_dim"`
+	ExpectedVersion string `json:"expected_version,omitempty"`
+	ActualModel     string `json:"actual_model"`
+	ActualDim       int    `json:"actual_dim"`
+	ActualVersion   string `json:"actual_version,omitempty"`
+	IsDrifted       bool   `json:"is_drifted"`
+	RecordCount     int    `json:"record_count"`
 }
 
 // ToolCheckDrift reports embedding model drift across all non-empty,
@@ -182,6 +186,11 @@ func ToolCheckDrift(ctx context.Context, deps Deps, args map[string]any) ToolRes
 			break
 		}
 	}
+	currentContract := embcontract.FromEnv(currentModel, currentDim, "cosine").Normalized()
+	currentVersion := ""
+	if !currentContract.Empty() {
+		currentVersion = currentContract.Fingerprint()
+	}
 
 	var results []driftResult
 	for _, name := range deps.ListCollections() {
@@ -200,15 +209,20 @@ func ToolCheckDrift(ctx context.Context, deps Deps, args map[string]any) ToolRes
 		if currentDim > 0 && m.Dim > 0 && m.Dim != currentDim {
 			isDrifted = true
 		}
+		if currentVersion != "" && m.EmbedVersion != "" && m.EmbedVersion != currentVersion {
+			isDrifted = true
+		}
 		if isDrifted {
 			results = append(results, driftResult{
-				Collection:    name,
-				ExpectedModel: currentModel,
-				ExpectedDim:   currentDim,
-				ActualModel:   m.EmbedModel,
-				ActualDim:     m.Dim,
-				IsDrifted:     true,
-				RecordCount:   m.Records,
+				Collection:      name,
+				ExpectedModel:   currentModel,
+				ExpectedDim:     currentDim,
+				ExpectedVersion: currentVersion,
+				ActualModel:     m.EmbedModel,
+				ActualDim:       m.Dim,
+				ActualVersion:   m.EmbedVersion,
+				IsDrifted:       true,
+				RecordCount:     m.Records,
 			})
 		}
 	}
@@ -217,8 +231,9 @@ func ToolCheckDrift(ctx context.Context, deps Deps, args map[string]any) ToolRes
 		results = []driftResult{}
 	}
 	return jsonResult(map[string]any{
-		"current_model": currentModel,
-		"current_dim":   currentDim,
-		"drifted":       results,
+		"current_model":   currentModel,
+		"current_dim":     currentDim,
+		"current_version": currentVersion,
+		"drifted":         results,
 	})
 }

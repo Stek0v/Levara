@@ -95,6 +95,7 @@ Done locally and on Pi 5 :8091. Nothing here touches :8090.
 | 1.1.e | Atomic rename support in Levara (see §1.3) | ✅ done 2026-05-26 — `POST /collections/:name/rename` (option A), store + handler tests green |
 | 1.1.f | Potion embed-server on prod-class host | ✅ done 2026-05-26 — Pi :9101, systemd `embed-potion.service`, model2vec/potion-code-16M, 235MB RSS |
 | 1.1.g | Real-data smoke via pg_dump of one prod collection | ✅ done 2026-05-26 — see §2.1 (path adapted: Levara isn't pg-backed for vectors, smoke is HTTP-only) |
+| 1.1.h | Embedding contract guard | ✅ done 2026-06-17 — `embedding_version = hash(encoder, tokenizer, pooling, normalization, dim, metric)`; write/search guards prevent mixed ANN spaces |
 
 ### 1.2 Potion embed-server host
 
@@ -262,27 +263,44 @@ PRE_COUNT=$(curl -s -H "Authorization: Bearer $TOKEN" \
 
 ### 4.2 Reembed into shadow
 
+Preferred path: use the managed embedding migration API. It creates or updates
+the shadow collection with the target embedding contract, tracks progress, keeps
+the last checkpoint id, records failed ids, and allows retry before cutover.
+
 ```bash
 RUN=$(curl -s -X POST -H "Authorization: Bearer $TOKEN" \
-  http://localhost:8090/api/v1/reembed \
+  http://localhost:8090/api/v1/embedding-migrations \
   -d "{
     \"source_collection\": \"${COLL}\",
     \"target_collection\": \"${SHADOW}\",
     \"target_model\": \"potion-code-16M\",
+    \"target_tokenizer\": \"potion-code-16M\",
+    \"target_pooling\": \"mean\",
+    \"target_normalization\": \"l2\",
+    \"target_metric\": \"cosine\",
     \"target_endpoint\": \"http://prod-amd64:9102/v1/embeddings\",
+    \"target_dim\": 256,
     \"batch_size\": 64,
-    \"delete_source\": false
+    \"max_attempts\": 3
   }" | jq -r .run_id)
 
 # Poll
 while true; do
   STATUS=$(curl -s -H "Authorization: Bearer $TOKEN" \
-    http://localhost:8090/api/v1/reembed/${RUN}/status | jq -r .status)
+    http://localhost:8090/api/v1/embedding-migrations/${RUN}/status | jq -r .status)
   [ "$STATUS" = "COMPLETED" ] && break
-  [ "$STATUS" = "FAILED" ] && { echo "REEMBED FAILED"; exit 1; }
+  [ "$STATUS" = "FAILED" ] && { echo "MIGRATION FAILED"; exit 1; }
+  if [ "$STATUS" = "DEAD_LETTER" ]; then
+    curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+      http://localhost:8090/api/v1/embedding-migrations/${RUN}/retry | jq .
+  fi
   sleep 5
 done
 ```
+
+Legacy path: `POST /api/v1/reembed` still works for one-shot local jobs, but
+new production migrations should prefer `/embedding-migrations` because it
+exposes checkpoint/dead-letter state in the API.
 
 ### 4.3 Validate shadow
 
@@ -304,6 +322,19 @@ SHADOW_DIM=$(curl -s -H "Authorization: Bearer $TOKEN" \
   --shadow "${SHADOW}" \
   --thresholds jaccard10=0.6,top1=0.5,empty=0.05 \
   --target http://localhost:8090
+```
+
+Runtime equivalent for quick checks:
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8090/api/v1/embedding-migrations/shadow-read \
+  -d "{
+    \"source_collection\": \"${COLL}\",
+    \"shadow_collection\": \"${SHADOW}\",
+    \"queries\": [\"auth migration\", \"database checkpoint\", \"memory recall\"],
+    \"top_k\": 10
+  }" | jq .
 ```
 
 Pass = Phase 4.5. Fail = stop, do not cut over, file issue with the

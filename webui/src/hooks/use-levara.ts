@@ -3,14 +3,23 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   levara,
-  type Dataset,
-  type CollectionMeta,
-  type Memory,
   type SearchRequest,
   type Settings,
   type DatasetDataRow,
   type DatasetDataResponse,
   type DatasetGraph,
+  type GraphPathRequest,
+  type VSAQueryRequest,
+  type WorkspaceArtifactsRequest,
+  type WorkspaceAuditRequest,
+  type WorkspaceIndexRequest,
+  type WorkspaceReadRequest,
+  type WorkspaceReindexRequest,
+  type WorkspaceRetryJobRequest,
+  type WorkspaceScope,
+  type WorkspaceSearchRequest,
+  type WorkspaceWriteRequest,
+  type SyncRunRequest,
 } from '@/lib/api'
 
 // ── Query Keys (single source of truth) ──
@@ -271,3 +280,218 @@ export function useDeleteDatasetRecord() {
 // Re-export the DatasetGraph type so consumers can annotate props without
 // pulling it directly from @/lib/api.
 export type { DatasetGraph }
+
+// ── VSA & Health (analytics) ──
+
+export function useHealthDetails() {
+  return useQuery({
+    queryKey: ['healthDetails'],
+    queryFn: () => levara.healthDetails(),
+    staleTime: 10_000,
+    refetchInterval: 30_000,
+  })
+}
+
+export function useVSAStatus() {
+  return useQuery({
+    queryKey: ['vsaStatus'],
+    queryFn: () => levara.vsaStatus(),
+    staleTime: 10_000,
+    refetchInterval: 30_000,
+  })
+}
+
+export function useVSARebuild() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (params?: { dataset_id?: string; dim?: number; shard_size?: number }) => levara.rebuildVSA(params ?? {}),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['vsaStatus'] })
+    },
+  })
+}
+
+export function useVSAQuery() {
+  return useMutation({
+    mutationFn: (params: VSAQueryRequest) => levara.queryVSA(params),
+  })
+}
+
+// ── Graph path ──
+
+export function useGraphPath() {
+  return useMutation({
+    mutationFn: (params: GraphPathRequest) => levara.graphPath(params),
+  })
+}
+
+// ── Workspace ──
+
+export function useWorkspaceOps(params: WorkspaceScope = {}) {
+  return useQuery({
+    queryKey: ['workspaceOps', params],
+    queryFn: () => levara.workspaceOpsStatus(params),
+    staleTime: 10_000,
+    refetchInterval: 30_000,
+  })
+}
+
+export function useWorkspaceManifest(params: WorkspaceScope = {}) {
+  return useQuery({
+    queryKey: ['workspaceManifest', params],
+    queryFn: () => levara.workspaceManifest(params),
+    staleTime: 10_000,
+  })
+}
+
+export function useWorkspaceJobs(params: WorkspaceScope & { status?: string } = {}) {
+  return useQuery({
+    queryKey: ['workspaceJobs', params],
+    queryFn: () => levara.workspaceJobs(params),
+    staleTime: 10_000,
+  })
+}
+
+export function useWorkspaceArtifacts(params: WorkspaceArtifactsRequest = {}) {
+  return useQuery({
+    queryKey: ['workspaceArtifacts', params],
+    queryFn: () => levara.workspaceArtifacts(params),
+    staleTime: 10_000,
+  })
+}
+
+export function useWorkspaceConflicts(params: WorkspaceScope = {}) {
+  return useQuery({
+    queryKey: ['workspaceConflicts', params],
+    queryFn: () => levara.workspaceConflicts(params),
+    staleTime: 10_000,
+  })
+}
+
+export function useWorkspaceAudit(params: WorkspaceAuditRequest = {}) {
+  return useQuery({
+    queryKey: ['workspaceAudit', params],
+    queryFn: () => levara.workspaceAudit(params),
+    staleTime: 10_000,
+  })
+}
+
+export function useWorkspaceIndex() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (params: WorkspaceIndexRequest) => levara.workspaceIndex(params),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['workspaceManifest'] })
+      qc.invalidateQueries({ queryKey: ['workspaceOps'] })
+      qc.invalidateQueries({ queryKey: ['workspaceConflicts'] })
+    },
+  })
+}
+
+export function useWorkspaceRead() {
+  return useMutation({
+    mutationFn: (params: WorkspaceReadRequest) => levara.workspaceRead(params),
+  })
+}
+
+export function useWorkspaceSearch() {
+  return useMutation({
+    mutationFn: (params: WorkspaceSearchRequest) => levara.workspaceSearch(params),
+  })
+}
+
+export function useWorkspaceWrite() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (params: WorkspaceWriteRequest) => levara.workspaceWrite(params),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['workspaceManifest'] })
+      qc.invalidateQueries({ queryKey: ['workspaceOps'] })
+      qc.invalidateQueries({ queryKey: ['workspaceConflicts'] })
+      qc.invalidateQueries({ queryKey: ['workspaceAudit'] })
+    },
+  })
+}
+
+export function useWorkspaceReindex() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (params: WorkspaceReindexRequest) => levara.workspaceReindex(params),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['workspaceJobs'] })
+      qc.invalidateQueries({ queryKey: ['workspaceManifest'] })
+      qc.invalidateQueries({ queryKey: ['workspaceConflicts'] })
+    },
+  })
+}
+
+export function useWorkspaceRetryJob() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (params: WorkspaceRetryJobRequest) => levara.workspaceRetryJob(params),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['workspaceJobs'] })
+      qc.invalidateQueries({ queryKey: ['workspaceOps'] })
+      qc.invalidateQueries({ queryKey: ['workspaceAudit'] })
+    },
+  })
+}
+
+// ── Sync ──
+
+export function useSyncManifest() {
+  return useQuery({
+    queryKey: ['syncManifest'],
+    queryFn: () => levara.syncManifest(),
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+  })
+}
+
+export function useSyncStatus(limit = 10) {
+  return useQuery({
+    queryKey: ['syncStatus', limit],
+    queryFn: () => levara.syncStatus(limit),
+    staleTime: 10_000,
+    refetchInterval: 30_000,
+  })
+}
+
+export function useRunSync() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (params: SyncRunRequest) => levara.runSync(params),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['syncStatus'] })
+      qc.invalidateQueries({ queryKey: ['syncManifest'] })
+    },
+  })
+}
+
+// ── MCP/Admin ──
+
+export function useMCPTools() {
+  return useQuery({
+    queryKey: ['mcpTools'],
+    queryFn: () => levara.mcpTools(),
+    staleTime: 60_000,
+  })
+}
+
+export function useMCPAdminSummary() {
+  return useQuery({
+    queryKey: ['mcpAdminSummary'],
+    queryFn: () => levara.mcpSummary(),
+    staleTime: 10_000,
+    refetchInterval: 30_000,
+  })
+}
+
+export function useMCPSessions(limit = 20) {
+  return useQuery({
+    queryKey: ['mcpSessions', limit],
+    queryFn: () => levara.mcpSessions(limit),
+    staleTime: 10_000,
+    refetchInterval: 30_000,
+  })
+}

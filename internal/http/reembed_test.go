@@ -12,6 +12,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/stek0v/levara/internal/store"
+	"github.com/stek0v/levara/pkg/embcontract"
 )
 
 // reembed_test.go — validation-path coverage for POST /reembed. The async
@@ -335,5 +336,20 @@ func TestReembed_HappyPath_DimChange(t *testing.T) {
 	}
 	if len(tgtIDs) != numRecs {
 		t.Errorf("target record count = %d, want %d", len(tgtIDs), numRecs)
+	}
+	targetContract := embcontract.Contract{Encoder: "potion-new", Dim: targetDim, Metric: "cosine"}.Normalized()
+	if meta := cm.GetMeta("tgt"); meta == nil || meta.EmbeddingVersion != targetContract.Fingerprint() {
+		t.Fatalf("target embedding_version=%v, want %s", meta, targetContract.Fingerprint())
+	}
+	db, err := cm.Get("tgt")
+	if err != nil {
+		t.Fatalf("Get tgt: %v", err)
+	}
+	_, rawMeta, ok := db.Get(tgtIDs[0])
+	if !ok {
+		t.Fatalf("target record %s missing", tgtIDs[0])
+	}
+	if got := embcontract.VersionFromMetadata(json.RawMessage(rawMeta)); got != targetContract.Fingerprint() {
+		t.Fatalf("record embedding_version=%q, want %q", got, targetContract.Fingerprint())
 	}
 }

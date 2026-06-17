@@ -42,6 +42,17 @@ type Candidate struct {
 	Similarity float64 `json:"similarity"`
 }
 
+type Stats struct {
+	Available     bool     `json:"available"`
+	Datasets      []string `json:"datasets"`
+	Predicates    []string `json:"predicates"`
+	ShardCount    int      `json:"shard_count"`
+	MemberCount   int      `json:"member_count"`
+	FactCount     int      `json:"fact_count"`
+	MaxDim        int      `json:"max_dim"`
+	LastUpdatedAt string   `json:"last_updated_at,omitempty"`
+}
+
 func NewStore(db *sql.DB, cfg Config) *Store {
 	dim := cfg.Dim
 	if dim <= 0 {
@@ -247,6 +258,53 @@ func (s *Store) QueryObject(ctx context.Context, datasetID, subjectID, predicate
 		out = out[:topK]
 	}
 	return out, nil
+}
+
+func (s *Store) Stats(ctx context.Context) (Stats, error) {
+	var out Stats
+	if s == nil || s.db == nil {
+		return out, nil
+	}
+	if err := s.EnsureSchema(ctx); err != nil {
+		return out, err
+	}
+	out.Available = true
+
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM vsa_fact_shards`).Scan(&out.ShardCount); err != nil {
+		return out, err
+	}
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM vsa_fact_members`).Scan(&out.MemberCount); err != nil {
+		return out, err
+	}
+	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(fact_count), 0) FROM vsa_fact_shards`).Scan(&out.FactCount); err != nil {
+		return out, err
+	}
+	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(dim), 0) FROM vsa_fact_shards`).Scan(&out.MaxDim); err != nil {
+		return out, err
+	}
+	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(updated_at), '') FROM vsa_fact_shards`).Scan(&out.LastUpdatedAt); err != nil {
+		return out, err
+	}
+
+	datasets, err := s.DatasetIDs(ctx)
+	if err != nil {
+		return out, err
+	}
+	out.Datasets = datasets
+
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT predicate FROM vsa_fact_shards ORDER BY predicate`)
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var predicate string
+		if err := rows.Scan(&predicate); err != nil {
+			return out, err
+		}
+		out.Predicates = append(out.Predicates, predicate)
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) DatasetIDs(ctx context.Context) ([]string, error) {

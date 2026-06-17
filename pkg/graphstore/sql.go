@@ -236,6 +236,11 @@ func (s *SQLGraphStore) ReadFullGraph(ctx context.Context) (_ graphdb.GraphReadR
 	}
 	for _, e := range graph.edges {
 		props := cloneMap(e.properties)
+		props["id"] = e.id
+		props["valid_from"] = e.validFrom
+		if e.validUntil != nil {
+			props["valid_until"] = *e.validUntil
+		}
 		if e.datasetID != "" {
 			props["dataset_id"] = e.datasetID
 		}
