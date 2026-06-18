@@ -10,6 +10,7 @@ import (
 
 // diskDoc is the JSON format for each indexed document on disk.
 type diskDoc struct {
+	Op       string `json:"op,omitempty"`
 	ID       string `json:"i"`
 	Text     string `json:"t"`
 	Metadata string `json:"m"`
