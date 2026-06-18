@@ -1,6 +1,6 @@
 # VSA Quantitative Evaluation Report
 
-Generated: 2026-06-18T12:53:42Z
+Generated: 2026-06-18T19:06:27Z
 
 Cases: 52
 
@@ -8,20 +8,20 @@ Cases: 52
 
 | Mode | fact_recall@k | MRR | nDCG@k | predicate_precision@k | p95 latency (us) |
 |---|---:|---:|---:|---:|---:|
-| baseline_sql_graph | 0.000 | 0.000 | 0.000 | 0.914 | 454 |
-| vsa_empty_index | 0.000 | 0.000 | 0.000 | 0.000 | 18 |
-| current_append | 0.000 | 0.000 | 0.000 | 0.914 | 460 |
-| vsa_first | 1.000 | 1.000 | 1.000 | 0.971 | 95947 |
-| vsa_only | 1.000 | 1.000 | 1.000 | 1.000 | 91050 |
+| baseline_sql_graph | 0.000 | 0.000 | 0.000 | 0.914 | 720 |
+| vsa_empty_index | 0.000 | 0.000 | 0.000 | 0.000 | 147 |
+| current_append | 0.000 | 0.000 | 0.000 | 0.914 | 779 |
+| vsa_first | 1.000 | 1.000 | 1.000 | 0.971 | 122086 |
+| vsa_only | 1.000 | 1.000 | 1.000 | 1.000 | 142609 |
 
 ## Lift vs Baseline
 
 | Mode | fact_recall lift | MRR lift | nDCG lift | precision lift | p95 latency delta (us) |
 |---|---:|---:|---:|---:|---:|
-| vsa_empty_index | 0.000 | 0.000 | 0.000 | -0.914 | -436 |
-| current_append | 0.000 | 0.000 | 0.000 | 0.000 | 6 |
-| vsa_first | 1.000 | 1.000 | 1.000 | 0.057 | 95493 |
-| vsa_only | 1.000 | 1.000 | 1.000 | 0.086 | 90596 |
+| vsa_empty_index | 0.000 | 0.000 | 0.000 | -0.914 | -573 |
+| current_append | 0.000 | 0.000 | 0.000 | 0.000 | 59 |
+| vsa_first | 1.000 | 1.000 | 1.000 | 0.057 | 121366 |
+| vsa_only | 1.000 | 1.000 | 1.000 | 0.086 | 141889 |
 
 ## By Scenario
 

@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-06-18T14:00:28Z",
+  "generated_at": "2026-06-18T18:12:57Z",
   "modes": [
     "sql_only",
     "sql_first",
@@ -24,10 +24,10 @@
       "expired_leak_rate": 0,
       "vsa_context_avg": 0,
       "sql_context_avg": 8,
-      "latency_p50_micros": 685,
-      "latency_p95_micros": 784,
-      "latency_max_micros": 1201,
-      "throughput_qps": 1397.217235088171
+      "latency_p50_micros": 797,
+      "latency_p95_micros": 1709,
+      "latency_max_micros": 1776,
+      "throughput_qps": 1056.4923802177464
     },
     "sql_only": {
       "cases": 25,
@@ -39,10 +39,10 @@
       "expired_leak_rate": 0,
       "vsa_context_avg": 0,
       "sql_context_avg": 8,
-      "latency_p50_micros": 704,
-      "latency_p95_micros": 863,
-      "latency_max_micros": 2043,
-      "throughput_qps": 1305.718808127337
+      "latency_p50_micros": 1715,
+      "latency_p95_micros": 2296,
+      "latency_max_micros": 3813,
+      "throughput_qps": 558.4054834167644
     },
     "vsa_first": {
       "cases": 25,
@@ -54,10 +54,10 @@
       "expired_leak_rate": 0,
       "vsa_context_avg": 4,
       "sql_context_avg": 4,
-      "latency_p50_micros": 91312,
-      "latency_p95_micros": 93080,
-      "latency_max_micros": 93260,
-      "throughput_qps": 10.972387624016477
+      "latency_p50_micros": 106611,
+      "latency_p95_micros": 134063,
+      "latency_max_micros": 157915,
+      "throughput_qps": 8.913315067436017
     },
     "vsa_only": {
       "cases": 25,
@@ -69,27 +69,27 @@
       "expired_leak_rate": 0,
       "vsa_context_avg": 4,
       "sql_context_avg": 0,
-      "latency_p50_micros": 93379,
-      "latency_p95_micros": 95922,
-      "latency_max_micros": 109265,
-      "throughput_qps": 10.636637502278779
+      "latency_p50_micros": 143464,
+      "latency_p95_micros": 193409,
+      "latency_max_micros": 198062,
+      "throughput_qps": 6.783259593648834
     }
   },
   "lift": {
     "sql_only": {
-      "latency_p95_micros": 79,
+      "latency_p95_micros": 587,
       "mrr": 0,
       "ndcg_at_k": 0,
       "target_recall_at_k": 0
     },
     "vsa_first": {
-      "latency_p95_micros": 92296,
+      "latency_p95_micros": 132354,
       "mrr": 1,
       "ndcg_at_k": 1,
       "target_recall_at_k": 1
     },
     "vsa_only": {
-      "latency_p95_micros": 95138,
+      "latency_p95_micros": 191700,
       "mrr": 1,
       "ndcg_at_k": 1,
       "target_recall_at_k": 1
