@@ -87,6 +87,8 @@ type Config struct {
 	// BM25Indexes (optional): shared BM25 indexes for lexical search.
 	// If set, pipeline updates BM25 index when inserting vectors.
 	BM25Indexes map[string]*bm25.Index
+	// BM25Store (optional): attaches immediate disk persistence to new BM25 indexes.
+	BM25Store *bm25.SnapshotStore
 	// SkipGraph when true skips LLM entity extraction (Stage 2),
 	// deduplication (Stage 3), temporal extraction (Stage 3b),
 	// Neo4j write (Stage 4a), and PostgreSQL graph upsert (Stage 4c).
@@ -689,6 +691,9 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 									idx, ok := cfg.BM25Indexes[chunkColl]
 									if !ok {
 										idx = bm25.NewIndex()
+										if cfg.BM25Store != nil {
+											cfg.BM25Store.Attach(chunkColl, idx)
+										}
 										cfg.BM25Indexes[chunkColl] = idx
 									}
 									idx.Add(chunkIDs[i], chunkMetas[i].text, meta)
