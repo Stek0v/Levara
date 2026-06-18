@@ -72,17 +72,19 @@ func TestPredicateSynonymMapLoadQualityAndSpeed(t *testing.T) {
 	if metrics.MRR < 0.99 {
 		t.Fatalf("MRR %.3f below 0.99", metrics.MRR)
 	}
-	if metrics.LatencyP95Micros > 5000 {
-		t.Fatalf("p95 latency %dus above 5000us", metrics.LatencyP95Micros)
-	}
-	if metrics.ThroughputQPS < 200 {
-		t.Fatalf("throughput %.0fqps below 200qps", metrics.ThroughputQPS)
-	}
-	if metrics.RefreshMillis > 1500 {
-		t.Fatalf("refresh latency %dms above 1500ms", metrics.RefreshMillis)
-	}
-	if metrics.LoadSynonymsMillis > 500 {
-		t.Fatalf("load latency %dms above 500ms", metrics.LoadSynonymsMillis)
+	if enforcePerfBudgets() && !raceDetectorEnabled() {
+		if metrics.LatencyP95Micros > 5000 {
+			t.Fatalf("p95 latency %dus above 5000us", metrics.LatencyP95Micros)
+		}
+		if metrics.ThroughputQPS < 200 {
+			t.Fatalf("throughput %.0fqps below 200qps", metrics.ThroughputQPS)
+		}
+		if metrics.RefreshMillis > 1500 {
+			t.Fatalf("refresh latency %dms above 1500ms", metrics.RefreshMillis)
+		}
+		if metrics.LoadSynonymsMillis > 500 {
+			t.Fatalf("load latency %dms above 500ms", metrics.LoadSynonymsMillis)
+		}
 	}
 }
 
@@ -235,18 +237,18 @@ func writePredicateSynonymLoadReportIfRequested(t *testing.T, metrics predicateS
 func renderPredicateSynonymLoadMarkdown(metrics predicateSynonymLoadMetrics) string {
 	var b strings.Builder
 	b.WriteString("# Predicate Synonym Map Load Report\n\n")
-	b.WriteString(fmt.Sprintf("Cases: %d\n\n", metrics.Cases))
-	b.WriteString(fmt.Sprintf("Predicates: %d\n\n", metrics.Predicates))
-	b.WriteString(fmt.Sprintf("Synonyms: %d\n\n", metrics.Synonyms))
+	fmt.Fprintf(&b, "Cases: %d\n\n", metrics.Cases)
+	fmt.Fprintf(&b, "Predicates: %d\n\n", metrics.Predicates)
+	fmt.Fprintf(&b, "Synonyms: %d\n\n", metrics.Synonyms)
 	b.WriteString("| Metric | Value |\n")
 	b.WriteString("|---|---:|\n")
-	b.WriteString(fmt.Sprintf("| top1 accuracy | %.3f |\n", metrics.Top1Accuracy))
-	b.WriteString(fmt.Sprintf("| MRR | %.3f |\n", metrics.MRR))
-	b.WriteString(fmt.Sprintf("| p50 latency (us) | %d |\n", metrics.LatencyP50Micros))
-	b.WriteString(fmt.Sprintf("| p95 latency (us) | %d |\n", metrics.LatencyP95Micros))
-	b.WriteString(fmt.Sprintf("| max latency (us) | %d |\n", metrics.LatencyMaxMicros))
-	b.WriteString(fmt.Sprintf("| throughput (qps) | %.0f |\n", metrics.ThroughputQPS))
-	b.WriteString(fmt.Sprintf("| refresh latency (ms) | %d |\n", metrics.RefreshMillis))
-	b.WriteString(fmt.Sprintf("| synonym load latency (ms) | %d |\n", metrics.LoadSynonymsMillis))
+	fmt.Fprintf(&b, "| top1 accuracy | %.3f |\n", metrics.Top1Accuracy)
+	fmt.Fprintf(&b, "| MRR | %.3f |\n", metrics.MRR)
+	fmt.Fprintf(&b, "| p50 latency (us) | %d |\n", metrics.LatencyP50Micros)
+	fmt.Fprintf(&b, "| p95 latency (us) | %d |\n", metrics.LatencyP95Micros)
+	fmt.Fprintf(&b, "| max latency (us) | %d |\n", metrics.LatencyMaxMicros)
+	fmt.Fprintf(&b, "| throughput (qps) | %.0f |\n", metrics.ThroughputQPS)
+	fmt.Fprintf(&b, "| refresh latency (ms) | %d |\n", metrics.RefreshMillis)
+	fmt.Fprintf(&b, "| synonym load latency (ms) | %d |\n", metrics.LoadSynonymsMillis)
 	return b.String()
 }

@@ -313,7 +313,7 @@ func initPostgresRuntime(pgURL string) sqlRuntime {
 			dbPort = "5432"
 		}
 		dbHost := os.Getenv("DB_HOST")
-		dsn = fmt.Sprintf("postgres://%s:***@%s:%s/%s?sslmode=disable", dbUser, dbHost, dbPort, dbName)
+		dsn = fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable", dbUser, dbPass, dbHost, dbPort, dbName)
 	}
 
 	db, err := sql.Open("pgx", dsn)

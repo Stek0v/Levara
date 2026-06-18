@@ -82,6 +82,7 @@ func TestMCP_AdoptsStaleSession_BindsOwnerFromJWT(t *testing.T) {
 	sess := h.sessions.Get(staleSessionID)
 	if sess == nil {
 		t.Fatal("session not adopted")
+		return
 	}
 	if sess.UserID != "owner-xyz" {
 		t.Errorf("adopted session owner = %q, want owner-xyz (bound from JWT sub)", sess.UserID)

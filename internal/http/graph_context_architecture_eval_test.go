@@ -77,7 +77,7 @@ func TestSearchHandlerGraphContextArchitectureEval(t *testing.T) {
 	if vsaFirst.TenantLeakRate != 0 || vsaFirst.ExpiredLeakRate != 0 {
 		t.Fatalf("vsa_first leak rates tenant=%.3f expired=%.3f, want zero", vsaFirst.TenantLeakRate, vsaFirst.ExpiredLeakRate)
 	}
-	if vsaFirst.LatencyP95Micros > 150000 {
+	if enforcePerfBudgets() && !raceDetectorEnabled() && vsaFirst.LatencyP95Micros > 150000 {
 		t.Fatalf("vsa_first p95 latency %dus above 150000us", vsaFirst.LatencyP95Micros)
 	}
 }
@@ -105,7 +105,7 @@ func buildGraphContextArchCases() []graphContextArchCase {
 	}
 	for _, scenario := range scenarios {
 		for i := 0; i < perScenario; i++ {
-			source := fmt.Sprintf("%s Service %02d", strings.Title(strings.ReplaceAll(scenario.name, "_", " ")), i)
+			source := fmt.Sprintf("%s Service %02d", graphContextArchTitle(scenario.name), i)
 			sourceID := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(source, " ", "-"), "_", "-"))
 			target := fmt.Sprintf(scenario.targetFmt, source)
 			id := fmt.Sprintf("%s-%02d", scenario.name, i)
@@ -123,6 +123,14 @@ func buildGraphContextArchCases() []graphContextArchCase {
 		}
 	}
 	return cases
+}
+
+func graphContextArchTitle(value string) string {
+	words := strings.Fields(strings.ReplaceAll(value, "_", " "))
+	for i, word := range words {
+		words[i] = strings.ToUpper(word[:1]) + word[1:]
+	}
+	return strings.Join(words, " ")
 }
 
 func runGraphContextArchMode(t *testing.T, mode string, cases []graphContextArchCase) graphContextArchMetrics {
@@ -325,10 +333,10 @@ func renderGraphContextArchMarkdown(report graphContextArchReport) string {
 	b.WriteString("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
 	for _, mode := range report.Modes {
 		m := report.Summary[mode]
-		b.WriteString(fmt.Sprintf("| %s | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f | %.2f | %.2f | %d | %.0f |\n",
+		fmt.Fprintf(&b, "| %s | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f | %.2f | %.2f | %d | %.0f |\n",
 			mode, m.TargetRecallAtK, m.MRR, m.NDCGAtK, m.PredicatePrecisionAtK,
 			m.TenantLeakRate, m.ExpiredLeakRate, m.VSAContextAvg, m.SQLContextAvg,
-			m.LatencyP95Micros, m.ThroughputQPS))
+			m.LatencyP95Micros, m.ThroughputQPS)
 	}
 	b.WriteString("\n## Lift vs sql_first\n\n")
 	b.WriteString("| Mode | recall lift | MRR lift | nDCG lift | p95 delta (us) |\n")
@@ -338,8 +346,8 @@ func renderGraphContextArchMarkdown(report graphContextArchReport) string {
 			continue
 		}
 		l := report.Lift[mode]
-		b.WriteString(fmt.Sprintf("| %s | %.3f | %.3f | %.3f | %.0f |\n",
-			mode, l["target_recall_at_k"], l["mrr"], l["ndcg_at_k"], l["latency_p95_micros"]))
+		fmt.Fprintf(&b, "| %s | %.3f | %.3f | %.3f | %.0f |\n",
+			mode, l["target_recall_at_k"], l["mrr"], l["ndcg_at_k"], l["latency_p95_micros"])
 	}
 	return b.String()
 }

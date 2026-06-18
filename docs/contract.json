@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-06-17T19:41:14+03:00",
-  "git_rev": "64aa8b7601e92fb736425ba389f39e96258bd3ad",
+  "generated_at": "2026-06-18T17:07:08+03:00",
+  "git_rev": "4d989533d6f1f2cb001e5048aa967d271861cc14",
   "rest": [
     {
       "method": "POST",
@@ -1551,6 +1551,11 @@
     {
       "provider": "postgres",
       "kind": "index",
+      "name": "idx_graph_predicate_synonyms_lookup"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
       "name": "idx_heartbeats_type_time"
     },
     {
@@ -1652,6 +1657,11 @@
       "provider": "postgres",
       "kind": "table",
       "name": "graph_nodes"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "graph_predicate_synonyms"
     },
     {
       "provider": "postgres",
@@ -1931,6 +1941,11 @@
     {
       "provider": "sqlite",
       "kind": "index",
+      "name": "idx_graph_predicate_synonyms_lookup"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
       "name": "idx_heartbeats_type_time"
     },
     {
@@ -2032,6 +2047,11 @@
       "provider": "sqlite",
       "kind": "table",
       "name": "graph_nodes"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "graph_predicate_synonyms"
     },
     {
       "provider": "sqlite",
