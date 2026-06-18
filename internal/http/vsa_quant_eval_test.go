@@ -550,14 +550,14 @@ func renderVSAEvalMarkdown(report vsaEvalReport) string {
 	var b strings.Builder
 	b.WriteString("# VSA Quantitative Evaluation Report\n\n")
 	b.WriteString("Generated: " + report.GeneratedAt + "\n\n")
-	b.WriteString(fmt.Sprintf("Cases: %d\n\n", report.Cases))
+	fmt.Fprintf(&b, "Cases: %d\n\n", report.Cases)
 	b.WriteString("## Summary\n\n")
 	b.WriteString("| Mode | fact_recall@k | MRR | nDCG@k | predicate_precision@k | p95 latency (us) |\n")
 	b.WriteString("|---|---:|---:|---:|---:|---:|\n")
 	for _, mode := range report.Modes {
 		m := report.Summary[mode]
-		b.WriteString(fmt.Sprintf("| %s | %.3f | %.3f | %.3f | %.3f | %d |\n",
-			mode, m.FactRecallAtK, m.MRR, m.NDCGAtK, m.PredicatePrecisionAtK, m.LatencyP95Micros))
+		fmt.Fprintf(&b, "| %s | %.3f | %.3f | %.3f | %.3f | %d |\n",
+			mode, m.FactRecallAtK, m.MRR, m.NDCGAtK, m.PredicatePrecisionAtK, m.LatencyP95Micros)
 	}
 	b.WriteString("\n## Lift vs Baseline\n\n")
 	b.WriteString("| Mode | fact_recall lift | MRR lift | nDCG lift | precision lift | p95 latency delta (us) |\n")
@@ -567,8 +567,8 @@ func renderVSAEvalMarkdown(report vsaEvalReport) string {
 			continue
 		}
 		l := report.Lift[mode]
-		b.WriteString(fmt.Sprintf("| %s | %.3f | %.3f | %.3f | %.3f | %.0f |\n",
-			mode, l["fact_recall_at_k"], l["mrr"], l["ndcg_at_k"], l["predicate_precision_at_k"], l["latency_p95_micros"]))
+		fmt.Fprintf(&b, "| %s | %.3f | %.3f | %.3f | %.3f | %.0f |\n",
+			mode, l["fact_recall_at_k"], l["mrr"], l["ndcg_at_k"], l["predicate_precision_at_k"], l["latency_p95_micros"])
 	}
 	b.WriteString("\n## By Scenario\n\n")
 	scenarios := make([]string, 0, len(report.ByScenario))
@@ -582,8 +582,8 @@ func renderVSAEvalMarkdown(report vsaEvalReport) string {
 		b.WriteString("|---|---:|---:|---:|---:|---:|\n")
 		for _, mode := range report.Modes {
 			m := report.ByScenario[scenario][mode]
-			b.WriteString(fmt.Sprintf("| %s | %.3f | %.3f | %.3f | %.3f | %.2f |\n",
-				mode, m.FactRecallAtK, m.MRR, m.NDCGAtK, m.PredicatePrecisionAtK, m.ContextFactsAvg))
+			fmt.Fprintf(&b, "| %s | %.3f | %.3f | %.3f | %.3f | %.2f |\n",
+				mode, m.FactRecallAtK, m.MRR, m.NDCGAtK, m.PredicatePrecisionAtK, m.ContextFactsAvg)
 		}
 		b.WriteString("\n")
 	}

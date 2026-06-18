@@ -112,7 +112,7 @@ func (s *SnapshotStore) AppendChange(collection string, change Change) error {
 	}
 	defer f.Close()
 
-	entry := diskDoc{Op: change.Op, ID: change.ID, Text: change.Text, Metadata: change.Metadata}
+	entry := diskDoc(change)
 	data, err := json.Marshal(entry)
 	if err != nil {
 		return err
