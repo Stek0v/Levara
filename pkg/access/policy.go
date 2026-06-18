@@ -336,6 +336,35 @@ func (p SQLPolicy) CanAccessDataset(ctx context.Context, datasetID, userID strin
 	return shareID != ""
 }
 
+// CanUseDatasetForUpload validates an explicit upload dataset id. Missing
+// dataset rows are allowed so upload can create caller-owned datasets with a
+// client-supplied id; existing rows require public, owner, or shared access.
+func (p SQLPolicy) CanUseDatasetForUpload(ctx context.Context, datasetID, userID string) (bool, error) {
+	if p.DB == nil || datasetID == "" || userID == "" {
+		return true, nil
+	}
+	var ownerID string
+	err := p.DB.QueryRowContext(ctx, p.rewrite("SELECT COALESCE(owner_id, '') FROM datasets WHERE id = $1"), datasetID).Scan(&ownerID)
+	if err == sql.ErrNoRows {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if ownerID == "" || ownerID == userID {
+		return true, nil
+	}
+	var shareID string
+	err = p.DB.QueryRowContext(ctx, p.rewrite("SELECT id FROM dataset_shares WHERE dataset_id = $1 AND user_id = $2"), datasetID, userID).Scan(&shareID)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return shareID != "", nil
+}
+
 // CanManageDatasetShares reports whether granterID may grant or revoke shares
 // on datasetID: the dataset owner, or a user holding an admin share. Mirrors
 // the prior inline HTTP checks exactly — a missing dataset row leaves owner

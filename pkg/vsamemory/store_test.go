@@ -16,6 +16,12 @@ func newVSATestDB(t *testing.T) *sql.DB {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	if _, err := db.Exec(`
+		CREATE TABLE graph_nodes (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL DEFAULT '',
+			type TEXT NOT NULL DEFAULT '',
+			dataset_id TEXT NOT NULL DEFAULT ''
+		);
 		CREATE TABLE graph_edges (
 			id TEXT PRIMARY KEY,
 			source_id TEXT NOT NULL,
@@ -24,8 +30,17 @@ func newVSATestDB(t *testing.T) *sql.DB {
 			properties TEXT NOT NULL DEFAULT '{}',
 			valid_from TEXT,
 			valid_until TEXT,
+			confidence REAL NOT NULL DEFAULT 1.0,
 			dataset_id TEXT NOT NULL DEFAULT ''
 		);
+		INSERT INTO graph_nodes(id, name, type, dataset_id) VALUES
+			('postgres', 'Postgres Database', 'Database', 'ds-a'),
+			('redis', 'Redis Cache', 'Cache', 'ds-a'),
+			('auth', 'Auth Service', 'Service', 'ds-a'),
+			('api', 'API Service', 'Service', 'ds-a'),
+			('alice', 'Alice Team', 'Team', 'ds-a'),
+			('mysql', 'MySQL Database', 'Database', 'ds-a'),
+			('tenant-b-db', 'Tenant B Database', 'Database', 'ds-b');
 		INSERT INTO graph_edges(id, source_id, target_id, relationship_name, valid_until, dataset_id) VALUES
 			('e1', 'auth', 'postgres', 'calls', NULL, 'ds-a'),
 			('e2', 'auth', 'redis', 'calls', NULL, 'ds-a'),
@@ -106,5 +121,31 @@ func TestStoreQueryObjectTopK(t *testing.T) {
 	}
 	if len(got) != 1 {
 		t.Fatalf("topK result len=%d, want 1", len(got))
+	}
+}
+
+func TestStoreQueryObjectWithOptionsReranksByQueryText(t *testing.T) {
+	ctx := context.Background()
+	db := newVSATestDB(t)
+	store := NewStore(db, Config{Dim: 1024, ShardSize: 12, Dialect: DialectSQLite})
+	if err := store.RebuildFromGraph(ctx, "ds-a"); err != nil {
+		t.Fatalf("RebuildFromGraph: %v", err)
+	}
+	got, err := store.QueryObjectWithOptions(ctx, "ds-a", "auth", "calls", QueryOptions{
+		QueryText: "which cache does auth call",
+		TopK:      2,
+		Rerank:    true,
+	})
+	if err != nil {
+		t.Fatalf("QueryObjectWithOptions: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("candidates=%+v, want two", got)
+	}
+	if got[0].TargetID != "redis" {
+		t.Fatalf("top candidate=%+v, want redis due query target hint", got[0])
+	}
+	if got[0].RerankScore <= got[0].Similarity {
+		t.Fatalf("rerank score %.3f should exceed similarity %.3f", got[0].RerankScore, got[0].Similarity)
 	}
 }
