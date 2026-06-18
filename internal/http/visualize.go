@@ -206,54 +206,6 @@ func VisualizeHTML(cfg *GraphVisualizationConfig) fiber.Handler {
 	}
 }
 
-// readGraphFromSQL reads graph nodes and edges from PostgreSQL/SQLite tables.
-func readGraphFromSQL(ctx context.Context, db *sql.DB) graphdb.GraphReadResult {
-	var result graphdb.GraphReadResult
-
-	// Nodes
-	rows, err := db.QueryContext(ctx, "SELECT id, name, type, COALESCE(description,'') FROM graph_nodes LIMIT 500")
-	if err != nil {
-		log.Printf("[visualize] SQL node query error: %v", err)
-		return result
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var id, name, typ, desc string
-		if err := rows.Scan(&id, &name, &typ, &desc); err != nil {
-			continue
-		}
-		result.Nodes = append(result.Nodes, graphdb.ReadNode{
-			ID:    id,
-			Label: typ,
-			Properties: map[string]any{
-				"name":        name,
-				"type":        typ,
-				"description": desc,
-			},
-		})
-	}
-	log.Printf("[visualize] SQL: loaded %d nodes", len(result.Nodes))
-
-	// Edges
-	erows, err := db.QueryContext(ctx, "SELECT source_id, target_id, relationship_name FROM graph_edges LIMIT 1000")
-	if err != nil {
-		return result
-	}
-	defer erows.Close()
-	for erows.Next() {
-		var src, tgt, rel string
-		erows.Scan(&src, &tgt, &rel)
-		result.Edges = append(result.Edges, graphdb.ReadEdge{
-			SourceID:         src,
-			TargetID:         tgt,
-			RelationshipType: rel,
-		})
-	}
-	log.Printf("[visualize] SQL: loaded %d edges", len(result.Edges))
-
-	return result
-}
-
 func generateVisualizationHTML(result graphdb.GraphReadResult) string {
 	// Build nodes JSON
 	var nodesJSON strings.Builder
