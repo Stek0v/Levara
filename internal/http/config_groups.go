@@ -95,6 +95,7 @@ type SearchConfig struct {
 	Collections             *store.CollectionManager
 	Neo4jCfg                GraphVisualizationConfig
 	BM25Indexes             map[string]*bm25.Index
+	BM25Store               *bm25.SnapshotStore
 	LLMCache                llmcache.LLMCacher
 	LLMProvider             llm.Provider
 	RerankEndpoint          string
@@ -115,6 +116,7 @@ func (c APIConfig) Search() SearchConfig {
 		Collections:             c.Collections,
 		Neo4jCfg:                c.Neo4jCfg,
 		BM25Indexes:             c.BM25Indexes,
+		BM25Store:               c.BM25Store,
 		LLMCache:                c.LLMCache,
 		LLMProvider:             c.LLMProvider,
 		RerankEndpoint:          c.RerankEndpoint,

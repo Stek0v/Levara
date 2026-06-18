@@ -70,6 +70,7 @@ import (
 
 	_ "github.com/stek0v/levara/docs" // swaggo-generated OpenAPI spec (T13)
 	"github.com/stek0v/levara/pkg/audit"
+	"github.com/stek0v/levara/pkg/bm25"
 	"github.com/stek0v/levara/pkg/consolidate"
 	"github.com/stek0v/levara/pkg/embcontract"
 	"github.com/stek0v/levara/pkg/embed"
@@ -524,6 +525,20 @@ func main() {
 
 	// Create gRPC service (shared between gRPC server and HTTP handlers for BM25 indexes)
 	grpcSvc := vectorGrpc.NewService(colManager, c, *dim)
+	bm25Store := bm25.NewSnapshotStore(*dataDir + "/bm25")
+	if loaded, err := bm25Store.LoadAll(); err != nil {
+		log.Printf("BM25 snapshot load failed (%v), starting with empty lexical indexes", err)
+	} else {
+		for collection, idx := range loaded {
+			grpcSvc.BM25Indexes()[collection] = idx
+		}
+		if len(loaded) > 0 {
+			log.Printf("loaded %d BM25 lexical indexes from disk", len(loaded))
+		}
+	}
+	grpcSvc.SetBM25Store(bm25Store)
+	stopBM25Autosave := bm25Store.StartAutosave(context.Background(), grpcSvc.BM25Indexes(), 5*time.Minute)
+	defer stopBM25Autosave()
 
 	// LLM response cache — eliminates redundant LLM calls for identical inputs
 	// PersistentCache: survives restarts via append-only JSONL file
@@ -595,6 +610,7 @@ func main() {
 		Neo4jCfg:                vizCfg,
 		DB:                      pgDB,
 		BM25Indexes:             grpcSvc.BM25Indexes(),
+		BM25Store:               bm25Store,
 		LLMCache:                llmCache,
 		LLMProvider:             llmProvider,
 		ErrorTracker:            errTracker,
@@ -627,6 +643,7 @@ func main() {
 		Collections:             colManager,
 		DB:                      pgDB,
 		BM25Indexes:             grpcSvc.BM25Indexes(),
+		BM25Store:               bm25Store,
 		LLMCache:                llmCache,
 		LLMProvider:             llmProvider,
 		RerankEndpoint:          rerankCfg.Endpoint,

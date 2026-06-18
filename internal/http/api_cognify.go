@@ -202,6 +202,7 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 			Collection:          collection,
 			Collections:         cfg.Collections,
 			BM25Indexes:         cfg.BM25Indexes,
+			BM25Store:           cfg.BM25Store,
 			GenerateTriplets:    !req.SkipGraph,
 			SkipGraph:           req.SkipGraph,
 			SystemPrompt:        sessionContext,

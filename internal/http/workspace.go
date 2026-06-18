@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -1316,6 +1317,9 @@ func workspaceLexicalIndex(cfg APIConfig, collection string) *bm25.Index {
 		return idx
 	}
 	idx := bm25.NewIndex()
+	if cfg.BM25Store != nil {
+		cfg.BM25Store.Attach(collection, idx)
+	}
 	cfg.BM25Indexes[collection] = idx
 	return idx
 }
@@ -1582,6 +1586,11 @@ func cleanupLexicalAfterGC(cfg APIConfig, chunks []workspace.ChunkRecord, result
 	for _, coll := range result.DroppedCollections {
 		dropped[coll] = struct{}{}
 		delete(cfg.BM25Indexes, coll)
+		if cfg.BM25Store != nil {
+			if err := cfg.BM25Store.Remove(coll); err != nil {
+				log.Printf("[workspace] remove BM25 sidecar %q: %v", coll, err)
+			}
+		}
 	}
 	for _, rec := range chunks {
 		if _, ok := dropped[rec.Collection]; ok {
