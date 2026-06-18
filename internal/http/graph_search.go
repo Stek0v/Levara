@@ -77,6 +77,7 @@ func graphCompletionSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest
 	// Step 2: Graph context
 	graphPolicy := defaultGraphContextPolicy()
 	graphPolicy.QueryText = req.QueryText
+	graphPolicy.RouteCandidates = dcdRouteCandidatesFromCtx(c)
 	graphAssembly := assembleGraphContext(ctx, cfg, entityNames, req.AllowedDatasetIDs, graphPolicy)
 	graphContext := graphAssembly.Context
 
@@ -210,6 +211,7 @@ func contextExtensionSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchReques
 	// Step 2: VSA-first direct context, with SQL/Neo4j as filler.
 	graphPolicy := defaultGraphContextPolicy()
 	graphPolicy.QueryText = req.QueryText
+	graphPolicy.RouteCandidates = dcdRouteCandidatesFromCtx(c)
 	graphAssembly := assembleGraphContext(ctx, cfg, entityNames, req.AllowedDatasetIDs, graphPolicy)
 	vsaContext := graphAssembly.VSAContext
 	hop1Context := append([]string{}, graphAssembly.SQLContext...)

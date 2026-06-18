@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode"
@@ -157,7 +158,7 @@ type vsaSourceNode struct {
 }
 
 func vsaGraphContext(ctx context.Context, cfg APIConfig, entityNames []string, allowedDatasetIDs []string, limit int) []string {
-	items := vsaGraphContextItems(ctx, cfg, entityNames, allowedDatasetIDs, limit, "")
+	items := vsaGraphContextItems(ctx, cfg, entityNames, allowedDatasetIDs, limit, "", nil)
 	out := make([]string, 0, len(items))
 	for _, item := range items {
 		out = append(out, item.format())
@@ -165,7 +166,7 @@ func vsaGraphContext(ctx context.Context, cfg APIConfig, entityNames []string, a
 	return out
 }
 
-func vsaGraphContextItems(ctx context.Context, cfg APIConfig, entityNames []string, allowedDatasetIDs []string, limit int, queryText string) []graphContextItem {
+func vsaGraphContextItems(ctx context.Context, cfg APIConfig, entityNames []string, allowedDatasetIDs []string, limit int, queryText string, routeCandidates []dcdRouteCandidate) []graphContextItem {
 	if cfg.DB == nil || len(entityNames) == 0 {
 		return nil
 	}
@@ -221,32 +222,46 @@ func vsaGraphContextItems(ctx context.Context, cfg APIConfig, entityNames []stri
 				predicates = predicates[:8]
 			}
 			for _, predicate := range predicates {
+				topK := 3
+				if len(routeCandidates) > 0 {
+					topK = 12
+				}
 				candidates, err := store.QueryObjectWithOptions(ctx, datasetID, source.ID, predicate, vsamemory.QueryOptions{
 					QueryText: queryText,
-					TopK:      3,
+					TopK:      topK,
 					Rerank:    strings.TrimSpace(queryText) != "",
 				})
 				if err != nil {
 					log.Printf("[vsa] query dataset=%q source=%q predicate=%q: %v", datasetID, source.ID, predicate, err)
 					continue
 				}
+				candidates = rerankVSACandidatesByDCDRoute(candidates, routeCandidates)
+				if len(candidates) > 3 {
+					candidates = candidates[:3]
+				}
 				for _, candidate := range candidates {
 					targetName := vsaNodeName(ctx, cfg.DB, candidate.TargetID, datasetID)
 					if targetName == "" {
 						targetName = candidate.TargetID
 					}
+					routeBoost := dcdRouteCandidateBoost(candidate, routeCandidates)
 					key := source.Name + "\x00" + predicate + "\x00" + targetName
 					if _, ok := seen[key]; ok {
 						continue
 					}
 					seen[key] = struct{}{}
 					out = append(out, graphContextItem{
-						SourceName: source.Name,
-						Predicate:  predicate,
-						TargetName: targetName,
-						DatasetID:  datasetID,
-						Provider:   graphContextProviderVSA,
-						Score:      candidate.Similarity,
+						SourceName:   source.Name,
+						Predicate:    predicate,
+						TargetName:   targetName,
+						DatasetID:    datasetID,
+						DomainID:     candidate.DomainID,
+						CollectionID: candidate.CollectionID,
+						DocumentID:   candidate.DocumentID,
+						Provider:     graphContextProviderVSA,
+						Score:        candidateScoreWithDCDRoute(candidate, routeCandidates),
+						RouteBoost:   routeBoost,
+						HasRouteMeta: candidateHasDCDRouteMetadata(candidate),
 					})
 					if len(out) >= limit {
 						return out
@@ -256,6 +271,61 @@ func vsaGraphContextItems(ctx context.Context, cfg APIConfig, entityNames []stri
 		}
 	}
 	return out
+}
+
+func candidateHasDCDRouteMetadata(candidate vsamemory.Candidate) bool {
+	return candidate.DomainID != "" || candidate.CollectionID != "" || candidate.DocumentID != ""
+}
+
+func rerankVSACandidatesByDCDRoute(candidates []vsamemory.Candidate, routes []dcdRouteCandidate) []vsamemory.Candidate {
+	if len(candidates) == 0 || len(routes) == 0 {
+		return candidates
+	}
+	out := append([]vsamemory.Candidate(nil), candidates...)
+	sort.SliceStable(out, func(i, j int) bool {
+		left := candidateScoreWithDCDRoute(out[i], routes)
+		right := candidateScoreWithDCDRoute(out[j], routes)
+		if left == right {
+			if out[i].Similarity != out[j].Similarity {
+				return out[i].Similarity > out[j].Similarity
+			}
+			return out[i].TargetID < out[j].TargetID
+		}
+		return left > right
+	})
+	return out
+}
+
+func candidateScoreWithDCDRoute(candidate vsamemory.Candidate, routes []dcdRouteCandidate) float64 {
+	score := candidate.RerankScore
+	if score == 0 {
+		score = candidate.Similarity
+	}
+	return score + dcdRouteCandidateBoost(candidate, routes)
+}
+
+func dcdRouteCandidateBoost(candidate vsamemory.Candidate, routes []dcdRouteCandidate) float64 {
+	var best float64
+	for _, route := range routes {
+		if route.DatasetID != "" && candidate.DatasetID != "" && route.DatasetID != candidate.DatasetID {
+			continue
+		}
+		boost := 0.0
+		if route.DomainID != "" && candidate.DomainID == route.DomainID {
+			boost += 0.10
+		}
+		if route.CollectionID != "" && candidate.CollectionID == route.CollectionID {
+			boost += 0.20
+		}
+		if route.DocumentID != "" && candidate.DocumentID == route.DocumentID {
+			boost += 0.35
+		}
+		boost *= route.Confidence
+		if boost > best {
+			best = boost
+		}
+	}
+	return best
 }
 
 func graphContextTokens(s string) map[string]struct{} {

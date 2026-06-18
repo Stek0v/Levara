@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-06-18T12:53:42Z",
+  "generated_at": "2026-06-18T19:06:27Z",
   "cases": 52,
   "budgets": {
     "context_budget": 5,
@@ -23,8 +23,8 @@
         "mrr": 0,
         "ndcg_at_k": 0,
         "context_facts_avg": 5,
-        "latency_p50_micros": 73,
-        "latency_p95_micros": 224,
+        "latency_p50_micros": 79,
+        "latency_p95_micros": 203,
         "tenant_leak_rate": 0,
         "expired_fact_leak_rate": 0
       },
@@ -35,8 +35,8 @@
         "mrr": 0,
         "ndcg_at_k": 0,
         "context_facts_avg": 5,
-        "latency_p50_micros": 58,
-        "latency_p95_micros": 86,
+        "latency_p50_micros": 59,
+        "latency_p95_micros": 258,
         "tenant_leak_rate": 0,
         "expired_fact_leak_rate": 0
       },
@@ -47,8 +47,8 @@
         "mrr": 0,
         "ndcg_at_k": 0,
         "context_facts_avg": 0,
-        "latency_p50_micros": 17,
-        "latency_p95_micros": 78,
+        "latency_p50_micros": 18,
+        "latency_p95_micros": 193,
         "tenant_leak_rate": 0,
         "expired_fact_leak_rate": 0
       },
@@ -59,8 +59,8 @@
         "mrr": 1,
         "ndcg_at_k": 1,
         "context_facts_avg": 5,
-        "latency_p50_micros": 91495,
-        "latency_p95_micros": 105162,
+        "latency_p50_micros": 117765,
+        "latency_p95_micros": 163757,
         "tenant_leak_rate": 0,
         "expired_fact_leak_rate": 0
       },
@@ -71,8 +71,8 @@
         "mrr": 1,
         "ndcg_at_k": 1,
         "context_facts_avg": 5,
-        "latency_p50_micros": 89377,
-        "latency_p95_micros": 90490,
+        "latency_p50_micros": 115673,
+        "latency_p95_micros": 119984,
         "tenant_leak_rate": 0,
         "expired_fact_leak_rate": 0
       }
@@ -85,8 +85,8 @@
         "mrr": 0,
         "ndcg_at_k": 0,
         "context_facts_avg": 10,
-        "latency_p50_micros": 146,
-        "latency_p95_micros": 234,
+        "latency_p50_micros": 174,
+        "latency_p95_micros": 324,
         "tenant_leak_rate": 0,
         "expired_fact_leak_rate": 0
       },
@@ -97,8 +97,8 @@
         "mrr": 0,
         "ndcg_at_k": 0,
         "context_facts_avg": 10,
-        "latency_p50_micros": 137,
-        "latency_p95_micros": 184,
+        "latency_p50_micros": 297,
+        "latency_p95_micros": 454,
         "tenant_leak_rate": 0,
         "expired_fact_leak_rate": 0
       },
@@ -109,8 +109,8 @@
         "mrr": 0,
         "ndcg_at_k": 0,
         "context_facts_avg": 0,
-        "latency_p50_micros": 15,
-        "latency_p95_micros": 18,
+        "latency_p50_micros": 44,
+        "latency_p95_micros": 67,
         "tenant_leak_rate": 0,
         "expired_fact_leak_rate": 0
       },
@@ -121,8 +121,8 @@
         "mrr": 1,
         "ndcg_at_k": 1,
         "context_facts_avg": 10,
-        "latency_p50_micros": 25647,
-        "latency_p95_micros": 26700,
+        "latency_p50_micros": 34047,
+        "latency_p95_micros": 52598,
         "tenant_leak_rate": 0,
         "expired_fact_leak_rate": 0
       },
@@ -133,8 +133,8 @@
         "mrr": 1,
         "ndcg_at_k": 1,
         "context_facts_avg": 10,
-        "latency_p50_micros": 25518,
-        "latency_p95_micros": 26103,
+        "latency_p50_micros": 34122,
+        "latency_p95_micros": 42969,
         "tenant_leak_rate": 0,
         "expired_fact_leak_rate": 0
       }
@@ -147,8 +147,8 @@
         "mrr": 0,
         "ndcg_at_k": 0,
         "context_facts_avg": 10,
-        "latency_p50_micros": 303,
-        "latency_p95_micros": 404,
+        "latency_p50_micros": 401,
+        "latency_p95_micros": 1009,
         "tenant_leak_rate": 0,
         "expired_fact_leak_rate": 0
       },
@@ -159,8 +159,8 @@
         "mrr": 0,
         "ndcg_at_k": 0,
         "context_facts_avg": 10,
-        "latency_p50_micros": 297,
-        "latency_p95_micros": 369,
+        "latency_p50_micros": 379,
+        "latency_p95_micros": 779,
         "tenant_leak_rate": 0,
         "expired_fact_leak_rate": 0
       },
@@ -171,8 +171,8 @@
         "mrr": 0,
         "ndcg_at_k": 0,
         "context_facts_avg": 0,
-        "latency_p50_micros": 15,
-        "latency_p95_micros": 15,
+        "latency_p50_micros": 16,
+        "latency_p95_micros": 17,
         "tenant_leak_rate": 0,
         "expired_fact_leak_rate": 0
       },
@@ -183,8 +183,8 @@
         "mrr": 1,
         "ndcg_at_k": 1,
         "context_facts_avg": 10,
-        "latency_p50_micros": 90832,
-        "latency_p95_micros": 95947,
+        "latency_p50_micros": 119000,
+        "latency_p95_micros": 121481,
         "tenant_leak_rate": 0,
         "expired_fact_leak_rate": 0
       },
@@ -195,8 +195,8 @@
         "mrr": 1,
         "ndcg_at_k": 1,
         "context_facts_avg": 10,
-        "latency_p50_micros": 89895,
-        "latency_p95_micros": 93349,
+        "latency_p50_micros": 121493,
+        "latency_p95_micros": 221433,
         "tenant_leak_rate": 0,
         "expired_fact_leak_rate": 0
       }
@@ -209,8 +209,8 @@
         "mrr": 0,
         "ndcg_at_k": 0,
         "context_facts_avg": 10,
-        "latency_p50_micros": 414,
-        "latency_p95_micros": 475,
+        "latency_p50_micros": 463,
+        "latency_p95_micros": 791,
         "tenant_leak_rate": 0,
         "expired_fact_leak_rate": 0
       },
@@ -221,8 +221,8 @@
         "mrr": 0,
         "ndcg_at_k": 0,
         "context_facts_avg": 10,
-        "latency_p50_micros": 414,
-        "latency_p95_micros": 576,
+        "latency_p50_micros": 445,
+        "latency_p95_micros": 881,
         "tenant_leak_rate": 0,
         "expired_fact_leak_rate": 0
       },
@@ -233,8 +233,8 @@
         "mrr": 0,
         "ndcg_at_k": 0,
         "context_facts_avg": 0,
-        "latency_p50_micros": 15,
-        "latency_p95_micros": 16,
+        "latency_p50_micros": 17,
+        "latency_p95_micros": 194,
         "tenant_leak_rate": 0,
         "expired_fact_leak_rate": 0
       },
@@ -245,8 +245,8 @@
         "mrr": 1,
         "ndcg_at_k": 1,
         "context_facts_avg": 10,
-        "latency_p50_micros": 14993,
-        "latency_p95_micros": 15298,
+        "latency_p50_micros": 19616,
+        "latency_p95_micros": 20801,
         "tenant_leak_rate": 0,
         "expired_fact_leak_rate": 0
       },
@@ -257,8 +257,8 @@
         "mrr": 1,
         "ndcg_at_k": 1,
         "context_facts_avg": 9,
-        "latency_p50_micros": 14333,
-        "latency_p95_micros": 14677,
+        "latency_p50_micros": 23892,
+        "latency_p95_micros": 26663,
         "tenant_leak_rate": 0,
         "expired_fact_leak_rate": 0
       }
@@ -272,8 +272,8 @@
       "mrr": 0,
       "ndcg_at_k": 0,
       "context_facts_avg": 8.75,
-      "latency_p50_micros": 224,
-      "latency_p95_micros": 454,
+      "latency_p50_micros": 302,
+      "latency_p95_micros": 720,
       "tenant_leak_rate": 0,
       "expired_fact_leak_rate": 0
     },
@@ -284,8 +284,8 @@
       "mrr": 0,
       "ndcg_at_k": 0,
       "context_facts_avg": 8.75,
-      "latency_p50_micros": 184,
-      "latency_p95_micros": 460,
+      "latency_p50_micros": 339,
+      "latency_p95_micros": 779,
       "tenant_leak_rate": 0,
       "expired_fact_leak_rate": 0
     },
@@ -296,8 +296,8 @@
       "mrr": 0,
       "ndcg_at_k": 0,
       "context_facts_avg": 0,
-      "latency_p50_micros": 15,
-      "latency_p95_micros": 18,
+      "latency_p50_micros": 18,
+      "latency_p95_micros": 147,
       "tenant_leak_rate": 0,
       "expired_fact_leak_rate": 0
     },
@@ -308,8 +308,8 @@
       "mrr": 1,
       "ndcg_at_k": 1,
       "context_facts_avg": 8.75,
-      "latency_p50_micros": 26700,
-      "latency_p95_micros": 95947,
+      "latency_p50_micros": 52598,
+      "latency_p95_micros": 122086,
       "tenant_leak_rate": 0,
       "expired_fact_leak_rate": 0
     },
@@ -320,8 +320,8 @@
       "mrr": 1,
       "ndcg_at_k": 1,
       "context_facts_avg": 8.5,
-      "latency_p50_micros": 26103,
-      "latency_p95_micros": 91050,
+      "latency_p50_micros": 42969,
+      "latency_p95_micros": 142609,
       "tenant_leak_rate": 0,
       "expired_fact_leak_rate": 0
     }
@@ -329,7 +329,7 @@
   "lift": {
     "current_append": {
       "fact_recall_at_k": 0,
-      "latency_p95_micros": 6,
+      "latency_p95_micros": 59,
       "mrr": 0,
       "ndcg_at_k": 0,
       "predicate_precision_at_k": 0,
@@ -337,7 +337,7 @@
     },
     "vsa_empty_index": {
       "fact_recall_at_k": 0,
-      "latency_p95_micros": -436,
+      "latency_p95_micros": -573,
       "mrr": 0,
       "ndcg_at_k": 0,
       "predicate_precision_at_k": -0.9142857142857143,
@@ -345,7 +345,7 @@
     },
     "vsa_first": {
       "fact_recall_at_k": 1,
-      "latency_p95_micros": 95493,
+      "latency_p95_micros": 121366,
       "mrr": 1,
       "ndcg_at_k": 1,
       "predicate_precision_at_k": 0.05714285714285716,
@@ -353,7 +353,7 @@
     },
     "vsa_only": {
       "fact_recall_at_k": 1,
-      "latency_p95_micros": 90596,
+      "latency_p95_micros": 141889,
       "mrr": 1,
       "ndcg_at_k": 1,
       "predicate_precision_at_k": 0.08571428571428574,

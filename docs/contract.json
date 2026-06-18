@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-06-18T17:07:08+03:00",
-  "git_rev": "4d989533d6f1f2cb001e5048aa967d271861cc14",
+  "generated_at": "2026-06-18T19:44:52+03:00",
+  "git_rev": "aad7bb732428471e48e0941f658784fcf6cb127e",
   "rest": [
     {
       "method": "POST",
@@ -1386,6 +1386,61 @@
     {
       "provider": "postgres",
       "kind": "alter",
+      "name": "graph_edges"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "graph_edges"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "graph_edges"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "graph_edges"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "graph_nodes"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "graph_nodes"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "graph_nodes"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "graph_nodes"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "graph_nodes"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "graph_nodes"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "graph_nodes"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
       "name": "graph_nodes"
     },
     {
@@ -1521,6 +1576,11 @@
     {
       "provider": "postgres",
       "kind": "index",
+      "name": "idx_graph_edges_route"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
       "name": "idx_graph_edges_source"
     },
     {
@@ -1546,6 +1606,11 @@
     {
       "provider": "postgres",
       "kind": "index",
+      "name": "idx_graph_nodes_route"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
       "name": "idx_graph_nodes_type"
     },
     {
@@ -1562,6 +1627,36 @@
       "provider": "postgres",
       "kind": "index",
       "name": "idx_interactions_session"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_knowledge_collections_name"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_knowledge_collections_scope"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_knowledge_documents_scope"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_knowledge_documents_title"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_knowledge_domains_name"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_knowledge_domains_scope"
     },
     {
       "provider": "postgres",
@@ -1672,6 +1767,21 @@
       "provider": "postgres",
       "kind": "table",
       "name": "interactions"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "knowledge_collections"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "knowledge_documents"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "knowledge_domains"
     },
     {
       "provider": "postgres",
@@ -1786,6 +1896,61 @@
     {
       "provider": "sqlite",
       "kind": "alter",
+      "name": "graph_edges"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "graph_edges"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "graph_edges"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "graph_edges"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "graph_nodes"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "graph_nodes"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "graph_nodes"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "graph_nodes"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "graph_nodes"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "graph_nodes"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "graph_nodes"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
       "name": "graph_nodes"
     },
     {
@@ -1911,6 +2076,11 @@
     {
       "provider": "sqlite",
       "kind": "index",
+      "name": "idx_graph_edges_route"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
       "name": "idx_graph_edges_source"
     },
     {
@@ -1936,6 +2106,11 @@
     {
       "provider": "sqlite",
       "kind": "index",
+      "name": "idx_graph_nodes_route"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
       "name": "idx_graph_nodes_type"
     },
     {
@@ -1952,6 +2127,36 @@
       "provider": "sqlite",
       "kind": "index",
       "name": "idx_interactions_session"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_knowledge_collections_name"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_knowledge_collections_scope"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_knowledge_documents_scope"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_knowledge_documents_title"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_knowledge_domains_name"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_knowledge_domains_scope"
     },
     {
       "provider": "sqlite",
@@ -2062,6 +2267,21 @@
       "provider": "sqlite",
       "kind": "table",
       "name": "interactions"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "knowledge_collections"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "knowledge_documents"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "knowledge_domains"
     },
     {
       "provider": "sqlite",

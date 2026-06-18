@@ -50,3 +50,23 @@ func TestAttachSearchDebugMetadata_WithRoutingDecision(t *testing.T) {
 	}
 }
 
+func TestAttachSearchDebugMetadata_WithDCDRoute(t *testing.T) {
+	app := fiber.New()
+	ctx := app.AcquireCtx(&fasthttp.RequestCtx{})
+	defer app.ReleaseCtx(ctx)
+
+	ctx.Locals("dcd_route_debug", fiber.Map{
+		"mode":            "observe",
+		"candidate_count": 1,
+	})
+
+	out := attachSearchDebugMetadata(ctx, fiber.Map{})
+	debug, _ := out["debug"].(fiber.Map)
+	dcd, ok := debug["dcd_route"].(fiber.Map)
+	if !ok {
+		t.Fatalf("dcd_route debug block missing: %#v", debug)
+	}
+	if dcd["mode"] != "observe" {
+		t.Fatalf("dcd_route.mode=%v, want observe", dcd["mode"])
+	}
+}

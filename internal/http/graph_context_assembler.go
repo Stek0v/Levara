@@ -21,35 +21,45 @@ const (
 )
 
 type graphContextItem struct {
-	SourceName string
-	Predicate  string
-	TargetName string
-	DatasetID  string
-	Provider   string
-	Score      float64
-	Text       string
+	SourceName   string
+	Predicate    string
+	TargetName   string
+	DatasetID    string
+	DomainID     string
+	CollectionID string
+	DocumentID   string
+	Provider     string
+	Score        float64
+	Text         string
+	RouteBoost   float64
+	HasRouteMeta bool
 }
 
 type graphContextPolicy struct {
-	TotalLimit int
-	VSAReserve int
-	Order      string
-	QueryText  string
+	TotalLimit      int
+	VSAReserve      int
+	Order           string
+	QueryText       string
+	RouteCandidates []dcdRouteCandidate
 }
 
 type graphContextAssembly struct {
-	Context       []string
-	VSAContext    []string
-	SQLContext    []string
-	Neo4jContext  []string
-	TargetNames   []string
-	Order         string
-	TotalLimit    int
-	VSAReserve    int
-	DedupCount    int
-	VSALatency    time.Duration
-	GraphLatency  time.Duration
-	GraphProvider string
+	Context                []string
+	VSAContext             []string
+	SQLContext             []string
+	Neo4jContext           []string
+	TargetNames            []string
+	Order                  string
+	TotalLimit             int
+	VSAReserve             int
+	DedupCount             int
+	VSALatency             time.Duration
+	GraphLatency           time.Duration
+	GraphProvider          string
+	RouteBoostEnabled      bool
+	RouteBoostedCount      int
+	RouteMetadataHitCount  int
+	RouteMetadataMissCount int
 }
 
 func defaultGraphContextPolicy() graphContextPolicy {
@@ -108,9 +118,10 @@ func assembleGraphContext(ctx context.Context, cfg APIConfig, entityNames []stri
 	}
 
 	out := graphContextAssembly{
-		Order:      policy.Order,
-		TotalLimit: policy.TotalLimit,
-		VSAReserve: policy.VSAReserve,
+		Order:             policy.Order,
+		TotalLimit:        policy.TotalLimit,
+		VSAReserve:        policy.VSAReserve,
+		RouteBoostEnabled: len(policy.RouteCandidates) > 0,
 	}
 	seen := map[string]struct{}{}
 	add := func(items []graphContextItem, limit int) []string {
@@ -134,6 +145,14 @@ func assembleGraphContext(ctx context.Context, cfg APIConfig, entityNames []stri
 			switch item.Provider {
 			case graphContextProviderVSA:
 				out.VSAContext = append(out.VSAContext, line)
+				if item.RouteBoost > 0 {
+					out.RouteBoostedCount++
+				}
+				if item.HasRouteMeta {
+					out.RouteMetadataHitCount++
+				} else {
+					out.RouteMetadataMissCount++
+				}
 			case graphContextProviderNeo4j:
 				out.Neo4jContext = append(out.Neo4jContext, line)
 				if item.TargetName != "" {
@@ -154,7 +173,7 @@ func assembleGraphContext(ctx context.Context, cfg APIConfig, entityNames []stri
 			return nil
 		}
 		start := time.Now()
-		items := vsaGraphContextItems(ctx, cfg, entityNames, allowedDatasetIDs, limit, policy.QueryText)
+		items := vsaGraphContextItems(ctx, cfg, entityNames, allowedDatasetIDs, limit, policy.QueryText, policy.RouteCandidates)
 		out.VSALatency += time.Since(start)
 		return items
 	}
@@ -224,16 +243,20 @@ func (i graphContextItem) format() string {
 
 func graphContextDebugMetadata(a graphContextAssembly) map[string]any {
 	return map[string]any{
-		"graph_context_order":          a.Order,
-		"graph_context_total_limit":    a.TotalLimit,
-		"graph_context_vsa_reserve":    a.VSAReserve,
-		"graph_context_total_count":    len(a.Context),
-		"graph_context_vsa_count":      len(a.VSAContext),
-		"graph_context_sql_count":      len(a.SQLContext),
-		"graph_context_neo4j_count":    len(a.Neo4jContext),
-		"graph_context_provider":       a.GraphProvider,
-		"graph_context_dedup_count":    a.DedupCount,
-		"graph_context_vsa_latency_ms": a.VSALatency.Milliseconds(),
-		"graph_context_sql_latency_ms": a.GraphLatency.Milliseconds(),
+		"graph_context_order":                     a.Order,
+		"graph_context_total_limit":               a.TotalLimit,
+		"graph_context_vsa_reserve":               a.VSAReserve,
+		"graph_context_total_count":               len(a.Context),
+		"graph_context_vsa_count":                 len(a.VSAContext),
+		"graph_context_sql_count":                 len(a.SQLContext),
+		"graph_context_neo4j_count":               len(a.Neo4jContext),
+		"graph_context_provider":                  a.GraphProvider,
+		"graph_context_dedup_count":               a.DedupCount,
+		"graph_context_vsa_latency_ms":            a.VSALatency.Milliseconds(),
+		"graph_context_sql_latency_ms":            a.GraphLatency.Milliseconds(),
+		"graph_context_route_boost_enabled":       a.RouteBoostEnabled,
+		"graph_context_route_boosted_count":       a.RouteBoostedCount,
+		"graph_context_route_metadata_hit_count":  a.RouteMetadataHitCount,
+		"graph_context_route_metadata_miss_count": a.RouteMetadataMissCount,
 	}
 }

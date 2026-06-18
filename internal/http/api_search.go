@@ -42,14 +42,14 @@ import (
 // ── U5: Levara Search ──
 
 type UnifiedSearchRequest struct {
-	QueryText         string   `json:"query_text"`
-	QueryType         string   `json:"query_type"` // CHUNKS, GRAPH_COMPLETION, etc.
-	TopK              int      `json:"top_k"`
-	CypherQuery       string   `json:"cypher_query"`    // Raw Cypher for CYPHER search type
-	Collection        string   `json:"collection"`      // Filter search to one collection (empty = all)
-	Domain            string   `json:"domain"`          // Optional: filter to collections tagged with this domain
-	SessionID         string   `json:"session_id"`      // Conversational memory: load prior interactions
-	Tags              []string `json:"tags"`            // Optional: filter results by metadata tags
+	QueryText   string   `json:"query_text"`
+	QueryType   string   `json:"query_type"` // CHUNKS, GRAPH_COMPLETION, etc.
+	TopK        int      `json:"top_k"`
+	CypherQuery string   `json:"cypher_query"` // Raw Cypher for CYPHER search type
+	Collection  string   `json:"collection"`   // Filter search to one collection (empty = all)
+	Domain      string   `json:"domain"`       // Optional: filter to collections tagged with this domain
+	SessionID   string   `json:"session_id"`   // Conversational memory: load prior interactions
+	Tags        []string `json:"tags"`         // Optional: filter results by metadata tags
 	// Rerank is tri-state: nil = use server default (default-on when
 	// RerankEndpoint is configured), explicit false = opt out, explicit
 	// true = force on. Phase 2 (2026-05-14) flipped the default from
@@ -397,6 +397,9 @@ func searchHandler(cfg APIConfig) fiber.Handler {
 			routingDecision = &d
 			queryType = d.SearchType
 		}
+		if dcdRouteSupportedSearchType(queryType) {
+			maybeAttachDCDRouteObserve(reqCtx, c, cfg, req, userID)
+		}
 
 		metrics.SearchRequestsByType.WithLabelValues(queryType, source).Inc()
 		c.Locals("routing_source", source)
@@ -413,6 +416,15 @@ func searchHandler(cfg APIConfig) fiber.Handler {
 			registry = NewDefaultStrategyRegistry()
 		}
 		return registry.Get(queryType).Execute(c, cfg, req)
+	}
+}
+
+func dcdRouteSupportedSearchType(queryType string) bool {
+	switch strings.ToUpper(strings.TrimSpace(queryType)) {
+	case "GRAPH_COMPLETION", "GRAPH_SUMMARY_COMPLETION", "GRAPH_COMPLETION_CONTEXT_EXTENSION":
+		return true
+	default:
+		return false
 	}
 }
 
