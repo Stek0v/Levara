@@ -42,6 +42,7 @@ type Service struct {
 	dim            int
 	llmCache       *llmcache.Cache
 	bm25Indexes    map[string]*bm25.Index
+	bm25Store      *bm25.SnapshotStore
 	bm25Mu         sync.RWMutex
 	graphCaches    map[string]*graphdb.CachedWriter
 	graphCacheMu   sync.Mutex
@@ -102,6 +103,17 @@ func (s *Service) resolveEmbedClient(reqEndpoint, reqModel string, batchSize, co
 // BM25Indexes returns the shared BM25 index map for HTTP handlers.
 func (s *Service) BM25Indexes() map[string]*bm25.Index {
 	return s.bm25Indexes
+}
+
+// SetBM25Store enables disk persistence for BM25 indexes created by gRPC.
+func (s *Service) SetBM25Store(store *bm25.SnapshotStore) {
+	s.bm25Store = store
+	if store == nil {
+		return
+	}
+	for collection, idx := range s.bm25Indexes {
+		store.Attach(collection, idx)
+	}
 }
 
 func (s *Service) CreateCollection(_ context.Context, req *pb.CreateCollectionReq) (*pb.StatusResp, error) {
@@ -1351,6 +1363,9 @@ func (s *Service) getBM25Index(collection string) *bm25.Index {
 		return idx
 	}
 	idx = bm25.NewIndex()
+	if s.bm25Store != nil {
+		s.bm25Store.Attach(collection, idx)
+	}
 	s.bm25Indexes[collection] = idx
 	return idx
 }

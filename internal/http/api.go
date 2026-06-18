@@ -55,6 +55,7 @@ type APIConfig struct {
 	Neo4jCfg     GraphVisualizationConfig
 	DB           *sql.DB                // shared connection pool (nil if no PostgresDSN)
 	BM25Indexes  map[string]*bm25.Index // shared BM25 indexes (same as gRPC service)
+	BM25Store    *bm25.SnapshotStore    // optional disk persistence for BM25 sidecars
 	LLMCache     llmcache.LLMCacher     // shared LLM response cache (nil = no caching)
 	LLMProvider  llm.Provider           // multi-provider LLM abstraction (nil = legacy raw HTTP)
 	ErrorTracker *observe.ErrorTracker  // error tracking (nil = disabled)
