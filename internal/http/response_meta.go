@@ -32,6 +32,9 @@ func attachSearchDebugMetadata(c *fiber.Ctx, payload fiber.Map) fiber.Map {
 		}
 		debug["alternatives"] = alternatives
 	}
+	if dcd, ok := c.Locals("dcd_route_debug").(fiber.Map); ok && dcd != nil {
+		debug["dcd_route"] = dcd
+	}
 	payload["debug"] = debug
 	return payload
 }

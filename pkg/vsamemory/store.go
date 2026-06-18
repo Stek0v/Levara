@@ -36,15 +36,18 @@ type Store struct {
 }
 
 type Candidate struct {
-	TargetID    string  `json:"target_id"`
-	TargetName  string  `json:"target_name,omitempty"`
-	EdgeID      string  `json:"edge_id"`
-	Predicate   string  `json:"predicate"`
-	DatasetID   string  `json:"dataset_id"`
-	ShardID     string  `json:"shard_id"`
-	Similarity  float64 `json:"similarity"`
-	RerankScore float64 `json:"rerank_score,omitempty"`
-	Confidence  float64 `json:"confidence,omitempty"`
+	TargetID     string  `json:"target_id"`
+	TargetName   string  `json:"target_name,omitempty"`
+	EdgeID       string  `json:"edge_id"`
+	Predicate    string  `json:"predicate"`
+	DatasetID    string  `json:"dataset_id"`
+	DomainID     string  `json:"domain_id,omitempty"`
+	CollectionID string  `json:"collection_id,omitempty"`
+	DocumentID   string  `json:"document_id,omitempty"`
+	ShardID      string  `json:"shard_id"`
+	Similarity   float64 `json:"similarity"`
+	RerankScore  float64 `json:"rerank_score,omitempty"`
+	Confidence   float64 `json:"confidence,omitempty"`
 }
 
 type QueryOptions struct {
@@ -244,14 +247,17 @@ func (s *Store) QueryObjectWithOptions(ctx context.Context, datasetID, subjectID
 				return nil, err
 			}
 			c := Candidate{
-				TargetID:   m.TargetID,
-				TargetName: m.TargetName,
-				EdgeID:     m.EdgeID,
-				Predicate:  predicate,
-				DatasetID:  datasetID,
-				ShardID:    shardID,
-				Similarity: score,
-				Confidence: m.Confidence,
+				TargetID:     m.TargetID,
+				TargetName:   m.TargetName,
+				EdgeID:       m.EdgeID,
+				Predicate:    predicate,
+				DatasetID:    datasetID,
+				DomainID:     m.DomainID,
+				CollectionID: m.CollectionID,
+				DocumentID:   m.DocumentID,
+				ShardID:      shardID,
+				Similarity:   score,
+				Confidence:   m.Confidence,
 			}
 			c.RerankScore = c.Similarity
 			if opts.Rerank {
@@ -388,13 +394,41 @@ func (s *Store) Predicates(ctx context.Context, datasetID string) ([]string, err
 }
 
 type member struct {
-	EdgeID     string
-	TargetID   string
-	TargetName string
-	Confidence float64
+	EdgeID       string
+	TargetID     string
+	TargetName   string
+	Confidence   float64
+	DomainID     string
+	CollectionID string
+	DocumentID   string
 }
 
 func (s *Store) membersForShard(ctx context.Context, shardID, subjectID string) ([]member, error) {
+	rows, err := s.db.QueryContext(ctx, s.q(`
+		SELECT m.edge_id, m.target_id, COALESCE(n.name, ''), COALESCE(e.confidence, 1.0),
+		       COALESCE(NULLIF(e.domain_id, ''), NULLIF(n.domain_id, ''), ''),
+		       COALESCE(NULLIF(e.collection_id, ''), NULLIF(n.collection_id, ''), ''),
+		       COALESCE(NULLIF(e.document_id, ''), NULLIF(n.document_id, ''), '')
+		FROM vsa_fact_members m
+		LEFT JOIN graph_nodes n ON n.id = m.target_id
+		LEFT JOIN graph_edges e ON e.id = m.edge_id
+		WHERE m.shard_id = $1 AND m.source_id = $2`), shardID, subjectID)
+	if err != nil {
+		return s.membersForShardWithoutRoute(ctx, shardID, subjectID)
+	}
+	defer rows.Close()
+	var out []member
+	for rows.Next() {
+		var m member
+		if err := rows.Scan(&m.EdgeID, &m.TargetID, &m.TargetName, &m.Confidence, &m.DomainID, &m.CollectionID, &m.DocumentID); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) membersForShardWithoutRoute(ctx context.Context, shardID, subjectID string) ([]member, error) {
 	rows, err := s.db.QueryContext(ctx, s.q(`
 		SELECT m.edge_id, m.target_id, COALESCE(n.name, ''), COALESCE(e.confidence, 1.0)
 		FROM vsa_fact_members m
