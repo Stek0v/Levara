@@ -148,6 +148,25 @@ func TestHybridWeights(t *testing.T) {
 	}
 }
 
+func TestHybridSearch_TieBreaksByBM25(t *testing.T) {
+	vectorResults := []VectorResult{
+		{ID: "semantic-neighbor", Score: 0.1},
+		{ID: "exact-phrase", Score: 0.2},
+	}
+	bm25Results := []Result{
+		{ID: "exact-phrase", Score: 10.0},
+		{ID: "semantic-neighbor", Score: 1.0},
+	}
+
+	results := HybridSearch(vectorResults, bm25Results, 2, 1.0, 1.0)
+	if len(results) != 2 {
+		t.Fatalf("results len=%d, want 2", len(results))
+	}
+	if results[0].ID != "exact-phrase" {
+		t.Fatalf("top result=%s, want exact-phrase; results=%+v", results[0].ID, results)
+	}
+}
+
 func BenchmarkBM25Search(b *testing.B) {
 	idx := NewIndex()
 	for i := 0; i < 10000; i++ {

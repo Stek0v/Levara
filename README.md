@@ -177,7 +177,7 @@ Example host configs live in [examples/agent-hosts](examples/agent-hosts).
 | MCP Streamable HTTP | `/mcp` | AI-agent tools for memory, search, workspace, sync, audit, observability | `internal/http/mcp.go`, `pkg/mcp` |
 | gRPC v1/v2 | `:50051` | Vector/search/cognify client API | `internal/grpc`, `proto/` |
 | CLI tools | local binaries | Server, backup, contract validation, host config install, load tests | `cmd/` |
-| Web UI | app package | Next.js operator/user UI | `webui/` |
+| Web UI | app package | Next.js operator/user UI | `webui/`, `docs/webui-operations.md` |
 
 <Accordion title="Representative REST groups">
 
@@ -256,7 +256,7 @@ flowchart TD
   deploy/profiles/   audience-specific env presets
   docs/              API, architecture, product ladder, testing, marketing
   proto/             protobuf definitions
-  webui/             Next.js 15 Web UI
+  webui/             Next.js 16 Web UI
 ```
 
 ## Configuration
@@ -339,6 +339,7 @@ access, tenant isolation, audit export, storage/KMS, and MCP memory ownership.
 | [docs/marketing/enterprise.md](docs/marketing/enterprise.md) | Organizations with governance and audit needs |
 | [docs/product-ladder.md](docs/product-ladder.md) | Engineering/product source of truth for tier boundaries |
 | [docs/profile-presets.md](docs/profile-presets.md) | Concrete env presets and strict-mode behavior |
+| [docs/webui-operations.md](docs/webui-operations.md) | WebUI setup, connection, monitoring, solo/team operations |
 
 ## Roadmap Honesty
 

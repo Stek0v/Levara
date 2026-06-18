@@ -1,36 +1,68 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Levara WebUI
 
-## Getting Started
+Next.js operator UI for Levara.
 
-First, run the development server:
+Full operating guide: [`../docs/webui-operations.md`](../docs/webui-operations.md).
+
+## Local Start
+
+Start the backend first:
+
+```bash
+cd ..
+./start-levara.sh
+```
+
+Then start the WebUI:
+
+```bash
+cd webui
+npm install
+LEVARA_API_URL=http://127.0.0.1:8081 npm run dev
+```
+
+Open `http://localhost:3000`.
+
+## Configuration
+
+| Variable | Default | Use |
+|---|---|---|
+| `LEVARA_API_URL` | `http://127.0.0.1:8081` | Backend target for Next rewrites from `/api/*`, `/health`, `/health/details` |
+| `NEXT_PUBLIC_API_URL` | empty | Optional browser-visible API base; leave empty for same-origin rewrites |
+
+Recommended local and team default: set `LEVARA_API_URL`, leave
+`NEXT_PUBLIC_API_URL` empty.
+
+## Scripts
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm run lint
+npm run build
+npm run start
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Tests
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Playwright starts the WebUI on port `3001` and points it at
+`LEVARA_API_URL`:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+LEVARA_API_URL=http://127.0.0.1:8081 npx playwright test
+```
 
-## Learn More
+Useful targeted suites:
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+npx playwright test e2e/auth-flow.spec.ts
+npx playwright test e2e/upload-flow.spec.ts
+npx playwright test e2e/full-integration.spec.ts
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Screens
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+The sidebar exposes Dashboard, Datasets, Search, Chat, Graph, Collections,
+Workspace, Sync, Memories, Notebooks, Analytics, Admin, Onboarding, and Settings.
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+For deployment, monitoring, reverse proxy, solo/team setup, and troubleshooting,
+use [`../docs/webui-operations.md`](../docs/webui-operations.md).

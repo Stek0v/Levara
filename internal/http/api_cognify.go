@@ -57,6 +57,10 @@ func ensureCognifyDataset(ctx context.Context, db *sql.DB, owner, collection, fa
 	return fallbackID
 }
 
+func cognifySkipGraphFromMode(mode string, skipGraph bool) bool {
+	return skipGraph || strings.EqualFold(mode, "rag")
+}
+
 // cognifyHandler — POST /cognify. Kicks off an async pipeline and returns
 // a run ID immediately; progress is available via /cognify/:id/status
 // (polling) or /cognify/:id/stream (SSE).
@@ -82,6 +86,7 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 			Texts           []string `json:"texts"`
 			LLMModel        string   `json:"llm_model"`
 			Collection      string   `json:"collection"`
+			Mode            string   `json:"mode"`
 			RunInBackground bool     `json:"runInBackground"`
 			SessionID       string   `json:"session_id"`
 			// SkipGraph enables RAG-mode ingest: chunk → embed → HNSW only,
@@ -91,6 +96,7 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 			SkipGraph bool `json:"skip_graph"`
 		}
 		c.BodyParser(&req)
+		req.SkipGraph = cognifySkipGraphFromMode(req.Mode, req.SkipGraph)
 
 		// Merge datasets and datasetIds
 		allDatasetIDs := append(req.Datasets, req.DatasetIds...)

@@ -1,12 +1,14 @@
 // Package orchestrator implements a streaming cognify pipeline using Go goroutines.
 //
 // Instead of Python's sequential batch processing:
-//   batch 20 items → task1 ALL → wait → task2 ALL → wait → task3 ALL → wait
+//
+//	batch 20 items → task1 ALL → wait → task2 ALL → wait → task3 ALL → wait
 //
 // Go pipeline streams items through stages concurrently:
-//   item1 → [chunk] → [LLM extract] → [dedup+write] → done
-//   item2 →    [chunk] → [LLM extract] →    [dedup+write] → done
-//   item3 →       [chunk] →    [LLM extract] →    [dedup+write] → done
+//
+//	item1 → [chunk] → [LLM extract] → [dedup+write] → done
+//	item2 →    [chunk] → [LLM extract] →    [dedup+write] → done
+//	item3 →       [chunk] →    [LLM extract] →    [dedup+write] → done
 //
 // This enables pipeline parallelism: while one item is in LLM (5-30s),
 // others are being chunked or having their results written to DBs.
@@ -25,17 +27,17 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/stek0v/levara/pkg/chunker"
+	"github.com/stek0v/levara/internal/store"
 	"github.com/stek0v/levara/pkg/bm25"
+	"github.com/stek0v/levara/pkg/chunker"
 	"github.com/stek0v/levara/pkg/classify"
 	"github.com/stek0v/levara/pkg/community"
+	"github.com/stek0v/levara/pkg/embed"
 	"github.com/stek0v/levara/pkg/graph"
 	"github.com/stek0v/levara/pkg/graphdb"
 	"github.com/stek0v/levara/pkg/llm"
 	"github.com/stek0v/levara/pkg/llmcache"
 	"github.com/stek0v/levara/pkg/temporal"
-	"github.com/stek0v/levara/internal/store"
-	"github.com/stek0v/levara/pkg/embed"
 )
 
 // Config for the pipeline.
@@ -262,7 +264,7 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 				allParentChunks = append(allParentChunks, indexedChunk{
 					id: p.ID, text: p.Text,
 					embedTxt: buildEmbedText(p.Text, cfg.DocumentTitle, p.Section),
-					idx: i, section: p.Section,
+					idx:      i, section: p.Section,
 				})
 			}
 
@@ -278,7 +280,7 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 				allChunks = append(allChunks, indexedChunk{
 					id: c.ID, text: c.Text,
 					embedTxt: buildEmbedText(c.Text, cfg.DocumentTitle, parentSection),
-					idx: i, parentID: c.ParentID, section: parentSection,
+					idx:      i, parentID: c.ParentID, section: parentSection,
 				})
 			}
 		} else {
@@ -318,7 +320,7 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 				allChunks = append(allChunks, indexedChunk{
 					id: c.ID, text: c.Text,
 					embedTxt: buildEmbedText(c.Text, cfg.DocumentTitle, sec),
-					idx: i, section: sec,
+					idx:      i, section: sec,
 				})
 			}
 		}
@@ -337,198 +339,198 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 	if cfg.SkipGraph {
 		progressCh <- Progress{
 			Stage: "embedding", ChunksCreated: len(allChunks),
-			Message: "RAG mode: skipping entity extraction, proceeding to embedding",
+			Message:   "RAG mode: skipping entity extraction, proceeding to embedding",
 			ElapsedMs: ms(start),
 		}
 	} else {
-	// --- Stage 2: LLM extraction (concurrent, through channels) ---
-	progressCh <- Progress{Stage: "extracting", ChunksCreated: len(allChunks), ElapsedMs: ms(start)}
+		// --- Stage 2: LLM extraction (concurrent, through channels) ---
+		progressCh <- Progress{Stage: "extracting", ChunksCreated: len(allChunks), ElapsedMs: ms(start)}
 
-	var (
-		allNodes  []graph.DedupNode
-		allEdges  []graph.DedupEdge
-		nodesMu   sync.Mutex
-		extracted atomic.Int32
-		entCount  atomic.Int32
-		edgeCount atomic.Int32
-	)
+		var (
+			allNodes  []graph.DedupNode
+			allEdges  []graph.DedupEdge
+			nodesMu   sync.Mutex
+			extracted atomic.Int32
+			entCount  atomic.Int32
+			edgeCount atomic.Int32
+		)
 
-	httpClient := &http.Client{Timeout: 600 * time.Second}
+		httpClient := &http.Client{Timeout: 600 * time.Second}
 
-	sem := make(chan struct{}, cfg.LLMConcurrency)
-	var wg sync.WaitGroup
+		sem := make(chan struct{}, cfg.LLMConcurrency)
+		var wg sync.WaitGroup
 
-	for _, chunk := range allChunks {
-		wg.Add(1)
-		chunk := chunk
-		go func() {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-
-			nodes, edges, err := extractEntities(ctx, httpClient, cfg, chunk.text)
-			if err != nil {
-				log.Printf("[pipeline] LLM extract chunk %s: %v", chunk.id, err)
-				extracted.Add(1)
-				return
-			}
-			// Set provenance on extracted entities
-			docID := fmt.Sprintf("doc-%d", chunk.idx)
-			for i := range nodes {
-				nodes[i].SourceChunkID = chunk.id
-				nodes[i].SourceDocID = docID
-			}
-
-			nodesMu.Lock()
-			allNodes = append(allNodes, nodes...)
-			allEdges = append(allEdges, edges...)
-			nodesMu.Unlock()
-
-			entCount.Add(int32(len(nodes)))
-			edgeCount.Add(int32(len(edges)))
-			cur := extracted.Add(1)
-
-			// Send progress every 5 chunks
-			if cur%5 == 0 || int(cur) == len(allChunks) {
-				progressCh <- Progress{
-					Stage: "extracting", ChunksCreated: len(allChunks),
-					ItemsProcessed: int(cur), EntitiesExtracted: int(entCount.Load()),
-					EdgesExtracted: int(edgeCount.Load()), ElapsedMs: ms(start),
-				}
-			}
-		}()
-	}
-
-	wg.Wait()
-
-	progressCh <- Progress{
-		Stage: "extracting", ChunksCreated: len(allChunks),
-		ItemsProcessed: len(allChunks), EntitiesExtracted: int(entCount.Load()),
-		EdgesExtracted: int(edgeCount.Load()),
-		Message: fmt.Sprintf("extracted %d entities, %d edges", entCount.Load(), edgeCount.Load()),
-		ElapsedMs: ms(start),
-	}
-
-	// --- Stage 3: Dedup ---
-	progressCh <- Progress{Stage: "deduplicating", ElapsedMs: ms(start)}
-
-	dedupResult = graph.Deduplicate(allNodes, allEdges)
-
-	// --- Stage 3a: Semantic dedup (merge similar entities by name embedding) ---
-	if cfg.EmbedEndpoint != "" && len(dedupResult.Nodes) > 1 {
-		embedClient := cfg.EmbedClient
-		if embedClient == nil {
-			embedClient = embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 3)
-		}
-		names := make([]string, len(dedupResult.Nodes))
-		for i, n := range dedupResult.Nodes {
-			names[i] = n.Name
-			if n.Description != "" {
-				names[i] += ": " + n.Description
-			}
-		}
-		nameVecs, err := embedClient.EmbedTexts(ctx, names)
-		if err == nil && len(nameVecs) == len(dedupResult.Nodes) {
-			dedupThresh := cfg.DedupThreshold
-			if dedupThresh <= 0 || dedupThresh > 1 {
-				dedupThresh = 0.95
-			}
-			semResult := graph.SemanticDedup(nameVecs, float32(dedupThresh))
-			if len(semResult.Removed) > 0 {
-				// Build ID remap: removed node ID → kept node ID
-				idRemap := make(map[string]string)
-				for _, pair := range semResult.Pairs {
-					removedID := dedupResult.Nodes[pair.RemovedIdx].ID
-					keptID := dedupResult.Nodes[pair.KeptIdx].ID
-					idRemap[removedID] = keptID
-				}
-				// Filter nodes to kept only
-				var keptNodes []graph.DedupNode
-				for _, idx := range semResult.Kept {
-					keptNodes = append(keptNodes, dedupResult.Nodes[idx])
-				}
-				// Remap edges
-				for i := range dedupResult.Edges {
-					if newID, ok := idRemap[dedupResult.Edges[i].SourceID]; ok {
-						dedupResult.Edges[i].SourceID = newID
-					}
-					if newID, ok := idRemap[dedupResult.Edges[i].TargetID]; ok {
-						dedupResult.Edges[i].TargetID = newID
-					}
-				}
-				dedupResult.Nodes = keptNodes
-				log.Printf("[pipeline] semantic dedup: merged %d entities (threshold 0.95, kept %d)",
-					len(semResult.Removed), len(semResult.Kept))
-				// Metric tracked via log; Prometheus in calling code
-			}
-		}
-	}
-
-	progressCh <- Progress{
-		Stage: "deduplicating",
-		EntitiesExtracted: len(dedupResult.Nodes),
-		EdgesExtracted:    len(dedupResult.Edges),
-		Message: fmt.Sprintf("deduped: %d nodes, %d edges, %d triplets",
-			len(dedupResult.Nodes), len(dedupResult.Edges), len(dedupResult.Triplets)),
-		ElapsedMs: ms(start),
-	}
-
-	// --- Stage 3b: Temporal extraction (optional, fast, no LLM) ---
-	// For each chunk, extract timestamps and link them to entities found in that chunk.
-	temporalNodesAdded := 0
-	temporalEdgesAdded := 0
-	{
-		// Build a map: chunk index → entity IDs extracted from that chunk.
-		// Since extraction is concurrent and we don't track per-chunk results,
-		// we do temporal extraction on the full text of each original document
-		// and link to ALL deduped entities (conservative approach).
-		now := time.Now()
-		existingNodeIDs := make([]string, len(dedupResult.Nodes))
-		for i, n := range dedupResult.Nodes {
-			existingNodeIDs[i] = n.ID
-		}
-
-		temporalNodesSeen := make(map[string]bool)
 		for _, chunk := range allChunks {
-			events := temporal.ExtractTimestamps(chunk.text, now)
-			if len(events) == 0 {
-				continue
+			wg.Add(1)
+			chunk := chunk
+			go func() {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+
+				nodes, edges, err := extractEntities(ctx, httpClient, cfg, chunk.text)
+				if err != nil {
+					log.Printf("[pipeline] LLM extract chunk %s: %v", chunk.id, err)
+					extracted.Add(1)
+					return
+				}
+				// Set provenance on extracted entities
+				docID := fmt.Sprintf("doc-%d", chunk.idx)
+				for i := range nodes {
+					nodes[i].SourceChunkID = chunk.id
+					nodes[i].SourceDocID = docID
+				}
+
+				nodesMu.Lock()
+				allNodes = append(allNodes, nodes...)
+				allEdges = append(allEdges, edges...)
+				nodesMu.Unlock()
+
+				entCount.Add(int32(len(nodes)))
+				edgeCount.Add(int32(len(edges)))
+				cur := extracted.Add(1)
+
+				// Send progress every 5 chunks
+				if cur%5 == 0 || int(cur) == len(allChunks) {
+					progressCh <- Progress{
+						Stage: "extracting", ChunksCreated: len(allChunks),
+						ItemsProcessed: int(cur), EntitiesExtracted: int(entCount.Load()),
+						EdgesExtracted: int(edgeCount.Load()), ElapsedMs: ms(start),
+					}
+				}
+			}()
+		}
+
+		wg.Wait()
+
+		progressCh <- Progress{
+			Stage: "extracting", ChunksCreated: len(allChunks),
+			ItemsProcessed: len(allChunks), EntitiesExtracted: int(entCount.Load()),
+			EdgesExtracted: int(edgeCount.Load()),
+			Message:        fmt.Sprintf("extracted %d entities, %d edges", entCount.Load(), edgeCount.Load()),
+			ElapsedMs:      ms(start),
+		}
+
+		// --- Stage 3: Dedup ---
+		progressCh <- Progress{Stage: "deduplicating", ElapsedMs: ms(start)}
+
+		dedupResult = graph.Deduplicate(allNodes, allEdges)
+
+		// --- Stage 3a: Semantic dedup (merge similar entities by name embedding) ---
+		if cfg.EmbedEndpoint != "" && len(dedupResult.Nodes) > 1 {
+			embedClient := cfg.EmbedClient
+			if embedClient == nil {
+				embedClient = embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 3)
+			}
+			names := make([]string, len(dedupResult.Nodes))
+			for i, n := range dedupResult.Nodes {
+				names[i] = n.Name
+				if n.Description != "" {
+					names[i] += ": " + n.Description
+				}
+			}
+			nameVecs, err := embedClient.EmbedTexts(ctx, names)
+			if err == nil && len(nameVecs) == len(dedupResult.Nodes) {
+				dedupThresh := cfg.DedupThreshold
+				if dedupThresh <= 0 || dedupThresh > 1 {
+					dedupThresh = 0.95
+				}
+				semResult := graph.SemanticDedup(nameVecs, float32(dedupThresh))
+				if len(semResult.Removed) > 0 {
+					// Build ID remap: removed node ID → kept node ID
+					idRemap := make(map[string]string)
+					for _, pair := range semResult.Pairs {
+						removedID := dedupResult.Nodes[pair.RemovedIdx].ID
+						keptID := dedupResult.Nodes[pair.KeptIdx].ID
+						idRemap[removedID] = keptID
+					}
+					// Filter nodes to kept only
+					var keptNodes []graph.DedupNode
+					for _, idx := range semResult.Kept {
+						keptNodes = append(keptNodes, dedupResult.Nodes[idx])
+					}
+					// Remap edges
+					for i := range dedupResult.Edges {
+						if newID, ok := idRemap[dedupResult.Edges[i].SourceID]; ok {
+							dedupResult.Edges[i].SourceID = newID
+						}
+						if newID, ok := idRemap[dedupResult.Edges[i].TargetID]; ok {
+							dedupResult.Edges[i].TargetID = newID
+						}
+					}
+					dedupResult.Nodes = keptNodes
+					log.Printf("[pipeline] semantic dedup: merged %d entities (threshold 0.95, kept %d)",
+						len(semResult.Removed), len(semResult.Kept))
+					// Metric tracked via log; Prometheus in calling code
+				}
+			}
+		}
+
+		progressCh <- Progress{
+			Stage:             "deduplicating",
+			EntitiesExtracted: len(dedupResult.Nodes),
+			EdgesExtracted:    len(dedupResult.Edges),
+			Message: fmt.Sprintf("deduped: %d nodes, %d edges, %d triplets",
+				len(dedupResult.Nodes), len(dedupResult.Edges), len(dedupResult.Triplets)),
+			ElapsedMs: ms(start),
+		}
+
+		// --- Stage 3b: Temporal extraction (optional, fast, no LLM) ---
+		// For each chunk, extract timestamps and link them to entities found in that chunk.
+		temporalNodesAdded := 0
+		temporalEdgesAdded := 0
+		{
+			// Build a map: chunk index → entity IDs extracted from that chunk.
+			// Since extraction is concurrent and we don't track per-chunk results,
+			// we do temporal extraction on the full text of each original document
+			// and link to ALL deduped entities (conservative approach).
+			now := time.Now()
+			existingNodeIDs := make([]string, len(dedupResult.Nodes))
+			for i, n := range dedupResult.Nodes {
+				existingNodeIDs[i] = n.ID
 			}
 
-			// Find entity IDs that were extracted from this chunk's parent document.
-			// Since we can't track per-chunk entity mapping (concurrent extraction),
-			// use all entities for now. This creates more edges but ensures coverage.
-			tNodes, tEdges := temporal.LinkEventsToEntities(events, existingNodeIDs)
-
-			for _, tn := range tNodes {
-				if temporalNodesSeen[tn.ID] {
+			temporalNodesSeen := make(map[string]bool)
+			for _, chunk := range allChunks {
+				events := temporal.ExtractTimestamps(chunk.text, now)
+				if len(events) == 0 {
 					continue
 				}
-				temporalNodesSeen[tn.ID] = true
-				dedupResult.Nodes = append(dedupResult.Nodes, graph.DedupNode{
-					ID:          tn.ID,
-					Name:        tn.Name,
-					Type:        tn.Type,
-					Description: tn.Description,
-					Properties:  map[string]string{"date": tn.DateISO},
-				})
-				temporalNodesAdded++
-			}
-			for _, te := range tEdges {
-				dedupResult.Edges = append(dedupResult.Edges, graph.DedupEdge{
-					SourceID:         te.SourceID,
-					TargetID:         te.TargetID,
-					RelationshipName: te.RelationshipName,
-					EdgeText:         te.EdgeText,
-				})
-				temporalEdgesAdded++
-			}
-		}
 
-		if temporalNodesAdded > 0 {
-			log.Printf("[pipeline] temporal: %d temporal nodes, %d HAPPENED_AT edges", temporalNodesAdded, temporalEdgesAdded)
+				// Find entity IDs that were extracted from this chunk's parent document.
+				// Since we can't track per-chunk entity mapping (concurrent extraction),
+				// use all entities for now. This creates more edges but ensures coverage.
+				tNodes, tEdges := temporal.LinkEventsToEntities(events, existingNodeIDs)
+
+				for _, tn := range tNodes {
+					if temporalNodesSeen[tn.ID] {
+						continue
+					}
+					temporalNodesSeen[tn.ID] = true
+					dedupResult.Nodes = append(dedupResult.Nodes, graph.DedupNode{
+						ID:          tn.ID,
+						Name:        tn.Name,
+						Type:        tn.Type,
+						Description: tn.Description,
+						Properties:  map[string]string{"date": tn.DateISO},
+					})
+					temporalNodesAdded++
+				}
+				for _, te := range tEdges {
+					dedupResult.Edges = append(dedupResult.Edges, graph.DedupEdge{
+						SourceID:         te.SourceID,
+						TargetID:         te.TargetID,
+						RelationshipName: te.RelationshipName,
+						EdgeText:         te.EdgeText,
+					})
+					temporalEdgesAdded++
+				}
+			}
+
+			if temporalNodesAdded > 0 {
+				log.Printf("[pipeline] temporal: %d temporal nodes, %d HAPPENED_AT edges", temporalNodesAdded, temporalEdgesAdded)
+			}
 		}
-	}
 	} // end if !cfg.SkipGraph
 
 	// Force-disable triplets in RAG mode (no entities to form triplets from)
@@ -744,71 +746,71 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 
 			// Embed node names/descriptions (skipped in RAG mode — no entities)
 			if !cfg.SkipGraph {
-			texts := make([]string, len(dedupResult.Nodes))
-			for i, n := range dedupResult.Nodes {
-				t := n.Name
-				if n.Description != "" {
-					t += ": " + n.Description
+				texts := make([]string, len(dedupResult.Nodes))
+				for i, n := range dedupResult.Nodes {
+					t := n.Name
+					if n.Description != "" {
+						t += ": " + n.Description
+					}
+					texts[i] = t
 				}
-				texts[i] = t
-			}
 
-			inserted := 0
-			if len(texts) > 0 {
-				vecs, err := embedClient.EmbedTexts(ctx, texts)
-				if err != nil {
-					log.Printf("[pipeline] embed FAILED (%d texts): %v", len(texts), err)
-					// Don't return — continue to triplets which may use different texts
-				} else {
-					for i, n := range dedupResult.Nodes {
-						if i < len(vecs) {
-							meta := fmt.Sprintf(`{"name":"%s","type":"%s","dataset_id":"%s"}`, n.Name, n.Type, cfg.DatasetID)
-							if err := cfg.Collections.Insert(coll, n.ID, vecs[i], meta); err != nil {
-								log.Printf("[pipeline] vector insert %q error: %v", n.Name, err)
-							} else {
-								inserted++
-								// Update BM25 index for lexical search
-								if cfg.BM25Indexes != nil {
-									if idx, ok := cfg.BM25Indexes[coll]; ok {
-										idx.Add(n.ID, texts[i], meta)
+				inserted := 0
+				if len(texts) > 0 {
+					vecs, err := embedClient.EmbedTexts(ctx, texts)
+					if err != nil {
+						log.Printf("[pipeline] embed FAILED (%d texts): %v", len(texts), err)
+						// Don't return — continue to triplets which may use different texts
+					} else {
+						for i, n := range dedupResult.Nodes {
+							if i < len(vecs) {
+								meta := fmt.Sprintf(`{"name":"%s","type":"%s","dataset_id":"%s"}`, n.Name, n.Type, cfg.DatasetID)
+								if err := cfg.Collections.Insert(coll, n.ID, vecs[i], meta); err != nil {
+									log.Printf("[pipeline] vector insert %q error: %v", n.Name, err)
+								} else {
+									inserted++
+									// Update BM25 index for lexical search
+									if cfg.BM25Indexes != nil {
+										if idx, ok := cfg.BM25Indexes[coll]; ok {
+											idx.Add(n.ID, texts[i], meta)
+										}
 									}
 								}
 							}
 						}
+						log.Printf("[pipeline] vector write: %d/%d entities embedded into %q", inserted, len(texts), coll)
 					}
-					log.Printf("[pipeline] vector write: %d/%d entities embedded into %q", inserted, len(texts), coll)
 				}
-			}
 
-			// Embed triplets if requested
-			if cfg.GenerateTriplets && len(dedupResult.Triplets) > 0 {
-				tripletColl := "Triplet_text"
-				if !cfg.Collections.Has(tripletColl) {
-					if err := cfg.Collections.Create(tripletColl); err != nil {
-						log.Printf("[pipeline] collection create %q: %v", tripletColl, err)
-					}
-				}
-				tripletTexts := make([]string, len(dedupResult.Triplets))
-				for i, t := range dedupResult.Triplets {
-					tripletTexts[i] = t.Text
-				}
-				if tvecs, err := embedClient.EmbedTexts(ctx, tripletTexts); err != nil {
-					log.Printf("[pipeline] triplet embed FAILED: %v", err)
-				} else {
-					tripletInserted := 0
-					for i, t := range dedupResult.Triplets {
-						if i < len(tvecs) {
-							meta := fmt.Sprintf(`{"from":"%s","to":"%s","dataset_id":"%s"}`, t.FromNodeID, t.ToNodeID, cfg.DatasetID)
-							if err := cfg.Collections.Insert(tripletColl, t.ID, tvecs[i], meta); err != nil {
-								log.Printf("[pipeline] triplet insert error: %v", err)
-							} else {
-								tripletInserted++
-							}
+				// Embed triplets if requested
+				if cfg.GenerateTriplets && len(dedupResult.Triplets) > 0 {
+					tripletColl := "Triplet_text"
+					if !cfg.Collections.Has(tripletColl) {
+						if err := cfg.Collections.Create(tripletColl); err != nil {
+							log.Printf("[pipeline] collection create %q: %v", tripletColl, err)
 						}
 					}
-					log.Printf("[pipeline] triplet write: %d/%d triplets into %q", tripletInserted, len(tripletTexts), tripletColl)
+					tripletTexts := make([]string, len(dedupResult.Triplets))
+					for i, t := range dedupResult.Triplets {
+						tripletTexts[i] = t.Text
+					}
+					if tvecs, err := embedClient.EmbedTexts(ctx, tripletTexts); err != nil {
+						log.Printf("[pipeline] triplet embed FAILED: %v", err)
+					} else {
+						tripletInserted := 0
+						for i, t := range dedupResult.Triplets {
+							if i < len(tvecs) {
+								meta := fmt.Sprintf(`{"from":"%s","to":"%s","dataset_id":"%s"}`, t.FromNodeID, t.ToNodeID, cfg.DatasetID)
+								if err := cfg.Collections.Insert(tripletColl, t.ID, tvecs[i], meta); err != nil {
+									log.Printf("[pipeline] triplet insert error: %v", err)
+								} else {
+									tripletInserted++
+								}
+							}
+						}
+						log.Printf("[pipeline] triplet write: %d/%d triplets into %q", tripletInserted, len(tripletTexts), tripletColl)
+					}
 				}
-			}
 			} // end if !cfg.SkipGraph (entity + triplet embedding)
 		}()
 	}
@@ -871,8 +873,8 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 				// Hierarchical summarization (optional, needs LLM + embed)
 				if cfg.LLMProvider != nil && cfg.EmbedEndpoint != "" {
 					progressCh <- Progress{
-						Stage:   "communities",
-						Message: fmt.Sprintf("summarizing %d communities", communitiesDetected),
+						Stage:     "communities",
+						Message:   fmt.Sprintf("summarizing %d communities", communitiesDetected),
 						ElapsedMs: ms(start),
 					}
 					summarizeEmbed := cfg.EmbedClient
@@ -881,13 +883,14 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 					}
 					sumCfg := community.SummarizeConfig{
 						LLMProvider: cfg.LLMProvider,
+						LLMModel:    cfg.LLMModel,
 						EmbedClient: summarizeEmbed,
 						Collections: cfg.Collections,
 						DB:          cfg.DB,
 						LLMCache:    cfg.LLMCache,
 						Concurrency: 3,
 						MinMembers:  3,
-						MaxContext:   50,
+						MaxContext:  50,
 					}
 					if err := community.SummarizeHierarchy(ctx, *dendro, g, sumCfg); err != nil {
 						log.Printf("[pipeline] community summarize: %v", err)
@@ -900,10 +903,10 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 	// --- Done ---
 	progressCh <- Progress{
 		Stage: "complete", ItemsTotal: len(texts), ItemsProcessed: len(texts),
-		ChunksCreated: len(allChunks),
+		ChunksCreated:     len(allChunks),
 		EntitiesExtracted: len(dedupResult.Nodes), EdgesExtracted: len(dedupResult.Edges),
 		NodesWritten: int(nodesWritten.Load()), EdgesWritten: int(edgesWritten.Load()),
-		Message: "pipeline complete",
+		Message:   "pipeline complete",
 		ElapsedMs: ms(start),
 	}
 

@@ -18,6 +18,7 @@ import (
 // SummarizeConfig holds configuration for community summarization.
 type SummarizeConfig struct {
 	LLMProvider llm.Provider
+	LLMModel    string
 	EmbedClient *embed.Client
 	Collections *store.CollectionManager
 	DB          *sql.DB
@@ -125,6 +126,10 @@ func ReplaceCommunities(ctx context.Context, db *sql.DB, dendro Dendrogram) erro
 func SummarizeHierarchy(ctx context.Context, dendro Dendrogram, g *Graph, cfg SummarizeConfig) error {
 	if cfg.LLMProvider == nil {
 		log.Printf("[community] LLM not configured — skipping summarization")
+		return nil
+	}
+	if strings.TrimSpace(cfg.LLMModel) == "" {
+		log.Printf("[community] LLM model not configured — skipping summarization")
 		return nil
 	}
 	if cfg.Concurrency <= 0 {
@@ -300,7 +305,7 @@ func summarizeFromEntities(ctx context.Context, cfg SummarizeConfig, comm Commun
 	prompt += "\nWrite a 2-4 sentence summary describing what this group represents, the key relationships, and the main topics. Be factual and concise."
 
 	resp, err := cfg.LLMProvider.ChatCompletion(ctx, llm.CompletionRequest{
-		Model:       "",
+		Model:       cfg.LLMModel,
 		Messages:    []llm.Message{{Role: "user", Content: prompt}},
 		Temperature: 0.3,
 		MaxTokens:   300,
@@ -320,6 +325,7 @@ func summarizeFromChildren(ctx context.Context, cfg SummarizeConfig, comm Commun
 	prompt += "Write a 2-4 sentence overview that captures the broader theme connecting these clusters. Focus on overarching topics, not details."
 
 	resp, err := cfg.LLMProvider.ChatCompletion(ctx, llm.CompletionRequest{
+		Model:       cfg.LLMModel,
 		Messages:    []llm.Message{{Role: "user", Content: prompt}},
 		Temperature: 0.3,
 		MaxTokens:   300,
