@@ -18,6 +18,10 @@ interface UploadedFile {
   progress?: CognifyProgress
 }
 
+function uploadDatasetName() {
+  return `upload-${Date.now()}`
+}
+
 export default function DatasetsPage() {
   const { data: datasetsRes, isLoading, isError, error, failureReason } = useDatasets()
   const datasets = datasetsRes?.data || []
@@ -28,7 +32,6 @@ export default function DatasetsPage() {
   const uploadMutation = useUpload()
   const cognifyMutation = useCognify()
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [_dragOver, setDragOver] = useState(false)
   const [newName, setNewName] = useState('')
   const [showCreate, setShowCreate] = useState(false)
@@ -66,11 +69,11 @@ export default function DatasetsPage() {
     const fileArr = Array.from(files)
     if (!fileArr.length) return
 
-    const dsName = targetDataset || undefined
+    const dsName = targetDataset || uploadDatasetName()
 
     // Show uploading state
     setUploadedFiles((prev) => [
-      ...fileArr.map((f) => ({ name: f.name, dataset: dsName || 'default', status: 'uploading' as const })),
+      ...fileArr.map((f) => ({ name: f.name, dataset: dsName, status: 'uploading' as const })),
       ...prev,
     ])
 
@@ -92,7 +95,7 @@ export default function DatasetsPage() {
       // reconciles the uploadedFiles UI.
       if (dsId) {
         try {
-          const cognifyRes = await cognifyMutation.mutateAsync({ dataset_id: dsId, collection: actualDsName })
+          const cognifyRes = await cognifyMutation.mutateAsync({ dataset_id: dsId, collection: actualDsName, skip_graph: true })
           const runId = cognifyRes?.pipeline_run_id
           if (!runId) {
             setUploadedFiles((prev) => prev.map((f) => f.status === 'processing' ? { ...f, status: 'ready' as const } : f))
@@ -185,8 +188,9 @@ export default function DatasetsPage() {
       )}
 
       {/* Upload zone with dataset selector */}
-      <div className="mb-6 p-6 bg-white dark:bg-gray-900 rounded-lg border-2 border-dashed transition-colors
-        ${_dragOver ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/10' : 'border-gray-300 dark:border-gray-700'}"
+      <div className={`mb-6 p-6 bg-white dark:bg-gray-900 rounded-lg border-2 border-dashed transition-colors ${
+        _dragOver ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/10' : 'border-gray-300 dark:border-gray-700'
+      }`}
         onDragOver={(e) => { e.preventDefault(); setDragOver(true) }} onDragLeave={() => setDragOver(false)} onDrop={handleDrop}>
         <div className="flex flex-col md:flex-row items-center gap-4">
           <Upload className="h-8 w-8 text-gray-400 flex-shrink-0" />
@@ -200,7 +204,7 @@ export default function DatasetsPage() {
             <select value={targetDataset} onChange={(e) => setTargetDataset(e.target.value)}
               className="h-9 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-3 text-sm"
               aria-label="Target dataset">
-              <option value="">Default dataset</option>
+              <option value="">New dataset per upload</option>
               {datasets.map((ds) => <option key={ds.id} value={ds.name}>{ds.name}</option>)}
             </select>
             <label className="cursor-pointer inline-flex items-center gap-2 h-9 px-4 text-sm font-medium rounded-md bg-blue-600 text-white hover:bg-blue-700 transition-colors">

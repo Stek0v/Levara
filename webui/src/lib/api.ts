@@ -173,7 +173,7 @@ export const levara = {
     }),
 
   // Cognify
-  cognify: (params: { texts?: string[]; dataset_id?: string; datasets?: string[]; collection?: string; mode?: string }) => {
+  cognify: (params: { texts?: string[]; dataset_id?: string; datasets?: string[]; collection?: string; mode?: string; skip_graph?: boolean }) => {
     // Backend expects datasets[] array, not dataset_id string
     const body: Record<string, unknown> = { ...params }
     if (params.dataset_id && !params.datasets) {
