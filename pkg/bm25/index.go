@@ -30,6 +30,14 @@ type Document struct {
 	tokens   []string
 }
 
+// Change describes a mutation applied to an index.
+type Change struct {
+	Op       string
+	ID       string
+	Text     string
+	Metadata string
+}
+
 // Result is a BM25 search result.
 type Result struct {
 	ID       string
@@ -46,6 +54,7 @@ type Index struct {
 	avgDL    float64                   // average document length
 	k1       float64
 	b        float64
+	onChange func(Change)
 }
 
 // NewIndex creates an empty BM25 index with default parameters (k1=1.2, b=0.75).
@@ -57,8 +66,12 @@ func NewIndex() *Index {
 // k1 controls term frequency saturation (higher = more weight to term freq, typical 1.2-2.0).
 // b controls length normalization (0 = no normalization, 1 = full normalization, typical 0.75).
 func NewIndexWithParams(k1, b float64) *Index {
-	if k1 <= 0 { k1 = defaultK1 }
-	if b < 0 || b > 1 { b = defaultB }
+	if k1 <= 0 {
+		k1 = defaultK1
+	}
+	if b < 0 || b > 1 {
+		b = defaultB
+	}
 	return &Index{
 		docs:     make(map[string]*Document),
 		inverted: make(map[string]map[string]int),
@@ -73,8 +86,6 @@ func (idx *Index) Add(id, text, metadata string) {
 	tokens := tokenize(text)
 
 	idx.mu.Lock()
-	defer idx.mu.Unlock()
-
 	// Remove old entry if exists
 	if old, exists := idx.docs[id]; exists {
 		idx.removeTokens(id, old.tokens)
@@ -98,6 +109,12 @@ func (idx *Index) Add(id, text, metadata string) {
 
 	// Update average doc length
 	idx.recalcAvgDL()
+	onChange := idx.onChange
+	idx.mu.Unlock()
+
+	if onChange != nil {
+		onChange(Change{Op: "put", ID: id, Text: text, Metadata: metadata})
+	}
 }
 
 // AddBatch indexes multiple documents.
@@ -110,10 +127,10 @@ func (idx *Index) AddBatch(docs []Document) {
 // Remove deletes a document from the index.
 func (idx *Index) Remove(id string) {
 	idx.mu.Lock()
-	defer idx.mu.Unlock()
 
 	doc, exists := idx.docs[id]
 	if !exists {
+		idx.mu.Unlock()
 		return
 	}
 
@@ -121,6 +138,12 @@ func (idx *Index) Remove(id string) {
 	delete(idx.docs, id)
 	delete(idx.docLen, id)
 	idx.recalcAvgDL()
+	onChange := idx.onChange
+	idx.mu.Unlock()
+
+	if onChange != nil {
+		onChange(Change{Op: "delete", ID: id})
+	}
 }
 
 // Search returns top-k documents ranked by BM25 score for the query.
@@ -190,14 +213,42 @@ func (idx *Index) Size() int {
 	return len(idx.docs)
 }
 
+// Documents returns a stable snapshot of indexed documents.
+func (idx *Index) Documents() []Document {
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+
+	docs := make([]Document, 0, len(idx.docs))
+	for _, doc := range idx.docs {
+		docs = append(docs, Document{
+			ID:       doc.ID,
+			Text:     doc.Text,
+			Metadata: doc.Metadata,
+		})
+	}
+	return docs
+}
+
 // Clear removes all documents from the index.
 func (idx *Index) Clear() {
 	idx.mu.Lock()
-	defer idx.mu.Unlock()
 	idx.docs = make(map[string]*Document)
 	idx.inverted = make(map[string]map[string]int)
 	idx.docLen = make(map[string]int)
 	idx.avgDL = 0
+	onChange := idx.onChange
+	idx.mu.Unlock()
+
+	if onChange != nil {
+		onChange(Change{Op: "clear"})
+	}
+}
+
+// SetOnChange registers a synchronous mutation callback.
+func (idx *Index) SetOnChange(fn func(Change)) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	idx.onChange = fn
 }
 
 func (idx *Index) removeTokens(id string, tokens []string) {
