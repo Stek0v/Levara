@@ -193,7 +193,7 @@ func initHTTPRuntime(clusterStore *store.Cluster, dim int, replServer *cluster.R
 	app.Use(cors.New(cors.Config{
 		AllowOrigins:     "http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000,http://127.0.0.1:3001,http://localhost:8080,http://localhost:8081",
 		AllowMethods:     "GET,POST,PUT,DELETE,PATCH,OPTIONS",
-		AllowHeaders:     "Origin,Content-Type,Accept,Authorization,X-Api-Key",
+		AllowHeaders:     "Origin,Content-Type,Accept,Authorization,X-Api-Key,X-Trace-ID",
 		AllowCredentials: true,
 	}))
 	app.Use(logger.New())
@@ -498,7 +498,13 @@ func installGracefulShutdown(app *fiber.App, shards []store.ShardHandler, colMan
 			log.Printf("collection manager close: %v", err)
 		}
 		if pgDB != nil {
-			pgDB.Close()
+			// Guard: Go interface is non-nil even when concrete *sql.DB is nil.
+			// Use type assertion to check concrete value nil-ness.
+			if db, ok := pgDB.(*sql.DB); ok && db == nil {
+				log.Println("pgDB is nil *sql.DB, skipping close")
+			} else if err := pgDB.Close(); err != nil {
+				log.Printf("pgDB close: %v", err)
+			}
 		}
 		if grpcServer != nil {
 			grpcServer.GracefulStop()
