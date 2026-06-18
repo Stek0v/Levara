@@ -1,7 +1,7 @@
 // graph_search_test.go — Wave A coverage for the two graph-based search paths:
 //
-//   graphCompletionSearch     (GRAPH_COMPLETION / GRAPH_SUMMARY_COMPLETION)
-//   tripletCompletionSearch   (TRIPLET_COMPLETION)
+//	graphCompletionSearch     (GRAPH_COMPLETION / GRAPH_SUMMARY_COMPLETION)
+//	tripletCompletionSearch   (TRIPLET_COMPLETION)
 //
 // Both handlers follow the same pattern: vector search → extract entity names
 // from chunk metadata → fetch graph context → optionally feed to LLM. The
@@ -11,6 +11,8 @@
 package http
 
 import (
+	"context"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -115,6 +117,118 @@ func TestGraphCompletionSearch_PostgresGraphContext(t *testing.T) {
 	}
 }
 
+func TestGraphCompletionSearch_VSABeforeSQLGraphUsesProtectedBudget(t *testing.T) {
+	t.Setenv("LEVARA_GRAPH_CONTEXT_ORDER", "vsa_first")
+	t.Setenv("LEVARA_GRAPH_CONTEXT_LIMIT", "5")
+	t.Setenv("LEVARA_GRAPH_CONTEXT_VSA_RESERVE", "3")
+	t.Setenv("LLM_ENDPOINT", "")
+	t.Setenv("LLM_MODEL", "")
+
+	env := newSearchTestEnv(t)
+	env.cfg.LLMProvider = nil
+	seedVSABeforeSQLSearchFixture(t, env)
+	env.start()
+
+	_, body := env.postSearch(map[string]any{
+		"query_text": "what validates checkout",
+		"query_type": "GRAPH_COMPLETION",
+		"collection": "entities",
+	})
+
+	ctxArr, _ := body["context"].([]any)
+	if !stringSliceContains(ctxArr, "PCI Validator") {
+		t.Fatalf("context = %v, want VSA target before SQL filler", ctxArr)
+	}
+	if first, _ := ctxArr[0].(string); !strings.Contains(first, "PCI Validator") || !strings.Contains(first, "VSA score") {
+		t.Fatalf("context[0] = %q, want VSA target first", first)
+	}
+	vsaCtx, _ := body["context_vsa"].([]any)
+	if !stringSliceContains(vsaCtx, "PCI Validator") {
+		t.Fatalf("context_vsa = %v, want VSA target", vsaCtx)
+	}
+	if body["graph_context_order"] != graphContextOrderVSAFirst {
+		t.Fatalf("graph_context_order = %v, want %s", body["graph_context_order"], graphContextOrderVSAFirst)
+	}
+	if body["graph_context_vsa_count"] == float64(0) {
+		t.Fatalf("graph_context_vsa_count = %v, want > 0", body["graph_context_vsa_count"])
+	}
+}
+
+func TestGraphCompletionSearch_SQLFirstCanStillHideVSAUnderBudget(t *testing.T) {
+	t.Setenv("LEVARA_GRAPH_CONTEXT_ORDER", "sql_first")
+	t.Setenv("LEVARA_GRAPH_CONTEXT_LIMIT", "5")
+	t.Setenv("LEVARA_GRAPH_CONTEXT_VSA_RESERVE", "3")
+	t.Setenv("LLM_ENDPOINT", "")
+	t.Setenv("LLM_MODEL", "")
+
+	env := newSearchTestEnv(t)
+	env.cfg.LLMProvider = nil
+	seedVSABeforeSQLSearchFixture(t, env)
+	env.start()
+
+	_, body := env.postSearch(map[string]any{
+		"query_text": "what validates checkout",
+		"query_type": "GRAPH_COMPLETION",
+		"collection": "entities",
+	})
+
+	ctxArr, _ := body["context"].([]any)
+	if stringSliceContains(ctxArr, "PCI Validator") {
+		t.Fatalf("context = %v, SQL-first should hide VSA target under budget", ctxArr)
+	}
+	if body["graph_context_order"] != graphContextOrderSQLFirst {
+		t.Fatalf("graph_context_order = %v, want %s", body["graph_context_order"], graphContextOrderSQLFirst)
+	}
+	if body["graph_context_vsa_count"] != float64(0) {
+		t.Fatalf("graph_context_vsa_count = %v, want 0 when SQL fills budget first", body["graph_context_vsa_count"])
+	}
+}
+
+func TestGraphCompletionSearch_VSASynonymMapRanksPredicate(t *testing.T) {
+	t.Setenv("LEVARA_GRAPH_CONTEXT_ORDER", "vsa_first")
+	t.Setenv("LEVARA_GRAPH_CONTEXT_LIMIT", "5")
+	t.Setenv("LEVARA_GRAPH_CONTEXT_VSA_RESERVE", "3")
+	t.Setenv("LLM_ENDPOINT", "")
+	t.Setenv("LLM_MODEL", "")
+
+	env := newSearchTestEnv(t)
+	env.cfg.LLMProvider = nil
+	const datasetID = "ds-vsa"
+	vec := []float32{1, 0, 0, 0}
+	env.insertVector("entities", "checkout-vector", vec, map[string]any{
+		"name":       "Checkout",
+		"dataset_id": datasetID,
+	})
+	env.insertNode("checkout", "Checkout", "Service", datasetID)
+	for i := 0; i < 8; i++ {
+		targetID := fmt.Sprintf("noise-%02d", i)
+		env.insertNode(targetID, fmt.Sprintf("Noise %02d", i), "Service", datasetID)
+		env.insertEdgeInDataset(fmt.Sprintf("a-noise-%02d", i), "checkout", targetID, "CALLS", datasetID)
+	}
+	env.insertNode("payments-team", "Payments Team", "Team", datasetID)
+	env.insertEdgeInDataset("z-owner", "checkout", "payments-team", "OWNED_BY", datasetID)
+	if err := vsaStoreForDB(env.db, 1024, 1).RebuildFromGraph(context.Background(), datasetID); err != nil {
+		t.Fatalf("rebuild VSA fixture: %v", err)
+	}
+	if err := refreshPredicateSynonyms(context.Background(), env.db, datasetID); err != nil {
+		t.Fatalf("refresh predicate synonyms: %v", err)
+	}
+	env.start()
+
+	_, body := env.postSearch(map[string]any{
+		"query_text": "who maintains checkout",
+		"query_type": "GRAPH_COMPLETION",
+		"collection": "entities",
+	})
+	ctxArr, _ := body["context"].([]any)
+	if !stringSliceContains(ctxArr, "Payments Team") {
+		t.Fatalf("context = %v, want synonym-ranked OWNED_BY target", ctxArr)
+	}
+	if first, _ := ctxArr[0].(string); !strings.Contains(first, "Payments Team") || !strings.Contains(first, "OWNED_BY") {
+		t.Fatalf("context[0] = %q, want OWNED_BY target first via synonym map", first)
+	}
+}
+
 // Happy path: vector hit + graph edge + LLMProvider wired. The recordingLLM
 // must see a prompt containing both the question and the graph triple.
 func TestGraphCompletionSearch_CallsLLMWithGraphContext(t *testing.T) {
@@ -158,6 +272,37 @@ func TestGraphCompletionSearch_CallsLLMWithGraphContext(t *testing.T) {
 	if !strings.Contains(prompts[0], "Alice") || !strings.Contains(prompts[0], "Bob") || !strings.Contains(prompts[0], "KNOWS") {
 		t.Errorf("prompt missing graph triple: %q", prompts[0])
 	}
+}
+
+func seedVSABeforeSQLSearchFixture(t *testing.T, env *searchTestEnv) {
+	t.Helper()
+	const datasetID = "ds-vsa"
+	vec := []float32{1, 0, 0, 0}
+	env.insertVector("entities", "checkout-vector", vec, map[string]any{
+		"name":       "Checkout",
+		"dataset_id": datasetID,
+	})
+	env.insertNode("checkout", "Checkout", "Service", datasetID)
+	for i := 0; i < 12; i++ {
+		targetID := fmt.Sprintf("noise-%02d", i)
+		env.insertNode(targetID, fmt.Sprintf("Noise %02d", i), "Service", datasetID)
+		env.insertEdgeInDataset(fmt.Sprintf("a-noise-%02d", i), "checkout", targetID, "CALLS", datasetID)
+	}
+	env.insertNode("pci-validator", "PCI Validator", "Service", datasetID)
+	env.insertEdgeInDataset("z-gold", "checkout", "pci-validator", "VALIDATES", datasetID)
+
+	if err := vsaStoreForDB(env.db, 1024, 1).RebuildFromGraph(context.Background(), datasetID); err != nil {
+		t.Fatalf("rebuild VSA fixture: %v", err)
+	}
+}
+
+func stringSliceContains(values []any, needle string) bool {
+	for _, value := range values {
+		if s, ok := value.(string); ok && strings.Contains(s, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 // High abstention threshold with weak retrieval should skip LLM call and return

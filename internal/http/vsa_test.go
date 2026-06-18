@@ -110,6 +110,44 @@ func TestVSAGraphContext_UsesDatasetFilter(t *testing.T) {
 	}
 }
 
+func TestRankVSAPredicatesForQuery(t *testing.T) {
+	got := rankVSAPredicatesForQuery([]string{"CALLS", "DEPENDS_ON", "VALIDATES"}, "what validates checkout", nil)
+	if len(got) != 3 {
+		t.Fatalf("ranked predicates = %v, want 3", got)
+	}
+	if got[0] != "VALIDATES" {
+		t.Fatalf("ranked predicates = %v, want VALIDATES first", got)
+	}
+}
+
+func TestRankVSAPredicatesForQuery_ManualSynonym(t *testing.T) {
+	got := rankVSAPredicatesForQuery([]string{"CALLS", "OWNED_BY"}, "who maintains checkout", nil)
+	if got[0] != "OWNED_BY" {
+		t.Fatalf("ranked predicates = %v, want OWNED_BY first via manual synonym", got)
+	}
+}
+
+func TestRefreshPredicateSynonyms(t *testing.T) {
+	db := newVSATestDB(t)
+	defer db.Close()
+
+	prev := GetDBProvider()
+	SetDBProvider(DBSQLite)
+	defer SetDBProvider(prev)
+
+	ctx := context.Background()
+	if err := refreshPredicateSynonyms(ctx, db, "ds-a"); err != nil {
+		t.Fatalf("refresh predicate synonyms: %v", err)
+	}
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM graph_predicate_synonyms WHERE dataset_id = 'ds-a' AND predicate = 'KNOWS' AND synonym = 'knows' AND source = 'generated'`).Scan(&count); err != nil {
+		t.Fatalf("count generated synonym: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("generated KNOWS synonym count=%d, want 1", count)
+	}
+}
+
 func newVSATestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	db, err := sql.Open("sqlite3", "file:"+t.TempDir()+"/vsa-http.db")
@@ -134,6 +172,15 @@ CREATE TABLE graph_edges (
 	properties TEXT NOT NULL DEFAULT '{}',
 	valid_until TEXT,
 	dataset_id TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE graph_predicate_synonyms (
+	dataset_id TEXT NOT NULL DEFAULT '',
+	predicate TEXT NOT NULL DEFAULT '',
+	synonym TEXT NOT NULL DEFAULT '',
+	source TEXT NOT NULL DEFAULT 'generated',
+	weight REAL NOT NULL DEFAULT 50,
+	updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	PRIMARY KEY (dataset_id, predicate, synonym, source)
 );`
 	if _, err := db.Exec(schema); err != nil {
 		t.Fatalf("create graph schema: %v", err)

@@ -245,6 +245,37 @@ func TestCanAccessDataset(t *testing.T) {
 	}
 }
 
+func TestCanUseDatasetForUpload(t *testing.T) {
+	db := newPolicyTestDB(t)
+	policy := SQLPolicy{DB: db, Q: sqliteQ}
+	ctx := context.Background()
+
+	cases := []struct {
+		name      string
+		userID    string
+		datasetID string
+		want      bool
+	}{
+		{"owner", "user-a", "payments", true},
+		{"shared", "user-b", "payments", true},
+		{"foreign", "user-c", "payments", false},
+		{"public", "user-c", "public", true},
+		{"missing allowed for create", "user-c", "new-dataset", true},
+		{"anonymous dev mode", "", "payments", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := policy.CanUseDatasetForUpload(ctx, tc.datasetID, tc.userID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want {
+				t.Fatalf("CanUseDatasetForUpload=%v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestCanManageDatasetShares(t *testing.T) {
 	db := newPolicyTestDB(t)
 	// user-d holds an admin share on payments; user-b is only a viewer.

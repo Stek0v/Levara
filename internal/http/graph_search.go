@@ -75,20 +75,10 @@ func graphCompletionSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest
 	entityNames = dedup(entityNames)
 
 	// Step 2: Graph context
-	var graphContext []string
-
-	if cfg.Neo4jCfg.Neo4jURL != "" && len(entityNames) > 0 {
-		// Neo4j path
-		graphContext = graphContextFromNeo4j(ctx, cfg, entityNames, req.AllowedDatasetIDs)
-	} else if cfg.DB != nil && len(entityNames) > 0 {
-		// PostgreSQL fallback
-		graphContext = graphContextFromPostgres(ctx, cfg, entityNames, req.AllowedDatasetIDs)
-	}
-	if cfg.DB != nil && len(entityNames) > 0 {
-		if remaining := 20 - len(graphContext); remaining > 0 {
-			graphContext = append(graphContext, vsaGraphContext(ctx, cfg, entityNames, req.AllowedDatasetIDs, remaining)...)
-		}
-	}
+	graphPolicy := defaultGraphContextPolicy()
+	graphPolicy.QueryText = req.QueryText
+	graphAssembly := assembleGraphContext(ctx, cfg, entityNames, req.AllowedDatasetIDs, graphPolicy)
+	graphContext := graphAssembly.Context
 
 	threshold := ragAbstainThresholdFor("GRAPH_COMPLETION")
 	breakdown := buildConfidenceBreakdown(c, vectorChunks, threshold)
@@ -143,9 +133,12 @@ func graphCompletionSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest
 
 	recordInteraction(ctx, cfg, req.SessionID, "", req.QueryText, answer, "GRAPH_COMPLETION")
 
-	return c.JSON(attachSearchDebugMetadata(c, fiber.Map{
+	resp := fiber.Map{
 		"answer":               answer,
 		"context":              graphContext,
+		"context_vsa":          graphAssembly.VSAContext,
+		"context_sql":          graphAssembly.SQLContext,
+		"context_neo4j":        graphAssembly.Neo4jContext,
 		"chunks":               vectorChunks,
 		"evidence_ids":         evidenceIDs,
 		"search_type":          "GRAPH_COMPLETION",
@@ -155,7 +148,11 @@ func graphCompletionSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest
 		"abstain_reason":       abstainReason,
 		"threshold":            threshold,
 		"verification":         verification,
-	}))
+	}
+	for k, v := range graphContextDebugMetadata(graphAssembly) {
+		resp[k] = v
+	}
+	return c.JSON(attachSearchDebugMetadata(c, resp))
 }
 
 // contextExtensionSearch performs 2-hop graph traversal for richer context.
@@ -210,15 +207,14 @@ func contextExtensionSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchReques
 	}
 	entityNames = dedup(entityNames)
 
-	// Step 2: 1st hop — direct neighbours (same as GRAPH_COMPLETION)
-	var hop1Context []string
-	var hop1TargetNames []string
-
-	if cfg.Neo4jCfg.Neo4jURL != "" && len(entityNames) > 0 {
-		hop1Context, hop1TargetNames = graphContextWithTargetsNeo4j(ctx, cfg, entityNames, req.AllowedDatasetIDs)
-	} else if cfg.DB != nil && len(entityNames) > 0 {
-		hop1Context = graphContextFromPostgres(ctx, cfg, entityNames, req.AllowedDatasetIDs)
-	}
+	// Step 2: VSA-first direct context, with SQL/Neo4j as filler.
+	graphPolicy := defaultGraphContextPolicy()
+	graphPolicy.QueryText = req.QueryText
+	graphAssembly := assembleGraphContext(ctx, cfg, entityNames, req.AllowedDatasetIDs, graphPolicy)
+	vsaContext := graphAssembly.VSAContext
+	hop1Context := append([]string{}, graphAssembly.SQLContext...)
+	hop1Context = append(hop1Context, graphAssembly.Neo4jContext...)
+	hop1TargetNames := graphAssembly.TargetNames
 
 	// Step 3: 2nd hop — neighbours of neighbours (EXTENSION)
 	var hop2Context []string
@@ -241,20 +237,23 @@ func contextExtensionSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchReques
 		if len(extendedNames) > 10 {
 			extendedNames = extendedNames[:10]
 		}
-		if cfg.Neo4jCfg.Neo4jURL != "" {
-			hop2Context, _ = graphContextWithTargetsNeo4j(ctx, cfg, extendedNames, req.AllowedDatasetIDs)
-		} else if cfg.DB != nil {
-			hop2Context = graphContextFromPostgres(ctx, cfg, extendedNames, req.AllowedDatasetIDs)
+		remaining := graphAssembly.TotalLimit - len(graphAssembly.Context)
+		if remaining > 0 {
+			if cfg.Neo4jCfg.Neo4jURL != "" {
+				hop2Context, _ = graphContextWithTargetsNeo4j(ctx, cfg, extendedNames, req.AllowedDatasetIDs)
+			} else if cfg.DB != nil {
+				hop2Context = graphContextFromPostgres(ctx, cfg, extendedNames, req.AllowedDatasetIDs)
+			}
+			if len(hop2Context) > remaining {
+				hop2Context = hop2Context[:remaining]
+			}
 		}
 	}
 
 	// Merge all context
-	allContext := append(hop1Context, hop2Context...)
-	if cfg.DB != nil && len(entityNames) > 0 {
-		if remaining := 20 - len(allContext); remaining > 0 {
-			allContext = append(allContext, vsaGraphContext(ctx, cfg, entityNames, req.AllowedDatasetIDs, remaining)...)
-		}
-	}
+	allContext := append([]string{}, vsaContext...)
+	allContext = append(allContext, hop1Context...)
+	allContext = append(allContext, hop2Context...)
 
 	threshold := ragAbstainThresholdFor("GRAPH_COMPLETION_CONTEXT_EXTENSION")
 	breakdown := buildConfidenceBreakdown(c, vectorChunks, threshold)
@@ -280,8 +279,14 @@ func contextExtensionSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchReques
 		answer = defaultAbstainMessage
 	} else if llmEndpoint != "" && llmModel != "" && (len(allContext) > 0 || len(vectorChunks) > 0) {
 		var contextStr string
+		if len(vsaContext) > 0 {
+			contextStr = "VSA recall relationships:\n" + strings.Join(vsaContext, "\n")
+		}
 		if len(hop1Context) > 0 {
-			contextStr = "Direct relationships (1-hop):\n" + strings.Join(hop1Context, "\n")
+			if contextStr != "" {
+				contextStr += "\n\n"
+			}
+			contextStr += "Direct relationships (1-hop):\n" + strings.Join(hop1Context, "\n")
 		}
 		if len(hop2Context) > 0 {
 			contextStr += "\n\nExtended relationships (2-hop):\n" + strings.Join(hop2Context, "\n")
@@ -314,8 +319,10 @@ func contextExtensionSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchReques
 
 	recordInteraction(ctx, cfg, req.SessionID, "", req.QueryText, answer, "GRAPH_COMPLETION_CONTEXT_EXTENSION")
 
-	return c.JSON(attachSearchDebugMetadata(c, fiber.Map{
+	resp := fiber.Map{
 		"answer":               answer,
+		"context":              allContext,
+		"context_vsa":          vsaContext,
 		"context_hop1":         hop1Context,
 		"context_hop2":         hop2Context,
 		"chunks":               vectorChunks,
@@ -328,7 +335,11 @@ func contextExtensionSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchReques
 		"abstain_reason":       abstainReason,
 		"threshold":            threshold,
 		"verification":         verification,
-	}))
+	}
+	for k, v := range graphContextDebugMetadata(graphAssembly) {
+		resp[k] = v
+	}
+	return c.JSON(attachSearchDebugMetadata(c, resp))
 }
 
 // graphContextWithTargetsNeo4j returns context strings AND target entity names (for 2nd hop).
@@ -1056,6 +1067,15 @@ Cypher query:`, strings.Join(labels, ", "), strings.Join(relTypes, ", "), req.Qu
 // graphContextFromNeo4j queries Neo4j for relationships involving the given entity names.
 // If allowedDatasetIDs is non-nil, only nodes with matching dataset_id are returned.
 func graphContextFromNeo4j(ctx context.Context, cfg APIConfig, names []string, allowedDatasetIDs []string) []string {
+	items := graphContextItemsFromNeo4j(ctx, cfg, names, allowedDatasetIDs)
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		out = append(out, item.format())
+	}
+	return out
+}
+
+func graphContextItemsFromNeo4j(ctx context.Context, cfg APIConfig, names []string, allowedDatasetIDs []string) []graphContextItem {
 	writer, err := graphdb.NewWriter(ctx, cfg.Neo4jCfg.Neo4jURL, cfg.Neo4jCfg.Neo4jUser,
 		cfg.Neo4jCfg.Neo4jPassword, cfg.Neo4jCfg.Neo4jDatabase)
 	if err != nil {
@@ -1089,21 +1109,35 @@ func graphContextFromNeo4j(ctx context.Context, cfg APIConfig, names []string, a
 		return nil
 	}
 
-	var context []string
+	var items []graphContextItem
 	for _, row := range rows {
 		src, _ := row["source"].(string)
 		rel, _ := row["rel"].(string)
 		tgt, _ := row["target"].(string)
 		if src != "" && tgt != "" {
-			context = append(context, fmt.Sprintf("%s is related to %s via %s", src, tgt, rel))
+			items = append(items, graphContextItem{
+				SourceName: src,
+				Predicate:  rel,
+				TargetName: tgt,
+				Provider:   graphContextProviderNeo4j,
+			})
 		}
 	}
-	return context
+	return items
 }
 
 // graphContextFromPostgres uses PostgreSQL graph_nodes/graph_edges as fallback.
 // If allowedDatasetIDs is non-nil, only nodes with matching dataset_id are returned.
 func graphContextFromPostgres(ctx context.Context, cfg APIConfig, names []string, allowedDatasetIDs []string) []string {
+	items := graphContextItemsFromPostgres(ctx, cfg, names, allowedDatasetIDs)
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		out = append(out, item.format())
+	}
+	return out
+}
+
+func graphContextItemsFromPostgres(ctx context.Context, cfg APIConfig, names []string, allowedDatasetIDs []string) []graphContextItem {
 	if cfg.DB == nil {
 		return nil
 	}
@@ -1148,11 +1182,13 @@ func graphContextFromPostgres(ctx context.Context, cfg APIConfig, names []string
 
 	nameFilter := InPlaceholders(len(names), 1)
 	query := Q(fmt.Sprintf(`
-		SELECT gn.name AS source, ge.relationship_name AS rel, gn2.name AS target
+		SELECT gn.name AS source, ge.relationship_name AS rel, gn2.name AS target,
+		       COALESCE(gn.dataset_id, gn2.dataset_id, '') AS dataset_id
 		FROM graph_edges ge
 		JOIN graph_nodes gn ON ge.source_id = gn.id
 		JOIN graph_nodes gn2 ON ge.target_id = gn2.id
 		WHERE gn.name %s AND ge.relationship_name <> 'HAPPENED_AT' AND (gn2.type IS NULL OR gn2.type <> 'TemporalEvent')%s
+		ORDER BY ge.id
 		LIMIT $%d`, nameFilter, dsFilter, limitIdx))
 
 	rows, err := cfg.DB.QueryContext(ctx, query, args...)
@@ -1162,15 +1198,21 @@ func graphContextFromPostgres(ctx context.Context, cfg APIConfig, names []string
 	}
 	defer rows.Close()
 
-	var context []string
+	var items []graphContextItem
 	for rows.Next() {
-		var src, rel, tgt string
-		rows.Scan(&src, &rel, &tgt)
+		var src, rel, tgt, datasetID string
+		rows.Scan(&src, &rel, &tgt, &datasetID)
 		if src != "" && tgt != "" {
-			context = append(context, fmt.Sprintf("%s is related to %s via %s", src, tgt, rel))
+			items = append(items, graphContextItem{
+				SourceName: src,
+				Predicate:  rel,
+				TargetName: tgt,
+				DatasetID:  datasetID,
+				Provider:   graphContextProviderSQL,
+			})
 		}
 	}
-	return context
+	return items
 }
 
 // getNeo4jLabels returns all node labels from Neo4j.

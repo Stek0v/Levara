@@ -23,12 +23,39 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 
+	accesspkg "github.com/stek0v/levara/pkg/access"
 	"github.com/stek0v/levara/pkg/extract"
 	"github.com/stek0v/levara/pkg/fetch"
 	"github.com/stek0v/levara/pkg/ingest"
 )
 
 // ── U3: File Upload (multipart) ──
+
+func lookupUploadDatasetID(ctx context.Context, db *sql.DB, datasetName, ownerID string) string {
+	if db == nil || datasetName == "" {
+		return ""
+	}
+	var datasetID string
+	if ownerID != "" {
+		db.QueryRowContext(ctx,
+			Q("SELECT id FROM datasets WHERE name = $1 AND owner_id = $2 LIMIT 1"), datasetName, ownerID).Scan(&datasetID)
+		if datasetID != "" {
+			return datasetID
+		}
+	}
+	if ownerID != "" {
+		db.QueryRowContext(ctx,
+			Q("SELECT id FROM datasets WHERE name = $1 AND (owner_id = '' OR owner_id IS NULL) LIMIT 1"), datasetName).Scan(&datasetID)
+		return datasetID
+	}
+	db.QueryRowContext(ctx,
+		Q("SELECT id FROM datasets WHERE name = $1 LIMIT 1"), datasetName).Scan(&datasetID)
+	return datasetID
+}
+
+func validateUploadDatasetID(ctx context.Context, db *sql.DB, datasetID, ownerID string) (bool, error) {
+	return accesspkg.SQLPolicy{DB: db, Q: Q}.CanUseDatasetForUpload(ctx, datasetID, ownerID)
+}
 
 func addHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
@@ -37,6 +64,9 @@ func addHandler(cfg APIConfig) fiber.Handler {
 
 		datasetName := c.FormValue("datasetName")
 		datasetID := c.FormValue("datasetId")
+		if datasetID == "" {
+			datasetID = c.FormValue("dataset_id")
+		}
 
 		form, err := c.MultipartForm()
 		if err != nil {
@@ -85,6 +115,11 @@ func addHandler(cfg APIConfig) fiber.Handler {
 					}
 				}
 				ownerID, _ := c.Locals("user_id").(string)
+				if ok, err := validateUploadDatasetID(reqCtx, cfg.DB, datasetID, ownerID); err != nil {
+					return c.Status(500).JSON(fiber.Map{"detail": "validate dataset: " + err.Error()})
+				} else if !ok {
+					return c.Status(403).JSON(fiber.Map{"detail": "dataset not accessible"})
+				}
 				items := []ingest.Item{{Text: bodyStr, DatasetName: datasetName, OwnerID: ownerID, Tags: tags}}
 				results, err := ingest.Ingest(items, cfg.StoragePath)
 				if err != nil {
@@ -97,10 +132,7 @@ func addHandler(cfg APIConfig) fiber.Handler {
 				txtDsID := datasetID
 				if txtDsID == "" {
 					// Look up existing dataset by name before creating new
-					if cfg.DB != nil && datasetName != "" {
-						cfg.DB.QueryRowContext(reqCtx,
-							Q("SELECT id FROM datasets WHERE name = $1 LIMIT 1"), datasetName).Scan(&txtDsID)
-					}
+					txtDsID = lookupUploadDatasetID(reqCtx, cfg.DB, datasetName, ownerID)
 					if txtDsID == "" {
 						txtDsID = uuid.New().String()
 					}
@@ -123,6 +155,11 @@ func addHandler(cfg APIConfig) fiber.Handler {
 		}
 
 		ownerID, _ := c.Locals("user_id").(string)
+		if ok, err := validateUploadDatasetID(reqCtx, cfg.DB, datasetID, ownerID); err != nil {
+			return c.Status(500).JSON(fiber.Map{"detail": "validate dataset: " + err.Error()})
+		} else if !ok {
+			return c.Status(403).JSON(fiber.Map{"detail": "dataset not accessible"})
+		}
 		var items []ingest.Item
 		for _, file := range files {
 			f, err := file.Open()
@@ -164,10 +201,7 @@ func addHandler(cfg APIConfig) fiber.Handler {
 		// Write metadata — reuse existing dataset by name
 		dsID := datasetID
 		if dsID == "" {
-			if cfg.DB != nil && datasetName != "" {
-				cfg.DB.QueryRowContext(reqCtx,
-					Q("SELECT id FROM datasets WHERE name = $1 LIMIT 1"), datasetName).Scan(&dsID)
-			}
+			dsID = lookupUploadDatasetID(reqCtx, cfg.DB, datasetName, ownerID)
 			if dsID == "" {
 				dsID = uuid.New().String()
 			}

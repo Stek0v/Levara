@@ -6,9 +6,11 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/stek0v/levara/pkg/vsa"
 )
@@ -34,12 +36,21 @@ type Store struct {
 }
 
 type Candidate struct {
-	TargetID   string  `json:"target_id"`
-	EdgeID     string  `json:"edge_id"`
-	Predicate  string  `json:"predicate"`
-	DatasetID  string  `json:"dataset_id"`
-	ShardID    string  `json:"shard_id"`
-	Similarity float64 `json:"similarity"`
+	TargetID    string  `json:"target_id"`
+	TargetName  string  `json:"target_name,omitempty"`
+	EdgeID      string  `json:"edge_id"`
+	Predicate   string  `json:"predicate"`
+	DatasetID   string  `json:"dataset_id"`
+	ShardID     string  `json:"shard_id"`
+	Similarity  float64 `json:"similarity"`
+	RerankScore float64 `json:"rerank_score,omitempty"`
+	Confidence  float64 `json:"confidence,omitempty"`
+}
+
+type QueryOptions struct {
+	QueryText string
+	TopK      int
+	Rerank    bool
 }
 
 type Stats struct {
@@ -180,9 +191,14 @@ func (s *Store) RebuildFromGraph(ctx context.Context, datasetID string) error {
 }
 
 func (s *Store) QueryObject(ctx context.Context, datasetID, subjectID, predicate string, topK int) ([]Candidate, error) {
+	return s.QueryObjectWithOptions(ctx, datasetID, subjectID, predicate, QueryOptions{TopK: topK})
+}
+
+func (s *Store) QueryObjectWithOptions(ctx context.Context, datasetID, subjectID, predicate string, opts QueryOptions) ([]Candidate, error) {
 	if s == nil || s.db == nil || subjectID == "" || predicate == "" {
 		return nil, nil
 	}
+	topK := opts.TopK
 	if topK <= 0 {
 		topK = 10
 	}
@@ -229,13 +245,19 @@ func (s *Store) QueryObject(ctx context.Context, datasetID, subjectID, predicate
 			}
 			c := Candidate{
 				TargetID:   m.TargetID,
+				TargetName: m.TargetName,
 				EdgeID:     m.EdgeID,
 				Predicate:  predicate,
 				DatasetID:  datasetID,
 				ShardID:    shardID,
 				Similarity: score,
+				Confidence: m.Confidence,
 			}
-			if prev, ok := scoreByTarget[c.TargetID]; !ok || c.Similarity > prev.Similarity {
+			c.RerankScore = c.Similarity
+			if opts.Rerank {
+				c.RerankScore = rerankScoreCandidate(c, opts.QueryText)
+			}
+			if prev, ok := scoreByTarget[c.TargetID]; !ok || candidateScore(c, opts.Rerank) > candidateScore(prev, opts.Rerank) {
 				scoreByTarget[c.TargetID] = c
 			}
 		}
@@ -249,15 +271,29 @@ func (s *Store) QueryObject(ctx context.Context, datasetID, subjectID, predicate
 		out = append(out, c)
 	}
 	sort.Slice(out, func(i, j int) bool {
-		if out[i].Similarity == out[j].Similarity {
+		left, right := out[i].Similarity, out[j].Similarity
+		if opts.Rerank {
+			left, right = out[i].RerankScore, out[j].RerankScore
+		}
+		if left == right {
+			if out[i].Similarity != out[j].Similarity {
+				return out[i].Similarity > out[j].Similarity
+			}
 			return out[i].TargetID < out[j].TargetID
 		}
-		return out[i].Similarity > out[j].Similarity
+		return left > right
 	})
 	if len(out) > topK {
 		out = out[:topK]
 	}
 	return out, nil
+}
+
+func candidateScore(c Candidate, rerank bool) float64 {
+	if rerank {
+		return c.RerankScore
+	}
+	return c.Similarity
 }
 
 func (s *Store) Stats(ctx context.Context) (Stats, error) {
@@ -352,11 +388,35 @@ func (s *Store) Predicates(ctx context.Context, datasetID string) ([]string, err
 }
 
 type member struct {
-	EdgeID   string
-	TargetID string
+	EdgeID     string
+	TargetID   string
+	TargetName string
+	Confidence float64
 }
 
 func (s *Store) membersForShard(ctx context.Context, shardID, subjectID string) ([]member, error) {
+	rows, err := s.db.QueryContext(ctx, s.q(`
+		SELECT m.edge_id, m.target_id, COALESCE(n.name, ''), COALESCE(e.confidence, 1.0)
+		FROM vsa_fact_members m
+		LEFT JOIN graph_nodes n ON n.id = m.target_id
+		LEFT JOIN graph_edges e ON e.id = m.edge_id
+		WHERE m.shard_id = $1 AND m.source_id = $2`), shardID, subjectID)
+	if err != nil {
+		return s.membersForShardLegacy(ctx, shardID, subjectID)
+	}
+	defer rows.Close()
+	var out []member
+	for rows.Next() {
+		var m member
+		if err := rows.Scan(&m.EdgeID, &m.TargetID, &m.TargetName, &m.Confidence); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) membersForShardLegacy(ctx context.Context, shardID, subjectID string) ([]member, error) {
 	rows, err := s.db.QueryContext(ctx, s.q(`
 		SELECT edge_id, target_id
 		FROM vsa_fact_members
@@ -371,9 +431,105 @@ func (s *Store) membersForShard(ctx context.Context, shardID, subjectID string) 
 		if err := rows.Scan(&m.EdgeID, &m.TargetID); err != nil {
 			return nil, err
 		}
+		m.Confidence = 1.0
 		out = append(out, m)
 	}
 	return out, rows.Err()
+}
+
+func rerankScoreCandidate(c Candidate, queryText string) float64 {
+	score := c.Similarity
+	qTokens := queryTokens(queryText)
+	if len(qTokens) == 0 {
+		return score + confidenceBonus(c.Confidence)
+	}
+	targetTokens := queryTokens(c.TargetName + " " + c.TargetID)
+	var overlap int
+	for token := range targetTokens {
+		if _, ok := qTokens[token]; ok {
+			overlap++
+		}
+	}
+	if overlap > 0 {
+		score += math.Min(0.25, 0.12*float64(overlap))
+	}
+	score += confidenceBonus(c.Confidence)
+	return score
+}
+
+func confidenceBonus(confidence float64) float64 {
+	if confidence <= 0 {
+		return 0
+	}
+	if confidence > 1 {
+		confidence = 1
+	}
+	return 0.03 * confidence
+}
+
+func queryTokens(s string) map[string]struct{} {
+	out := map[string]struct{}{}
+	var b strings.Builder
+	flush := func() {
+		if b.Len() == 0 {
+			return
+		}
+		token := b.String()
+		b.Reset()
+		if len(token) < 2 {
+			return
+		}
+		for _, variant := range []string{
+			token,
+			strings.TrimSuffix(token, "s"),
+			strings.TrimSuffix(token, "ed"),
+			strings.TrimSuffix(token, "ing"),
+		} {
+			if len(variant) >= 2 {
+				out[variant] = struct{}{}
+			}
+		}
+	}
+	for _, r := range strings.ToLower(s) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+			continue
+		}
+		flush()
+	}
+	flush()
+	expandQueryTokens(out)
+	return out
+}
+
+func expandQueryTokens(tokens map[string]struct{}) {
+	expansions := map[string][]string{
+		"validate":  {"validator"},
+		"validates": {"validator"},
+		"verify":    {"verifier", "validator"},
+		"verifies":  {"verifier", "validator"},
+		"check":     {"checker", "validator"},
+		"checks":    {"checker", "validator"},
+		"maintain":  {"owner", "team"},
+		"maintains": {"owner", "team"},
+		"owner":     {"owned"},
+		"require":   {"dependency"},
+		"requires":  {"dependency"},
+		"need":      {"dependency"},
+		"needs":     {"dependency"},
+		"protect":   {"guard", "security"},
+		"protects":  {"guard", "security"},
+		"secure":    {"guard", "security"},
+		"publish":   {"topic"},
+		"publishes": {"topic"},
+		"emit":      {"topic"},
+		"emits":     {"topic"},
+	}
+	for token := range tokens {
+		for _, expansion := range expansions[token] {
+			tokens[expansion] = struct{}{}
+		}
+	}
 }
 
 func (s *Store) q(query string) string {

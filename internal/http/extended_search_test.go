@@ -1,11 +1,11 @@
 // extended_search_test.go — Wave C coverage for the "extended" search
 // handlers on top of vector + graph:
 //
-//   contextExtensionSearch     (GRAPH_COMPLETION_CONTEXT_EXTENSION, 2-hop)
-//   cotSearch                  (GRAPH_COMPLETION_COT, chain-of-thought)
-//   communityLocalSearch       (COMMUNITY_LOCAL)
-//   communityGlobalSearch      (COMMUNITY_GLOBAL, map-reduce)
-//   parseJSONStringArray       (pure helper used by cotSearch)
+//	contextExtensionSearch     (GRAPH_COMPLETION_CONTEXT_EXTENSION, 2-hop)
+//	cotSearch                  (GRAPH_COMPLETION_COT, chain-of-thought)
+//	communityLocalSearch       (COMMUNITY_LOCAL)
+//	communityGlobalSearch      (COMMUNITY_GLOBAL, map-reduce)
+//	parseJSONStringArray       (pure helper used by cotSearch)
 //
 // All four handlers have cheap, deterministic fallback paths that dominate
 // real-world traffic (any time embed/DB/LLM is missing). Those are the
@@ -80,6 +80,39 @@ func TestContextExtensionSearch_PostgresHop1Only(t *testing.T) {
 	}
 	if body["hops"] != float64(2) {
 		t.Errorf("hops = %v, want 2", body["hops"])
+	}
+}
+
+func TestContextExtensionSearch_VSABeforeSQLGraph(t *testing.T) {
+	t.Setenv("LEVARA_GRAPH_CONTEXT_ORDER", "vsa_first")
+	t.Setenv("LEVARA_GRAPH_CONTEXT_LIMIT", "5")
+	t.Setenv("LEVARA_GRAPH_CONTEXT_VSA_RESERVE", "3")
+	t.Setenv("LLM_ENDPOINT", "")
+	t.Setenv("LLM_MODEL", "")
+
+	env := newSearchTestEnv(t)
+	seedVSABeforeSQLSearchFixture(t, env)
+	env.start()
+
+	_, body := env.postSearch(map[string]any{
+		"query_text": "what validates checkout",
+		"query_type": "GRAPH_COMPLETION_CONTEXT_EXTENSION",
+		"collection": "entities",
+	})
+
+	combined, _ := body["context"].([]any)
+	if !stringSliceContains(combined, "PCI Validator") {
+		t.Fatalf("context = %v, want VSA target in combined context", combined)
+	}
+	if first, _ := combined[0].(string); !strings.Contains(first, "PCI Validator") || !strings.Contains(first, "VSA score") {
+		t.Fatalf("context[0] = %q, want VSA target before hop filler", first)
+	}
+	vsaCtx, _ := body["context_vsa"].([]any)
+	if !stringSliceContains(vsaCtx, "PCI Validator") {
+		t.Fatalf("context_vsa = %v, want VSA target", vsaCtx)
+	}
+	if body["graph_context_order"] != graphContextOrderVSAFirst {
+		t.Fatalf("graph_context_order = %v, want %s", body["graph_context_order"], graphContextOrderVSAFirst)
 	}
 }
 
