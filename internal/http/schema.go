@@ -208,6 +208,16 @@ var schemaStatements = []string{
 		PRIMARY KEY (shard_id, edge_id)
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_vsa_members_lookup ON vsa_fact_members(dataset_id, predicate, source_id)`,
+	`CREATE TABLE IF NOT EXISTS graph_predicate_synonyms (
+		dataset_id TEXT NOT NULL DEFAULT '',
+		predicate TEXT NOT NULL DEFAULT '',
+		synonym TEXT NOT NULL DEFAULT '',
+		source TEXT NOT NULL DEFAULT 'generated',
+		weight REAL NOT NULL DEFAULT 50,
+		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		PRIMARY KEY (dataset_id, predicate, synonym, source)
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_graph_predicate_synonyms_lookup ON graph_predicate_synonyms(dataset_id, synonym)`,
 	`CREATE INDEX IF NOT EXISTS idx_notebooks_owner ON notebooks(owner_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_notebook_cells_notebook ON notebook_cells(notebook_id)`,
 
@@ -578,6 +588,16 @@ var schemaSQLiteStatements = []string{
 		PRIMARY KEY (shard_id, edge_id)
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_vsa_members_lookup ON vsa_fact_members(dataset_id, predicate, source_id)`,
+	`CREATE TABLE IF NOT EXISTS graph_predicate_synonyms (
+		dataset_id TEXT NOT NULL DEFAULT '',
+		predicate TEXT NOT NULL DEFAULT '',
+		synonym TEXT NOT NULL DEFAULT '',
+		source TEXT NOT NULL DEFAULT 'generated',
+		weight REAL NOT NULL DEFAULT 50,
+		updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (dataset_id, predicate, synonym, source)
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_graph_predicate_synonyms_lookup ON graph_predicate_synonyms(dataset_id, synonym)`,
 	`CREATE INDEX IF NOT EXISTS idx_notebooks_owner ON notebooks(owner_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_notebook_cells_notebook ON notebook_cells(notebook_id)`,
 

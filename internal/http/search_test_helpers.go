@@ -125,11 +125,21 @@ CREATE TABLE graph_edges (
 	source_id TEXT NOT NULL,
 	target_id TEXT NOT NULL,
 	relationship_name TEXT NOT NULL DEFAULT '',
+	dataset_id TEXT,
 	properties TEXT NOT NULL DEFAULT '{}',
 	valid_from TEXT,
 	valid_until TEXT,
 	superseded_by TEXT NOT NULL DEFAULT '',
 	confidence REAL NOT NULL DEFAULT 1.0
+);
+CREATE TABLE graph_predicate_synonyms (
+	dataset_id TEXT NOT NULL DEFAULT '',
+	predicate TEXT NOT NULL DEFAULT '',
+	synonym TEXT NOT NULL DEFAULT '',
+	source TEXT NOT NULL DEFAULT 'generated',
+	weight REAL NOT NULL DEFAULT 50,
+	updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	PRIMARY KEY (dataset_id, predicate, synonym, source)
 );
 CREATE TABLE graph_communities (
 	id TEXT PRIMARY KEY,
@@ -375,6 +385,17 @@ func (e *searchTestEnv) insertEdge(id, srcID, tgtID, rel string) {
 	_, err := e.db.Exec(
 		`INSERT INTO graph_edges(id, source_id, target_id, relationship_name) VALUES (?, ?, ?, ?)`,
 		id, srcID, tgtID, rel,
+	)
+	if err != nil {
+		e.t.Fatalf("insert edge %q: %v", id, err)
+	}
+}
+
+func (e *searchTestEnv) insertEdgeInDataset(id, srcID, tgtID, rel, datasetID string) {
+	e.t.Helper()
+	_, err := e.db.Exec(
+		`INSERT INTO graph_edges(id, source_id, target_id, relationship_name, dataset_id) VALUES (?, ?, ?, ?, ?)`,
+		id, srcID, tgtID, rel, datasetID,
 	)
 	if err != nil {
 		e.t.Fatalf("insert edge %q: %v", id, err)

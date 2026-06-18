@@ -1,0 +1,13 @@
+{
+  "cases": 1600,
+  "predicates": 800,
+  "synonyms": 13200,
+  "top1_accuracy": 1,
+  "mrr": 1,
+  "latency_p50_micros": 3460,
+  "latency_p95_micros": 4013,
+  "latency_max_micros": 7202,
+  "throughput_qps": 285.3861298862732,
+  "refresh_millis": 82,
+  "load_synonyms_millis": 8
+}

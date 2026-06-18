@@ -1,0 +1,369 @@
+{
+  "generated_at": "2026-06-18T12:53:42Z",
+  "cases": 52,
+  "budgets": {
+    "context_budget": 5,
+    "distractor_heavy": 10,
+    "fanout": 10,
+    "predicate_specific": 10
+  },
+  "modes": [
+    "baseline_sql_graph",
+    "vsa_empty_index",
+    "current_append",
+    "vsa_first",
+    "vsa_only"
+  ],
+  "by_scenario": {
+    "context_budget": {
+      "baseline_sql_graph": {
+        "fact_recall_at_k": 0,
+        "target_recall_at_k": 0,
+        "predicate_precision_at_k": 0.8,
+        "mrr": 0,
+        "ndcg_at_k": 0,
+        "context_facts_avg": 5,
+        "latency_p50_micros": 73,
+        "latency_p95_micros": 224,
+        "tenant_leak_rate": 0,
+        "expired_fact_leak_rate": 0
+      },
+      "current_append": {
+        "fact_recall_at_k": 0,
+        "target_recall_at_k": 0,
+        "predicate_precision_at_k": 0.8,
+        "mrr": 0,
+        "ndcg_at_k": 0,
+        "context_facts_avg": 5,
+        "latency_p50_micros": 58,
+        "latency_p95_micros": 86,
+        "tenant_leak_rate": 0,
+        "expired_fact_leak_rate": 0
+      },
+      "vsa_empty_index": {
+        "fact_recall_at_k": 0,
+        "target_recall_at_k": 0,
+        "predicate_precision_at_k": 0,
+        "mrr": 0,
+        "ndcg_at_k": 0,
+        "context_facts_avg": 0,
+        "latency_p50_micros": 17,
+        "latency_p95_micros": 78,
+        "tenant_leak_rate": 0,
+        "expired_fact_leak_rate": 0
+      },
+      "vsa_first": {
+        "fact_recall_at_k": 1,
+        "target_recall_at_k": 1,
+        "predicate_precision_at_k": 1,
+        "mrr": 1,
+        "ndcg_at_k": 1,
+        "context_facts_avg": 5,
+        "latency_p50_micros": 91495,
+        "latency_p95_micros": 105162,
+        "tenant_leak_rate": 0,
+        "expired_fact_leak_rate": 0
+      },
+      "vsa_only": {
+        "fact_recall_at_k": 1,
+        "target_recall_at_k": 1,
+        "predicate_precision_at_k": 1,
+        "mrr": 1,
+        "ndcg_at_k": 1,
+        "context_facts_avg": 5,
+        "latency_p50_micros": 89377,
+        "latency_p95_micros": 90490,
+        "tenant_leak_rate": 0,
+        "expired_fact_leak_rate": 0
+      }
+    },
+    "distractor_heavy": {
+      "baseline_sql_graph": {
+        "fact_recall_at_k": 0,
+        "target_recall_at_k": 0,
+        "predicate_precision_at_k": 1,
+        "mrr": 0,
+        "ndcg_at_k": 0,
+        "context_facts_avg": 10,
+        "latency_p50_micros": 146,
+        "latency_p95_micros": 234,
+        "tenant_leak_rate": 0,
+        "expired_fact_leak_rate": 0
+      },
+      "current_append": {
+        "fact_recall_at_k": 0,
+        "target_recall_at_k": 0,
+        "predicate_precision_at_k": 1,
+        "mrr": 0,
+        "ndcg_at_k": 0,
+        "context_facts_avg": 10,
+        "latency_p50_micros": 137,
+        "latency_p95_micros": 184,
+        "tenant_leak_rate": 0,
+        "expired_fact_leak_rate": 0
+      },
+      "vsa_empty_index": {
+        "fact_recall_at_k": 0,
+        "target_recall_at_k": 0,
+        "predicate_precision_at_k": 0,
+        "mrr": 0,
+        "ndcg_at_k": 0,
+        "context_facts_avg": 0,
+        "latency_p50_micros": 15,
+        "latency_p95_micros": 18,
+        "tenant_leak_rate": 0,
+        "expired_fact_leak_rate": 0
+      },
+      "vsa_first": {
+        "fact_recall_at_k": 1,
+        "target_recall_at_k": 1,
+        "predicate_precision_at_k": 1,
+        "mrr": 1,
+        "ndcg_at_k": 1,
+        "context_facts_avg": 10,
+        "latency_p50_micros": 25647,
+        "latency_p95_micros": 26700,
+        "tenant_leak_rate": 0,
+        "expired_fact_leak_rate": 0
+      },
+      "vsa_only": {
+        "fact_recall_at_k": 1,
+        "target_recall_at_k": 1,
+        "predicate_precision_at_k": 1,
+        "mrr": 1,
+        "ndcg_at_k": 1,
+        "context_facts_avg": 10,
+        "latency_p50_micros": 25518,
+        "latency_p95_micros": 26103,
+        "tenant_leak_rate": 0,
+        "expired_fact_leak_rate": 0
+      }
+    },
+    "fanout": {
+      "baseline_sql_graph": {
+        "fact_recall_at_k": 0,
+        "target_recall_at_k": 0,
+        "predicate_precision_at_k": 1,
+        "mrr": 0,
+        "ndcg_at_k": 0,
+        "context_facts_avg": 10,
+        "latency_p50_micros": 303,
+        "latency_p95_micros": 404,
+        "tenant_leak_rate": 0,
+        "expired_fact_leak_rate": 0
+      },
+      "current_append": {
+        "fact_recall_at_k": 0,
+        "target_recall_at_k": 0,
+        "predicate_precision_at_k": 1,
+        "mrr": 0,
+        "ndcg_at_k": 0,
+        "context_facts_avg": 10,
+        "latency_p50_micros": 297,
+        "latency_p95_micros": 369,
+        "tenant_leak_rate": 0,
+        "expired_fact_leak_rate": 0
+      },
+      "vsa_empty_index": {
+        "fact_recall_at_k": 0,
+        "target_recall_at_k": 0,
+        "predicate_precision_at_k": 0,
+        "mrr": 0,
+        "ndcg_at_k": 0,
+        "context_facts_avg": 0,
+        "latency_p50_micros": 15,
+        "latency_p95_micros": 15,
+        "tenant_leak_rate": 0,
+        "expired_fact_leak_rate": 0
+      },
+      "vsa_first": {
+        "fact_recall_at_k": 1,
+        "target_recall_at_k": 1,
+        "predicate_precision_at_k": 1,
+        "mrr": 1,
+        "ndcg_at_k": 1,
+        "context_facts_avg": 10,
+        "latency_p50_micros": 90832,
+        "latency_p95_micros": 95947,
+        "tenant_leak_rate": 0,
+        "expired_fact_leak_rate": 0
+      },
+      "vsa_only": {
+        "fact_recall_at_k": 1,
+        "target_recall_at_k": 1,
+        "predicate_precision_at_k": 1,
+        "mrr": 1,
+        "ndcg_at_k": 1,
+        "context_facts_avg": 10,
+        "latency_p50_micros": 89895,
+        "latency_p95_micros": 93349,
+        "tenant_leak_rate": 0,
+        "expired_fact_leak_rate": 0
+      }
+    },
+    "predicate_specific": {
+      "baseline_sql_graph": {
+        "fact_recall_at_k": 0,
+        "target_recall_at_k": 0,
+        "predicate_precision_at_k": 0.8,
+        "mrr": 0,
+        "ndcg_at_k": 0,
+        "context_facts_avg": 10,
+        "latency_p50_micros": 414,
+        "latency_p95_micros": 475,
+        "tenant_leak_rate": 0,
+        "expired_fact_leak_rate": 0
+      },
+      "current_append": {
+        "fact_recall_at_k": 0,
+        "target_recall_at_k": 0,
+        "predicate_precision_at_k": 0.8,
+        "mrr": 0,
+        "ndcg_at_k": 0,
+        "context_facts_avg": 10,
+        "latency_p50_micros": 414,
+        "latency_p95_micros": 576,
+        "tenant_leak_rate": 0,
+        "expired_fact_leak_rate": 0
+      },
+      "vsa_empty_index": {
+        "fact_recall_at_k": 0,
+        "target_recall_at_k": 0,
+        "predicate_precision_at_k": 0,
+        "mrr": 0,
+        "ndcg_at_k": 0,
+        "context_facts_avg": 0,
+        "latency_p50_micros": 15,
+        "latency_p95_micros": 16,
+        "tenant_leak_rate": 0,
+        "expired_fact_leak_rate": 0
+      },
+      "vsa_first": {
+        "fact_recall_at_k": 1,
+        "target_recall_at_k": 1,
+        "predicate_precision_at_k": 0.9,
+        "mrr": 1,
+        "ndcg_at_k": 1,
+        "context_facts_avg": 10,
+        "latency_p50_micros": 14993,
+        "latency_p95_micros": 15298,
+        "tenant_leak_rate": 0,
+        "expired_fact_leak_rate": 0
+      },
+      "vsa_only": {
+        "fact_recall_at_k": 1,
+        "target_recall_at_k": 1,
+        "predicate_precision_at_k": 1,
+        "mrr": 1,
+        "ndcg_at_k": 1,
+        "context_facts_avg": 9,
+        "latency_p50_micros": 14333,
+        "latency_p95_micros": 14677,
+        "tenant_leak_rate": 0,
+        "expired_fact_leak_rate": 0
+      }
+    }
+  },
+  "summary": {
+    "baseline_sql_graph": {
+      "fact_recall_at_k": 0,
+      "target_recall_at_k": 0,
+      "predicate_precision_at_k": 0.9142857142857143,
+      "mrr": 0,
+      "ndcg_at_k": 0,
+      "context_facts_avg": 8.75,
+      "latency_p50_micros": 224,
+      "latency_p95_micros": 454,
+      "tenant_leak_rate": 0,
+      "expired_fact_leak_rate": 0
+    },
+    "current_append": {
+      "fact_recall_at_k": 0,
+      "target_recall_at_k": 0,
+      "predicate_precision_at_k": 0.9142857142857143,
+      "mrr": 0,
+      "ndcg_at_k": 0,
+      "context_facts_avg": 8.75,
+      "latency_p50_micros": 184,
+      "latency_p95_micros": 460,
+      "tenant_leak_rate": 0,
+      "expired_fact_leak_rate": 0
+    },
+    "vsa_empty_index": {
+      "fact_recall_at_k": 0,
+      "target_recall_at_k": 0,
+      "predicate_precision_at_k": 0,
+      "mrr": 0,
+      "ndcg_at_k": 0,
+      "context_facts_avg": 0,
+      "latency_p50_micros": 15,
+      "latency_p95_micros": 18,
+      "tenant_leak_rate": 0,
+      "expired_fact_leak_rate": 0
+    },
+    "vsa_first": {
+      "fact_recall_at_k": 1,
+      "target_recall_at_k": 1,
+      "predicate_precision_at_k": 0.9714285714285714,
+      "mrr": 1,
+      "ndcg_at_k": 1,
+      "context_facts_avg": 8.75,
+      "latency_p50_micros": 26700,
+      "latency_p95_micros": 95947,
+      "tenant_leak_rate": 0,
+      "expired_fact_leak_rate": 0
+    },
+    "vsa_only": {
+      "fact_recall_at_k": 1,
+      "target_recall_at_k": 1,
+      "predicate_precision_at_k": 1,
+      "mrr": 1,
+      "ndcg_at_k": 1,
+      "context_facts_avg": 8.5,
+      "latency_p50_micros": 26103,
+      "latency_p95_micros": 91050,
+      "tenant_leak_rate": 0,
+      "expired_fact_leak_rate": 0
+    }
+  },
+  "lift": {
+    "current_append": {
+      "fact_recall_at_k": 0,
+      "latency_p95_micros": 6,
+      "mrr": 0,
+      "ndcg_at_k": 0,
+      "predicate_precision_at_k": 0,
+      "target_recall_at_k": 0
+    },
+    "vsa_empty_index": {
+      "fact_recall_at_k": 0,
+      "latency_p95_micros": -436,
+      "mrr": 0,
+      "ndcg_at_k": 0,
+      "predicate_precision_at_k": -0.9142857142857143,
+      "target_recall_at_k": 0
+    },
+    "vsa_first": {
+      "fact_recall_at_k": 1,
+      "latency_p95_micros": 95493,
+      "mrr": 1,
+      "ndcg_at_k": 1,
+      "predicate_precision_at_k": 0.05714285714285716,
+      "target_recall_at_k": 1
+    },
+    "vsa_only": {
+      "fact_recall_at_k": 1,
+      "latency_p95_micros": 90596,
+      "mrr": 1,
+      "ndcg_at_k": 1,
+      "predicate_precision_at_k": 0.08571428571428574,
+      "target_recall_at_k": 1
+    }
+  },
+  "notes": [
+    "current_append models the current graph-search integration: SQL context consumes budget before VSA is appended.",
+    "vsa_first models a VSA-aware budget policy: predicate VSA facts are retrieved before SQL graph filler.",
+    "TestVSABeforeSQLGraphPreservesTargetUnderBudget checks the order directly: VSA-before-SQL finds the target in all 52 cases, SQL-before-VSA finds none.",
+    "Positive vsa_first lift quantifies VSA signal; flat current_append lift indicates budget allocation can hide that signal."
+  ]
+}

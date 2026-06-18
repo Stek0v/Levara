@@ -8,6 +8,7 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/stek0v/levara/pkg/vsamemory"
@@ -62,6 +63,9 @@ func vsaRebuildHandler(cfg APIConfig) fiber.Handler {
 		}
 		store := vsaStoreForDB(cfg.DB, req.Dim, req.ShardSize)
 		if err := store.RebuildFromGraph(c.Context(), req.DatasetID); err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		}
+		if err := refreshPredicateSynonyms(c.Context(), cfg.DB, req.DatasetID); err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 		}
 		return c.JSON(fiber.Map{
@@ -119,6 +123,10 @@ func rebuildVSAMemory(ctx context.Context, cfg APIConfig, datasetID, source stri
 	}
 	if err := vsaStoreForDB(cfg.DB, 0, 0).RebuildFromGraph(ctx, datasetID); err != nil {
 		log.Printf("[vsa] rebuild after %s dataset=%q: %v", source, datasetID, err)
+		return
+	}
+	if err := refreshPredicateSynonyms(ctx, cfg.DB, datasetID); err != nil {
+		log.Printf("[vsa] refresh predicate synonyms after %s dataset=%q: %v", source, datasetID, err)
 	}
 }
 
@@ -149,6 +157,15 @@ type vsaSourceNode struct {
 }
 
 func vsaGraphContext(ctx context.Context, cfg APIConfig, entityNames []string, allowedDatasetIDs []string, limit int) []string {
+	items := vsaGraphContextItems(ctx, cfg, entityNames, allowedDatasetIDs, limit, "")
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		out = append(out, item.format())
+	}
+	return out
+}
+
+func vsaGraphContextItems(ctx context.Context, cfg APIConfig, entityNames []string, allowedDatasetIDs []string, limit int, queryText string) []graphContextItem {
 	if cfg.DB == nil || len(entityNames) == 0 {
 		return nil
 	}
@@ -185,8 +202,9 @@ func vsaGraphContext(ctx context.Context, cfg APIConfig, entityNames []string, a
 	if len(sources) > 5 {
 		sources = sources[:5]
 	}
+	predicateSynonyms := loadPredicateSynonyms(ctx, cfg.DB, datasets, nil)
 
-	var out []string
+	var out []graphContextItem
 	seen := make(map[string]struct{})
 	for _, source := range sources {
 		for _, datasetID := range datasets {
@@ -198,11 +216,16 @@ func vsaGraphContext(ctx context.Context, cfg APIConfig, entityNames []string, a
 				log.Printf("[vsa] list predicates dataset=%q: %v", datasetID, err)
 				continue
 			}
+			predicates = rankVSAPredicatesForQuery(predicates, queryText, predicateSynonyms)
 			if len(predicates) > 8 {
 				predicates = predicates[:8]
 			}
 			for _, predicate := range predicates {
-				candidates, err := store.QueryObject(ctx, datasetID, source.ID, predicate, 3)
+				candidates, err := store.QueryObjectWithOptions(ctx, datasetID, source.ID, predicate, vsamemory.QueryOptions{
+					QueryText: queryText,
+					TopK:      3,
+					Rerank:    strings.TrimSpace(queryText) != "",
+				})
 				if err != nil {
 					log.Printf("[vsa] query dataset=%q source=%q predicate=%q: %v", datasetID, source.ID, predicate, err)
 					continue
@@ -217,7 +240,14 @@ func vsaGraphContext(ctx context.Context, cfg APIConfig, entityNames []string, a
 						continue
 					}
 					seen[key] = struct{}{}
-					out = append(out, fmt.Sprintf("%s is related to %s via %s (VSA score %.3f)", source.Name, targetName, predicate, candidate.Similarity))
+					out = append(out, graphContextItem{
+						SourceName: source.Name,
+						Predicate:  predicate,
+						TargetName: targetName,
+						DatasetID:  datasetID,
+						Provider:   graphContextProviderVSA,
+						Score:      candidate.Similarity,
+					})
 					if len(out) >= limit {
 						return out
 					}
@@ -225,6 +255,40 @@ func vsaGraphContext(ctx context.Context, cfg APIConfig, entityNames []string, a
 			}
 		}
 	}
+	return out
+}
+
+func graphContextTokens(s string) map[string]struct{} {
+	out := map[string]struct{}{}
+	var b strings.Builder
+	flush := func() {
+		if b.Len() == 0 {
+			return
+		}
+		token := b.String()
+		b.Reset()
+		if len(token) < 2 {
+			return
+		}
+		for _, variant := range []string{
+			token,
+			strings.TrimSuffix(token, "s"),
+			strings.TrimSuffix(token, "ed"),
+			strings.TrimSuffix(token, "ing"),
+		} {
+			if len(variant) >= 2 {
+				out[variant] = struct{}{}
+			}
+		}
+	}
+	for _, r := range strings.ToLower(s) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+			continue
+		}
+		flush()
+	}
+	flush()
 	return out
 }
 
