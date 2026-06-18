@@ -4,13 +4,13 @@ import "sort"
 
 // HybridResult is a fused result from vector + BM25 search.
 type HybridResult struct {
-	ID             string
-	VectorScore    float32 // lower = more similar (distance)
-	BM25Score      float64 // higher = more relevant
-	FusedScore     float64 // RRF combined score (higher = better)
-	VectorRank     int
-	BM25Rank       int
-	Metadata       string
+	ID          string
+	VectorScore float32 // lower = more similar (distance)
+	BM25Score   float64 // higher = more relevant
+	FusedScore  float64 // RRF combined score (higher = better)
+	VectorRank  int
+	BM25Rank    int
+	Metadata    string
 }
 
 // HybridSearch fuses vector search results with BM25 results using
@@ -91,7 +91,32 @@ func HybridSearch(
 	}
 
 	sort.Slice(results, func(i, j int) bool {
-		return results[i].FusedScore > results[j].FusedScore
+		a, b := results[i], results[j]
+		if a.FusedScore != b.FusedScore {
+			return a.FusedScore > b.FusedScore
+		}
+		if a.BM25Score != b.BM25Score {
+			return a.BM25Score > b.BM25Score
+		}
+		if a.BM25Rank != b.BM25Rank {
+			if a.BM25Rank == 0 {
+				return false
+			}
+			if b.BM25Rank == 0 {
+				return true
+			}
+			return a.BM25Rank < b.BM25Rank
+		}
+		if a.VectorRank != b.VectorRank {
+			if a.VectorRank == 0 {
+				return false
+			}
+			if b.VectorRank == 0 {
+				return true
+			}
+			return a.VectorRank < b.VectorRank
+		}
+		return a.ID < b.ID
 	})
 
 	if len(results) > topK {
