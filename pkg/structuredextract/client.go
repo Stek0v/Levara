@@ -139,7 +139,7 @@ func writeValue(b *strings.Builder, key string, v any, depth int) {
 			switch item.(type) {
 			case map[string]any, []any:
 				b.WriteString("- item ")
-				b.WriteString(fmt.Sprint(i + 1))
+				fmt.Fprint(b, i+1)
 				b.WriteString("\n")
 				writeValue(b, "", item, depth+1)
 			default:
