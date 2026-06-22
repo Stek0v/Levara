@@ -494,12 +494,18 @@ func TestToolSearch_AUTORoutesThroughRouter(t *testing.T) {
 	if routing["source"] != "routed" {
 		t.Errorf("routing.source=%v, want 'routed'", routing["source"])
 	}
-	alternatives, ok := routing["alternatives"].([]any)
+	altRaw, ok := routing["alternatives"].([]interface{})
 	if !ok {
-		t.Fatalf("routing.alternatives should be []any, got %T", routing["alternatives"])
+		t.Fatalf("routing.alternatives should be []interface{}, got %T", routing["alternatives"])
 	}
-	if len(alternatives) != 0 {
-		t.Errorf("routing.alternatives len=%d, want 0", len(alternatives))
+	altStrs := make([]string, 0, len(altRaw))
+	for _, a := range altRaw {
+		if s, ok := a.(string); ok {
+			altStrs = append(altStrs, s)
+		}
+	}
+	if len(altStrs) != 0 {
+		t.Errorf("routing.alternatives len=%d, want 0", len(altStrs))
 	}
 }
 
