@@ -17,6 +17,8 @@ import (
 	"encoding/json"
 	"io"
 	"log"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -24,9 +26,11 @@ import (
 	"github.com/google/uuid"
 
 	accesspkg "github.com/stek0v/levara/pkg/access"
+	"github.com/stek0v/levara/pkg/docdetect"
 	"github.com/stek0v/levara/pkg/extract"
 	"github.com/stek0v/levara/pkg/fetch"
 	"github.com/stek0v/levara/pkg/ingest"
+	"github.com/stek0v/levara/pkg/structuredextract"
 )
 
 // ── U3: File Upload (multipart) ──
@@ -67,6 +71,8 @@ func addHandler(cfg APIConfig) fiber.Handler {
 		if datasetID == "" {
 			datasetID = c.FormValue("dataset_id")
 		}
+		schemaArg := firstNonEmptyUpload(c.FormValue("schema"), c.FormValue("schema_id"), c.FormValue("structured_schema"))
+		schemaProvided := strings.TrimSpace(schemaArg) != ""
 
 		form, err := c.MultipartForm()
 		if err != nil {
@@ -79,10 +85,13 @@ func addHandler(cfg APIConfig) fiber.Handler {
 				var tags []string
 				if c.Get("Content-Type") == "application/json" {
 					var jsonBody struct {
-						Data        string   `json:"data"`
-						DatasetName string   `json:"dataset_name"`
-						DatasetID   string   `json:"dataset_id"`
-						Tags        []string `json:"tags"`
+						Data             string   `json:"data"`
+						DatasetName      string   `json:"dataset_name"`
+						DatasetID        string   `json:"dataset_id"`
+						Schema           string   `json:"schema"`
+						SchemaID         string   `json:"schema_id"`
+						StructuredSchema string   `json:"structured_schema"`
+						Tags             []string `json:"tags"`
 					}
 					if c.BodyParser(&jsonBody) == nil {
 						if jsonBody.Data != "" {
@@ -94,6 +103,8 @@ func addHandler(cfg APIConfig) fiber.Handler {
 						if jsonBody.DatasetID != "" {
 							datasetID = jsonBody.DatasetID
 						}
+						schemaArg = firstNonEmptyUpload(schemaArg, jsonBody.Schema, jsonBody.SchemaID, jsonBody.StructuredSchema)
+						schemaProvided = strings.TrimSpace(schemaArg) != ""
 						tags = jsonBody.Tags
 					}
 				}
@@ -141,7 +152,19 @@ func addHandler(cfg APIConfig) fiber.Handler {
 					mw := ingest.NewMetadataWriterFromDB(cfg.DB)
 					mw.WriteMetadata(reqCtx, results, ownerID, txtDsID, datasetName)
 				}
-				return c.JSON(fiber.Map{"status": "ok", "items": len(results), "dataset_id": txtDsID, "dataset_name": datasetName})
+				return c.JSON(fiber.Map{
+					"status":       "ok",
+					"items":        len(results),
+					"dataset_id":   txtDsID,
+					"dataset_name": datasetName,
+					"document_analysis": []docdetect.Analysis{{
+						Format:           "text",
+						SchemaProvided:   schemaProvided,
+						Recommended:      docdetect.PipelinePlainIngest,
+						StructuredReady:  false,
+						StructuredReason: "text_body_plain_ingest",
+					}},
+				})
 			}
 			return c.Status(400).JSON(fiber.Map{"detail": "no data provided"})
 		}
@@ -161,6 +184,8 @@ func addHandler(cfg APIConfig) fiber.Handler {
 			return c.Status(403).JSON(fiber.Map{"detail": "dataset not accessible"})
 		}
 		var items []ingest.Item
+		var analyses []docdetect.Analysis
+		var structuredResults []structuredUploadResult
 		for _, file := range files {
 			f, err := file.Open()
 			if err != nil {
@@ -171,6 +196,24 @@ func addHandler(cfg APIConfig) fiber.Handler {
 
 			// Extract text if needed
 			result, err := extract.Extract(data, file.Filename, file.Header.Get("Content-Type"))
+			extractedText := ""
+			if err == nil {
+				extractedText = result.Text
+			}
+			analysis := docdetect.AnalyzePDFForStructuredExtraction(data, file.Filename, extractedText, schemaProvided)
+			analyses = append(analyses, analysis)
+			structured := maybeRunStructuredExtraction(reqCtx, cfg, data, file.Filename, schemaArg, analysis)
+			structuredResults = append(structuredResults, structured)
+			if structured.Status == "ok" && structured.ProjectionText != "" {
+				items = append(items, ingest.Item{
+					Text:        structured.ProjectionText,
+					Filename:    file.Filename + ".structured.md",
+					DatasetName: datasetName,
+					OwnerID:     ownerID,
+					Tags:        []string{"structured_extraction", "lift_structured"},
+				})
+				continue
+			}
 			if err == nil && result.Text != "" {
 				items = append(items, ingest.Item{
 					Text:        result.Text,
@@ -211,14 +254,115 @@ func addHandler(cfg APIConfig) fiber.Handler {
 			mw := ingest.NewMetadataWriterFromDB(cfg.DB)
 			mw.WriteMetadata(reqCtx, results, ownerID, dsID, datasetName)
 		}
+		attachStructuredArtifacts(cfg.StoragePath, results, structuredResults)
 
 		return c.JSON(fiber.Map{
-			"status":       "ok",
-			"items":        len(results),
-			"files":        len(files),
-			"dataset_id":   dsID,
-			"dataset_name": datasetName,
+			"status":                 "ok",
+			"items":                  len(results),
+			"files":                  len(files),
+			"dataset_id":             dsID,
+			"dataset_name":           datasetName,
+			"document_analysis":      analyses,
+			"structured_extractions": structuredResults,
 		})
+	}
+}
+
+func firstNonEmptyUpload(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+type structuredUploadResult struct {
+	Filename       string          `json:"filename,omitempty"`
+	Status         string          `json:"status"`
+	Reason         string          `json:"reason,omitempty"`
+	ArtifactPath   string          `json:"artifact_path,omitempty"`
+	Extraction     json.RawMessage `json:"extraction,omitempty"`
+	Metadata       json.RawMessage `json:"metadata,omitempty"`
+	TokenCount     int             `json:"token_count,omitempty"`
+	ProjectionText string          `json:"-"`
+}
+
+func maybeRunStructuredExtraction(ctx context.Context, cfg APIConfig, data []byte, filename, schema string, analysis docdetect.Analysis) structuredUploadResult {
+	out := structuredUploadResult{Filename: filename, Status: "skipped"}
+	if !analysis.StructuredReady {
+		out.Reason = analysis.StructuredReason
+		return out
+	}
+	endpoint := structuredEndpoint(cfg)
+	if endpoint == "" {
+		out.Reason = "structured_endpoint_not_configured"
+		return out
+	}
+
+	timeout := time.Duration(cfg.StructuredExtractTimeoutMs) * time.Millisecond
+	client := structuredextract.Client{Endpoint: endpoint, Timeout: timeout}
+	res, err := client.Extract(ctx, data, filename, schema, analysis.TableSignal.PagesWithTable)
+	if err != nil {
+		out.Status = "failed"
+		out.Reason = err.Error()
+		return out
+	}
+	if res.Error || len(res.Extraction) == 0 {
+		out.Status = "failed"
+		out.Reason = "empty_or_error_extraction"
+		out.Metadata = res.Metadata
+		out.TokenCount = res.TokenCount
+		return out
+	}
+
+	out.Status = "ok"
+	out.Extraction = res.Extraction
+	out.Metadata = res.Metadata
+	out.TokenCount = res.TokenCount
+	out.ProjectionText = structuredextract.ProjectionMarkdown(filename, res.Extraction)
+	if out.ProjectionText == "" {
+		out.Status = "failed"
+		out.Reason = "projection_failed"
+	}
+	return out
+}
+
+func structuredEndpoint(cfg APIConfig) string {
+	if strings.TrimSpace(cfg.StructuredExtractEndpoint) != "" {
+		return strings.TrimSpace(cfg.StructuredExtractEndpoint)
+	}
+	if v := strings.TrimSpace(os.Getenv("STRUCTURED_EXTRACT_ENDPOINT")); v != "" {
+		return v
+	}
+	return strings.TrimSpace(os.Getenv("LIFT_ENDPOINT"))
+}
+
+func attachStructuredArtifacts(storagePath string, results []ingest.Result, structured []structuredUploadResult) {
+	if storagePath == "" || len(results) == 0 || len(structured) == 0 {
+		return
+	}
+	dir := filepath.Join(storagePath, "structured_extractions")
+	for i := range structured {
+		if i >= len(results) || structured[i].Status != "ok" || len(structured[i].Extraction) == 0 {
+			continue
+		}
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			structured[i].Status = "failed"
+			structured[i].Reason = "artifact_dir: " + err.Error()
+			continue
+		}
+		path := filepath.Join(dir, results[i].ID+".json")
+		if err := os.WriteFile(path, structured[i].Extraction, 0644); err != nil {
+			structured[i].Status = "failed"
+			structured[i].Reason = "artifact_write: " + err.Error()
+			continue
+		}
+		if abs, err := filepath.Abs(path); err == nil {
+			structured[i].ArtifactPath = "file://" + abs
+		} else {
+			structured[i].ArtifactPath = path
+		}
 	}
 }
 

@@ -132,17 +132,21 @@ func (c APIConfig) Search() SearchConfig {
 // StorageConfig carries the persistence layer: the Postgres DSN, the local
 // upload/ingest path, and the object-storage backend (local/S3).
 type StorageConfig struct {
-	PostgresDSN string
-	StoragePath string
-	FileStorage storage.Storage
+	PostgresDSN                string
+	StoragePath                string
+	FileStorage                storage.Storage
+	StructuredExtractEndpoint  string
+	StructuredExtractTimeoutMs int
 }
 
 // Storage projects the persistence-layer facts out of the flat wrapper.
 func (c APIConfig) Storage() StorageConfig {
 	return StorageConfig{
-		PostgresDSN: c.PostgresDSN,
-		StoragePath: c.StoragePath,
-		FileStorage: c.FileStorage,
+		PostgresDSN:                c.PostgresDSN,
+		StoragePath:                c.StoragePath,
+		FileStorage:                c.FileStorage,
+		StructuredExtractEndpoint:  c.StructuredExtractEndpoint,
+		StructuredExtractTimeoutMs: c.StructuredExtractTimeoutMs,
 	}
 }
 
