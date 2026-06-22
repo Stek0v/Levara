@@ -263,7 +263,7 @@ func TestGraphCompletionSearch_RoutedDebugMetadata(t *testing.T) {
 	if debug["strategy"] != "GRAPH_COMPLETION" {
 		t.Fatalf("debug.strategy=%v, want GRAPH_COMPLETION", debug["strategy"])
 	}
-	if _, ok := debug["alternatives"].([]any); !ok {
+	if _, ok := debug["alternatives"].([]interface{}); !ok {
 		t.Fatalf("debug.alternatives missing or wrong type: %#v", debug["alternatives"])
 	}
 	if reason, _ := debug["reason"].(string); reason == "" {

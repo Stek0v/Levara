@@ -367,15 +367,15 @@ func ToolSearch(ctx context.Context, deps Deps, args map[string]any) ToolResult 
 		response["results"] = results
 	}
 	if routingInfo != nil {
-		alternatives := routingInfo.Alternatives
-		if alternatives == nil {
-			alternatives = []router.Alternative{}
+		altStrings := make([]string, 0, len(routingInfo.Alternatives))
+		for _, a := range routingInfo.Alternatives {
+			altStrings = append(altStrings, a.SearchType)
 		}
 		response["routing"] = map[string]any{
 			"selected_type": routingInfo.SearchType,
 			"reason":        routingInfo.Reason,
 			"confidence":    routingInfo.Confidence,
-			"alternatives":  alternatives,
+			"alternatives":  altStrings,
 			"source":        "routed",
 		}
 	}
