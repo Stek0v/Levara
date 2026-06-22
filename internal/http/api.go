@@ -83,6 +83,12 @@ type APIConfig struct {
 	// the same *runreg.Registry as the one passed to RegisterMCPAPI so that
 	// MCP clients can poll REST-initiated runs and vice versa.
 	Runs *runreg.Registry
+	// StructuredExtractEndpoint enables optional schema-driven PDF/image
+	// extraction via a lift-compatible sidecar. Empty keeps uploads on the
+	// ordinary text ingest path unless env LIFT_ENDPOINT or
+	// STRUCTURED_EXTRACT_ENDPOINT is set.
+	StructuredExtractEndpoint  string
+	StructuredExtractTimeoutMs int
 	// SearchStrategies maps query_type to its strategy handler (T5). When
 	// nil the searchHandler constructs a default registry on demand — main
 	// wiring sets this explicitly so tests can override with stubs.
