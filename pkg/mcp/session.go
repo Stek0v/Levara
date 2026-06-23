@@ -13,10 +13,26 @@ import (
 // below handles concurrent map access.
 type Session struct {
 	ID                string
-	UserID            string    // from Authorization header (JWT); empty for anonymous
+	UserID            string // from Authorization header (JWT); empty for anonymous
 	CreatedAt         time.Time
 	SSECh             chan []byte // buffered channel for server-initiated SSE messages
 	DefaultCollection string      // set via the set_context tool
+	closeSSEOnce      sync.Once
+}
+
+// CloseSSE closes the server-initiated SSE channel at most once. It also
+// tolerates a channel that was closed by older/external code paths so idle
+// cleanup cannot take down the server with "close of closed channel".
+func (s *Session) CloseSSE() {
+	if s == nil || s.SSECh == nil {
+		return
+	}
+	s.closeSSEOnce.Do(func() {
+		defer func() {
+			_ = recover()
+		}()
+		close(s.SSECh)
+	})
 }
 
 // ResolveCollection picks the collection for a tool call. Priority:
@@ -128,7 +144,7 @@ func (s *SessionStore) Delete(id string) {
 	s.mu.Lock()
 	sess, ok := s.sessions[id]
 	if ok {
-		close(sess.SSECh)
+		sess.CloseSSE()
 		delete(s.sessions, id)
 	}
 	count := len(s.sessions)
@@ -155,7 +171,7 @@ func (s *SessionStore) CleanupIdle(maxAge time.Duration) int {
 	s.mu.Lock()
 	for id, sess := range s.sessions {
 		if now.Sub(sess.CreatedAt) > maxAge {
-			close(sess.SSECh)
+			sess.CloseSSE()
 			delete(s.sessions, id)
 			evicted++
 		}
