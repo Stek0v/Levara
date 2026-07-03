@@ -68,6 +68,10 @@ logs/
 # Local UI/e2e screenshots and run artifacts
 output/
 
+# Generated audit/workbook support files
+outputs/**/node_modules
+outputs/**/*.inspect.ndjson
+
 # Proto generated (rebuild with make proto)
 *_pb2.py
 *_pb2_grpc.py

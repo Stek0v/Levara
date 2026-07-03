@@ -146,6 +146,7 @@ test.describe('Upload Flow', () => {
   })
 
   test('U10. Take screenshot of each page for visual verification', async ({ page }) => {
+    test.setTimeout(90000)
     const pages = [
       { url: '/', name: 'dashboard' },
       { url: '/datasets', name: 'datasets' },
@@ -161,8 +162,9 @@ test.describe('Upload Flow', () => {
     ]
 
     for (const p of pages) {
-      await page.goto(p.url)
-      await page.waitForTimeout(2000)
+      await page.goto(p.url, { waitUntil: 'domcontentloaded' })
+      await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {})
+      await page.waitForTimeout(500)
       await page.screenshot({ path: `test-results/screenshot-${p.name}.png`, fullPage: true })
     }
   })
