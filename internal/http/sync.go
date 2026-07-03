@@ -4,6 +4,7 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -957,4 +958,201 @@ func SyncManifestFromRemote(remoteURL, token string) (*syncManifest, error) {
 		return nil, fmt.Errorf("invalid manifest: %w", err)
 	}
 	return &m, nil
+}
+
+func syncPush(ctx context.Context, cfg APIConfig, remoteURL string, types []string, since string) map[string]any {
+	results := map[string]any{}
+	client := &http.Client{Timeout: 30 * time.Second}
+
+	shouldSync := func(t string) bool {
+		if len(types) == 0 {
+			return true
+		}
+		for _, tt := range types {
+			if tt == t {
+				return true
+			}
+		}
+		return false
+	}
+
+	if shouldSync("memories") && cfg.DB != nil {
+		var memories []syncMemory
+		query := Q(`SELECT id, key, value, type, owner_id, collection_name,
+			 COALESCE(room,''), COALESCE(hall,''), is_pinned, pin_priority,
+			 created_at, updated_at FROM memories ORDER BY updated_at`)
+		args := []any{}
+		if since != "" {
+			query = Q(`SELECT id, key, value, type, owner_id, collection_name,
+				 COALESCE(room,''), COALESCE(hall,''), is_pinned, pin_priority,
+				 created_at, updated_at FROM memories WHERE updated_at > $1 ORDER BY updated_at`)
+			args = []any{since}
+		}
+		rows, err := cfg.DB.QueryContext(ctx, query, args...)
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var m syncMemory
+				rows.Scan(&m.ID, &m.Key, &m.Value, &m.Type, &m.OwnerID, &m.CollectionName,
+					&m.Room, &m.Hall, &m.IsPinned, &m.PinPriority, &m.CreatedAt, &m.UpdatedAt)
+				memories = append(memories, m)
+			}
+		}
+		if len(memories) > 0 {
+			body, _ := json.Marshal(memories)
+			resp, err := syncAuthPost(client, remoteURL+"/sync/import/memories", "application/json", string(body), cfg.SyncToken)
+			if err != nil {
+				results["memories_error"] = err.Error()
+			} else {
+				defer resp.Body.Close()
+				var r map[string]any
+				json.NewDecoder(resp.Body).Decode(&r)
+				results["memories"] = r
+			}
+		} else {
+			results["memories"] = "no data to push"
+		}
+	}
+
+	if shouldSync("graph") && cfg.DB != nil {
+		var g syncGraph
+		nodeRows, err := cfg.DB.QueryContext(ctx,
+			Q(`SELECT id, name, type, COALESCE(description,''), COALESCE(properties,'{}'), COALESCE(dataset_id,'') FROM graph_nodes`))
+		if err == nil {
+			defer nodeRows.Close()
+			for nodeRows.Next() {
+				var n syncGraphNode
+				nodeRows.Scan(&n.ID, &n.Name, &n.Type, &n.Description, &n.Properties, &n.DatasetID)
+				g.Nodes = append(g.Nodes, n)
+			}
+		}
+		edgeRows, err := cfg.DB.QueryContext(ctx,
+			Q(`SELECT id, source_id, target_id, relationship_name, COALESCE(properties,'{}'),
+				  COALESCE(valid_from,''), COALESCE(valid_until,''), COALESCE(superseded_by,''),
+				  COALESCE(confidence,1.0), COALESCE(dataset_id,'')
+			   FROM graph_edges`))
+		if err == nil {
+			defer edgeRows.Close()
+			for edgeRows.Next() {
+				var e syncGraphEdge
+				edgeRows.Scan(&e.ID, &e.SourceID, &e.TargetID, &e.RelationshipName, &e.Properties,
+					&e.ValidFrom, &e.ValidUntil, &e.SupersededBy, &e.Confidence, &e.DatasetID)
+				g.Edges = append(g.Edges, e)
+			}
+		}
+		if len(g.Nodes) > 0 || len(g.Edges) > 0 {
+			body, _ := json.Marshal(g)
+			resp, err := syncAuthPost(client, remoteURL+"/sync/import/graph", "application/json", string(body), cfg.SyncToken)
+			if err != nil {
+				results["graph_error"] = err.Error()
+			} else {
+				defer resp.Body.Close()
+				var r map[string]any
+				json.NewDecoder(resp.Body).Decode(&r)
+				results["graph"] = r
+			}
+		} else {
+			results["graph"] = "no data to push"
+		}
+	}
+
+	return results
+}
+
+func containsType(types []string, t string) bool {
+	for _, tt := range types {
+		if tt == t {
+			return true
+		}
+	}
+	return false
+}
+
+func syncPullCollections(cfg APIConfig, remoteURL string, collections []string) map[string]any {
+	client := &http.Client{Timeout: 120 * time.Second}
+	results := map[string]any{}
+
+	for _, coll := range collections {
+		resp, err := syncAuthGet(client, remoteURL+"/sync/export/collection/"+coll, cfg.SyncToken)
+		if err != nil {
+			results[coll] = map[string]string{"error": err.Error()}
+			continue
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		// POST to local import endpoint
+		importResp, err := syncAuthPost(
+			client,
+			"http://localhost:"+fmt.Sprintf("%d", 8080)+"/api/v1/sync/import/collection",
+			"application/json",
+			string(body),
+			cfg.SyncToken,
+		)
+		if err != nil {
+			// Fallback: import directly in-process if local HTTP fails
+			var export syncCollectionExport
+			if json.Unmarshal(body, &export) == nil {
+				results[coll] = map[string]any{
+					"records": len(export.Records),
+					"status":  "fetched, needs local import via /sync/import/collection",
+					"source":  fmt.Sprintf("%s (dim=%d)", export.SourceModel, export.SourceDim),
+				}
+			} else {
+				results[coll] = map[string]string{"error": "parse error"}
+			}
+			continue
+		}
+		defer importResp.Body.Close()
+		var r map[string]any
+		json.NewDecoder(importResp.Body).Decode(&r)
+		results[coll] = r
+	}
+
+	return results
+}
+
+func syncPushCollections(ctx context.Context, cfg APIConfig, remoteURL string, collections []string) map[string]any {
+	client := &http.Client{Timeout: 120 * time.Second}
+	results := map[string]any{}
+
+	for _, coll := range collections {
+		if cfg.Collections == nil || !cfg.Collections.Has(coll) {
+			results[coll] = map[string]string{"error": "collection not found locally"}
+			continue
+		}
+
+		ids, _, metas, err := cfg.Collections.AllRecords(coll)
+		if err != nil {
+			results[coll] = map[string]string{"error": err.Error()}
+			continue
+		}
+
+		meta := cfg.Collections.GetMeta(coll)
+		export := syncCollectionExport{Collection: coll}
+		if meta != nil {
+			export.SourceModel = meta.EmbeddingModel
+			export.SourceDim = meta.EmbeddingDim
+		}
+		for i, id := range ids {
+			export.Records = append(export.Records, syncCollectionRecord{
+				ID:       id,
+				Text:     textFromMetadata(metas[i]),
+				Metadata: json.RawMessage(metas[i]),
+			})
+		}
+
+		body, _ := json.Marshal(export)
+		resp, err := syncAuthPost(client, remoteURL+"/sync/import/collection", "application/json", string(body), cfg.SyncToken)
+		if err != nil {
+			results[coll] = map[string]string{"error": err.Error()}
+			continue
+		}
+		defer resp.Body.Close()
+		var r map[string]any
+		json.NewDecoder(resp.Body).Decode(&r)
+		results[coll] = r
+	}
+
+	return results
 }

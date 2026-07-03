@@ -230,8 +230,9 @@ test.describe('I. Notebooks', () => {
 
   test('I2. Cell badges', async ({ page }) => {
     await page.goto('/notebooks')
-    const text = await page.textContent('body')
-    expect(text?.includes('code') || text?.includes('markdown')).toBeTruthy()
+    const main = page.locator('main')
+    await expect(main.getByText('markdown', { exact: true }).first()).toBeVisible()
+    await expect(main.getByText('code', { exact: true }).first()).toBeVisible()
   })
 })
 

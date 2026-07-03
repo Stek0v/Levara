@@ -16,6 +16,6 @@ export async function authenticate(page: Page) {
     if (!cachedToken) throw new Error('auth setup failed: token missing')
   }
 
-  await page.goto('/login')
+  await page.goto('/login', { waitUntil: 'domcontentloaded' })
   await page.evaluate((t) => localStorage.setItem('levara_token', t), cachedToken)
 }

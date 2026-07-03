@@ -194,6 +194,36 @@ func TestSessionStore_CleanupIdle_NothingToEvictDoesNotFireHook(t *testing.T) {
 	}
 }
 
+func TestSessionStore_CleanupIdle_ToleratesAlreadyClosedSSECh(t *testing.T) {
+	s := NewSessionStore()
+	sess := s.Create()
+	sess.CreatedAt = time.Now().Add(-2 * time.Hour)
+	close(sess.SSECh)
+
+	evicted := s.CleanupIdle(time.Hour)
+	if evicted != 1 {
+		t.Errorf("evicted = %d, want 1", evicted)
+	}
+	if got := s.Get(sess.ID); got != nil {
+		t.Error("already-closed session should still be evicted")
+	}
+}
+
+func TestSessionStore_CleanupIdle_ToleratesDuplicateSessionPointer(t *testing.T) {
+	s := NewSessionStore()
+	sess := s.Create()
+	sess.CreatedAt = time.Now().Add(-2 * time.Hour)
+
+	s.mu.Lock()
+	s.sessions["duplicate-"+sess.ID] = sess
+	s.mu.Unlock()
+
+	evicted := s.CleanupIdle(time.Hour)
+	if evicted != 2 {
+		t.Errorf("evicted = %d, want 2", evicted)
+	}
+}
+
 func TestSessionStore_ConcurrentCreateDelete(t *testing.T) {
 	// Race detector catches any map or mutex misuse.
 	s := NewSessionStore()
