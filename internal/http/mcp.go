@@ -17,11 +17,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -49,18 +46,6 @@ type (
 )
 
 const mcpUserIDKey = mcp.UserIDKey
-
-func mcpJSONResult(v any) mcpToolResult {
-	data, _ := json.MarshalIndent(v, "", "  ")
-	return mcpToolResult{
-		Content:           []mcpContent{{Type: "text", Text: string(data)}},
-		StructuredContent: v,
-	}
-}
-
-// ── Tool definitions ──
-
-// mcpTools moved to pkg/mcp.ToolDescriptors() during F-4.
 
 // RegisterMCPAPI registers MCP Streamable HTTP endpoint (spec 2025-03-26).
 // POST /mcp — JSON-RPC requests + notifications
@@ -134,9 +119,6 @@ func (h *mcpHandler) CollectionExists(name string) bool {
 // EmbedAvailable implements mcp.Deps: true iff both the embed service
 // URL and the CollectionManager are configured. Memory tools gate
 // their vector-index path on this check.
-func (h *mcpHandler) EmbedAvailable() bool {
-	return h.cfg.EmbedEndpoint != "" && h.cfg.Collections != nil
-}
 
 // Embed implements mcp.Deps: single-text embedding via the configured
 // embed service. Batch + concurrency are 1 since MCP tool calls drive
@@ -146,22 +128,10 @@ func (h *mcpHandler) EmbedAvailable() bool {
 // misconfigured APIConfig (e.g. EmbedEndpoint set without wiring
 // EmbedClient in main) would otherwise nil-panic here. Fail closed with
 // an error so the tool layer can surface a proper failure instead.
-func (h *mcpHandler) Embed(ctx context.Context, text string) ([]float32, error) {
-	if h.cfg.EmbedClient == nil {
-		return nil, fmt.Errorf("embed client not configured")
-	}
-	return h.cfg.EmbedClient.EmbedSingle(ctx, text)
-}
 
 // EmbedBatch implements mcp.Deps: reuses the shared embedding client for
 // a multi-text call. Used by tool_codify to embed entity descriptions in
 // one round-trip instead of constructing a fresh client per invocation.
-func (h *mcpHandler) EmbedBatch(ctx context.Context, texts []string) ([][]float32, error) {
-	if h.cfg.EmbedClient == nil {
-		return nil, fmt.Errorf("embed client not configured")
-	}
-	return h.cfg.EmbedClient.EmbedTexts(ctx, texts)
-}
 
 // CollectionInsert implements mcp.Deps: forwards to the shared
 // CollectionManager. Callers are expected to have guarded on
@@ -234,10 +204,8 @@ func (h *mcpHandler) Runs() *runreg.Registry { return h.cfg.Runs }
 // EmbedEndpoint returns the deployment-wide embed URL. Narrow accessor
 // added in T6 so tools that only need this single setting don't have to
 // materialise the full orchestrator.Config.
-func (h *mcpHandler) EmbedEndpoint() string { return h.cfg.EmbedEndpoint }
 
 // EmbedModel returns the deployment-wide embed model name (T6).
-func (h *mcpHandler) EmbedModel() string { return h.cfg.EmbedModel }
 
 func (h *mcpHandler) BaseCognifyConfig() orchestrator.Config {
 	return orchestrator.Config{
@@ -494,88 +462,10 @@ func (h *mcpHandler) CollectionMeta(name string) mcp.CollectionInfo {
 }
 
 // getOrValidateSession returns the session for the given ID, or nil if invalid.
-func (h *mcpHandler) getOrValidateSession(sessionID string) *mcpSession {
-	return h.sessions.Get(sessionID)
-}
 
-// createSession creates a new MCP session and returns its ID.
-func (h *mcpHandler) createSession(userID string) string {
-	sess := h.sessions.Create()
-	sess.UserID = userID
-	return sess.ID
-}
-
-// adoptSession re-establishes a session under a client-supplied id (e.g. one
-// replayed after a backend restart wiped the in-memory store), binding its
-// owner to userID when known. Returns the session — existing or freshly
-// adopted. See SessionStore.Adopt for the lifecycle rationale.
-func (h *mcpHandler) adoptSession(sessionID, userID string) *mcpSession {
-	sess := h.sessions.Adopt(sessionID)
-	if userID != "" {
-		sess.UserID = userID
-	}
-	return sess
-}
-
-func (h *mcpHandler) authenticateMCPRequest(c *fiber.Ctx) (string, error) {
-	if apiKey := firstNonEmpty(c.Get("X-API-Key"), c.Get("X-Api-Key")); apiKey != "" {
-		if h.cfg.DB == nil {
-			return "", fmt.Errorf("database required for API key auth")
-		}
-		id := verifyAPIKey(h.cfg.DB, apiKey)
-		if !id.Valid() {
-			return "", fmt.Errorf("invalid API key")
-		}
-		return id.UserID, nil
-	}
-
-	token := bearerToken(c.Get("Authorization"))
-	if token == "" {
-		token = c.Cookies("auth_token")
-	}
-	if token == "" {
-		if h.cfg.RequireAuth {
-			return "", fmt.Errorf("authorization required")
-		}
-		return "", nil
-	}
-	if h.cfg.JWTSecret == "" {
-		return "", fmt.Errorf("JWT secret not configured")
-	}
-	payload, ok := verifyJWT(token, h.cfg.JWTSecret)
-	if !ok {
-		return "", fmt.Errorf("invalid token")
-	}
-	return payload.Sub, nil
-}
-
-func bearerToken(header string) string {
-	if header == "" {
-		return ""
-	}
-	token := strings.TrimPrefix(header, "Bearer ")
-	if token == "null" || token == "undefined" {
-		return ""
-	}
-	return token
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-	return ""
-}
+// authenticateMCPRequest verifies the caller's identity from API key or JWT.
 
 // deleteSession removes a session.
-func (h *mcpHandler) deleteSession(id string) {
-	h.sessions.Delete(id)
-}
-
-// randomHex moved to pkg/mcp.RandomHex.
-
 func (h *mcpHandler) handleRPC(c *fiber.Ctx) error {
 	var req jsonRPCRequest
 	if err := c.BodyParser(&req); err != nil {
@@ -793,44 +683,6 @@ func (h *mcpHandler) recordMCPAudit(ctx context.Context, sess *mcpSession, name 
 		entry.ErrorMessage = truncateAuditField(result.Content[0].Text)
 	}
 	h.cfg.MCPAudit.Log(entry)
-}
-
-func classifyOutcome(r mcpToolResult) audit.Outcome {
-	if !r.IsError {
-		return audit.OutcomeOK
-	}
-	if len(r.Content) == 0 {
-		return audit.OutcomeServerError
-	}
-	low := strings.ToLower(r.Content[0].Text)
-	switch {
-	case strings.Contains(low, "timeout"), strings.Contains(low, "deadline exceeded"):
-		return audit.OutcomeTimeout
-	case strings.Contains(low, "unauthorized"), strings.Contains(low, "forbidden"), strings.Contains(low, "permission denied"):
-		return audit.OutcomeUnauthorized
-	case strings.Contains(low, "rate limit"), strings.Contains(low, "too many requests"):
-		return audit.OutcomeRateLimited
-	case strings.Contains(low, "invalid"), strings.Contains(low, "missing"), strings.Contains(low, "bad request"):
-		return audit.OutcomeClientError
-	default:
-		return audit.OutcomeServerError
-	}
-}
-
-func resultPayloadSize(r mcpToolResult) int {
-	var n int
-	for _, c := range r.Content {
-		n += len(c.Text)
-	}
-	return n
-}
-
-func truncateAuditField(s string) string {
-	const lim = 256
-	if len(s) <= lim {
-		return s
-	}
-	return s[:lim] + "…"
 }
 
 func (h *mcpHandler) executeToolInner(ctx context.Context, sess *mcpSession, name string, args map[string]any) mcpToolResult {
@@ -1121,99 +973,6 @@ func truncate(s string, maxLen int) string { return mcp.Truncate(s, maxLen) }
 
 // ── MCP Resources API ──────────────────────────────────────────────────────
 
-func (h *mcpHandler) handleResourcesList(c *fiber.Ctx, req jsonRPCRequest) error {
-	resources := []map[string]any{
-		{
-			"uri":         "levara://collections",
-			"name":        "Collections",
-			"description": "List of all knowledge collections with record counts and dimensions",
-			"mimeType":    "application/json",
-		},
-		{
-			"uri":         "levara://memories/project",
-			"name":        "Project Memories",
-			"description": "Project-level stored memories (tech stack, decisions, conventions)",
-			"mimeType":    "application/json",
-		},
-		{
-			"uri":         "levara://memories/user",
-			"name":        "User Memories",
-			"description": "User-level stored preferences and settings",
-			"mimeType":    "application/json",
-		},
-		{
-			"uri":         "levara://memories/feedback",
-			"name":        "Feedback Memories",
-			"description": "Stored feedback and corrections",
-			"mimeType":    "application/json",
-		},
-	}
-
-	// Add per-collection resources dynamically
-	if h.cfg.Collections != nil {
-		for _, name := range h.cfg.Collections.List() {
-			resources = append(resources, map[string]any{
-				"uri":         fmt.Sprintf("levara://collections/%s", name),
-				"name":        fmt.Sprintf("Collection: %s", name),
-				"description": fmt.Sprintf("Knowledge collection '%s' — vectors, entities, triplets", name),
-				"mimeType":    "application/json",
-			})
-		}
-	}
-
-	return c.JSON(jsonRPCResponse{
-		JSONRPC: "2.0", ID: req.ID,
-		Result: map[string]any{"resources": resources},
-	})
-}
-
-func (h *mcpHandler) handleResourcesRead(c *fiber.Ctx, req jsonRPCRequest) error {
-	var params struct {
-		URI string `json:"uri"`
-	}
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return c.JSON(jsonRPCResponse{JSONRPC: "2.0", ID: req.ID,
-			Error: &rpcError{Code: -32602, Message: "Invalid params: uri required"}})
-	}
-
-	uri := params.URI
-	var content string
-	var mimeType = "application/json"
-
-	switch {
-	case uri == "levara://collections":
-		content = h.resourceCollections()
-
-	case strings.HasPrefix(uri, "levara://collections/"):
-		name := strings.TrimPrefix(uri, "levara://collections/")
-		content = h.resourceCollectionDetail(name)
-
-	case strings.HasPrefix(uri, "levara://memories/"):
-		parts := strings.TrimPrefix(uri, "levara://memories/")
-		// parts can be "project" or "project/collectionName"
-		segments := strings.SplitN(parts, "/", 2)
-		memType := segments[0]
-		collName := ""
-		if len(segments) > 1 {
-			collName = segments[1]
-		}
-		content = h.resourceMemories(context.Background(), memType, collName)
-
-	default:
-		return c.JSON(jsonRPCResponse{JSONRPC: "2.0", ID: req.ID,
-			Error: &rpcError{Code: -32602, Message: fmt.Sprintf("Unknown resource URI: %s", uri)}})
-	}
-
-	return c.JSON(jsonRPCResponse{
-		JSONRPC: "2.0", ID: req.ID,
-		Result: map[string]any{
-			"contents": []map[string]any{
-				{"uri": uri, "mimeType": mimeType, "text": content},
-			},
-		},
-	})
-}
-
 func (h *mcpHandler) resourceCollections() string {
 	if h.cfg.Collections == nil {
 		return "[]"
@@ -1321,203 +1080,6 @@ func (h *mcpHandler) toolSync(ctx context.Context, args map[string]any) mcpToolR
 	return mcp.ToolSync(ctx, h, args)
 }
 
-func syncPush(ctx context.Context, cfg APIConfig, remoteURL string, types []string, since string) map[string]any {
-	results := map[string]any{}
-	client := &http.Client{Timeout: 30 * time.Second}
-
-	shouldSync := func(t string) bool {
-		if len(types) == 0 {
-			return true
-		}
-		for _, tt := range types {
-			if tt == t {
-				return true
-			}
-		}
-		return false
-	}
-
-	if shouldSync("memories") && cfg.DB != nil {
-		var memories []syncMemory
-		query := Q(`SELECT id, key, value, type, owner_id, collection_name,
-			 COALESCE(room,''), COALESCE(hall,''), is_pinned, pin_priority,
-			 created_at, updated_at FROM memories ORDER BY updated_at`)
-		args := []any{}
-		if since != "" {
-			query = Q(`SELECT id, key, value, type, owner_id, collection_name,
-				 COALESCE(room,''), COALESCE(hall,''), is_pinned, pin_priority,
-				 created_at, updated_at FROM memories WHERE updated_at > $1 ORDER BY updated_at`)
-			args = []any{since}
-		}
-		rows, err := cfg.DB.QueryContext(ctx, query, args...)
-		if err == nil {
-			defer rows.Close()
-			for rows.Next() {
-				var m syncMemory
-				rows.Scan(&m.ID, &m.Key, &m.Value, &m.Type, &m.OwnerID, &m.CollectionName,
-					&m.Room, &m.Hall, &m.IsPinned, &m.PinPriority, &m.CreatedAt, &m.UpdatedAt)
-				memories = append(memories, m)
-			}
-		}
-		if len(memories) > 0 {
-			body, _ := json.Marshal(memories)
-			resp, err := syncAuthPost(client, remoteURL+"/sync/import/memories", "application/json", string(body), cfg.SyncToken)
-			if err != nil {
-				results["memories_error"] = err.Error()
-			} else {
-				defer resp.Body.Close()
-				var r map[string]any
-				json.NewDecoder(resp.Body).Decode(&r)
-				results["memories"] = r
-			}
-		} else {
-			results["memories"] = "no data to push"
-		}
-	}
-
-	if shouldSync("graph") && cfg.DB != nil {
-		var g syncGraph
-		nodeRows, err := cfg.DB.QueryContext(ctx,
-			Q(`SELECT id, name, type, COALESCE(description,''), COALESCE(properties,'{}'), COALESCE(dataset_id,'') FROM graph_nodes`))
-		if err == nil {
-			defer nodeRows.Close()
-			for nodeRows.Next() {
-				var n syncGraphNode
-				nodeRows.Scan(&n.ID, &n.Name, &n.Type, &n.Description, &n.Properties, &n.DatasetID)
-				g.Nodes = append(g.Nodes, n)
-			}
-		}
-		edgeRows, err := cfg.DB.QueryContext(ctx,
-			Q(`SELECT id, source_id, target_id, relationship_name, COALESCE(properties,'{}'),
-				  COALESCE(valid_from,''), COALESCE(valid_until,''), COALESCE(superseded_by,''),
-				  COALESCE(confidence,1.0), COALESCE(dataset_id,'')
-			   FROM graph_edges`))
-		if err == nil {
-			defer edgeRows.Close()
-			for edgeRows.Next() {
-				var e syncGraphEdge
-				edgeRows.Scan(&e.ID, &e.SourceID, &e.TargetID, &e.RelationshipName, &e.Properties,
-					&e.ValidFrom, &e.ValidUntil, &e.SupersededBy, &e.Confidence, &e.DatasetID)
-				g.Edges = append(g.Edges, e)
-			}
-		}
-		if len(g.Nodes) > 0 || len(g.Edges) > 0 {
-			body, _ := json.Marshal(g)
-			resp, err := syncAuthPost(client, remoteURL+"/sync/import/graph", "application/json", string(body), cfg.SyncToken)
-			if err != nil {
-				results["graph_error"] = err.Error()
-			} else {
-				defer resp.Body.Close()
-				var r map[string]any
-				json.NewDecoder(resp.Body).Decode(&r)
-				results["graph"] = r
-			}
-		} else {
-			results["graph"] = "no data to push"
-		}
-	}
-
-	return results
-}
-
-func containsType(types []string, t string) bool {
-	for _, tt := range types {
-		if tt == t {
-			return true
-		}
-	}
-	return false
-}
-
-func syncPullCollections(cfg APIConfig, remoteURL string, collections []string) map[string]any {
-	client := &http.Client{Timeout: 120 * time.Second}
-	results := map[string]any{}
-
-	for _, coll := range collections {
-		resp, err := syncAuthGet(client, remoteURL+"/sync/export/collection/"+coll, cfg.SyncToken)
-		if err != nil {
-			results[coll] = map[string]string{"error": err.Error()}
-			continue
-		}
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-
-		// POST to local import endpoint
-		importResp, err := syncAuthPost(
-			client,
-			"http://localhost:"+fmt.Sprintf("%d", 8080)+"/api/v1/sync/import/collection",
-			"application/json",
-			string(body),
-			cfg.SyncToken,
-		)
-		if err != nil {
-			// Fallback: import directly in-process if local HTTP fails
-			var export syncCollectionExport
-			if json.Unmarshal(body, &export) == nil {
-				results[coll] = map[string]any{
-					"records": len(export.Records),
-					"status":  "fetched, needs local import via /sync/import/collection",
-					"source":  fmt.Sprintf("%s (dim=%d)", export.SourceModel, export.SourceDim),
-				}
-			} else {
-				results[coll] = map[string]string{"error": "parse error"}
-			}
-			continue
-		}
-		defer importResp.Body.Close()
-		var r map[string]any
-		json.NewDecoder(importResp.Body).Decode(&r)
-		results[coll] = r
-	}
-
-	return results
-}
-
-func syncPushCollections(ctx context.Context, cfg APIConfig, remoteURL string, collections []string) map[string]any {
-	client := &http.Client{Timeout: 120 * time.Second}
-	results := map[string]any{}
-
-	for _, coll := range collections {
-		if cfg.Collections == nil || !cfg.Collections.Has(coll) {
-			results[coll] = map[string]string{"error": "collection not found locally"}
-			continue
-		}
-
-		ids, _, metas, err := cfg.Collections.AllRecords(coll)
-		if err != nil {
-			results[coll] = map[string]string{"error": err.Error()}
-			continue
-		}
-
-		meta := cfg.Collections.GetMeta(coll)
-		export := syncCollectionExport{Collection: coll}
-		if meta != nil {
-			export.SourceModel = meta.EmbeddingModel
-			export.SourceDim = meta.EmbeddingDim
-		}
-		for i, id := range ids {
-			export.Records = append(export.Records, syncCollectionRecord{
-				ID:       id,
-				Text:     textFromMetadata(metas[i]),
-				Metadata: json.RawMessage(metas[i]),
-			})
-		}
-
-		body, _ := json.Marshal(export)
-		resp, err := syncAuthPost(client, remoteURL+"/sync/import/collection", "application/json", string(body), cfg.SyncToken)
-		if err != nil {
-			results[coll] = map[string]string{"error": err.Error()}
-			continue
-		}
-		defer resp.Body.Close()
-		var r map[string]any
-		json.NewDecoder(resp.Body).Decode(&r)
-		results[coll] = r
-	}
-
-	return results
-}
-
 // toolGetProjectContext is a thin shim over mcp.ToolGetProjectContext.
 // F-4 wave 3o moved the body (collection stats + memories + graph
 // entities + interactions + related projects) into pkg/mcp. Uses the
@@ -1528,20 +1090,6 @@ func (h *mcpHandler) toolGetProjectContext(ctx context.Context, args map[string]
 }
 
 // ── Session Cleanup ───────────────────────────────────────────────────────
-
-func (h *mcpHandler) sessionCleanupLoop() {
-	// Update data metrics on startup
-	h.updateDataMetrics()
-
-	ticker := time.NewTicker(5 * time.Minute)
-	defer ticker.Stop()
-	for range ticker.C {
-		// SessionStore.CleanupIdle fires OnCountChange which updates the
-		// MCPSessionsActive gauge for us — no explicit metrics.Set here.
-		h.sessions.CleanupIdle(time.Hour)
-		h.updateDataMetrics()
-	}
-}
 
 func (h *mcpHandler) updateDataMetrics() {
 	// Collection records

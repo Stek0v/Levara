@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Start Levara on Mac with PostgreSQL metadata (port 8081).
-# Requires: docker, scripts/postgres-dev.sh
+# Uses native macOS/Homebrew PostgreSQL by default; no Docker required.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -15,11 +15,21 @@ elif [[ -f "$ROOT/deploy/profiles/local.postgres.env.example" ]]; then
 fi
 
 export DB_PROVIDER="${DB_PROVIDER:-postgres}"
-export DB_HOST="${DB_HOST:-localhost}"
-export DB_PORT="${DB_PORT:-5433}"
-export DB_USERNAME="${DB_USERNAME:-levara}"
-export DB_PASSWORD="${DB_PASSWORD:-levara}"
+export DB_HOST="${DB_HOST:-${POSTGRES_HOST:-localhost}}"
+export DB_PORT="${DB_PORT:-${POSTGRES_PORT:-5432}}"
+export DB_USERNAME="${DB_USERNAME:-${POSTGRES_USER:-$(id -un)}}"
+export DB_PASSWORD="${DB_PASSWORD:-${POSTGRES_PASSWORD:-}}"
 export DB_NAME="${DB_NAME:-levara}"
+
+if [[ -z "${DATABASE_URL:-}" ]]; then
+  if [[ -n "${POSTGRES_DSN:-}" ]]; then
+    export DATABASE_URL="$POSTGRES_DSN"
+  elif [[ -n "$DB_PASSWORD" ]]; then
+    export DATABASE_URL="postgres://${DB_USERNAME}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}?sslmode=disable"
+  else
+    export DATABASE_URL="postgres://${DB_USERNAME}@${DB_HOST}:${DB_PORT}/${DB_NAME}?sslmode=disable"
+  fi
+fi
 
 "$ROOT/scripts/postgres-dev.sh" ensure
 "$ROOT/scripts/start-embed-local.sh" ensure
@@ -44,10 +54,12 @@ if pgrep -f "levara-server.*-port=8081" >/dev/null 2>&1; then
 fi
 
 exec "$ROOT/levara-server" \
-  -standalone=true \
+  -profile=standalone-embed \
   -dim="${LEVARA_DIM:-256}" \
   -port=8081 \
   -grpc-port=0 \
   -data-dir="$ROOT/data" \
   -node-id=mac1 \
-  -require-auth=false
+  -require-auth=false \
+  -pg-url="$DATABASE_URL" \
+  -embed-keepalive-interval="${EMBED_KEEPALIVE_INTERVAL:-5m}"

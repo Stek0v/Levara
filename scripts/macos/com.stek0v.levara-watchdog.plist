@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.stek0v.levara-watchdog</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__REPO_ROOT__/scripts/macos/levara-watchdog.sh</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>LEVARA_URL</key>
+    <string>http://127.0.0.1:8081</string>
+    <key>LEVARA_LOG_PATH</key>
+    <string>__REPO_ROOT__/data/logs/levara-local.log</string>
+    <key>LEVARA_WATCHDOG_COOLDOWN_SECONDS</key>
+    <string>900</string>
+    <key>LEVARA_WATCHDOG_NOTIFY_MODE</key>
+    <string>both</string>
+  </dict>
+
+  <key>StartInterval</key>
+  <integer>60</integer>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>__HOME__/Library/Logs/levara-watchdog.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/Library/Logs/levara-watchdog.err.log</string>
+</dict>
+</plist>

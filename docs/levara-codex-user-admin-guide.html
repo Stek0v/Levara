@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Levara для Codex, solo-пользователей и команд</title>
+  <title>Levara для Codex, solo-пользователей, команд и workspace knowledge plane</title>
   <style>
     :root {
       --bg: #f7f8fa;
@@ -281,7 +281,7 @@
   <div class="shell">
     <nav>
       <h2>Levara Guide</h2>
-      <p>Практическая документация для Codex, solo-пользователей и команд.</p>
+      <p>Практическая документация для Codex, solo-пользователей, команд и администраторов.</p>
       <div class="group">Основы</div>
       <a href="#overview">1. Что такое Levara</a>
       <a href="#audience">2. Для кого</a>
@@ -294,30 +294,36 @@
       <a href="#team-setup">8. Team setup</a>
       <a href="#ingestion">9. Код и документы</a>
       <div class="group">Использование</div>
-      <a href="#daily-work">10. Ежедневная работа</a>
-      <a href="#rag">11. RAG, graph и VSA</a>
-      <a href="#memory">12. Memory practices</a>
-      <a href="#admin">13. Администрирование</a>
-      <a href="#monitoring">14. Мониторинг</a>
-      <a href="#backup">15. Backup и sync</a>
-      <a href="#security">16. Безопасность</a>
-      <a href="#scenarios">17. Сценарии пользы</a>
-      <a href="#prompts">18. Готовые prompts</a>
-      <a href="#checklists">19. Checklist внедрения</a>
+      <a href="#workspace-plane">10. Workspace knowledge plane</a>
+      <a href="#structured-extraction">11. Structured PDF extraction</a>
+      <a href="#daily-work">12. Ежедневная работа</a>
+      <a href="#rag">13. RAG, graph и VSA</a>
+      <a href="#memory">14. Memory practices</a>
+      <a href="#admin">15. Администрирование</a>
+      <a href="#monitoring">16. Мониторинг</a>
+      <a href="#backup">17. Backup и sync</a>
+      <a href="#security">18. Безопасность</a>
+      <a href="#scenarios">19. Сценарии пользы</a>
+      <a href="#prompts">20. Готовые prompts</a>
+      <a href="#checklists">21. Checklist внедрения</a>
     </nav>
 
     <main>
       <header class="hero">
-        <h1>Levara для Codex, solo-пользователей и команд</h1>
+        <h1>Levara для Codex, solo-пользователей, команд и workspace knowledge plane</h1>
         <p>
           Подробное практическое руководство: как настроить Levara, подключить Codex через MCP,
-          индексировать существующий код и документы, использовать память, RAG, SQL graph и VSA,
+          индексировать существующий код и документы, использовать markdown workspace, память,
+          RAG, SQL graph, VSA, citations, audit, durable indexing jobs и structured extraction,
           а также мониторить систему в solo и team deployment.
         </p>
         <div class="meta">
           <span class="pill">Codex + MCP</span>
           <span class="pill">SQL graph</span>
           <span class="pill">VSA retrieval</span>
+          <span class="pill">Markdown workspace</span>
+          <span class="pill">Citations + exact read</span>
+          <span class="pill">Structured PDF extraction</span>
           <span class="pill">Solo и team setup</span>
           <span class="pill">Без обязательного Neo4j</span>
         </div>
@@ -459,6 +465,31 @@
               <td>Протокол, через который Codex и другие агенты используют Levara tools.</td>
               <td><code>search</code>, <code>wake_up</code>, <code>save_memory</code></td>
             </tr>
+            <tr>
+              <td><code>Workspace project</code></td>
+              <td>Markdown-native пространство проекта: файлы, ветки, поколения индекса, manifest, audit и операции агента.</td>
+              <td><code>payments/main/gen-20260622</code></td>
+            </tr>
+            <tr>
+              <td><code>Generation</code></td>
+              <td>Снимок индексированных workspace chunks. Активное поколение определяет, из чего отвечает <code>workspace_search</code>.</td>
+              <td><code>gen-2026-06-22</code>, <code>release-42</code></td>
+            </tr>
+            <tr>
+              <td><code>Freshness</code></td>
+              <td>Машиночитаемая оценка актуальности поиска: active generation, watcher pending/error, stale и potentially_stale.</td>
+              <td><code>freshness.stale=false</code>, <code>potentially_stale=true</code></td>
+            </tr>
+            <tr>
+              <td><code>Citation</code></td>
+              <td>Точное происхождение workspace-hit: path, heading, digest, chunk id и готовые аргументы для <code>workspace_read</code>.</td>
+              <td><code>citation.read_args</code></td>
+            </tr>
+            <tr>
+              <td><code>Context artifact</code></td>
+              <td>Декларативно подключенный проектный артефакт: OpenAPI, DDL, Terraform, ADR, runbook или markdown.</td>
+              <td><code>.kb/context-artifacts.json</code></td>
+            </tr>
           </tbody>
         </table>
       </section>
@@ -535,22 +566,61 @@ LEV_DB_PATH=./levara.db \
 
         <h3>Проверить tools</h3>
         <p>После подключения должны быть доступны инструменты:</p>
-        <ul>
-          <li><code>set_context</code></li>
-          <li><code>wake_up</code></li>
-          <li><code>save_memory</code></li>
-          <li><code>recall_memory</code></li>
-          <li><code>search</code></li>
-          <li><code>cognify</code></li>
-          <li><code>query_entity</code></li>
-          <li><code>workspace_index</code></li>
-          <li><code>workspace_search</code></li>
-        </ul>
+        <table>
+          <thead>
+            <tr>
+              <th>Группа</th>
+              <th>Ключевые инструменты</th>
+              <th>Когда использовать</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Context</td>
+              <td><code>set_context</code>, <code>wake_up</code>, <code>get_project_context</code>, <code>levara_instructions</code></td>
+              <td>Старт сессии, загрузка pinned memories и правил агента.</td>
+            </tr>
+            <tr>
+              <td>Memory</td>
+              <td><code>save_memory</code>, <code>recall_memory</code>, <code>list_memories</code>, <code>pin_memory</code>, <code>delete_memory</code>, <code>consolidate</code>, <code>consolidation_revert</code></td>
+              <td>Долговременные факты, решения, открытия, preferences и уборка дублей.</td>
+            </tr>
+            <tr>
+              <td>Search/Graph</td>
+              <td><code>search</code>, <code>cross_search</code>, <code>query_entity</code>, <code>list_communities</code></td>
+              <td>RAG, graph-aware вопросы, поиск по нескольким collections.</td>
+            </tr>
+            <tr>
+              <td>Ingestion</td>
+              <td><code>add</code>, <code>list_data</code>, <code>delete</code>, <code>prune</code>, <code>cognify</code>, <code>cognify_status</code>, <code>codify</code></td>
+              <td>Загрузка данных, построение chunks, graph facts и code intelligence.</td>
+            </tr>
+            <tr>
+              <td>Workspace</td>
+              <td><code>workspace_context</code>, <code>workspace_search</code>, <code>workspace_read</code>, <code>workspace_write</code>, <code>workspace_reconcile</code>, <code>workspace_conflicts</code>, <code>workspace_commit</code>, <code>workspace_revert</code></td>
+              <td>Markdown-native project knowledge plane для Codex/Claude/команды.</td>
+            </tr>
+            <tr>
+              <td>Ops</td>
+              <td><code>doctor</code>, <code>runtime_stats</code>, <code>ingestion_status</code>, <code>recent_errors</code>, <code>heartbeat</code>, <code>sync_status</code>, <code>workspace_ops_status</code></td>
+              <td>Диагностика состояния instance, очередей, watcher, audit и sync.</td>
+            </tr>
+          </tbody>
+        </table>
 
         <h3>Рекомендуемый старт каждой сессии</h3>
         <pre><code>set_context(collection="levara")
 wake_up(max_tokens=300)</code></pre>
-        <p>Это загружает pinned memories и важный контекст проекта.</p>
+        <p>
+          Это загружает pinned memories и важный контекст проекта. Для работы с markdown workspace
+          добавьте второй стартовый вызов:
+        </p>
+        <pre><code>workspace_context(project_id="payments", branch="main")</code></pre>
+        <p>
+          Если агент отвечает на факты из workspace, правило строгое:
+          <code>workspace_search</code> находит кандидатов, но перед ответом нужно выполнить
+          <code>workspace_read</code> по <code>citation.read_args</code>.
+        </p>
       </section>
 
       <section id="team-setup">
@@ -649,18 +719,301 @@ workspace_index(root="/srv/repos/frontend", dataset_id="project-frontend")</code
         </ul>
       </section>
 
+      <section id="workspace-plane">
+        <h2>10. Markdown workspace knowledge plane</h2>
+        <p>
+          Новый workspace слой превращает markdown-файлы проекта в управляемую базу знаний для агентов.
+          Это не просто upload документов: Levara хранит файлы по <code>project_id</code> и ветке,
+          индексирует поколения, ведет manifest, проверяет freshness, возвращает citations,
+          пишет audit log и дает агенту безопасный цикл “найти → точно прочитать → ответить”.
+        </p>
+
+        <h3>Базовый агентский цикл</h3>
+        <pre><code>workspace_context(project_id="payments", branch="main")
+workspace_search(project_id="payments", branch="main", search_query="refund policy", search_type="HYBRID")
+workspace_read(project_id="payments", branch="main", path="docs/refunds.md")</code></pre>
+        <div class="note warning">
+          <strong>Правило источника истины:</strong> результат <code>workspace_search</code> приблизительный.
+          Перед factual answer, архитектурным выводом или цитированием агент обязан прочитать точный markdown
+          через <code>workspace_read</code>, обычно напрямую из <code>citation.read_args</code>.
+        </div>
+
+        <h3>Что возвращает <code>workspace_context</code></h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Поле</th>
+              <th>Зачем нужно</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td><code>projects</code></td><td>Только доступные пользователю workspace projects; ACL не раскрывает чужие проекты.</td></tr>
+            <tr><td><code>active_generation</code></td><td>Поколение индекса, из которого по умолчанию отвечает поиск.</td></tr>
+            <tr><td><code>active_collection</code></td><td>Внутренняя collection, которую агенту не нужно угадывать вручную.</td></tr>
+            <tr><td><code>recommended_search_type</code></td><td>Обычно <code>HYBRID</code>: dense + BM25 для markdown corpus.</td></tr>
+            <tr><td><code>exact_read_required</code></td><td>Машиночитаемый флаг правила “search then read”.</td></tr>
+            <tr><td><code>watcher</code> и <code>jobs_by_status</code></td><td>Показывают pending watcher branches, ошибки и indexing backlog.</td></tr>
+            <tr><td><code>initialization_path</code></td><td>Подсказка для пустого проекта: write markdown, reconcile, затем search/read.</td></tr>
+          </tbody>
+        </table>
+
+        <h3>Запись и публикация markdown</h3>
+        <p>
+          <code>workspace_write</code> пишет файл в workspace filesystem truth и может сразу индексировать его.
+          <code>workspace_reconcile</code> сверяет текущие markdown-файлы с индексом и публикует новое active generation.
+        </p>
+        <pre><code>workspace_write(
+  project_id="payments",
+  branch="main",
+  path="docs/refunds.md",
+  text="# Refunds\n\nRefunds are handled by...",
+  generation="gen-2026-06-22",
+  activate_generation=true
+)
+
+workspace_reconcile(
+  project_id="payments",
+  branch="main",
+  generation="gen-2026-06-22",
+  activate_generation=true
+)</code></pre>
+
+        <h3>CLI workflow</h3>
+        <pre><code>levara workspace context --project=payments --branch=main
+printf '# Refunds\n\n...' | levara workspace write docs/refunds.md --project=payments --generation=gen-2026-06-22 --activate
+levara workspace reconcile --project=payments --generation=gen-2026-06-22
+levara workspace conflicts --project=payments
+levara workspace manifest --project=payments</code></pre>
+
+        <h3>Freshness contract</h3>
+        <p>
+          <code>workspace_search</code> сам резолвит active generation и collection, если они не указаны.
+          Ответ содержит <code>freshness</code>: можно понять, stale ли запрошенное поколение,
+          есть ли pending watcher changes, когда был последний successful reconcile и сколько активных chunks/path.
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>Ситуация</th>
+              <th>Что увидит агент</th>
+              <th>Правильное действие</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Запрошено старое поколение</td>
+              <td><code>freshness.stale=true</code>, reason <code>requested_generation_is_not_active</code></td>
+              <td>Не использовать как актуальный ответ без явной оговорки.</td>
+            </tr>
+            <tr>
+              <td>Watcher видит изменения, индекс еще не обновлен</td>
+              <td><code>potentially_stale=true</code>, <code>watcher_branch_pending=true</code></td>
+              <td>Выполнить <code>workspace_reconcile</code> или дождаться worker.</td>
+            </tr>
+            <tr>
+              <td>Нет active generation</td>
+              <td>Ошибка с подсказкой <code>run workspace_reconcile</code></td>
+              <td>Создать/проиндексировать markdown и активировать generation.</td>
+            </tr>
+            <tr>
+              <td>В active generation несколько collections</td>
+              <td>Ошибка неоднозначности</td>
+              <td>Передать <code>collection</code> явно.</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3>Citations и answer contract</h3>
+        <p>
+          Каждый hit обогащается workspace metadata: <code>path</code>, <code>heading_path</code>,
+          <code>file_digest</code>, <code>chunk_id</code>, <code>vector_id</code>, <code>generation</code>,
+          <code>collection</code> и <code>citation.read_args</code>. Это делает ответы проверяемыми:
+          можно показать, из какого файла и digest сделан вывод.
+        </p>
+        <pre><code>workspace_search(...)
+→ result.citation.read_args
+
+workspace_read(
+  project_id="payments",
+  branch="main",
+  path="docs/refunds.md"
+)</code></pre>
+
+        <h3>Durable indexing jobs</h3>
+        <p>
+          Для production Levara сохраняет indexing/reconcile jobs в durable outbox. Если процесс упал
+          во время embedding или vector upsert, job останется видимым, будет retryable и при исчерпании
+          попыток попадет в <code>dead_letter</code>.
+        </p>
+        <pre><code>workspace_enqueue_index_job(
+  project_id="payments",
+  branch="main",
+  operation="reconcile",
+  generation="gen-2026-06-22",
+  paths=["docs/refunds.md"]
+)
+
+workspace_index_jobs(project_id="payments", branch="main")
+workspace_retry_index_job(project_id="payments", branch="main", job_id="...")</code></pre>
+        <p>Полезные env-флаги:</p>
+        <pre><code>LEVARA_WORKSPACE_INDEX_WORKER=1
+LEVARA_WORKSPACE_WATCH_ASYNC_INDEX=1</code></pre>
+
+        <h3>Watcher, conflicts, commit и revert</h3>
+        <p>
+          Workspace хранит filesystem truth отдельно от active generation. Поэтому появились инструменты
+          для drift/conflict detection и легкой истории изменений.
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>Инструмент</th>
+              <th>Назначение</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td><code>workspace_watch_status</code></td><td>Состояние watcher: pending branches, last scan/change/reconcile/error.</td></tr>
+            <tr><td><code>workspace_conflicts</code></td><td>Показывает dirty, unindexed и missing indexed markdown paths.</td></tr>
+            <tr><td><code>workspace_commit</code></td><td>Фиксирует snapshot измененных workspace files с message/author.</td></tr>
+            <tr><td><code>workspace_log</code></td><td>Показывает историю workspace commits.</td></tr>
+            <tr><td><code>workspace_revert</code></td><td>Возвращает файлы к выбранному commit; после revert обычно нужен reconcile или <code>reindex=true</code>.</td></tr>
+            <tr><td><code>workspace_gc</code></td><td>Удаляет stale generations/vector IDs/BM25 entries; dry-run показывает impact.</td></tr>
+          </tbody>
+        </table>
+
+        <h3>Context artifacts registry</h3>
+        <p>
+          Файл <code>.kb/context-artifacts.json</code> описывает важные артефакты вне обычных notes:
+          OpenAPI, DDL, Terraform, ADR, runbook и другие markdown/source-файлы. Их можно перечислять,
+          фильтровать по kind и переиндексировать отдельным workflow.
+        </p>
+        <pre><code>{
+  "version": 1,
+  "includes": [
+    {
+      "project_id": "payments",
+      "branch": "main",
+      "glob": "docs/**/*.md",
+      "kind": "markdown",
+      "room": "docs",
+      "tags": ["workspace"]
+    },
+    {
+      "project_id": "payments",
+      "glob": "api/**/*.yaml",
+      "kind": "openapi",
+      "room": "api",
+      "tags": ["contract"]
+    }
+  ]
+}</code></pre>
+        <pre><code>workspace_context_artifacts(project_id="payments", branch="main", kind="openapi")
+workspace_reindex_artifacts(
+  project_id="payments",
+  branch="main",
+  generation="gen-2026-06-22",
+  kinds=["openapi"],
+  activate_generation=true
+)</code></pre>
+      </section>
+
+      <section id="structured-extraction">
+        <h2>11. Structured PDF extraction</h2>
+        <p>
+          Levara теперь умеет направлять table-heavy или visual-only PDF в schema-driven sidecar
+          перед обычным ingest. Это полезно для счетов, актов, форм, сканов и PDF, где обычный текстовый
+          extractor теряет таблицы или структуру.
+        </p>
+
+        <h3>Как работает pipeline</h3>
+        <ol>
+          <li>Пользователь загружает PDF через <code>/add</code> или MCP <code>add</code> и передает <code>schema</code>, <code>schema_id</code> или <code>structured_schema</code>.</li>
+          <li>Go server делает дешевый PDF preflight: ищет table signals, visual-only признаки и учитывает наличие schema.</li>
+          <li>Если structured extraction уместен, Levara вызывает sidecar endpoint.</li>
+          <li>Sidecar возвращает JSON extraction; Levara строит markdown projection и индексирует его как <code>*.structured.md</code>.</li>
+          <li>Raw JSON сохраняется в <code>structured_extractions/&lt;data_id&gt;.json</code> рядом со storage.</li>
+        </ol>
+
+        <h3>Запуск sidecar</h3>
+        <pre><code>pip install lift-pdf
+python3 scripts/lift_sidecar.py --host 127.0.0.1 --port 8097 --method vllm</code></pre>
+        <p>Для локального HuggingFace inference:</p>
+        <pre><code>pip install 'lift-pdf[hf]'
+python3 scripts/lift_sidecar.py --method hf</code></pre>
+
+        <h3>Настройка Levara</h3>
+        <pre><code>export STRUCTURED_EXTRACT_ENDPOINT=http://127.0.0.1:8097/extract
+# или
+export LIFT_ENDPOINT=http://127.0.0.1:8097/extract
+
+./server \
+  --structured-extract-endpoint http://127.0.0.1:8097/extract \
+  --structured-extract-timeout-ms 120000</code></pre>
+        <p>Дополнительные env для sidecar:</p>
+        <pre><code>VLLM_API_BASE=http://localhost:8000/v1
+LIFT_METHOD=vllm
+LIFT_MAX_OUTPUT_TOKENS=12384
+LIFT_SIDECAR_PORT=8097</code></pre>
+
+        <h3>Upload пример</h3>
+        <pre><code>curl -X POST http://localhost:8080/api/v1/add \
+  -F "dataset_id=finance-docs" \
+  -F "schema_id=invoice-v1" \
+  -F "files=@invoice.pdf"</code></pre>
+        <p>
+          В ответе появятся <code>document_analysis</code> и <code>structured_extractions</code>.
+          Для plain text body structured extraction не запускается, но response все равно показывает
+          <code>document_analysis</code>, чтобы клиент понимал выбранный pipeline.
+        </p>
+
+        <h3>Контракт sidecar</h3>
+        <pre><code>{
+  "filename": "invoice.pdf",
+  "content_base64": "...",
+  "schema": "{\"type\":\"object\",\"properties\":{\"total\":{\"type\":\"number\"}}}",
+  "page_range": [1]
+}</code></pre>
+        <pre><code>{
+  "extraction": {"total": 155.5},
+  "metadata": {},
+  "raw": "{\"total\":155.5}",
+  "error": false,
+  "token_count": 33
+}</code></pre>
+
+        <div class="note">
+          Structured extraction является optional capability. Если endpoint не настроен или preflight решает,
+          что документ лучше обрабатывать обычным текстовым ingest, Levara продолжит стандартный pipeline.
+        </div>
+      </section>
+
       <section id="daily-work">
-        <h2>10. Ежедневная работа</h2>
+        <h2>12. Ежедневная работа</h2>
         <h3>В начале дня</h3>
         <pre><code>Восстанови контекст проекта через Levara и покажи последние важные решения.</code></pre>
         <p>Агент обычно выполнит:</p>
         <pre><code>set_context(collection="project-docs")
 wake_up(max_tokens=500)
+workspace_context(project_id="payments", branch="main")
 recall_memory(query="recent architecture decisions", hall="decision")</code></pre>
 
         <h3>Перед изменением кода</h3>
         <pre><code>Что нужно знать перед изменением sync?</code></pre>
         <p>Levara может вернуть связанные memories, документы, graph entities и workspace results.</p>
+
+        <h3>Перед ответом по документам</h3>
+        <pre><code>workspace_search(project_id="payments", branch="main", search_query="current refund SLA")
+# затем взять citation.read_args из лучшего hit
+workspace_read(project_id="payments", branch="main", path="docs/refunds.md")</code></pre>
+        <p>
+          Если <code>freshness.potentially_stale=true</code>, сначала выполните reconcile или явно предупредите,
+          что ответ основан на не подтвержденном active generation.
+        </p>
+
+        <h3>Перед командной записью</h3>
+        <pre><code>workspace_conflicts(project_id="payments", branch="main")
+workspace_write(..., expected_file_digest="sha256-from-last-read")
+workspace_reconcile(project_id="payments", branch="main", generation="gen-2026-06-22", activate_generation=true)</code></pre>
 
         <h3>После дебага</h3>
         <pre><code>save_memory(
@@ -678,7 +1031,7 @@ recall_memory(query="recent architecture decisions", hall="decision")</code></pr
       </section>
 
       <section id="rag">
-        <h2>11. Как работает RAG в Levara</h2>
+        <h2>13. Как работает RAG в Levara</h2>
         <table>
           <thead>
             <tr>
@@ -722,7 +1075,7 @@ recall_memory(query="recent architecture decisions", hall="decision")</code></pr
       </section>
 
       <section id="memory">
-        <h2>12. Memory practices</h2>
+        <h2>14. Memory practices</h2>
         <h3>Всегда указывать <code>room</code> и <code>hall</code></h3>
         <p>Плохо:</p>
         <pre><code>save_memory(value="SQLite лучше")</code></pre>
@@ -755,30 +1108,116 @@ recall_memory(query="recent architecture decisions", hall="decision")</code></pr
           Не сохраняйте в memory секреты, большие куски кода, git history и пути файлов.
           Для этого есть repository, workspace search и git.
         </div>
+
+        <h3>Pin policy</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Priority</th>
+              <th>Что пинить</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td><code>10</code></td><td>Глобальные пользовательские preferences и жесткие правила.</td></tr>
+            <tr><td><code>8</code></td><td>Критичная инфраструктура: endpoints, IP, ports, protocol versions.</td></tr>
+            <tr><td><code>5</code></td><td>Активные major decisions, которые нужны почти в каждой сессии.</td></tr>
+            <tr><td><code>1-3</code></td><td>Редкие подсказки, которые можно убрать при шумном <code>wake_up</code>.</td></tr>
+          </tbody>
+        </table>
+
+        <h3>Memory consolidation</h3>
+        <p>
+          Когда много похожих memories начинает засорять recall, используйте <code>consolidate</code>.
+          Он планирует merge/supersede действий, проверяет summary на потерю чисел/сущностей и пишет
+          <code>consolidation_run_id</code>, чтобы результат можно было откатить.
+        </p>
+        <pre><code>consolidate(collection="levara", room="deploy", hall="discovery", dry_run=true)
+consolidate(collection="levara", room="deploy", hall="discovery", dry_run=false)
+consolidation_revert(run_id="...")</code></pre>
+
+        <h3>Recall before research</h3>
+        <p>
+          Перед архитектурным советом или изменением незнакомой подсистемы агент должен сначала искать
+          прошлые решения и discoveries:
+        </p>
+        <pre><code>recall_memory(query="workspace indexing", room="workspace", hall="decision")
+recall_memory(query="migration failure", room="storage", hall="discovery")</code></pre>
       </section>
 
       <section id="admin">
-        <h2>13. Администрирование</h2>
+        <h2>15. Администрирование</h2>
         <h3>Health</h3>
         <pre><code>curl http://localhost:8080/health</code></pre>
+
+        <h3>Workspace REST endpoints</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Endpoint</th>
+              <th>Назначение</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td><code>GET /workspace/context</code></td><td>Bootstrap для агента: projects, active generation, collection, watcher, jobs.</td></tr>
+            <tr><td><code>POST /workspace/search</code></td><td>Agent-facing поиск с freshness, citation и exact-read contract.</td></tr>
+            <tr><td><code>GET /workspace/read</code></td><td>Точное чтение markdown path с citation metadata.</td></tr>
+            <tr><td><code>POST /workspace/write</code></td><td>Запись markdown; поддерживает index/generation/activate.</td></tr>
+            <tr><td><code>POST /workspace/reconcile</code></td><td>Сверка filesystem truth с индексом и публикация active generation.</td></tr>
+            <tr><td><code>GET /workspace/conflicts</code></td><td>Dirty/unindexed/missing indexed paths, watcher/job рекомендации.</td></tr>
+            <tr><td><code>GET /workspace/jobs</code>, <code>POST /workspace/jobs/enqueue</code>, <code>POST /workspace/jobs/retry</code></td><td>Durable indexing outbox.</td></tr>
+            <tr><td><code>GET /workspace/ops/status</code></td><td>Сводка watcher, jobs, dead letters и audit volume.</td></tr>
+            <tr><td><code>GET /workspace/context/artifacts</code>, <code>POST /workspace/context/artifacts/reindex</code></td><td>Registry и reindex OpenAPI/DDL/Terraform/ADR/runbooks.</td></tr>
+            <tr><td><code>POST /workspace/commit</code>, <code>GET /workspace/log</code>, <code>POST /workspace/revert</code></td><td>Легкая история workspace-файлов.</td></tr>
+            <tr><td><code>POST /workspace/gc</code></td><td>Очистка stale generations, vector tombstones и BM25 entries.</td></tr>
+            <tr><td><code>POST /workspace/access/check</code>, <code>GET /workspace/audit</code></td><td>ACL preflight и sanitized audit log.</td></tr>
+          </tbody>
+        </table>
 
         <h3>Операционные MCP tools</h3>
         <pre><code>ingestion_status
 recent_errors
 runtime_stats
+doctor
+heartbeat
 check_drift
 sync_status
-workspace_index_jobs</code></pre>
+reconcile_memory
+workspace_ops_status
+workspace_index_jobs
+workspace_watch_status
+workspace_conflicts</code></pre>
+
+        <h3>Memory maintenance</h3>
+        <p>
+          Память со временем накапливает близкие записи. Для безопасной уборки используйте dry-run,
+          затем apply, а при ошибке откатывайте run.
+        </p>
+        <pre><code>consolidate(collection="levara", room="workspace", hall="discovery", dry_run=true)
+consolidate(collection="levara", room="workspace", hall="discovery", dry_run=false)
+consolidation_revert(run_id="...")</code></pre>
+        <p>
+          Для проверки SQL↔vector sidecar consistency используйте:
+        </p>
+        <pre><code>reconcile_memory(collection="levara", apply=false)
+reconcile_memory(collection="levara", apply=true)</code></pre>
 
         <h3>Проверка VSA вручную</h3>
         <pre><code>curl -X POST http://localhost:8080/api/v1/vsa/rebuild \
   -H "Content-Type: application/json" \
   -d '{"dataset_id":"project-docs"}'</code></pre>
         <pre><code>curl "http://localhost:8080/api/v1/vsa/query?dataset_id=project-docs&source_id=node-123&predicate=depends_on&top_k=5"</code></pre>
+
+        <h3>Recommended production env</h3>
+        <pre><code>LEV_WORKSPACE_PATH=/var/lib/levara/workspace
+LEV_STORAGE_PATH=/var/lib/levara/storage
+LEVARA_WORKSPACE_INDEX_WORKER=1
+LEVARA_WORKSPACE_WATCH_ASYNC_INDEX=1
+STRUCTURED_EXTRACT_ENDPOINT=http://127.0.0.1:8097/extract
+STRUCTURED_EXTRACT_TIMEOUT_MS=120000</code></pre>
       </section>
 
       <section id="monitoring">
-        <h2>14. Мониторинг</h2>
+        <h2>16. Мониторинг</h2>
         <h3>Что мониторить</h3>
         <div class="grid">
           <div class="card">
@@ -800,6 +1239,15 @@ workspace_index_jobs</code></pre>
             </ul>
           </div>
           <div class="card">
+            <h3>Workspace</h3>
+            <ul>
+              <li>watcher pending branches;</li>
+              <li>active generation freshness;</li>
+              <li>dead-letter jobs;</li>
+              <li>dirty/unindexed paths.</li>
+            </ul>
+          </div>
+          <div class="card">
             <h3>Search</h3>
             <ul>
               <li>latency;</li>
@@ -817,7 +1265,26 @@ workspace_index_jobs</code></pre>
               <li>VSA rebuild errors.</li>
             </ul>
           </div>
+          <div class="card">
+            <h3>Audit</h3>
+            <ul>
+              <li>workspace audit events;</li>
+              <li>denied operations;</li>
+              <li>source/result labels;</li>
+              <li>last event time.</li>
+            </ul>
+          </div>
         </div>
+
+        <h3>One-call workspace operations status</h3>
+        <pre><code>workspace_ops_status(project_id="payments", branch="main")</code></pre>
+        <p>Смотрите в ответе:</p>
+        <ul>
+          <li><code>watcher.pending_branches</code> и <code>watcher.error_count</code>;</li>
+          <li><code>jobs.by_status.failed</code>, <code>jobs.dead_letter_count</code>, <code>jobs.max_lag_seconds</code>;</li>
+          <li><code>audit.total_events</code>, <code>audit.by_source</code>, <code>audit.by_result</code>;</li>
+          <li><code>jobs.oldest_pending_at</code> и <code>jobs.oldest_dead_letter_at</code>.</li>
+        </ul>
 
         <h3>Пример operational dashboard</h3>
         <pre><code>Levara API
@@ -830,6 +1297,13 @@ Ingestion
 - pending jobs: 2
 - failed jobs: 0
 - last successful index: 2026-06-17 09:20
+
+Workspace
+- watcher pending branches: 1
+- dead-letter indexing jobs: 0
+- max job lag: 42s
+- dirty paths: 0
+- active generation: gen-2026-06-22
 
 Search
 - searches today: 814
@@ -847,11 +1321,16 @@ VSA
 - shards: 9,840
 - members: 118,441
 - last rebuild: 2026-06-17 09:21
-- rebuild errors: 0</code></pre>
+- rebuild errors: 0
+
+Audit
+- workspace events today: 128
+- denied operations: 3
+- last event: 2026-06-22 10:14</code></pre>
       </section>
 
       <section id="backup">
-        <h2>15. Backup и sync</h2>
+        <h2>17. Backup и sync</h2>
         <h3>SQLite backup</h3>
         <pre><code>sqlite3 levara.db ".backup levara-backup-$(date +%F).db"</code></pre>
 
@@ -864,6 +1343,8 @@ VSA
           <li><code>memories</code>;</li>
           <li><code>data</code> и <code>dataset_data</code>;</li>
           <li>raw documents и storage;</li>
+          <li><code>workspace</code>: markdown files, manifests, jobs, commits, audit jsonl и context-artifacts registry;</li>
+          <li><code>structured_extractions</code>, если PDF extraction является источником audit/traceability;</li>
           <li>vector collections, если их нельзя быстро пересоздать.</li>
         </ul>
         <p>
@@ -876,10 +1357,15 @@ VSA
   remote_url="http://server:8080/api/v1",
   direction="pull"
 )</code></pre>
+        <p>
+          По умолчанию sync ориентирован на memories, interactions и graph. Vector collections обычно
+          не синхронизируются без явного opt-in, потому что требуют совместимых embedding dimensions/model
+          и могут быть дешевле пересозданы через reindex/reconcile.
+        </p>
       </section>
 
       <section id="security">
-        <h2>16. Безопасность</h2>
+        <h2>18. Безопасность</h2>
         <h3>Рекомендации</h3>
         <ul>
           <li>Включить auth для командного сервера.</li>
@@ -887,9 +1373,36 @@ VSA
           <li>Разделять customer/project datasets.</li>
           <li>Не давать всем write-доступ к общим memories.</li>
           <li>Логировать MCP tool calls.</li>
+          <li>Для workspace использовать <code>workspace_access_check</code> перед сложными workflow.</li>
+          <li>Просматривать <code>workspace_audit_log</code> и <code>workspace_ops_status</code> при расследованиях.</li>
+          <li>Не хранить в audit snippets, search query, полный document text и exact file path там, где это запрещено политикой.</li>
           <li>Не сохранять секреты в memory.</li>
           <li>Не индексировать private keys, tokens и <code>.env</code>.</li>
         </ul>
+
+        <h3>Workspace ACL модель</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Операция</th>
+              <th>Минимальный доступ</th>
+              <th>Примеры tools</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>Read/search/status</td><td>viewer/read</td><td><code>workspace_context</code>, <code>workspace_search</code>, <code>workspace_read</code>, <code>workspace_conflicts</code></td></tr>
+            <tr><td>Write/index/reconcile</td><td>editor/write</td><td><code>workspace_write</code>, <code>workspace_reconcile</code>, <code>workspace_reindex_paths</code></td></tr>
+            <tr><td>History mutation</td><td>write</td><td><code>workspace_commit</code>, <code>workspace_revert</code></td></tr>
+            <tr><td>Cleanup</td><td>write/admin policy</td><td><code>workspace_gc</code>, <code>workspace_delete</code></td></tr>
+          </tbody>
+        </table>
+
+        <h3>Audit privacy</h3>
+        <p>
+          Workspace audit events должны помогать расследовать “кто что сделал”, но не превращаться
+          во вторую копию документов. События фиксируют user/bot id, project id, branch, operation,
+          result и timestamp; они не должны хранить markdown text, snippets, search query или секреты.
+        </p>
 
         <h3>Рекомендуемый denylist</h3>
         <pre><code>.env
@@ -907,7 +1420,7 @@ vendor/
       </section>
 
       <section id="scenarios">
-        <h2>17. Практические сценарии пользы</h2>
+        <h2>19. Практические сценарии пользы</h2>
         <div class="grid">
           <div class="card">
             <h3>Новый разработчик</h3>
@@ -929,11 +1442,21 @@ vendor/
             <p>Агент ищет previous discoveries, runbooks, recent errors и sync status.</p>
             <p><strong>Бонус:</strong> быстрее root cause analysis.</p>
           </div>
+          <div class="card">
+            <h3>Документированный ответ с citations</h3>
+            <p>Агент ищет через <code>workspace_search</code>, читает exact markdown и отвечает с проверяемым source path/digest.</p>
+            <p><strong>Бонус:</strong> меньше “галлюцинаций” и проще review решений.</p>
+          </div>
+          <div class="card">
+            <h3>Счета и табличные PDF</h3>
+            <p>Structured extraction sidecar извлекает JSON по schema и индексирует markdown projection.</p>
+            <p><strong>Бонус:</strong> поиск работает по нормализованным полям, а raw JSON остается в артефактах.</p>
+          </div>
         </div>
       </section>
 
       <section id="prompts">
-        <h2>18. Готовые prompts</h2>
+        <h2>20. Готовые prompts</h2>
         <h3>Начать работу</h3>
         <pre><code>Используй Levara, восстанови контекст проекта и покажи 5 самых важных решений.</code></pre>
 
@@ -943,6 +1466,18 @@ vendor/
         <h3>Подготовиться к задаче</h3>
         <pre><code>Перед тем как менять workspace indexing, найди связанные memories, документы, graph entities и прошлые баги.</code></pre>
 
+        <h3>Ответить по workspace с источниками</h3>
+        <pre><code>Найди актуальную политику refund в workspace. Не отвечай по search hit напрямую:
+сначала прочитай точный markdown через citation.read_args и укажи источник.</code></pre>
+
+        <h3>Проверить свежесть workspace</h3>
+        <pre><code>Проверь workspace_context, workspace_conflicts и workspace_ops_status для payments/main.
+Если есть stale generation, pending watcher или dead-letter jobs, предложи точные действия.</code></pre>
+
+        <h3>Обработать PDF со schema</h3>
+        <pre><code>Загрузи invoice PDF в Levara с schema_id invoice-v1, проверь document_analysis,
+убедись что structured extraction сработал, и найди результат по полю total.</code></pre>
+
         <h3>После дебага</h3>
         <pre><code>Сохрани root cause и reusable advice в Levara memory.</code></pre>
 
@@ -951,10 +1486,14 @@ vendor/
 
         <h3>Для администратора</h3>
         <pre><code>Проверь состояние Levara: ingestion, sync, recent errors, graph, VSA и workspace jobs.</code></pre>
+
+        <h3>Для security review</h3>
+        <pre><code>Проверь workspace audit по project_id payments за последние операции:
+кто читал, писал, делал revert/gc, и есть ли denied operations.</code></pre>
       </section>
 
       <section id="checklists">
-        <h2>19. Checklist внедрения</h2>
+        <h2>21. Checklist внедрения</h2>
         <div class="grid">
           <div class="card">
             <h3>Solo</h3>
@@ -969,6 +1508,9 @@ vendor/
               <li>Проверить wake_up.</li>
               <li>Проверить search.</li>
               <li>Проверить graph-aware вопросы.</li>
+              <li>Выполнить <code>workspace_context</code>.</li>
+              <li>Проверить <code>workspace_search → workspace_read</code>.</li>
+              <li>Проверить <code>workspace_conflicts</code>.</li>
             </ul>
           </div>
           <div class="card">
@@ -988,9 +1530,46 @@ vendor/
               <li>Настроить monitoring.</li>
               <li>Настроить backup.</li>
               <li>Описать memory policy для команды.</li>
+              <li>Включить workspace audit review.</li>
+              <li>Настроить durable indexing worker.</li>
+              <li>Описать exact-read/citation policy для агентов.</li>
             </ul>
           </div>
         </div>
+
+        <h3>Workspace production checklist</h3>
+        <div class="grid">
+          <div class="card">
+            <h3>Agent readiness</h3>
+            <ul>
+              <li><code>workspace_context</code> возвращает active generation.</li>
+              <li><code>workspace_search</code> возвращает <code>freshness</code>.</li>
+              <li>Search hits содержат <code>citation.read_args</code>.</li>
+              <li><code>workspace_read</code> возвращает citation/chunk citations.</li>
+              <li>Agent instructions требуют exact read перед ответом.</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>Ops readiness</h3>
+            <ul>
+              <li><code>workspace_ops_status</code> показывает zero-initialized jobs/audit.</li>
+              <li><code>workspace_index_jobs</code> видит failed/dead_letter jobs.</li>
+              <li><code>workspace_watch_status</code> показывает pending/error.</li>
+              <li><code>workspace_gc --dry-run</code> понятен оператору.</li>
+              <li>Prometheus/Grafana смотрят job lag, dead letters и watcher pending.</li>
+            </ul>
+          </div>
+        </div>
+
+        <h3>Structured extraction checklist</h3>
+        <ul>
+          <li>Sidecar <code>scripts/lift_sidecar.py</code> запущен и доступен.</li>
+          <li><code>STRUCTURED_EXTRACT_ENDPOINT</code> или <code>LIFT_ENDPOINT</code> настроен.</li>
+          <li>Timeout подходит для выбранного vLLM/HF backend.</li>
+          <li>Upload с <code>schema_id</code> возвращает <code>document_analysis</code>.</li>
+          <li>Для table-heavy PDF есть <code>structured_extractions.status="ok"</code>.</li>
+          <li>Raw JSON artifact сохраняется в <code>structured_extractions/&lt;data_id&gt;.json</code>.</li>
+        </ul>
 
         <div class="note success">
           Главное сообщение для пользователей: Levara делает AI-агента полезнее не потому, что добавляет

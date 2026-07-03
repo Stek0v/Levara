@@ -329,6 +329,15 @@ For security-sensitive changes, use
 [docs/security-diff-checklist.md](docs/security-diff-checklist.md). It covers
 access, tenant isolation, audit export, storage/KMS, and MCP memory ownership.
 
+For app-wide QA/user-story tracking, use
+[docs/feature-audit-tracker.md](docs/feature-audit-tracker.md). It explains the
+canonical workbook, current automated gate status, known extraction limitations,
+and follow-up testing backlog.
+
+For local macOS error notifications, use
+[docs/macos-levara-watchdog.md](docs/macos-levara-watchdog.md). It installs a
+launchd watchdog that checks health, tracked errors, and panic/error log lines.
+
 ## Marketing and Product Docs
 
 | Document | Audience |
