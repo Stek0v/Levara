@@ -35,6 +35,8 @@ Main screens:
 | Memories | `/memories` | Memory records |
 | Notebooks | `/notebooks` | Notebook-style workflows |
 | Analytics | `/analytics` | Health details, VSA status, embedding migration controls |
+| Memory Behavior | `/memory-behavior` | MCP trajectory metrics: recall-before-save, repeats, zero-results, context bytes |
+| Scaffold Proposals | `/memory-scaffold` | Human approval queue for AGENTS.md / memory policy recommendations |
 | Admin | `/admin` | MCP tools, MCP sessions, admin summary |
 | Settings | `/settings` | User settings and visible API base |
 
@@ -137,6 +139,29 @@ Open `http://localhost:3000`.
    `/api/v1/cognify/<runId>/status`.
 5. Open `/search` and query the collection.
 6. Open `/settings` and confirm the API base shown there is what you intended.
+7. Open `/memory-behavior` after a few MCP calls and confirm trajectories are
+   appearing. If the page is empty while MCP calls are active, check the MCP
+   audit read-model health.
+
+### Memory behavior operations
+
+Use `/memory-behavior` to answer whether agents are using memory efficiently:
+
+- low recall-before-save means agents are writing before checking memory;
+- high repeat-save rate means scaffold/update policy is weak;
+- high zero-result rate points to retrieval/indexing or query-formulation issues;
+- rising context bytes points to noisy wake-up/pinned memory context.
+
+Use `/memory-scaffold` only after a meta-review has produced proposals. The UI
+does not apply proposals automatically. Approved proposals are a record of human
+acceptance and should be applied intentionally in the relevant `AGENTS.md` or
+memory policy file.
+
+Run the deterministic behavior eval before and after scaffold changes:
+
+```bash
+python3 benchmark/memory_behavior_eval/run_memory_behavior_eval.py --fake --label scaffold-check
+```
 
 ### 4. Solo Pro sync
 
