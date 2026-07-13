@@ -77,8 +77,14 @@ func AnalyzeBehavior(traces []Trajectory) BehaviorSummary {
 			} else {
 				problem.BlindSaves++
 			}
+			if event.BlindSave && consulted {
+				problem.BlindSaves++
+			}
 			key := argString(args, "key")
-			if key != "" {
+			if event.RepeatSave {
+				repeatSave++
+				problem.RepeatSaves++
+			} else if key != "" {
 				repeatKey := tr.Collection + "\x00" + key
 				if seenSaveKeys[repeatKey] {
 					repeatSave++
