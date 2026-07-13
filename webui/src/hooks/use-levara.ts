@@ -579,3 +579,20 @@ export function useMCPSessions(limit = 20) {
     refetchInterval: 30_000,
   })
 }
+
+export function useMCPAnalytics(hours = 24) {
+  return useQuery({
+    queryKey: ['mcpAnalytics', hours],
+    queryFn: () => levara.mcpAnalytics(hours),
+    staleTime: 10_000,
+    refetchInterval: 30_000,
+  })
+}
+
+export function useImplicitFeedback() {
+  return useQuery({ queryKey: ['implicitFeedback'], queryFn: () => levara.implicitFeedback(), staleTime: 10_000, refetchInterval: 30_000 })
+}
+
+export function useMemoryIndexStatus() {
+  return useQuery({ queryKey: ['memoryIndexStatus'], queryFn: () => levara.memoryIndexStatus(), staleTime: 5_000, refetchInterval: 15_000 })
+}

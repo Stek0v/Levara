@@ -122,6 +122,25 @@ func TestAllowedDatasetIDs(t *testing.T) {
 	}
 }
 
+func TestAllowedDatasetIDsFailsClosedOnQueryError(t *testing.T) {
+	db, err := sql.Open("sqlite3", t.TempDir()+"/broken.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TABLE users (id TEXT PRIMARY KEY, is_superuser INTEGER)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO users(id, is_superuser) VALUES ('user-a', 0)`); err != nil {
+		t.Fatal(err)
+	}
+
+	got := (SQLPolicy{DB: db, Q: sqliteQ, QA: sqliteQArgs}).AllowedDatasetIDs(context.Background(), "user-a")
+	if got == nil || len(got) != 0 {
+		t.Fatalf("broken ACL query returned %v, want non-nil empty deny-all filter", got)
+	}
+}
+
 func TestVisibleDatasetIDs(t *testing.T) {
 	db := newPolicyTestDB(t)
 	policy := SQLPolicy{DB: db, Q: sqliteQ, QA: sqliteQArgs}

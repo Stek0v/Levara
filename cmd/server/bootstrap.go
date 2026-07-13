@@ -196,7 +196,9 @@ func initHTTPRuntime(clusterStore *store.Cluster, dim int, replServer *cluster.R
 		AllowHeaders:     "Origin,Content-Type,Accept,Authorization,X-Api-Key,X-Trace-ID",
 		AllowCredentials: true,
 	}))
-	app.Use(logger.New())
+	if httpAccessLogEnabled() {
+		app.Use(logger.New())
+	}
 
 	handler := vectorHttp.NewHandler(clusterStore, dim)
 	app.Get("/metrics", adaptor.HTTPHandler(promhttp.Handler()))
@@ -253,6 +255,11 @@ func initHTTPRuntime(clusterStore *store.Cluster, dim int, replServer *cluster.R
 		VectorHandler:  handler,
 		VersionHandler: versionHandler,
 	}
+}
+
+func httpAccessLogEnabled() bool {
+	raw := strings.TrimSpace(strings.ToLower(os.Getenv("LEVARA_HTTP_ACCESS_LOG")))
+	return raw != "0" && raw != "false" && raw != "off" && raw != "no"
 }
 
 func initSQLiteRuntime(dataDir string) sqlRuntime {
@@ -384,11 +391,11 @@ func initLLMProvider() llm.Provider {
 // chain (auth → ratelimit → metrics) and registers both v1 and v2
 // services on the same port. Runs the server in a goroutine — the
 // returned *grpc.Server lets the caller GracefulStop on shutdown.
-func startGRPCServer(port int, jwtSecret string, requireAuth bool, svc *vectorGrpc.Service) *grpc.Server {
+func startGRPCServer(host string, port int, jwtSecret string, requireAuth bool, svc *vectorGrpc.Service) *grpc.Server {
 	if port <= 0 {
 		return nil
 	}
-	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	lis, err := net.Listen("tcp", net.JoinHostPort(host, strconv.Itoa(port)))
 	if err != nil {
 		log.Fatalf("gRPC listen: %v", err)
 	}
@@ -416,7 +423,7 @@ func startGRPCServer(port int, jwtSecret string, requireAuth bool, svc *vectorGr
 	// fully qualified method name so old clients keep working.
 	pbv2.RegisterLevaraServiceV2Server(srv, vectorGrpc.NewServiceV2(svc))
 	go func() {
-		log.Printf("gRPC server listening on port %d", port)
+		log.Printf("gRPC server listening on %s", lis.Addr())
 		if err := srv.Serve(lis); err != nil {
 			log.Fatalf("gRPC serve: %v", err)
 		}
@@ -476,16 +483,34 @@ func startEmbedKeepAlive(embedEndpoint, embedModel string, interval time.Duratio
 	log.Printf("Embed keep-alive started (ping every %v)", interval)
 }
 
-// installGracefulShutdown blocks-on-signal in a background goroutine and
-// flushes shards + collection manager + DB pool before asking Fiber to
-// shut down. Decoupled from main so the signal handling order is one
-// place to audit.
-func installGracefulShutdown(app *fiber.App, shards []store.ShardHandler, colManager *store.CollectionManager, pgDB closer, grpcServer *grpc.Server) {
+// installGracefulShutdown stops accepting traffic first, then closes backing
+// services after in-flight HTTP requests have drained. The returned channel is
+// closed only after all cleanup finishes so main does not exit early.
+func installGracefulShutdown(app *fiber.App, shards []store.ShardHandler, colManager *store.CollectionManager, pgDB *sql.DB, grpcServer *grpc.Server) <-chan struct{} {
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+		defer signal.Stop(sigCh)
 		sig := <-sigCh
 		log.Printf("Received %v, shutting down gracefully...", sig)
+		if err := app.ShutdownWithTimeout(10 * time.Second); err != nil {
+			log.Printf("HTTP shutdown: %v", err)
+		}
+		if grpcServer != nil {
+			grpcDone := make(chan struct{})
+			go func() {
+				grpcServer.GracefulStop()
+				close(grpcDone)
+			}()
+			select {
+			case <-grpcDone:
+			case <-time.After(10 * time.Second):
+				log.Printf("gRPC graceful shutdown timed out; forcing stop")
+				grpcServer.Stop()
+			}
+		}
 
 		for i, shard := range shards {
 			if dn, ok := shard.(*cluster.DirectNode); ok {
@@ -494,29 +519,20 @@ func installGracefulShutdown(app *fiber.App, shards []store.ShardHandler, colMan
 				}
 			}
 		}
-		if err := colManager.Close(); err != nil {
-			log.Printf("collection manager close: %v", err)
+		if colManager != nil {
+			if err := colManager.Close(); err != nil {
+				log.Printf("collection manager close: %v", err)
+			}
 		}
 		if pgDB != nil {
-			// Guard: Go interface is non-nil even when concrete *sql.DB is nil.
-			// Use type assertion to check concrete value nil-ness.
-			if db, ok := pgDB.(*sql.DB); ok && db == nil {
-				log.Println("pgDB is nil *sql.DB, skipping close")
-			} else if err := pgDB.Close(); err != nil {
+			if err := pgDB.Close(); err != nil {
 				log.Printf("pgDB close: %v", err)
 			}
 		}
-		if grpcServer != nil {
-			grpcServer.GracefulStop()
-		}
 		log.Println("All shards flushed and closed")
-		_ = app.Shutdown()
 	}()
+	return done
 }
-
-// closer is the minimum interface graceful shutdown needs from pgDB —
-// keeps the helper from importing database/sql just for *sql.DB.
-type closer interface{ Close() error }
 
 // registerHealthDetails wires the verbose /health/details endpoint that
 // probes every dependency (Postgres, Neo4j, embed service, LLM, Whisper)
@@ -533,11 +549,22 @@ func registerHealthDetails(app *fiber.App, deps healthDeps) {
 		if deps.pgDB != nil {
 			if err := deps.pgDB.Ping(); err == nil {
 				services["database"] = fiber.Map{"status": "connected", "provider": deps.dbProvider}
-				services["postgres"] = fiber.Map{"status": "connected"}
+				if strings.EqualFold(deps.dbProvider, "postgres") {
+					services["postgres"] = fiber.Map{"status": "connected"}
+				} else {
+					services["postgres"] = fiber.Map{"status": "not_configured"}
+				}
 			} else {
 				services["database"] = fiber.Map{"status": "error", "provider": deps.dbProvider, "error": err.Error()}
-				services["postgres"] = fiber.Map{"status": "error", "error": err.Error()}
+				if strings.EqualFold(deps.dbProvider, "postgres") {
+					services["postgres"] = fiber.Map{"status": "error", "error": err.Error()}
+				} else {
+					services["postgres"] = fiber.Map{"status": "not_configured"}
+				}
 			}
+		} else if strings.EqualFold(deps.dbProvider, "postgres") {
+			services["database"] = fiber.Map{"status": "unavailable", "provider": deps.dbProvider, "error": "connection not initialized"}
+			services["postgres"] = fiber.Map{"status": "unavailable", "error": "connection not initialized"}
 		} else {
 			services["postgres"] = fiber.Map{"status": "not_configured"}
 		}
@@ -571,11 +598,14 @@ func registerHealthDetails(app *fiber.App, deps healthDeps) {
 		llmEP := os.Getenv("LLM_ENDPOINT")
 		llmMD := os.Getenv("LLM_MODEL")
 		if llmEP != "" {
-			resp, err := http.Get(llmEP + "/models")
-			if err == nil {
+			resp, err := healthHTTPGet(llmEP + "/models")
+			if err == nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
 				resp.Body.Close()
 				services["llm"] = fiber.Map{"status": "connected", "endpoint": llmEP, "model": llmMD}
 			} else {
+				if resp != nil {
+					resp.Body.Close()
+				}
 				services["llm"] = fiber.Map{"status": "unreachable", "endpoint": llmEP, "model": llmMD}
 			}
 		} else {
@@ -594,7 +624,7 @@ func registerHealthDetails(app *fiber.App, deps healthDeps) {
 		}
 
 		if whisperEndpoint := os.Getenv("WHISPER_ENDPOINT"); whisperEndpoint != "" {
-			resp, err := http.Get(whisperEndpoint + "/health")
+			resp, err := healthHTTPGet(whisperEndpoint + "/health")
 			if err == nil {
 				resp.Body.Close()
 				if resp.StatusCode == 200 {
@@ -629,11 +659,29 @@ func registerHealthDetails(app *fiber.App, deps healthDeps) {
 		} else {
 			services["ocr"] = fiber.Map{"status": "not_configured", "backend": "vision"}
 		}
-		services["collections"] = fiber.Map{"status": "ready", "count": len(deps.colManager.List()), "dimension": deps.dim}
-		services["grpc"] = fiber.Map{"status": "listening", "port": deps.grpcPort}
+		if deps.colManager != nil {
+			services["collections"] = fiber.Map{"status": "ready", "count": len(deps.colManager.List()), "dimension": deps.dim}
+		} else {
+			services["collections"] = fiber.Map{"status": "unavailable", "count": 0, "dimension": deps.dim}
+		}
+		if deps.grpcPort > 0 {
+			services["grpc"] = fiber.Map{"status": "listening", "port": deps.grpcPort}
+		} else {
+			services["grpc"] = fiber.Map{"status": "disabled", "port": 0}
+		}
 
 		return ctx.JSON(fiber.Map{"services": services})
 	})
+}
+
+var healthProbeClient = &http.Client{Timeout: 3 * time.Second}
+
+func healthHTTPGet(rawURL string) (*http.Response, error) {
+	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	return healthProbeClient.Do(req)
 }
 
 // healthDeps is the bundle of shared deps the verbose health endpoint
@@ -646,7 +694,7 @@ type healthDeps struct {
 	dbProvider     string
 	storageBackend string
 	storagePath    string
-	pgDB           interface{ Ping() error }
+	pgDB           *sql.DB
 	neo4jURL       string
 	neo4jUser      string
 	neo4jPassword  string
@@ -675,7 +723,7 @@ func initMCPAuditSink(path string, log *observe.Logger) audit.Sink {
 		return audit.NewLogger(nil)
 	}
 	log.Info("mcp_audit_log_ready", map[string]any{"path": path, "retention_days": 30})
-	return fl
+	return audit.NewAsyncSink(fl, 65536)
 }
 
 // initWorkspaceAuditExporter constructs the optional enterprise audit-export

@@ -16,6 +16,7 @@ import (
 	"github.com/stek0v/levara/pkg/embed"
 	"github.com/stek0v/levara/pkg/llm"
 	"github.com/stek0v/levara/pkg/llmcache"
+	"github.com/stek0v/levara/pkg/memoryindex"
 	"github.com/stek0v/levara/pkg/observe"
 	"github.com/stek0v/levara/pkg/router"
 	"github.com/stek0v/levara/pkg/runreg"
@@ -96,7 +97,9 @@ type APIConfig struct {
 	// MCPAudit records every MCP tool call (sanitized args, latency, outcome,
 	// result size) to its configured writer. Nil disables audit logging —
 	// metrics still emit, but no JSONL trail is kept.
-	MCPAudit audit.Sink
+	MCPAudit          audit.Sink
+	MCPAuditReadModel *audit.ReadModel
+	MemoryIndexOutbox *memoryindex.Store
 	// WorkspaceAuditSink mirrors sanitized workspace audit events to an optional
 	// generic audit boundary for future enterprise export. Local JSONL audit
 	// remains the source exposed by workspace_audit_log.
@@ -122,6 +125,10 @@ func RegisterAPI(app fiber.Router, cfg APIConfig) {
 	}
 
 	// U1: Health is registered as public route in main.go (before JWT middleware)
+	app.Get("/mcp-analytics", mcpAnalyticsHandler(cfg))
+	app.Get("/mcp-analytics/events", mcpAnalyticsEventsHandler(cfg))
+	app.Get("/feedback/implicit", implicitFeedbackHandler(cfg))
+	app.Get("/memory-index/status", memoryIndexStatusHandler(cfg))
 
 	// U2: Datasets CRUD
 	app.Get("/datasets", datasetsListHandler(cfg))

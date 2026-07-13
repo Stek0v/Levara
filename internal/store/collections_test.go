@@ -266,6 +266,75 @@ func TestCollectionRename(t *testing.T) {
 	}
 }
 
+func TestCollectionNamesCannotEscapeRoot(t *testing.T) {
+	dir := t.TempDir()
+	cm, err := NewCollectionManager(4, dir)
+	if err != nil {
+		t.Fatalf("NewCollectionManager: %v", err)
+	}
+	defer cm.Close()
+
+	outside := filepath.Join(dir, "outside")
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(outside, "keep")
+	if err := os.WriteFile(marker, []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	badNames := []string{"", ".", "..", "../outside", "nested/name", `nested\name`, "/tmp/absolute", "bad\x00name"}
+	for _, name := range badNames {
+		t.Run(fmt.Sprintf("create_%q", name), func(t *testing.T) {
+			if err := cm.Create(name); err == nil {
+				t.Fatalf("Create(%q) succeeded", name)
+			}
+		})
+		t.Run(fmt.Sprintf("lazy_insert_%q", name), func(t *testing.T) {
+			if err := cm.Insert(name, "id", []float32{1, 0, 0, 0}, nil); err == nil {
+				t.Fatalf("Insert(%q) succeeded", name)
+			}
+		})
+		t.Run(fmt.Sprintf("drop_%q", name), func(t *testing.T) {
+			if err := cm.Drop(name); err == nil {
+				t.Fatalf("Drop(%q) succeeded", name)
+			}
+		})
+	}
+
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("outside marker changed after traversal attempts: %v", err)
+	}
+	if entries, err := os.ReadDir(filepath.Join(dir, "collections")); err != nil {
+		t.Fatal(err)
+	} else if len(entries) != 0 {
+		t.Fatalf("invalid names created collection entries: %v", entries)
+	}
+}
+
+func TestListByDomainDoesNotBroadenUnknownDomain(t *testing.T) {
+	cm, err := NewCollectionManager(4, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cm.Close()
+	if err := cm.Create("finance"); err != nil {
+		t.Fatal(err)
+	}
+	if err := cm.Create("medical"); err != nil {
+		t.Fatal(err)
+	}
+	cm.SetDomain("finance", "finance")
+	cm.SetDomain("medical", "medical")
+
+	if got := cm.ListByDomain("finance"); len(got) != 1 || got[0] != "finance" {
+		t.Fatalf("finance domain=%v, want [finance]", got)
+	}
+	if got := cm.ListByDomain("missing"); len(got) != 0 {
+		t.Fatalf("missing domain=%v, want empty", got)
+	}
+}
+
 func TestCollectionRenameSurvivesRestart(t *testing.T) {
 	dir, _ := os.MkdirTemp("", "levara-rename-restart-*")
 	defer os.RemoveAll(dir)

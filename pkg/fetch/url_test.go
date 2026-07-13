@@ -1,6 +1,7 @@
 package fetch
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -55,7 +56,7 @@ func TestFetchURL_PlainText(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	got, err := FetchURL(srv.URL)
+	got, err := fetchURLWithClient(srv.URL, srv.Client(), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +75,7 @@ func TestFetchURL_HTMLExtractsText(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	got, err := FetchURL(srv.URL)
+	got, err := fetchURLWithClient(srv.URL, srv.Client(), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +99,7 @@ func TestFetchURL_Non200Error(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := FetchURL(srv.URL)
+	_, err := fetchURLWithClient(srv.URL, srv.Client(), true)
 	if err == nil {
 		t.Fatal("expected error on 500")
 	}
@@ -114,7 +115,7 @@ func TestFetchURL_JSONPassthrough(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	got, err := FetchURL(srv.URL)
+	got, err := fetchURLWithClient(srv.URL, srv.Client(), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +133,9 @@ func TestFetchMultipleURLs_ConcurrentNoLeak(t *testing.T) {
 	defer srv.Close()
 
 	urls := []string{srv.URL + "/a", srv.URL + "/b", srv.URL + "/c"}
-	got := FetchMultipleURLs(urls)
+	got := fetchMultipleURLs(urls, func(rawURL string) (string, error) {
+		return fetchURLWithClient(rawURL, srv.Client(), true)
+	})
 	if len(got) != 3 {
 		t.Errorf("got %d results, want 3", len(got))
 	}
@@ -140,5 +143,32 @@ func TestFetchMultipleURLs_ConcurrentNoLeak(t *testing.T) {
 		if got[u] == "" {
 			t.Errorf("missing result for %s", u)
 		}
+	}
+}
+
+func TestFetchURLRejectsPrivateAddresses(t *testing.T) {
+	for _, rawURL := range []string{
+		"http://127.0.0.1/secret",
+		"http://[::1]/secret",
+		"http://169.254.169.254/latest/meta-data",
+		"http://10.0.0.1/internal",
+		"file:///etc/passwd",
+	} {
+		if _, err := FetchURL(rawURL); err == nil {
+			t.Fatalf("FetchURL(%q) succeeded, want SSRF rejection", rawURL)
+		}
+	}
+}
+
+func TestFetchURLRejectsOversizedResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.Header().Set("Content-Length", fmt.Sprint(maxURLResponseBytes+1))
+		_, _ = io.WriteString(w, strings.Repeat("x", int(maxURLResponseBytes+1)))
+	}))
+	defer srv.Close()
+
+	if _, err := fetchURLWithClient(srv.URL, srv.Client(), true); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("oversized response err=%v, want size-limit error", err)
 	}
 }

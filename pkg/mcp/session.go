@@ -17,6 +17,8 @@ type Session struct {
 	CreatedAt         time.Time
 	SSECh             chan []byte // buffered channel for server-initiated SSE messages
 	DefaultCollection string      // set via the set_context tool
+	ClientName        string      // initialize.params.clientInfo.name
+	ClientVersion     string      // initialize.params.clientInfo.version
 	closeSSEOnce      sync.Once
 }
 

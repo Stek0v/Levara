@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { useInfo, useCollections, useFeedbackStats, useCacheStats, useErrors, useHealthDetails, useVSARebuild, useVSAQuery, useVSAStatus } from '@/hooks/use-levara'
+import { useInfo, useCollections, useFeedbackStats, useCacheStats, useErrors, useHealthDetails, useVSARebuild, useVSAQuery, useVSAStatus, useMCPAnalytics, useImplicitFeedback, useMemoryIndexStatus } from '@/hooks/use-levara'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -17,6 +17,9 @@ export default function AnalyticsPage() {
   const { data: errors } = useErrors()
   const { data: healthDetails } = useHealthDetails()
   const { data: vsa } = useVSAStatus()
+  const { data: mcpAnalytics } = useMCPAnalytics(24)
+  const { data: implicitFeedback } = useImplicitFeedback()
+  const { data: memoryIndex } = useMemoryIndexStatus()
   const vsaRebuild = useVSARebuild()
   const vsaQuery = useVSAQuery()
   const [vsaDataset, setVSADataset] = useState('')
@@ -58,6 +61,9 @@ export default function AnalyticsPage() {
     { title: 'VSA Facts', value: vsa?.available ? (vsa.fact_count ?? 0).toLocaleString() : 'off', icon: Network, color: 'text-cyan-600', sub: vsa?.available ? `${vsa.shard_count ?? 0} shards / ${vsa.member_count ?? 0} members` : vsa?.reason || 'sql graph index' },
     { title: 'Feedback', value: feedback?.total ?? 0, icon: Star, color: 'text-amber-500', sub: feedback?.total ? `avg: ${feedback.avg_rating}/5` : 'no feedback' },
     { title: 'LLM Cache', value: cache?.hit_rate != null ? `${(cache.hit_rate * 100).toFixed(0)}%` : '—', icon: Zap, color: 'text-purple-600', sub: cache ? `${cache.hits} hits / ${cache.misses} misses` : '' },
+    { title: 'MCP p95', value: mcpAnalytics ? `${mcpAnalytics.summary.p95_ms} ms` : '—', icon: MessageCircle, color: 'text-indigo-600', sub: mcpAnalytics ? `${mcpAnalytics.summary.total} calls · ${(mcpAnalytics.summary.error_rate * 100).toFixed(1)}% errors · ${(mcpAnalytics.summary.zero_result_rate * 100).toFixed(1)}% zero` : 'audit read-model unavailable' },
+    { title: 'Implicit Signals', value: implicitFeedback?.total ?? 0, icon: RefreshCw, color: 'text-teal-600', sub: implicitFeedback ? `${implicitFeedback.by_signal.recovery ?? 0} recoveries · ${implicitFeedback.by_signal.reformulation ?? 0} reformulations` : 'privacy-safe search signals' },
+    { title: 'Index Queue', value: (memoryIndex?.counts.pending ?? 0) + (memoryIndex?.counts.failed ?? 0), icon: Database, color: 'text-orange-600', sub: memoryIndex ? `${memoryIndex.counts.dead_letter ?? 0} dead letters · ${memoryIndex.counts.running ?? 0} running` : 'durable embedding jobs' },
   ]
 
   return (

@@ -40,9 +40,10 @@ func ToolDescriptors() []Tool {
 			Name:        "search",
 			Description: "Search the knowledge graph using various strategies. Use AUTO (default) for intelligent routing that analyzes your query and selects the best strategy automatically. Optional room/tags filters narrow chunk results by metadata (overfetched ×3 then post-filtered).",
 			OutputSchema: objectSchema(map[string]any{
-				"results":     arrayOfObjectsProp(searchResultItemSchema(), "Ranked hits from the selected strategy."),
-				"search_type": stringProp("Strategy actually used (may differ from the request under AUTO routing)."),
-				"reranked":    booleanProp("Whether cross-encoder reranking was applied."),
+				"interaction_id": stringProp("Opaque ID for explicit or implicit feedback correlation."),
+				"results":        arrayOfObjectsProp(searchResultItemSchema(), "Ranked hits from the selected strategy."),
+				"search_type":    stringProp("Strategy actually used (may differ from the request under AUTO routing)."),
+				"reranked":       booleanProp("Whether cross-encoder reranking was applied."),
 				"routing": objectSchema(map[string]any{
 					"selected_type": stringProp("Search type selected by AUTO routing."),
 					"reason":        stringProp("Router explanation."),
@@ -54,20 +55,22 @@ func ToolDescriptors() []Tool {
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"search_query":  map[string]any{"type": "string", "description": "Natural language search query"},
-					"search_type":   map[string]any{"type": "string", "description": "Search strategy: AUTO (intelligent routing), CHUNKS (vector), HYBRID (vector+BM25), RAG_COMPLETION (vector+LLM answer), GRAPH_COMPLETION (graph traversal+LLM), TEMPORAL (date-aware), SUMMARIES, CHUNKS_LEXICAL (BM25), CODING_RULES (code entities)", "default": "AUTO"},
-					"top_k":         map[string]any{"type": "integer", "description": "Number of results to return", "default": 10},
-					"collection":    map[string]any{"type": "string", "description": "Project collection name to search in. Leave empty to search all."},
-					"room":          map[string]any{"type": "string", "description": "Filter chunks by room (sub-topic) attached during cognify."},
-					"tags":          map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Filter chunks by tags (any-match)."},
-					"rerank":        map[string]any{"type": "boolean", "default": false, "description": "Apply cross-encoder reranking to results. Requires RERANK_ENDPOINT configured."},
-					"parent_child":  map[string]any{"type": "boolean", "default": false, "description": "Search child chunks for precision, return parent chunks for context."},
-					"multi_query":   map[string]any{"type": "boolean", "default": false, "description": "Generate query variants via LLM for broader retrieval. Requires LLM."},
-					"dedup":         map[string]any{"type": "boolean", "default": true, "description": "Deduplicate overlapping results (useful for sliding window chunks)."},
-					"mode":          map[string]any{"type": "string", "enum": []string{"rag", "graph", "full", "auto"}, "default": "auto", "description": "Search mode. rag: vector only. graph: graph traversal only. full: all backends. auto: router decides."},
-					"graph_rerank":  map[string]any{"type": "boolean", "default": false, "description": "Rerank results using graph proximity (entity hop distance)."},
-					"vector_weight": map[string]any{"type": "number", "default": 1.0, "description": "RRF weight for vector results in HYBRID / WEIGHTED_HYBRID search."},
-					"bm25_weight":   map[string]any{"type": "number", "default": 1.0, "description": "RRF weight for lexical BM25 results in HYBRID / WEIGHTED_HYBRID search."},
+					"search_query":    map[string]any{"type": "string", "description": "Natural language search query"},
+					"search_type":     map[string]any{"type": "string", "description": "Search strategy: AUTO (intelligent routing), CHUNKS (vector), HYBRID (vector+BM25), RAG_COMPLETION (vector+LLM answer), GRAPH_COMPLETION (graph traversal+LLM), TEMPORAL (date-aware), SUMMARIES, CHUNKS_LEXICAL (BM25), CODING_RULES (code entities)", "default": "AUTO"},
+					"top_k":           map[string]any{"type": "integer", "description": "Number of results to return", "default": 10},
+					"collection":      map[string]any{"type": "string", "description": "Project collection name to search in. Leave empty to search all."},
+					"room":            map[string]any{"type": "string", "description": "Filter chunks by room (sub-topic) attached during cognify."},
+					"tags":            map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Filter chunks by tags (any-match)."},
+					"rerank":          map[string]any{"type": "boolean", "default": false, "description": "Apply cross-encoder reranking to results. Requires RERANK_ENDPOINT configured."},
+					"parent_child":    map[string]any{"type": "boolean", "default": false, "description": "Search child chunks for precision, return parent chunks for context."},
+					"multi_query":     map[string]any{"type": "boolean", "default": false, "description": "Generate query variants via LLM for broader retrieval. Requires LLM."},
+					"dedup":           map[string]any{"type": "boolean", "default": true, "description": "Deduplicate overlapping results (useful for sliding window chunks)."},
+					"mode":            map[string]any{"type": "string", "enum": []string{"rag", "graph", "full", "auto"}, "default": "auto", "description": "Search mode. rag: vector only. graph: graph traversal only. full: all backends. auto: router decides."},
+					"graph_rerank":    map[string]any{"type": "boolean", "default": false, "description": "Rerank results using graph proximity (entity hop distance)."},
+					"vector_weight":   map[string]any{"type": "number", "default": 1.0, "description": "RRF weight for vector results in HYBRID / WEIGHTED_HYBRID search."},
+					"bm25_weight":     map[string]any{"type": "number", "default": 1.0, "description": "RRF weight for lexical BM25 results in HYBRID / WEIGHTED_HYBRID search."},
+					"session_id":      map[string]any{"type": "string", "description": "Session correlation key for privacy-safe implicit feedback."},
+					"used_result_ids": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "IDs from a previous interaction that the agent actually used."},
 				},
 				"required": []string{"search_query"},
 			},
@@ -765,9 +768,14 @@ func ToolDescriptors() []Tool {
 			},
 		},
 		{
-			Name:         "delete",
-			Description:  "Delete a specific dataset by ID.",
-			OutputSchema: statusMessageSchema(),
+			Name:        "delete",
+			Description: "Delete a specific dataset by ID.",
+			OutputSchema: objectSchema(map[string]any{
+				"ok":           booleanProp("True when the SQL memory write succeeded."),
+				"message":      stringProp("Human-readable result."),
+				"index_status": stringProp("ready or pending when durable indexing is enabled."),
+				"index_job_id": stringProp("Durable memory indexing job ID."),
+			}),
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -779,7 +787,7 @@ func ToolDescriptors() []Tool {
 		{
 			Name:         "prune",
 			Description:  "Reset all data — removes all datasets, vectors, and graph data.",
-			OutputSchema: statusMessageSchema(),
+			OutputSchema: objectSchema(map[string]any{"ok": booleanProp("Synchronous success when wait=true."), "message": stringProp("Synchronous result."), "job_id": stringProp("Async job ID."), "status": stringProp("pending|running|completed|failed."), "submitted_at": stringProp("RFC3339 submission time."), "poll_after_ms": integerProp("Suggested polling delay.")}),
 			InputSchema: map[string]any{
 				"type":       "object",
 				"properties": map[string]any{},
@@ -880,7 +888,7 @@ func ToolDescriptors() []Tool {
 		{
 			Name:         "save_memory",
 			Description:  "Save project/user memory key-value pair. Optional room (sub-topic within collection, e.g. auth/deploy/ocr) and hall (memory genre) enable structured retrieval.",
-			OutputSchema: statusMessageSchema(),
+			OutputSchema: objectSchema(map[string]any{"ok": booleanProp("True when saved."), "message": stringProp("Human-readable result."), "index_status": stringProp("ready or pending."), "index_job_id": stringProp("Durable indexing job ID.")}),
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -956,17 +964,25 @@ func ToolDescriptors() []Tool {
 		{
 			Name:         "consolidate",
 			Description:  "Consolidate near-duplicate/related memories in a collection: cluster, then merge (deterministic) or abstract (LLM). Reversible. dry_run defaults true.",
-			OutputSchema: statusMessageSchema(),
+			OutputSchema: objectSchema(map[string]any{"ok": booleanProp("Synchronous success when wait=true."), "message": stringProp("Synchronous result."), "job_id": stringProp("Async job ID."), "status": stringProp("pending|running|completed|failed."), "submitted_at": stringProp("RFC3339 submission time."), "poll_after_ms": integerProp("Suggested polling delay.")}),
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"collection": map[string]any{"type": "string", "description": "Collection to consolidate. Use '_memories' to target the base memory store (records saved with no pinned context)."},
-					"room":       map[string]any{"type": "string", "description": "Optional room scope."},
-					"hall":       map[string]any{"type": "string", "description": "Optional hall scope."},
-					"dry_run":    map[string]any{"type": "boolean", "description": "Preview only, no writes. Default true."},
+					"collection":      map[string]any{"type": "string", "description": "Collection to consolidate. Use '_memories' to target the base memory store (records saved with no pinned context)."},
+					"room":            map[string]any{"type": "string", "description": "Optional room scope."},
+					"hall":            map[string]any{"type": "string", "description": "Optional hall scope."},
+					"dry_run":         map[string]any{"type": "boolean", "description": "Preview only, no writes. Default true."},
+					"wait":            map[string]any{"type": "boolean", "description": "Run synchronously for backward compatibility. Default false."},
+					"wait_timeout_ms": map[string]any{"type": "integer", "description": "Reserved bounded wait timeout."},
+					"max_duration_ms": map[string]any{"type": "integer", "description": "Maximum asynchronous job duration; default 300000 ms."},
 				},
 				"required": []string{"collection"},
 			},
+		},
+		{
+			Name: "consolidation_status", Description: "Read a durable asynchronous consolidation job.",
+			OutputSchema: objectSchema(map[string]any{"job_id": stringProp("Job ID."), "status": stringProp("pending|running|completed|failed."), "result": stringProp("Completed consolidation result."), "last_error": stringProp("Failure detail."), "updated_at": stringProp("RFC3339 update time."), "candidates": integerProp("Candidate memories."), "clusters": integerProp("Clusters found."), "actions": integerProp("Actions planned/applied."), "llm_calls": integerProp("LLM calls consumed.")}),
+			InputSchema:  map[string]any{"type": "object", "properties": map[string]any{"job_id": stringProp("Job ID.")}, "required": []string{"job_id"}},
 		},
 		{
 			Name:         "consolidation_revert",
@@ -1375,6 +1391,8 @@ func ToolDescriptors() []Tool {
 				"heap_alloc_bytes":  integerProp("Currently allocated heap bytes."),
 				"heap_sys_bytes":    integerProp("Heap memory obtained from OS."),
 				"num_gc":            integerProp("Completed GC cycles since start."),
+				"mcp_toolset":       stringProp("Effective MCP tool profile."),
+				"mcp_tool_count":    integerProp("Number of tools exposed by the active profile."),
 				"snapshot_taken_at": stringProp("RFC3339 timestamp."),
 			}),
 			InputSchema: map[string]any{
@@ -1463,6 +1481,16 @@ func ToolDescriptors() []Tool {
 					"delete_orphans": map[string]any{"type": "boolean", "default": false, "description": "With apply, also delete orphan vectors. Default false."},
 				},
 			},
+		},
+		{
+			Name: "memory_index_status", Description: "List durable memory embedding jobs and counts by status for the current owner.",
+			OutputSchema: objectSchema(map[string]any{"jobs": arrayOfObjectsProp(objectSchema(map[string]any{"id": stringProp("Job ID."), "memory_id": stringProp("Memory ID."), "operation": stringProp("upsert_vector or delete_vector."), "collection": stringProp("Logical collection."), "status": stringProp("pending|running|completed|failed|dead_letter."), "attempts": integerProp("Attempt count."), "last_error": stringProp("Last worker error.")}), "Durable jobs."), "counts": map[string]any{"type": "object"}}),
+			InputSchema:  map[string]any{"type": "object", "properties": map[string]any{"limit": integerProp("Maximum jobs, 1-100.")}},
+		},
+		{
+			Name: "memory_index_retry", Description: "Retry one failed or dead-letter memory embedding job owned by the caller.",
+			OutputSchema: objectSchema(map[string]any{"ok": booleanProp("True when queued."), "job_id": stringProp("Job ID."), "status": stringProp("pending.")}),
+			InputSchema:  map[string]any{"type": "object", "properties": map[string]any{"job_id": stringProp("Durable job ID.")}, "required": []string{"job_id"}},
 		},
 		{
 			Name:        "sync_status",

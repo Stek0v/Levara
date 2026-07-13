@@ -55,6 +55,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"runtime"
 	"strconv"
@@ -77,6 +78,7 @@ import (
 	"github.com/stek0v/levara/pkg/graphdb"
 	"github.com/stek0v/levara/pkg/llmcache"
 	"github.com/stek0v/levara/pkg/mcp"
+	"github.com/stek0v/levara/pkg/memoryindex"
 	"github.com/stek0v/levara/pkg/observe"
 	"github.com/stek0v/levara/pkg/profile"
 	"github.com/stek0v/levara/pkg/router"
@@ -94,7 +96,7 @@ var (
 	BuildTime = "unknown"
 )
 
-const mcpProtocolVersion = "2024-11-05"
+const mcpProtocolVersion = mcp.ProtocolVersion
 
 func versionPayload() fiber.Map {
 	return fiber.Map{
@@ -172,6 +174,8 @@ func main() {
 	bootstrap := flag.Bool("bootstrap", false, "Bootstrap the Raft cluster (Leader only)")
 	standalone := flag.Bool("standalone", true, "Standalone mode: WAL-only, no Raft consensus (fastest)")
 	dim := flag.Int("dim", 128, "Vector dimension size (must match embedding model output)")
+	defaultHTTPHost := firstNonEmpty(strings.TrimSpace(os.Getenv("LEVARA_HTTP_HOST")), "127.0.0.1")
+	host := flag.String("host", defaultHTTPHost, "HTTP bind host (defaults to loopback; containers should set LEVARA_HTTP_HOST=0.0.0.0)")
 	port := flag.Int("port", 8080, "HTTP API port")
 	numShardsFlag := flag.Int("shards", 3, "Number of shards")
 	defaultDataDir := "data"
@@ -179,6 +183,7 @@ func main() {
 		defaultDataDir = envDir
 	}
 	dataDir := flag.String("data-dir", defaultDataDir, "Directory for persistent data storage (overrides $LEVARA_DATA_DIR)")
+	grpcHost := flag.String("grpc-host", firstNonEmpty(strings.TrimSpace(os.Getenv("LEVARA_GRPC_HOST")), defaultHTTPHost), "gRPC bind host (defaults to HTTP host)")
 	grpcPort := flag.Int("grpc-port", 50051, "gRPC API port (0 to disable)")
 	hnswM := flag.Int("hnsw-m", 16, "HNSW M parameter: max neighbors per node")
 	hnswEfMult := flag.Int("hnsw-ef-mult", 8, "HNSW efSearch multiplier: efSearch = k * this value")
@@ -483,6 +488,7 @@ func main() {
 
 	// JWT + API Key middleware on all protected routes below this point
 	api.Use(vectorHttp.JWTMiddleware(authCfg.JWTSecret, *requireAuth))
+	api.Use(vectorHttp.APIKeyPermissionMiddleware())
 
 	// Per-user rate limit (T2 / D10): 100 req/min keyed on the user_id resolved
 	// by JWTMiddleware above, falling back to source IP for anonymous paths.
@@ -595,6 +601,43 @@ func main() {
 		wsAuditSink = wsAuditExporter
 		defer wsAuditExporter.Close()
 	}
+	mcpPrimaryAudit := initMCPAuditSink(*mcpAuditPath, srvLog)
+	if closer, ok := mcpPrimaryAudit.(interface{ Close() error }); ok {
+		defer closer.Close()
+	}
+	var mcpAuditReadModel *audit.ReadModel
+	var memoryIndexOutbox *memoryindex.Store
+	if pgDB != nil {
+		if store, err := memoryindex.NewStore(pgDB); err != nil {
+			srvLog.Warn("memory_index_outbox_init_failed", map[string]any{"err": err.Error()})
+		} else {
+			memoryIndexOutbox = store
+		}
+		if readModel, err := audit.NewReadModel(pgDB, 32768); err != nil {
+			srvLog.Warn("mcp_audit_read_model_init_failed", map[string]any{"err": err.Error()})
+		} else {
+			mcpAuditReadModel = readModel
+			if *mcpAuditPath != "" && *mcpAuditPath != "-" {
+				go func() {
+					if imported, importErr := readModel.ImportDir(context.Background(), *mcpAuditPath); importErr != nil {
+						srvLog.Warn("mcp_audit_import_failed", map[string]any{"err": importErr.Error()})
+					} else {
+						srvLog.Info("mcp_audit_import_complete", map[string]any{"events_scanned": imported})
+					}
+				}()
+			}
+			retentionDays := 90
+			if raw := os.Getenv("MCP_AUDIT_READ_MODEL_RETENTION_DAYS"); raw != "" {
+				if parsed, parseErr := strconv.Atoi(raw); parseErr == nil && parsed > 0 {
+					retentionDays = parsed
+				}
+			}
+			stopRetention := readModel.StartRetention(retentionDays)
+			defer stopRetention()
+			defer readModel.Close()
+		}
+	}
+	mcpAuditSink := audit.MultiSink{mcpPrimaryAudit, mcpAuditReadModel}
 
 	apiCfg := vectorHttp.APIConfig{
 		PostgresDSN:                pgDSN,
@@ -629,6 +672,8 @@ func main() {
 		Runs:                       runs,
 		SearchStrategies:           searchStrategies,
 		WorkspaceAuditSink:         wsAuditSink,
+		MCPAuditReadModel:          mcpAuditReadModel,
+		MemoryIndexOutbox:          memoryIndexOutbox,
 	}
 
 	// Protected routes: Levara API (datasets, upload, cognify, search)
@@ -658,13 +703,18 @@ func main() {
 		StructuredExtractEndpoint:  *structuredExtractEndpoint,
 		StructuredExtractTimeoutMs: *structuredExtractTimeoutMs,
 		Runs:                       runs,
-		MCPAudit:                   initMCPAuditSink(*mcpAuditPath, srvLog),
+		MCPAudit:                   mcpAuditSink,
+		MCPAuditReadModel:          mcpAuditReadModel,
+		MemoryIndexOutbox:          memoryIndexOutbox,
 		MCPAgentBucket:             metrics.NewUserBucket(20, time.Minute),
 		WorkspaceAuditSink:         wsAuditSink,
 	}
 
 	// MCP (Model Context Protocol) server — JSON-RPC 2.0 for AI agent integration
 	vectorHttp.RegisterMCPAPI(app, mcpCfg)
+	vectorHttp.StartConsolidationRecovery(mcpCfg)
+	stopMemoryIndexWorker := vectorHttp.StartMemoryIndexWorker(mcpCfg, 5*time.Millisecond)
+	defer stopMemoryIndexWorker()
 
 	// Opt-in background memory-consolidation janitor. Off unless
 	// CONSOLIDATION_INTERVAL is a positive Go duration (e.g. "30m"). Sweeps
@@ -712,7 +762,8 @@ func main() {
 	api.Get("/cache/stats", func(c *fiber.Ctx) error {
 		return c.JSON(llmCache.Stats())
 	})
-	log.Printf("MCP server registered at POST /mcp (7 tools)")
+	log.Printf("MCP server registered at POST /mcp (%d tools, mode=%s)",
+		len(mcp.ToolDescriptorsForMode(os.Getenv("LEVARA_MCP_TOOLSET"))), firstNonEmpty(os.Getenv("LEVARA_MCP_TOOLSET"), "full"))
 
 	// Detailed /health/details with per-dependency probes lives in
 	// bootstrap.go.
@@ -737,7 +788,7 @@ func main() {
 	})
 
 	// gRPC server (v1 + v2) starts in a goroutine. nil when disabled.
-	grpcServer := startGRPCServer(*grpcPort, authCfg.JWTSecret, *requireAuth, grpcSvc)
+	grpcServer := startGRPCServer(*grpcHost, *grpcPort, authCfg.JWTSecret, *requireAuth, grpcSvc)
 
 	// Optional LLM proxy on its own port.
 	stopProxy := startLLMProxyIfConfigured(*llmProxyPort, *llmUpstream, *dataDir, nodeID, *llmCacheSize, *llmMaxInflight)
@@ -753,7 +804,7 @@ func main() {
 		}()
 	}
 
-	addr := fmt.Sprintf(":%d", *port)
+	addr := net.JoinHostPort(*host, strconv.Itoa(*port))
 	mode := "standalone/WAL"
 	if !*standalone {
 		mode = "raft"
@@ -764,10 +815,14 @@ func main() {
 	log.Printf("Levara listening on HTTP:%d gRPC:%d (dim=%d, shards=%d, mode=%s, node=%s)", *port, *grpcPort, *dim, numShards, mode, nodeID)
 
 	// Graceful shutdown — see bootstrap.go for the full close ordering.
-	installGracefulShutdown(app, shards, colManager, pgDB, grpcServer)
+	shutdownDone := installGracefulShutdown(app, shards, colManager, pgDB, grpcServer)
 
 	// Embed model keep-alive ticker (Ollama eviction defence).
 	startEmbedKeepAlive(embedEndpoint, embedModel, keepaliveDur)
 
-	log.Fatal(app.Listen(addr))
+	if err := app.Listen(addr); err != nil {
+		log.Printf("HTTP server stopped with error: %v", err)
+		return
+	}
+	<-shutdownDone
 }

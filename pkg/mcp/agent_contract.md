@@ -97,3 +97,17 @@ parsing `/metrics`:
   the agent locate the symbol via grep when needed.
 - **Skipping the `why`.** A decision without a reason can't survive an
   edge case re-evaluation six months later.
+
+## 8. Tool profiles
+
+Operators can reduce tool-schema prompt cost with `LEVARA_MCP_TOOLSET`:
+
+- `core` — conversational memory and search.
+- `memory` (and legacy alias `light`) — memory lifecycle, consolidation,
+  diaries, and feedback.
+- `workspace` — core plus safe workspace authoring.
+- `ops` — health, audit, reconciliation, jobs, and sync.
+- `full` — the complete backward-compatible catalogue.
+
+Unknown and empty values resolve to `full`. A profile is not an authorization
+boundary: JWT/API-key permissions are still enforced independently.

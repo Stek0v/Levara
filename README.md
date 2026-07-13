@@ -26,6 +26,13 @@ across sessions.
 > This README uses MDX-friendly structure (`<CardGroup>`, `<Card>`, `<Tabs>`,
 > `<Accordion>`) while remaining readable as plain Markdown on GitHub.
 
+> [!IMPORTANT]
+> For the verified local Mac runtime, use
+> [docs/current-state.md](docs/current-state.md). As of the latest check, the
+> running server is `standalone-embed` on `:8081`, gRPC is disabled, vectors are
+> `256`-dim `potion-code-16M`, PostgreSQL and the local LLM are connected,
+> Neo4j/rerank are disabled, and doctor reports `8/9 ok` with one BM25 warning.
+
 ## Why Levara
 
 AI agents are only useful when they keep the right context. Chat history is too
@@ -70,7 +77,7 @@ Use when a single developer wants local AI memory.
 ```bash
 cp deploy/profiles/personal.local.env.example .env
 ./levara-server -config-check
-./levara-server -standalone=true -dim=768 -port=8080
+./levara-server -profile=standalone -dim=768 -port=8080 -grpc-port=0
 ```
 
 Default posture: SQLite, local filesystem, MCP/workspace enabled, auth optional.
@@ -142,8 +149,29 @@ make build
 
 cp deploy/profiles/personal.local.env.example .env
 ./levara-server -config-check
-./levara-server -standalone=true -dim=768 -port=8080 -grpc-port=50051
+./levara-server -profile=standalone -dim=768 -port=8080 -grpc-port=0
 ```
+
+Local Mac development currently runs a richer profile:
+
+```bash
+./levara-server \
+  -profile=standalone-embed \
+  -dim=256 \
+  -port=8081 \
+  -grpc-port=0 \
+  -data-dir=/Users/stek0v/src/levara/data \
+  -node-id=mac1 \
+  -require-auth=false \
+  -embed-endpoint=http://127.0.0.1:9101/v1/embeddings \
+  -embed-model=potion-code-16M \
+  -llm-upstream=http://localhost:11434/v1 \
+  -pg-url='postgres://stek0v@localhost:5432/levara?sslmode=disable' \
+  -embed-keepalive-interval=5m
+```
+
+See [docs/current-state.md](docs/current-state.md) before using local ports,
+model names, or launchd commands in automation.
 
 ### With Docker
 
@@ -178,6 +206,10 @@ Example host configs live in [examples/agent-hosts](examples/agent-hosts).
 | gRPC v1/v2 | `:50051` | Vector/search/cognify client API | `internal/grpc`, `proto/` |
 | CLI tools | local binaries | Server, backup, contract validation, host config install, load tests | `cmd/` |
 | Web UI | app package | Next.js operator/user UI | `webui/`, `docs/webui-operations.md` |
+
+Defaults are compile/runtime defaults, not the current Mac launchd deployment.
+The verified local instance uses HTTP/MCP on `:8081` and disables gRPC with
+`-grpc-port=0`.
 
 <Accordion title="Representative REST groups">
 
@@ -288,7 +320,7 @@ make profile-config-check
 | `LEVARA_WORKSPACE_AUDIT_EXPORT` / `_DIR` / `_RETENTION_DAYS` | Workspace audit export controls |
 | `LEVARA_WORKSPACE_WATCH` / `_INDEX_WORKER` | Workspace watcher and async index worker |
 | `EMBED_URL` / `EMBEDDING_ENDPOINT` / `EMBEDDING_MODEL` | Embedding service configuration |
-| `LLM_PROVIDER`, `LLM_MODEL`, `LLM_API_KEY`, `OLLAMA_URL` | LLM provider configuration |
+| `LLM_PROVIDER`, `LLM_ENDPOINT`, `LLM_MODEL`, `LLM_API_KEY` | LLM provider configuration. The current Mac runtime uses `LLM_PROVIDER=openai`, `LLM_ENDPOINT=http://localhost:11434/v1`, `LLM_MODEL=gemma4:e2b`. |
 | `RERANK_ENDPOINT`, `RERANK_MODEL`, `RERANK_BUDGET_MS` | Cross-encoder reranker configuration |
 | `STORAGE_BACKEND`, `S3_BUCKET`, `STORAGE_PATH` | Raw object storage backend controls |
 | `LANGFUSE_PUBLIC_KEY` | Optional tracing integration |
@@ -297,16 +329,22 @@ make profile-config-check
 
 ```bash
 ./levara-server \
-  -standalone=true \
-  -dim=768 \
-  -port=8080 \
-  -grpc-port=50051 \
+  -profile=standalone-embed \
+  -dim=256 \
+  -port=8081 \
+  -grpc-port=0 \
   -data-dir=./data \
   -require-auth=false \
+  -embed-endpoint=http://127.0.0.1:9101/v1/embeddings \
+  -embed-model=potion-code-16M \
+  -llm-upstream=http://localhost:11434/v1 \
   -hnsw-m=16 \
   -hnsw-ef-mult=8 \
   -hnsw-ef-min=64
 ```
+
+This block mirrors the current local shape. Use `-profile=standalone -dim=768
+-port=8080 -grpc-port=0` for a minimal dependency-light local run.
 
 ## Development
 
