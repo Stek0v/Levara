@@ -222,6 +222,7 @@ func RegisterAPI(app fiber.Router, cfg APIConfig) {
 	app.Get("/memory-scaffold/proposals", memoryScaffoldProposalListHandler(cfg))
 	app.Get("/memory-scaffold/proposals/:id", memoryScaffoldProposalDetailHandler(cfg))
 	app.Post("/memory-scaffold/proposals/:id/decision", memoryScaffoldProposalDecisionHandler(cfg))
+	app.Get("/memory-traces/export", memoryTraceExportHandler(cfg))
 
 	// U22: Ontology upload (already registered via RegisterAPI for ontology list/upload)
 
