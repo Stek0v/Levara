@@ -67,21 +67,23 @@ type Summary struct {
 }
 
 type EventRow struct {
-	ID           string          `json:"id"`
-	TS           string          `json:"ts"`
-	SessionID    string          `json:"session_id,omitempty"`
-	AgentID      string          `json:"agent_id,omitempty"`
-	ClientName   string          `json:"client_name,omitempty"`
-	Toolset      string          `json:"toolset,omitempty"`
-	Tool         string          `json:"tool"`
-	Collection   string          `json:"collection,omitempty"`
-	LatencyMS    int64           `json:"latency_ms"`
-	Outcome      string          `json:"outcome"`
-	ResultCount  int             `json:"result_count"`
-	ZeroResult   bool            `json:"zero_result"`
-	TraceID      string          `json:"trace_id,omitempty"`
-	ErrorMessage string          `json:"error_message,omitempty"`
-	Args         json.RawMessage `json:"args,omitempty"`
+	ID            string          `json:"id"`
+	TS            string          `json:"ts"`
+	SessionID     string          `json:"session_id,omitempty"`
+	AgentID       string          `json:"agent_id,omitempty"`
+	ClientName    string          `json:"client_name,omitempty"`
+	Toolset       string          `json:"toolset,omitempty"`
+	Tool          string          `json:"tool"`
+	Collection    string          `json:"collection,omitempty"`
+	LatencyMS     int64           `json:"latency_ms"`
+	Outcome       string          `json:"outcome"`
+	ResultCount   int             `json:"result_count"`
+	ZeroResult    bool            `json:"zero_result"`
+	RequestBytes  int             `json:"request_bytes,omitempty"`
+	ResponseBytes int             `json:"response_bytes,omitempty"`
+	TraceID       string          `json:"trace_id,omitempty"`
+	ErrorMessage  string          `json:"error_message,omitempty"`
+	Args          json.RawMessage `json:"args,omitempty"`
 }
 
 type EventFilter struct {
@@ -305,7 +307,7 @@ func (r *ReadModel) Events(ctx context.Context, f EventFilter) ([]EventRow, erro
 	if f.IncludeArgs {
 		selectArgs = "args_json"
 	}
-	q := `SELECT id,ts,session_id,agent_id,client_name,toolset,tool,collection_name,latency_ms,outcome,result_count,zero_result,trace_id,error_message,` + selectArgs + ` FROM mcp_audit_events WHERE ts>=?`
+	q := `SELECT id,ts,session_id,agent_id,client_name,toolset,tool,collection_name,latency_ms,outcome,result_count,zero_result,request_bytes,response_bytes,trace_id,error_message,` + selectArgs + ` FROM mcp_audit_events WHERE ts>=?`
 	args := []any{f.Since.UTC().Format(time.RFC3339Nano)}
 	for _, x := range []struct{ column, value string }{{"tool", f.Tool}, {"outcome", f.Outcome}, {"client_name", f.Client}, {"collection_name", f.Collection}} {
 		if x.value != "" {
@@ -325,7 +327,50 @@ func (r *ReadModel) Events(ctx context.Context, f EventFilter) ([]EventRow, erro
 		var e EventRow
 		var zero int
 		var raw string
-		if rows.Scan(&e.ID, &e.TS, &e.SessionID, &e.AgentID, &e.ClientName, &e.Toolset, &e.Tool, &e.Collection, &e.LatencyMS, &e.Outcome, &e.ResultCount, &zero, &e.TraceID, &e.ErrorMessage, &raw) == nil {
+		if rows.Scan(&e.ID, &e.TS, &e.SessionID, &e.AgentID, &e.ClientName, &e.Toolset, &e.Tool, &e.Collection, &e.LatencyMS, &e.Outcome, &e.ResultCount, &zero, &e.RequestBytes, &e.ResponseBytes, &e.TraceID, &e.ErrorMessage, &raw) == nil {
+			e.ZeroResult = zero != 0
+			if f.IncludeArgs && raw != "" {
+				e.Args = json.RawMessage(raw)
+			}
+			out = append(out, e)
+		}
+	}
+	return out, rows.Err()
+}
+
+// EventsForTrajectories returns sanitized audit rows ordered oldest-first for
+// in-memory trajectory assembly. It intentionally uses the same filters as
+// Events but allows a larger bounded limit because one trajectory can contain
+// many MCP calls.
+func (r *ReadModel) EventsForTrajectories(ctx context.Context, f EventFilter) ([]EventRow, error) {
+	if f.Limit <= 0 || f.Limit > 20000 {
+		f.Limit = 10000
+	}
+	selectArgs := "''"
+	if f.IncludeArgs {
+		selectArgs = "args_json"
+	}
+	q := `SELECT id,ts,session_id,agent_id,client_name,toolset,tool,collection_name,latency_ms,outcome,result_count,zero_result,request_bytes,response_bytes,trace_id,error_message,` + selectArgs + ` FROM mcp_audit_events WHERE ts>=?`
+	args := []any{f.Since.UTC().Format(time.RFC3339Nano)}
+	for _, x := range []struct{ column, value string }{{"tool", f.Tool}, {"outcome", f.Outcome}, {"client_name", f.Client}, {"collection_name", f.Collection}} {
+		if x.value != "" {
+			q += " AND " + x.column + "=?"
+			args = append(args, x.value)
+		}
+	}
+	q += " ORDER BY ts ASC LIMIT ? OFFSET ?"
+	args = append(args, f.Limit, f.Offset)
+	rows, err := r.db.QueryContext(ctx, r.bind(q), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []EventRow{}
+	for rows.Next() {
+		var e EventRow
+		var zero int
+		var raw string
+		if rows.Scan(&e.ID, &e.TS, &e.SessionID, &e.AgentID, &e.ClientName, &e.Toolset, &e.Tool, &e.Collection, &e.LatencyMS, &e.Outcome, &e.ResultCount, &zero, &e.RequestBytes, &e.ResponseBytes, &e.TraceID, &e.ErrorMessage, &raw) == nil {
 			e.ZeroResult = zero != 0
 			if f.IncludeArgs && raw != "" {
 				e.Args = json.RawMessage(raw)
