@@ -124,6 +124,8 @@ func RESTRouteInventory() []RouteSpec {
 		{Method: "GET", Path: "/admin/mcp/sessions", Status: APICanonical, Group: "admin"},
 		{Method: "POST", Path: "/feedback", Status: APICanonical, Group: "feedback"},
 		{Method: "GET", Path: "/feedback/stats", Status: APICanonical, Group: "feedback"},
+		{Method: "GET", Path: "/agent-trajectories", Status: APICanonical, Group: "mcp"},
+		{Method: "GET", Path: "/agent-trajectories/:id", Status: APICanonical, Group: "mcp"},
 		{Method: "GET", Path: "/mcp-analytics", Status: APICanonical, Group: "mcp"},
 		{Method: "GET", Path: "/mcp-analytics/events", Status: APICanonical, Group: "mcp"},
 		{Method: "GET", Path: "/feedback/implicit", Status: APICanonical, Group: "feedback"},
