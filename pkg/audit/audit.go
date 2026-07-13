@@ -71,6 +71,8 @@ type Entry struct {
 	RequestBytes  int            `json:"request_bytes,omitempty"`
 	ResponseBytes int            `json:"response_bytes,omitempty"`
 	TraceID       string         `json:"trace_id,omitempty"`
+	BlindSave     bool           `json:"blind_save,omitempty"`
+	RepeatSave    bool           `json:"repeat_save,omitempty"`
 }
 
 // Sink is the abstract write-side of an audit log. Both Logger (plain
