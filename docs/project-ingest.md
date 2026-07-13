@@ -114,3 +114,31 @@ MODE=full \
 PIPELINE=all \
 /Users/stek0v/src/levara/scripts/levara_nightly_full_enrich.sh
 ```
+
+## After ingest: check agent memory behavior
+
+Once agents start using a newly ingested project, inspect whether the project
+scaffold is working:
+
+```bash
+curl -sS 'http://127.0.0.1:8081/api/v1/memory-behavior?hours=24&collection=my-project'
+```
+
+In WebUI open:
+
+- `/memory-behavior` for recall-before-save, repeat-save, zero-result and
+  context-byte metrics;
+- `/memory-scaffold` after running a meta-review to approve/reject proposed
+  `AGENTS.md` or memory-policy improvements.
+
+Before changing the local project memory contract, capture a baseline:
+
+```bash
+python3 benchmark/memory_behavior_eval/run_memory_behavior_eval.py \
+  --fake \
+  --label my-project-scaffold-baseline
+```
+
+After changing the scaffold, rerun the same eval and compare behavior score and
+context bytes. For the full operator workflow see
+`docs/memory-behavior-optimization.md`.
