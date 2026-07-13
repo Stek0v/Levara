@@ -339,6 +339,23 @@ export const levara = {
   mcpTools: () => api<MCPToolsResponse>('/api/v1/admin/mcp/tools'),
   mcpSummary: () => api<MCPAdminSummary>('/api/v1/admin/mcp/summary'),
   mcpAnalytics: (hours = 24) => api<MCPAnalyticsResponse>(`/api/v1/mcp-analytics?hours=${hours}`),
+  memoryBehavior: (params?: MemoryBehaviorRequest) => {
+    const q = new URLSearchParams()
+    q.set('hours', String(params?.hours ?? 24))
+    if (params?.collection) q.set('collection', params.collection)
+    if (params?.client) q.set('client', params.client)
+    return api<MemoryBehaviorResponse>(`/api/v1/memory-behavior?${q.toString()}`)
+  },
+  agentTrajectories: (params?: AgentTrajectoriesRequest) => {
+    const q = new URLSearchParams()
+    q.set('hours', String(params?.hours ?? 24))
+    q.set('limit', String(params?.limit ?? 50))
+    q.set('offset', String(params?.offset ?? 0))
+    if (params?.collection) q.set('collection', params.collection)
+    if (params?.client) q.set('client', params.client)
+    if (params?.tool) q.set('tool', params.tool)
+    return api<AgentTrajectoriesResponse>(`/api/v1/agent-trajectories?${q.toString()}`)
+  },
   implicitFeedback: () => api<{ total: number; by_signal: Record<string, number> }>('/api/v1/feedback/implicit'),
   memoryIndexStatus: () => api<{ counts: Record<string, number>; jobs: Array<{ id: string; status: string; attempts: number; last_error?: string }> }>('/api/v1/memory-index/status'),
   mcpSessions: (limit = 20) => api<MCPSessionsResponse>(`/api/v1/admin/mcp/sessions?limit=${limit}`),
@@ -1067,4 +1084,81 @@ export interface MCPAnalyticsSummary {
 export interface MCPAnalyticsResponse {
   window_hours: number
   summary: MCPAnalyticsSummary
+}
+
+export interface MemoryBehaviorRequest {
+  hours?: number
+  collection?: string
+  client?: string
+}
+
+export interface AgentTrajectoriesRequest extends MemoryBehaviorRequest {
+  limit?: number
+  offset?: number
+  tool?: string
+}
+
+export interface AgentTrajectoryCounters {
+  search_count: number
+  recall_count: number
+  save_count: number
+  zero_result_count: number
+  error_count: number
+  request_bytes: number
+  response_bytes: number
+}
+
+export interface AgentTrajectorySummary {
+  id: string
+  started_at: string
+  ended_at: string
+  duration_ms: number
+  client_name?: string
+  toolset?: string
+  collection?: string
+  event_count: number
+  counters: AgentTrajectoryCounters
+}
+
+export interface AgentTrajectoriesResponse {
+  window_hours: number
+  limit: number
+  offset: number
+  total: number
+  trajectories: AgentTrajectorySummary[]
+}
+
+export interface MemoryBehaviorProblem {
+  id: string
+  collection?: string
+  client_name?: string
+  repeat_saves: number
+  blind_saves: number
+  zero_results: number
+  errors: number
+  context_bytes: number
+  memory_ops: number
+}
+
+export interface MemoryBehaviorSummary {
+  total_trajectories: number
+  total_events: number
+  memory_ops: number
+  recall_before_save_rate: number
+  repeat_save_rate: number
+  zero_result_rate: number
+  empty_recall_rate: number
+  memory_ops_per_trajectory: number
+  context_bytes_per_trajectory: number
+  save_without_room_or_hall_count: number
+  unknown_hall_error_count: number
+  tool_errors_by_tool: Record<string, number>
+  problem_trajectories: MemoryBehaviorProblem[]
+}
+
+export interface MemoryBehaviorResponse {
+  window_hours: number
+  collection?: string
+  client?: string
+  summary: MemoryBehaviorSummary
 }
