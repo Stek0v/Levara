@@ -133,6 +133,7 @@ func RESTRouteInventory() []RouteSpec {
 		{Method: "GET", Path: "/memory-scaffold/proposals", Status: APIOps, Group: "mcp"},
 		{Method: "GET", Path: "/memory-scaffold/proposals/:id", Status: APIOps, Group: "mcp"},
 		{Method: "POST", Path: "/memory-scaffold/proposals/:id/decision", Status: APIOps, Group: "mcp"},
+		{Method: "GET", Path: "/memory-traces/export", Status: APIOps, Group: "mcp"},
 		{Method: "GET", Path: "/mcp-analytics", Status: APICanonical, Group: "mcp"},
 		{Method: "GET", Path: "/mcp-analytics/events", Status: APICanonical, Group: "mcp"},
 		{Method: "GET", Path: "/feedback/implicit", Status: APICanonical, Group: "feedback"},
