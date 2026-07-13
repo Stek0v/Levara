@@ -22,6 +22,7 @@ const nav = [
   { name: 'Notebooks', href: '/notebooks', icon: BookOpen },
   { name: 'Analytics', href: '/analytics', icon: BarChart3 },
   { name: 'Memory Behavior', href: '/memory-behavior', icon: Activity },
+  { name: 'Scaffold Proposals', href: '/memory-scaffold', icon: BookOpen },
   { name: 'Admin', href: '/admin', icon: Shield },
   { name: 'Onboarding', href: '/onboarding', icon: Sparkles },
   { name: 'Settings', href: '/settings', icon: Settings },

@@ -219,6 +219,9 @@ func RegisterAPI(app fiber.Router, cfg APIConfig) {
 	app.Post("/memory-reviews/run", memoryReviewRunHandler(cfg))
 	app.Get("/memory-reviews", memoryReviewListHandler(cfg))
 	app.Get("/memory-reviews/:id", memoryReviewDetailHandler(cfg))
+	app.Get("/memory-scaffold/proposals", memoryScaffoldProposalListHandler(cfg))
+	app.Get("/memory-scaffold/proposals/:id", memoryScaffoldProposalDetailHandler(cfg))
+	app.Post("/memory-scaffold/proposals/:id/decision", memoryScaffoldProposalDecisionHandler(cfg))
 
 	// U22: Ontology upload (already registered via RegisterAPI for ontology list/upload)
 
