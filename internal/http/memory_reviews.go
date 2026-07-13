@@ -141,6 +141,9 @@ func memoryReviewRunHandler(cfg APIConfig) fiber.Handler {
 			if err := insertMemoryReviewFindings(c.UserContext(), cfg.DB, run.Findings); err != nil {
 				return c.Status(500).JSON(fiber.Map{"error": "memory review findings create failed"})
 			}
+			if _, err := createMemoryScaffoldProposalsFromReview(c.UserContext(), cfg.DB, run); err != nil {
+				return c.Status(500).JSON(fiber.Map{"error": "memory scaffold proposal create failed"})
+			}
 		}
 		status := fiber.StatusOK
 		if run.Status == "failed" {
