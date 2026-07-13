@@ -20,10 +20,10 @@ echo "==> Building levara-server (${GOOS}/${GOARCH}) for Pi5 (${GIT_SHA} @ ${BUI
 CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build -ldflags "${LDFLAGS}" -o /tmp/levara-server-pi ./cmd/server/
 
 echo "==> Upload to ${SSH_USER}@${HOST}:${REMOTE_DIR}/"
-scp "${SSH_OPTS[@]}" /tmp/levara-server-pi "${SSH_USER}@${HOST}:${REMOTE_DIR}/levara.new"
+scp "${SSH_OPTS[@]+"${SSH_OPTS[@]}"}" /tmp/levara-server-pi "${SSH_USER}@${HOST}:${REMOTE_DIR}/levara.new"
 
 echo "==> Remote swap + restart levara (port 8090)"
-ssh "${SSH_OPTS[@]}" "${SSH_USER}@${HOST}" bash -s <<EOF
+ssh "${SSH_OPTS[@]+"${SSH_OPTS[@]}"}" "${SSH_USER}@${HOST}" bash -s <<EOF
 set -euo pipefail
 cd "${REMOTE_DIR}"
 chmod +x levara.new
