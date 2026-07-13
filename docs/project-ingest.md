@@ -74,3 +74,43 @@ python3 /Users/stek0v/src/levara/scripts/levara_project_ingest.py \
 
 This validates API connectivity and indexing on a few files without touching
 the project `AGENTS.md`.
+
+## Nightly full enrichment for `~/src/*`
+
+Installed local cron entry:
+
+```cron
+10 3 * * * /bin/bash /Users/stek0v/src/levara/scripts/levara_nightly_full_enrich.sh >> /Users/stek0v/Library/Logs/levara/nightly-full-enrich/cron.log 2>&1
+```
+
+The batch script:
+
+- scans first-level directories under `~/src/*`;
+- skips hidden directories;
+- skips any project containing `.levara-no-nightly`;
+- runs projects sequentially with a lock;
+- uses `--mode full` and `--pipeline all`;
+- writes per-project JSON reports under
+  `~/Library/Logs/levara/nightly-full-enrich/reports/`;
+- does not write project `AGENTS.md` by default during nightly runs
+  (`WRITE_AGENTS=1` enables it);
+- stops on classic full enrichment error/timeout by default to avoid stacking
+  slow LLM/graph jobs (`STOP_ON_CLASSIC_ERROR=0` disables this).
+
+Useful manual checks:
+
+```bash
+crontab -l
+tail -f ~/Library/Logs/levara/nightly-full-enrich/cron.log
+DRY_RUN=1 MAX_PROJECTS=2 /Users/stek0v/src/levara/scripts/levara_nightly_full_enrich.sh
+```
+
+Useful overrides:
+
+```bash
+PROJECT_ROOT=/Users/stek0v/src \
+TIMEOUT_SECONDS=21600 \
+MODE=full \
+PIPELINE=all \
+/Users/stek0v/src/levara/scripts/levara_nightly_full_enrich.sh
+```

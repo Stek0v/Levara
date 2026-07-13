@@ -318,6 +318,7 @@ def main() -> int:
     parser.add_argument("--chunk-strategy", choices=["merged", "paragraph", "sentence", "sliding"], default="merged")
     parser.add_argument("--max-file-bytes", type=int, default=200_000)
     parser.add_argument("--limit", type=int, default=0, help="Limit collected files for smoke tests; 0 means no limit.")
+    parser.add_argument("--allow-empty", action="store_true", help="Return a skipped report instead of failing when no files are collected.")
     parser.add_argument("--include", default=",".join(sorted(DEFAULT_SUFFIXES)), help="Comma-separated file suffixes.")
     parser.add_argument("--exclude-dir", action="append", default=[], help="Extra directory name to exclude; can be repeated.")
     parser.add_argument("--no-agents", action="store_true", help="Do not create/append AGENTS.md memory contract.")
@@ -364,6 +365,15 @@ def main() -> int:
     }
 
     if not corpus:
+        report["classic"] = {"status": "skipped", "reason": "no files collected"}
+        report["workspace"] = {"status": "skipped", "reason": "no files collected"}
+        if args.output:
+            out = Path(args.output).expanduser()
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        if args.allow_empty:
+            return 0
         raise SystemExit("no files collected; adjust --include/--exclude-dir/--max-file-bytes")
 
     if not args.no_agents:
