@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation'
 import { cn } from '@/lib/utils'
 import {
   LayoutDashboard, Database, Search, MessageCircle, Share2,
-  FolderOpen, Brain, Settings, BarChart3, BookOpen, Menu, X, Files, RefreshCw, Shield, Sparkles,
+  FolderOpen, Brain, Settings, BarChart3, BookOpen, Menu, X, Files, RefreshCw, Shield, Sparkles, Activity,
 } from 'lucide-react'
 import { useState } from 'react'
 
@@ -21,6 +21,7 @@ const nav = [
   { name: 'Memories', href: '/memories', icon: Brain },
   { name: 'Notebooks', href: '/notebooks', icon: BookOpen },
   { name: 'Analytics', href: '/analytics', icon: BarChart3 },
+  { name: 'Memory Behavior', href: '/memory-behavior', icon: Activity },
   { name: 'Admin', href: '/admin', icon: Shield },
   { name: 'Onboarding', href: '/onboarding', icon: Sparkles },
   { name: 'Settings', href: '/settings', icon: Settings },

@@ -12,6 +12,8 @@ import {
   type EmbeddingMigrationRequest,
   type EmbeddingShadowReadRequest,
   type GraphPathRequest,
+  type AgentTrajectoriesRequest,
+  type MemoryBehaviorRequest,
   type VSAQueryRequest,
   type WorkspaceArtifactsRequest,
   type WorkspaceAuditRequest,
@@ -35,6 +37,8 @@ export const queryKeys = {
   collections: ['collections'] as const,
   memories: (type?: string) => ['memories', type] as const,
   feedbackStats: ['feedbackStats'] as const,
+  memoryBehavior: (params?: MemoryBehaviorRequest) => ['memoryBehavior', params] as const,
+  agentTrajectories: (params?: AgentTrajectoriesRequest) => ['agentTrajectories', params] as const,
   cacheStats: ['cacheStats'] as const,
   errors: ['errors'] as const,
   settings: ['settings'] as const,
@@ -90,6 +94,24 @@ export function useFeedbackStats() {
     queryKey: queryKeys.feedbackStats,
     queryFn: () => levara.feedbackStats(),
     staleTime: 30_000,
+  })
+}
+
+export function useMemoryBehavior(params?: MemoryBehaviorRequest) {
+  return useQuery({
+    queryKey: queryKeys.memoryBehavior(params),
+    queryFn: () => levara.memoryBehavior(params),
+    staleTime: 15_000,
+    refetchInterval: 30_000,
+  })
+}
+
+export function useAgentTrajectories(params?: AgentTrajectoriesRequest) {
+  return useQuery({
+    queryKey: queryKeys.agentTrajectories(params),
+    queryFn: () => levara.agentTrajectories(params),
+    staleTime: 15_000,
+    refetchInterval: 30_000,
   })
 }
 
