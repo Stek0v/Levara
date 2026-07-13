@@ -13,6 +13,7 @@ import {
   type EmbeddingShadowReadRequest,
   type GraphPathRequest,
   type AgentTrajectoriesRequest,
+  type MemoryScaffoldProposalRequest,
   type MemoryBehaviorRequest,
   type VSAQueryRequest,
   type WorkspaceArtifactsRequest,
@@ -39,6 +40,8 @@ export const queryKeys = {
   feedbackStats: ['feedbackStats'] as const,
   memoryBehavior: (params?: MemoryBehaviorRequest) => ['memoryBehavior', params] as const,
   agentTrajectories: (params?: AgentTrajectoriesRequest) => ['agentTrajectories', params] as const,
+  memoryScaffoldProposals: (params?: MemoryScaffoldProposalRequest) => ['memoryScaffoldProposals', params] as const,
+  memoryScaffoldProposal: (id: string) => ['memoryScaffoldProposal', id] as const,
   cacheStats: ['cacheStats'] as const,
   errors: ['errors'] as const,
   settings: ['settings'] as const,
@@ -112,6 +115,35 @@ export function useAgentTrajectories(params?: AgentTrajectoriesRequest) {
     queryFn: () => levara.agentTrajectories(params),
     staleTime: 15_000,
     refetchInterval: 30_000,
+  })
+}
+
+export function useMemoryScaffoldProposals(params?: MemoryScaffoldProposalRequest) {
+  return useQuery({
+    queryKey: queryKeys.memoryScaffoldProposals(params),
+    queryFn: () => levara.memoryScaffoldProposals(params),
+    staleTime: 15_000,
+  })
+}
+
+export function useMemoryScaffoldProposal(id?: string) {
+  return useQuery({
+    queryKey: queryKeys.memoryScaffoldProposal(id || ''),
+    queryFn: () => levara.memoryScaffoldProposal(id || ''),
+    enabled: Boolean(id),
+    staleTime: 15_000,
+  })
+}
+
+export function useDecideMemoryScaffoldProposal() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, status, note }: { id: string; status: 'approved' | 'rejected'; note?: string }) =>
+      levara.decideMemoryScaffoldProposal(id, status, note),
+    onSuccess: (proposal) => {
+      qc.invalidateQueries({ queryKey: ['memoryScaffoldProposals'] })
+      qc.invalidateQueries({ queryKey: queryKeys.memoryScaffoldProposal(proposal.id) })
+    },
   })
 }
 

@@ -356,6 +356,22 @@ export const levara = {
     if (params?.tool) q.set('tool', params.tool)
     return api<AgentTrajectoriesResponse>(`/api/v1/agent-trajectories?${q.toString()}`)
   },
+  memoryScaffoldProposals: (params?: MemoryScaffoldProposalRequest) => {
+    const q = new URLSearchParams()
+    if (params?.status) q.set('status', params.status)
+    if (params?.collection) q.set('collection', params.collection)
+    if (params?.target) q.set('target', params.target)
+    q.set('limit', String(params?.limit ?? 50))
+    q.set('offset', String(params?.offset ?? 0))
+    return api<MemoryScaffoldProposalsResponse>(`/api/v1/memory-scaffold/proposals?${q.toString()}`)
+  },
+  memoryScaffoldProposal: (id: string) =>
+    api<MemoryScaffoldProposal>(`/api/v1/memory-scaffold/proposals/${encodeURIComponent(id)}`),
+  decideMemoryScaffoldProposal: (id: string, status: 'approved' | 'rejected', note?: string) =>
+    api<MemoryScaffoldProposal>(`/api/v1/memory-scaffold/proposals/${encodeURIComponent(id)}/decision`, {
+      method: 'POST',
+      body: JSON.stringify({ status, note }),
+    }),
   implicitFeedback: () => api<{ total: number; by_signal: Record<string, number> }>('/api/v1/feedback/implicit'),
   memoryIndexStatus: () => api<{ counts: Record<string, number>; jobs: Array<{ id: string; status: string; attempts: number; last_error?: string }> }>('/api/v1/memory-index/status'),
   mcpSessions: (limit = 20) => api<MCPSessionsResponse>(`/api/v1/admin/mcp/sessions?limit=${limit}`),
@@ -1161,4 +1177,34 @@ export interface MemoryBehaviorResponse {
   collection?: string
   client?: string
   summary: MemoryBehaviorSummary
+}
+
+export interface MemoryScaffoldProposalRequest {
+  status?: string
+  collection?: string
+  target?: string
+  limit?: number
+  offset?: number
+}
+
+export interface MemoryScaffoldProposal {
+  id: string
+  target: 'global_agents' | 'project_agents' | 'tool_profile' | 'memory_policy' | string
+  collection?: string
+  summary: string
+  current_problem: string
+  proposed_change: string
+  risk: string
+  status: 'open' | 'approved' | 'rejected' | 'superseded' | string
+  source_run_id?: string
+  source_finding_ids?: string[]
+  created_at: string
+  updated_at: string
+  decided_at?: string
+  decided_by?: string
+  decision_note?: string
+}
+
+export interface MemoryScaffoldProposalsResponse {
+  proposals: MemoryScaffoldProposal[]
 }
