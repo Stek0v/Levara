@@ -3,6 +3,7 @@ package access
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"testing"
 
 	_ "github.com/ncruces/go-sqlite3/driver"
@@ -49,21 +50,29 @@ func TestAuthorizeRoutesDataset(t *testing.T) {
 		actor   Actor
 		action  string
 		allowed bool
+		role    string
 		reason  string
 	}{
-		{"owner read", Actor{UserID: "user-a"}, ActionRead, true, "dataset_access"},
-		{"shared read", Actor{UserID: "user-b"}, ActionRead, true, "dataset_access"},
-		{"foreign denied", Actor{UserID: "user-c"}, ActionRead, false, "denied"},
-		{"api-key denied", Actor{UserID: "user-a", APIKeyPermissions: "read"}, ActionWrite, false, "api_key_permissions_denied"},
+		{"owner read", Actor{UserID: "user-a"}, ActionRead, true, RoleAdmin, "owner"},
+		{"shared read", Actor{UserID: "user-b"}, ActionRead, true, RoleViewer, "shared_viewer"},
+		{"viewer write denied", Actor{UserID: "user-b"}, ActionWrite, false, RoleViewer, "role_insufficient"},
+		{"public read", Actor{UserID: "user-c"}, ActionRead, true, RoleViewer, "public"},
+		{"public write denied", Actor{UserID: "user-c"}, ActionWrite, false, RoleViewer, "public_read_only"},
+		{"foreign denied", Actor{UserID: "user-c"}, ActionRead, false, "", "denied"},
+		{"api-key denied", Actor{UserID: "user-a", APIKeyPermissions: "read"}, ActionWrite, false, "", "api_key_permissions_denied"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			d, err := policy.Authorize(ctx, tc.actor, Resource{Kind: ResourceDataset, ID: "payments"}, tc.action)
+			datasetID := "payments"
+			if strings.HasPrefix(tc.name, "public") {
+				datasetID = "public"
+			}
+			d, err := policy.Authorize(ctx, tc.actor, Resource{Kind: ResourceDataset, ID: datasetID}, tc.action)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if d.Allowed != tc.allowed || d.Reason != tc.reason {
-				t.Fatalf("decision=%+v, want allowed=%v reason=%q", d, tc.allowed, tc.reason)
+			if d.Allowed != tc.allowed || d.Role != tc.role || d.Reason != tc.reason {
+				t.Fatalf("decision=%+v, want allowed=%v role=%q reason=%q", d, tc.allowed, tc.role, tc.reason)
 			}
 		})
 	}

@@ -352,6 +352,35 @@ func TestJWTMiddleware_RequireAuthGuard(t *testing.T) {
 	}
 }
 
+func TestAPIKeyPermissionMiddlewareBlocksMutationsForReadKey(t *testing.T) {
+	app := fiber.New(fiber.Config{DisableStartupMessage: true})
+	app.Use(func(c *fiber.Ctx) error {
+		c.Locals("api_key_permissions", "read")
+		return c.Next()
+	})
+	app.Use(APIKeyPermissionMiddleware())
+	app.Get("/resource", func(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusOK) })
+	app.Post("/resource", func(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusCreated) })
+
+	readResp, err := app.Test(httptest.NewRequest("GET", "/resource", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = readResp.Body.Close()
+	if readResp.StatusCode != fiber.StatusOK {
+		t.Fatalf("read status=%d, want 200", readResp.StatusCode)
+	}
+
+	writeResp, err := app.Test(httptest.NewRequest("POST", "/resource", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = writeResp.Body.Close()
+	if writeResp.StatusCode != fiber.StatusForbidden {
+		t.Fatalf("write status=%d, want 403", writeResp.StatusCode)
+	}
+}
+
 // ── API key CRUD lifecycle ──────────────────────────────────────────────────
 
 func TestAPIKey_CreateRevokeListLifecycle(t *testing.T) {

@@ -207,6 +207,7 @@ explicitly opted in via `types=["collections"]` + `collections=[...]`).
 | cognify_status | cognify | canonical |
 | consolidate | memory | canonical |
 | consolidation_revert | memory | canonical |
+| consolidation_status | memory | canonical |
 | cross_search | search | canonical |
 | delete | data | canonical |
 | delete_memory | memory | canonical |
@@ -222,6 +223,8 @@ explicitly opted in via `types=["collections"]` + `collections=[...]`).
 | list_communities | search | canonical |
 | list_data | data | canonical |
 | list_memories | memory | canonical |
+| memory_index_retry | ops | canonical |
+| memory_index_status | ops | canonical |
 | pin_memory | memory | canonical |
 | prune | data | canonical |
 | prune_graph | git | canonical |

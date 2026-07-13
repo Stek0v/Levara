@@ -4,7 +4,6 @@
 package http
 
 import (
-	"context"
 	"database/sql"
 	"encoding/json"
 
@@ -110,19 +109,27 @@ func pruneSystemHandler(cfg APIConfig) fiber.Handler {
 
 func updateDataHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		datasetID := c.Params("id")
 		dataID := c.Params("dataId")
 		if cfg.DB == nil {
 			return c.Status(503).JSON(fiber.Map{"detail": "database required"})
+		}
+		if err := authorizeDatasetFiber(c, cfg, datasetID, accesspkg.ActionWrite); err != nil {
+			return err
 		}
 		body := c.Body()
 		if len(body) == 0 {
 			return c.Status(400).JSON(fiber.Map{"detail": "content required"})
 		}
-		_, err := cfg.DB.ExecContext(context.Background(),
-			Q("UPDATE data SET name = $1, updated_at = NOW() WHERE id = $2"),
-			string(body), dataID)
+		query, args := QArgs(`UPDATE data SET name = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2
+			AND EXISTS (SELECT 1 FROM dataset_data WHERE dataset_id = $3 AND data_id = $2)`,
+			string(body), dataID, datasetID)
+		result, err := cfg.DB.ExecContext(c.UserContext(), query, args...)
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"detail": err.Error()})
+		}
+		if updated, err := result.RowsAffected(); err == nil && updated == 0 {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"detail": "not found"})
 		}
 		return c.JSON(fiber.Map{"id": dataID, "updated": true})
 	}

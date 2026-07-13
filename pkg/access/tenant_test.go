@@ -66,6 +66,36 @@ func TestTenantOwnerFilterSQL(t *testing.T) {
 	}
 }
 
+func TestCanManageTenant(t *testing.T) {
+	db := newDefaultTenantTestDB(t)
+	policy := SQLPolicy{DB: db, Q: sqliteQ}
+	ctx := context.Background()
+
+	for _, tc := range []struct {
+		name     string
+		userID   string
+		tenantID string
+		want     bool
+	}{
+		{name: "owner", userID: "owner-a", tenantID: "tenant-a", want: true},
+		{name: "superuser", userID: "root", tenantID: "tenant-a", want: true},
+		{name: "member is not manager", userID: "user-single", tenantID: "tenant-a"},
+		{name: "foreign owner", userID: "owner-b", tenantID: "tenant-a"},
+		{name: "missing tenant", userID: "owner-a", tenantID: "missing"},
+		{name: "anonymous", tenantID: "tenant-a"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := policy.CanManageTenant(ctx, tc.userID, tc.tenantID)
+			if err != nil {
+				t.Fatalf("CanManageTenant: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("CanManageTenant(%q, %q) = %v, want %v", tc.userID, tc.tenantID, got, tc.want)
+			}
+		})
+	}
+}
+
 func newDefaultTenantTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	db, err := sql.Open("sqlite3", t.TempDir()+"/default_tenant.db")
@@ -75,6 +105,10 @@ func newDefaultTenantTestDB(t *testing.T) *sql.DB {
 	t.Cleanup(func() { db.Close() })
 	for _, stmt := range []string{
 		`CREATE TABLE user_tenant (user_id TEXT, tenant_id TEXT)`,
+		`CREATE TABLE tenants (id TEXT PRIMARY KEY, owner_id TEXT)`,
+		`CREATE TABLE users (id TEXT PRIMARY KEY, is_superuser BOOLEAN DEFAULT FALSE)`,
+		`INSERT INTO tenants(id, owner_id) VALUES ('tenant-a', 'owner-a'), ('tenant-b', 'owner-b')`,
+		`INSERT INTO users(id, is_superuser) VALUES ('owner-a', FALSE), ('owner-b', FALSE), ('user-single', FALSE), ('user-multi', FALSE), ('root', TRUE)`,
 		`INSERT INTO user_tenant(user_id, tenant_id) VALUES ('user-single', 'tenant-a')`,
 		`INSERT INTO user_tenant(user_id, tenant_id) VALUES ('user-multi', 'tenant-a')`,
 		`INSERT INTO user_tenant(user_id, tenant_id) VALUES ('user-multi', 'tenant-b')`,

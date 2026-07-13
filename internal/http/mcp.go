@@ -24,9 +24,11 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/stek0v/levara/internal/metrics"
 	"github.com/stek0v/levara/pipeline"
+	accesspkg "github.com/stek0v/levara/pkg/access"
 	"github.com/stek0v/levara/pkg/audit"
 	"github.com/stek0v/levara/pkg/llm"
 	"github.com/stek0v/levara/pkg/mcp"
+	"github.com/stek0v/levara/pkg/memoryindex"
 	"github.com/stek0v/levara/pkg/orchestrator"
 	"github.com/stek0v/levara/pkg/rerank"
 	"github.com/stek0v/levara/pkg/router"
@@ -46,6 +48,12 @@ type (
 )
 
 const mcpUserIDKey = mcp.UserIDKey
+const mcpAPIKeyPermissionsKey mcp.ContextKey = "mcp_api_key_permissions"
+const mcpTraceIDKey mcp.ContextKey = "mcp_trace_id"
+
+func configuredMCPToolDescriptors() []mcp.Tool {
+	return mcp.ToolDescriptorsForMode(os.Getenv("LEVARA_MCP_TOOLSET"))
+}
 
 // RegisterMCPAPI registers MCP Streamable HTTP endpoint (spec 2025-03-26).
 // POST /mcp — JSON-RPC requests + notifications
@@ -85,7 +93,8 @@ type mcpHandler struct {
 // DB implements mcp.Deps: exposes the shared *sql.DB to tool functions
 // that have migrated into pkg/mcp. May return nil when no PostgresDSN
 // is configured.
-func (h *mcpHandler) DB() *sql.DB { return h.cfg.DB }
+func (h *mcpHandler) DB() *sql.DB                           { return h.cfg.DB }
+func (h *mcpHandler) MemoryIndexOutbox() *memoryindex.Store { return h.cfg.MemoryIndexOutbox }
 
 // Q implements mcp.Deps: forwards to the package-level Q() so tools in
 // pkg/mcp stay agnostic of internal/http's sqlcompat state.
@@ -502,12 +511,17 @@ func (h *mcpHandler) handleRPC(c *fiber.Ctx) error {
 	// transparent.
 	sessionID := c.Get("Mcp-Session-Id")
 	if req.Method != "initialize" && req.Method != "ping" {
-		userID, authErr := h.authenticateMCPRequest(c)
+		actor, authErr := h.authenticateMCPRequest(c)
 		if authErr != nil {
 			return c.SendStatus(404) // can't establish an owner → client should re-initialize
 		}
-		if sessionID != "" && h.getOrValidateSession(sessionID) == nil {
-			h.adoptSession(sessionID, userID)
+		if sessionID != "" {
+			sess := h.getOrValidateSession(sessionID)
+			if sess == nil {
+				h.adoptSession(sessionID, actor.UserID)
+			} else if sess.UserID != "" && actor.UserID != sess.UserID {
+				return c.SendStatus(404)
+			}
 		}
 	}
 
@@ -518,7 +532,7 @@ func (h *mcpHandler) handleRPC(c *fiber.Ctx) error {
 
 	switch req.Method {
 	case "initialize":
-		userID, authErr := h.authenticateMCPRequest(c)
+		actor, authErr := h.authenticateMCPRequest(c)
 		if authErr != nil {
 			return c.Status(fiber.StatusUnauthorized).JSON(jsonRPCResponse{
 				JSONRPC: "2.0",
@@ -526,13 +540,25 @@ func (h *mcpHandler) handleRPC(c *fiber.Ctx) error {
 				Error:   &rpcError{Code: -32001, Message: authErr.Error()},
 			})
 		}
-		sid := h.createSession(userID)
+		sid := h.createSession(actor.UserID)
+		if sess := h.getOrValidateSession(sid); sess != nil {
+			var params struct {
+				ClientInfo struct {
+					Name    string `json:"name"`
+					Version string `json:"version"`
+				} `json:"clientInfo"`
+			}
+			if json.Unmarshal(req.Params, &params) == nil {
+				sess.ClientName = params.ClientInfo.Name
+				sess.ClientVersion = params.ClientInfo.Version
+			}
+		}
 		c.Set("Mcp-Session-Id", sid)
 		return c.JSON(jsonRPCResponse{
 			JSONRPC: "2.0",
 			ID:      req.ID,
 			Result: map[string]any{
-				"protocolVersion": "2025-03-26",
+				"protocolVersion": mcp.ProtocolVersion,
 				"capabilities": map[string]any{
 					"tools":     map[string]any{},
 					"resources": map[string]any{"subscribe": false, "listChanged": false},
@@ -540,6 +566,11 @@ func (h *mcpHandler) handleRPC(c *fiber.Ctx) error {
 				"serverInfo": map[string]any{
 					"name":    "levara",
 					"version": "1.0.0",
+				},
+				"toolset": map[string]any{
+					"name":              mcp.ToolsetName(os.Getenv("LEVARA_MCP_TOOLSET")),
+					"tool_count":        len(configuredMCPToolDescriptors()),
+					"contract_revision": mcp.AgentContractVersion,
 				},
 				"instructions": "Call the `levara_instructions` tool for the versioned agent contract (memory model, when-to-save rules, observability toolkit, anti-patterns). Contract revision: " + mcp.AgentContractVersion + ".",
 			},
@@ -553,7 +584,7 @@ func (h *mcpHandler) handleRPC(c *fiber.Ctx) error {
 			JSONRPC: "2.0",
 			ID:      req.ID,
 			Result: map[string]any{
-				"tools": mcp.ToolDescriptors(),
+				"tools": configuredMCPToolDescriptors(),
 			},
 		})
 
@@ -600,20 +631,26 @@ func (h *mcpHandler) handleToolCall(c *fiber.Ctx, req jsonRPCRequest) error {
 	// closes the owner_id='' footgun where a client that dropped its
 	// Mcp-Session-Id would otherwise write records with no owner.
 	toolCtx := context.Background()
+	if traceID := firstNonEmpty(c.Get("X-Trace-ID"), c.Get("X-Request-ID")); traceID != "" {
+		toolCtx = context.WithValue(toolCtx, mcpTraceIDKey, traceID)
+	}
 	sessionID := c.Get("Mcp-Session-Id")
 	sess := h.getOrValidateSession(sessionID)
-	userID := ""
-	if uid, err := h.authenticateMCPRequest(c); err == nil && uid != "" {
-		userID = uid
+	actor := accesspkg.Actor{}
+	if authenticated, err := h.authenticateMCPRequest(c); err == nil && authenticated.UserID != "" {
+		actor = authenticated
 	} else if sess != nil {
-		userID = sess.UserID
+		actor.UserID = sess.UserID
 	}
-	if userID != "" {
-		toolCtx = context.WithValue(toolCtx, mcpUserIDKey, userID)
+	if actor.UserID != "" {
+		toolCtx = context.WithValue(toolCtx, mcpUserIDKey, actor.UserID)
+		if actor.APIKeyPermissions != "" {
+			toolCtx = context.WithValue(toolCtx, mcpAPIKeyPermissionsKey, actor.APIKeyPermissions)
+		}
 		// Keep the session's owner in sync so audit/set_context agree with the
 		// identity the tool actually ran as.
 		if sess != nil && sess.UserID == "" {
-			sess.UserID = userID
+			sess.UserID = actor.UserID
 		}
 	}
 
@@ -625,7 +662,15 @@ func (h *mcpHandler) handleToolCall(c *fiber.Ctx, req jsonRPCRequest) error {
 
 func (h *mcpHandler) executeTool(ctx context.Context, sess *mcpSession, name string, args map[string]any) mcpToolResult {
 	toolStart := time.Now()
-	result := h.executeToolInner(ctx, sess, name, args)
+	var result mcpToolResult
+	actor := workspaceActorFromMCP(ctx)
+	if !mcp.ToolAllowedForMode(os.Getenv("LEVARA_MCP_TOOLSET"), name) {
+		result = mcpToolResult{Content: []mcpContent{{Type: "text", Text: "method not found in active MCP toolset"}}, IsError: true}
+	} else if !accesspkg.APIKeyAllows(actor.APIKeyPermissions, mcpToolAction(name)) {
+		result = mcpToolResult{Content: []mcpContent{{Type: "text", Text: "API key permissions denied"}}, IsError: true}
+	} else {
+		result = h.executeToolInner(ctx, sess, name, args)
+	}
 	h.auditWorkspaceTool(ctx, name, args, result)
 	duration := time.Since(toolStart)
 	metrics.MCPToolDuration.WithLabelValues(name).Observe(duration.Seconds())
@@ -636,6 +681,22 @@ func (h *mcpHandler) executeTool(ctx context.Context, sess *mcpSession, name str
 	metrics.MCPToolRequests.WithLabelValues(name, status).Inc()
 	h.recordMCPAudit(ctx, sess, name, args, result, duration)
 	return result
+}
+
+func mcpToolAction(name string) string {
+	switch name {
+	case "search", "workspace_access_check", "workspace_context", "workspace_audit_log",
+		"workspace_ops_status", "workspace_context_artifacts", "workspace_conflicts",
+		"workspace_search", "workspace_read", "workspace_index_jobs", "workspace_watch_status",
+		"workspace_run_get", "workspace_log", "workspace_manifest", "check_drift", "list_data",
+		"cognify_status", "list_communities", "recall_memory", "list_memories", "wake_up",
+		"query_entity", "diary_read", "recall_chat", "search_chats", "get_project_context",
+		"cross_search", "get_feedback_stats", "doctor", "levara_instructions", "runtime_stats",
+		"ingestion_status", "recent_errors", "sync_status", "git_search":
+		return accesspkg.ActionRead
+	default:
+		return accesspkg.ActionWrite
+	}
 }
 
 // recordMCPAudit emits the per-call audit entry (P3.3) plus the
@@ -670,19 +731,65 @@ func (h *mcpHandler) recordMCPAudit(ctx context.Context, sess *mcpSession, name 
 		return
 	}
 	entry := audit.Entry{
-		TS:         time.Now().UTC().Format(time.RFC3339Nano),
-		SessionID:  sessionID,
-		AgentID:    agentID,
-		Tool:       name,
-		Args:       audit.SanitizeArgs(args),
-		LatencyMS:  duration.Milliseconds(),
-		Outcome:    outcome,
-		ResultSize: resultSize,
+		TS:            time.Now().UTC().Format(time.RFC3339Nano),
+		SessionID:     sessionID,
+		AgentID:       agentID,
+		Tool:          name,
+		Args:          audit.SanitizeArgs(args),
+		LatencyMS:     duration.Milliseconds(),
+		Outcome:       outcome,
+		ResultSize:    resultSize,
+		ResponseBytes: resultSize,
+		Toolset:       mcp.ToolsetName(os.Getenv("LEVARA_MCP_TOOLSET")),
 	}
+	if requestJSON, err := json.Marshal(args); err == nil {
+		entry.RequestBytes = len(requestJSON)
+	}
+	if sess != nil {
+		entry.ClientName = sess.ClientName
+		entry.ClientVersion = sess.ClientVersion
+		entry.Collection = mcp.ResolveCollection(sess, args, false)
+	}
+	if entry.Collection == "" {
+		entry.Collection, _ = args["collection"].(string)
+	}
+	entry.ResultCount = auditResultCount(result)
+	entry.ZeroResult = isRetrievalTool(name) && entry.ResultCount == 0 && outcome == audit.OutcomeOK
+	entry.TraceID, _ = ctx.Value(mcpTraceIDKey).(string)
 	if outcome != audit.OutcomeOK && len(result.Content) > 0 {
 		entry.ErrorMessage = truncateAuditField(result.Content[0].Text)
 	}
 	h.cfg.MCPAudit.Log(entry)
+}
+
+func isRetrievalTool(name string) bool {
+	switch name {
+	case "search", "recall_memory", "cross_search", "workspace_search", "query_entity", "git_search", "search_chats":
+		return true
+	default:
+		return false
+	}
+}
+
+func auditResultCount(result mcpToolResult) int {
+	if len(result.Content) == 0 || result.Content[0].Text == "" {
+		return 0
+	}
+	var payload any
+	if json.Unmarshal([]byte(result.Content[0].Text), &payload) != nil {
+		return 0
+	}
+	switch value := payload.(type) {
+	case []any:
+		return len(value)
+	case map[string]any:
+		for _, key := range []string{"results", "memories", "entities", "hits", "items", "rows"} {
+			if rows, ok := value[key].([]any); ok {
+				return len(rows)
+			}
+		}
+	}
+	return 0
 }
 
 func (h *mcpHandler) executeToolInner(ctx context.Context, sess *mcpSession, name string, args map[string]any) mcpToolResult {
@@ -794,7 +901,9 @@ func (h *mcpHandler) executeToolInner(ctx context.Context, sess *mcpSession, nam
 	case "list_memories":
 		return h.toolListMemories(ctx, args)
 	case "consolidate":
-		return h.toolConsolidate(ctx, args)
+		return h.toolConsolidateAsync(ctx, args)
+	case "consolidation_status":
+		return h.toolConsolidationStatus(ctx, args)
 	case "consolidation_revert":
 		return h.toolConsolidationRevert(ctx, args)
 	case "save_chat":
@@ -843,6 +952,10 @@ func (h *mcpHandler) executeToolInner(ctx context.Context, sess *mcpSession, nam
 		return h.toolRecentErrors(ctx, args)
 	case "reconcile_memory":
 		return h.toolReconcileMemory(ctx, args)
+	case "memory_index_status":
+		return h.toolMemoryIndexStatus(ctx, args)
+	case "memory_index_retry":
+		return h.toolMemoryIndexRetry(ctx, args)
 	case "sync_status":
 		return h.toolSyncStatus(ctx, args)
 	case "levara_instructions":
@@ -1121,6 +1234,9 @@ func (h *mcpHandler) handleSSEStream(c *fiber.Ctx) error {
 	if sess == nil {
 		return c.SendStatus(404)
 	}
+	if !h.requestOwnsMCPSession(c, sess) {
+		return c.SendStatus(404)
+	}
 
 	c.Set("Content-Type", "text/event-stream")
 	c.Set("Cache-Control", "no-cache")
@@ -1156,8 +1272,26 @@ func (h *mcpHandler) handleDeleteSession(c *fiber.Ctx) error {
 	if sessionID == "" {
 		return c.SendStatus(400)
 	}
+	sess := h.getOrValidateSession(sessionID)
+	if sess == nil || !h.requestOwnsMCPSession(c, sess) {
+		return c.SendStatus(404)
+	}
 	h.deleteSession(sessionID)
 	return c.SendStatus(204)
+}
+
+func (h *mcpHandler) requestOwnsMCPSession(c *fiber.Ctx, sess *mcpSession) bool {
+	if sess == nil {
+		return false
+	}
+	actor, err := h.authenticateMCPRequest(c)
+	if err != nil {
+		return false
+	}
+	if sess.UserID == "" {
+		return !h.cfg.RequireAuth || actor.UserID != ""
+	}
+	return actor.UserID != "" && actor.UserID == sess.UserID
 }
 
 // MCPHealthHandler returns MCP-specific health info.
@@ -1167,7 +1301,7 @@ func MCPHealthHandler() fiber.Handler {
 			"status":  "ok",
 			"server":  "levara-mcp",
 			"version": "1.0.0",
-			"tools":   len(mcp.ToolDescriptors()),
+			"tools":   len(configuredMCPToolDescriptors()),
 		})
 	}
 }

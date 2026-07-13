@@ -52,8 +52,8 @@ func TestProvisionerDeactivationDeniesThroughPolicy(t *testing.T) {
 	if d, err := policy.AuthorizeWorkspace(ctx, wsReq); err != nil || !d.Allowed || d.Reason != "owner" {
 		t.Fatalf("pre-deactivation workspace decision=%+v err=%v, want owner allow", d, err)
 	}
-	if d, err := policy.Authorize(ctx, dsActor, dsRes, ActionRead); err != nil || !d.Allowed || d.Reason != "dataset_access" {
-		t.Fatalf("pre-deactivation dataset decision=%+v err=%v, want dataset_access allow", d, err)
+	if d, err := policy.Authorize(ctx, dsActor, dsRes, ActionRead); err != nil || !d.Allowed || d.Reason != "owner" {
+		t.Fatalf("pre-deactivation dataset decision=%+v err=%v, want owner allow", d, err)
 	}
 
 	// Deactivate through the provisioner; the shared policy layer now denies both.

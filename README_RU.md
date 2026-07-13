@@ -12,6 +12,10 @@ Levara помогает агентам сохранять решения, фак
 Русская версия является кратким вводным документом. Полное MDX-описание проекта, архитектуры и команд см. в `README.md`.
 </Callout>
 
+<Callout type="warning">
+Фактическое локальное состояние Mac-развёртывания описано в `docs/current-state.md`: сейчас Levara работает через launchd на `:8081`, профиль `standalone-embed`, embedding `potion-code-16M`/256d на `:9101`, PostgreSQL и локальный LLM подключены, gRPC/Neo4j/rerank выключены.
+</Callout>
+
 ## Для кого
 
 | Профиль | Целевая аудитория | База | Auth | Хранилище | Enterprise gate |
@@ -34,7 +38,25 @@ Levara помогает агентам сохранять решения, фак
 ## Быстрый старт
 
 ```bash
-go run ./cmd/server -standalone=true -dim=768 -port=8080
+go run ./cmd/server \
+  -profile=standalone \
+  -dim=768 \
+  -port=8080 \
+  -grpc-port=0
+```
+
+Текущий локальный Mac-запуск использует другой набор флагов:
+
+```bash
+./levara-server \
+  -profile=standalone-embed \
+  -dim=256 \
+  -port=8081 \
+  -grpc-port=0 \
+  -data-dir=/Users/stek0v/src/levara/data \
+  -embed-endpoint=http://127.0.0.1:9101/v1/embeddings \
+  -embed-model=potion-code-16M \
+  -llm-upstream=http://localhost:11434/v1
 ```
 
 Для проверки продуктовых профилей:
@@ -54,6 +76,9 @@ go test ./docs ./pkg/profile ./pkg/access ./pkg/storage
 | Документ | Назначение |
 |---|---|
 | `README.md` | Полное MDX-введение, структура репозитория, команды и API surfaces |
+| `docs/current-state.md` | Проверенное фактическое состояние локального Mac runtime |
+| `docs/getting-started.md` | Актуальный быстрый старт и команды проверки |
+| `docs/deployment.md` | Реальные launchd/systemd/Docker рецепты |
 | `docs/product-ladder.md` | Продуктовая лестница Personal → Solo Pro → Team → Enterprise |
 | `docs/profile-presets.md` | Правила конфигурации и fail-fast gates для профилей |
 | `docs/security/enterprise-readiness-checklist.md` | Security checklist перед Team/Enterprise rollout |

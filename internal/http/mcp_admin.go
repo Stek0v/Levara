@@ -42,7 +42,7 @@ func mcpAdminToolsHandler() fiber.Handler {
 				Status string
 			}{Group: item.Group, Status: string(item.Status)}
 		}
-		descriptors := mcp.ToolDescriptors()
+		descriptors := configuredMCPToolDescriptors()
 		tools := make([]mcpAdminTool, 0, len(descriptors))
 		for _, descriptor := range descriptors {
 			meta := byName[descriptor.Name]

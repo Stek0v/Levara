@@ -28,7 +28,7 @@ mv levara-server.new levara-server
 
 # Qwen embed + rerank sidecars (see docs/MIGRATION-QWEN3.md)
 if [ -f docker-compose.qwen3.yml ]; then
-  docker compose -f docker-compose.qwen3.yml up -d qwen3-embed qwen3-rerank-llm qwen3-rerank-front || true
+  docker compose -f docker-compose.yml -f docker-compose.qwen3.yml up -d qwen3-embed qwen3-rerank-llm qwen3-rerank-front || true
 fi
 
 if sudo -n systemctl restart levara 2>/dev/null; then

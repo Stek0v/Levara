@@ -338,6 +338,9 @@ export const levara = {
   // MCP/Admin observability
   mcpTools: () => api<MCPToolsResponse>('/api/v1/admin/mcp/tools'),
   mcpSummary: () => api<MCPAdminSummary>('/api/v1/admin/mcp/summary'),
+  mcpAnalytics: (hours = 24) => api<MCPAnalyticsResponse>(`/api/v1/mcp-analytics?hours=${hours}`),
+  implicitFeedback: () => api<{ total: number; by_signal: Record<string, number> }>('/api/v1/feedback/implicit'),
+  memoryIndexStatus: () => api<{ counts: Record<string, number>; jobs: Array<{ id: string; status: string; attempts: number; last_error?: string }> }>('/api/v1/memory-index/status'),
   mcpSessions: (limit = 20) => api<MCPSessionsResponse>(`/api/v1/admin/mcp/sessions?limit=${limit}`),
 }
 
@@ -1045,4 +1048,23 @@ export interface MCPAdminSummary {
 export interface MCPSessionsResponse {
   sessions: MCPSessionSummary[]
   total: number
+}
+
+export interface MCPAnalyticsSummary {
+  total: number
+  errors: number
+  zero_results: number
+  error_rate: number
+  zero_result_rate: number
+  p50_ms: number
+  p95_ms: number
+  p99_ms: number
+  by_tool: Record<string, number>
+  by_outcome: Record<string, number>
+  projection_dropped: number
+}
+
+export interface MCPAnalyticsResponse {
+  window_hours: number
+  summary: MCPAnalyticsSummary
 }

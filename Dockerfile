@@ -1,4 +1,4 @@
-FROM golang:1.26-alpine AS builder
+FROM golang:1.26.5-alpine AS builder
 
 WORKDIR /app
 
@@ -13,13 +13,19 @@ COPY . .
 # CGO disabled keeps the image static; ldflags strip debug info.
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o levara ./cmd/server/
 
-FROM alpine:latest
+FROM alpine:3.21
 
 WORKDIR /app
 
-RUN mkdir -p data
+ENV LEVARA_HTTP_HOST=0.0.0.0 \
+    LEVARA_GRPC_HOST=0.0.0.0
 
-COPY --from=builder /app/levara .
+RUN addgroup -S levara && adduser -S -G levara -h /app levara \
+    && mkdir -p data && chown -R levara:levara /app
+
+COPY --from=builder --chown=levara:levara /app/levara .
+
+USER levara
 
 # 8080 = HTTP API + Swagger UI; 50051 = gRPC (v1 + v2 on the same port).
 EXPOSE 8080 50051

@@ -473,3 +473,24 @@ func TestToolDescriptors_RequiredCoreTools(t *testing.T) {
 		}
 	}
 }
+
+func TestToolProfilesAreExplicitAndBackwardCompatible(t *testing.T) {
+	if ToolsetName("") != "full" || ToolsetName("unknown") != "full" || ToolsetName("light") != "memory" {
+		t.Fatalf("unexpected toolset resolution: empty=%s unknown=%s light=%s", ToolsetName(""), ToolsetName("unknown"), ToolsetName("light"))
+	}
+	full := ToolDescriptorsForMode("full")
+	core := ToolDescriptorsForMode("core")
+	if len(core) == 0 || len(core)*100 > len(full)*40 {
+		t.Fatalf("core size=%d full=%d, want at least 60%% reduction", len(core), len(full))
+	}
+	for _, forbidden := range []string{"delete", "workspace_delete", "sync", "consolidate"} {
+		if ToolAllowedForMode("core", forbidden) {
+			t.Errorf("core unexpectedly allows %s", forbidden)
+		}
+	}
+	for _, required := range []string{"levara_instructions", "set_context", "wake_up", "save_memory", "recall_memory", "search", "doctor"} {
+		if !ToolAllowedForMode("core", required) {
+			t.Errorf("core missing %s", required)
+		}
+	}
+}

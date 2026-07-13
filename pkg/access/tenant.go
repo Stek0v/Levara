@@ -34,6 +34,34 @@ func (p SQLPolicy) DefaultTenantForUser(ctx context.Context, userID string) (str
 	return tenantID, nil
 }
 
+// CanManageTenant reports whether userID may change tenant membership. Tenant
+// owners and global superusers are managers; missing users/tenants and empty
+// identities are denied. Database failures are returned so transports fail
+// closed instead of silently granting administrative access.
+func (p SQLPolicy) CanManageTenant(ctx context.Context, userID, tenantID string) (bool, error) {
+	if p.DB == nil || userID == "" || tenantID == "" {
+		return false, nil
+	}
+	if superuser, err := p.IsSuperuser(ctx, userID); err != nil {
+		return false, err
+	} else if superuser {
+		return true, nil
+	}
+
+	var ownerID string
+	err := p.DB.QueryRowContext(ctx,
+		p.rewrite("SELECT owner_id FROM tenants WHERE id = $1"),
+		tenantID,
+	).Scan(&ownerID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return ownerID == userID, nil
+}
+
 // TenantOwnerFilterSQL returns the SQL fragment that restricts a query to rows
 // whose owner_id belongs to tenantID, plus its bind args. An empty tenantID
 // yields ("", nil) — the no-isolation (dev / single-user) path. startIdx is the
