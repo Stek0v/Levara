@@ -48,31 +48,7 @@ func (p SQLPolicy) Authorize(ctx context.Context, actor Actor, res Resource, act
 			APIKeyPermissions: actor.APIKeyPermissions,
 		})
 	case ResourceDataset:
-		// Dataset access is binary per the existing Levara contract: ownership
-		// or any share row grants access regardless of role. API-key permissions
-		// still gate the action so denied keys cannot read or write, and a
-		// deactivated account is denied first through the shared activation gate
-		// — the same IsActive check the workspace facade uses.
-		decision := Decision{
-			Authenticated: actor.UserID != "",
-			APIKeyAllowed: APIKeyAllows(actor.APIKeyPermissions, action),
-		}
-		active, err := p.IsActive(ctx, actor.UserID)
-		if err != nil {
-			return decision, err
-		}
-		switch {
-		case !active:
-			decision.Reason = "user_inactive"
-		case !decision.APIKeyAllowed:
-			decision.Reason = "api_key_permissions_denied"
-		case p.CanAccessDataset(ctx, res.ID, actor.UserID):
-			decision.Allowed = true
-			decision.Reason = "dataset_access"
-		default:
-			decision.Reason = "denied"
-		}
-		return decision, nil
+		return p.AuthorizeDataset(ctx, actor, res.ID, action)
 	default:
 		return Decision{}, fmt.Errorf("access: unknown resource kind %q", res.Kind)
 	}

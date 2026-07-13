@@ -3,6 +3,8 @@ package mcp
 import (
 	"context"
 	"strconv"
+
+	"github.com/stek0v/levara/pkg/memoryindex"
 )
 
 // ToolDeleteMemory permanently removes a memory by key — both the SQL row
@@ -84,9 +86,34 @@ func ToolDeleteMemory(ctx context.Context, deps Deps, args map[string]any) ToolR
 	if collectionName != "" {
 		delSQL += ` AND collection_name = $3`
 	}
-	if _, err := db.ExecContext(ctx, deps.Q(delSQL), qargs...); err != nil {
+	var deleteErr error
+	queued := false
+	if provider, ok := deps.(interface{ MemoryIndexOutbox() *memoryindex.Store }); ok && provider.MemoryIndexOutbox() != nil {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			deleteErr = err
+		} else {
+			defer tx.Rollback()
+			_, deleteErr = tx.ExecContext(ctx, deps.Q(delSQL), qargs...)
+			if deleteErr == nil {
+				for _, target := range targets {
+					_, deleteErr = provider.MemoryIndexOutbox().EnqueueTx(ctx, tx, memoryindex.Job{MemoryID: target.id, Operation: "delete_vector", Collection: target.collection, OwnerID: ownerID, Digest: "delete:" + target.id})
+					if deleteErr != nil {
+						break
+					}
+				}
+			}
+			if deleteErr == nil {
+				deleteErr = tx.Commit()
+				queued = deleteErr == nil
+			}
+		}
+	} else {
+		_, deleteErr = db.ExecContext(ctx, deps.Q(delSQL), qargs...)
+	}
+	if deleteErr != nil {
 		return ToolResult{
-			Content: []Content{{Type: "text", Text: "Error: " + err.Error()}},
+			Content: []Content{{Type: "text", Text: "Error: " + deleteErr.Error()}},
 			IsError: true,
 		}
 	}
@@ -94,7 +121,7 @@ func ToolDeleteMemory(ctx context.Context, deps Deps, args map[string]any) ToolR
 	// Best-effort vector cleanup so the record stops surfacing in recall
 	// (unfiltered recall returns vector metadata directly). We don't fail the
 	// delete if a sidecar drop errors — reconcile_memory reaps the orphan.
-	if deps.HasCollections() {
+	if !queued && deps.HasCollections() {
 		for _, t := range targets {
 			_ = deps.CollectionDelete(memoryCollectionName(t.collection), t.id)
 		}

@@ -131,6 +131,97 @@ func (p SQLPolicy) AuthorizeWorkspace(ctx context.Context, req WorkspaceRequest)
 	return decision, nil
 }
 
+// AuthorizeDataset applies object-level dataset permissions. Public datasets
+// are readable but immutable to regular authenticated users; owners and
+// superusers are administrators, and shares honor their viewer/editor/admin
+// role. SQL failures are returned so callers fail closed.
+func (p SQLPolicy) AuthorizeDataset(ctx context.Context, actor Actor, datasetID, action string) (Decision, error) {
+	action = normalizeAction(action)
+	decision := Decision{
+		Authenticated: actor.UserID != "",
+		APIKeyAllowed: APIKeyAllows(actor.APIKeyPermissions, action),
+	}
+	if datasetID == "" {
+		decision.Reason = "denied"
+		return decision, nil
+	}
+	if !decision.APIKeyAllowed {
+		decision.Reason = "api_key_permissions_denied"
+		return decision, nil
+	}
+	if p.DB == nil || actor.UserID == "" {
+		decision.Allowed = true
+		decision.Role = RoleAdmin
+		decision.Reason = "dev_mode"
+		decision.DevMode = true
+		return decision, nil
+	}
+	if active, err := p.IsActive(ctx, actor.UserID); err != nil {
+		return decision, err
+	} else if !active {
+		decision.Reason = "user_inactive"
+		return decision, nil
+	}
+	if superuser, err := p.IsSuperuser(ctx, actor.UserID); err != nil {
+		return decision, err
+	} else if superuser {
+		decision.Allowed = true
+		decision.Role = RoleAdmin
+		decision.Reason = "superuser"
+		return decision, nil
+	}
+
+	var ownerID string
+	err := p.DB.QueryRowContext(ctx,
+		p.rewrite("SELECT COALESCE(owner_id, '') FROM datasets WHERE id = $1"),
+		datasetID,
+	).Scan(&ownerID)
+	if errors.Is(err, sql.ErrNoRows) {
+		decision.Reason = "denied"
+		return decision, nil
+	}
+	if err != nil {
+		return decision, err
+	}
+	if ownerID == actor.UserID {
+		decision.Allowed = true
+		decision.Role = RoleAdmin
+		decision.Reason = "owner"
+		return decision, nil
+	}
+	if ownerID == "" {
+		decision.Role = RoleViewer
+		decision.Allowed = action == ActionRead
+		if decision.Allowed {
+			decision.Reason = "public"
+		} else {
+			decision.Reason = "public_read_only"
+		}
+		return decision, nil
+	}
+
+	var role string
+	err = p.DB.QueryRowContext(ctx,
+		p.rewrite("SELECT role FROM dataset_shares WHERE dataset_id = $1 AND user_id = $2"),
+		datasetID, actor.UserID,
+	).Scan(&role)
+	if errors.Is(err, sql.ErrNoRows) {
+		decision.Reason = "denied"
+		return decision, nil
+	}
+	if err != nil {
+		return decision, err
+	}
+	decision.Role = strings.ToLower(role)
+	decision.Allowed = RoleAllows(role, action)
+	if decision.Allowed {
+		decision.Reason = "shared_" + decision.Role
+	} else {
+		decision.Reason = "role_insufficient"
+	}
+	return decision, nil
+}
+
 func (p SQLPolicy) rewrite(query string) string {
 	if p.Q == nil {
 		return query
@@ -188,14 +279,15 @@ func (p SQLPolicy) IsActive(ctx context.Context, userID string) (bool, error) {
 }
 
 // AllowedDatasetIDs returns dataset IDs the user owns or has been granted.
-// Nil means no filtering, matching the existing Levara search contract for
-// dev mode, anonymous requests, superusers, and SQL fallback errors.
+// Nil means no filtering for dev mode, anonymous requests, and superusers.
+// SQL errors return an explicit empty slice so callers filter out every
+// dataset rather than exposing all data.
 func (p SQLPolicy) AllowedDatasetIDs(ctx context.Context, userID string) []string {
 	if p.DB == nil || userID == "" {
 		return nil
 	}
 
-	if super, _ := p.IsSuperuser(ctx, userID); super {
+	if super, err := p.IsSuperuser(ctx, userID); err == nil && super {
 		return nil
 	}
 
@@ -204,16 +296,20 @@ func (p SQLPolicy) AllowedDatasetIDs(ctx context.Context, userID string) []strin
 		 WHERE d.owner_id = $1 OR d.owner_id = '' OR d.owner_id IS NULL OR s.id IS NOT NULL`, userID)
 	rows, err := p.DB.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil
+		return []string{}
 	}
 	defer rows.Close()
 
 	ids := []string{}
 	for rows.Next() {
 		var id string
-		if err := rows.Scan(&id); err == nil {
-			ids = append(ids, id)
+		if err := rows.Scan(&id); err != nil {
+			return []string{}
 		}
+		ids = append(ids, id)
+	}
+	if rows.Err() != nil {
+		return []string{}
 	}
 	return ids
 }

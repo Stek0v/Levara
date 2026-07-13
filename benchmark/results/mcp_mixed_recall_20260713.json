@@ -1,0 +1,24 @@
+{
+  "url": "http://127.0.0.1:18083",
+  "tool": "recall_memory",
+  "target_rps": 20.0,
+  "duration_target_s": 120,
+  "elapsed_s": 120.026,
+  "scheduled": 2400,
+  "completed": 2400,
+  "achieved_rps": 19.996,
+  "error_count": 0,
+  "error_rate": 0.0,
+  "latency_ms": {
+    "p50": 12.399,
+    "p95": 24.48,
+    "p99": 47.583
+  },
+  "schedule_lag_ms": {
+    "p50": 1.009,
+    "p95": 1.198,
+    "p99": 1.61
+  },
+  "max_rss_kb_generator": 42729472,
+  "errors_sample": []
+}

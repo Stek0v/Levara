@@ -641,12 +641,11 @@ func workspaceActorFromFiber(c *fiber.Ctx) accesspkg.Actor {
 	return accesspkg.Actor{UserID: userID, APIKeyPermissions: perms, TenantID: tenantID}
 }
 
-// workspaceActorFromMCP builds the access.Actor from MCP session context. MCP
-// sessions carry only the resolved user id; API-key permissions are an HTTP
-// edge concern, so they stay empty here (no api-key gate for MCP).
+// workspaceActorFromMCP builds the access.Actor from MCP call context.
 func workspaceActorFromMCP(ctx context.Context) accesspkg.Actor {
 	userID, _ := ctx.Value(mcpUserIDKey).(string)
-	return accesspkg.Actor{UserID: userID}
+	permissions, _ := ctx.Value(mcpAPIKeyPermissionsKey).(string)
+	return accesspkg.Actor{UserID: userID, APIKeyPermissions: permissions}
 }
 
 // authorizeWorkspace is the single shared decision used by both transports.

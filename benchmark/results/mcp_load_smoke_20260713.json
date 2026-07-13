@@ -1,0 +1,24 @@
+{
+  "url": "http://127.0.0.1:18082",
+  "tool": "heartbeat",
+  "target_rps": 50.0,
+  "duration_target_s": 2,
+  "elapsed_s": 1.999,
+  "scheduled": 100,
+  "completed": 100,
+  "achieved_rps": 50.029,
+  "error_count": 0,
+  "error_rate": 0.0,
+  "latency_ms": {
+    "p50": 0.932,
+    "p95": 6.604,
+    "p99": 33.997
+  },
+  "schedule_lag_ms": {
+    "p50": 0.258,
+    "p95": 1.562,
+    "p99": 45.431
+  },
+  "max_rss_kb_generator": 42369024,
+  "errors_sample": []
+}

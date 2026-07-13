@@ -73,6 +73,9 @@ func resolveDCDRouteCandidates(ctx context.Context, db *sql.DB, query string, sc
 }
 
 func loadDCDRouteRows(ctx context.Context, db *sql.DB, scope dcdRouteScope) ([]dcdRouteRow, error) {
+	if scope.AllowedDatasetIDs != nil && len(scope.AllowedDatasetIDs) == 0 {
+		return []dcdRouteRow{}, nil
+	}
 	query := `SELECT
 		d.id, d.name, COALESCE(d.description, ''), COALESCE(d.aliases_json, '[]'),
 		COALESCE(c.id, ''), COALESCE(c.name, ''), COALESCE(c.description, ''), COALESCE(c.aliases_json, '[]'),

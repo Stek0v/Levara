@@ -13,8 +13,8 @@ class FakeHTTP:
 
 
 GOOD = FakeHTTP({
-    ("GET",  "http://10.23.0.53:9101/health"):   {"model": "potion-code-16M", "dim": 256, "backend": "model2vec", "ram_mb": 120},
-    ("POST", "http://10.23.0.53:9101/v1/embeddings"): {"data": [{"embedding": [0.0] * 256, "index": 0}], "model": "potion-code-16M"},
+    ("GET",  "http://10.23.0.53:9201/health"):   {"model": "potion-code-16M", "dim": 256, "backend": "model2vec", "ram_mb": 120},
+    ("POST", "http://10.23.0.53:9201/v1/embeddings"): {"data": [{"embedding": [0.0] * 256, "index": 0}], "model": "potion-code-16M"},
     ("GET",  "http://10.23.0.53:8091/health"):   {"status": "ok"},
     ("GET",  "http://10.23.0.53:11434/api/tags"): {"models": [{"name": "qwen3:0.6b"}]},
     ("GET",  "http://10.23.0.53:9100/health"):    {"status": "ok"},
@@ -32,7 +32,7 @@ def test_all_checks_pass_for_good_stack():
 def test_fails_on_sidecar_dim_mismatch():
     bad = FakeHTTP({
         **GOOD.routes,
-        ("GET", "http://10.23.0.53:9101/health"): {"model": "potion-code-16M", "dim": 999, "backend": "model2vec", "ram_mb": 120},
+        ("GET", "http://10.23.0.53:9201/health"): {"model": "potion-code-16M", "dim": 999, "backend": "model2vec", "ram_mb": 120},
     })
     checks = Checks(model_short="potion", expected_dim=256, expected_openai_name="potion-code-16M")
     result = run_checks(checks, http=bad)
@@ -54,7 +54,7 @@ def test_fails_on_missing_llm():
 def test_fails_on_embed_vector_length_mismatch():
     bad = FakeHTTP({
         **GOOD.routes,
-        ("POST", "http://10.23.0.53:9101/v1/embeddings"): {"data": [{"embedding": [0.0] * 7, "index": 0}], "model": "potion-code-16M"},
+        ("POST", "http://10.23.0.53:9201/v1/embeddings"): {"data": [{"embedding": [0.0] * 7, "index": 0}], "model": "potion-code-16M"},
     })
     checks = Checks(model_short="potion", expected_dim=256, expected_openai_name="potion-code-16M")
     result = run_checks(checks, http=bad)

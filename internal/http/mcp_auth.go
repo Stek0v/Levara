@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
+	accesspkg "github.com/stek0v/levara/pkg/access"
 )
 
 // bearerToken extracts the Bearer token from an Authorization header.
@@ -30,16 +31,16 @@ func firstNonEmpty(values ...string) string {
 }
 
 // authenticateMCPRequest verifies the caller's identity from API key or JWT.
-func (h *mcpHandler) authenticateMCPRequest(c *fiber.Ctx) (string, error) {
+func (h *mcpHandler) authenticateMCPRequest(c *fiber.Ctx) (accesspkg.Actor, error) {
 	if apiKey := firstNonEmpty(c.Get("X-API-Key"), c.Get("X-Api-Key")); apiKey != "" {
 		if h.cfg.DB == nil {
-			return "", fmt.Errorf("database required for API key auth")
+			return accesspkg.Actor{}, fmt.Errorf("database required for API key auth")
 		}
 		id := verifyAPIKey(h.cfg.DB, apiKey)
 		if !id.Valid() {
-			return "", fmt.Errorf("invalid API key")
+			return accesspkg.Actor{}, fmt.Errorf("invalid API key")
 		}
-		return id.UserID, nil
+		return accesspkg.Actor{UserID: id.UserID, APIKeyPermissions: id.Permissions, AuthMethod: "api_key"}, nil
 	}
 
 	token := bearerToken(c.Get("Authorization"))
@@ -48,16 +49,16 @@ func (h *mcpHandler) authenticateMCPRequest(c *fiber.Ctx) (string, error) {
 	}
 	if token == "" {
 		if h.cfg.RequireAuth {
-			return "", fmt.Errorf("authorization required")
+			return accesspkg.Actor{}, fmt.Errorf("authorization required")
 		}
-		return "", nil
+		return accesspkg.Actor{}, nil
 	}
 	if h.cfg.JWTSecret == "" {
-		return "", fmt.Errorf("JWT secret not configured")
+		return accesspkg.Actor{}, fmt.Errorf("JWT secret not configured")
 	}
 	payload, ok := verifyJWT(token, h.cfg.JWTSecret)
 	if !ok {
-		return "", fmt.Errorf("invalid token")
+		return accesspkg.Actor{}, fmt.Errorf("invalid token")
 	}
-	return payload.Sub, nil
+	return accesspkg.Actor{UserID: payload.Sub, AuthMethod: "jwt"}, nil
 }

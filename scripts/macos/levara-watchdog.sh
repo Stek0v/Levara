@@ -4,7 +4,7 @@ set -euo pipefail
 # macOS Levara watchdog.
 #
 # Intended to run from launchd every 60-300 seconds. It checks:
-#   - Levara /health availability;
+#   - Levara /health/details dependency readiness;
 #   - /api/v1/errors if the server exposes ErrorTracker records;
 #   - new local log lines for panic/error patterns.
 #
@@ -82,14 +82,22 @@ http_get() {
 }
 
 check_health() {
-  local body
-  body="$(http_get "$LEVARA_URL/health")"
+  local body degraded
+  body="$(http_get "$LEVARA_URL/health/details")"
   if [[ -z "$body" ]]; then
-    alert_once "health-unreachable" "Backend unreachable" "$LEVARA_URL/health did not respond"
+    alert_once "health-unreachable" "Backend unreachable" "$LEVARA_URL/health/details did not respond"
     return
   fi
-  if ! printf '%s' "$body" | grep -Eq '"(status|health)"[[:space:]]*:[[:space:]]*"(ok|ready|healthy)"'; then
-    alert_once "health-degraded" "Backend degraded" "$(printf '%s' "$body" | tr '\n' ' ' | cut -c1-220)"
+  degraded="$(printf '%s' "$body" | /usr/bin/python3 -c '
+import json, sys
+services = json.load(sys.stdin).get("services", {})
+bad = {"error", "fail", "unavailable", "unreachable"}
+items = [f"{name}={details.get('"'"'status'"'"')}" for name, details in services.items()
+         if isinstance(details, dict) and details.get("status") in bad]
+print(", ".join(sorted(items)))
+' 2>/dev/null || echo "invalid health response")"
+  if [[ -n "$degraded" ]]; then
+    alert_once "health-degraded" "Backend degraded" "$degraded"
   fi
 }
 

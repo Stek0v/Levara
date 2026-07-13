@@ -9,6 +9,7 @@
 package audit
 
 import (
+	"bufio"
 	"compress/gzip"
 	"encoding/json"
 	"fmt"
@@ -23,6 +24,7 @@ import (
 )
 
 const maxFieldChars = 256
+const maxSanitizeDepth = 6
 
 // Outcome classifies how a tool call ended. The set is closed; new
 // values should be added to outcomeValues for metric label allow-listing.
@@ -49,17 +51,26 @@ func AllOutcomes() []Outcome {
 // Entry is the on-wire schema. Field order is stable; new fields must
 // be appended so log consumers can rely on positional readers if needed.
 type Entry struct {
-	TS           string         `json:"ts"`
-	RequestID    string         `json:"request_id,omitempty"`
-	SessionID    string         `json:"session_id,omitempty"`
-	AgentID      string         `json:"agent_id,omitempty"`
-	Tool         string         `json:"tool"`
-	Args         map[string]any `json:"args,omitempty"`
-	LatencyMS    int64          `json:"latency_ms"`
-	Outcome      Outcome        `json:"outcome"`
-	ResultSize   int            `json:"result_size,omitempty"`
-	ErrorCode    string         `json:"error_code,omitempty"`
-	ErrorMessage string         `json:"error_message,omitempty"`
+	TS            string         `json:"ts"`
+	RequestID     string         `json:"request_id,omitempty"`
+	SessionID     string         `json:"session_id,omitempty"`
+	AgentID       string         `json:"agent_id,omitempty"`
+	Tool          string         `json:"tool"`
+	Args          map[string]any `json:"args,omitempty"`
+	LatencyMS     int64          `json:"latency_ms"`
+	Outcome       Outcome        `json:"outcome"`
+	ResultSize    int            `json:"result_size,omitempty"`
+	ErrorCode     string         `json:"error_code,omitempty"`
+	ErrorMessage  string         `json:"error_message,omitempty"`
+	ClientName    string         `json:"client_name,omitempty"`
+	ClientVersion string         `json:"client_version,omitempty"`
+	Toolset       string         `json:"toolset,omitempty"`
+	Collection    string         `json:"collection,omitempty"`
+	ResultCount   int            `json:"result_count,omitempty"`
+	ZeroResult    bool           `json:"zero_result,omitempty"`
+	RequestBytes  int            `json:"request_bytes,omitempty"`
+	ResponseBytes int            `json:"response_bytes,omitempty"`
+	TraceID       string         `json:"trace_id,omitempty"`
 }
 
 // Sink is the abstract write-side of an audit log. Both Logger (plain
@@ -138,21 +149,50 @@ func SanitizeArgs(args map[string]any) map[string]any {
 	}
 	out := make(map[string]any, len(args))
 	for k, v := range args {
-		if isSecretKey(k) {
-			continue
+		if sanitized, ok := sanitizeValue(k, v, 0); ok {
+			out[k] = sanitized
 		}
-		if isVectorKey(k) {
-			out[k] = vectorDescriptor(v)
-			continue
-		}
-		out[k] = clamp(v)
 	}
 	return out
 }
 
+func sanitizeValue(key string, value any, depth int) (any, bool) {
+	if isSecretKey(key) {
+		return nil, false
+	}
+	if isVectorKey(key) {
+		return vectorDescriptor(value), true
+	}
+	if depth >= maxSanitizeDepth {
+		return "<max-depth>", true
+	}
+	switch v := value.(type) {
+	case string:
+		return truncate(v), true
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for nestedKey, nestedValue := range v {
+			if sanitized, ok := sanitizeValue(nestedKey, nestedValue, depth+1); ok {
+				out[nestedKey] = sanitized
+			}
+		}
+		return out, true
+	case []any:
+		out := make([]any, 0, len(v))
+		for _, nestedValue := range v {
+			if sanitized, ok := sanitizeValue("", nestedValue, depth+1); ok {
+				out = append(out, sanitized)
+			}
+		}
+		return out, true
+	default:
+		return v, true
+	}
+}
+
 func isSecretKey(k string) bool {
 	low := strings.ToLower(k)
-	if low == "password" || low == "secret" || low == "api_key" {
+	if low == "password" || low == "secret" || low == "api_key" || low == "authorization" || low == "cookie" || low == "set-cookie" {
 		return true
 	}
 	return strings.HasSuffix(low, "_token") || low == "token"
@@ -194,21 +234,6 @@ func normFloat64(v []float64) float64 {
 	return math.Sqrt(s)
 }
 
-func clamp(v any) any {
-	switch vv := v.(type) {
-	case string:
-		return truncate(vv)
-	case map[string]any, []any:
-		b, err := json.Marshal(vv)
-		if err != nil {
-			return "<unmarshalable>"
-		}
-		return truncate(string(b))
-	default:
-		return v
-	}
-}
-
 func truncate(s string) string {
 	if len(s) <= maxFieldChars {
 		return s
@@ -228,7 +253,10 @@ type FileLogger struct {
 	mu            sync.Mutex
 	currentDay    string
 	currentFile   *os.File
+	currentBuffer *bufio.Writer
 	currentLogger *Logger
+	bufferedLines int
+	lastFlush     time.Time
 }
 
 // NewFileLogger opens (or creates) a daily-rolling audit log under dir.
@@ -256,13 +284,20 @@ func (fl *FileLogger) Log(e Entry) {
 	now := time.Now().UTC()
 	day := now.Format("2006-01-02")
 	fl.mu.Lock()
+	defer fl.mu.Unlock()
 	if day != fl.currentDay {
 		_ = fl.rotateLocked(now)
 	}
-	logger := fl.currentLogger
-	fl.mu.Unlock()
-	if logger != nil {
-		logger.Log(e)
+	if fl.currentLogger != nil {
+		fl.currentLogger.Log(e)
+		fl.bufferedLines++
+		// Amortize filesystem writes while keeping the unflushed crash window
+		// bounded to a small number of events.
+		if fl.currentBuffer != nil && (fl.bufferedLines >= 256 || now.Sub(fl.lastFlush) >= time.Second) {
+			_ = fl.currentBuffer.Flush()
+			fl.bufferedLines = 0
+			fl.lastFlush = now
+		}
 	}
 }
 
@@ -274,8 +309,12 @@ func (fl *FileLogger) Close() error {
 	if fl.currentFile == nil {
 		return nil
 	}
+	if fl.currentBuffer != nil {
+		_ = fl.currentBuffer.Flush()
+	}
 	err := fl.currentFile.Close()
 	fl.currentFile = nil
+	fl.currentBuffer = nil
 	fl.currentLogger = nil
 	return err
 }
@@ -289,8 +328,12 @@ func (fl *FileLogger) rotate(now time.Time) error {
 func (fl *FileLogger) rotateLocked(now time.Time) error {
 	if fl.currentFile != nil {
 		prevPath := fl.currentFile.Name()
+		if fl.currentBuffer != nil {
+			_ = fl.currentBuffer.Flush()
+		}
 		_ = fl.currentFile.Close()
 		fl.currentFile = nil
+		fl.currentBuffer = nil
 		fl.currentLogger = nil
 		if err := gzipFile(prevPath); err != nil {
 			fmt.Fprintf(os.Stderr, "audit: gzip %s failed: %v\n", prevPath, err)
@@ -304,7 +347,10 @@ func (fl *FileLogger) rotateLocked(now time.Time) error {
 	}
 	fl.currentFile = f
 	fl.currentDay = day
-	fl.currentLogger = NewLogger(f)
+	fl.currentBuffer = bufio.NewWriterSize(f, 256*1024)
+	fl.currentLogger = NewLogger(fl.currentBuffer)
+	fl.bufferedLines = 0
+	fl.lastFlush = now
 	fl.pruneOldLocked(now)
 	return nil
 }

@@ -1,0 +1,40 @@
+name: memory-quality
+
+on:
+  schedule:
+    - cron: '17 2 * * *'
+  workflow_dispatch:
+
+jobs:
+  deterministic-golden:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Retrieval, rerank, privacy and context gates
+        run: go test -count=1 ./pkg/mcp ./pkg/router ./pipeline ./pkg/consolidate
+      - name: Contract drift gate
+        run: make contract-check
+
+  live-memory-eval:
+    runs-on: ubuntu-latest
+    env:
+      LEVARA_EVAL_URL: ${{ secrets.LEVARA_EVAL_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run approved live golden set
+        if: ${{ env.LEVARA_EVAL_URL != '' }}
+        run: python3 benchmark/memory_eval/run_memory_eval.py --url "$LEVARA_EVAL_URL" --label github-nightly --auth -v
+      - name: Upload sanitized evaluation report
+        if: ${{ env.LEVARA_EVAL_URL != '' && always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: memory-eval-report
+          path: benchmark/memory_eval/results/memory_eval_github-nightly_*
+          retention-days: 30

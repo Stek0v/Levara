@@ -169,14 +169,30 @@ func tenantCreateHandler(cfg APIConfig) fiber.Handler {
 		id := uuid.New().String()
 		ownerID, _ := c.Locals("user_id").(string)
 		if cfg.DB != nil {
-			cfg.DB.ExecContext(context.Background(),
+			if ownerID == "" {
+				return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"detail": "authorization required"})
+			}
+			tx, err := cfg.DB.BeginTx(c.UserContext(), nil)
+			if err != nil {
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"detail": "tenant creation failed"})
+			}
+			defer tx.Rollback()
+			result, err := tx.ExecContext(c.UserContext(),
 				Q("INSERT INTO tenants (id, name, owner_id, created_at) VALUES ($1, $2, $3, $4) ON CONFLICT (name) DO NOTHING"),
 				id, req.Name, ownerID, time.Now().UTC())
-			// Auto-add creator to tenant
-			if ownerID != "" {
-				cfg.DB.ExecContext(context.Background(),
-					Q("INSERT INTO user_tenant (user_id, tenant_id) VALUES ($1, $2) ON CONFLICT DO NOTHING"),
-					ownerID, id)
+			if err != nil {
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"detail": "tenant creation failed"})
+			}
+			if inserted, err := result.RowsAffected(); err == nil && inserted == 0 {
+				return c.Status(fiber.StatusConflict).JSON(fiber.Map{"detail": "tenant name already exists"})
+			}
+			if _, err := tx.ExecContext(c.UserContext(),
+				Q("INSERT INTO user_tenant (user_id, tenant_id) VALUES ($1, $2) ON CONFLICT DO NOTHING"),
+				ownerID, id); err != nil {
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"detail": "tenant creation failed"})
+			}
+			if err := tx.Commit(); err != nil {
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"detail": "tenant creation failed"})
 			}
 		}
 		return c.Status(201).JSON(fiber.Map{"id": id, "name": req.Name, "owner_id": ownerID})
@@ -188,22 +204,61 @@ func tenantListHandler(cfg APIConfig) fiber.Handler {
 		if cfg.DB == nil {
 			return c.JSON([]any{})
 		}
-		rows, err := cfg.DB.QueryContext(context.Background(), Q("SELECT id, name, owner_id, created_at FROM tenants ORDER BY created_at"))
+		userID, _ := c.Locals("user_id").(string)
+		showAll := userID == ""
+		if !showAll {
+			var err error
+			showAll, err = (accesspkg.SQLPolicy{DB: cfg.DB, Q: Q}).IsSuperuser(c.UserContext(), userID)
+			if err != nil {
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"detail": "tenant listing failed"})
+			}
+		}
+		query := "SELECT id, name, owner_id, created_at FROM tenants ORDER BY created_at"
+		args := []any(nil)
+		if !showAll {
+			query = `SELECT t.id, t.name, t.owner_id, t.created_at FROM tenants t
+				JOIN user_tenant ut ON ut.tenant_id = t.id
+				WHERE ut.user_id = $1 ORDER BY t.created_at`
+			args = []any{userID}
+		}
+		rows, err := cfg.DB.QueryContext(c.UserContext(), Q(query), args...)
 		if err != nil {
-			return c.JSON([]any{})
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"detail": "tenant listing failed"})
 		}
 		defer rows.Close()
 		var tenants []fiber.Map
 		for rows.Next() {
 			var id, name, ownerID, ca string
-			rows.Scan(&id, &name, &ownerID, &ca)
+			if err := rows.Scan(&id, &name, &ownerID, &ca); err != nil {
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"detail": "tenant listing failed"})
+			}
 			tenants = append(tenants, fiber.Map{"id": id, "name": name, "owner_id": ownerID, "created_at": ca})
 		}
 		if tenants == nil {
 			tenants = []fiber.Map{}
 		}
+		if err := rows.Err(); err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"detail": "tenant listing failed"})
+		}
 		return c.JSON(tenants)
 	}
+}
+
+func requireTenantManager(c *fiber.Ctx, cfg APIConfig, tenantID string) bool {
+	if cfg.DB == nil {
+		return true
+	}
+	userID, _ := c.Locals("user_id").(string)
+	allowed, err := (accesspkg.SQLPolicy{DB: cfg.DB, Q: Q}).CanManageTenant(c.UserContext(), userID, tenantID)
+	if err != nil {
+		_ = c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"detail": "tenant authorization failed"})
+		return false
+	}
+	if !allowed {
+		_ = c.Status(fiber.StatusForbidden).JSON(fiber.Map{"detail": "tenant owner or superuser required"})
+		return false
+	}
+	return true
 }
 
 func tenantAddUserHandler(cfg APIConfig) fiber.Handler {
@@ -216,10 +271,15 @@ func tenantAddUserHandler(cfg APIConfig) fiber.Handler {
 		if req.UserID == "" {
 			return c.Status(400).JSON(fiber.Map{"detail": "user_id required"})
 		}
+		if !requireTenantManager(c, cfg, tenantID) {
+			return nil
+		}
 		if cfg.DB != nil {
-			cfg.DB.ExecContext(context.Background(),
+			if _, err := cfg.DB.ExecContext(c.UserContext(),
 				Q("INSERT INTO user_tenant (user_id, tenant_id) VALUES ($1, $2) ON CONFLICT DO NOTHING"),
-				req.UserID, tenantID)
+				req.UserID, tenantID); err != nil {
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"detail": "tenant membership update failed"})
+			}
 		}
 		return c.Status(201).JSON(fiber.Map{"user_id": req.UserID, "tenant_id": tenantID, "added": true})
 	}
@@ -229,8 +289,13 @@ func tenantRemoveUserHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		tenantID := c.Params("id")
 		userID := c.Params("uid")
+		if !requireTenantManager(c, cfg, tenantID) {
+			return nil
+		}
 		if cfg.DB != nil {
-			cfg.DB.ExecContext(context.Background(), Q("DELETE FROM user_tenant WHERE user_id = $1 AND tenant_id = $2"), userID, tenantID)
+			if _, err := cfg.DB.ExecContext(c.UserContext(), Q("DELETE FROM user_tenant WHERE user_id = $1 AND tenant_id = $2"), userID, tenantID); err != nil {
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"detail": "tenant membership update failed"})
+			}
 		}
 		return c.JSON(fiber.Map{"removed": true})
 	}
@@ -252,10 +317,21 @@ func aclGrantHandler(cfg APIConfig) fiber.Handler {
 		}
 		id := uuid.New().String()
 		if cfg.DB != nil {
-			cfg.DB.ExecContext(context.Background(),
+			actorID, _ := c.Locals("user_id").(string)
+			policy := accesspkg.SQLPolicy{DB: cfg.DB, Q: Q}
+			superuser, err := policy.IsSuperuser(c.UserContext(), actorID)
+			if err != nil {
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"detail": "ACL authorization failed"})
+			}
+			if !superuser && !policy.CanGrantDatasetShare(c.UserContext(), req.DatasetID, actorID) {
+				return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"detail": "dataset owner or admin required"})
+			}
+			if _, err := cfg.DB.ExecContext(c.UserContext(),
 				Q(`INSERT INTO acl (id, principal_id, dataset_id, permission_type) VALUES ($1, $2, $3, $4)
 				 ON CONFLICT (principal_id, dataset_id, permission_type) DO NOTHING`),
-				id, req.PrincipalID, req.DatasetID, req.PermissionType)
+				id, req.PrincipalID, req.DatasetID, req.PermissionType); err != nil {
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"detail": "ACL update failed"})
+			}
 		}
 		return c.Status(201).JSON(fiber.Map{"id": id, "granted": true})
 	}

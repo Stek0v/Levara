@@ -48,6 +48,30 @@ func TestToolSearch_MissingQuery(t *testing.T) {
 	}
 }
 
+func TestToolSearchInteractionStoresFingerprintNotRawQuery(t *testing.T) {
+	deps := setupSaveRecallMemoryDB(t)
+	deps.collections = []string{"default"}
+	deps.hasColls = true
+	deps.searchPipelineFn = func(bool) SearchPipeline {
+		return &fakeSearchPipeline{byText: func(context.Context, string, string, int) ([]pipeline.ScoredResult, error) {
+			return []pipeline.ScoredResult{scoredRes("a", .9)}, nil
+		}}
+	}
+	query := "secret customer question"
+	res := ToolSearch(context.Background(), deps, map[string]any{"search_query": query, "session_id": "s1"})
+	body := decodeSearchResp(t, res)
+	if body["interaction_id"] == "" {
+		t.Fatal("missing interaction_id")
+	}
+	var fingerprint string
+	if err := deps.db.QueryRow(`SELECT query_fingerprint FROM search_interactions_v2`).Scan(&fingerprint); err != nil {
+		t.Fatal(err)
+	}
+	if fingerprint == query || strings.Contains(fingerprint, "secret") {
+		t.Fatalf("raw query persisted: %q", fingerprint)
+	}
+}
+
 func TestToolSearch_EmbedNotConfigured(t *testing.T) {
 	// searchPipelineFn not set → NewSearchPipeline returns nil →
 	// tool returns the "not configured" text, not an IsError.

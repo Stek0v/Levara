@@ -62,12 +62,26 @@ func TestSanitizeArgsMarshalsNested(t *testing.T) {
 	out := SanitizeArgs(map[string]any{
 		"filter": map[string]any{"room": "auth", "tags": []any{"a", "b"}},
 	})
-	s, ok := out["filter"].(string)
+	nested, ok := out["filter"].(map[string]any)
 	if !ok {
-		t.Fatalf("nested map should serialize to string, got %T", out["filter"])
+		t.Fatalf("nested map should remain structured, got %T", out["filter"])
 	}
-	if !strings.Contains(s, `"room":"auth"`) {
-		t.Errorf("nested map not serialized: %q", s)
+	if nested["room"] != "auth" {
+		t.Errorf("nested map not sanitized: %#v", nested)
+	}
+}
+
+func TestSanitizeArgsDropsNestedSecrets(t *testing.T) {
+	out := SanitizeArgs(map[string]any{"filter": map[string]any{
+		"room": "auth", "authorization": "Bearer secret", "nested": map[string]any{"cookie": "sid=secret"},
+	}})
+	filter := out["filter"].(map[string]any)
+	if _, ok := filter["authorization"]; ok {
+		t.Fatal("nested authorization leaked")
+	}
+	nested := filter["nested"].(map[string]any)
+	if _, ok := nested["cookie"]; ok {
+		t.Fatal("deeply nested cookie leaked")
 	}
 }
 
@@ -138,6 +152,30 @@ func TestFileLoggerRotatesAndPrunes(t *testing.T) {
 		t.Errorf("expected gzipped rotation artefact, got entries=%v", names(entries))
 	}
 	_ = fl.Close()
+}
+
+func TestFileLoggerFlushesTailByInterval(t *testing.T) {
+	dir := t.TempDir()
+	fl, err := NewFileLogger(dir, 30)
+	if err != nil {
+		t.Fatalf("NewFileLogger: %v", err)
+	}
+	defer fl.Close()
+
+	fl.mu.Lock()
+	path := fl.currentFile.Name()
+	fl.lastFlush = time.Now().UTC().Add(-2 * time.Second)
+	fl.mu.Unlock()
+
+	fl.Log(Entry{Tool: "heartbeat", Outcome: OutcomeOK})
+
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"tool":"heartbeat"`) {
+		t.Fatalf("tail entry was not flushed before Close: %q", string(b))
+	}
 }
 
 func names(es []os.DirEntry) []string {

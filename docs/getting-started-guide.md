@@ -3,6 +3,12 @@
 > Пошаговое руководство: от нуля до работающего AI-сервера памяти.
 > Никаких предварительных знаний не требуется.
 
+> **Актуальность:** это подробный учебный текст. Для проверенного фактического
+> состояния локального Mac-развёртывания см. `docs/current-state.md`; для
+> короткого актуального старта см. `docs/getting-started.md`. Сейчас локально
+> используется `:8081`, `standalone-embed`, `potion-code-16M`/256d, PostgreSQL,
+> локальный LLM; gRPC/Neo4j/rerank выключены.
+
 ---
 
 ## Что такое Levara?
@@ -40,7 +46,7 @@ sudo apt update && sudo apt install -y golang
 Проверьте:
 ```bash
 go version
-# Должно показать: go version go1.21+ ...
+# Должно показать: go version go1.26+ ...
 ```
 
 #### Шаг 2. Скачайте и соберите Levara
@@ -50,20 +56,24 @@ go version
 git clone https://github.com/stek0v/levara.git
 cd levara
 
-# Соберите
-go build -o levara ./cmd/server/
+# Соберите сервер и CLI
+make build
 
-# Проверьте что файл создан
-ls -la levara
-# Должен показать файл размером ~30МБ
+# Проверьте что серверный бинарь создан
+ls -la levara-server
 ```
 
 #### Шаг 3. Запустите
 
 ```bash
 # Самый простой запуск (без LLM, только базовый функционал)
-DB_PROVIDER=sqlite DB_PATH=./data/levara.db \
-  ./levara -standalone=true -dim=384 -shards=1 -port=8080 -data-dir=./data
+./levara-server \
+  -profile=standalone \
+  -dim=384 \
+  -shards=1 \
+  -port=8080 \
+  -grpc-port=0 \
+  -data-dir=./data
 ```
 
 #### Шаг 4. Проверьте что работает
@@ -138,8 +148,8 @@ export LLM_MODEL=qwen3:0.6b
 
 # Запустите
 cd ~/levara
-chmod +x levara
-./levara -standalone=true -dim=768 -shards=1 -port=8080 -data-dir=$HOME/levara/data
+chmod +x levara-server
+./levara-server -profile=standalone-embed -dim=768 -shards=1 -port=8080 -grpc-port=0 -data-dir=$HOME/levara/data
 ```
 
 #### Шаг 4. Проверьте
@@ -178,7 +188,7 @@ claude mcp add --transport http levara http://localhost:8080/mcp
 Какие MCP инструменты доступны от levara?
 ```
 
-Claude должен ответить что видит 16 инструментов: cognify, search, save_memory и т.д.
+Claude должен ответить, что видит MCP-инструменты Levara: cognify, search, save_memory, workspace_* и т.д. Точный список меняется вместе с `pkg/mcp` и контрактом в `docs/api-contract.md`.
 
 ### Альтернатива: конфигурация через файл
 
@@ -434,7 +444,7 @@ Environment=EMBEDDING_MODEL=nomic-embed-text
 Environment=LLM_ENDPOINT=http://localhost:11434/v1
 Environment=LLM_MODEL=qwen3:0.6b
 Environment=OLLAMA_MAX_LOADED_MODELS=2
-ExecStart=/home/pi/levara/levara -standalone=true -dim=768 -shards=1 -port=8080 -data-dir=/home/pi/levara/data
+ExecStart=/home/pi/levara/levara-server -profile=standalone-embed -dim=768 -shards=1 -port=8080 -grpc-port=0 -data-dir=/home/pi/levara/data
 Restart=always
 RestartSec=5
 
@@ -468,11 +478,12 @@ journalctl -u levara -f
     <string>com.levara.server</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/local/bin/levara</string>
-        <string>-standalone=true</string>
+        <string>/usr/local/bin/levara-server</string>
+        <string>-profile=standalone</string>
         <string>-dim=768</string>
         <string>-shards=1</string>
         <string>-port=8080</string>
+        <string>-grpc-port=0</string>
     </array>
     <key>EnvironmentVariables</key>
     <dict>
@@ -630,7 +641,7 @@ ollama pull all-minilm
 
 ```bash
 # Запуск
-./levara -standalone=true -dim=768 -port=8080
+./levara-server -profile=standalone -dim=768 -port=8080 -grpc-port=0
 
 # Проверка
 curl http://localhost:8080/health

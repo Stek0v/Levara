@@ -399,6 +399,27 @@ func JWTMiddleware(secret string, requireAuth bool) fiber.Handler {
 	}
 }
 
+// APIKeyPermissionMiddleware enforces the read/write label attached by
+// JWTMiddleware across the complete REST surface. JWT and anonymous dev-mode
+// requests have no API-key permission local and pass unchanged.
+func APIKeyPermissionMiddleware() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		permissions, _ := c.Locals("api_key_permissions").(string)
+		if permissions == "" {
+			return c.Next()
+		}
+		action := accesspkg.ActionWrite
+		switch c.Method() {
+		case fiber.MethodGet, fiber.MethodHead, fiber.MethodOptions:
+			action = accesspkg.ActionRead
+		}
+		if !accesspkg.APIKeyAllows(permissions, action) {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"detail": "API key permissions denied"})
+		}
+		return c.Next()
+	}
+}
+
 // verifyAPIKey checks X-API-Key against api_keys table. Token hashing and the
 // key→user lookup stay here in the auth layer; the result is returned as the
 // transport-independent accesspkg.APIKeyIdentity (zero value when invalid).

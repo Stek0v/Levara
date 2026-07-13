@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import sys
 import types
+from importlib.machinery import ModuleSpec
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -16,6 +17,8 @@ import torch
 # when the real optimum package is not installed.
 _optimum_stub = types.ModuleType("optimum")
 _optimum_ort_stub = types.ModuleType("optimum.onnxruntime")
+_optimum_stub.__spec__ = ModuleSpec("optimum", loader=None, is_package=True)
+_optimum_ort_stub.__spec__ = ModuleSpec("optimum.onnxruntime", loader=None)
 _optimum_ort_stub.ORTModelForFeatureExtraction = MagicMock()
 _optimum_stub.onnxruntime = _optimum_ort_stub
 sys.modules.setdefault("optimum", _optimum_stub)

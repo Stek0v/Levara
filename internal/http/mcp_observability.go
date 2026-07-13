@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/stek0v/levara/internal/metrics"
+	"github.com/stek0v/levara/pkg/mcp"
 )
 
 // toolRuntimeStats returns a compact snapshot of the running instance:
@@ -73,6 +74,8 @@ func (h *mcpHandler) toolRuntimeStats(ctx context.Context, args map[string]any) 
 		"heap_sys_bytes":    ms.HeapSys,
 		"num_gc":            ms.NumGC,
 		"snapshot_taken_at": time.Now().UTC().Format(time.RFC3339),
+		"mcp_toolset":       mcp.ToolsetName(os.Getenv("LEVARA_MCP_TOOLSET")),
+		"mcp_tool_count":    len(mcp.ToolDescriptorsForMode(os.Getenv("LEVARA_MCP_TOOLSET"))),
 	}
 
 	return mcpJSONResult(out)

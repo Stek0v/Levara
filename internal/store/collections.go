@@ -51,6 +51,39 @@ type CollectionMeta struct {
 
 const collectionMetaFile = "collection_meta.json"
 
+// validateCollectionName keeps collection identifiers as a single safe path
+// component. Collection names are persisted as directories directly below the
+// manager root, so separators, traversal components, absolute paths, and NUL
+// bytes are never valid identifiers.
+func validateCollectionName(name string) error {
+	if name == "" {
+		return fmt.Errorf("collection name must be non-empty")
+	}
+	if name == "." || name == ".." || filepath.IsAbs(name) || strings.ContainsAny(name, "/\\\x00") {
+		return fmt.Errorf("invalid collection name: %q", name)
+	}
+	return nil
+}
+
+func safeCollectionDir(basePath, name string) (string, error) {
+	if err := validateCollectionName(name); err != nil {
+		return "", err
+	}
+	root, err := filepath.Abs(basePath)
+	if err != nil {
+		return "", fmt.Errorf("resolve collections root: %w", err)
+	}
+	target, err := filepath.Abs(filepath.Join(root, name))
+	if err != nil {
+		return "", fmt.Errorf("resolve collection path: %w", err)
+	}
+	rel, err := filepath.Rel(root, target)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("collection path escapes root: %q", name)
+	}
+	return target, nil
+}
+
 func loadCollectionMeta(colDir string) (*CollectionMeta, error) {
 	path := filepath.Join(colDir, collectionMetaFile)
 	data, err := os.ReadFile(path)
@@ -246,6 +279,10 @@ func (cm *CollectionManager) CreateWithMeta(name, embeddingModel, distanceMetric
 
 // CreateWithDim creates a collection with a specific dimension (can differ from global default).
 func (cm *CollectionManager) CreateWithDim(name string, dim int, embeddingModel, distanceMetric string) error {
+	colDir, err := safeCollectionDir(cm.basePath, name)
+	if err != nil {
+		return err
+	}
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 
@@ -257,7 +294,6 @@ func (cm *CollectionManager) CreateWithDim(name string, dim int, embeddingModel,
 		dim = cm.dim
 	}
 
-	colDir := filepath.Join(cm.basePath, name)
 	if err := os.MkdirAll(colDir, 0755); err != nil {
 		return fmt.Errorf("create collection dir: %w", err)
 	}
@@ -297,6 +333,10 @@ func (cm *CollectionManager) CreateWithDim(name string, dim int, embeddingModel,
 
 // Drop removes a collection and its data from disk.
 func (cm *CollectionManager) Drop(name string) error {
+	colDir, err := safeCollectionDir(cm.basePath, name)
+	if err != nil {
+		return err
+	}
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 
@@ -309,7 +349,6 @@ func (cm *CollectionManager) Drop(name string) error {
 	delete(cm.collections, name)
 	delete(cm.metas, name)
 
-	colDir := filepath.Join(cm.basePath, name)
 	return os.RemoveAll(colDir)
 }
 
@@ -321,19 +360,16 @@ func (cm *CollectionManager) Drop(name string) error {
 // Phase 4.5) where the shadow collection is promoted to the live name
 // in a sub-second window.
 func (cm *CollectionManager) Rename(oldName, newName string) error {
-	if oldName == "" || newName == "" {
-		return fmt.Errorf("collection name must be non-empty")
-	}
 	if oldName == newName {
 		return fmt.Errorf("source and target names are identical: %q", oldName)
 	}
-	// Guard against path traversal. Collection names map directly to a
-	// directory under cm.basePath; a "../" or "/" in the name would let
-	// callers point Rename outside the collections root.
-	for _, n := range []string{oldName, newName} {
-		if strings.ContainsAny(n, "/\\") || n == "." || n == ".." || strings.Contains(n, "..") {
-			return fmt.Errorf("invalid collection name: %q", n)
-		}
+	oldDir, err := safeCollectionDir(cm.basePath, oldName)
+	if err != nil {
+		return err
+	}
+	newDir, err := safeCollectionDir(cm.basePath, newName)
+	if err != nil {
+		return err
 	}
 
 	cm.mu.Lock()
@@ -349,7 +385,6 @@ func (cm *CollectionManager) Rename(oldName, newName string) error {
 
 	// Belt-and-braces: if the target directory exists on disk but isn't in
 	// our in-memory map, we'd happily clobber it with os.Rename. Refuse.
-	newDir := filepath.Join(cm.basePath, newName)
 	if _, err := os.Stat(newDir); err == nil {
 		return fmt.Errorf("target collection directory %q already exists on disk", newName)
 	}
@@ -363,7 +398,6 @@ func (cm *CollectionManager) Rename(oldName, newName string) error {
 	}
 	delete(cm.collections, oldName)
 
-	oldDir := filepath.Join(cm.basePath, oldName)
 	if err := os.Rename(oldDir, newDir); err != nil {
 		// Try to reopen the source under its old name so the manager isn't
 		// left with a dangling entry. If this fails too, the caller has a
@@ -426,10 +460,10 @@ func (cm *CollectionManager) ListByDomain(domain string) []string {
 			names = append(names, name)
 		}
 	}
-	if len(names) == 0 {
-		return cm.List() // fallback: return all if no domain match
-	}
 	sort.Strings(names)
+	if names == nil {
+		return []string{}
+	}
 	return names
 }
 
@@ -439,8 +473,9 @@ func (cm *CollectionManager) SetDomain(name, domain string) {
 	defer cm.mu.Unlock()
 	if m, ok := cm.metas[name]; ok {
 		m.Domain = domain
-		colDir := filepath.Join(cm.basePath, name)
-		_ = saveCollectionMeta(colDir, m)
+		if colDir, err := safeCollectionDir(cm.basePath, name); err == nil {
+			_ = saveCollectionMeta(colDir, m)
+		}
 	}
 }
 
@@ -693,7 +728,10 @@ func (cm *CollectionManager) UpdateMeta(name string, model, distanceMetric, vers
 		meta.EmbeddingVersion = version
 	}
 	ensureCollectionContract(meta)
-	colDir := filepath.Join(cm.basePath, name)
+	colDir, err := safeCollectionDir(cm.basePath, name)
+	if err != nil {
+		return err
+	}
 	return saveCollectionMeta(colDir, meta)
 }
 
@@ -713,7 +751,10 @@ func (cm *CollectionManager) UpdateEmbeddingContract(name string, contract Embed
 	meta.DistanceMetric = contract.Metric
 	meta.EmbeddingVersion = contract.Fingerprint()
 	meta.EmbeddingContract = &contract
-	colDir := filepath.Join(cm.basePath, name)
+	colDir, err := safeCollectionDir(cm.basePath, name)
+	if err != nil {
+		return err
+	}
 	return saveCollectionMeta(colDir, meta)
 }
 
@@ -731,7 +772,10 @@ func (cm *CollectionManager) MarkArchive(name, archivedFrom, reason string, rete
 	if !retentionUntil.IsZero() {
 		meta.RetentionUntil = retentionUntil.UTC().Format(time.RFC3339)
 	}
-	colDir := filepath.Join(cm.basePath, name)
+	colDir, err := safeCollectionDir(cm.basePath, name)
+	if err != nil {
+		return err
+	}
 	return saveCollectionMeta(colDir, meta)
 }
 

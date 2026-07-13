@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-06-18T19:44:52+03:00",
-  "git_rev": "aad7bb732428471e48e0941f658784fcf6cb127e",
+  "generated_at": "2026-07-03T10:44:20-05:00",
+  "git_rev": "27efa39b3841a3958240f0a846f4b27c2a965a8a",
   "rest": [
     {
       "method": "POST",
@@ -238,6 +238,12 @@
     },
     {
       "method": "GET",
+      "path": "/feedback/implicit",
+      "status": "canonical",
+      "group": "feedback"
+    },
+    {
+      "method": "GET",
       "path": "/feedback/stats",
       "status": "canonical",
       "group": "feedback"
@@ -277,6 +283,18 @@
       "path": "/interactions/:sessionId",
       "status": "canonical",
       "group": "sessions"
+    },
+    {
+      "method": "GET",
+      "path": "/mcp-analytics",
+      "status": "canonical",
+      "group": "mcp"
+    },
+    {
+      "method": "GET",
+      "path": "/mcp-analytics/events",
+      "status": "canonical",
+      "group": "mcp"
     },
     {
       "method": "POST",
@@ -324,6 +342,12 @@
       "method": "GET",
       "path": "/memories/stream",
       "status": "canonical",
+      "group": "memory"
+    },
+    {
+      "method": "GET",
+      "path": "/memory-index/status",
+      "status": "ops",
       "group": "memory"
     },
     {
@@ -1057,6 +1081,11 @@
       "status": "canonical"
     },
     {
+      "name": "consolidation_status",
+      "group": "memory",
+      "status": "canonical"
+    },
+    {
       "name": "cross_search",
       "group": "search",
       "status": "canonical"
@@ -1129,6 +1158,16 @@
     {
       "name": "list_memories",
       "group": "memory",
+      "status": "canonical"
+    },
+    {
+      "name": "memory_index_retry",
+      "group": "ops",
+      "status": "canonical"
+    },
+    {
+      "name": "memory_index_status",
+      "group": "ops",
       "status": "canonical"
     },
     {

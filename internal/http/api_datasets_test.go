@@ -117,12 +117,31 @@ func datasetsRawURLTestApp(t *testing.T, fs storage.Storage) (*fiber.App, *sql.D
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`
+		CREATE TABLE datasets (
+			id TEXT PRIMARY KEY,
+			owner_id TEXT
+		);
 		CREATE TABLE data (
 			id TEXT PRIMARY KEY,
 			name TEXT,
 			extension TEXT,
 			raw_data_location TEXT,
 			updated_at TIMESTAMP
+		);
+		CREATE TABLE dataset_data (
+			dataset_id TEXT,
+			data_id TEXT
+		);
+		CREATE TABLE dataset_shares (
+			id TEXT PRIMARY KEY,
+			dataset_id TEXT,
+			user_id TEXT,
+			role TEXT
+		);
+		CREATE TABLE users (
+			id TEXT PRIMARY KEY,
+			is_active INTEGER DEFAULT 1,
+			is_superuser INTEGER DEFAULT 0
 		);
 	`); err != nil {
 		db.Close()
@@ -134,9 +153,17 @@ func datasetsRawURLTestApp(t *testing.T, fs storage.Storage) (*fiber.App, *sql.D
 
 	cfg := APIConfig{DB: db, FileStorage: fs}
 	app := fiber.New(fiber.Config{DisableStartupMessage: true})
+	app.Use(func(c *fiber.Ctx) error {
+		if userID := c.Get("X-Test-User"); userID != "" {
+			c.Locals("user_id", userID)
+		}
+		return c.Next()
+	})
 	api := app.Group("/api/v1")
 	api.Get("/datasets/:id/data/:dataId/raw", datasetDataRawHandler(cfg))
 	api.Get("/datasets/:id/data/:dataId/raw/url", datasetDataRawURLHandler(cfg))
+	api.Delete("/datasets/:id/data/:dataId", datasetDataDeleteHandler(cfg))
+	api.Patch("/datasets/:id/data/:dataId", updateDataHandler(cfg))
 
 	cleanup := func() {
 		_ = app.Shutdown()
@@ -354,6 +381,9 @@ func TestDatasetDataRawURL_FallbackProxy(t *testing.T) {
 	if _, err := db.Exec(`INSERT INTO data (id, name, extension, raw_data_location) VALUES ('d1','n','.txt','file:///tmp/a.txt')`); err != nil {
 		t.Fatalf("insert data: %v", err)
 	}
+	if _, err := db.Exec(`INSERT INTO datasets(id, owner_id) VALUES ('ds1', ''); INSERT INTO dataset_data(dataset_id, data_id) VALUES ('ds1', 'd1')`); err != nil {
+		t.Fatalf("associate data: %v", err)
+	}
 
 	status, body := getJSON(t, app, "/api/v1/datasets/ds1/data/d1/raw/url")
 	if status != http.StatusOK {
@@ -378,6 +408,9 @@ func TestDatasetDataRawURL_PresignedStorage(t *testing.T) {
 	if _, err := db.Exec(`INSERT INTO data (id, name, extension, raw_data_location) VALUES ('d1','n','.txt','storage://ingest/d1.txt')`); err != nil {
 		t.Fatalf("insert data: %v", err)
 	}
+	if _, err := db.Exec(`INSERT INTO datasets(id, owner_id) VALUES ('ds1', ''); INSERT INTO dataset_data(dataset_id, data_id) VALUES ('ds1', 'd1')`); err != nil {
+		t.Fatalf("associate data: %v", err)
+	}
 
 	status, body := getJSON(t, app, "/api/v1/datasets/ds1/data/d1/raw/url?ttl_seconds=600")
 	if status != http.StatusOK {
@@ -394,6 +427,69 @@ func TestDatasetDataRawURL_PresignedStorage(t *testing.T) {
 	if !strings.Contains(url, "signed.example/ingest/d1.txt") {
 		t.Fatalf("presigned url = %q", url)
 	}
+}
+
+func TestDatasetChildRoutesEnforceObjectAuthorization(t *testing.T) {
+	app, db, cleanup := datasetsRawURLTestApp(t, storage.NewLocalStorage(t.TempDir()))
+	defer cleanup()
+	for _, stmt := range []string{
+		`INSERT INTO users(id, is_active, is_superuser) VALUES ('alice', 1, 0), ('bob', 1, 0)`,
+		`INSERT INTO datasets(id, owner_id) VALUES ('ds-a', 'alice')`,
+		`INSERT INTO data(id, name, extension, raw_data_location) VALUES ('d1', 'n', '.txt', 'file:///tmp/a.txt')`,
+		`INSERT INTO dataset_data(dataset_id, data_id) VALUES ('ds-a', 'd1')`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("seed %q: %v", stmt, err)
+		}
+	}
+
+	request := func(method, userID string, body io.Reader) *http.Response {
+		t.Helper()
+		req := httptest.NewRequest(method, "/api/v1/datasets/ds-a/data/d1/raw/url", body)
+		req.Header.Set("X-Test-User", userID)
+		resp, err := app.Test(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+
+	resp := request(http.MethodGet, "bob", nil)
+	if resp.StatusCode != fiber.StatusForbidden {
+		t.Fatalf("foreign read status=%d, want 403", resp.StatusCode)
+	}
+	_ = resp.Body.Close()
+
+	if _, err := db.Exec(`INSERT INTO dataset_shares(id, dataset_id, user_id, role) VALUES ('share-b', 'ds-a', 'bob', 'viewer')`); err != nil {
+		t.Fatal(err)
+	}
+	resp = request(http.MethodGet, "bob", nil)
+	if resp.StatusCode != fiber.StatusOK {
+		t.Fatalf("shared viewer read status=%d, want 200", resp.StatusCode)
+	}
+	_ = resp.Body.Close()
+
+	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/v1/datasets/ds-a/data/d1", nil)
+	deleteReq.Header.Set("X-Test-User", "bob")
+	resp, err := app.Test(deleteReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != fiber.StatusForbidden {
+		t.Fatalf("viewer delete status=%d, want 403", resp.StatusCode)
+	}
+	_ = resp.Body.Close()
+
+	updateReq := httptest.NewRequest(http.MethodPatch, "/api/v1/datasets/ds-a/data/d1", strings.NewReader("renamed"))
+	updateReq.Header.Set("X-Test-User", "alice")
+	resp, err = app.Test(updateReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != fiber.StatusOK {
+		t.Fatalf("owner update status=%d, want 200", resp.StatusCode)
+	}
+	_ = resp.Body.Close()
 }
 
 func TestDatasetData_EmptyReturnsEmptyArray(t *testing.T) {

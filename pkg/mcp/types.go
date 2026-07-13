@@ -8,6 +8,10 @@ package mcp
 
 import "encoding/json"
 
+// ProtocolVersion is the single MCP wire-version advertised by every Levara
+// transport and by the /version endpoint.
+const ProtocolVersion = "2025-03-26"
+
 // ── JSON-RPC 2.0 wire types ──
 //
 // MCP rides on JSON-RPC 2.0 over HTTP (spec 2025-03-26). These types capture

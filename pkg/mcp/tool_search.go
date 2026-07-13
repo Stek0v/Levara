@@ -8,10 +8,13 @@ package mcp
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/stek0v/levara/pipeline"
 	"github.com/stek0v/levara/pkg/bm25"
 	"github.com/stek0v/levara/pkg/graphrank"
@@ -321,6 +324,13 @@ func ToolSearch(ctx context.Context, deps Deps, args map[string]any) ToolResult 
 		fetchK = a.topK * searchMetaOverfetchFactor
 	}
 	allowedDatasetIDs := deps.AllowedDatasetIDs(ctx)
+	if allowedDatasetIDs != nil && len(allowedDatasetIDs) == 0 {
+		return jsonResult(map[string]any{
+			"search_type": a.searchType,
+			"reranked":    false,
+			"results":     []any{},
+		})
+	}
 
 	var results []map[string]any
 	wasReranked := false
@@ -361,6 +371,7 @@ func ToolSearch(ctx context.Context, deps Deps, args map[string]any) ToolResult 
 		"search_type": a.searchType,
 		"reranked":    wasReranked,
 	}
+	response["interaction_id"] = recordSearchInteraction(ctx, deps, args, a, results)
 	if len(results) == 0 {
 		response["results"] = []any{}
 	} else {
@@ -383,9 +394,48 @@ func ToolSearch(ctx context.Context, deps Deps, args map[string]any) ToolResult 
 	return jsonResult(response)
 }
 
+func recordSearchInteraction(ctx context.Context, deps Deps, args map[string]any, a searchArgs, results []map[string]any) string {
+	id := uuid.NewString()
+	db := deps.DB()
+	if db == nil {
+		return id
+	}
+	_, _ = db.Exec(`CREATE TABLE IF NOT EXISTS search_interactions_v2 (id TEXT PRIMARY KEY,session_id TEXT NOT NULL DEFAULT '',owner_id TEXT NOT NULL DEFAULT '',query_fingerprint TEXT NOT NULL,search_type TEXT NOT NULL,collection_name TEXT NOT NULL DEFAULT '',result_ids TEXT NOT NULL DEFAULT '[]',result_count INTEGER NOT NULL DEFAULT 0,zero_result INTEGER NOT NULL DEFAULT 0,used_result_ids TEXT NOT NULL DEFAULT '[]',created_at TEXT NOT NULL)`)
+	_, _ = db.Exec(`CREATE TABLE IF NOT EXISTS implicit_feedback (id TEXT PRIMARY KEY,interaction_id TEXT NOT NULL,previous_interaction_id TEXT NOT NULL DEFAULT '',owner_id TEXT NOT NULL DEFAULT '',signal TEXT NOT NULL,confidence TEXT NOT NULL DEFAULT 'uncertain',created_at TEXT NOT NULL)`)
+	session, _ := args["session_id"].(string)
+	owner := extractOwnerID(ctx)
+	fingerprint := fmt.Sprintf("%x", sha256.Sum256([]byte(a.query)))
+	ids := make([]string, 0, len(results))
+	for _, result := range results {
+		if value, ok := result["id"].(string); ok {
+			ids = append(ids, value)
+		}
+	}
+	rawIDs, _ := json.Marshal(ids)
+	used, _ := json.Marshal(args["used_result_ids"])
+	now := time.Now().UTC()
+	_, _ = db.ExecContext(ctx, deps.Q(`INSERT INTO search_interactions_v2(id,session_id,owner_id,query_fingerprint,search_type,collection_name,result_ids,result_count,zero_result,used_result_ids,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`), id, session, owner, fingerprint, a.searchType, a.collection, string(rawIDs), len(results), len(results) == 0, string(used), now.Format(time.RFC3339Nano))
+	if session != "" {
+		var previousID, previousFingerprint string
+		var previousZero int
+		err := db.QueryRowContext(ctx, deps.Q(`SELECT id,query_fingerprint,zero_result FROM search_interactions_v2 WHERE session_id=$1 AND owner_id=$2 AND id<>$3 AND created_at>=$4 ORDER BY created_at DESC LIMIT 1`), session, owner, id, now.Add(-2*time.Minute).Format(time.RFC3339Nano)).Scan(&previousID, &previousFingerprint, &previousZero)
+		if err == nil && previousFingerprint != fingerprint {
+			signal, confidence := "reformulation", "uncertain"
+			if previousZero != 0 && len(results) > 0 {
+				signal, confidence = "recovery", "positive"
+			}
+			_, _ = db.ExecContext(ctx, deps.Q(`INSERT INTO implicit_feedback(id,interaction_id,previous_interaction_id,owner_id,signal,confidence,created_at) VALUES($1,$2,$3,$4,$5,$6,$7)`), uuid.NewString(), id, previousID, owner, signal, confidence, now.Format(time.RFC3339Nano))
+		}
+	}
+	return id
+}
+
 func searchMetadataAllowed(metadata json.RawMessage, allowedIDs []string) bool {
 	if allowedIDs == nil {
 		return true
+	}
+	if len(allowedIDs) == 0 {
+		return false
 	}
 	dsID := searchMetadataDatasetID(metadata)
 	if dsID == "" {

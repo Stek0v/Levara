@@ -1,4 +1,4 @@
-FROM golang:1.26-alpine AS builder
+FROM golang:1.26.5-alpine AS builder
 
 WORKDIR /app
 
@@ -16,10 +16,16 @@ RUN apk add --no-cache ca-certificates tzdata
 
 WORKDIR /app
 
-RUN mkdir -p data
+ENV LEVARA_HTTP_HOST=0.0.0.0 \
+    LEVARA_GRPC_HOST=0.0.0.0
 
-COPY --from=builder /app/levara-server .
-COPY --from=builder /app/levara /usr/local/bin/levara
+RUN addgroup -S levara && adduser -S -G levara -h /app levara \
+    && mkdir -p data && chown -R levara:levara /app
+
+COPY --from=builder --chown=levara:levara /app/levara-server .
+COPY --from=builder --chown=levara:levara /app/levara /usr/local/bin/levara
+
+USER levara
 
 EXPOSE 8080 50051
 

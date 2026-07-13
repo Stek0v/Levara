@@ -8,8 +8,15 @@ import (
 	"io"
 	"log"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
+)
+
+const (
+	maxRestoreEntryBytes = int64(4 << 30)
+	maxRestoreTotalBytes = int64(32 << 30)
+	maxManifestBytes     = int64(1 << 20)
 )
 
 // FullBackup creates a tar.gz archive with all Levara data.
@@ -123,6 +130,12 @@ func FullRestore(input, dataDir, dbDSN string) error {
 
 	tr := tar.NewReader(gz)
 	dbSQL := ""
+	var restoredBytes int64
+	defer func() {
+		if dbSQL != "" {
+			_ = os.Remove(dbSQL)
+		}
+	}()
 
 	for {
 		hdr, err := tr.Next()
@@ -133,58 +146,114 @@ func FullRestore(input, dataDir, dbDSN string) error {
 			return fmt.Errorf("tar read: %w", err)
 		}
 
-		// Skip directories — create them as needed
-		cleanName := filepath.Clean(hdr.Name)
+		cleanName, err := safeArchiveName(hdr.Name)
+		if err != nil {
+			return err
+		}
+		if hdr.Size < 0 || hdr.Size > maxRestoreEntryBytes || restoredBytes > maxRestoreTotalBytes-hdr.Size {
+			return fmt.Errorf("restore entry %q exceeds size limits", cleanName)
+		}
+		regularFile := hdr.Typeflag == tar.TypeReg || hdr.Typeflag == 0
+		if hdr.Typeflag != tar.TypeDir && !regularFile {
+			return fmt.Errorf("restore entry %q has unsupported type %d", cleanName, hdr.Typeflag)
+		}
 
 		if cleanName == "db.sql" {
-			// Save DB dump to temp
-			tmpSQL := filepath.Join(os.TempDir(), "levara_restore.sql")
-			out, err := os.Create(tmpSQL)
-			if err != nil {
-				continue
+			if !regularFile {
+				return fmt.Errorf("database dump entry must be a regular file")
 			}
-			io.Copy(out, tr)
-			out.Close()
+			// Save DB dump to temp
+			out, err := os.CreateTemp("", "levara-restore-*.sql")
+			if err != nil {
+				return fmt.Errorf("create temporary database dump: %w", err)
+			}
+			tmpSQL := out.Name()
+			if _, err := io.CopyN(out, tr, hdr.Size); err != nil {
+				_ = out.Close()
+				_ = os.Remove(tmpSQL)
+				return fmt.Errorf("extract database dump: %w", err)
+			}
+			if err := out.Close(); err != nil {
+				_ = os.Remove(tmpSQL)
+				return fmt.Errorf("close database dump: %w", err)
+			}
+			restoredBytes += hdr.Size
 			dbSQL = tmpSQL
 			continue
 		}
 
 		if cleanName == "manifest.json" {
+			if !regularFile {
+				return fmt.Errorf("manifest entry must be a regular file")
+			}
 			// Read and log manifest
-			data, _ := io.ReadAll(tr)
+			if hdr.Size > maxManifestBytes {
+				return fmt.Errorf("restore manifest exceeds %d bytes", maxManifestBytes)
+			}
+			data, err := io.ReadAll(io.LimitReader(tr, maxManifestBytes+1))
+			if err != nil {
+				return fmt.Errorf("read restore manifest: %w", err)
+			}
+			restoredBytes += int64(len(data))
 			log.Printf("[restore] manifest: %s", string(data))
 			continue
 		}
 
 		// Determine target path
-		var targetPath string
-		if strings.HasPrefix(cleanName, "collections/") || strings.HasPrefix(cleanName, "uploads/") {
+		targetRoot := dataDir
+		if cleanName == "collections" || strings.HasPrefix(cleanName, "collections/") {
 			// Find or create node dir
-			nodeDir := findOrCreateNodeDir(dataDir)
-			if strings.HasPrefix(cleanName, "collections/") {
-				targetPath = filepath.Join(nodeDir, cleanName)
-			} else {
-				targetPath = filepath.Join(dataDir, cleanName)
+			targetRoot, err = findOrCreateNodeDir(dataDir)
+			if err != nil {
+				return err
 			}
-		} else {
-			targetPath = filepath.Join(dataDir, cleanName)
+		}
+		targetPath, err := secureRestorePath(targetRoot, cleanName)
+		if err != nil {
+			return err
 		}
 
 		if hdr.Typeflag == tar.TypeDir {
-			os.MkdirAll(targetPath, 0755)
+			if err := mkdirAllNoSymlink(targetRoot, targetPath); err != nil {
+				return err
+			}
 			continue
 		}
 
 		// Create parent dirs
-		os.MkdirAll(filepath.Dir(targetPath), 0755)
-
-		out, err := os.Create(targetPath)
-		if err != nil {
-			log.Printf("[restore] skip %s: %v", cleanName, err)
-			continue
+		if err := mkdirAllNoSymlink(targetRoot, filepath.Dir(targetPath)); err != nil {
+			return err
 		}
-		io.Copy(out, tr)
-		out.Close()
+		if info, err := os.Lstat(targetPath); err == nil && info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("restore target %q is a symlink", targetPath)
+		} else if err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("inspect restore target: %w", err)
+		}
+
+		out, err := os.CreateTemp(filepath.Dir(targetPath), ".levara-restore-*")
+		if err != nil {
+			return fmt.Errorf("create restore target %q: %w", cleanName, err)
+		}
+		tmpPath := out.Name()
+		if err := out.Chmod(0600); err != nil {
+			_ = out.Close()
+			_ = os.Remove(tmpPath)
+			return fmt.Errorf("set restore target permissions %q: %w", cleanName, err)
+		}
+		if _, err := io.CopyN(out, tr, hdr.Size); err != nil {
+			_ = out.Close()
+			_ = os.Remove(tmpPath)
+			return fmt.Errorf("extract %q: %w", cleanName, err)
+		}
+		if err := out.Close(); err != nil {
+			_ = os.Remove(tmpPath)
+			return fmt.Errorf("close restore target %q: %w", cleanName, err)
+		}
+		if err := os.Rename(tmpPath, targetPath); err != nil {
+			_ = os.Remove(tmpPath)
+			return fmt.Errorf("install restore target %q: %w", cleanName, err)
+		}
+		restoredBytes += hdr.Size
 		log.Printf("[restore] extracted: %s", cleanName)
 	}
 
@@ -194,29 +263,98 @@ func FullRestore(input, dataDir, dbDSN string) error {
 		if err := PgRestore(dbDSN, dbSQL); err != nil {
 			log.Printf("[restore] WARNING: pg_restore failed: %v", err)
 		}
-		os.Remove(dbSQL)
+		_ = os.Remove(dbSQL)
+		dbSQL = ""
 	}
 
 	log.Printf("[restore] complete: data extracted to %s", dataDir)
 	return nil
 }
 
+func safeArchiveName(name string) (string, error) {
+	if name == "" || strings.Contains(name, "\\") {
+		return "", fmt.Errorf("unsafe restore entry name %q", name)
+	}
+	clean := path.Clean(name)
+	if clean == "." || path.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, "../") {
+		return "", fmt.Errorf("unsafe restore entry name %q", name)
+	}
+	return clean, nil
+}
+
+func secureRestorePath(root, name string) (string, error) {
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return "", fmt.Errorf("resolve restore root: %w", err)
+	}
+	target, err := filepath.Abs(filepath.Join(rootAbs, filepath.FromSlash(name)))
+	if err != nil {
+		return "", fmt.Errorf("resolve restore target: %w", err)
+	}
+	rel, err := filepath.Rel(rootAbs, target)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("restore entry %q escapes target root", name)
+	}
+	return target, nil
+}
+
+func mkdirAllNoSymlink(root, target string) error {
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return err
+	}
+	targetAbs, err := filepath.Abs(target)
+	if err != nil {
+		return err
+	}
+	rel, err := filepath.Rel(rootAbs, targetAbs)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("restore directory escapes target root")
+	}
+	current := rootAbs
+	if info, err := os.Lstat(current); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("restore root %q is a symlink", current)
+	}
+	for _, component := range strings.Split(rel, string(filepath.Separator)) {
+		if component == "" || component == "." {
+			continue
+		}
+		current = filepath.Join(current, component)
+		info, err := os.Lstat(current)
+		switch {
+		case err == nil && info.Mode()&os.ModeSymlink != 0:
+			return fmt.Errorf("restore path component %q is a symlink", current)
+		case err == nil && !info.IsDir():
+			return fmt.Errorf("restore path component %q is not a directory", current)
+		case os.IsNotExist(err):
+			if err := os.Mkdir(current, 0755); err != nil && !os.IsExist(err) {
+				return fmt.Errorf("create restore directory %q: %w", current, err)
+			}
+		case err != nil:
+			return fmt.Errorf("inspect restore directory %q: %w", current, err)
+		}
+	}
+	return nil
+}
+
 // helpers
 
-func findOrCreateNodeDir(dataDir string) string {
+func findOrCreateNodeDir(dataDir string) (string, error) {
 	entries, _ := os.ReadDir(dataDir)
 	for _, e := range entries {
 		if e.IsDir() {
 			colPath := filepath.Join(dataDir, e.Name(), "collections")
 			if _, err := os.Stat(colPath); err == nil {
-				return filepath.Join(dataDir, e.Name())
+				return filepath.Join(dataDir, e.Name()), nil
 			}
 		}
 	}
 	// Create default node dir
 	nodeDir := filepath.Join(dataDir, "restored")
-	os.MkdirAll(filepath.Join(nodeDir, "collections"), 0755)
-	return nodeDir
+	if err := mkdirAllNoSymlink(dataDir, filepath.Join(nodeDir, "collections")); err != nil {
+		return "", err
+	}
+	return nodeDir, nil
 }
 
 func addDirToTar(tw *tar.Writer, srcDir, prefix string) error {

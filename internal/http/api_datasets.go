@@ -35,6 +35,22 @@ type DatasetDTO struct {
 	RecordCount int     `json:"record_count"`
 }
 
+func authorizeDatasetFiber(c *fiber.Ctx, cfg APIConfig, datasetID, action string) error {
+	decision, err := (accesspkg.SQLPolicy{DB: cfg.DB, Q: Q, QA: QArgs}).Authorize(
+		c.UserContext(),
+		workspaceActorFromFiber(c),
+		accesspkg.Resource{Kind: accesspkg.ResourceDataset, ID: datasetID},
+		action,
+	)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "dataset access check failed")
+	}
+	if !decision.Allowed {
+		return fiber.NewError(fiber.StatusForbidden, "dataset access denied")
+	}
+	return nil
+}
+
 // In-memory dataset store (fallback when no PostgreSQL)
 var memDatasets = struct {
 	mu   sync.Mutex
@@ -125,9 +141,15 @@ func datasetCreateHandler(cfg APIConfig) fiber.Handler {
 		}
 
 		if cfg.DB != nil {
-			cfg.DB.ExecContext(ctx,
+			result, err := cfg.DB.ExecContext(ctx,
 				Q("INSERT INTO datasets (id, name, owner_id, created_at, updated_at) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (name) DO NOTHING"),
 				id, req.Name, ownerID, now, now)
+			if err != nil {
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"detail": "create dataset failed"})
+			}
+			if inserted, err := result.RowsAffected(); err == nil && inserted == 0 {
+				return c.Status(fiber.StatusConflict).JSON(fiber.Map{"detail": "dataset name already exists"})
+			}
 		} else {
 			memDatasets.mu.Lock()
 			memDatasets.data = append(memDatasets.data, dto)
@@ -155,11 +177,11 @@ func datasetDeleteHandler(cfg APIConfig) fiber.Handler {
 
 		id := c.Params("id")
 		if cfg.DB != nil {
-			userID, _ := c.Locals("user_id").(string)
-			if userID != "" {
-				cfg.DB.ExecContext(ctx, Q("DELETE FROM datasets WHERE id = $1 AND (owner_id = $2 OR owner_id = '' OR owner_id IS NULL)"), id, userID)
-			} else {
-				cfg.DB.ExecContext(ctx, Q("DELETE FROM datasets WHERE id = $1"), id)
+			if err := authorizeDatasetFiber(c, cfg, id, accesspkg.ActionWrite); err != nil {
+				return err
+			}
+			if _, err := cfg.DB.ExecContext(ctx, Q("DELETE FROM datasets WHERE id = $1"), id); err != nil {
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"detail": "delete dataset failed"})
 			}
 		} else {
 			memDatasets.mu.Lock()
@@ -196,6 +218,9 @@ func datasetDataHandler(cfg APIConfig) fiber.Handler {
 		dsID := c.Params("id")
 		if cfg.DB == nil {
 			return c.JSON([]DataDTO{})
+		}
+		if err := authorizeDatasetFiber(c, cfg, dsID, accesspkg.ActionRead); err != nil {
+			return err
 		}
 
 		rows, err := cfg.DB.QueryContext(ctx,
@@ -238,8 +263,29 @@ func datasetDataDeleteHandler(cfg APIConfig) fiber.Handler {
 		dataID := c.Params("dataId")
 		dsID := c.Params("id")
 		if cfg.DB != nil {
-			cfg.DB.ExecContext(ctx, Q("DELETE FROM dataset_data WHERE dataset_id = $1 AND data_id = $2"), dsID, dataID)
-			cfg.DB.ExecContext(ctx, Q("DELETE FROM data WHERE id = $1"), dataID)
+			if err := authorizeDatasetFiber(c, cfg, dsID, accesspkg.ActionWrite); err != nil {
+				return err
+			}
+			tx, err := cfg.DB.BeginTx(ctx, nil)
+			if err != nil {
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"detail": "delete data failed"})
+			}
+			defer tx.Rollback()
+			result, err := tx.ExecContext(ctx, Q("DELETE FROM dataset_data WHERE dataset_id = $1 AND data_id = $2"), dsID, dataID)
+			if err != nil {
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"detail": "delete data failed"})
+			}
+			if deleted, err := result.RowsAffected(); err == nil && deleted == 0 {
+				return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"detail": "not found"})
+			}
+			query, args := QArgs(`DELETE FROM data WHERE id = $1
+				AND NOT EXISTS (SELECT 1 FROM dataset_data WHERE data_id = $1)`, dataID)
+			if _, err := tx.ExecContext(ctx, query, args...); err != nil {
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"detail": "delete data failed"})
+			}
+			if err := tx.Commit(); err != nil {
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"detail": "delete data failed"})
+			}
 		}
 		return c.JSON(fiber.Map{"deleted": true})
 	}
@@ -251,14 +297,23 @@ func datasetDataRawHandler(cfg APIConfig) fiber.Handler {
 		defer cancel()
 
 		dataID := c.Params("dataId")
+		datasetID := c.Params("id")
 		if cfg.DB == nil {
 			return c.Status(404).JSON(fiber.Map{"detail": "not found"})
 		}
+		if err := authorizeDatasetFiber(c, cfg, datasetID, accesspkg.ActionRead); err != nil {
+			return err
+		}
 
 		var location string
-		cfg.DB.QueryRowContext(ctx, Q("SELECT raw_data_location FROM data WHERE id = $1"), dataID).Scan(&location)
-		if location == "" {
+		err := cfg.DB.QueryRowContext(ctx, Q(`SELECT d.raw_data_location FROM data d
+			JOIN dataset_data dd ON dd.data_id = d.id
+			WHERE d.id = $1 AND dd.dataset_id = $2`), dataID, datasetID).Scan(&location)
+		if errors.Is(err, sql.ErrNoRows) || location == "" {
 			return c.Status(404).JSON(fiber.Map{"detail": "not found"})
+		}
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"detail": "load raw data failed"})
 		}
 		raw, err := loadRawDataByLocation(ctx, cfg, location)
 		if err != nil {
@@ -281,11 +336,19 @@ func datasetDataRawURLHandler(cfg APIConfig) fiber.Handler {
 		if cfg.DB == nil {
 			return c.Status(404).JSON(fiber.Map{"detail": "not found"})
 		}
+		if err := authorizeDatasetFiber(c, cfg, datasetID, accesspkg.ActionRead); err != nil {
+			return err
+		}
 
 		var location string
-		cfg.DB.QueryRowContext(ctx, Q("SELECT raw_data_location FROM data WHERE id = $1"), dataID).Scan(&location)
-		if location == "" {
+		err := cfg.DB.QueryRowContext(ctx, Q(`SELECT d.raw_data_location FROM data d
+			JOIN dataset_data dd ON dd.data_id = d.id
+			WHERE d.id = $1 AND dd.dataset_id = $2`), dataID, datasetID).Scan(&location)
+		if errors.Is(err, sql.ErrNoRows) || location == "" {
 			return c.Status(404).JSON(fiber.Map{"detail": "not found"})
+		}
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"detail": "load raw data failed"})
 		}
 
 		ttlSec := c.QueryInt("ttl_seconds", 900)

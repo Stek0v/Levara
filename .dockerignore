@@ -1,0 +1,37 @@
+.git
+.gitignore
+.DS_Store
+
+# Local runtime state and generated binaries.
+data
+*.db
+*.db-*
+*.sqlite*
+*.wal
+*.log
+levara
+levara-server
+levara-arm64
+
+# Frontend dependencies/build/test output are not used by the Go image.
+webui/node_modules
+webui/.next
+webui/test-results
+webui/playwright-report
+node_modules
+coverage
+
+# Local model weights and downloadable artifacts.
+models
+*.gguf
+*.onnx
+*.safetensors
+*.tar
+*.tar.gz
+*.zip
+
+# Local secrets must never enter the build context.
+.env
+.env.*
+!.env.example
+!*.env.example

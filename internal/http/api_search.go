@@ -247,6 +247,9 @@ func filterByAllowedDatasets(results []fiber.Map, allowedIDs []string) []fiber.M
 	if allowedIDs == nil {
 		return results
 	}
+	if len(allowedIDs) == 0 {
+		return []fiber.Map{}
+	}
 	allowed := make(map[string]bool, len(allowedIDs))
 	for _, id := range allowedIDs {
 		allowed[id] = true
@@ -269,6 +272,9 @@ func filterByAllowedDatasets(results []fiber.Map, allowedIDs []string) []fiber.M
 func filterScoredByAllowedDatasets(results []pipeline.ScoredResult, allowedIDs []string) []pipeline.ScoredResult {
 	if allowedIDs == nil {
 		return results
+	}
+	if len(allowedIDs) == 0 {
+		return []pipeline.ScoredResult{}
 	}
 	allowed := make(map[string]bool, len(allowedIDs))
 	for _, id := range allowedIDs {
@@ -515,7 +521,8 @@ func chunksSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 					continue
 				}
 				filtered := filterScoredByAllowedDatasets(raw, req.AllowedDatasetIDs)
-				rerankedThisCall, results = applyRerankToScored(ctx, cfg, rerankClient, sq, filtered, req.TopK)
+				forceRerank := req.Rerank != nil && *req.Rerank
+				rerankedThisCall, results = applyRerankToScored(ctx, cfg, rerankClient, sq, filtered, req.TopK, forceRerank)
 			} else {
 				attempts++
 				results, err = sp.SearchByText(ctx, coll, sq, req.TopK)
@@ -531,12 +538,15 @@ func chunksSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 					continue // dedup across sub-queries
 				}
 				seen[r.ID] = true
+				decision, reason := rerankResponseDecision(req.Rerank, rerankedThisCall)
 				allResults = append(allResults, fiber.Map{
-					"id":         r.ID,
-					"score":      r.Score,
-					"collection": coll,
-					"metadata":   json.RawMessage(r.Metadata),
-					"reranked":   rerankedThisCall,
+					"id":              r.ID,
+					"score":           r.Score,
+					"collection":      coll,
+					"metadata":        json.RawMessage(r.Metadata),
+					"reranked":        rerankedThisCall,
+					"rerank_decision": decision,
+					"rerank_reason":   reason,
 				})
 			}
 		}
@@ -694,7 +704,7 @@ func hybridSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 	// chunksSearch outcome scheme (ok|budget|error|no_text|disabled) so the
 	// same dashboards/alerts work across paths.
 	if rerankClient != nil && rerankClient.Enabled() && len(allResults) > 0 {
-		hybridApplyRerank(ctx, cfg, rerankClient, req.QueryText, &allResults)
+		hybridApplyRerank(ctx, cfg, rerankClient, req.QueryText, &allResults, req.Rerank != nil && *req.Rerank)
 	} else if rerankWanted(req.Rerank, cfg.RerankEndpoint) {
 		metrics.RerankInvocations.WithLabelValues("disabled").Inc()
 	}
@@ -724,11 +734,32 @@ func applyRerankToScored(
 	query string,
 	in []pipeline.ScoredResult,
 	topK int,
+	force bool,
 ) (bool, []pipeline.ScoredResult) {
+	threshold := cfg.RerankScoreGapThreshold
+	if force {
+		threshold = 0
+	}
 	return pipeline.ApplyRerankToScored(ctx, pipeline.ApplyRerankConfig{
 		BudgetMs:          cfg.RerankBudgetMs,
-		ScoreGapThreshold: cfg.RerankScoreGapThreshold,
+		ScoreGapThreshold: threshold,
 	}, rerankClient, query, in, topK)
+}
+
+func rerankResponseDecision(flag *bool, reranked bool) (string, string) {
+	if flag != nil && !*flag {
+		return "disabled", "client_opt_out"
+	}
+	if flag != nil && *flag {
+		if reranked {
+			return "forced", "client_forced"
+		}
+		return "forced", "fallback"
+	}
+	if reranked {
+		return "adaptive_run", "ambiguous_scores"
+	}
+	return "adaptive_skip", "confident_scores_or_fallback"
 }
 
 // hybridApplyRerank scores the fused candidates with the configured
@@ -742,6 +773,7 @@ func hybridApplyRerank(
 	rerankClient *rerank.Client,
 	queryText string,
 	allResults *[]fiber.Map,
+	force bool,
 ) {
 	rows := *allResults
 	docs := make([]string, 0, len(rows))
@@ -770,7 +802,7 @@ func hybridApplyRerank(
 		botFS, _ := rows[len(rows)-1]["fused_score"].(float64)
 		spread := topFS - botFS
 		metrics.RerankScoreSpread.WithLabelValues("rrf").Observe(spread)
-		if cfg.RerankScoreGapThreshold > 0 && float32(spread) > cfg.RerankScoreGapThreshold {
+		if !force && cfg.RerankScoreGapThreshold > 0 && float32(spread) > cfg.RerankScoreGapThreshold {
 			metrics.RerankInvocations.WithLabelValues("skipped_gap").Inc()
 			return
 		}

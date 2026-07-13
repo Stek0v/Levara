@@ -5,6 +5,7 @@ package mcp
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/stek0v/levara/pkg/memoryindex"
 )
 
 const (
@@ -96,7 +98,6 @@ func ToolSaveMemory(ctx context.Context, deps Deps, args map[string]any) ToolRes
 			IsError: true,
 		}
 	}
-
 	id := uuid.New().String()
 	now := time.Now().UTC().Format(time.RFC3339)
 	ownerID := extractOwnerID(ctx)
@@ -111,14 +112,34 @@ func ToolSaveMemory(ctx context.Context, deps Deps, args map[string]any) ToolRes
 	// the prior vector in place instead of leaving an orphan in HNSW —
 	// CollectionInsert replaces by id (store.replaceExistingLocked).
 	canonicalID := id
-	err := db.QueryRowContext(ctx, deps.Q(`
+	upsertQuery := deps.Q(`
 		INSERT INTO memories (id, key, value, type, owner_id, collection_name, room, hall, is_pinned, pin_priority, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		ON CONFLICT(key, owner_id, collection_name) DO UPDATE SET value = $13, type = $14, room = $15, hall = $16, is_pinned = $17, pin_priority = $18, updated_at = $19
 		RETURNING id
-	`),
-		id, key, value, memType, ownerID, collectionName, room, hall, pin, pinPriority, now, now,
-		value, memType, room, hall, pin, pinPriority, now).Scan(&canonicalID)
+	`)
+	queryArgs := []any{id, key, value, memType, ownerID, collectionName, room, hall, pin, pinPriority, now, now,
+		value, memType, room, hall, pin, pinPriority, now}
+	var indexJob memoryindex.Job
+	var err error
+	if provider, ok := deps.(interface{ MemoryIndexOutbox() *memoryindex.Store }); ok && provider.MemoryIndexOutbox() != nil && deps.EmbedAvailable() {
+		tx, beginErr := db.BeginTx(ctx, nil)
+		if beginErr != nil {
+			err = beginErr
+		} else {
+			defer tx.Rollback()
+			err = tx.QueryRowContext(ctx, upsertQuery, queryArgs...).Scan(&canonicalID)
+			if err == nil {
+				digest := fmt.Sprintf("%x", sha256.Sum256([]byte(key+"\x00"+value)))
+				indexJob, err = provider.MemoryIndexOutbox().EnqueueTx(ctx, tx, memoryindex.Job{MemoryID: canonicalID, Operation: "upsert_vector", Collection: collectionName, OwnerID: ownerID, Digest: digest, Model: deps.EmbedModel()})
+			}
+			if err == nil {
+				err = tx.Commit()
+			}
+		}
+	} else {
+		err = db.QueryRowContext(ctx, upsertQuery, queryArgs...).Scan(&canonicalID)
+	}
 	if err != nil {
 		reportMemoryPersistFailure(deps, key, ownerID, collectionName, err.Error())
 		return ToolResult{
@@ -127,8 +148,11 @@ func ToolSaveMemory(ctx context.Context, deps Deps, args map[string]any) ToolRes
 		}
 	}
 
-	if deps.EmbedAvailable() {
+	if indexJob.ID == "" && deps.EmbedAvailable() {
 		indexMemorySync(deps, collectionName, canonicalID, key, value, memType)
+	}
+	if indexJob.ID != "" {
+		return jsonResult(map[string]any{"ok": true, "message": fmt.Sprintf("Memory saved: %s = %s (type: %s)", key, Truncate(value, memoryValueLogMaxLen), memType), "index_status": string(indexJob.Status), "index_job_id": indexJob.ID})
 	}
 
 	return statusResult(true, fmt.Sprintf("Memory saved: %s = %s (type: %s)", key, Truncate(value, memoryValueLogMaxLen), memType))
@@ -264,6 +288,9 @@ func ToolRecallMemory(ctx context.Context, deps Deps, args map[string]any) ToolR
 	db := deps.DB()
 	if db == nil {
 		return jsonResult(map[string]any{"results": []any{}})
+	}
+	if provider, ok := deps.(interface{ MemoryIndexOutbox() *memoryindex.Store }); ok && provider.MemoryIndexOutbox() != nil {
+		provider.MemoryIndexOutbox().WaitReady(ctx, collectionName, ownerID, 200*time.Millisecond)
 	}
 
 	// Strategy 1: vector semantic search, always hydrated through SQL so the

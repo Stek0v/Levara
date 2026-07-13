@@ -78,3 +78,62 @@ jobs:
           go-version-file: go.mod
           cache-dependency-path: go.sum
       - run: make contract-check
+
+  vulnerabilities:
+    name: reachable vulnerabilities
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - run: govulncheck ./...
+
+  webui:
+    name: webui lint + build + e2e + audit
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: webui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: webui/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: LEVARA_API_URL=http://127.0.0.1:8081 npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - run: npm audit --omit=dev --audit-level=high
+
+  compose:
+    name: compose configuration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose -f docker-compose.yml config --quiet
+      - run: docker compose -f docker-compose.qwen-stack.yml config --quiet
+      - run: docker compose -f docker-compose.pi.yml config --quiet
+      - run: docker compose -f docker-compose.yml -f docker-compose.qwen3.yml config --quiet
+      - run: docker compose -f deploy/docker/docker-compose.yml config --quiet
+
+  memory-auth-isolation:
+    name: memory auth + owner isolation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Authenticated MCP and owner boundaries
+        run: go test -count=1 ./internal/http ./pkg/mcp -run 'Auth|Owner|Isolation|APIKey|Session'
+      - name: Durable memory job ownership
+        run: go test -count=1 ./pkg/memoryindex ./pkg/mcp -run 'Outbox|RecoverRunning|DeleteMemory'
+      - name: Race-check security boundaries
+        run: go test -race -count=1 ./internal/http -run 'MCP.*Auth|MCP.*Session|Tenant.*Isolation'

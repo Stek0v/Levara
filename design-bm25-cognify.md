@@ -4,6 +4,12 @@ Status: **DRAFT**
 Дата: 2026-06-17
 Конфигурация: `standalone-embed`, MacBook Air M2
 
+> Обновление 2026-07-05: этот документ фиксирует состояние анализа на
+> 2026-06-17. Фактическое текущее состояние см. в `docs/current-state.md`:
+> embed-сервис на `http://127.0.0.1:9101/v1/embeddings` работает,
+> модель `potion-code-16M`/256d, PostgreSQL и LLM подключены, doctor даёт
+> `8/9 ok`, BM25 покрытие `51/52` пользовательских коллекций.
+
 ---
 
 ## 1. Текущее состояние
@@ -14,9 +20,9 @@ Status: **DRAFT**
 Levara: running standalone (PID via launchd)
   --dim=256 --port=8081 --grpc-port=0 --node-id=mac1 --data-dir=~/src/levara/data
 
-EMBEDDING_ENDPOINT: http://127.0.0.1:9101/v1   ❌ DOWN (4 дня)
-DB_PROVIDER:       sqlite (default, no $DB_HOST)
-LLM_ENDPOINT:      не задан
+EMBEDDING_ENDPOINT: http://127.0.0.1:9101/v1   ❌ DOWN (4 дня) — историческое состояние 2026-06-17
+DB_PROVIDER:       sqlite (default, no $DB_HOST) — историческое состояние 2026-06-17
+LLM_ENDPOINT:      не задан — историческое состояние 2026-06-17
 Neo4j:             не настроен
 BM25 index:        не инициализирован
 ```
@@ -243,7 +249,7 @@ mcp_levara_cognify(
 ```bash
 levara-server \
   --profile standalone-embed \
-  --embed-endpoint=http://127.0.0.1:9101/v1 \
+  --embed-endpoint=http://127.0.0.1:9101/v1/embeddings \
   --pg-url=postgres://levara:***@host:5432/levara_db
 ```
 
