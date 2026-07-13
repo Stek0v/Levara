@@ -216,6 +216,9 @@ func RegisterAPI(app fiber.Router, cfg APIConfig) {
 	app.Get("/agent-trajectories", agentTrajectoriesHandler(cfg))
 	app.Get("/agent-trajectories/:id", agentTrajectoryDetailHandler(cfg))
 	app.Get("/memory-behavior", memoryBehaviorHandler(cfg))
+	app.Post("/memory-reviews/run", memoryReviewRunHandler(cfg))
+	app.Get("/memory-reviews", memoryReviewListHandler(cfg))
+	app.Get("/memory-reviews/:id", memoryReviewDetailHandler(cfg))
 
 	// U22: Ontology upload (already registered via RegisterAPI for ontology list/upload)
 
