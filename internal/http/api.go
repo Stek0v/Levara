@@ -215,6 +215,7 @@ func RegisterAPI(app fiber.Router, cfg APIConfig) {
 	RegisterFeedbackAPI(app, cfg)
 	app.Get("/agent-trajectories", agentTrajectoriesHandler(cfg))
 	app.Get("/agent-trajectories/:id", agentTrajectoryDetailHandler(cfg))
+	app.Get("/memory-behavior", memoryBehaviorHandler(cfg))
 
 	// U22: Ontology upload (already registered via RegisterAPI for ontology list/upload)
 
