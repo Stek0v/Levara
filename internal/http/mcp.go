@@ -672,6 +672,7 @@ func (h *mcpHandler) executeTool(ctx context.Context, sess *mcpSession, name str
 		result = h.executeToolInner(ctx, sess, name, args)
 	}
 	h.auditWorkspaceTool(ctx, name, args, result)
+	h.updateMemoryBehaviorSession(sess, name, result)
 	duration := time.Since(toolStart)
 	metrics.MCPToolDuration.WithLabelValues(name).Observe(duration.Seconds())
 	status := "ok"
@@ -755,6 +756,7 @@ func (h *mcpHandler) recordMCPAudit(ctx context.Context, sess *mcpSession, name 
 	}
 	entry.ResultCount = auditResultCount(result)
 	entry.ZeroResult = isRetrievalTool(name) && entry.ResultCount == 0 && outcome == audit.OutcomeOK
+	entry.BlindSave, entry.RepeatSave = memoryBehaviorFlags(result)
 	entry.TraceID, _ = ctx.Value(mcpTraceIDKey).(string)
 	if outcome != audit.OutcomeOK && len(result.Content) > 0 {
 		entry.ErrorMessage = truncateAuditField(result.Content[0].Text)
@@ -895,7 +897,7 @@ func (h *mcpHandler) executeToolInner(ctx context.Context, sess *mcpSession, nam
 	case "git_search":
 		return h.toolGitSearch(ctx, args)
 	case "save_memory":
-		return h.toolSaveMemory(ctx, args)
+		return h.toolSaveMemory(ctx, sess, args)
 	case "recall_memory":
 		return h.toolRecallMemory(ctx, args)
 	case "list_memories":
@@ -1041,12 +1043,98 @@ func (h *mcpHandler) toolGitSearch(ctx context.Context, args map[string]any) mcp
 // toolSaveMemory / toolRecallMemory are thin shims over pkg/mcp (F-4 wave 3i).
 // First AI-seam tools: vector indexing (save) + semantic recall with SQL
 // fallback (recall), both gated on EmbedAvailable() via Deps.
-func (h *mcpHandler) toolSaveMemory(ctx context.Context, args map[string]any) mcpToolResult {
-	return mcp.ToolSaveMemory(ctx, h, args)
+func (h *mcpHandler) toolSaveMemory(ctx context.Context, sess *mcpSession, args map[string]any) mcpToolResult {
+	blindSave := sess == nil || !sess.MemoryConsulted
+	repeatSave := h.memoryKeyExists(ctx, args)
+	result := mcp.ToolSaveMemory(ctx, h, args)
+	if result.IsError {
+		return result
+	}
+	behavior := map[string]any{}
+	if blindSave {
+		behavior["warning"] = "save_memory was called before recall/search/list_memories in this MCP session"
+		behavior["recommendation"] = "Call recall_memory, search, or list_memories before saving to avoid duplicate or noisy memories."
+	}
+	if repeatSave {
+		behavior["repeat_key"] = true
+		if behavior["warning"] == nil {
+			behavior["warning"] = "save_memory updated an existing key"
+		}
+		if behavior["recommendation"] == nil {
+			behavior["recommendation"] = "Use recall_memory/list_memories before saving to decide whether to update or create a new key."
+		}
+	}
+	if len(behavior) == 0 {
+		return result
+	}
+	behavior["blind_save"] = blindSave
+	behavior["repeat_save"] = repeatSave
+	return attachMemoryBehavior(result, behavior)
 }
 
 func (h *mcpHandler) toolRecallMemory(ctx context.Context, args map[string]any) mcpToolResult {
 	return mcp.ToolRecallMemory(ctx, h, args)
+}
+
+func (h *mcpHandler) memoryKeyExists(ctx context.Context, args map[string]any) bool {
+	if h.cfg.DB == nil {
+		return false
+	}
+	key, _ := args["key"].(string)
+	if key == "" {
+		return false
+	}
+	collection, _ := args["collection"].(string)
+	ownerID, _ := ctx.Value(mcpUserIDKey).(string)
+	var id string
+	err := h.cfg.DB.QueryRowContext(ctx, Q(`SELECT id FROM memories WHERE key=$1 AND owner_id=$2 AND collection_name=$3 LIMIT 1`), key, ownerID, collection).Scan(&id)
+	if err != nil {
+		return false
+	}
+	return id != ""
+}
+
+func attachMemoryBehavior(result mcpToolResult, behavior map[string]any) mcpToolResult {
+	payload := map[string]any{}
+	if existing, ok := result.StructuredContent.(map[string]any); ok {
+		for k, v := range existing {
+			payload[k] = v
+		}
+	} else if len(result.Content) > 0 && result.Content[0].Text != "" {
+		_ = json.Unmarshal([]byte(result.Content[0].Text), &payload)
+	}
+	if len(payload) == 0 {
+		payload["ok"] = true
+	}
+	payload["memory_behavior"] = behavior
+	out, _ := json.MarshalIndent(payload, "", "  ")
+	result.StructuredContent = payload
+	result.Content = []mcpContent{{Type: "text", Text: string(out)}}
+	return result
+}
+
+func memoryBehaviorFlags(result mcpToolResult) (bool, bool) {
+	payload, ok := result.StructuredContent.(map[string]any)
+	if !ok {
+		return false, false
+	}
+	behavior, ok := payload["memory_behavior"].(map[string]any)
+	if !ok {
+		return false, false
+	}
+	blind, _ := behavior["blind_save"].(bool)
+	repeat, _ := behavior["repeat_save"].(bool)
+	return blind, repeat
+}
+
+func (h *mcpHandler) updateMemoryBehaviorSession(sess *mcpSession, name string, result mcpToolResult) {
+	if sess == nil || result.IsError {
+		return
+	}
+	switch name {
+	case "recall_memory", "list_memories", "wake_up", "search", "workspace_search", "cross_search":
+		sess.MemoryConsulted = true
+	}
 }
 
 // toolListMemories is a thin shim over mcp.ToolListMemories (F-4 wave 3f).

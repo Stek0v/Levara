@@ -82,6 +82,8 @@ type EventRow struct {
 	RequestBytes  int             `json:"request_bytes,omitempty"`
 	ResponseBytes int             `json:"response_bytes,omitempty"`
 	TraceID       string          `json:"trace_id,omitempty"`
+	BlindSave     bool            `json:"blind_save,omitempty"`
+	RepeatSave    bool            `json:"repeat_save,omitempty"`
 	ErrorMessage  string          `json:"error_message,omitempty"`
 	Args          json.RawMessage `json:"args,omitempty"`
 }
@@ -106,11 +108,14 @@ func NewReadModel(db *sql.DB, queueSize int) (*ReadModel, error) {
 		collection_name TEXT, args_json TEXT, latency_ms INTEGER NOT NULL,
 		outcome TEXT NOT NULL, result_count INTEGER NOT NULL DEFAULT 0,
 		zero_result INTEGER NOT NULL DEFAULT 0, request_bytes INTEGER NOT NULL DEFAULT 0,
-		response_bytes INTEGER NOT NULL DEFAULT 0, trace_id TEXT, error_message TEXT
+		response_bytes INTEGER NOT NULL DEFAULT 0, trace_id TEXT, error_message TEXT,
+		blind_save INTEGER NOT NULL DEFAULT 0, repeat_save INTEGER NOT NULL DEFAULT 0
 	)`
 	if _, err := db.Exec(ddl); err != nil {
 		return nil, err
 	}
+	ensureAuditColumn(db, "blind_save INTEGER NOT NULL DEFAULT 0")
+	ensureAuditColumn(db, "repeat_save INTEGER NOT NULL DEFAULT 0")
 	driverName := strings.ToLower(fmt.Sprintf("%T", db.Driver()))
 	r := &ReadModel{db: db, q: make(chan Entry, queueSize), closed: make(chan struct{}), postgres: strings.Contains(driverName, "pgx") || strings.Contains(driverName, "pq") || strings.Contains(driverName, "stdlib")}
 	go r.run()
@@ -172,21 +177,21 @@ func (r *ReadModel) insertBatch(ctx context.Context, entries []Entry) error {
 	if len(entries) == 0 {
 		return nil
 	}
-	const columns = 18
+	const columns = 20
 	var query strings.Builder
-	query.WriteString(`INSERT INTO mcp_audit_events (id,ts,session_id,agent_id,client_name,client_version,toolset,tool,collection_name,args_json,latency_ms,outcome,result_count,zero_result,request_bytes,response_bytes,trace_id,error_message) VALUES `)
+	query.WriteString(`INSERT INTO mcp_audit_events (id,ts,session_id,agent_id,client_name,client_version,toolset,tool,collection_name,args_json,latency_ms,outcome,result_count,zero_result,request_bytes,response_bytes,trace_id,error_message,blind_save,repeat_save) VALUES `)
 	values := make([]any, 0, len(entries)*columns)
 	for i, e := range entries {
 		if i > 0 {
 			query.WriteByte(',')
 		}
-		query.WriteString("(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+		query.WriteString("(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
 		args, _ := json.Marshal(e.Args)
 		id := e.RequestID
 		if id == "" {
 			id = fmt.Sprintf("%s:%s:%s:%d", e.TS, e.SessionID, e.Tool, e.LatencyMS)
 		}
-		values = append(values, id, e.TS, e.SessionID, e.AgentID, e.ClientName, e.ClientVersion, e.Toolset, e.Tool, e.Collection, string(args), e.LatencyMS, string(e.Outcome), e.ResultCount, boolInt(e.ZeroResult), e.RequestBytes, e.ResponseBytes, e.TraceID, e.ErrorMessage)
+		values = append(values, id, e.TS, e.SessionID, e.AgentID, e.ClientName, e.ClientVersion, e.Toolset, e.Tool, e.Collection, string(args), e.LatencyMS, string(e.Outcome), e.ResultCount, boolInt(e.ZeroResult), e.RequestBytes, e.ResponseBytes, e.TraceID, e.ErrorMessage, boolInt(e.BlindSave), boolInt(e.RepeatSave))
 	}
 	query.WriteString(" ON CONFLICT(id) DO NOTHING")
 	_, err := r.db.ExecContext(ctx, r.bind(query.String()), values...)
@@ -307,7 +312,7 @@ func (r *ReadModel) Events(ctx context.Context, f EventFilter) ([]EventRow, erro
 	if f.IncludeArgs {
 		selectArgs = "args_json"
 	}
-	q := `SELECT id,ts,session_id,agent_id,client_name,toolset,tool,collection_name,latency_ms,outcome,result_count,zero_result,request_bytes,response_bytes,trace_id,error_message,` + selectArgs + ` FROM mcp_audit_events WHERE ts>=?`
+	q := `SELECT id,ts,session_id,agent_id,client_name,toolset,tool,collection_name,latency_ms,outcome,result_count,zero_result,request_bytes,response_bytes,trace_id,error_message,blind_save,repeat_save,` + selectArgs + ` FROM mcp_audit_events WHERE ts>=?`
 	args := []any{f.Since.UTC().Format(time.RFC3339Nano)}
 	for _, x := range []struct{ column, value string }{{"tool", f.Tool}, {"outcome", f.Outcome}, {"client_name", f.Client}, {"collection_name", f.Collection}} {
 		if x.value != "" {
@@ -325,10 +330,12 @@ func (r *ReadModel) Events(ctx context.Context, f EventFilter) ([]EventRow, erro
 	out := []EventRow{}
 	for rows.Next() {
 		var e EventRow
-		var zero int
+		var zero, blind, repeat int
 		var raw string
-		if rows.Scan(&e.ID, &e.TS, &e.SessionID, &e.AgentID, &e.ClientName, &e.Toolset, &e.Tool, &e.Collection, &e.LatencyMS, &e.Outcome, &e.ResultCount, &zero, &e.RequestBytes, &e.ResponseBytes, &e.TraceID, &e.ErrorMessage, &raw) == nil {
+		if rows.Scan(&e.ID, &e.TS, &e.SessionID, &e.AgentID, &e.ClientName, &e.Toolset, &e.Tool, &e.Collection, &e.LatencyMS, &e.Outcome, &e.ResultCount, &zero, &e.RequestBytes, &e.ResponseBytes, &e.TraceID, &e.ErrorMessage, &blind, &repeat, &raw) == nil {
 			e.ZeroResult = zero != 0
+			e.BlindSave = blind != 0
+			e.RepeatSave = repeat != 0
 			if f.IncludeArgs && raw != "" {
 				e.Args = json.RawMessage(raw)
 			}
@@ -350,7 +357,7 @@ func (r *ReadModel) EventsForTrajectories(ctx context.Context, f EventFilter) ([
 	if f.IncludeArgs {
 		selectArgs = "args_json"
 	}
-	q := `SELECT id,ts,session_id,agent_id,client_name,toolset,tool,collection_name,latency_ms,outcome,result_count,zero_result,request_bytes,response_bytes,trace_id,error_message,` + selectArgs + ` FROM mcp_audit_events WHERE ts>=?`
+	q := `SELECT id,ts,session_id,agent_id,client_name,toolset,tool,collection_name,latency_ms,outcome,result_count,zero_result,request_bytes,response_bytes,trace_id,error_message,blind_save,repeat_save,` + selectArgs + ` FROM mcp_audit_events WHERE ts>=?`
 	args := []any{f.Since.UTC().Format(time.RFC3339Nano)}
 	for _, x := range []struct{ column, value string }{{"tool", f.Tool}, {"outcome", f.Outcome}, {"client_name", f.Client}, {"collection_name", f.Collection}} {
 		if x.value != "" {
@@ -368,10 +375,12 @@ func (r *ReadModel) EventsForTrajectories(ctx context.Context, f EventFilter) ([
 	out := []EventRow{}
 	for rows.Next() {
 		var e EventRow
-		var zero int
+		var zero, blind, repeat int
 		var raw string
-		if rows.Scan(&e.ID, &e.TS, &e.SessionID, &e.AgentID, &e.ClientName, &e.Toolset, &e.Tool, &e.Collection, &e.LatencyMS, &e.Outcome, &e.ResultCount, &zero, &e.RequestBytes, &e.ResponseBytes, &e.TraceID, &e.ErrorMessage, &raw) == nil {
+		if rows.Scan(&e.ID, &e.TS, &e.SessionID, &e.AgentID, &e.ClientName, &e.Toolset, &e.Tool, &e.Collection, &e.LatencyMS, &e.Outcome, &e.ResultCount, &zero, &e.RequestBytes, &e.ResponseBytes, &e.TraceID, &e.ErrorMessage, &blind, &repeat, &raw) == nil {
 			e.ZeroResult = zero != 0
+			e.BlindSave = blind != 0
+			e.RepeatSave = repeat != 0
 			if f.IncludeArgs && raw != "" {
 				e.Args = json.RawMessage(raw)
 			}
@@ -430,6 +439,13 @@ func boolInt(v bool) int {
 		return 1
 	}
 	return 0
+}
+
+func ensureAuditColumn(db *sql.DB, columnDDL string) {
+	if db == nil || strings.TrimSpace(columnDDL) == "" {
+		return
+	}
+	_, _ = db.Exec("ALTER TABLE mcp_audit_events ADD COLUMN " + columnDDL)
 }
 
 func (r *ReadModel) bind(query string) string {

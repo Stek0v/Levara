@@ -19,6 +19,7 @@ type Session struct {
 	DefaultCollection string      // set via the set_context tool
 	ClientName        string      // initialize.params.clientInfo.name
 	ClientVersion     string      // initialize.params.clientInfo.version
+	MemoryConsulted   bool        // true after recall/search/list before save_memory guardrails
 	closeSSEOnce      sync.Once
 }
 
