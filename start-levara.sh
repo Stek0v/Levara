@@ -46,6 +46,10 @@ export EMBEDDING_DIMENSIONS="${EMBEDDING_DIMENSIONS:-256}"
 # Bench/eval hammers /auth/login — default server cap is 10/min/IP (not a DB limit).
 export RATE_LIMIT_AUTH_MAX="${RATE_LIMIT_AUTH_MAX:-10000}"
 export RATE_LIMIT_AUTH_WINDOW_SECONDS="${RATE_LIMIT_AUTH_WINDOW_SECONDS:-60}"
+export LEVARA_HTTP_ACCESS_LOG="${LEVARA_HTTP_ACCESS_LOG:-false}"
+export LEVARA_MCP_TOOLSET="${LEVARA_MCP_TOOLSET:-memory}"
+export LEVARA_MCP_AUDIT_LOG="${LEVARA_MCP_AUDIT_LOG:-$ROOT/data/audit/mcp-local}"
+mkdir -p "$LEVARA_MCP_AUDIT_LOG"
 
 # Stop previous instance on :8081 if any
 if pgrep -f "levara-server.*-port=8081" >/dev/null 2>&1; then
@@ -62,4 +66,5 @@ exec "$ROOT/levara-server" \
   -node-id=mac1 \
   -require-auth=false \
   -pg-url="$DATABASE_URL" \
-  -embed-keepalive-interval="${EMBED_KEEPALIVE_INTERVAL:-5m}"
+  -embed-keepalive-interval="${EMBED_KEEPALIVE_INTERVAL:-5m}" \
+  -mcp-audit-log="$LEVARA_MCP_AUDIT_LOG"
