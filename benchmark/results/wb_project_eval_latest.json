@@ -1,0 +1,1378 @@
+{
+  "project": "/Users/stek0v/Documents/WB",
+  "collection": "wb_eval_20260713_02",
+  "corpus": {
+    "files": 114,
+    "bytes": 500148,
+    "excluded_dirs": [
+      ".evidence",
+      ".git",
+      ".pytest_cache",
+      ".venv",
+      "__pycache__",
+      "build",
+      "dist",
+      "node_modules",
+      "output",
+      "tmp"
+    ],
+    "suffixes": [
+      ".json",
+      ".md",
+      ".py",
+      ".sql",
+      ".toml",
+      ".ts",
+      ".yaml",
+      ".yml"
+    ]
+  },
+  "mcp": {
+    "toolset": {
+      "contract_revision": "v1",
+      "name": "memory",
+      "tool_count": 19
+    },
+    "tools": 19,
+    "tools_list_bytes": 20186
+  },
+  "golden_cases": [
+    {
+      "id": "token_source",
+      "query": "Where does wb-mcp-server read WB_API_TOKEN and CLI --token?",
+      "expected": [
+        "wb-mcp-server/src/config.ts",
+        "wb-mcp-server/src/index.ts",
+        "wb-mcp-server/README.md"
+      ],
+      "slice": "mcp-auth"
+    },
+    {
+      "id": "authorization_header",
+      "query": "Where is the Wildberries Authorization header set without Bearer?",
+      "expected": [
+        "wb-mcp-server/src/wb-client.ts",
+        "wb-mcp-server/CLAUDE.md"
+      ],
+      "slice": "mcp-auth"
+    },
+    {
+      "id": "write_tools",
+      "query": "Which WB MCP tools can mutate real seller data?",
+      "expected": [
+        "wb-mcp-server/README.md",
+        "wb-mcp-server/README.ru.md",
+        "wb-mcp-server/docs/wb-api-read-coverage.md"
+      ],
+      "slice": "safety"
+    },
+    {
+      "id": "readonly_profile",
+      "query": "Why does the WB MCP need a read-only profile for analytics?",
+      "expected": [
+        "wb-mcp-server/docs/wb-api-read-coverage.md"
+      ],
+      "slice": "safety"
+    },
+    {
+      "id": "account_limits",
+      "query": "Why should equivalent tokens for the same seller not be alternated?",
+      "expected": [
+        "wb-analytics-platform/README.md",
+        "wb-analytics-platform/docs/ingestion-control.md"
+      ],
+      "slice": "ingestion-control"
+    },
+    {
+      "id": "rate_limit_429",
+      "query": "How does ingestion handle WB HTTP 429 and persistent cooldown?",
+      "expected": [
+        "wb-analytics-platform/docs/ingestion-control.md",
+        "wb-analytics-platform/ingestion/wb_analytics/history.py"
+      ],
+      "slice": "ingestion-control"
+    },
+    {
+      "id": "finance_rrdid",
+      "query": "How does finance realization pagination resume with rrdId until HTTP 204?",
+      "expected": [
+        "wb-analytics-platform/README.md",
+        "wb-analytics-platform/docs/pnl-data-contract.md",
+        "wb-analytics-platform/ingestion/wb_analytics/collectors.py"
+      ],
+      "slice": "finance"
+    },
+    {
+      "id": "raw_s3_contract",
+      "query": "Where is the contract that raw WB responses are archived before normalization?",
+      "expected": [
+        "wb-analytics-platform/README.md",
+        "wb-analytics-platform/docs/mass-ingestion-contract.md",
+        "wb-analytics-platform/ingestion/wb_analytics/storage.py"
+      ],
+      "slice": "storage"
+    },
+    {
+      "id": "pnl_tables",
+      "query": "Which ClickHouse tables and SQL define the daily P&L mart?",
+      "expected": [
+        "wb-analytics-platform/README.md",
+        "wb-analytics-platform/docker/clickhouse/init/002_finance_pnl.sql",
+        "wb-analytics-platform/docs/pnl-data-contract.md"
+      ],
+      "slice": "finance"
+    },
+    {
+      "id": "evidence_reports",
+      "query": "Where are Evidence dashboards and ClickHouse report queries defined?",
+      "expected": [
+        "wb-analytics-platform/docs/evidence-report-design.md",
+        "wb-analytics-platform/evidence/pages/index.md",
+        "wb-analytics-platform/evidence/sources/clickhouse/kpi_summary.sql"
+      ],
+      "slice": "bi"
+    },
+    {
+      "id": "mcp_large_exports",
+      "query": "Why should MCP not stream full multi-page WB exports through model context?",
+      "expected": [
+        "wb-analytics-platform/docs/mass-ingestion-contract.md",
+        "wb-mcp-server/docs/wb-api-read-coverage.md"
+      ],
+      "slice": "mcp-architecture"
+    },
+    {
+      "id": "async_warehouse_report",
+      "query": "Where is the warehouse remains async report implemented and documented?",
+      "expected": [
+        "wb-analytics-platform/README.md",
+        "wb-analytics-platform/ingestion/wb_analytics/collectors.py",
+        "wb-mcp-server/src/tools/analytics.ts"
+      ],
+      "slice": "analytics"
+    }
+  ],
+  "modes": {
+    "filesystem": {
+      "cases": 12,
+      "recall@3": 0.5,
+      "recall@5": 0.6667,
+      "mrr": 0.4028,
+      "latency_ms": {
+        "p50": 4.471,
+        "p95": 5.567,
+        "p99": 5.592
+      },
+      "context_bytes_avg": 223.7
+    },
+    "memory": {
+      "cases": 12,
+      "recall@3": 0.0,
+      "recall@5": 0.0,
+      "mrr": 0.0,
+      "latency_ms": {
+        "p50": 4.987,
+        "p95": 11.839,
+        "p99": 16.082
+      },
+      "context_bytes_avg": 3432.7
+    },
+    "search_hybrid": {
+      "cases": 12,
+      "recall@3": 0.5833,
+      "recall@5": 0.5833,
+      "mrr": 0.4583,
+      "latency_ms": {
+        "p50": 4.909,
+        "p95": 10.095,
+        "p99": 12.911
+      },
+      "context_bytes_avg": 25045.8
+    },
+    "search_chunks": {
+      "cases": 12,
+      "recall@3": 0.4167,
+      "recall@5": 0.5,
+      "mrr": 0.2917,
+      "latency_ms": {
+        "p50": 4.739,
+        "p95": 11.596,
+        "p99": 13.526
+      },
+      "context_bytes_avg": 26660.5
+    },
+    "search_chunks_lexical": {
+      "cases": 12,
+      "recall@3": 0.5833,
+      "recall@5": 0.5833,
+      "mrr": 0.5417,
+      "latency_ms": {
+        "p50": 1.47,
+        "p95": 3.159,
+        "p99": 3.569
+      },
+      "context_bytes_avg": 21490.2
+    },
+    "workspace": {
+      "status": "not_available",
+      "reason": "active MCP profile does not expose workspace_search",
+      "active_toolset": {
+        "contract_revision": "v1",
+        "name": "memory",
+        "tool_count": 19
+      }
+    }
+  },
+  "rows": [
+    {
+      "mode": "filesystem",
+      "id": "token_source",
+      "slice": "mcp-auth",
+      "query": "Where does wb-mcp-server read WB_API_TOKEN and CLI --token?",
+      "expected": [
+        "wb-mcp-server/src/config.ts",
+        "wb-mcp-server/src/index.ts",
+        "wb-mcp-server/README.md"
+      ],
+      "result_refs": [
+        "wb-mcp-server/README.md",
+        "wb-mcp-server/README.ru.md",
+        "wb-analytics-platform/README.md",
+        "wb-analytics-platform/ingestion/wb_analytics/config.py",
+        "wb-mcp-server/docs/wb-api-read-coverage.md"
+      ],
+      "hit@3": true,
+      "rank": 1,
+      "latency_ms": 4.387,
+      "context_bytes": 176
+    },
+    {
+      "mode": "filesystem",
+      "id": "authorization_header",
+      "slice": "mcp-auth",
+      "query": "Where is the Wildberries Authorization header set without Bearer?",
+      "expected": [
+        "wb-mcp-server/src/wb-client.ts",
+        "wb-mcp-server/CLAUDE.md"
+      ],
+      "result_refs": [
+        "wb-mcp-server/scripts/build_business_owner_pdf.py",
+        "wb-analytics-platform/ingestion/wb_analytics/metadata.py",
+        "wb-mcp-server/CLAUDE.md",
+        "wb-analytics-platform/ingestion/wb_analytics/cli.py",
+        "wb-analytics-platform/ingestion/wb_analytics/http.py"
+      ],
+      "hit@3": true,
+      "rank": 3,
+      "latency_ms": 3.827,
+      "context_bytes": 231
+    },
+    {
+      "mode": "filesystem",
+      "id": "write_tools",
+      "slice": "safety",
+      "query": "Which WB MCP tools can mutate real seller data?",
+      "expected": [
+        "wb-mcp-server/README.md",
+        "wb-mcp-server/README.ru.md",
+        "wb-mcp-server/docs/wb-api-read-coverage.md"
+      ],
+      "result_refs": [
+        "wb-analytics-platform/ingestion/wb_analytics/metadata.py",
+        "wb-mcp-server/scripts/build_business_owner_pdf.py",
+        "wb-analytics-platform/ingestion/wb_analytics/clickhouse.py",
+        "wb-analytics-platform/ingestion/wb_analytics/collectors.py",
+        "wb-mcp-server/src/server.ts"
+      ],
+      "hit@3": false,
+      "rank": null,
+      "latency_ms": 3.99,
+      "context_bytes": 248
+    },
+    {
+      "mode": "filesystem",
+      "id": "readonly_profile",
+      "slice": "safety",
+      "query": "Why does the WB MCP need a read-only profile for analytics?",
+      "expected": [
+        "wb-mcp-server/docs/wb-api-read-coverage.md"
+      ],
+      "result_refs": [
+        "wb-analytics-platform/README.md",
+        "wb-mcp-server/README.md",
+        "wb-analytics-platform/ingestion/wb_analytics/collectors.py",
+        "wb-mcp-server/docs/wb-api-read-coverage.md",
+        "wb-mcp-server/README.ru.md"
+      ],
+      "hit@3": false,
+      "rank": null,
+      "latency_ms": 5.598,
+      "context_bytes": 180
+    },
+    {
+      "mode": "filesystem",
+      "id": "account_limits",
+      "slice": "ingestion-control",
+      "query": "Why should equivalent tokens for the same seller not be alternated?",
+      "expected": [
+        "wb-analytics-platform/README.md",
+        "wb-analytics-platform/docs/ingestion-control.md"
+      ],
+      "result_refs": [
+        "wb-analytics-platform/README.md",
+        "wb-analytics-platform/ingestion/wb_analytics/metadata.py",
+        "wb-analytics-platform/docker/clickhouse/init/002_finance_pnl.sql",
+        "wb-analytics-platform/ingestion/wb_analytics/collectors.py",
+        "wb-analytics-platform/docs/pnl-data-contract.md"
+      ],
+      "hit@3": true,
+      "rank": 1,
+      "latency_ms": 5.194,
+      "context_bytes": 256
+    },
+    {
+      "mode": "filesystem",
+      "id": "rate_limit_429",
+      "slice": "ingestion-control",
+      "query": "How does ingestion handle WB HTTP 429 and persistent cooldown?",
+      "expected": [
+        "wb-analytics-platform/docs/ingestion-control.md",
+        "wb-analytics-platform/ingestion/wb_analytics/history.py"
+      ],
+      "result_refs": [
+        "wb-analytics-platform/README.md",
+        "wb-analytics-platform/ingestion/wb_analytics/metadata.py",
+        "wb-mcp-server/CLAUDE.md",
+        "wb-mcp-server/docs/wb-api-read-coverage.md",
+        "wb-mcp-server/scripts/build_business_owner_pdf.py"
+      ],
+      "hit@3": false,
+      "rank": null,
+      "latency_ms": 4.008,
+      "context_bytes": 201
+    },
+    {
+      "mode": "filesystem",
+      "id": "finance_rrdid",
+      "slice": "finance",
+      "query": "How does finance realization pagination resume with rrdId until HTTP 204?",
+      "expected": [
+        "wb-analytics-platform/README.md",
+        "wb-analytics-platform/docs/pnl-data-contract.md",
+        "wb-analytics-platform/ingestion/wb_analytics/collectors.py"
+      ],
+      "result_refs": [
+        "wb-mcp-server/CLAUDE.md",
+        "wb-analytics-platform/ingestion/wb_analytics/cli.py",
+        "wb-mcp-server/docs/wb-api-read-coverage.md",
+        "wb-analytics-platform/ingestion/wb_analytics/collectors.py",
+        "wb-analytics-platform/docker/clickhouse/init/002_finance_pnl.sql"
+      ],
+      "hit@3": false,
+      "rank": null,
+      "latency_ms": 5.407,
+      "context_bytes": 238
+    },
+    {
+      "mode": "filesystem",
+      "id": "raw_s3_contract",
+      "slice": "storage",
+      "query": "Where is the contract that raw WB responses are archived before normalization?",
+      "expected": [
+        "wb-analytics-platform/README.md",
+        "wb-analytics-platform/docs/mass-ingestion-contract.md",
+        "wb-analytics-platform/ingestion/wb_analytics/storage.py"
+      ],
+      "result_refs": [
+        "wb-mcp-server/scripts/build_business_owner_pdf.py",
+        "wb-analytics-platform/README.md",
+        "wb-analytics-platform/docs/pnl-data-contract.md",
+        "wb-analytics-platform/ingestion/wb_analytics/collectors.py",
+        "wb-mcp-server/README.md"
+      ],
+      "hit@3": true,
+      "rank": 2,
+      "latency_ms": 4.556,
+      "context_bytes": 208
+    },
+    {
+      "mode": "filesystem",
+      "id": "pnl_tables",
+      "slice": "finance",
+      "query": "Which ClickHouse tables and SQL define the daily P&L mart?",
+      "expected": [
+        "wb-analytics-platform/README.md",
+        "wb-analytics-platform/docker/clickhouse/init/002_finance_pnl.sql",
+        "wb-analytics-platform/docs/pnl-data-contract.md"
+      ],
+      "result_refs": [
+        "wb-analytics-platform/README.md",
+        "wb-analytics-platform/docs/pnl-data-contract.md",
+        "wb-analytics-platform/docs/docker-compose-design.md",
+        "wb-analytics-platform/docs/ingestion-control.md",
+        "wb-mcp-server/README.md"
+      ],
+      "hit@3": true,
+      "rank": 1,
+      "latency_ms": 4.667,
+      "context_bytes": 199
+    },
+    {
+      "mode": "filesystem",
+      "id": "evidence_reports",
+      "slice": "bi",
+      "query": "Where are Evidence dashboards and ClickHouse report queries defined?",
+      "expected": [
+        "wb-analytics-platform/docs/evidence-report-design.md",
+        "wb-analytics-platform/evidence/pages/index.md",
+        "wb-analytics-platform/evidence/sources/clickhouse/kpi_summary.sql"
+      ],
+      "result_refs": [
+        "wb-mcp-server/docs/wb-api-read-coverage.md",
+        "wb-analytics-platform/README.md",
+        "wb-analytics-platform/ingestion/wb_analytics/metadata.py",
+        "wb-analytics-platform/ingestion/wb_analytics/clickhouse.py",
+        "wb-analytics-platform/ingestion/wb_analytics/collectors.py"
+      ],
+      "hit@3": false,
+      "rank": null,
+      "latency_ms": 4.038,
+      "context_bytes": 245
+    },
+    {
+      "mode": "filesystem",
+      "id": "mcp_large_exports",
+      "slice": "mcp-architecture",
+      "query": "Why should MCP not stream full multi-page WB exports through model context?",
+      "expected": [
+        "wb-analytics-platform/docs/mass-ingestion-contract.md",
+        "wb-mcp-server/docs/wb-api-read-coverage.md"
+      ],
+      "result_refs": [
+        "wb-mcp-server/scripts/build_business_owner_pdf.py",
+        "wb-analytics-platform/ingestion/wb_analytics/collectors.py",
+        "wb-analytics-platform/ingestion/tests/test_collectors_pagination.py",
+        "wb-analytics-platform/docker/postgres/init/002_ingestion_control.sql",
+        "wb-analytics-platform/docker/postgres/init/001_metadata.sql"
+      ],
+      "hit@3": false,
+      "rank": null,
+      "latency_ms": 5.542,
+      "context_bytes": 301
+    },
+    {
+      "mode": "filesystem",
+      "id": "async_warehouse_report",
+      "slice": "analytics",
+      "query": "Where is the warehouse remains async report implemented and documented?",
+      "expected": [
+        "wb-analytics-platform/README.md",
+        "wb-analytics-platform/ingestion/wb_analytics/collectors.py",
+        "wb-mcp-server/src/tools/analytics.ts"
+      ],
+      "result_refs": [
+        "wb-analytics-platform/README.md",
+        "wb-mcp-server/docs/wb-api-read-coverage.md",
+        "wb-mcp-server/README.md",
+        "wb-analytics-platform/docs/pnl-data-contract.md",
+        "wb-analytics-platform/ingestion/wb_analytics/collectors.py"
+      ],
+      "hit@3": true,
+      "rank": 1,
+      "latency_ms": 4.244,
+      "context_bytes": 201
+    },
+    {
+      "mode": "memory",
+      "id": "token_source",
+      "slice": "mcp-auth",
+      "query": "Where does wb-mcp-server read WB_API_TOKEN and CLI --token?",
+      "expected": [
+        "wb-mcp-server/src/config.ts",
+        "wb-mcp-server/src/index.ts",
+        "wb-mcp-server/README.md"
+      ],
+      "result_refs": [],
+      "hit@3": false,
+      "rank": null,
+      "latency_ms": 17.143,
+      "context_bytes": 5152
+    },
+    {
+      "mode": "memory",
+      "id": "authorization_header",
+      "slice": "mcp-auth",
+      "query": "Where is the Wildberries Authorization header set without Bearer?",
+      "expected": [
+        "wb-mcp-server/src/wb-client.ts",
+        "wb-mcp-server/CLAUDE.md"
+      ],
+      "result_refs": [],
+      "hit@3": false,
+      "rank": null,
+      "latency_ms": 5.2,
+      "context_bytes": 1332
+    },
+    {
+      "mode": "memory",
+      "id": "write_tools",
+      "slice": "safety",
+      "query": "Which WB MCP tools can mutate real seller data?",
+      "expected": [
+        "wb-mcp-server/README.md",
+        "wb-mcp-server/README.ru.md",
+        "wb-mcp-server/docs/wb-api-read-coverage.md"
+      ],
+      "result_refs": [],
+      "hit@3": false,
+      "rank": null,
+      "latency_ms": 4.047,
+      "context_bytes": 3456
+    },
+    {
+      "mode": "memory",
+      "id": "readonly_profile",
+      "slice": "safety",
+      "query": "Why does the WB MCP need a read-only profile for analytics?",
+      "expected": [
+        "wb-mcp-server/docs/wb-api-read-coverage.md"
+      ],
+      "result_refs": [],
+      "hit@3": false,
+      "rank": null,
+      "latency_ms": 5.416,
+      "context_bytes": 1490
+    },
+    {
+      "mode": "memory",
+      "id": "account_limits",
+      "slice": "ingestion-control",
+      "query": "Why should equivalent tokens for the same seller not be alternated?",
+      "expected": [
+        "wb-analytics-platform/README.md",
+        "wb-analytics-platform/docs/ingestion-control.md"
+      ],
+      "result_refs": [],
+      "hit@3": false,
+      "rank": null,
+      "latency_ms": 4.519,
+      "context_bytes": 3059
+    },
+    {
+      "mode": "memory",
+      "id": "rate_limit_429",
+      "slice": "ingestion-control",
+      "query": "How does ingestion handle WB HTTP 429 and persistent cooldown?",
+      "expected": [
+        "wb-analytics-platform/docs/ingestion-control.md",
+        "wb-analytics-platform/ingestion/wb_analytics/history.py"
+      ],
+      "result_refs": [],
+      "hit@3": false,
+      "rank": null,
+      "latency_ms": 5.427,
+      "context_bytes": 6333
+    },
+    {
+      "mode": "memory",
+      "id": "finance_rrdid",
+      "slice": "finance",
+      "query": "How does finance realization pagination resume with rrdId until HTTP 204?",
+      "expected": [
+        "wb-analytics-platform/README.md",
+        "wb-analytics-platform/docs/pnl-data-contract.md",
+        "wb-analytics-platform/ingestion/wb_analytics/collectors.py"
+      ],
+      "result_refs": [],
+      "hit@3": false,
+      "rank": null,
+      "latency_ms": 7.5,
+      "context_bytes": 5562
+    },
+    {
+      "mode": "memory",
+      "id": "raw_s3_contract",
+      "slice": "storage",
+      "query": "Where is the contract that raw WB responses are archived before normalization?",
+      "expected": [
+        "wb-analytics-platform/README.md",
+        "wb-analytics-platform/docs/mass-ingestion-contract.md",
+        "wb-analytics-platform/ingestion/wb_analytics/storage.py"
+      ],
+      "result_refs": [],
+      "hit@3": false,
+      "rank": null,
+      "latency_ms": 4.956,
+      "context_bytes": 5198
+    },
+    {
+      "mode": "memory",
+      "id": "pnl_tables",
+      "slice": "finance",
+      "query": "Which ClickHouse tables and SQL define the daily P&L mart?",
+      "expected": [
+        "wb-analytics-platform/README.md",
+        "wb-analytics-platform/docker/clickhouse/init/002_finance_pnl.sql",
+        "wb-analytics-platform/docs/pnl-data-contract.md"
+      ],
+      "result_refs": [],
+      "hit@3": false,
+      "rank": null,
+      "latency_ms": 4.391,
+      "context_bytes": 4559
+    },
+    {
+      "mode": "memory",
+      "id": "evidence_reports",
+      "slice": "bi",
+      "query": "Where are Evidence dashboards and ClickHouse report queries defined?",
+      "expected": [
+        "wb-analytics-platform/docs/evidence-report-design.md",
+        "wb-analytics-platform/evidence/pages/index.md",
+        "wb-analytics-platform/evidence/sources/clickhouse/kpi_summary.sql"
+      ],
+      "result_refs": [],
+      "hit@3": false,
+      "rank": null,
+      "latency_ms": 4.5,
+      "context_bytes": 3773
+    },
+    {
+      "mode": "memory",
+      "id": "mcp_large_exports",
+      "slice": "mcp-architecture",
+      "query": "Why should MCP not stream full multi-page WB exports through model context?",
+      "expected": [
+        "wb-analytics-platform/docs/mass-ingestion-contract.md",
+        "wb-mcp-server/docs/wb-api-read-coverage.md"
+      ],
+      "result_refs": [],
+      "hit@3": false,
+      "rank": null,
+      "latency_ms": 5.017,
+      "context_bytes": 233
+    },
+    {
+      "mode": "memory",
+      "id": "async_warehouse_report",
+      "slice": "analytics",
+      "query": "Where is the warehouse remains async report implemented and documented?",
+      "expected": [
+        "wb-analytics-platform/README.md",
+        "wb-analytics-platform/ingestion/wb_analytics/collectors.py",
+        "wb-mcp-server/src/tools/analytics.ts"
+      ],
+      "result_refs": [],
+      "hit@3": false,
+      "rank": null,
+      "latency_ms": 3.957,
+      "context_bytes": 1045
+    },
+    {
+      "mode": "search_hybrid",
+      "id": "token_source",
+      "slice": "mcp-auth",
+      "query": "Where does wb-mcp-server read WB_API_TOKEN and CLI --token?",
+      "expected": [
+        "wb-mcp-server/src/config.ts",
+        "wb-mcp-server/src/index.ts",
+        "wb-mcp-server/README.md"
+      ],
+      "result_refs": [
+        "wb-analytics-platform/docs/mass-ingestion-contract.md",
+        "wb-mcp-server/README.ru.md",
+        "wb-mcp-server/src/tools/statistics.ts"
+      ],
+      "hit@3": false,
+      "rank": null,
+      "latency_ms": 13.615,
+      "context_bytes": 28457
+    },
+    {
+      "mode": "search_hybrid",
+      "id": "authorization_header",
+      "slice": "mcp-auth",
+      "query": "Where is the Wildberries Authorization header set without Bearer?",
+      "expected": [
+        "wb-mcp-server/src/wb-client.ts",
+        "wb-mcp-server/CLAUDE.md"
+      ],
+      "result_refs": [
+        "wb-analytics-platform/ingestion/wb_analytics/config.py",
+        "wb-mcp-server/README.md"
+      ],
+      "hit@3": false,
+      "rank": null,
+      "latency_ms": 7.215,
+      "context_bytes": 31661
+    },
+    {
+      "mode": "search_hybrid",
+      "id": "write_tools",
+      "slice": "safety",
+      "query": "Which WB MCP tools can mutate real seller data?",
+      "expected": [
+        "wb-mcp-server/README.md",
+        "wb-mcp-server/README.ru.md",
+        "wb-mcp-server/docs/wb-api-read-coverage.md"
+      ],
+      "result_refs": [
+        "wb-mcp-server/README.md",
+        "wb-mcp-server/src/server.ts",
+        "wb-mcp-server/src/tools/seller.ts"
+      ],
+      "hit@3": true,
+      "rank": 1,
+      "latency_ms": 4.595,
+      "context_bytes": 26059
+    },
+    {
+      "mode": "search_hybrid",
+      "id": "readonly_profile",
+      "slice": "safety",
+      "query": "Why does the WB MCP need a read-only profile for analytics?",
+      "expected": [
+        "wb-mcp-server/docs/wb-api-read-coverage.md"
+      ],
+      "result_refs": [
+        "wb-analytics-platform/docs/ingestion-control.md",
+        "wb-analytics-platform/docs/mass-ingestion-contract.md",
+        "wb-analytics-platform/ingestion/wb_analytics/history.py",
+        "wb-mcp-server/README.md"
+      ],
+      "hit@3": false,
+      "rank": null,
+      "latency_ms": 4.785,
+      "context_bytes": 24879
+    },
+    {
+      "mode": "search_hybrid",
+      "id": "account_limits",
+      "slice": "ingestion-control",
+      "query": "Why should equivalent tokens for the same seller not be alternated?",
+      "expected": [
+        "wb-analytics-platform/README.md",
+        "wb-analytics-platform/docs/ingestion-control.md"
+      ],
+      "result_refs": [
+        "wb-analytics-platform/docker/postgres/init/002_ingestion_control.sql",
+        "wb-analytics-platform/docs/ingestion-control.md",
+        "wb-analytics-platform/docs/pnl-data-contract.md"
+      ],
+      "hit@3": true,
+      "rank": 2,
+      "latency_ms": 5.034,
+      "context_bytes": 20933
+    },
+    {
+      "mode": "search_hybrid",
+      "id": "rate_limit_429",
+      "slice": "ingestion-control",
+      "query": "How does ingestion handle WB HTTP 429 and persistent cooldown?",
+      "expected": [
+        "wb-analytics-platform/docs/ingestion-control.md",
+        "wb-analytics-platform/ingestion/wb_analytics/history.py"
+      ],
+      "result_refs": [
+        "wb-analytics-platform/docs/docker-compose-design.md",
+        "wb-analytics-platform/docs/ingestion-control.md",
+        "wb-analytics-platform/docs/mass-ingestion-contract.md"
+      ],
+      "hit@3": true,
+      "rank": 2,
+      "latency_ms": 4.132,
+      "context_bytes": 25927
+    },
+    {
+      "mode": "search_hybrid",
+      "id": "finance_rrdid",
+      "slice": "finance",
+      "query": "How does finance realization pagination resume with rrdId until HTTP 204?",
+      "expected": [
+        "wb-analytics-platform/README.md",
+        "wb-analytics-platform/docs/pnl-data-contract.md",
+        "wb-analytics-platform/ingestion/wb_analytics/collectors.py"
+      ],
+      "result_refs": [
+        "wb-analytics-platform/ingestion/tests/test_collectors_pagination.py",
+        "wb-analytics-platform/ingestion/tests/test_history.py"
+      ],
+      "hit@3": false,
+      "rank": null,
+      "latency_ms": 6.695,
+      "context_bytes": 24651
+    },
+    {
+      "mode": "search_hybrid",
+      "id": "raw_s3_contract",
+      "slice": "storage",
+      "query": "Where is the contract that raw WB responses are archived before normalization?",
+      "expected": [
+        "wb-analytics-platform/README.md",
+        "wb-analytics-platform/docs/mass-ingestion-contract.md",
+        "wb-analytics-platform/ingestion/wb_analytics/storage.py"
+      ],
+      "result_refs": [
+        "wb-analytics-platform/README.md",
+        "wb-analytics-platform/docs/docker-compose-design.md",
+        "wb-analytics-platform/docs/ingestion-control.md",
+        "wb-analytics-platform/docs/mass-ingestion-contract.md",
+        "wb-analytics-platform/ingestion/wb_analytics/config.py"
+      ],
+      "hit@3": true,
+      "rank": 1,
+      "latency_ms": 5.755,
+      "context_bytes": 25321
+    },
+    {
+      "mode": "search_hybrid",
+      "id": "pnl_tables",
+      "slice": "finance",
+      "query": "Which ClickHouse tables and SQL define the daily P&L mart?",
+      "expected": [
+        "wb-analytics-platform/README.md",
+        "wb-analytics-platform/docker/clickhouse/init/002_finance_pnl.sql",
+        "wb-analytics-platform/docs/pnl-data-contract.md"
+      ],
+      "result_refs": [
+        "wb-analytics-platform/evidence/sources/clickhouse/data_coverage.sql",
+        "wb-analytics-platform/evidence/sources/clickhouse/pnl_quality.sql",
+        "wb-analytics-platform/evidence/sources/clickhouse/pnl_summary.sql"
+      ],
+      "hit@3": false,
+      "rank": null,
+      "latency_ms": 4.706,
+      "context_bytes": 18859
+    },
+    {
+      "mode": "search_hybrid",
+      "id": "evidence_reports",
+      "slice": "bi",
+      "query": "Where are Evidence dashboards and ClickHouse report queries defined?",
+      "expected": [
+        "wb-analytics-platform/docs/evidence-report-design.md",
+        "wb-analytics-platform/evidence/pages/index.md",
+        "wb-analytics-platform/evidence/sources/clickhouse/kpi_summary.sql"
+      ],
+      "result_refs": [
+        "wb-analytics-platform/README.md",
+        "wb-analytics-platform/docs/evidence-report-design.md"
+      ],
+      "hit@3": true,
+      "rank": 2,
+      "latency_ms": 7.124,
+      "context_bytes": 22991
+    },
+    {
+      "mode": "search_hybrid",
+      "id": "mcp_large_exports",
+      "slice": "mcp-architecture",
+      "query": "Why should MCP not stream full multi-page WB exports through model context?",
+      "expected": [
+        "wb-analytics-platform/docs/mass-ingestion-contract.md",
+        "wb-mcp-server/docs/wb-api-read-coverage.md"
+      ],
+      "result_refs": [
+        "wb-analytics-platform/docs/mass-ingestion-contract.md",
+        "wb-analytics-platform/ingestion/tests/test_collectors_pagination.py",
+        "wb-mcp-server/CLAUDE.md",
+        "wb-mcp-server/README.md"
+      ],
+      "hit@3": true,
+      "rank": 1,
+      "latency_ms": 3.942,
+      "context_bytes": 27163
+    },
+    {
+      "mode": "search_hybrid",
+      "id": "async_warehouse_report",
+      "slice": "analytics",
+      "query": "Where is the warehouse remains async report implemented and documented?",
+      "expected": [
+        "wb-analytics-platform/README.md",
+        "wb-analytics-platform/ingestion/wb_analytics/collectors.py",
+        "wb-mcp-server/src/tools/analytics.ts"
+      ],
+      "result_refs": [
+        "wb-analytics-platform/README.md",
+        "wb-analytics-platform/docs/ingestion-control.md"
+      ],
+      "hit@3": true,
+      "rank": 1,
+      "latency_ms": 3.898,
+      "context_bytes": 23649
+    },
+    {
+      "mode": "search_chunks",
+      "id": "token_source",
+      "slice": "mcp-auth",
+      "query": "Where does wb-mcp-server read WB_API_TOKEN and CLI --token?",
+      "expected": [
+        "wb-mcp-server/src/config.ts",
+        "wb-mcp-server/src/index.ts",
+        "wb-mcp-server/README.md"
+      ],
+      "result_refs": [
+        "wb-mcp-server/README.ru.md",
+        "wb-mcp-server/src/tools/prices.ts",
+        "wb-mcp-server/src/tools/seller.ts",
+        "wb-mcp-server/src/tools/statistics.ts"
+      ],
+      "hit@3": false,
+      "rank": null,
+      "latency_ms": 8.239,
+      "context_bytes": 31967
+    },
+    {
+      "mode": "search_chunks",
+      "id": "authorization_header",
+      "slice": "mcp-auth",
+      "query": "Where is the Wildberries Authorization header set without Bearer?",
+      "expected": [
+        "wb-mcp-server/src/wb-client.ts",
+        "wb-mcp-server/CLAUDE.md"
+      ],
+      "result_refs": [
+        "wb-analytics-platform/ingestion/wb_analytics/config.py"
+      ],
+      "hit@3": false,
+      "rank": null,
+      "latency_ms": 3.932,
+      "context_bytes": 33607
+    },
+    {
+      "mode": "search_chunks",
+      "id": "write_tools",
+      "slice": "safety",
+      "query": "Which WB MCP tools can mutate real seller data?",
+      "expected": [
+        "wb-mcp-server/README.md",
+        "wb-mcp-server/README.ru.md",
+        "wb-mcp-server/docs/wb-api-read-coverage.md"
+      ],
+      "result_refs": [
+        "wb-analytics-platform/evidence/pages/finance.md",
+        "wb-mcp-server/README.md",
+        "wb-mcp-server/README.ru.md",
+        "wb-mcp-server/src/server.ts"
+      ],
+      "hit@3": true,
+      "rank": 2,
+      "latency_ms": 14.008,
+      "context_bytes": 29239
+    },
+    {
+      "mode": "search_chunks",
+      "id": "readonly_profile",
+      "slice": "safety",
+      "query": "Why does the WB MCP need a read-only profile for analytics?",
+      "expected": [
+        "wb-mcp-server/docs/wb-api-read-coverage.md"
+      ],
+      "result_refs": [
+        "wb-analytics-platform/docs/ingestion-control.md",
+        "wb-analytics-platform/docs/mass-ingestion-contract.md",
+        "wb-analytics-platform/docs/pnl-data-contract.md",
+        "wb-analytics-platform/ingestion/wb_analytics/history.py"
+      ],
+      "hit@3": false,
+      "rank": null,
+      "latency_ms": 6.07,
+      "context_bytes": 22273
+    },
+    {
+      "mode": "search_chunks",
+      "id": "account_limits",
+      "slice": "ingestion-control",
+      "query": "Why should equivalent tokens for the same seller not be alternated?",
+      "expected": [
+        "wb-analytics-platform/README.md",
+        "wb-analytics-platform/docs/ingestion-control.md"
+      ],
+      "result_refs": [
+        "wb-analytics-platform/docker/clickhouse/init/001_schema.sql",
+        "wb-analytics-platform/docker/postgres/init/001_metadata.sql",
+        "wb-analytics-platform/docker/postgres/init/002_ingestion_control.sql",
+        "wb-analytics-platform/docs/ingestion-control.md"
+      ],
+      "hit@3": false,
+      "rank": null,
+      "latency_ms": 4.644,
+      "context_bytes": 21987
+    },
+    {
+      "mode": "search_chunks",
+      "id": "rate_limit_429",
+      "slice": "ingestion-control",
+      "query": "How does ingestion handle WB HTTP 429 and persistent cooldown?",
+      "expected": [
+        "wb-analytics-platform/docs/ingestion-control.md",
+        "wb-analytics-platform/ingestion/wb_analytics/history.py"
+      ],
+      "result_refs": [
+        "wb-analytics-platform/README.md",
+        "wb-analytics-platform/docker-compose.yml",
+        "wb-analytics-platform/ingestion/wb_analytics/http.py"
+      ],
+      "hit@3": false,
+      "rank": null,
+      "latency_ms": 3.266,
+      "context_bytes": 29293
+    },
+    {
+      "mode": "search_chunks",
+      "id": "finance_rrdid",
+      "slice": "finance",
+      "query": "How does finance realization pagination resume with rrdId until HTTP 204?",
+      "expected": [
+        "wb-analytics-platform/README.md",
+        "wb-analytics-platform/docs/pnl-data-contract.md",
+        "wb-analytics-platform/ingestion/wb_analytics/collectors.py"
+      ],
+      "result_refs": [
+        "wb-analytics-platform/ingestion/tests/test_collectors_pagination.py"
+      ],
+      "hit@3": false,
+      "rank": null,
+      "latency_ms": 4.835,
+      "context_bytes": 28087
+    },
+    {
+      "mode": "search_chunks",
+      "id": "raw_s3_contract",
+      "slice": "storage",
+      "query": "Where is the contract that raw WB responses are archived before normalization?",
+      "expected": [
+        "wb-analytics-platform/README.md",
+        "wb-analytics-platform/docs/mass-ingestion-contract.md",
+        "wb-analytics-platform/ingestion/wb_analytics/storage.py"
+      ],
+      "result_refs": [
+        "wb-analytics-platform/README.md",
+        "wb-analytics-platform/docs/docker-compose-design.md",
+        "wb-analytics-platform/ingestion/wb_analytics/config.py",
+        "wb-mcp-server/src/wb-client.ts"
+      ],
+      "hit@3": true,
+      "rank": 1,
+      "latency_ms": 4.914,
+      "context_bytes": 27071
+    },
+    {
+      "mode": "search_chunks",
+      "id": "pnl_tables",
+      "slice": "finance",
+      "query": "Which ClickHouse tables and SQL define the daily P&L mart?",
+      "expected": [
+        "wb-analytics-platform/README.md",
+        "wb-analytics-platform/docker/clickhouse/init/002_finance_pnl.sql",
+        "wb-analytics-platform/docs/pnl-data-contract.md"
+      ],
+      "result_refs": [
+        "wb-analytics-platform/docker/clickhouse/init/001_schema.sql",
+        "wb-analytics-platform/docs/pnl-data-contract.md",
+        "wb-analytics-platform/evidence/sources/clickhouse/data_coverage.sql",
+        "wb-analytics-platform/evidence/sources/clickhouse/orders_sales_daily.sql",
+        "wb-analytics-platform/evidence/sources/clickhouse/pnl_summary.sql"
+      ],
+      "hit@3": true,
+      "rank": 2,
+      "latency_ms": 4.301,
+      "context_bytes": 18103
+    },
+    {
+      "mode": "search_chunks",
+      "id": "evidence_reports",
+      "slice": "bi",
+      "query": "Where are Evidence dashboards and ClickHouse report queries defined?",
+      "expected": [
+        "wb-analytics-platform/docs/evidence-report-design.md",
+        "wb-analytics-platform/evidence/pages/index.md",
+        "wb-analytics-platform/evidence/sources/clickhouse/kpi_summary.sql"
+      ],
+      "result_refs": [
+        "wb-analytics-platform/docs/docker-compose-design.md",
+        "wb-analytics-platform/docs/evidence-report-design.md",
+        "wb-analytics-platform/ingestion/tests/test_validation.py"
+      ],
+      "hit@3": true,
+      "rank": 2,
+      "latency_ms": 3.066,
+      "context_bytes": 26329
+    },
+    {
+      "mode": "search_chunks",
+      "id": "mcp_large_exports",
+      "slice": "mcp-architecture",
+      "query": "Why should MCP not stream full multi-page WB exports through model context?",
+      "expected": [
+        "wb-analytics-platform/docs/mass-ingestion-contract.md",
+        "wb-mcp-server/docs/wb-api-read-coverage.md"
+      ],
+      "result_refs": [
+        "wb-analytics-platform/README.md",
+        "wb-analytics-platform/evidence/pages/finance.md",
+        "wb-analytics-platform/ingestion/tests/test_collectors_pagination.py",
+        "wb-mcp-server/README.md"
+      ],
+      "hit@3": false,
+      "rank": null,
+      "latency_ms": 9.623,
+      "context_bytes": 27183
+    },
+    {
+      "mode": "search_chunks",
+      "id": "async_warehouse_report",
+      "slice": "analytics",
+      "query": "Where is the warehouse remains async report implemented and documented?",
+      "expected": [
+        "wb-analytics-platform/README.md",
+        "wb-analytics-platform/ingestion/wb_analytics/collectors.py",
+        "wb-mcp-server/src/tools/analytics.ts"
+      ],
+      "result_refs": [
+        "wb-analytics-platform/README.md",
+        "wb-analytics-platform/docs/evidence-report-design.md",
+        "wb-analytics-platform/docs/mass-ingestion-contract.md"
+      ],
+      "hit@3": true,
+      "rank": 1,
+      "latency_ms": 3.878,
+      "context_bytes": 24787
+    },
+    {
+      "mode": "search_chunks_lexical",
+      "id": "token_source",
+      "slice": "mcp-auth",
+      "query": "Where does wb-mcp-server read WB_API_TOKEN and CLI --token?",
+      "expected": [
+        "wb-mcp-server/src/config.ts",
+        "wb-mcp-server/src/index.ts",
+        "wb-mcp-server/README.md"
+      ],
+      "result_refs": [
+        "wb-analytics-platform/docs/mass-ingestion-contract.md",
+        "wb-mcp-server/README.md"
+      ],
+      "hit@3": true,
+      "rank": 2,
+      "latency_ms": 1.429,
+      "context_bytes": 22725
+    },
+    {
+      "mode": "search_chunks_lexical",
+      "id": "authorization_header",
+      "slice": "mcp-auth",
+      "query": "Where is the Wildberries Authorization header set without Bearer?",
+      "expected": [
+        "wb-mcp-server/src/wb-client.ts",
+        "wb-mcp-server/CLAUDE.md"
+      ],
+      "result_refs": [
+        "wb-analytics-platform/README.md"
+      ],
+      "hit@3": false,
+      "rank": null,
+      "latency_ms": 1.438,
+      "context_bytes": 22345
+    },
+    {
+      "mode": "search_chunks_lexical",
+      "id": "write_tools",
+      "slice": "safety",
+      "query": "Which WB MCP tools can mutate real seller data?",
+      "expected": [
+        "wb-mcp-server/README.md",
+        "wb-mcp-server/README.ru.md",
+        "wb-mcp-server/docs/wb-api-read-coverage.md"
+      ],
+      "result_refs": [
+        "wb-mcp-server/README.md"
+      ],
+      "hit@3": true,
+      "rank": 1,
+      "latency_ms": 2.74,
+      "context_bytes": 22657
+    },
+    {
+      "mode": "search_chunks_lexical",
+      "id": "readonly_profile",
+      "slice": "safety",
+      "query": "Why does the WB MCP need a read-only profile for analytics?",
+      "expected": [
+        "wb-mcp-server/docs/wb-api-read-coverage.md"
+      ],
+      "result_refs": [
+        "wb-analytics-platform/docs/mass-ingestion-contract.md",
+        "wb-mcp-server/README.md"
+      ],
+      "hit@3": false,
+      "rank": null,
+      "latency_ms": 1.473,
+      "context_bytes": 23429
+    },
+    {
+      "mode": "search_chunks_lexical",
+      "id": "account_limits",
+      "slice": "ingestion-control",
+      "query": "Why should equivalent tokens for the same seller not be alternated?",
+      "expected": [
+        "wb-analytics-platform/README.md",
+        "wb-analytics-platform/docs/ingestion-control.md"
+      ],
+      "result_refs": [
+        "wb-analytics-platform/docs/ingestion-control.md",
+        "wb-analytics-platform/docs/pnl-data-contract.md"
+      ],
+      "hit@3": true,
+      "rank": 1,
+      "latency_ms": 1.467,
+      "context_bytes": 21233
+    },
+    {
+      "mode": "search_chunks_lexical",
+      "id": "rate_limit_429",
+      "slice": "ingestion-control",
+      "query": "How does ingestion handle WB HTTP 429 and persistent cooldown?",
+      "expected": [
+        "wb-analytics-platform/docs/ingestion-control.md",
+        "wb-analytics-platform/ingestion/wb_analytics/history.py"
+      ],
+      "result_refs": [
+        "wb-analytics-platform/docs/ingestion-control.md"
+      ],
+      "hit@3": true,
+      "rank": 1,
+      "latency_ms": 1.37,
+      "context_bytes": 20529
+    },
+    {
+      "mode": "search_chunks_lexical",
+      "id": "finance_rrdid",
+      "slice": "finance",
+      "query": "How does finance realization pagination resume with rrdId until HTTP 204?",
+      "expected": [
+        "wb-analytics-platform/README.md",
+        "wb-analytics-platform/docs/pnl-data-contract.md",
+        "wb-analytics-platform/ingestion/wb_analytics/collectors.py"
+      ],
+      "result_refs": [
+        "wb-analytics-platform/ingestion/tests/test_collectors_pagination.py"
+      ],
+      "hit@3": false,
+      "rank": null,
+      "latency_ms": 1.403,
+      "context_bytes": 22143
+    },
+    {
+      "mode": "search_chunks_lexical",
+      "id": "raw_s3_contract",
+      "slice": "storage",
+      "query": "Where is the contract that raw WB responses are archived before normalization?",
+      "expected": [
+        "wb-analytics-platform/README.md",
+        "wb-analytics-platform/docs/mass-ingestion-contract.md",
+        "wb-analytics-platform/ingestion/wb_analytics/storage.py"
+      ],
+      "result_refs": [
+        "wb-analytics-platform/README.md",
+        "wb-analytics-platform/docs/ingestion-control.md",
+        "wb-analytics-platform/docs/mass-ingestion-contract.md",
+        "wb-analytics-platform/docs/pnl-data-contract.md"
+      ],
+      "hit@3": true,
+      "rank": 1,
+      "latency_ms": 2.102,
+      "context_bytes": 21937
+    },
+    {
+      "mode": "search_chunks_lexical",
+      "id": "pnl_tables",
+      "slice": "finance",
+      "query": "Which ClickHouse tables and SQL define the daily P&L mart?",
+      "expected": [
+        "wb-analytics-platform/README.md",
+        "wb-analytics-platform/docker/clickhouse/init/002_finance_pnl.sql",
+        "wb-analytics-platform/docs/pnl-data-contract.md"
+      ],
+      "result_refs": [
+        "wb-analytics-platform/evidence/sources/clickhouse/pnl_quality.sql"
+      ],
+      "hit@3": false,
+      "rank": null,
+      "latency_ms": 1.682,
+      "context_bytes": 19173
+    },
+    {
+      "mode": "search_chunks_lexical",
+      "id": "evidence_reports",
+      "slice": "bi",
+      "query": "Where are Evidence dashboards and ClickHouse report queries defined?",
+      "expected": [
+        "wb-analytics-platform/docs/evidence-report-design.md",
+        "wb-analytics-platform/evidence/pages/index.md",
+        "wb-analytics-platform/evidence/sources/clickhouse/kpi_summary.sql"
+      ],
+      "result_refs": [
+        "wb-analytics-platform/docs/pnl-data-contract.md",
+        "wb-analytics-platform/evidence/evidence.config.yaml"
+      ],
+      "hit@3": false,
+      "rank": null,
+      "latency_ms": 3.672,
+      "context_bytes": 20091
+    },
+    {
+      "mode": "search_chunks_lexical",
+      "id": "mcp_large_exports",
+      "slice": "mcp-architecture",
+      "query": "Why should MCP not stream full multi-page WB exports through model context?",
+      "expected": [
+        "wb-analytics-platform/docs/mass-ingestion-contract.md",
+        "wb-mcp-server/docs/wb-api-read-coverage.md"
+      ],
+      "result_refs": [
+        "wb-analytics-platform/docs/mass-ingestion-contract.md",
+        "wb-mcp-server/CLAUDE.md"
+      ],
+      "hit@3": true,
+      "rank": 1,
+      "latency_ms": 1.818,
+      "context_bytes": 22013
+    },
+    {
+      "mode": "search_chunks_lexical",
+      "id": "async_warehouse_report",
+      "slice": "analytics",
+      "query": "Where is the warehouse remains async report implemented and documented?",
+      "expected": [
+        "wb-analytics-platform/README.md",
+        "wb-analytics-platform/ingestion/wb_analytics/collectors.py",
+        "wb-mcp-server/src/tools/analytics.ts"
+      ],
+      "result_refs": [
+        "wb-analytics-platform/README.md",
+        "wb-analytics-platform/docs/pnl-data-contract.md"
+      ],
+      "hit@3": true,
+      "rank": 1,
+      "latency_ms": 1.43,
+      "context_bytes": 19607
+    }
+  ],
+  "index": {
+    "run_id": "81b95007-527a-4024-9986-58db18376c3b",
+    "submit_ms": 15.120833006221801,
+    "final": {
+      "pipeline_run_id": "81b95007-527a-4024-9986-58db18376c3b",
+      "status": "COMPLETED",
+      "stage": "complete",
+      "message": "pipeline complete",
+      "chunks_created": 302,
+      "entities_extracted": 0,
+      "edges_extracted": 0,
+      "elapsed_ms": 2707,
+      "started_at": "2026-07-13T06:05:35.924002+03:00"
+    }
+  }
+}
