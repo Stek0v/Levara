@@ -8,9 +8,12 @@ SSH_USER="${LEVARA_SSH_USER:-stek0v}"
 REMOTE_DIR="${LEVARA_REMOTE_DIR:-/home/stek0v/levara-qwen3}"
 GOOS="${GOOS:-linux}"
 GOARCH="${GOARCH:-amd64}"
+GIT_SHA="$(git rev-parse --short HEAD 2>/dev/null || echo dev)"
+BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+LDFLAGS="-s -w -X main.GitSHA=${GIT_SHA} -X main.BuildTime=${BUILD_TIME}"
 
-echo "==> Building levara-server (${GOOS}/${GOARCH})"
-CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build -ldflags "-s -w" -o /tmp/levara-server ./cmd/server/
+echo "==> Building levara-server (${GOOS}/${GOARCH}) (${GIT_SHA} @ ${BUILD_TIME})"
+CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build -ldflags "${LDFLAGS}" -o /tmp/levara-server ./cmd/server/
 
 echo "==> Ensuring PostgreSQL on remote"
 bash scripts/postgres-remote-ensure.sh
