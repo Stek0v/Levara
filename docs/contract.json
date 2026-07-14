@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-07-03T10:44:20-05:00",
-  "git_rev": "27efa39b3841a3958240f0a846f4b27c2a965a8a",
+  "generated_at": "2026-07-14T04:55:45+03:00",
+  "git_rev": "f73c06b1cab11c543a33dbe84bcb9e1b8e3d8123",
   "rest": [
     {
       "method": "POST",
@@ -37,6 +37,18 @@
       "path": "/admin/mcp/tools",
       "status": "canonical",
       "group": "admin"
+    },
+    {
+      "method": "GET",
+      "path": "/agent-trajectories",
+      "status": "canonical",
+      "group": "mcp"
+    },
+    {
+      "method": "GET",
+      "path": "/agent-trajectories/:id",
+      "status": "canonical",
+      "group": "mcp"
     },
     {
       "method": "POST",
@@ -346,9 +358,57 @@
     },
     {
       "method": "GET",
+      "path": "/memory-behavior",
+      "status": "canonical",
+      "group": "mcp"
+    },
+    {
+      "method": "GET",
       "path": "/memory-index/status",
       "status": "ops",
       "group": "memory"
+    },
+    {
+      "method": "GET",
+      "path": "/memory-reviews",
+      "status": "ops",
+      "group": "mcp"
+    },
+    {
+      "method": "GET",
+      "path": "/memory-reviews/:id",
+      "status": "ops",
+      "group": "mcp"
+    },
+    {
+      "method": "POST",
+      "path": "/memory-reviews/run",
+      "status": "ops",
+      "group": "mcp"
+    },
+    {
+      "method": "GET",
+      "path": "/memory-scaffold/proposals",
+      "status": "ops",
+      "group": "mcp"
+    },
+    {
+      "method": "GET",
+      "path": "/memory-scaffold/proposals/:id",
+      "status": "ops",
+      "group": "mcp"
+    },
+    {
+      "method": "POST",
+      "path": "/memory-scaffold/proposals/:id/decision",
+      "status": "ops",
+      "group": "mcp"
+    },
+    {
+      "method": "GET",
+      "path": "/memory-traces/export",
+      "status": "ops",
+      "group": "mcp"
     },
     {
       "method": "GET",

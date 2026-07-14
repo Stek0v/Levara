@@ -1142,10 +1142,6 @@ func (h *mcpHandler) toolListMemories(ctx context.Context, args map[string]any) 
 	return mcp.ToolListMemories(ctx, h, args)
 }
 
-func (h *mcpHandler) toolConsolidate(ctx context.Context, args map[string]any) mcpToolResult {
-	return mcp.ToolConsolidate(ctx, h, args)
-}
-
 func (h *mcpHandler) toolConsolidationRevert(ctx context.Context, args map[string]any) mcpToolResult {
 	return mcp.ToolConsolidationRevert(ctx, h, args)
 }
