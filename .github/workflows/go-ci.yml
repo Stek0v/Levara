@@ -165,6 +165,34 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  postgres-integration:
+    name: postgres audit + outbox
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: levara
+          POSTGRES_PASSWORD: levara
+          POSTGRES_DB: levara_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U levara -d levara_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      LEVARA_TEST_POSTGRES_DSN: postgres://levara:levara@127.0.0.1:5432/levara_ci?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Run Postgres-backed audit and outbox tests
+        run: go test -count=1 ./pkg/audit ./pkg/memoryindex -run Postgres
+
   compose:
     name: compose configuration
     runs-on: ubuntu-latest
