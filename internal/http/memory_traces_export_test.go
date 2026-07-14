@@ -82,6 +82,18 @@ func TestMemoryTraceExportEmptyAndAdminRequired(t *testing.T) {
 	}
 }
 
+func TestMemoryTraceExportRejectsUnsupportedQuality(t *testing.T) {
+	db, rm := newTraceExportFixture(t)
+	app := traceExportApp(db, rm, "root")
+	resp, err := app.Test(httptest.NewRequest("GET", "/api/v1/memory-traces/export?quality=bad", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 400 {
+		t.Fatalf("status=%d want 400", resp.StatusCode)
+	}
+}
+
 func newTraceExportFixture(t *testing.T) (*sql.DB, *audit.ReadModel) {
 	t.Helper()
 	db, err := sql.Open("sqlite3", "file:"+filepath.Join(t.TempDir(), "trace-export.db"))

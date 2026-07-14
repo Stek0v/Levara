@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test:e2e": "playwright test auth-flow.spec.ts auth-guard.spec.ts error-scenarios.spec.ts invalidation.spec.ts search-rerank-badge.spec.ts settings-persist.spec.ts",
+    "test:e2e": "playwright test auth-flow.spec.ts auth-guard.spec.ts error-scenarios.spec.ts invalidation.spec.ts memory-behavior.spec.ts memory-scaffold.spec.ts search-rerank-badge.spec.ts settings-persist.spec.ts",
     "test:e2e:integration": "playwright test"
   },
   "dependencies": {

@@ -54,3 +54,55 @@ func TestMemoryBehaviorAPI(t *testing.T) {
 		t.Fatalf("summary=%+v", got.Summary)
 	}
 }
+
+func TestMemoryBehaviorEmptyAndClientFilter(t *testing.T) {
+	db, err := sql.Open("sqlite3", "file:"+filepath.Join(t.TempDir(), "audit.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	rm, err := audit.NewReadModel(db, 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rm.Close()
+	now := time.Now().UTC()
+	rm.Log(audit.Entry{RequestID: "r1", TS: now.Format(time.RFC3339Nano), TraceID: "tr1", Tool: "recall_memory", Outcome: audit.OutcomeOK, Collection: "levara", ClientName: "codex", ResultCount: 1})
+	rm.Log(audit.Entry{RequestID: "s1", TS: now.Add(time.Second).Format(time.RFC3339Nano), TraceID: "tr1", Tool: "save_memory", Outcome: audit.OutcomeOK, Collection: "levara", ClientName: "codex"})
+	waitAuditRows(t, db, 2)
+
+	app := fiber.New()
+	app.Get("/api/v1/memory-behavior", memoryBehaviorHandler(APIConfig{MCPAuditReadModel: rm}))
+	resp, err := app.Test(httptest.NewRequest("GET", "/api/v1/memory-behavior?collection=levara&client=claude&hours=1", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("status=%d", resp.StatusCode)
+	}
+	var got struct {
+		Summary struct {
+			TotalTrajectories   int            `json:"total_trajectories"`
+			ToolErrorsByTool    map[string]int `json:"tool_errors_by_tool"`
+			ProblemTrajectories []any          `json:"problem_trajectories"`
+		} `json:"summary"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Summary.TotalTrajectories != 0 || got.Summary.ToolErrorsByTool == nil || got.Summary.ProblemTrajectories == nil {
+		t.Fatalf("empty summary shape=%+v", got.Summary)
+	}
+}
+
+func TestMemoryBehaviorUnavailable(t *testing.T) {
+	app := fiber.New()
+	app.Get("/api/v1/memory-behavior", memoryBehaviorHandler(APIConfig{}))
+	resp, err := app.Test(httptest.NewRequest("GET", "/api/v1/memory-behavior", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 503 {
+		t.Fatalf("status=%d want 503", resp.StatusCode)
+	}
+}
