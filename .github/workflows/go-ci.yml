@@ -19,6 +19,10 @@ on:
       - 'AGENTS.md'
       - '.github/workflows/go-ci.yml'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   vet-build:
     name: vet + build
@@ -109,7 +113,42 @@ jobs:
       - run: LEVARA_API_URL=http://127.0.0.1:8081 npm run build
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
+      - name: Upload Playwright failure artifacts
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: webui-playwright-artifacts
+          path: |
+            webui/playwright-report
+            webui/test-results
+          if-no-files-found: ignore
+          retention-days: 14
       - run: npm audit --omit=dev --audit-level=high
+
+  memory-behavior:
+    name: memory behavior eval
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile memory behavior eval
+        run: python3 -m py_compile benchmark/memory_behavior_eval/run_memory_behavior_eval.py
+      - name: Run deterministic memory behavior eval
+        run: >
+          python3 benchmark/memory_behavior_eval/run_memory_behavior_eval.py
+          --fake
+          --label ci
+          --output "${RUNNER_TEMP}/memory_behavior_eval.json"
+      - name: Upload memory behavior report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: memory-behavior-eval
+          path: ${{ runner.temp }}/memory_behavior_eval.json
+          if-no-files-found: error
+          retention-days: 30
 
   compose:
     name: compose configuration
