@@ -11,6 +11,9 @@ linters:
     - ineffassign
     - unused
   exclusions:
+    paths:
+      - '^webui/node_modules/'
+      - '^node_modules/'
     rules:
       - path: _test\.go
         linters:
