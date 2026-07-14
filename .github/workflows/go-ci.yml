@@ -275,3 +275,22 @@ jobs:
         run: go test -count=1 ./pkg/memoryindex ./pkg/mcp -run 'Outbox|RecoverRunning|DeleteMemory'
       - name: Race-check security boundaries
         run: go test -race -count=1 ./internal/http -run 'MCP.*Auth|MCP.*Session|Tenant.*Isolation'
+
+  privacy-smoke:
+    name: privacy and redaction smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Audit sanitization boundaries
+        run: >
+          go test -count=1 ./pkg/audit
+          -run '^(TestSanitizeArgsDropsSecrets|TestSanitizeArgsCollapsesVectors|TestSanitizeArgsTruncatesLongStrings|TestSanitizeArgsMarshalsNested|TestSanitizeArgsDropsNestedSecrets|TestSanitizeEventScrubsLeaks)$'
+      - name: Memory behavior privacy surfaces
+        run: >
+          go test -count=1 ./internal/http
+          -run '^(TestAgentTrajectoriesFiltersPaginationAndAdminArgs|TestMemoryReviewPromptOmitsRawArgsAndParser|TestMemoryTraceExportStreamsGoodSanitizedJSONL|TestMemoryTraceExportEmptyAndAdminRequired|TestMemoryTraceExportRejectsUnsupportedQuality|TestMemoryScaffoldDecisionRequiresAdmin|TestRecordMCPAuditSanitizesArgs)$'
