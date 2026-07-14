@@ -10,6 +10,9 @@ use memory. The goal is not to auto-edit agent instructions. The v1 workflow is:
 5. Approve or reject proposals explicitly.
 6. Re-run the golden eval before rollout.
 
+For the full standard/edge/load/canary test matrix, see
+`docs/memory-behavior-test-plan.md`.
+
 ## Surfaces
 
 | Surface | Use |

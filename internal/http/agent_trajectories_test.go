@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -101,6 +102,88 @@ func TestAgentTrajectoriesUnavailable(t *testing.T) {
 	}
 	if resp.StatusCode != 503 {
 		t.Fatalf("status=%d want 503", resp.StatusCode)
+	}
+}
+
+func TestAgentTrajectoriesFiltersPaginationAndAdminArgs(t *testing.T) {
+	db, err := sql.Open("sqlite3", "file:"+filepath.Join(t.TempDir(), "audit.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TABLE users (id TEXT PRIMARY KEY, is_superuser INTEGER DEFAULT 0)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO users(id, is_superuser) VALUES ('root', 1), ('user', 0)`); err != nil {
+		t.Fatal(err)
+	}
+	rm, err := audit.NewReadModel(db, 16)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rm.Close()
+	now := time.Now().UTC()
+	rm.Log(audit.Entry{RequestID: "a1", TS: now.Format(time.RFC3339Nano), TraceID: "a", Tool: "save_memory", Outcome: audit.OutcomeOK, Collection: "levara", ClientName: "codex", Args: audit.SanitizeArgs(map[string]any{"key": "a", "password": "secret"})})
+	rm.Log(audit.Entry{RequestID: "b1", TS: now.Add(time.Second).Format(time.RFC3339Nano), TraceID: "b", Tool: "search", Outcome: audit.OutcomeOK, Collection: "levara", ClientName: "claude"})
+	rm.Log(audit.Entry{RequestID: "c1", TS: now.Add(2 * time.Second).Format(time.RFC3339Nano), TraceID: "c", Tool: "save_memory", Outcome: audit.OutcomeOK, Collection: "other", ClientName: "codex"})
+	waitAuditRows(t, db, 3)
+
+	app := fiber.New()
+	cfg := APIConfig{DB: db, MCPAuditReadModel: rm}
+	app.Get("/api/v1/agent-trajectories", agentTrajectoriesHandler(cfg))
+	app.Get("/api/v1/admin/agent-trajectories", func(c *fiber.Ctx) error {
+		c.Locals("user_id", "root")
+		return agentTrajectoriesHandler(cfg)(c)
+	})
+	app.Get("/api/v1/admin/agent-trajectories/:id", func(c *fiber.Ctx) error {
+		c.Locals("user_id", "root")
+		return agentTrajectoryDetailHandler(cfg)(c)
+	})
+	app.Get("/api/v1/user/agent-trajectories", func(c *fiber.Ctx) error {
+		c.Locals("user_id", "user")
+		return agentTrajectoriesHandler(cfg)(c)
+	})
+
+	resp, err := app.Test(httptest.NewRequest("GET", "/api/v1/agent-trajectories?collection=levara&client=codex&tool=save_memory&limit=1&offset=0", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var filtered struct {
+		Total        int `json:"total"`
+		Trajectories []struct {
+			ID     string `json:"id"`
+			Events []any  `json:"events"`
+		} `json:"trajectories"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&filtered); err != nil {
+		t.Fatal(err)
+	}
+	if filtered.Total != 1 || len(filtered.Trajectories) != 1 || filtered.Trajectories[0].ID != "trace:a" || len(filtered.Trajectories[0].Events) != 0 {
+		t.Fatalf("filtered=%+v", filtered)
+	}
+
+	resp, err = app.Test(httptest.NewRequest("GET", "/api/v1/admin/agent-trajectories/trace:a?include_args=true", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("admin status=%d", resp.StatusCode)
+	}
+	body := map[string]any{}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(body)
+	if !strings.Contains(string(raw), `"key"`) || strings.Contains(string(raw), "secret") {
+		t.Fatalf("admin args not present/sanitized correctly: %s", raw)
+	}
+
+	resp, err = app.Test(httptest.NewRequest("GET", "/api/v1/user/agent-trajectories?include_args=true", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 403 {
+		t.Fatalf("non-admin include_args status=%d want 403", resp.StatusCode)
 	}
 }
 
