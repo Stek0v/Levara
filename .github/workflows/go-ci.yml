@@ -56,7 +56,7 @@ jobs:
           packages=()
           while IFS= read -r pkg; do
             packages+=("$pkg")
-          done < <(go list ./... | grep -v '/webui/node_modules/')
+          done < <(go list ./... | grep -v '/webui/node_modules/' | grep -v '/internal/http$')
           shard_packages=()
           for i in "${!packages[@]}"; do
             if (( i % ${{ matrix.total }} == ${{ matrix.shard }} )); then
@@ -66,6 +66,17 @@ jobs:
           printf 'Shard %s/%s packages:\n' '${{ matrix.shard }}' '${{ matrix.total }}'
           printf '  %s\n' "${shard_packages[@]}"
           go test -count=1 "${shard_packages[@]}"
+
+  http-test:
+    name: test internal/http
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - run: go test -count=1 ./internal/http
 
   race:
     name: targeted race
