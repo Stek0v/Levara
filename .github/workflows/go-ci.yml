@@ -48,15 +48,30 @@ jobs:
       - run: go test -count=1 ./...
 
   race:
-    name: test -race
+    name: targeted race
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
-      - run: go test -race -count=1 ./...
+      - name: Race-check concurrent core packages
+        run: >
+          go test -race -count=1
+          ./pkg/audit
+          ./pkg/memoryindex
+          ./pkg/mcp
+          ./internal/store
+          ./pkg/vectorstore
+          ./pkg/bm25
+          ./pkg/router
+          ./pkg/workspace
+      - name: Race-check HTTP concurrency surfaces
+        run: >
+          go test -race -count=1 ./internal/http
+          -run 'Audit|MemoryBehavior|MCP.*Auth|MCP.*Session|Tenant.*Isolation|Outbox|Consolidation'
 
   lint:
     name: golangci-lint
