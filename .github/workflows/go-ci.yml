@@ -37,15 +37,35 @@ jobs:
       - run: go build ./...
 
   test:
-    name: test
+    name: test shard ${{ matrix.shard }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+        total: [4]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
-      - run: go test -count=1 ./...
+      - name: Run Go test shard
+        run: |
+          set -euo pipefail
+          packages=()
+          while IFS= read -r pkg; do
+            packages+=("$pkg")
+          done < <(go list ./... | grep -v '/webui/node_modules/')
+          shard_packages=()
+          for i in "${!packages[@]}"; do
+            if (( i % ${{ matrix.total }} == ${{ matrix.shard }} )); then
+              shard_packages+=("${packages[$i]}")
+            fi
+          done
+          printf 'Shard %s/%s packages:\n' '${{ matrix.shard }}' '${{ matrix.total }}'
+          printf '  %s\n' "${shard_packages[@]}"
+          go test -count=1 "${shard_packages[@]}"
 
   race:
     name: targeted race
