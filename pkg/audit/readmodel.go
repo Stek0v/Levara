@@ -169,10 +169,6 @@ func (r *ReadModel) run() {
 	}
 }
 
-func (r *ReadModel) insert(ctx context.Context, e Entry) error {
-	return r.insertBatch(ctx, []Entry{e})
-}
-
 func (r *ReadModel) insertBatch(ctx context.Context, entries []Entry) error {
 	if len(entries) == 0 {
 		return nil
