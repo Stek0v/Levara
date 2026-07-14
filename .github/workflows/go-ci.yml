@@ -68,15 +68,40 @@ jobs:
           go test -count=1 "${shard_packages[@]}"
 
   http-test:
-    name: test internal/http
+    name: test internal/http shard ${{ matrix.shard }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+        total: [4]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
-      - run: go test -count=1 ./internal/http
+      - name: Run internal/http test shard
+        run: |
+          set -euo pipefail
+          tests=()
+          while IFS= read -r test_name; do
+            tests+=("$test_name")
+          done < <(go test -list '^(Test|Example)' ./internal/http)
+          shard_tests=()
+          for i in "${!tests[@]}"; do
+            if (( i % ${{ matrix.total }} == ${{ matrix.shard }} )); then
+              shard_tests+=("${tests[$i]}")
+            fi
+          done
+          if (( ${#shard_tests[@]} == 0 )); then
+            echo "No internal/http tests selected for shard ${{ matrix.shard }}" >&2
+            exit 1
+          fi
+          regex="$(printf '%s\n' "${shard_tests[@]}" | paste -sd'|' -)"
+          printf 'internal/http shard %s/%s tests (%d):\n' '${{ matrix.shard }}' '${{ matrix.total }}' "${#shard_tests[@]}"
+          printf '  %s\n' "${shard_tests[@]}"
+          go test -count=1 ./internal/http -run "^(${regex})$"
 
   race:
     name: targeted race
