@@ -167,6 +167,64 @@ func TestMemoryReviewRunFailsWithoutLLM(t *testing.T) {
 	}
 }
 
+func TestMemoryReviewRunFailsOnMalformedLLMResponse(t *testing.T) {
+	t.Setenv("LLM_MODEL", "mock-model")
+	db, rm := newReviewAuditFixture(t)
+	now := time.Now().UTC()
+	rm.Log(audit.Entry{RequestID: "e1", TS: now.Format(time.RFC3339Nano), TraceID: "tr", Tool: "save_memory", Outcome: audit.OutcomeOK, Collection: "levara", ClientName: "codex"})
+	waitAuditRows(t, db, 1)
+
+	llm := llmmock.New().OnAny().Reply(`not-json`)
+	app := fiber.New()
+	app.Post("/api/v1/memory-reviews/run", memoryReviewRunHandler(APIConfig{DB: db, MCPAuditReadModel: rm, LLMProvider: llm.Provider()}))
+	req := httptest.NewRequest("POST", "/api/v1/memory-reviews/run", bytes.NewBufferString(`{"collection":"levara"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 503 {
+		t.Fatalf("status=%d want 503", resp.StatusCode)
+	}
+	var run memoryReviewRun
+	if err := json.NewDecoder(resp.Body).Decode(&run); err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != "failed" || !strings.Contains(run.Error, "valid JSON") {
+		t.Fatalf("run=%+v", run)
+	}
+	var n int
+	if err := db.QueryRow("SELECT COUNT(*) FROM memory_review_runs WHERE status = 'failed'").Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("failed runs=%d want 1", n)
+	}
+}
+
+func TestMemoryReviewNormalizesUnknownCategoryAndSeverity(t *testing.T) {
+	run := memoryReviewRun{ID: "run", Status: "running", Scope: memoryReviewScope{Collection: "levara"}}
+	parsed := memoryReviewLLMResponse{Summary: "ok"}
+	parsed.Findings = append(parsed.Findings, struct {
+		Category       string `json:"category"`
+		Severity       string `json:"severity"`
+		TrajectoryID   string `json:"trajectory_id"`
+		Summary        string `json:"summary"`
+		Evidence       string `json:"evidence"`
+		Recommendation string `json:"recommendation"`
+	}{Category: "new_category", Severity: "critical", Summary: "unknown", Evidence: "e", Recommendation: "r"})
+	raw, _ := json.Marshal(parsed)
+	llm := llmmock.New().OnAny().Reply(string(raw))
+	t.Setenv("LLM_MODEL", "mock-model")
+	got := executeMemoryReview(context.Background(), APIConfig{LLMProvider: llm.Provider()}, run, nil, "prompt")
+	if got.Status != "completed" || len(got.Findings) != 1 {
+		t.Fatalf("run=%+v", got)
+	}
+	if got.Findings[0].Category != "scaffold_recommendation" || got.Findings[0].Severity != "medium" {
+		t.Fatalf("finding=%+v", got.Findings[0])
+	}
+}
+
 func newReviewAuditFixture(t *testing.T) (*sql.DB, *audit.ReadModel) {
 	t.Helper()
 	db, err := sql.Open("sqlite3", "file:"+filepath.Join(t.TempDir(), "audit.db"))

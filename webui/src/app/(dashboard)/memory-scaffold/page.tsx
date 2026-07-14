@@ -51,8 +51,13 @@ export default function MemoryScaffoldPage() {
 
   const onDecision = async (decision: 'approved' | 'rejected') => {
     if (!selected) return
-    await decide.mutateAsync({ id: selected, status: decision, note: note.trim() || undefined })
-    setNote('')
+    try {
+      await decide.mutateAsync({ id: selected, status: decision, note: note.trim() || undefined })
+      setNote('')
+    } catch {
+      // React Query keeps the error in decide.error; the UI renders the
+      // admin-permission message below without surfacing an unhandled promise.
+    }
   }
 
   return (
