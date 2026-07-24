@@ -1,0 +1,104 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="400" viewBox="0 0 1200 400" role="img" aria-labelledby="title desc">
+  <title id="title">Levara — context that survives the session</title>
+  <desc id="desc">A warm editorial hero built around Levara's project-specific room by hall memory map.</desc>
+
+  <rect width="1200" height="400" rx="28" fill="#F4F1E9"/>
+  <rect x="1" y="1" width="1198" height="398" rx="27" fill="none" stroke="#D3CEC1" stroke-width="2"/>
+
+  <g font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">
+    <g transform="translate(58 46)">
+      <text x="0" y="0" fill="#2658D8" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="15" font-weight="700" letter-spacing="2.2">PERSISTENT CONTEXT FOR AI AGENTS</text>
+      <text x="0" y="74" fill="#17202A" font-size="66" font-weight="760" letter-spacing="-2.8">Levara</text>
+      <text x="0" y="132" fill="#17202A" font-size="39" font-weight="620" letter-spacing="-1.2">Context that survives</text>
+      <text x="0" y="179" fill="#17202A" font-size="39" font-weight="620" letter-spacing="-1.2">the session.</text>
+      <text x="0" y="228" fill="#5B6570" font-size="21">Store decisions. Search project knowledge.</text>
+      <text x="0" y="257" fill="#5B6570" font-size="21">Recover verified work without replaying the chat.</text>
+
+      <g transform="translate(0 298)" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="14">
+        <text x="0" y="0" fill="#2658D8">01</text>
+        <text x="30" y="0" fill="#59636E">remember</text>
+        <path d="M116 -5H158" stroke="#A29B8D" stroke-width="1"/>
+        <text x="176" y="0" fill="#2658D8">02</text>
+        <text x="206" y="0" fill="#59636E">verify</text>
+        <path d="M270 -5H312" stroke="#A29B8D" stroke-width="1"/>
+        <text x="330" y="0" fill="#2658D8">03</text>
+        <text x="360" y="0" fill="#59636E">resume</text>
+      </g>
+    </g>
+
+    <g transform="translate(662 42)">
+      <text x="0" y="0" fill="#777061" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="14" letter-spacing="1.5">THE MEMORY MAP</text>
+
+      <g transform="translate(0 34)">
+        <text x="102" y="0" text-anchor="middle" fill="#756E60" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="13">FACT</text>
+        <text x="258" y="0" text-anchor="middle" fill="#756E60" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="13">DECISION</text>
+        <text x="414" y="0" text-anchor="middle" fill="#756E60" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="13">DISCOVERY</text>
+
+        <text x="0" y="70" fill="#777061" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="13">AUTH</text>
+        <text x="0" y="154" fill="#777061" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="13">DEPLOY</text>
+        <text x="0" y="238" fill="#777061" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="13">MEMORY</text>
+
+        <g transform="translate(50 22)">
+          <rect width="104" height="66" rx="12" fill="#ECE7DB" stroke="#CFC8B8"/>
+          <circle cx="18" cy="18" r="5" fill="#A8A08F"/>
+          <path d="M18 24V47H83" fill="none" stroke="#B9B09D" stroke-width="2"/>
+          <rect x="31" y="14" width="50" height="7" rx="3.5" fill="#C4BBA8"/>
+          <rect x="31" y="29" width="38" height="7" rx="3.5" fill="#D2CBBB"/>
+
+          <rect x="156" width="104" height="66" rx="12" fill="#2658D8"/>
+          <circle cx="174" cy="18" r="5" fill="#C7D5FF"/>
+          <path d="M174 24V47H239" fill="none" stroke="#9DB5FF" stroke-width="2"/>
+          <rect x="187" y="14" width="50" height="7" rx="3.5" fill="#DCE5FF"/>
+          <rect x="187" y="29" width="38" height="7" rx="3.5" fill="#AFC2FF"/>
+
+          <rect x="312" width="104" height="66" rx="12" fill="#ECE7DB" stroke="#CFC8B8"/>
+          <circle cx="330" cy="18" r="5" fill="#A8A08F"/>
+          <path d="M330 24V47H395" fill="none" stroke="#B9B09D" stroke-width="2"/>
+          <rect x="343" y="14" width="50" height="7" rx="3.5" fill="#C4BBA8"/>
+          <rect x="343" y="29" width="38" height="7" rx="3.5" fill="#D2CBBB"/>
+
+          <rect y="84" width="104" height="66" rx="12" fill="#ECE7DB" stroke="#CFC8B8"/>
+          <circle cx="18" cy="102" r="5" fill="#A8A08F"/>
+          <path d="M18 108V131H83" fill="none" stroke="#B9B09D" stroke-width="2"/>
+          <rect x="31" y="98" width="50" height="7" rx="3.5" fill="#C4BBA8"/>
+          <rect x="31" y="113" width="38" height="7" rx="3.5" fill="#D2CBBB"/>
+
+          <rect x="156" y="84" width="104" height="66" rx="12" fill="#ECE7DB" stroke="#CFC8B8"/>
+          <circle cx="174" cy="102" r="5" fill="#A8A08F"/>
+          <path d="M174 108V131H239" fill="none" stroke="#B9B09D" stroke-width="2"/>
+          <rect x="187" y="98" width="50" height="7" rx="3.5" fill="#C4BBA8"/>
+          <rect x="187" y="113" width="38" height="7" rx="3.5" fill="#D2CBBB"/>
+
+          <rect x="312" y="84" width="104" height="66" rx="12" fill="#DFF3EA" stroke="#89BFA7"/>
+          <circle cx="330" cy="102" r="5" fill="#28835E"/>
+          <path d="M330 108V131H395" fill="none" stroke="#63A98D" stroke-width="2"/>
+          <rect x="343" y="98" width="50" height="7" rx="3.5" fill="#89C8AD"/>
+          <rect x="343" y="113" width="38" height="7" rx="3.5" fill="#B4DDCA"/>
+
+          <rect y="168" width="104" height="66" rx="12" fill="#ECE7DB" stroke="#CFC8B8"/>
+          <circle cx="18" cy="186" r="5" fill="#A8A08F"/>
+          <path d="M18 192V215H83" fill="none" stroke="#B9B09D" stroke-width="2"/>
+          <rect x="31" y="182" width="50" height="7" rx="3.5" fill="#C4BBA8"/>
+          <rect x="31" y="197" width="38" height="7" rx="3.5" fill="#D2CBBB"/>
+
+          <rect x="156" y="168" width="104" height="66" rx="12" fill="#FFE9C8" stroke="#D8A95D"/>
+          <circle cx="174" cy="186" r="5" fill="#BB7620"/>
+          <path d="M174 192V215H239" fill="none" stroke="#D5A052" stroke-width="2"/>
+          <rect x="187" y="182" width="50" height="7" rx="3.5" fill="#E7B767"/>
+          <rect x="187" y="197" width="38" height="7" rx="3.5" fill="#F2CF91"/>
+
+          <rect x="312" y="168" width="104" height="66" rx="12" fill="#ECE7DB" stroke="#CFC8B8"/>
+          <circle cx="330" cy="186" r="5" fill="#A8A08F"/>
+          <path d="M330 192V215H395" fill="none" stroke="#B9B09D" stroke-width="2"/>
+          <rect x="343" y="182" width="50" height="7" rx="3.5" fill="#C4BBA8"/>
+          <rect x="343" y="197" width="38" height="7" rx="3.5" fill="#D2CBBB"/>
+        </g>
+
+        <path d="M312 55C395 55 366 274 465 274" fill="none" stroke="#2658D8" stroke-width="3" stroke-linecap="round"/>
+        <circle cx="312" cy="55" r="6" fill="#2658D8"/>
+        <circle cx="465" cy="274" r="6" fill="#2658D8"/>
+        <text x="465" y="302" text-anchor="end" fill="#2658D8" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="13" font-weight="700">RECALLED WITH PROVENANCE</text>
+      </g>
+    </g>
+  </g>
+</svg>
