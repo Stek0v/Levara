@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="400" viewBox="0 0 1200 400" role="img" aria-labelledby="title desc">
+  <title id="title">A verified Levara durable-memory flow</title>
+  <desc id="desc">A terminal-style record showing a README decision saved in one agent turn and recalled with provenance in the next turn.</desc>
+
+  <rect width="1200" height="400" rx="28" fill="#061827"/>
+  <rect x="1" y="1" width="1198" height="398" rx="27" fill="none" stroke="#173A55" stroke-width="2"/>
+
+  <g font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">
+    <g transform="translate(52 48)">
+      <text x="0" y="0" fill="#78E3D5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="15" font-weight="700" letter-spacing="2">VERIFIED MCP FLOW · 2026-07-24</text>
+      <text x="0" y="58" fill="#F4FAFE" font-size="38" font-weight="720" letter-spacing="-1.2">A decision survives</text>
+      <text x="0" y="103" fill="#F4FAFE" font-size="38" font-weight="720" letter-spacing="-1.2">the chat boundary.</text>
+      <text x="0" y="151" fill="#AABFCC" font-size="20">Stored as project memory, scoped by</text>
+      <text x="0" y="179" fill="#AABFCC" font-size="20">room and hall, recovered with provenance.</text>
+
+      <g transform="translate(0 226)" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">
+        <rect width="116" height="38" rx="19" fill="#0C2A41" stroke="#1D557B"/>
+        <text x="58" y="25" text-anchor="middle" fill="#9BC9E8" font-size="14">DURABLE</text>
+        <rect x="128" width="110" height="38" rx="19" fill="#0C2A41" stroke="#1D557B"/>
+        <text x="183" y="25" text-anchor="middle" fill="#9BC9E8" font-size="14">SCOPED</text>
+        <rect x="250" width="126" height="38" rx="19" fill="#0C2A41" stroke="#1D557B"/>
+        <text x="313" y="25" text-anchor="middle" fill="#9BC9E8" font-size="14">AUDITABLE</text>
+      </g>
+
+      <text x="0" y="330" fill="#55768C" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="14">REAL PROJECT MEMORY · SANITIZED OUTPUT</text>
+    </g>
+
+    <g transform="translate(480 36)">
+      <rect width="666" height="328" rx="20" fill="#07131E" stroke="#26506D" stroke-width="2"/>
+      <rect width="666" height="44" rx="20" fill="#0C2233"/>
+      <rect y="24" width="666" height="20" fill="#0C2233"/>
+      <circle cx="22" cy="22" r="5" fill="#FF806D"/>
+      <circle cx="40" cy="22" r="5" fill="#F6C65B"/>
+      <circle cx="58" cy="22" r="5" fill="#65D39B"/>
+      <text x="333" y="27" text-anchor="middle" fill="#6F91A8" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="13">LEVARA · ROOM × HALL</text>
+
+      <g transform="translate(24 78)" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">
+        <text x="0" y="0" fill="#6E93AC" font-size="14">AGENT TURN 01</text>
+        <text x="0" y="34" fill="#78E3D5" font-size="17">$</text>
+        <text x="24" y="34" fill="#DCEAF3" font-size="17">save_memory(</text>
+        <text x="156" y="34" fill="#8FCBFF" font-size="17">room="mcp", hall="decision"</text>
+        <text x="442" y="34" fill="#DCEAF3" font-size="17">)</text>
+        <text x="24" y="64" fill="#5FCB9D" font-size="15">✓ B + C · Whole README · user-confirmed</text>
+
+        <path d="M0 91H618" stroke="#18364A" stroke-width="1"/>
+        <text x="0" y="119" fill="#6E93AC" font-size="14">NEXT AGENT TURN · NO CHAT REPLAY</text>
+        <text x="0" y="153" fill="#78E3D5" font-size="17">$</text>
+        <text x="24" y="153" fill="#DCEAF3" font-size="17">recall_memory(</text>
+        <text x="173" y="153" fill="#8FCBFF" font-size="17">"README redesign"</text>
+        <text x="351" y="153" fill="#DCEAF3" font-size="17">)</text>
+
+        <rect x="0" y="174" width="618" height="74" rx="12" fill="#0B2633" stroke="#236C68"/>
+        <path d="M18 211L27 220L43 200" fill="none" stroke="#78E3D5" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+        <text x="60" y="202" fill="#8BB0C8" font-size="13">RECOVERED WITH PROVENANCE</text>
+        <text x="60" y="226" fill="#E7F7F5" font-size="17">B + C selected · Whole README · verified</text>
+      </g>
+    </g>
+  </g>
+</svg>
