@@ -1,350 +1,293 @@
-# Levara
+<p align="center">
+  <img src="./assets/readme/hero.svg" width="100%" alt="Levara gives AI agents persistent, structured context through a room-by-hall memory map">
+</p>
 
-> Persistent memory, search, and workspace infrastructure for AI agents, built as one Go binary.
+<p align="center">
+  <a href="https://go.dev/"><img src="https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go&logoColor=white" alt="Go 1.26 or newer"></a>
+  <a href="./docs/api-contract.md"><img src="https://img.shields.io/badge/MCP-native-2658D8" alt="Native Model Context Protocol support"></a>
+  <a href="./docs/profile-presets.md"><img src="https://img.shields.io/badge/profiles-personal%20%E2%86%92%20enterprise-17202A" alt="Personal through enterprise runtime profiles"></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-28835E" alt="MIT license"></a>
+</p>
 
-[![Go](https://img.shields.io/badge/Go-1.26+-00ADD8?logo=go&logoColor=white)](https://go.dev/)
-[![MCP](https://img.shields.io/badge/MCP-agent_memory-6E56CF)](docs/marketing/personal.md)
-[![Profiles](https://img.shields.io/badge/profiles-personal%20%7C%20solo%20pro%20%7C%20team%20%7C%20enterprise-111827)](docs/profile-presets.md)
-[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+<p align="center">
+  <a href="./README_RU.md">Русский</a> ·
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#capability-map">Capabilities</a> ·
+  <a href="#how-it-works">Architecture</a> ·
+  <a href="#operations-and-webui">Operations</a> ·
+  <a href="./docs/api-contract.md">API contract</a>
+</p>
 
-Levara is the memory layer for humans working with AI agents. It combines an
-in-process HNSW vector engine, BM25, temporal knowledge graph storage, MCP tools,
-workspace-aware Markdown indexing, sync, audit, and runtime profile validation so
-an assistant can remember project facts, decisions, files, and team boundaries
-across sessions.
+Levara is local-first context infrastructure for AI agents. It combines durable
+memory, hybrid search, a temporal knowledge graph, a verifiable Markdown
+workspace, synchronization, observability, and scoped long-running tasks in one
+Go binary.
 
-<CardGroup cols={2}>
-  <Card title="For one developer" icon="user" href="docs/marketing/personal.md">
-    Local SQLite, local files, MCP, memory palace, and no required auth by default.
-  </Card>
-  <Card title="For teams" icon="users" href="docs/marketing/team.md">
-    Postgres, required auth, dataset/project sharing, workspace ACL, audit, and per-agent credentials.
-  </Card>
-</CardGroup>
+<p align="center">
+  <img src="./assets/readme/proof.svg" width="100%" alt="A verified MCP flow where a README decision is saved in one agent turn and recalled with provenance in the next">
+</p>
 
-> [!NOTE]
-> This README uses MDX-friendly structure (`<CardGroup>`, `<Card>`, `<Tabs>`,
-> `<Accordion>`) while remaining readable as plain Markdown on GitHub.
-
-> [!IMPORTANT]
-> For the verified local Mac runtime, use
-> [docs/current-state.md](docs/current-state.md). As of the latest check, the
-> running server is `standalone-embed` on `:8081`, gRPC is disabled, vectors are
-> `256`-dim `potion-code-16M`, PostgreSQL and the local LLM are connected,
-> Neo4j/rerank are disabled, and doctor reports `8/9 ok` with one BM25 warning.
+The flow above is based on a real project memory used while redesigning this
+README: the visual direction was stored as a scoped `decision`, then recovered
+in the next agent turn without replaying the previous chat. Levara keeps the
+record in SQL and maintains searchable index sidecars; the conversation itself
+is not the source of truth.
 
 ## Why Levara
 
-AI agents are only useful when they keep the right context. Chat history is too
-noisy, vector search alone loses provenance, and corporate teams need auth,
-tenant isolation, and audit before they can trust agent memory. Levara packages
-those layers together:
+AI agents are powerful inside one prompt window and forgetful outside it. Chat
+history is noisy, vector search alone loses provenance, and shared agent
+workspaces need explicit access, audit, and recovery semantics.
 
-| Layer | What it does | Key packages |
-|---|---|---|
-| Core engine | WAL-backed HNSW, arena storage, BM25, graph search, hybrid/rerank routing | `internal/store`, `pkg/bm25`, `pkg/vectorstore`, `pkg/graphstore`, `pkg/graphrank`, `pkg/router` |
-| Agent memory | MCP tools, memory palace, wake-up briefings, diaries, chat recall | `internal/http/mcp.go`, `pkg/mcp`, `pkg/consolidate` |
-| Workspace plane | Markdown-as-source-of-truth, workspace search/read/write/commit, audit, jobs | `pkg/workspace`, `internal/http/workspace*.go` |
-| Identity and access | JWT/API keys, RBAC, tenant membership, policy facade, OIDC verified-claims adapter | `pkg/access`, `pkg/auth`, `internal/http/auth.go` |
-| Enterprise adapters | Audit export, storage/KMS contracts, SSO/SCIM seams | `pkg/audit`, `pkg/storage`, `pkg/access` |
+Levara gives agents a context control plane:
 
-## Highlights
+- **Remember deliberately** — facts, decisions, events, preferences, advice,
+  and discoveries are stored under a project-specific `room × hall` taxonomy.
+- **Recover only what matters** — wake-up briefings, filtered recall, hybrid
+  search, temporal graph queries, and bounded task bootstraps keep context small.
+- **Keep work inspectable** — Markdown remains the workspace source of truth;
+  indexes are disposable derivatives that can be reconciled or rebuilt.
+- **Prove long-running work** — the alpha Task Runtime connects Definition of
+  Done criteria to steps, leases, immutable receipts, checkpoints, and
+  deterministic validation.
+- **Scale the operating model** — the same engine supports a local developer,
+  a multi-device setup, a shared team, or enterprise adapter boundaries.
 
-- **Agent memory that survives sessions**: `save_memory`, `recall_memory`,
-  `wake_up`, pins, room x hall taxonomy, and per-agent diaries.
-- **Verifiable workspace**: Markdown files are the source of truth; vector/graph
-  indexes are disposable derivatives with commit, conflict, audit, and reindex
-  flows.
-- **Search stack**: HNSW vector search, BM25 full text, hybrid RRF, graph-aware
-  reranking, temporal edges, NL-to-Cypher, and structured filters.
-- **MCP-first integration**: one `/mcp` endpoint for Claude Code, Cursor, Codex,
-  Cline, and other MCP clients.
-- **Product profiles**: `personal`, `solo_pro`, `team`, and `enterprise` model
-  the same codebase for different audiences.
-- **Enterprise boundaries without core pollution**: access policy, audit export,
-  OIDC verified claims, storage metadata, and KMS/BYOK hooks are adapter seams,
-  not logic embedded in search handlers.
-- **Operational shape**: Prometheus metrics, JSONL audit export, backup/restore,
-  sync, config validation, Docker, ARM64 build, and release gates.
+## Capability map
 
-## Product Profiles
+| Area | Implemented capabilities |
+|---|---|
+| **Agent memory** | `save_memory`, filtered recall, wake-up briefings, pins, room × hall routing, per-agent diaries, chat recall, deletion, consolidation and revert, provenance-preserving supersession |
+| **Search and knowledge** | WAL-backed HNSW, BM25, hybrid RRF, rerank routing, RAG and graph search, temporal validity, path queries, communities, structured filters, Git-aware analysis |
+| **Ingestion** | Add/list/prune data, Cognify and Codify pipelines, status tracking, deduplication, embeddings, graph extraction, drift checks |
+| **Verifiable workspace** | Markdown context and artifacts, search/read/write/commit/revert/delete, manifests, conflicts, access checks, audit log, watch mode, indexing and reindexing jobs, retries, reconciliation and GC |
+| **Long-Horizon Task Runtime** | Scoped tasks, Definition of Done, versioned plans, dependent steps, atomic leases, immutable receipts, checkpoints, blockers, crash recovery, risk-based reviewer policy, deterministic completion and verified-memory promotion |
+| **Operations** | Doctor checks, runtime and ingestion snapshots, recent errors, heartbeat, memory-index health/retry, SQL↔vector reconciliation, workspace job/watch health, Prometheus metrics |
+| **Sync and storage** | Mac/Pi and peer sync, scoped manifests and status, backup/restore tooling, SQLite or PostgreSQL metadata, local or S3-compatible raw-object storage |
+| **Identity and governance** | JWT and API keys, dataset/project sharing, workspace ACL, tenant membership checks, audit export, OIDC verified-claims adapter, SSO/SCIM and storage/KMS seams |
+| **Product surfaces** | MCP Streamable HTTP, REST, gRPC v1/v2, CLI tools, Next.js WebUI, notebooks, feedback and memory-behavior analytics |
 
-<Tabs>
-  <Tab title="Personal">
+The generated contract currently contains **79 canonical MCP tools**, **144 REST
+routes**, and **45 gRPC methods**. The complete machine-derived inventory lives
+in [docs/api-contract.md](docs/api-contract.md); the README groups the surface
+by user outcome instead of reproducing every endpoint.
 
-Use when a single developer wants local AI memory.
+<details>
+<summary><strong>MCP tool groups</strong></summary>
 
-```bash
-cp deploy/profiles/personal.local.env.example .env
-./levara-server -config-check
-./levara-server -profile=standalone -dim=768 -port=8080 -grpc-port=0
-```
+| Group | Tools | Responsibility |
+|---|---:|---|
+| Workspace | 25 | Context, artifacts, authoring, revisions, indexing, jobs and audit |
+| Memory | 11 | Lifecycle, recall, consolidation, supersession and wake-up |
+| Operations | 9 | Health, errors, reconciliation, indexing and runtime state |
+| Task | 8 | Long-Horizon Task Runtime |
+| Data | 5 | Add, list, drift, delete and prune |
+| Search | 4 | Hybrid/graph search, entities and communities |
+| Cognify | 3 | Cognify, Codify and run status |
+| Chat | 3 | Save, recall and search chat records |
+| Git | 3 | Commit analysis, Git search and graph pruning |
+| Context | 2 | Project context selection and retrieval |
+| Diary | 2 | Per-agent isolated notes |
+| Feedback | 2 | Retrieval feedback and statistics |
+| Sync | 2 | Cross-instance synchronization and status |
 
-Default posture: SQLite, local filesystem, MCP/workspace enabled, auth optional.
+</details>
 
-  </Tab>
-  <Tab title="Solo Pro">
+## Quick start
 
-Use when one power user syncs memory across a laptop, home server, or Raspberry Pi.
-
-```bash
-cp deploy/profiles/solo_pro.sync.env.example .env
-# set LEVARA_SYNC_REMOTE_URL and LEVARA_TOKEN
-./levara-server -config-check
-```
-
-Default posture: local + sync, backups, optional S3-compatible storage, basic
-observability.
-
-  </Tab>
-  <Tab title="Team">
-
-Use when humans and agents share projects.
-
-```bash
-cp deploy/profiles/team.postgres.env.example .env
-# set POSTGRES_DSN and a stable JWT_SECRET
-./levara-server -require-auth -config-check
-./levara-server -require-auth
-```
-
-Default posture: Postgres, required auth, dataset/project sharing, workspace ACL,
-audit, and async indexing jobs.
-
-  </Tab>
-  <Tab title="Enterprise">
-
-Use for tenant governance, central identity, audit export, and adapter-based
-corporate integration.
-
-```bash
-cp deploy/profiles/enterprise.strict.env.example .env
-# configure Postgres, auth/SSO bridge, tenant enforcement, and audit sink
-./levara-server -require-auth -config-check
-```
-
-Implemented: tenant policy, strict profile validation, audit export boundary,
-OIDC verified-claims adapter, SCIM-shaped provisioning seam, storage/KMS adapter
-contracts.
-
-Still adapter work: SAML, SCIM HTTP surface, SIEM sink, concrete KMS/BYOK
-backends, legal-hold enforcement in production object stores.
-
-  </Tab>
-</Tabs>
-
-See [docs/profile-presets.md](docs/profile-presets.md) and
-[docs/product-ladder.md](docs/product-ladder.md) for the full product ladder.
-
-## Quick Start
-
-### From Source
+The Personal profile runs with SQLite and local files. PostgreSQL, Neo4j, an
+LLM, and a reranker are not required for the first successful run.
 
 ```bash
 git clone https://github.com/Stek0v/Levara.git
 cd Levara
 
-go test ./pkg/profile ./cmd/server
 make build
-
 cp deploy/profiles/personal.local.env.example .env
+set -a && source .env && set +a
+
 ./levara-server -config-check
-./levara-server -profile=standalone -dim=768 -port=8080 -grpc-port=0
+./levara-server -profile=standalone -port=8080 -grpc-port=0
 ```
 
-Local Mac development currently runs a richer profile:
-
-```bash
-./levara-server \
-  -profile=standalone-embed \
-  -dim=256 \
-  -port=8081 \
-  -grpc-port=0 \
-  -data-dir=/Users/stek0v/src/levara/data \
-  -node-id=mac1 \
-  -require-auth=false \
-  -embed-endpoint=http://127.0.0.1:9101/v1/embeddings \
-  -embed-model=potion-code-16M \
-  -llm-upstream=http://localhost:11434/v1 \
-  -pg-url='postgres://stek0v@localhost:5432/levara?sslmode=disable' \
-  -embed-keepalive-interval=5m
-```
-
-See [docs/current-state.md](docs/current-state.md) before using local ports,
-model names, or launchd commands in automation.
-
-### With Docker
-
-```bash
-cd Levara
-docker compose up -d --build
-```
-
-### Connect an MCP Client
+Connect an MCP client:
 
 ```json
 {
   "mcpServers": {
     "levara": {
-      "url": "http://localhost:8080/mcp",
-      "headers": {
-        "Authorization": "Bearer ${LEVARA_TOKEN}"
-      }
+      "url": "http://127.0.0.1:8080/mcp"
     }
   }
 }
 ```
 
-Example host configs live in [examples/agent-hosts](examples/agent-hosts).
+Then ask the agent to create its first durable record:
+
+```text
+Save the decision that this project uses PostgreSQL for shared state.
+Record why, place it in the auth room, and recall existing auth decisions first.
+```
+
+Host-specific examples for Codex, Claude Code, Cursor, Cline, and other clients
+live in [examples/agent-hosts](examples/agent-hosts).
+
+> [!IMPORTANT]
+> Personal mode does not require auth by default. Keep the listener on a trusted
+> local network or enable authentication before exposing it to other machines.
+
+### Docker
+
+```bash
+docker compose up -d --build
+```
+
+See [docs/profile-presets.md](docs/profile-presets.md) for production-shaped
+Personal, Solo Pro, Team, and Enterprise configuration examples.
+
+## How it works
+
+```mermaid
+flowchart LR
+  Agents[AI agents and IDEs] --> MCP[MCP tool profile]
+  WebUI[WebUI and applications] --> REST[REST API]
+  SDKs[SDKs and services] --> GRPC[gRPC v1/v2]
+
+  MCP --> Policy[Access and tenant policy]
+  REST --> Policy
+  GRPC --> Search[Search engine]
+
+  Policy --> Memory[Durable memory]
+  Policy --> Workspace[Markdown workspace]
+  Policy --> Tasks[Task Runtime]
+  Policy --> Search
+
+  Memory --> SQL[(SQLite / PostgreSQL)]
+  Workspace --> Markdown[(Markdown truth)]
+  Workspace --> Jobs[Index and audit jobs]
+  Tasks --> SQL
+
+  Search --> HNSW[HNSW + WAL]
+  Search --> BM25[BM25]
+  Search --> Graph[Temporal graph]
+```
+
+Levara separates authoritative records from derived indexes:
+
+- SQL stores memory, graph metadata, tasks, receipts, identity, and operational
+  state.
+- Markdown stores human-readable workspace truth.
+- HNSW, BM25, and graph projections accelerate retrieval and can be rebuilt.
+- Access policy sits above MCP and REST workspace/memory operations.
+- Audit and adapter contracts stay outside the core search implementation.
+
+## MCP tool profiles
+
+`LEVARA_MCP_TOOLSET` reduces tool-schema cost by exposing only the surface an
+agent needs:
+
+| Tool profile | Intended use |
+|---|---|
+| `core` | Context selection, wake-up, memory recall/save, search and doctor |
+| `memory` | Full memory lifecycle, consolidation, diaries and feedback |
+| `workspace` | Core memory plus safe Markdown workspace authoring |
+| `ops` | Health, errors, reconciliation, sync, audit and indexing operations |
+| `long-horizon` | Scoped memory plus tasks, receipts, validation and completion |
+| `full` | Backward-compatible canonical catalogue |
+
+`light` remains a legacy alias for `memory`. Tool profiles are not authorization
+boundaries; JWT/API-key and workspace policy checks still apply independently.
+
+> [!WARNING]
+> Long-Horizon Task Runtime is alpha and feature-flagged. Set
+> `LEVARA_LONG_HORIZON_RUNTIME=1` and use the `long-horizon` MCP tool profile.
+> The current alpha suite covers dependency handling, idempotent retries,
+> concurrent claims, stale evidence, reviewer policy, crash recovery, bounded
+> bootstrap relevance, and verified memory promotion. See
+> [docs/long-horizon-alpha-report.md](docs/long-horizon-alpha-report.md).
+
+## Runtime profiles
+
+Levara uses three different profile controls:
+
+| Control | Values | Purpose |
+|---|---|---|
+| `LEVARA_PROFILE` | `personal`, `solo_pro`, `team`, `enterprise` | Product and governance posture |
+| `-profile` | `standalone`, `standalone-embed`, `full` | Functional server bootstrap |
+| `LEVARA_MCP_TOOLSET` | `core`, `memory`, `workspace`, `ops`, `long-horizon`, `full` | MCP schema exposed to agents |
+
+Product profiles share one core engine:
+
+| Product profile | Default shape | What it adds |
+|---|---|---|
+| **Personal** | SQLite, local files, local MCP, optional auth | Durable memory and workspace for one developer |
+| **Solo Pro** | SQLite or PostgreSQL, sync, backups, optional S3-compatible storage | Several devices or a Mac/Pi setup |
+| **Team** | PostgreSQL, required auth, shared workspace, per-agent credentials | Project sharing, ACL, audit and async jobs |
+| **Enterprise** | PostgreSQL, tenant enforcement, central identity/audit boundaries | Governance and adapter-based integration |
+
+Strict validation is available with `LEVARA_PROFILE_STRICT=1`; unsafe Team and
+Enterprise combinations fail before listeners are opened.
 
 ## Interfaces
 
-| Surface | Default | Purpose | Where to inspect |
-|---|---:|---|---|
-| HTTP REST | `:8080` | Datasets, ingest, search, auth, tenants, workspace, sync, notebooks, ops | `internal/http/api.go`, `internal/http/routes.go`, `docs/api-reference.md` |
-| MCP Streamable HTTP | `/mcp` | AI-agent tools for memory, search, workspace, sync, audit, observability | `internal/http/mcp.go`, `pkg/mcp` |
-| gRPC v1/v2 | `:50051` | Vector/search/cognify client API | `internal/grpc`, `proto/` |
-| CLI tools | local binaries | Server, backup, contract validation, host config install, load tests | `cmd/` |
-| Web UI | app package | Next.js operator/user UI | `webui/`, `docs/webui-operations.md` |
+| Surface | Default | Current contract | Best for |
+|---|---:|---:|---|
+| MCP Streamable HTTP | `/mcp` | 79 canonical tools | AI agents and IDE integrations |
+| REST | `:8080` | 144 canonical routes | WebUI, applications and operations |
+| gRPC v1/v2 | `:50051` | 45 canonical methods | Typed SDK and search clients |
+| CLI | local binaries | server, client, backup, contract and host tooling | Operators and automation |
+| WebUI | `:3000` in development | Next.js application | Users, operators and reviewers |
 
-Defaults are compile/runtime defaults, not the current Mac launchd deployment.
-The verified local instance uses HTTP/MCP on `:8081` and disables gRPC with
-`-grpc-port=0`.
+Defaults describe the normal deployment shape, not any specific developer
+machine. For a verified local development snapshot, use
+[docs/current-state.md](docs/current-state.md).
 
-<Accordion title="Representative REST groups">
+## Operations and WebUI
 
-- `/api/v1/datasets`, `/api/v1/add`, `/api/v1/cognify`, `/api/v1/search/text`
-- `/api/v1/memories`, `/api/v1/sync/*`, `/api/v1/tenants/*`, `/api/v1/acl`
-- `/api/v1/workspace/*` for context, read, write, commit, audit, jobs, conflicts
-- `/api/v1/notebooks/*`, `/api/v1/ontologies`, `/api/v1/feedback`, `/metrics`
+The WebUI is a real operating surface over the backend, not a separate data
+store:
 
-</Accordion>
-
-<Accordion title="Representative MCP tools">
-
-- Memory: `save_memory`, `recall_memory`, `list_memories`, `pin_memory`, `wake_up`, `diary_write`, `diary_read`
-- Search/graph: `search`, `cross_search`, `query_entity`, `list_communities`, `git_search`, `analyze_commits`
-- Workspace: `workspace_context`, `workspace_read`, `workspace_write`, `workspace_commit`, `workspace_search`, `workspace_audit_log`
-- Ops: `doctor`, `runtime_stats`, `recent_errors`, `sync_status`, `workspace_ops_status`
-
-</Accordion>
-
-## Architecture
-
-```mermaid
-flowchart TD
-  Agent[AI agents and IDEs] --> MCP[MCP /mcp]
-  Apps[Apps and CLIs] --> REST[REST /api/v1]
-  SDKs[gRPC clients] --> GRPC[gRPC v1/v2]
-
-  MCP --> Access[pkg/access policy]
-  REST --> Access
-  GRPC --> Core[Core engine]
-  Access --> Workspace[Workspace plane]
-  Access --> Memory[Memory palace]
-  Access --> Core
-
-  Workspace --> Markdown[Markdown truth layer]
-  Workspace --> Jobs[Index jobs and audit]
-  Memory --> SQL[(SQLite/Postgres)]
-  Core --> HNSW[HNSW + WAL + arena]
-  Core --> BM25[BM25]
-  Core --> Graph[Temporal graph]
-
-  Audit[pkg/audit export] -.-> SIEM[Future SIEM adapters]
-  Storage[pkg/storage contracts] -.-> ObjectStore[Future S3/GCS/Azure/KMS]
-  Identity[OIDC verified claims / SCIM seam] -.-> Access
-```
-
-## Repository Map
-
-```text
-
-  cmd/
-    server/          HTTP + gRPC + MCP server, profile/config validation
-    cli/             Levara CLI
-    backup/          backup/restore command
-    contract/        REST/gRPC/MCP contract generation and drift checks
-    agent-hosts/     MCP host config installer
-    loadtest/        load testing utilities
-  internal/
-    store/           HNSW, WAL, mmap arena, collection manager
-    http/            Fiber REST API, MCP endpoint, auth, workspace, sync, RBAC
-    grpc/            gRPC v1/v2 services and interceptors
-    cluster/         optional Raft sharding/replication
-    metrics/         Prometheus metrics
-    contract/        generated contract inventory types
-  pkg/
-    access/          policy, tenant membership, identity bridges, OIDC adapter
-    audit/           audit sink/export contracts and JSONL exporter
-    bm25/            full-text index and hybrid retrieval
-    graphstore/      graph persistence
-    mcp/             MCP tool descriptors and tool implementations
-    orchestrator/    cognify pipeline: chunk -> extract -> dedup -> embed -> write
-    storage/         local/S3 storage plus enterprise metadata/KMS contracts
-    workspace/       Markdown workspace model and indexing helpers
-    profile/         runtime profile validation
-    llm/, embed/     LLM and embedding provider clients
-  deploy/profiles/   audience-specific env presets
-  docs/              API, architecture, product ladder, testing, marketing
-  proto/             protobuf definitions
-  webui/             Next.js 16 Web UI
-```
-
-## Configuration
-
-### Runtime Profiles
-
-```bash
-LEVARA_PROFILE=personal|solo_pro|team|enterprise
-LEVARA_PROFILE_STRICT=1   # fail fast on unsafe team/enterprise configs
-```
-
-`-config-check` validates the resolved profile and exits before listeners, DB
-connections, or network services start.
-
-```bash
-./levara-server -config-check
-make profile-config-check
-```
-
-### Common Environment Variables
-
-| Variable | Purpose |
+| Workflow | Screens |
 |---|---|
-| `DB_PROVIDER` / `POSTGRES_DSN` / `DB_PATH` | Select Postgres or SQLite storage |
-| `JWT_SECRET` | Stable HS256 signing secret for auth-enabled deployments |
-| `LEVARA_TOKEN` | Sync/MCP bearer token in examples and sync flows |
-| `LEVARA_DATA_DIR` | Root data directory when `-data-dir` is not set |
-| `LEVARA_TENANT_ENFORCED` | Required for enterprise tenant isolation strict mode |
-| `LEVARA_WORKSPACE_AUDIT_EXPORT` / `_DIR` / `_RETENTION_DAYS` | Workspace audit export controls |
-| `LEVARA_WORKSPACE_WATCH` / `_INDEX_WORKER` | Workspace watcher and async index worker |
-| `EMBED_URL` / `EMBEDDING_ENDPOINT` / `EMBEDDING_MODEL` | Embedding service configuration |
-| `LLM_PROVIDER`, `LLM_ENDPOINT`, `LLM_MODEL`, `LLM_API_KEY` | LLM provider configuration. The current Mac runtime uses `LLM_PROVIDER=openai`, `LLM_ENDPOINT=http://localhost:11434/v1`, `LLM_MODEL=gemma4:e2b`. |
-| `RERANK_ENDPOINT`, `RERANK_MODEL`, `RERANK_BUDGET_MS` | Cross-encoder reranker configuration |
-| `STORAGE_BACKEND`, `S3_BUCKET`, `STORAGE_PATH` | Raw object storage backend controls |
-| `LANGFUSE_PUBLIC_KEY` | Optional tracing integration |
+| Knowledge | Datasets, collections, Cognify, search, chat and graph exploration |
+| Memory | Memories, notebooks, memory behavior and scaffold proposals |
+| Workspace | Manifest, artifacts, search, authoring, indexing jobs and audit |
+| Operations | Dashboard, sync, analytics, administration and settings |
 
-### Server Flags
+Operational APIs and MCP tools expose:
 
-```bash
-./levara-server \
-  -profile=standalone-embed \
-  -dim=256 \
-  -port=8081 \
-  -grpc-port=0 \
-  -data-dir=./data \
-  -require-auth=false \
-  -embed-endpoint=http://127.0.0.1:9101/v1/embeddings \
-  -embed-model=potion-code-16M \
-  -llm-upstream=http://localhost:11434/v1 \
-  -hnsw-m=16 \
-  -hnsw-ef-mult=8 \
-  -hnsw-ef-min=64
-```
+- dependency health, runtime configuration and collection statistics;
+- active/recent ingestion runs, tracked errors and heartbeat history;
+- memory SQL↔vector reconciliation and failed index-job retry;
+- workspace watch state, conflicts, audit log, indexing and reindexing jobs;
+- sync manifests, push/pull status and optional collection transfer;
+- Prometheus metrics, JSONL audit export, backup/restore and macOS watchdog
+  runbooks.
 
-This block mirrors the current local shape. Use `-profile=standalone -dim=768
--port=8080 -grpc-port=0` for a minimal dependency-light local run.
+See [docs/webui-operations.md](docs/webui-operations.md) for setup, monitoring,
+security notes, Playwright checks, and operational workflows.
+
+## Security and enterprise boundaries
+
+Implemented foundations include:
+
+- transport-independent access policy and tenant membership checks;
+- JWT, API keys, per-agent credentials, dataset sharing and workspace ACL;
+- strict profile validation and tenant-safe SQL boundaries;
+- asynchronous audit export with retry/backpressure and JSONL output;
+- OIDC verified-claims mapping and identity/provisioning seams;
+- storage metadata plus KMS/BYOK adapter contracts.
+
+Still adapter or production-hardening work:
+
+- concrete SAML and SCIM HTTP protocol surfaces;
+- SIEM delivery adapters;
+- production KMS/BYOK implementations;
+- additional corporate object-store integrations and legal-hold enforcement.
+
+The Enterprise preset validates governance requirements; it is not a claim that
+every external enterprise adapter is already implemented. See
+[docs/product-ladder.md](docs/product-ladder.md) for the exact boundary.
 
 ## Development
 
@@ -353,60 +296,32 @@ This block mirrors the current local shape. Use `-profile=standalone -dim=768
 git diff --check
 make test-commit
 
-# Profile/config gate without external services
+# Profile and public-contract gates
 make profile-config-check
-
-# Release-candidate local gate
-make test-release-candidate
-
-# Contract validation for REST/gRPC/MCP inventories
 make contract-check
+
+# Broader local release gate
+make test-release-candidate
 ```
 
-For security-sensitive changes, use
-[docs/security-diff-checklist.md](docs/security-diff-checklist.md). It covers
-access, tenant isolation, audit export, storage/KMS, and MCP memory ownership.
+Useful references:
 
-For app-wide QA/user-story tracking, use
-[docs/feature-audit-tracker.md](docs/feature-audit-tracker.md). It explains the
-canonical workbook, current automated gate status, known extraction limitations,
-and follow-up testing backlog.
-
-For local macOS error notifications, use
-[docs/macos-levara-watchdog.md](docs/macos-levara-watchdog.md). It installs a
-launchd watchdog that checks health, tracked errors, and panic/error log lines.
-
-## Marketing and Product Docs
-
-| Document | Audience |
+| Document | Purpose |
 |---|---|
-| [docs/marketing/personal.md](docs/marketing/personal.md) | One developer using local AI agents |
-| [docs/marketing/solo-pro.md](docs/marketing/solo-pro.md) | Power user with several machines |
-| [docs/marketing/team.md](docs/marketing/team.md) | Small team with humans and agents |
-| [docs/marketing/enterprise.md](docs/marketing/enterprise.md) | Organizations with governance and audit needs |
-| [docs/product-ladder.md](docs/product-ladder.md) | Engineering/product source of truth for tier boundaries |
-| [docs/profile-presets.md](docs/profile-presets.md) | Concrete env presets and strict-mode behavior |
-| [docs/webui-operations.md](docs/webui-operations.md) | WebUI setup, connection, monitoring, solo/team operations |
-
-## Roadmap Honesty
-
-Implemented foundations include local/solo/team profiles, access policy, tenant
-membership checks, workspace audit, async audit export, OIDC verified-claims
-adapter, SCIM-shaped provisioning seam, storage metadata contracts, and KMS/BYOK
-hook contracts.
-
-Still future adapter work: concrete SAML, SCIM HTTP routes, SIEM sinks,
-production KMS/BYOK implementations, corporate object-store backends, and legal
-hold enforcement in those backends.
+| [docs/api-contract.md](docs/api-contract.md) | Generated REST, gRPC, MCP and schema inventory |
+| [docs/profile-presets.md](docs/profile-presets.md) | Runnable product-profile examples |
+| [docs/product-ladder.md](docs/product-ladder.md) | Capability and enterprise boundary source of truth |
+| [docs/webui-operations.md](docs/webui-operations.md) | WebUI setup, monitoring and workflows |
+| [docs/current-state.md](docs/current-state.md) | Verified local development snapshot |
+| [docs/security-diff-checklist.md](docs/security-diff-checklist.md) | Review checklist for security-sensitive changes |
+| [docs/long-horizon-alpha-report.md](docs/long-horizon-alpha-report.md) | Task Runtime acceptance and recovery evidence |
 
 ## Contributing
 
-1. Read [docs/product-ladder.md](docs/product-ladder.md) before changing profile
-   behavior or product claims.
-2. Keep public REST/MCP/gRPC contract changes explicit; run `make contract-check`.
-3. Keep policy decisions in `pkg/access`, not scattered through HTTP handlers.
-4. Add tests at the layer boundary you touch.
-5. Run `make test-commit` before opening a PR.
+Read [CONTRIBUTING.md](CONTRIBUTING.md), keep public contract changes explicit,
+and run the relevant gates before opening a pull request. Profile claims should
+stay aligned with the product ladder; MCP/REST/gRPC changes should regenerate
+and validate the canonical contract.
 
 ## License
 
