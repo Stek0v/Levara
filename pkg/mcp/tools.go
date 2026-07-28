@@ -8,7 +8,7 @@ package mcp
 // Moved from internal/http/mcp.go during F-4 to make the registry usable
 // from future SDK bindings without pulling in the HTTP handler.
 func ToolDescriptors() []Tool {
-	return []Tool{
+	tools := []Tool{
 		{
 			Name:         "cognify",
 			Description:  "Transform text data into a structured knowledge graph, or ingest in RAG mode (chunk+embed only, no LLM). Optional room/tags propagate to chunk metadata for filtered search.",
@@ -892,14 +892,18 @@ func ToolDescriptors() []Tool {
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"key":          map[string]any{"type": "string", "description": "Memory key"},
-					"value":        map[string]any{"type": "string", "description": "Memory value"},
-					"type":         map[string]any{"type": "string", "description": "Memory type: user, project, feedback"},
-					"collection":   map[string]any{"type": "string", "description": "Collection name to scope memory to."},
-					"room":         map[string]any{"type": "string", "description": "Sub-topic within collection (auth, deploy, mcp, ocr-bench)."},
-					"hall":         map[string]any{"type": "string", "description": "Memory genre (controlled vocab): fact, event, decision, preference, advice, discovery."},
-					"pin":          map[string]any{"type": "boolean", "description": "Pin as critical fact for wake_up. Default false."},
-					"pin_priority": map[string]any{"type": "integer", "description": "Higher priority loaded first by wake_up. Default 0."},
+					"key":                  map[string]any{"type": "string", "description": "Memory key"},
+					"value":                map[string]any{"type": "string", "description": "Memory value"},
+					"type":                 map[string]any{"type": "string", "description": "Memory type: user, project, feedback"},
+					"collection":           map[string]any{"type": "string", "description": "Collection name to scope memory to."},
+					"room":                 map[string]any{"type": "string", "description": "Sub-topic within collection (auth, deploy, mcp, ocr-bench)."},
+					"hall":                 map[string]any{"type": "string", "description": "Memory genre (controlled vocab): fact, event, decision, preference, advice, discovery."},
+					"pin":                  map[string]any{"type": "boolean", "description": "Pin as critical fact for wake_up. Default false."},
+					"pin_priority":         map[string]any{"type": "integer", "description": "Higher priority loaded first by wake_up. Default 0."},
+					"source_task_id":       stringProp("Optional originating long-horizon task ID."),
+					"source_receipt_ids":   arrayOfStringsProp("Optional verification receipt IDs."),
+					"verification_status":  stringProp("Optional verification state."),
+					"supersedes_memory_id": stringProp("Optional memory ID this record replaces."),
 				},
 				"required": []string{"key", "value"},
 			},
@@ -924,10 +928,11 @@ func ToolDescriptors() []Tool {
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"query":      map[string]any{"type": "string", "description": "Search query for memories"},
-					"collection": map[string]any{"type": "string", "description": "Collection name to filter memories."},
-					"room":       map[string]any{"type": "string", "description": "Optional room filter (sub-topic)."},
-					"hall":       map[string]any{"type": "string", "description": "Optional hall filter (fact|event|decision|preference|advice|discovery)."},
+					"query":              map[string]any{"type": "string", "description": "Search query for memories"},
+					"collection":         map[string]any{"type": "string", "description": "Collection name to filter memories."},
+					"room":               map[string]any{"type": "string", "description": "Optional room filter (sub-topic)."},
+					"hall":               map[string]any{"type": "string", "description": "Optional hall filter (fact|event|decision|preference|advice|discovery)."},
+					"include_superseded": map[string]any{"type": "boolean", "description": "Audit mode: include historical superseded rows. Default false."},
 				},
 				"required": []string{"query"},
 			},
@@ -1004,6 +1009,7 @@ func ToolDescriptors() []Tool {
 				"max_tokens":   integerProp("Requested token budget."),
 				"pinned":       arrayOfObjectsProp(objectSchema(map[string]any{"key": stringProp(""), "value": stringProp(""), "hall": stringProp(""), "room": stringProp(""), "priority": integerProp("")}), "Pinned memories in priority order."),
 				"top_entities": arrayOfObjectsProp(objectSchema(map[string]any{"name": stringProp(""), "type": stringProp(""), "edge_count": integerProp("")}), "Top-k graph entities by active-edge degree."),
+				"scope_status": stringProp("exact when graph entities are collection-scoped; empty when no collection was supplied."),
 				"tokens_used":  integerProp("Approximate token count (chars/4)."),
 			}),
 			InputSchema: map[string]any{
@@ -1378,21 +1384,27 @@ func ToolDescriptors() []Tool {
 					"embedding_model": stringProp("Model used to embed this collection."),
 					"domain":          stringProp("Optional domain tag."),
 				}), "Per-collection state."),
-				"collection_count":  integerProp("Number of collections."),
-				"total_records":     integerProp("Sum of records across all collections."),
-				"embed_endpoint":    stringProp("Embedding service URL."),
-				"embed_model":       stringProp("Default embedding model."),
-				"llm_provider":      stringProp("'configured' when an LLM provider is wired, '' otherwise."),
-				"llm_model":         stringProp("LLM model name."),
-				"rerank_enabled":    map[string]any{"type": "boolean", "description": "Whether a reranker is wired."},
-				"rerank_model":      stringProp("Reranker model name."),
-				"neo4j_enabled":     map[string]any{"type": "boolean", "description": "Whether Neo4j graph backend is configured."},
-				"goroutines":        integerProp("Live goroutine count."),
-				"heap_alloc_bytes":  integerProp("Currently allocated heap bytes."),
-				"heap_sys_bytes":    integerProp("Heap memory obtained from OS."),
-				"num_gc":            integerProp("Completed GC cycles since start."),
-				"mcp_toolset":       stringProp("Effective MCP tool profile."),
-				"mcp_tool_count":    integerProp("Number of tools exposed by the active profile."),
+				"collection_count": integerProp("Number of collections."),
+				"total_records":    integerProp("Sum of records across all collections."),
+				"embed_endpoint":   stringProp("Embedding service URL."),
+				"embed_model":      stringProp("Default embedding model."),
+				"llm_provider":     stringProp("'configured' when an LLM provider is wired, '' otherwise."),
+				"llm_model":        stringProp("LLM model name."),
+				"rerank_enabled":   map[string]any{"type": "boolean", "description": "Whether a reranker is wired."},
+				"rerank_model":     stringProp("Reranker model name."),
+				"neo4j_enabled":    map[string]any{"type": "boolean", "description": "Whether Neo4j graph backend is configured."},
+				"goroutines":       integerProp("Live goroutine count."),
+				"heap_alloc_bytes": integerProp("Currently allocated heap bytes."),
+				"heap_sys_bytes":   integerProp("Heap memory obtained from OS."),
+				"num_gc":           integerProp("Completed GC cycles since start."),
+				"mcp_toolset":      stringProp("Effective MCP tool profile."),
+				"mcp_tool_count":   integerProp("Number of tools exposed by the active profile."),
+				"task_runtime": objectSchema(map[string]any{
+					"enabled":       booleanProp("Whether long-horizon tools are enabled."),
+					"active_tasks":  integerProp("Draft, planned, running, or validating tasks."),
+					"blocked_tasks": integerProp("Blocked tasks."),
+					"stuck_leases":  integerProp("Expired leases awaiting cleanup."),
+				}),
 				"snapshot_taken_at": stringProp("RFC3339 timestamp."),
 			}),
 			InputSchema: map[string]any{
@@ -1536,4 +1548,5 @@ func ToolDescriptors() []Tool {
 			},
 		},
 	}
+	return append(tools, longHorizonToolDescriptors()...)
 }

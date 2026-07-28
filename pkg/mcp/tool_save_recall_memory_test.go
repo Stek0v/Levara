@@ -37,13 +37,48 @@ func setupSaveRecallMemoryDB(t *testing.T) *fakeDeps {
 		collection_name TEXT, room TEXT, hall TEXT,
 		is_pinned INTEGER DEFAULT 0, pin_priority INTEGER DEFAULT 0,
 		created_at TEXT, updated_at TEXT,
-		superseded_by TEXT DEFAULT '',
+		superseded_by TEXT DEFAULT '', valid_until TEXT,
+		source_task_id TEXT DEFAULT '', source_receipt_ids TEXT DEFAULT '[]',
+		verification_status TEXT DEFAULT '', supersedes_memory_id TEXT DEFAULT '',
+		supersession_reason TEXT DEFAULT '',
 		UNIQUE(key, owner_id, collection_name)
 	)`
 	if _, err := db.Exec(stmt); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	return &fakeDeps{db: db}
+}
+
+func TestToolSupersedeMemoryPreservesHistory(t *testing.T) {
+	deps := setupSaveRecallMemoryDB(t)
+	first := ToolSaveMemory(context.Background(), deps, map[string]any{
+		"key": "runtime-choice", "value": "old", "collection": "levara", "room": "runtime", "hall": "decision",
+	})
+	if first.IsError {
+		t.Fatalf("seed: %s", first.Content[0].Text)
+	}
+	var oldID string
+	if err := deps.db.QueryRow(`SELECT id FROM memories WHERE key='runtime-choice'`).Scan(&oldID); err != nil {
+		t.Fatal(err)
+	}
+	got := ToolSupersedeMemory(context.Background(), deps, map[string]any{
+		"old_memory_id": oldID, "new_value": "new", "reason": "validated replacement",
+	})
+	if got.IsError {
+		t.Fatalf("supersede: %s", got.Content[0].Text)
+	}
+	var active, superseded int
+	var persistedReason string
+	_ = deps.db.QueryRow(`SELECT COUNT(*) FROM memories WHERE key='runtime-choice' AND superseded_by=''`).Scan(&active)
+	_ = deps.db.QueryRow(`SELECT COUNT(*) FROM memories WHERE id=? AND superseded_by<>'' AND valid_until IS NOT NULL`, oldID).Scan(&superseded)
+	_ = deps.db.QueryRow(`SELECT supersession_reason FROM memories WHERE id=?`, oldID).Scan(&persistedReason)
+	if active != 1 || superseded != 1 || persistedReason != "validated replacement" {
+		t.Fatalf("active=%d superseded=%d reason=%q", active, superseded, persistedReason)
+	}
+	results := decodeRecallResults(t, ToolRecallMemory(context.Background(), deps, map[string]any{"query": "runtime-choice", "collection": "levara"}))
+	if len(results) != 1 || results[0]["value"] != "new" {
+		t.Fatalf("recall=%+v", results)
+	}
 }
 
 func decodeRecallResults(t *testing.T, got ToolResult) []map[string]any {

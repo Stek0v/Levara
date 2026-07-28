@@ -81,6 +81,11 @@ func (h *mcpHandler) toolDoctor(ctx context.Context, args map[string]any) mcpToo
 	// 9. Memory upsert index (collection-scoped uniqueness)
 	checks = append(checks, h.checkMemoryUpsertIndex(ctx))
 
+	// 10. Long-horizon task runtime integrity (opt-in feature).
+	if longHorizonRuntimeEnabled() {
+		checks = append(checks, h.checkTaskRuntime(ctx))
+	}
+
 	// Compute overall status
 	okCount, warnCount, failCount := 0, 0, 0
 	for _, c := range checks {
@@ -111,6 +116,26 @@ func (h *mcpHandler) toolDoctor(ctx context.Context, args map[string]any) mcpToo
 	h.logHeartbeat("doctor", report)
 
 	return mcpJSONResult(report)
+}
+
+func (h *mcpHandler) checkTaskRuntime(ctx context.Context) doctorCheck {
+	if h.cfg.DB == nil {
+		return doctorCheck{Name: "task_runtime", Status: "fail", Message: "Database not configured", Remediation: "Task Runtime requires PostgreSQL or SQLite"}
+	}
+	var stuck, orphanReceipts, orphanLeases int
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if err := h.cfg.DB.QueryRowContext(ctx, Q(`SELECT COUNT(*) FROM task_leases WHERE expires_at<=$1`), now).Scan(&stuck); err != nil {
+		return doctorCheck{Name: "task_runtime", Status: "fail", Message: fmt.Sprintf("Schema/query error: %v", err), Remediation: "Run Levara schema migration"}
+	}
+	_ = h.cfg.DB.QueryRowContext(ctx, Q(`SELECT COUNT(*) FROM task_receipts r LEFT JOIN tasks t ON t.id=r.task_id WHERE t.id IS NULL`)).Scan(&orphanReceipts)
+	_ = h.cfg.DB.QueryRowContext(ctx, Q(`SELECT COUNT(*) FROM task_leases l LEFT JOIN task_steps s ON s.task_id=l.task_id AND s.id=l.step_id WHERE s.id IS NULL`)).Scan(&orphanLeases)
+	if orphanReceipts > 0 || orphanLeases > 0 {
+		return doctorCheck{Name: "task_runtime", Status: "fail", Message: fmt.Sprintf("orphan_receipts=%d orphan_leases=%d", orphanReceipts, orphanLeases), Remediation: "Inspect task runtime referential integrity before continuing tasks"}
+	}
+	if stuck > 0 {
+		return doctorCheck{Name: "task_runtime", Status: "warn", Message: fmt.Sprintf("%d expired leases await cleanup", stuck), Remediation: "Resume the task or claim the affected steps to reap expired leases"}
+	}
+	return doctorCheck{Name: "task_runtime", Status: "ok", Message: "Schema reachable; no orphan records or expired leases"}
 }
 
 // ── Individual checks ──

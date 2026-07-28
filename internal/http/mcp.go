@@ -14,11 +14,14 @@ package http
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -117,6 +120,71 @@ func (h *mcpHandler) ListCollections() []string {
 // ingested files. Empty string is returned as-is; the tool layer
 // applies the legacy "data/uploads" default.
 func (h *mcpHandler) StoragePath() string { return h.cfg.StoragePath }
+
+// VerifyArtifact implements mcp.ArtifactVerifier. Local files are restricted
+// to Levara's configured storage/workspace roots; object-storage artifacts are
+// loaded through the configured storage backend. Unsupported URI schemes are
+// unverifiable rather than implicitly trusted.
+func (h *mcpHandler) VerifyArtifact(ctx context.Context, evidenceURI, expectedDigest string) error {
+	uri := strings.TrimSpace(evidenceURI)
+	switch {
+	case strings.HasPrefix(uri, "file://"):
+		path := strings.TrimPrefix(uri, "file://")
+		if !pathWithinAnyRoot(path, h.cfg.StoragePath, h.cfg.WorkspacePath) {
+			return fmt.Errorf("artifact path is outside configured storage/workspace roots")
+		}
+	case strings.HasPrefix(uri, storageURIPrefix):
+		if h.cfg.FileStorage == nil {
+			return fmt.Errorf("artifact object storage is not configured")
+		}
+	default:
+		return fmt.Errorf("unsupported artifact URI scheme")
+	}
+
+	data, err := loadRawDataByLocation(ctx, h.cfg, uri)
+	if err != nil {
+		return fmt.Errorf("load artifact: %w", err)
+	}
+	actual := fmt.Sprintf("%x", sha256.Sum256(data))
+	expected := strings.ToLower(strings.TrimSpace(expectedDigest))
+	expected = strings.TrimPrefix(expected, "sha256:")
+	if len(expected) != 64 {
+		return fmt.Errorf("artifact digest must be a full SHA-256 value")
+	}
+	if !strings.EqualFold(actual, expected) {
+		return fmt.Errorf("artifact digest mismatch")
+	}
+	return nil
+}
+
+func pathWithinAnyRoot(path string, roots ...string) bool {
+	absPath, err := filepath.Abs(filepath.Clean(path))
+	if err != nil {
+		return false
+	}
+	resolvedPath, err := filepath.EvalSymlinks(absPath)
+	if err != nil {
+		return false
+	}
+	for _, root := range roots {
+		if strings.TrimSpace(root) == "" {
+			continue
+		}
+		absRoot, err := filepath.Abs(filepath.Clean(root))
+		if err != nil {
+			continue
+		}
+		resolvedRoot, err := filepath.EvalSymlinks(absRoot)
+		if err != nil {
+			continue
+		}
+		rel, err := filepath.Rel(resolvedRoot, resolvedPath)
+		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
+}
 
 // CollectionExists implements mcp.Deps: true iff a collection with
 // the given name is registered in the CollectionManager. Always false
@@ -693,7 +761,7 @@ func mcpToolAction(name string) string {
 		"cognify_status", "list_communities", "recall_memory", "list_memories", "wake_up",
 		"query_entity", "diary_read", "recall_chat", "search_chats", "get_project_context",
 		"cross_search", "get_feedback_stats", "doctor", "levara_instructions", "runtime_stats",
-		"ingestion_status", "recent_errors", "sync_status", "git_search":
+		"ingestion_status", "recent_errors", "sync_status", "git_search", "task_bootstrap", "task_validate":
 		return accesspkg.ActionRead
 	default:
 		return accesspkg.ActionWrite
@@ -804,7 +872,7 @@ func (h *mcpHandler) executeToolInner(ctx context.Context, sess *mcpSession, nam
 		}
 	case "save_memory", "recall_memory", "list_memories",
 		"wake_up", "pin_memory", "unpin_memory",
-		"diary_write", "diary_read", "consolidate":
+		"diary_write", "diary_read", "consolidate", "supersede_memory", "task_open":
 		// Memory tools: only inject session default, NOT "default" fallback.
 		// Empty collection → global _memories (backward compatible with Pi data).
 		if _, ok := args["collection"]; !ok || args["collection"] == "" {
@@ -936,6 +1004,24 @@ func (h *mcpHandler) executeToolInner(ctx context.Context, sess *mcpSession, nam
 		return h.toolUnpinMemory(ctx, args)
 	case "delete_memory":
 		return h.toolDeleteMemory(ctx, args)
+	case "supersede_memory":
+		return mcp.ToolSupersedeMemory(ctx, h, args)
+	case "task_open":
+		return mcp.ToolTaskOpen(ctx, h, args)
+	case "task_bootstrap":
+		return mcp.ToolTaskBootstrap(ctx, h, args)
+	case "task_plan":
+		return mcp.ToolTaskPlan(ctx, h, args)
+	case "task_step":
+		return mcp.ToolTaskStep(ctx, h, args)
+	case "task_checkpoint":
+		return mcp.ToolTaskCheckpoint(ctx, h, args)
+	case "task_receipt":
+		return mcp.ToolTaskReceipt(ctx, h, args)
+	case "task_validate":
+		return mcp.ToolTaskValidate(ctx, h, args)
+	case "task_complete":
+		return mcp.ToolTaskComplete(ctx, h, args)
 	case "query_entity":
 		return h.toolQueryEntity(ctx, args)
 	case "diary_write":

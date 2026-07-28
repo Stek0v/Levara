@@ -57,6 +57,14 @@ func (h *mcpHandler) toolRuntimeStats(ctx context.Context, args map[string]any) 
 
 	var ms runtime.MemStats
 	runtime.ReadMemStats(&ms)
+	taskRuntime := map[string]any{"enabled": longHorizonRuntimeEnabled(), "active_tasks": 0, "blocked_tasks": 0, "stuck_leases": 0}
+	if h.cfg.DB != nil && longHorizonRuntimeEnabled() {
+		var active, blocked, stuck int
+		_ = h.cfg.DB.QueryRowContext(ctx, Q(`SELECT COUNT(*) FROM tasks WHERE status IN ('draft','planned','running','validating')`)).Scan(&active)
+		_ = h.cfg.DB.QueryRowContext(ctx, Q(`SELECT COUNT(*) FROM tasks WHERE status='blocked'`)).Scan(&blocked)
+		_ = h.cfg.DB.QueryRowContext(ctx, Q(`SELECT COUNT(*) FROM task_leases WHERE expires_at<= $1`), time.Now().UTC().Format(time.RFC3339Nano)).Scan(&stuck)
+		taskRuntime["active_tasks"], taskRuntime["blocked_tasks"], taskRuntime["stuck_leases"] = active, blocked, stuck
+	}
 
 	out := map[string]any{
 		"collections":       collections,
@@ -76,9 +84,19 @@ func (h *mcpHandler) toolRuntimeStats(ctx context.Context, args map[string]any) 
 		"snapshot_taken_at": time.Now().UTC().Format(time.RFC3339),
 		"mcp_toolset":       mcp.ToolsetName(os.Getenv("LEVARA_MCP_TOOLSET")),
 		"mcp_tool_count":    len(mcp.ToolDescriptorsForMode(os.Getenv("LEVARA_MCP_TOOLSET"))),
+		"task_runtime":      taskRuntime,
 	}
 
 	return mcpJSONResult(out)
+}
+
+func longHorizonRuntimeEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("LEVARA_LONG_HORIZON_RUNTIME"))) {
+	case "1", "true", "yes", "on", "enabled":
+		return true
+	default:
+		return false
+	}
 }
 
 // toolIngestionStatus surfaces in-flight and recently completed
