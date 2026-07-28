@@ -680,6 +680,8 @@ func main() {
 	vectorHttp.RegisterAPI(api, apiCfg)
 
 	mcpCfg := vectorHttp.APIConfig{
+		StoragePath:                *dataDir + "/uploads",
+		FileStorage:                fileStore,
 		EmbedEndpoint:              embedEndpoint,
 		EmbedModel:                 embedModel,
 		EmbedClient:                sharedEmbed,
