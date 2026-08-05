@@ -266,8 +266,7 @@ question с датой? ─yes→ TEMPORAL
 
 - `docs/api-reference.md` — полный OpenAPI surface всех стратегий.
 - `docs/phase2-rerank-default-design.md` — design Phase 2 + 2.5 rerank пути.
-- `docs/PHASE1_RAG_MODE.md`, `docs/PHASE1B_RAG_QUALITY.md` — RAG verify-stack.
-- `docs/PHASE2_DAG_MODE.md` — graph-side стратегии в деталях.
+- `docs/current-state.md` — проверенное состояние текущего search/RAG стека.
 - `CLAUDE.md` § "Levara MCP Memory — usage guide" — MCP параметры для recall.
 
 ---
