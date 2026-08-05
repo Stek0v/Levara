@@ -1,6 +1,9 @@
 package mcp
 
-import "strings"
+import (
+	"os"
+	"strings"
+)
 
 var toolProfiles = map[string][]string{
 	"core": {
@@ -12,7 +15,7 @@ var toolProfiles = map[string][]string{
 		"levara_instructions", "set_context", "get_project_context", "wake_up",
 		"save_memory", "recall_memory", "list_memories", "pin_memory", "unpin_memory", "delete_memory",
 		"search", "doctor", "consolidate", "consolidation_status", "consolidation_revert", "diary_write", "diary_read",
-		"add_feedback", "get_feedback_stats",
+		"supersede_memory", "add_feedback", "get_feedback_stats",
 	},
 	"workspace": {
 		"levara_instructions", "set_context", "get_project_context", "wake_up",
@@ -25,7 +28,24 @@ var toolProfiles = map[string][]string{
 		"memory_index_status", "memory_index_retry",
 		"workspace_watch_status", "workspace_audit_log", "workspace_conflicts",
 	},
+	"long-horizon": {
+		"levara_instructions", "set_context", "get_project_context", "wake_up",
+		"save_memory", "recall_memory", "list_memories", "pin_memory", "unpin_memory", "supersede_memory",
+		"search", "doctor", "runtime_stats", "recent_errors",
+		"task_open", "task_bootstrap", "task_plan", "task_step", "task_checkpoint", "task_receipt", "task_validate", "task_complete",
+	},
 }
+
+func longHorizonEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("LEVARA_LONG_HORIZON_RUNTIME"))) {
+	case "1", "true", "yes", "on", "enabled":
+		return true
+	default:
+		return false
+	}
+}
+
+func isLongHorizonTaskTool(name string) bool { return strings.HasPrefix(name, "task_") }
 
 // ToolsetName returns the stable effective profile. Empty and unknown values
 // intentionally remain full for backward compatibility. light is the legacy
@@ -47,7 +67,17 @@ func ToolsetName(mode string) string {
 func ToolDescriptorsForMode(mode string) []Tool {
 	effective := ToolsetName(mode)
 	if effective == "full" {
-		return ToolDescriptors()
+		full := ToolDescriptors()
+		if longHorizonEnabled() {
+			return full
+		}
+		filtered := make([]Tool, 0, len(full))
+		for _, tool := range full {
+			if !isLongHorizonTaskTool(tool.Name) {
+				filtered = append(filtered, tool)
+			}
+		}
+		return filtered
 	}
 	keep := make(map[string]bool, len(toolProfiles[effective]))
 	for _, name := range toolProfiles[effective] {
@@ -56,7 +86,7 @@ func ToolDescriptorsForMode(mode string) []Tool {
 	full := ToolDescriptors()
 	filtered := make([]Tool, 0, len(keep))
 	for _, tool := range full {
-		if keep[tool.Name] {
+		if keep[tool.Name] && (longHorizonEnabled() || !isLongHorizonTaskTool(tool.Name)) {
 			filtered = append(filtered, tool)
 		}
 	}

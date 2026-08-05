@@ -372,6 +372,11 @@ var schemaStatements = []string{
 		consolidated_from TEXT NOT NULL DEFAULT '',
 		consolidation_run_id TEXT NOT NULL DEFAULT '',
 		tier TEXT NOT NULL DEFAULT 'raw',
+		source_task_id TEXT NOT NULL DEFAULT '',
+		source_receipt_ids TEXT NOT NULL DEFAULT '[]',
+		verification_status TEXT NOT NULL DEFAULT '',
+		supersedes_memory_id TEXT NOT NULL DEFAULT '',
+		supersession_reason TEXT NOT NULL DEFAULT '',
 		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 	)`,
@@ -393,6 +398,11 @@ var schemaStatements = []string{
 	`ALTER TABLE memories ADD COLUMN IF NOT EXISTS consolidated_from TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE memories ADD COLUMN IF NOT EXISTS consolidation_run_id TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE memories ADD COLUMN IF NOT EXISTS tier TEXT NOT NULL DEFAULT 'raw'`,
+	`ALTER TABLE memories ADD COLUMN IF NOT EXISTS source_task_id TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE memories ADD COLUMN IF NOT EXISTS source_receipt_ids TEXT NOT NULL DEFAULT '[]'`,
+	`ALTER TABLE memories ADD COLUMN IF NOT EXISTS verification_status TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE memories ADD COLUMN IF NOT EXISTS supersedes_memory_id TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE memories ADD COLUMN IF NOT EXISTS supersession_reason TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE data ADD COLUMN IF NOT EXISTS room TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE graph_edges ADD COLUMN IF NOT EXISTS valid_from TIMESTAMPTZ`,
 	`ALTER TABLE graph_edges ADD COLUMN IF NOT EXISTS valid_until TIMESTAMPTZ`,
@@ -418,11 +428,102 @@ var schemaStatements = []string{
 	`CREATE INDEX IF NOT EXISTS idx_memories_room ON memories(collection_name, room)`,
 	`CREATE INDEX IF NOT EXISTS idx_memories_hall ON memories(hall)`,
 	`CREATE INDEX IF NOT EXISTS idx_memories_pinned ON memories(is_pinned, pin_priority DESC)`,
+	`CREATE INDEX IF NOT EXISTS idx_memories_source_task ON memories(source_task_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_graph_edges_validity ON graph_edges(source_id, relationship_name, valid_until)`,
 	`CREATE INDEX IF NOT EXISTS idx_graph_nodes_dataset ON graph_nodes(dataset_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_graph_edges_dataset ON graph_edges(dataset_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_graph_nodes_route ON graph_nodes(dataset_id, domain_id, collection_id, document_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_graph_edges_route ON graph_edges(dataset_id, domain_id, collection_id, document_id)`,
+
+	// Long-horizon task runtime. PostgreSQL is the canonical operational
+	// state; semantic memory remains a separate durable knowledge surface.
+	`CREATE TABLE IF NOT EXISTS tasks (
+		id TEXT PRIMARY KEY,
+		idempotency_key TEXT NOT NULL,
+		owner_id TEXT NOT NULL DEFAULT '',
+		collection_name TEXT NOT NULL,
+		room TEXT NOT NULL,
+		objective TEXT NOT NULL,
+		authority_json TEXT NOT NULL DEFAULT '{}',
+		risk_level TEXT NOT NULL DEFAULT 'medium',
+		status TEXT NOT NULL DEFAULT 'draft',
+		version INTEGER NOT NULL DEFAULT 1,
+		current_workspace_revision TEXT NOT NULL DEFAULT '',
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		completed_at TIMESTAMPTZ,
+		UNIQUE(owner_id, collection_name, idempotency_key)
+	)`,
+	`CREATE TABLE IF NOT EXISTS task_criteria (
+		id TEXT NOT NULL, task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+		description TEXT NOT NULL, required BOOLEAN NOT NULL DEFAULT TRUE,
+		verification_json TEXT NOT NULL DEFAULT '{}', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		PRIMARY KEY(task_id, id)
+	)`,
+	`CREATE TABLE IF NOT EXISTS task_steps (
+		id TEXT NOT NULL, task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+		description TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', required BOOLEAN NOT NULL DEFAULT TRUE,
+		dependencies_json TEXT NOT NULL DEFAULT '[]', criterion_ids_json TEXT NOT NULL DEFAULT '[]',
+		attempts INTEGER NOT NULL DEFAULT 0, position INTEGER NOT NULL DEFAULT 0,
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		PRIMARY KEY(task_id, id)
+	)`,
+	`CREATE TABLE IF NOT EXISTS task_leases (
+		step_id TEXT NOT NULL,
+		task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+		actor_id TEXT NOT NULL, expires_at TIMESTAMPTZ NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		PRIMARY KEY(task_id, step_id),
+		CONSTRAINT task_leases_task_step_fkey FOREIGN KEY(task_id, step_id) REFERENCES task_steps(task_id, id) ON DELETE CASCADE
+	)`,
+	`ALTER TABLE task_leases DROP CONSTRAINT IF EXISTS task_leases_step_id_fkey`,
+	`ALTER TABLE task_leases DROP CONSTRAINT IF EXISTS task_leases_task_step_fkey`,
+	`ALTER TABLE task_leases DROP CONSTRAINT IF EXISTS task_leases_pkey`,
+	`ALTER TABLE task_criteria DROP CONSTRAINT IF EXISTS task_criteria_pkey`,
+	`ALTER TABLE task_steps DROP CONSTRAINT IF EXISTS task_steps_pkey`,
+	`ALTER TABLE task_criteria ADD CONSTRAINT task_criteria_pkey PRIMARY KEY(task_id, id)`,
+	`ALTER TABLE task_steps ADD CONSTRAINT task_steps_pkey PRIMARY KEY(task_id, id)`,
+	`ALTER TABLE task_leases ADD CONSTRAINT task_leases_pkey PRIMARY KEY(task_id, step_id)`,
+	`ALTER TABLE task_leases ADD CONSTRAINT task_leases_task_step_fkey FOREIGN KEY(task_id, step_id) REFERENCES task_steps(task_id, id) ON DELETE CASCADE`,
+	`CREATE TABLE IF NOT EXISTS task_receipts (
+		id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+		idempotency_key TEXT NOT NULL, owner_id TEXT NOT NULL DEFAULT '', receipt_type TEXT NOT NULL,
+		status TEXT NOT NULL, criterion_ids_json TEXT NOT NULL DEFAULT '[]', observation TEXT NOT NULL DEFAULT '',
+		exit_code INTEGER, evidence_uri TEXT NOT NULL DEFAULT '', artifact_digest TEXT NOT NULL DEFAULT '',
+		workspace_revision TEXT NOT NULL DEFAULT '', metadata_json TEXT NOT NULL DEFAULT '{}',
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), UNIQUE(task_id, idempotency_key)
+	)`,
+	`CREATE TABLE IF NOT EXISTS task_checkpoints (
+		id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+		idempotency_key TEXT NOT NULL, step_id TEXT NOT NULL DEFAULT '', summary TEXT NOT NULL,
+		verified_json TEXT NOT NULL DEFAULT '[]', failed_json TEXT NOT NULL DEFAULT '[]',
+		next_action TEXT NOT NULL DEFAULT '', workspace_revision TEXT NOT NULL DEFAULT '',
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), UNIQUE(task_id, idempotency_key)
+	)`,
+	`CREATE TABLE IF NOT EXISTS task_blockers (
+		id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+		reason TEXT NOT NULL, required_decision TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active',
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), resolved_at TIMESTAMPTZ
+	)`,
+	`CREATE TABLE IF NOT EXISTS task_events (
+		id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+		actor_id TEXT NOT NULL DEFAULT '', event_type TEXT NOT NULL, payload_json TEXT NOT NULL DEFAULT '{}',
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	)`,
+	`CREATE TABLE IF NOT EXISTS task_memory_candidates (
+		id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+		memory_key TEXT NOT NULL, value TEXT NOT NULL, room TEXT NOT NULL, hall TEXT NOT NULL,
+		evidence_receipt_ids TEXT NOT NULL DEFAULT '[]', status TEXT NOT NULL DEFAULT 'pending',
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), UNIQUE(task_id, memory_key)
+	)`,
+	`CREATE TABLE IF NOT EXISTS task_memory_links (
+		task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, memory_id TEXT NOT NULL,
+		relation TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY(task_id, memory_id, relation)
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_tasks_scope_status ON tasks(owner_id, collection_name, status)`,
+	`CREATE INDEX IF NOT EXISTS idx_task_steps_task_status ON task_steps(task_id, status, position)`,
+	`CREATE INDEX IF NOT EXISTS idx_task_receipts_task ON task_receipts(task_id, created_at DESC)`,
+	`CREATE INDEX IF NOT EXISTS idx_task_events_task ON task_events(task_id, created_at DESC)`,
+	`CREATE INDEX IF NOT EXISTS idx_task_blockers_active ON task_blockers(task_id, status)`,
 
 	`CREATE INDEX IF NOT EXISTS idx_acl_principal ON acl(principal_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_acl_dataset ON acl(dataset_id)`,
@@ -802,6 +903,11 @@ var schemaSQLiteStatements = []string{
 		consolidated_from TEXT NOT NULL DEFAULT '',
 		consolidation_run_id TEXT NOT NULL DEFAULT '',
 		tier TEXT NOT NULL DEFAULT 'raw',
+		source_task_id TEXT NOT NULL DEFAULT '',
+		source_receipt_ids TEXT NOT NULL DEFAULT '[]',
+		verification_status TEXT NOT NULL DEFAULT '',
+		supersedes_memory_id TEXT NOT NULL DEFAULT '',
+		supersession_reason TEXT NOT NULL DEFAULT '',
 		created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 	)`,
@@ -861,6 +967,11 @@ var schemaSQLiteStatements = []string{
 	`ALTER TABLE memories ADD COLUMN consolidated_from TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE memories ADD COLUMN consolidation_run_id TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE memories ADD COLUMN tier TEXT NOT NULL DEFAULT 'raw'`,
+	`ALTER TABLE memories ADD COLUMN source_task_id TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE memories ADD COLUMN source_receipt_ids TEXT NOT NULL DEFAULT '[]'`,
+	`ALTER TABLE memories ADD COLUMN verification_status TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE memories ADD COLUMN supersedes_memory_id TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE memories ADD COLUMN supersession_reason TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE graph_edges ADD COLUMN valid_from TEXT`,
 	`ALTER TABLE graph_edges ADD COLUMN valid_until TEXT`,
 	`ALTER TABLE graph_edges ADD COLUMN superseded_by TEXT NOT NULL DEFAULT ''`,
@@ -882,11 +993,85 @@ var schemaSQLiteStatements = []string{
 	`CREATE INDEX IF NOT EXISTS idx_memories_room ON memories(collection_name, room)`,
 	`CREATE INDEX IF NOT EXISTS idx_memories_hall ON memories(hall)`,
 	`CREATE INDEX IF NOT EXISTS idx_memories_pinned ON memories(is_pinned, pin_priority DESC)`,
+	`CREATE INDEX IF NOT EXISTS idx_memories_source_task ON memories(source_task_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_graph_edges_validity ON graph_edges(source_id, relationship_name, valid_until)`,
 	`CREATE INDEX IF NOT EXISTS idx_graph_nodes_dataset ON graph_nodes(dataset_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_graph_edges_dataset ON graph_edges(dataset_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_graph_nodes_route ON graph_nodes(dataset_id, domain_id, collection_id, document_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_graph_edges_route ON graph_edges(dataset_id, domain_id, collection_id, document_id)`,
+
+	// Long-horizon task runtime — SQLite-compatible mirror of PostgreSQL DDL.
+	`CREATE TABLE IF NOT EXISTS tasks (
+		id TEXT PRIMARY KEY, idempotency_key TEXT NOT NULL, owner_id TEXT NOT NULL DEFAULT '',
+		collection_name TEXT NOT NULL, room TEXT NOT NULL, objective TEXT NOT NULL,
+		authority_json TEXT NOT NULL DEFAULT '{}', risk_level TEXT NOT NULL DEFAULT 'medium',
+		status TEXT NOT NULL DEFAULT 'draft', version INTEGER NOT NULL DEFAULT 1,
+		current_workspace_revision TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, completed_at TEXT,
+		UNIQUE(owner_id, collection_name, idempotency_key)
+	)`,
+	`CREATE TABLE IF NOT EXISTS task_criteria (
+		id TEXT NOT NULL, task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+		description TEXT NOT NULL, required INTEGER NOT NULL DEFAULT 1,
+		verification_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY(task_id, id)
+	)`,
+	`CREATE TABLE IF NOT EXISTS task_steps (
+		id TEXT NOT NULL, task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+		description TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', required INTEGER NOT NULL DEFAULT 1,
+		dependencies_json TEXT NOT NULL DEFAULT '[]', criterion_ids_json TEXT NOT NULL DEFAULT '[]',
+		attempts INTEGER NOT NULL DEFAULT 0, position INTEGER NOT NULL DEFAULT 0,
+		created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY(task_id, id)
+	)`,
+	`CREATE TABLE IF NOT EXISTS task_leases (
+		step_id TEXT NOT NULL,
+		task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+		actor_id TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY(task_id, step_id),
+		FOREIGN KEY(task_id, step_id) REFERENCES task_steps(task_id, id) ON DELETE CASCADE
+	)`,
+	`CREATE TABLE IF NOT EXISTS task_receipts (
+		id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+		idempotency_key TEXT NOT NULL, owner_id TEXT NOT NULL DEFAULT '', receipt_type TEXT NOT NULL,
+		status TEXT NOT NULL, criterion_ids_json TEXT NOT NULL DEFAULT '[]', observation TEXT NOT NULL DEFAULT '',
+		exit_code INTEGER, evidence_uri TEXT NOT NULL DEFAULT '', artifact_digest TEXT NOT NULL DEFAULT '',
+		workspace_revision TEXT NOT NULL DEFAULT '', metadata_json TEXT NOT NULL DEFAULT '{}',
+		created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(task_id, idempotency_key)
+	)`,
+	`CREATE TABLE IF NOT EXISTS task_checkpoints (
+		id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+		idempotency_key TEXT NOT NULL, step_id TEXT NOT NULL DEFAULT '', summary TEXT NOT NULL,
+		verified_json TEXT NOT NULL DEFAULT '[]', failed_json TEXT NOT NULL DEFAULT '[]',
+		next_action TEXT NOT NULL DEFAULT '', workspace_revision TEXT NOT NULL DEFAULT '',
+		created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(task_id, idempotency_key)
+	)`,
+	`CREATE TABLE IF NOT EXISTS task_blockers (
+		id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+		reason TEXT NOT NULL, required_decision TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active',
+		created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, resolved_at TEXT
+	)`,
+	`CREATE TABLE IF NOT EXISTS task_events (
+		id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+		actor_id TEXT NOT NULL DEFAULT '', event_type TEXT NOT NULL, payload_json TEXT NOT NULL DEFAULT '{}',
+		created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+	)`,
+	`CREATE TABLE IF NOT EXISTS task_memory_candidates (
+		id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+		memory_key TEXT NOT NULL, value TEXT NOT NULL, room TEXT NOT NULL, hall TEXT NOT NULL,
+		evidence_receipt_ids TEXT NOT NULL DEFAULT '[]', status TEXT NOT NULL DEFAULT 'pending',
+		created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(task_id, memory_key)
+	)`,
+	`CREATE TABLE IF NOT EXISTS task_memory_links (
+		task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, memory_id TEXT NOT NULL,
+		relation TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY(task_id, memory_id, relation)
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_tasks_scope_status ON tasks(owner_id, collection_name, status)`,
+	`CREATE INDEX IF NOT EXISTS idx_task_steps_task_status ON task_steps(task_id, status, position)`,
+	`CREATE INDEX IF NOT EXISTS idx_task_receipts_task ON task_receipts(task_id, created_at DESC)`,
+	`CREATE INDEX IF NOT EXISTS idx_task_events_task ON task_events(task_id, created_at DESC)`,
+	`CREATE INDEX IF NOT EXISTS idx_task_blockers_active ON task_blockers(task_id, status)`,
 
 	// Graph communities (Louvain multi-level) — SQLite
 	`CREATE TABLE IF NOT EXISTS graph_communities (

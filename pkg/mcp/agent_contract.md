@@ -107,7 +107,19 @@ Operators can reduce tool-schema prompt cost with `LEVARA_MCP_TOOLSET`:
   diaries, and feedback.
 - `workspace` — core plus safe workspace authoring.
 - `ops` — health, audit, reconciliation, jobs, and sync.
+- `long-horizon` — scoped memory, task state, receipts, validation, and
+  completion. Requires `LEVARA_LONG_HORIZON_RUNTIME=1`.
 - `full` — the complete backward-compatible catalogue.
 
 Unknown and empty values resolve to `full`. A profile is not an authorization
 boundary: JWT/API-key permissions are still enforced independently.
+
+## 9. Long-Horizon Tasks
+
+When Task Runtime is enabled, use `task_open` and `task_bootstrap` instead of
+chat history for operational state. Claim one step atomically, attach observed
+receipts to Definition of Done criteria, checkpoint only verified progress,
+and call `task_validate` before `task_complete`. A goal or scheduled run does
+not broaden authority. Do not save checkpoints, leases, receipts, blockers, or
+temporary TODOs through `save_memory`; verified durable candidates are
+promoted by the task runtime with provenance.

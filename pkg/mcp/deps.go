@@ -97,6 +97,15 @@ type ObservabilityDeps interface {
 	LogHeartbeat(eventType string, payload any)
 }
 
+// ArtifactVerifier is an optional capability used by Task Runtime completion
+// validation. Implementations must verify the current artifact bytes, not only
+// the syntax of the URI or digest. When a Deps implementation does not expose
+// this capability, artifact receipts remain unverifiable and cannot satisfy a
+// completion criterion.
+type ArtifactVerifier interface {
+	VerifyArtifact(ctx context.Context, evidenceURI, expectedDigest string) error
+}
+
 // Deps is the full application-state surface that the current MCP tool set
 // depends on. New tools should prefer the narrow capability interface they
 // actually need (SQLDeps, SearchDeps, PipelineDeps, SyncDeps, etc.) so the
