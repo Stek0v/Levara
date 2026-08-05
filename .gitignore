@@ -20,6 +20,10 @@ data_768/
 *.db
 *.db-wal
 *.db-shm
+*.db-*
+*.sqlite
+*.sqlite3
+*.wal
 *.jsonl
 *.snap
 
@@ -40,6 +44,10 @@ docker-compose.override.yml
 # Build
 vendor/
 bin/
+node_modules/
+.next/
+.nuxt/
+.svelte-kit/
 
 # Binaries (root-level only, not cmd/ directories)
 /levara
@@ -57,13 +65,30 @@ bin/
 *.test
 *.out
 coverage.html
+coverage/
 .pytest_cache/
 htmlcov/
 .coverage
+playwright-report/
+test-results/
+
+# Generated benchmark runs. Keep only curated project baselines.
+/benchmark/results/*
+!/benchmark/results/latest.json
+!/benchmark/results/*_latest.json
+
+# Generated feature-audit workbooks and previews.
+/outputs/feature-audit/*
+!/outputs/feature-audit/build_feature_tracker.mjs
 
 # Logs
 logs/
 *.log
+*.log.*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
 
 # Local UI/e2e screenshots and run artifacts
 output/
