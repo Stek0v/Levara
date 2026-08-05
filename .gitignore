@@ -79,7 +79,6 @@ test-results/
 
 # Generated feature-audit workbooks and previews.
 /outputs/feature-audit/*
-!/outputs/feature-audit/build_feature_tracker.mjs
 
 # Logs
 logs/
