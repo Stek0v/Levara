@@ -1,0 +1,11 @@
+interface:
+  display_name: "Levara Long Task"
+  short_description: "Run verified long-horizon tasks with Levara"
+  default_prompt: "Use $levara-run-long-task to start or resume this task with Levara-backed checkpoints and receipts."
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "levara"
+      description: "Levara MCP with Long-Horizon Task Runtime enabled"
+policy:
+  allow_implicit_invocation: true

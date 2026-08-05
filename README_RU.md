@@ -210,9 +210,11 @@ Levara отделяет авторитетные записи от произв�
 > Установите `LEVARA_LONG_HORIZON_RUNTIME=1` и используйте профиль MCP
 > `long-horizon`. Текущий alpha-набор проверяет зависимости, идемпотентные
 > retries, конкурентные claims, устаревшие evidence, reviewer policy,
-> восстановление после сбоя, релевантность ограниченного bootstrap и
-> продвижение проверенной памяти. См.
-> [docs/long-horizon-alpha-report.md](docs/long-horizon-alpha-report.md).
+> восстановление после сбоя, релевантность ограниченного bootstrap, разрешение
+> blockers и продвижение проверенной памяти. Начните с
+> [руководства по Long-Horizon Runtime](docs/long-horizon-runtime.ru.md); результаты
+> acceptance-прогона находятся в
+> [alpha-отчёте](docs/long-horizon-alpha-report.md).
 
 ## Профили исполнения
 
@@ -326,6 +328,7 @@ make test-release-candidate
 | [docs/webui-operations.md](docs/webui-operations.md) | Настройка WebUI, мониторинг и процессы |
 | [docs/current-state.md](docs/current-state.md) | Проверенный снимок локальной среды разработки |
 | [docs/security-diff-checklist.md](docs/security-diff-checklist.md) | Checklist review изменений, важных для безопасности |
+| [docs/long-horizon-runtime.ru.md](docs/long-horizon-runtime.ru.md) | Настройка Task Runtime, жизненный цикл, evidence и восстановление |
 | [docs/long-horizon-alpha-report.md](docs/long-horizon-alpha-report.md) | Доказательства acceptance и recovery для Task Runtime |
 
 ## Участие в разработке

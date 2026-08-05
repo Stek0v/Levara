@@ -229,13 +229,18 @@ func ToolWakeUp(ctx context.Context, deps Deps, args map[string]any) ToolResult 
 	ownerID := extractOwnerID(ctx)
 
 	pinned := wakeUpPinned(ctx, db, deps.Q, ownerID, collectionName)
-	entities := wakeUpEntities(ctx, db, deps.Q, topEntities)
+	entities := wakeUpEntities(ctx, db, deps.Q, collectionName, topEntities)
+	scopeStatus := "exact"
+	if collectionName == "" {
+		scopeStatus = "empty"
+	}
 
 	bundle := map[string]any{
 		"collection":   collectionName,
 		"max_tokens":   maxTokens,
 		"pinned":       pinned,
 		"top_entities": entities,
+		"scope_status": scopeStatus,
 		"tokens_used":  0,
 	}
 	out, _ := json.MarshalIndent(bundle, "", "  ")
@@ -294,17 +299,25 @@ func wakeUpPinned(ctx context.Context, db *sql.DB, rewrite func(string) string, 
 
 // wakeUpEntities loads the top-N graph nodes by active-edge degree.
 // Edges are "active" if their valid_until is NULL or in the future.
-func wakeUpEntities(ctx context.Context, db *sql.DB, rewrite func(string) string, topN int) []map[string]any {
+
+func wakeUpEntities(ctx context.Context, db *sql.DB, rewrite func(string) string, collectionName string, topN int) []map[string]any {
+	// Graph context without an explicit collection is unsafe: global nodes can
+	// silently contaminate a project bootstrap. Pinned global memories remain
+	// backward compatible, but graph entities require an exact scope.
+	if collectionName == "" {
+		return []map[string]any{}
+	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	sqlStr := `SELECT n.name, n.type, COUNT(e.id) AS deg
 		FROM graph_nodes n
 		LEFT JOIN graph_edges e ON (e.source_id = n.id OR e.target_id = n.id)
 			AND (e.valid_until IS NULL OR e.valid_until > $1)
+		WHERE (n.collection_id = $2 OR n.dataset_id = $3)
 		GROUP BY n.id, n.name, n.type
 		ORDER BY deg DESC, n.updated_at DESC
-		LIMIT $2`
+		LIMIT $4`
 
-	rows, err := db.QueryContext(ctx, rewrite(sqlStr), now, topN)
+	rows, err := db.QueryContext(ctx, rewrite(sqlStr), now, collectionName, collectionName, topN)
 	if err != nil {
 		return nil
 	}

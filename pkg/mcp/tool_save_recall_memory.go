@@ -101,6 +101,10 @@ func ToolSaveMemory(ctx context.Context, deps Deps, args map[string]any) ToolRes
 	id := uuid.New().String()
 	now := time.Now().UTC().Format(time.RFC3339)
 	ownerID := extractOwnerID(ctx)
+	sourceTaskID, _ := args["source_task_id"].(string)
+	sourceReceiptIDs, _ := json.Marshal(stringSliceArg(args, "source_receipt_ids"))
+	verificationStatus, _ := args["verification_status"].(string)
+	supersedesMemoryID, _ := args["supersedes_memory_id"].(string)
 
 	// Reused-value columns (value/type/collection_name/room/hall/
 	// is_pinned/pin_priority/updated_at) get their own placeholders in
@@ -113,13 +117,18 @@ func ToolSaveMemory(ctx context.Context, deps Deps, args map[string]any) ToolRes
 	// CollectionInsert replaces by id (store.replaceExistingLocked).
 	canonicalID := id
 	upsertQuery := deps.Q(`
-		INSERT INTO memories (id, key, value, type, owner_id, collection_name, room, hall, is_pinned, pin_priority, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-		ON CONFLICT(key, owner_id, collection_name) DO UPDATE SET value = $13, type = $14, room = $15, hall = $16, is_pinned = $17, pin_priority = $18, updated_at = $19
+		INSERT INTO memories (id, key, value, type, owner_id, collection_name, room, hall, is_pinned, pin_priority,
+		 source_task_id, source_receipt_ids, verification_status, supersedes_memory_id, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+		ON CONFLICT(key, owner_id, collection_name) DO UPDATE SET value = $17, type = $18, room = $19, hall = $20,
+		 is_pinned = $21, pin_priority = $22, source_task_id = $23, source_receipt_ids = $24,
+		 verification_status = $25, supersedes_memory_id = $26, updated_at = $27
 		RETURNING id
 	`)
-	queryArgs := []any{id, key, value, memType, ownerID, collectionName, room, hall, pin, pinPriority, now, now,
-		value, memType, room, hall, pin, pinPriority, now}
+	queryArgs := []any{id, key, value, memType, ownerID, collectionName, room, hall, pin, pinPriority,
+		sourceTaskID, string(sourceReceiptIDs), verificationStatus, supersedesMemoryID, now, now,
+		value, memType, room, hall, pin, pinPriority, sourceTaskID, string(sourceReceiptIDs),
+		verificationStatus, supersedesMemoryID, now}
 	var indexJob memoryindex.Job
 	var err error
 	if provider, ok := deps.(interface{ MemoryIndexOutbox() *memoryindex.Store }); ok && provider.MemoryIndexOutbox() != nil && deps.EmbedAvailable() {

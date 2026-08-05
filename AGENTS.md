@@ -7,6 +7,17 @@ and every future session should be able to reconstruct context cheaply.
 
 Mirror of the "Levara MCP Memory" section in `CLAUDE.md`. Update both together.
 
+## Levara memory
+
+- Collection: `levara`
+- Default room: `mcp`
+- Runtime rooms:
+  - `memory` — recall, isolation, consolidation, supersession, and provenance
+  - `task-runtime` — tasks, criteria, steps, leases, receipts, checkpoints, blockers, and promotion
+  - `observability` — validation failures, runtime health, metrics, and rollout
+  - `deploy` — feature flags, profiles, services, and security
+- Use the hall vocabulary and pin policy defined below. Never save Task checkpoints, receipts, temporary TODO state, code snippets, file paths, git history, or speculation as durable memory.
+
 ---
 
 ## TL;DR
@@ -239,8 +250,17 @@ explicitly opted in via `types=["collections"]` + `collections=[...]`).
 | search | search | canonical |
 | search_chats | chat | canonical |
 | set_context | context | canonical |
+| supersede_memory | memory | canonical |
 | sync | sync | canonical |
 | sync_status | sync | canonical |
+| task_bootstrap | task | canonical |
+| task_checkpoint | task | canonical |
+| task_complete | task | canonical |
+| task_open | task | canonical |
+| task_plan | task | canonical |
+| task_receipt | task | canonical |
+| task_step | task | canonical |
+| task_validate | task | canonical |
 | unpin_memory | memory | canonical |
 | wake_up | memory | canonical |
 | workspace_access_check | workspace | canonical |
