@@ -18,7 +18,7 @@ var agentContractMD string
 
 // AgentContractVersion is the human-readable contract revision. Bump
 // whenever the embedded markdown changes meaningfully (not for typos).
-const AgentContractVersion = "v1"
+const AgentContractVersion = "v2"
 
 // AgentContractMarkdown returns the embedded contract verbatim. Exposed
 // for callers (e.g. the HTTP `initialize` handler) that want to hint at

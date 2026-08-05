@@ -203,8 +203,9 @@ boundaries; JWT/API-key and workspace policy checks still apply independently.
 > `LEVARA_LONG_HORIZON_RUNTIME=1` and use the `long-horizon` MCP tool profile.
 > The current alpha suite covers dependency handling, idempotent retries,
 > concurrent claims, stale evidence, reviewer policy, crash recovery, bounded
-> bootstrap relevance, and verified memory promotion. See
-> [docs/long-horizon-alpha-report.md](docs/long-horizon-alpha-report.md).
+> bootstrap relevance, blocker resolution, and verified memory promotion. Start
+> with the [Long-Horizon Runtime guide](docs/long-horizon-runtime.md); the
+> [alpha report](docs/long-horizon-alpha-report.md) records the acceptance run.
 
 ## Runtime profiles
 
@@ -314,6 +315,7 @@ Useful references:
 | [docs/webui-operations.md](docs/webui-operations.md) | WebUI setup, monitoring and workflows |
 | [docs/current-state.md](docs/current-state.md) | Verified local development snapshot |
 | [docs/security-diff-checklist.md](docs/security-diff-checklist.md) | Review checklist for security-sensitive changes |
+| [docs/long-horizon-runtime.md](docs/long-horizon-runtime.md) | Task Runtime setup, lifecycle, evidence and recovery guide |
 | [docs/long-horizon-alpha-report.md](docs/long-horizon-alpha-report.md) | Task Runtime acceptance and recovery evidence |
 
 ## Contributing

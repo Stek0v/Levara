@@ -498,7 +498,7 @@ func setupWakeUpTestDB(t *testing.T) *fakeDeps {
 	deps := setupMemoryTestDB(t)
 
 	stmts := []string{
-		`CREATE TABLE graph_nodes (id TEXT PRIMARY KEY, name TEXT, type TEXT, updated_at TEXT)`,
+		`CREATE TABLE graph_nodes (id TEXT PRIMARY KEY, name TEXT, type TEXT, dataset_id TEXT DEFAULT '', collection_id TEXT DEFAULT '', updated_at TEXT)`,
 		`CREATE TABLE graph_edges (
 			id TEXT PRIMARY KEY, source_id TEXT, target_id TEXT,
 			valid_until TEXT, updated_at TEXT
@@ -611,14 +611,14 @@ func TestToolWakeUp_EntityDegreeCountsActiveEdges(t *testing.T) {
 	deps := setupWakeUpTestDB(t)
 	past := "2000-01-01T00:00:00Z"
 	// Nodes.
-	deps.db.Exec(`INSERT INTO graph_nodes (id, name, type, updated_at) VALUES ('n1', 'auth', 'service', ?)`, past)
-	deps.db.Exec(`INSERT INTO graph_nodes (id, name, type, updated_at) VALUES ('n2', 'deploy', 'service', ?)`, past)
+	deps.db.Exec(`INSERT INTO graph_nodes (id, name, type, collection_id, updated_at) VALUES ('n1', 'auth', 'service', 'levara', ?)`, past)
+	deps.db.Exec(`INSERT INTO graph_nodes (id, name, type, collection_id, updated_at) VALUES ('n2', 'deploy', 'service', 'levara', ?)`, past)
 	// Active edges touching n1 (x2), expired edge touching n2 (x1).
 	deps.db.Exec(`INSERT INTO graph_edges (id, source_id, target_id, valid_until, updated_at) VALUES ('e1', 'n1', 'n2', NULL, ?)`, past)
 	deps.db.Exec(`INSERT INTO graph_edges (id, source_id, target_id, valid_until, updated_at) VALUES ('e2', 'n1', 'n2', NULL, ?)`, past)
 	deps.db.Exec(`INSERT INTO graph_edges (id, source_id, target_id, valid_until, updated_at) VALUES ('e3', 'n2', 'n1', ?, ?)`, past, past)
 
-	got := ToolWakeUp(context.Background(), deps, map[string]any{})
+	got := ToolWakeUp(context.Background(), deps, map[string]any{"collection": "levara"})
 	var bundle map[string]any
 	json.Unmarshal([]byte(got.Content[0].Text), &bundle)
 
@@ -635,5 +635,19 @@ func TestToolWakeUp_EntityDegreeCountsActiveEdges(t *testing.T) {
 	}
 	if int(top["edge_count"].(float64)) != 2 {
 		t.Errorf("auth edge_count = %v, want 2 (expired edge excluded)", top["edge_count"])
+	}
+}
+
+func TestToolWakeUp_EmptyCollectionDoesNotLeakGraphEntities(t *testing.T) {
+	deps := setupWakeUpTestDB(t)
+	_, _ = deps.db.Exec(`INSERT INTO graph_nodes (id,name,type,collection_id,updated_at) VALUES ('n1','other','service','other',?)`, time.Now().UTC().Format(time.RFC3339))
+	got := ToolWakeUp(context.Background(), deps, map[string]any{})
+	var bundle map[string]any
+	_ = json.Unmarshal([]byte(got.Content[0].Text), &bundle)
+	if entities := bundle["top_entities"].([]any); len(entities) != 0 {
+		t.Fatalf("unscoped wake_up leaked entities: %+v", entities)
+	}
+	if bundle["scope_status"] != "empty" {
+		t.Fatalf("scope_status=%v want empty", bundle["scope_status"])
 	}
 }

@@ -1,0 +1,11 @@
+interface:
+  display_name: "Levara Task Auditor"
+  short_description: "Audit Levara task evidence and completion"
+  default_prompt: "Use $levara-audit-task to independently verify this Levara task against its Definition of Done."
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "levara"
+      description: "Levara MCP read access to Task Runtime"
+policy:
+  allow_implicit_invocation: true

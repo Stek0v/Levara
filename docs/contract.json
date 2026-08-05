@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-07-14T04:55:45+03:00",
-  "git_rev": "f73c06b1cab11c543a33dbe84bcb9e1b8e3d8123",
+  "generated_at": "2026-07-29T01:08:30+03:00",
+  "git_rev": "3b02f7fa85644ddc76beb5a4cd0a242ea851886c",
   "rest": [
     {
       "method": "POST",
@@ -1301,6 +1301,11 @@
       "status": "canonical"
     },
     {
+      "name": "supersede_memory",
+      "group": "memory",
+      "status": "canonical"
+    },
+    {
       "name": "sync",
       "group": "sync",
       "status": "canonical"
@@ -1308,6 +1313,46 @@
     {
       "name": "sync_status",
       "group": "sync",
+      "status": "canonical"
+    },
+    {
+      "name": "task_bootstrap",
+      "group": "task",
+      "status": "canonical"
+    },
+    {
+      "name": "task_checkpoint",
+      "group": "task",
+      "status": "canonical"
+    },
+    {
+      "name": "task_complete",
+      "group": "task",
+      "status": "canonical"
+    },
+    {
+      "name": "task_open",
+      "group": "task",
+      "status": "canonical"
+    },
+    {
+      "name": "task_plan",
+      "group": "task",
+      "status": "canonical"
+    },
+    {
+      "name": "task_receipt",
+      "group": "task",
+      "status": "canonical"
+    },
+    {
+      "name": "task_step",
+      "group": "task",
+      "status": "canonical"
+    },
+    {
+      "name": "task_validate",
+      "group": "task",
       "status": "canonical"
     },
     {
@@ -1590,12 +1635,82 @@
     {
       "provider": "postgres",
       "kind": "alter",
+      "name": "memories"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "memories"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "memories"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "memories"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "memories"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
       "name": "ontologies"
     },
     {
       "provider": "postgres",
       "kind": "alter",
       "name": "ontologies"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "task_criteria"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "task_criteria"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "task_leases"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "task_leases"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "task_leases"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "task_leases"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "task_leases"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "task_steps"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "task_steps"
     },
     {
       "provider": "postgres",
@@ -1775,12 +1890,42 @@
     {
       "provider": "postgres",
       "kind": "index",
+      "name": "idx_memories_source_task"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
       "name": "idx_notebook_cells_notebook"
     },
     {
       "provider": "postgres",
       "kind": "index",
       "name": "idx_notebooks_owner"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_task_blockers_active"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_task_events_task"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_task_receipts_task"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_task_steps_task_status"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_tasks_scope_status"
     },
     {
       "provider": "postgres",
@@ -1921,6 +2066,56 @@
       "provider": "postgres",
       "kind": "table",
       "name": "search_feedback"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "task_blockers"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "task_checkpoints"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "task_criteria"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "task_events"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "task_leases"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "task_memory_candidates"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "task_memory_links"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "task_receipts"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "task_steps"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "tasks"
     },
     {
       "provider": "postgres",
@@ -2099,6 +2294,31 @@
     },
     {
       "provider": "sqlite",
+      "kind": "alter",
+      "name": "memories"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "memories"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "memories"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "memories"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "memories"
+    },
+    {
+      "provider": "sqlite",
       "kind": "index",
       "name": "idx_acl_dataset"
     },
@@ -2275,12 +2495,42 @@
     {
       "provider": "sqlite",
       "kind": "index",
+      "name": "idx_memories_source_task"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
       "name": "idx_notebook_cells_notebook"
     },
     {
       "provider": "sqlite",
       "kind": "index",
       "name": "idx_notebooks_owner"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_task_blockers_active"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_task_events_task"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_task_receipts_task"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_task_steps_task_status"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_tasks_scope_status"
     },
     {
       "provider": "sqlite",
@@ -2421,6 +2671,56 @@
       "provider": "sqlite",
       "kind": "table",
       "name": "search_feedback"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "task_blockers"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "task_checkpoints"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "task_criteria"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "task_events"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "task_leases"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "task_memory_candidates"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "task_memory_links"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "task_receipts"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "task_steps"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "tasks"
     },
     {
       "provider": "sqlite",
