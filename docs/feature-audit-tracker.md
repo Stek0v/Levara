@@ -8,12 +8,19 @@ the app-wide behavior review. The spreadsheet is the canonical tracker for the
 current pass; this document records how to interpret it, what was verified, and
 what should happen next.
 
-## Canonical artifact
+## Generated artifact
 
-The canonical workbook is:
+The workbook for a generated audit run is written locally to:
 
 ```text
 outputs/feature-audit/levara_feature_user_story_tracker.xlsx
+```
+
+Generated workbooks and previews are intentionally ignored by Git. Regenerate
+them from project source when needed:
+
+```bash
+node outputs/feature-audit/build_feature_tracker.mjs
 ```
 
 It currently tracks:
@@ -80,16 +87,16 @@ The fixed E2E files are:
   it does not prove every negative, accessibility, performance, or live external
   integration behavior.
 
-## Local files reviewed
+## External research files
 
-The following untracked files are local source/research artifacts, not part of
-the current app feature audit unless a follow-up explicitly makes them examples
-or fixtures:
+The audit reviewed two external source/research artifacts that are intentionally
+not retained in the repository. Neither had the provenance, licensing notes, or
+maintained fixture purpose required for product source:
 
 | File | Assessment |
 |---|---|
-| `152-fz.md` | Full Russian personal-data law text; useful for compliance/RAG testing, but should not be committed as product docs without source/licensing review. |
-| `DCD_Design_red_mad_robot.pdf` | 14-page paper on Domain-Collection-Document RAG design; useful research input for router/workspace architecture, but should stay out of git unless added as a cited research asset. |
+| `152-fz.md` | Full Russian personal-data law text; excluded from product source. |
+| `DCD_Design_red_mad_robot.pdf` | Domain-Collection-Document RAG paper; excluded from product source. |
 
 Generated support files under `outputs/feature-audit` are intentionally separate
 from source. The local `node_modules` symlink and `.inspect.ndjson` dump are
@@ -103,9 +110,7 @@ ignored and should not be committed.
    table-heavy pages.
 3. Add visual regression baselines for the screenshot sweep instead of only
    saving screenshots.
-4. Decide whether `152-fz.md` and the DCD PDF should become a documented sample
-   corpus. If yes, add license/source notes and ingest/retrieval test scenarios.
-5. Promote the workbook builder into a maintained script once the output path
+4. Promote the workbook builder into a maintained script once the output path
    policy is settled.
 
 ## Extractor validation
