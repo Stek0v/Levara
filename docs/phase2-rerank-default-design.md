@@ -99,7 +99,7 @@ Lives at `deploy/rerank/` (Dockerfile + app.py + model files mounted from a volu
 
 1. **PR A** — sidecar service (`deploy/rerank/`) + docker-compose entry, behind `profiles: [rerank]`. No code change in Levara yet. Smoke: `curl rerank:9100/rerank`.
 2. **PR B** — flip default in `api_search.go`, add budget/fallback, add metrics. Wire `RERANK_BUDGET_MS` config plumbing in `cmd/server/main.go`. Unit tests for: nil = on, false = off, true = force, budget exceeded → fallback path.
-3. **PR C** — update `WEBUI_REQUIREMENTS.md` + WebUI search to drop the manual "Rerank" toggle from the default UI (move it under Advanced).
+3. **PR C** — update WebUI search and current user documentation to drop the manual "Rerank" toggle from the default UI (move it under Advanced).
 4. **PR D** — update docs: `api-reference.md`, `README.md`, getting-started — mention rerank is default-on.
 
 ## Risks
