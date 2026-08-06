@@ -328,6 +328,7 @@ make test-release-candidate
 | [docs/webui-operations.md](docs/webui-operations.md) | Настройка WebUI, мониторинг и процессы |
 | [docs/current-state.md](docs/current-state.md) | Проверенный снимок локальной среды разработки |
 | [docs/security-diff-checklist.md](docs/security-diff-checklist.md) | Checklist review изменений, важных для безопасности |
+| [docs/memory-workflow-skill.ru.md](docs/memory-workflow-skill.ru.md) | Установка и использование skill автоматической памяти Levara |
 | [docs/long-horizon-runtime.ru.md](docs/long-horizon-runtime.ru.md) | Настройка Task Runtime, жизненный цикл, evidence и восстановление |
 | [docs/long-horizon-alpha-report.md](docs/long-horizon-alpha-report.md) | Доказательства acceptance и recovery для Task Runtime |
 

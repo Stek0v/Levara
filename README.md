@@ -315,6 +315,7 @@ Useful references:
 | [docs/webui-operations.md](docs/webui-operations.md) | WebUI setup, monitoring and workflows |
 | [docs/current-state.md](docs/current-state.md) | Verified local development snapshot |
 | [docs/security-diff-checklist.md](docs/security-diff-checklist.md) | Review checklist for security-sensitive changes |
+| [docs/memory-workflow-skill.md](docs/memory-workflow-skill.md) | Install and operate the automatic Levara memory workflow skill |
 | [docs/long-horizon-runtime.md](docs/long-horizon-runtime.md) | Task Runtime setup, lifecycle, evidence and recovery guide |
 | [docs/long-horizon-alpha-report.md](docs/long-horizon-alpha-report.md) | Task Runtime acceptance and recovery evidence |
 

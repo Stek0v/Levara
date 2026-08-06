@@ -1,0 +1,13 @@
+interface:
+  display_name: "Levara Memory Workflow"
+  short_description: "Restore and preserve durable project context"
+  default_prompt: "Use $levara-memory-workflow to restore relevant project context and preserve durable outcomes."
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "levara"
+      description: "Levara MCP server with the core memory tools enabled"
+
+policy:
+  allow_implicit_invocation: true
