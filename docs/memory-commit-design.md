@@ -169,6 +169,7 @@ Example output:
     {
       "candidate_id": "idle-polling-root-cause",
       "action": "add",
+      "reason_code": "no_equivalent",
       "reason": "no equivalent memory found",
       "target_memory_id": "",
       "warnings": []
@@ -177,12 +178,26 @@ Example output:
 }
 ```
 
+Every preview item must include a stable `reason_code` plus human-readable
+`reason`. Initial v1 codes:
+
+| `reason_code` | Typical action |
+| --- | --- |
+| `no_equivalent` | `add` |
+| `exact_duplicate` | `skip` |
+| `key_conflict` | `conflict` |
+| `explicit_supersede` | `supersede` |
+| `stale_target` | `reject` or stale-plan conflict on apply |
+| `secret_rejected` | `reject` |
+| `schema_invalid` | `reject` |
+| `unauthorized` | `reject` |
+
 Allowed item actions:
 
 | Action | Meaning | Apply behavior |
 | --- | --- | --- |
 | `add` | No equivalent live memory exists | Insert a new memory |
-| `supersede` | Candidate explicitly and safely replaces an existing memory | Supersede old memory and insert the replacement |
+| `supersede` | Candidate explicitly and safely replaces an existing memory | Use the `supersede_memory` state transition: archive the old row (`superseded_by` / `valid_until`) and insert the replacement in the same SQL transaction as index-outbox enqueue. Do **not** implement this via `save_memory` upsert or provenance-only `supersedes_memory_id` |
 | `skip` | Candidate is an exact or normalized duplicate | No memory mutation |
 | `conflict` | Existing memory differs and intent is ambiguous | Require a new preview with explicit intent |
 | `reject` | Invalid, unauthorized, unsafe, or unsupported candidate | Cannot be accepted |
@@ -244,8 +259,8 @@ Run rules in this order:
    automatically skip or supersede based on embeddings.
 8. Classify the remaining candidate as `add`.
 
-The output must include a stable reason code in addition to human-readable
-text so clients and evals do not parse prose.
+The output must include a stable `reason_code` in addition to human-readable
+`reason` so clients and evals do not parse prose.
 
 ## Persistence and atomicity
 
@@ -268,6 +283,10 @@ are required:
   the server never silently recalculates a different apply plan.
 - Accepted memory writes and `MemoryIndexOutbox.EnqueueTx` calls occur in the
   same SQL transaction for SQLite and PostgreSQL.
+- A `supersede` apply must perform the same row transition as
+  `supersede_memory` (archive old key / set `superseded_by` and `valid_until`,
+  then insert the replacement) inside that transaction. `save_memory` upsert
+  semantics are forbidden for this action.
 - A transaction failure leaves both memories and index jobs unchanged.
 - Vector indexing remains asynchronous and observable through existing index
   job status and reconciliation surfaces.
@@ -312,14 +331,23 @@ submitted by the authorized client cross this boundary.
 ## Relationship to client skills
 
 An Agent Skill remains useful for deciding when to recall and which outcomes
-are worth proposing. Once Memory Commit exists, the skill no longer needs to
-implement duplicate and supersession policy through multiple MCP calls.
+are worth proposing. Memory Commit does **not** replace the canonical
+immediate-save policy in `AGENTS.md` / `levara_instructions`. Agents should
+still call `save_memory` (or `supersede_memory`) as soon as a durable decision,
+discovery, preference, advice, or dated event is verified.
 
-The closeout becomes:
+Memory Commit is an additional reconciliation / closeout path for a small set
+of curated candidates: duplicate detection, explicit supersession, conflict
+surfaces, approval, and atomic apply. Once it exists, the skill can prefer
+preview/apply for that closeout instead of hand-rolling duplicate and
+supersession policy through multiple MCP calls, while mid-session immediate
+saves remain valid.
+
+The complementary closeout becomes:
 
 ```text
-identify durable candidates
-    -> memory_commit_preview
+immediate save_memory / supersede_memory for verified outcomes during work
+    -> optional memory_commit_preview for remaining curated candidates
     -> present or inspect the diff
     -> memory_commit_apply
 ```
@@ -342,7 +370,10 @@ Recommended rollout:
    - durable plans, TTL, optimistic revalidation, SQL transaction, index
      outbox, idempotent results, and audit events.
 4. **Phase 3 — client integration**
-   - update the automatic memory workflow skill to prefer Memory Commit;
+   - update or add a client memory skill so closeout prefers Memory Commit when
+     the tools are available, while preserving immediate mid-session saves;
+   - keep a `save_memory` / `supersede_memory` fallback for `core` and for
+     hosts that do not enable `LEVARA_MEMORY_COMMIT`;
    - add WebUI review for prepared commits if real usage demonstrates demand.
 5. **Phase 4 — broader default**
    - consider adding the tools to `core` after behavior metrics and security
