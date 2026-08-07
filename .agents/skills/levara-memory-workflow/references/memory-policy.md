@@ -23,6 +23,18 @@ own system when needed.
 - `key`: durable concept such as `idle-polling-root-cause`; avoid paths and
   symbol names.
 
+## Supersession
+
+| Goal | Tool | Profiles |
+| --- | --- | --- |
+| Archive old memory and insert a replacement | `supersede_memory` | `memory`, `full`, `long-horizon` |
+| Upsert one key without retiring another row | `save_memory` | `core`, `memory`, `workspace`, `full`, ... |
+| Store provenance only on the written row | `save_memory(supersedes_memory_id=...)` | any profile with `save_memory` |
+
+`supersedes_memory_id` on `save_memory` does **not** set `superseded_by` or
+`valid_until` on the prior row. Recall still returns that prior row until
+`supersede_memory` (or an equivalent server path) archives it.
+
 ## Entry templates
 
 ### Decision

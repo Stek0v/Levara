@@ -22,24 +22,30 @@ the skill directs the agent to:
 3. recall relevant decisions or discoveries before new research;
 4. verify recalled claims against current authoritative sources;
 5. save durable decisions, discoveries, facts, preferences, advice, and dated
-   events with `collection`, `room`, and `hall`;
-6. search before saving, skip duplicates, and supersede stale memories;
+   events with `collection`, `room`, and `hall` as soon as they are verified;
+6. search before saving, skip duplicates, and replace stale memories with
+   `supersede_memory` when that tool is available;
 7. exclude secrets, raw transcripts, temporary task state, code locations,
    and unverified conclusions.
 
 The workflow is deliberately selective. It is intended to improve future
-agent sessions, not archive every step of the current one.
+agent sessions, not archive every step of the current one. Inside this
+repository, [`AGENTS.md`](../AGENTS.md) remains the canonical memory playbook;
+the skill must not override its immediate-save triggers.
 
 ## Requirements
 
 - A running Levara MCP endpoint.
-- The `core`, `memory`, `workspace`, or `full` MCP toolset. `core` is the
-  smallest compatible profile.
+- The `core`, `memory`, `workspace`, `long-horizon`, or `full` MCP toolset.
+  `core` is enough for recall and `save_memory`. History-preserving
+  supersession requires `memory`, `full`, or `long-horizon` because only those
+  profiles expose `supersede_memory`.
 - An agent client that supports Agent Skills or equivalent reusable
   instructions.
 
 At minimum, the server must expose `levara_instructions`, `set_context`,
-`wake_up`, `recall_memory`, and `save_memory`.
+`wake_up`, `recall_memory`, and `save_memory`. For replacement with retained
+history, also expose `supersede_memory`.
 
 ## Install for Codex
 
@@ -88,16 +94,29 @@ default_tools_approval_mode = "writes"
 ```
 
 Set `LEVARA_MCP_API_KEY` outside the configuration file. Omit
-`env_http_headers` when authentication is intentionally disabled. Use HTTPS
-for endpoints accessed across an untrusted network.
+`env_http_headers` only for isolated single-user loopback development when the
+server itself has authentication intentionally disabled
+(`-require-auth=false`). Do not omit credentials for shared, remote, or
+persistent deployments. Use HTTPS for endpoints accessed across an untrusted
+network.
 
-Configure the smallest required tool surface on the server:
+Configure the tool surface on the server. Use `core` for recall and simple
+saves; use `memory` (or `full`) when agents must supersede with history:
 
 ```bash
-export LEVARA_MCP_TOOLSET=core
+export LEVARA_MCP_TOOLSET=memory
 ```
 
 Restart both Levara and Codex after changing their configuration.
+
+## Supersession semantics
+
+- `supersede_memory` archives the old row and inserts the replacement. Prefer
+  it whenever an outcome replaces a live memory and the tool is available.
+- `save_memory(supersedes_memory_id=...)` stores provenance on the written row
+  only. It does not retire the old memory from recall.
+- On `core` / `workspace`, either overwrite the same key or leave both rows
+  active; do not advertise history-preserving supersession.
 
 ## Other clients
 

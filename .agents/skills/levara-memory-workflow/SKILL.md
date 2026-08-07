@@ -8,6 +8,12 @@ description: Automatically restore and curate durable project context through a 
 Use Levara as durable agent memory, not as a transcript store or replacement
 for source control, task tracking, or human documentation.
 
+When this repository also loads [`AGENTS.md`](../../../AGENTS.md) or the server
+returns `levara_instructions`, treat those as the canonical Levara playbook.
+This skill is a portable client workflow: follow the stricter rule when they
+differ, and never skip an immediate durable save required by the server
+contract merely to stay under a soft write budget.
+
 ## Check availability
 
 1. Prefer the native `levara` MCP tools.
@@ -17,6 +23,10 @@ for source control, task tracking, or human documentation.
    connection unless requested; mention skipped memory synchronization only
    when it materially matters.
 4. Never expose, retrieve, or copy Levara credentials while using memory.
+5. Detect whether `supersede_memory` is available. Full history-preserving
+   replacement requires a profile that exposes it (`memory`, `full`, or
+   `long-horizon`). `core` and `workspace` support recall and `save_memory`
+   only.
 
 ## Start substantial work
 
@@ -72,12 +82,21 @@ filename or function name.
 Before saving, search or recall similar memories:
 
 - Skip equivalent duplicates.
-- Preserve history with `supersedes_memory_id` when a new outcome replaces an
-  older one.
-- Prefer at most three new memories per task. Exceed that only when the task
-  genuinely produced more independent durable outcomes.
+- When a new outcome replaces an older live memory and `supersede_memory` is
+  available, call `supersede_memory` with the old memory id. That tool archives
+  the old row (`superseded_by` / `valid_until`) and inserts the replacement.
+  Do not rely on `save_memory(supersedes_memory_id=...)` for replacement:
+  that field is provenance only and does not retire the old row from recall.
+- On `core` / `workspace` without `supersede_memory`, either overwrite the same
+  key with `save_memory` (history is destroyed) or leave the old memory active
+  and state that limitation. Never claim history-preserving supersession.
+- Prefer at most three new memories per task as a soft noise budget. Exceed it
+  whenever additional independent durable outcomes exist; never postpone a
+  verified decision, discovery, preference, advice, or dated event that the
+  canonical playbook would save immediately.
 - Do not pin automatically. Pin only an explicitly declared global hard rule
-  or a user-requested critical fact.
+  or a user-requested critical fact (including critical infrastructure the
+  user asks to keep in wake-up).
 - Respect host approval prompts for all writes; never bypass them.
 
 Read [references/memory-policy.md](references/memory-policy.md) when choosing
