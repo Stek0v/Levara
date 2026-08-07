@@ -141,6 +141,10 @@ func durationEnv(key string, fallback time.Duration) time.Duration {
 	return fallback
 }
 
+func memoryIndexWorkerInterval() time.Duration {
+	return durationEnv("LEVARA_MEMORY_INDEX_WORKER_INTERVAL", 250*time.Millisecond)
+}
+
 func intEnv(key string, fallback int) int {
 	v := strings.TrimSpace(os.Getenv(key))
 	if v == "" {
@@ -715,7 +719,7 @@ func main() {
 	// MCP (Model Context Protocol) server — JSON-RPC 2.0 for AI agent integration
 	vectorHttp.RegisterMCPAPI(app, mcpCfg)
 	vectorHttp.StartConsolidationRecovery(mcpCfg)
-	stopMemoryIndexWorker := vectorHttp.StartMemoryIndexWorker(mcpCfg, 5*time.Millisecond)
+	stopMemoryIndexWorker := vectorHttp.StartMemoryIndexWorker(mcpCfg, memoryIndexWorkerInterval())
 	defer stopMemoryIndexWorker()
 
 	// Opt-in background memory-consolidation janitor. Off unless
