@@ -972,8 +972,8 @@ func ToolTaskComplete(ctx context.Context, deps Deps, args map[string]any) ToolR
 
 func promoteTaskMemories(ctx context.Context, deps Deps, taskID string) (int, int) {
 	db := deps.DB()
-	var collection string
-	_ = db.QueryRowContext(ctx, deps.Q(`SELECT collection_name FROM tasks WHERE id=$1`), taskID).Scan(&collection)
+	var collection, revision string
+	_ = db.QueryRowContext(ctx, deps.Q(`SELECT collection_name,current_workspace_revision FROM tasks WHERE id=$1`), taskID).Scan(&collection, &revision)
 	rows, err := db.QueryContext(ctx, deps.Q(`SELECT id,memory_key,value,room,hall,evidence_receipt_ids FROM task_memory_candidates WHERE task_id=$1 AND status='pending'`), taskID)
 	if err != nil {
 		return 0, 0
@@ -991,20 +991,15 @@ func promoteTaskMemories(ctx context.Context, deps Deps, taskID string) (int, in
 	for _, c := range items {
 		var evidence []string
 		_ = json.Unmarshal([]byte(c.evidence), &evidence)
-		valid := c.hall == "decision" || c.hall == "preference"
+		valid := len(evidence) > 0
 		if c.hall == "event" && !absoluteDateRE.MatchString(c.value) {
 			valid = false
-		} else if len(evidence) > 0 {
-			valid = true
-			for _, rid := range evidence {
-				var status string
-				if db.QueryRowContext(ctx, deps.Q(`SELECT status FROM task_receipts WHERE id=$1 AND task_id=$2`), rid, taskID).Scan(&status) != nil || status != "pass" {
-					valid = false
-				}
-			}
 		}
-		if c.hall == "discovery" && len(evidence) == 0 {
-			valid = false
+		for _, rid := range evidence {
+			var status, receiptRevision string
+			if db.QueryRowContext(ctx, deps.Q(`SELECT status,workspace_revision FROM task_receipts WHERE id=$1 AND task_id=$2`), rid, taskID).Scan(&status, &receiptRevision) != nil || status != "pass" || (revision != "" && receiptRevision != revision) {
+				valid = false
+			}
 		}
 		if !valid {
 			rejected++

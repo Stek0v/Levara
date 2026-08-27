@@ -422,6 +422,53 @@ func TestTaskArtifactDigestMustBeVerified(t *testing.T) {
 	}
 }
 
+func TestTaskMemoryCandidateWithoutEvidenceIsRejected(t *testing.T) {
+	deps := setupTaskTestDB(t)
+	taskID, version := openTask(t, deps, "low")
+	receipt := taskPayload(t, ToolTaskReceipt(context.Background(), deps, map[string]any{
+		"task_id": taskID, "base_version": float64(version), "idempotency_key": "tests-current",
+		"receipt_type": "command", "status": "pass", "criterion_ids": []any{"tests"}, "exit_code": float64(0), "workspace_revision": "rev-1",
+	}))
+	version = int(receipt["version"].(float64))
+	checkpoint := taskPayload(t, ToolTaskCheckpoint(context.Background(), deps, map[string]any{
+		"task_id": taskID, "base_version": float64(version), "idempotency_key": "candidate-without-evidence",
+		"summary": "candidate needs proof", "workspace_revision": "rev-1",
+		"memory_candidates": []any{map[string]any{"key": "unsupported-decision", "value": "Use SQLite.", "room": "runtime", "hall": "decision"}},
+	}))
+	completed := taskPayload(t, ToolTaskComplete(context.Background(), deps, map[string]any{
+		"task_id": taskID, "expected_version": checkpoint["version"],
+	}))
+	if completed["promoted_memories"] != float64(0) || completed["rejected_memories"] != float64(1) {
+		t.Fatalf("unproven candidate must be rejected: %+v", completed)
+	}
+}
+
+func TestTaskMemoryCandidateWithStaleEvidenceIsRejected(t *testing.T) {
+	deps := setupTaskTestDB(t)
+	taskID, version := openTask(t, deps, "low")
+	oldReceipt := taskPayload(t, ToolTaskReceipt(context.Background(), deps, map[string]any{
+		"task_id": taskID, "base_version": float64(version), "idempotency_key": "tests-old",
+		"receipt_type": "command", "status": "pass", "criterion_ids": []any{"tests"}, "exit_code": float64(0), "workspace_revision": "rev-1",
+	}))
+	version = int(oldReceipt["version"].(float64))
+	checkpoint := taskPayload(t, ToolTaskCheckpoint(context.Background(), deps, map[string]any{
+		"task_id": taskID, "base_version": float64(version), "idempotency_key": "candidate-with-stale-evidence",
+		"summary": "candidate cites old evidence", "workspace_revision": "rev-2",
+		"memory_candidates": []any{map[string]any{"key": "stale-discovery", "value": "Root cause was idle polling.", "room": "runtime", "hall": "discovery", "evidence_receipt_ids": []any{oldReceipt["receipt_id"]}}},
+	}))
+	version = int(checkpoint["version"].(float64))
+	currentReceipt := taskPayload(t, ToolTaskReceipt(context.Background(), deps, map[string]any{
+		"task_id": taskID, "base_version": float64(version), "idempotency_key": "tests-current",
+		"receipt_type": "command", "status": "pass", "criterion_ids": []any{"tests"}, "exit_code": float64(0), "workspace_revision": "rev-2",
+	}))
+	completed := taskPayload(t, ToolTaskComplete(context.Background(), deps, map[string]any{
+		"task_id": taskID, "expected_version": currentReceipt["version"],
+	}))
+	if completed["promoted_memories"] != float64(0) || completed["rejected_memories"] != float64(1) {
+		t.Fatalf("candidate with stale evidence must be rejected: %+v", completed)
+	}
+}
+
 func TestTaskBootstrapBudgetIsHardLimit(t *testing.T) {
 	t.Log("CONTRACT: task_bootstrap must keep the complete serialized snapshot within the requested token budget")
 	t.Log("TRIGGER: create many long criteria and steps while the memory list is empty, leaving no memories for the existing trimming path to remove")

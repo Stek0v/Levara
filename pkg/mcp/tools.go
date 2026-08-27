@@ -913,15 +913,23 @@ func ToolDescriptors() []Tool {
 			Description: "Search memories by query, optionally filtered by room/hall for higher precision.",
 			OutputSchema: objectSchema(map[string]any{
 				"results": arrayOfObjectsProp(objectSchema(map[string]any{
-					"id":         stringProp("Memory row ID."),
-					"key":        stringProp("Memory key."),
-					"value":      stringProp("Memory value."),
-					"type":       stringProp("Memory type."),
-					"owner_id":   stringProp("Memory owner scope."),
-					"hall":       stringProp("Memory genre: fact|event|decision|preference|advice|discovery."),
-					"room":       stringProp("Sub-topic within the collection."),
-					"created_at": stringProp("RFC3339 creation timestamp."),
-					"updated_at": stringProp("RFC3339 update timestamp."),
+					"id":                   stringProp("Memory row ID."),
+					"key":                  stringProp("Memory key."),
+					"value":                stringProp("Memory value."),
+					"type":                 stringProp("Memory type."),
+					"owner_id":             stringProp("Memory owner scope."),
+					"hall":                 stringProp("Memory genre: fact|event|decision|preference|advice|discovery."),
+					"room":                 stringProp("Sub-topic within the collection."),
+					"created_at":           stringProp("RFC3339 creation timestamp."),
+					"updated_at":           stringProp("RFC3339 update timestamp."),
+					"verification_status":  stringProp("Verification state."),
+					"source_task_id":       stringProp("Origin task, when available."),
+					"source_receipt_ids":   arrayOfStringsProp("Verification receipt IDs."),
+					"supersedes_memory_id": stringProp("Predecessor memory ID, when this row replaced one."),
+					"superseded_by":        stringProp("Replacement memory ID, when this row is historical."),
+					"supersession_state":   stringProp("active|superseded."),
+					"superseded_at":        stringProp("Replacement timestamp, when known."),
+					"supersession_reason":  stringProp("Why this memory was replaced, when known."),
 				}), "Recalled memories ranked by relevance."),
 				"message": stringProp("Optional empty-result explanation."),
 			}),
@@ -936,6 +944,35 @@ func ToolDescriptors() []Tool {
 				},
 				"required": []string{"query"},
 			},
+		},
+		{
+			Name: "memory_garden", Group: "memory", Description: "Review active memories for duplicates, conflicts, staleness, and weak provenance. Read-only.",
+			OutputSchema: objectSchema(map[string]any{
+				"collection": stringProp("Reviewed collection."), "stale_after_days": integerProp("Age threshold."), "scanned_memories": integerProp("Live memories examined."), "truncated": booleanProp("True when scan or findings were capped."),
+				"summary":  map[string]any{"type": "object"},
+				"findings": arrayOfObjectsProp(objectSchema(map[string]any{"category": stringProp("duplicate|conflict|stale|weak_provenance."), "severity": stringProp("low|medium|high."), "memory_ids": arrayOfStringsProp("Scoped memory IDs."), "keys": arrayOfStringsProp("Memory keys."), "reason": stringProp("Review reason.")}), "Review-only findings; memory values are never returned."),
+			}),
+			InputSchema: map[string]any{"type": "object", "properties": map[string]any{
+				"collection": stringProp("Collection to review."), "stale_after_days": integerProp("1-3650; default 180."), "limit": integerProp("1-200 findings; default 100."),
+			}, "required": []string{"collection"}},
+		},
+		{
+			Name: "memory_markdown_digest", Group: "memory", Description: "Render selected verified decisions and discoveries as a read-only Markdown export.",
+			OutputSchema: objectSchema(map[string]any{
+				"collection": stringProp("Source collection."), "generated_at": stringProp("RFC3339 export timestamp."), "count": integerProp("Memories exported."), "markdown": stringProp("Read-only Markdown digest; Levara remains the source of truth."),
+			}),
+			InputSchema: map[string]any{"type": "object", "properties": map[string]any{
+				"collection": stringProp("Collection to export from."), "memory_ids": arrayOfStringsProp("Selected memory IDs; 1-100."),
+			}, "required": []string{"collection", "memory_ids"}},
+		},
+		{
+			Name: "memory_scaffold_block", Group: "memory", Description: "Render selected approved scaffold proposals as a manual AGENTS.md or CLAUDE.md preview.",
+			OutputSchema: objectSchema(map[string]any{
+				"collection": stringProp("Source collection."), "target_file": stringProp("AGENTS.md|CLAUDE.md."), "proposal_ids": arrayOfStringsProp("Approved proposals rendered."), "block": stringProp("Copy-ready Markdown preview; never written automatically."),
+			}),
+			InputSchema: map[string]any{"type": "object", "properties": map[string]any{
+				"collection": stringProp("Proposal collection."), "target_file": stringProp("AGENTS.md or CLAUDE.md."), "proposal_ids": arrayOfStringsProp("Selected approved proposal IDs; 1-6."),
+			}, "required": []string{"collection", "target_file", "proposal_ids"}},
 		},
 		{
 			Name:        "list_memories",
@@ -1548,5 +1585,32 @@ func ToolDescriptors() []Tool {
 			},
 		},
 	}
-	return append(tools, longHorizonToolDescriptors()...)
+	tools = append(tools, longHorizonToolDescriptors()...)
+	if memoryCommitEnabled() {
+		tools = append(tools, Tool{
+			Name: "memory_commit_preview", Group: "memory", Description: "Prepare an idempotent, reviewable memory diff without mutating memory rows.",
+			OutputSchema: objectSchema(map[string]any{
+				"commit_id": stringProp("Prepared commit ID."), "status": stringProp("prepared|applied."), "collection": stringProp("Collection."), "plan_digest": stringProp("SHA-256 plan digest."), "expires_at": stringProp("RFC3339 plan expiry."),
+				"summary": map[string]any{"type": "object"},
+				"items":   arrayOfObjectsProp(objectSchema(map[string]any{"candidate_id": stringProp("Candidate ID."), "action": stringProp("add|supersede|skip|conflict|reject."), "reason_code": stringProp("Stable classification reason."), "target_memory_id": stringProp("Matched memory ID, when safe."), "warnings": map[string]any{"type": "array", "items": map[string]any{}}}), "Classified candidates."),
+			}),
+			InputSchema: map[string]any{"type": "object", "properties": map[string]any{
+				"collection": stringProp("Authorized collection."), "idempotency_key": stringProp("Stable preview request key."),
+				"candidates": map[string]any{"type": "array", "items": map[string]any{"type": "object", "properties": map[string]any{"candidate_id": stringProp("Candidate ID."), "room": stringProp("Memory room."), "hall": stringProp("Memory hall."), "key": stringProp("Memory key."), "value": stringProp("Memory value."), "supersedes_memory_id": stringProp("Explicit active replacement target."), "verification_status": stringProp("Verification state."), "source_task_id": stringProp("Origin task."), "source_receipt_ids": arrayOfStringsProp("Evidence receipt IDs.")}, "required": []string{"candidate_id", "room", "hall", "key", "value"}}},
+			}, "required": []string{"collection", "idempotency_key", "candidates"}},
+		})
+		tools = append(tools, Tool{
+			Name: "memory_commit_apply", Group: "memory", Description: "Atomically apply accepted add or supersede actions from a prepared Memory Commit plan.",
+			OutputSchema: objectSchema(map[string]any{
+				"commit_id": stringProp("Prepared commit ID."), "status": stringProp("applied."),
+				"added": integerProp("Inserted memories."), "superseded": integerProp("Replaced memories."), "skipped": integerProp("Duplicate no-ops."),
+				"index_jobs": arrayOfObjectsProp(objectSchema(map[string]any{"memory_id": stringProp("Memory row."), "job_id": stringProp("Outbox job."), "status": stringProp("pending|completed.")}), "Async vector jobs."),
+			}),
+			InputSchema: map[string]any{"type": "object", "properties": map[string]any{
+				"commit_id": stringProp("Prepared commit ID."), "plan_digest": stringProp("Exact preview digest."),
+				"accepted_candidate_ids": arrayOfStringsProp("Optional subset of add/supersede candidate IDs."),
+			}, "required": []string{"commit_id", "plan_digest"}},
+		})
+	}
+	return tools
 }

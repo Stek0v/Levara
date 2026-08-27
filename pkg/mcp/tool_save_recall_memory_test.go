@@ -46,6 +46,14 @@ func setupSaveRecallMemoryDB(t *testing.T) *fakeDeps {
 	if _, err := db.Exec(stmt); err != nil {
 		t.Fatalf("create: %v", err)
 	}
+	if _, err := db.Exec(`CREATE TABLE memory_commits (
+		id TEXT PRIMARY KEY, owner_id TEXT, collection_name TEXT, idempotency_key TEXT,
+		status TEXT, request_digest TEXT, plan_digest TEXT, plan_json TEXT, result_json TEXT,
+		created_at TEXT, expires_at TEXT, applied_at TEXT,
+		UNIQUE(owner_id, collection_name, idempotency_key)
+	)`); err != nil {
+		t.Fatalf("create memory_commits: %v", err)
+	}
 	return &fakeDeps{db: db}
 }
 
@@ -627,6 +635,53 @@ func TestToolRecallMemory_VectorPathHydratesFromSQL(t *testing.T) {
 	if len(items) != 1 || items[0]["key"] != "hit" {
 		t.Errorf("got %+v, want single 'hit' (SQL-hydrated)", items)
 	}
+}
+
+func TestToolRecallMemoryHydratesProvenanceForSQLAndVector(t *testing.T) {
+	deps := setupSaveRecallMemoryDB(t)
+	ctx := context.WithValue(context.Background(), UserIDKey, "owner-a")
+	if got := ToolSaveMemory(ctx, deps, map[string]any{
+		"key": "runtime-choice", "value": "old", "collection": "levara", "room": "memory", "hall": "decision",
+	}); got.IsError {
+		t.Fatal(got.Content[0].Text)
+	}
+	var oldID, activeID string
+	if err := deps.db.QueryRow(`SELECT id FROM memories WHERE key='runtime-choice'`).Scan(&oldID); err != nil {
+		t.Fatal(err)
+	}
+	if got := ToolSupersedeMemory(ctx, deps, map[string]any{
+		"old_memory_id": oldID, "new_value": "new", "reason": "validated replacement",
+		"source_task_id": "task-1", "source_receipt_ids": []any{"receipt-1"}, "verification_status": "verified",
+	}); got.IsError {
+		t.Fatal(got.Content[0].Text)
+	}
+	if err := deps.db.QueryRow(`SELECT id FROM memories WHERE key='runtime-choice' AND superseded_by=''`).Scan(&activeID); err != nil {
+		t.Fatal(err)
+	}
+	assertProvenance := func(got ToolResult) {
+		t.Helper()
+		items := decodeRecallResults(t, got)
+		if len(items) != 1 {
+			t.Fatalf("recall=%+v", items)
+		}
+		item := items[0]
+		if item["verification_status"] != "verified" || item["source_task_id"] != "task-1" ||
+			item["supersedes_memory_id"] != oldID || item["supersession_state"] != "active" ||
+			item["supersession_reason"] != "validated replacement" || item["superseded_at"] == "" {
+			t.Fatalf("provenance=%+v", item)
+		}
+		receipts, ok := item["source_receipt_ids"].([]any)
+		if !ok || len(receipts) != 1 || receipts[0] != "receipt-1" {
+			t.Fatalf("receipt provenance=%+v", item["source_receipt_ids"])
+		}
+	}
+
+	assertProvenance(ToolRecallMemory(ctx, deps, map[string]any{"query": "runtime-choice", "collection": "levara"}))
+	deps.embedAvailable = true
+	deps.searchFn = func(collection string, q []float32, k int) ([]SearchResult, error) {
+		return []SearchResult{{ID: activeID, Score: 0.9}}, nil
+	}
+	assertProvenance(ToolRecallMemory(ctx, deps, map[string]any{"query": "semantic replacement", "collection": "levara"}))
 }
 
 func TestToolRecallMemory_VectorPathOwnershipScoped(t *testing.T) {

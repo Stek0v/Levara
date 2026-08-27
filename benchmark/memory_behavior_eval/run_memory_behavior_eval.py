@@ -271,6 +271,7 @@ def main() -> int:
     score = float(report["metrics"].get("behavior_score", 0.0))
     report["gates"] = {"behavior_score_min": args.behavior_score_min, "passed": score >= args.behavior_score_min}
     report["passed"] = bool(report["gates"]["passed"])
+    report["command"] = "python3 benchmark/memory_behavior_eval/run_memory_behavior_eval.py" + (" --fake" if args.fake or not args.base_url else " --base-url " + args.base_url) + " --label " + args.label
     path = write_report(report, args.output)
     print(json.dumps({"output": str(path), "passed": report["passed"], "metrics": report["metrics"]}, indent=2, sort_keys=True))
     return 0 if report["passed"] else 1

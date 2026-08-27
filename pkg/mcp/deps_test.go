@@ -14,6 +14,7 @@ import (
 	"github.com/stek0v/levara/pipeline"
 	"github.com/stek0v/levara/pkg/ingest"
 	"github.com/stek0v/levara/pkg/llm"
+	"github.com/stek0v/levara/pkg/memoryindex"
 	"github.com/stek0v/levara/pkg/orchestrator"
 	"github.com/stek0v/levara/pkg/router"
 	"github.com/stek0v/levara/pkg/runreg"
@@ -79,6 +80,7 @@ type fakeDeps struct {
 	allowedDatasetIDs  []string
 	lexicalCollections []string
 	lexicalFn          func(collection, query string, topK int) ([]LexicalResult, error)
+	memoryIndexOutbox  *memoryindex.Store
 
 	// collectionMetas is keyed by collection name. Tests that exercise
 	// toolGetProjectContext or toolCheckDrift populate this map.
@@ -104,7 +106,8 @@ type deletedRow struct {
 	id         string
 }
 
-func (f *fakeDeps) DB() *sql.DB { return f.db }
+func (f *fakeDeps) DB() *sql.DB                           { return f.db }
+func (f *fakeDeps) MemoryIndexOutbox() *memoryindex.Store { return f.memoryIndexOutbox }
 
 // pgPlaceholderRe matches $N placeholder style used by the production
 // queries; we rewrite to ? for SQLite.

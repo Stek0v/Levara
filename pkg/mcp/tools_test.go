@@ -140,6 +140,12 @@ func TestToolOutputsMatchRegisteredSchemas_RoundTrip(t *testing.T) {
 
 	recallDeps := setupSaveRecallMemoryDB(t)
 	ToolSaveMemory(context.Background(), recallDeps, map[string]any{"key": "alpha", "value": "memory body"})
+	if _, err := recallDeps.db.Exec(`CREATE TABLE memory_scaffold_proposals (id TEXT PRIMARY KEY, collection_name TEXT NOT NULL, summary TEXT NOT NULL, proposed_change TEXT NOT NULL, status TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := recallDeps.db.Exec(`INSERT INTO memory_scaffold_proposals(id,collection_name,summary,proposed_change,status) VALUES('proposal','levara','summary','change','approved')`); err != nil {
+		t.Fatal(err)
+	}
 
 	diaryDeps := setupDiaryTestDB(t)
 	ToolDiaryWrite(context.Background(), diaryDeps, map[string]any{"agent": "reviewer", "key": "note", "value": "body"})
@@ -221,6 +227,9 @@ func TestToolOutputsMatchRegisteredSchemas_RoundTrip(t *testing.T) {
 	}{
 		{"save_memory", ToolSaveMemory(context.Background(), recallDeps, map[string]any{"key": "beta", "value": "body"})},
 		{"recall_memory", ToolRecallMemory(context.Background(), recallDeps, map[string]any{"query": "alpha"})},
+		{"memory_garden", ToolMemoryGarden(context.Background(), recallDeps, map[string]any{"collection": "levara"})},
+		{"memory_markdown_digest", ToolMemoryMarkdownDigest(context.Background(), recallDeps, map[string]any{"collection": "levara", "memory_ids": []any{"alpha"}})},
+		{"memory_scaffold_block", ToolMemoryScaffoldBlock(context.Background(), recallDeps, map[string]any{"collection": "levara", "target_file": "AGENTS.md", "proposal_ids": []any{"proposal"}})},
 		{"list_memories", ToolListMemories(context.Background(), memoryDeps, map[string]any{})},
 		{"pin_memory", ToolPinMemory(context.Background(), memoryDeps, map[string]any{"key": "alpha"})},
 		{"unpin_memory", ToolUnpinMemory(context.Background(), memoryDeps, map[string]any{"key": "alpha"})},

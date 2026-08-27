@@ -25,6 +25,9 @@ For the full standard/edge/load/canary test matrix, see
 | `/api/v1/memory-reviews` | Review run list |
 | `/api/v1/memory-scaffold/proposals` | Human-gated scaffold/policy proposals |
 | WebUI `/memory-scaffold` | Proposal review and approve/reject controls |
+| MCP `memory_garden` | Read-only duplicate, conflict, stale, and weak-provenance review of one memory collection |
+| MCP `memory_markdown_digest` | Read-only Markdown export of explicitly selected verified decisions and discoveries |
+| MCP `memory_scaffold_block` | Copy-ready preview from explicitly selected approved scaffold proposals |
 | `/api/v1/memory-traces/export` | Admin-only JSONL export of good sanitized traces |
 | `benchmark/memory_behavior_eval/run_memory_behavior_eval.py` | Repeatable golden behavior eval |
 
@@ -88,6 +91,10 @@ Valid decisions are `approved` and `rejected`. Only `open` proposals can be
 decided. Approved means a human accepted the recommendation; it still does not
 modify `AGENTS.md` automatically.
 
+`memory_scaffold_block` turns explicitly selected approved proposals into a
+short preview for `AGENTS.md` or `CLAUDE.md`. It never writes either file or
+changes proposal state; applying the preview remains a manual review step.
+
 ## Guardrails
 
 `save_memory` remains backward compatible. The write succeeds as before, but
@@ -106,6 +113,22 @@ successful responses may include:
 
 The same derived flags are stored in the MCP audit read-model as
 `blind_save`/`repeat_save`.
+
+## Memory Garden
+
+`memory_garden` is a collection-scoped, read-only review. It reports
+duplicate normalized values, active-key conflicts, records older than a chosen
+age threshold, and missing verification/task/receipt provenance. It returns
+keys and IDs, never memory values, and does not change memory, vectors, pins,
+or graph state. Run it on demand or from an external schedule; it never
+auto-applies findings.
+
+## Markdown digest
+
+`memory_markdown_digest` renders only explicitly selected, active, verified
+`decision` and `discovery` memories. The output includes freshness and available
+task/receipt provenance, but performs no workspace or Git write and has no
+import path. Levara remains the sole source of truth.
 
 ## Golden eval
 

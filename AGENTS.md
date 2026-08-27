@@ -234,8 +234,11 @@ explicitly opted in via `types=["collections"]` + `collections=[...]`).
 | list_communities | search | canonical |
 | list_data | data | canonical |
 | list_memories | memory | canonical |
+| memory_garden | memory | canonical |
 | memory_index_retry | ops | canonical |
 | memory_index_status | ops | canonical |
+| memory_markdown_digest | memory | canonical |
+| memory_scaffold_block | memory | canonical |
 | pin_memory | memory | canonical |
 | prune | data | canonical |
 | prune_graph | git | canonical |

@@ -877,7 +877,7 @@ func (h *mcpHandler) executeToolInner(ctx context.Context, sess *mcpSession, nam
 		if _, ok := args["collection"]; !ok || args["collection"] == "" {
 			args["collection"] = h.resolveCollection(sess, args, true)
 		}
-	case "save_memory", "recall_memory", "list_memories",
+	case "save_memory", "recall_memory", "memory_garden", "memory_markdown_digest", "memory_scaffold_block", "list_memories", "memory_commit_preview",
 		"wake_up", "pin_memory", "unpin_memory",
 		"diary_write", "diary_read", "consolidate", "supersede_memory", "task_open":
 		// Memory tools: only inject session default, NOT "default" fallback.
@@ -975,6 +975,12 @@ func (h *mcpHandler) executeToolInner(ctx context.Context, sess *mcpSession, nam
 		return h.toolSaveMemory(ctx, sess, args)
 	case "recall_memory":
 		return h.toolRecallMemory(ctx, args)
+	case "memory_garden":
+		return mcp.ToolMemoryGarden(ctx, h, args)
+	case "memory_markdown_digest":
+		return mcp.ToolMemoryMarkdownDigest(ctx, h, args)
+	case "memory_scaffold_block":
+		return mcp.ToolMemoryScaffoldBlock(ctx, h, args)
 	case "list_memories":
 		return h.toolListMemories(ctx, args)
 	case "consolidate":
@@ -1013,6 +1019,10 @@ func (h *mcpHandler) executeToolInner(ctx context.Context, sess *mcpSession, nam
 		return h.toolDeleteMemory(ctx, args)
 	case "supersede_memory":
 		return mcp.ToolSupersedeMemory(ctx, h, args)
+	case "memory_commit_preview":
+		return mcp.ToolMemoryCommitPreview(ctx, h, args)
+	case "memory_commit_apply":
+		return mcp.ToolMemoryCommitApply(ctx, h, args)
 	case "task_open":
 		return mcp.ToolTaskOpen(ctx, h, args)
 	case "task_bootstrap":

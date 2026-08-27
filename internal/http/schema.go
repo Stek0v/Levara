@@ -383,6 +383,13 @@ var schemaStatements = []string{
 	// Upsert identity is (key, owner_id, collection_name) so the same key
 	// can exist in different pinned contexts without clobbering (P1 isolation).
 	`CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_key_owner_coll ON memories(key, owner_id, collection_name)`,
+	`CREATE TABLE IF NOT EXISTS memory_commits (
+		id TEXT PRIMARY KEY, owner_id TEXT NOT NULL DEFAULT '', collection_name TEXT NOT NULL DEFAULT '',
+		idempotency_key TEXT NOT NULL, status TEXT NOT NULL, request_digest TEXT NOT NULL,
+		plan_digest TEXT NOT NULL, plan_json TEXT NOT NULL, result_json TEXT NOT NULL DEFAULT '',
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), expires_at TIMESTAMPTZ NOT NULL, applied_at TIMESTAMPTZ,
+		UNIQUE(owner_id, collection_name, idempotency_key)
+	)`,
 	// Drop legacy index from deployments that predated collection-scoped upsert.
 	`DROP INDEX IF EXISTS idx_memories_key_owner`,
 	// Migrations for existing PG databases. ALTER TABLE must run BEFORE the
@@ -914,6 +921,13 @@ var schemaSQLiteStatements = []string{
 	// Upsert identity is (key, owner_id, collection_name) so the same key
 	// can exist in different pinned contexts without clobbering (P1 isolation).
 	`CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_key_owner_coll ON memories(key, owner_id, collection_name)`,
+	`CREATE TABLE IF NOT EXISTS memory_commits (
+		id TEXT PRIMARY KEY, owner_id TEXT NOT NULL DEFAULT '', collection_name TEXT NOT NULL DEFAULT '',
+		idempotency_key TEXT NOT NULL, status TEXT NOT NULL, request_digest TEXT NOT NULL,
+		plan_digest TEXT NOT NULL, plan_json TEXT NOT NULL, result_json TEXT NOT NULL DEFAULT '',
+		created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, expires_at TEXT NOT NULL, applied_at TEXT,
+		UNIQUE(owner_id, collection_name, idempotency_key)
+	)`,
 	// Drop legacy index from deployments that predated collection-scoped upsert.
 	`DROP INDEX IF EXISTS idx_memories_key_owner`,
 	// idx_memories_room/hall/pinned are created at the end of the

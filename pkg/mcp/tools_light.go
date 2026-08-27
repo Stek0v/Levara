@@ -13,9 +13,9 @@ var toolProfiles = map[string][]string{
 	},
 	"memory": {
 		"levara_instructions", "set_context", "get_project_context", "wake_up",
-		"save_memory", "recall_memory", "list_memories", "pin_memory", "unpin_memory", "delete_memory",
+		"save_memory", "recall_memory", "memory_garden", "memory_markdown_digest", "memory_scaffold_block", "list_memories", "pin_memory", "unpin_memory", "delete_memory",
 		"search", "doctor", "consolidate", "consolidation_status", "consolidation_revert", "diary_write", "diary_read",
-		"supersede_memory", "add_feedback", "get_feedback_stats",
+		"supersede_memory", "memory_commit_preview", "memory_commit_apply", "add_feedback", "get_feedback_stats",
 	},
 	"workspace": {
 		"levara_instructions", "set_context", "get_project_context", "wake_up",
@@ -38,6 +38,15 @@ var toolProfiles = map[string][]string{
 
 func longHorizonEnabled() bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("LEVARA_LONG_HORIZON_RUNTIME"))) {
+	case "1", "true", "yes", "on", "enabled":
+		return true
+	default:
+		return false
+	}
+}
+
+func memoryCommitEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("LEVARA_MEMORY_COMMIT"))) {
 	case "1", "true", "yes", "on", "enabled":
 		return true
 	default:

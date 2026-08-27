@@ -102,7 +102,7 @@ func ToolSaveMemory(ctx context.Context, deps Deps, args map[string]any) ToolRes
 	now := time.Now().UTC().Format(time.RFC3339)
 	ownerID := extractOwnerID(ctx)
 	sourceTaskID, _ := args["source_task_id"].(string)
-	sourceReceiptIDs, _ := json.Marshal(stringSliceArg(args, "source_receipt_ids"))
+	sourceReceiptIDs := memoryReceiptJSON(stringSliceArg(args, "source_receipt_ids"))
 	verificationStatus, _ := args["verification_status"].(string)
 	supersedesMemoryID, _ := args["supersedes_memory_id"].(string)
 
@@ -126,8 +126,8 @@ func ToolSaveMemory(ctx context.Context, deps Deps, args map[string]any) ToolRes
 		RETURNING id
 	`)
 	queryArgs := []any{id, key, value, memType, ownerID, collectionName, room, hall, pin, pinPriority,
-		sourceTaskID, string(sourceReceiptIDs), verificationStatus, supersedesMemoryID, now, now,
-		value, memType, room, hall, pin, pinPriority, sourceTaskID, string(sourceReceiptIDs),
+		sourceTaskID, sourceReceiptIDs, verificationStatus, supersedesMemoryID, now, now,
+		value, memType, room, hall, pin, pinPriority, sourceTaskID, sourceReceiptIDs,
 		verificationStatus, supersedesMemoryID, now}
 	var indexJob memoryindex.Job
 	var err error
@@ -165,6 +165,14 @@ func ToolSaveMemory(ctx context.Context, deps Deps, args map[string]any) ToolRes
 	}
 
 	return statusResult(true, fmt.Sprintf("Memory saved: %s = %s (type: %s)", key, Truncate(value, memoryValueLogMaxLen), memType))
+}
+
+func memoryReceiptJSON(ids []string) string {
+	if len(ids) == 0 {
+		return "[]"
+	}
+	encoded, _ := json.Marshal(ids)
+	return string(encoded)
 }
 
 // indexMemorySync vector-indexes the memory inline — before ToolSaveMemory
@@ -320,7 +328,10 @@ func ToolRecallMemory(ctx context.Context, deps Deps, args map[string]any) ToolR
 
 // memoryRowColumns is the SELECT list shared by the SQL recall paths so
 // recallViaSQLLike and recallViaVectorFiltered hydrate an identical shape.
-const memoryRowColumns = "id, key, value, type, owner_id, room, hall, created_at, updated_at"
+const memoryRowColumns = `id, key, value, type, owner_id, room, hall, created_at, updated_at,
+	verification_status, source_task_id, source_receipt_ids, supersedes_memory_id, superseded_by,
+	COALESCE(NULLIF(supersession_reason, ''), (SELECT supersession_reason FROM memories predecessor WHERE predecessor.id=memories.supersedes_memory_id AND predecessor.collection_name=memories.collection_name AND (predecessor.owner_id=memories.owner_id OR predecessor.owner_id='')), '') AS supersession_reason,
+	COALESCE(CAST(valid_until AS TEXT), (SELECT CAST(valid_until AS TEXT) FROM memories predecessor WHERE predecessor.id=memories.supersedes_memory_id AND predecessor.collection_name=memories.collection_name AND (predecessor.owner_id=memories.owner_id OR predecessor.owner_id='')), '') AS superseded_at`
 
 // appendMemoryFilters appends the structural filters shared by both SQL
 // recall paths — owner scope, then optional collection/room/hall, then
@@ -357,14 +368,26 @@ func appendMemoryFilters(conds []string, qargs []any, pos int, collectionName, r
 func scanMemoryRows(rows *sql.Rows) []map[string]any {
 	var results []map[string]any
 	for rows.Next() {
-		var id, key, value, typ, oid, rm, hl, ca, ua string
-		if err := rows.Scan(&id, &key, &value, &typ, &oid, &rm, &hl, &ca, &ua); err != nil {
+		var id, key, value, typ, oid, rm, hl, ca, ua, verification, taskID, receiptJSON, supersedes, supersededBy, reason, supersededAt string
+		if err := rows.Scan(&id, &key, &value, &typ, &oid, &rm, &hl, &ca, &ua, &verification, &taskID, &receiptJSON, &supersedes, &supersededBy, &reason, &supersededAt); err != nil {
 			continue
+		}
+		var receipts []string
+		_ = json.Unmarshal([]byte(receiptJSON), &receipts)
+		if receipts == nil {
+			receipts = []string{}
+		}
+		state := "active"
+		if supersededBy != "" {
+			state = "superseded"
 		}
 		results = append(results, map[string]any{
 			"id": id, "key": key, "value": value, "type": typ,
 			"owner_id": oid, "room": rm, "hall": hl,
 			"created_at": ca, "updated_at": ua,
+			"verification_status": verification, "source_task_id": taskID, "source_receipt_ids": receipts,
+			"supersedes_memory_id": supersedes, "superseded_by": supersededBy, "supersession_state": state,
+			"superseded_at": supersededAt, "supersession_reason": reason,
 		})
 	}
 	return results
