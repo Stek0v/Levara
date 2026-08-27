@@ -1,6 +1,5 @@
-// mcp.go — Model Context Protocol (MCP) Streamable HTTP server (spec 2025-03-26).
-// Implements JSON-RPC 2.0 with session management, SSE streaming, and 15 tools.
-// Compatible with Claude Code, Cursor, Cline, and any MCP client.
+// mcp.go — legacy Model Context Protocol (MCP) Streamable HTTP server.
+// Implements the session-based 2025-03-26 transport for existing clients.
 //
 // Transport: Streamable HTTP (preferred)
 //
@@ -58,10 +57,11 @@ func configuredMCPToolDescriptors() []mcp.Tool {
 	return mcp.ToolDescriptorsForMode(os.Getenv("LEVARA_MCP_TOOLSET"))
 }
 
-// RegisterMCPAPI registers MCP Streamable HTTP endpoint (spec 2025-03-26).
+// RegisterMCPAPI registers both MCP transport eras.
 // POST /mcp — JSON-RPC requests + notifications
 // GET  /mcp — SSE stream for server-initiated messages
 // DELETE /mcp — terminate session
+// POST /mcp/2026-07-28 — stateless current Streamable HTTP transport
 func RegisterMCPAPI(app fiber.Router, cfg APIConfig) {
 	store := mcp.NewSessionStore()
 	store.OnCountChange = func(n int) {
@@ -74,8 +74,13 @@ func RegisterMCPAPI(app fiber.Router, cfg APIConfig) {
 	app.Post("/mcp", handler.handleRPC)
 	app.Get("/mcp", handler.handleSSEStream)
 	app.Delete("/mcp", handler.handleDeleteSession)
+	app.Post(latestMCPPath, handler.handleLatestRPC)
+	app.Get(latestMCPPath, methodNotAllowed)
+	app.Delete(latestMCPPath, methodNotAllowed)
 	go handler.sessionCleanupLoop()
 }
+
+func methodNotAllowed(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusMethodNotAllowed) }
 
 // NewMCPDeps builds a server-scoped mcp.Deps from an APIConfig, independent of
 // any HTTP/SSE session. Used by background workers (e.g. the consolidation
@@ -626,7 +631,7 @@ func (h *mcpHandler) handleRPC(c *fiber.Ctx) error {
 			JSONRPC: "2.0",
 			ID:      req.ID,
 			Result: map[string]any{
-				"protocolVersion": mcp.ProtocolVersion,
+				"protocolVersion": mcp.LegacyProtocolVersion,
 				"capabilities": map[string]any{
 					"tools":     map[string]any{},
 					"resources": map[string]any{"subscribe": false, "listChanged": false},
@@ -682,6 +687,10 @@ func (h *mcpHandler) resolveCollection(sess *mcpSession, args map[string]any, fo
 }
 
 func (h *mcpHandler) handleToolCall(c *fiber.Ctx, req jsonRPCRequest) error {
+	return h.handleToolCallWithSession(c, req, h.getOrValidateSession(c.Get("Mcp-Session-Id")))
+}
+
+func (h *mcpHandler) handleToolCallWithSession(c *fiber.Ctx, req jsonRPCRequest, sess *mcpSession) error {
 	var params struct {
 		Name      string         `json:"name"`
 		Arguments map[string]any `json:"arguments"`
@@ -702,8 +711,6 @@ func (h *mcpHandler) handleToolCall(c *fiber.Ctx, req jsonRPCRequest) error {
 	if traceID := firstNonEmpty(c.Get("X-Trace-ID"), c.Get("X-Request-ID")); traceID != "" {
 		toolCtx = context.WithValue(toolCtx, mcpTraceIDKey, traceID)
 	}
-	sessionID := c.Get("Mcp-Session-Id")
-	sess := h.getOrValidateSession(sessionID)
 	actor := accesspkg.Actor{}
 	if authenticated, err := h.authenticateMCPRequest(c); err == nil && authenticated.UserID != "" {
 		actor = authenticated
@@ -1130,7 +1137,9 @@ func (h *mcpHandler) toolGitSearch(ctx context.Context, args map[string]any) mcp
 // First AI-seam tools: vector indexing (save) + semantic recall with SQL
 // fallback (recall), both gated on EmbedAvailable() via Deps.
 func (h *mcpHandler) toolSaveMemory(ctx context.Context, sess *mcpSession, args map[string]any) mcpToolResult {
-	blindSave := sess == nil || !sess.MemoryConsulted
+	// ponytail: stateless MCP requests cannot carry session history; omit this
+	// session-only advisory instead of inventing request state.
+	blindSave := sess != nil && !sess.MemoryConsulted
 	repeatSave := h.memoryKeyExists(ctx, args)
 	result := mcp.ToolSaveMemory(ctx, h, args)
 	if result.IsError {

@@ -233,7 +233,8 @@ Enterprise combinations fail before listeners are opened.
 
 | Surface | Default | Current contract | Best for |
 |---|---:|---:|---|
-| MCP Streamable HTTP | `/mcp` | 79 canonical tools | AI agents and IDE integrations |
+| MCP Streamable HTTP (latest) | `/mcp/2026-07-28` | stateless, per-request metadata | Hermes and current MCP clients |
+| MCP Streamable HTTP (legacy) | `/mcp` | session-based compatibility | Existing AI agents and IDE integrations |
 | REST | `:8080` | 144 canonical routes | WebUI, applications and operations |
 | gRPC v1/v2 | `:50051` | 45 canonical methods | Typed SDK and search clients |
 | CLI | local binaries | server, client, backup, contract and host tooling | Operators and automation |

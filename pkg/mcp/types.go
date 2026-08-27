@@ -8,9 +8,14 @@ package mcp
 
 import "encoding/json"
 
-// ProtocolVersion is the single MCP wire-version advertised by every Levara
-// transport and by the /version endpoint.
-const ProtocolVersion = "2025-03-26"
+const (
+	// LatestProtocolVersion uses the stateless, per-request metadata model.
+	LatestProtocolVersion = "2026-07-28"
+	// LegacyProtocolVersion keeps the session-based /mcp endpoint compatible.
+	LegacyProtocolVersion = "2025-03-26"
+	// ProtocolVersion is the newest MCP revision supported by Levara.
+	ProtocolVersion = LatestProtocolVersion
+)
 
 // ── JSON-RPC 2.0 wire types ──
 //
@@ -39,6 +44,7 @@ type JSONRPCResponse struct {
 type RPCError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
+	Data    any    `json:"data,omitempty"`
 }
 
 // ── MCP-specific types ──
