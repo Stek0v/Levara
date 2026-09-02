@@ -137,7 +137,7 @@ func ToolPinMemory(ctx context.Context, deps Deps, args map[string]any) ToolResu
 
 	// Placeholders $1..$4 are each used once — Q (not QArgs) is sufficient.
 	res, err := db.ExecContext(ctx, deps.Q(`
-		UPDATE memories SET is_pinned = 1, pin_priority = $1, updated_at = $2
+		UPDATE memories SET is_pinned = TRUE, pin_priority = $1, updated_at = $2
 		WHERE key = $3 AND (owner_id = $4 OR owner_id = '')
 	`), priority, now, key, ownerID)
 	if err != nil {
@@ -180,7 +180,7 @@ func ToolUnpinMemory(ctx context.Context, deps Deps, args map[string]any) ToolRe
 	now := time.Now().UTC().Format(time.RFC3339)
 
 	if _, err := db.ExecContext(ctx, deps.Q(`
-		UPDATE memories SET is_pinned = 0, pin_priority = 0, updated_at = $1
+		UPDATE memories SET is_pinned = FALSE, pin_priority = 0, updated_at = $1
 		WHERE key = $2 AND (owner_id = $3 OR owner_id = '')
 	`), now, key, ownerID); err != nil {
 		return ToolResult{

@@ -246,8 +246,8 @@ jobs:
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
-      - name: Run Postgres-backed audit and outbox tests
-        run: go test -count=1 ./pkg/audit ./pkg/memoryindex -run Postgres
+      - name: Run Postgres-backed audit, outbox, and MCP tests
+        run: go test -count=1 ./pkg/audit ./pkg/memoryindex ./pkg/mcp -run Postgres
 
   compose:
     name: compose configuration
