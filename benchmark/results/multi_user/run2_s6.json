@@ -1,0 +1,14 @@
+{
+ "url": "http://127.0.0.1:18085",
+ "generated": "2026-09-03T06:12:22Z",
+ "scenarios": [
+  {
+   "scenario": "S6",
+   "key": "s6-key-6a98f765",
+   "a_has_new": true,
+   "b_has_new": true,
+   "pass": true
+  }
+ ],
+ "all_pass": true
+}

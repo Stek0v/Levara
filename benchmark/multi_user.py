@@ -418,15 +418,17 @@ async def scenario_s6(args, http):
         await b.call("save_memory", {"key": key, "value": "NEW", "collection": "loadtest_s6", "room": "loadtest", "hall": "fact"})
 
         # Bidirectional sync via REST API
-        async def run_sync(target_url):
+        async def run_sync(target_url, remote_url):
+            # remote_url must include the /api/v1 prefix — sync/run proxies
+            # it straight into /sync/manifest, /sync/export, etc.
             async with http.post(target_url.rstrip("/") + "/api/v1/sync/run",
-                                 json={"remote_url": url_b.replace("18082", "18081") if target_url.endswith("18082") else url_b,
+                                 json={"remote_url": remote_url,
                                         "direction": "pull", "types": ["memories"]}) as r:
                 return r.status
 
         # Pull A from B and B from A
-        await run_sync(args.url)
-        await run_sync(url_b)
+        await run_sync(args.url, url_b.rstrip("/") + "/api/v1")
+        await run_sync(url_b, args.url.rstrip("/") + "/api/v1")
 
         # Read both back
         _, pl_a, _ = await a.call("recall_memory", {"query": key, "collection": "loadtest_s6"})
@@ -453,9 +455,9 @@ async def main():
     ap.add_argument("--agents", type=int, default=10)
     ap.add_argument("--keys", type=int, default=100)
     ap.add_argument("--output", default="")
-    ap.add_argument("--server-binary", default="/tmp/levara-loadtest/levara-server")
-    ap.add_argument("--data-dir-b", default="/tmp/levara-loadtest/data-b")
-    ap.add_argument("--pg-dsn", default="postgres://stek0v@localhost:5432/levara_loadtest?sslmode=disable")
+    ap.add_argument("--server-binary", default="/tmp/levara-load2/levara-server")
+    ap.add_argument("--data-dir-b", default="/tmp/levara-load2/data-b")
+    ap.add_argument("--pg-dsn", default="postgres://stek0v@localhost:5432/levara_load2?sslmode=disable")
     ap.add_argument("--s3-saves", type=int, default=1000)
     args = ap.parse_args()
 

@@ -1,0 +1,16 @@
+{
+ "url": "http://127.0.0.1:18085",
+ "generated": "2026-09-03T06:03:00Z",
+ "scenarios": [
+  {
+   "scenario": "S4",
+   "writers": 10,
+   "stale_attempts": 5,
+   "stale_rejected": 5,
+   "fresh_accepted": 0,
+   "manifest_ok": true,
+   "pass": true
+  }
+ ],
+ "all_pass": true
+}

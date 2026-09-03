@@ -1,0 +1,63 @@
+{
+  "generated": "2026-09-03T09:20:00+03:00",
+  "commit": "1bb5bab",
+  "note": "Full re-run against a fresh build of main after all 25 review-fix commits; fresh PG database levara_load2, embed sidecar potion-code-16M/256d.",
+  "scenarios": [
+    {
+      "name": "S1 x10 agents x100 keys",
+      "pass": true,
+      "detail": {
+        "error_count": 0,
+        "save_p95_ms": 8.2,
+        "recall_p95_ms": 226.3
+      }
+    },
+    {
+      "name": "S1 x50 agents x60 keys",
+      "pass": true,
+      "detail": {
+        "error_count": 0,
+        "save_p95_ms": 22.2,
+        "recall_p95_ms": 238.5
+      }
+    },
+    {
+      "name": "S2 lease contention",
+      "pass": true,
+      "detail": {
+        "rounds": 5,
+        "complete_ok": true,
+        "replay_idempotent": true
+      }
+    },
+    {
+      "name": "S3 dual-process outbox",
+      "pass": true,
+      "detail": {
+        "error_count": 0,
+        "job_status": {
+          "completed": 3201
+        },
+        "duplicate_completions": 0,
+        "drained": true
+      }
+    },
+    {
+      "name": "S4 workspace digest storm",
+      "pass": true,
+      "detail": {
+        "stale_attempts": 5,
+        "stale_rejected": 5,
+        "manifest_ok": true
+      }
+    },
+    {
+      "name": "S6 dual-node sync",
+      "pass": true,
+      "detail": {
+        "a_has_new": true,
+        "b_has_new": true
+      }
+    }
+  ]
+}
