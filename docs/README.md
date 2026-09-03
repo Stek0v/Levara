@@ -20,7 +20,7 @@ Entry points by role:
 | Run long-horizon tasks | [long-horizon-runtime.md](long-horizon-runtime.md) ([RU](long-horizon-runtime.ru.md)) |
 | Operate and observe | [webui-operations.md](webui-operations.md), [cron-profiles.md](cron-profiles.md), [macos-levara-watchdog.md](macos-levara-watchdog.md) |
 | Check the API surface | [api-contract.md](api-contract.md) (SSOT), [api-reference.md](api-reference.md), [contract.json](contract.json) |
-| Evaluate Levara for my org | [marketing/](marketing/), [product-ladder.md](product-ladder.md) |
+| Evaluate Levara for my org | [marketing/](marketing/), [one-pager](marketing/one-pager.md), [product-ladder.md](product-ladder.md) |
 
 ## Verified state
 

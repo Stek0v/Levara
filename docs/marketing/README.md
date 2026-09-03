@@ -38,6 +38,9 @@ without forcing teams into a SaaS memory silo.
 | “Markdown workspace as source of truth” | `pkg/workspace`, `internal/http/workspace*.go` | `.md` файлы остаются читаемыми людьми, индексы можно пересобрать |
 | “Team/Enterprise governance” | `pkg/access`, `pkg/audit`, `pkg/profile` | Auth/RBAC/tenant/audit вынесены в отдельные слои и проверяются тестами |
 | “Enterprise honesty” | `pkg/storage`, `pkg/access/oidc.go`, `docs/profile-presets.md` | Contracts/seams готовы; production SAML/SCIM/KMS/SIEM backends — roadmap |
+| “Проверено независимым код-ревью” (2026-09-03) | итоги: 54 findings, 52 закрыто, 2 задокументированы как осознанный дизайн; все critical/high закрыты с regression-тестами | «Провели полный аудит безопасности и конкурентности: все критические и высокие находки исправлены и покрыты тестами» |
+| “CI как гейт качества” | 19 зелёных проверок: golangci-lint, vet, race detector, govulncheck (0 reachable), npm audit (0), contract drift check, Postgres-интеграционные шарды | «Каждый коммит проходит 19 автоматических проверок, включая сканеры уязвимостей» |
+| “Проверено под нагрузкой” (2026-09-03) | `benchmark/results/multi_user/run2_summary.json`: 50 агентов — save p95 22 ms, recall p95 238 ms, 0 утечек между агентами; 2 сервера на общей БД — 3 200 задач, 0 дублей; lease contention — ровно 1 победитель из 3 гонщиков | «Проверено на 50 параллельных агентах: миллисекундные отклики, ноль утечек данных, ноль двойных выполнений задач» |
 
 ## Что улучшено и что ещё улучшать
 
@@ -62,6 +65,11 @@ without forcing teams into a SaaS memory silo.
 | “Mac ↔ Pi memory sync” | self-hosted/homelab communities | Solo Pro adoption |
 | “AI agents with ACL and audit” | technical founder / platform teams | Team pilots |
 | “Enterprise memory without SaaS lock-in” | security/platform stakeholders | Enterprise discovery |
+
+## One-pager
+
+Краткая презентация проекта на одной странице (EN + RU), для холодных писем и
+первого контакта: [one-pager.md](one-pager.md).
 
 ## Редакционная серия
 

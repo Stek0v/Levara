@@ -67,7 +67,7 @@ Enterprise доказательством готовности KMS/BYOK или �
 - SCIM-shaped provisioner seam уже есть, но HTTP SCIM surface отложен до ADR.
 - `pkg/storage` задаёт metadata/KMS contracts: tenant/project scope, digest,
   retention class, legal hold flag, encryption key reference.
-- `docs/security-diff-checklist.md` задаёт блокирующие условия для access,
+- `docs/internal/security-diff-checklist.md` задаёт блокирующие условия для access,
   tenant, audit, storage/KMS и MCP memory ownership изменений.
 
 ## Почему Levara
@@ -78,6 +78,11 @@ Enterprise доказательством готовности KMS/BYOK или �
   это слой адаптеров, а не другой продукт.
 - **Производительность инженерного класса** — около 2,6 мс на поиск, сотни
   запросов в секунду, 100% восстановление после сбоя.
+- **Прошёл независимый аудит** (2026-09-03): полный код-ревью безопасности и
+  конкурентности — 52 из 54 находок закрыто с regression-тестами, критические и
+  высокие устранены полностью. Tenant enforcement: аутентифицированные запросы
+  без tenant-контекста получают 403 (проверено тестом). CI включает govulncheck
+  (0 достижимых уязвимостей) и npm audit (0 уязвимостей).
 
 ## Как начать (пилот)
 
@@ -88,7 +93,7 @@ cp deploy/profiles/enterprise.strict.env.example .env
 ./levara-server -config-check
 ```
 
-Для оценки безопасности изменений используйте `docs/security-diff-checklist.md`.
+Для оценки безопасности изменений используйте `docs/internal/security-diff-checklist.md`.
 
 ## CTA для enterprise discovery
 
