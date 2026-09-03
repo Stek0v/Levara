@@ -54,6 +54,17 @@ Levara gives agents a context control plane:
 - **Scale the operating model** — the same engine supports a local developer,
   a multi-device setup, a shared team, or enterprise adapter boundaries.
 
+## Verified quality
+
+- **Full code review (2026-09-03)**: 54 findings — 52 fixed, 2 documented as
+  deliberate design choices. Summary in [docs/README.md](./docs/README.md).
+- **CI, 19 checks green**: golangci-lint, vet, race detector, govulncheck
+  (0 reachable vulnerabilities), npm audit (0 vulnerabilities), contract
+  drift check, Postgres-backed integration shards.
+- **Multi-user load suite, 6/6 PASS**: 50 concurrent agents — save p95 22 ms,
+  recall p95 238 ms, zero cross-agent leaks; 3,200 outbox jobs under dual-process
+  contention — zero duplicate executions.
+
 ## Capability map
 
 | Area | Implemented capabilities |

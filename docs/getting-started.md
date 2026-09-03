@@ -200,6 +200,35 @@ Important flags:
 
 There is no `-llm-model` flag. Set the LLM model with `LLM_MODEL` in the environment.
 
+## Security hardening
+
+The dev default is an open server (no auth) for local single-user use. For
+anything reachable beyond localhost:
+
+```bash
+# Require authentication (JWT / API keys) on all endpoints
+./levara-server -require-auth ...
+
+# Enforce tenant isolation: authenticated users without a tenant get 403
+LEVARA_TENANT_ENFORCED=1 ./levara-server -require-auth ...
+
+# HMAC-pepper API-key hashing (falls back to JWT_SECRET)
+LEVARA_API_KEY_PEPPER=<random> ./levara-server -require-auth ...
+```
+
+MCP transports: the stateless endpoint `/mcp/2026-07-28` enforces auth on
+`tools/call` and resource reads (discovery stays public); the legacy session
+transport `/mcp` keeps session-bound authorization.
+
+Cognify batching is opt-in and off by default:
+
+```bash
+# Coalesce 4 chunks per LLM extraction call (fewer requests on large runs)
+LEVARA_LLM_EXTRACT_BATCH_SIZE=4 ./levara-server ...
+```
+
+_Last verified: 2026-09-03 against main (1bb5bab)._
+
 ## MCP integration
 
 For MCP clients against the current Mac runtime:
@@ -245,7 +274,10 @@ mcp_levara_check_drift()
 
 ## Next steps
 
+- [README.md](README.md) — documentation index by role.
+- [features-guide.md](features-guide.md) — every feature mapped to use cases and commands.
+- [tutorials/00-getting-started-ru.md](tutorials/00-getting-started-ru.md) — Russian step-by-step guide.
 - [current-state.md](current-state.md) — verified local runtime snapshot.
-- [api-reference.md](api-reference.md) — HTTP and gRPC API documentation.
+- [api-reference.md](api-reference.md) — complete REST endpoint reference (generated from the contract).
 - [deployment.md](deployment.md) — deployment recipes, launchd/systemd/Docker notes.
 - [profile-presets.md](profile-presets.md) — product profile packaging.

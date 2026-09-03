@@ -1,6 +1,6 @@
 # Current implementation and local runtime state
 
-_Last verified: 2026-07-05T01:46:42Z from the Mac launchd runtime, `/version`, `/health`, embed sidecar `/health`, `mcp_levara_doctor`, and `mcp_levara_runtime_stats`._
+_Last verified: 2026-09-03 from the Mac launchd runtime, `/version`, and `/health`._
 
 This page is the operational truth for the local Mac deployment. Product roadmap documents may describe target profiles or enterprise seams; use this page when you need to know what is actually running now.
 
@@ -10,13 +10,16 @@ This page is the operational truth for the local Mac deployment. Product roadmap
 |---|---|
 | Repo | `/Users/stek0v/src/levara` |
 | Branch | `main` |
-| Repo HEAD | `27efa39 remove agent dot-folders from repo (.claude .continue .cursor .gemini .kiro .opencode .vscode .pytest_cache)` |
-| Running binary version | `991d61a` |
-| Running build time | `2026-06-30T12:11:27Z` |
-| Go version in running binary | `go1.26.4` |
-| Protocols | MCP `2024-11-05`, gRPC `v1`, `v2` |
+| Repo HEAD | `83df7e5` (2026-09-03) |
+| Running binary version | `fffaeb0` |
+| Running build time | `2026-08-28T00:46:51Z` |
+| Go version in running binary | `go1.27.0` |
+| Protocols | MCP `2026-07-28` (stateless) + legacy session `/mcp`, gRPC `v1`, `v2` |
+| API surface | 82 MCP tools, 144 REST routes, 45 gRPC methods (`docs/contract.json`) |
 
-The checked-out source is ahead of the deployed binary. Rebuild + restart before assuming code at HEAD is active.
+The deployed binary predates the 2026-09-03 security review (26 fix commits,
+`949e482..83df7e5`): 54 findings, 52 fixed. Rebuild + restart before assuming
+review fixes are active. Track: `git log --oneline fffaeb0..HEAD`.
 
 ## Local Mac runtime
 
