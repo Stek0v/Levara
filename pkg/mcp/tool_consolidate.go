@@ -80,11 +80,18 @@ func (s *sqlStore) Candidates(ctx context.Context, collection, room, hall string
 
 func (s *sqlStore) Apply(ctx context.Context, runID string, actions []consolidate.Action) error {
 	db := s.deps.DB()
+	// Transactional apply (finding M7, 2026-09-03 review): a mid-run failure
+	// previously left half-superseded sources with no semantic record.
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
 	for _, a := range actions {
 		switch a.Kind {
 		case consolidate.ActionMerge:
 			for _, src := range a.SourceIDs {
-				if _, err := db.ExecContext(ctx, s.deps.Q(
+				if _, err := tx.ExecContext(ctx, s.deps.Q(
 					`UPDATE memories SET superseded_by = $1, valid_until = $2, consolidation_run_id = $3 WHERE id = $4`),
 					a.SurvivorID, nowTS(), runID, src); err != nil {
 					return err
@@ -93,7 +100,7 @@ func (s *sqlStore) Apply(ctx context.Context, runID string, actions []consolidat
 		case consolidate.ActionAbstract:
 			newID := uuid.New().String()
 			from, _ := json.Marshal(a.SourceIDs)
-			if _, err := db.ExecContext(ctx, s.deps.Q(
+			if _, err := tx.ExecContext(ctx, s.deps.Q(
 				`INSERT INTO memories
 				   (id, key, value, type, owner_id, collection_name, room, hall, is_pinned, pin_priority,
 				    superseded_by, consolidated_from, consolidation_run_id, tier, created_at, updated_at)
@@ -105,7 +112,7 @@ func (s *sqlStore) Apply(ctx context.Context, runID string, actions []consolidat
 				return err
 			}
 			for _, src := range a.SourceIDs {
-				if _, err := db.ExecContext(ctx, s.deps.Q(
+				if _, err := tx.ExecContext(ctx, s.deps.Q(
 					`UPDATE memories SET superseded_by = $1, valid_until = $2, consolidation_run_id = $3 WHERE id = $4`),
 					newID, nowTS(), runID, src); err != nil {
 					return err
@@ -113,7 +120,7 @@ func (s *sqlStore) Apply(ctx context.Context, runID string, actions []consolidat
 			}
 		}
 	}
-	return nil
+	return tx.Commit()
 }
 
 // collectionNeighbors adapts the embed + vector-search surface to
@@ -401,18 +408,26 @@ func (r *consolidationRunner) RunOnce(ctx context.Context) error {
 // sqlStore.collection is not used here; Revert operates purely by
 // consolidation_run_id so a zero-value collection field is fine.
 func (s *sqlStore) Revert(ctx context.Context, runID string) error {
+	// Transactional revert (finding M7, 2026-09-03 review): reactivation and
+	// semantic-record deletion must succeed together, or the memory set is
+	// left inconsistent (sources active AND synthetic records alive).
+	tx, err := s.deps.DB().BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
 	// Reactivate superseded source rows from this run.
-	if _, err := s.deps.DB().ExecContext(ctx, s.deps.Q(
+	if _, err := tx.ExecContext(ctx, s.deps.Q(
 		`UPDATE memories SET superseded_by='', valid_until=NULL, consolidation_run_id=''
 		 WHERE consolidation_run_id=$1 AND superseded_by<>''`), runID); err != nil {
 		return err
 	}
 	// Delete generated semantic records from this run.
-	if _, err := s.deps.DB().ExecContext(ctx, s.deps.Q(
+	if _, err := tx.ExecContext(ctx, s.deps.Q(
 		`DELETE FROM memories WHERE consolidation_run_id=$1 AND tier='semantic'`), runID); err != nil {
 		return err
 	}
-	return nil
+	return tx.Commit()
 }
 
 // ToolConsolidationRevert reverses a consolidation run: reactivates

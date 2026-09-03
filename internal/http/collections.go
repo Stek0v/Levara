@@ -2,6 +2,7 @@
 package http
 
 import (
+	"log"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
@@ -76,6 +77,15 @@ func collectionDeleteHandler(cfg APIConfig) fiber.Handler {
 			return c.SendStatus(204)
 		}
 		cfg.Collections.Drop(name)
+		// Drop the lexical sidecar with the collection (finding M4).
+		if cfg.BM25Indexes != nil {
+			cfg.BM25Indexes.Delete(name)
+			if cfg.BM25Store != nil {
+				if err := cfg.BM25Store.Remove(name); err != nil {
+					log.Printf("[collections] remove BM25 sidecar %q: %v", name, err)
+				}
+			}
+		}
 		return c.SendStatus(204)
 	}
 }
@@ -97,6 +107,13 @@ func collectionRecordDeleteHandler(cfg APIConfig) fiber.Handler {
 				return c.Status(404).JSON(fiber.Map{"detail": msg})
 			}
 			return c.Status(500).JSON(fiber.Map{"detail": msg})
+		}
+		// Keep the lexical sidecar in sync with the vector store (finding
+		// M4, 2026-09-03 review): a BM25 hit on a deleted vector misleads.
+		if cfg.BM25Indexes != nil {
+			if idx := cfg.BM25Indexes.Get(name); idx != nil {
+				idx.Remove(id)
+			}
 		}
 		return c.SendStatus(204)
 	}

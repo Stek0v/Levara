@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"sort"
 	"strings"
 )
@@ -35,7 +36,7 @@ type ScoredResult struct {
 	ID          string
 	Score       float32
 	RerankScore float64 // 0 = not reranked
-	Metadata json.RawMessage
+	Metadata    json.RawMessage
 }
 
 // GraphProximity computes the proximity score between query entities and result entities.
@@ -98,6 +99,15 @@ func GraphProximity(ctx context.Context, db *sql.DB, queryEntityIDs, resultEntit
 	return 0
 }
 
+// isPostgresDriver reports whether db speaks PostgreSQL placeholder syntax.
+func isPostgresDriver(db *sql.DB) bool {
+	if db == nil {
+		return false
+	}
+	name := strings.ToLower(fmt.Sprintf("%T", db.Driver()))
+	return strings.Contains(name, "pgx") || strings.Contains(name, "pq") || strings.Contains(name, "stdlib")
+}
+
 // batchNeighbors returns the set of all 1-hop neighbors for given node IDs.
 // Single SQL query for efficiency.
 func batchNeighbors(ctx context.Context, db *sql.DB, nodeIDs []string) map[string]bool {
@@ -106,10 +116,21 @@ func batchNeighbors(ctx context.Context, db *sql.DB, nodeIDs []string) map[strin
 		return result
 	}
 
+	// Placeholder style follows the driver (finding M9, 2026-09-03 review):
+	// pgx rejects '?' placeholders, which previously made graph rerank
+	// silently degrade to zero graph proximity on PostgreSQL.
+	placeholderStyle := "?"
+	if isPostgresDriver(db) {
+		placeholderStyle = "$%d"
+	}
 	placeholders := make([]string, len(nodeIDs))
 	args := make([]any, len(nodeIDs))
 	for i, id := range nodeIDs {
-		placeholders[i] = "?"
+		if placeholderStyle == "?" {
+			placeholders[i] = "?"
+		} else {
+			placeholders[i] = fmt.Sprintf(placeholderStyle, i+1)
+		}
 		args[i] = id
 	}
 	inClause := strings.Join(placeholders, ",")
@@ -122,6 +143,9 @@ func batchNeighbors(ctx context.Context, db *sql.DB, nodeIDs []string) map[strin
 
 	rows, err := db.QueryContext(ctx, query, append(args, args...)...)
 	if err != nil {
+		// Surface the failure instead of silently ranking without graph
+		// proximity (M9).
+		log.Printf("[graphrank] batchNeighbors query: %v", err)
 		return result
 	}
 	defer rows.Close()
