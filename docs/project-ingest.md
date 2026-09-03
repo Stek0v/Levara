@@ -141,4 +141,4 @@ python3 benchmark/memory_behavior_eval/run_memory_behavior_eval.py \
 
 After changing the scaffold, rerun the same eval and compare behavior score and
 context bytes. For the full operator workflow see
-`docs/memory-behavior-optimization.md`.
+`docs/internal/memory-behavior-optimization.md`.
