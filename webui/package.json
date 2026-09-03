@@ -37,7 +37,8 @@
     "zustand": "^5.0.12"
   },
   "overrides": {
-    "postcss": "8.5.22",
+    "postcss": "8.5.26",
+    "nanoid": "3.3.18",
     "sharp": "0.35.3"
   }
 }
