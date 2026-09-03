@@ -4,6 +4,8 @@ package http
 import (
 	"context"
 	"database/sql"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -58,7 +60,16 @@ func TenantMiddleware(accessCfg AccessConfig) fiber.Handler {
 			}
 		}
 
-		// 3. No tenant = no isolation (dev mode / single-user)
+		// 3. No tenant = no isolation (dev mode / single-user). Under
+		// LEVARA_TENANT_ENFORCED an authenticated user without a resolved
+		// tenant is rejected instead of silently proceeding unisolated
+		// (finding M26, 2026-09-03 review).
+		if strings.EqualFold(strings.TrimSpace(os.Getenv("LEVARA_TENANT_ENFORCED")), "true") ||
+			os.Getenv("LEVARA_TENANT_ENFORCED") == "1" {
+			if userID, _ := c.Locals("user_id").(string); userID != "" {
+				return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"detail": "tenant membership required (tenant enforcement enabled)"})
+			}
+		}
 		return c.Next()
 	}
 }
