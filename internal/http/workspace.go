@@ -1096,7 +1096,10 @@ func commitWorkspace(cfg APIConfig, req workspaceCommitRequest) (workspaceCommit
 		CommitID:  commitID,
 		Message:   req.Message,
 		Author:    req.Author,
-		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		// RFC3339Nano: two commits within the same second previously
+		// tied, and the UUID tie-break made "latest commit" random —
+		// breaking the H7 revert guard ordering.
+		CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
 		Path:      commitDir,
 		Files:     files,
 	}
