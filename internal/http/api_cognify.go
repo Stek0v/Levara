@@ -15,6 +15,7 @@ import (
 	"log"
 	"os"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -192,12 +193,16 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 
 		// Build orchestrator config from server config + request overrides
 		pipeCfg := orchestrator.Config{
-			ChunkStrategy:       "merged",
-			MinChunkChars:       50,
-			MaxChunkChars:       2000,
-			LLMEndpoint:         os.Getenv("LLM_ENDPOINT"),
-			LLMModel:            os.Getenv("LLM_MODEL"),
-			LLMConcurrency:      1,
+			ChunkStrategy:  "merged",
+			MinChunkChars:  50,
+			MaxChunkChars:  2000,
+			LLMEndpoint:    os.Getenv("LLM_ENDPOINT"),
+			LLMModel:       os.Getenv("LLM_MODEL"),
+			LLMConcurrency: 1,
+			// M8: opt-in chunk batching. LEVARA_LLM_EXTRACT_BATCH_SIZE=4
+			// coalesces 4 chunks per extraction call — fewer LLM requests
+			// for large cognify runs. Default 1 keeps legacy behavior.
+			LLMBatchSize:        batchSizeFromEnv(),
 			EmbedEndpoint:       cfg.EmbedEndpoint,
 			EmbedModel:          cfg.EmbedModel,
 			EmbedClient:         cfg.EmbedClient, // T3 follow-up: reuse shared TCP pool through the pipeline
@@ -424,4 +429,14 @@ func cognifyStreamHandler(cfg APIConfig) fiber.Handler {
 		})
 		return nil
 	}
+}
+
+// batchSizeFromEnv reads LEVARA_LLM_EXTRACT_BATCH_SIZE (M8); values < 1
+// keep the legacy per-chunk extraction.
+func batchSizeFromEnv() int {
+	n, err := strconv.Atoi(strings.TrimSpace(os.Getenv("LEVARA_LLM_EXTRACT_BATCH_SIZE")))
+	if err != nil || n < 1 {
+		return 1
+	}
+	return n
 }

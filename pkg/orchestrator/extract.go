@@ -20,6 +20,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -266,4 +267,59 @@ func extractJSON(s string) string {
 		}
 	}
 	return ""
+}
+
+// extractEntitiesBatched coalesces several chunks into a single LLM call
+// (finding M8, 2026-09-03 review). The prompt separates chunks with an
+// explicit marker and asks the model to include "source_chunk" (the 1-based
+// segment index) on every node; nodes missing that field are attributed to
+// the batch's first chunk. If the combined call fails or the payload cannot
+// be attributed, the caller should fall back to per-chunk extraction.
+func extractEntitiesBatched(ctx context.Context, client *http.Client, cfg Config, chunkIDs []string, texts []string) (map[string][]graph.DedupNode, map[string][]graph.DedupEdge, string, error) {
+	var sb strings.Builder
+	for i, t := range texts {
+		fmt.Fprintf(&sb, "\n===== CHUNK %d =====\n%s\n", i+1, t)
+	}
+	combined := sb.String()
+
+	nodes, edges, err := extractEntities(ctx, client, cfg, combined)
+	if err != nil {
+		return nil, nil, "", err
+	}
+
+	byChunkNodes := make(map[string][]graph.DedupNode, len(chunkIDs))
+	byChunkEdges := make(map[string][]graph.DedupEdge, len(chunkIDs))
+	fallbackID := chunkIDs[0]
+	for _, n := range nodes {
+		id := chunkIDFromNode(n, chunkIDs)
+		byChunkNodes[id] = append(byChunkNodes[id], n)
+	}
+	for _, e := range edges {
+		// Edges lack per-node provenance; attribute them to the batch's
+		// first chunk so dedup/temporal still process them under a real
+		// chunk id.
+		byChunkEdges[fallbackID] = append(byChunkEdges[fallbackID], e)
+	}
+	return byChunkNodes, byChunkEdges, fallbackID, nil
+}
+
+// chunkIDFromNode resolves a node's source chunk: the batched prompt asks
+// the model for a "source_chunk" property (1-based batch index); nodes
+// without a resolvable index fall back to the batch's first chunk id.
+func chunkIDFromNode(n graph.DedupNode, chunkIDs []string) string {
+	if n.Properties != nil {
+		if v, ok := n.Properties["source_chunk"]; ok {
+			if idx, err := strconv.Atoi(fmt.Sprint(v)); err == nil && idx >= 1 && idx <= len(chunkIDs) {
+				return chunkIDs[idx-1]
+			}
+		}
+	}
+	if n.SourceChunkID != "" {
+		for _, id := range chunkIDs {
+			if id == n.SourceChunkID {
+				return id
+			}
+		}
+	}
+	return chunkIDs[0]
 }

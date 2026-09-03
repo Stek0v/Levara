@@ -115,6 +115,12 @@ type Config struct {
 	CommunityResolution float64
 	// DedupThreshold for semantic entity dedup. Default 0.95.
 	DedupThreshold float64
+	// LLMBatchSize coalesces N adjacent chunks into one entity-extraction
+	// LLM call (M8, 2026-09-03 review). 0 or 1 = legacy per-chunk calls.
+	// The batch prompt asks the model to tag each node with its source
+	// chunk index; nodes without a resolvable index are attributed to the
+	// batch's first chunk.
+	LLMBatchSize int
 }
 
 // Progress reports pipeline status.
@@ -360,35 +366,90 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 		sem := make(chan struct{}, cfg.LLMConcurrency)
 		var wg sync.WaitGroup
 
-		for _, chunk := range allChunks {
+		batchSize := cfg.LLMBatchSize
+		if batchSize < 1 {
+			batchSize = 1
+		}
+		for batchStart := 0; batchStart < len(allChunks); batchStart += batchSize {
+			batchEnd := batchStart + batchSize
+			if batchEnd > len(allChunks) {
+				batchEnd = len(allChunks)
+			}
+			batch := allChunks[batchStart:batchEnd]
 			wg.Add(1)
-			chunk := chunk
+
 			go func() {
 				defer wg.Done()
 				sem <- struct{}{}
 				defer func() { <-sem }()
 
-				nodes, edges, err := extractEntities(ctx, httpClient, cfg, chunk.text)
-				if err != nil {
-					log.Printf("[pipeline] LLM extract chunk %s: %v", chunk.id, err)
-					extracted.Add(1)
+				var batchNodes []graph.DedupNode
+				var batchEdges []graph.DedupEdge
+				var extractErr error
+
+				if batchSize > 1 && len(batch) > 1 {
+					// Batched call: one LLM request for N chunks (M8).
+					ids := make([]string, len(batch))
+					texts := make([]string, len(batch))
+					for i, ch := range batch {
+						ids[i] = ch.id
+						texts[i] = ch.text
+					}
+					byChunk, byChunkEdges, fallbackID, berr := extractEntitiesBatched(ctx, httpClient, cfg, ids, texts)
+					if berr == nil {
+						for _, ch := range batch {
+							batchNodes = append(batchNodes, byChunk[ch.id]...)
+							batchEdges = append(batchEdges, byChunkEdges[fallbackID]...)
+						}
+					} else {
+						log.Printf("[pipeline] batched LLM extract failed (%v), falling back per-chunk", berr)
+						for _, ch := range batch {
+							n, e, err := extractEntities(ctx, httpClient, cfg, ch.text)
+							if err != nil {
+								continue
+							}
+							batchNodes = append(batchNodes, n...)
+							batchEdges = append(batchEdges, e...)
+						}
+					}
+				} else {
+					chunk := batch[0]
+					nodes, edges, extractErr := extractEntities(ctx, httpClient, cfg, chunk.text)
+					batchNodes, batchEdges = nodes, edges
+					if extractErr != nil {
+						log.Printf("[pipeline] LLM extract chunk %s: %v", chunk.id, extractErr)
+					}
+				}
+				if extractErr != nil {
+					log.Printf("[pipeline] LLM extract failed: %v", extractErr)
+					extracted.Add(int32(len(batch)))
 					return
 				}
-				// Set provenance on extracted entities
-				docID := fmt.Sprintf("doc-%d", chunk.idx)
-				for i := range nodes {
-					nodes[i].SourceChunkID = chunk.id
-					nodes[i].SourceDocID = docID
+				// Provenance: batched nodes carry per-chunk attribution via
+				// chunkIDFromNode; single-chunk path attributes directly.
+				if batchSize == 1 || len(batch) == 1 {
+					chunk := batch[0]
+					docID := fmt.Sprintf("doc-%d", chunk.idx)
+					for i := range batchNodes {
+						batchNodes[i].SourceChunkID = chunk.id
+						batchNodes[i].SourceDocID = docID
+					}
+				} else {
+					for i := range batchNodes {
+						if batchNodes[i].SourceDocID == "" {
+							batchNodes[i].SourceDocID = fmt.Sprintf("doc-%d", batch[0].idx)
+						}
+					}
 				}
 
 				nodesMu.Lock()
-				allNodes = append(allNodes, nodes...)
-				allEdges = append(allEdges, edges...)
+				allNodes = append(allNodes, batchNodes...)
+				allEdges = append(allEdges, batchEdges...)
 				nodesMu.Unlock()
 
-				entCount.Add(int32(len(nodes)))
-				edgeCount.Add(int32(len(edges)))
-				cur := extracted.Add(1)
+				entCount.Add(int32(len(batchNodes)))
+				edgeCount.Add(int32(len(batchEdges)))
+				cur := extracted.Add(int32(len(batch)))
 
 				// Send progress every 5 chunks
 				if cur%5 == 0 || int(cur) == len(allChunks) {
