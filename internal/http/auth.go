@@ -424,7 +424,7 @@ func APIKeyPermissionMiddleware() fiber.Handler {
 // key→user lookup stay here in the auth layer; the result is returned as the
 // transport-independent accesspkg.APIKeyIdentity (zero value when invalid).
 func verifyAPIKey(db *sql.DB, key string) accesspkg.APIKeyIdentity {
-	h := sha256Hash(key)
+	h := apikeyHash(key)
 	var userID, permissions string
 	err := db.QueryRow(
 		Q(`SELECT user_id, permissions FROM api_keys WHERE key_hash = $1 AND revoked = FALSE`), h,
@@ -441,6 +441,25 @@ func verifyAPIKey(db *sql.DB, key string) accesspkg.APIKeyIdentity {
 func sha256Hash(s string) string {
 	h := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(h[:])
+}
+
+// apikeyHash hashes an API key for storage/lookup. When
+// LEVARA_API_KEY_PEPPER (or JWT_SECRET as fallback) is set, keys are
+// HMAC-SHA256'd with it so a stolen database cannot be attacked offline
+// even for weaker keys (finding M24, 2026-09-03 review). Without a pepper
+// the legacy bare SHA-256 is kept — generated keys are 32 random bytes,
+// so this remains safe; rotating the pepper invalidates existing keys.
+func apikeyHash(key string) string {
+	pepper := os.Getenv("LEVARA_API_KEY_PEPPER")
+	if pepper == "" {
+		pepper = os.Getenv("JWT_SECRET")
+	}
+	if pepper == "" {
+		return sha256Hash(key)
+	}
+	mac := hmac.New(sha256.New, []byte(pepper))
+	mac.Write([]byte(key))
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
 // RegisterAPIKeyEndpoints registers API key management endpoints.
@@ -478,7 +497,7 @@ func createAPIKeyHandler(cfg AuthConfig) fiber.Handler {
 			return c.Status(500).JSON(fiber.Map{"detail": "random generation failed"})
 		}
 		plainKey := "lk_" + hex.EncodeToString(keyBytes)
-		keyHash := sha256Hash(plainKey)
+		keyHash := apikeyHash(plainKey)
 		id := generateUUID()
 
 		_, err := cfg.DB.Exec(

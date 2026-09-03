@@ -226,9 +226,27 @@ func main() {
 	provided := make(map[string]bool)
 	flag.Visit(func(f *flag.Flag) { provided[f.Name] = true })
 
+	// Functional profile source: explicit --profile wins; otherwise fall
+	// back to LEVARA_PROFILE so validation and functional behavior read the
+	// same variable (finding M21, 2026-09-03 review).
+	funcProfile := *profileName
+	if funcProfile == "" && !provided["profile"] {
+		funcProfile = strings.ToLower(strings.TrimSpace(os.Getenv("LEVARA_PROFILE")))
+		if funcProfile == "personal" || funcProfile == "" {
+			funcProfile = ""
+		} else {
+			// Product profiles map onto functional behavior: governance
+			// tiers run the full stack (validation enforces the rest).
+			funcProfile = "full"
+		}
+		if funcProfile != "" {
+			log.Printf("Profile: using functional profile %q from LEVARA_PROFILE", funcProfile)
+		}
+	}
+
 	// Apply functional profile — pre-sets flags for common use cases.
 	// Explicit flags always override profile defaults (checked via `provided`).
-	switch *profileName {
+	switch funcProfile {
 	case "standalone":
 		if !provided["grpc-port"] {
 			*grpcPort = 0
