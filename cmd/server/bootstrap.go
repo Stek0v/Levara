@@ -73,10 +73,6 @@ type sqlRuntime struct {
 	DB  *sql.DB
 }
 
-func initSQLRuntime(dataDir string, pgURL string) sqlRuntime {
-	return initSQLRuntimeSuppressed(dataDir, pgURL, false)
-}
-
 // initSQLRuntimeSuppressed adds the profile-suppression input: when a
 // functional profile cleared --pg-url, inherited DB_HOST env must not
 // silently initialize PostgreSQL anyway (finding M22, 2026-09-03 review).

@@ -2493,7 +2493,7 @@ func TestWorkspaceAPICommitLogAndRevertSnapshotsTruthLayer(t *testing.T) {
 		t.Fatalf("log commits=%d, want 2", len(logResp.Commits))
 	}
 
-	body, status = workspaceTestPost(t, app, "/workspace/revert", map[string]any{
+	_, status = workspaceTestPost(t, app, "/workspace/revert", map[string]any{
 		"project_id": "payments",
 		"branch":     "main",
 		"commit_id":  first.CommitID,

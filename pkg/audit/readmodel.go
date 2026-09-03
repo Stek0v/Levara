@@ -401,7 +401,11 @@ func SanitizeArgsForAnalytics(tool, raw string) string {
 	case "save_memory", "recall_memory", "supersede_memory", "delete_memory":
 		redacted := map[string]any{}
 		for k, v := range full {
-			if keep[k] {
+			// Values pre-redacted at ingest (audit writer stores the
+			// "[redacted]" marker for secret keys) carry no payload, so
+			// keeping them preserves the redaction audit trail without
+			// exposing values.
+			if keep[k] || v == "[redacted]" {
 				redacted[k] = v
 			}
 		}

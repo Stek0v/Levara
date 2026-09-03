@@ -294,12 +294,10 @@ func extractEntitiesBatched(ctx context.Context, client *http.Client, cfg Config
 		id := chunkIDFromNode(n, chunkIDs)
 		byChunkNodes[id] = append(byChunkNodes[id], n)
 	}
-	for _, e := range edges {
-		// Edges lack per-node provenance; attribute them to the batch's
-		// first chunk so dedup/temporal still process them under a real
-		// chunk id.
-		byChunkEdges[fallbackID] = append(byChunkEdges[fallbackID], e)
-	}
+	// Edges lack per-node provenance; attribute them to the batch's
+	// first chunk so dedup/temporal still process them under a real
+	// chunk id.
+	byChunkEdges[fallbackID] = append(byChunkEdges[fallbackID], edges...)
 	return byChunkNodes, byChunkEdges, fallbackID, nil
 }
 
