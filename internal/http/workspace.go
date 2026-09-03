@@ -696,6 +696,14 @@ func authorizeWorkspaceMCP(ctx context.Context, cfg APIConfig, projectID string,
 }
 
 func indexWorkspaceMarkdown(ctx context.Context, cfg APIConfig, req workspaceIndexRequest) (workspaceIndexResponse, error) {
+	unlock := workspaceManifestLocks.lock(req.ProjectID + "/" + defaultBranch(req.Branch))
+	defer unlock()
+	return indexWorkspaceMarkdownLocked(ctx, cfg, req)
+}
+
+// indexWorkspaceMarkdownLocked is the index core; caller must already hold
+// the branch manifest lock (reconcile holds it across the whole batch).
+func indexWorkspaceMarkdownLocked(ctx context.Context, cfg APIConfig, req workspaceIndexRequest) (workspaceIndexResponse, error) {
 	if strings.TrimSpace(req.Text) == "" {
 		return workspaceIndexResponse{}, errors.New("text required")
 	}
@@ -888,7 +896,9 @@ func reindexWorkspaceMarkdownDirect(ctx context.Context, cfg APIConfig, req work
 		if err != nil {
 			return workspaceReindexResponse{}, err
 		}
-		indexResp, err := indexWorkspaceMarkdown(ctx, cfg, workspaceIndexRequest{
+		// Caller (reconcile) already holds the branch manifest lock (H6):
+		// use the locked variant to avoid re-lock deadlock.
+		indexResp, err := indexWorkspaceMarkdownLocked(ctx, cfg, workspaceIndexRequest{
 			ProjectID:          req.ProjectID,
 			Branch:             branch,
 			Generation:         req.Generation,
@@ -953,6 +963,9 @@ func reconcileWorkspaceMarkdownDirect(ctx context.Context, cfg APIConfig, req wo
 	if req.Generation == "" {
 		return workspaceReconcileResponse{}, workspace.ErrMissingGeneration
 	}
+	// Serialize reconcile against index/delete/GC on the same branch (H6).
+	unlock := workspaceManifestLocks.lock(req.ProjectID + "/" + branch)
+	defer unlock()
 	paths := append([]string(nil), req.Paths...)
 	if len(paths) == 0 {
 		var err error
@@ -1233,6 +1246,8 @@ func revertWorkspace(ctx context.Context, cfg APIConfig, req workspaceRevertRequ
 }
 
 func deleteWorkspaceMarkdown(cfg APIConfig, req workspaceDeleteRequest) (workspaceDeleteResponse, error) {
+	unlock := workspaceManifestLocks.lock(req.ProjectID + "/" + defaultBranch(req.Branch))
+	defer unlock()
 	manifest, path, err := loadWorkspaceManifest(cfg, req.ProjectID, defaultBranch(req.Branch))
 	if err != nil {
 		return workspaceDeleteResponse{}, err
@@ -1268,6 +1283,8 @@ func deleteWorkspaceMarkdown(cfg APIConfig, req workspaceDeleteRequest) (workspa
 }
 
 func gcWorkspaceGenerations(cfg APIConfig, req workspaceGCRequest) (workspaceGCResponse, error) {
+	unlock := workspaceManifestLocks.lock(req.ProjectID + "/" + defaultBranch(req.Branch))
+	defer unlock()
 	manifest, path, err := loadWorkspaceManifest(cfg, req.ProjectID, defaultBranch(req.Branch))
 	if err != nil {
 		return workspaceGCResponse{}, err

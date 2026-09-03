@@ -120,7 +120,13 @@ func (m *Manifest) Save(path string) error {
 		return err
 	}
 	data = append(data, '\n')
-	return os.WriteFile(path, data, 0644)
+	// Atomic rename (finding H6, 2026-09-03 review): a concurrent reader
+	// must never observe a half-written manifest.
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 func (m *Manifest) SetGeneration(id string, status GenerationStatus, errText string) error {
