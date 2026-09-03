@@ -28,6 +28,12 @@ Mirror of the "Levara MCP Memory" section in `CLAUDE.md`. Update both together.
 4. **Recall before research** → `recall_memory(query, room=, hall=)` to surface prior decisions before reinventing.
 5. **Never save** code/paths/git history — those live in source.
 
+Delegated-agent exception: a subagent returns confirmed durable-memory
+candidates to the main agent instead of mutating shared project memory. The main
+agent must validate, de-duplicate, and save a qualifying decision/discovery/fact
+immediately after receiving the result. This preserves the immediate-save rule
+without using shared memory as an inter-agent coordination channel.
+
 ---
 
 ## The room × hall model
@@ -200,6 +206,84 @@ explicitly opted in via `types=["collections"]` + `collections=[...]`).
 4. **Saving code snippets** — store the *decision* and *why*, not the implementation.
 5. **Forgetting `set_context` at session start** — saves end up in the wrong collection.
 6. **Saving relative dates** — always convert "yesterday" / "last week" to absolute ISO date in value.
+
+---
+
+## Official Codex subagents
+
+Use Codex's built-in subagent workflow for complex work that benefits from
+independent exploration, disjoint implementation, or independent review. This
+is the project orchestration mechanism; do not use `codex-flow`, `.hermes`, or a
+third-party dynamic-workflow runner unless the user explicitly requests it.
+
+Project-scoped roles live in `.codex/agents/`:
+
+- `levara_code_mapper` — read-only architecture and root-cause mapping;
+- `levara_implementation_worker` — one narrow implementation scope with focused
+  tests;
+- `levara_regression_reviewer` — read-only independent correctness and
+  regression audit.
+
+Built-in `explorer`, `worker`, and `default` remain available when a custom role
+does not fit. The main agent owns decomposition, integration, final verification,
+and the user-facing result.
+
+### Delegation rules
+
+1. Delegate only concrete, bounded work that can make progress independently.
+   Parallel read-heavy exploration and review are preferred.
+2. Before spawning write agents, assign an explicit non-overlapping file set to
+   each agent. If two tasks need the same file, run them sequentially or give
+   the file to one owner.
+3. A delegated read-only agent must not edit files or mutate shared Levara
+   memory/Task state. It returns confirmed discoveries and memory candidates to
+   the main agent for de-duplication and persistence.
+4. A write agent must preserve the dirty worktree, stay inside its allowed
+   files, and stop when correct work requires scope expansion.
+5. Subagents do not commit, push, publish, deploy, restart production services,
+   apply live migrations, or expand authority. Those actions require the same
+   explicit user authority as in the main thread.
+6. The main agent waits for every required result, reviews the actual combined
+   diff, resolves conflicts, runs integration-level checks, and reports both
+   passed evidence and remaining gaps.
+7. An agent result is not a receipt. Do not mark a task criterion complete from
+   a summary alone; use actually observed, current-revision evidence.
+8. For SQL-backed changes, PostgreSQL and SQLite mirrors, constraints, indexes,
+   placeholder rewriting, transactions, and rollback behavior are one review
+   unit.
+9. For public MCP changes, verify descriptor, input/output schema, dispatch,
+   profile/feature-flag visibility, backward-compatible result/error shapes,
+   and generated-contract drift. Generated contract files have one sequential
+   owner and are never hand-edited.
+10. Shared memory is not a coordination channel. A subagent mutates Task Runtime
+    only when the assignment supplies the exact task/step/version/lease context;
+    summaries alone are never receipts.
+11. A subagent must not spawn additional subagents unless the main agent
+    explicitly delegates that authority and reserves the required concurrency
+    slots.
+
+### Delegated task template
+
+Every subagent assignment should state:
+
+```text
+Role:
+Concrete objective:
+Context and confirmed facts:
+Allowed files or read scope:
+Forbidden actions:
+Required invariants:
+Corner cases:
+Tests or checks to run:
+Expected result for the main agent:
+May edit code: yes/no
+Must wait for another agent: agent name/no
+```
+
+The returned report must contain: outcome, evidence, changed files (if any),
+tests with observed results, residual risks, blockers, and any durable-memory
+candidates. Keep raw exploratory logs in the subagent thread; return a distilled
+summary to the main thread.
 
 ---
 

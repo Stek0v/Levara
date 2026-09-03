@@ -63,5 +63,10 @@ without forcing teams into a SaaS memory silo.
 | “AI agents with ACL and audit” | technical founder / platform teams | Team pilots |
 | “Enterprise memory without SaaS lock-in” | security/platform stakeholders | Enterprise discovery |
 
+## Редакционная серия
+
+1. [Почему Levara: память не должна принадлежать одному агенту](00-why-levara.md)
+2. [Архив, в котором всё есть — и ничего не найти](01-archive-where-everything-exists.md)
+
 Для нетехнической аудитории есть отдельная объяснялка без жаргона:
 [../explainer.md](../explainer.md).
