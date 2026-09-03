@@ -23,6 +23,34 @@ func TestToolDescriptors_NotEmpty(t *testing.T) {
 	}
 }
 
+func TestTaskOpenSchemaDescribesDefinitionOfDone(t *testing.T) {
+	// DoD: tools/list tells an MCP client how to create addressable DoD criteria.
+	var taskOpen Tool
+	for _, tool := range ToolDescriptors() {
+		if tool.Name == "task_open" {
+			taskOpen = tool
+			break
+		}
+	}
+	definition, ok := taskOpen.InputSchema["properties"].(map[string]any)["definition_of_done"].(map[string]any)
+	if !ok {
+		t.Fatal("task_open schema lacks definition_of_done")
+	}
+	item, ok := definition["items"].(map[string]any)
+	if !ok {
+		t.Fatal("definition_of_done schema lacks item contract")
+	}
+	properties, ok := item["properties"].(map[string]any)
+	if !ok {
+		t.Fatal("definition_of_done items lack properties")
+	}
+	for _, field := range []string{"criterion_id", "description", "required", "verification"} {
+		if _, ok := properties[field]; !ok {
+			t.Errorf("definition_of_done item schema lacks %q", field)
+		}
+	}
+}
+
 func TestToolDescriptors_EveryToolHasRequiredFields(t *testing.T) {
 	for _, tool := range ToolDescriptors() {
 		if tool.Name == "" {

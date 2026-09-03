@@ -6,6 +6,15 @@ func longHorizonToolDescriptors() []Tool {
 	nonEmpty := func(description string) map[string]any {
 		return map[string]any{"type": "string", "minLength": 1, "description": description}
 	}
+	definitionOfDone := map[string]any{
+		"type": "array", "minItems": 1, "description": "Required, addressable completion criteria.",
+		"items": map[string]any{"type": "object", "properties": map[string]any{
+			"criterion_id": nonEmpty("Stable ID used by task_receipt and task_plan."),
+			"description":  nonEmpty("Verifiable completion requirement."),
+			"required":     booleanProp("Defaults to true."),
+			"verification": obj(),
+		}, "required": []string{"criterion_id", "description"}},
+	}
 	validationSchema := objectSchema(map[string]any{
 		"valid": booleanProp("True when all completion invariants hold."), "task_id": stringProp("Task ID."),
 		"mode": stringProp("checkpoint or completion."), "version": integerProp("Current task version."),
@@ -20,7 +29,7 @@ func longHorizonToolDescriptors() []Tool {
 			InputSchema:  map[string]any{"type": "object", "properties": map[string]any{"old_memory_id": nonEmpty("Active memory ID."), "new_value": nonEmpty("Replacement value."), "reason": nonEmpty("Why the old value is obsolete."), "key": stringProp("Optional replacement key."), "room": stringProp("Optional replacement room."), "hall": stringProp("Optional replacement hall."), "source_task_id": stringProp("Origin task."), "source_receipt_ids": arrayOfStringsProp("Evidence receipt IDs."), "verification_status": stringProp("Verification state.")}, "required": []string{"old_memory_id", "new_value", "reason"}}},
 		{Name: "task_open", Group: "task", Description: "Create or idempotently reopen a versioned long-horizon task scoped to one collection and room.",
 			OutputSchema: objectSchema(map[string]any{"task_id": stringProp("Task ID."), "status": stringProp("Task state."), "version": integerProp("Optimistic version."), "collection": stringProp("Collection."), "room": stringProp("Room.")}),
-			InputSchema:  map[string]any{"type": "object", "properties": map[string]any{"collection": nonEmpty("Non-empty collection."), "room": nonEmpty("Non-empty task subsystem."), "objective": nonEmpty("Verifiable outcome."), "idempotency_key": nonEmpty("Stable create key."), "risk_level": map[string]any{"type": "string", "enum": []string{"low", "medium", "high"}}, "authority": obj(), "definition_of_done": arrObj(), "actor_id": stringProp("Agent identity.")}, "required": []string{"collection", "room", "objective", "idempotency_key"}}},
+			InputSchema:  map[string]any{"type": "object", "properties": map[string]any{"collection": nonEmpty("Non-empty collection."), "room": nonEmpty("Non-empty task subsystem."), "objective": nonEmpty("Verifiable outcome."), "idempotency_key": nonEmpty("Stable create key."), "risk_level": map[string]any{"type": "string", "enum": []string{"low", "medium", "high"}}, "authority": obj(), "definition_of_done": definitionOfDone, "actor_id": stringProp("Agent identity.")}, "required": []string{"collection", "room", "objective", "idempotency_key", "definition_of_done"}}},
 		{Name: "task_bootstrap", Group: "task", Description: "Return a bounded recovery snapshot with task state, next step, blockers, and strictly scoped durable memories.",
 			OutputSchema: objectSchema(map[string]any{"task_id": stringProp("Task ID."), "collection": stringProp("Collection."), "room": stringProp("Room."), "objective": stringProp("Outcome."), "risk_level": stringProp("Risk."), "status": stringProp("State."), "version": integerProp("Version."), "workspace_revision": stringProp("Current workspace revision."), "criteria": arrObj(), "steps": arrObj(), "active_blockers": arrObj(), "last_checkpoint": arrObj(), "next_step": obj(), "memories": arrObj(), "scope_status": stringProp("exact."), "max_tokens": integerProp("Budget."), "tokens_used": integerProp("Approximate tokens.")}),
 			InputSchema:  map[string]any{"type": "object", "properties": map[string]any{"task_id": nonEmpty("Task ID."), "max_tokens": integerProp("100-4000 token budget.")}, "required": []string{"task_id"}}},

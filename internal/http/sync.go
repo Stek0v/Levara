@@ -191,13 +191,13 @@ func syncExportMemoriesHandler(cfg APIConfig) fiber.Handler {
 				Q(`SELECT id, key, value, type, owner_id, collection_name,
 					 COALESCE(room,''), COALESCE(hall,''), is_pinned, pin_priority,
 					 created_at, updated_at
-					 FROM memories WHERE updated_at > $1 ORDER BY updated_at`), since)
+					 FROM memories WHERE updated_at > $1 ORDER BY updated_at LIMIT 10000`), since)
 		} else {
 			rows, err = cfg.DB.QueryContext(ctx,
 				Q(`SELECT id, key, value, type, owner_id, collection_name,
 					 COALESCE(room,''), COALESCE(hall,''), is_pinned, pin_priority,
 					 created_at, updated_at
-					 FROM memories ORDER BY updated_at`))
+					 FROM memories ORDER BY updated_at LIMIT 10000`))
 		}
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"detail": err.Error()})
@@ -232,17 +232,11 @@ func syncImportMemoriesHandler(cfg APIConfig) fiber.Handler {
 
 		imported, skipped := 0, 0
 		for _, m := range memories {
-			// Last-writer-wins: check if existing record is newer
-			var existingUpdated string
-			cfg.DB.QueryRowContext(ctx,
-				Q(`SELECT updated_at FROM memories WHERE key = $1 AND owner_id = $2`),
-				m.Key, m.OwnerID).Scan(&existingUpdated)
-
-			if existingUpdated != "" && existingUpdated >= m.UpdatedAt {
-				skipped++
-				continue
-			}
-
+			// Last-writer-wins, enforced atomically (finding H5, 2026-09-03
+			// review): the conflict clause carries a WHERE guard so a
+			// concurrent import that lands between our SELECT and INSERT can
+			// never be overwritten by an older row. The conditional insert
+			// also avoids the separate SELECT entirely.
 			q, qargs := QArgs(`INSERT INTO memories (
 					id, key, value, type, owner_id, collection_name, room, hall,
 					is_pinned, pin_priority, created_at, updated_at
@@ -250,11 +244,18 @@ func syncImportMemoriesHandler(cfg APIConfig) fiber.Handler {
 				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 				 ON CONFLICT(key, owner_id, collection_name) DO UPDATE SET
 					value = $3, type = $4, collection_name = $6, room = $7, hall = $8,
-					is_pinned = $9, pin_priority = $10, updated_at = $12`,
+					is_pinned = $9, pin_priority = $10, updated_at = $12
+				 WHERE memories.updated_at < EXCLUDED.updated_at`,
 				m.ID, m.Key, m.Value, m.Type, m.OwnerID, m.CollectionName,
 				m.Room, m.Hall, m.IsPinned, m.PinPriority, m.CreatedAt, m.UpdatedAt)
-			if _, err := cfg.DB.ExecContext(ctx, q, qargs...); err == nil {
+			res, err := cfg.DB.ExecContext(ctx, q, qargs...)
+			if err != nil {
+				continue
+			}
+			if n, _ := res.RowsAffected(); n > 0 {
 				imported++
+			} else {
+				skipped++
 			}
 		}
 
@@ -339,11 +340,11 @@ func syncExportInteractionsHandler(cfg APIConfig) fiber.Handler {
 		if since != "" {
 			rows, err = cfg.DB.QueryContext(ctx,
 				Q(`SELECT id, session_id, user_id, query, response, search_type, created_at
-					 FROM interactions WHERE created_at > $1 ORDER BY created_at`), since)
+					 FROM interactions WHERE created_at > $1 ORDER BY created_at LIMIT 10000`), since)
 		} else {
 			rows, err = cfg.DB.QueryContext(ctx,
 				Q(`SELECT id, session_id, user_id, query, response, search_type, created_at
-					 FROM interactions ORDER BY created_at`))
+					 FROM interactions ORDER BY created_at LIMIT 10000`))
 		}
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"detail": err.Error()})
@@ -435,7 +436,7 @@ func syncExportGraphHandler(cfg APIConfig) fiber.Handler {
 		g := syncGraph{}
 
 		nodeRows, err := cfg.DB.QueryContext(ctx,
-			Q(`SELECT id, name, type, COALESCE(description,''), COALESCE(properties,'{}'), COALESCE(dataset_id,'') FROM graph_nodes`))
+			Q(`SELECT id, name, type, COALESCE(description,''), COALESCE(properties,'{}'), COALESCE(dataset_id,'') FROM graph_nodes LIMIT 50000`))
 		if err == nil {
 			defer nodeRows.Close()
 			for nodeRows.Next() {
@@ -454,7 +455,7 @@ func syncExportGraphHandler(cfg APIConfig) fiber.Handler {
 			Q(`SELECT id, source_id, target_id, relationship_name, COALESCE(properties,'{}'),
 				  COALESCE(valid_from,''), COALESCE(valid_until,''), COALESCE(superseded_by,''),
 				  COALESCE(confidence,1.0), COALESCE(dataset_id,'')
-			   FROM graph_edges`))
+			   FROM graph_edges LIMIT 50000`))
 		if err == nil {
 			defer edgeRows.Close()
 			for edgeRows.Next() {
@@ -833,14 +834,8 @@ func SyncPull(cfg APIConfig, remoteURL string, types []string, since string) map
 			if json.Unmarshal(body, &memories) == nil && len(memories) > 0 {
 				imported, skipped := 0, 0
 				for _, m := range memories {
-					var existingUpdated string
-					cfg.DB.QueryRowContext(bgCtx,
-						Q(`SELECT updated_at FROM memories WHERE key = $1 AND owner_id = $2`),
-						m.Key, m.OwnerID).Scan(&existingUpdated)
-					if existingUpdated != "" && existingUpdated >= m.UpdatedAt {
-						skipped++
-						continue
-					}
+					// Atomic last-writer-wins, same guard as the pull handler
+					// (finding H5, 2026-09-03 review).
 					q, qargs := QArgs(`INSERT INTO memories (
 								id, key, value, type, owner_id, collection_name, room, hall,
 								is_pinned, pin_priority, created_at, updated_at
@@ -848,11 +843,18 @@ func SyncPull(cfg APIConfig, remoteURL string, types []string, since string) map
 							 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 							 ON CONFLICT(key, owner_id, collection_name) DO UPDATE SET
 								value = $3, type = $4, collection_name = $6, room = $7, hall = $8,
-								is_pinned = $9, pin_priority = $10, updated_at = $12`,
+								is_pinned = $9, pin_priority = $10, updated_at = $12
+							 WHERE memories.updated_at < EXCLUDED.updated_at`,
 						m.ID, m.Key, m.Value, m.Type, m.OwnerID, m.CollectionName,
 						m.Room, m.Hall, m.IsPinned, m.PinPriority, m.CreatedAt, m.UpdatedAt)
-					if _, err := cfg.DB.ExecContext(bgCtx, q, qargs...); err == nil {
+					res, err := cfg.DB.ExecContext(bgCtx, q, qargs...)
+					if err != nil {
+						continue
+					}
+					if n, _ := res.RowsAffected(); n > 0 {
 						imported++
+					} else {
+						skipped++
 					}
 				}
 				results["memories"] = map[string]int{"imported": imported, "skipped": skipped, "total": len(memories)}
@@ -980,12 +982,12 @@ func syncPush(ctx context.Context, cfg APIConfig, remoteURL string, types []stri
 		var memories []syncMemory
 		query := Q(`SELECT id, key, value, type, owner_id, collection_name,
 			 COALESCE(room,''), COALESCE(hall,''), is_pinned, pin_priority,
-			 created_at, updated_at FROM memories ORDER BY updated_at`)
+			 created_at, updated_at FROM memories ORDER BY updated_at LIMIT 10000`)
 		args := []any{}
 		if since != "" {
 			query = Q(`SELECT id, key, value, type, owner_id, collection_name,
 				 COALESCE(room,''), COALESCE(hall,''), is_pinned, pin_priority,
-				 created_at, updated_at FROM memories WHERE updated_at > $1 ORDER BY updated_at`)
+				 created_at, updated_at FROM memories WHERE updated_at > $1 ORDER BY updated_at LIMIT 10000`)
 			args = []any{since}
 		}
 		rows, err := cfg.DB.QueryContext(ctx, query, args...)
@@ -1017,7 +1019,7 @@ func syncPush(ctx context.Context, cfg APIConfig, remoteURL string, types []stri
 	if shouldSync("graph") && cfg.DB != nil {
 		var g syncGraph
 		nodeRows, err := cfg.DB.QueryContext(ctx,
-			Q(`SELECT id, name, type, COALESCE(description,''), COALESCE(properties,'{}'), COALESCE(dataset_id,'') FROM graph_nodes`))
+			Q(`SELECT id, name, type, COALESCE(description,''), COALESCE(properties,'{}'), COALESCE(dataset_id,'') FROM graph_nodes LIMIT 50000`))
 		if err == nil {
 			defer nodeRows.Close()
 			for nodeRows.Next() {
@@ -1030,7 +1032,7 @@ func syncPush(ctx context.Context, cfg APIConfig, remoteURL string, types []stri
 			Q(`SELECT id, source_id, target_id, relationship_name, COALESCE(properties,'{}'),
 				  COALESCE(valid_from,''), COALESCE(valid_until,''), COALESCE(superseded_by,''),
 				  COALESCE(confidence,1.0), COALESCE(dataset_id,'')
-			   FROM graph_edges`))
+			   FROM graph_edges LIMIT 50000`))
 		if err == nil {
 			defer edgeRows.Close()
 			for edgeRows.Next() {

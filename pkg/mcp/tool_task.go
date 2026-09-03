@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -90,12 +91,62 @@ func taskEvent(ctx context.Context, exec interface {
 	return err
 }
 
+// lookupTaskByIdempotency returns the existing task payload for an
+// (owner, collection, idempotency_key) triple, or ok=false when absent.
+// Used so idempotent reopen works without resending definition_of_done
+// (finding M1, 2026-09-03 review).
+func lookupTaskByIdempotency(ctx context.Context, deps Deps, owner, collection, idempotency string) (ToolResult, bool, error) {
+	var taskID, status, room string
+	var version int
+	err := deps.DB().QueryRowContext(ctx, deps.Q(`SELECT id,status,version,room FROM tasks
+		WHERE owner_id=$1 AND collection_name=$2 AND idempotency_key=$3`), owner, collection, idempotency).
+		Scan(&taskID, &status, &version, &room)
+	if err == sql.ErrNoRows {
+		return ToolResult{}, false, nil
+	}
+	if err != nil {
+		return ToolResult{}, false, err
+	}
+	return jsonResult(map[string]any{"task_id": taskID, "status": status, "version": version, "collection": collection, "room": room, "reopened": true}), true, nil
+}
+
 // ToolTaskOpen creates a task once per owner/collection/idempotency key.
 func ToolTaskOpen(ctx context.Context, deps Deps, args map[string]any) ToolResult {
 	collection, room, objective := stringArg(args, "collection"), stringArg(args, "room"), stringArg(args, "objective")
 	idempotency := stringArg(args, "idempotency_key")
 	if collection == "" || room == "" || objective == "" || idempotency == "" {
 		return toolError("'collection', 'room', 'objective', and 'idempotency_key' required")
+	}
+	if deps.DB() == nil {
+		return toolError("database not configured")
+	}
+	owner := taskOwner(ctx)
+	// Idempotent reopen takes precedence over schema validation (finding M1,
+	// 2026-09-03 review): a task created before strict DoD validation — or by
+	// a client that no longer carries the full DoD payload — must still be
+	// reopenable by (owner, collection, idempotency_key) without resending
+	// definition_of_done.
+	if existing, ok, lookupErr := lookupTaskByIdempotency(ctx, deps, owner, collection, idempotency); lookupErr == nil && ok {
+		return existing
+	}
+	criteria, ok := args["definition_of_done"].([]any)
+	if !ok || len(criteria) == 0 {
+		return toolError("definition_of_done must contain at least one criterion")
+	}
+	criterionIDs := make(map[string]bool, len(criteria))
+	for i, raw := range criteria {
+		item, ok := raw.(map[string]any)
+		if !ok {
+			return toolError(fmt.Sprintf("definition_of_done[%d] must be an object", i))
+		}
+		criterionID, description := stringArg(item, "criterion_id"), stringArg(item, "description")
+		if criterionID == "" || description == "" {
+			return toolError(fmt.Sprintf("definition_of_done[%d] requires criterion_id and description", i))
+		}
+		if criterionIDs[criterionID] {
+			return toolError("duplicate criterion_id: " + criterionID)
+		}
+		criterionIDs[criterionID] = true
 	}
 	risk := stringArg(args, "risk_level")
 	if risk == "" {
@@ -105,10 +156,7 @@ func ToolTaskOpen(ctx context.Context, deps Deps, args map[string]any) ToolResul
 		return toolError("risk_level must be low, medium, or high")
 	}
 	db := deps.DB()
-	if db == nil {
-		return toolError("database not configured")
-	}
-	owner, now, taskID := taskOwner(ctx), time.Now().UTC().Format(time.RFC3339Nano), uuid.NewString()
+	now, taskID := time.Now().UTC().Format(time.RFC3339Nano), uuid.NewString()
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return toolError(err.Error())
@@ -133,20 +181,9 @@ func ToolTaskOpen(ctx context.Context, deps Deps, args map[string]any) ToolResul
 	var criterionCount int
 	_ = tx.QueryRowContext(ctx, deps.Q(`SELECT COUNT(*) FROM task_criteria WHERE task_id=$1`), taskID).Scan(&criterionCount)
 	if criterionCount == 0 {
-		criteria, _ := args["definition_of_done"].([]any)
-		for i, raw := range criteria {
-			item, ok := raw.(map[string]any)
-			if !ok {
-				return toolError(fmt.Sprintf("definition_of_done[%d] must be an object", i))
-			}
-			description := stringArg(item, "description")
-			if description == "" {
-				return toolError(fmt.Sprintf("definition_of_done[%d].description required", i))
-			}
-			criterionID := stringArg(item, "criterion_id")
-			if criterionID == "" {
-				criterionID = uuid.NewString()
-			}
+		for _, raw := range criteria {
+			item := raw.(map[string]any)
+			criterionID, description := stringArg(item, "criterion_id"), stringArg(item, "description")
 			_, err = tx.ExecContext(ctx, deps.Q(`INSERT INTO task_criteria
 				(id,task_id,description,required,verification_json,created_at) VALUES($1,$2,$3,$4,$5,$6)`),
 				criterionID, taskID, description, boolArg(item, "required", true), jsonArg(item, "verification", map[string]any{}), now)
@@ -154,11 +191,9 @@ func ToolTaskOpen(ctx context.Context, deps Deps, args map[string]any) ToolResul
 				return toolError(err.Error())
 			}
 		}
-		if len(criteria) > 0 {
-			status = "planned"
-			_, _ = tx.ExecContext(ctx, deps.Q(`UPDATE tasks SET status='planned',version=version+1,updated_at=$1 WHERE id=$2`), now, taskID)
-			version++
-		}
+		status = "planned"
+		_, _ = tx.ExecContext(ctx, deps.Q(`UPDATE tasks SET status='planned',version=version+1,updated_at=$1 WHERE id=$2`), now, taskID)
+		version++
 		_ = taskEvent(ctx, tx, deps.Q, taskID, taskActor(ctx, args), "task_opened", map[string]any{"objective": objective, "risk_level": risk})
 	}
 	if err := tx.Commit(); err != nil {
@@ -176,6 +211,9 @@ func ToolTaskPlan(ctx context.Context, deps Deps, args map[string]any) ToolResul
 		return toolError("'task_id', positive 'base_version', and non-empty 'steps' required")
 	}
 	db := deps.DB()
+	if db == nil {
+		return toolError("database not configured")
+	}
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return toolError(err.Error())
@@ -183,8 +221,12 @@ func ToolTaskPlan(ctx context.Context, deps Deps, args map[string]any) ToolResul
 	defer tx.Rollback()
 	owner := taskOwner(ctx)
 	var current int
-	if err := tx.QueryRowContext(ctx, deps.Q(`SELECT version FROM tasks WHERE id=$1 AND (owner_id=$2 OR owner_id='')`), taskID, owner).Scan(&current); err != nil {
+	var status string
+	if err := tx.QueryRowContext(ctx, deps.Q(`SELECT status,version FROM tasks WHERE id=$1 AND (owner_id=$2 OR owner_id='')`), taskID, owner).Scan(&status, &current); err != nil {
 		return toolError("task not found")
+	}
+	if status == "completed" {
+		return toolError("completed task is immutable")
 	}
 	if current != baseVersion {
 		return toolError(fmt.Sprintf("version conflict: current=%d", current))
@@ -298,14 +340,21 @@ func ToolTaskStep(ctx context.Context, deps Deps, args map[string]any) ToolResul
 		return toolError("action must be claim, renew, release, pass, or fail")
 	}
 	db := deps.DB()
+	if db == nil {
+		return toolError("database not configured")
+	}
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return toolError(err.Error())
 	}
 	defer tx.Rollback()
 	var version int
-	if err := tx.QueryRowContext(ctx, deps.Q(`SELECT version FROM tasks WHERE id=$1 AND (owner_id=$2 OR owner_id='')`), taskID, taskOwner(ctx)).Scan(&version); err != nil {
+	var taskStatus string
+	if err := tx.QueryRowContext(ctx, deps.Q(`SELECT status,version FROM tasks WHERE id=$1 AND (owner_id=$2 OR owner_id='')`), taskID, taskOwner(ctx)).Scan(&taskStatus, &version); err != nil {
 		return toolError("task not found")
+	}
+	if taskStatus == "completed" {
+		return toolError("completed task is immutable")
 	}
 	if version != baseVersion {
 		return toolError(fmt.Sprintf("version conflict: current=%d", version))
@@ -395,6 +444,9 @@ func ToolTaskStep(ctx context.Context, deps Deps, args map[string]any) ToolResul
 
 // ToolTaskReceipt records immutable verification evidence.
 func ToolTaskReceipt(ctx context.Context, deps Deps, args map[string]any) ToolResult {
+	if deps.DB() == nil {
+		return toolError("database not configured")
+	}
 	taskID, idem := stringArg(args, "task_id"), stringArg(args, "idempotency_key")
 	receiptType, status := stringArg(args, "receipt_type"), stringArg(args, "status")
 	baseVersion := intArg(args, "base_version", 0)
@@ -414,14 +466,21 @@ func ToolTaskReceipt(ctx context.Context, deps Deps, args map[string]any) ToolRe
 		return toolError("artifact receipts require evidence_uri and artifact_digest")
 	}
 	db := deps.DB()
+	if db == nil {
+		return toolError("database not configured")
+	}
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return toolError(err.Error())
 	}
 	defer tx.Rollback()
 	var current int
-	if err := tx.QueryRowContext(ctx, deps.Q(`SELECT version FROM tasks WHERE id=$1 AND (owner_id=$2 OR owner_id='')`), taskID, taskOwner(ctx)).Scan(&current); err != nil {
+	var currentStatus string
+	if err := tx.QueryRowContext(ctx, deps.Q(`SELECT status,version FROM tasks WHERE id=$1 AND (owner_id=$2 OR owner_id='')`), taskID, taskOwner(ctx)).Scan(&currentStatus, &current); err != nil {
 		return toolError("task not found")
+	}
+	if currentStatus == "completed" {
+		return toolError("completed task is immutable")
 	}
 	var existingReceiptID string
 	if err := tx.QueryRowContext(ctx, deps.Q(`SELECT id FROM task_receipts WHERE task_id=$1 AND idempotency_key=$2`), taskID, idem).Scan(&existingReceiptID); err == nil {
@@ -488,14 +547,21 @@ func ToolTaskCheckpoint(ctx context.Context, deps Deps, args map[string]any) Too
 		return toolError("task_id, idempotency_key, summary, and positive base_version required")
 	}
 	db := deps.DB()
+	if db == nil {
+		return toolError("database not configured")
+	}
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return toolError(err.Error())
 	}
 	defer tx.Rollback()
 	var current int
-	if err := tx.QueryRowContext(ctx, deps.Q(`SELECT version FROM tasks WHERE id=$1 AND (owner_id=$2 OR owner_id='')`), taskID, taskOwner(ctx)).Scan(&current); err != nil {
+	var currentStatus string
+	if err := tx.QueryRowContext(ctx, deps.Q(`SELECT status,version FROM tasks WHERE id=$1 AND (owner_id=$2 OR owner_id='')`), taskID, taskOwner(ctx)).Scan(&currentStatus, &current); err != nil {
 		return toolError("task not found")
+	}
+	if currentStatus == "completed" {
+		return toolError("completed task is immutable")
 	}
 	var existingCheckpointID string
 	if err := tx.QueryRowContext(ctx, deps.Q(`SELECT id FROM task_checkpoints WHERE task_id=$1 AND idempotency_key=$2`), taskID, idem).Scan(&existingCheckpointID); err == nil {
@@ -598,6 +664,9 @@ type taskValidation struct {
 
 func validateTask(ctx context.Context, deps Deps, taskID, owner, mode string) (taskValidation, int, error) {
 	db, rewrite := deps.DB(), deps.Q
+	if db == nil {
+		return taskValidation{TaskID: taskID, Mode: mode}, 0, errors.New("database not configured")
+	}
 	v := taskValidation{TaskID: taskID, Mode: mode, MissingReceipts: []string{}, StaleReceipts: []string{}, FailedReceipts: []string{}, IncompleteSteps: []string{}, ActiveBlockers: []string{}, ActiveLeases: []string{}}
 	var risk, revision string
 	var version int
@@ -725,6 +794,9 @@ func containsString(values []string, needle string) bool {
 }
 
 func ToolTaskValidate(ctx context.Context, deps Deps, args map[string]any) ToolResult {
+	if deps.DB() == nil {
+		return toolError("database not configured")
+	}
 	taskID, mode := stringArg(args, "task_id"), stringArg(args, "mode")
 	if mode == "" {
 		mode = "completion"
@@ -765,6 +837,9 @@ func ToolTaskBootstrap(ctx context.Context, deps Deps, args map[string]any) Tool
 		maxTokens = 4000
 	}
 	db := deps.DB()
+	if db == nil {
+		return toolError("database not configured")
+	}
 	owner := taskOwner(ctx)
 	var collection, room, objective, risk, status, revision string
 	var version int
@@ -932,10 +1007,21 @@ func queryMaps(ctx context.Context, db *sql.DB, rewrite func(string) string, que
 
 // ToolTaskComplete validates then atomically transitions the versioned task.
 func ToolTaskComplete(ctx context.Context, deps Deps, args map[string]any) ToolResult {
+	if deps.DB() == nil {
+		return toolError("database not configured")
+	}
 	taskID := stringArg(args, "task_id")
 	expected := intArg(args, "expected_version", 0)
 	if taskID == "" || expected < 1 {
 		return toolError("task_id and positive expected_version required")
+	}
+	// Idempotent completion replay (finding M20, 2026-09-03 review): if the
+	// task is already completed, return success with the stored terminal
+	// version instead of a version conflict.
+	var doneStatus string
+	var doneVersion int
+	if err := deps.DB().QueryRowContext(ctx, deps.Q(`SELECT status,version FROM tasks WHERE id=$1 AND (owner_id=$2 OR owner_id='')`), taskID, taskOwner(ctx)).Scan(&doneStatus, &doneVersion); err == nil && doneStatus == "completed" {
+		return jsonResult(map[string]any{"ok": true, "task_id": taskID, "status": "completed", "version": doneVersion, "already_completed": true})
 	}
 	v, current, err := validateTask(ctx, deps, taskID, taskOwner(ctx), "completion")
 	if err != nil {
@@ -972,6 +1058,9 @@ func ToolTaskComplete(ctx context.Context, deps Deps, args map[string]any) ToolR
 
 func promoteTaskMemories(ctx context.Context, deps Deps, taskID string) (int, int) {
 	db := deps.DB()
+	if db == nil {
+		return 0, 0
+	}
 	var collection, revision string
 	_ = db.QueryRowContext(ctx, deps.Q(`SELECT collection_name,current_workspace_revision FROM tasks WHERE id=$1`), taskID).Scan(&collection, &revision)
 	rows, err := db.QueryContext(ctx, deps.Q(`SELECT id,memory_key,value,room,hall,evidence_receipt_ids FROM task_memory_candidates WHERE task_id=$1 AND status='pending'`), taskID)

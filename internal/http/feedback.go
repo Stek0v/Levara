@@ -126,6 +126,11 @@ func feedbackListHandler(cfg APIConfig) fiber.Handler {
 		}
 		collection := c.Query("collection")
 		limit := c.QueryInt("limit", 20)
+		// Bound the page size (finding M12, 2026-09-03 review): negative or
+		// huge limit values went straight into SQL.
+		if limit <= 0 || limit > 100 {
+			limit = 20
+		}
 
 		var rows interface{ Next() bool; Scan(...any) error; Close() error }
 		var err error

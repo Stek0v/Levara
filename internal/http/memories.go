@@ -4,12 +4,17 @@ package http
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"log"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
+
+	"github.com/stek0v/levara/pkg/memoryindex"
 )
 
 // RegisterMemoryAPI registers memory CRUD endpoints.
@@ -73,16 +78,38 @@ func saveMemoryHandler(cfg APIConfig) fiber.Handler {
 		id := uuid.New().String()
 		now := time.Now().UTC().Format(time.RFC3339)
 
-		// Upsert: insert or update value+type+updated_at on conflict
+		// Upsert: insert or update value+type+updated_at on conflict.
+		// RETURNING id yields the canonical row id (existing id on conflict)
+		// so the response no longer lies about which record was updated
+		// (finding H4, 2026-09-03 review).
 		upsertSQL := `INSERT INTO memories (id, key, value, type, owner_id, collection_name, room, hall, created_at, updated_at)
 			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-			 ON CONFLICT(key, owner_id, collection_name) DO UPDATE SET value = $11, type = $12, room = $13, hall = $14, updated_at = $15`
+			 ON CONFLICT(key, owner_id, collection_name) DO UPDATE SET value = $11, type = $12, room = $13, hall = $14, updated_at = $15
+			 RETURNING id`
 		q, qargs := QArgs(upsertSQL,
 			id, req.Key, req.Value, req.Type, req.OwnerID, req.CollectionName, req.Room, req.Hall, now, now,
 			req.Value, req.Type, req.Room, req.Hall, now)
-		_, err := cfg.DB.ExecContext(context.Background(), q, qargs...)
-		if err != nil {
-			return c.Status(500).JSON(fiber.Map{"detail": "save failed: " + err.Error()})
+		var canonicalID string
+		scanErr := cfg.DB.QueryRowContext(context.Background(), q, qargs...).Scan(&canonicalID)
+		if scanErr != nil {
+			// Fall back to Exec for engines without RETURNING support.
+			if _, err := cfg.DB.ExecContext(context.Background(), q, qargs...); err != nil {
+				return c.Status(500).JSON(fiber.Map{"detail": "save failed: " + scanErr.Error()})
+			}
+			canonicalID = id
+		}
+		id = canonicalID
+
+		// Enqueue the durable memory-index job so REST-written memories get
+		// embedded into the HNSW sidecar exactly like MCP saves (finding H4).
+		if cfg.MemoryIndexOutbox != nil && cfg.EmbedEndpoint != "" {
+			digest := fmt.Sprintf("%x", sha256.Sum256([]byte(req.Key+"\x00"+req.Value)))
+			if _, err := cfg.MemoryIndexOutbox.Enqueue(context.Background(), memoryindex.Job{
+				MemoryID: canonicalID, Operation: "upsert_vector", Collection: req.CollectionName,
+				OwnerID: req.OwnerID, Digest: digest,
+			}); err != nil {
+				log.Printf("[memories] outbox enqueue failed for %s: %v", req.Key, err)
+			}
 		}
 
 		memoryEvents.Publish(MemoryEvent{
@@ -117,31 +144,31 @@ func listMemoriesHandler(cfg APIConfig) fiber.Handler {
 		if cfg.DB == nil {
 			return c.JSON([]any{})
 		}
-		filterType := c.Query("type", "")
 		ownerID, _ := c.Locals("user_id").(string)
 
-		var items []fiber.Map
-		if filterType != "" {
-			rows, err := cfg.DB.QueryContext(context.Background(),
-				Q(`SELECT id, key, value, type, owner_id, created_at, updated_at
-				 FROM memories WHERE type = $1 AND (owner_id = $2 OR owner_id = '') AND superseded_by = ''
-				 ORDER BY updated_at DESC LIMIT 100`), filterType, ownerID)
-			if err != nil {
-				return c.JSON([]any{})
+		// Honour documented collection/room/hall query filters (finding M14,
+		// 2026-09-03 review): they were parsed in swagger but ignored here.
+		conds := []string{"(owner_id = $1 OR owner_id = '')", "superseded_by = ''"}
+		args := []any{ownerID}
+		pos := 2
+		for _, f := range []struct{ name, col string }{
+			{"type", "type"}, {"collection", "collection_name"}, {"room", "room"}, {"hall", "hall"},
+		} {
+			if v := c.Query(f.name, ""); v != "" {
+				conds = append(conds, fmt.Sprintf("%s = $%d", f.col, pos))
+				args = append(args, v)
+				pos++
 			}
-			defer rows.Close()
-			items = scanMemoryRows(rows)
-		} else {
-			rows, err := cfg.DB.QueryContext(context.Background(),
-				Q(`SELECT id, key, value, type, owner_id, created_at, updated_at
-				 FROM memories WHERE (owner_id = $1 OR owner_id = '') AND superseded_by = ''
-				 ORDER BY updated_at DESC LIMIT 100`), ownerID)
-			if err != nil {
-				return c.JSON([]any{})
-			}
-			defer rows.Close()
-			items = scanMemoryRows(rows)
 		}
+		query := "SELECT id, key, value, type, owner_id, created_at, updated_at FROM memories WHERE " +
+			strings.Join(conds, " AND ") + " ORDER BY updated_at DESC LIMIT 100"
+
+		rows, err := cfg.DB.QueryContext(context.Background(), Q(query), args...)
+		if err != nil {
+			return c.JSON([]any{})
+		}
+		defer rows.Close()
+		items := scanMemoryRows(rows)
 
 		if items == nil {
 			items = []fiber.Map{}

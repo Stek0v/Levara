@@ -118,9 +118,14 @@ func validate(cfg Config, level string) []Finding {
 			findings = append(findings, require("enterprise_requires_audit_sink", "enterprise profile should configure an audit sink"))
 		}
 	default:
-		// An unknown profile is advisory regardless of strict mode: a typo in
-		// LEVARA_PROFILE should not hard-stop startup.
-		findings = append(findings, warn("unknown_profile", "unknown LEVARA_PROFILE; using current runtime behavior"))
+		// An unknown profile warns in normal mode; under strict mode it is an
+		// error — a typo in LEVARA_PROFILE would silently skip the governance
+		// checks the operator asked to enforce (finding M28, 2026-09-03).
+		if level == LevelError {
+			findings = append(findings, Finding{Level: level, Code: "unknown_profile", Message: "unknown LEVARA_PROFILE under strict mode; expected personal, solo_pro, team, or enterprise"})
+		} else {
+			findings = append(findings, warn("unknown_profile", "unknown LEVARA_PROFILE; using current runtime behavior"))
+		}
 	}
 	return findings
 }

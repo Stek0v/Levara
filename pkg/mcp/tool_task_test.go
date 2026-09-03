@@ -116,6 +116,61 @@ func openTask(t *testing.T, deps *fakeDeps, risk string) (string, int) {
 	return out["task_id"].(string), int(out["version"].(float64))
 }
 
+func TestTaskRuntimeRejectsOpenWithoutDefinitionOfDone(t *testing.T) {
+	// DoD: task_open must reject a task without a durable completion contract.
+	deps := setupTaskTestDB(t)
+	result := ToolTaskOpen(context.Background(), deps, map[string]any{
+		"collection": "levara", "room": "runtime", "objective": "complete without proof",
+		"idempotency_key": "no-definition-of-done", "risk_level": "low",
+	})
+	if !result.IsError {
+		t.Fatalf("task_open accepted a task without definition_of_done: %s", toolResultText(result))
+	}
+}
+
+func TestTaskRuntimeCompletedTaskIsTerminal(t *testing.T) {
+	// DoD: no mutation can move a completed task back to running.
+	deps := setupTaskTestDB(t)
+	taskID, version := openTask(t, deps, "low")
+	receipt := taskPayload(t, ToolTaskReceipt(context.Background(), deps, map[string]any{
+		"task_id": taskID, "base_version": float64(version), "idempotency_key": "terminal-proof",
+		"receipt_type": "observation", "status": "pass", "criterion_ids": []any{"tests"},
+	}))
+	completed := taskPayload(t, ToolTaskComplete(context.Background(), deps, map[string]any{
+		"task_id": taskID, "expected_version": receipt["version"],
+	}))
+	baseVersion := completed["version"]
+	mutations := map[string]ToolResult{
+		"plan": ToolTaskPlan(context.Background(), deps, map[string]any{
+			"task_id": taskID, "base_version": baseVersion,
+			"steps": []any{map[string]any{"step_id": "after-completion", "description": "must be rejected"}},
+		}),
+		"step": ToolTaskStep(context.Background(), deps, map[string]any{
+			"task_id": taskID, "step_id": "after-completion", "action": "claim", "base_version": baseVersion,
+		}),
+		"receipt": ToolTaskReceipt(context.Background(), deps, map[string]any{
+			"task_id": taskID, "base_version": baseVersion, "idempotency_key": "after-completion",
+			"receipt_type": "observation", "status": "pass", "criterion_ids": []any{"tests"},
+		}),
+		"checkpoint": ToolTaskCheckpoint(context.Background(), deps, map[string]any{
+			"task_id": taskID, "base_version": baseVersion, "idempotency_key": "after-completion",
+			"summary": "must not reopen a completed task",
+		}),
+	}
+	for name, mutation := range mutations {
+		if !mutation.IsError {
+			t.Fatalf("%s mutated a completed task: %s", name, toolResultText(mutation))
+		}
+	}
+	var status string
+	if err := deps.db.QueryRow(`SELECT status FROM tasks WHERE id=?`, taskID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "completed" {
+		t.Fatalf("completed task changed state to %q", status)
+	}
+}
+
 func TestTaskRuntime_IdempotencyLeaseAndStaleReceipt(t *testing.T) {
 	deps := setupTaskTestDB(t)
 	taskID, version := openTask(t, deps, "medium")
