@@ -65,13 +65,40 @@ func NewLocalStorage(basePath string) *LocalStorage {
 	return &LocalStorage{basePath: basePath}
 }
 
-func (s *LocalStorage) fullPath(key string) string {
-	return filepath.Join(s.basePath, filepath.Clean(key))
+// fullPath resolves a relative storage key under the storage root,
+// enforcing containment: keys containing .. (or absolute paths) must never
+// escape the base directory (finding H10, 2026-09-03 review).
+func (s *LocalStorage) fullPath(key string) (string, error) {
+	if filepath.IsAbs(key) {
+		return "", fmt.Errorf("storage: absolute key %q not allowed", key)
+	}
+	cleaned := filepath.Clean(key)
+	if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("storage: key %q escapes storage root", key)
+	}
+	fp := filepath.Join(s.basePath, cleaned)
+	// Defense in depth: verify containment even for tricky inputs (e.g.
+	// symlinks created inside the root, or separator edge cases).
+	rootAbs, err := filepath.Abs(s.basePath)
+	if err != nil {
+		return "", err
+	}
+	fpAbs, err := filepath.Abs(fp)
+	if err != nil {
+		return "", err
+	}
+	if fpAbs != rootAbs && !strings.HasPrefix(fpAbs, rootAbs+string(filepath.Separator)) {
+		return "", fmt.Errorf("storage: key %q resolves outside storage root", key)
+	}
+	return fp, nil
 }
 
 // Save writes data to the given path, creating parent directories as needed.
 func (s *LocalStorage) Save(_ context.Context, path string, data io.Reader) error {
-	fp := s.fullPath(path)
+	fp, err := s.fullPath(path)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(fp), 0755); err != nil {
 		return fmt.Errorf("storage: mkdir %s: %w", filepath.Dir(fp), err)
 	}
@@ -90,7 +117,11 @@ func (s *LocalStorage) Save(_ context.Context, path string, data io.Reader) erro
 
 // Load opens the file at path for reading.
 func (s *LocalStorage) Load(_ context.Context, path string) (io.ReadCloser, error) {
-	f, err := os.Open(s.fullPath(path))
+	fp, err := s.fullPath(path)
+	if err != nil {
+		return nil, err
+	}
+	f, err := os.Open(fp)
 	if err != nil {
 		return nil, fmt.Errorf("storage: open %s: %w", path, err)
 	}
@@ -99,7 +130,11 @@ func (s *LocalStorage) Load(_ context.Context, path string) (io.ReadCloser, erro
 
 // Delete removes the file at path.
 func (s *LocalStorage) Delete(_ context.Context, path string) error {
-	err := os.Remove(s.fullPath(path))
+	fp, err := s.fullPath(path)
+	if err != nil {
+		return err
+	}
+	err = os.Remove(fp)
 	if os.IsNotExist(err) {
 		return nil // idempotent
 	}
@@ -108,10 +143,13 @@ func (s *LocalStorage) Delete(_ context.Context, path string) error {
 
 // List returns all relative paths under the given prefix.
 func (s *LocalStorage) List(_ context.Context, prefix string) ([]string, error) {
-	root := s.fullPath(prefix)
+	root, err := s.fullPath(prefix)
+	if err != nil {
+		return nil, err
+	}
 	var paths []string
 
-	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+	err = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			if os.IsNotExist(err) {
 				return nil
@@ -132,7 +170,11 @@ func (s *LocalStorage) List(_ context.Context, prefix string) ([]string, error) 
 
 // Exists checks whether a file exists at path.
 func (s *LocalStorage) Exists(_ context.Context, path string) (bool, error) {
-	_, err := os.Stat(s.fullPath(path))
+	fp, err := s.fullPath(path)
+	if err != nil {
+		return false, err
+	}
+	_, err = os.Stat(fp)
 	if err == nil {
 		return true, nil
 	}

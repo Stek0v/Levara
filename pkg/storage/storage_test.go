@@ -199,3 +199,29 @@ func TestS3_PresignGet_IncludesSigV4Query(t *testing.T) {
 		t.Fatalf("expires = %q, want 600", got)
 	}
 }
+
+// Keys must never escape the storage root (finding H10, 2026-09-03 review).
+func TestLocalStorageRejectsPathTraversal(t *testing.T) {
+	s := NewLocalStorage(t.TempDir())
+	for _, key := range []string{
+		"../escape.txt",
+		"a/../../escape.txt",
+		"..",
+		"/etc/passwd",
+	} {
+		if _, err := s.fullPath(key); err == nil {
+			t.Errorf("fullPath(%q) accepted, want traversal rejection", key)
+		}
+	}
+	// Legitimate keys still resolve inside the root.
+	for _, key := range []string{"docs/file.txt", "a/b/c.bin", "./relative.txt"} {
+		fp, err := s.fullPath(key)
+		if err != nil {
+			t.Errorf("fullPath(%q) rejected: %v", key, err)
+			continue
+		}
+		if !strings.HasPrefix(fp, s.basePath) {
+			t.Errorf("fullPath(%q) = %q escapes root %q", key, fp, s.basePath)
+		}
+	}
+}

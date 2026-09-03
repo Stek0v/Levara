@@ -59,7 +59,7 @@ func TestWorkspaceAPIIndexDeleteAndManifest(t *testing.T) {
 	if got := workspaceTestRecordCount(cfg, indexResp.Result.Collection); got != indexResp.Result.ChunksCreated {
 		t.Fatalf("vector count=%d, want chunks=%d", got, indexResp.Result.ChunksCreated)
 	}
-	if hits := cfg.BM25Indexes[indexResp.Result.Collection].Search("bounded timeout", 10); len(hits) == 0 {
+	if hits := cfg.BM25Indexes.Get(indexResp.Result.Collection).Search("bounded timeout", 10); len(hits) == 0 {
 		t.Fatal("expected BM25 hit for indexed markdown")
 	}
 
@@ -94,7 +94,7 @@ func TestWorkspaceAPIIndexDeleteAndManifest(t *testing.T) {
 	if got := workspaceTestRecordCount(cfg, indexResp.Result.Collection); got != 0 {
 		t.Fatalf("vector count after delete=%d, want 0", got)
 	}
-	if hits := cfg.BM25Indexes[indexResp.Result.Collection].Search("bounded timeout", 10); len(hits) != 0 {
+	if hits := cfg.BM25Indexes.Get(indexResp.Result.Collection).Search("bounded timeout", 10); len(hits) != 0 {
 		t.Fatalf("BM25 hits after delete=%d, want 0", len(hits))
 	}
 }
@@ -2498,6 +2498,15 @@ func TestWorkspaceAPICommitLogAndRevertSnapshotsTruthLayer(t *testing.T) {
 		"branch":     "main",
 		"commit_id":  first.CommitID,
 	})
+	if status == http.StatusOK {
+		t.Fatal("revert of non-head commit without expected_current_commit_id must be rejected (H7 guard)")
+	}
+	body, status = workspaceTestPost(t, app, "/workspace/revert", map[string]any{
+		"project_id":                 "payments",
+		"branch":                     "main",
+		"commit_id":                  first.CommitID,
+		"expected_current_commit_id": second.CommitID,
+	})
 	if status != http.StatusOK {
 		t.Fatalf("revert status=%d body=%s", status, body)
 	}
@@ -2539,7 +2548,7 @@ func TestWorkspaceAPIGCRemovesPendingGenerationCollectionsAndBM25(t *testing.T) 
 	}
 	var gen1 workspaceIndexResponse
 	_ = json.Unmarshal(body, &gen1)
-	if hits := cfg.BM25Indexes[gen1.Result.Collection].Search("legacy keyword", 10); len(hits) == 0 {
+	if hits := cfg.BM25Indexes.Get(gen1.Result.Collection).Search("legacy keyword", 10); len(hits) == 0 {
 		t.Fatal("expected gen1 BM25 hit before GC")
 	}
 
@@ -2588,7 +2597,7 @@ func TestWorkspaceAPIGCRemovesPendingGenerationCollectionsAndBM25(t *testing.T) 
 	if cfg.Collections.Has(gen1.Result.Collection) {
 		t.Fatalf("old collection %q still exists", gen1.Result.Collection)
 	}
-	if _, ok := cfg.BM25Indexes[gen1.Result.Collection]; ok {
+	if cfg.BM25Indexes.Get(gen1.Result.Collection) != nil {
 		t.Fatalf("old BM25 collection %q still exists", gen1.Result.Collection)
 	}
 	if !cfg.Collections.Has(gen2.Result.Collection) {
@@ -3498,7 +3507,7 @@ func newWorkspaceTestConfig(t *testing.T) (APIConfig, func()) {
 		EmbedEndpoint: embedSrv.URL,
 		EmbedModel:    "test-embed",
 		Collections:   cm,
-		BM25Indexes:   map[string]*bm25.Index{},
+		BM25Indexes:   bm25.NewIndexRegistry(),
 	}
 	return cfg, func() {
 		embedSrv.Close()

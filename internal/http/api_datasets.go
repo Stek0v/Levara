@@ -322,6 +322,11 @@ func datasetDataRawHandler(cfg APIConfig) fiber.Handler {
 			}
 			return c.Status(500).JSON(fiber.Map{"detail": "load raw data: " + err.Error()})
 		}
+		// Download semantics (finding L7, 2026-09-03 review): opaque
+		// octet-stream plus no-sniff prevents browser content sniffing of
+		// attacker-supplied bytes.
+		c.Set("Content-Type", "application/octet-stream")
+		c.Set("X-Content-Type-Options", "nosniff")
 		return c.Send(raw)
 	}
 }

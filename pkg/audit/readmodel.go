@@ -378,12 +378,41 @@ func (r *ReadModel) EventsForTrajectories(ctx context.Context, f EventFilter) ([
 			e.BlindSave = blind != 0
 			e.RepeatSave = repeat != 0
 			if f.IncludeArgs && raw != "" {
-				e.Args = json.RawMessage(raw)
+				e.Args = json.RawMessage(SanitizeArgsForAnalytics(e.Tool, raw))
 			}
 			out = append(out, e)
 		}
 	}
 	return out, rows.Err()
+}
+
+// SanitizeArgsForAnalytics reduces tool args to the fields behavior
+// analytics actually consumes — memory-tool room/hall/key — dropping every
+// other payload (values, queries, content). Used by the shared
+// trajectories read path so non-superuser analytics surfaces never expose
+// full audit args (finding M13, 2026-09-03 review).
+func SanitizeArgsForAnalytics(tool, raw string) string {
+	var full map[string]any
+	if json.Unmarshal([]byte(raw), &full) != nil {
+		return raw
+	}
+	keep := map[string]bool{"room": true, "hall": true, "key": true}
+	switch tool {
+	case "save_memory", "recall_memory", "supersede_memory", "delete_memory":
+		redacted := map[string]any{}
+		for k, v := range full {
+			if keep[k] {
+				redacted[k] = v
+			}
+		}
+		out, err := json.Marshal(redacted)
+		if err != nil {
+			return raw
+		}
+		return string(out)
+	default:
+		return "{}"
+	}
 }
 
 func (r *ReadModel) Close() {

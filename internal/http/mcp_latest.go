@@ -34,6 +34,22 @@ func (h *mcpHandler) handleLatestRPC(c *fiber.Ctx) error {
 		return c.SendStatus(fiber.StatusAccepted)
 	}
 
+	// Auth gate. The stateless transport must enforce RequireAuth as strictly
+	// as the legacy session transport (mcp.go authenticates every
+	// non-initialize/non-ping request); without this gate an unauthenticated
+	// caller could reach tools/call and resources/* under -require-auth
+	// because handleToolCallWithSession tolerates auth errors (it falls back
+	// to an empty actor) and APIKeyAllows("") is permissive. server/discover
+	// and tools/list stay public for capability negotiation; tools/call,
+	// resources/list and resources/read fail closed with 404 — matching the
+	// legacy transport's "can't establish an owner" signal.
+	switch req.Method {
+	case "tools/call", "resources/list", "resources/read":
+		if _, authErr := h.authenticateMCPRequest(c); authErr != nil {
+			return c.SendStatus(fiber.StatusNotFound)
+		}
+	}
+
 	switch req.Method {
 	case "server/discover":
 		return c.JSON(jsonRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{

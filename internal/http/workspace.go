@@ -128,15 +128,21 @@ type workspaceRevertRequest struct {
 	ProjectID          string `json:"project_id"`
 	Branch             string `json:"branch"`
 	CommitID           string `json:"commit_id"`
-	Reindex            bool   `json:"reindex,omitempty"`
-	Generation         string `json:"generation,omitempty"`
-	Collection         string `json:"collection,omitempty"`
-	ChunkStrategy      string `json:"chunk_strategy,omitempty"`
-	MinChunkChars      int    `json:"min_chunk_chars,omitempty"`
-	MaxChunkChars      int    `json:"max_chunk_chars,omitempty"`
-	OverlapChars       int    `json:"overlap_chars,omitempty"`
-	SnapToSentence     *bool  `json:"snap_to_sentence,omitempty"`
-	ActivateGeneration *bool  `json:"activate_generation,omitempty"`
+	// ExpectedCurrentCommitID is an optimistic-concurrency guard (finding
+	// H7, 2026-09-03 review): when non-empty, revert is refused unless it
+	// matches the branch's latest commit, so a stale client cannot discard
+	// commits it never saw.
+	ExpectedCurrentCommitID string `json:"expected_current_commit_id,omitempty"`
+	Force                   bool   `json:"force,omitempty"`
+	Reindex                 bool   `json:"reindex,omitempty"`
+	Generation              string `json:"generation,omitempty"`
+	Collection              string `json:"collection,omitempty"`
+	ChunkStrategy           string `json:"chunk_strategy,omitempty"`
+	MinChunkChars           int    `json:"min_chunk_chars,omitempty"`
+	MaxChunkChars           int    `json:"max_chunk_chars,omitempty"`
+	OverlapChars            int    `json:"overlap_chars,omitempty"`
+	SnapToSentence          *bool  `json:"snap_to_sentence,omitempty"`
+	ActivateGeneration      *bool  `json:"activate_generation,omitempty"`
 }
 
 type workspaceSearchRequest struct {
@@ -1149,6 +1155,28 @@ func revertWorkspace(ctx context.Context, cfg APIConfig, req workspaceRevertRequ
 	if err != nil {
 		return workspaceRevertResponse{}, err
 	}
+	// Optimistic-concurrency guard (finding H7, 2026-09-03 review): revert
+	// replaces the whole branch tree, destroying any commits made after the
+	// caller last looked. Without an explicit expected_current_commit_id
+	// match (or force), refuse instead of silently discarding newer work.
+	if !req.Force {
+		head := workspaceLogResponse{}
+		log, logErr := logWorkspaceCommits(cfg, workspaceCommitRequest{ProjectID: req.ProjectID, Branch: branch})
+		if logErr == nil {
+			head = log
+		}
+		if len(head.Commits) > 0 && head.Commits[0].CommitID != req.CommitID {
+			if req.ExpectedCurrentCommitID == "" {
+				return workspaceRevertResponse{}, fmt.Errorf(
+					"branch has commits newer than %s; pass expected_current_commit_id=%q to confirm, or force=true to discard newer commits",
+					req.CommitID, head.Commits[0].CommitID)
+			}
+			if req.ExpectedCurrentCommitID != head.Commits[0].CommitID {
+				return workspaceRevertResponse{}, errors.New(
+					"expected_current_commit_id does not match branch head " + head.Commits[0].CommitID)
+			}
+		}
+	}
 	root := workspaceProjectRoot(cfg, req.ProjectID, branch)
 	if err := os.RemoveAll(root); err != nil {
 		return workspaceRevertResponse{}, err
@@ -1312,15 +1340,11 @@ func workspaceLexicalIndex(cfg APIConfig, collection string) *bm25.Index {
 	if cfg.BM25Indexes == nil || collection == "" {
 		return nil
 	}
-	if idx := cfg.BM25Indexes[collection]; idx != nil {
-		return idx
-	}
-	idx := bm25.NewIndex()
-	if cfg.BM25Store != nil {
-		cfg.BM25Store.Attach(collection, idx)
-	}
-	cfg.BM25Indexes[collection] = idx
-	return idx
+	return cfg.BM25Indexes.GetOrCreate(collection, func(coll string, idx *bm25.Index) {
+		if cfg.BM25Store != nil {
+			cfg.BM25Store.Attach(coll, idx)
+		}
+	})
 }
 
 func loadWorkspaceManifest(cfg APIConfig, projectID, branch string) (*workspace.Manifest, string, error) {
@@ -1584,7 +1608,7 @@ func cleanupLexicalAfterGC(cfg APIConfig, chunks []workspace.ChunkRecord, result
 	dropped := make(map[string]struct{}, len(result.DroppedCollections))
 	for _, coll := range result.DroppedCollections {
 		dropped[coll] = struct{}{}
-		delete(cfg.BM25Indexes, coll)
+		cfg.BM25Indexes.Delete(coll)
 		if cfg.BM25Store != nil {
 			if err := cfg.BM25Store.Remove(coll); err != nil {
 				log.Printf("[workspace] remove BM25 sidecar %q: %v", coll, err)
@@ -1595,7 +1619,7 @@ func cleanupLexicalAfterGC(cfg APIConfig, chunks []workspace.ChunkRecord, result
 		if _, ok := dropped[rec.Collection]; ok {
 			continue
 		}
-		if idx := cfg.BM25Indexes[rec.Collection]; idx != nil {
+		if idx := cfg.BM25Indexes.Get(rec.Collection); idx != nil {
 			idx.Remove(rec.VectorID)
 		}
 	}

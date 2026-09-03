@@ -215,6 +215,10 @@ func main() {
 	structuredExtractEndpoint := flag.String("structured-extract-endpoint", firstNonEmpty(os.Getenv("STRUCTURED_EXTRACT_ENDPOINT"), os.Getenv("LIFT_ENDPOINT")), "Schema-driven document extraction sidecar endpoint (falls back to $STRUCTURED_EXTRACT_ENDPOINT or $LIFT_ENDPOINT)")
 	structuredExtractTimeoutMs := flag.Int("structured-extract-timeout-ms", intEnv("STRUCTURED_EXTRACT_TIMEOUT_MS", 0), "Structured extraction sidecar timeout in milliseconds (0 = handler default)")
 	profileName := flag.String("profile", "", "Functional profile: standalone, standalone-embed, or full (default)")
+	// pgSuppressed records that a functional profile disabled PostgreSQL
+	// without an explicit --pg-url; the DB_HOST env path in initSQLRuntime
+	// must then stay off too (finding M22, 2026-09-03 review).
+	var pgSuppressed bool
 
 	flag.Parse()
 
@@ -249,6 +253,7 @@ func main() {
 		}
 		if !provided["pg-url"] {
 			*pgURL = ""
+			pgSuppressed = true
 		}
 		if !provided["embed-endpoint"] {
 			*embedEndpointF = ""
@@ -278,6 +283,7 @@ func main() {
 		}
 		if !provided["pg-url"] {
 			*pgURL = ""
+			pgSuppressed = true
 		}
 		log.Printf("Profile: standalone-embed — as standalone, embed left enabled")
 	case "full", "":
@@ -389,7 +395,7 @@ func main() {
 	// for backward compatibility.
 	handler.SetCollections(colManager)
 
-	sqlRuntime := initSQLRuntime(*dataDir, *pgURL)
+	sqlRuntime := initSQLRuntimeSuppressed(*dataDir, *pgURL, pgSuppressed)
 	pgDSN := sqlRuntime.DSN
 	pgDB := sqlRuntime.DB
 	profileStrict := truthyEnv("LEVARA_PROFILE_STRICT")
@@ -535,6 +541,24 @@ func main() {
 	api.Post("/delete", handler.Delete)
 	api.Get("/datasets/:id/graph", vectorHttp.DatasetGraph(vizCfg))
 
+	// Error tracker inspection (protected). Previously registered in
+	// initHTTPRuntime before the JWT middleware, which made GET/DELETE
+	// /api/v1/errors unauthenticated — operational error details and a
+	// state-changing clear were reachable without credentials. The errTracker
+	// is threaded into RegisterAPI via APIConfig below.
+	// (auth-bypass finding, 2026-09-03 review H12)
+	api.Get("/errors", func(c *fiber.Ctx) error {
+		limit := c.QueryInt("limit", 50)
+		return c.JSON(fiber.Map{
+			"errors": errTracker.Recent(limit),
+			"total":  errTracker.Count(),
+		})
+	})
+	api.Delete("/errors", func(c *fiber.Ctx) error {
+		errTracker.Clear()
+		return c.JSON(fiber.Map{"cleared": true})
+	})
+
 	// Create gRPC service (shared between gRPC server and HTTP handlers for BM25 indexes)
 	grpcSvc := vectorGrpc.NewService(colManager, c, *dim)
 	bm25Store := bm25.NewSnapshotStore(*dataDir + "/bm25")
@@ -542,7 +566,7 @@ func main() {
 		log.Printf("BM25 snapshot load failed (%v), starting with empty lexical indexes", err)
 	} else {
 		for collection, idx := range loaded {
-			grpcSvc.BM25Indexes()[collection] = idx
+			grpcSvc.BM25Indexes().Insert(collection, idx)
 		}
 		if len(loaded) > 0 {
 			log.Printf("loaded %d BM25 lexical indexes from disk", len(loaded))

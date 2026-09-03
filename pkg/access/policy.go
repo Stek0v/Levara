@@ -11,6 +11,8 @@ import (
 const (
 	ActionRead  = "read"
 	ActionWrite = "write"
+	ActionDelete = "delete"
+	ActionShare  = "share"
 
 	RoleAdmin  = "admin"
 	RoleEditor = "editor"
@@ -552,8 +554,14 @@ func ValidRole(role string) bool {
 }
 
 func normalizeAction(action string) string {
-	if strings.ToLower(action) == ActionWrite {
+	switch strings.ToLower(action) {
+	case ActionWrite, ActionDelete, ActionShare:
+		// Destructive and grant-changing actions carry write-level (or
+		// higher) requirements. Previously anything but the literal "write"
+		// normalized to read, so a viewer ACL grant could not be denied for
+		// delete/share requests (finding M25, 2026-09-03 review).
 		return ActionWrite
+	default:
+		return ActionRead
 	}
-	return ActionRead
 }

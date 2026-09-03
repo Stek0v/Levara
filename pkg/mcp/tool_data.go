@@ -97,9 +97,42 @@ func ToolListData(ctx context.Context, deps Deps, args map[string]any) ToolResul
 	roomFilter, _ := args["room"].(string)
 	hasFilter := len(wantTags) > 0 || roomFilter != ""
 
+	// ACL scoping (finding H13, 2026-09-03 review): nil = unrestricted
+	// (superuser or no-auth mode); a non-nil, empty slice means the caller
+	// may see nothing; otherwise only the listed dataset IDs are visible.
+	allowed := deps.AllowedDatasetIDs(ctx)
+	allowedSet := map[string]bool{}
+	for _, id := range allowed {
+		allowedSet[id] = true
+	}
+	// Vector collections are named after their dataset, so a caller allowed
+	// to see a dataset may also see its collection by name. Resolve visible
+	// dataset names and add them to the allowed set.
+	if allowed != nil && deps.DB() != nil && len(allowed) > 0 {
+		ph := make([]string, len(allowed))
+		args := make([]any, len(allowed))
+		for i, id := range allowed {
+			ph[i] = fmt.Sprintf("$%d", i+1)
+			args[i] = id
+		}
+		q := deps.Q("SELECT name FROM datasets WHERE id IN (" + strings.Join(ph, ",") + ")")
+		if rows, err := deps.DB().QueryContext(ctx, q, args...); err == nil {
+			for rows.Next() {
+				var name string
+				if rows.Scan(&name) == nil {
+					allowedSet[name] = true
+				}
+			}
+			rows.Close()
+		}
+	}
+
 	var items []map[string]any
 	if !hasFilter {
 		for _, c := range deps.ListCollections() {
+			if allowed != nil && !allowedSet[c] {
+				continue
+			}
 			items = append(items, map[string]any{"collection": c, "type": "vector_collection"})
 		}
 	}
@@ -108,7 +141,7 @@ func ToolListData(ctx context.Context, deps Deps, args map[string]any) ToolResul
 		if hasFilter {
 			items = append(items, listDataFiltered(ctx, db, deps.Q, roomFilter, wantTags)...)
 		} else {
-			items = append(items, listDataUnfiltered(ctx, db, deps.Q)...)
+			items = append(items, listDataUnfiltered(ctx, db, deps.Q, allowed, allowedSet)...)
 		}
 	}
 
@@ -164,8 +197,10 @@ func listDataFiltered(ctx context.Context, db *sql.DB, rewrite func(string) stri
 }
 
 // listDataUnfiltered lists the most recent datasets (used when no
-// room/tags filter is supplied).
-func listDataUnfiltered(ctx context.Context, db *sql.DB, rewrite func(string) string) []map[string]any {
+// room/tags filter is supplied). allowed == nil means no ACL filtering
+// (anonymous/dev/superuser); otherwise only datasets whose id is in the
+// allowed set are returned (finding H13, 2026-09-03 review).
+func listDataUnfiltered(ctx context.Context, db *sql.DB, rewrite func(string) string, allowed []string, allowedSet map[string]bool) []map[string]any {
 	rows, err := db.QueryContext(ctx, rewrite(fmt.Sprintf("SELECT id, name FROM datasets ORDER BY created_at DESC LIMIT %d", listDataDatasetsCap)))
 	if err != nil {
 		return nil
@@ -176,6 +211,9 @@ func listDataUnfiltered(ctx context.Context, db *sql.DB, rewrite func(string) st
 	for rows.Next() {
 		var id, name string
 		rows.Scan(&id, &name)
+		if allowed != nil && !allowedSet[id] {
+			continue
+		}
 		out = append(out, map[string]any{"id": id, "name": name, "type": "dataset"})
 	}
 	return out

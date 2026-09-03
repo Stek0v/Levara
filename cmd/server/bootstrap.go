@@ -74,6 +74,13 @@ type sqlRuntime struct {
 }
 
 func initSQLRuntime(dataDir string, pgURL string) sqlRuntime {
+	return initSQLRuntimeSuppressed(dataDir, pgURL, false)
+}
+
+// initSQLRuntimeSuppressed adds the profile-suppression input: when a
+// functional profile cleared --pg-url, inherited DB_HOST env must not
+// silently initialize PostgreSQL anyway (finding M22, 2026-09-03 review).
+func initSQLRuntimeSuppressed(dataDir string, pgURL string, pgSuppressed bool) sqlRuntime {
 	dbProvider := os.Getenv("DB_PROVIDER")
 	if dbProvider == "sqlite" {
 		return initSQLiteRuntime(dataDir)
@@ -82,7 +89,7 @@ func initSQLRuntime(dataDir string, pgURL string) sqlRuntime {
 	if pgURL != "" {
 		return initPostgresRuntime(pgURL)
 	}
-	if os.Getenv("DB_HOST") != "" {
+	if !pgSuppressed && os.Getenv("DB_HOST") != "" {
 		return initPostgresRuntime("")
 	}
 	return sqlRuntime{}
@@ -236,17 +243,6 @@ func initHTTPRuntime(clusterStore *store.Cluster, dim int, replServer *cluster.R
 	api.Get("/version", versionHandler)
 	api.Post("/checks/connection", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "connected"})
-	})
-	api.Get("/errors", func(c *fiber.Ctx) error {
-		limit := c.QueryInt("limit", 50)
-		return c.JSON(fiber.Map{
-			"errors": errTracker.Recent(limit),
-			"total":  errTracker.Count(),
-		})
-	})
-	api.Delete("/errors", func(c *fiber.Ctx) error {
-		errTracker.Clear()
-		return c.JSON(fiber.Map{"cleared": true})
 	})
 
 	return httpRuntime{

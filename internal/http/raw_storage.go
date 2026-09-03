@@ -62,6 +62,9 @@ func storageKeyForResult(r ingest.Result) string {
 }
 
 // loadRawDataByLocation resolves file:// and storage:// locations.
+// Local filesystem locations (file:// and legacy plain paths) are contained
+// to the configured storage root: a tampered raw_data_location row must not
+// read arbitrary server files (finding M27, 2026-09-03 review).
 func loadRawDataByLocation(ctx context.Context, cfg APIConfig, location string) ([]byte, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -69,6 +72,9 @@ func loadRawDataByLocation(ctx context.Context, cfg APIConfig, location string) 
 	switch {
 	case strings.HasPrefix(location, "file://"):
 		path := strings.TrimPrefix(location, "file://")
+		if !pathInsideStorageRoot(cfg.StoragePath, path) {
+			return nil, fmt.Errorf("raw location %q is outside the storage root", location)
+		}
 		return os.ReadFile(path)
 	case strings.HasPrefix(location, storageURIPrefix):
 		if cfg.FileStorage == nil {
@@ -82,9 +88,32 @@ func loadRawDataByLocation(ctx context.Context, cfg APIConfig, location string) 
 		defer rc.Close()
 		return io.ReadAll(rc)
 	default:
-		// Backward compatibility for plain local paths.
+		// Backward compatibility for plain local paths — same containment.
+		if !pathInsideStorageRoot(cfg.StoragePath, location) {
+			return nil, fmt.Errorf("raw location %q is outside the storage root", location)
+		}
 		return os.ReadFile(location)
 	}
+}
+
+// pathInsideStorageRoot reports whether path resolves inside root without
+// traversal. Empty root disables the check (unconfigured deployments).
+func pathInsideStorageRoot(root, path string) bool {
+	if strings.TrimSpace(root) == "" {
+		return true
+	}
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return false
+	}
+	pathAbs, err := filepath.Abs(path)
+	if err != nil {
+		return false
+	}
+	if pathAbs == rootAbs {
+		return true
+	}
+	return strings.HasPrefix(pathAbs, rootAbs+string(filepath.Separator))
 }
 
 func storageKeyForData(id, extension, fallbackPath string) string {
