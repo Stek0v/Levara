@@ -3,7 +3,10 @@ package router
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
+	"fmt"
 	"log"
+	"strings"
 	"sync"
 )
 
@@ -130,17 +133,32 @@ func (aw *AdaptiveWeights) persistLocked(ctx context.Context) error {
 	if aw.db == nil {
 		return nil
 	}
+	// Placeholder style follows the driver (finding L3, 2026-09-03 review):
+	// '?' previously made persistence a silent no-op on PostgreSQL.
+	q := `INSERT INTO routing_weights (search_type, weight, success_count, total_count, updated_at)
+		 VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+		 ON CONFLICT(search_type) DO UPDATE SET weight=excluded.weight, success_count=excluded.success_count, total_count=excluded.total_count, updated_at=CURRENT_TIMESTAMP`
+	if isPostgresDB(aw.db) {
+		q = `INSERT INTO routing_weights (search_type, weight, success_count, total_count, updated_at)
+			 VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
+			 ON CONFLICT(search_type) DO UPDATE SET weight=excluded.weight, success_count=excluded.success_count, total_count=excluded.total_count, updated_at=CURRENT_TIMESTAMP`
+	}
 	for st, w := range aw.weights {
-		_, err := aw.db.ExecContext(ctx,
-			`INSERT INTO routing_weights (search_type, weight, success_count, total_count, updated_at)
-			 VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-			 ON CONFLICT(search_type) DO UPDATE SET weight=excluded.weight, success_count=excluded.success_count, total_count=excluded.total_count, updated_at=CURRENT_TIMESTAMP`,
-			st, w, aw.successCount[st], aw.totalCount[st])
+		_, err := aw.db.ExecContext(ctx, q, st, w, aw.successCount[st], aw.totalCount[st])
 		if err != nil {
 			log.Printf("[adaptive] persist %s: %v", st, err)
 		}
 	}
 	return nil
+}
+
+// isPostgresDB reports whether db speaks PostgreSQL placeholder syntax.
+func isPostgresDB(db interface{ Driver() driver.Driver }) bool {
+	if db == nil {
+		return false
+	}
+	name := strings.ToLower(fmt.Sprintf("%T", db.Driver()))
+	return strings.Contains(name, "pgx") || strings.Contains(name, "pq") || strings.Contains(name, "stdlib")
 }
 
 // Load reads weights from DB.

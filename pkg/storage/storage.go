@@ -338,25 +338,31 @@ func (s *S3Storage) List(ctx context.Context, prefix string) ([]string, error) {
 		if err != nil {
 			return nil, fmt.Errorf("storage/s3: LIST prefix=%s: %w", prefix, err)
 		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode >= 300 {
-			return nil, fmt.Errorf("storage/s3: LIST prefix=%s status %d", prefix, resp.StatusCode)
+		// Close per page, not deferred in the loop (finding L5, 2026-09-03
+		// review): paginated listings otherwise hold every response body
+		// open until the whole listing returns.
+		xmlDecodeErr := func() error {
+			defer resp.Body.Close()
+			var result listBucketResult
+			if err := xml.NewDecoder(resp.Body).Decode(&result); err != nil {
+				return fmt.Errorf("storage/s3: parse list response: %w", err)
+			}
+			for _, obj := range result.Contents {
+				allKeys = append(allKeys, obj.Key)
+			}
+			if !result.IsTruncated {
+				contToken = ""
+			} else {
+				contToken = result.NextContToken
+			}
+			return nil
+		}()
+		if xmlDecodeErr != nil {
+			return nil, xmlDecodeErr
 		}
-
-		var result listBucketResult
-		if err := xml.NewDecoder(resp.Body).Decode(&result); err != nil {
-			return nil, fmt.Errorf("storage/s3: parse list response: %w", err)
-		}
-
-		for _, obj := range result.Contents {
-			allKeys = append(allKeys, obj.Key)
-		}
-
-		if !result.IsTruncated {
+		if contToken == "" {
 			break
 		}
-		contToken = result.NextContToken
 	}
 
 	return allKeys, nil

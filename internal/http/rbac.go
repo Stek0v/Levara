@@ -49,6 +49,14 @@ func datasetSharesListHandler(cfg APIConfig) fiber.Handler {
 			return c.JSON([]ShareDTO{})
 		}
 
+		// Reading the share list requires at least read access to the
+		// dataset (finding L9, 2026-09-03 review) — otherwise any
+		// authenticated caller could enumerate a private dataset's shares.
+		userID, _ := c.Locals("user_id").(string)
+		if !CheckDatasetAccess(cfg.DB, c, dsID, userID) {
+			return c.Status(403).JSON(fiber.Map{"detail": "read access to dataset required"})
+		}
+
 		rows, err := cfg.DB.QueryContext(ctx,
 			Q(`SELECT s.id, s.dataset_id, s.user_id, COALESCE(u.email,''), s.role, s.granted_by, s.created_at
 			 FROM dataset_shares s LEFT JOIN users u ON s.user_id = u.id
