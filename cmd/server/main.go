@@ -644,6 +644,11 @@ func main() {
 	// (concurrency-safe) across the REST and MCP configs; drained on shutdown.
 	var wsAuditSink audit.EventSink
 	if wsAuditExporter := initWorkspaceAuditExporter(*dataDir, srvLog); wsAuditExporter != nil {
+		// Compliance note (finding L8, 2026-09-03 review): the exporter is
+		// non-blocking by design and drops events under sustained
+		// backpressure. Treat it as best-effort observability, not a
+		// durable compliance sink.
+		srvLog.Warn("workspace audit export is best-effort; events may be dropped under backpressure", nil)
 		wsAuditSink = wsAuditExporter
 		defer wsAuditExporter.Close()
 	}

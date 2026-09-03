@@ -541,6 +541,14 @@ func (h *mcpHandler) CollectionMeta(name string) mcp.CollectionInfo {
 // authenticateMCPRequest verifies the caller's identity from API key or JWT.
 
 // deleteSession removes a session.
+// Error-shape note (L1, 2026-09-03 review): transport failure shapes are
+// deliberately heterogeneous for client compatibility — legacy auth
+// failures use bare 404 (the Claude Code client treats it as
+// "re-initialize"), latest-transport auth failures use bare 404 (same
+// semantics, stateless), initialize auth failures use a JSON-RPC
+// envelope with 401, and tool-level failures are HTTP 200 results with
+// isError=true per the MCP spec. Unifying these would break established
+// clients; treat the shapes as part of each transport's contract.
 func (h *mcpHandler) handleRPC(c *fiber.Ctx) error {
 	var req jsonRPCRequest
 	if err := c.BodyParser(&req); err != nil {
