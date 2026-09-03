@@ -155,7 +155,7 @@ func newWorkspaceCLITestServer(t *testing.T) func() {
 		EmbedEndpoint:    embedSrv.URL,
 		EmbedModel:       "test-embed",
 		Collections:      cm,
-		BM25Indexes:      map[string]*bm25.Index{},
+		BM25Indexes:      bm25.NewIndexRegistry(),
 	})
 	srv := httptest.NewServer(adaptor.FiberApp(app))
 

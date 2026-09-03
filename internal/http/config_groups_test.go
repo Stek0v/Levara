@@ -33,7 +33,7 @@ func sampleAPIConfig() APIConfig {
 		Collections:                &store.CollectionManager{},
 		Neo4jCfg:                   GraphVisualizationConfig{Neo4jURL: "bolt://neo4j"},
 		DB:                         &sql.DB{},
-		BM25Indexes:                map[string]*bm25.Index{"c": nil},
+		BM25Indexes:                bm25.NewIndexRegistry(),
 		BM25Store:                  bm25.NewSnapshotStore("/tmp/bm25-test"),
 		LLMCache:                   nil,
 		LLMProvider:                nil,

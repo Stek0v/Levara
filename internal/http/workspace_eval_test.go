@@ -130,7 +130,7 @@ func newWorkspaceEvalConfig(t *testing.T) (APIConfig, func()) {
 		EmbedModel:    "workspace-eval-embed",
 		EmbedClient:   embed.NewClient(embedSrv.URL, "workspace-eval-embed", 16, 1),
 		Collections:   cm,
-		BM25Indexes:   map[string]*bm25.Index{},
+		BM25Indexes:   bm25.NewIndexRegistry(),
 	}
 	return cfg, func() {
 		embedSrv.Close()

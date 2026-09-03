@@ -41,9 +41,8 @@ type Service struct {
 	cluster     *store.Cluster // legacy: for non-collection operations
 	dim            int
 	llmCache       *llmcache.Cache
-	bm25Indexes    map[string]*bm25.Index
+	bm25Indexes    *bm25.IndexRegistry
 	bm25Store      *bm25.SnapshotStore
-	bm25Mu         sync.RWMutex
 	graphCaches    map[string]*graphdb.CachedWriter
 	graphCacheMu   sync.Mutex
 	// Shared embed client + defaults (T3 / P3.1). When req.EmbedEndpoint is
@@ -62,7 +61,7 @@ func NewService(collections *store.CollectionManager, cluster *store.Cluster, di
 		cluster:     cluster,
 		dim:         dim,
 		llmCache:    llmcache.New(10000, 0),
-		bm25Indexes: make(map[string]*bm25.Index),
+		bm25Indexes: bm25.NewIndexRegistry(),
 		graphCaches: make(map[string]*graphdb.CachedWriter),
 	}
 }
@@ -100,8 +99,10 @@ func (s *Service) resolveEmbedClient(reqEndpoint, reqModel string, batchSize, co
 	return embed.NewClient(reqEndpoint, model, batchSize, concurrency), nil
 }
 
-// BM25Indexes returns the shared BM25 index map for HTTP handlers.
-func (s *Service) BM25Indexes() map[string]*bm25.Index {
+// BM25Indexes returns the shared BM25 index registry for HTTP handlers.
+// The registry is concurrency-safe: search/autosave readers and
+// cognify/workspace writers no longer race on the underlying map (H2).
+func (s *Service) BM25Indexes() *bm25.IndexRegistry {
 	return s.bm25Indexes
 }
 
@@ -111,7 +112,7 @@ func (s *Service) SetBM25Store(store *bm25.SnapshotStore) {
 	if store == nil {
 		return
 	}
-	for collection, idx := range s.bm25Indexes {
+	for collection, idx := range s.bm25Indexes.Snapshot() {
 		store.Attach(collection, idx)
 	}
 }
@@ -1351,23 +1352,11 @@ func (s *Service) LLMCacheStats(_ context.Context, _ *pb.Empty) (*pb.LLMCacheSta
 }
 
 func (s *Service) getBM25Index(collection string) *bm25.Index {
-	s.bm25Mu.RLock()
-	idx, ok := s.bm25Indexes[collection]
-	s.bm25Mu.RUnlock()
-	if ok {
-		return idx
-	}
-	s.bm25Mu.Lock()
-	defer s.bm25Mu.Unlock()
-	if idx, ok = s.bm25Indexes[collection]; ok {
-		return idx
-	}
-	idx = bm25.NewIndex()
-	if s.bm25Store != nil {
-		s.bm25Store.Attach(collection, idx)
-	}
-	s.bm25Indexes[collection] = idx
-	return idx
+	return s.bm25Indexes.GetOrCreate(collection, func(coll string, idx *bm25.Index) {
+		if s.bm25Store != nil {
+			s.bm25Store.Attach(coll, idx)
+		}
+	})
 }
 
 // BM25Index adds documents to a BM25 inverted index.
@@ -1392,10 +1381,8 @@ func (s *Service) BM25Search(_ context.Context, req *pb.BM25SearchReq) (*pb.BM25
 		topK = 10
 	}
 
-	s.bm25Mu.RLock()
-	idx, ok := s.bm25Indexes[req.Collection]
-	s.bm25Mu.RUnlock()
-	if !ok {
+	idx := s.bm25Indexes.Get(req.Collection)
+	if idx == nil {
 		return &pb.BM25SearchResp{}, nil // empty collection
 	}
 
@@ -1460,10 +1447,8 @@ func (s *Service) HybridSearch(ctx context.Context, req *pb.HybridSearchReq) (*p
 
 	// BM25 search goroutine
 	go func() {
-		s.bm25Mu.RLock()
-		idx, ok := s.bm25Indexes[req.Collection]
-		s.bm25Mu.RUnlock()
-		if !ok {
+		idx := s.bm25Indexes.Get(req.Collection)
+		if idx == nil {
 			bmCh <- bm25Out{}
 			return
 		}

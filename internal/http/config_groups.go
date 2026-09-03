@@ -94,7 +94,7 @@ type SearchConfig struct {
 	EmbedClient             *embed.Client
 	Collections             *store.CollectionManager
 	Neo4jCfg                GraphVisualizationConfig
-	BM25Indexes             map[string]*bm25.Index
+	BM25Indexes             *bm25.IndexRegistry
 	BM25Store               *bm25.SnapshotStore
 	LLMCache                llmcache.LLMCacher
 	LLMProvider             llm.Provider

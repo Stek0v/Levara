@@ -445,7 +445,7 @@ func capabilitiesFromConfig(cfg APIConfig) router.Capabilities {
 	}
 	return router.Capabilities{
 		HasEmbedding:   cfg.EmbedEndpoint != "" && cfg.Collections != nil,
-		HasBM25:        len(cfg.BM25Indexes) > 0,
+		HasBM25:        cfg.BM25Indexes.Len() > 0,
 		HasNeo4j:       cfg.Neo4jCfg.Neo4jURL != "",
 		HasLLM:         cfg.LLMProvider != nil,
 		HasPostgres:    cfg.DB != nil,
@@ -604,7 +604,7 @@ func bm25Search(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 	}
 
 	var allResults []fiber.Map
-	for collection, idx := range cfg.BM25Indexes {
+	for collection, idx := range cfg.BM25Indexes.Snapshot() {
 		if req.Collection != "" && collection != req.Collection {
 			continue
 		}
@@ -668,7 +668,7 @@ func hybridSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 		}
 		var br []bm25.Result
 		if cfg.BM25Indexes != nil {
-			if idx, ok := cfg.BM25Indexes[coll]; ok {
+			if idx := cfg.BM25Indexes.Get(coll); idx != nil {
 				br = idx.Search(bm25Query, req.TopK*2)
 			}
 		}

@@ -115,11 +115,15 @@ func UpsertGraphToPostgres(ctx context.Context, db *sql.DB, datasetID string, no
 		// prior valid edges (different target, same source+rel, same
 		// dataset) as superseded by this new edge.
 		if IsExclusiveRelationship(e.RelationshipName) {
+			// Case-insensitive relation match (finding M6, 2026-09-03
+			// review): LLM extraction emits mixed-case variants of the same
+			// exclusive relation; the supersede predicate must match them
+			// exactly like IsExclusiveRelationship does.
 			_, err := tx.ExecContext(ctx,
 				`UPDATE graph_edges
 				 SET valid_until = $1, superseded_by = $2, updated_at = $3
 				 WHERE source_id = $4
-				   AND relationship_name = $5
+				   AND LOWER(relationship_name) = LOWER($5)
 				   AND id <> $6
 				   AND dataset_id = $7
 				   AND (valid_until IS NULL)`,

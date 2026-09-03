@@ -88,7 +88,7 @@ type Config struct {
 	LLMProvider llm.Provider
 	// BM25Indexes (optional): shared BM25 indexes for lexical search.
 	// If set, pipeline updates BM25 index when inserting vectors.
-	BM25Indexes map[string]*bm25.Index
+	BM25Indexes *bm25.IndexRegistry
 	// BM25Store (optional): attaches immediate disk persistence to new BM25 indexes.
 	BM25Store *bm25.SnapshotStore
 	// SkipGraph when true skips LLM entity extraction (Stage 2),
@@ -543,6 +543,10 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 
 	var writeWg sync.WaitGroup
 	var nodesWritten, edgesWritten atomic.Int32
+	// writeErrors counts Stage-4 write failures. FULL cognify previously
+	// swallowed them, reporting COMPLETED after split-brain writes
+	// (finding H3, 2026-09-03 review).
+	var writeErrors atomic.Int32
 
 	// Neo4j write (goroutine) — skipped in RAG mode
 	if cfg.Neo4jURL != "" && !cfg.SkipGraph {
@@ -552,6 +556,7 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 			writer, err := graphdb.NewWriter(ctx, cfg.Neo4jURL, cfg.Neo4jUser, cfg.Neo4jPassword, cfg.Neo4jDatabase)
 			if err != nil {
 				log.Printf("[pipeline] neo4j connect: %v", err)
+				writeErrors.Add(1)
 				return
 			}
 			defer writer.Close(ctx)
@@ -589,6 +594,7 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 			edgesWritten.Add(int32(res.EdgesWritten))
 			if len(res.Errors) > 0 {
 				log.Printf("[pipeline] neo4j write errors: %v", res.Errors)
+				writeErrors.Add(int32(len(res.Errors)))
 			}
 			log.Printf("[pipeline] neo4j write: %d nodes, %d edges written", res.NodesWritten, res.EdgesWritten)
 		}()
@@ -687,17 +693,15 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 							meta := buildChunkMeta(chunkMetas[i])
 							if err := cfg.Collections.Insert(chunkColl, chunkIDs[i], vec, meta); err != nil {
 								log.Printf("[pipeline] chunk insert error: %v", err)
+								writeErrors.Add(1)
 							} else {
 								chunkInserted++
 								if cfg.BM25Indexes != nil {
-									idx, ok := cfg.BM25Indexes[chunkColl]
-									if !ok {
-										idx = bm25.NewIndex()
+									idx := cfg.BM25Indexes.GetOrCreate(chunkColl, func(coll string, created *bm25.Index) {
 										if cfg.BM25Store != nil {
-											cfg.BM25Store.Attach(chunkColl, idx)
+											cfg.BM25Store.Attach(coll, created)
 										}
-										cfg.BM25Indexes[chunkColl] = idx
-									}
+									})
 									idx.Add(chunkIDs[i], chunkMetas[i].text, meta)
 								}
 							}
@@ -771,7 +775,7 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 									inserted++
 									// Update BM25 index for lexical search
 									if cfg.BM25Indexes != nil {
-										if idx, ok := cfg.BM25Indexes[coll]; ok {
+										if idx := cfg.BM25Indexes.Get(coll); idx != nil {
 											idx.Add(n.ID, texts[i], meta)
 										}
 									}
@@ -901,6 +905,18 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 	}
 
 	// --- Done ---
+	if n := writeErrors.Load(); n > 0 {
+		progressCh <- Progress{
+			Stage: "complete", ItemsTotal: len(texts), ItemsProcessed: len(texts),
+			ChunksCreated:     len(allChunks),
+			EntitiesExtracted: len(dedupResult.Nodes), EdgesExtracted: len(dedupResult.Edges),
+			NodesWritten: int(nodesWritten.Load()), EdgesWritten: int(edgesWritten.Load()),
+			Message:   fmt.Sprintf("pipeline finished with %d write error(s)", n),
+			ElapsedMs: ms(start),
+		}
+		return fmt.Errorf("%d stage-4 write(s) failed; run reported COMPLETED in error previously — check Neo4j/vector/PG health", n)
+	}
+
 	progressCh <- Progress{
 		Stage: "complete", ItemsTotal: len(texts), ItemsProcessed: len(texts),
 		ChunksCreated:     len(allChunks),

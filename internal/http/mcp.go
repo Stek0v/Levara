@@ -438,14 +438,7 @@ func (h *mcpHandler) AllowedDatasetIDs(ctx context.Context) []string {
 // ListLexicalCollections implements mcp.Deps: returns collections with a BM25
 // index, independent of whether the vector CollectionManager is configured.
 func (h *mcpHandler) ListLexicalCollections() []string {
-	if h.cfg.BM25Indexes == nil {
-		return nil
-	}
-	names := make([]string, 0, len(h.cfg.BM25Indexes))
-	for name := range h.cfg.BM25Indexes {
-		names = append(names, name)
-	}
-	return names
+	return h.cfg.BM25Indexes.Names()
 }
 
 // LexicalSearch implements mcp.Deps: forwards to the shared BM25 index map.
@@ -453,7 +446,7 @@ func (h *mcpHandler) LexicalSearch(collection, query string, topK int) ([]mcp.Le
 	if h.cfg.BM25Indexes == nil {
 		return nil, nil
 	}
-	idx := h.cfg.BM25Indexes[collection]
+	idx := h.cfg.BM25Indexes.Get(collection)
 	if idx == nil {
 		return nil, nil
 	}

@@ -127,7 +127,9 @@ func (s *SnapshotStore) AppendChange(collection string, change Change) error {
 }
 
 // StartAutosave periodically snapshots BM25 indexes until ctx is cancelled.
-func (s *SnapshotStore) StartAutosave(ctx context.Context, indexes map[string]*Index, interval time.Duration) func() {
+// It takes an IndexRegistry so the periodic Snapshot() copy cannot race with
+// concurrent cognify/workspace writers on the underlying map (finding H2).
+func (s *SnapshotStore) StartAutosave(ctx context.Context, indexes *IndexRegistry, interval time.Duration) func() {
 	if interval <= 0 {
 		interval = 5 * time.Minute
 	}
@@ -138,11 +140,11 @@ func (s *SnapshotStore) StartAutosave(ctx context.Context, indexes map[string]*I
 		for {
 			select {
 			case <-ticker.C:
-				if err := s.SaveAll(indexes); err != nil {
+				if err := s.SaveAll(indexes.Snapshot()); err != nil {
 					log.Printf("[bm25] autosave failed: %v", err)
 				}
 			case <-ctx.Done():
-				if err := s.SaveAll(indexes); err != nil {
+				if err := s.SaveAll(indexes.Snapshot()); err != nil {
 					log.Printf("[bm25] final save failed: %v", err)
 				}
 				return

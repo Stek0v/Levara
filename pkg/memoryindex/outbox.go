@@ -62,6 +62,27 @@ func NewStore(db *sql.DB) (*Store, error) {
 	return s, nil
 }
 
+// Enqueue adds a job outside any caller transaction.
+func (s *Store) Enqueue(ctx context.Context, j Job) (Job, error) {
+	j.Status = Pending
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	q := s.bind(`INSERT INTO memory_index_jobs (id,memory_id,operation,collection_name,owner_id,digest,embed_model,embed_dimension,status,created_at,updated_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(memory_id,operation,digest) DO NOTHING`)
+	if _, err := s.db.ExecContext(ctx, q, j.ID, j.MemoryID, j.Operation, j.Collection, j.OwnerID, j.Digest, j.Model, j.Dimension, string(j.Status), now, now); err != nil {
+		return Job{}, err
+	}
+	var id string
+	var status Status
+	var attempts int
+	err := s.db.QueryRowContext(ctx, s.bind(`SELECT id,status,attempts FROM memory_index_jobs WHERE memory_id=? AND operation=? AND digest=?`), j.MemoryID, j.Operation, j.Digest).Scan(&id, &status, &attempts)
+	if err != nil {
+		return Job{}, err
+	}
+	j.ID, j.Status, j.Attempts = id, status, attempts
+	return j, nil
+}
+
+// EnqueueTx adds a job within the caller's transaction.
 func (s *Store) EnqueueTx(ctx context.Context, tx *sql.Tx, j Job) (Job, error) {
 	if j.ID == "" {
 		j.ID = uuid.NewString()
@@ -77,34 +98,59 @@ func (s *Store) EnqueueTx(ctx context.Context, tx *sql.Tx, j Job) (Job, error) {
 	return j, err
 }
 
+// Claim atomically moves the next due job to 'running'. Safe across
+	// multiple server processes sharing one database: each claim is a single
+	// conditional UPDATE guarded on the selectable statuses, so only the
+	// winner's UPDATE affects the row; losers move on to the next candidate
+	// (finding H9, 2026-09-03 review). On PostgreSQL candidates are selected
+	// FOR UPDATE SKIP LOCKED to avoid lock contention between claimers.
 func (s *Store) Claim(ctx context.Context) (Job, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return Job{}, false, err
-	}
-	defer tx.Rollback()
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	var j Job
-	err = tx.QueryRowContext(ctx, s.bind(`SELECT id,memory_id,operation,collection_name,owner_id,digest,embed_model,embed_dimension,status,attempts,next_run_at,last_error
-		FROM memory_index_jobs WHERE status IN ('pending','failed') AND (next_run_at='' OR next_run_at<=?) ORDER BY created_at LIMIT 1`), now).
-		Scan(&j.ID, &j.MemoryID, &j.Operation, &j.Collection, &j.OwnerID, &j.Digest, &j.Model, &j.Dimension, &j.Status, &j.Attempts, &j.NextRunAt, &j.LastError)
-	if err == sql.ErrNoRows {
-		return Job{}, false, nil
+	skipLocked := ""
+	if s.postgres {
+		skipLocked = " FOR UPDATE SKIP LOCKED"
 	}
+	candQ := s.bind(`SELECT id FROM memory_index_jobs WHERE status IN ('pending','failed') AND (next_run_at='' OR next_run_at<=?) ORDER BY created_at LIMIT 8` + skipLocked)
+	rows, err := s.db.QueryContext(ctx, candQ, now)
 	if err != nil {
 		return Job{}, false, err
 	}
-	j.Attempts++
-	j.Status = Running
-	if _, err = tx.ExecContext(ctx, s.bind(`UPDATE memory_index_jobs SET status='running',attempts=?,updated_at=? WHERE id=?`), j.Attempts, now, j.ID); err != nil {
+	var candidates []string
+	for rows.Next() {
+		var id string
+		if rows.Scan(&id) == nil {
+			candidates = append(candidates, id)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
 		return Job{}, false, err
 	}
-	if err = tx.Commit(); err != nil {
-		return Job{}, false, err
+	updQ := s.bind(`UPDATE memory_index_jobs SET status='running',attempts=attempts+1,updated_at=? WHERE id=? AND status IN ('pending','failed')`)
+	for _, id := range candidates {
+		res, err := s.db.ExecContext(ctx, updQ, now, id)
+		if err != nil {
+			return Job{}, false, err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return Job{}, false, err
+		}
+		if n == 0 {
+			continue // another process claimed it first
+		}
+		var j Job
+		err = s.db.QueryRowContext(ctx, s.bind(`SELECT id,memory_id,operation,collection_name,owner_id,digest,embed_model,embed_dimension,status,attempts,next_run_at,last_error
+			FROM memory_index_jobs WHERE id=?`), id).
+			Scan(&j.ID, &j.MemoryID, &j.Operation, &j.Collection, &j.OwnerID, &j.Digest, &j.Model, &j.Dimension, &j.Status, &j.Attempts, &j.NextRunAt, &j.LastError)
+		if err != nil {
+			return Job{}, false, err
+		}
+		return j, true, nil
 	}
-	return j, true, nil
+	return Job{}, false, nil
 }
 
 func (s *Store) Finish(ctx context.Context, j Job, runErr error, maxAttempts int, backoff time.Duration) error {
@@ -120,7 +166,9 @@ func (s *Store) Finish(ctx context.Context, j Job, runErr error, maxAttempts int
 			next = time.Now().Add(backoff * time.Duration(1<<max(0, j.Attempts-1))).UTC().Format(time.RFC3339Nano)
 		}
 	}
-	_, err := s.db.ExecContext(ctx, s.bind(`UPDATE memory_index_jobs SET status=?,last_error=?,next_run_at=?,updated_at=? WHERE id=?`), string(status), last, next, time.Now().UTC().Format(time.RFC3339Nano), j.ID)
+	// Status predicate: a stale worker whose job was reclaimed after lease
+	// loss must not clobber the new owner's state.
+	_, err := s.db.ExecContext(ctx, s.bind(`UPDATE memory_index_jobs SET status=?,last_error=?,next_run_at=?,updated_at=? WHERE id=? AND status='running'`), string(status), last, next, time.Now().UTC().Format(time.RFC3339Nano), j.ID)
 	return err
 }
 

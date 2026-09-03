@@ -464,7 +464,7 @@ func (h *mcpHandler) checkBM25Coverage(verbose bool) doctorCheck {
 			continue
 		}
 		if h.cfg.BM25Indexes != nil {
-			if _, ok := h.cfg.BM25Indexes[name]; ok {
+			if h.cfg.BM25Indexes.Get(name) != nil {
 				indexed++
 				continue
 			}
