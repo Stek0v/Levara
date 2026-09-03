@@ -81,7 +81,7 @@ type SearchDeps interface {
 	NewSearchPipeline(doRerank bool) SearchPipeline
 	LLMProvider() llm.Provider
 	LLMModel() string
-	SearchCapabilities() router.Capabilities
+	SearchCapabilities(collection string) router.Capabilities
 	AllowedDatasetIDs(ctx context.Context) []string
 	ListLexicalCollections() []string
 	LexicalSearch(collection, query string, topK int) ([]LexicalResult, error)

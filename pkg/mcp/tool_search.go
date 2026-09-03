@@ -283,7 +283,7 @@ func ToolSearch(ctx context.Context, deps Deps, args map[string]any) ToolResult 
 	var routingInfo *router.Decision
 	upper := strings.ToUpper(a.searchType)
 	if upper == "AUTO" || upper == "FEELING_LUCKY" {
-		caps := deps.SearchCapabilities()
+		caps := deps.SearchCapabilities(a.collection)
 		// Mode-aware: suppress graph capabilities in rag mode so the
 		// router doesn't pick a graph-backed search type.
 		if a.mode == "rag" {

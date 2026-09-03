@@ -288,7 +288,7 @@ func (f *fakeDeps) NewSearchPipeline(doRerank bool) SearchPipeline {
 
 func (f *fakeDeps) LLMProvider() llm.Provider               { return f.llmProvider }
 func (f *fakeDeps) LLMModel() string                        { return f.llmModel }
-func (f *fakeDeps) SearchCapabilities() router.Capabilities { return f.capabilities }
+func (f *fakeDeps) SearchCapabilities(string) router.Capabilities { return f.capabilities }
 func (f *fakeDeps) AllowedDatasetIDs(context.Context) []string {
 	return f.allowedDatasetIDs
 }
@@ -394,7 +394,7 @@ func (nilDBDeps) RunPipeline(context.Context, []string, orchestrator.Config, cha
 func (nilDBDeps) NewSearchPipeline(bool) SearchPipeline   { return nil }
 func (nilDBDeps) LLMProvider() llm.Provider               { return nil }
 func (nilDBDeps) LLMModel() string                        { return "" }
-func (nilDBDeps) SearchCapabilities() router.Capabilities { return router.Capabilities{} }
+func (nilDBDeps) SearchCapabilities(string) router.Capabilities { return router.Capabilities{} }
 func (nilDBDeps) AllowedDatasetIDs(context.Context) []string {
 	return nil
 }

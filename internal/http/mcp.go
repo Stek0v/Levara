@@ -424,8 +424,8 @@ func (h *mcpHandler) LLMModel() string { return os.Getenv("LLM_MODEL") }
 // capabilitiesFromConfig helper in api.go. Potentially issues a DB
 // query to detect communities; kept as a separate method so tool code
 // can cache the result when it uses it multiple times.
-func (h *mcpHandler) SearchCapabilities() router.Capabilities {
-	return capabilitiesFromConfig(h.cfg)
+func (h *mcpHandler) SearchCapabilities(collection string) router.Capabilities {
+	return capabilitiesFromConfig(h.cfg, collection)
 }
 
 // AllowedDatasetIDs implements mcp.Deps: resolves the caller's dataset/project

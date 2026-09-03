@@ -377,7 +377,7 @@ func searchHandler(cfg APIConfig) fiber.Handler {
 		if queryType == "" || queryType == "AUTO" || queryType == "FEELING_LUCKY" {
 			source = "routed"
 			routeStart := time.Now()
-			caps := capabilitiesFromConfig(cfg)
+			caps := capabilitiesFromConfig(cfg, req.Collection)
 			d := router.Route(req.QueryText, caps)
 			metrics.RouterDecisionDuration.Observe(time.Since(routeStart).Seconds())
 
@@ -435,7 +435,11 @@ func dcdRouteSupportedSearchType(queryType string) bool {
 }
 
 // capabilitiesFromConfig derives router.Capabilities from the current APIConfig.
-func capabilitiesFromConfig(cfg APIConfig) router.Capabilities {
+// collection scopes the BM25 capability check: previously HasBM25 was global,
+// so AUTO could route HYBRID for a collection with no BM25 index and return
+// zero results (finding M5, 2026-09-03 review). Empty collection keeps the
+// legacy global behavior.
+func capabilitiesFromConfig(cfg APIConfig, collection string) router.Capabilities {
 	hasCommunities := false
 	if cfg.DB != nil {
 		var count int
@@ -443,9 +447,13 @@ func capabilitiesFromConfig(cfg APIConfig) router.Capabilities {
 			hasCommunities = count > 0
 		}
 	}
+	hasBM25 := cfg.BM25Indexes.Len() > 0
+	if collection != "" {
+		hasBM25 = cfg.BM25Indexes.Get(collection) != nil
+	}
 	return router.Capabilities{
 		HasEmbedding:   cfg.EmbedEndpoint != "" && cfg.Collections != nil,
-		HasBM25:        cfg.BM25Indexes.Len() > 0,
+		HasBM25:        hasBM25,
 		HasNeo4j:       cfg.Neo4jCfg.Neo4jURL != "",
 		HasLLM:         cfg.LLMProvider != nil,
 		HasPostgres:    cfg.DB != nil,
