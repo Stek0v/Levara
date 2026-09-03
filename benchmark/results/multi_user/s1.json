@@ -1,0 +1,40 @@
+{
+ "url": "http://127.0.0.1:18081",
+ "generated": "2026-09-03T04:18:18Z",
+ "scenarios": [
+  {
+   "scenario": "S1",
+   "agents": 10,
+   "keys_per_agent": 100,
+   "save_count": 1000,
+   "recall_count": 100,
+   "errors": [],
+   "error_count": 0,
+   "save_p50_ms": 3.0,
+   "save_p95_ms": 8.1,
+   "save_p99_ms": 18.6,
+   "save_max_ms": 25.5,
+   "recall_p50_ms": 216.6,
+   "recall_p95_ms": 226.8,
+   "recall_p99_ms": 235.3,
+   "recall_spotcheck_found": [
+    3,
+    3,
+    5,
+    4,
+    2,
+    6,
+    2,
+    5,
+    5,
+    4
+   ],
+   "isolation": {
+    "per_collection_counts_ok": true,
+    "cross_agent_leak": false
+   },
+   "pass": true
+  }
+ ],
+ "all_pass": true
+}

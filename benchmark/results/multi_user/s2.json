@@ -1,0 +1,38 @@
+{
+ "url": "http://127.0.0.1:18081",
+ "generated": "2026-09-03T04:17:01Z",
+ "scenarios": [
+  {
+   "scenario": "S2",
+   "rounds": 5,
+   "contention_results": [
+    {
+     "round": 0,
+     "winner": 0
+    },
+    {
+     "round": 1,
+     "winner": 1
+    },
+    {
+     "round": 2,
+     "winner": 0
+    },
+    {
+     "round": 3,
+     "winner": 1
+    },
+    {
+     "round": 4,
+     "winner": 0
+    }
+   ],
+   "errors": [],
+   "receipt_ok": true,
+   "complete_ok": true,
+   "replay_idempotent": true,
+   "pass": true
+  }
+ ],
+ "all_pass": true
+}

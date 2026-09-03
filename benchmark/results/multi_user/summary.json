@@ -1,0 +1,162 @@
+{
+ "generated": "2026-09-03T04:19:44Z",
+ "server": {
+  "port": 18081,
+  "profile": "standalone-embed",
+  "db": "postgres levara_loadtest",
+  "embed": "potion-code-16M dim=256",
+  "flags": [
+   "LEVARA_LONG_HORIZON_RUNTIME=1"
+  ],
+  "build": "current main + review fixes"
+ },
+ "scenarios": [
+  {
+   "scenario": "S1",
+   "agents": 10,
+   "keys_per_agent": 100,
+   "save_count": 1000,
+   "recall_count": 100,
+   "errors": [],
+   "error_count": 0,
+   "save_p50_ms": 3.0,
+   "save_p95_ms": 8.1,
+   "save_p99_ms": 18.6,
+   "save_max_ms": 25.5,
+   "recall_p50_ms": 216.6,
+   "recall_p95_ms": 226.8,
+   "recall_p99_ms": 235.3,
+   "recall_spotcheck_found": [
+    3,
+    3,
+    5,
+    4,
+    2,
+    6,
+    2,
+    5,
+    5,
+    4
+   ],
+   "isolation": {
+    "per_collection_counts_ok": true,
+    "cross_agent_leak": false
+   },
+   "pass": true
+  },
+  {
+   "scenario": "S1",
+   "agents": 50,
+   "keys_per_agent": 60,
+   "save_count": 3000,
+   "recall_count": 500,
+   "errors": [],
+   "error_count": 0,
+   "save_p50_ms": 10.6,
+   "save_p95_ms": 32.6,
+   "save_p99_ms": 68.1,
+   "save_max_ms": 141.6,
+   "recall_p50_ms": 212.5,
+   "recall_p95_ms": 283.6,
+   "recall_p99_ms": 327.3,
+   "recall_spotcheck_found": [
+    9,
+    10,
+    10,
+    10,
+    10,
+    10,
+    10,
+    10,
+    10,
+    10,
+    6,
+    10,
+    10,
+    10,
+    10,
+    10,
+    0,
+    4,
+    10,
+    10,
+    0,
+    0,
+    0,
+    10,
+    0,
+    10,
+    9,
+    10,
+    2,
+    10,
+    0,
+    10,
+    10,
+    8,
+    10,
+    10,
+    1,
+    10,
+    0,
+    0,
+    10,
+    10,
+    10,
+    0,
+    0,
+    0,
+    10,
+    10,
+    10,
+    0
+   ],
+   "isolation": {
+    "per_collection_counts_ok": true,
+    "cross_agent_leak": false
+   },
+   "pass": true
+  },
+  {
+   "scenario": "S2",
+   "rounds": 5,
+   "contention_results": [
+    {
+     "round": 0,
+     "winner": 0
+    },
+    {
+     "round": 1,
+     "winner": 1
+    },
+    {
+     "round": 2,
+     "winner": 0
+    },
+    {
+     "round": 3,
+     "winner": 1
+    },
+    {
+     "round": 4,
+     "winner": 0
+    }
+   ],
+   "errors": [],
+   "receipt_ok": true,
+   "complete_ok": true,
+   "replay_idempotent": true,
+   "pass": true
+  },
+  {
+   "scenario": "S4",
+   "writers": 10,
+   "stale_attempts": 5,
+   "stale_rejected": 5,
+   "fresh_accepted": 0,
+   "manifest_ok": true,
+   "pass": true
+  }
+ ],
+ "all_pass": true
+}
