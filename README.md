@@ -15,6 +15,7 @@
   <a href="#capability-map">Capabilities</a> ·
   <a href="#how-it-works">Architecture</a> ·
   <a href="#operations-and-webui">Operations</a> ·
+  <a href="./docs/README.md">Docs</a> ·
   <a href="./docs/api-contract.md">API contract</a>
 </p>
 
