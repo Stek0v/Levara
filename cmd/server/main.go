@@ -762,8 +762,9 @@ func main() {
 		}
 	}
 
+	var stopWorkspaceIndexWorker func()
 	if workspaceIndexWorkerEnabled() {
-		stopWorkspaceIndexWorker := vectorHttp.StartWorkspaceIndexWorker(context.Background(), apiCfg, vectorHttp.WorkspaceIndexWorkerOptions{
+		stopWorkspaceIndexWorker = vectorHttp.StartWorkspaceIndexWorker(context.Background(), apiCfg, vectorHttp.WorkspaceIndexWorkerOptions{
 			Interval:    durationEnv("LEVARA_WORKSPACE_INDEX_WORKER_INTERVAL", 2*time.Second),
 			Backoff:     durationEnv("LEVARA_WORKSPACE_INDEX_WORKER_BACKOFF", 5*time.Second),
 			MaxAttempts: intEnv("LEVARA_WORKSPACE_INDEX_WORKER_MAX_ATTEMPTS", 3),
@@ -772,8 +773,9 @@ func main() {
 		log.Printf("workspace index worker enabled for %s", apiCfg.WorkspacePath)
 	}
 
+	var stopWorkspaceWatcher func()
 	if workspaceWatchEnabled() {
-		stopWorkspaceWatcher := vectorHttp.StartWorkspaceWatcher(context.Background(), apiCfg, vectorHttp.WorkspaceWatchOptions{
+		stopWorkspaceWatcher = vectorHttp.StartWorkspaceWatcher(context.Background(), apiCfg, vectorHttp.WorkspaceWatchOptions{
 			Interval:      durationEnv("LEVARA_WORKSPACE_WATCH_INTERVAL", 2*time.Second),
 			Debounce:      durationEnv("LEVARA_WORKSPACE_WATCH_DEBOUNCE", 1500*time.Millisecond),
 			ChunkStrategy: os.Getenv("LEVARA_WORKSPACE_WATCH_CHUNK_STRATEGY"),
@@ -854,5 +856,18 @@ func main() {
 		log.Printf("HTTP server stopped with error: %v", err)
 		return
 	}
+	// Stop background workers while the database is still open (finding H8,
+	// 2026-09-03 review): the shutdown goroutine closes shards/colManager/PG
+	// concurrently, so workers must have exited before those closes land.
+	// All stop funcs are idempotent — the deferred calls below become no-ops.
+	stopMemoryIndexWorker()
+	if stopWorkspaceIndexWorker != nil {
+		stopWorkspaceIndexWorker()
+	}
+	if stopWorkspaceWatcher != nil {
+		stopWorkspaceWatcher()
+	}
+	stopBM25Autosave()
+	runsJanitorStop()
 	<-shutdownDone
 }

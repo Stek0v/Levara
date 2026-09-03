@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"time"
 
+	"sync"
+
 	"github.com/stek0v/levara/pkg/memoryindex"
 )
 
@@ -25,8 +27,11 @@ func StartMemoryIndexWorker(cfg APIConfig, interval time.Duration) func() {
 	// Claim remains atomic in the durable store, so workers cannot execute the
 	// same job concurrently.
 	const workers = 8
+	var wg sync.WaitGroup
 	for range workers {
+		wg.Add(1)
 		go func() {
+			defer wg.Done()
 			t := time.NewTicker(interval)
 			defer t.Stop()
 			for {
@@ -41,7 +46,16 @@ func StartMemoryIndexWorker(cfg APIConfig, interval time.Duration) func() {
 			}
 		}()
 	}
-	return cancel
+	// Stop cancels and waits for the worker pool to exit so shutdown never
+	// closes the database under an in-flight embedding write (finding H8,
+	// 2026-09-03 review). Idempotent via sync.Once.
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			cancel()
+			wg.Wait()
+		})
+	}
 }
 
 // enqueueMissingMemoryVectors is the startup incremental reconcile. SQL is
