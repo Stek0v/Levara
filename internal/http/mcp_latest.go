@@ -60,7 +60,7 @@ func (h *mcpHandler) handleLatestRPC(c *fiber.Ctx) error {
 			"instructions":      "Pass collection explicitly to every collection-aware tool call.",
 		}})
 	case "tools/list":
-		return c.JSON(jsonRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"tools": configuredLatestMCPToolDescriptors()}})
+		return c.JSON(jsonRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"tools": withToolGroups(configuredLatestMCPToolDescriptors())}})
 	case "tools/call":
 		// set_context is session-scoped and hidden from the stateless
 		// tools/list; reject it here instead of letting dispatch return a

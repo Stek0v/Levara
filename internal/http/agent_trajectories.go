@@ -38,6 +38,10 @@ func agentTrajectoriesHandler(cfg APIConfig) fiber.Handler {
 			"limit":        limit,
 			"offset":       offset,
 			"total":        len(traces),
+			// len(traces) counts the bounded 20k-event window, not the
+			// database total — flag it so clients don't treat it as exact
+			// (finding L4, 2026-09-03 review).
+			"total_capped": len(traces) >= 20000,
 			"trajectories": trajectory.Page(traces, limit, offset),
 		})
 	}

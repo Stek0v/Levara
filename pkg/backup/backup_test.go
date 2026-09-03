@@ -18,7 +18,7 @@ func TestParseDSNToArgs_URIFormat(t *testing.T) {
 		"postgresql://x:y@host/db",
 	}
 	for _, dsn := range cases {
-		args := parseDSNToArgs(dsn)
+		args, _ := parseDSNToArgs(dsn)
 		if len(args) != 1 || args[0] != dsn {
 			t.Errorf("URI dsn %q → args %v, want [%q]", dsn, args, dsn)
 		}
@@ -27,7 +27,7 @@ func TestParseDSNToArgs_URIFormat(t *testing.T) {
 
 func TestParseDSNToArgs_KeyValueFormat(t *testing.T) {
 	dsn := "host=localhost port=5433 user=levara password=<test-secret> dbname=levara"
-	args := parseDSNToArgs(dsn)
+	args, _ := parseDSNToArgs(dsn)
 
 	want := []string{
 		"-h", "localhost",
@@ -48,7 +48,7 @@ func TestParseDSNToArgs_KeyValueFormat(t *testing.T) {
 
 func TestParseDSNToArgs_UsernameAlias(t *testing.T) {
 	// libpq accepts both `user=` and `username=`; we should map both to -U.
-	args := parseDSNToArgs("username=alice dbname=db")
+	args, _ := parseDSNToArgs("username=alice dbname=db")
 	got := strings.Join(args, " ")
 	if !strings.Contains(got, "-U alice") {
 		t.Errorf("username= alias not mapped: %v", args)
@@ -57,7 +57,7 @@ func TestParseDSNToArgs_UsernameAlias(t *testing.T) {
 
 func TestParseDSNToArgs_MalformedToken(t *testing.T) {
 	// Tokens without "=" are silently skipped — keeps the parser robust.
-	args := parseDSNToArgs("host=localhost weirdtoken port=5432")
+	args, _ := parseDSNToArgs("host=localhost weirdtoken port=5432")
 	got := strings.Join(args, " ")
 	if !strings.Contains(got, "-h localhost") || !strings.Contains(got, "-p 5432") {
 		t.Errorf("unexpected args: %v", args)

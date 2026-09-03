@@ -650,7 +650,7 @@ func (h *mcpHandler) handleRPC(c *fiber.Ctx) error {
 			JSONRPC: "2.0",
 			ID:      req.ID,
 			Result: map[string]any{
-				"tools": configuredMCPToolDescriptors(),
+				"tools": withToolGroups(configuredMCPToolDescriptors()),
 			},
 		})
 
@@ -1508,4 +1508,17 @@ func (h *mcpHandler) toolCheckDrift(ctx context.Context, args map[string]any) mc
 // No new Deps methods — DB() and LogHeartbeat() already in interface.
 func (h *mcpHandler) toolPruneGraph(ctx context.Context, args map[string]any) mcpToolResult {
 	return mcp.ToolPruneGraph(ctx, h, args)
+}
+
+
+// withToolGroups stamps each tool descriptor with its functional group
+// (memory, search, workspace, ...) so tools/list matches the generated
+// contract inventory (finding L2, 2026-09-03 review).
+func withToolGroups(tools []mcp.Tool) []mcp.Tool {
+	for i := range tools {
+		if tools[i].Group == "" {
+			tools[i].Group = mcp.ToolGroupFor(tools[i].Name)
+		}
+	}
+	return tools
 }

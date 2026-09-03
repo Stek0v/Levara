@@ -97,6 +97,11 @@ var groupByName = map[string]string{
 	"prune_graph":            "git",
 }
 
+// ToolGroupFor returns the functional group for a tool name (workspace
+// prefix-derived or from the explicit map). Exported so tools/list can
+// attach group metadata that MCPInventory already derives (L2).
+func ToolGroupFor(name string) string { return deriveGroup(name) }
+
 func deriveGroup(name string) string {
 	if strings.HasPrefix(name, "workspace_") {
 		return "workspace"
