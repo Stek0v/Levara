@@ -11,6 +11,10 @@ Entry points by role:
 | Understand what Levara is in 5 minutes | [README.md](../README.md) ([RU](../README_RU.md)) |
 | Install and run the server | [getting-started.md](getting-started.md) |
 | Learn by doing (RU, step-by-step) | [tutorials/00-getting-started-ru.md](tutorials/00-getting-started-ru.md) |
+| First memory in 15 minutes | [tutorials/01-first-memory.md](tutorials/01-first-memory.md) |
+| Connect Claude Code / Cursor / Codex | [tutorials/02-agent-integration.md](tutorials/02-agent-integration.md) |
+| Ingest documents and search them | [tutorials/03-knowledge-base.md](tutorials/03-knowledge-base.md) |
+| Deploy for a team with auth | [tutorials/04-team-deploy.md](tutorials/04-team-deploy.md) |
 | Find the right tool/command for my task | [features-guide.md](features-guide.md) |
 | Integrate my agent (Claude Code, Cursor, Codex) | [getting-started.md → MCP integration](getting-started.md) and [integrations.md](integrations.md) |
 | Deploy for a team | [deployment.md](deployment.md), [deployment-matrix.md](deployment-matrix.md) |
