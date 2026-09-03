@@ -62,6 +62,13 @@ func (h *mcpHandler) handleLatestRPC(c *fiber.Ctx) error {
 	case "tools/list":
 		return c.JSON(jsonRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"tools": configuredLatestMCPToolDescriptors()}})
 	case "tools/call":
+		// set_context is session-scoped and hidden from the stateless
+		// tools/list; reject it here instead of letting dispatch return a
+		// misleading session error (finding M3, 2026-09-03 review).
+		if toolNameFromParams(req) == "set_context" {
+			return latestMCPError(c, req.ID, fiber.StatusBadRequest, -32602,
+				"set_context requires the legacy session transport; pass collection explicitly on each call", nil)
+		}
 		return h.handleToolCallWithSession(c, req, nil)
 	case "resources/list":
 		return h.handleResourcesList(c, req)
@@ -70,6 +77,16 @@ func (h *mcpHandler) handleLatestRPC(c *fiber.Ctx) error {
 	default:
 		return latestMCPError(c, req.ID, fiber.StatusNotFound, -32601, "Method not found: "+req.Method, nil)
 	}
+}
+
+func toolNameFromParams(req jsonRPCRequest) string {
+	var params struct {
+		Name string `json:"name"`
+	}
+	if json.Unmarshal(req.Params, &params) != nil {
+		return ""
+	}
+	return params.Name
 }
 
 func configuredLatestMCPToolDescriptors() []mcp.Tool {
