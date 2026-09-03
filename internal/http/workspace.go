@@ -794,6 +794,12 @@ func writeWorkspaceMarkdown(ctx context.Context, cfg APIConfig, req workspaceWri
 	if err != nil {
 		return workspaceWriteResponse{}, err
 	}
+	// Hold the branch manifest lock across digest-check → file write →
+	// index (finding M15, 2026-09-03 review): the check-then-write was a
+	// TOCTOU window where a concurrent writer could land between them.
+	// indexWorkspaceMarkdownLocked below relies on this lock being held.
+	unlock := workspaceManifestLocks.lock(req.ProjectID + "/" + branch)
+	defer unlock()
 	if req.ExpectedFileDigest != nil {
 		currentDigest := ""
 		if current, err := os.ReadFile(filePath); err == nil {
@@ -822,7 +828,8 @@ func writeWorkspaceMarkdown(ctx context.Context, cfg APIConfig, req workspaceWri
 		shouldIndex = *req.Index
 	}
 	if shouldIndex {
-		indexResp, err := indexWorkspaceMarkdown(ctx, cfg, workspaceIndexRequest{
+		// Lock already held (M15): use the locked variant.
+		indexResp, err := indexWorkspaceMarkdownLocked(ctx, cfg, workspaceIndexRequest{
 			ProjectID:          req.ProjectID,
 			Branch:             branch,
 			Generation:         req.Generation,
@@ -1089,6 +1096,11 @@ func commitWorkspace(cfg APIConfig, req workspaceCommitRequest) (workspaceCommit
 	if req.ProjectID == "" {
 		return workspaceCommitRecord{}, workspace.ErrMissingProjectID
 	}
+	// Hold the branch lock across the whole snapshot walk (finding M16,
+	// 2026-09-03 review): without it a concurrent workspace_write could
+	// land mid-walk and the commit would capture a torn tree.
+	unlock := workspaceManifestLocks.lock(req.ProjectID + "/" + branch)
+	defer unlock()
 	commitID := uuid.New().String()
 	commitDir, err := workspaceCommitDir(cfg, req.ProjectID, branch, commitID)
 	if err != nil {

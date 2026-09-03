@@ -519,10 +519,18 @@ func ToolTaskReceipt(ctx context.Context, deps Deps, args map[string]any) ToolRe
 		return toolError(err.Error())
 	}
 	if inserted, _ := insertResult.RowsAffected(); inserted == 0 {
+		// Lost the idempotency race: another transaction inserted the same
+		// key and already bumped the version. Re-read the current version
+		// instead of echoing the caller's stale baseVersion (finding M19,
+		// 2026-09-03 review).
+		var currentVersion int
+		if err := tx.QueryRowContext(ctx, deps.Q(`SELECT version FROM tasks WHERE id=$1`), taskID).Scan(&currentVersion); err != nil {
+			return toolError(err.Error())
+		}
 		if err := tx.Commit(); err != nil {
 			return toolError(err.Error())
 		}
-		return jsonResult(map[string]any{"ok": true, "task_id": taskID, "receipt_id": receiptID, "version": baseVersion, "idempotent_replay": true})
+		return jsonResult(map[string]any{"ok": true, "task_id": taskID, "receipt_id": receiptID, "version": currentVersion, "idempotent_replay": true})
 	}
 	res, err := tx.ExecContext(ctx, deps.Q(`UPDATE tasks SET current_workspace_revision=CASE WHEN $1<>'' THEN $2 ELSE current_workspace_revision END,
 		version=version+1,updated_at=$3 WHERE id=$4 AND version=$5`), revision, revision, now, taskID, baseVersion)
