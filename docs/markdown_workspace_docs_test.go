@@ -104,7 +104,7 @@ func TestMarkdownWorkspaceDeploymentRecipeLinksExist(t *testing.T) {
 }
 
 func TestFullTestingScenariosCoversProductLadder(t *testing.T) {
-	raw, err := os.ReadFile("full-testing-scenarios.md")
+	raw, err := os.ReadFile(filepath.Join("internal", "full-testing-scenarios.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +204,7 @@ func TestProductDocsDoNotDriftFromProfileConstants(t *testing.T) {
 }
 
 func TestSecurityDiffChecklistCoversLayeredRiskAreas(t *testing.T) {
-	raw, err := os.ReadFile("security-diff-checklist.md")
+	raw, err := os.ReadFile(filepath.Join("internal", "security-diff-checklist.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -315,7 +315,7 @@ func TestMarkdownWorkspaceUserScenarios(t *testing.T) {
 }
 
 func TestMarkdownWorkspaceCapabilityParity(t *testing.T) {
-	raw, err := os.ReadFile("markdown-workspace-capability-parity.md")
+	raw, err := os.ReadFile(filepath.Join("internal", "markdown-workspace-capability-parity.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -356,7 +356,7 @@ func TestMarkdownWorkspaceCapabilityParity(t *testing.T) {
 }
 
 func TestMarkdownWorkspaceCapabilityParityMatchesSource(t *testing.T) {
-	docRaw, err := os.ReadFile("markdown-workspace-capability-parity.md")
+	docRaw, err := os.ReadFile(filepath.Join("internal", "markdown-workspace-capability-parity.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -565,7 +565,7 @@ func TestMarkdownWorkspaceCapabilityParityMatchesSource(t *testing.T) {
 }
 
 func TestMarkdownWorkspaceAnswerContractDoc(t *testing.T) {
-	raw, err := os.ReadFile("markdown-workspace-answer-contract.md")
+	raw, err := os.ReadFile(filepath.Join("internal", "markdown-workspace-answer-contract.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -587,7 +587,7 @@ func TestMarkdownWorkspaceAnswerContractDoc(t *testing.T) {
 }
 
 func TestMarkdownWorkspaceConflictModelDoc(t *testing.T) {
-	raw, err := os.ReadFile("markdown-workspace-conflict-model.md")
+	raw, err := os.ReadFile(filepath.Join("internal", "markdown-workspace-conflict-model.md"))
 	if err != nil {
 		t.Fatal(err)
 	}

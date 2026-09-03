@@ -40,7 +40,7 @@ Entry points by role:
 | `docs/marketing/` | GTM: positioning, audience landing pages (RU) |
 | `docs/product/` | Market segments and product analysis |
 | `docs/adr/` | Architecture decision records |
-| `docs/internal/` | Working notes: eval reports, experiments, migration plans, design docs — historical context, not guaranteed current |
+| `docs/internal/` | Working notes: eval reports, experiments, migration plans, design contracts — historical context, not guaranteed current |
 | `docs/swagger.*`, `docs/contract.json` | Generated API contract artifacts (do not hand-edit) |
 
 ## Conventions
