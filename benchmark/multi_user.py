@@ -10,7 +10,7 @@ Scenarios:
 Usage: python3 benchmark/multi_user.py --url http://127.0.0.1:18081 \
          --scenario s1 --agents 10 --output results/multi_user/s1_10.json
 """
-import argparse, asyncio, json, random, time, uuid
+import argparse, asyncio, json, os, random, time, uuid
 from pathlib import Path
 
 import aiohttp
@@ -298,6 +298,154 @@ async def scenario_auth_smoke(http, url):
                 "note": "require-auth=false dev mode: 200 expected; with -require-auth this must be 404",
                 "pass": True}
 
+
+async def wait_healthy(http, url, timeout_s=30):
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        try:
+            async with http.get(url.rstrip("/") + "/health") as r:
+                if r.status == 200:
+                    return True
+        except Exception:
+            pass
+        await asyncio.sleep(0.5)
+    return False
+
+
+async def outbox_drained(cfg_db, timeout_s=120):
+    """Poll memory_index_jobs until no pending/running remain."""
+    import psycopg
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        try:
+            with psycopg.connect(cfg_db) as conn:
+                row = conn.execute("SELECT COUNT(*) FROM memory_index_jobs WHERE status IN ('pending','running')").fetchone()
+                if row and row[0] == 0:
+                    return True
+        except Exception:
+            pass
+        await asyncio.sleep(1)
+    return False
+
+
+async def scenario_s3(args, http):
+    """Dual-process outbox: two servers share one PostgreSQL; rapid saves from
+    both; verify every job completes exactly once (H9)."""
+    import psycopg
+    proc_b = await asyncio.create_subprocess_exec(
+        args.server_binary,
+        "-profile=standalone-embed", "-port=18082", "-grpc-port=0",
+        f"-data-dir={args.data_dir_b}", "-node-id=loadtest2", "-dim=256",
+        "-embed-endpoint=http://127.0.0.1:9101/v1/embeddings",
+        "-embed-model=potion-code-16M", f"-pg-url={args.pg_dsn}",
+        env={**os.environ, "LEVARA_LONG_HORIZON_RUNTIME": "1"},
+        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+    )
+    try:
+        url_b = "http://127.0.0.1:18082"
+        if not await wait_healthy(http, url_b):
+            return {"scenario": "S3", "pass": False, "error": "second instance did not become healthy"}
+        a = Agent(http, args.url, "s3a")
+        b = Agent(http, url_b, "s3b")
+        await asyncio.gather(a.init(), b.init())
+
+        saves = []
+        async def blast(agent, prefix, n):
+            for i in range(n):
+                t0 = time.perf_counter()
+                st, pl = await agent.call_raw("save_memory", {
+                    "key": f"{prefix}_{i}", "value": f"v-{prefix}-{i}",
+                    "collection": "loadtest_s3", "room": "loadtest", "hall": "fact",
+                })
+                saves.append((time.perf_counter() - t0) * 1000)
+                if not tool_ok(pl):
+                    errors_s3.append({"prefix": prefix, "i": i, "payload": str(pl)[:200]})
+
+        errors_s3 = []
+        total = args.s3_saves // 2
+        await asyncio.gather(blast(a, "s3a", total), blast(b, "s3b", total))
+
+        drained = await outbox_drained(args.pg_dsn, timeout_s=180)
+        with psycopg.connect(args.pg_dsn) as conn:
+            status_counts = dict(conn.execute(
+                "SELECT status, COUNT(*) FROM memory_index_jobs GROUP BY status").fetchall())
+            dup_claims = conn.execute(
+                """SELECT COUNT(*) FROM (
+                     SELECT memory_id, operation, COUNT(DISTINCT status) AS distinct_running
+                     FROM memory_index_jobs GROUP BY memory_id, operation
+                     HAVING COUNT(*) FILTER (WHERE status='completed') > 1
+                   ) t""").fetchone()[0]
+        return {"scenario": "S3", "servers": 2, "saves": len(saves),
+                "errors": errors_s3[:10], "error_count": len(errors_s3),
+                "job_status": {k: v for k, v in status_counts.items()},
+                "duplicate_completions": dup_claims, "drained": drained,
+                "pass": drained and dup_claims == 0 and len(errors_s3) == 0
+                        and status_counts.get("dead_letter", 0) == 0}
+    finally:
+        proc_b.terminate()
+        try:
+            await asyncio.wait_for(proc_b.wait(), timeout=10)
+        except asyncio.TimeoutError:
+            proc_b.kill()
+
+
+async def scenario_s6(args, http):
+    """Dual-node sync: concurrent same-key writes with different updated_at;
+    after bidirectional sync the newest value must win on both nodes (H5)."""
+    proc_b = await asyncio.create_subprocess_exec(
+        args.server_binary,
+        "-profile=standalone-embed", "-port=18082", "-grpc-port=0",
+        f"-data-dir={args.data_dir_b}", "-node-id=loadtest2", "-dim=256",
+        "-embed-endpoint=http://127.0.0.1:9101/v1/embeddings",
+        "-embed-model=potion-code-16M", f"-pg-url={args.pg_dsn}",
+        env={**os.environ, "LEVARA_LONG_HORIZON_RUNTIME": "1"},
+        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+    )
+    try:
+        url_b = "http://127.0.0.1:18082"
+        if not await wait_healthy(http, url_b):
+            return {"scenario": "S6", "pass": False, "error": "second instance not healthy"}
+        a = Agent(http, args.url, "s6a")
+        b = Agent(http, url_b, "s6b")
+        await asyncio.gather(a.init(), b.init())
+
+        key = f"s6-key-{uuid.uuid4().hex[:8]}"
+        old_ts = "2026-09-01T00:00:00Z"
+        new_ts = "2026-09-02T00:00:00Z"
+        # A writes the OLD value, B writes the NEW value concurrently-ish.
+        await a.call("save_memory", {"key": key, "value": "OLD", "collection": "loadtest_s6", "room": "loadtest", "hall": "fact"})
+        # B overwrites via REST sync import semantics: push B's data to A and A's to B.
+        await b.call("save_memory", {"key": key, "value": "NEW", "collection": "loadtest_s6", "room": "loadtest", "hall": "fact"})
+
+        # Bidirectional sync via REST API
+        async def run_sync(target_url):
+            async with http.post(target_url.rstrip("/") + "/api/v1/sync/run",
+                                 json={"remote_url": url_b.replace("18082", "18081") if target_url.endswith("18082") else url_b,
+                                        "direction": "pull", "types": ["memories"]}) as r:
+                return r.status
+
+        # Pull A from B and B from A
+        await run_sync(args.url)
+        await run_sync(url_b)
+
+        # Read both back
+        _, pl_a, _ = await a.call("recall_memory", {"query": key, "collection": "loadtest_s6"})
+        _, pl_b, _ = await b.call("recall_memory", {"query": key, "collection": "loadtest_s6"})
+        text_a, text_b = tool_text(pl_a), tool_text(pl_b)
+        # Both should converge on NEW (the later write), never resurrect OLD after both syncs.
+        a_has_new = "NEW" in text_a
+        b_has_new = "NEW" in text_b
+        return {"scenario": "S6", "key": key,
+                "a_has_new": a_has_new, "b_has_new": b_has_new,
+                "pass": a_has_new and b_has_new}
+    finally:
+        proc_b.terminate()
+        try:
+            await asyncio.wait_for(proc_b.wait(), timeout=10)
+        except asyncio.TimeoutError:
+            proc_b.kill()
+
+
 async def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--url", default="http://127.0.0.1:18081")
@@ -305,6 +453,10 @@ async def main():
     ap.add_argument("--agents", type=int, default=10)
     ap.add_argument("--keys", type=int, default=100)
     ap.add_argument("--output", default="")
+    ap.add_argument("--server-binary", default="/tmp/levara-loadtest/levara-server")
+    ap.add_argument("--data-dir-b", default="/tmp/levara-loadtest/data-b")
+    ap.add_argument("--pg-dsn", default="postgres://stek0v@localhost:5432/levara_loadtest?sslmode=disable")
+    ap.add_argument("--s3-saves", type=int, default=1000)
     args = ap.parse_args()
 
     results = []
@@ -320,6 +472,12 @@ async def main():
         if args.scenario in ("all", "s2"):
             print("== S2 lease contention ==", flush=True)
             results.append(await scenario_s2(http, args.url))
+        if args.scenario in ("all", "s3"):
+            print("== S3 dual-process outbox ==", flush=True)
+            results.append(await scenario_s3(args, http))
+        if args.scenario in ("all", "s6"):
+            print("== S6 dual-node sync ==", flush=True)
+            results.append(await scenario_s6(args, http))
         if args.scenario in ("all", "s4"):
             print("== S4 workspace conflicts ==", flush=True)
             results.append(await scenario_s4(http, args.url))

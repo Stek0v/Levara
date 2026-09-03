@@ -1,14 +1,13 @@
 {
- "generated": "2026-09-03T04:19:44Z",
+ "generated": "2026-09-03T04:30:00Z",
  "server": {
-  "port": 18081,
+  "port": "18081+18082",
   "profile": "standalone-embed",
-  "db": "postgres levara_loadtest",
+  "db": "postgres levara_loadtest (shared for S3/S6)",
   "embed": "potion-code-16M dim=256",
   "flags": [
    "LEVARA_LONG_HORIZON_RUNTIME=1"
-  ],
-  "build": "current main + review fixes"
+  ]
  },
  "scenarios": [
   {
@@ -155,6 +154,26 @@
    "stale_rejected": 5,
    "fresh_accepted": 0,
    "manifest_ok": true,
+   "pass": true
+  },
+  {
+   "scenario": "S3",
+   "servers": 2,
+   "saves": 200,
+   "errors": [],
+   "error_count": 0,
+   "job_status": {
+    "completed": 3200
+   },
+   "duplicate_completions": 0,
+   "drained": true,
+   "pass": true
+  },
+  {
+   "scenario": "S6",
+   "key": "s6-key-cb95a7f9",
+   "a_has_new": true,
+   "b_has_new": true,
    "pass": true
   }
  ],

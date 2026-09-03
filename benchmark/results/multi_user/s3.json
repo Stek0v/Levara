@@ -1,0 +1,20 @@
+{
+ "url": "http://127.0.0.1:18081",
+ "generated": "2026-09-03T04:29:34Z",
+ "scenarios": [
+  {
+   "scenario": "S3",
+   "servers": 2,
+   "saves": 200,
+   "errors": [],
+   "error_count": 0,
+   "job_status": {
+    "completed": 3200
+   },
+   "duplicate_completions": 0,
+   "drained": true,
+   "pass": true
+  }
+ ],
+ "all_pass": true
+}
