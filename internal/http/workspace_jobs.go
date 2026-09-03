@@ -233,6 +233,32 @@ func enqueueWorkspaceIndexJobFromPayload(cfg APIConfig, payload workspaceIndexJo
 	return enqueueWorkspaceIndexJob(cfg, payload)
 }
 
+// hasActiveWorkspaceIndexJob reports whether the branch has a pending or
+// running reconcile/reindex job (finding M17, 2026-09-03 review): the
+// watcher uses this to keep a branch marked dirty until its queued job has
+// actually completed instead of the moment of enqueue.
+func hasActiveWorkspaceIndexJob(cfg APIConfig, projectID, branch string) bool {
+	dir := workspaceIndexJobDir(cfg, projectID, branch)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		job, err := loadWorkspaceIndexJobPath(filepath.Join(dir, entry.Name()))
+		if err != nil {
+			continue
+		}
+		if (job.Status == workspaceIndexJobPending || job.Status == workspaceIndexJobRunning) &&
+			(job.Request.Operation == "reconcile" || job.Request.Operation == "reindex") {
+			return true
+		}
+	}
+	return false
+}
+
 func retryWorkspaceIndexJob(ctx context.Context, cfg APIConfig, req workspaceRetryIndexJobRequest) (workspaceRetryIndexJobResponse, error) {
 	branch := defaultBranch(req.Branch)
 	if req.ProjectID == "" {

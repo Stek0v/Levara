@@ -875,7 +875,13 @@ func ToolTaskBootstrap(ctx context.Context, deps Deps, args map[string]any) Tool
 			break
 		}
 	}
-	bundle := map[string]any{"task_id": taskID, "collection": collection, "room": room, "objective": objective, "risk_level": risk, "status": status, "version": version, "workspace_revision": revision, "criteria": criteria, "steps": steps, "active_blockers": blockers, "last_checkpoint": checkpoint, "next_step": nextStep, "memories": memories, "scope_status": "exact", "max_tokens": maxTokens}
+	// Surface expired active-step leases (finding M18, 2026-09-03 review):
+	// an actor that died holding a lease leaves its step 'active' forever —
+	// bootstrap must call this out so a recovery flow can re-claim.
+	expiredSteps := queryMaps(ctx, db, deps.Q, `SELECT s.id, s.description, l.actor_id, l.expires_at
+		FROM task_steps s JOIN task_leases l ON l.step_id = s.id AND l.task_id = s.task_id
+		WHERE s.task_id=$1 AND s.status='active' AND l.expires_at <= $2`, taskID, time.Now().UTC().Format(time.RFC3339Nano))
+	bundle := map[string]any{"task_id": taskID, "collection": collection, "room": room, "objective": objective, "risk_level": risk, "status": status, "version": version, "workspace_revision": revision, "criteria": criteria, "steps": steps, "active_blockers": blockers, "expired_leases": expiredSteps, "last_checkpoint": checkpoint, "next_step": nextStep, "memories": memories, "scope_status": "exact", "max_tokens": maxTokens}
 	if !boundBootstrapBundle(bundle, maxTokens) {
 		return toolError("token budget is too small to include safety-critical task state")
 	}

@@ -507,6 +507,12 @@ func workspaceWatchLoop(ctx context.Context, cfg APIConfig, opts WorkspaceWatchO
 					if cfg.WorkspaceWatcher != nil {
 						cfg.WorkspaceWatcher.recordReconcile(key, generation, len(dirty)-1)
 					}
+					// Async mode: the reconcile was only enqueued (finding
+					// M17, 2026-09-03 review). Keep the branch dirty until
+					// its job actually completes so status reflects truth.
+					if opts.AsyncIndex && hasActiveWorkspaceIndexJob(cfg, key.ProjectID, key.Branch) {
+						continue
+					}
 				}
 				delete(dirty, key)
 			}
