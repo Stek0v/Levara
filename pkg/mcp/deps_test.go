@@ -1259,8 +1259,8 @@ func TestToolSetContext_MissingCollectionIsError(t *testing.T) {
 	if !strings.Contains(got.Content[0].Text, "'collection' required") {
 		t.Errorf("content = %q, want error", got.Content[0].Text)
 	}
-	if sess.DefaultCollection != "" {
-		t.Errorf("DefaultCollection mutated to %q on error path", sess.DefaultCollection)
+	if sess.GetDefaultCollection() != "" {
+		t.Errorf("DefaultCollection mutated to %q on error path", sess.GetDefaultCollection())
 	}
 }
 
@@ -1285,8 +1285,8 @@ func TestToolSetContext_ExistingCollection(t *testing.T) {
 	if got.IsError {
 		t.Fatalf("IsError = true, want false")
 	}
-	if sess.DefaultCollection != "levara" {
-		t.Errorf("DefaultCollection = %q, want levara", sess.DefaultCollection)
+	if sess.GetDefaultCollection() != "levara" {
+		t.Errorf("DefaultCollection = %q, want levara", sess.GetDefaultCollection())
 	}
 	// "set" but NOT the "not yet created" tail.
 	if strings.Contains(got.Content[0].Text, "not yet created") {
@@ -1305,8 +1305,8 @@ func TestToolSetContext_UnknownCollectionIsAllowed(t *testing.T) {
 	if got.IsError {
 		t.Fatalf("IsError = true, want false for unknown coll")
 	}
-	if sess.DefaultCollection != "new-coll" {
-		t.Errorf("DefaultCollection = %q, want new-coll (session updated even for unknown)", sess.DefaultCollection)
+	if sess.GetDefaultCollection() != "new-coll" {
+		t.Errorf("DefaultCollection = %q, want new-coll (session updated even for unknown)", sess.GetDefaultCollection())
 	}
 	if !strings.Contains(got.Content[0].Text, "not yet created") {
 		t.Errorf("content = %q, want 'not yet created' warning", got.Content[0].Text)

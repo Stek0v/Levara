@@ -12,7 +12,7 @@ func (h *mcpHandler) getOrValidateSession(sessionID string) *mcpSession {
 // createSession creates a new MCP session and returns its ID.
 func (h *mcpHandler) createSession(userID string) string {
 	sess := h.sessions.Create()
-	sess.UserID = userID
+	sess.SetUserID(userID)
 	return sess.ID
 }
 
@@ -23,7 +23,7 @@ func (h *mcpHandler) createSession(userID string) string {
 func (h *mcpHandler) adoptSession(sessionID, userID string) *mcpSession {
 	sess := h.sessions.Adopt(sessionID)
 	if userID != "" {
-		sess.UserID = userID
+		sess.SetUserID(userID)
 	}
 	return sess
 }

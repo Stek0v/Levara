@@ -8,7 +8,8 @@ import "testing"
 // without re-specifying collection on every call.
 
 func TestResolveCollection_ExplicitArgWins(t *testing.T) {
-	sess := &Session{DefaultCollection: "session-default"}
+	sess := &Session{}
+	sess.SetDefaultCollection("session-default")
 	got := ResolveCollection(sess, map[string]any{"collection": "explicit"}, false)
 	if got != "explicit" {
 		t.Errorf("got %q, want explicit (arg should beat session default)", got)
@@ -16,7 +17,8 @@ func TestResolveCollection_ExplicitArgWins(t *testing.T) {
 }
 
 func TestResolveCollection_SessionDefault(t *testing.T) {
-	sess := &Session{DefaultCollection: "from-session"}
+	sess := &Session{}
+	sess.SetDefaultCollection("from-session")
 	// No "collection" arg → session default used.
 	if got := ResolveCollection(sess, map[string]any{}, false); got != "from-session" {
 		t.Errorf("got %q, want from-session", got)
@@ -53,7 +55,8 @@ func TestResolveCollection_NilSessionOK(t *testing.T) {
 func TestResolveCollection_EmptyStringArgIsIgnored(t *testing.T) {
 	// "collection": "" in args is treated as unset, falling through to
 	// session default. Guards against clients that always include the field.
-	sess := &Session{DefaultCollection: "kept"}
+	sess := &Session{}
+	sess.SetDefaultCollection("kept")
 	got := ResolveCollection(sess, map[string]any{"collection": ""}, false)
 	if got != "kept" {
 		t.Errorf("got %q, want kept (empty arg should not override session default)", got)
@@ -64,7 +67,8 @@ func TestResolveCollection_WrongTypeIgnored(t *testing.T) {
 	// Type assertion failure (non-string value for "collection") falls
 	// through to session default — MCP clients sending bad arg types
 	// shouldn't silently hit an unintended collection.
-	sess := &Session{DefaultCollection: "kept"}
+	sess := &Session{}
+	sess.SetDefaultCollection("kept")
 	got := ResolveCollection(sess, map[string]any{"collection": 42}, false)
 	if got != "kept" {
 		t.Errorf("got %q, want kept (int arg should be ignored)", got)

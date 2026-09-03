@@ -12,15 +12,81 @@ import (
 // machine. Concurrent mutation is the caller's responsibility; SessionStore
 // below handles concurrent map access.
 type Session struct {
-	ID                string
-	UserID            string // from Authorization header (JWT); empty for anonymous
-	CreatedAt         time.Time
-	SSECh             chan []byte // buffered channel for server-initiated SSE messages
-	DefaultCollection string      // set via the set_context tool
-	ClientName        string      // initialize.params.clientInfo.name
-	ClientVersion     string      // initialize.params.clientInfo.version
-	MemoryConsulted   bool        // true after recall/search/list before save_memory guardrails
-	closeSSEOnce      sync.Once
+	ID        string
+	UserID    string // from Authorization header (JWT); empty for anonymous
+	CreatedAt time.Time
+	SSECh     chan []byte // buffered channel for server-initiated SSE messages
+	ClientName    string // initialize.params.clientInfo.name
+	ClientVersion string // initialize.params.clientInfo.version
+
+	// mu guards the mutable session fields below. A single legacy session
+	// can serve concurrent tool calls, so direct field writes raced (M2,
+	// 2026-09-03 review). Access goes through the Set*/Get* helpers.
+	mu                sync.Mutex
+	defaultCollection string // set via the set_context tool
+	memoryConsulted   bool   // true after recall/search/list before save_memory guardrails
+
+	closeSSEOnce sync.Once
+}
+
+// SetUserID binds the session owner (JWT/API-key resolution).
+func (s *Session) SetUserID(id string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.UserID = id
+	s.mu.Unlock()
+}
+
+// GetUserID returns the bound owner.
+func (s *Session) GetUserID() string {
+	if s == nil {
+		return ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.UserID
+}
+
+// SetDefaultCollection stores the set_context default.
+func (s *Session) SetDefaultCollection(coll string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.defaultCollection = coll
+	s.mu.Unlock()
+}
+
+// GetDefaultCollection returns the set_context default ("" if unset).
+func (s *Session) GetDefaultCollection() string {
+	if s == nil {
+		return ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.defaultCollection
+}
+
+// SetMemoryConsulted marks the guardrail flag.
+func (s *Session) SetMemoryConsulted(v bool) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.memoryConsulted = v
+	s.mu.Unlock()
+}
+
+// GetMemoryConsulted reports the guardrail flag.
+func (s *Session) GetMemoryConsulted() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.memoryConsulted
 }
 
 // CloseSSE closes the server-initiated SSE channel at most once. It also
@@ -50,8 +116,8 @@ func ResolveCollection(sess *Session, args map[string]any, forWrite bool) string
 	if coll, _ := args["collection"].(string); coll != "" {
 		return coll
 	}
-	if sess != nil && sess.DefaultCollection != "" {
-		return sess.DefaultCollection
+	if coll := sess.GetDefaultCollection(); sess != nil && coll != "" {
+		return coll
 	}
 	if forWrite {
 		return "default"

@@ -585,7 +585,7 @@ func (h *mcpHandler) handleRPC(c *fiber.Ctx) error {
 			sess := h.getOrValidateSession(sessionID)
 			if sess == nil {
 				h.adoptSession(sessionID, actor.UserID)
-			} else if sess.UserID != "" && actor.UserID != sess.UserID {
+			} else if got := sess.GetUserID(); got != "" && actor.UserID != got {
 				return c.SendStatus(404)
 			}
 		}
@@ -708,7 +708,7 @@ func (h *mcpHandler) handleToolCallWithSession(c *fiber.Ctx, req jsonRPCRequest,
 	if authenticated, err := h.authenticateMCPRequest(c); err == nil && authenticated.UserID != "" {
 		actor = authenticated
 	} else if sess != nil {
-		actor.UserID = sess.UserID
+		actor.UserID = sess.GetUserID()
 	}
 	if actor.UserID != "" {
 		toolCtx = context.WithValue(toolCtx, mcpUserIDKey, actor.UserID)
@@ -717,8 +717,8 @@ func (h *mcpHandler) handleToolCallWithSession(c *fiber.Ctx, req jsonRPCRequest,
 		}
 		// Keep the session's owner in sync so audit/set_context agree with the
 		// identity the tool actually ran as.
-		if sess != nil && sess.UserID == "" {
-			sess.UserID = actor.UserID
+		if sess != nil && sess.GetUserID() == "" {
+			sess.SetUserID(actor.UserID)
 		}
 	}
 
@@ -876,8 +876,8 @@ func (h *mcpHandler) executeToolInner(ctx context.Context, sess *mcpSession, nam
 		// Memory tools: only inject session default, NOT "default" fallback.
 		// Empty collection → global _memories (backward compatible with Pi data).
 		if _, ok := args["collection"]; !ok || args["collection"] == "" {
-			if sess != nil && sess.DefaultCollection != "" {
-				args["collection"] = sess.DefaultCollection
+			if dc := sess.GetDefaultCollection(); sess != nil && dc != "" {
+				args["collection"] = dc
 			}
 			// else: leave empty → _memories (global, no suffix)
 		}
@@ -1142,7 +1142,7 @@ func (h *mcpHandler) toolGitSearch(ctx context.Context, args map[string]any) mcp
 func (h *mcpHandler) toolSaveMemory(ctx context.Context, sess *mcpSession, args map[string]any) mcpToolResult {
 	// ponytail: stateless MCP requests cannot carry session history; omit this
 	// session-only advisory instead of inventing request state.
-	blindSave := sess != nil && !sess.MemoryConsulted
+	blindSave := sess != nil && !sess.GetMemoryConsulted()
 	repeatSave := h.memoryKeyExists(ctx, args)
 	result := mcp.ToolSaveMemory(ctx, h, args)
 	if result.IsError {
@@ -1231,7 +1231,7 @@ func (h *mcpHandler) updateMemoryBehaviorSession(sess *mcpSession, name string, 
 	}
 	switch name {
 	case "recall_memory", "list_memories", "wake_up", "search", "workspace_search", "cross_search":
-		sess.MemoryConsulted = true
+		sess.SetMemoryConsulted(true)
 	}
 }
 
@@ -1470,10 +1470,10 @@ func (h *mcpHandler) requestOwnsMCPSession(c *fiber.Ctx, sess *mcpSession) bool 
 	if err != nil {
 		return false
 	}
-	if sess.UserID == "" {
+	if sess.GetUserID() == "" {
 		return !h.cfg.RequireAuth || actor.UserID != ""
 	}
-	return actor.UserID != "" && actor.UserID == sess.UserID
+	return actor.UserID != "" && actor.UserID == sess.GetUserID()
 }
 
 // MCPHealthHandler returns MCP-specific health info.

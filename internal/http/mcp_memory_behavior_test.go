@@ -59,7 +59,8 @@ func TestSaveMemoryGuardrailRepeatWarningAndAudit(t *testing.T) {
 	db := newMCPMemoryBehaviorDB(t)
 	sink := &captureSink{}
 	h := &mcpHandler{cfg: APIConfig{DB: db, MCPAudit: sink}, sessions: mcp.NewSessionStore()}
-	sess := &mcp.Session{ID: "s1", MemoryConsulted: true}
+	sess := &mcp.Session{ID: "s1"}
+	sess.SetMemoryConsulted(true)
 
 	first := h.executeTool(t.Context(), sess, "save_memory", map[string]any{
 		"key": "k", "value": "v1", "collection": "levara", "room": "mcp", "hall": "fact",

@@ -130,7 +130,7 @@ func ToolSetContext(sess *Session, deps Deps, args map[string]any) ToolResult {
 	}
 
 	exists := deps.CollectionExists(collection)
-	sess.DefaultCollection = collection
+	sess.SetDefaultCollection(collection)
 
 	status := "set"
 	if !exists {

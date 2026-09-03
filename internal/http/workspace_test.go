@@ -3353,7 +3353,7 @@ func TestMCPInitializeStoresAuthenticatedUser(t *testing.T) {
 		t.Fatal("missing MCP session id")
 	}
 	sess := h.sessions.Get(sessionID)
-	if sess == nil || sess.UserID != "user-b" {
+	if sess == nil || sess.GetUserID() != "user-b" {
 		t.Fatalf("session user=%v, want user-b", sess)
 	}
 }
