@@ -13,7 +13,7 @@ instead of editing tool inventories by hand.
 - Main README: [`README.md`](README.md)
 - Product ladder: [`docs/product-ladder.md`](docs/product-ladder.md)
 - Runtime profiles: [`docs/profile-presets.md`](docs/profile-presets.md)
-- Security review checklist: [`docs/security-diff-checklist.md`](docs/security-diff-checklist.md)
+- Security review checklist: [`docs/internal/security-diff-checklist.md`](docs/internal/security-diff-checklist.md)
 - REST/gRPC/MCP contract artifacts: [`docs/api-contract.md`](docs/api-contract.md)
   and [`docs/contract.json`](docs/contract.json)
 

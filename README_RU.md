@@ -84,7 +84,7 @@ Levara даёт агентам плоскость управления конт�
 | **Идентификация и governance** | JWT и API-ключи, sharing dataset/project, workspace ACL, проверки tenant membership, экспорт аудита, адаптер проверенных OIDC claims, границы SSO/SCIM, storage и KMS |
 | **Продуктовые интерфейсы** | MCP Streamable HTTP, REST, gRPC v1/v2, CLI-инструменты, Next.js WebUI, notebooks, feedback и аналитика поведения памяти |
 
-Сгенерированный контракт сейчас содержит **79 канонических MCP-инструментов**,
+Сгенерированный контракт сейчас содержит **82 канонических MCP-инструмента**,
 **144 REST-маршрута** и **45 gRPC-методов**. Полный машинно-сформированный
 инвентарь находится в [docs/api-contract.md](docs/api-contract.md); README
 группирует интерфейс по пользовательским задачам, а не повторяет каждый
@@ -340,7 +340,7 @@ make test-release-candidate
 | [docs/product-ladder.md](docs/product-ladder.md) | Источник истины возможностей и enterprise-границ |
 | [docs/webui-operations.md](docs/webui-operations.md) | Настройка WebUI, мониторинг и процессы |
 | [docs/current-state.md](docs/current-state.md) | Проверенный снимок локальной среды разработки |
-| [docs/security-diff-checklist.md](docs/security-diff-checklist.md) | Checklist review изменений, важных для безопасности |
+| [docs/security-diff-checklist.md](docs/internal/security-diff-checklist.md) | Checklist review изменений, важных для безопасности |
 | [docs/memory-workflow-skill.ru.md](docs/memory-workflow-skill.ru.md) | Установка и использование skill автоматической памяти Levara |
 | [docs/long-horizon-runtime.ru.md](docs/long-horizon-runtime.ru.md) | Настройка Task Runtime, жизненный цикл, evidence и восстановление |
 | [docs/long-horizon-alpha-report.md](docs/long-horizon-alpha-report.md) | Доказательства acceptance и recovery для Task Runtime |
