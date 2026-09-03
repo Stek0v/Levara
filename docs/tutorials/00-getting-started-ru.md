@@ -664,6 +664,6 @@ curl http://localhost:8080/health/details
 ## Нужна помощь?
 
 - Документация: `docs/` в репозитории
-- Подробно о MCP-интеграции: `docs/levara_as_memory.md`
+
 - Многопроектный режим: `docs/per-project-collections.md`
-- Русская версия: `docs/ru_levara_as_memory.md`
+

@@ -114,9 +114,10 @@ func TestDocsInternalLinks(t *testing.T) {
 				if name == "node_modules" || name == ".git" {
 					return filepath.SkipDir
 				}
-				if name == "internal" {
-					// docs/internal is historical context, not guaranteed
-					// current — links there are not part of the contract.
+				if name == "internal" || name == "marketing" {
+					// docs/internal (historical context) and docs/marketing
+					// (local-only, gitignored) are not part of the published
+					// documentation contract.
 					return filepath.SkipDir
 				}
 				return nil

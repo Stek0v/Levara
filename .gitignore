@@ -114,3 +114,12 @@ for_cod.md
 # Legacy local artifacts left behind by the pre-flattened `Levara/` module
 # layout. Do not add new source under this directory.
 /Levara/
+
+# Local-only documentation: marketing materials, internal working notes,
+# and competitive/variant comparisons (mem0, Zep, wb, VSA-variant evals).
+# Kept locally, not part of the published repository.
+docs/marketing/
+docs/internal/
+docs/levara_as_memory.md
+docs/ru_levara_as_memory.md
+docs/levara-codex-user-admin-guide.html

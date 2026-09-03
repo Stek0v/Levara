@@ -103,11 +103,22 @@ func TestMarkdownWorkspaceDeploymentRecipeLinksExist(t *testing.T) {
 	}
 }
 
-func TestFullTestingScenariosCoversProductLadder(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("internal", "full-testing-scenarios.md"))
+// internalDocRaw reads a gitignored docs/internal file. Fresh CI clones do
+// not contain docs/internal (local-only), so callers skip instead of failing.
+func internalDocRaw(t *testing.T, name string) []byte {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("internal", name))
+	if os.IsNotExist(err) {
+		t.Skipf("docs/internal/%s not present (local-only, gitignored)", name)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
+	return raw
+}
+
+func TestFullTestingScenariosCoversProductLadder(t *testing.T) {
+	raw := internalDocRaw(t, "full-testing-scenarios.md")
 	text := string(raw)
 	for _, required := range []string{
 		"Personal / Local",
@@ -204,10 +215,7 @@ func TestProductDocsDoNotDriftFromProfileConstants(t *testing.T) {
 }
 
 func TestSecurityDiffChecklistCoversLayeredRiskAreas(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("internal", "security-diff-checklist.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	raw := internalDocRaw(t, "security-diff-checklist.md")
 	text := string(raw)
 	for _, required := range []string{
 		"pkg/access",
@@ -315,10 +323,7 @@ func TestMarkdownWorkspaceUserScenarios(t *testing.T) {
 }
 
 func TestMarkdownWorkspaceCapabilityParity(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("internal", "markdown-workspace-capability-parity.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	raw := internalDocRaw(t, "markdown-workspace-capability-parity.md")
 	text := string(raw)
 	for _, required := range []string{
 		"| Access preflight | `POST /workspace/access/check` | `not exposed` | `workspace_access_check` | `intentional-gap` |",
@@ -356,10 +361,7 @@ func TestMarkdownWorkspaceCapabilityParity(t *testing.T) {
 }
 
 func TestMarkdownWorkspaceCapabilityParityMatchesSource(t *testing.T) {
-	docRaw, err := os.ReadFile(filepath.Join("internal", "markdown-workspace-capability-parity.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	docRaw := internalDocRaw(t, "markdown-workspace-capability-parity.md")
 	docText := string(docRaw)
 
 	workspaceRaw, err := os.ReadFile(filepath.Join("..", "internal", "http", "workspace.go"))
@@ -565,10 +567,7 @@ func TestMarkdownWorkspaceCapabilityParityMatchesSource(t *testing.T) {
 }
 
 func TestMarkdownWorkspaceAnswerContractDoc(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("internal", "markdown-workspace-answer-contract.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	raw := internalDocRaw(t, "markdown-workspace-answer-contract.md")
 	text := string(raw)
 	for _, required := range []string{
 		"`workspace_search`",
@@ -587,10 +586,7 @@ func TestMarkdownWorkspaceAnswerContractDoc(t *testing.T) {
 }
 
 func TestMarkdownWorkspaceConflictModelDoc(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("internal", "markdown-workspace-conflict-model.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	raw := internalDocRaw(t, "markdown-workspace-conflict-model.md")
 	text := string(raw)
 	for _, required := range []string{
 		"`filesystem_truth_wins`",

@@ -24,7 +24,7 @@ Entry points by role:
 | Run long-horizon tasks | [long-horizon-runtime.md](long-horizon-runtime.md) ([RU](long-horizon-runtime.ru.md)) |
 | Operate and observe | [webui-operations.md](webui-operations.md), [cron-profiles.md](cron-profiles.md), [macos-levara-watchdog.md](macos-levara-watchdog.md) |
 | Check the API surface | [api-contract.md](api-contract.md) (SSOT), [api-reference.md](api-reference.md), [contract.json](contract.json) |
-| Evaluate Levara for my org | [marketing/](marketing/), [one-pager](marketing/one-pager.md), [product-ladder.md](product-ladder.md) |
+| Evaluate Levara for my org | [product-ladder.md](product-ladder.md), [product/market-segments.md](product/market-segments.md) |
 
 ## Verified state
 
@@ -41,10 +41,9 @@ Entry points by role:
 | `docs/*.md` (this level) | User-facing and operator-facing documentation |
 | `docs/tutorials/` | Step-by-step learning paths |
 | `docs/recipes/` | Short task-specific integration recipes |
-| `docs/marketing/` | GTM: positioning, audience landing pages (RU) |
 | `docs/product/` | Market segments and product analysis |
 | `docs/adr/` | Architecture decision records |
-| `docs/internal/` | Working notes: eval reports, experiments, migration plans, design contracts — historical context, not guaranteed current |
+| `docs/internal/`, `docs/marketing/` | Local-only (gitignored): internal working notes and marketing materials |
 | `docs/swagger.*`, `docs/contract.json` | Generated API contract artifacts (do not hand-edit) |
 
 ## Conventions
@@ -52,5 +51,6 @@ Entry points by role:
 - `api-contract.md` / `contract.json` are generated; edit the source and
   regenerate (`make contract-check` guards drift).
 - Docs claiming runtime behavior should carry a `_Last verified: <date>_` note.
-- Internal working documents live under `docs/internal/` and are not part of
-  the user documentation contract.
+- Internal working documents (`docs/internal/`) and marketing materials
+  (`docs/marketing/`) are gitignored — they live locally and are not part of
+  the published documentation.

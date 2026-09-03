@@ -28,7 +28,7 @@
 **Немедленно** вызывай `save_memory` с:
 - `key` — короткий идентификатор (например, "auth-jwt-decision")
 - `value` — сам факт, включая **почему** для решений
-- `room` — подтема (см. [brain-schema.md](internal/brain-schema.md) для стандартных rooms)
+- `room` — подтема (см. [brain-schema.md — `docs/internal/brain-schema.md` (local-only) для стандартных rooms)
 - `hall` — жанр (контролируемый словарь):
   - `fact` — объективная характеристика (версия, IP, путь)
   - `event` — что-то произошло в конкретный момент (всегда с датой)
