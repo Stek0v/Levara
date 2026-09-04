@@ -127,6 +127,12 @@ func workspaceWatchAsyncIndexEnabled() bool {
 	return v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes")
 }
 
+// taskWorkerEnabled reports whether the autonomous task worker (B2) is on.
+func taskWorkerEnabled() bool {
+	v := strings.TrimSpace(os.Getenv("LEVARA_TASK_WORKER"))
+	return v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes")
+}
+
 func durationEnv(key string, fallback time.Duration) time.Duration {
 	v := strings.TrimSpace(os.Getenv(key))
 	if v == "" {
@@ -840,6 +846,16 @@ func main() {
 		} else {
 			log.Printf("CONSOLIDATION_INTERVAL=%q invalid; janitor disabled", v)
 		}
+	}
+
+	// Autonomous task worker (backlog B2) — off by default. When enabled it
+	// advances auto_run tasks through the SAME MCP task_step CAS path as
+	// external hosts; kill-switch = process exit (leases expire naturally).
+	if taskWorkerEnabled() && pgDB != nil {
+		worker := mcp.NewTaskWorker(vectorHttp.NewMCPDeps(mcpCfg), mcp.NewLoggingStepExecutor(), mcp.TaskWorkerConfig{})
+		worker.Start(context.Background())
+		defer worker.Stop()
+		log.Printf("autonomous task worker enabled (actor=levara:task-worker)")
 	}
 
 	var stopWorkspaceIndexWorker func()

@@ -271,7 +271,22 @@ rewrite-цель `LEVARA_API_URL` инлайнится в routes-manifest при
   виртуализация списка; unicode в названиях; конкурентная мутация во время
   просмотра → версия в UI обновляется, стейл-данные не выдаются за текущие.
 
-### B2. Автономный планировщик / worker — P1
+### B2. Автономный планировщик / worker — P1 ✅ (2026-09-04)
+
+**Статус.** Выполнено: `pkg/mcp/task_worker.go` — опциональный in-process
+worker (`LEVARA_TASK_WORKER=1`, off by default), который двигает auto_run
+задачи через ТЕ ЖЕ примитивы `task_step` (claim/release/pass/fail CAS) —
+никаких новых путей записи. Политика в authority_json: `auto_run`,
+`max_concurrent_steps` (default 1), `step_deadline_seconds` (≤3600),
+`max_step_attempts` (default 3). Retry: fail → release обратно в pending,
+атtempts инкрементируются claim'ом; при исчерпании — blocker
+«exceeded max attempts». Deadlock-детектор: auto_run-задача без claimable
+шагов N раундов подряд → blocker «scheduler deadlock». Kill-switch —
+остановка процесса (leases истекают, другой воркер подхватывает через
+expired-lease reclaim). Worker действует от имени owner задачи
+(owner-scoped lookup). Проверка: unit 6/6 (3-step chain, 0 double-claims
+при гонке с внешним хостом, retry-exhaustion, kill-mid-step → подхват,
+cycle → deadlock, non-auto_run не трогается) + live 6/6 против PG.
 
 **DoD.**
 1. Опциональный in-process worker (`LEVARA_TASK_WORKER=1`): подхватывает

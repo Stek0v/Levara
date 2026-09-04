@@ -39,8 +39,10 @@
   (2026-09-04): страница Tasks (список/детали/lease/receipts/checkpoints)
   поверх GET-only REST; мутации остаются в MCP task_* tools. Write-фаза —
   будущая работа.
-- [ ] B2 (P1). **Автономный планировщик / worker** — «There is no autonomous
-  scheduler or worker»; возобновление задачи лежит на MCP-хосте.
+- [x] B2 (P1). **Автономный планировщик / worker** — in-process worker
+  готов (2026-09-04): opt-in LEVARA_TASK_WORKER=1, auto_run-политика в
+  authority_json, retry/deadline/exhaustion, deadlock-детектор, работа
+  строго через существующие task_step CAS-примитивы.
 - [ ] B3 (P2). **Выход из alpha** — стабилизация схем до non-alpha контракта,
   прогон полного e2e-набора на каждом релизе.
 - [ ] B4 (P3). **Расширяемая модель authority** — рантайм записывает authority,
