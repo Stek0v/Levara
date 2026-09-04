@@ -276,12 +276,27 @@ func TestCanUseDatasetForUpload(t *testing.T) {
 		want      bool
 	}{
 		{"owner", "user-a", "payments", true},
-		{"shared", "user-b", "payments", true},
+		// user-b holds only a viewer share on payments — viewers are
+		// read-only, uploading mutates the dataset.
+		{"viewer share denied", "user-b", "payments", false},
 		{"foreign", "user-c", "payments", false},
 		{"public", "user-c", "public", true},
 		{"missing allowed for create", "user-c", "new-dataset", true},
 		{"anonymous dev mode", "", "payments", true},
 	}
+	// user-e holds an editor share on payments — editors may upload.
+	if _, err := db.Exec(`INSERT INTO dataset_shares(id, dataset_id, user_id, role) VALUES ('share-e', 'payments', 'user-e', 'editor')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO users(id, email, is_superuser) VALUES ('user-e', 'user-e@example.com', 0)`); err != nil {
+		t.Fatal(err)
+	}
+	cases = append(cases, struct {
+		name      string
+		userID    string
+		datasetID string
+		want      bool
+	}{"editor share allowed", "user-e", "payments", true})
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := policy.CanUseDatasetForUpload(ctx, tc.datasetID, tc.userID)

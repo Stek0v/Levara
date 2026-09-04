@@ -452,15 +452,17 @@ func (p SQLPolicy) CanUseDatasetForUpload(ctx context.Context, datasetID, userID
 	if ownerID == "" || ownerID == userID {
 		return true, nil
 	}
-	var shareID string
-	err = p.DB.QueryRowContext(ctx, p.rewrite("SELECT id FROM dataset_shares WHERE dataset_id = $1 AND user_id = $2"), datasetID, userID).Scan(&shareID)
+	var role string
+	err = p.DB.QueryRowContext(ctx, p.rewrite("SELECT role FROM dataset_shares WHERE dataset_id = $1 AND user_id = $2"), datasetID, userID).Scan(&role)
 	if err == sql.ErrNoRows {
 		return false, nil
 	}
 	if err != nil {
 		return false, err
 	}
-	return shareID != "", nil
+	// Uploading mutates the dataset: viewers are read-only. Only editor and
+	// admin shares grant write access (owner handled above).
+	return role == RoleEditor || role == RoleAdmin, nil
 }
 
 // CanManageDatasetShares reports whether granterID may grant or revoke shares

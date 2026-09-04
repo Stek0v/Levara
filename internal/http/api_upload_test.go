@@ -120,7 +120,8 @@ func TestValidateUploadDatasetID_AllowsSharedDataset(t *testing.T) {
 	if _, err := db.Exec(`INSERT INTO datasets(id, name, owner_id) VALUES ('bob-ds', 'bob-data', 'bob')`); err != nil {
 		t.Fatalf("seed datasets: %v", err)
 	}
-	if _, err := db.Exec(`INSERT INTO dataset_shares(id, dataset_id, user_id, role) VALUES ('share-1', 'bob-ds', 'alice', 'viewer')`); err != nil {
+	// Editors hold write access to the shared dataset.
+	if _, err := db.Exec(`INSERT INTO dataset_shares(id, dataset_id, user_id, role) VALUES ('share-1', 'bob-ds', 'alice', 'editor')`); err != nil {
 		t.Fatalf("seed share: %v", err)
 	}
 
@@ -129,7 +130,25 @@ func TestValidateUploadDatasetID_AllowsSharedDataset(t *testing.T) {
 		t.Fatalf("validateUploadDatasetID: %v", err)
 	}
 	if !ok {
-		t.Fatal("validateUploadDatasetID denied shared dataset")
+		t.Fatal("validateUploadDatasetID denied editor-shared dataset")
+	}
+}
+
+func TestValidateUploadDatasetID_DeniesViewerSharedDataset(t *testing.T) {
+	db := uploadDatasetDB(t)
+	if _, err := db.Exec(`INSERT INTO datasets(id, name, owner_id) VALUES ('bob-ds', 'bob-data', 'bob')`); err != nil {
+		t.Fatalf("seed datasets: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO dataset_shares(id, dataset_id, user_id, role) VALUES ('share-1', 'bob-ds', 'alice', 'viewer')`); err != nil {
+		t.Fatalf("seed share: %v", err)
+	}
+
+	ok, err := validateUploadDatasetID(context.Background(), db, "bob-ds", "alice")
+	if err != nil {
+		t.Fatalf("validateUploadDatasetID: %v", err)
+	}
+	if ok {
+		t.Fatal("validateUploadDatasetID allowed upload with viewer share")
 	}
 }
 
