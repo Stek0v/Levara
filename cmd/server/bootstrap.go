@@ -886,6 +886,23 @@ func auditSinkConfigured(mcpAuditPath string) bool {
 	return mcpAuditPath != "-" && (mcpAuditPath != "" || truthyEnv("LEVARA_WORKSPACE_AUDIT_EXPORT"))
 }
 
+// splitCSVEnv reads a comma-separated env var into a trimmed, non-empty
+// string list. Returns nil when the variable is unset or empty.
+func splitCSVEnv(key string) []string {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if v := strings.TrimSpace(p); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
 func truthyEnv(key string) bool {
 	v := strings.TrimSpace(os.Getenv(key))
 	return v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes")

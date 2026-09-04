@@ -399,6 +399,79 @@ func JWTMiddleware(secret string, requireAuth bool) fiber.Handler {
 	}
 }
 
+// JWTMiddlewareWithOIDC is JWTMiddleware with an additional fallback: tokens
+// that are not Levara-issued JWTs are verified against an external OIDC
+// provider (A1) and resolved through the external identity bridge.
+// Order of attempts per request: API key → Levara JWT → OIDC bearer.
+// When oidc is nil this is equivalent to JWTMiddleware.
+func JWTMiddlewareWithOIDC(secret string, requireAuth bool, oidc ExternalBearerAuth) fiber.Handler {
+	base := JWTMiddleware(secret, requireAuth)
+	if oidc == nil {
+		return base
+	}
+	return func(c *fiber.Ctx) error {
+		// API-key and Levara-JWT requests must still take the base path.
+		if apiKey := c.Get("X-API-Key"); apiKey == "" {
+			apiKey = c.Get("X-Api-Key")
+			if apiKey == "" {
+				if authHeader := c.Get("Authorization"); strings.HasPrefix(authHeader, "Bearer ") {
+					if token := bearerToken(authHeader); token != "" {
+						if _, valid := verifyJWT(token, secret); !valid {
+							// Not a Levara JWT: try the external provider before
+							// rejecting. Verified claims resolve to a Principal
+							// through the same bridge the adapter seam uses.
+							if principal, err := oidc.Authenticate(c.Context(), token); err == nil {
+								c.Locals("user_id", principal.UserID)
+								c.Locals("email", principal.Email)
+								c.Locals("principal", principal)
+								return c.Next()
+							}
+						} else {
+							c.Locals("user_id", jwtSub(token, secret))
+							c.Locals("email", jwtEmail(token, secret))
+							return c.Next()
+						}
+					}
+				}
+			}
+		}
+		return base(c)
+	}
+}
+
+// jwtSub / jwtEmail re-parse a token already validated by verifyJWT in the
+// caller; failures yield empty strings (claims are best-effort locals here,
+// authorization decisions were already made by verifyJWT).
+func jwtSub(token, secret string) string {
+	if p, ok := verifyJWT(token, secret); ok {
+		return p.Sub
+	}
+	return ""
+}
+
+func jwtEmail(token, secret string) string {
+	if p, ok := verifyJWT(token, secret); ok {
+		return p.Email
+	}
+	return ""
+}
+
+// ExternalBearerAuth is the minimal seam the HTTP layer needs from an
+// external token verifier (backlog A1). Protocol adapter code lives above
+// this seam (see the architecture guard in pkg/access) — the HTTP layer
+// only ever sees verified identity facts.
+type ExternalBearerAuth interface {
+	// Authenticate verifies the raw bearer token and returns the resolved
+	// user identity, or an error when the token is not acceptable.
+	Authenticate(ctx context.Context, token string) (ExternalPrincipal, error)
+}
+
+// ExternalPrincipal is the identity fact set the HTTP middleware consumes.
+type ExternalPrincipal struct {
+	UserID string
+	Email  string
+}
+
 // APIKeyPermissionMiddleware enforces the read/write label attached by
 // JWTMiddleware across the complete REST surface. JWT and anonymous dev-mode
 // requests have no API-key permission local and pass unchanged.

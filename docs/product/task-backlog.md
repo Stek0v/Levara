@@ -9,10 +9,16 @@
 
 ## A. Enterprise-инфраструктура
 
-### A1. Raw OIDC token verification — P1
+### A1. Raw OIDC token verification — P1 ✅ (2026-09-04)
 
 **Суть.** Сервер сам проверяет входящие OIDC/JWT-токены (подпись, `iss`, `aud`,
 `exp`, `nbf`), а не доверяет проверенным claims от вышестоящего прокси.
+
+**Статус.** Выполнено: `pkg/auth/oidc.go` + тесты (20 кейсов, включая alg
+confusion, rotation, skew-границы, key cap, concurrency), HTTP-фолбэк
+`JWTMiddlewareWithOIDC`, composition-root биндинг в `cmd/server/main.go`,
+bridge `SimpleMappingBridge` в `pkg/access/bridge.go`. Архитектурный guard
+(pkg/access) соблюдён — protocol adapter code вне internal/http.
 
 **DoD.**
 1. `pkg/access/oidc.go` валидирует RS256/ES256 подпись по JWKS с

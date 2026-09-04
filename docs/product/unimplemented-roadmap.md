@@ -10,8 +10,11 @@
 
 Документы честно разделяют: seams/contracts готовы, конкретные реализации — нет.
 
-- [ ] A1 (P1). **Raw OIDC token verification** — сейчас адаптер принимает уже
-  проверенные claims; сервер сам не проверяет подпись/эмитента токена.
+- [x] A1 (P1). **Raw OIDC token verification** — реализовано 2026-09-04:
+  `pkg/auth/oidc.go` (JWKS + RS256/ES256 + iss/aud allowlist + exp/nbf skew +
+  rotation), middleware-фолбэк в HTTP-слое, env `LEVARA_OIDC_JWKS_URL` /
+  `LEVARA_OIDC_ISSUERS` / `LEVARA_OIDC_AUDIENCES`; биндинг к identity bridge —
+  в composition root (архитектурный guard соблюдён). ADR на surface не нужен.
 - [ ] A2 (P1). **SAML HTTP surface** — identity-федерауия для корпораций;
   контракт SSO bridge есть, SAML-реализации нет.
 - [ ] A3 (P1). **SCIM HTTP surface (provisioning)** — SCIM-shaped provisioner

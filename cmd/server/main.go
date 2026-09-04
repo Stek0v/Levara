@@ -70,7 +70,9 @@ import (
 	"github.com/stek0v/levara/internal/store"
 
 	_ "github.com/stek0v/levara/docs" // swaggo-generated OpenAPI spec (T13)
+	accesspkg "github.com/stek0v/levara/pkg/access"
 	"github.com/stek0v/levara/pkg/audit"
+	vectorAuth "github.com/stek0v/levara/pkg/auth"
 	"github.com/stek0v/levara/pkg/bm25"
 	"github.com/stek0v/levara/pkg/consolidate"
 	"github.com/stek0v/levara/pkg/embcontract"
@@ -514,8 +516,29 @@ func main() {
 		return c.Next()
 	})
 
-	// JWT + API Key middleware on all protected routes below this point
-	api.Use(vectorHttp.JWTMiddleware(authCfg.JWTSecret, *requireAuth))
+	// JWT + API Key middleware on all protected routes below this point.
+	// With LEVARA_OIDC_JWKS_URL set, an additional fallback verifies bearer
+	// tokens issued by the external OIDC provider (backlog A1) and resolves
+	// them through the identity bridge. Fail-closed: a misconfigured or
+	// unreachable JWKS aborts startup right below.
+	var oidcAuth vectorHttp.ExternalBearerAuth
+	if jwksURL := strings.TrimSpace(os.Getenv("LEVARA_OIDC_JWKS_URL")); jwksURL != "" {
+		oidcCfg := vectorAuth.OIDCVerifierConfig{
+			JWKSURL:   jwksURL,
+			Issuers:   splitCSVEnv("LEVARA_OIDC_ISSUERS"),
+			Audiences: splitCSVEnv("LEVARA_OIDC_AUDIENCES"),
+		}
+		verifier, err := vectorAuth.NewOIDCVerifier(oidcCfg)
+		if err != nil {
+			log.Fatalf("oidc bearer verification: %v (check LEVARA_OIDC_JWKS_URL/LEVARA_OIDC_ISSUERS/LEVARA_OIDC_AUDIENCES)", err)
+		}
+		oidcAuth = vectorHttp.ExternalBearerAuth(&oidcBearerAuth{
+			verifier: verifier,
+			adapter:  accesspkg.OIDCAdapter{Bridge: accesspkg.SimpleMappingBridge{}},
+		})
+		log.Printf("oidc bearer verification enabled: jwks=%s issuers=%v", jwksURL, oidcCfg.Issuers)
+	}
+	api.Use(vectorHttp.JWTMiddlewareWithOIDC(authCfg.JWTSecret, *requireAuth, oidcAuth))
 	api.Use(vectorHttp.APIKeyPermissionMiddleware())
 
 	// Per-user rate limit (T2 / D10): 100 req/min keyed on the user_id resolved
@@ -893,4 +916,31 @@ func main() {
 	stopBM25Autosave()
 	runsJanitorStop()
 	<-shutdownDone
+}
+
+// oidcBearerAuth binds the raw OIDC verifier (pkg/auth) to the identity
+// adapter (pkg/access) at the composition root, keeping protocol adapter
+// code out of internal/http per the architecture guard (pkg/access
+// oidc_test.go).
+type oidcBearerAuth struct {
+	verifier *vectorAuth.OIDCVerifier
+	adapter  accesspkg.OIDCAdapter
+}
+
+func (o *oidcBearerAuth) Authenticate(ctx context.Context, token string) (vectorHttp.ExternalPrincipal, error) {
+	claims, err := o.verifier.Verify(token)
+	if err != nil {
+		return vectorHttp.ExternalPrincipal{}, err
+	}
+	principal, err := o.adapter.ResolveVerified(ctx, accesspkg.OIDCClaims{
+		Issuer:      claims.Issuer,
+		Subject:     claims.Subject,
+		Email:       claims.Email,
+		DisplayName: claims.DisplayName,
+		Groups:      claims.Groups,
+	})
+	if err != nil {
+		return vectorHttp.ExternalPrincipal{}, err
+	}
+	return vectorHttp.ExternalPrincipal{UserID: principal.UserID, Email: principal.Email}, nil
 }
