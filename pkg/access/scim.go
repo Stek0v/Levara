@@ -8,9 +8,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"strings"
-	"time"
 )
 
 // SCIM provisioning store (backlog A3, per ADR-003).
@@ -224,19 +222,4 @@ func (s SCIMStore) lookup(ctx context.Context, issuer, externalID string) (strin
 func TokenCheck(presented, configured string) bool {
 	return len(configured) > 0 &&
 		subtle.ConstantTimeCompare([]byte(presented), []byte(configured)) == 1
-}
-
-// scimAuditEvent is the audit trail shape every mutation emits (ADR-003 §6).
-type scimAuditEvent struct {
-	At         time.Time `json:"at"`
-	Actor      string    `json:"actor"`
-	Action     string    `json:"action"`
-	Issuer     string    `json:"issuer"`
-	ExternalID string    `json:"external_id"`
-	UserID     string    `json:"user_id"`
-}
-
-func (e scimAuditEvent) String() string {
-	return fmt.Sprintf("scim actor=%s action=%s issuer=%s external_id=%s user=%s",
-		e.Actor, e.Action, e.Issuer, e.ExternalID, e.UserID)
 }

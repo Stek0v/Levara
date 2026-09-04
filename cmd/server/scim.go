@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"sync"
 
 	"github.com/gofiber/fiber/v2"
 	accesspkg "github.com/stek0v/levara/pkg/access"
@@ -43,7 +42,6 @@ type scimService struct {
 	query  scimQuerier
 	issuer string
 	token  string
-	mu     sync.Mutex
 	audit  func(action, externalID, userID string)
 }
 
