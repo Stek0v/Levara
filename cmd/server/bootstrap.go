@@ -192,7 +192,11 @@ type httpRuntime struct {
 }
 
 func initHTTPRuntime(clusterStore *store.Cluster, dim int, replServer *cluster.ReplicationServer, errTracker *observe.ErrorTracker) httpRuntime {
-	app := fiber.New()
+	// BodyLimit: fiber's 4 MiB default silently truncated real PDF uploads —
+	// the connection was reset mid-body and the WebUI proxy surfaced it as an
+	// opaque EPIPE (dogfood 2026-09-04). 100 MiB covers large documents; the
+	// upload handler streams and enforces its own per-file checks.
+	app := fiber.New(fiber.Config{BodyLimit: 100 << 20})
 	app.Use(cors.New(cors.Config{
 		AllowOrigins:     "http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000,http://127.0.0.1:3001,http://localhost:8080,http://localhost:8081",
 		AllowMethods:     "GET,POST,PUT,DELETE,PATCH,OPTIONS",
