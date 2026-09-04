@@ -1031,6 +1031,12 @@ func (h *mcpHandler) executeToolInner(ctx context.Context, sess *mcpSession, nam
 	case "task_plan":
 		return mcp.ToolTaskPlan(ctx, h, args)
 	case "task_step":
+		if err := h.verifyTaskAuthorityAtClaim(args); err != nil {
+			return mcp.ToolResult{
+				Content: []mcp.Content{{Type: "text", Text: "Error: " + err.Error()}},
+				IsError: true,
+			}
+		}
 		return mcp.ToolTaskStep(ctx, h, args)
 	case "task_checkpoint":
 		return mcp.ToolTaskCheckpoint(ctx, h, args)
@@ -1517,7 +1523,6 @@ func (h *mcpHandler) toolCheckDrift(ctx context.Context, args map[string]any) mc
 func (h *mcpHandler) toolPruneGraph(ctx context.Context, args map[string]any) mcpToolResult {
 	return mcp.ToolPruneGraph(ctx, h, args)
 }
-
 
 // withToolGroups stamps each tool descriptor with its functional group
 // (memory, search, workspace, ...) so tools/list matches the generated

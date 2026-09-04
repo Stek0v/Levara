@@ -327,7 +327,20 @@ contract.json и заморожены как v1 (additive-only); раздел «
 3. Раздел «alpha boundary» в доке заменён на текущие ограничения.
 4. Load-гейт: S2/S3 сценарии из multi_user.py проходят при каждом RC.
 
-### B4. Расширяемая модель authority — P3
+### B4. Расширяемая модель authority — P3 ✅ (2026-09-04)
+
+**Статус.** Выполнено: `pkg/mcp/authority.go` — декларативные манифесты
+(YAML в workspace): `allowed_tools` / `allowed_paths` /
+`allowed_networks` (зарезервировано, deny-by-default). Биндинг через
+`authority_json` (`manifest` + `manifest_sha256`); `task_step` claim
+проверяет digest манифеста (`internal/http/authority_http.go`) — подмена
+во время исполнения отклоняется явно (digest mismatch). Symlink-побеги
+проверяются покомпонентно для манифеста и для путей шага, включая
+symlinked-директории внутри allowed root. Эскалация через чейн шагов
+невозможна by design: каждый шаг использует ровно манифест задачи.
+Отказ — всегда явный `authority not declared: <что>`. Гайд автора:
+`docs/authority-manifests.md`. Проверка: unit 10/10 (парсинг, digest
+pinning, symlink-эскейпы, containment, deny-by-default, unbound no-op).
 
 **DoD.**
 1. Декларативный манифест authority (YAML в workspace): какие tools/files/

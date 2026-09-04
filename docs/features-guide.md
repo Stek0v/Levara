@@ -392,6 +392,7 @@ LEVARA_URL=http://127.0.0.1:8081/api/v1 ./levara/cli health --details
 | Стратегии поиска | `docs/search-strategies-guide.md` |
 | Workspace | `docs/markdown-native-workspace.md` + 5 соседних docs/markdown-workspace-*.md |
 | Task Runtime | `docs/long-horizon-runtime.md`, `docs/long-horizon-alpha-report.md` |
+| Authority-манифесты | `docs/authority-manifests.md` |
 | Память (workflow) | `docs/memory-workflow-skill.md`, `docs/memory-commit-design.md` |
 | Интеграции | `docs/integrations.md` |
 | Продуктовая лестница | `docs/product-ladder.md`, `docs/adr/002` |
