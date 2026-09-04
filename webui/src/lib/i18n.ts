@@ -231,14 +231,19 @@ export function useT() {
 }
 
 // formatBytes renders a human-readable size with ru/en units.
-export function formatBytes(n: number | undefined, locale: Locale | undefined): string {
+export function formatBytes(n: number | undefined, locale?: Locale): string {
+  const ru = locale !== 'en'
+  const b = ru ? 'Б' : 'B'
+  const kbU = ru ? 'КБ' : 'KB'
+  const mbU = ru ? 'МБ' : 'MB'
+  const gbU = ru ? 'ГБ' : 'GB'
   const v = n ?? 0
-  if (v < 1024) return `${v} Б`
+  if (v < 1024) return `${v} ${b}`
   const kb = v / 1024
-  if (kb < 1024) return `${kb.toFixed(1)} КБ`
+  if (kb < 1024) return `${kb.toFixed(1)} ${kbU}`
   const mb = kb / 1024
-  if (mb < 1024) return `${mb.toFixed(1)} МБ`
-  return `${(mb / 1024).toFixed(1)} ГБ`
+  if (mb < 1024) return `${mb.toFixed(1)} ${mbU}`
+  return `${(mb / 1024).toFixed(1)} ${gbU}`
 }
 
 export function formatDate(iso: string | undefined, locale: Locale | undefined): string {

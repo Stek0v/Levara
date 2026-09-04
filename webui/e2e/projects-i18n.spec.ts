@@ -43,7 +43,6 @@ test.describe('Projects i18n (RU)', () => {
     await page.goto('/datasets')
     await expect(page.locator('h1')).toHaveText('Проекты')
     // Card for ds-1: 12 файлов · 5.0 МБ
-    const card = page.locator('div', { has: page.locator('text=clienta-project') }).last()
     await expect(page.locator('text=12 файлов').first()).toBeVisible()
     await expect(page.locator('text=5.0 МБ').first()).toBeVisible()
   })

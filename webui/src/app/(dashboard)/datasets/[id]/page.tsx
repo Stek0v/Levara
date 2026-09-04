@@ -16,8 +16,8 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { EmptyState } from '@/components/ui/empty-state'
 import { ArrowLeft, Play, Trash2, FileText, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useT, formatBytes, formatDate, formatCount } from '@/lib/i18n'
-import { useQuery } from '@tanstack/react-query'
-import type { ProjectContextItem, ProjectActivityItem, GitCommit, DatasetShare } from '@/lib/api'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import type { ProjectContextItem, ProjectActivityItem, GitCommit } from '@/lib/api'
 import { useSettings } from '@/hooks/use-levara'
 
 function formatSize(bytes?: number): string {
@@ -72,6 +72,7 @@ export default function DatasetDetailPage() {
   const [repoPath, setRepoPath] = useState('')
   const [repoSaved, setRepoSaved] = useState(false)
   const [repoError, setRepoError] = useState('')
+  const [repoSyncedFrom, setRepoSyncedFrom] = useState<string | undefined>(undefined)
   const [commits, setCommits] = useState<GitCommit[] | null>(null)
     const saveRepo = async () => {
     setRepoSaved(false); setRepoError('')
@@ -86,23 +87,22 @@ export default function DatasetDetailPage() {
     }
   }
 
-  // Block ⑤: share management.
-  const [shares, setShares] = useState<DatasetShare[]>([])
+  // Block ⑤: share management (react-query cache, invalidated on
+  // grant/revoke instead of manual state sync).
+  const queryClient = useQueryClient()
+  const { data: shares } = useQuery({
+    queryKey: ['dataset-shares', datasetId],
+    queryFn: () => levara.getDatasetShares(datasetId),
+  })
   const [shareEmail, setShareEmail] = useState('')
   const [shareRole, setShareRole] = useState('viewer')
   const [shareError, setShareError] = useState('')
-  const [sharesLoaded, setSharesLoaded] = useState(false)
-  useEffect(() => {
-    if (!sharesLoaded) return
-    levara.getDatasetShares(datasetId).then((s) => setShares(s ?? [])).catch(() => setShares([]))
-  }, [datasetId, sharesLoaded])
-  useEffect(() => { setSharesLoaded(true) }, [])
   const grantShare = async () => {
     setShareError('')
     try {
       await levara.createDatasetShare(datasetId, shareEmail, shareRole)
       setShareEmail('')
-      setShares(await levara.getDatasetShares(datasetId))
+      queryClient.invalidateQueries({ queryKey: ['dataset-shares', datasetId] })
     } catch (e) {
       setShareError(e instanceof Error ? e.message : String(e))
     }
@@ -111,7 +111,7 @@ export default function DatasetDetailPage() {
     setShareError('')
     try {
       await levara.deleteDatasetShare(datasetId, shareId)
-      setShares(shares.filter((s) => s.id !== shareId))
+      queryClient.invalidateQueries({ queryKey: ['dataset-shares', datasetId] })
     } catch (e) {
       setShareError(e instanceof Error ? e.message : String(e))
     }
@@ -126,8 +126,14 @@ export default function DatasetDetailPage() {
   const dsMeta = datasetsRes?.data?.find((d) => d.id === datasetId)
   const dsName = dsMeta?.name ?? ''
   const dsSize = dsMeta?.total_size ?? 0
-  // Keep the repo input in sync once the dataset list resolves.
-  useEffect(() => { setRepoPath(dsMeta?.github_repo ?? '') }, [dsMeta?.github_repo])
+  // Keep the repo input in sync once the dataset list resolves —
+  // state-adjust-during-render pattern (react-hooks/set-state-in-effect
+  // forbids the effect form).
+  const repoBinding = dsMeta?.github_repo ?? ''
+  if (repoSyncedFrom !== repoBinding) {
+    setRepoSyncedFrom(repoBinding)
+    setRepoPath(repoBinding)
+  }
   const { data: dataPage, isLoading: loading } = useDatasetData(datasetId, page, limit)
   const records = (dataPage?.rows ?? []) as DataRecord[]
   const total = dataPage?.total ?? 0
@@ -245,11 +251,11 @@ export default function DatasetDetailPage() {
           <h2 className="text-sm font-semibold">{t('project.shares.title')}</h2>
           {shareError && <span className="text-xs text-red-600">{t('project.shares.error')}: {shareError}</span>}
         </div>
-        {shares.length === 0 ? (
+        {(shares ?? []).length === 0 ? (
           <p className="text-xs text-gray-400 mb-3">{t('project.shares.empty')}</p>
         ) : (
           <div className="space-y-1.5 mb-3">
-            {shares.map((s) => (
+            {(shares ?? []).map((s) => (
               <div key={s.id} className="flex items-center gap-2 text-sm">
                 <span className="flex-1 truncate">{s.user_email || s.user_id}</span>
                 <span className="text-xs px-2 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300">
