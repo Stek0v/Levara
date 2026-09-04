@@ -68,16 +68,6 @@ type TaskWorker struct {
 	wg       sync.WaitGroup
 }
 
-func defaultWorkerConfig() TaskWorkerConfig {
-	return TaskWorkerConfig{
-		PollInterval:     5 * time.Second,
-		LeaseSeconds:     900,
-		MaxInFlight:      8,
-		MaxStalledRounds: 4,
-		ActorID:          "levara:task-worker",
-	}
-}
-
 // NewTaskWorker builds a worker over the shared MCP Deps (same DB handle as
 // the tool surface — one connection pool, one write path).
 func NewTaskWorker(deps Deps, exec TaskStepExecutor, cfg TaskWorkerConfig) *TaskWorker {
