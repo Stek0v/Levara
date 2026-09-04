@@ -88,3 +88,6 @@
 Критический путь по лестнице: A1–A3 (identity) + B1–B2 (задачи) + C1 (e2e
 enterprise-пресета) — это то, что отделяет «пилот Enterprise» от «Enterprise в
 продакшене».
+
+Развёртка каждой позиции с DoD, тест-планами и corner cases:
+[task-backlog.md](task-backlog.md).
