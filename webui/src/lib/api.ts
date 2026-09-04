@@ -223,6 +223,16 @@ export const levara = {
     }),
   getDatasetCommits: (id: string) =>
     api<GitCommit[]>(`/api/v1/datasets/${id}/commits`),
+  // Share management (block ⑤)
+  getDatasetShares: (id: string) =>
+    api<DatasetShare[]>(`/api/v1/datasets/${id}/shares`),
+  createDatasetShare: (id: string, email: string, role: string) =>
+    api<DatasetShare>(`/api/v1/datasets/${id}/shares`, {
+      method: 'POST',
+      body: JSON.stringify({ email, role }),
+    }),
+  deleteDatasetShare: (id: string, shareId: string) =>
+    api<void>(`/api/v1/datasets/${id}/shares/${shareId}`, { method: 'DELETE' }),
   graphPath: (params: GraphPathRequest) => {
     const q = new URLSearchParams({
       from: params.from,
@@ -508,6 +518,16 @@ export interface DatasetDataRow {
   tags?: string
   created_at?: string
   [key: string]: unknown
+}
+
+export interface DatasetShare {
+  id: string
+  dataset_id: string
+  user_id: string
+  user_email?: string
+  role: string
+  granted_by?: string
+  created_at?: string
 }
 
 export interface GitCommit {

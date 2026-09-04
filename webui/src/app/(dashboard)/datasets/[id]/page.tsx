@@ -17,7 +17,7 @@ import { EmptyState } from '@/components/ui/empty-state'
 import { ArrowLeft, Play, Trash2, FileText, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useT, formatBytes, formatDate, formatCount } from '@/lib/i18n'
 import { useQuery } from '@tanstack/react-query'
-import type { ProjectContextItem, ProjectActivityItem, GitCommit } from '@/lib/api'
+import type { ProjectContextItem, ProjectActivityItem, GitCommit, DatasetShare } from '@/lib/api'
 import { useSettings } from '@/hooks/use-levara'
 
 function formatSize(bytes?: number): string {
@@ -83,6 +83,37 @@ export default function DatasetDetailPage() {
       }
     } catch (e) {
       setRepoError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  // Block ⑤: share management.
+  const [shares, setShares] = useState<DatasetShare[]>([])
+  const [shareEmail, setShareEmail] = useState('')
+  const [shareRole, setShareRole] = useState('viewer')
+  const [shareError, setShareError] = useState('')
+  const [sharesLoaded, setSharesLoaded] = useState(false)
+  useEffect(() => {
+    if (!sharesLoaded) return
+    levara.getDatasetShares(datasetId).then((s) => setShares(s ?? [])).catch(() => setShares([]))
+  }, [datasetId, sharesLoaded])
+  useEffect(() => { setSharesLoaded(true) }, [])
+  const grantShare = async () => {
+    setShareError('')
+    try {
+      await levara.createDatasetShare(datasetId, shareEmail, shareRole)
+      setShareEmail('')
+      setShares(await levara.getDatasetShares(datasetId))
+    } catch (e) {
+      setShareError(e instanceof Error ? e.message : String(e))
+    }
+  }
+  const revokeShare = async (shareId: string) => {
+    setShareError('')
+    try {
+      await levara.deleteDatasetShare(datasetId, shareId)
+      setShares(shares.filter((s) => s.id !== shareId))
+    } catch (e) {
+      setShareError(e instanceof Error ? e.message : String(e))
     }
   }
 
@@ -206,6 +237,40 @@ export default function DatasetDetailPage() {
         {commits && commits.length === 0 && (
           <p className="mt-2 text-xs text-gray-400">{t('project.repo.empty')}</p>
         )}
+      </div>
+
+      {/* Access / shares (block ⑤) */}
+      <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-4 mb-4">
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-sm font-semibold">{t('project.shares.title')}</h2>
+          {shareError && <span className="text-xs text-red-600">{t('project.shares.error')}: {shareError}</span>}
+        </div>
+        {shares.length === 0 ? (
+          <p className="text-xs text-gray-400 mb-3">{t('project.shares.empty')}</p>
+        ) : (
+          <div className="space-y-1.5 mb-3">
+            {shares.map((s) => (
+              <div key={s.id} className="flex items-center gap-2 text-sm">
+                <span className="flex-1 truncate">{s.user_email || s.user_id}</span>
+                <span className="text-xs px-2 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300">
+                  {t(`project.shares.role.${s.role}`)}
+                </span>
+                <button onClick={() => revokeShare(s.id)} title={t('project.shares.revoke')}
+                  className="text-gray-400 hover:text-red-600 text-xs">✕</button>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="flex gap-2">
+          <Input placeholder={t('project.shares.email')} value={shareEmail} onChange={(e) => setShareEmail(e.target.value)} className="flex-1" />
+          <select value={shareRole} onChange={(e) => setShareRole(e.target.value)}
+            className="rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 px-2 text-sm">
+            <option value="viewer">{t('project.shares.role.viewer')}</option>
+            <option value="editor">{t('project.shares.role.editor')}</option>
+            <option value="admin">{t('project.shares.role.admin')}</option>
+          </select>
+          <Button size="sm" onClick={grantShare}>{t('project.shares.grant')}</Button>
+        </div>
       </div>
 
       {/* Tabs */}
