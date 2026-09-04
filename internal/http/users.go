@@ -13,13 +13,13 @@ import (
 )
 
 type UserDTO struct {
-	ID         string  `json:"id"`
-	Email      string  `json:"email"`
-	IsActive   bool    `json:"is_active"`
-	IsSuperuser bool   `json:"is_superuser"`
-	IsVerified bool    `json:"is_verified"`
-	CreatedAt  string  `json:"created_at"`
-	UpdatedAt  *string `json:"updated_at"`
+	ID          string  `json:"id"`
+	Email       string  `json:"email"`
+	IsActive    bool    `json:"is_active"`
+	IsSuperuser bool    `json:"is_superuser"`
+	IsVerified  bool    `json:"is_verified"`
+	CreatedAt   string  `json:"created_at"`
+	UpdatedAt   *string `json:"updated_at"`
 }
 
 // userLookupHandler — GET /users?email=... — admin-side lookup used by

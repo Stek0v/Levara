@@ -57,4 +57,3 @@ func (h *mcpHandler) toolDiaryWrite(ctx context.Context, args map[string]any) mc
 func (h *mcpHandler) toolDiaryRead(ctx context.Context, args map[string]any) mcpToolResult {
 	return mcp.ToolDiaryRead(ctx, h, args)
 }
-

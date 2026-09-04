@@ -125,9 +125,9 @@ type workspaceCommitRequest struct {
 }
 
 type workspaceRevertRequest struct {
-	ProjectID          string `json:"project_id"`
-	Branch             string `json:"branch"`
-	CommitID           string `json:"commit_id"`
+	ProjectID string `json:"project_id"`
+	Branch    string `json:"branch"`
+	CommitID  string `json:"commit_id"`
 	// ExpectedCurrentCommitID is an optimistic-concurrency guard (finding
 	// H7, 2026-09-03 review): when non-empty, revert is refused unless it
 	// matches the branch's latest commit, so a stale client cannot discard

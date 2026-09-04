@@ -22,10 +22,10 @@ import (
 
 // RateLimitConfig holds tunable limits. Defaults match 20.04-tasks.md D10.
 type RateLimitConfig struct {
-	AuthMax        int           // req per AuthWindow, per IP (default 10)
-	AuthWindow     time.Duration // default 1 min
-	UserMax        int           // req per UserWindow, per user (default 100)
-	UserWindow     time.Duration // default 1 min
+	AuthMax    int           // req per AuthWindow, per IP (default 10)
+	AuthWindow time.Duration // default 1 min
+	UserMax    int           // req per UserWindow, per user (default 100)
+	UserWindow time.Duration // default 1 min
 }
 
 func (c *RateLimitConfig) withDefaults() {

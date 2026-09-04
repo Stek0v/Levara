@@ -21,4 +21,3 @@ func TestVerifyScoredResults_FiltersLowScoreAndBadMetadata(t *testing.T) {
 		t.Fatalf("verification=%+v, want low=1 bad=1 kept=1", v)
 	}
 }
-

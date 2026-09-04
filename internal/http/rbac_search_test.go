@@ -2,17 +2,17 @@
 //
 // The production code path is:
 //
-//   searchHandler → c.Locals("user_id") → GetAllowedDatasetIDs(db, ctx, uid)
-//     → req.AllowedDatasetIDs → filterByAllowedDatasets(results, allowed)
+//	searchHandler → c.Locals("user_id") → GetAllowedDatasetIDs(db, ctx, uid)
+//	  → req.AllowedDatasetIDs → filterByAllowedDatasets(results, allowed)
 //
 // We wire a middleware that sets Locals("user_id") to a test user, seed
 // users/datasets/dataset_shares, and insert vectors tagged with dataset_id
 // in their metadata. The tests verify:
 //
-//   * User B cannot see user A's data (isolation).
-//   * Once A shares with B, B can see it (share grant).
-//   * Without user_id (anonymous) no filter applies (dev-mode compat).
-//   * Superusers bypass the filter.
+//   - User B cannot see user A's data (isolation).
+//   - Once A shares with B, B can see it (share grant).
+//   - Without user_id (anonymous) no filter applies (dev-mode compat).
+//   - Superusers bypass the filter.
 //
 // This complements the Wave A RBAC test, which only checked the "no
 // filter" branch — here we prove the filter itself works end-to-end.

@@ -26,10 +26,10 @@ func emitRAGMetrics(searchType string, confidence float64, abstained bool, absta
 }
 
 type resultVerification struct {
-	Total             int `json:"total"`
-	Kept              int `json:"kept"`
-	DroppedLowScore   int `json:"dropped_low_score"`
-	DroppedBadMeta    int `json:"dropped_bad_metadata"`
+	Total           int `json:"total"`
+	Kept            int `json:"kept"`
+	DroppedLowScore int `json:"dropped_low_score"`
+	DroppedBadMeta  int `json:"dropped_bad_metadata"`
 }
 
 func (r resultVerification) Enabled() bool {
@@ -101,4 +101,3 @@ func hasValidMetadata(r fiber.Map) bool {
 		return false
 	}
 }
-

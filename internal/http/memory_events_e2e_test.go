@@ -255,9 +255,9 @@ func TestSSE_FilterPrecedence_AllThreeMustMatch(t *testing.T) {
 	defer cancel()
 
 	// Each of these fails exactly one of the three filters → all dropped.
-	publishWithRetry(MemoryEvent{Kind: "memory.saved", Key: "proj/a", Type: "fact", OwnerID: "u2", Timestamp: "t1"})    // owner mismatch
-	publishWithRetry(MemoryEvent{Kind: "memory.saved", Key: "proj/b", Type: "event", OwnerID: "u1", Timestamp: "t2"})   // type mismatch
-	publishWithRetry(MemoryEvent{Kind: "memory.saved", Key: "user/c", Type: "fact", OwnerID: "u1", Timestamp: "t3"})    // prefix mismatch
+	publishWithRetry(MemoryEvent{Kind: "memory.saved", Key: "proj/a", Type: "fact", OwnerID: "u2", Timestamp: "t1"})  // owner mismatch
+	publishWithRetry(MemoryEvent{Kind: "memory.saved", Key: "proj/b", Type: "event", OwnerID: "u1", Timestamp: "t2"}) // type mismatch
+	publishWithRetry(MemoryEvent{Kind: "memory.saved", Key: "user/c", Type: "fact", OwnerID: "u1", Timestamp: "t3"})  // prefix mismatch
 	publishWithRetry(MemoryEvent{Kind: "memory.saved", Key: "proj/ok", Type: "fact", OwnerID: "u1", Timestamp: "t4"}) // all three pass
 
 	gotKeys := readKeys(t, br, 1)

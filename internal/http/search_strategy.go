@@ -5,12 +5,12 @@
 // calling free-standing functions defined in api_search.go and
 // graph_search.go. That worked but had three downsides:
 //
-//   1. Adding a new query_type required editing the central switch AND
-//      hoping nobody else was relying on the default-to-CHUNKS fallback.
-//   2. Tests couldn't substitute a stub strategy — every search test had
-//      to stand up the real pipeline.
-//   3. The contract (what does Execute receive, what does it return) was
-//      implicit: spread across 13 function signatures.
+//  1. Adding a new query_type required editing the central switch AND
+//     hoping nobody else was relying on the default-to-CHUNKS fallback.
+//  2. Tests couldn't substitute a stub strategy — every search test had
+//     to stand up the real pipeline.
+//  3. The contract (what does Execute receive, what does it return) was
+//     implicit: spread across 13 function signatures.
 //
 // This file introduces a minimal SearchStrategy interface and a registry
 // wired once during RegisterAPI. The existing handler functions

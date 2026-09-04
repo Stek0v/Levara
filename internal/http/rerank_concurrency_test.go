@@ -96,10 +96,10 @@ func TestRerankConcurrency_OutcomesSumAndLatency(t *testing.T) {
 
 	const N = 50
 	var (
-		wg       sync.WaitGroup
-		ok200    atomic.Int32
-		latMu    sync.Mutex
-		latency  = make([]time.Duration, 0, N)
+		wg      sync.WaitGroup
+		ok200   atomic.Int32
+		latMu   sync.Mutex
+		latency = make([]time.Duration, 0, N)
 	)
 	wg.Add(N)
 	for i := 0; i < N; i++ {

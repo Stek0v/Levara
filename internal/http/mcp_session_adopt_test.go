@@ -107,7 +107,7 @@ func TestMCP_StaleSession_404WhenUnauthenticated(t *testing.T) {
 }
 
 // tools/call resolves the owner from the request JWT even when the session was
-// adopted empty — closing the owner_id='' footgun. We assert the response is a
+// adopted empty — closing the owner_id=” footgun. We assert the response is a
 // well-formed JSON-RPC result (the tool runs) rather than a transport 404.
 func TestMCP_ToolCall_OwnerFromJWT(t *testing.T) {
 	const secret = "test-secret-adopt"
@@ -182,7 +182,7 @@ func TestMCP_NoSessionHeader_AllowsValidBearer(t *testing.T) {
 
 // No session header + no credentials under require-auth must also block
 // tools/call — closing the path where an anon caller ran a tool with
-// owner_id='' just by omitting the session id.
+// owner_id=” just by omitting the session id.
 func TestMCP_NoSessionHeader_RejectsAnonToolCall(t *testing.T) {
 	app, _ := mcpAdoptApp(t, APIConfig{RequireAuth: true, JWTSecret: "test-secret-adopt"})
 

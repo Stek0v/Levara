@@ -77,4 +77,3 @@ func TestChunksSearch_EnvelopeWhenIncludeDebugTrue(t *testing.T) {
 		t.Fatalf("debug=%v, want source=explicit", obj["debug"])
 	}
 }
-
