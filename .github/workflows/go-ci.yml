@@ -296,7 +296,7 @@ jobs:
           --health-timeout 5s
           --health-retries 20
     env:
-      LEVARA_TASK_LOAD_DSN: postgres://levara:***@127.0.0.1:5432/levara_taskload?sslmode=disable
+      LEVARA_TASK_LOAD_DSN: postgres://levara:levara@127.0.0.1:5432/levara_taskload?sslmode=disable
       LEVARA_TASK_LOAD_PGUSER: levara
       PGPASSWORD: levara
     steps:
