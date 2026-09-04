@@ -385,7 +385,15 @@ pinning, symlink-эскейпы, containment, deny-by-default, unbound no-op).
 - Restart с тем же env → детерминированный успех.
 - Порты заняты → внятная ошибка, не panic.
 
-### C6. Пресет/сервер: единый DSN-контракт — P3
+### C6. Пресет/сервер: единый DSN-контракт — P3 ✅ (2026-09-04)
+
+**Статус.** Контракт: `-pg-url` > `$DATABASE_URL` > `$POSTGRES_DSN`
+(пресетная governance-переменная признана runtime-fallback последней
+инстанции). Когда два источника заданы и расходятся — fail-fast на
+старте (включая `-config-check`) с сообщением, каким именно источникам
+верить. Флаг, дефолтящийся из `$DATABASE_URL`, считается env-источником,
+а не явным флагом. Live smoke: diverge → exit 1 + сообщение;
+agree/empty → OK. Тесты `cmd/server/dsn_test.go` (матрица 10 кейсов).
 
 **Суть.** `enterprise.strict.env.example` задаёт `POSTGRES_DSN`, живой сервер
 читает `DATABASE_URL`/`-pg-url`; C1-e2e компенсирует передачей обоих.

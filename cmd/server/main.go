@@ -128,6 +128,38 @@ func workspaceWatchAsyncIndexEnabled() bool {
 }
 
 // taskWorkerEnabled reports whether the autonomous task worker (B2) is on.
+// resolveRuntimeDSN applies the single-source-of-truth DSN contract
+// (backlog C6): the -pg-url flag wins, then $DATABASE_URL, then
+// $POSTGRES_DSN (preset governance variable honored as a last fallback).
+// When two or more sources are set and disagree, startup fails with an
+// explicit error instead of silently picking one.
+func resolveRuntimeDSN(explicitFlag, databaseURL, postgresDSN string) (string, error) {
+	type src struct {
+		name string
+		val  string
+	}
+	sources := []src{
+		{"-pg-url", explicitFlag},
+		{"DATABASE_URL", databaseURL},
+		{"POSTGRES_DSN", postgresDSN},
+	}
+	var chosen string
+	var chosenName string
+	for _, s := range sources {
+		if s.val == "" {
+			continue
+		}
+		if chosen == "" {
+			chosen, chosenName = s.val, s.name
+			continue
+		}
+		if s.val != chosen {
+			return "", fmt.Errorf("conflicting PostgreSQL DSNs: %s and %s are both set but differ; keep exactly one source of truth (flag -pg-url > $DATABASE_URL > $POSTGRES_DSN)", chosenName, s.name)
+		}
+	}
+	return chosen, nil
+}
+
 func taskWorkerEnabled() bool {
 	v := strings.TrimSpace(os.Getenv("LEVARA_TASK_WORKER"))
 	return v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes")
@@ -322,6 +354,19 @@ func main() {
 	// exit. Runs before any external init (storage, vector, SQL, listeners) so
 	// an operator — or `make profile-smoke` — can verify a profile preset with
 	// no services up. Exit 0 = acceptable, 1 = strict-mode fatal.
+	// DSN contract (C6): when -pg-url was defaulted from $DATABASE_URL, treat
+	// it as the env source, not an explicit flag source. Diverging sources
+	// fail before anything starts — including -config-check.
+	flagDSN := *pgURL
+	if !provided["pg-url"] {
+		flagDSN = ""
+	}
+	runtimeDSN, dsnErr := resolveRuntimeDSN(flagDSN, os.Getenv("DATABASE_URL"), os.Getenv("POSTGRES_DSN"))
+	if dsnErr != nil {
+		fmt.Fprintf(os.Stderr, "levara: %v\n", dsnErr)
+		os.Exit(1)
+	}
+
 	if *configCheck {
 		os.Exit(runConfigCheck(os.Stdout, *requireAuth, *mcpAuditPath, truthyEnv("LEVARA_PROFILE_STRICT")))
 	}
@@ -421,7 +466,7 @@ func main() {
 	// for backward compatibility.
 	handler.SetCollections(colManager)
 
-	sqlRuntime := initSQLRuntimeSuppressed(*dataDir, *pgURL, pgSuppressed)
+	sqlRuntime := initSQLRuntimeSuppressed(*dataDir, runtimeDSN, pgSuppressed)
 	pgDSN := sqlRuntime.DSN
 	pgDB := sqlRuntime.DB
 	profileStrict := truthyEnv("LEVARA_PROFILE_STRICT")
