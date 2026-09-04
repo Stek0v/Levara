@@ -11,6 +11,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -53,8 +54,8 @@ func newOIDCTestKeys(t *testing.T) *oidcTestKeys {
 	mux.HandleFunc("/jwks", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"keys": []map[string]any{{
 			"kty": "RSA", "kid": tk.rsaKid, "alg": "RS256", "use": "sig",
-			"n": b64u(tk.rsa.PublicKey.N.Bytes()),
-			"e": b64u(big.NewInt(int64(tk.rsa.PublicKey.E)).Bytes()),
+			"n": b64u(tk.rsa.N.Bytes()),
+			"e": b64u(big.NewInt(int64(tk.rsa.E)).Bytes()),
 		}}})
 	})
 	tk.server = httptest.NewServer(mux)
@@ -121,15 +122,22 @@ func TestJWTMiddlewareWithOIDCTamperedToken(t *testing.T) {
 	tk := newOIDCTestKeys(t)
 	app, _ := newMW(t, tk, true)
 	token := tk.sign(t, oidcClaims(time.Now()))
-	parts := []byte(token)
-	// flip a payload char
-	for i := len(parts) - 1; i > 0; i-- {
-		if parts[i] == 'A' {
-			parts[i] = 'B'
-			break
-		}
+	segments := strings.Split(token, ".")
+	if len(segments) != 3 {
+		t.Fatalf("expected 3 JWS segments, got %d", len(segments))
 	}
-	resp, err := app.Test(authedGet("/whoami", string(parts)))
+	// Flip the first character of the payload segment: claims change, the
+	// signature no longer matches, and the mutation is deterministic (the
+	// previous scan-for-A approach could land on a signature char whose
+	// base64 decode happened to still verify).
+	payload := []byte(segments[1])
+	if payload[0] == 'A' {
+		payload[0] = 'B'
+	} else {
+		payload[0] = 'A'
+	}
+	segments[1] = string(payload)
+	resp, err := app.Test(authedGet("/whoami", strings.Join(segments, ".")))
 	if err != nil {
 		t.Fatal(err)
 	}

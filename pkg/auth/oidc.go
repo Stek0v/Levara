@@ -45,16 +45,14 @@ type OIDCVerifierConfig struct {
 // OIDCVerifier verifies bearer tokens against a remote JWKS. Safe for
 // concurrent use.
 type OIDCVerifier struct {
-	cfg      OIDCVerifierConfig
-	client   *http.Client
-	skew     time.Duration
-	mu       sync.RWMutex
-	keys     map[string]jsonWebKey
-	fetched  time.Time
-	refetch  chan struct{}
-	maxKeys  int
-	closedMu sync.Mutex
-	closed   bool
+	cfg     OIDCVerifierConfig
+	client  *http.Client
+	skew    time.Duration
+	mu      sync.RWMutex
+	keys    map[string]jsonWebKey
+	fetched time.Time
+	refetch chan struct{}
+	maxKeys int
 }
 
 type jsonWebKey struct {

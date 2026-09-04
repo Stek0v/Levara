@@ -50,13 +50,13 @@ func newTestKeys(t *testing.T) *testKeys {
 			"keys": []map[string]any{
 				{
 					"kty": "RSA", "kid": tk.rsaKid, "alg": "RS256", "use": "sig",
-					"n": b64(tk.rsa.PublicKey.N.Bytes()),
-					"e": b64(big.NewInt(int64(tk.rsa.PublicKey.E)).Bytes()),
+					"n": b64(tk.rsa.N.Bytes()),
+					"e": b64(big.NewInt(int64(tk.rsa.E)).Bytes()),
 				},
 				{
 					"kty": "EC", "kid": tk.ecKid, "alg": "ES256", "use": "sig", "crv": "P-256",
-					"x": b64(tk.ec.PublicKey.X.Bytes()),
-					"y": b64(tk.ec.PublicKey.Y.Bytes()),
+					"x": b64(tk.ec.X.Bytes()),
+					"y": b64(tk.ec.Y.Bytes()),
 				},
 			},
 		})
