@@ -9,6 +9,11 @@ DIR=$(mktemp -d /tmp/levara-taskload.XXXXXX)
 PORT=18094
 DSN="${LEVARA_TASK_LOAD_DSN:?LEVARA_TASK_LOAD_DSN required}"
 PGUSER="${LEVARA_TASK_LOAD_PGUSER:-$(whoami)}"
+# psql needs the password out-of-band when the service requires auth.
+if [ -z "${PGPASSWORD:-}" ]; then
+  PGPASSWORD=$(printf '%s' "$DSN" | sed -nE 's|.*://[^:/@]+:([^@]+)@.*|\1|p')
+  export PGPASSWORD
+fi
 
 cleanup() {
   kill "${SRV:-0}" 2>/dev/null || true
