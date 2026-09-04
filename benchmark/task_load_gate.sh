@@ -39,7 +39,7 @@ for i in $(seq 1 60); do
 done
 curl -sf "http://127.0.0.1:$PORT/health" >/dev/null || { echo "server never became healthy"; tail -20 "$DIR/server.log"; exit 1; }
 echo "-- server boot lines:"
-grep -m4 -E "Profile|standalone|sql|postgres|listening" "$DIR/server.log" || head -5 "$DIR/server.log"
+grep -iE "postgres|sql schema|schema migration|pool" "$DIR/server.log" || echo "(no sql lines)"
 
 echo "== S2 lease contention =="
 python3 benchmark/multi_user.py --scenario s2 --url "http://127.0.0.1:$PORT" --output "$DIR/s2.json"
