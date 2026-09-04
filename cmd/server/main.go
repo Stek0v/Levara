@@ -519,6 +519,27 @@ func main() {
 			os.Getenv("LEVARA_SAML_ENTITY_ID"), os.Getenv("LEVARA_SAML_ACS_URL"))
 	}
 
+	// SCIM HTTP surface (backlog A3, ADR-003) — inactive unless
+	// LEVARA_SCIM_TOKEN is set. Scoped to the dedicated token; no JWT or
+	// API-key auth reaches these routes. Disabled without a live DB (the
+	// identity tables do not exist in sqlite-less embedded mode).
+	if pgDB != nil {
+		scimStore := accesspkg.SCIMStore{DB: pgDB, Q: vectorHttp.SQLRewriter()}
+		scimQuery := pgSCIMQuery{DB: pgDB, Q: vectorHttp.SQLRewriter()}
+		// Canonical RFC 7644 base path is top-level /scim/v2 (IdP base URL),
+		// not under /api/v1 — directories configure the prefix verbatim.
+		if err := SCIMRoutes(app, scimStore, scimQuery, nil); err != nil {
+			log.Fatalf("scim: %v", err)
+		}
+		if os.Getenv("LEVARA_SCIM_TOKEN") != "" {
+			issuer := os.Getenv("LEVARA_SCIM_ISSUER")
+			if issuer == "" {
+				issuer = "scim-directory"
+			}
+			log.Printf("scim http surface enabled: issuer=%s", issuer)
+		}
+	}
+
 	// Inject DB for API key verification (used by JWTMiddleware).
 	// IMPORTANT: Wrap in DBRef to prevent fasthttp from calling Close() on it.
 	// fasthttp calls io.Closer.Close() on all c.Locals values when the request

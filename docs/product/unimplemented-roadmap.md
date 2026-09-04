@@ -19,8 +19,9 @@
   crewjam/saml v0.5.1, `/saml/login|acs|metadata` за `LEVARA_SAML_ENABLED`,
   SP-initiated only (unsolicited отклоняются), one-time-use request-ID store,
   identity через общий IdentityBridge.
-- [ ] A3 (P1). **SCIM HTTP surface (provisioning)** — SCIM-shaped provisioner
-  seam существует; HTTP-поверхность отложена до ADR.
+- [x] A3 (P1). **SCIM HTTP surface (provisioning)** — реализовано 2026-09-04
+  по ADR-003: `/scim/v2` Users CRUD за отдельным bearer-токеном, externalId
+  primary, email-конфликт → 409 uniqueness, soft delete = is_active=false.
 - [ ] A4 (P2). **KMS / BYOK реализации** — storage/KMS contracts задают scope,
   digest, retention class, legal hold flag, key reference; конкретных
   production-бэкендов нет.
@@ -30,7 +31,7 @@
 - [ ] A6 (P2). **SIEM sink** — приёмник аудит-событий для корпоративных SIEM.
 - [ ] A7 (P2). **Legal hold enforcement** — флаг в контракте есть, принудительного
   исполнения нет.
-- [ ] A8 (P3). **ADR на SCIM HTTP surface** — блокирует A3.
+- [x] A8 (P3). **ADR на SCIM HTTP surface** — ADR-003 принят; A3 реализован.
 
 ## B. Task Runtime — alpha-границы (③④)
 

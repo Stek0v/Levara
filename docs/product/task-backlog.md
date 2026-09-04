@@ -91,7 +91,24 @@ PEM-парсинг PKCS#1/PKCS#8, HTTP-поверхность (metadata/login 30
 
 ---
 
-### A3. SCIM HTTP surface (provisioning) — P1 (блокируется A8)
+### A3. SCIM HTTP surface (provisioning) — P1 ✅ (2026-09-04)
+
+**Статус.** Выполнено по ADR-003: `pkg/access/scim.go` — SCIMStore поверх
+users/principals: externalId-маппинг в `scim_identities` (PK issuer+externalId),
+детерминированный user id `scim-<sha256(issuer␤externalId)[:32]>`, email-конфликт
+чужой личности → `ErrSCIMEmailConflict` (никаких тихих склеек), soft delete через
+`is_active=false` (маппинг живёт → перепровижининг реактивирует), locked random
+password (логин только через SSO/JWT), транзакционный create, constant-time token
+check. HTTP: `cmd/server/scim.go` — `/scim/v2` canonical top-level path
+(ServiceProviderConfig, Schemas, Users CRUD + PATCH active/rename + Delete→204,
+pagination clamp ≤200, `userName eq`/`externalId eq` фильтры, RFC 7644 error
+shapes `uniqueness/invalidValue/invalidFilter/invalidPath`), auth — отдельный
+static bearer `LEVARA_SCIM_TOKEN` (поверхность не существует без токена), issuer
+`LEVARA_SCIM_ISSUER`. Unit: 8 store-кейсов (idempotent re-create, конфликт
+включая pre-existing локального юзера, soft delete → re-provision реактивирует,
+concurrent creates, nil-DB disabled) + 8 HTTP-кейсов. Живой стенд: 12/12
+(create→dup 200→conflict 409→patch deactivate→soft delete 204→фильтры→ghost
+404→no-token 401).
 
 **Суть.** RFC 7644: `/scim/v2/Users` (POST/GET/PATCH/PUT/DELETE),
 `/scim/v2/Groups`, `/scim/v2/ServiceProviderConfig`, Bearer-auth отдельным

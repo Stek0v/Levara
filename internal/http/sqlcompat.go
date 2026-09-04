@@ -66,6 +66,12 @@ func GetDBProvider() DBProvider { return activeDBProvider }
 // IMPORTANT: For queries that reuse the same $N placeholder multiple times
 // (e.g., ON CONFLICT ... DO UPDATE SET col = $3), use QArgs() instead
 // since SQLite uses positional ? and needs the argument duplicated.
+// SQLRewriter returns the dialect rewriter used by this package, for
+// composition-root components that build SQL against the same tables.
+func SQLRewriter() func(string) string {
+	return Q
+}
+
 func Q(query string) string {
 	if activeDBProvider == DBPostgres {
 		return query

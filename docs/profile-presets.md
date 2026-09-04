@@ -88,7 +88,11 @@ key rotation; env: `LEVARA_OIDC_JWKS_URL`, `LEVARA_OIDC_ISSUERS`,
 `/saml/acs`, `/saml/metadata`; env: `LEVARA_SAML_ENABLED`,
 `LEVARA_SAML_ENTITY_ID`, `LEVARA_SAML_ACS_URL`, `LEVARA_SAML_IDP_METADATA_URL`
 or `LEVARA_SAML_IDP_METADATA_FILE`, `LEVARA_SAML_KEY_FILE`,
-`LEVARA_SAML_CERT_FILE` — SP-initiated flows only), SSO/SCIM seams, and
+`LEVARA_SAML_CERT_FILE` — SP-initiated flows only), a SCIM 2.0 provisioning
+surface (`/scim/v2`; env: `LEVARA_SCIM_TOKEN`, `LEVARA_SCIM_ISSUER` — the
+surface does not exist without the token; Users CRUD with soft delete,
+externalId-primary identity matching, email collisions reject with 409),
+SSO seams, and
 storage/KMS adapter contracts. SCIM HTTP surfaces, SIEM sinks, KMS/BYOK
 implementations, legal-hold enforcement, and corporate object storage backends
 remain follow-up work.
