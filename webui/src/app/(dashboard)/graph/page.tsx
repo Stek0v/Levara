@@ -10,6 +10,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Route, Search, Share2 } from 'lucide-react'
 import * as d3 from 'd3'
 import type { GraphNode, GraphEdge } from '@/lib/api'
+import { useT } from '@/lib/i18n'
 
 // Local aliases keep d3 simulation types stable while referencing the
 // canonical shape from @/lib/api. Before T7 this file redefined GNode
@@ -31,6 +32,7 @@ function formatValidity(edge: GraphEdge): string {
 }
 
 export default function GraphPage() {
+  const t = useT()
   const svgRef = useRef<SVGSVGElement>(null)
   const [dsId, setDsId] = useState('')
   const [selected, setSelected] = useState<GNode | null>(null)
@@ -156,11 +158,11 @@ export default function GraphPage() {
   return (
     <div className="flex flex-col h-[calc(100vh-5rem)]">
       <div className="flex items-center justify-between mb-4">
-        <h1 className="text-2xl font-bold">Knowledge Graph</h1>
+        <h1 className="text-2xl font-bold">{t('graph.title')}</h1>
         <div className="flex items-center gap-2">
           <select value={dsId} onChange={(e) => load(e.target.value)}
             className="h-9 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-3 text-sm" aria-label="Dataset">
-            <option value="">Select dataset…</option>
+            <option value="">{t('graph.select')}</option>
             {datasets.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
           </select>
           <Input placeholder="Search nodes…" value={search} onChange={(e) => setSearch(e.target.value)} className="w-48" />
@@ -177,7 +179,7 @@ export default function GraphPage() {
               <span className="w-2 h-2 rounded-full" style={{ backgroundColor: COLORS[t]||COLORS.default }} />{t}
             </button>
           ))}
-          {typeFilter.size > 0 && <button onClick={() => setTypeFilter(new Set())} className="text-xs text-gray-400 hover:text-gray-600">Clear</button>}
+          {typeFilter.size > 0 && <button onClick={() => setTypeFilter(new Set())} className="text-xs text-gray-400 hover:text-gray-600">{t('graph.clear')}</button>}
         </div>
       )}
 
@@ -213,8 +215,8 @@ export default function GraphPage() {
                     <code className="block truncate text-[10px] text-gray-400">{node.id}</code>
                   </button>
                   <div className="flex gap-1">
-                    <Button variant="secondary" size="sm" onClick={() => setPathFrom(node.id)}>From</Button>
-                    <Button variant="secondary" size="sm" onClick={() => setPathTo(node.id)}>To</Button>
+                    <Button variant="secondary" size="sm" onClick={() => setPathFrom(node.id)}>{t('graph.from')}</Button>
+                    <Button variant="secondary" size="sm" onClick={() => setPathTo(node.id)}>{t('graph.to')}</Button>
                   </div>
                 </div>
               ))}
@@ -241,8 +243,8 @@ export default function GraphPage() {
       <div className="flex-1 flex gap-4">
         <div className="flex-1 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 relative overflow-hidden">
           {loading && <div className="absolute inset-0 flex items-center justify-center"><Skeleton className="w-32 h-32 rounded-full" /></div>}
-          {!loading && !dsId && <EmptyState icon={Share2} title="Select a dataset" description="Choose a dataset to visualize its knowledge graph" className="h-full" />}
-          {!loading && dsId && fNodes.length === 0 && <EmptyState icon={Share2} title="Graph is empty" description="Run Cognify to extract entities" className="h-full" />}
+          {!loading && !dsId && <EmptyState icon={Share2} title={t('graph.emptyselect')} description={t('graph.emptyselect.desc')} className="h-full" />}
+          {!loading && dsId && fNodes.length === 0 && <EmptyState icon={Share2} title={t('graph.empty')} description={t('graph.empty.desc')} className="h-full" />}
           <svg ref={svgRef} className="w-full h-full" />
           {fNodes.length > 0 && (
             <div className="absolute bottom-3 left-3 flex gap-2">
@@ -264,14 +266,14 @@ export default function GraphPage() {
             <div className="mt-3 space-y-2 text-sm">
             <div><span className="text-gray-500">ID:</span> <code className="text-xs break-all">{selected.id}</code></div>
               <div className="flex gap-2 pt-1">
-                <Button variant="secondary" size="sm" onClick={() => setPathFrom(selected.id)}>Set from</Button>
-                <Button variant="secondary" size="sm" onClick={() => setPathTo(selected.id)}>Set to</Button>
+                <Button variant="secondary" size="sm" onClick={() => setPathFrom(selected.id)}>{t('graph.setfrom')}</Button>
+                <Button variant="secondary" size="sm" onClick={() => setPathTo(selected.id)}>{t('graph.setto')}</Button>
               </div>
               {selected.properties && Object.entries(selected.properties).map(([k, v]) => (
                 <div key={k}><span className="text-gray-500">{k}:</span> <span className="ml-1">{String(v)}</span></div>
               ))}
             </div>
-            <h4 className="font-medium mt-4 mb-2 text-sm">Connections</h4>
+            <h4 className="font-medium mt-4 mb-2 text-sm">{t('graph.connections')}</h4>
             <div className="space-y-1">
               {fEdges.filter((e) => e.source === selected.id || e.target === selected.id).slice(0, 20).map((e, i) => {
                 const otherId = e.source === selected.id ? e.target : e.source

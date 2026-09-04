@@ -8,8 +8,10 @@ import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Activity, MessageCircle, Star, AlertCircle, Zap, Database, Network, RefreshCw, Search } from 'lucide-react'
 import type { VSACandidate } from '@/lib/api'
+import { useT } from '@/lib/i18n'
 
 export default function AnalyticsPage() {
+  const t = useT()
   const { data: info } = useInfo()
   const { data: collections } = useCollections()
   const { data: feedback } = useFeedbackStats()
@@ -47,7 +49,7 @@ export default function AnalyticsPage() {
   if (isLoading) {
     return (
       <div>
-        <h1 className="text-2xl font-bold mb-6">Analytics</h1>
+        <h1 className="text-2xl font-bold mb-6">{t('an.title')}</h1>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           {[...Array(4)].map((_, i) => <Skeleton key={i} className="h-28 rounded-lg" />)}
         </div>
@@ -69,7 +71,7 @@ export default function AnalyticsPage() {
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold">Analytics</h1>
+        <h1 className="text-2xl font-bold">{t('an.title')}</h1>
         <Badge variant="default">Auto-refresh 30s</Badge>
       </div>
 
@@ -112,7 +114,7 @@ export default function AnalyticsPage() {
               })}
             </div>
           ) : (
-            <p className="text-sm text-gray-400">Dependency details are not available.</p>
+            <p className="text-sm text-gray-400">{t('an.depnodata')}</p>
           )}
         </div>
 
@@ -124,12 +126,12 @@ export default function AnalyticsPage() {
               <div className="flex justify-between text-sm"><span className="text-gray-500">Facts</span><span>{(vsa.fact_count ?? 0).toLocaleString()}</span></div>
               <div className="flex justify-between text-sm"><span className="text-gray-500">Shards</span><span>{(vsa.shard_count ?? 0).toLocaleString()}</span></div>
               <div className="flex justify-between text-sm"><span className="text-gray-500">Members</span><span>{(vsa.member_count ?? 0).toLocaleString()}</span></div>
-              <div className="flex justify-between text-sm"><span className="text-gray-500">Max dim</span><span>{vsa.max_dim || '—'}</span></div>
+              <div className="flex justify-between text-sm"><span className="text-gray-500">{t('an.maxdim')}</span><span>{vsa.max_dim || '—'}</span></div>
               <div className="flex justify-between text-sm"><span className="text-gray-500">Datasets</span><span>{vsa.datasets?.length ?? 0}</span></div>
               <div className="flex justify-between text-sm"><span className="text-gray-500">Predicates</span><span>{vsa.predicates?.length ?? 0}</span></div>
               {vsa.last_updated_at && (
                 <div className="pt-2 border-t border-gray-100 dark:border-gray-800">
-                  <p className="text-xs text-gray-400">Last rebuild</p>
+                  <p className="text-xs text-gray-400">{t('an.lastrebuild')}</p>
                   <p className="text-sm">{new Date(vsa.last_updated_at).toLocaleString()}</p>
                 </div>
               )}
@@ -141,7 +143,7 @@ export default function AnalyticsPage() {
                     className="h-9 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-3 text-sm"
                     aria-label="VSA dataset"
                   >
-                    <option value="">All / default dataset</option>
+                    <option value="">{t('an.alldatasets')}</option>
                     {(vsa.datasets ?? []).map((id) => (
                       <option key={id} value={id}>{id || 'default'}</option>
                     ))}
@@ -161,7 +163,7 @@ export default function AnalyticsPage() {
                   <Input
                     value={vsaSourceId}
                     onChange={(e) => setVSASourceId(e.target.value)}
-                    placeholder="source node id"
+                    placeholder={t('an.nodeid')}
                     aria-label="VSA source node id"
                   />
                   <Input
@@ -187,7 +189,7 @@ export default function AnalyticsPage() {
                 {vsaQuery.data && (
                   <div className="space-y-2">
                     {vsaQuery.data.candidates.length === 0 ? (
-                      <p className="text-sm text-gray-400">No VSA candidates found.</p>
+                      <p className="text-sm text-gray-400">{t('an.novsa')}</p>
                     ) : (
                       vsaQuery.data.candidates.map((c: VSACandidate) => (
                         <div key={`${c.shard_id}:${c.edge_id}:${c.target_id}`} className="rounded-md bg-gray-50 dark:bg-gray-800 px-3 py-2 text-sm">
@@ -216,12 +218,12 @@ export default function AnalyticsPage() {
               <div className="flex justify-between text-sm"><span className="text-gray-500">Size</span><span>{cache.size} / {cache.max_size}</span></div>
               <div className="flex justify-between text-sm"><span className="text-gray-500">Hits</span><span className="text-green-600">{cache.hits}</span></div>
               <div className="flex justify-between text-sm"><span className="text-gray-500">Misses</span><span className="text-red-500">{cache.misses}</span></div>
-              <div className="flex justify-between text-sm"><span className="text-gray-500">Hit Rate</span><span className="font-medium">{(cache.hit_rate * 100).toFixed(1)}%</span></div>
+              <div className="flex justify-between text-sm"><span className="text-gray-500">{t('an.hitrate')}</span><span className="font-medium">{(cache.hit_rate * 100).toFixed(1)}%</span></div>
               <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
                 <div className="bg-purple-600 h-2 rounded-full transition-all" style={{ width: `${cache.hit_rate * 100}%` }} />
               </div>
             </div>
-          ) : <p className="text-sm text-gray-400">Cache not available</p>}
+          ) : <p className="text-sm text-gray-400">{t('an.nocache')}</p>}
         </div>
 
         {/* Feedback */}
@@ -239,7 +241,7 @@ export default function AnalyticsPage() {
               </div>
               {feedback.worst_query && <div><span className="text-xs text-gray-500">Worst:</span><p className="text-sm text-red-600 italic mt-1">{feedback.worst_query}</p></div>}
             </div>
-          ) : <p className="text-sm text-gray-400">No feedback yet</p>}
+          ) : <p className="text-sm text-gray-400">{t('an.nofeedback')}</p>}
         </div>
 
         {/* Errors */}
@@ -255,7 +257,7 @@ export default function AnalyticsPage() {
                 </div>
               ))}
             </div>
-          ) : <p className="text-sm text-gray-400">No errors. System is healthy.</p>}
+          ) : <p className="text-sm text-gray-400">{t('an.noerrors')}</p>}
         </div>
       </div>
     </div>

@@ -4,6 +4,7 @@ import { useEffect } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Settings, Globe, Palette, Key } from 'lucide-react'
 import { useSettings, useUpdateSettings } from '@/hooks/use-levara'
+import { useT } from '@/lib/i18n'
 import type { Theme, Locale } from '@/lib/api'
 
 const THEMES: Theme[] = ['light', 'dark', 'system']
@@ -40,6 +41,7 @@ function applyLocale(l: Locale) {
 }
 
 export default function SettingsPage() {
+  const t = useT()
   const { data: settings, isPending } = useSettings()
   const updateMutation = useUpdateSettings()
 
@@ -72,14 +74,14 @@ export default function SettingsPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-6">Settings</h1>
+      <h1 className="text-2xl font-bold mb-6">{t('settings.title')}</h1>
 
       <div className="space-y-6 max-w-2xl">
         {/* Appearance */}
         <section className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-5">
           <div className="flex items-center gap-2 mb-4">
             <Palette className="h-5 w-5 text-gray-400" />
-            <h2 className="text-lg font-medium">Appearance</h2>
+            <h2 className="text-lg font-medium">{t('settings.appearance')}</h2>
           </div>
           <div className="flex gap-3">
             {THEMES.map((t) => (
@@ -103,7 +105,7 @@ export default function SettingsPage() {
         <section className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-5">
           <div className="flex items-center gap-2 mb-4">
             <Globe className="h-5 w-5 text-gray-400" />
-            <h2 className="text-lg font-medium">Language</h2>
+            <h2 className="text-lg font-medium">{t('settings.language')}</h2>
           </div>
           <select
             value={locale}
@@ -125,14 +127,14 @@ export default function SettingsPage() {
           </div>
           <div className="space-y-2 text-sm">
             <div className="flex items-center justify-between">
-              <span className="text-gray-500">Endpoint</span>
+              <span className="text-gray-500">{t('settings.endpoint')}</span>
               <code className="text-xs bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded">
                 {process.env.NEXT_PUBLIC_API_URL || ''}
               </code>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-gray-500">Status</span>
-              <Badge variant="success">Connected</Badge>
+              <span className="text-gray-500">{t('settings.status')}</span>
+              <Badge variant="success">{t('settings.connected')}</Badge>
             </div>
           </div>
         </section>
@@ -141,7 +143,7 @@ export default function SettingsPage() {
         <section className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-5">
           <div className="flex items-center gap-2 mb-4">
             <Settings className="h-5 w-5 text-gray-400" />
-            <h2 className="text-lg font-medium">About</h2>
+            <h2 className="text-lg font-medium">{t('settings.about')}</h2>
           </div>
           <div className="space-y-1 text-sm text-gray-500">
             <p>Levara WebUI v0.1.0</p>

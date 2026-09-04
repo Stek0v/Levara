@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { useTask, useTasks } from '@/hooks/use-levara'
 import { Badge } from '@/components/ui/badge'
 import { ListTodo, Clock, ShieldAlert, CircleCheck, CircleDashed, LoaderCircle } from 'lucide-react'
+import { useT } from '@/lib/i18n'
 
 
 const statusVariant = (s: string) =>
@@ -35,6 +36,7 @@ function StepCounts({ counts }: { counts: { pending: number; claimed: number; pa
 }
 
 export default function TasksPage() {
+  const t = useT()
   const [selected, setSelected] = useState<string | null>(null)
   const [statusFilter, setStatusFilter] = useState('')
   const { data, isLoading } = useTasks({ status: statusFilter || undefined, limit: 100 })
@@ -46,13 +48,13 @@ export default function TasksPage() {
     <div>
       <div className="flex items-center justify-between mb-2">
         <h1 className="text-2xl font-bold flex items-center gap-2">
-          <ListTodo className="h-6 w-6" /> Tasks
+          <ListTodo className="h-6 w-6" /> {t('tasks.title')}
         </h1>
-        <Badge variant="warning">read-only alpha</Badge>
+        <Badge variant="warning">{t('tasks.alpha')}</Badge>
       </div>
       <p className="text-sm text-muted-foreground mb-6">
         Observation surface for the long-horizon task runtime. Mutations stay in the
-        MCP <code>task_*</code> tools — this dashboard never writes.
+        {t('tasks.desc')}
       </p>
 
       <div className="flex gap-2 mb-4">
@@ -71,9 +73,9 @@ export default function TasksPage() {
 
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="space-y-3">
-          {isLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
+          {isLoading && <p className="text-sm text-muted-foreground">{t('tasks.loading')}</p>}
           {!isLoading && tasks.length === 0 && (
-            <p className="text-sm text-muted-foreground">No tasks match the filter.</p>
+            <p className="text-sm text-muted-foreground">{t('tasks.nomatch')}</p>
           )}
           {tasks.map((t) => (
             <button
@@ -113,7 +115,7 @@ export default function TasksPage() {
             <div className="space-y-4">
               <section className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-5">
                 <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-sm font-semibold">Plan</h3>
+                  <h3 className="text-sm font-semibold">{t('tasks.plan')}</h3>
                   <Badge variant={statusVariant(detail.data.status)}>{detail.data.status}</Badge>
                 </div>
                 <ol className="space-y-2">
@@ -146,7 +148,7 @@ export default function TasksPage() {
 
               {detail.data.blockers.length > 0 && (
                 <section className="bg-white dark:bg-gray-900 rounded-lg border border-red-300 dark:border-red-900 p-5">
-                  <h3 className="text-sm font-semibold mb-3 text-red-500">Blockers</h3>
+                  <h3 className="text-sm font-semibold mb-3 text-red-500">{t('tasks.blockers')}</h3>
                   <ul className="space-y-1 text-sm">
                     {detail.data.blockers.map((b, i) => (
                       <li key={i}>
@@ -163,9 +165,9 @@ export default function TasksPage() {
               )}
 
               <section className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-5">
-                <h3 className="text-sm font-semibold mb-3">Recent receipts</h3>
+                <h3 className="text-sm font-semibold mb-3">{t('tasks.receipts')}</h3>
                 {detail.data.receipts.length === 0 && (
-                  <p className="text-sm text-muted-foreground">No receipts yet.</p>
+                  <p className="text-sm text-muted-foreground">{t('tasks.noreceipts')}</p>
                 )}
                 <ul className="space-y-2 text-sm">
                   {detail.data.receipts.slice(0, 5).map((r, i) => (
@@ -184,7 +186,7 @@ export default function TasksPage() {
                   <Clock className="h-4 w-4" /> Checkpoints
                 </h3>
                 {detail.data.checkpoints.length === 0 && (
-                  <p className="text-sm text-muted-foreground">No checkpoints yet.</p>
+                  <p className="text-sm text-muted-foreground">{t('tasks.nockpoints')}</p>
                 )}
                 <ul className="space-y-1 text-sm">
                   {detail.data.checkpoints.slice(0, 5).map((c, i) => (

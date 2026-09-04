@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Brain, Plus } from 'lucide-react'
+import { useT } from '@/lib/i18n'
 
 const TYPES = ['all', 'fact', 'decision', 'event', 'preference', 'advice', 'discovery']
 const typeBadge = (t?: string) => {
@@ -16,6 +17,7 @@ const typeBadge = (t?: string) => {
 }
 
 export default function MemoriesPage() {
+  const t = useT()
   const [filter, setFilter] = useState('all')
   const [showAdd, setShowAdd] = useState(false)
   const [newKey, setNewKey] = useState('')
@@ -38,7 +40,7 @@ export default function MemoriesPage() {
   if (isLoading) {
     return (
       <div>
-        <h1 className="text-2xl font-bold mb-6">Memories</h1>
+        <h1 className="text-2xl font-bold mb-6">{t('mem.title')}</h1>
         <div className="space-y-3">{[...Array(5)].map((_, i) => <Skeleton key={i} className="h-16 rounded-lg" />)}</div>
       </div>
     )
@@ -48,22 +50,22 @@ export default function MemoriesPage() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold">Memories</h1>
-        <Button size="sm" onClick={() => setShowAdd(!showAdd)}><Plus className="h-4 w-4" /> Add Memory</Button>
+        <Button size="sm" onClick={() => setShowAdd(!showAdd)}><Plus className="h-4 w-4" /> {t('mem.add')}</Button>
       </div>
 
       {showAdd && (
         <div className="mb-4 p-4 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 space-y-3">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <Input placeholder="Key" value={newKey} onChange={(e) => setNewKey(e.target.value)} />
-            <Input placeholder="Value" value={newValue} onChange={(e) => setNewValue(e.target.value)} />
+            <Input placeholder={t('mem.key')} value={newKey} onChange={(e) => setNewKey(e.target.value)} />
+            <Input placeholder={t('mem.value')} value={newValue} onChange={(e) => setNewValue(e.target.value)} />
             <select value={newType} onChange={(e) => setNewType(e.target.value)}
               className="h-9 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-3 text-sm">
               {TYPES.filter((t) => t !== 'all').map((t) => <option key={t} value={t}>{t}</option>)}
             </select>
           </div>
           <div className="flex gap-2">
-            <Button onClick={handleAdd} disabled={!newKey.trim() || !newValue.trim()} loading={saveMutation.isPending}>Save</Button>
-            <Button variant="ghost" onClick={() => setShowAdd(false)}>Cancel</Button>
+            <Button onClick={handleAdd} disabled={!newKey.trim() || !newValue.trim()} loading={saveMutation.isPending}>{t('mem.save')}</Button>
+            <Button variant="ghost" onClick={() => setShowAdd(false)}>{t('mem.cancel')}</Button>
           </div>
         </div>
       )}
@@ -78,8 +80,8 @@ export default function MemoriesPage() {
       </div>
 
       {memories.length === 0 ? (
-        <EmptyState icon={Brain} title="No memories yet" description="Save facts, decisions, and events for persistent context"
-          action={{ label: 'Add Memory', onClick: () => setShowAdd(true) }} />
+        <EmptyState icon={Brain} title={t('mem.empty')} description={t('mem.empty.desc')}
+          action={{ label: t('mem.add'), onClick: () => setShowAdd(true) }} />
       ) : (
         <div className="space-y-2">
           {memories.map((m) => (

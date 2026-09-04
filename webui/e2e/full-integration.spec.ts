@@ -133,9 +133,9 @@ test.describe('Full Integration', () => {
     await page.waitForTimeout(2000)
 
     // Add memory
-    await page.locator('main').getByRole('button', { name: /Add Memory/i }).first().click()
-    await page.getByPlaceholder('Key').fill('test_key_' + Date.now())
-    await page.getByPlaceholder('Value').fill('test_value')
+    await page.locator('main').getByRole('button', { name: /add memory|добавить/i }).first().click()
+    await page.getByPlaceholder(/key|ключ/i).fill('test_key_' + Date.now())
+    await page.getByPlaceholder(/value|значение/i).fill('test_value')
     await page.getByRole('button', { name: 'Save' }).click()
     await page.waitForTimeout(3000)
 
@@ -168,7 +168,7 @@ test.describe('Full Integration', () => {
 
     // Should show "Select a dataset" or graph canvas
     const body = await page.textContent('body') || ''
-    expect(body.includes('Knowledge Graph')).toBeTruthy()
+    expect(/Knowledge Graph|Граф знаний/.test(body)).toBeTruthy()
     expect(body).not.toContain('Error')
   })
 })
