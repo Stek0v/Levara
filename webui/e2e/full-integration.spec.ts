@@ -23,9 +23,9 @@ test.describe('Full Integration', () => {
     void bodyBefore
 
     // Create new dataset
-    await page.getByRole('button', { name: /New Dataset/i }).click()
-    await page.getByPlaceholder('Dataset name').fill('integration_test_' + Date.now())
-    await page.getByRole('button', { name: 'Create' }).click()
+    await page.getByRole('button', { name: /new dataset|создать проект/i }).click()
+    await page.getByPlaceholder(/dataset name|название проекта/i).fill('integration_test_' + Date.now())
+    await page.getByRole('button', { name: 'Создать', exact: true }).or(page.getByRole('button', { name: 'Create', exact: true })).click()
     await page.waitForTimeout(3000)
 
     // Verify it appeared

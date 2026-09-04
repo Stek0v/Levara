@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, startTransition } from 'react'
-import { useDatasets, useCreateDataset, useDeleteDataset, useUpload, useCognify } from '@/hooks/use-levara'
+import { useDatasets, useCreateDataset, useDeleteDataset, useUpload, useCognify, useSettings } from '@/hooks/use-levara'
 import { useCognifyProgress, type CognifyProgress } from '@/hooks/use-sse'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Database, Upload, Trash2, Plus, Loader2, CheckCircle, XCircle } from 'lucide-react'
+import { useT, formatBytes, formatDate, formatCount } from '@/lib/i18n'
 
 interface UploadedFile {
   name: string
@@ -23,6 +24,9 @@ function uploadDatasetName() {
 }
 
 export default function DatasetsPage() {
+  const t = useT()
+  const { data: settings } = useSettings()
+  const locale = (settings?.locale ?? 'en') as 'ru' | 'en'
   const { data: datasetsRes, isLoading, isError, error, failureReason } = useDatasets()
   const datasets = datasetsRes?.data || []
   const loadError = error || failureReason
@@ -110,7 +114,7 @@ export default function DatasetsPage() {
       }
     } catch (err) {
       setUploadedFiles((prev) => prev.map((f) => f.status === 'uploading' ? { ...f, status: 'error' as const } : f))
-      alert(`Upload failed: ${err instanceof Error ? err.message : 'Unknown error'}`)
+      alert(`${t('upload.title')}: ${err instanceof Error ? err.message : 'Error'}`)
     }
   }
 
@@ -152,7 +156,7 @@ export default function DatasetsPage() {
   if (isLoading && !loadError) {
     return (
       <div>
-        <h1 className="text-2xl font-bold mb-6">Datasets</h1>
+        <h1 className="text-2xl font-bold mb-6">{t('projects.title')}</h1>
         <div className="space-y-3">{[...Array(3)].map((_, i) => <Skeleton key={i} className="h-20 rounded-lg" />)}</div>
       </div>
     )
@@ -161,17 +165,17 @@ export default function DatasetsPage() {
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold">Datasets</h1>
+        <h1 className="text-2xl font-bold">{t('projects.title')}</h1>
         <div className="flex gap-2">
           <Button variant="secondary" size="sm" onClick={() => setShowCreate(!showCreate)}>
-            <Plus className="h-4 w-4" /> New Dataset
+            <Plus className="h-4 w-4" /> {t('projects.create')}
           </Button>
         </div>
       </div>
 
       {(isError || loadError) && (
         <div role="alert" className="mb-4 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200">
-          Failed to load datasets: {loadError instanceof Error ? loadError.message : 'Unknown error'}
+          {t('projects.title')}: {loadError instanceof Error ? loadError.message : ''}
         </div>
       )}
 
@@ -179,10 +183,10 @@ export default function DatasetsPage() {
       {showCreate && (
         <div className="mb-4 p-4 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800">
           <div className="flex items-end gap-2">
-            <Input label="Dataset name" placeholder="Dataset name" value={newName} onChange={(e) => setNewName(e.target.value)}
+            <Input label={t('projects.namePlaceholder')} placeholder={t('projects.namePlaceholder')} value={newName} onChange={(e) => setNewName(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleCreate()} />
-            <Button onClick={handleCreate} disabled={!newName.trim()} loading={createMutation.isPending}>Create</Button>
-            <Button variant="ghost" onClick={() => setShowCreate(false)}>Cancel</Button>
+            <Button onClick={handleCreate} disabled={!newName.trim()} loading={createMutation.isPending}>{t('common.create')}</Button>
+            <Button variant="ghost" onClick={() => setShowCreate(false)}>{t('common.cancel')}</Button>
           </div>
         </div>
       )}
@@ -196,7 +200,7 @@ export default function DatasetsPage() {
           <Upload className="h-8 w-8 text-gray-400 flex-shrink-0" />
           <div className="flex-1 text-center md:text-left">
             <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
-              {uploadMutation.isPending ? 'Uploading...' : 'Drag & drop files or click Upload'}
+              {uploadMutation.isPending ? t('upload.button') + '…' : t('project.dropzone')}
             </p>
             <p className="text-xs text-gray-400 mt-1">PDF, DOCX, PPTX, XLSX, HTML, EPUB, TXT, MD, CSV</p>
           </div>
@@ -204,11 +208,11 @@ export default function DatasetsPage() {
             <select value={targetDataset} onChange={(e) => setTargetDataset(e.target.value)}
               className="h-9 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-3 text-sm"
               aria-label="Target dataset">
-              <option value="">New dataset per upload</option>
+              <option value="">{t('projects.newPerUpload')}</option>
               {datasets.map((ds) => <option key={ds.id} value={ds.name}>{ds.name}</option>)}
             </select>
             <label className="cursor-pointer inline-flex items-center gap-2 h-9 px-4 text-sm font-medium rounded-md bg-blue-600 text-white hover:bg-blue-700 transition-colors">
-              <Upload className="h-4 w-4" /> Upload
+              <Upload className="h-4 w-4" /> {t('upload.button')}
               <input type="file" multiple className="hidden"
                 onChange={(e) => e.target.files && handleUpload(e.target.files)}
                 accept=".pdf,.docx,.pptx,.xlsx,.html,.htm,.epub,.odt,.txt,.md,.csv,.json" />
@@ -220,7 +224,7 @@ export default function DatasetsPage() {
       {/* Upload progress */}
       {uploadedFiles.length > 0 && (
         <div className="mb-6">
-          <h2 className="text-sm font-medium text-gray-500 mb-2">Recent Uploads</h2>
+          <h2 className="text-sm font-medium text-gray-500 mb-2">{t('projects.recentUploads')}</h2>
           <div className="space-y-2">
             {uploadedFiles.map((f, i) => (
               <div key={i} className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-3">
@@ -246,15 +250,15 @@ export default function DatasetsPage() {
                 )}
               </div>
             ))}
-            <button onClick={() => setUploadedFiles([])} className="text-xs text-gray-400 hover:text-gray-600">Clear history</button>
+            <button onClick={() => setUploadedFiles([])} className="text-xs text-gray-400 hover:text-gray-600">{t('projects.clearHistory')}</button>
           </div>
         </div>
       )}
 
       {/* Dataset list */}
       {datasets.length === 0 && uploadedFiles.length === 0 ? (
-        <EmptyState icon={Database} title="No datasets yet" description="Upload files or create a new dataset"
-          action={{ label: 'Create Dataset', onClick: () => setShowCreate(true) }} />
+        <EmptyState icon={Database} title={t('projects.empty')} description={t('projects.subtitle')}
+          action={{ label: t('projects.create'), onClick: () => setShowCreate(true) }} />
       ) : (
         <div className="space-y-3">
           {datasets.map((ds) => (
@@ -265,9 +269,9 @@ export default function DatasetsPage() {
                 <div className="flex items-center gap-2">
                   <Database className="h-4 w-4 text-gray-400" />
                   <span className="font-medium">{ds.name}</span>
-                  <Badge variant={ds.record_count > 0 ? 'success' : 'default'}>{ds.record_count} records</Badge>
+                  <Badge variant={ds.record_count > 0 ? 'success' : 'default'}>{formatCount(ds.record_count, locale)} {t('projects.files').toLowerCase()}</Badge>
                 </div>
-                <p className="text-xs text-gray-400 mt-1">Created {new Date(ds.created_at).toLocaleDateString()}</p>
+                <p className="text-xs text-gray-400 mt-1">{t('projects.created')} {formatDate(ds.created_at, locale)}{ds.total_size ? ` · ${formatBytes(ds.total_size, locale)}` : ''}</p>
               </div>
               <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
                 <Button variant="ghost" size="sm" onClick={() => handleDelete(ds.id, ds.name)} title="Delete">

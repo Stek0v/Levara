@@ -17,22 +17,28 @@ test.describe('Auth guard (T1)', () => {
     await page.route('**/api/v1/auth/me', (route) =>
       route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ error: 'unauth' }) }),
     )
+    await page.route('**/api/v1/settings', (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ theme: 'light', locale: 'en' }) }),
+    )
 
     await page.goto('/datasets')
 
     await expect(page).toHaveURL(/\/login\?next=%2Fdatasets$/, { timeout: 5000 })
-    await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: /sign in|вход/i })).toBeVisible()
   })
 
   test('/login never triggers a redirect loop', async ({ page }) => {
     await page.route('**/api/v1/auth/me', (route) =>
       route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ error: 'unauth' }) }),
     )
+    await page.route('**/api/v1/settings', (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ theme: 'light', locale: 'en' }) }),
+    )
 
     await page.goto('/login')
     // Should stay on /login, not ping-pong to /login?next=/login.
     await expect(page).toHaveURL(/\/login$/)
-    await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: /sign in|вход/i })).toBeVisible()
   })
 
   test('API 401 on an arbitrary endpoint redirects to /login', async ({ page }) => {

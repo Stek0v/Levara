@@ -3,6 +3,7 @@
 import { Suspense, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { levara, ApiError } from '@/lib/api'
+import { useT } from '@/lib/i18n'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 
@@ -27,6 +28,8 @@ export default function LoginPage() {
 }
 
 function LoginForm() {
+  const t = useT()
+  const locale = t('login.submit') === 'Войти' ? 'ru' : 'en'
   const router = useRouter()
   const searchParams = useSearchParams()
   const nextUrl = sanitizeNext(searchParams.get('next'))
@@ -53,7 +56,7 @@ function LoginForm() {
       if (err instanceof ApiError) {
         setError(err.message)
       } else {
-        setError('Connection failed. Is the server running?')
+        setError(locale === 'ru' ? 'Нет соединения с сервером' : 'Connection failed. Is the server running?')
       }
     } finally {
       setLoading(false)
@@ -76,12 +79,12 @@ function LoginForm() {
         {/* Form */}
         <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-6 shadow-sm">
           <h1 className="text-lg font-semibold text-center mb-6">
-            {isRegister ? 'Create account' : 'Sign in'}
+            {isRegister ? t('login.register') : t('login.submit')}
           </h1>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <Input
-              label="Email"
+              label={t('login.email')}
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -90,7 +93,7 @@ function LoginForm() {
               autoFocus
             />
             <Input
-              label="Password"
+              label={t('login.password')}
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
@@ -99,7 +102,7 @@ function LoginForm() {
               error={error || undefined}
             />
             <Button type="submit" loading={loading} className="w-full">
-              {isRegister ? 'Create account' : 'Sign in'}
+              {isRegister ? t('login.register') : t('login.submit')}
             </Button>
           </form>
 
@@ -109,7 +112,7 @@ function LoginForm() {
               onClick={() => { setIsRegister(!isRegister); setError('') }}
               className="text-sm text-blue-600 hover:text-blue-700 dark:text-blue-400"
             >
-              {isRegister ? 'Already have an account? Sign in' : "Don't have an account? Register"}
+              {isRegister ? t('login.haveAccount') + ' ' + t('login.submit') : t('login.noAccount') + ' ' + t('login.register')}
             </button>
           </div>
         </div>

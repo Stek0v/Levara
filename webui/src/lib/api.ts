@@ -398,6 +398,7 @@ export interface Dataset {
   id: string
   name: string
   record_count: number
+  total_size?: number
   created_at: string
   updated_at: string
 }

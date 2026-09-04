@@ -61,10 +61,10 @@ test.describe('React Query invalidation (T20)', () => {
 
     await page.goto('/datasets')
     // Open the create form — button label varies; we try both.
-    const createBtn = page.getByRole('button', { name: /new dataset|create/i }).first()
+    const createBtn = page.getByRole('button', { name: /new dataset|create|создать/i }).first()
     await createBtn.click()
-    await page.getByLabel(/name/i).fill('playwright-ds')
-    const confirm = page.getByRole('button', { name: /^(create|save)$/i }).first()
+    await page.getByLabel(/name|название/i).fill('playwright-ds')
+    const confirm = page.getByRole('button', { name: /^(create|save|создать)$/i }).first()
     await confirm.click()
 
     // Without page reload, the dataset should appear in the list thanks to

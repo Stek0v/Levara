@@ -15,6 +15,8 @@ import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { EmptyState } from '@/components/ui/empty-state'
 import { ArrowLeft, Play, Trash2, FileText, ChevronLeft, ChevronRight } from 'lucide-react'
+import { useT, formatBytes, formatDate, formatCount } from '@/lib/i18n'
+import { useSettings } from '@/hooks/use-levara'
 
 function formatSize(bytes?: number): string {
   if (!bytes) return ''
@@ -35,6 +37,9 @@ interface DataRecord {
 }
 
 export default function DatasetDetailPage() {
+  const t = useT()
+  const { data: settings } = useSettings()
+  const locale = (settings?.locale ?? 'en') as 'ru' | 'en'
   const params = useParams()
   const router = useRouter()
   const datasetId = params.id as string
@@ -53,8 +58,9 @@ export default function DatasetDetailPage() {
   // useDeleteDatasetRecord invalidates every page of this dataset on
   // success so deletions reflect in the table without manual refetch.
   const { data: datasetsRes } = useDatasets()
-  const dsName =
-    datasetsRes?.data?.find((d) => d.id === datasetId)?.name ?? ''
+  const dsMeta = datasetsRes?.data?.find((d) => d.id === datasetId)
+  const dsName = dsMeta?.name ?? ''
+  const dsSize = dsMeta?.total_size ?? 0
   const { data: dataPage, isLoading: loading } = useDatasetData(datasetId, page, limit)
   const records = (dataPage?.rows ?? []) as DataRecord[]
   const total = dataPage?.total ?? 0
@@ -118,7 +124,7 @@ export default function DatasetDetailPage() {
   if (loading) {
     return (
       <div>
-        <h1 className="text-2xl font-bold mb-6">Dataset</h1>
+        <h1 className="text-2xl font-bold mb-6">{t('projects.title')}</h1>
         <div className="space-y-2">{[...Array(5)].map((_, i) => <Skeleton key={i} className="h-16 rounded-lg" />)}</div>
       </div>
     )
@@ -130,7 +136,7 @@ export default function DatasetDetailPage() {
         <Button variant="ghost" size="sm" onClick={() => router.push('/datasets')}><ArrowLeft className="h-4 w-4" /></Button>
         <div className="flex-1">
           <h1 className="text-2xl font-bold">{dsName || 'Dataset'}</h1>
-          <p className="text-sm text-gray-500">{total} records</p>
+          <p className="text-sm text-gray-500">{formatCount(total, locale)} {t('projects.files').toLowerCase()}{dsSize ? ` · ${formatBytes(dsSize, locale)}` : ''}</p>
         </div>
         <Button variant="secondary" size="sm" onClick={handleCognify} loading={cognifyRunning} disabled={cognifyRunning}>
           <Play className="h-4 w-4" /> Cognify
@@ -138,18 +144,18 @@ export default function DatasetDetailPage() {
       </div>
 
       <div className="flex items-center gap-3 mb-4">
-        <Input placeholder="Search by name..." value={search} onChange={(e) => setSearch(e.target.value)} className="w-64" />
+        <Input placeholder={t('memories.searchPlaceholder')} value={search} onChange={(e) => setSearch(e.target.value)} className="w-64" />
         {selected.size > 0 && (
           <div className="flex items-center gap-2 ml-auto">
-            <Badge>{selected.size} selected</Badge>
-            <Button variant="danger" size="sm" onClick={handleBulkDelete}><Trash2 className="h-4 w-4" /> Delete</Button>
-            <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>Clear</Button>
+            <Badge>{formatCount(selected.size, locale)}</Badge>
+            <Button variant="danger" size="sm" onClick={handleBulkDelete}><Trash2 className="h-4 w-4" /> {t('common.delete')}</Button>
+            <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>{t('common.clear')}</Button>
           </div>
         )}
       </div>
 
       {filtered.length === 0 ? (
-        <EmptyState icon={FileText} title="No records" description={search ? 'No match' : 'Upload files to add records'} />
+        <EmptyState icon={FileText} title={t('common.empty')} description={search ? '' : t('project.dropzone')} />
       ) : (
         <>
           <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 overflow-hidden">
@@ -159,10 +165,10 @@ export default function DatasetDetailPage() {
                   <th className="w-10 px-3 py-2">
                     <input type="checkbox" checked={selected.size === records.length && records.length > 0} onChange={toggleAll} className="rounded" aria-label="Select all" />
                   </th>
-                  <th className="text-left px-3 py-2 font-medium text-gray-500">Name</th>
-                  <th className="text-left px-3 py-2 font-medium text-gray-500">Type</th>
-                  <th className="text-left px-3 py-2 font-medium text-gray-500">Size</th>
-                  <th className="text-left px-3 py-2 font-medium text-gray-500">Status</th>
+                  <th className="text-left px-3 py-2 font-medium text-gray-500">{t('project.file')}</th>
+                  <th className="text-left px-3 py-2 font-medium text-gray-500">{t('project.type')}</th>
+                  <th className="text-left px-3 py-2 font-medium text-gray-500">{t('projects.size')}</th>
+                  <th className="text-left px-3 py-2 font-medium text-gray-500">{t('common.status')}</th>
                   <th className="w-20 px-3 py-2"></th>
                 </tr>
               </thead>
@@ -180,7 +186,10 @@ export default function DatasetDetailPage() {
                     <td className="px-3 py-2 text-gray-500 text-xs">{formatSize(r.data_size)}</td>
                     <td className="px-3 py-2">
                       <Badge variant={r.pipeline_status === 'completed' ? 'success' : r.pipeline_status === 'processing' ? 'warning' : 'default'}>
-                        {r.pipeline_status || 'pending'}
+                        {r.pipeline_status === 'completed' ? t('project.status.ready')
+                          : r.pipeline_status === 'processing' ? t('project.status.processing')
+                          : r.pipeline_status === 'error' ? t('project.status.error')
+                          : t('project.status.unknown')}
                       </Badge>
                     </td>
                     <td className="px-3 py-2">

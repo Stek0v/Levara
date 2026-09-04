@@ -8,28 +8,32 @@ import {
   FolderOpen, Brain, Settings, BarChart3, BookOpen, Menu, X, Files, RefreshCw, Shield, Sparkles, Activity, ListTodo,
 } from 'lucide-react'
 import { useState } from 'react'
+import { useT } from '@/lib/i18n'
 
+// nameKey is resolved through i18n at render time so the sidebar follows
+// the active locale without a reload.
 const nav = [
-  { name: 'Dashboard', href: '/', icon: LayoutDashboard },
-  { name: 'Datasets', href: '/datasets', icon: Database },
-  { name: 'Search', href: '/search', icon: Search },
-  { name: 'Chat', href: '/chat', icon: MessageCircle },
-  { name: 'Graph', href: '/graph', icon: Share2 },
-  { name: 'Collections', href: '/collections', icon: FolderOpen },
-  { name: 'Workspace', href: '/workspace', icon: Files },
-  { name: 'Sync', href: '/sync', icon: RefreshCw },
-  { name: 'Tasks', href: '/tasks', icon: ListTodo },
-  { name: 'Memories', href: '/memories', icon: Brain },
-  { name: 'Notebooks', href: '/notebooks', icon: BookOpen },
-  { name: 'Analytics', href: '/analytics', icon: BarChart3 },
-  { name: 'Memory Behavior', href: '/memory-behavior', icon: Activity },
-  { name: 'Scaffold Proposals', href: '/memory-scaffold', icon: BookOpen },
-  { name: 'Admin', href: '/admin', icon: Shield },
-  { name: 'Onboarding', href: '/onboarding', icon: Sparkles },
-  { name: 'Settings', href: '/settings', icon: Settings },
+  { nameKey: 'nav.dashboard', name: 'Dashboard', href: '/', icon: LayoutDashboard },
+  { nameKey: 'nav.projects', name: 'Datasets', href: '/datasets', icon: Database },
+  { nameKey: 'nav.search', name: 'Search', href: '/search', icon: Search },
+  { nameKey: 'nav.chat', name: 'Chat', href: '/chat', icon: MessageCircle },
+  { nameKey: 'nav.graph', name: 'Graph', href: '/graph', icon: Share2 },
+  { nameKey: 'nav.collections', name: 'Collections', href: '/collections', icon: FolderOpen },
+  { nameKey: 'nav.workspace', name: 'Workspace', href: '/workspace', icon: Files },
+  { nameKey: 'nav.sync', name: 'Sync', href: '/sync', icon: RefreshCw },
+  { nameKey: 'nav.tasks', name: 'Tasks', href: '/tasks', icon: ListTodo },
+  { nameKey: 'nav.memories', name: 'Memories', href: '/memories', icon: Brain },
+  { nameKey: 'nav.notebooks', name: 'Notebooks', href: '/notebooks', icon: BookOpen },
+  { nameKey: 'nav.analytics', name: 'Analytics', href: '/analytics', icon: BarChart3 },
+  { nameKey: 'nav.memoryBehavior', name: 'Memory Behavior', href: '/memory-behavior', icon: Activity },
+  { nameKey: 'nav.scaffold', name: 'Scaffold Proposals', href: '/memory-scaffold', icon: BookOpen },
+  { nameKey: 'nav.admin', name: 'Admin', href: '/admin', icon: Shield },
+  { nameKey: 'nav.onboarding', name: 'Onboarding', href: '/onboarding', icon: Sparkles },
+  { nameKey: 'nav.settings', name: 'Settings', href: '/settings', icon: Settings },
 ]
 
 export function Sidebar() {
+  const t = useT()
   const pathname = usePathname()
   const [collapsed, setCollapsed] = useState(true) // default collapsed on mobile
 
@@ -83,10 +87,10 @@ export function Sidebar() {
                     ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
                     : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800',
                 )}
-                title={collapsed ? item.name : undefined}
+                title={collapsed ? t(item.nameKey) : undefined}
               >
                 <item.icon className="h-5 w-5 flex-shrink-0" />
-                {!collapsed && item.name}
+                {!collapsed && t(item.nameKey)}
               </Link>
             )
           })}

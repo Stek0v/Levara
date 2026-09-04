@@ -27,14 +27,14 @@ test.describe('A. Navigation', () => {
 
   test('A3. Sidebar navigation', async ({ page }) => {
     await page.goto('/')
-    await page.locator('aside').getByRole('link', { name: 'Search', exact: true }).click()
+    await page.locator('aside').getByRole('link', { name: /search|поиск/i }).click()
     await expect(page).toHaveURL('/search')
     await expect(page.getByRole('heading', { name: 'Search' })).toBeVisible()
   })
 
   test('A4. Login page has no sidebar', async ({ page }) => {
     await page.goto('/login')
-    await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: /sign in|вход/i })).toBeVisible()
     await expect(page.locator('aside')).not.toBeVisible()
   })
 })
@@ -55,7 +55,7 @@ test.describe('B. Dashboard', () => {
 
   test('B3. Quick action links', async ({ page }) => {
     await page.goto('/')
-    await page.getByRole('link', { name: 'Datasets' }).click()
+    await page.getByRole('link', { name: /datasets|проекты/i }).click()
     await expect(page).toHaveURL('/datasets')
   })
 })
@@ -65,7 +65,7 @@ test.describe('B. Dashboard', () => {
 test.describe('C. Datasets', () => {
   test('C1. Page loads', async ({ page }) => {
     await page.goto('/datasets')
-    await expect(page.getByRole('heading', { name: 'Datasets', exact: true })).toBeVisible({ timeout: 10000 })
+    await expect(page.getByRole('heading', { name: /datasets|проекты/i })).toBeVisible({ timeout: 10000 })
   })
 
   test('C2. Upload file via API', async ({}) => {
@@ -81,13 +81,13 @@ test.describe('C. Datasets', () => {
 
   test('C3. Drag-drop zone visible', async ({ page }) => {
     await page.goto('/datasets')
-    await expect(page.getByText('Drag')).toBeVisible({ timeout: 5000 })
+    await expect(page.getByText(/drag|перетащите/i)).toBeVisible({ timeout: 5000 })
   })
 
   test('C4. Create dataset form', async ({ page }) => {
     await page.goto('/datasets')
-    await page.getByRole('button', { name: /New Dataset/i }).click()
-    await expect(page.getByPlaceholder('Dataset name')).toBeVisible()
+    await page.getByRole('button', { name: /new dataset|создать проект/i }).click()
+    await expect(page.getByPlaceholder(/dataset name|название проекта/i)).toBeVisible()
   })
 })
 
@@ -291,20 +291,20 @@ test.describe('K. Settings', () => {
 test.describe('L. Login', () => {
   test('L1. Renders', async ({ page }) => {
     await page.goto('/login')
-    await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: /sign in|вход/i })).toBeVisible()
     await expect(page.getByLabel('Email')).toBeVisible()
-    await expect(page.getByLabel('Password')).toBeVisible()
+    await expect(page.getByLabel(/password|пароль/i)).toBeVisible()
   })
 
   test('L2. Toggle register', async ({ page }) => {
     await page.goto('/login')
-    await page.getByText("Don't have an account").click()
-    await expect(page.getByRole('heading', { name: 'Create account' })).toBeVisible()
+    await page.getByText(/don't have an account|нет аккаунта/i).click()
+    await expect(page.getByRole('heading', { name: /create account|регистрация/i })).toBeVisible()
   })
 
   test('L3. Empty submit stays on page', async ({ page }) => {
     await page.goto('/login')
-    await page.getByRole('button', { name: 'Sign in' }).click()
+    await page.getByRole('button', { name: /sign in|войти/i }).click()
     await page.waitForTimeout(500)
     await expect(page).toHaveURL('/login')
   })
