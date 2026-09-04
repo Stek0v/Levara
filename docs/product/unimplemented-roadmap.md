@@ -43,8 +43,10 @@
   готов (2026-09-04): opt-in LEVARA_TASK_WORKER=1, auto_run-политика в
   authority_json, retry/deadline/exhaustion, deadlock-детектор, работа
   строго через существующие task_step CAS-примитивы.
-- [ ] B3 (P2). **Выход из alpha** — стабилизация схем до non-alpha контракта,
-  прогон полного e2e-набора на каждом релизе.
+- [x] B3 (P2). **Выход из alpha** — схемы v1 заморожены (additive-only),
+  alpha-boundary секция заменена текущими ограничениями, S2/S3 load-гейт
+  идёт в CI на каждый RC (2026-09-04). Осталось доказательство: зелёный
+  e2e на 3 последовательных релизах (отслеживается в backlog B3).
 - [ ] B4 (P3). **Расширяемая модель authority** — рантайм записывает authority,
   но не грантует filesystem/network/deploy/payment/publication права.
 

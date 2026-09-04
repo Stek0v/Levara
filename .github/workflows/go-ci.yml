@@ -278,6 +278,35 @@ jobs:
       - name: Run enterprise strict preset gate
         run: bash deploy/profiles/enterprise_e2e.sh
 
+  task-runtime-load-gate:
+    name: task runtime load gate (S2/S3)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: levara
+          POSTGRES_PASSWORD: levara
+          POSTGRES_DB: levara_taskload
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U levara -d levara_taskload"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      LEVARA_TASK_LOAD_DSN: postgres://levara:***@127.0.0.1:5432/levara_taskload?sslmode=disable
+      LEVARA_TASK_LOAD_PGUSER: levara
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Run task runtime load gate
+        run: bash benchmark/task_load_gate.sh
+
   compose:
     name: compose configuration
     runs-on: ubuntu-latest

@@ -237,9 +237,14 @@ provenance; unsupported or insufficiently evidenced candidates are rejected.
 - Use one claimed step at a time per actor. Dependency checks and lease claims
   are atomic.
 
-## Security and current alpha boundary
+## Security and current limitations
 
-- Task Runtime is MCP-only in this alpha; there is no dedicated WebUI workflow.
+The Task Runtime graduated from alpha (2026-09-04). The tool schemas are
+frozen as canonical v1 in [contract.json](contract.json); additive changes
+only from here on. A read-only WebUI dashboard (`/tasks`) observes tasks,
+steps, leases, receipts, checkpoints, and blockers — mutations remain
+MCP-only by design so leases and idempotency keys cannot be bypassed.
+
 - The runtime records authority but does not grant filesystem, network,
   deployment, payment, or publication permission.
 - Tool profiles reduce schema size; they are not authorization boundaries.
@@ -247,9 +252,15 @@ provenance; unsupported or insufficiently evidenced candidates are rejected.
   isolation.
 - Local artifact verification rejects symlink escapes and paths outside the
   configured roots. Unsupported URI schemes are never trusted implicitly.
-- There is no autonomous scheduler or worker. The MCP host must resume the task
-  or invoke it on a schedule.
+- The optional in-process worker (`LEVARA_TASK_WORKER=1`) advances auto_run
+  tasks through the same task_step CAS primitives as external hosts, with
+  retry caps, deadlines, and deadlock detection. External MCP hosts remain
+  free to resume or schedule tasks themselves.
+- Declarative authority manifests (per-task tool/file/network allowlists
+  validated at claim time) are not yet implemented — see backlog B4.
 
-For tested scenarios and reproducible acceptance commands, see the
-[alpha report](long-horizon-alpha-report.md). The canonical input/output schemas
-are generated in [api-contract.md](api-contract.md).
+For the original alpha acceptance evidence, see the
+[alpha report](long-horizon-alpha-report.md). The canonical input/output
+schemas are generated in [api-contract.md](api-contract.md). The S2/S3
+multi-user load gate runs per release candidate (CI job "task runtime load
+gate (S2/S3)", benchmark/task_load_gate.sh).

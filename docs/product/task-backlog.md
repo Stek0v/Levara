@@ -307,7 +307,17 @@ cycle → deadlock, non-auto_run не трогается) + live 6/6 проти�
   политика запрещает инструмент → шаг failed с понятной причиной; deadlock
   (шаг A ждёт B, B ждёт A) → deadline рвёт.
 
-### B3. Выход Task Runtime из alpha — P2
+### B3. Выход Task Runtime из alpha — P2 ◐ (частично, 2026-09-04)
+
+**Статус.** Пункты 1, 3, 4 выполнены: схемы task-инструментов каноничны в
+contract.json и заморожены как v1 (additive-only); раздел «alpha boundary»
+в long-horizon-runtime.md заменён на «Security and current limitations»
+(отражает WebUI-наблюдение и опциональный worker); S2/S3 load-гейт
+(`benchmark/task_load_gate.sh`, CI-job «task runtime load gate (S2/S3)»,
+21-я проверка) зелёный локально и обязан проходить на каждом RC. Пункт 2
+(зелёный e2e на 3 последовательных релизах) — накапливаемое свидетельство,
+проверяется по факту будущих релизов; до этого задача не «done», а
+«частично». Обновить после третьего релиза с зелёным гейтом.
 
 **DoD.**
 1. Схемы v1 зафиксированы в contract.json как stable (не alpha);
