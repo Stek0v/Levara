@@ -142,6 +142,8 @@ func RegisterAPI(app fiber.Router, cfg APIConfig) {
 	app.Get("/datasets/:id/data", datasetDataHandler(cfg))
 	app.Get("/datasets/:id/context", datasetContextHandler(cfg))
 	app.Get("/datasets/:id/activity", datasetActivityHandler(cfg))
+	app.Patch("/datasets/:id", datasetSetRepoHandler(cfg))
+	app.Get("/datasets/:id/commits", datasetCommitsHandler(cfg))
 	app.Delete("/datasets/:id/data/:dataId", datasetDataDeleteHandler(cfg))
 	app.Get("/datasets/:id/data/:dataId/raw", datasetDataRawHandler(cfg))
 	app.Get("/datasets/:id/data/:dataId/raw/url", datasetDataRawURLHandler(cfg))

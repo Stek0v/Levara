@@ -346,6 +346,7 @@ var schemaStatements = []string{
 	`ALTER TABLE ontologies ADD COLUMN IF NOT EXISTS classes_count INTEGER NOT NULL DEFAULT 0`,
 	`ALTER TABLE ontologies ADD COLUMN IF NOT EXISTS individuals_count INTEGER NOT NULL DEFAULT 0`,
 	`ALTER TABLE data ADD COLUMN IF NOT EXISTS tags TEXT NOT NULL DEFAULT '[]'`,
+	`ALTER TABLE datasets ADD COLUMN IF NOT EXISTS github_repo TEXT NOT NULL DEFAULT ''`,
 
 	// Memories (project/user memory store)
 	// room    — narrow topic within collection (auth, deploy, mcp, ocr-bench)
@@ -1003,6 +1004,7 @@ var schemaSQLiteStatements = []string{
 	`ALTER TABLE graph_edges ADD COLUMN collection_id TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE graph_edges ADD COLUMN document_id TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE graph_edges ADD COLUMN section_path TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE datasets ADD COLUMN github_repo TEXT NOT NULL DEFAULT ''`,
 	// Indexes that depend on the columns added above.
 	`CREATE INDEX IF NOT EXISTS idx_memories_room ON memories(collection_name, room)`,
 	`CREATE INDEX IF NOT EXISTS idx_memories_hall ON memories(hall)`,

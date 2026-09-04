@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-09-04T17:48:07+03:00",
-  "git_rev": "6866c3f3e37933c0fbd2eddd13e175b91b787acd",
+  "generated_at": "2026-09-04T18:27:52+03:00",
+  "git_rev": "05731feea1d815a4e2a68af21a24ed0bc731f5a2",
   "rest": [
     {
       "method": "POST",
@@ -135,8 +135,20 @@
       "group": "datasets"
     },
     {
+      "method": "PATCH",
+      "path": "/datasets/:id",
+      "status": "canonical",
+      "group": "datasets"
+    },
+    {
       "method": "GET",
       "path": "/datasets/:id/activity",
+      "status": "canonical",
+      "group": "datasets"
+    },
+    {
+      "method": "GET",
+      "path": "/datasets/:id/commits",
       "status": "canonical",
       "group": "datasets"
     },
@@ -1532,6 +1544,11 @@
     {
       "provider": "postgres",
       "kind": "alter",
+      "name": "datasets"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
       "name": "graph_edges"
     },
     {
@@ -2193,6 +2210,11 @@
       "provider": "sqlite",
       "kind": "alter",
       "name": "data"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "datasets"
     },
     {
       "provider": "sqlite",

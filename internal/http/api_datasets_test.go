@@ -46,7 +46,8 @@ func datasetsTestApp(t *testing.T) (*fiber.App, func()) {
 			name TEXT UNIQUE,
 			owner_id TEXT,
 			created_at TIMESTAMP,
-			updated_at TIMESTAMP
+			updated_at TIMESTAMP,
+			github_repo TEXT DEFAULT ''
 		);
 		CREATE TABLE data (
 			id TEXT PRIMARY KEY,
@@ -119,7 +120,8 @@ func datasetsRawURLTestApp(t *testing.T, fs storage.Storage) (*fiber.App, *sql.D
 	if _, err := db.Exec(`
 		CREATE TABLE datasets (
 			id TEXT PRIMARY KEY,
-			owner_id TEXT
+			owner_id TEXT,
+			github_repo TEXT DEFAULT ''
 		);
 		CREATE TABLE data (
 			id TEXT PRIMARY KEY,

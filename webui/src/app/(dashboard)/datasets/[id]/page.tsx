@@ -17,7 +17,7 @@ import { EmptyState } from '@/components/ui/empty-state'
 import { ArrowLeft, Play, Trash2, FileText, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useT, formatBytes, formatDate, formatCount } from '@/lib/i18n'
 import { useQuery } from '@tanstack/react-query'
-import type { ProjectContextItem, ProjectActivityItem } from '@/lib/api'
+import type { ProjectContextItem, ProjectActivityItem, GitCommit } from '@/lib/api'
 import { useSettings } from '@/hooks/use-levara'
 
 function formatSize(bytes?: number): string {
@@ -68,6 +68,24 @@ export default function DatasetDetailPage() {
     enabled: tab === 'history',
   })
 
+  // Block ④: repo binding + commit feed (fetched on demand).
+  const [repoPath, setRepoPath] = useState('')
+  const [repoSaved, setRepoSaved] = useState(false)
+  const [repoError, setRepoError] = useState('')
+  const [commits, setCommits] = useState<GitCommit[] | null>(null)
+    const saveRepo = async () => {
+    setRepoSaved(false); setRepoError('')
+    try {
+      await levara.setDatasetRepo(datasetId, repoPath)
+      setRepoSaved(true)
+      if (repoPath) {
+        setCommits(await levara.getDatasetCommits(datasetId))
+      }
+    } catch (e) {
+      setRepoError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
   // Data access moved to React Query (T7). Datasets list feeds the name
   // lookup; useDatasetData paginates rows and handles the two response
   // shapes backend still returns (plain array vs {data, pagination}).
@@ -77,6 +95,8 @@ export default function DatasetDetailPage() {
   const dsMeta = datasetsRes?.data?.find((d) => d.id === datasetId)
   const dsName = dsMeta?.name ?? ''
   const dsSize = dsMeta?.total_size ?? 0
+  // Keep the repo input in sync once the dataset list resolves.
+  useEffect(() => { setRepoPath(dsMeta?.github_repo ?? '') }, [dsMeta?.github_repo])
   const { data: dataPage, isLoading: loading } = useDatasetData(datasetId, page, limit)
   const records = (dataPage?.rows ?? []) as DataRecord[]
   const total = dataPage?.total ?? 0
@@ -157,6 +177,35 @@ export default function DatasetDetailPage() {
         <Button variant="secondary" size="sm" onClick={handleCognify} loading={cognifyRunning} disabled={cognifyRunning}>
           <Play className="h-4 w-4" /> Cognify
         </Button>
+      </div>
+
+      {/* Repo binding (block ④) */}
+      <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-4 mb-4">
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-sm font-semibold">{t('project.repo.title')}</h2>
+          {repoSaved && <span className="text-xs text-green-600">{t('project.repo.saved')}</span>}
+          {repoError && <span className="text-xs text-red-600">{repoError}</span>}
+        </div>
+        <div className="flex gap-2">
+          <Input placeholder={t('project.repo.placeholder')} value={repoPath} onChange={(e) => setRepoPath(e.target.value)} className="flex-1" />
+          <Button size="sm" onClick={saveRepo}>{t('project.repo.save')}</Button>
+        </div>
+        {commits && commits.length > 0 && (
+          <div className="mt-3 space-y-1.5">
+            <p className="text-xs font-medium text-gray-500">{t('project.repo.commits')} ({commits.length})</p>
+            {commits.map((cm) => (
+              <div key={cm.hash} className="flex items-baseline gap-2 text-sm">
+                <code className="text-xs text-gray-400">{cm.hash.slice(0, 7)}</code>
+                <span className="flex-1 truncate">{cm.message}</span>
+                <span className="text-xs text-gray-400">{cm.author}</span>
+                <span className="text-xs text-gray-400">{cm.date}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        {commits && commits.length === 0 && (
+          <p className="mt-2 text-xs text-gray-400">{t('project.repo.empty')}</p>
+        )}
       </div>
 
       {/* Tabs */}

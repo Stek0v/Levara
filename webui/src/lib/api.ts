@@ -215,6 +215,14 @@ export const levara = {
     api<ProjectContextItem[]>(`/api/v1/datasets/${id}/context`),
   getDatasetActivity: (id: string) =>
     api<ProjectActivityItem[]>(`/api/v1/datasets/${id}/activity`),
+  // Repo binding (block ④)
+  setDatasetRepo: (id: string, githubRepo: string) =>
+    api<{ id: string }>(`/api/v1/datasets/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ github_repo: githubRepo }),
+    }),
+  getDatasetCommits: (id: string) =>
+    api<GitCommit[]>(`/api/v1/datasets/${id}/commits`),
   graphPath: (params: GraphPathRequest) => {
     const q = new URLSearchParams({
       from: params.from,
@@ -404,6 +412,7 @@ export interface Dataset {
   name: string
   record_count: number
   total_size?: number
+  github_repo?: string
   created_at: string
   updated_at: string
 }
@@ -499,6 +508,14 @@ export interface DatasetDataRow {
   tags?: string
   created_at?: string
   [key: string]: unknown
+}
+
+export interface GitCommit {
+  hash: string
+  author: string
+  date: string
+  message: string
+  files: string[]
 }
 
 export interface ProjectContextItem {

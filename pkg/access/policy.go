@@ -9,8 +9,8 @@ import (
 )
 
 const (
-	ActionRead  = "read"
-	ActionWrite = "write"
+	ActionRead   = "read"
+	ActionWrite  = "write"
 	ActionDelete = "delete"
 	ActionShare  = "share"
 
@@ -51,6 +51,8 @@ type VisibleDataset struct {
 	CreatedAt   string
 	OwnerID     string
 	RecordCount int
+	TotalSize   int64
+	GitHubRepo  string
 }
 
 func (p SQLPolicy) AuthorizeWorkspace(ctx context.Context, req WorkspaceRequest) (Decision, error) {
@@ -387,14 +389,19 @@ func (p SQLPolicy) ListVisibleDatasets(ctx context.Context, userID string) ([]Vi
 	)
 	if showAll {
 		rows, err = p.DB.QueryContext(ctx,
-			p.rewrite(`SELECT d.id, d.name, d.created_at, COALESCE(d.owner_id,''), COUNT(dd.data_id)
-			 FROM datasets d LEFT JOIN dataset_data dd ON dd.dataset_id = d.id
+			p.rewrite(`SELECT d.id, d.name, d.created_at, COALESCE(d.owner_id,''), COUNT(dd.data_id),
+			 COALESCE(SUM(sz.data_size), 0), COALESCE(d.github_repo, '')
+			 FROM datasets d
+			 LEFT JOIN dataset_data dd ON dd.dataset_id = d.id
+			 LEFT JOIN data sz ON sz.id = dd.data_id
 			 GROUP BY d.id ORDER BY d.created_at DESC`))
 	} else {
-		query, args := p.rewriteArgs(`SELECT DISTINCT d.id, d.name, d.created_at, COALESCE(d.owner_id,''), COUNT(dd.data_id)
+		query, args := p.rewriteArgs(`SELECT d.id, d.name, d.created_at, COALESCE(d.owner_id,''), COUNT(DISTINCT dd.data_id),
+			 COALESCE(SUM(sz.data_size), 0), COALESCE(d.github_repo, '')
 			 FROM datasets d
 			 LEFT JOIN dataset_shares s ON s.dataset_id = d.id AND s.user_id = $1
 			 LEFT JOIN dataset_data dd ON dd.dataset_id = d.id
+			 LEFT JOIN data sz ON sz.id = dd.data_id
 			 WHERE d.owner_id = $1 OR d.owner_id = '' OR d.owner_id IS NULL OR s.id IS NOT NULL
 			 GROUP BY d.id ORDER BY d.created_at DESC`, userID)
 		rows, err = p.DB.QueryContext(ctx, query, args...)
@@ -407,7 +414,7 @@ func (p SQLPolicy) ListVisibleDatasets(ctx context.Context, userID string) ([]Vi
 	var out []VisibleDataset
 	for rows.Next() {
 		var d VisibleDataset
-		if err := rows.Scan(&d.ID, &d.Name, &d.CreatedAt, &d.OwnerID, &d.RecordCount); err != nil {
+		if err := rows.Scan(&d.ID, &d.Name, &d.CreatedAt, &d.OwnerID, &d.RecordCount, &d.TotalSize, &d.GitHubRepo); err != nil {
 			return nil, err
 		}
 		out = append(out, d)

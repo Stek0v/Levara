@@ -33,6 +33,8 @@ type DatasetDTO struct {
 	UpdatedAt   *string `json:"updated_at"`
 	OwnerID     string  `json:"owner_id"`
 	RecordCount int     `json:"record_count"`
+	TotalSize   int64   `json:"total_size"`
+	GitHubRepo  string  `json:"github_repo"`
 }
 
 func authorizeDatasetFiber(c *fiber.Ctx, cfg APIConfig, datasetID, action string) error {
@@ -100,6 +102,8 @@ func datasetsListHandler(cfg APIConfig) fiber.Handler {
 				CreatedAt:   d.CreatedAt,
 				OwnerID:     d.OwnerID,
 				RecordCount: d.RecordCount,
+				TotalSize:   d.TotalSize,
+				GitHubRepo:  d.GitHubRepo,
 			})
 		}
 		if datasets == nil {

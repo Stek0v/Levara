@@ -479,7 +479,7 @@ func newPolicyTestDB(t *testing.T) *sql.DB {
 	t.Cleanup(func() { db.Close() })
 	for _, stmt := range []string{
 		`CREATE TABLE users (id TEXT PRIMARY KEY, email TEXT DEFAULT '', is_active INTEGER NOT NULL DEFAULT 1, is_superuser INTEGER NOT NULL DEFAULT 0)`,
-		`CREATE TABLE datasets (id TEXT PRIMARY KEY, name TEXT DEFAULT '', owner_id TEXT, created_at TEXT DEFAULT '')`,
+		`CREATE TABLE datasets (id TEXT PRIMARY KEY, name TEXT DEFAULT '', owner_id TEXT, created_at TEXT DEFAULT '', github_repo TEXT DEFAULT '')`,
 		`CREATE TABLE dataset_shares (id TEXT PRIMARY KEY, dataset_id TEXT, user_id TEXT, role TEXT)`,
 		`INSERT INTO users(id, email, is_superuser) VALUES ('user-a', 'user-a@example.com', 0), ('user-b', 'user-b@example.com', 0), ('user-c', 'user-c@example.com', 0), ('root', 'root@example.com', 1)`,
 		`INSERT INTO datasets(id, name, owner_id, created_at) VALUES ('payments', 'Payments', 'user-a', '2026-01-01T00:00:00Z')`,

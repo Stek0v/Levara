@@ -23,7 +23,7 @@ func projectMetaDB(t *testing.T) *sql.DB {
 	t.Cleanup(func() { db.Close() })
 	for _, stmt := range []string{
 		`CREATE TABLE users (id TEXT PRIMARY KEY, email TEXT DEFAULT '')`,
-		`CREATE TABLE datasets (id TEXT PRIMARY KEY, name TEXT DEFAULT '', owner_id TEXT, created_at TEXT DEFAULT '')`,
+		`CREATE TABLE datasets (id TEXT PRIMARY KEY, name TEXT DEFAULT '', owner_id TEXT, created_at TEXT DEFAULT '', github_repo TEXT DEFAULT '', updated_at TEXT DEFAULT '')`,
 		`CREATE TABLE dataset_shares (id TEXT PRIMARY KEY, dataset_id TEXT, user_id TEXT, role TEXT, granted_by TEXT DEFAULT '', created_at TEXT DEFAULT '')`,
 		`CREATE TABLE data (id TEXT PRIMARY KEY, name TEXT DEFAULT '', pipeline_status TEXT DEFAULT '', created_at TEXT DEFAULT '')`,
 		`CREATE TABLE dataset_data (dataset_id TEXT, data_id TEXT)`,
