@@ -54,12 +54,12 @@ type APIConfig struct {
 	EmbedClient  *embed.Client
 	Collections  *store.CollectionManager
 	Neo4jCfg     GraphVisualizationConfig
-	DB           *sql.DB                // shared connection pool (nil if no PostgresDSN)
-	BM25Indexes  *bm25.IndexRegistry    // shared BM25 indexes (same as gRPC service)
-	BM25Store    *bm25.SnapshotStore    // optional disk persistence for BM25 sidecars
-	LLMCache     llmcache.LLMCacher     // shared LLM response cache (nil = no caching)
-	LLMProvider  llm.Provider           // multi-provider LLM abstraction (nil = legacy raw HTTP)
-	ErrorTracker *observe.ErrorTracker  // error tracking (nil = disabled)
+	DB           *sql.DB               // shared connection pool (nil if no PostgresDSN)
+	BM25Indexes  *bm25.IndexRegistry   // shared BM25 indexes (same as gRPC service)
+	BM25Store    *bm25.SnapshotStore   // optional disk persistence for BM25 sidecars
+	LLMCache     llmcache.LLMCacher    // shared LLM response cache (nil = no caching)
+	LLMProvider  llm.Provider          // multi-provider LLM abstraction (nil = legacy raw HTTP)
+	ErrorTracker *observe.ErrorTracker // error tracking (nil = disabled)
 	// FileStorage is wired from server bootstrap (local/S3). Upload hot-path writes
 	// local ingest artifacts first, then mirrors them into non-local backends and
 	// persists storage:// locations in metadata.
@@ -204,6 +204,7 @@ func RegisterAPI(app fiber.Router, cfg APIConfig) {
 
 	// U20: Cross-instance sync
 	RegisterSyncAPI(app, cfg)
+	RegisterTaskReadAPI(app, cfg)
 
 	// U20b: Markdown-native workspace indexing
 	RegisterWorkspaceAPI(app, cfg)

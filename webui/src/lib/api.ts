@@ -329,6 +329,15 @@ export const levara = {
   // Cross-instance sync
   syncManifest: () => api<SyncManifest>('/api/v1/sync/manifest'),
   syncStatus: (limit = 10) => api<SyncStatus>(`/api/v1/sync/status?limit=${limit}`),
+  tasks: (params?: { status?: string; collection_name?: string; limit?: number }) => {
+    const q = new URLSearchParams()
+    if (params?.status) q.set('status', params.status)
+    if (params?.collection_name) q.set('collection_name', params.collection_name)
+    if (params?.limit) q.set('limit', String(params.limit))
+    const qs = q.toString()
+    return api<{ tasks: TaskSummary[]; count: number }>(`/api/v1/tasks${qs ? `?${qs}` : ''}`)
+  },
+  task: (id: string) => api<TaskDetail>(`/api/v1/tasks/${id}`),
   runSync: (params: SyncRunRequest) =>
     api<SyncRunResponse>('/api/v1/sync/run', {
       method: 'POST',
@@ -1207,4 +1216,48 @@ export interface MemoryScaffoldProposal {
 
 export interface MemoryScaffoldProposalsResponse {
   proposals: MemoryScaffoldProposal[]
+}
+
+// ── Task Runtime (read-only alpha, backlog B1) ──
+
+export interface TaskStepCounts {
+  pending: number
+  claimed: number
+  passed: number
+  failed: number
+}
+
+export interface TaskSummary {
+  id: string
+  owner_id: string
+  collection_name: string
+  room: string
+  objective: string
+  status: string
+  risk_level: string
+  step_counts: TaskStepCounts
+  blocker_count: number
+  created_at: string
+  updated_at: string
+  completed_at?: string
+}
+
+export interface TaskStepView {
+  id: string
+  description: string
+  status: string
+  required: boolean
+  attempts: number
+  position: number
+  leased_by?: string
+  lease_expires_at?: string
+}
+
+export interface TaskDetail extends TaskSummary {
+  criteria: Array<Record<string, unknown>>
+  steps: TaskStepView[]
+  receipts: Array<Record<string, unknown>>
+  checkpoints: Array<Record<string, unknown>>
+  blockers: Array<Record<string, unknown>>
+  recent_events: Array<Record<string, unknown>>
 }

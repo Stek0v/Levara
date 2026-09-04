@@ -240,7 +240,20 @@ concurrent creates, nil-DB disabled) + 8 HTTP-кейсов. Живой стен�
 
 ## B. Task Runtime
 
-### B1. WebUI-воркфлоу задач — P1
+### B1. WebUI-воркфлоу задач — P1 ✅ (2026-09-04, read-only alpha)
+
+**Статус.** Выполнена read-only фаза: `internal/http/tasks_read.go` —
+`GET /api/v1/tasks` (агрегаты шагов через FILTER-подзапросы, счётчик активных
+блокеров, фильтры status/collection_name, лимит ≤200, повторные плейсхолдеры
+через QArgs) и `GET /api/v1/tasks/:id` (критерии, шаги с live-lease join —
+истёкшие lease не показываются, receipts ≤20, checkpoints ≤10, blockers,
+события ≤30). Файл намеренно GET-only: мутации остаются в MCP `task_*` —
+leases и idempotency нельзя обойти. WebUI: `/tasks` — список с фильтрами
+статуса, карточки с бейджами, панель деталей (план с иконками шагов и
+lease-аннотациями, блокеры, receipts, checkpoints), auto-refetch 15 c,
+бейдж «read-only alpha». Проверка: unit 5/5 + live-стенд API 9/9 + браузер
+(login → список → детали, vision-анализ скриншота чистый). Нюанс Next 16:
+rewrite-цель `LEVARA_API_URL` инлайнится в routes-manifest при build.
 
 **DoD.**
 1. Страница Tasks в WebUI: список (статус, версия, blockers), карточка

@@ -35,8 +35,10 @@
 
 ## B. Task Runtime — alpha-границы (③④)
 
-- [ ] B1 (P1). **WebUI-воркфлоу для задач** — рантайм MCP-only; в WebUI нет
-  dedicated-интерфейса для задач (создание, шаги, receipts, споры о версиях).
+- [x] B1 (P1). **WebUI-воркфлоу для задач** — read-only alpha готова
+  (2026-09-04): страница Tasks (список/детали/lease/receipts/checkpoints)
+  поверх GET-only REST; мутации остаются в MCP task_* tools. Write-фаза —
+  будущая работа.
 - [ ] B2 (P1). **Автономный планировщик / worker** — «There is no autonomous
   scheduler or worker»; возобновление задачи лежит на MCP-хосте.
 - [ ] B3 (P2). **Выход из alpha** — стабилизация схем до non-alpha контракта,

@@ -586,6 +586,27 @@ export function useSyncManifest() {
   })
 }
 
+// ── Task Runtime (read-only alpha) ──
+
+export function useTasks(params?: { status?: string; collection_name?: string; limit?: number }) {
+  return useQuery({
+    queryKey: ['tasks', params],
+    queryFn: () => levara.tasks(params),
+    staleTime: 5_000,
+    refetchInterval: 15_000,
+  })
+}
+
+export function useTask(id: string | null) {
+  return useQuery({
+    queryKey: ['task', id],
+    queryFn: () => levara.task(id!),
+    enabled: !!id,
+    staleTime: 5_000,
+    refetchInterval: 15_000,
+  })
+}
+
 export function useSyncStatus(limit = 10) {
   return useQuery({
     queryKey: ['syncStatus', limit],
