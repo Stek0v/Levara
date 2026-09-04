@@ -15,7 +15,7 @@ This page is the operational truth for the local Mac deployment. Product roadmap
 | Running build time | `2026-08-28T00:46:51Z` |
 | Go version in running binary | `go1.27.0` |
 | Protocols | MCP `2026-07-28` (stateless) + legacy session `/mcp`, gRPC `v1`, `v2` |
-| API surface | 82 MCP tools, 146 REST routes, 45 gRPC methods (`docs/contract.json`) |
+| API surface | 82 MCP tools, 148 REST routes, 45 gRPC methods (`docs/contract.json`) |
 
 The deployed binary predates the 2026-09-03 security review (26 fix commits,
 `949e482..83df7e5`): 54 findings, 52 fixed. Rebuild + restart before assuming

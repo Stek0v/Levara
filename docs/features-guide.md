@@ -5,7 +5,7 @@
 разработчик (примеры и контракты).
 
 > Источники истины: сгенерированный контракт `docs/api-contract.md`
-> (`docs/contract.json` — 82 MCP tools, 146 REST routes, 45 gRPC methods),
+> (`docs/contract.json` — 82 MCP tools, 148 REST routes, 45 gRPC methods),
 > `docs/product-ladder.md` (границы продукта), `docs/current-state.md`
 > (проверенный локальный снимок). Этот гайд группирует поверхность по
 > пользовательским кейсам.

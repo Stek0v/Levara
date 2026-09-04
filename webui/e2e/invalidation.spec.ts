@@ -20,6 +20,24 @@ test.describe('React Query invalidation (T20)', () => {
         body: JSON.stringify({ dimension: 768, shards: 1, status: 'ready' }),
       }),
     )
+    // i18n locale + project-page auxiliary feeds must not hit the live
+    // proxy (CI has no backend).
+    await page.route('**/api/v1/settings', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ theme: 'light', locale: 'ru' }),
+      }),
+    )
+    await page.route('**/api/v1/datasets/*/shares', (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
+    )
+    await page.route('**/api/v1/datasets/*/commits', (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
+    )
+    await page.route('**/api/v1/datasets/*/context', (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
+    )
   })
 
   test('create dataset → list reflects new row without reload', async ({ page }) => {

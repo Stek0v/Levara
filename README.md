@@ -79,7 +79,7 @@ Levara gives agents a context control plane:
 | **Identity and governance** | JWT and API keys, dataset/project sharing, workspace ACL, tenant membership checks, audit export, OIDC verified-claims adapter, SSO/SCIM and storage/KMS seams |
 | **Product surfaces** | MCP Streamable HTTP, REST, gRPC v1/v2, CLI tools, Next.js WebUI, notebooks, feedback and memory-behavior analytics |
 
-The generated contract currently contains **82 canonical MCP tools**, **146 REST
+The generated contract currently contains **82 canonical MCP tools**, **148 REST
 routes**, and **45 gRPC methods**. The complete machine-derived inventory lives
 in [docs/api-contract.md](docs/api-contract.md); the README groups the surface
 by user outcome instead of reproducing every endpoint.
@@ -247,7 +247,7 @@ Enterprise combinations fail before listeners are opened.
 |---|---:|---:|---|
 | MCP Streamable HTTP (latest) | `/mcp/2026-07-28` | stateless, per-request metadata | Hermes and current MCP clients |
 | MCP Streamable HTTP (legacy) | `/mcp` | session-based compatibility | Existing AI agents and IDE integrations |
-| REST | `:8080` | 146 canonical routes | WebUI, applications and operations |
+| REST | `:8080` | 148 canonical routes | WebUI, applications and operations |
 | gRPC v1/v2 | `:50051` | 45 canonical methods | Typed SDK and search clients |
 | CLI | local binaries | server, client, backup, contract and host tooling | Operators and automation |
 | WebUI | `:3000` in development | Next.js application | Users, operators and reviewers |
