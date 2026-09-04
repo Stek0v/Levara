@@ -27,6 +27,8 @@ func RESTRouteInventory() []RouteSpec {
 		{Method: "POST", Path: "/datasets", Status: APICanonical, Group: "datasets"},
 		{Method: "DELETE", Path: "/datasets/:id", Status: APICanonical, Group: "datasets"},
 		{Method: "GET", Path: "/datasets/:id/data", Status: APICanonical, Group: "datasets"},
+		{Method: "GET", Path: "/datasets/:id/context", Status: APICanonical, Group: "datasets"},
+		{Method: "GET", Path: "/datasets/:id/activity", Status: APICanonical, Group: "datasets"},
 		{Method: "DELETE", Path: "/datasets/:id/data/:dataId", Status: APICanonical, Group: "datasets"},
 		{Method: "GET", Path: "/datasets/:id/data/:dataId/raw", Status: APICanonical, Group: "datasets"},
 		{Method: "GET", Path: "/datasets/:id/data/:dataId/raw/url", Status: APICanonical, Group: "datasets"},

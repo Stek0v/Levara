@@ -191,7 +191,9 @@ func TestVisibleDatasetIDs(t *testing.T) {
 func TestListVisibleDatasets(t *testing.T) {
 	db := newPolicyTestDB(t)
 	for _, stmt := range []string{
+		`CREATE TABLE data (id TEXT PRIMARY KEY, data_size INTEGER NOT NULL DEFAULT 0)`,
 		`CREATE TABLE dataset_data (dataset_id TEXT, data_id TEXT)`,
+		`INSERT INTO data(id, data_size) VALUES ('d1', 100), ('d2', 250), ('d3', 7)`,
 		`INSERT INTO dataset_data(dataset_id, data_id) VALUES ('payments', 'd1'), ('payments', 'd2'), ('owned-b', 'd3')`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {

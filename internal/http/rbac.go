@@ -231,3 +231,34 @@ func CheckDatasetAccess(db *sql.DB, c *fiber.Ctx, datasetID, userID string) bool
 	defer cancel()
 	return accesspkg.SQLPolicy{DB: db, Q: Q, QA: QArgs}.CanAccessDataset(ctx, datasetID, userID)
 }
+
+// datasetShareGrants lists share grants for a dataset (email, role,
+// created_at string) — newest first, capped. Extracted here because the
+// policy-boundary test forbids direct dataset_shares SQL outside this
+// file; api_project_meta.go consumes it for the activity feed.
+func datasetShareGrants(q func(string) string, db interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}, ctx context.Context, datasetID string) ([]shareGrant, error) {
+	rows, err := db.QueryContext(ctx, q(`SELECT u.email, s.role, s.created_at
+	   FROM dataset_shares s LEFT JOIN users u ON u.id = s.user_id
+	   WHERE s.dataset_id = $1 ORDER BY s.created_at DESC LIMIT 50`), datasetID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []shareGrant
+	for rows.Next() {
+		var g shareGrant
+		if err := rows.Scan(&g.Email, &g.Role, &g.Created); err != nil {
+			continue
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
+type shareGrant struct {
+	Email   string
+	Role    string
+	Created any
+}

@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-08-27T06:14:14+03:00",
-  "git_rev": "248ac1d3ee16209c34e97504ac401b94b991e197",
+  "generated_at": "2026-09-04T17:48:07+03:00",
+  "git_rev": "6866c3f3e37933c0fbd2eddd13e175b91b787acd",
   "rest": [
     {
       "method": "POST",
@@ -131,6 +131,18 @@
     {
       "method": "DELETE",
       "path": "/datasets/:id",
+      "status": "canonical",
+      "group": "datasets"
+    },
+    {
+      "method": "GET",
+      "path": "/datasets/:id/activity",
+      "status": "canonical",
+      "group": "datasets"
+    },
+    {
+      "method": "GET",
+      "path": "/datasets/:id/context",
       "status": "canonical",
       "group": "datasets"
     },

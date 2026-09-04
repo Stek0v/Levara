@@ -210,6 +210,11 @@ export const levara = {
     api<void>(`/api/v1/datasets/${datasetId}/data/${recordId}`, { method: 'DELETE' }),
   getDatasetGraph: (id: string) =>
     api<DatasetGraph>(`/api/v1/datasets/${id}/graph`),
+  // Project context (collection memories) + activity feed (block ③)
+  getDatasetContext: (id: string) =>
+    api<ProjectContextItem[]>(`/api/v1/datasets/${id}/context`),
+  getDatasetActivity: (id: string) =>
+    api<ProjectActivityItem[]>(`/api/v1/datasets/${id}/activity`),
   graphPath: (params: GraphPathRequest) => {
     const q = new URLSearchParams({
       from: params.from,
@@ -494,6 +499,21 @@ export interface DatasetDataRow {
   tags?: string
   created_at?: string
   [key: string]: unknown
+}
+
+export interface ProjectContextItem {
+  id: string
+  key: string
+  value: string
+  type: string
+  created_at: string
+}
+
+export interface ProjectActivityItem {
+  type: 'upload' | 'share_granted' | 'context_add'
+  title: string
+  detail: string
+  created_at: string
 }
 
 export interface DatasetDataResponse {

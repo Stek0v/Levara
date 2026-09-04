@@ -16,6 +16,8 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { EmptyState } from '@/components/ui/empty-state'
 import { ArrowLeft, Play, Trash2, FileText, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useT, formatBytes, formatDate, formatCount } from '@/lib/i18n'
+import { useQuery } from '@tanstack/react-query'
+import type { ProjectContextItem, ProjectActivityItem } from '@/lib/api'
 import { useSettings } from '@/hooks/use-levara'
 
 function formatSize(bytes?: number): string {
@@ -51,6 +53,20 @@ export default function DatasetDetailPage() {
   const [activeCognifyRunId, setActiveCognifyRunId] = useState<string | null>(null)
   const cognifyProgress = useCognifyProgress(activeCognifyRunId)
   const limit = 20
+
+  // Block ③: tabs. Context/history fetch lazily — only when the tab is
+  // opened (enabled flag), so the files view stays the default payload.
+  const [tab, setTab] = useState<'files' | 'context' | 'history'>('files')
+  const { data: ctxItems } = useQuery({
+    queryKey: ['dataset-context', datasetId],
+    queryFn: () => levara.getDatasetContext(datasetId),
+    enabled: tab === 'context',
+  })
+  const { data: activity } = useQuery({
+    queryKey: ['dataset-activity', datasetId],
+    queryFn: () => levara.getDatasetActivity(datasetId),
+    enabled: tab === 'history',
+  })
 
   // Data access moved to React Query (T7). Datasets list feeds the name
   // lookup; useDatasetData paginates rows and handles the two response
@@ -143,6 +159,58 @@ export default function DatasetDetailPage() {
         </Button>
       </div>
 
+      {/* Tabs */}
+      <div className="flex gap-1 mb-4 border-b border-gray-200 dark:border-gray-800">
+        {([['files', t('project.tab.files')], ['context', t('project.tab.context')], ['history', t('project.tab.history')]] as const).map(([key, label]) => (
+          <button key={key} onClick={() => setTab(key)}
+            className={`px-4 py-2 text-sm font-medium -mb-px border-b-2 transition-colors ${tab === key
+              ? 'border-blue-600 text-blue-600 dark:border-blue-400 dark:text-blue-400'
+              : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'}`}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'context' && (
+        <div className="space-y-2">
+          {(ctxItems ?? []).length === 0 ? (
+            <EmptyState icon={FileText} title={t('project.tab.context')} description={t('project.context.empty')} />
+          ) : (
+            (ctxItems ?? []).map((m: ProjectContextItem) => (
+              <div key={m.id} className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-3">
+                <div className="flex items-center justify-between">
+                  <span className="font-medium text-sm">{m.key}</span>
+                  <span className="text-xs text-gray-400">{formatDate(m.created_at, locale)}</span>
+                </div>
+                <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">{m.value}</p>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
+      {tab === 'history' && (
+        <div className="space-y-2">
+          {(activity ?? []).length === 0 ? (
+            <EmptyState icon={FileText} title={t('project.tab.history')} description={t('project.history.empty')} />
+          ) : (
+            (activity ?? []).map((e: ProjectActivityItem, i: number) => (
+              <div key={i} className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-3 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Badge variant={e.type === 'upload' ? 'success' : e.type === 'share_granted' ? 'default' : 'warning'}>
+                    {e.type === 'upload' ? t('project.history.upload') : e.type === 'share_granted' ? t('project.history.share') : t('project.history.context')}
+                  </Badge>
+                  <span className="font-medium text-sm">{e.title}</span>
+                  {e.detail && <span className="text-xs text-gray-400">{e.detail}</span>}
+                </div>
+                <span className="text-xs text-gray-400">{formatDate(e.created_at, locale)}</span>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
+      {tab === 'files' && (
       <div className="flex items-center gap-3 mb-4">
         <Input placeholder={t('memories.searchPlaceholder')} value={search} onChange={(e) => setSearch(e.target.value)} className="w-64" />
         {selected.size > 0 && (
@@ -153,8 +221,9 @@ export default function DatasetDetailPage() {
           </div>
         )}
       </div>
+      )}
 
-      {filtered.length === 0 ? (
+      {tab === 'files' && (filtered.length === 0 ? (
         <EmptyState icon={FileText} title={t('common.empty')} description={search ? '' : t('project.dropzone')} />
       ) : (
         <>
@@ -212,7 +281,7 @@ export default function DatasetDetailPage() {
             </div>
           )}
         </>
-      )}
+      ))}
     </div>
   )
 }
