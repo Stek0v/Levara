@@ -14,22 +14,24 @@ import (
 
 // SettingsDTO matches Levara frontend expected format.
 type SettingsDTO struct {
-	Theme          string `json:"theme,omitempty"`
-	Locale         string `json:"locale,omitempty"`
-	LLMProvider    string `json:"llm_provider"`
-	LLMModel       string `json:"llm_model"`
-	LLMEndpoint    string `json:"llm_endpoint"`
-	LLMAPIKey      string `json:"llm_api_key,omitempty"`
-	EmbedProvider  string `json:"embedding_provider"`
-	EmbedModel     string `json:"embedding_model"`
-	EmbedEndpoint  string `json:"embedding_endpoint"`
-	EmbedDimension int    `json:"embedding_dimension"`
-	GraphEngine    string `json:"graph_engine"`
-	GraphURL       string `json:"graph_url"`
-	GraphDatabase  string `json:"graph_database"`
-	VectorEngine   string `json:"vector_engine"`
-	ChunkStrategy  string `json:"chunk_strategy"`
-	ChunkSize      int    `json:"chunk_size"`
+	Theme  string `json:"theme,omitempty"`
+	Locale string `json:"locale,omitempty"`
+	// DefaultCollection is the collection preselected in the chat/search pages ("" = all).
+	DefaultCollection string `json:"default_collection,omitempty"`
+	LLMProvider       string `json:"llm_provider"`
+	LLMModel          string `json:"llm_model"`
+	LLMEndpoint       string `json:"llm_endpoint"`
+	LLMAPIKey         string `json:"llm_api_key,omitempty"`
+	EmbedProvider     string `json:"embedding_provider"`
+	EmbedModel        string `json:"embedding_model"`
+	EmbedEndpoint     string `json:"embedding_endpoint"`
+	EmbedDimension    int    `json:"embedding_dimension"`
+	GraphEngine       string `json:"graph_engine"`
+	GraphURL          string `json:"graph_url"`
+	GraphDatabase     string `json:"graph_database"`
+	VectorEngine      string `json:"vector_engine"`
+	ChunkStrategy     string `json:"chunk_strategy"`
+	ChunkSize         int    `json:"chunk_size"`
 }
 
 // userSettings stores per-user overrides (in-memory, keyed by user_id).

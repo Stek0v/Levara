@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { levara, type SearchRequest } from '@/lib/api'
+import { useSettings } from '@/hooks/use-levara'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Send, Bot, User, RotateCcw } from 'lucide-react'
@@ -15,19 +16,51 @@ interface Message {
 }
 
 export default function ChatPage() {
-  const [messages, setMessages] = useState<Message[]>([])
+  const [messages, setMessages] = useState<Message[]>(() => {
+    // Restore the last conversation so a reload does not wipe the chat.
+    if (typeof window === 'undefined') return []
+    try {
+      const raw = window.localStorage.getItem('levara.chat.messages')
+      return raw ? (JSON.parse(raw) as Message[]) : []
+    } catch {
+      return []
+    }
+  })
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
-  const [sessionId] = useState(() => crypto.randomUUID())
+  const [sessionId] = useState(() => {
+    if (typeof window === 'undefined') return crypto.randomUUID()
+    let sid = window.localStorage.getItem('levara.chat.sessionId')
+    if (!sid) {
+      sid = crypto.randomUUID()
+      window.localStorage.setItem('levara.chat.sessionId', sid)
+    }
+    return sid
+  })
   const [mode, setMode] = useState<'RAG_COMPLETION' | 'GRAPH_COMPLETION_COT'>('RAG_COMPLETION')
   const [collection, setCollection] = useState('')
+  const collectionTouched = useRef(false)
   const [collections, setCollections] = useState<string[]>([])
+  const { data: settings } = useSettings()
+  const defaultCollection = (settings?.default_collection as string | undefined) ?? ''
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('levara.chat.messages', JSON.stringify(messages.slice(-100)))
+    } catch { /* quota — ignore */ }
+  }, [messages])
+
+  // Apply the user's default_collection from settings once it resolves,
+  // unless the user already picked a collection in this visit.
+  useEffect(() => {
+    if (!collectionTouched.current && defaultCollection) setCollection(defaultCollection)
+  }, [defaultCollection])
 
   // Load collections for selector (exclude internal ones)
   useEffect(() => {
@@ -122,7 +155,7 @@ export default function ChatPage() {
         <div className="flex items-center gap-2">
           <select
             value={collection}
-            onChange={(e) => setCollection(e.target.value)}
+            onChange={(e) => { collectionTouched.current = true; setCollection(e.target.value) }}
             className="h-8 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-2 text-sm"
             aria-label="Collection">
             <option value="">All collections</option>
@@ -140,7 +173,10 @@ export default function ChatPage() {
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => setMessages([])}
+            onClick={() => {
+              setMessages([])
+              try { window.localStorage.removeItem('levara.chat.messages') } catch { /* ignore */ }
+            }}
             title="Clear chat"
           >
             <RotateCcw className="h-4 w-4" />

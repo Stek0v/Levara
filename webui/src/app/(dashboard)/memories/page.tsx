@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { useMemories, useSaveMemory } from '@/hooks/use-levara'
+import { useMemories, useSaveMemory, useDeleteMemory } from '@/hooks/use-levara'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -11,6 +11,7 @@ import { Brain, Plus } from 'lucide-react'
 import { useT } from '@/lib/i18n'
 
 const TYPES = ['all', 'fact', 'decision', 'event', 'preference', 'advice', 'discovery']
+const HALLS = ['fact', 'decision', 'event', 'preference', 'advice', 'discovery']
 const typeBadge = (t?: string) => {
   const m: Record<string, 'info' | 'success' | 'warning' | 'default'> = { fact: 'info', decision: 'success', event: 'warning', preference: 'default', advice: 'info', discovery: 'success' }
   return m[t || ''] || 'default'
@@ -23,17 +24,22 @@ export default function MemoriesPage() {
   const [newKey, setNewKey] = useState('')
   const [newValue, setNewValue] = useState('')
   const [newType, setNewType] = useState('fact')
+  const [newRoom, setNewRoom] = useState('')
+  const [newHall, setNewHall] = useState('decision')
+  const [formError, setFormError] = useState('')
+  const deleteMutation = useDeleteMemory()
 
   const { data: memories = [], isLoading } = useMemories(filter)
   const saveMutation = useSaveMemory()
 
   const handleAdd = async () => {
     if (!newKey.trim() || !newValue.trim()) return
+    setFormError('')
     try {
-      await saveMutation.mutateAsync({ key: newKey.trim(), value: newValue.trim(), type: newType })
-      setNewKey(''); setNewValue(''); setShowAdd(false)
+      await saveMutation.mutateAsync({ key: newKey.trim(), value: newValue.trim(), type: newType, room: newRoom.trim() || undefined, hall: newHall })
+      setNewKey(''); setNewValue(''); setNewRoom(''); setShowAdd(false)
     } catch (err) {
-      alert(`Failed: ${err instanceof Error ? err.message : 'Unknown error'}`)
+      setFormError(err instanceof Error ? err.message : t('mem.error'))
     }
   }
 
@@ -63,6 +69,14 @@ export default function MemoriesPage() {
               {TYPES.filter((t) => t !== 'all').map((t) => <option key={t} value={t}>{t}</option>)}
             </select>
           </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <Input placeholder={t('mem.room')} value={newRoom} onChange={(e) => setNewRoom(e.target.value)} />
+            <select value={newHall} onChange={(e) => setNewHall(e.target.value)}
+              className="h-9 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-3 text-sm">
+              {HALLS.map((h) => <option key={h} value={h}>{h}</option>)}
+            </select>
+          </div>
+          {formError && <p className="text-sm text-red-500">{formError}</p>}
           <div className="flex gap-2">
             <Button onClick={handleAdd} disabled={!newKey.trim() || !newValue.trim()} loading={saveMutation.isPending}>{t('mem.save')}</Button>
             <Button variant="ghost" onClick={() => setShowAdd(false)}>{t('mem.cancel')}</Button>
@@ -89,6 +103,13 @@ export default function MemoriesPage() {
               <div className="flex items-center gap-2 mb-1">
                 <code className="text-xs text-gray-500 font-mono">{m.key}</code>
                 {m.type && <Badge variant={typeBadge(m.type)}>{m.type}</Badge>}
+                {m.room && <span className="text-xs text-gray-400">· {m.room}</span>}
+                {m.hall && <span className="text-xs text-gray-400">· {m.hall}</span>}
+                <button
+                  className="ml-auto text-xs text-gray-400 hover:text-red-500"
+                  onClick={() => deleteMutation.mutate(m.key)}
+                  title={t('mem.delete')}
+                >✕</button>
               </div>
               <p className="text-sm text-gray-900 dark:text-gray-100">{m.value}</p>
               {m.created_at && <p className="text-xs text-gray-400 mt-1">{new Date(m.created_at).toLocaleString()}</p>}

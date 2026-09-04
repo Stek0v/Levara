@@ -136,7 +136,7 @@ test.describe('Full Integration', () => {
     await page.locator('main').getByRole('button', { name: /add memory|добавить/i }).first().click()
     await page.getByPlaceholder(/key|ключ/i).fill('test_key_' + Date.now())
     await page.getByPlaceholder(/value|значение/i).fill('test_value')
-    await page.getByRole('button', { name: 'Save' }).click()
+    await page.getByRole('button', { name: /save|сохранить/i }).click()
     await page.waitForTimeout(3000)
 
     // Should not show error alert

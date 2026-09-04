@@ -226,8 +226,16 @@ export function useCognify() {
 export function useSaveMemory() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (params: { key: string; value: string; type?: string }) =>
-      levara.saveMemory(params.key, params.value, params.type),
+    mutationFn: (params: { key: string; value: string; type?: string; room?: string; hall?: string }) =>
+      levara.saveMemory(params.key, params.value, params.type, params.room, params.hall),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['memories'] }) },
+  })
+}
+
+export function useDeleteMemory() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (key: string) => levara.deleteMemory(key),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['memories'] }) },
   })
 }

@@ -160,7 +160,7 @@ func listMemoriesHandler(cfg APIConfig) fiber.Handler {
 				pos++
 			}
 		}
-		query := "SELECT id, key, value, type, owner_id, created_at, updated_at FROM memories WHERE " +
+		query := "SELECT id, key, value, type, owner_id, room, hall, created_at, updated_at FROM memories WHERE " +
 			strings.Join(conds, " AND ") + " ORDER BY updated_at DESC LIMIT 100"
 
 		rows, err := cfg.DB.QueryContext(context.Background(), Q(query), args...)
@@ -196,16 +196,17 @@ func getMemoryHandler(cfg APIConfig) fiber.Handler {
 		ownerID, _ := c.Locals("user_id").(string)
 
 		row := cfg.DB.QueryRowContext(context.Background(),
-			Q(`SELECT id, key, value, type, owner_id, created_at, updated_at
+			Q(`SELECT id, key, value, type, owner_id, room, hall, created_at, updated_at
 			 FROM memories WHERE key = $1 AND (owner_id = $2 OR owner_id = '') LIMIT 1`), key, ownerID)
 
-		var id, k, v, t, oid, ca, ua string
-		if err := row.Scan(&id, &k, &v, &t, &oid, &ca, &ua); err != nil {
+		var id, k, v, t, oid, room, hall, ca, ua string
+		if err := row.Scan(&id, &k, &v, &t, &oid, &room, &hall, &ca, &ua); err != nil {
 			return c.Status(404).JSON(fiber.Map{"detail": "not found"})
 		}
 		return c.JSON(fiber.Map{
 			"id": id, "key": k, "value": v, "type": t,
-			"owner_id": oid, "created_at": ca, "updated_at": ua,
+			"owner_id": oid, "room": room, "hall": hall,
+			"created_at": ca, "updated_at": ua,
 		})
 	}
 }
@@ -334,13 +335,14 @@ func scanMemoryRows(rows interface {
 }) []fiber.Map {
 	var items []fiber.Map
 	for rows.Next() {
-		var id, key, value, typ, ownerID, ca, ua string
-		if err := rows.Scan(&id, &key, &value, &typ, &ownerID, &ca, &ua); err != nil {
+		var id, key, value, typ, ownerID, room, hall, ca, ua string
+		if err := rows.Scan(&id, &key, &value, &typ, &ownerID, &room, &hall, &ca, &ua); err != nil {
 			continue
 		}
 		items = append(items, fiber.Map{
 			"id": id, "key": key, "value": value, "type": typ,
-			"owner_id": ownerID, "created_at": ca, "updated_at": ua,
+			"owner_id": ownerID, "room": room, "hall": hall,
+			"created_at": ca, "updated_at": ua,
 		})
 	}
 	return items

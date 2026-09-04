@@ -2,8 +2,8 @@
 
 import { useEffect } from 'react'
 import { Badge } from '@/components/ui/badge'
-import { Settings, Globe, Palette, Key } from 'lucide-react'
-import { useSettings, useUpdateSettings } from '@/hooks/use-levara'
+import { Settings, Globe, Palette, Key, Database } from 'lucide-react'
+import { useSettings, useUpdateSettings, useCollections } from '@/hooks/use-levara'
 import { useT } from '@/lib/i18n'
 import type { Theme, Locale } from '@/lib/api'
 
@@ -57,6 +57,8 @@ export default function SettingsPage() {
   // renders it as the "effective" theme. M10 from the 2d15b38 review.
   const theme: Theme = settings?.theme ?? 'system'
   const locale: Locale = settings?.locale ?? 'ru'
+  const defaultCollection = (settings?.default_collection as string | undefined) ?? ''
+  const { data: collections = [] } = useCollections()
 
   // Single source of truth: cache → DOM + localStorage. This effect fires
   // both for user-initiated changes (optimistic cache update) and for
@@ -71,6 +73,8 @@ export default function SettingsPage() {
 
   const handleTheme = (t: Theme) => updateMutation.mutate({ theme: t })
   const handleLocale = (l: Locale) => updateMutation.mutate({ locale: l })
+  const handleDefaultCollection = (name: string) =>
+    updateMutation.mutate({ default_collection: name })
 
   return (
     <div>
@@ -116,6 +120,26 @@ export default function SettingsPage() {
             {LOCALES.map((l) => (
               <option key={l.value} value={l.value}>{l.label}</option>
             ))}
+          </select>
+        </section>
+
+        {/* Chat */}
+        <section className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-5">
+          <div className="flex items-center gap-2 mb-4">
+            <Database className="h-5 w-5 text-gray-400" />
+            <h2 className="text-lg font-medium">{t('settings.chat')}</h2>
+          </div>
+          <label className="block text-sm text-gray-500 dark:text-gray-400 mb-2" htmlFor="default-collection">{t('settings.defaultCollection')}</label>
+          <select
+            id="default-collection"
+            value={defaultCollection}
+            onChange={(e) => handleDefaultCollection(e.target.value)}
+            className="h-9 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-3 text-sm"
+          >
+            <option value="">{t('an.alldatasets')}</option>
+            {collections
+              .filter((x) => !x.name.startsWith('_') && x.name !== 'Triplet_text')
+              .map((x) => <option key={x.name} value={x.name}>{x.name}</option>)}
           </select>
         </section>
 

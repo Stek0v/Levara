@@ -166,10 +166,15 @@ export const levara = {
   // Memories
   memories: (type?: string) =>
     api<Memory[]>(`/api/v1/memories${type ? `?type=${type}` : ''}`),
-  saveMemory: (key: string, value: string, type?: string) =>
+  saveMemory: (key: string, value: string, type?: string, room?: string, hall?: string) =>
     api<Memory>('/api/v1/memories', {
       method: 'POST',
-      body: JSON.stringify({ key, value, type }),
+      body: JSON.stringify({ key, value, type, room, hall }),
+    }),
+
+  deleteMemory: (key: string) =>
+    api<{ deleted: boolean }>(`/api/v1/memories/${encodeURIComponent(key)}`, {
+      method: 'DELETE',
     }),
 
   // Cognify
@@ -480,6 +485,8 @@ export interface Memory {
   key: string
   value: string
   type?: string
+  room?: string
+  hall?: string
   created_at?: string
 }
 
@@ -499,6 +506,8 @@ export type Locale = 'ru' | 'en'
 export interface Settings {
   theme?: Theme
   locale?: Locale
+  // Backend SettingsDTO.default_collection — preselected collection in chat.
+  default_collection?: string
   // Backend may return additional user-specific settings; we keep the
   // shape open so new keys don't require a client upgrade in lockstep.
   [key: string]: unknown
