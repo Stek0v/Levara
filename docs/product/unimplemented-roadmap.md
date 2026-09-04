@@ -43,8 +43,9 @@
 
 ## C. Режимы и лестница — что мешает апгрейду (①②③)
 
-- [ ] C1 (P1). **Enterprise strict preset e2e** — пресет
-  `enterprise.strict.env.example` существует, полного e2e-прогона режима в CI нет.
+- [x] C1 (P1). **Enterprise strict preset e2e** — реализовано 2026-09-04:
+  `deploy/profiles/enterprise_e2e.sh` в CI (job `enterprise strict preset e2e`);
+  матрица mandatory-checks + live strict-старт (13 проверок, 13/13 PASS локально).
 - [ ] C2 (P2). **Team onboarding path** — туториал 04 есть, но нет
   автоматизированного «создать пользователей → выдать API-ключи агентам →
   проверить изоляцию» скрипта.

@@ -1,4 +1,4 @@
-.PHONY: all build run test test-ocr test-ocr-gosseract test-cross-ocr test-commit test-release-candidate profile-config-check profile-smoke benchmark clean docker arm64 proto proto-go proto-python swag contract contract-check
+.PHONY: all build run test test-ocr test-ocr-gosseract test-cross-ocr test-commit test-release-candidate profile-config-check profile-smoke profile-enterprise-e2e benchmark clean docker arm64 proto proto-go proto-python swag contract contract-check
 
 # Regenerate OpenAPI spec from swaggo annotations (T13).
 # Requires `go install github.com/swaggo/swag/cmd/swag@latest` once.
@@ -116,6 +116,12 @@ profile-config-check:
 # real binary against the shipped deploy/profiles/*.env.example files.
 profile-smoke:
 	@bash deploy/profiles/smoke.sh
+
+# Enterprise strict preset e2e gate (backlog C1): mandatory-condition matrix
+# via -config-check dry runs + live strict startup against Postgres with
+# tenant/auth/audit assertions. Requires a local Postgres (CI provides one).
+profile-enterprise-e2e:
+	@bash deploy/profiles/enterprise_e2e.sh
 
 # --- Cross-compile ---
 

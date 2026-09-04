@@ -249,6 +249,35 @@ jobs:
       - name: Run Postgres-backed audit, outbox, and MCP tests
         run: go test -count=1 ./pkg/audit ./pkg/memoryindex ./pkg/mcp -run Postgres
 
+  enterprise-preset-e2e:
+    name: enterprise strict preset e2e
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: levara
+          POSTGRES_PASSWORD: levara
+          POSTGRES_DB: levara_enterprise_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U levara -d levara_enterprise_e2e"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      LEVARA_ENTERPRISE_E2E_DSN: postgres://levara:levara@127.0.0.1:5432/levara_enterprise_e2e?sslmode=disable
+      LEVARA_ENTERPRISE_E2E_PGUSER: levara
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Run enterprise strict preset gate
+        run: bash deploy/profiles/enterprise_e2e.sh
+
   compose:
     name: compose configuration
     runs-on: ubuntu-latest

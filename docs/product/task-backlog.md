@@ -284,7 +284,16 @@ bridge `SimpleMappingBridge` в `pkg/access/bridge.go`. Архитектурны
 
 ## C. Режимы и лестница
 
-### C1. Enterprise strict preset e2e — P1
+### C1. Enterprise strict preset e2e — P1 ✅ (2026-09-04)
+
+**Статус.** Выполнено: `deploy/profiles/enterprise_e2e.sh` +
+`make profile-enterprise-e2e` + CI-job `enterprise strict preset e2e`
+(postgres-сервис). Матрица обязательных условий через `-config-check`
+(каждое — с точным finding-кодом, dual-violation — оба кода, unknown profile
+под strict) + живой strict-старт: health публичен, API 401, аудит-каталог
+создан. Найден попутный гэп: пресет задаёт `POSTGRES_DSN`, а сервер читает
+`DATABASE_URL`/`-pg-url` — в e2e live-фаза передаёт оба; выравнивание пресета
+отдельной задачей (C6).
 
 **DoD.**
 1. CI-job (или make-цель) `test-enterprise-preset`: поднимает сервер с
@@ -302,6 +311,15 @@ bridge `SimpleMappingBridge` в `pkg/access/bridge.go`. Архитектурны
 - Порядрок проверок: при двух отсутствующих условиях — обе в ошибке.
 - Restart с тем же env → детерминированный успех.
 - Порты заняты → внятная ошибка, не panic.
+
+### C6. Пресет/сервер: единый DSN-контракт — P3
+
+**Суть.** `enterprise.strict.env.example` задаёт `POSTGRES_DSN`, живой сервер
+читает `DATABASE_URL`/`-pg-url`; C1-e2e компенсирует передачей обоих.
+Решить: сервер читает `POSTGRES_DSN` как fallback, либо пресет переходит на
+`DATABASE_URL`, либо `POSTGRES_DSN` остаётся governance-only маркером с
+документацией. DoD: один источник истины, smoke/e2e без компенсаций.
+Corner: оба заданы и расходятся → fail-fast с сообщением.
 
 ### C2. Team onboarding скрипт — P2
 
