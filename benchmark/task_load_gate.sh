@@ -38,6 +38,8 @@ for i in $(seq 1 60); do
   sleep 1
 done
 curl -sf "http://127.0.0.1:$PORT/health" >/dev/null || { echo "server never became healthy"; tail -20 "$DIR/server.log"; exit 1; }
+echo "-- server boot lines:"
+grep -m4 -E "Profile|standalone|sql|postgres|listening" "$DIR/server.log" || head -5 "$DIR/server.log"
 
 echo "== S2 lease contention =="
 python3 benchmark/multi_user.py --scenario s2 --url "http://127.0.0.1:$PORT" --output "$DIR/s2.json"
@@ -56,6 +58,11 @@ for p in sys.argv[1:]:
         name = s.get("scenario", "?")
         print(f"{name}: pass={s.get('pass')} {s.get('error','')[:200]}")
         ok = ok and s.get("pass", False)
+if not ok:
+    import pathlib
+    log = pathlib.Path("${DIR:-/tmp}/server.log")
+    print("--- server.log tail ---")
+    print(log.read_text(errors="replace")[-1500:])
 sys.exit(0 if ok else 1)
 EOF
 echo "TASK_LOAD_GATE: PASS"
