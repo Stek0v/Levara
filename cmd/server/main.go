@@ -869,6 +869,7 @@ func main() {
 		MemoryIndexOutbox:          memoryIndexOutbox,
 		MCPAgentBucket:             metrics.NewUserBucket(20, time.Minute),
 		WorkspaceAuditSink:         wsAuditSink,
+		OIDCBearer:                 oidcAuth, // nil unless LEVARA_OIDC_JWKS_URL set
 	}
 
 	// MCP (Model Context Protocol) server — JSON-RPC 2.0 for AI agent integration

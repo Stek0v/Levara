@@ -51,10 +51,15 @@ type APIConfig struct {
 	// Handlers that need non-default parameters (custom endpoint/model/batchSize —
 	// e.g. reembed migration, dual-search per-collection models, gRPC request-
 	// driven params) continue to construct their own client.
-	EmbedClient  *embed.Client
-	Collections  *store.CollectionManager
-	Neo4jCfg     GraphVisualizationConfig
-	DB           *sql.DB               // shared connection pool (nil if no PostgresDSN)
+	EmbedClient *embed.Client
+	Collections *store.CollectionManager
+	Neo4jCfg    GraphVisualizationConfig
+	DB          *sql.DB // shared connection pool (nil if no PostgresDSN)
+	// OIDCBearer, when non-nil, lets MCP requests authenticate with bearer
+	// tokens issued by the external OIDC provider (backlog A1). Consulted as
+	// a fallback after the Levara-JWT check fails, mirroring
+	// JWTMiddlewareWithOIDC on the HTTP side.
+	OIDCBearer   ExternalBearerAuth
 	BM25Indexes  *bm25.IndexRegistry   // shared BM25 indexes (same as gRPC service)
 	BM25Store    *bm25.SnapshotStore   // optional disk persistence for BM25 sidecars
 	LLMCache     llmcache.LLMCacher    // shared LLM response cache (nil = no caching)

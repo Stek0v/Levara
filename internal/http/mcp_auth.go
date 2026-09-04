@@ -58,6 +58,13 @@ func (h *mcpHandler) authenticateMCPRequest(c *fiber.Ctx) (accesspkg.Actor, erro
 	}
 	payload, ok := verifyJWT(token, h.cfg.JWTSecret)
 	if !ok {
+		// Not a Levara JWT: fall back to the external OIDC provider (A1),
+		// mirroring JWTMiddlewareWithOIDC. Fail-closed when both reject.
+		if h.cfg.OIDCBearer != nil {
+			if principal, err := h.cfg.OIDCBearer.Authenticate(c.Context(), token); err == nil {
+				return accesspkg.Actor{UserID: principal.UserID, AuthMethod: "oidc"}, nil
+			}
+		}
 		return accesspkg.Actor{}, fmt.Errorf("invalid token")
 	}
 	return accesspkg.Actor{UserID: payload.Sub, AuthMethod: "jwt"}, nil
