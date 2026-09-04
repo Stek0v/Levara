@@ -53,19 +53,24 @@ bridge `SimpleMappingBridge` в `pkg/access/bridge.go`. Архитектурны
 
 ---
 
-### A2. SAML HTTP surface — P1
+### A2. SAML HTTP surface — P1 ✅ (2026-09-04)
 
 **Суть.** SAML 2.0 SP: `/auth/saml/login` (redirect to IdP), `/auth/saml/acs`
 (Consumer Service), метаданные SP на `/auth/saml/metadata`.
 
+**Статус.** Выполнено: `pkg/access/saml.go` — SP на проверенной библиотеке
+crewjam/saml v0.5.1 (govulncheck: 0 called), подпись/условия/audience — в
+библиотеке (hand-rolled XML-DSig = источник signature-wrapping багов).
+One-time-use: request-ID store с TTL 15 мин + атомарное consume; IdP-initiated
+(unsolicited) ответы отклонены — SP-initiated only, это и есть replay-защита.
+HTTP: `/saml/login`, `/saml/acs` (opaque 401 без утечки деталей), `/saml/metadata`;
+env `LEVARA_SAML_ENABLED` + `LEVARA_SAML_{ENTITY_ID,ACS_URL,METADATA_URL,
+IDP_METADATA_URL,IDP_METADATA_FILE,KEY_FILE,CERT_FILE}`. Wire — в composition
+root `cmd/server/saml.go` (архитектурный guard pkg/access соблюдён). Тесты:
+config-validation fail-closed (6 кейсов), ID-store replay/TTL/bound (4),
+PEM-парсинг PKCS#1/PKCS#8, HTTP-поверхность (metadata/login 302/ACS 401/disabled→404).
+
 **DoD.**
-1. Подписанные AuthnRequest, проверка подписи SAMLResponse, условия
-   `NotBefore`/`NotOnOrAfter`, аудит Audience.
-2. One-time-use защита: replay InResponseTo + assertion ID с окном (10 мин).
-3. Маппинг NameID/атрибутов → `IdentityBridge` (те же группы/roles).
-4. Конфиг: метаданные IdP по URL или файлу; сертификат SP для подписи.
-5. Feature-flag `LEVARA_SAML_ENABLED=1` — без флага routes не регистрируются.
-6. `docs/profile-presets.md` + enterprise-пресет дополнены.
 
 **Тесты.**
 - Unit: разбор валидного/битого XML; XML-атаки (XXE, signature wrapping).

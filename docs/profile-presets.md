@@ -84,9 +84,14 @@ corporate storage controls matter. The current implementation has tenant
 hardening, strict profile checks, audit export, an OIDC verified-claims adapter,
 raw OIDC bearer verification against a JWKS (RS256/ES256, iss/aud allowlists,
 key rotation; env: `LEVARA_OIDC_JWKS_URL`, `LEVARA_OIDC_ISSUERS`,
-`LEVARA_OIDC_AUDIENCES`), SSO/SCIM seams, and storage/KMS adapter contracts.
-SAML, SCIM HTTP surfaces, SIEM sinks, KMS/BYOK implementations, legal-hold
-enforcement, and corporate object storage backends remain follow-up work.
+`LEVARA_OIDC_AUDIENCES`), a SAML 2.0 service provider (`/saml/login`,
+`/saml/acs`, `/saml/metadata`; env: `LEVARA_SAML_ENABLED`,
+`LEVARA_SAML_ENTITY_ID`, `LEVARA_SAML_ACS_URL`, `LEVARA_SAML_IDP_METADATA_URL`
+or `LEVARA_SAML_IDP_METADATA_FILE`, `LEVARA_SAML_KEY_FILE`,
+`LEVARA_SAML_CERT_FILE` — SP-initiated flows only), SSO/SCIM seams, and
+storage/KMS adapter contracts. SCIM HTTP surfaces, SIEM sinks, KMS/BYOK
+implementations, legal-hold enforcement, and corporate object storage backends
+remain follow-up work.
 
 Start from:
 

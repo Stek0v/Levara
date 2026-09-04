@@ -98,6 +98,14 @@ type jwtPayload struct {
 	Iat   int64  `json:"iat"` // issued at
 }
 
+// CreateSessionJWT issues a Levara session token for an identity resolved
+// by an external authentication flow (composition-root callers only; the
+// name deliberately carries no protocol terms — see the architecture guard
+// in pkg/access). Exposed for SSO flows wired in cmd/server.
+func CreateSessionJWT(userID, email, secret string) string {
+	return createJWT(userID, email, secret)
+}
+
 func createJWT(userID, email, secret string) string {
 	header := jwtHeader{Alg: "HS256", Typ: "JWT"}
 	payload := jwtPayload{

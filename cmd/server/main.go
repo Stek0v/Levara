@@ -506,6 +506,19 @@ func main() {
 	}
 	vectorHttp.RegisterAuthAPI(api, authCfg) // may generate JWTSecret if empty
 
+	// SAML HTTP surface (backlog A2) — disabled unless LEVARA_SAML_ENABLED
+	// is set AND IdP metadata is configured. Construction is fail-closed: a
+	// broken SAML config aborts startup rather than registering dead routes.
+	samlSP, err := newSAMLSPFromEnv(context.Background(), accesspkg.SimpleMappingBridge{})
+	if err != nil {
+		log.Fatalf("saml: %v", err)
+	}
+	if samlSP != nil {
+		samlRoutes(api, samlSP, authCfg.JWTSecret)
+		log.Printf("saml sp enabled: entity=%s acs=%s",
+			os.Getenv("LEVARA_SAML_ENTITY_ID"), os.Getenv("LEVARA_SAML_ACS_URL"))
+	}
+
 	// Inject DB for API key verification (used by JWTMiddleware).
 	// IMPORTANT: Wrap in DBRef to prevent fasthttp from calling Close() on it.
 	// fasthttp calls io.Closer.Close() on all c.Locals values when the request

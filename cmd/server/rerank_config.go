@@ -6,11 +6,11 @@ import (
 )
 
 type rerankConfig struct {
-	Endpoint           string
-	Model              string
-	TimeoutMs          int
-	BudgetMs           int
-	ScoreGapThreshold  float32
+	Endpoint          string
+	Model             string
+	TimeoutMs         int
+	BudgetMs          int
+	ScoreGapThreshold float32
 }
 
 func rerankConfigFromEnv() rerankConfig {

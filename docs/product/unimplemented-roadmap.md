@@ -15,8 +15,10 @@
   rotation), middleware-фолбэк в HTTP-слое, env `LEVARA_OIDC_JWKS_URL` /
   `LEVARA_OIDC_ISSUERS` / `LEVARA_OIDC_AUDIENCES`; биндинг к identity bridge —
   в composition root (архитектурный guard соблюдён). ADR на surface не нужен.
-- [ ] A2 (P1). **SAML HTTP surface** — identity-федерауия для корпораций;
-  контракт SSO bridge есть, SAML-реализации нет.
+- [x] A2 (P1). **SAML HTTP surface** — реализовано 2026-09-04: SP на
+  crewjam/saml v0.5.1, `/saml/login|acs|metadata` за `LEVARA_SAML_ENABLED`,
+  SP-initiated only (unsolicited отклоняются), one-time-use request-ID store,
+  identity через общий IdentityBridge.
 - [ ] A3 (P1). **SCIM HTTP surface (provisioning)** — SCIM-shaped provisioner
   seam существует; HTTP-поверхность отложена до ADR.
 - [ ] A4 (P2). **KMS / BYOK реализации** — storage/KMS contracts задают scope,
