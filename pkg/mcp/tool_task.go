@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/stek0v/levara/pkg/memoryindex"
 )
 
 const (
@@ -1061,78 +1063,162 @@ func ToolTaskComplete(ctx context.Context, deps Deps, args map[string]any) ToolR
 	if n, _ := res.RowsAffected(); n != 1 {
 		return toolError("version conflict or task already completed")
 	}
-	_ = taskEvent(ctx, tx, deps.Q, taskID, taskActor(ctx, args), "task_completed", map[string]any{"version": expected + 1})
+	promoted, rejected, err := promoteTaskMemories(ctx, deps, tx, taskID)
+	if err != nil {
+		return toolError(err.Error())
+	}
+	if err := taskEvent(ctx, tx, deps.Q, taskID, taskActor(ctx, args), "task_completed", map[string]any{"version": expected + 1}); err != nil {
+		return toolError(err.Error())
+	}
 	if err := tx.Commit(); err != nil {
 		return toolError(err.Error())
 	}
-	promoted, rejected := promoteTaskMemories(ctx, deps, taskID)
+	syncTaskMemoryIndex(ctx, deps, taskID)
 	deps.LogHeartbeat("task_completed", map[string]any{"task_id": taskID, "promoted_memories": promoted, "rejected_memories": rejected, "at": now})
 	return jsonResult(map[string]any{"ok": true, "task_id": taskID, "status": "completed", "version": expected + 1, "promoted_memories": promoted, "rejected_memories": rejected})
 }
 
-func promoteTaskMemories(ctx context.Context, deps Deps, taskID string) (int, int) {
-	db := deps.DB()
-	if db == nil {
-		return 0, 0
-	}
+func promoteTaskMemories(ctx context.Context, deps Deps, tx *sql.Tx, taskID string) (int, int, error) {
 	var collection, revision string
-	_ = db.QueryRowContext(ctx, deps.Q(`SELECT collection_name,current_workspace_revision FROM tasks WHERE id=$1`), taskID).Scan(&collection, &revision)
-	rows, err := db.QueryContext(ctx, deps.Q(`SELECT id,memory_key,value,room,hall,evidence_receipt_ids FROM task_memory_candidates WHERE task_id=$1 AND status='pending'`), taskID)
-	if err != nil {
-		return 0, 0
+	if err := tx.QueryRowContext(ctx, deps.Q(`SELECT collection_name,current_workspace_revision FROM tasks WHERE id=$1`), taskID).Scan(&collection, &revision); err != nil {
+		return 0, 0, err
 	}
-	defer rows.Close()
+	rows, err := tx.QueryContext(ctx, deps.Q(`SELECT id,memory_key,value,room,hall,evidence_receipt_ids FROM task_memory_candidates WHERE task_id=$1 AND status='pending' ORDER BY memory_key`), taskID)
+	if err != nil {
+		return 0, 0, err
+	}
 	type candidate struct{ id, key, value, room, hall, evidence string }
 	var items []candidate
 	for rows.Next() {
 		var c candidate
-		if rows.Scan(&c.id, &c.key, &c.value, &c.room, &c.hall, &c.evidence) == nil {
-			items = append(items, c)
+		if err := rows.Scan(&c.id, &c.key, &c.value, &c.room, &c.hall, &c.evidence); err != nil {
+			rows.Close()
+			return 0, 0, err
 		}
+		items = append(items, c)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return 0, 0, err
 	}
 	promoted, rejected := 0, 0
+	now := time.Now().UTC().Format(time.RFC3339Nano)
 	for _, c := range items {
 		var evidence []string
-		_ = json.Unmarshal([]byte(c.evidence), &evidence)
-		valid := len(evidence) > 0
+		valid := json.Unmarshal([]byte(c.evidence), &evidence) == nil && len(evidence) > 0 && IsValidHall(c.hall) && c.room != ""
 		if c.hall == "event" && !absoluteDateRE.MatchString(c.value) {
 			valid = false
 		}
 		for _, rid := range evidence {
 			var status, receiptRevision string
-			if db.QueryRowContext(ctx, deps.Q(`SELECT status,workspace_revision FROM task_receipts WHERE id=$1 AND task_id=$2`), rid, taskID).Scan(&status, &receiptRevision) != nil || status != "pass" || (revision != "" && receiptRevision != revision) {
+			err := tx.QueryRowContext(ctx, deps.Q(`SELECT status,workspace_revision FROM task_receipts WHERE id=$1 AND task_id=$2`), rid, taskID).Scan(&status, &receiptRevision)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return 0, 0, err
+			}
+			if err != nil || status != "pass" || (revision != "" && receiptRevision != revision) {
 				valid = false
 			}
 		}
 		if !valid {
+			if _, err := tx.ExecContext(ctx, deps.Q(`UPDATE task_memory_candidates SET status='rejected' WHERE id=$1`), c.id); err != nil {
+				return 0, 0, err
+			}
 			rejected++
-			_, _ = db.ExecContext(ctx, deps.Q(`UPDATE task_memory_candidates SET status='rejected' WHERE id=$1`), c.id)
 			continue
 		}
-		var memoryID string
-		var existingValue string
-		existingErr := db.QueryRowContext(ctx, deps.Q(`SELECT id,value FROM memories WHERE key=$1 AND collection_name=$2 AND (owner_id=$3 OR owner_id='') AND superseded_by='' ORDER BY owner_id DESC LIMIT 1`), c.key, collection, taskOwner(ctx)).Scan(&memoryID, &existingValue)
-		if existingErr == nil && existingValue != c.value {
-			result := ToolSupersedeMemory(ctx, deps, map[string]any{"old_memory_id": memoryID, "new_value": c.value, "reason": "verified long-horizon task outcome", "room": c.room, "hall": c.hall, "source_task_id": taskID, "source_receipt_ids": toAnyStrings(evidence), "verification_status": "verified"})
-			if result.IsError {
-				rejected++
-				continue
-			}
-			_ = db.QueryRowContext(ctx, deps.Q(`SELECT id FROM memories WHERE key=$1 AND collection_name=$2 AND (owner_id=$3 OR owner_id='') AND superseded_by='' ORDER BY owner_id DESC LIMIT 1`), c.key, collection, taskOwner(ctx)).Scan(&memoryID)
-		} else if existingErr != nil {
-			result := ToolSaveMemory(ctx, deps, map[string]any{"key": c.key, "value": c.value, "type": "project", "collection": collection, "room": c.room, "hall": c.hall, "source_task_id": taskID, "source_receipt_ids": toAnyStrings(evidence), "verification_status": "verified"})
-			if result.IsError {
-				rejected++
-				continue
-			}
-			_ = db.QueryRowContext(ctx, deps.Q(`SELECT id FROM memories WHERE key=$1 AND collection_name=$2 AND (owner_id=$3 OR owner_id='') AND superseded_by='' ORDER BY owner_id DESC LIMIT 1`), c.key, collection, taskOwner(ctx)).Scan(&memoryID)
+		var memoryID, existingValue, memType, ownerID string
+		err := tx.QueryRowContext(ctx, deps.Q(`SELECT id,value,type,owner_id FROM memories WHERE key=$1 AND collection_name=$2 AND (owner_id=$3 OR owner_id='') AND superseded_by='' ORDER BY owner_id DESC LIMIT 1`), c.key, collection, taskOwner(ctx)).Scan(&memoryID, &existingValue, &memType, &ownerID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return 0, 0, err
 		}
-		_, _ = db.ExecContext(ctx, deps.Q(`UPDATE memories SET source_task_id=$1,source_receipt_ids=$2,verification_status='verified' WHERE id=$3`), taskID, c.evidence, memoryID)
-		_, _ = db.ExecContext(ctx, deps.Q(`INSERT INTO task_memory_links(task_id,memory_id,relation,created_at) VALUES($1,$2,'produced',$3) ON CONFLICT DO NOTHING`), taskID, memoryID, time.Now().UTC().Format(time.RFC3339Nano))
-		_, _ = db.ExecContext(ctx, deps.Q(`UPDATE task_memory_candidates SET status='promoted' WHERE id=$1`), c.id)
+		oldID := ""
+		changed := err != nil || existingValue != c.value
+		if err == nil && changed {
+			oldID = memoryID
+			memoryID = uuid.NewString()
+			res, err := tx.ExecContext(ctx, deps.Q(`UPDATE memories SET key=$1,superseded_by=$2,supersession_reason=$3,valid_until=$4,updated_at=$5 WHERE id=$6 AND superseded_by='' AND value=$7`), c.key+"#superseded:"+oldID, memoryID, "verified long-horizon task outcome", now, now, oldID, existingValue)
+			if err != nil {
+				return 0, 0, err
+			}
+			if n, err := res.RowsAffected(); err != nil || n != 1 {
+				return 0, 0, fmt.Errorf("memory changed during task promotion")
+			}
+		} else if err != nil {
+			memoryID, ownerID, memType = uuid.NewString(), taskOwner(ctx), "project"
+		}
+		if changed {
+			value := memoryCommitCandidate{Key: c.key, Value: c.value, Room: c.room, Hall: c.hall, SourceTaskID: taskID, SourceReceiptIDs: evidence, VerificationStatus: "verified"}
+			if err := memoryCommitInsert(ctx, tx, deps, memoryID, value, ownerID, collection, memType, oldID); err != nil {
+				return 0, 0, err
+			}
+			if provider, ok := deps.(interface{ MemoryIndexOutbox() *memoryindex.Store }); ok && provider.MemoryIndexOutbox() != nil {
+				if oldID != "" && deps.HasCollections() {
+					if _, err := provider.MemoryIndexOutbox().EnqueueTx(ctx, tx, memoryindex.Job{MemoryID: oldID, Operation: "delete_vector", Collection: collection, OwnerID: ownerID, Digest: "delete:" + oldID}); err != nil {
+						return 0, 0, err
+					}
+				}
+				if deps.EmbedAvailable() {
+					if _, err := provider.MemoryIndexOutbox().EnqueueTx(ctx, tx, memoryindex.Job{MemoryID: memoryID, Operation: "upsert_vector", Collection: collection, OwnerID: ownerID, Digest: fmt.Sprintf("%x", sha256.Sum256([]byte(c.key+"\x00"+c.value))), Model: deps.EmbedModel()}); err != nil {
+						return 0, 0, err
+					}
+				}
+			}
+		}
+		res, err := tx.ExecContext(ctx, deps.Q(`UPDATE memories SET source_task_id=$1,source_receipt_ids=$2,verification_status='verified' WHERE id=$3 AND superseded_by='' AND value=$4`), taskID, c.evidence, memoryID, c.value)
+		if err != nil {
+			return 0, 0, err
+		}
+		if n, err := res.RowsAffected(); err != nil || n != 1 {
+			return 0, 0, fmt.Errorf("memory changed during task promotion")
+		}
+		if _, err := tx.ExecContext(ctx, deps.Q(`INSERT INTO task_memory_links(task_id,memory_id,relation,created_at) VALUES($1,$2,'produced',$3) ON CONFLICT DO NOTHING`), taskID, memoryID, now); err != nil {
+			return 0, 0, err
+		}
+		if _, err := tx.ExecContext(ctx, deps.Q(`UPDATE task_memory_candidates SET status='promoted' WHERE id=$1`), c.id); err != nil {
+			return 0, 0, err
+		}
 		promoted++
 	}
-	return promoted, rejected
+	return promoted, rejected, nil
+}
+
+// Preserve synchronous indexing for embedders that do not expose an outbox.
+// SQL outcomes are already durable; configured servers use transactional jobs.
+func syncTaskMemoryIndex(ctx context.Context, deps Deps, taskID string) {
+	if provider, ok := deps.(interface{ MemoryIndexOutbox() *memoryindex.Store }); ok && provider.MemoryIndexOutbox() != nil {
+		return
+	}
+	if !deps.EmbedAvailable() && !deps.HasCollections() {
+		return
+	}
+	rows, err := deps.DB().QueryContext(ctx, deps.Q(`SELECT m.id,m.key,m.value,m.type,m.collection_name,m.supersedes_memory_id FROM memories m JOIN task_memory_links l ON l.memory_id=m.id WHERE l.task_id=$1 AND m.superseded_by=''`), taskID)
+	if err != nil {
+		return
+	}
+	type indexedMemory struct{ id, key, value, memType, collection, oldID string }
+	var items []indexedMemory
+	for rows.Next() {
+		var m indexedMemory
+		if err := rows.Scan(&m.id, &m.key, &m.value, &m.memType, &m.collection, &m.oldID); err != nil {
+			rows.Close()
+			return
+		}
+		items = append(items, m)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return
+	}
+	for _, m := range items {
+		if m.oldID != "" && deps.HasCollections() {
+			_ = deps.CollectionDelete(memoryCollectionName(m.collection), m.oldID)
+		}
+		if deps.EmbedAvailable() {
+			indexMemorySync(deps, m.collection, m.id, m.key, m.value, m.memType)
+		}
+	}
 }
 
 func toAnyStrings(values []string) []any {

@@ -7,13 +7,17 @@ import { useT } from '@/lib/i18n'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 
-// Only allow same-origin relative redirects. Rejects protocol-relative (//evil.com),
-// absolute URLs, and paths starting with /login (loop protection).
+// Parse with the browser's URL rules, including backslashes and control characters.
 function sanitizeNext(raw: string | null): string {
-  if (!raw) return '/'
-  if (!raw.startsWith('/') || raw.startsWith('//')) return '/'
-  if (raw.startsWith('/login')) return '/'
-  return raw
+  if (!raw?.startsWith('/')) return '/'
+  try {
+    const origin = 'http://levara.invalid'
+    const next = new URL(raw, origin)
+    if (next.origin !== origin || next.pathname.startsWith('//') || next.pathname.startsWith('/login')) return '/'
+    return next.pathname + next.search + next.hash
+  } catch {
+    return '/'
+  }
 }
 
 // useSearchParams in Next.js 15/16 forces the parent to opt into client-side

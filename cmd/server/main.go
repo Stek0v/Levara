@@ -806,6 +806,7 @@ func main() {
 		RequireAuth:                *requireAuth,
 		Version:                    GitSHA,
 		SyncToken:                  os.Getenv("LEVARA_TOKEN"),
+		SyncRemoteURL:              os.Getenv("LEVARA_SYNC_REMOTE_URL"),
 		WorkspaceWatcher:           workspaceWatcher,
 		EmbedEndpoint:              embedEndpoint,
 		EmbedModel:                 embedModel,
@@ -849,6 +850,7 @@ func main() {
 		RequireAuth:                *requireAuth,
 		Version:                    GitSHA,
 		SyncToken:                  os.Getenv("LEVARA_TOKEN"),
+		SyncRemoteURL:              os.Getenv("LEVARA_SYNC_REMOTE_URL"),
 		WorkspaceWatcher:           workspaceWatcher,
 		Collections:                colManager,
 		DB:                         pgDB,
@@ -962,7 +964,7 @@ func main() {
 	})
 
 	// gRPC server (v1 + v2) starts in a goroutine. nil when disabled.
-	grpcServer := startGRPCServer(*grpcHost, *grpcPort, authCfg.JWTSecret, *requireAuth, grpcSvc)
+	grpcServer := startGRPCServer(*grpcHost, *grpcPort, authCfg.JWTSecret, *requireAuth, accesspkg.SQLPolicy{DB: pgDB, Q: vectorHttp.SQLRewriter()}, grpcSvc)
 
 	// Optional LLM proxy on its own port.
 	stopProxy := startLLMProxyIfConfigured(*llmProxyPort, *llmUpstream, *dataDir, nodeID, *llmCacheSize, *llmMaxInflight)

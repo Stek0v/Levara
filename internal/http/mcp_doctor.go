@@ -644,6 +644,10 @@ func (h *mcpHandler) toolHeartbeat(ctx context.Context, args map[string]any) mcp
 	}
 
 	eventType, _ := args["event_type"].(string)
+	canReadSync := authorizeSync(ctx, h.cfg) == nil
+	if eventType == "sync" && !canReadSync {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "sync requires an active superuser"}}, IsError: true}
+	}
 	limit := 10
 	if v, ok := args["limit"].(float64); ok && v > 0 {
 		limit = int(v)
@@ -657,6 +661,8 @@ func (h *mcpHandler) toolHeartbeat(ctx context.Context, args map[string]any) mcp
 	if eventType != "" {
 		q, a := QArgs(`SELECT id, event_type, payload, created_at FROM heartbeats WHERE event_type = $1 ORDER BY created_at DESC LIMIT $2`, eventType, limit)
 		rows, err = h.cfg.DB.QueryContext(ctx, q, a...)
+	} else if !canReadSync {
+		rows, err = h.cfg.DB.QueryContext(ctx, Q(`SELECT id,event_type,payload,created_at FROM heartbeats WHERE event_type<>'sync' ORDER BY created_at DESC LIMIT $1`), limit)
 	} else {
 		rows, err = h.cfg.DB.QueryContext(ctx, Q(`SELECT id, event_type, payload, created_at FROM heartbeats ORDER BY created_at DESC LIMIT $1`), limit)
 	}

@@ -3,7 +3,9 @@ package http
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -81,6 +83,10 @@ func enqueueMissingMemoryVectors(cfg APIConfig) {
 			missing = append(missing, r)
 		}
 	}
+	if err := rows.Err(); err != nil {
+		return
+	}
+	rows.Close()
 	for _, r := range missing {
 		tx, err := cfg.DB.BeginTx(context.Background(), nil)
 		if err != nil {
@@ -109,12 +115,29 @@ func runMemoryIndexJob(ctx context.Context, cfg APIConfig) bool {
 	return true
 }
 
+// ponytail: fixed stripes bound lock memory; split further only if contention is measured.
+// Embedding stays outside these locks. Vector publication/deletion for an ID is ordered.
+var memoryVectorLocks [64]sync.Mutex
+
 func executeMemoryIndexJob(ctx context.Context, cfg APIConfig, job memoryindex.Job) error {
+	if cfg.Collections == nil || cfg.DB == nil {
+		return fmt.Errorf("index dependencies unavailable")
+	}
+	hash := sha256.Sum256([]byte(job.MemoryID))
+	lock := &memoryVectorLocks[int(hash[0])%len(memoryVectorLocks)]
 	if job.Operation == "delete_vector" {
+		lock.Lock()
+		defer lock.Unlock()
+		if !cfg.Collections.HasRecord(memoryCollectionNameHTTP(job.Collection), job.MemoryID) {
+			return nil
+		}
 		return cfg.Collections.Delete(memoryCollectionNameHTTP(job.Collection), job.MemoryID)
 	}
 	var key, value, typ, owner, collection string
-	err := cfg.DB.QueryRowContext(ctx, Q(`SELECT key,value,type,owner_id,collection_name FROM memories WHERE id=$1`), job.MemoryID).Scan(&key, &value, &typ, &owner, &collection)
+	err := cfg.DB.QueryRowContext(ctx, Q(`SELECT key,value,type,owner_id,collection_name FROM memories WHERE id=$1 AND superseded_by=''`), job.MemoryID).Scan(&key, &value, &typ, &owner, &collection)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -134,9 +157,24 @@ func executeMemoryIndexJob(ctx context.Context, cfg APIConfig, job memoryindex.J
 	if job.Dimension > 0 && len(vec) != job.Dimension {
 		return fmt.Errorf("embedding dimension %d, want %d", len(vec), job.Dimension)
 	}
+	lock.Lock()
+	defer lock.Unlock()
+	current := func() (bool, error) {
+		var active bool
+		err := cfg.DB.QueryRowContext(ctx, Q(`SELECT EXISTS(SELECT 1 FROM memories WHERE id=$1 AND key=$2 AND value=$3 AND owner_id=$4 AND collection_name=$5 AND superseded_by='')`), job.MemoryID, key, value, owner, collection).Scan(&active)
+		return active, err
+	}
+	if active, err := current(); err != nil || !active {
+		return err
+	}
 	meta, _ := json.Marshal(map[string]string{"key": key, "value": value, "type": typ, "collection": collection, "memory_id": job.MemoryID})
 	if err = cfg.Collections.Insert(memoryCollectionNameHTTP(collection), job.MemoryID, vec, meta); err != nil {
 		return err
+	}
+	if active, err := current(); err != nil {
+		return err
+	} else if !active {
+		return cfg.Collections.Delete(memoryCollectionNameHTTP(collection), job.MemoryID)
 	}
 	if !cfg.Collections.HasRecord(memoryCollectionNameHTTP(collection), job.MemoryID) {
 		return fmt.Errorf("vector absent after insert")

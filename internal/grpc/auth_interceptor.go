@@ -19,6 +19,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
+	"github.com/stek0v/levara/pkg/access"
 	vectorAuth "github.com/stek0v/levara/pkg/auth"
 )
 
@@ -27,11 +28,14 @@ import (
 // downstream library might use.
 type ctxUserIDKey struct{}
 
+type ctxPrivateInfoKey struct{}
+
 // publicMethods is the allow-list of RPCs that skip auth. Keep this
 // short — every entry is a potential abuse surface. Health/Info probes
 // need to work before a client has a token.
 var publicMethods = map[string]bool{
-	"/levara.v1.LevaraService/Info": true,
+	"/levara.v1.LevaraService/Info":   true,
+	"/levara.v2.LevaraServiceV2/Info": true,
 }
 
 // UserIDFromContext returns the authenticated user ID if the interceptor
@@ -41,15 +45,12 @@ func UserIDFromContext(ctx context.Context) string {
 	return v
 }
 
-// UnaryAuthInterceptor verifies JWT on every non-whitelisted unary RPC
-// and injects the user_id into the context. requireAuth=false makes the
-// interceptor permissive — useful for dev deployments where clients
-// don't set a token yet; it logs missing/invalid tokens as "anon" rather
-// than rejecting.
-func UnaryAuthInterceptor(secret string, requireAuth bool) grpclib.UnaryServerInterceptor {
+// UnaryAuthInterceptor restricts the global raw-storage API to active
+// superusers when authentication is required. No-auth dev mode stays permissive.
+func UnaryAuthInterceptor(secret string, requireAuth bool, policy access.SQLPolicy) grpclib.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpclib.UnaryServerInfo, handler grpclib.UnaryHandler) (any, error) {
 		if publicMethods[info.FullMethod] {
-			return handler(ctx, req)
+			return handler(context.WithValue(ctx, ctxPrivateInfoKey{}, requireAuth), req)
 		}
 		uid, ok := authFromMetadata(ctx, secret)
 		if !ok {
@@ -59,6 +60,11 @@ func UnaryAuthInterceptor(secret string, requireAuth bool) grpclib.UnaryServerIn
 			// Permissive mode: continue without uid.
 			return handler(ctx, req)
 		}
+		if requireAuth {
+			if err := authorizeGlobalStorage(ctx, uid, policy); err != nil {
+				return nil, err
+			}
+		}
 		ctx = context.WithValue(ctx, ctxUserIDKey{}, uid)
 		return handler(ctx, req)
 	}
@@ -67,7 +73,7 @@ func UnaryAuthInterceptor(secret string, requireAuth bool) grpclib.UnaryServerIn
 // StreamAuthInterceptor mirrors UnaryAuthInterceptor for server-streaming
 // RPCs. Wraps the stream so downstream handlers reading ss.Context() see
 // the injected user_id.
-func StreamAuthInterceptor(secret string, requireAuth bool) grpclib.StreamServerInterceptor {
+func StreamAuthInterceptor(secret string, requireAuth bool, policy access.SQLPolicy) grpclib.StreamServerInterceptor {
 	return func(srv any, ss grpclib.ServerStream, info *grpclib.StreamServerInfo, handler grpclib.StreamHandler) error {
 		if publicMethods[info.FullMethod] {
 			return handler(srv, ss)
@@ -79,8 +85,33 @@ func StreamAuthInterceptor(secret string, requireAuth bool) grpclib.StreamServer
 			}
 			return handler(srv, ss)
 		}
+		if requireAuth {
+			if err := authorizeGlobalStorage(ss.Context(), uid, policy); err != nil {
+				return err
+			}
+		}
 		return handler(srv, &authedStream{ServerStream: ss, ctx: context.WithValue(ss.Context(), ctxUserIDKey{}, uid)})
 	}
+}
+
+func authorizeGlobalStorage(ctx context.Context, uid string, policy access.SQLPolicy) error {
+	// Raw collection names have no ownership mapping: dataset grants cannot
+	// safely authorize this API's reads, deletes, and collection-wide operations.
+	superuser, err := policy.IsSuperuser(ctx, uid)
+	if err != nil {
+		return status.Error(codes.Internal, "authorization lookup failed")
+	}
+	if !superuser {
+		return status.Error(codes.PermissionDenied, "active superuser required")
+	}
+	active, err := policy.IsActive(ctx, uid)
+	if err != nil {
+		return status.Error(codes.Internal, "authorization lookup failed")
+	}
+	if !active {
+		return status.Error(codes.PermissionDenied, "active superuser required")
+	}
+	return nil
 }
 
 // authFromMetadata extracts and verifies the JWT. Accepts "Bearer <token>"
@@ -99,7 +130,7 @@ func authFromMetadata(ctx context.Context, secret string) (string, bool) {
 	token = strings.TrimPrefix(token, "Bearer ")
 	token = strings.TrimPrefix(token, "bearer ")
 	p, ok := vectorAuth.VerifyJWT(token, secret)
-	if !ok {
+	if !ok || p.Sub == "" {
 		return "", false
 	}
 	return p.Sub, true

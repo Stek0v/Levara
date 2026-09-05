@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,6 +16,8 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
+	_ "github.com/ncruces/go-sqlite3/driver"
+	"github.com/stek0v/levara/pkg/access"
 	vectorAuth "github.com/stek0v/levara/pkg/auth"
 )
 
@@ -51,7 +55,7 @@ func TestUnaryAuthInterceptor_ValidTokenInjectsUserID(t *testing.T) {
 	tok := signJWT(t, "alice", secret, time.Hour)
 	ctx := ctxWithToken(tok)
 
-	interceptor := UnaryAuthInterceptor(secret, true)
+	interceptor := UnaryAuthInterceptor(secret, true, newGRPCAuthPolicy(t))
 	info := &grpclib.UnaryServerInfo{FullMethod: "/levara.v1.LevaraService/Search"}
 
 	var gotUID string
@@ -68,7 +72,7 @@ func TestUnaryAuthInterceptor_ValidTokenInjectsUserID(t *testing.T) {
 }
 
 func TestUnaryAuthInterceptor_MissingTokenRejected(t *testing.T) {
-	interceptor := UnaryAuthInterceptor("s3cret", true)
+	interceptor := UnaryAuthInterceptor("s3cret", true, access.SQLPolicy{})
 	info := &grpclib.UnaryServerInfo{FullMethod: "/levara.v1.LevaraService/Search"}
 
 	_, err := interceptor(context.Background(), nil, info, func(context.Context, any) (any, error) {
@@ -84,7 +88,7 @@ func TestUnaryAuthInterceptor_MissingTokenRejected(t *testing.T) {
 }
 
 func TestUnaryAuthInterceptor_WhitelistedMethodBypassesAuth(t *testing.T) {
-	interceptor := UnaryAuthInterceptor("s3cret", true)
+	interceptor := UnaryAuthInterceptor("s3cret", true, access.SQLPolicy{})
 	info := &grpclib.UnaryServerInfo{FullMethod: "/levara.v1.LevaraService/Info"}
 
 	called := false
@@ -105,7 +109,7 @@ func TestUnaryAuthInterceptor_ExpiredTokenRejected(t *testing.T) {
 	tok := signJWT(t, "alice", secret, -time.Hour) // already expired
 	ctx := ctxWithToken(tok)
 
-	interceptor := UnaryAuthInterceptor(secret, true)
+	interceptor := UnaryAuthInterceptor(secret, true, access.SQLPolicy{})
 	info := &grpclib.UnaryServerInfo{FullMethod: "/levara.v1.LevaraService/Search"}
 	_, err := interceptor(ctx, nil, info, func(context.Context, any) (any, error) {
 		t.Fatal("expired token should not reach handler")
@@ -120,7 +124,7 @@ func TestUnaryAuthInterceptor_WrongSecretRejected(t *testing.T) {
 	tok := signJWT(t, "alice", "right-secret", time.Hour)
 	ctx := ctxWithToken(tok)
 
-	interceptor := UnaryAuthInterceptor("wrong-secret", true)
+	interceptor := UnaryAuthInterceptor("wrong-secret", true, access.SQLPolicy{})
 	info := &grpclib.UnaryServerInfo{FullMethod: "/levara.v1.LevaraService/Search"}
 	_, err := interceptor(ctx, nil, info, func(context.Context, any) (any, error) {
 		t.Fatal("wrong-secret token should not reach handler")
@@ -134,7 +138,7 @@ func TestUnaryAuthInterceptor_WrongSecretRejected(t *testing.T) {
 // Permissive mode: missing token doesn't reject — useful for dev where
 // some clients haven't been upgraded to send tokens yet.
 func TestUnaryAuthInterceptor_PermissiveModeAllowsAnon(t *testing.T) {
-	interceptor := UnaryAuthInterceptor("s3cret", false)
+	interceptor := UnaryAuthInterceptor("s3cret", false, access.SQLPolicy{})
 	info := &grpclib.UnaryServerInfo{FullMethod: "/levara.v1.LevaraService/Search"}
 
 	called := false
@@ -152,5 +156,74 @@ func TestUnaryAuthInterceptor_PermissiveModeAllowsAnon(t *testing.T) {
 	}
 	if gotUID != "" {
 		t.Errorf("anonymous call should have empty user_id, got %q", gotUID)
+	}
+}
+
+func newGRPCAuthPolicy(t *testing.T) access.SQLPolicy {
+	t.Helper()
+	db, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	t.Cleanup(func() { db.Close() })
+	if _, err := db.Exec(`CREATE TABLE users (id TEXT PRIMARY KEY, is_superuser BOOLEAN, is_active BOOLEAN);
+		INSERT INTO users VALUES ('alice', true, true), ('ordinary-user', false, true), ('disabled-superuser', true, false)`); err != nil {
+		t.Fatal(err)
+	}
+	return access.SQLPolicy{DB: db, Q: func(q string) string { return strings.ReplaceAll(q, "$1", "?") }}
+}
+
+func TestAuthInterceptorsGlobalStoragePolicy(t *testing.T) {
+	policy := newGRPCAuthPolicy(t)
+	brokenPolicy := newGRPCAuthPolicy(t)
+	if err := brokenPolicy.DB.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, user  string
+		requireAuth bool
+		policy      access.SQLPolicy
+		want        codes.Code
+	}{
+		{"active superuser", "alice", true, policy, codes.OK},
+		{"ordinary user", "ordinary-user", true, policy, codes.PermissionDenied},
+		{"inactive superuser", "disabled-superuser", true, policy, codes.PermissionDenied},
+		{"missing user", "deleted-user", true, policy, codes.PermissionDenied},
+		{"empty subject", "", true, policy, codes.Unauthenticated},
+		{"nil database", "alice", true, access.SQLPolicy{}, codes.PermissionDenied},
+		{"database failure", "alice", true, brokenPolicy, codes.Internal},
+		{"dev anonymous", "", false, access.SQLPolicy{}, codes.OK},
+		{"dev ordinary user", "ordinary-user", false, brokenPolicy, codes.OK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := ctxWithToken(signJWT(t, tc.user, "secret", time.Hour))
+			called := false
+			_, err := UnaryAuthInterceptor("secret", tc.requireAuth, tc.policy)(ctx, nil,
+				&grpclib.UnaryServerInfo{FullMethod: "/levara.v2.LevaraServiceV2/Insert"},
+				func(ctx context.Context, _ any) (any, error) {
+					called = true
+					if UserIDFromContext(ctx) != tc.user {
+						t.Errorf("unary user=%q", UserIDFromContext(ctx))
+					}
+					return nil, nil
+				})
+			if status.Code(err) != tc.want || called != (tc.want == codes.OK) {
+				t.Fatalf("unary: error=%v called=%v, want %s", err, called, tc.want)
+			}
+			called = false
+			err = StreamAuthInterceptor("secret", tc.requireAuth, tc.policy)(nil, &authedStream{ctx: ctx},
+				&grpclib.StreamServerInfo{FullMethod: "/levara.v1.LevaraService/PipelineCognify"},
+				func(_ any, stream grpclib.ServerStream) error {
+					called = true
+					if UserIDFromContext(stream.Context()) != tc.user {
+						t.Errorf("stream user=%q", UserIDFromContext(stream.Context()))
+					}
+					return nil
+				})
+			if status.Code(err) != tc.want || called != (tc.want == codes.OK) {
+				t.Fatalf("stream: error=%v called=%v, want %s", err, called, tc.want)
+			}
+		})
 	}
 }

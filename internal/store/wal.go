@@ -37,15 +37,16 @@ type flushRequest struct {
 //
 //	[4B size][1B op][4B idLen][id][4B vecLen][vec bytes][4B metaLen][meta][8B offset][4B length]
 type WAL struct {
+	path   string
 	file   *os.File
 	writer *bufio.Writer
 
-	mu        sync.Mutex       // protects writer (bufio.Writer) from concurrent access
+	mu        sync.Mutex        // protects writer (bufio.Writer) from concurrent access
 	flushCh   chan flushRequest // group commit channel
 	closeCh   chan struct{}     // signal fsyncLoop to stop
-	closeOnce sync.Once        // ensure single close
-	syncCount uint64           // atomic counter for testing coalescing
-	closed    atomic.Bool      // set on Close, checked by FlushAsync
+	closeOnce sync.Once         // ensure single close
+	syncCount uint64            // atomic counter for testing coalescing
+	closed    atomic.Bool       // set on Close, checked by FlushAsync
 	loopDone  chan struct{}     // closed when fsyncLoop exits
 }
 
@@ -58,6 +59,7 @@ func OpenWal(path string) (*WAL, error) {
 		return nil, err
 	}
 	wal := &WAL{
+		path:     path,
 		file:     f,
 		writer:   bufio.NewWriter(f),
 		flushCh:  make(chan flushRequest, 64),
@@ -240,7 +242,25 @@ func writeWALEntryTo(w *bufio.Writer, op byte, id string, vector []float32, meta
 
 // Path returns the filesystem path of the WAL file.
 func (wal *WAL) Path() string {
-	return wal.file.Name()
+	return wal.path
+}
+
+// replaceFile publishes a flushed, synced WAL while preserving pending group commits.
+// The caller holds db.mu and transfers ownership of file only on success.
+func (wal *WAL) replaceFile(file *os.File) error {
+	wal.mu.Lock()
+	defer wal.mu.Unlock()
+	if wal.closed.Load() {
+		return ErrClosed
+	}
+	if err := os.Rename(file.Name(), wal.path); err != nil {
+		return err
+	}
+	old := wal.file
+	wal.file = file
+	wal.writer = bufio.NewWriter(file)
+	_ = old.Close()
+	return nil
 }
 
 // Flush flushes the buffered writer and fsyncs to ensure durability.

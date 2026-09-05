@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import type { MemoryScaffoldProposal } from '../src/lib/api'
 
 test.describe('Memory scaffold proposals', () => {
   test.beforeEach(async ({ page }) => {
@@ -12,7 +13,7 @@ test.describe('Memory scaffold proposals', () => {
   })
 
   test('lists proposals, opens detail, approves', async ({ page }) => {
-    let proposal = {
+    let proposal: MemoryScaffoldProposal = {
       id: 'p1',
       target: 'project_agents',
       collection: 'levara',

@@ -117,10 +117,7 @@ func (s *SnapshotStore) AppendChange(collection string, change Change) error {
 	if err != nil {
 		return err
 	}
-	if _, err := f.Write(data); err != nil {
-		return err
-	}
-	if _, err := f.Write([]byte("\n")); err != nil {
+	if _, err := f.Write(append(data, '\n')); err != nil {
 		return err
 	}
 	return f.Sync()
@@ -156,6 +153,12 @@ func (s *SnapshotStore) StartAutosave(ctx context.Context, indexes *IndexRegistr
 
 // SaveSnapshot writes a complete BM25 index snapshot with atomic rename.
 func SaveSnapshot(path string, idx *Index) error {
+	return saveSnapshot(path, idx, writeSnapshotDocuments)
+}
+
+func saveSnapshot(path string, idx *Index, writeDocuments func(*bufio.Writer, []Document) error) error {
+	idx.changeMu.Lock()
+	defer idx.changeMu.Unlock()
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
@@ -165,30 +168,50 @@ func SaveSnapshot(path string, idx *Index) error {
 		return err
 	}
 	w := bufio.NewWriter(f)
-	for _, doc := range idx.Documents() {
-		entry := diskDoc{Op: "put", ID: doc.ID, Text: doc.Text, Metadata: doc.Metadata}
-		data, err := json.Marshal(entry)
-		if err != nil {
-			_ = f.Close()
-			return err
-		}
-		if _, err := w.Write(data); err != nil {
-			_ = f.Close()
-			return err
-		}
-		if err := w.WriteByte('\n'); err != nil {
-			_ = f.Close()
-			return err
-		}
+	if err := writeDocuments(w, idx.Documents()); err != nil {
+		_ = f.Close()
+		return err
 	}
 	if err := w.Flush(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
 		_ = f.Close()
 		return err
 	}
 	if err := f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	dir, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return fmt.Errorf("snapshot published; open directory: %w", err)
+	}
+	defer dir.Close()
+	if err := dir.Sync(); err != nil {
+		return fmt.Errorf("snapshot published; sync directory: %w", err)
+	}
+	return nil
+}
+
+func writeSnapshotDocuments(w *bufio.Writer, docs []Document) error {
+	for _, doc := range docs {
+		entry := diskDoc{Op: "put", ID: doc.ID, Text: doc.Text, Metadata: doc.Metadata}
+		data, err := json.Marshal(entry)
+		if err != nil {
+			return err
+		}
+		if _, err := w.Write(data); err != nil {
+			return err
+		}
+		if err := w.WriteByte('\n'); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // LoadSnapshot loads a complete BM25 index snapshot from disk.

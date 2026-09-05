@@ -18,8 +18,8 @@ func TestRESTRouteInventoryMatchesRegisterAPI(t *testing.T) {
 			if r.Method == "HEAD" {
 				continue
 			}
-			if r.Path == "/workspace" {
-				continue // middleware mount from app.Use("/workspace", ...), not an endpoint.
+			if r.Path == "/workspace" || r.Path == "/sync" {
+				continue // app.Use middleware mounts are not endpoints.
 			}
 			registered[routeKey(r.Method, r.Path)] = true
 		}

@@ -244,7 +244,7 @@ func ToolMemoryCommitApply(ctx context.Context, deps Deps, args map[string]any) 
 				indexJobs = append(indexJobs, map[string]any{"memory_id": oldID, "job_id": job.ID, "status": job.Status})
 			}
 			if deps.EmbedAvailable() {
-				job, err := provider.MemoryIndexOutbox().EnqueueTx(ctx, tx, memoryindex.Job{MemoryID: newID, Operation: "upsert_vector", Collection: plan.Collection, OwnerID: ownerID, Digest: memoryCommitTargetDigest(candidate.Key, candidate.Value), Model: deps.EmbedModel()})
+				job, err := provider.MemoryIndexOutbox().EnqueueTx(ctx, tx, memoryindex.Job{MemoryID: newID, Operation: "upsert_vector", Collection: plan.Collection, OwnerID: ownerID, Digest: fmt.Sprintf("%x", sha256.Sum256([]byte(candidate.Key+"\x00"+candidate.Value))), Model: deps.EmbedModel()})
 				if err != nil {
 					return toolError(err.Error())
 				}

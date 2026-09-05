@@ -1,8 +1,9 @@
 // Package cluster provides WAL-based replication for Levara multi-node deployments.
 //
 // Architecture:
-//   Primary: accepts writes → WAL fsync → streams WAL entries to replicas
-//   Replica: receives WAL stream → replays entries to local DB
+//
+//	Primary: accepts writes → WAL fsync → streams WAL entries to replicas
+//	Replica: receives WAL stream → replays entries to local DB
 //
 // Communication uses HTTP streaming (SSE-like) to avoid proto regeneration.
 // Each WAL entry is sent as a JSON line over a long-lived HTTP connection.
@@ -25,11 +26,11 @@ import (
 
 // WALEntry is one replicated entry sent from primary to replica.
 type WALEntry struct {
-	Op       byte              `json:"op"`       // store.OpInsert or store.OpDelete
-	ID       string            `json:"id"`
-	Vector   []float32         `json:"vector,omitempty"`
-	Metadata json.RawMessage   `json:"metadata,omitempty"`
-	Seq      uint64            `json:"seq"` // monotonic sequence number
+	Op       byte            `json:"op"` // store.OpInsert or store.OpDelete
+	ID       string          `json:"id"`
+	Vector   []float32       `json:"vector,omitempty"`
+	Metadata json.RawMessage `json:"metadata,omitempty"`
+	Seq      uint64          `json:"seq"` // monotonic sequence number
 }
 
 // ReplicationServer streams WAL entries to replicas.
@@ -266,12 +267,8 @@ func (rc *ReplicaClient) fetchSnapshot(ctx context.Context) error {
 		return err
 	}
 
-	// Clear local DB and replay snapshot
-	rc.db.Clear()
-	for _, r := range records {
-		if err := rc.db.Insert(r.ID, r.Vector, r.Data); err != nil {
-			log.Printf("[replica] snapshot insert %s: %v", r.ID, err)
-		}
+	if err := rc.db.RestoreSnapshot(records); err != nil {
+		return fmt.Errorf("snapshot restore: %w", err)
 	}
 	log.Printf("[replica] snapshot restored: %d records", len(records))
 	return nil
@@ -381,4 +378,3 @@ func WALEntryFromInsert(id string, vector []float32, metadata interface{}) WALEn
 func WALEntryFromDelete(id string) WALEntry {
 	return WALEntry{Op: store.OpDelete, ID: id}
 }
-

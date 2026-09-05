@@ -468,6 +468,18 @@ func (h *mcpHandler) LexicalSearch(collection, query string, topK int) ([]mcp.Le
 // syncPushCollections) so pkg/mcp doesn't need to know about APIConfig or
 // *store.CollectionManager. Added in F-4 wave 3q for toolSync.
 func (h *mcpHandler) DoSync(ctx context.Context, remoteURL, direction string, types []string, since string, collections []string) (map[string]any, map[string]any, error) {
+	if err := authorizeSync(ctx, h.cfg); err != nil {
+		return nil, nil, err
+	}
+	if permissions, _ := ctx.Value(mcpAPIKeyPermissionsKey).(string); permissions != "" && !accesspkg.APIKeyAllows(permissions, accesspkg.ActionWrite) {
+		return nil, nil, fmt.Errorf("sync requires write permission")
+	}
+	if direction != "pull" && direction != "push" {
+		return nil, nil, fmt.Errorf("direction must be pull or push")
+	}
+	if err := validateSyncRemote(h.cfg, remoteURL); err != nil {
+		return nil, nil, err
+	}
 	rawManifest, err := SyncManifestFromRemote(remoteURL, h.cfg.SyncToken)
 	if err != nil {
 		return nil, nil, err

@@ -10,17 +10,28 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/stek0v/levara/internal/metrics"
+	"github.com/stek0v/levara/pkg/access"
 	"github.com/stek0v/levara/pkg/embed"
 )
 
 // RegisterSyncAPI registers sync export/import endpoints.
 func RegisterSyncAPI(app fiber.Router, cfg APIConfig) {
+	app.Use("/sync", func(c *fiber.Ctx) error {
+		userID, _ := c.Locals("user_id").(string)
+		ctx := context.WithValue(c.UserContext(), mcpUserIDKey, userID)
+		if err := authorizeSync(ctx, cfg); err != nil {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": err.Error()})
+		}
+		c.SetUserContext(ctx)
+		return c.Next()
+	})
 	app.Get("/sync/manifest", syncManifestHandler(cfg.Identity(), cfg.Access(), cfg.Search()))
 	app.Post("/sync/run", syncRunHandler(cfg))
 	app.Get("/sync/status", syncStatusHandler(cfg))
@@ -37,6 +48,38 @@ func RegisterSyncAPI(app fiber.Router, cfg APIConfig) {
 	app.Get("/sync/export/collection/:name", syncExportCollectionHandler(cfg))
 	app.Post("/sync/import/collection", syncImportCollectionHandler(cfg))
 	app.Get("/sync/import/collection/:runId/status", syncImportCollectionStatusHandler())
+}
+
+// Sync reads and writes instance-wide state, including other owners' records.
+func authorizeSync(ctx context.Context, cfg APIConfig) error {
+	userID, _ := ctx.Value(mcpUserIDKey).(string)
+	if !cfg.RequireAuth && userID == "" {
+		return nil
+	}
+	policy := access.SQLPolicy{DB: cfg.DB, Q: Q}
+	super, err := policy.IsSuperuser(ctx, userID)
+	if err != nil || !super {
+		return fmt.Errorf("sync requires an active superuser")
+	}
+	active, err := policy.IsActive(ctx, userID)
+	if err != nil || !active {
+		return fmt.Errorf("sync requires an active superuser")
+	}
+	return nil
+}
+
+func validateSyncRemote(cfg APIConfig, remote string) error {
+	parsed, err := url.Parse(remote)
+	if err != nil || parsed == nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Hostname() == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return fmt.Errorf("remote_url must be an HTTP(S) base URL without credentials, query or fragment")
+	}
+	if cfg.SyncToken != "" {
+		trusted, err := url.Parse(cfg.SyncRemoteURL)
+		if err != nil || trusted == nil || trusted.Scheme != parsed.Scheme || !strings.EqualFold(trusted.Host, parsed.Host) || strings.TrimRight(trusted.EscapedPath(), "/") != strings.TrimRight(parsed.EscapedPath(), "/") || trusted.User != nil || trusted.RawQuery != "" || trusted.Fragment != "" {
+			return fmt.Errorf("remote_url must match LEVARA_SYNC_REMOTE_URL before sending the server sync token")
+		}
+	}
+	return nil
 }
 
 type syncRunRequest struct {
@@ -613,13 +656,14 @@ type syncMap struct {
 	m sync.Map
 }
 
-func (s *syncMap) Store(k string, v *syncCollectionImportStatus) { s.m.Store(k, v) }
+func (s *syncMap) Store(k string, v *syncCollectionImportStatus) { s.m.Store(k, *v) }
 func (s *syncMap) Load(k string) (*syncCollectionImportStatus, bool) {
 	v, ok := s.m.Load(k)
 	if !ok {
 		return nil, false
 	}
-	return v.(*syncCollectionImportStatus), true
+	status := v.(syncCollectionImportStatus)
+	return &status, true
 }
 
 func syncImportCollectionHandler(cfg APIConfig) fiber.Handler {
@@ -628,133 +672,140 @@ func syncImportCollectionHandler(cfg APIConfig) fiber.Handler {
 		if err := c.BodyParser(&export); err != nil {
 			return c.Status(400).JSON(fiber.Map{"detail": "invalid JSON"})
 		}
-		if export.Collection == "" {
-			return c.Status(400).JSON(fiber.Map{"detail": "collection name required"})
-		}
-		if len(export.Records) == 0 {
-			return c.JSON(fiber.Map{"status": "empty", "message": "no records to import"})
-		}
-		if cfg.EmbedEndpoint == "" || cfg.Collections == nil {
-			return c.Status(503).JSON(fiber.Map{"detail": "embedding service or collections not configured"})
-		}
+		result, code := startSyncCollectionImport(cfg, export)
+		return c.Status(code).JSON(result)
+	}
+}
 
-		runID := fmt.Sprintf("sync-%d", time.Now().UnixNano())
-		status := &syncCollectionImportStatus{
-			RunID:      runID,
-			Status:     "RUNNING",
-			Collection: export.Collection,
-			Total:      len(export.Records),
-		}
-		syncImportRuns.Store(runID, status)
+func startSyncCollectionImport(cfg APIConfig, export syncCollectionExport) (fiber.Map, int) {
+	if export.Collection == "" {
+		return fiber.Map{"detail": "collection name required"}, 400
+	}
+	if len(export.Records) == 0 {
+		return fiber.Map{"status": "empty", "message": "no records to import"}, 200
+	}
+	if cfg.EmbedEndpoint == "" || cfg.Collections == nil {
+		return fiber.Map{"detail": "embedding service or collections not configured"}, 503
+	}
 
-		go func() {
-			defer func() {
-				if r := recover(); r != nil {
-					log.Printf("[sync] collection import panic recovered run=%s: %v", runID, r)
-					status.Status = "FAILED"
-					status.Message = fmt.Sprintf("panic: %v", r)
-				}
-			}()
-			start := time.Now()
-			bgCtx, bgCancel := backgroundTaskContext()
-			defer bgCancel()
+	runID := fmt.Sprintf("sync-%d", time.Now().UnixNano())
+	status := &syncCollectionImportStatus{
+		RunID:      runID,
+		Status:     "RUNNING",
+		Collection: export.Collection,
+		Total:      len(export.Records),
+	}
+	syncImportRuns.Store(runID, status)
 
-			// Split records that exceed the embed context into overlapping
-			// chunks; records that fit pass through unchanged. Each unit is
-			// embedded and stored as its own vector.
-			units, skippedNoText, chunked := expandRecordsToUnits(export.Records, reembedMaxRunes, reembedMaxRunes/5)
-			status.Skipped += skippedNoText
-			if len(units) == 0 {
-				status.Status = "COMPLETED"
-				status.Message = "no embeddable text in records"
-				return
-			}
-			status.Total = len(units)
-
-			// Re-embed throughput is tuned to unit size. Short memory texts
-			// keep the high-throughput defaults (batch 50, concurrency 3).
-			// When a document was split into large chunks, a batch of 50 at
-			// concurrency 3 overruns the embed client's 30s HTTP timeout on
-			// modest hardware (Ollama on a Pi), so shrink the batch, drop to
-			// sequential, and extend the timeout for that path only.
-			// WithTimeout(0) is a no-op, leaving the default for the fast path.
-			batchSize, embedConcurrency, embedTimeout := 50, 3, time.Duration(0)
-			if chunked {
-				batchSize, embedConcurrency, embedTimeout = 16, 1, 5*time.Minute
-			}
-			embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, batchSize, embedConcurrency).
-				WithTimeout(embedTimeout)
-
-			// Auto-detect target dimension
-			testVecs, err := embedClient.EmbedTexts(bgCtx, []string{units[0].text})
-			if err != nil || len(testVecs) == 0 {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[sync] collection import panic recovered run=%s: %v", runID, r)
 				status.Status = "FAILED"
-				status.Message = fmt.Sprintf("embed test failed: %v", err)
+				status.Message = fmt.Sprintf("panic: %v", r)
+			}
+			syncImportRuns.Store(runID, status)
+		}()
+		start := time.Now()
+		bgCtx, bgCancel := backgroundTaskContext()
+		defer bgCancel()
+
+		// Split records that exceed the embed context into overlapping
+		// chunks; records that fit pass through unchanged. Each unit is
+		// embedded and stored as its own vector.
+		units, skippedNoText, chunked := expandRecordsToUnits(export.Records, reembedMaxRunes, reembedMaxRunes/5)
+		status.Skipped += skippedNoText
+		if len(units) == 0 {
+			status.Status = "COMPLETED"
+			status.Message = "no embeddable text in records"
+			return
+		}
+		status.Total = len(units)
+
+		// Re-embed throughput is tuned to unit size. Short memory texts
+		// keep the high-throughput defaults (batch 50, concurrency 3).
+		// When a document was split into large chunks, a batch of 50 at
+		// concurrency 3 overruns the embed client's 30s HTTP timeout on
+		// modest hardware (Ollama on a Pi), so shrink the batch, drop to
+		// sequential, and extend the timeout for that path only.
+		// WithTimeout(0) is a no-op, leaving the default for the fast path.
+		batchSize, embedConcurrency, embedTimeout := 50, 3, time.Duration(0)
+		if chunked {
+			batchSize, embedConcurrency, embedTimeout = 16, 1, 5*time.Minute
+		}
+		embedClient := embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, batchSize, embedConcurrency).
+			WithTimeout(embedTimeout)
+
+		// Auto-detect target dimension
+		testVecs, err := embedClient.EmbedTexts(bgCtx, []string{units[0].text})
+		if err != nil || len(testVecs) == 0 {
+			status.Status = "FAILED"
+			status.Message = fmt.Sprintf("embed test failed: %v", err)
+			return
+		}
+		targetDim := len(testVecs[0])
+
+		// Create collection if not exists
+		if !cfg.Collections.Has(export.Collection) {
+			if err := cfg.Collections.CreateWithDim(export.Collection, targetDim, cfg.EmbedModel, "cosine"); err != nil {
+				status.Status = "FAILED"
+				status.Message = fmt.Sprintf("create collection: %v", err)
 				return
 			}
-			targetDim := len(testVecs[0])
+		}
 
-			// Create collection if not exists
-			if !cfg.Collections.Has(export.Collection) {
-				if err := cfg.Collections.CreateWithDim(export.Collection, targetDim, cfg.EmbedModel, "cosine"); err != nil {
-					status.Status = "FAILED"
-					status.Message = fmt.Sprintf("create collection: %v", err)
-					return
-				}
+		log.Printf("[sync-import] %s: %d records → %d units, source=%s/%d → target=%s/%d",
+			export.Collection, len(export.Records), len(units), export.SourceModel, export.SourceDim, cfg.EmbedModel, targetDim)
+
+		// Process in batches
+		for i := 0; i < len(units); i += batchSize {
+			end := i + batchSize
+			if end > len(units) {
+				end = len(units)
+			}
+			batch := units[i:end]
+
+			texts := make([]string, len(batch))
+			for j, u := range batch {
+				texts[j] = u.text
 			}
 
-			log.Printf("[sync-import] %s: %d records → %d units, source=%s/%d → target=%s/%d",
-				export.Collection, len(export.Records), len(units), export.SourceModel, export.SourceDim, cfg.EmbedModel, targetDim)
+			vecs, err := embedClient.EmbedTexts(bgCtx, texts)
+			if err != nil {
+				log.Printf("[sync-import] batch %d-%d embed error: %v", i, end, err)
+				status.Failed += len(batch)
+				continue
+			}
 
-			// Process in batches
-			for i := 0; i < len(units); i += batchSize {
-				end := i + batchSize
-				if end > len(units) {
-					end = len(units)
-				}
-				batch := units[i:end]
-
-				texts := make([]string, len(batch))
-				for j, u := range batch {
-					texts[j] = u.text
-				}
-
-				vecs, err := embedClient.EmbedTexts(bgCtx, texts)
-				if err != nil {
-					log.Printf("[sync-import] batch %d-%d embed error: %v", i, end, err)
-					status.Failed += len(batch)
-					continue
-				}
-
-				for j, vec := range vecs {
-					if j < len(batch) {
-						if err := cfg.Collections.Insert(export.Collection, batch[j].id, vec, batch[j].meta); err != nil {
-							status.Failed++
-						} else {
-							status.Processed++
-						}
+			for j, vec := range vecs {
+				if j < len(batch) {
+					if err := cfg.Collections.Insert(export.Collection, batch[j].id, vec, batch[j].meta); err != nil {
+						status.Failed++
+					} else {
+						status.Processed++
 					}
 				}
-
-				status.ElapsedMs = time.Since(start).Milliseconds()
 			}
 
-			status.Status = "COMPLETED"
 			status.ElapsedMs = time.Since(start).Milliseconds()
-			status.Message = fmt.Sprintf("imported %d/%d units from %d records (%s dim=%d → %s dim=%d) in %dms",
-				status.Processed, len(units), len(export.Records), export.SourceModel, export.SourceDim, cfg.EmbedModel, targetDim, status.ElapsedMs)
-			log.Printf("[sync-import] %s", status.Message)
-		}()
+			syncImportRuns.Store(runID, status)
+		}
 
-		return c.JSON(fiber.Map{
-			"status":     "started",
-			"run_id":     runID,
-			"collection": export.Collection,
-			"records":    len(export.Records),
-			"source":     fmt.Sprintf("%s (dim=%d)", export.SourceModel, export.SourceDim),
-			"target":     fmt.Sprintf("%s (dim=auto)", cfg.EmbedModel),
-		})
-	}
+		status.Status = "COMPLETED"
+		status.ElapsedMs = time.Since(start).Milliseconds()
+		status.Message = fmt.Sprintf("imported %d/%d units from %d records (%s dim=%d → %s dim=%d) in %dms",
+			status.Processed, len(units), len(export.Records), export.SourceModel, export.SourceDim, cfg.EmbedModel, targetDim, status.ElapsedMs)
+		log.Printf("[sync-import] %s", status.Message)
+	}()
+
+	return fiber.Map{
+		"status":     "started",
+		"run_id":     runID,
+		"collection": export.Collection,
+		"records":    len(export.Records),
+		"source":     fmt.Sprintf("%s (dim=%d)", export.SourceModel, export.SourceDim),
+		"target":     fmt.Sprintf("%s (dim=auto)", cfg.EmbedModel),
+	}, 200
 }
 
 func syncImportCollectionStatusHandler() fiber.Handler {
@@ -780,7 +831,9 @@ func syncAuthGet(client *http.Client, url, token string) (*http.Response, error)
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	return client.Do(req)
+	transport := *client
+	transport.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return transport.Do(req)
 }
 
 // syncAuthPost performs a POST with the given body, attaching an
@@ -794,7 +847,9 @@ func syncAuthPost(client *http.Client, url, contentType, body, token string) (*h
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	return client.Do(req)
+	transport := *client
+	transport.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return transport.Do(req)
 }
 
 // ── Sync Pull (client-side: fetch from remote, import locally) ──
@@ -1075,40 +1130,20 @@ func syncPullCollections(cfg APIConfig, remoteURL string, collections []string) 
 	results := map[string]any{}
 
 	for _, coll := range collections {
-		resp, err := syncAuthGet(client, remoteURL+"/sync/export/collection/"+coll, cfg.SyncToken)
+		resp, err := syncAuthGet(client, remoteURL+"/sync/export/collection/"+url.PathEscape(coll), cfg.SyncToken)
 		if err != nil {
 			results[coll] = map[string]string{"error": err.Error()}
 			continue
 		}
-		body, _ := io.ReadAll(resp.Body)
+		var export syncCollectionExport
+		err = json.NewDecoder(resp.Body).Decode(&export)
 		resp.Body.Close()
-
-		// POST to local import endpoint
-		importResp, err := syncAuthPost(
-			client,
-			"http://localhost:"+fmt.Sprintf("%d", 8080)+"/api/v1/sync/import/collection",
-			"application/json",
-			string(body),
-			cfg.SyncToken,
-		)
-		if err != nil {
-			// Fallback: import directly in-process if local HTTP fails
-			var export syncCollectionExport
-			if json.Unmarshal(body, &export) == nil {
-				results[coll] = map[string]any{
-					"records": len(export.Records),
-					"status":  "fetched, needs local import via /sync/import/collection",
-					"source":  fmt.Sprintf("%s (dim=%d)", export.SourceModel, export.SourceDim),
-				}
-			} else {
-				results[coll] = map[string]string{"error": "parse error"}
-			}
+		if resp.StatusCode != http.StatusOK || err != nil || export.Collection != coll {
+			results[coll] = map[string]string{"error": "invalid remote collection export"}
 			continue
 		}
-		defer importResp.Body.Close()
-		var r map[string]any
-		json.NewDecoder(importResp.Body).Decode(&r)
-		results[coll] = r
+		result, _ := startSyncCollectionImport(cfg, export)
+		results[coll] = result
 	}
 
 	return results

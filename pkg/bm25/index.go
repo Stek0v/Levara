@@ -47,14 +47,16 @@ type Result struct {
 
 // Index is a thread-safe BM25 inverted index.
 type Index struct {
-	mu       sync.RWMutex
-	docs     map[string]*Document      // id → doc
-	inverted map[string]map[string]int // term → {docID → term_freq}
-	docLen   map[string]int            // id → token count
-	avgDL    float64                   // average document length
-	k1       float64
-	b        float64
-	onChange func(Change)
+	changeMu    sync.Mutex // orders mutations and durable snapshot publication
+	mu          sync.RWMutex
+	docs        map[string]*Document      // id → doc
+	inverted    map[string]map[string]int // term → {docID → term_freq}
+	docLen      map[string]int            // id → token count
+	totalTokens int
+	avgDL       float64 // average document length
+	k1          float64
+	b           float64
+	onChange    func(Change)
 }
 
 // NewIndex creates an empty BM25 index with default parameters (k1=1.2, b=0.75).
@@ -83,6 +85,8 @@ func NewIndexWithParams(k1, b float64) *Index {
 
 // Add indexes a document. If ID exists, it replaces it.
 func (idx *Index) Add(id, text, metadata string) {
+	idx.changeMu.Lock()
+	defer idx.changeMu.Unlock()
 	tokens := tokenize(text)
 
 	idx.mu.Lock()
@@ -93,6 +97,7 @@ func (idx *Index) Add(id, text, metadata string) {
 
 	doc := &Document{ID: id, Text: text, Metadata: metadata, tokens: tokens}
 	idx.docs[id] = doc
+	idx.totalTokens += len(tokens) - idx.docLen[id]
 	idx.docLen[id] = len(tokens)
 
 	// Update inverted index
@@ -126,6 +131,8 @@ func (idx *Index) AddBatch(docs []Document) {
 
 // Remove deletes a document from the index.
 func (idx *Index) Remove(id string) {
+	idx.changeMu.Lock()
+	defer idx.changeMu.Unlock()
 	idx.mu.Lock()
 
 	doc, exists := idx.docs[id]
@@ -136,6 +143,7 @@ func (idx *Index) Remove(id string) {
 
 	idx.removeTokens(id, doc.tokens)
 	delete(idx.docs, id)
+	idx.totalTokens -= idx.docLen[id]
 	delete(idx.docLen, id)
 	idx.recalcAvgDL()
 	onChange := idx.onChange
@@ -231,11 +239,14 @@ func (idx *Index) Documents() []Document {
 
 // Clear removes all documents from the index.
 func (idx *Index) Clear() {
+	idx.changeMu.Lock()
+	defer idx.changeMu.Unlock()
 	idx.mu.Lock()
 	idx.docs = make(map[string]*Document)
 	idx.inverted = make(map[string]map[string]int)
 	idx.docLen = make(map[string]int)
 	idx.avgDL = 0
+	idx.totalTokens = 0
 	onChange := idx.onChange
 	idx.mu.Unlock()
 
@@ -246,6 +257,8 @@ func (idx *Index) Clear() {
 
 // SetOnChange registers a synchronous mutation callback.
 func (idx *Index) SetOnChange(fn func(Change)) {
+	idx.changeMu.Lock()
+	defer idx.changeMu.Unlock()
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 	idx.onChange = fn
@@ -271,11 +284,7 @@ func (idx *Index) recalcAvgDL() {
 		idx.avgDL = 0
 		return
 	}
-	total := 0
-	for _, l := range idx.docLen {
-		total += l
-	}
-	idx.avgDL = float64(total) / float64(len(idx.docLen))
+	idx.avgDL = float64(idx.totalTokens) / float64(len(idx.docLen))
 }
 
 // tokenize splits text into lowercase tokens, removing punctuation.

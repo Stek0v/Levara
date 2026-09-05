@@ -10,21 +10,16 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 )
 
-func openPostgresOutboxTestDB(t *testing.T) *sql.DB {
+func openPostgresOutboxTestDB(t testing.TB) *sql.DB {
 	t.Helper()
 	dsn := os.Getenv("LEVARA_TEST_POSTGRES_DSN")
 	if dsn == "" {
 		t.Skip("LEVARA_TEST_POSTGRES_DSN is not set")
 	}
-	db, err := sql.Open("pgx", dsn)
-	if err != nil {
-		t.Fatalf("open postgres: %v", err)
-	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
 	schema := fmt.Sprintf("memoryindex_test_%d", time.Now().UnixNano())
 	schema = strings.Map(func(r rune) rune {
 		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' {
@@ -32,13 +27,18 @@ func openPostgresOutboxTestDB(t *testing.T) *sql.DB {
 		}
 		return '_'
 	}, schema)
+	config, err := pgx.ParseConfig(dsn)
+	if err != nil {
+		t.Fatalf("parse postgres config: %v", err)
+	}
+	// Keep isolation after a cancelled query causes the driver to reconnect.
+	config.RuntimeParams["search_path"] = schema
+	db := stdlib.OpenDB(*config)
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 	if _, err := db.Exec(`CREATE SCHEMA ` + schema); err != nil {
 		db.Close()
 		t.Fatalf("create schema: %v", err)
-	}
-	if _, err := db.Exec(`SET search_path TO ` + schema); err != nil {
-		db.Close()
-		t.Fatalf("set search_path: %v", err)
 	}
 	t.Cleanup(func() {
 		_, _ = db.Exec(`DROP SCHEMA IF EXISTS ` + schema + ` CASCADE`)
@@ -170,4 +170,16 @@ func TestOutboxPostgresBind(t *testing.T) {
 	if got := s.bind("SELECT ?::text, ?::int"); got != "SELECT $1::text, $2::int" {
 		t.Fatalf("bind=%q", got)
 	}
+}
+
+func TestOutboxPostgresReadinessAndClaimOrdering(t *testing.T) {
+	testOutboxReadinessAndClaimOrdering(t, openPostgresOutboxTestDB(t))
+}
+
+func TestOutboxPostgresHistoryQueryPlans(t *testing.T) {
+	testOutboxHistoryQueryPlans(t, openPostgresOutboxTestDB(t))
+}
+
+func BenchmarkOutboxPostgresReadinessQueries(b *testing.B) {
+	benchmarkOutboxReadinessQueries(b, openPostgresOutboxTestDB(b))
 }

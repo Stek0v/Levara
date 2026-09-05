@@ -24,11 +24,19 @@ func setupTaskTestDB(t *testing.T) *fakeDeps {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close(); _ = os.Remove(path) })
+	if _, err := db.Exec(`PRAGMA foreign_keys=ON`); err != nil {
+		t.Fatal(err)
+	}
+	createTaskTestSchema(t, db)
+	return &fakeDeps{db: db}
+}
+
+func createTaskTestSchema(t *testing.T, db *sql.DB) {
+	t.Helper()
 	ddl := []string{
-		`PRAGMA foreign_keys=ON`,
 		`CREATE TABLE tasks(id TEXT PRIMARY KEY,idempotency_key TEXT,owner_id TEXT DEFAULT '',collection_name TEXT,room TEXT,objective TEXT,authority_json TEXT,risk_level TEXT,status TEXT,version INTEGER,current_workspace_revision TEXT DEFAULT '',created_at TEXT,updated_at TEXT,completed_at TEXT,UNIQUE(owner_id,collection_name,idempotency_key))`,
-		`CREATE TABLE task_criteria(id TEXT,task_id TEXT,description TEXT,required INTEGER,verification_json TEXT,created_at TEXT,PRIMARY KEY(task_id,id))`,
-		`CREATE TABLE task_steps(id TEXT,task_id TEXT,description TEXT,status TEXT,required INTEGER,dependencies_json TEXT,criterion_ids_json TEXT,attempts INTEGER,position INTEGER,created_at TEXT,updated_at TEXT,PRIMARY KEY(task_id,id))`,
+		`CREATE TABLE task_criteria(id TEXT,task_id TEXT,description TEXT,required BOOLEAN,verification_json TEXT,created_at TEXT,PRIMARY KEY(task_id,id))`,
+		`CREATE TABLE task_steps(id TEXT,task_id TEXT,description TEXT,status TEXT,required BOOLEAN,dependencies_json TEXT,criterion_ids_json TEXT,attempts INTEGER,position INTEGER,created_at TEXT,updated_at TEXT,PRIMARY KEY(task_id,id))`,
 		`CREATE TABLE task_leases(step_id TEXT,task_id TEXT,actor_id TEXT,expires_at TEXT,created_at TEXT,PRIMARY KEY(task_id,step_id))`,
 		`CREATE TABLE task_receipts(id TEXT PRIMARY KEY,task_id TEXT,idempotency_key TEXT,owner_id TEXT,receipt_type TEXT,status TEXT,criterion_ids_json TEXT,observation TEXT,exit_code INTEGER,evidence_uri TEXT,artifact_digest TEXT,workspace_revision TEXT,metadata_json TEXT,created_at TEXT,UNIQUE(task_id,idempotency_key))`,
 		`CREATE TABLE task_checkpoints(id TEXT PRIMARY KEY,task_id TEXT,idempotency_key TEXT,step_id TEXT,summary TEXT,verified_json TEXT,failed_json TEXT,next_action TEXT,workspace_revision TEXT,created_at TEXT,UNIQUE(task_id,idempotency_key))`,
@@ -36,14 +44,13 @@ func setupTaskTestDB(t *testing.T) *fakeDeps {
 		`CREATE TABLE task_events(id TEXT PRIMARY KEY,task_id TEXT,actor_id TEXT,event_type TEXT,payload_json TEXT,created_at TEXT)`,
 		`CREATE TABLE task_memory_candidates(id TEXT PRIMARY KEY,task_id TEXT,memory_key TEXT,value TEXT,room TEXT,hall TEXT,evidence_receipt_ids TEXT,status TEXT,created_at TEXT,UNIQUE(task_id,memory_key))`,
 		`CREATE TABLE task_memory_links(task_id TEXT,memory_id TEXT,relation TEXT,created_at TEXT,PRIMARY KEY(task_id,memory_id,relation))`,
-		`CREATE TABLE memories(id TEXT PRIMARY KEY,key TEXT,value TEXT,type TEXT,owner_id TEXT DEFAULT '',collection_name TEXT,room TEXT,hall TEXT,is_pinned INTEGER DEFAULT 0,pin_priority INTEGER DEFAULT 0,superseded_by TEXT DEFAULT '',valid_until TEXT,source_task_id TEXT DEFAULT '',source_receipt_ids TEXT DEFAULT '[]',verification_status TEXT DEFAULT '',supersedes_memory_id TEXT DEFAULT '',supersession_reason TEXT DEFAULT '',created_at TEXT,updated_at TEXT,UNIQUE(key,owner_id,collection_name))`,
+		`CREATE TABLE memories(id TEXT PRIMARY KEY,key TEXT,value TEXT,type TEXT,owner_id TEXT DEFAULT '',collection_name TEXT,room TEXT,hall TEXT,is_pinned BOOLEAN DEFAULT FALSE,pin_priority INTEGER DEFAULT 0,superseded_by TEXT DEFAULT '',valid_until TEXT,source_task_id TEXT DEFAULT '',source_receipt_ids TEXT DEFAULT '[]',verification_status TEXT DEFAULT '',supersedes_memory_id TEXT DEFAULT '',supersession_reason TEXT DEFAULT '',created_at TEXT,updated_at TEXT,UNIQUE(key,owner_id,collection_name))`,
 	}
 	for _, stmt := range ddl {
 		if _, err := db.Exec(stmt); err != nil {
 			t.Fatalf("schema: %v", err)
 		}
 	}
-	return &fakeDeps{db: db}
 }
 
 func taskPayload(t *testing.T, result ToolResult) map[string]any {
@@ -106,7 +113,7 @@ func (d *taskArtifactVerifierDeps) VerifyArtifact(_ context.Context, evidenceURI
 	return d.err
 }
 
-func openTask(t *testing.T, deps *fakeDeps, risk string) (string, int) {
+func openTask(t *testing.T, deps Deps, risk string) (string, int) {
 	t.Helper()
 	out := taskPayload(t, ToolTaskOpen(context.Background(), deps, map[string]any{
 		"collection": "levara", "room": "runtime", "objective": "ship verified runtime",

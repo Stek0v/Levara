@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"sync"
 
@@ -190,16 +191,17 @@ func NewLevara(dim int, storagePath string, cfg ...HNSWConfig) (*Levara, error) 
 func (db *Levara) indexerLoop() {
 	for range db.indexSignal {
 		for {
+			db.mu.RLock()
 			db.pendingMu.Lock()
 			if len(db.pendingVecs) == 0 {
 				db.pendingMu.Unlock()
+				db.mu.RUnlock()
 				break
 			}
 			batch := db.pendingVecs
 			db.pendingVecs = nil
 			db.pendingMu.Unlock()
 
-			db.mu.RLock()
 			hnsw := db.hnsw
 			db.mu.RUnlock()
 
@@ -499,40 +501,33 @@ func (db *Levara) Search(query []float32, topK int) []VectroRecord {
 // Delete removes a record by ID (index + HNSW tombstone + WAL).
 func (db *Levara) Delete(id string) error {
 	db.mu.Lock()
+	err := db.deleteLocked(id)
+	db.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	if err := db.wal.FlushAsync(); err != nil {
+		return fmt.Errorf("wal flush: %w", err)
+	}
+	return nil
+}
 
+func (db *Levara) deleteLocked(id string) error {
 	idx, ok := db.index[id]
 	if !ok {
-		db.mu.Unlock()
 		return fmt.Errorf("record %q not found", id)
 	}
-
-	// WAL: write delete entry (buffered, no flush yet)
 	if err := db.wal.WriteEntryNoFlush(OpDelete, id, nil, nil, FileLocation{}); err != nil {
-		db.mu.Unlock()
 		return fmt.Errorf("wal delete: %w", err)
 	}
-
-	// Remove from in-memory maps
 	delete(db.index, id)
 	if int(idx) < len(db.revIndex) {
 		db.revIndex[idx] = ""
 	}
 	delete(db.metaLocs, idx)
-
-	// Mark deleted in HNSW (tombstone — search will skip)
 	db.hnsw.MarkDeleted(idx)
-
-	// Release db.mu before fsync — group commit coalesces across goroutines.
-	db.mu.Unlock()
-
-	// Group commit: fsync outside db.mu lock
-	if err := db.wal.FlushAsync(); err != nil {
-		return fmt.Errorf("wal flush: %w", err)
-	}
-
-	// Also remove from pending vectors (if not yet indexed)
+	// Remove under db.mu so a concurrent reinsertion's pending vector survives.
 	db.removePendingByID(id)
-
 	return nil
 }
 
@@ -574,10 +569,23 @@ func removePendingItemsByID(items []pendingItem, id string) []pendingItem {
 
 // BatchDelete removes multiple records by ID.
 func (db *Levara) BatchDelete(ids []string) []error {
+	db.mu.Lock()
 	var errs []error
+	deleted := 0
 	for _, id := range ids {
-		if err := db.Delete(id); err != nil {
+		if err := db.deleteLocked(id); err != nil {
 			errs = append(errs, err)
+		} else {
+			deleted++
+		}
+	}
+	db.mu.Unlock()
+	if deleted > 0 {
+		if err := db.wal.FlushAsync(); err != nil {
+			// Every buffered deletion has uncertain durability on a failed flush.
+			for range deleted {
+				errs = append(errs, fmt.Errorf("wal flush: %w", err))
+			}
 		}
 	}
 	return errs
@@ -629,7 +637,80 @@ func (db *Levara) AllRecords() []SnapshotRecord {
 	return records
 }
 
-// Clear removes all in-memory data. Used during Raft snapshot restore.
+// RestoreSnapshot replaces the complete durable state. Failed staging leaves the
+// previous index and WAL intact; publication happens only after validation/fsync.
+func (db *Levara) RestoreSnapshot(records []SnapshotRecord) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	arena := NewVectorArena(db.dim)
+	hnsw := NewHNSWIndex(arena, db.hnswCfg)
+	index := make(map[string]uint32, len(records))
+	reverse := make([]string, 0, len(records))
+	locations := make(map[uint32]FileLocation, len(records))
+	file, err := os.CreateTemp(filepath.Dir(db.wal.Path()), ".restore-*.wal")
+	if err != nil {
+		return err
+	}
+	published := false
+	defer func() {
+		if !published {
+			_ = file.Close()
+		}
+		_ = os.Remove(file.Name())
+	}()
+	writer := bufio.NewWriter(file)
+	for _, record := range records {
+		if record.ID == "" {
+			return fmt.Errorf("snapshot contains empty record ID")
+		}
+		if _, exists := index[record.ID]; exists {
+			return fmt.Errorf("duplicate snapshot ID %q", record.ID)
+		}
+		vector := append([]float32(nil), record.Vector...)
+		offset, err := arena.Add(vector)
+		if err != nil {
+			return fmt.Errorf("snapshot %s: %w", record.ID, err)
+		}
+		loc, err := db.disk.Write(record.Data)
+		if err != nil {
+			return err
+		}
+		if err := writeWALEntryTo(writer, OpInsert, record.ID, vector, record.Data, loc); err != nil {
+			return err
+		}
+		index[record.ID] = offset
+		reverse = append(reverse, record.ID)
+		locations[offset] = loc
+		hnsw.Add(vector, record.ID, offset)
+	}
+	if err := writer.Flush(); err != nil {
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		return err
+	}
+	if err := db.wal.replaceFile(file); err != nil {
+		return err
+	}
+	published = true
+	db.arena, db.hnsw, db.index, db.revIndex, db.metaLocs = arena, hnsw, index, reverse, locations
+	db.pendingMu.Lock()
+	db.pendingVecs = nil
+	db.pendingMu.Unlock()
+	// A directory-sync error occurs after publication: callers must treat it as
+	// uncertain crash durability, not as a rollback to the previous snapshot.
+	dir, err := os.Open(filepath.Dir(db.wal.Path()))
+	if err != nil {
+		return fmt.Errorf("snapshot published; open directory: %w", err)
+	}
+	defer dir.Close()
+	if err := dir.Sync(); err != nil {
+		return fmt.Errorf("snapshot published; sync directory: %w", err)
+	}
+	return nil
+}
+
+// Clear removes only in-memory data. Use RestoreSnapshot for durable replacement.
 func (db *Levara) Clear() {
 	db.mu.Lock()
 	defer db.mu.Unlock()
@@ -714,22 +795,20 @@ func (db *Levara) Checkpoint() error {
 		_ = os.Remove(tmpPath)
 		return fmt.Errorf("checkpoint: sync: %w", err)
 	}
-	_ = tmpFile.Close()
-
-	// Close current WAL
-	_ = db.wal.Close()
-
-	// Atomic swap: rename tmp -> WAL
-	if err := os.Rename(tmpPath, walPath); err != nil {
-		return fmt.Errorf("checkpoint: rename: %w", err)
+	if err := db.wal.replaceFile(tmpFile); err != nil {
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("checkpoint: replace: %w", err)
 	}
 
-	// Reopen WAL (starts fresh fsyncLoop)
-	newWal, err := OpenWal(walPath)
+	dir, err := os.Open(filepath.Dir(walPath))
 	if err != nil {
-		return fmt.Errorf("checkpoint: reopen: %w", err)
+		return fmt.Errorf("checkpoint published; open directory: %w", err)
 	}
-	db.wal = newWal
+	defer dir.Close()
+	if err := dir.Sync(); err != nil {
+		return fmt.Errorf("checkpoint published; sync directory: %w", err)
+	}
 
 	fmt.Printf("Checkpoint complete: %d live records written to compacted WAL\n", count)
 	return nil

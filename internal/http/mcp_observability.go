@@ -255,6 +255,9 @@ func (h *mcpHandler) toolRecentErrors(ctx context.Context, args map[string]any) 
 // on success today, so this view answers "did sync run lately?" rather
 // than "did sync fail?".
 func (h *mcpHandler) toolSyncStatus(ctx context.Context, args map[string]any) mcpToolResult {
+	if err := authorizeSync(ctx, h.cfg); err != nil {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: err.Error()}}, IsError: true}
+	}
 	if h.cfg.DB == nil {
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: `{"error":"no database configured"}`}}, IsError: true}
 	}

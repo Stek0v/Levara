@@ -186,3 +186,26 @@ func BenchmarkBM25Add(b *testing.B) {
 		idx.Add(fmt.Sprintf("d%d", i), "quantum computing machine learning algorithms", "")
 	}
 }
+
+func TestAverageLengthAfterReplacementDeletionAndClear(t *testing.T) {
+	idx := NewIndex()
+	idx.Add("a", "alpha beta gamma", "")
+	idx.Add("b", "alpha", "")
+	if idx.avgDL != 2 {
+		t.Fatalf("initial average=%v", idx.avgDL)
+	}
+	idx.Add("a", "beta", "")
+	if idx.avgDL != 1 {
+		t.Fatalf("replacement average=%v", idx.avgDL)
+	}
+	idx.Remove("b")
+	idx.Remove("missing")
+	if idx.avgDL != 1 || len(idx.Search("alpha", 10)) != 0 {
+		t.Fatal("delete left stale lengths/postings")
+	}
+	idx.Clear()
+	idx.Add("c", "gamma delta", "")
+	if idx.avgDL != 2 || len(idx.Search("gamma", 10)) != 1 {
+		t.Fatal("clear left stale lengths")
+	}
+}

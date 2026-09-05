@@ -88,14 +88,7 @@ func (f *FSM) Restore(rc io.ReadCloser) error {
 	if err := json.Unmarshal(data, &records); err != nil {
 		return fmt.Errorf("snapshot unmarshal: %w", err)
 	}
-	// Clear existing data and replay from snapshot
-	f.db.Clear()
-	for _, r := range records {
-		if err := f.db.Insert(r.ID, r.Vector, r.Data); err != nil {
-			return fmt.Errorf("snapshot restore %s: %w", r.ID, err)
-		}
-	}
-	return nil
+	return f.db.RestoreSnapshot(records)
 }
 
 // LevaraSnapshot implements raft.FSMSnapshot with actual data.

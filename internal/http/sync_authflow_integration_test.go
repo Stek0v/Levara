@@ -31,6 +31,8 @@ func newSyncIntegDB(t *testing.T, name string) *sql.DB {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`
+		CREATE TABLE users (id TEXT PRIMARY KEY, is_superuser BOOLEAN, is_active BOOLEAN);
+		INSERT INTO users VALUES ('user-1', TRUE, TRUE);
 		CREATE TABLE memories (
 			id TEXT PRIMARY KEY, key TEXT NOT NULL, value TEXT NOT NULL,
 			type TEXT NOT NULL DEFAULT 'project', owner_id TEXT NOT NULL DEFAULT '',
@@ -68,7 +70,7 @@ func startAuthRemote(t *testing.T, db *sql.DB, version string) string {
 	app := fiber.New()
 	api := app.Group("/api/v1")
 	api.Use(JWTMiddleware(syncTestSecret, true)) // requireAuth=true
-	RegisterSyncAPI(api, APIConfig{DB: db, Version: version, EmbedModel: "potion-256"})
+	RegisterSyncAPI(api, APIConfig{DB: db, RequireAuth: true, Version: version, EmbedModel: "potion-256"})
 	srv := httptest.NewServer(adaptor.FiberApp(app))
 	t.Cleanup(srv.Close)
 	return srv.URL + "/api/v1"
@@ -217,7 +219,7 @@ func TestSyncAuthFlowEndToEnd(t *testing.T) {
 		url := startAuthRemote(t, remoteDB, "remoteSHA")
 
 		localDB := newSyncIntegDB(t, "local")
-		h := &mcpHandler{cfg: APIConfig{DB: localDB, SyncToken: validToken, Version: "localSHA"}}
+		h := &mcpHandler{cfg: APIConfig{DB: localDB, SyncToken: validToken, SyncRemoteURL: url, Version: "localSHA"}}
 		result, _, err := h.DoSync(context.Background(), url, "pull", []string{"memories"}, "", nil)
 		if err != nil {
 			t.Fatalf("DoSync: %v", err)
@@ -236,7 +238,7 @@ func TestSyncAuthFlowEndToEnd(t *testing.T) {
 		url := startAuthRemote(t, remoteDB, "sameSHA")
 
 		localDB := newSyncIntegDB(t, "local")
-		h := &mcpHandler{cfg: APIConfig{DB: localDB, SyncToken: validToken, Version: "sameSHA"}}
+		h := &mcpHandler{cfg: APIConfig{DB: localDB, SyncToken: validToken, SyncRemoteURL: url, Version: "sameSHA"}}
 		result, _, err := h.DoSync(context.Background(), url, "pull", []string{"memories"}, "", nil)
 		if err != nil {
 			t.Fatalf("DoSync: %v", err)

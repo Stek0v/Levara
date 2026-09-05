@@ -38,6 +38,8 @@ type APIConfig struct {
 	// sync requests (manifest/export/import). Empty = unauthenticated (the
 	// pre-existing behaviour) — required when the remote enforces auth.
 	SyncToken string
+	// SyncRemoteURL binds the instance credential to one configured remote base URL.
+	SyncRemoteURL string
 	// WorkspaceWatcher exposes polling watcher status to REST/MCP observability
 	// endpoints. Nil means watcher status is unavailable/disabled.
 	WorkspaceWatcher *WorkspaceWatchState

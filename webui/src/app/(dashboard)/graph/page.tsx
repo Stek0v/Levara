@@ -109,8 +109,9 @@ export default function GraphPage() {
   }, [fNodes, edges])
 
   useEffect(() => {
-    if (!svgRef.current || fNodes.length === 0) return
+    if (!svgRef.current) return
     const svg = d3.select(svgRef.current); svg.selectAll('*').remove()
+    if (fNodes.length === 0) return
     const w = svgRef.current.clientWidth, h = svgRef.current.clientHeight
     const g = svg.append('g')
     svg.call(d3.zoom<SVGSVGElement, unknown>().scaleExtent([0.1, 4]).on('zoom', (e) => g.attr('transform', e.transform)))
@@ -127,9 +128,6 @@ export default function GraphPage() {
       .force('collision', d3.forceCollide().radius(25))
 
     const link = g.append('g').selectAll('line').data(sl).join('line')
-      .attr('stroke', (d) => pathEdgeKeys.has(`${(d.source as SimNode).id}\x00${(d.target as SimNode).id}\x00${d.label}`) ? '#0891b2' : '#d1d5db')
-      .attr('stroke-width', (d) => pathEdgeKeys.has(`${(d.source as SimNode).id}\x00${(d.target as SimNode).id}\x00${d.label}`) ? 3 : 1)
-      .attr('stroke-opacity', (d) => pathEdgeKeys.size === 0 || pathEdgeKeys.has(`${(d.source as SimNode).id}\x00${(d.target as SimNode).id}\x00${d.label}`) ? 0.85 : 0.25)
     const linkLbl = g.append('g').selectAll('text').data(sl).join('text')
       .text((d) => d.label).attr('font-size', 8).attr('fill', '#9ca3af').attr('text-anchor', 'middle')
     const node = g.append('g').selectAll<SVGCircleElement, SimNode>('circle').data(sn).join('circle')
@@ -153,6 +151,15 @@ export default function GraphPage() {
       lbl.attr('x', (d) => d.x!).attr('y', (d) => d.y!)
     })
     return () => { sim.stop() }
+  }, [fNodes, fEdges])
+
+  // Update edge styling without restarting the simulation or replacing its SVG.
+  useEffect(() => {
+    if (!svgRef.current) return
+    d3.select(svgRef.current).selectAll<SVGLineElement, SimLink>('line')
+      .attr('stroke', (d) => pathEdgeKeys.has(`${(d.source as SimNode).id}\x00${(d.target as SimNode).id}\x00${d.label}`) ? '#0891b2' : '#d1d5db')
+      .attr('stroke-width', (d) => pathEdgeKeys.has(`${(d.source as SimNode).id}\x00${(d.target as SimNode).id}\x00${d.label}`) ? 3 : 1)
+      .attr('stroke-opacity', (d) => pathEdgeKeys.size === 0 || pathEdgeKeys.has(`${(d.source as SimNode).id}\x00${(d.target as SimNode).id}\x00${d.label}`) ? 0.85 : 0.25)
   }, [fNodes, fEdges, pathEdgeKeys])
 
   return (

@@ -16,12 +16,31 @@ interface Message {
 }
 
 export default function ChatPage() {
+  const [userId, setUserId] = useState<string | null>(null)
+  const [error, setError] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    levara.me().then((user) => {
+      if (cancelled) return
+      if (typeof user.id === 'string' && user.id) setUserId(user.id)
+      else setError(true)
+    }).catch(() => { if (!cancelled) setError(true) })
+    return () => { cancelled = true }
+  }, [])
+  if (!userId) return <p role="status">{error ? 'Unable to load your account. Reload to try again.' : 'Loading chat…'}</p>
+  return <AccountChat key={userId} userId={userId} />
+}
+
+function AccountChat({ userId }: { userId: string }) {
+  // Ownerless legacy keys cannot be safely assigned to the current account.
+  const storagePrefix = `levara.chat.${encodeURIComponent(userId)}`
   const [messages, setMessages] = useState<Message[]>(() => {
     // Restore the last conversation so a reload does not wipe the chat.
     if (typeof window === 'undefined') return []
     try {
-      const raw = window.localStorage.getItem('levara.chat.messages')
-      return raw ? (JSON.parse(raw) as Message[]) : []
+      const raw = window.localStorage.getItem(`${storagePrefix}.messages`)
+      const stored = raw ? JSON.parse(raw) : []
+      return Array.isArray(stored) ? stored as Message[] : []
     } catch {
       return []
     }
@@ -30,12 +49,11 @@ export default function ChatPage() {
   const [loading, setLoading] = useState(false)
   const [sessionId] = useState(() => {
     if (typeof window === 'undefined') return crypto.randomUUID()
-    let sid = window.localStorage.getItem('levara.chat.sessionId')
-    if (!sid) {
-      sid = crypto.randomUUID()
-      window.localStorage.setItem('levara.chat.sessionId', sid)
-    }
-    return sid
+    try {
+      const sid = window.localStorage.getItem(`${storagePrefix}.sessionId`) || crypto.randomUUID()
+      window.localStorage.setItem(`${storagePrefix}.sessionId`, sid)
+      return sid
+    } catch { return crypto.randomUUID() }
   })
   const [mode, setMode] = useState<'RAG_COMPLETION' | 'GRAPH_COMPLETION_COT'>('RAG_COMPLETION')
   const [collection, setCollection] = useState('')
@@ -52,9 +70,9 @@ export default function ChatPage() {
 
   useEffect(() => {
     try {
-      window.localStorage.setItem('levara.chat.messages', JSON.stringify(messages.slice(-100)))
+      window.localStorage.setItem(`${storagePrefix}.messages`, JSON.stringify(messages.slice(-100)))
     } catch { /* quota — ignore */ }
-  }, [messages])
+  }, [messages, storagePrefix])
 
   // Apply the user's default_collection from settings once it resolves,
   // unless the user already picked a collection in this visit.
@@ -175,7 +193,7 @@ export default function ChatPage() {
             size="sm"
             onClick={() => {
               setMessages([])
-              try { window.localStorage.removeItem('levara.chat.messages') } catch { /* ignore */ }
+              try { window.localStorage.removeItem(`${storagePrefix}.messages`) } catch { /* ignore */ }
             }}
             title="Clear chat"
           >

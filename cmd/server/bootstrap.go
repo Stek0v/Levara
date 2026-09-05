@@ -34,6 +34,7 @@ import (
 	vectorGrpc "github.com/stek0v/levara/internal/grpc"
 	vectorHttp "github.com/stek0v/levara/internal/http"
 	"github.com/stek0v/levara/internal/store"
+	"github.com/stek0v/levara/pkg/access"
 	"github.com/stek0v/levara/pkg/audit"
 	"github.com/stek0v/levara/pkg/embed"
 	"github.com/stek0v/levara/pkg/graphdb"
@@ -387,7 +388,7 @@ func initLLMProvider() llm.Provider {
 // chain (auth → ratelimit → metrics) and registers both v1 and v2
 // services on the same port. Runs the server in a goroutine — the
 // returned *grpc.Server lets the caller GracefulStop on shutdown.
-func startGRPCServer(host string, port int, jwtSecret string, requireAuth bool, svc *vectorGrpc.Service) *grpc.Server {
+func startGRPCServer(host string, port int, jwtSecret string, requireAuth bool, policy access.SQLPolicy, svc *vectorGrpc.Service) *grpc.Server {
 	if port <= 0 {
 		return nil
 	}
@@ -404,12 +405,12 @@ func startGRPCServer(host string, port int, jwtSecret string, requireAuth bool, 
 	// user's rate-limit budget.
 	srv := grpc.NewServer(
 		grpc.ChainUnaryInterceptor(
-			vectorGrpc.UnaryAuthInterceptor(jwtSecret, requireAuth),
+			vectorGrpc.UnaryAuthInterceptor(jwtSecret, requireAuth, policy),
 			vectorGrpc.UnaryRateLimitInterceptor(grpcLimiters),
 			vectorGrpc.MetricsUnaryInterceptor(),
 		),
 		grpc.ChainStreamInterceptor(
-			vectorGrpc.StreamAuthInterceptor(jwtSecret, requireAuth),
+			vectorGrpc.StreamAuthInterceptor(jwtSecret, requireAuth, policy),
 			vectorGrpc.StreamRateLimitInterceptor(grpcLimiters),
 			vectorGrpc.MetricsStreamInterceptor(),
 		),

@@ -310,12 +310,16 @@ func (s *Service) ChunkText(_ context.Context, req *pb.ChunkTextReq) (*pb.ChunkT
 	return &pb.ChunkTextResp{Chunks: pbChunks}, nil
 }
 
-func (s *Service) Info(_ context.Context, _ *pb.Empty) (*pb.InfoResp, error) {
+func (s *Service) Info(ctx context.Context, _ *pb.Empty) (*pb.InfoResp, error) {
+	var collections []string
+	if private, _ := ctx.Value(ctxPrivateInfoKey{}).(bool); !private {
+		collections = s.collections.List()
+	}
 	return &pb.InfoResp{
 		Dimension:   int32(s.dim),
 		Shards:      int32(s.cluster.NumShards()),
 		Status:      "ready",
-		Collections: s.collections.List(),
+		Collections: collections,
 	}, nil
 }
 

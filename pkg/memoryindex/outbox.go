@@ -59,6 +59,14 @@ func NewStore(db *sql.DB) (*Store, error) {
 	if _, err := db.Exec(ddl); err != nil {
 		return nil, err
 	}
+	for _, ddl := range []string{
+		`CREATE INDEX IF NOT EXISTS memory_index_jobs_ready ON memory_index_jobs(collection_name,owner_id) WHERE status IN ('pending','running','failed')`,
+		`CREATE INDEX IF NOT EXISTS memory_index_jobs_claim ON memory_index_jobs(created_at,next_run_at) WHERE status IN ('pending','failed')`,
+	} {
+		if _, err := db.Exec(ddl); err != nil {
+			return nil, err
+		}
+	}
 	return s, nil
 }
 
@@ -99,11 +107,11 @@ func (s *Store) EnqueueTx(ctx context.Context, tx *sql.Tx, j Job) (Job, error) {
 }
 
 // Claim atomically moves the next due job to 'running'. Safe across
-	// multiple server processes sharing one database: each claim is a single
-	// conditional UPDATE guarded on the selectable statuses, so only the
-	// winner's UPDATE affects the row; losers move on to the next candidate
-	// (finding H9, 2026-09-03 review). On PostgreSQL candidates are selected
-	// FOR UPDATE SKIP LOCKED to avoid lock contention between claimers.
+// multiple server processes sharing one database: each claim is a single
+// conditional UPDATE guarded on the selectable statuses, so only the
+// winner's UPDATE affects the row; losers move on to the next candidate
+// (finding H9, 2026-09-03 review). On PostgreSQL candidates are selected
+// FOR UPDATE SKIP LOCKED to avoid lock contention between claimers.
 func (s *Store) Claim(ctx context.Context) (Job, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -243,10 +251,16 @@ func (s *Store) RecoverRunning(ctx context.Context) (int64, error) {
 
 func (s *Store) WaitReady(ctx context.Context, collection, ownerID string, maxWait time.Duration) bool {
 	deadline := time.Now().Add(maxWait)
+	query := `SELECT EXISTS(SELECT 1 FROM memory_index_jobs WHERE collection_name=? AND owner_id=? AND status IN ('pending','running','failed'))`
+	if s.postgres {
+		// COUNT uses the partial index reliably when pending rows sit after a
+		// large completed history; PostgreSQL can choose a slow seq scan for EXISTS.
+		query = `SELECT COUNT(*) > 0 FROM memory_index_jobs WHERE collection_name=? AND owner_id=? AND status IN ('pending','running','failed')`
+	}
 	for {
-		var n int
-		err := s.db.QueryRowContext(ctx, s.bind(`SELECT COUNT(*) FROM memory_index_jobs WHERE collection_name=? AND owner_id=? AND status IN ('pending','running','failed')`), collection, ownerID).Scan(&n)
-		if err != nil || n == 0 {
+		var pending bool
+		err := s.db.QueryRowContext(ctx, s.bind(query), collection, ownerID).Scan(&pending)
+		if err != nil || !pending {
 			return err == nil
 		}
 		if time.Now().After(deadline) {
