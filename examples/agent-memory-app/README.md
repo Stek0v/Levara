@@ -6,14 +6,19 @@ no SDK.
 
 ## Prerequisites
 
-The local Levara stack must be running:
+Run a local Ollama service separately and download `nomic-embed-text` using
+Ollama's supported setup. The example hardcodes `localhost:11434`, that model
+and the `mem0` collection in `main.py`; environment variables do not change them.
+Its vectors have 768 dimensions, so start a matching fresh Levara test instance:
 
 ```bash
-docker compose up -d --build   # from the repo root
+LEVARA_DIM=768 docker compose up -d --build   # from the repository root
 ```
 
-This brings up Levara on `:8080` and Ollama on `:11434` with the
-`nomic-embed-text` model preloaded.
+Compose starts Levara and Prometheus, not Ollama. Do not reuse a `mem0` collection
+created with a different dimension. The script sends no token; run only against
+your isolated local development server, or adapt its requests for authenticated
+use. This is a raw-vector example, not the document upload/sharing workflow.
 
 ## Run
 
@@ -45,15 +50,19 @@ Expected output:
 | Semantic search | `POST /api/v1/search` |
 | Embeddings (external) | `POST {ollama}/api/embeddings` |
 
-The default collection `mem0` is created automatically by the stack at
-boot time (`embedding_dim=768`, cosine distance).
+The example uses `mem0`; its vector dimension must match the configured
+server/collection. Do not treat the example scores as a retrieval-quality target.
 
 ## Next steps
 
-- Swap `nomic-embed-text` for `text-embedding-3-large` by setting
-  `EMBEDDING_PROVIDER=openai` in `.env` and re-running `docker compose up -d --build`.
+- To use another embedding provider, change `main.py`'s embedding request
+  and configure a collection with the matching dimension; this script does
+  not read an `EMBEDDING_PROVIDER` environment variable.
 - Use Levara's MCP surface (`POST /mcp`) for richer tools like
   `cognify`, `recall_memory`, and `query_entity` — call the
   `levara_instructions` tool first to get the agent contract.
 - For multi-collection workloads, pass `"collection": "<name>"` in the
   insert/search payloads — Levara will create the collection on first use.
+
+For files, processing status and individual sharing, use
+[document management](../../docs/document-management.md).

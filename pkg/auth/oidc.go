@@ -20,7 +20,9 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -38,7 +40,9 @@ type OIDCVerifierConfig struct {
 	Audiences []string
 	// ClockSkew tolerates clock drift for exp/nbf/iat. Defaults to 5m.
 	ClockSkew time.Duration
-	// HTTPClient for JWKS fetches; nil → http.DefaultClient with 10s timeout.
+	// HTTPClient for JWKS fetches; nil uses the default transport with a 10s
+	// timeout. The client is copied and redirects are disabled: configure the
+	// final trusted JWKS URL directly.
 	HTTPClient *http.Client
 }
 
@@ -103,12 +107,15 @@ func NewOIDCVerifier(cfg OIDCVerifierConfig) (*OIDCVerifier, error) {
 	if strings.TrimSpace(cfg.JWKSURL) == "" {
 		return nil, errors.New("oidc: JWKSURL is required")
 	}
-	if !strings.HasPrefix(cfg.JWKSURL, "https://") {
-		// Plain-http JWKS would let an attacker serve their own keys;
-		// only allow for explicit localhost testing.
-		if !strings.HasPrefix(cfg.JWKSURL, "http://localhost") && !strings.HasPrefix(cfg.JWKSURL, "http://127.0.0.1") {
-			return nil, errors.New("oidc: JWKSURL must use https")
-		}
+	u, err := url.Parse(cfg.JWKSURL)
+	if err != nil || u.Hostname() == "" || u.User != nil || u.Fragment != "" || u.Opaque != "" {
+		return nil, errors.New("oidc: JWKSURL must be an absolute URL without userinfo or fragment")
+	}
+	// Compare the parsed host, never a URL prefix; localhost.example and
+	// localhost@example are remote hosts. Plain HTTP is for loopback tests only.
+	loopback := strings.EqualFold(u.Hostname(), "localhost") || net.ParseIP(u.Hostname()).IsLoopback()
+	if u.Scheme != "https" && !(u.Scheme == "http" && loopback) {
+		return nil, errors.New("oidc: JWKSURL must use https (except loopback)")
 	}
 	if len(cfg.Issuers) == 0 || len(cfg.Audiences) == 0 {
 		return nil, errors.New("oidc: at least one issuer and audience are required")
@@ -122,13 +129,14 @@ func NewOIDCVerifier(cfg OIDCVerifierConfig) (*OIDCVerifier, error) {
 	if skew <= 0 {
 		skew = 5 * time.Minute
 	}
-	client := cfg.HTTPClient
-	if client == nil {
-		client = &http.Client{Timeout: 10 * time.Second}
+	client := http.Client{Timeout: 10 * time.Second}
+	if cfg.HTTPClient != nil {
+		client = *cfg.HTTPClient
 	}
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	v := &OIDCVerifier{
 		cfg:     cfg,
-		client:  client,
+		client:  &client,
 		skew:    skew,
 		refetch: make(chan struct{}, 1),
 		maxKeys: 100,

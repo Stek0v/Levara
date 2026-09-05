@@ -11,19 +11,24 @@ Deploy Levara on Raspberry Pi (ARM64) for edge AI and local knowledge graph use 
 ## Quick Setup
 
 ```bash
-# 1. Cross-compile on your dev machine
+# 1. Cross-compile from the repository root.
 make arm64
 
-# 2. Copy to Raspberry Pi
-scp levara-arm64 pi@raspberrypi:~/levara/levara-server
-scp deploy/raspberry/levara.service pi@raspberrypi:~/
-scp deploy/raspberry/levara.env pi@raspberrypi:~/
+# 2. Copy the binary and installer together under the expected names.
+ssh pi@raspberrypi 'mkdir -p ~/levara-install'
+scp levara-arm64 deploy/raspberry/setup.sh pi@raspberrypi:~/levara-install/
 
-# 3. On the Raspberry Pi, run setup
+# 3. Inspect the installer/configuration before installing system services.
 ssh pi@raspberrypi
-chmod +x ~/levara/levara-server
+cd ~/levara-install
 sudo bash setup.sh
 ```
+
+The installer may install packages, models, swap and system services; this is
+more than copying a binary. Review it before using an existing host. The backend
+now defaults to loopback. For access from another machine, configure the service
+bind address and required auth, or use a trusted reverse proxy/SSH tunnel.
+See [profile presets](../../docs/profile-presets.md).
 
 ## Automated Setup
 
@@ -46,28 +51,26 @@ The `setup.sh` script handles:
 
 ## Memory Considerations
 
-- **4GB Pi**: Use `dim=384` or `dim=768`, limit to ~50K vectors
-- **8GB Pi**: Use `dim=768` or `dim=1024`, supports ~200K vectors
+- **4GB Pi**: size the vector index and local model together; historical
+  planning estimates used dim 384/768 and roughly 50K vectors, not a capacity guarantee.
+- **8GB Pi**: historical planning estimates used dim 768/1024 and roughly 200K
+  vectors; measure resident memory with your documents, shards and sidecars.
 - SQLite backend recommended (lower memory overhead than PostgreSQL)
 
 ## MCP Integration
 
 Levara provides an MCP server for integration with MCP-compatible AI assistants.
 
-### Available Tools (15)
+### Available tools
 
-| Tool | Description |
-|------|-------------|
-| `add` | Add text/data to memory |
-| `search` | Semantic search across memory |
-| `cognify` | Run cognify pipeline (extract entities, build graph) |
-| `dataset_delete` | Delete data from memory |
-| `status` | Pipeline status |
-| `graph_query` | Get knowledge graph |
-| `extract_entities` | Get extracted entities |
-| `summarize` | Get summaries |
-| `datasets_list` | List collections |
-| `health` | Health check |
+The available MCP tools depend on `LEVARA_MCP_TOOLSET` and feature flags.
+Use the [canonical catalogue](../../docs/api-contract.md) rather than a
+Pi-specific tool list. Typical operations are `save_memory`/`recall_memory`,
+`add`, `cognify`, `cognify_status`, `search` and `doctor`.
+
+`add` stores input; processing it into searchable chunks is a separate step.
+Follow [document management](../../docs/document-management.md) for upload,
+extraction dependencies, processing and quality checks.
 
 ### MCP Config
 
@@ -86,7 +89,8 @@ Levara provides an MCP server for integration with MCP-compatible AI assistants.
 **Adding data:**
 > "Remember this: distributed systems use consensus protocols for consistency"
 
-Levara adds the data and runs the cognify pipeline automatically.
+Ask the agent to save a discrete memory, or use `add` followed by `cognify`
+for a document. Confirm completion and an actual source-backed search result.
 
 **Searching:**
 > "What do I know about caching architecture?"

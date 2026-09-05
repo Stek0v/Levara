@@ -1,5 +1,12 @@
 # Levara — задачи с DoD, тест-планами и corner cases (2026-09-04)
 
+> Статус документа на 2026-09-05: это датированный backlog, а не руководство
+> эксплуатации. Отметка о реализации SAML/SCIM обозначает ограниченную HTTP-поверхность,
+> а не готовую связку с AD/LDAP, browser SSO или права групп. Текущие ограничения:
+> [enterprise identity](../enterprise-identity.md), [управление документами](../document-management.md),
+> [приёмочные сценарии](../document-workflow-scenarios.md).
+
+
 Развёртка роадмапа `docs/product/unimplemented-roadmap.md` (24 пункта).
 Каждая задача: чёткий Definition of Done + список тестов + corner cases.
 Приоритеты: P1 (блокирует Enterprise в продакшене) → P3 (отложаемо).

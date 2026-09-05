@@ -23,64 +23,62 @@ func (s pgSCIMQuery) rewrite(q string) string {
 	return s.Q(q)
 }
 
-func (s pgSCIMQuery) ByEmail(ctx context.Context, issuer, email string) (uids, externalIDs []string, total int, err error) {
+func (s pgSCIMQuery) ByEmail(ctx context.Context, issuer, email string) (users []scimUserRecord, total int, err error) {
 	rows, err := s.DB.QueryContext(ctx, s.rewrite(`
-		SELECT u.id, COALESCE(si.external_id, u.email)
+		SELECT u.id, u.email, u.is_active, si.external_id
 		FROM users u
-		LEFT JOIN scim_identities si ON si.user_id = u.id AND si.issuer = $1
+		JOIN scim_identities si ON si.user_id = u.id AND si.issuer = $1
 		WHERE u.email = $2`), issuer, email)
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var id, ext string
-		if err := rows.Scan(&id, &ext); err != nil {
-			return nil, nil, 0, err
+		var u scimUserRecord
+		if err := rows.Scan(&u.ID, &u.Email, &u.Active, &u.ExternalID); err != nil {
+			return nil, 0, err
 		}
-		uids = append(uids, id)
-		externalIDs = append(externalIDs, ext)
+		users = append(users, u)
 		total++
 	}
-	return uids, externalIDs, total, rows.Err()
+	return users, total, rows.Err()
 }
 
-func (s pgSCIMQuery) List(ctx context.Context, issuer string, start, count int) (uids, externalIDs []string, total int, err error) {
+func (s pgSCIMQuery) List(ctx context.Context, issuer string, start, count int) (users []scimUserRecord, total int, err error) {
 	if err := s.DB.QueryRowContext(ctx, s.rewrite(`
 		SELECT COUNT(*) FROM users u
 		JOIN scim_identities si ON si.user_id = u.id AND si.issuer = $1`), issuer).Scan(&total); err != nil {
-		return nil, nil, 0, err
+		return nil, 0, err
 	}
 	if total == 0 {
-		return nil, nil, 0, nil
+		return nil, 0, nil
 	}
 	rows, err := s.DB.QueryContext(ctx, s.rewrite(`
-		SELECT u.id, si.external_id
+		SELECT u.id, u.email, u.is_active, si.external_id
 		FROM users u
 		JOIN scim_identities si ON si.user_id = u.id AND si.issuer = $1
 		ORDER BY si.created_at, u.id
 		LIMIT $2 OFFSET $3`), issuer, count, start-1)
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var id, ext string
-		if err := rows.Scan(&id, &ext); err != nil {
-			return nil, nil, 0, err
+		var u scimUserRecord
+		if err := rows.Scan(&u.ID, &u.Email, &u.Active, &u.ExternalID); err != nil {
+			return nil, 0, err
 		}
-		uids = append(uids, id)
-		externalIDs = append(externalIDs, ext)
+		users = append(users, u)
 	}
-	return uids, externalIDs, total, rows.Err()
+	return users, total, rows.Err()
 }
 
-func (s pgSCIMQuery) ByID(ctx context.Context, id string) (email string, active bool, externalID string, err error) {
+func (s pgSCIMQuery) ByID(ctx context.Context, issuer, id string) (email string, active bool, externalID string, err error) {
 	err = s.DB.QueryRowContext(ctx, s.rewrite(`
-		SELECT u.email, u.is_active, COALESCE(si.external_id, '')
+		SELECT u.email, u.is_active, si.external_id
 		FROM users u
-		LEFT JOIN scim_identities si ON si.user_id = $1
-		WHERE u.id = $2`), id, id).Scan(&email, &active, &externalID)
+		JOIN scim_identities si ON si.user_id = u.id AND si.issuer = $1
+		WHERE u.id = $2`), issuer, id).Scan(&email, &active, &externalID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", false, "", accesspkg.ErrUserNotFound
 	}

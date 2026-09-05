@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"net/http"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/adaptor"
 	vectorHttp "github.com/stek0v/levara/internal/http"
 	accesspkg "github.com/stek0v/levara/pkg/access"
 )
@@ -133,40 +135,30 @@ func samlRoutes(public fiber.Router, sp *accesspkg.SAMLSP, jwtSecret string) {
 	if sp == nil {
 		return
 	}
-	public.Get("/saml/login", func(c *fiber.Ctx) error {
-		redirect, err := sp.StartAuth(c.Query("RelayState"))
+	public.Get("/saml/login", adaptor.HTTPHandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		redirect, err := sp.StartAuth(w, r)
 		if err != nil {
-			return c.Status(500).JSON(fiber.Map{"detail": err.Error()})
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(fiber.Map{"detail": "saml authentication failed"})
+			return
 		}
-		return c.Redirect(redirect, 302)
-	})
-	public.Post("/saml/acs", func(c *fiber.Ctx) error {
-		// Bridge fasthttp -> net/http: the SAML library reads the form body
-		// through the standard library request shape.
-		stdReq, err := httpFromFasthttp(c)
-		if err != nil {
-			return c.Status(400).JSON(fiber.Map{"detail": "unreadable request"})
-		}
-		principal, err := sp.ConsumeResponse(c.Context(), stdReq)
+		http.Redirect(w, r, redirect, http.StatusFound)
+	}))
+	public.Post("/saml/acs", adaptor.HTTPHandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		principal, err := sp.ConsumeResponse(r.Context(), w, r)
 		if err != nil {
 			// Opaque rejection: never echo IdP response details to the client.
-			return c.Status(401).JSON(fiber.Map{"detail": "saml authentication failed"})
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(fiber.Map{"detail": "saml authentication failed"})
+			return
 		}
 		token := vectorHttp.CreateSessionJWT(principal.UserID, principal.Email, jwtSecret)
-		return c.JSON(fiber.Map{"access_token": token, "token_type": "bearer"})
-	})
+		_ = json.NewEncoder(w).Encode(fiber.Map{"access_token": token, "token_type": "bearer"})
+	}))
 	public.Get("/saml/metadata", func(c *fiber.Ctx) error {
 		c.Set("Content-Type", "application/samlmetadata+xml")
 		return c.SendString(sp.Metadata())
 	})
-}
-
-// httpFromFasthttp converts the fiber request into a stdlib POST.
-func httpFromFasthttp(c *fiber.Ctx) (*http.Request, error) {
-	req, err := http.NewRequest(http.MethodPost, "/", strings.NewReader(string(c.Body())))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", string(c.Request().Header.ContentType()))
-	return req, nil
 }

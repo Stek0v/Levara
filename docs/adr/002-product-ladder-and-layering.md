@@ -1,5 +1,12 @@
 # ADR-002: Product Ladder And Layer Boundaries
 
+> Implementation status, 2026-09-05: this ADR preserves the original architecture
+> decision. OIDC bearer, SAML SP and limited SCIM Users HTTP now exist; their
+> browser, directory-linkage and group-permission limits are documented in
+> [enterprise identity](../enterprise-identity.md). Historical open questions below
+> are not the current supported-feature list.
+
+
 Date: 2026-06-05
 Status: accepted; layer split, profile validation, and product presets complete.
 Concrete enterprise backends (raw OIDC/SAML/SCIM, KMS/BYOK, corporate object

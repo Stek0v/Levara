@@ -1,8 +1,9 @@
 # Tutorial 04 — Deploy for a Team (30 minutes)
 
 Take Levara from a laptop to a shared server: Postgres, authentication,
-tenant isolation, and workspace indexing for the whole team. Every claim in
-this tutorial was verified against a live server (2026-09-03).
+workspace access checks, and indexing for the team. Core token-flow examples
+were exercised on 2026-09-03; documentation was cross-checked with source on
+2026-09-05. This is not an LDAP/AD or organizational-isolation acceptance test.
 
 Prerequisites: a Linux host (or Mac) with Go 1.26+, PostgreSQL 14+, and
 optionally Docker.
@@ -41,12 +42,18 @@ The team profile example enables:
 set -a && source .env && set +a
 ./levara-server -config-check              # validate before serving
 ./levara-server -require-auth \
-  -port=8080 -grpc-port=8081
+  -host=0.0.0.0 -port=8080 -grpc-port=0
 ```
 
+This example explicitly binds the team listener; use HTTPS at the reverse proxy
+and restrict direct backend access. Keep `-host=127.0.0.1` when the proxy runs
+on the same host. The default listener is loopback, not a public team endpoint.
+
 With `-require-auth`, `/health` stays public for load balancers, but
-everything else answers 401 without a token (verified: unauthenticated
-`POST /api/v1/collections` → 401).
+protected resource calls require credentials. Registration/login, enabled
+identity handshakes and transport discovery have their own access rules.
+gRPC raw-storage methods require an active global superuser with auth enabled;
+use REST/MCP for ordinary users or disable gRPC with `-grpc-port=0`.
 
 The MCP endpoint `http://your-host:8080/mcp` now requires
 `Authorization: Bearer <token>` on every call — see
@@ -81,12 +88,17 @@ JWTs are signed with `JWT_SECRET` — keep it stable across restarts and
 identical if you run more than one server process. For HMAC-peppered API-key
 hashing, set `LEVARA_API_KEY_PEPPER` too.
 
-## 5. Tenant isolation (optional, recommended)
+## 5. Identity and permission boundaries
 
-With `LEVARA_TENANT_ENFORCED=1` in the environment, requests authenticated
-but lacking a tenant context receive **403** — users can no longer see
-each other's data by accident. Turn this on when the deployment crosses
-team boundaries.
+`LEVARA_TENANT_ENFORCED=1` requires tenant context on guarded operations; it
+does not create group grants or a document ACL. Dataset sharing is individual,
+with viewer/editor/admin roles. To share one document, use a separate dataset
+and verify both allowed and denied operations in
+[document management](../document-management.md).
+
+For LDAP/AD and SSO, follow [enterprise identity](../enterprise-identity.md).
+Native LDAP, browser OIDC login and SCIM-to-SSO linking are absent; provisioning
+an account is not proof that its browser/API identity or permissions are wired.
 
 ## 6. Point every agent at the server
 
@@ -103,19 +115,20 @@ curl -s http://127.0.0.1:8080/health/details
 # database: postgres/connected, embed: connected
 
 # two users cannot see each other by default:
-# user A saves to a collection with owner scoping, user B lists — count differs
+# follow document-workflow-scenarios.md with separate users and known IDs
 ```
 
-Load expectation, verified 2026-09-03 (dual-core-class hardware): 50
+Historical observation from the [2026-09-03 run](../../benchmark/results/multi_user/run2_summary.json): 50
 concurrent agents, save p95 22 ms, recall p95 238 ms, zero cross-agent
 leaks, zero duplicate task executions across two server processes on one
-database (`benchmark/results/multi_user/run2_summary.json`).
+database. This workload does not certify every access path or set a latency SLA.
 
 ## Operations
 
 - Backups: `cmd/backup` wraps pg_dump/pg_restore, including schema-only and
   restore verification
-- WebUI: `http://your-host:8080/ui` — memory, workspace, and task inspection
+- WebUI: a separate Next.js service (port 3000 in development); configure
+  its backend target/reverse proxy using [WebUI operations](../webui-operations.md)
 - Upgrades: rebuild the binary; indexes are disposable derivatives and
   reconcile/rebuild on demand
 
@@ -125,5 +138,4 @@ database (`benchmark/results/multi_user/run2_summary.json`).
 - [../deployment-matrix.md](../deployment-matrix.md) — which profile fits
   which operating model
 
-_Last verified: 2026-09-03 (main; register/login/authenticated flows tested
-live on a require-auth instance)._
+_Historical token-flow test: 2026-09-03. Documentation/source cross-check: 2026-09-05._

@@ -13,10 +13,10 @@ import (
 //   - format classification: isTextFormat / isImageFormat / isAudioFormat
 //
 // Skipped (require external deps):
-//   - PDF/DOCX/PPTX/XLSX extraction → tabula library + binary test fixtures
 //   - Image OCR → Ollama vision model running locally
 //   - Audio transcription → Whisper API endpoint
-// These are integration paths covered separately, not unit tests.
+// PDF/Office parsing uses checked-in synthetic fixtures in document_quality_test.go.
+// Live OCR/transcription accuracy requires a separate configured acceptance run.
 
 // ──────────────────────────────────────────────────────────────────
 // detectFormat

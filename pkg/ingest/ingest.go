@@ -2,15 +2,17 @@
 // in a single Go call, replacing Python's 3x MD5 + 2x disk write + sync blocking.
 //
 // Python ADD pipeline per item:
-//   save_data_to_file()     → MD5 #1 + SYNC disk write (40-175ms)
-//   data_item_to_text_file()→ read file back (20-100ms)
-//   classify original       → MD5 #2 (52-510ms)
-//   classify storage        → MD5 #3 (52-510ms)
-//   Total: 164-1,295ms per item
+//
+//	save_data_to_file()     → MD5 #1 + SYNC disk write (40-175ms)
+//	data_item_to_text_file()→ read file back (20-100ms)
+//	classify original       → MD5 #2 (52-510ms)
+//	classify storage        → MD5 #3 (52-510ms)
+//	Total: 164-1,295ms per item
 //
 // Go IngestData per item:
-//   SHA256 + disk write + classify = single pass (~5-20ms)
-//   Total: 5-20ms per item (10-65x faster)
+//
+//	SHA256 + disk write + classify = single pass (~5-20ms)
+//	Total: 5-20ms per item (10-65x faster)
 package ingest
 
 import (
@@ -69,8 +71,8 @@ func isInside(root, child string) bool {
 // Item is input to ingest.
 type Item struct {
 	ID          string
-	Text        string   // for text input
-	FileData    []byte   // for binary file input
+	Text        string // for text input
+	FileData    []byte // for binary file input
 	Filename    string
 	DatasetName string
 	OwnerID     string   // user who uploaded (for dedup scoping)
@@ -80,16 +82,19 @@ type Item struct {
 
 // Result is the output of ingesting one item.
 type Result struct {
-	ID            string
-	ContentHash   string
-	FilePath      string // file:// URI
-	MimeType      string
-	Extension     string
-	FileSize      int64
-	Name          string
-	Tags          string // JSON array string, e.g. '["backend","api"]'
-	Room          string // sub-topic, propagated from Item
-	AlreadyExists bool
+	OriginalFilePath    string // optional source bytes, separate from extracted text
+	OriginalContentHash string
+	OriginalFileSize    int64
+	ID                  string
+	ContentHash         string
+	FilePath            string // file:// URI
+	MimeType            string
+	Extension           string
+	FileSize            int64
+	Name                string
+	Tags                string // JSON array string, e.g. '["backend","api"]'
+	Room                string // sub-topic, propagated from Item
+	AlreadyExists       bool
 }
 
 // ingestPrep holds the pre-computed data from Phase 1 (sequential).
@@ -101,7 +106,6 @@ type ingestPrep struct {
 	name          string
 	ext           string
 	mimeType      string
-	filename      string
 	fullPath      string
 	tagsJSON      string
 	room          string
@@ -118,10 +122,13 @@ func Ingest(items []Item, storagePath string) ([]Result, error) {
 	if storagePath == "" {
 		storagePath = "data"
 	}
-	os.MkdirAll(storagePath, 0755)
+	storagePath = filepath.Join(storagePath, "blobs")
+	if err := os.MkdirAll(storagePath, 0700); err != nil {
+		return nil, fmt.Errorf("create blob storage: %w", err)
+	}
 
 	// Phase 1: sequential hash + dedup (deterministic: first occurrence wins).
-	seen := make(map[string]bool) // hash → true
+	seen := make(map[string]bool) // owner/content storage key → true
 	preps := make([]ingestPrep, len(items))
 	for i, item := range items {
 		p, err := prepareItem(item, storagePath, seen)
@@ -173,8 +180,11 @@ func prepareItem(item Item, storagePath string, seen map[string]bool) (ingestPre
 	hash := sha256.Sum256(content)
 	contentHash := hex.EncodeToString(hash[:])
 
-	alreadyExists := seen[contentHash]
-	seen[contentHash] = true
+	// A display filename must never alias another owner's document or version.
+	storageHash := sha256.Sum256([]byte(item.OwnerID + "\x00" + contentHash))
+	storageKey := hex.EncodeToString(storageHash[:])
+	alreadyExists := seen[storageKey]
+	seen[storageKey] = true
 
 	id := item.ID
 	if id == "" {
@@ -207,11 +217,7 @@ func prepareItem(item Item, storagePath string, seen map[string]bool) (ingestPre
 		mimeType = http.DetectContentType(content)
 	}
 
-	filename := name
-	if !strings.HasSuffix(strings.ToLower(name), strings.ToLower(ext)) {
-		filename = name + ext
-	}
-	fullPath := filepath.Join(storagePath, filename)
+	fullPath := filepath.Join(storagePath, storageKey)
 	// Defense-in-depth: ensure the resolved path stays inside storagePath even
 	// if a future change weakens sanitizeFilename.
 	if !isInside(storagePath, fullPath) {
@@ -235,7 +241,6 @@ func prepareItem(item Item, storagePath string, seen map[string]bool) (ingestPre
 		name:          name,
 		ext:           ext,
 		mimeType:      mimeType,
-		filename:      filename,
 		fullPath:      fullPath,
 		tagsJSON:      tagsJSON,
 		room:          item.Room,
@@ -248,12 +253,31 @@ func finalizeItem(p *ingestPrep) (Result, error) {
 	alreadyExists := p.alreadyExists
 
 	if !alreadyExists {
-		if _, err := os.Stat(p.fullPath); err != nil {
-			if err := os.WriteFile(p.fullPath, p.content, 0644); err != nil {
-				return Result{}, fmt.Errorf("write %s: %w", p.fullPath, err)
-			}
-		} else {
+		if _, err := os.Stat(p.fullPath); err == nil {
 			alreadyExists = true
+		} else if !os.IsNotExist(err) {
+			return Result{}, fmt.Errorf("stat blob: %w", err)
+		} else {
+			f, err := os.CreateTemp(filepath.Dir(p.fullPath), ".ingest-*")
+			if err != nil {
+				return Result{}, err
+			}
+			defer os.Remove(f.Name())
+			_, writeErr := f.Write(p.content)
+			if writeErr == nil {
+				writeErr = f.Sync()
+			}
+			closeErr := f.Close()
+			if writeErr != nil {
+				return Result{}, fmt.Errorf("write blob: %w", writeErr)
+			}
+			if closeErr != nil {
+				return Result{}, closeErr
+			}
+			// Publish complete bytes atomically; concurrent copies have identical content.
+			if err := os.Rename(f.Name(), p.fullPath); err != nil {
+				return Result{}, fmt.Errorf("publish blob: %w", err)
+			}
 		}
 	}
 

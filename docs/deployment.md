@@ -1,10 +1,14 @@
 # Deployment Guide
 
-This guide separates generic deployment recipes from the verified local Mac runtime. For the exact current state, see [current-state.md](current-state.md).
+This guide contains generic recipes and a dated local Mac example. Start new
+deployments with [profile presets](profile-presets.md); use
+[enterprise identity](enterprise-identity.md) and [document management](document-management.md)
+for corporate login and individual sharing. [current-state.md](current-state.md)
+is a historical observation, not proof of the currently running binary.
 
-## Verified local Mac launchd deployment
+## Historical local Mac launchd example
 
-Current local service:
+The local service recorded in the snapshot (substitute your own paths):
 
 ```text
 LaunchAgent: ~/Library/LaunchAgents/com.stek0v.levara.plist
@@ -51,10 +55,10 @@ curl -fsS http://127.0.0.1:8081/health
 curl -fsS http://127.0.0.1:8081/version
 curl -fsS http://127.0.0.1:9101/health
 ps -p $(pgrep -f '/levara-server' | head -1) -o pid,lstart,args=
-LEVARA_URL=http://127.0.0.1:8081/api/v1 ./levara/cli health --details
+LEVARA_URL=http://127.0.0.1:8081/api/v1 ./levara health --details
 ```
 
-Expected current health:
+Example health response:
 
 ```json
 {"health":"healthy","status":"ready","version":"levara-go"}
@@ -317,6 +321,6 @@ Enable auth before exposing Levara outside a trusted network.
 - `-grpc-port=0` disables gRPC, but `/health/details` may still show a `grpc` row with `port=0`.
 - `./levara-server -standalone=true` is legacy shorthand; prefer explicit `-profile=standalone` or `-profile=standalone-embed`.
 - `LLM_MODEL` is an environment variable, not a CLI flag.
-- The local CLI executable may be `./levara/cli` because a `levara/` directory exists.
+- Build the CLI explicitly with `go build -o ./bin/levara ./cmd/cli`; use that output path in local examples.
 - The local Mac runtime uses port `8081`; many generic examples use `8080`.
 - Neo4j and rerank are optional and are not configured in the current Mac deployment.

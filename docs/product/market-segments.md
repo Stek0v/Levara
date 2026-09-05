@@ -21,7 +21,7 @@ and `docs/profile-presets.md`.
 | Individual developers | “Your AI remembers the project without sending memory to a SaaS.” | Personal preset, MCP tools, local SQLite/files, Markdown workspace | “Enterprise-ready KMS” |
 | Power users | “One memory follows you across machines.” | Solo Pro sync token, backup/restore tests, Pi docs | “transparent multi-master cloud sync” unless implemented |
 | Teams | “Humans and agents share context with auth, ACL, and audit.” | Team strict profile, `pkg/access`, workspace audit, policy boundary tests | “SSO/SCIM complete” |
-| Enterprise | “Governed agent memory with clear adapter seams.” | enterprise strict checks, OIDC verified-claims adapter, audit export, storage/KMS contracts | “production SAML/SCIM/KMS/SIEM ready” |
+| Enterprise | “Governed agent memory with clear adapter seams.” | enterprise strict checks, OIDC verified-claims adapter, audit export, storage/KMS contracts | “complete browser SSO, directory/group authorization or KMS/SIEM ready” |
 
 ## Campaign Backlog
 
@@ -97,14 +97,17 @@ and `docs/profile-presets.md`.
 | marketing/solo-pro (local) | S2, S5 |
 | marketing/team (local) | S4 |
 | marketing/enterprise (local) | enterprise discovery, security review |
-| `docs/security-diff-checklist.md` | Team/Enterprise trust |
+| [enterprise identity](../enterprise-identity.md) and [document scenarios](../document-workflow-scenarios.md) | Team/Enterprise acceptance boundaries |
 
 ## Claim Guardrails
 
 - Use “adapter contract”, “seam”, or “verified-claims adapter” for current
   enterprise identity/storage/KMS work.
-- Do not claim production SAML, SCIM HTTP, SIEM, KMS/BYOK, Azure/GCS, or legal
-  hold backend support until those adapters exist and have tests.
+- OIDC bearer verification, SAML SP and limited SCIM Users HTTP exist; do not
+  equate them with browser OIDC login, native LDAP, SCIM-to-SSO linking or group
+  authorization. Follow [enterprise identity](../enterprise-identity.md).
+- Do not claim production SIEM, KMS/BYOK, corporate Azure/GCS controls or legal
+  hold enforcement until concrete backends and acceptance evidence exist.
 - Performance claims should link to a reproducible benchmark or be phrased as
   historical benchmark results, not universal guarantees.
 - Product profile claims should be backed by `deploy/profiles/*` and

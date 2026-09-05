@@ -597,10 +597,8 @@ func TestToolPrune_ClearsEveryKnownTable(t *testing.T) {
 	}
 }
 
-func TestToolPrune_MissingTableIsBestEffort(t *testing.T) {
-	// If a table is missing (e.g. schema drift in a minority deployment),
-	// ToolPrune must still succeed for the tables that do exist. This
-	// locks in the "errors are swallowed" contract from pre-refactor.
+func TestToolPrune_MissingTableRollsBack(t *testing.T) {
+	// A schema failure must surface and leave existing rows intact.
 	f, _ := os.CreateTemp("", "mcp-prune-partial-*.db")
 	path := f.Name()
 	f.Close()
@@ -623,16 +621,16 @@ func TestToolPrune_MissingTableIsBestEffort(t *testing.T) {
 	}
 
 	got := ToolPrune(context.Background(), &fakeDeps{db: db})
-	if got.IsError {
-		t.Fatalf("IsError = true, want false on partial schema")
+	if !got.IsError {
+		t.Fatal("partial schema must return an error")
 	}
 
 	var n int
 	if err := db.QueryRow("SELECT COUNT(*) FROM datasets").Scan(&n); err != nil {
 		t.Fatalf("count datasets: %v", err)
 	}
-	if n != 0 {
-		t.Errorf("datasets count = %d after prune, want 0 even when other tables are missing", n)
+	if n != 1 {
+		t.Errorf("datasets count = %d after failed prune, want 1", n)
 	}
 }
 
@@ -997,11 +995,10 @@ func TestToolAdd_MetadataWriteCommitsToDB(t *testing.T) {
 	}
 }
 
-func TestToolAdd_MetadataErrorIsSwallowed(t *testing.T) {
+func TestToolAdd_MetadataErrorIsReported(t *testing.T) {
 	// Partial schema (no data table) → MetadataWriter returns an error
-	// deep inside the transaction. The tool must still return success
-	// because the filesystem ingest has already committed — this locks
-	// in the pre-refactor "DB write is best-effort" contract.
+	// deep inside the transaction. The tool must return an error so the
+	// caller does not mistake an unregistered file for an ingested document.
 	f, _ := os.CreateTemp("", "mcp-add-brokendb-*.db")
 	path := f.Name()
 	f.Close()
@@ -1027,8 +1024,8 @@ func TestToolAdd_MetadataErrorIsSwallowed(t *testing.T) {
 	deps := &fakeDeps{db: db, storagePath: t.TempDir()}
 
 	got := ToolAdd(context.Background(), deps, map[string]any{"data": "x"})
-	if got.IsError {
-		t.Errorf("IsError = true, want false (metadata failure should be swallowed); content=%+v", got.Content)
+	if !got.IsError {
+		t.Errorf("metadata failure should be reported; content=%+v", got.Content)
 	}
 }
 

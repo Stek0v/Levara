@@ -4,14 +4,20 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"io"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 	accesspkg "github.com/stek0v/levara/pkg/access"
 
 	_ "github.com/ncruces/go-sqlite3/driver"
@@ -20,13 +26,41 @@ import (
 const scimTestToken = "scim-e2e-token"
 
 func scimTestApp(t *testing.T) (*fiber.App, *accesspkg.SCIMStore) {
+	return scimTestAppDialect(t, "sqlite")
+}
+
+func scimTestAppDialect(t *testing.T, dialect string) (*fiber.App, *accesspkg.SCIMStore) {
 	t.Helper()
-	db, err := sql.Open("sqlite3", t.TempDir()+"/scim-http.db")
-	if err != nil {
-		t.Fatal(err)
+	var db *sql.DB
+	var rewrite accesspkg.QueryRewriter
+	if dialect == "sqlite" {
+		var err error
+		db, err = sql.Open("sqlite3", t.TempDir()+"/scim-http.db")
+		if err != nil {
+			t.Fatal(err)
+		}
+		rewrite = scimTestRewriter
+		t.Cleanup(func() { _ = db.Close() })
+	} else {
+		dsn := os.Getenv("LEVARA_TEST_POSTGRES_DSN")
+		if dsn == "" {
+			t.Skip("LEVARA_TEST_POSTGRES_DSN is not set")
+		}
+		cfg, err := pgx.ParseConfig(dsn)
+		if err != nil {
+			t.Fatal(err)
+		}
+		schema := fmt.Sprintf("scim_http_test_%d", time.Now().UnixNano())
+		cfg.RuntimeParams["search_path"] = schema
+		db = stdlib.OpenDB(*cfg)
+		t.Cleanup(func() { _ = db.Close() })
+		if _, err := db.Exec("CREATE SCHEMA " + schema); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _, _ = db.Exec("DROP SCHEMA " + schema + " CASCADE") })
+		rewrite = func(q string) string { return q }
 	}
-	t.Cleanup(func() { db.Close() })
-	store := accesspkg.SCIMStore{DB: db, Q: scimTestRewriter}
+	store := accesspkg.SCIMStore{DB: db, Q: rewrite}
 	if err := store.EnsureSchema(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -34,16 +68,193 @@ func scimTestApp(t *testing.T) (*fiber.App, *accesspkg.SCIMStore) {
 		`CREATE TABLE IF NOT EXISTS principals (id TEXT PRIMARY KEY, type TEXT NOT NULL DEFAULT 'user', created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
 		`CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY REFERENCES principals(id), email TEXT NOT NULL UNIQUE, hashed_password TEXT NOT NULL, is_active BOOLEAN NOT NULL DEFAULT true, is_superuser BOOLEAN NOT NULL DEFAULT false, is_verified BOOLEAN NOT NULL DEFAULT false, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
 	} {
-		if _, err := db.Exec(scimTestRewriter(q)); err != nil {
+		if _, err := db.Exec(rewrite(q)); err != nil {
 			t.Fatal(err)
 		}
 	}
-	query := pgSCIMQuery{DB: db, Q: scimTestRewriter}
+	query := pgSCIMQuery{DB: db, Q: rewrite}
 	app := fiber.New()
 	if err := SCIMRoutes(app, store, query, nil); err != nil {
 		t.Fatal(err)
 	}
 	return app, &store
+}
+
+func TestSCIMRepresentationsAfterRenameAndDisable(t *testing.T) {
+	scimTestEnv(t)
+	for _, dialect := range []string{"sqlite", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			app, _ := scimTestAppDialect(t, dialect)
+			request := func(method, path, body string, status int) map[string]interface{} {
+				t.Helper()
+				resp, err := scimReq(app, method, path, body)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer resp.Body.Close()
+				var result map[string]interface{}
+				if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+					t.Fatal(err)
+				}
+				if resp.StatusCode != status {
+					t.Fatalf("%s %s: status=%d want=%d body=%v", method, path, resp.StatusCode, status, result)
+				}
+				return result
+			}
+			first := request("POST", "/scim/v2/Users", `{"userName":"old@corp.test","externalId":"person-1"}`, 201)
+			second := request("POST", "/scim/v2/Users", `{"userName":"second@corp.test","externalId":"person-2"}`, 201)
+			uid := first["id"].(string)
+			path := "/scim/v2/Users/" + uid
+			request("PATCH", path, `{"Operations":[{"op":"Replace","path":"userName","value":"renamed@corp.test"}]}`, 200)
+			request("PATCH", path, `{"Operations":[{"op":"Replace","path":"active","value":false}]}`, 200)
+			want := map[string]map[string]interface{}{
+				uid:                   {"id": uid, "userName": "renamed@corp.test", "externalId": "person-1", "active": false},
+				second["id"].(string): {"id": second["id"], "userName": "second@corp.test", "externalId": "person-2", "active": true},
+			}
+			assertUser := func(got map[string]interface{}) {
+				t.Helper()
+				expected := want[fmt.Sprint(got["id"])]
+				if expected == nil {
+					t.Fatalf("unexpected user: %v", got)
+				}
+				for key, value := range expected {
+					if got[key] != value {
+						t.Errorf("%s.%s = %v, want %v", got["id"], key, got[key], value)
+					}
+				}
+			}
+			assertUser(request("GET", path, "", 200))
+			for _, filter := range []string{`userName eq "renamed@corp.test"`, `externalId eq "person-1"`} {
+				list := request("GET", "/scim/v2/Users?filter="+url.QueryEscape(filter), "", 200)
+				resources := list["Resources"].([]interface{})
+				if list["totalResults"] != float64(1) || len(resources) != 1 {
+					t.Fatalf("bad filtered list: %v", list)
+				}
+				assertUser(resources[0].(map[string]interface{}))
+			}
+			seen := map[string]bool{}
+			for start := 1; start <= 3; start++ {
+				list := request("GET", fmt.Sprintf("/scim/v2/Users?startIndex=%d&count=1", start), "", 200)
+				resources := list["Resources"].([]interface{})
+				items := 1
+				if start == 3 {
+					items = 0
+				}
+				if list["totalResults"] != float64(2) || list["startIndex"] != float64(start) || list["itemsPerPage"] != float64(items) || len(resources) != items {
+					t.Fatalf("bad pagination: %v", list)
+				}
+				for _, item := range resources {
+					user := item.(map[string]interface{})
+					assertUser(user)
+					seen[user["id"].(string)] = true
+				}
+			}
+			if len(seen) != 2 {
+				t.Fatalf("pagination repeated a user: %v", seen)
+			}
+			for _, filter := range []string{`userName eq "old@corp.test"`, `externalId eq "missing"`} {
+				list := request("GET", "/scim/v2/Users?filter="+url.QueryEscape(filter), "", 200)
+				if list["totalResults"] != float64(0) || len(list["Resources"].([]interface{})) != 0 {
+					t.Errorf("obsolete/missing identity matched: %v", list)
+				}
+			}
+			// Failed combined PATCH must agree with the unchanged GET representation.
+			errBody := request("PATCH", path, `{"Operations":[{"op":"Replace","value":{"active":true,"userName":"second@corp.test"}}]}`, 409)
+			if errBody["scimType"] != "uniqueness" {
+				t.Errorf("wrong conflict shape: %v", errBody)
+			}
+			assertUser(request("GET", path, "", 200))
+			// An idempotent POST does not rename the existing user; report stored state.
+			assertUser(request("POST", "/scim/v2/Users", `{"userName":"old@corp.test","externalId":"person-1","active":false}`, 200))
+		})
+	}
+}
+
+func TestSCIMIssuerIsolation(t *testing.T) {
+	scimTestEnv(t)
+	for _, dialect := range []string{"sqlite", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			app, store := scimTestAppDialect(t, dialect)
+			ctx := context.Background()
+			ownID, _, err := store.ProvisionCreate(ctx, accesspkg.SCIMUser{
+				Issuer: "https://idp.corp.test", ExternalID: "shared-external", Email: "own@corp.test", Active: true,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			foreignID, _, err := store.ProvisionCreate(ctx, accesspkg.SCIMUser{
+				Issuer: "https://other-directory.test", ExternalID: "shared-external", Email: "foreign@corp.test", Active: true,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.DB.Exec(`INSERT INTO principals(id, type) VALUES ('local-user', 'user')`); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.DB.Exec(`INSERT INTO users(id, email, hashed_password) VALUES ('local-user', 'local@corp.test', 'locked')`); err != nil {
+				t.Fatal(err)
+			}
+			request := func(method, path, body string, status int) map[string]interface{} {
+				t.Helper()
+				resp, err := scimReq(app, method, path, body)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer resp.Body.Close()
+				var result map[string]interface{}
+				if resp.StatusCode != http.StatusNoContent {
+					if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if resp.StatusCode != status {
+					t.Errorf("%s %s: status=%d want=%d body=%v", method, path, resp.StatusCode, status, result)
+				}
+				return result
+			}
+			assertUnchanged := func() {
+				t.Helper()
+				for id, wantEmail := range map[string]string{ownID: "own@corp.test", foreignID: "foreign@corp.test", "local-user": "local@corp.test"} {
+					var email string
+					var active bool
+					if err := store.DB.QueryRow("SELECT email, is_active FROM users WHERE id = $1", id).Scan(&email, &active); err != nil {
+						t.Fatal(err)
+					}
+					if email != wantEmail || !active {
+						t.Errorf("unauthorized request changed %s: email=%s active=%v", id, email, active)
+					}
+				}
+			}
+			for _, id := range []string{foreignID, "local-user", "unknown-user"} {
+				path := "/scim/v2/Users/" + id
+				for _, method := range []string{"GET", "PATCH", "DELETE"} {
+					body := request(method, path, `{"Operations":[{"op":"Replace","value":{"active":false,"userName":"wrong@corp.test"}}]}`, 404)
+					if body["detail"] != "user not found" || body["status"] != "404" {
+						t.Errorf("foreign and missing resource should have identical error: %v", body)
+					}
+					assertUnchanged()
+				}
+			}
+			for _, email := range []string{"foreign@corp.test", "local@corp.test"} {
+				list := request("GET", "/scim/v2/Users?filter="+url.QueryEscape(`userName eq "`+email+`"`), "", 200)
+				if list["totalResults"] != float64(0) || len(list["Resources"].([]interface{})) != 0 {
+					t.Errorf("foreign user exposed by email: %v", list)
+				}
+			}
+			list := request("GET", "/scim/v2/Users", "", 200)
+			resources := list["Resources"].([]interface{})
+			if list["totalResults"] != float64(1) || len(resources) != 1 || resources[0].(map[string]interface{})["id"] != ownID {
+				t.Errorf("own list mismatch: %v", list)
+			}
+			path := "/scim/v2/Users/" + ownID
+			request("GET", path, "", 200)
+			got := request("PATCH", path, `{"Operations":[{"op":"Replace","path":"active","value":false}]}`, 200)
+			if got["id"] != ownID || got["active"] != false {
+				t.Errorf("own update failed: %v", got)
+			}
+			request("DELETE", path, "", 204)
+		})
+	}
 }
 
 func scimReq(app *fiber.App, method, path, body string) (*http.Response, error) {

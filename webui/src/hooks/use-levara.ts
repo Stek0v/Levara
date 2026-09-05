@@ -200,8 +200,8 @@ export function useDeleteDataset() {
 export function useUpload() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ files, datasetName }: { files: File[]; datasetName?: string }) =>
-      levara.upload(files, datasetName),
+    mutationFn: ({ files, datasetName, datasetId }: { files: File[]; datasetName?: string; datasetId?: string }) =>
+      levara.upload(files, datasetName, datasetId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.datasets })
       qc.invalidateQueries({ queryKey: queryKeys.collections })

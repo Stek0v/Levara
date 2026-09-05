@@ -58,6 +58,9 @@ func mirrorResultsToFileStorage(ctx context.Context, cfg APIConfig, results []in
 }
 
 func storageKeyForResult(r ingest.Result) string {
+	if r.ContentHash != "" {
+		return "ingest/" + r.ID + "/" + r.ContentHash
+	}
 	return storageKeyForData(r.ID, r.Extension, "")
 }
 

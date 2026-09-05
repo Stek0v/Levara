@@ -5,7 +5,7 @@
 разработчик (примеры и контракты).
 
 > Источники истины: сгенерированный контракт `docs/api-contract.md`
-> (`docs/contract.json` — 82 MCP tools, 148 REST routes, 45 gRPC methods),
+> ([contract.json](contract.json), включая aliases и ops-маршруты),
 > `docs/product-ladder.md` (границы продукта), `docs/current-state.md`
 > (проверенный локальный снимок). Этот гайд группирует поверхность по
 > пользовательским кейсам.
@@ -139,6 +139,11 @@ REST: `/memories` (CRUD), `/memory-reviews`, `/memory-scaffold/proposals`,
 | Анализ коммитов | `analyze_commits`, `git_search`, `prune_graph` | — |
 
 ---
+
+Для Web/CLI загрузки, проверки извлечённого текста, статуса и повторной
+обработки используйте [управление документами](document-management.md).
+Права назначаются пользователю на датасет; `room`/`hall` не заменяют ACL,
+а групповых и независимых прав на документ сейчас нет.
 
 ## Ingestion и Cognify
 
@@ -291,14 +296,16 @@ REST: 12 маршрутов `/sync*`. Гайд: `docs/setup-levara-workstation.m
 
 ## Безопасность и профили
 
-Три независимых контура (см. `docs/security-diff-checklist.md`):
+Три независимых контура (подробно: [identity](enterprise-identity.md)
+и [права на документы](document-management.md)):
 
 1. **Аутентификация**: JWT (login/users), API keys (хэшированные, с
    permissions и revoke), per-agent credentials. Включается
    `-require-auth` / конфигом профиля.
-2. **Авторизация**: dataset sharing + ACL (RBAC-маршруты `/acl`),
-   workspace ACL (`workspace_access_check`), tenant membership (`user_tenant`,
-   `/tenants`). MCP toolset-профиль — НЕ граница авторизации.
+2. **Авторизация**: индивидуальные viewer/editor/admin на датасет и
+   workspace access checks (`workspace_access_check`). Tenant membership —
+   отдельная проверка; записи `/acl` и роли групп не дают effective dataset
+   grants. `room`, `hall` и MCP toolset-профиль — не границы авторизации.
 3. **Аудит**: асинхронный JSONL export с retry/backpressure (`pkg/audit`),
    workspace audit log, MCP request audit.
 
@@ -343,7 +350,7 @@ Operations (дашборд, sync, аналитика, админка).
 | `workspace` | 16 | память + безопасный авторинг Markdown |
 | `ops` | 14 | эксплуатация и здоровье |
 | `long-horizon` | 22 | память + Task Runtime |
-| `full` | 82 (79 canonical + variants) | обратная совместимость |
+| `full` | см. текущий каталог | обратная совместимость |
 
 `light` — legacy-алиас `memory`. Профили не являются границей авторизации.
 Флаги: `LEVARA_LONG_HORIZON_RUNTIME` (task-инструменты), `LEVARA_MEMORY_COMMIT`
@@ -359,9 +366,9 @@ Operations (дашборд, sync, аналитика, админка).
 |---|---|---|---|
 | MCP Streamable HTTP (latest) | `/mcp/2026-07-28` | stateless, per-request metadata | современные MCP-клиенты |
 | MCP Streamable HTTP (legacy) | `/mcp` | session-based | существующие агенты и IDE |
-| REST | `:8080` | 144 маршрута | WebUI, приложения, операции |
-| gRPC v1/v2 | `:50051` | 45 методов | типизированные SDK |
-| CLI | `./levara/cli` | health/add/cognify/search/datasets/workspace/git | операторы и автоматизация |
+| REST | `:8080` | [каталог маршрутов](api-contract.md) | WebUI, приложения, операции |
+| gRPC v1/v2 | `:50051` | raw-storage API; superuser при auth | типизированные SDK |
+| CLI | `./levara` | health/add/cognify/search/datasets/workspace/git | операторы и автоматизация |
 | MCP stdio | `cmd/server/mcp_stdio.go` | локальный stdio-транспорт | локальные агентские хосты |
 
 Пример подключения MCP-клиента:
@@ -373,10 +380,10 @@ Operations (дашборд, sync, аналитика, админка).
 CLI-примеры:
 
 ```bash
-LEVARA_URL=http://127.0.0.1:8081/api/v1 ./levara/cli health --details
-./levara/cli add ./report.pdf --dataset=reports
-./levara/cli cognify --dataset=reports --wait
-./levara/cli search "rate limiting" --type=HYBRID --top-k=10
+LEVARA_URL=http://127.0.0.1:8081/api/v1 ./levara health --details
+./levara add ./report.pdf --dataset=reports
+./levara cognify --dataset=reports --wait
+./levara search "rate limiting" --type=HYBRID --top-k=10
 ```
 
 ---
@@ -393,12 +400,12 @@ LEVARA_URL=http://127.0.0.1:8081/api/v1 ./levara/cli health --details
 | Workspace | `docs/markdown-native-workspace.md` + 5 соседних docs/markdown-workspace-*.md |
 | Task Runtime | `docs/long-horizon-runtime.md`, `docs/long-horizon-alpha-report.md` |
 | Authority-манифесты | `docs/authority-manifests.md` |
-| Память (workflow) | `docs/memory-workflow-skill.md`, `docs/memory-commit-design.md` |
+| Память (workflow) | [memory workflow](memory-workflow-skill.md) |
 | Интеграции | `docs/integrations.md` |
-| Продуктовая лестница | `docs/product-ladder.md`, `docs/adr/002` |
-| Безопасность | `docs/security-diff-checklist.md` |
-| Миграции | `docs/MIGRATION-*.md` |
-| Эксплуатация | `docs/webui-operations.md`, `docs/reconcile-guide.md`, `docs/macos-levara-watchdog.md` |
+| Продуктовая лестница | [product ladder](product-ladder.md), [ADR002](adr/002-product-ladder-and-layering.md) |
+| LDAP/AD, SSO и provisioning | [enterprise identity](enterprise-identity.md) |
+| Документы, обработка и индивидуальный доступ | [document management](document-management.md), [сценарии](document-workflow-scenarios.md) |
+| Эксплуатация | [WebUI operations](webui-operations.md), [watchdog](macos-levara-watchdog.md) |
 | Рецепты | `docs/recipes/` |
 
 ---

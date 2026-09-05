@@ -1,6 +1,8 @@
 # Getting Started with Levara
 
-This guide describes the current checked-in server and the verified local Mac runtime. For a full snapshot of the running instance, see [current-state.md](current-state.md).
+This guide describes a portable first run of the checked-in server.
+[current-state.md](current-state.md) preserves a dated local deployment snapshot;
+its paths, ports and counts are examples, not defaults for a fresh installation.
 
 ## Prerequisites
 
@@ -9,7 +11,7 @@ This guide describes the current checked-in server and the verified local Mac ru
 - Optional: PostgreSQL for SQL-backed memory/metadata.
 - Optional: an OpenAI-compatible embedding endpoint for vector search and cognify.
 - Optional: an OpenAI-compatible LLM endpoint for full graph/entity extraction.
-- Optional: Neo4j and rerank sidecars; both are disabled in the current local Mac runtime.
+- Optional: Neo4j and rerank sidecars; the first-run recipe does not require them.
 
 ## Build locally
 
@@ -24,9 +26,9 @@ Build targets:
 | Binary | Package | Notes |
 |---|---|---|
 | `levara-server` | `./cmd/server` | Main HTTP/MCP/gRPC server. |
-| `levara` CLI | `./cmd/cli` | If a directory named `levara/` exists, Go writes the executable inside it, currently `./levara/cli`. |
+| `levara` CLI | `./cmd/cli` | `make build` writes `./levara` in a fresh checkout. |
 
-The current repository has a `levara/` directory, so use `./levara/cli` locally unless you explicitly build the CLI to another path:
+If a local legacy directory already occupies that name, choose an explicit path:
 
 ```bash
 go build -o /tmp/levara-cli ./cmd/cli
@@ -57,69 +59,26 @@ Current health responses use this shape:
 {"health":"healthy","status":"ready","version":"levara-go"}
 ```
 
-## Current Mac runtime
+## Add optional local models
 
-The verified local deployment is not the minimal run. It is a launchd service on `:8081` with PostgreSQL, local embeddings, and local LLM configured:
+Basic memory and lexical search do not require an external model. For semantic
+search, configure an OpenAI-compatible embedding endpoint and match `-dim` to
+its output. Full entity/graph extraction additionally needs an LLM provider.
+Use [integrations](integrations.md) for model setup and
+[document management](document-management.md) for format/extraction limits.
 
-```bash
-./levara-server \
-  -profile=standalone-embed \
-  -dim=256 \
-  -port=8081 \
-  -grpc-port=0 \
-  -data-dir=/Users/stek0v/src/levara/data \
-  -node-id=mac1 \
-  -require-auth=false \
-  -embed-endpoint=http://127.0.0.1:9101/v1/embeddings \
-  -embed-model=potion-code-16M \
-  -llm-upstream=http://localhost:11434/v1 \
-  -pg-url='postgres://stek0v@localhost:5432/levara?sslmode=disable' \
-  -embed-keepalive-interval=5m
-```
-
-Verified state on 2026-07-05T01:46:42Z:
-
-| Component | State |
-|---|---|
-| HTTP/MCP | `http://127.0.0.1:8081`, `/mcp` |
-| gRPC | disabled (`-grpc-port=0`) |
-| Embeddings | `potion-code-16M`, 256 dimensions, `http://127.0.0.1:9101/v1/embeddings` |
-| LLM | `gemma4:e2b` via `http://localhost:11434/v1` |
-| PostgreSQL | connected |
-| Neo4j | disabled |
-| Rerank | disabled |
-| Doctor | `8/9 ok`, one BM25 warning for `_memories_pd` |
-| Collections | 54 collections, 582 records |
-
-## Embedding sidecar
-
-The local embedding service is separate from Levara:
-
-```bash
-curl -fsS http://127.0.0.1:9101/health
-```
-
-Expected current response:
-
-```json
-{"model":"potion-code-16M","dim":256,"ram_mb":259776,"backend":"model2vec"}
-```
-
-Use the full embeddings path in Levara config:
-
-```text
-http://127.0.0.1:9101/v1/embeddings
-```
-
-Do not shorten it to `/v1`; the doctor health derivation depends on the `/v1/embeddings` suffix.
+A fully local setup needs local embedding, LLM and extraction providers.
+Choosing an external endpoint sends the relevant input there. The separately
+operated services in [current-state.md](current-state.md) are a historical Mac
+example, not processes started by the server.
 
 ## CLI usage
 
-The CLI defaults to `http://localhost:8080/api/v1`. For the current Mac runtime:
+The CLI defaults to `http://localhost:8080/api/v1`. For the first-run server:
 
 ```bash
-LEVARA_URL=http://127.0.0.1:8081/api/v1 ./levara/cli health
-LEVARA_URL=http://127.0.0.1:8081/api/v1 ./levara/cli health --details
+LEVARA_URL=http://127.0.0.1:8080/api/v1 ./levara health
+LEVARA_URL=http://127.0.0.1:8080/api/v1 ./levara health --details
 ```
 
 Implemented top-level commands:
@@ -138,14 +97,14 @@ git ...
 Global CLI flags must appear before the subcommand:
 
 ```bash
-./levara/cli --url=http://127.0.0.1:8081/api/v1 health
-./levara/cli --token=$LEVARA_TOKEN datasets list
+./levara --url=http://127.0.0.1:8080/api/v1 health
+./levara --token=$LEVARA_TOKEN datasets list
 ```
 
-`./levara/cli --help` is currently rejected as an unknown global flag. Use:
+`./levara --help` is currently rejected as an unknown global flag. Use:
 
 ```bash
-./levara/cli help
+./levara help
 ```
 
 ## Add data and search
@@ -153,22 +112,24 @@ Global CLI flags must appear before the subcommand:
 Via CLI:
 
 ```bash
-LEVARA_URL=http://127.0.0.1:8081/api/v1 ./levara/cli add \
+LEVARA_URL=http://127.0.0.1:8080/api/v1 ./levara add \
   "Levara is a memory and search layer for AI agents." \
   --dataset=demo
 
-LEVARA_URL=http://127.0.0.1:8081/api/v1 ./levara/cli cognify \
+LEVARA_URL=http://127.0.0.1:8080/api/v1 ./levara cognify \
   --dataset=demo \
   --collection=demo \
   --wait
 
-LEVARA_URL=http://127.0.0.1:8081/api/v1 ./levara/cli search \
+LEVARA_URL=http://127.0.0.1:8080/api/v1 ./levara search \
   "memory layer" \
   --type=HYBRID \
   --top-k=5
 ```
 
-Via HTTP/MCP clients, use the server base URL `http://127.0.0.1:8081` for the current Mac runtime.
+For WebUI upload, extraction status, reprocessing and individual sharing,
+follow [document management](document-management.md). Verify these workflows
+with [document scenarios](document-workflow-scenarios.md).
 
 ## Server configuration facts
 
@@ -177,7 +138,7 @@ Current functional server profiles:
 | Profile | Meaning |
 |---|---|
 | `standalone` | WAL/local mode, external subsystems disabled unless explicit flags/env enable them. |
-| `standalone-embed` | Local mode with embeddings enabled; current Mac runtime uses this. |
+| `standalone-embed` | Local mode with embeddings enabled. |
 | `full` / empty | Full configuration surface; no profile suppression. |
 
 Important flags:
@@ -200,16 +161,25 @@ Important flags:
 
 There is no `-llm-model` flag. Set the LLM model with `LLM_MODEL` in the environment.
 
+## Team identity and access
+
+Use [profile presets](profile-presets.md) for PostgreSQL and required auth,
+[enterprise identity](enterprise-identity.md) for LDAP/AD or SSO integration,
+and [document management](document-management.md) for individual dataset grants.
+Native LDAP, browser OIDC login and effective group/document ACLs are not
+available. gRPC raw-storage operations require an active global superuser when
+auth is enabled; ordinary user workflows should use the documented REST/MCP APIs.
+
 ## Security hardening
 
 The dev default is an open server (no auth) for local single-user use. For
 anything reachable beyond localhost:
 
 ```bash
-# Require authentication (JWT / API keys) on all endpoints
+# Require authentication on protected resource endpoints
 ./levara-server -require-auth ...
 
-# Enforce tenant isolation: authenticated users without a tenant get 403
+# Require tenant context where tenant enforcement applies; this is not a document ACL
 LEVARA_TENANT_ENFORCED=1 ./levara-server -require-auth ...
 
 # HMAC-pepper API-key hashing (falls back to JWT_SECRET)
@@ -227,17 +197,17 @@ Cognify batching is opt-in and off by default:
 LEVARA_LLM_EXTRACT_BATCH_SIZE=4 ./levara-server ...
 ```
 
-_Last verified: 2026-09-03 against main (1bb5bab)._
+_Documentation/source cross-check: 2026-09-05. This does not assert a live deployment check._
 
 ## MCP integration
 
-For MCP clients against the current Mac runtime:
+For MCP clients against the first-run server:
 
 ```json
 {
   "mcpServers": {
     "levara": {
-      "url": "http://127.0.0.1:8081/mcp"
+      "url": "http://127.0.0.1:8080/mcp"
     }
   }
 }
@@ -258,10 +228,10 @@ Docker defaults are not the same as the current Mac launchd runtime. Verify port
 ## Verification checklist
 
 ```bash
-curl -fsS http://127.0.0.1:8081/health
-curl -fsS http://127.0.0.1:8081/version
+curl -fsS http://127.0.0.1:8080/health
+curl -fsS http://127.0.0.1:8080/version
 curl -fsS http://127.0.0.1:9101/health
-LEVARA_URL=http://127.0.0.1:8081/api/v1 ./levara/cli health --details
+LEVARA_URL=http://127.0.0.1:8080/api/v1 ./levara health --details
 ```
 
 Inside Hermes:

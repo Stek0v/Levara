@@ -19,6 +19,18 @@ update the same exclusive relationship for one entity, then read both the
 `current_state`, `is_a`. Adding domain-specific exclusivity is a deliberate
 code change there.
 
+## Prerequisites
+
+The base Compose file starts Levara and Prometheus only. Configure and start
+embedding and LLM providers separately; set `EMBEDDING_ENDPOINT`,
+`EMBEDDING_MODEL`, a matching `LEVARA_DIM`, and the `LLM_*` provider values.
+See [integrations](../../docs/integrations.md). Containers need an endpoint
+reachable from inside the container, not the host's loopback address.
+
+The script sends no credentials, so use an isolated local test instance or
+adapt its HTTP/MCP requests for auth. This example tests temporal extraction;
+it is not a document-sharing or corporate identity acceptance test.
+
 ## Run
 
 ```bash
@@ -51,12 +63,12 @@ Levara's persistent LLM cache.
 
 ## Tuning
 
-- **LLM**: docker compose defaults to `qwen2.5:1.5b` for footprint. Extraction
-  quality at that size is rough and edge counts vary across runs. For
-  production-style demos, set `LLM_MODEL=qwen2.5:7b` (or `gpt-4o-mini` with
-  an API key) in `.env` before bringing the stack up.
-- **Latency**: each `cognify` waits for one full LLM call. With a 1.5B model
-  on CPU expect 30–120s per run. The script polls every 2s and times out
+- **LLM**: the historical output above used qwen2.5:1.5b; Compose does not
+  install a model or choose an LLM provider. Configure your provider and model
+  explicitly. Entity and edge extraction vary with input/model; inspect the
+  result rather than accepting a run solely because it completed.
+- **Latency**: each `cognify` waits for one full LLM call. The recorded CPU run above is a historical
+  observation, not a latency guarantee. The script polls every 2s and times out
   after 600s.
 - **Determinism**: small models occasionally emit synthetic IDs (`A1`,
   `B1`) for entities. The pipeline maps known names to UUIDs but cannot

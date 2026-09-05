@@ -22,7 +22,7 @@
 Levara is local-first context infrastructure for AI agents. It combines durable
 memory, hybrid search, a temporal knowledge graph, a verifiable Markdown
 workspace, synchronization, observability, and scoped long-running tasks in one
-Go binary.
+Go server binary. The optional WebUI runs as a separate Next.js service.
 
 <p align="center">
   <img src="./assets/readme/proof.svg" width="100%" alt="A verified MCP flow where a README decision is saved in one agent turn and recalled with provenance in the next">
@@ -56,14 +56,17 @@ Levara gives agents a context control plane:
 
 ## Verified quality
 
-- **Full code review (2026-09-03)**: 54 findings — 52 fixed, 2 documented as
-  deliberate design choices. Summary in [docs/README.md](./docs/README.md).
-- **CI, 19 checks green**: golangci-lint, vet, race detector, govulncheck
-  (0 reachable vulnerabilities), npm audit (0 vulnerabilities), contract
-  drift check, Postgres-backed integration shards.
-- **Multi-user load suite, 6/6 PASS**: 50 concurrent agents — save p95 22 ms,
-  recall p95 238 ms, zero cross-agent leaks; 3,200 outbox jobs under dual-process
-  contention — zero duplicate executions.
+The [2026-09-03 multi-user run](benchmark/results/multi_user/run2_summary.json)
+records six passing scenarios at revision `1bb5bab`, using PostgreSQL and a
+`potion-code-16M` embedding sidecar (256 dimensions). With 50 agents writing
+60 keys each, save p95 was 22.2 ms and recall p95 was 238.5 ms. The separate
+outbox scenario observed no duplicate completions. These are results for that
+workload, not guarantees for every deployment or authorization path.
+
+The [CI workflow](.github/workflows/go-ci.yml) defines lint, vet, race,
+contract-drift, vulnerability and PostgreSQL integration checks for pull
+requests and main-branch pushes. Its npm audit covers production dependencies;
+consult the run for a particular revision for current results.
 
 ## Capability map
 
@@ -76,13 +79,12 @@ Levara gives agents a context control plane:
 | **Long-Horizon Task Runtime** | Scoped tasks, Definition of Done, versioned plans, dependent steps, atomic leases, immutable receipts, checkpoints, blockers, crash recovery, risk-based reviewer policy, deterministic completion and verified-memory promotion |
 | **Operations** | Doctor checks, runtime and ingestion snapshots, recent errors, heartbeat, memory-index health/retry, SQL↔vector reconciliation, workspace job/watch health, Prometheus metrics |
 | **Sync and storage** | Mac/Pi and peer sync, scoped manifests and status, backup/restore tooling, SQLite or PostgreSQL metadata, local or S3-compatible raw-object storage |
-| **Identity and governance** | JWT and API keys, dataset/project sharing, workspace ACL, tenant membership checks, audit export, OIDC verified-claims adapter, SSO/SCIM and storage/KMS seams |
+| **Identity and governance** | JWT and API keys, individual dataset sharing, workspace access checks, tenant membership checks, audit export, OIDC bearer verification, SAML SP, limited SCIM Users API, storage/KMS contracts |
 | **Product surfaces** | MCP Streamable HTTP, REST, gRPC v1/v2, CLI tools, Next.js WebUI, notebooks, feedback and memory-behavior analytics |
 
-The generated contract currently contains **82 canonical MCP tools**, **148 REST
-routes**, and **45 gRPC methods**. The complete machine-derived inventory lives
-in [docs/api-contract.md](docs/api-contract.md); the README groups the surface
-by user outcome instead of reproducing every endpoint.
+The [generated API inventory](docs/api-contract.md) lists MCP tools and registered
+REST/gRPC entries, including aliases and operational routes. Bootstrap identity
+endpoints are described in the [API reader guide](docs/api-reference.md).
 
 <details>
 <summary><strong>MCP tool groups</strong></summary>
@@ -90,7 +92,7 @@ by user outcome instead of reproducing every endpoint.
 | Group | Tools | Responsibility |
 |---|---:|---|
 | Workspace | 25 | Context, artifacts, authoring, revisions, indexing, jobs and audit |
-| Memory | 11 | Lifecycle, recall, consolidation, supersession and wake-up |
+| Memory | 14 | Lifecycle, recall, consolidation, supersession and wake-up |
 | Operations | 9 | Health, errors, reconciliation, indexing and runtime state |
 | Task | 8 | Long-Horizon Task Runtime |
 | Data | 5 | Add, list, drift, delete and prune |
@@ -145,8 +147,8 @@ Host-specific examples for Codex, Claude Code, Cursor, Cline, and other clients
 live in [examples/agent-hosts](examples/agent-hosts).
 
 > [!IMPORTANT]
-> Personal mode does not require auth by default. Keep the listener on a trusted
-> local network or enable authentication before exposing it to other machines.
+> Personal mode does not require auth by default. Keep the listener on a
+> loopback address or enable authentication before exposing it to other machines.
 
 ### Docker
 
@@ -156,6 +158,18 @@ docker compose up -d --build
 
 See [docs/profile-presets.md](docs/profile-presets.md) for production-shaped
 Personal, Solo Pro, Team, and Enterprise configuration examples.
+
+## Work with documents and colleagues
+
+Upload a document through WebUI or CLI, check extraction and indexing status,
+then verify an answer against its source. Use [document management](docs/document-management.md)
+for the complete workflow and [acceptance scenarios](docs/document-workflow-scenarios.md)
+for partial failures, retries and access checks.
+
+To share one document today, use a separate dataset and grant an individual
+viewer/editor/admin role. Group grants and independent document ACLs are not
+available. For AD, LDAP and SSO deployment choices, start with
+[enterprise identity](docs/enterprise-identity.md).
 
 ## How it works
 
@@ -167,7 +181,8 @@ flowchart LR
 
   MCP --> Policy[Access and tenant policy]
   REST --> Policy
-  GRPC --> Search[Search engine]
+  GRPC --> Admin[Active superuser in auth mode]
+  Admin --> Search[Search engine]
 
   Policy --> Memory[Durable memory]
   Policy --> Workspace[Markdown workspace]
@@ -247,8 +262,8 @@ Enterprise combinations fail before listeners are opened.
 |---|---:|---:|---|
 | MCP Streamable HTTP (latest) | `/mcp/2026-07-28` | stateless, per-request metadata | Hermes and current MCP clients |
 | MCP Streamable HTTP (legacy) | `/mcp` | session-based compatibility | Existing AI agents and IDE integrations |
-| REST | `:8080` | 148 canonical routes | WebUI, applications and operations |
-| gRPC v1/v2 | `:50051` | 45 canonical methods | Typed SDK and search clients |
+| REST | `:8080` | [Generated route inventory](docs/api-contract.md) | WebUI, applications and operations |
+| gRPC v1/v2 | `:50051` | Privileged raw-storage API | Operator SDKs; active superuser when auth is enabled |
 | CLI | local binaries | server, client, backup, contract and host tooling | Operators and automation |
 | WebUI | `:3000` in development | Next.js application | Users, operators and reviewers |
 
@@ -283,25 +298,25 @@ security notes, Playwright checks, and operational workflows.
 
 ## Security and enterprise boundaries
 
-Implemented foundations include:
+JWT/API keys, individual dataset grants, workspace access checks, tenant
+membership checks, strict startup validation and audit export are available.
+`room` and `hall` organize memory; they do not grant or restrict access.
 
-- transport-independent access policy and tenant membership checks;
-- JWT, API keys, per-agent credentials, dataset sharing and workspace ACL;
-- strict profile validation and tenant-safe SQL boundaries;
-- asynchronous audit export with retry/backpressure and JSONL output;
-- OIDC verified-claims mapping and identity/provisioning seams;
-- storage metadata plus KMS/BYOK adapter contracts.
+Enterprise identity includes OIDC bearer verification, a SAML service-provider
+HTTP flow and a limited SCIM Users API. Native LDAP/LDAPS, browser OIDC login,
+SCIM-to-SSO identity linking and effective group/document grants are not
+implemented. An AD deployment therefore needs a federation design and an
+explicit acceptance test; an Enterprise preset alone does not establish it.
+See [enterprise identity](docs/enterprise-identity.md) for supported operations,
+route prefixes and lifecycle limits, and [document management](docs/document-management.md)
+for individual sharing and its current boundaries.
 
-Still adapter or production-hardening work:
-
-- concrete SAML and SCIM HTTP protocol surfaces;
-- SIEM delivery adapters;
-- production KMS/BYOK implementations;
-- additional corporate object-store integrations and legal-hold enforcement.
-
-The Enterprise preset validates governance requirements; it is not a claim that
-every external enterprise adapter is already implemented. See
-[docs/product-ladder.md](docs/product-ladder.md) for the exact boundary.
+SIEM delivery, production KMS/BYOK backends, corporate object-store controls
+and legal-hold enforcement remain adapter work. Local storage does not imply
+local inference: embedding, extraction, LLM, tracing and sync destinations
+follow configuration. Offline operation requires local providers and models.
+See the [product ladder](docs/product-ladder.md) and
+[profile presets](docs/profile-presets.md) before choosing a deployment.
 
 ## Development
 
@@ -327,7 +342,6 @@ Useful references:
 | [docs/product-ladder.md](docs/product-ladder.md) | Capability and enterprise boundary source of truth |
 | [docs/webui-operations.md](docs/webui-operations.md) | WebUI setup, monitoring and workflows |
 | [docs/current-state.md](docs/current-state.md) | Verified local development snapshot |
-
 | [docs/memory-workflow-skill.md](docs/memory-workflow-skill.md) | Install and operate the automatic Levara memory workflow skill |
 | [docs/long-horizon-runtime.md](docs/long-horizon-runtime.md) | Task Runtime setup, lifecycle, evidence and recovery guide |
 | [docs/long-horizon-alpha-report.md](docs/long-horizon-alpha-report.md) | Task Runtime acceptance and recovery evidence |

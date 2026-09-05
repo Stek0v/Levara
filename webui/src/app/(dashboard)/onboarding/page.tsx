@@ -155,7 +155,7 @@ export default function OnboardingPage() {
                 Cognify RAG
               </Button>
             </div>
-            {upload.isSuccess && <p className="text-xs text-green-600">Uploaded {upload.data.items?.length ?? files.length} files.</p>}
+            {upload.isSuccess && <p className="text-xs text-green-600">Uploaded {upload.data.items ?? files.length} files.</p>}
             {cognify.isSuccess && <p className="text-xs text-green-600">Cognify started: {cognify.data.pipeline_run_id || cognify.data.status}</p>}
             {(upload.isError || cognify.isError) && <p className="text-xs text-red-600">Upload or cognify failed.</p>}
           </div>

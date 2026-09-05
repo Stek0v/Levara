@@ -5,6 +5,16 @@
 - **Связанные задачи:** backlog A3 (блокируется этим ADR), A2 (SAML), A8
 - **Чек-лист:** `docs/internal/security-diff-checklist.md` (access, tenant, audit)
 
+## Статус реализации на 2026-09-05
+
+Текст решения ниже сохраняет исходную целевую архитектуру и не является
+перечнем доступных endpoint-ов. Уже реализован ограниченный `/scim/v2` Users
+API: GET/POST, GET/PATCH/DELETE по ID, ServiceProviderConfig и Schemas под
+отдельным bearer-токеном. Groups, PUT, Bulk, ResourceTypes, связка SCIM↔SSO
+и действующий group→role mapping не реализованы. Описанные ниже audit/rate-limit
+и немедленный отзыв всех JWT/API-ключей нельзя считать действующей гарантией.
+Точные операции и проверки: [enterprise identity](../enterprise-identity.md).
+
 ## Контекст
 
 Enterprise-профиль требует корпоративного provisioning: пользователи и группы

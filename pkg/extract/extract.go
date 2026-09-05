@@ -3,7 +3,8 @@
 // table detection, and RAG-ready chunking.
 //
 // Replaces Python's pypdf + unstructured + Docling with a single Go library.
-// Supports: PDF (with OCR fallback), DOCX, PPTX, XLSX, HTML, EPUB, ODT, TXT, MD, CSV.
+// Supports PDF text layers, DOCX, PPTX, XLSX, HTML, EPUB, ODT, TXT, MD, CSV.
+// Images use a configured OCR backend; PDF scans have no automatic OCR fallback here.
 package extract
 
 import (
@@ -16,6 +17,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stek0v/levara/pkg/audio"
 	"github.com/tsawler/tabula"
@@ -72,6 +74,9 @@ func Extract(data []byte, filename, mimeType string) (Result, error) {
 
 	// Plain text formats — direct passthrough (no temp file needed)
 	if isTextFormat(format) {
+		if !utf8.Valid(data) || strings.ContainsRune(string(data), 0) {
+			return Result{}, fmt.Errorf("text input must be UTF-8 without NUL bytes")
+		}
 		return Result{
 			Text:      string(data),
 			Markdown:  string(data),
@@ -110,10 +115,10 @@ func Extract(data []byte, filename, mimeType string) (Result, error) {
 	}
 
 	// Get markdown version
-	markdown, _, _ := tabula.Open(tmpFile.Name()).ExcludeHeadersAndFooters().ToMarkdown()
+	markdown, _, _ := ext_instance.ToMarkdown()
 
 	// Get page count
-	pages, _ := tabula.Open(tmpFile.Name()).PageCount()
+	pages, _ := ext_instance.PageCount()
 	if pages == 0 {
 		pages = 1
 	}

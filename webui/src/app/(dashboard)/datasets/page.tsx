@@ -1,8 +1,9 @@
 'use client'
 
-import { useEffect, useState, startTransition } from 'react'
+import { useEffect, useRef, useState, startTransition } from 'react'
 import { useDatasets, useCreateDataset, useDeleteDataset, useUpload, useCognify, useSettings } from '@/hooks/use-levara'
-import { useCognifyProgress, type CognifyProgress } from '@/hooks/use-sse'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { levara } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -12,11 +13,12 @@ import { Database, Upload, Trash2, Plus, Loader2, CheckCircle, XCircle } from 'l
 import { useT, formatBytes, formatDate, formatCount } from '@/lib/i18n'
 
 interface UploadedFile {
+  batchId: string
   name: string
   dataset: string
   status: 'uploading' | 'processing' | 'ready' | 'error'
   cognifyRunId?: string
-  progress?: CognifyProgress
+  error?: string
 }
 
 function uploadDatasetName() {
@@ -43,84 +45,82 @@ export default function DatasetsPage() {
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([])
   const [activeCognifyRunId, setActiveCognifyRunId] = useState<string | null>(null)
 
-  // SSE progress for active cognify
-  const cognifyProgress = useCognifyProgress(activeCognifyRunId)
+  const busyRef = useRef(false)
+  const [busy, setBusy] = useState(false)
+  const queryClient = useQueryClient()
+  const cognifyProgress = useQuery({
+    queryKey: ['cognify-status', activeCognifyRunId],
+    queryFn: () => levara.cognifyStatus(activeCognifyRunId!),
+    enabled: !!activeCognifyRunId,
+    refetchInterval: 1000,
+    refetchOnWindowFocus: false,
+    retry: false,
+  })
 
-  // SSE-driven completion: when the backend emits `event: done` or the
-  // progress payload transitions to a terminal status, useCognifyProgress
-  // stamps `_complete` and/or sets `status` to COMPLETED/FAILED. We
-  // reconcile the per-file upload state off that single source of truth
-  // — no more parallel polling loop (T8).
   useEffect(() => {
-    const d = cognifyProgress.data
-    if (!d) return
-    const terminal = d._complete || d.status === 'COMPLETED' || d.status === 'FAILED'
-    if (!terminal) return
-    const ok = d.status !== 'FAILED'
+    if (!activeCognifyRunId) return
+    const progress = cognifyProgress.data
+    if (!cognifyProgress.error && (!progress || progress.status === 'RUNNING')) return
+    const reason = cognifyProgress.error?.message || (progress?.status === 'FAILED' ? progress.message || 'Processing failed.' : '')
     startTransition(() => {
-      setUploadedFiles((prev) =>
-        prev.map((f) =>
-          f.status === 'processing'
-            ? { ...f, status: ok ? ('ready' as const) : ('error' as const) }
-            : f,
-        ),
-      )
+      setUploadedFiles((prev) => prev.map((file) => file.cognifyRunId === activeCognifyRunId
+        ? { ...file, status: reason ? 'error' : 'ready', error: reason } : file))
       setActiveCognifyRunId(null)
+      setBusy(false)
     })
-  }, [cognifyProgress.data])
+    busyRef.current = false
+    void queryClient.invalidateQueries({ queryKey: ['datasets'] })
+    void queryClient.invalidateQueries({ queryKey: ['collections'] })
+  }, [activeCognifyRunId, cognifyProgress.data, cognifyProgress.error, queryClient])
 
   const handleUpload = async (files: FileList | File[]) => {
     const fileArr = Array.from(files)
-    if (!fileArr.length) return
-
-    const dsName = targetDataset || uploadDatasetName()
-
-    // Show uploading state
+    // The ref closes the gap before React renders disabled controls.
+    if (!fileArr.length || busyRef.current) return
+    busyRef.current = true
+    setBusy(true)
+    const chosen = datasets.find((dataset) => dataset.id === targetDataset)
+    const dsName = chosen?.name || uploadDatasetName()
+    const batchId = crypto.randomUUID()
+    const updateBatch = (patch: Partial<UploadedFile>) => setUploadedFiles((prev) =>
+      prev.map((file) => file.batchId === batchId ? { ...file, ...patch } : file))
     setUploadedFiles((prev) => [
-      ...fileArr.map((f) => ({ name: f.name, dataset: dsName, status: 'uploading' as const })),
+      ...fileArr.map((file) => ({ batchId, name: file.name, dataset: dsName, status: 'uploading' as const })),
       ...prev,
     ])
 
+    let awaitingRun = false
     try {
-      const res = await uploadMutation.mutateAsync({ files: fileArr, datasetName: dsName })
-      const r = res as Record<string, unknown>
-      const dsId = r.dataset_id as string || ''
-      const actualDsName = r.dataset_name as string || 'default'
-
-      // Update to processing
-      setUploadedFiles((prev) =>
-        prev.map((f) => f.status === 'uploading' ? { ...f, dataset: actualDsName, status: 'processing' as const } : f)
-      )
-
-      // Auto-cognify. SSE (via useCognifyProgress below) drives both live
-      // progress and terminal-state transitions — we no longer poll
-      // /cognify/:id/status separately (T8). The effect watching
-      // cognifyProgress.data picks up _complete / status=FAILED and
-      // reconciles the uploadedFiles UI.
-      if (dsId) {
-        try {
-          const cognifyRes = await cognifyMutation.mutateAsync({ dataset_id: dsId, collection: actualDsName, skip_graph: true })
-          const runId = cognifyRes?.pipeline_run_id
-          if (!runId) {
-            setUploadedFiles((prev) => prev.map((f) => f.status === 'processing' ? { ...f, status: 'ready' as const } : f))
-            return
-          }
-          setActiveCognifyRunId(runId)
-        } catch {
-          setUploadedFiles((prev) => prev.map((f) => f.status === 'processing' ? { ...f, status: 'error' as const } : f))
-        }
+      if (targetDataset && !chosen) throw new Error('Selected dataset is no longer available. Choose a target again.')
+      const res = await uploadMutation.mutateAsync({ files: fileArr, datasetName: dsName, datasetId: chosen?.id })
+      if (res.status !== 'ok' || !res.dataset_id || !res.dataset_name || !(res.items > 0) ||
+          (chosen && res.dataset_id !== chosen.id)) {
+        throw new Error('Upload did not confirm the target dataset.')
+      }
+      updateBatch({ dataset: res.dataset_name, status: 'processing' })
+      const run = await cognifyMutation.mutateAsync({ dataset_id: res.dataset_id, collection: res.dataset_name, skip_graph: true })
+      if (['COMPLETED', 'SKIPPED', 'already_processed'].includes(run.status)) {
+        updateBatch({ status: 'ready' })
       } else {
-        setUploadedFiles((prev) => prev.map((f) => f.status === 'processing' ? { ...f, status: 'ready' as const } : f))
+        if (run.status === 'FAILED') throw new Error(run.message || 'Processing failed.')
+        if (!run.pipeline_run_id) throw new Error('Processing did not return a run ID.')
+        updateBatch({ cognifyRunId: run.pipeline_run_id })
+        setActiveCognifyRunId(run.pipeline_run_id)
+        awaitingRun = true
       }
     } catch (err) {
-      setUploadedFiles((prev) => prev.map((f) => f.status === 'uploading' ? { ...f, status: 'error' as const } : f))
-      alert(`${t('upload.title')}: ${err instanceof Error ? err.message : 'Error'}`)
+      updateBatch({ status: 'error', error: err instanceof Error ? err.message : 'Upload failed.' })
+    } finally {
+      if (!awaitingRun) {
+        busyRef.current = false
+        setBusy(false)
+      }
     }
   }
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault(); setDragOver(false)
-    if (e.dataTransfer.files.length) handleUpload(e.dataTransfer.files)
+    if (!busyRef.current && e.dataTransfer.files.length) void handleUpload(e.dataTransfer.files)
   }
 
   const handleCreate = async () => {
@@ -195,7 +195,7 @@ export default function DatasetsPage() {
       <div className={`mb-6 p-6 bg-white dark:bg-gray-900 rounded-lg border-2 border-dashed transition-colors ${
         _dragOver ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/10' : 'border-gray-300 dark:border-gray-700'
       }`}
-        onDragOver={(e) => { e.preventDefault(); setDragOver(true) }} onDragLeave={() => setDragOver(false)} onDrop={handleDrop}>
+        onDragOver={(e) => { e.preventDefault(); if (!busy) setDragOver(true) }} onDragLeave={() => setDragOver(false)} onDrop={handleDrop}>
         <div className="flex flex-col md:flex-row items-center gap-4">
           <Upload className="h-8 w-8 text-gray-400 flex-shrink-0" />
           <div className="flex-1 text-center md:text-left">
@@ -205,16 +205,20 @@ export default function DatasetsPage() {
             <p className="text-xs text-gray-400 mt-1">PDF, DOCX, PPTX, XLSX, HTML, EPUB, TXT, MD, CSV</p>
           </div>
           <div className="flex items-center gap-2">
-            <select value={targetDataset} onChange={(e) => setTargetDataset(e.target.value)}
+            <select disabled={busy} value={targetDataset} onChange={(e) => setTargetDataset(e.target.value)}
               className="h-9 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-3 text-sm"
               aria-label="Target dataset">
               <option value="">{t('projects.newPerUpload')}</option>
-              {datasets.map((ds) => <option key={ds.id} value={ds.name}>{ds.name}</option>)}
+              {datasets.map((ds) => <option key={ds.id} value={ds.id}>{ds.name}</option>)}
             </select>
             <label className="cursor-pointer inline-flex items-center gap-2 h-9 px-4 text-sm font-medium rounded-md bg-blue-600 text-white hover:bg-blue-700 transition-colors">
               <Upload className="h-4 w-4" /> {t('upload.button')}
-              <input type="file" multiple className="hidden"
-                onChange={(e) => e.target.files && handleUpload(e.target.files)}
+              <input type="file" multiple className="hidden" disabled={busy}
+                onChange={(e) => {
+                  const files = Array.from(e.target.files || [])
+                  e.target.value = ''
+                  void handleUpload(files)
+                }}
                 accept=".pdf,.docx,.pptx,.xlsx,.html,.htm,.epub,.odt,.txt,.md,.csv,.json" />
             </label>
           </div>
@@ -236,13 +240,10 @@ export default function DatasetsPage() {
                   </div>
                   <span className="text-xs text-gray-400">{statusLabel(f.status)}</span>
                 </div>
-                {/* Progress bar for processing */}
-                {f.status === 'processing' && cognifyProgress.data && (
+                {f.error && <p role="alert" className="mt-2 text-xs text-red-600">{f.error}</p>}
+                {/* Progress for this batch's active run. */}
+                {f.status === 'processing' && f.cognifyRunId === activeCognifyRunId && cognifyProgress.data && (
                   <div className="mt-2">
-                    <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1.5">
-                      <div className="bg-amber-500 h-1.5 rounded-full transition-all"
-                        style={{ width: cognifyProgress.data.items_total ? `${((cognifyProgress.data.items_processed || 0) / cognifyProgress.data.items_total) * 100}%` : '30%' }} />
-                    </div>
                     <p className="text-[10px] text-gray-400 mt-1">
                       {cognifyProgress.data.stage} • {cognifyProgress.data.entities_extracted || 0} entities • {cognifyProgress.data.edges_extracted || 0} edges
                     </p>
@@ -250,7 +251,7 @@ export default function DatasetsPage() {
                 )}
               </div>
             ))}
-            <button onClick={() => setUploadedFiles([])} className="text-xs text-gray-400 hover:text-gray-600">{t('projects.clearHistory')}</button>
+            <button disabled={busy} onClick={() => setUploadedFiles([])} className="text-xs text-gray-400 hover:text-gray-600">{t('projects.clearHistory')}</button>
           </div>
         </div>
       )}

@@ -160,14 +160,19 @@ func (s SCIMStore) ProvisionUpdate(ctx context.Context, u SCIMUser, newEmail str
 	if err != nil {
 		return err
 	}
-	if _, err := s.DB.ExecContext(ctx,
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx,
 		s.rewrite("UPDATE users SET is_active = $1, is_verified = true WHERE id = $2"),
 		u.Active, uid); err != nil {
 		return err
 	}
 	if newEmail != "" && newEmail != u.Email {
 		var other string
-		err = s.DB.QueryRowContext(ctx,
+		err = tx.QueryRowContext(ctx,
 			s.rewrite("SELECT id FROM users WHERE email = $1"), newEmail).Scan(&other)
 		if err == nil && other != uid {
 			return ErrSCIMEmailConflict
@@ -175,12 +180,12 @@ func (s SCIMStore) ProvisionUpdate(ctx context.Context, u SCIMUser, newEmail str
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		if _, err := s.DB.ExecContext(ctx,
+		if _, err := tx.ExecContext(ctx,
 			s.rewrite("UPDATE users SET email = $1 WHERE id = $2"), newEmail, uid); err != nil {
 			return err
 		}
 	}
-	return nil
+	return tx.Commit()
 }
 
 // ProvisionDeactivate implements soft delete: is_active=false so the shared

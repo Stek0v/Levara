@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"io"
 	"log"
+	"mime"
 	"os"
 	"path/filepath"
 	"strings"
@@ -66,7 +67,7 @@ func addHandler(cfg APIConfig) fiber.Handler {
 		reqCtx, cancel := apiRequestContext(c)
 		defer cancel()
 
-		datasetName := c.FormValue("datasetName")
+		datasetName := firstNonEmptyUpload(c.FormValue("datasetName"), c.Query("datasetName"))
 		datasetID := c.FormValue("datasetId")
 		if datasetID == "" {
 			datasetID = c.FormValue("dataset_id")
@@ -83,7 +84,8 @@ func addHandler(cfg APIConfig) fiber.Handler {
 
 				// Parse JSON body for dataset_name
 				var tags []string
-				if c.Get("Content-Type") == "application/json" {
+				mediaType, _, _ := mime.ParseMediaType(c.Get("Content-Type"))
+				if mediaType == "application/json" {
 					var jsonBody struct {
 						Data             string   `json:"data"`
 						DatasetName      string   `json:"dataset_name"`
@@ -93,20 +95,19 @@ func addHandler(cfg APIConfig) fiber.Handler {
 						StructuredSchema string   `json:"structured_schema"`
 						Tags             []string `json:"tags"`
 					}
-					if c.BodyParser(&jsonBody) == nil {
-						if jsonBody.Data != "" {
-							bodyStr = jsonBody.Data
-						}
-						if jsonBody.DatasetName != "" {
-							datasetName = jsonBody.DatasetName
-						}
-						if jsonBody.DatasetID != "" {
-							datasetID = jsonBody.DatasetID
-						}
-						schemaArg = firstNonEmptyUpload(schemaArg, jsonBody.Schema, jsonBody.SchemaID, jsonBody.StructuredSchema)
-						schemaProvided = strings.TrimSpace(schemaArg) != ""
-						tags = jsonBody.Tags
+					if err := json.Unmarshal(body, &jsonBody); err != nil || strings.TrimSpace(jsonBody.Data) == "" {
+						return c.Status(400).JSON(fiber.Map{"detail": "valid JSON with non-empty data is required"})
 					}
+					bodyStr = jsonBody.Data
+					if jsonBody.DatasetName != "" {
+						datasetName = jsonBody.DatasetName
+					}
+					if jsonBody.DatasetID != "" {
+						datasetID = jsonBody.DatasetID
+					}
+					schemaArg = firstNonEmptyUpload(schemaArg, jsonBody.Schema, jsonBody.SchemaID, jsonBody.StructuredSchema)
+					schemaProvided = strings.TrimSpace(schemaArg) != ""
+					tags = jsonBody.Tags
 				}
 
 				if datasetName == "" {
@@ -121,9 +122,13 @@ func addHandler(cfg APIConfig) fiber.Handler {
 					} else {
 						fetchedText, fetchErr = fetch.FetchURL(strings.TrimSpace(bodyStr))
 					}
-					if fetchErr == nil && fetchedText != "" {
-						bodyStr = fetchedText
+					if fetchErr != nil || strings.TrimSpace(fetchedText) == "" {
+						return c.Status(422).JSON(fiber.Map{"detail": "could not extract text from URL"})
 					}
+					bodyStr = fetchedText
+				}
+				if _, err := extract.Extract([]byte(bodyStr), "input.txt", "text/plain"); err != nil || strings.TrimSpace(bodyStr) == "" {
+					return c.Status(422).JSON(fiber.Map{"detail": "non-empty UTF-8 text is required"})
 				}
 				ownerID, _ := c.Locals("user_id").(string)
 				if ok, err := validateUploadDatasetID(reqCtx, cfg.DB, datasetID, ownerID); err != nil {
@@ -150,7 +155,9 @@ func addHandler(cfg APIConfig) fiber.Handler {
 				}
 				if cfg.DB != nil {
 					mw := ingest.NewMetadataWriterFromDB(cfg.DB)
-					mw.WriteMetadata(reqCtx, results, ownerID, txtDsID, datasetName)
+					if _, err := mw.WriteMetadata(reqCtx, results, ownerID, txtDsID, datasetName); err != nil {
+						return c.Status(500).JSON(fiber.Map{"detail": "save upload metadata: " + err.Error()})
+					}
 				}
 				return c.JSON(fiber.Map{
 					"status":       "ok",
@@ -184,15 +191,20 @@ func addHandler(cfg APIConfig) fiber.Handler {
 			return c.Status(403).JSON(fiber.Map{"detail": "dataset not accessible"})
 		}
 		var items []ingest.Item
+		var originals []ingest.Item
 		var analyses []docdetect.Analysis
 		var structuredResults []structuredUploadResult
 		for _, file := range files {
 			f, err := file.Open()
 			if err != nil {
-				continue
+				return c.Status(400).JSON(fiber.Map{"detail": "cannot open uploaded file", "filename": file.Filename})
 			}
-			data, _ := io.ReadAll(f)
+			data, readErr := io.ReadAll(f)
 			f.Close()
+			if readErr != nil {
+				return c.Status(400).JSON(fiber.Map{"detail": "cannot read uploaded file", "filename": file.Filename})
+			}
+			originals = append(originals, ingest.Item{FileData: data, Filename: file.Filename, OwnerID: ownerID, DatasetName: datasetName})
 
 			// Extract text if needed
 			result, err := extract.Extract(data, file.Filename, file.Header.Get("Content-Type"))
@@ -214,7 +226,7 @@ func addHandler(cfg APIConfig) fiber.Handler {
 				})
 				continue
 			}
-			if err == nil && result.Text != "" {
+			if err == nil && strings.TrimSpace(result.Text) != "" {
 				items = append(items, ingest.Item{
 					Text:        result.Text,
 					Filename:    file.Filename,
@@ -222,16 +234,26 @@ func addHandler(cfg APIConfig) fiber.Handler {
 					OwnerID:     ownerID,
 				})
 			} else {
-				// Fallback: raw content as text
-				items = append(items, ingest.Item{
-					Text:        string(data),
-					Filename:    file.Filename,
-					DatasetName: datasetName,
-					OwnerID:     ownerID,
-				})
+				detail := "no usable text extracted"
+				if err != nil {
+					detail = err.Error()
+				}
+				return c.Status(422).JSON(fiber.Map{"detail": detail, "filename": file.Filename, "document_analysis": analyses, "structured_extractions": structuredResults})
 			}
 		}
 
+		sources, err := ingest.Ingest(originals, cfg.StoragePath)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"detail": "save original: " + err.Error()})
+		}
+		for i := range items {
+			// Identity follows source bytes even when two files extract to identical text.
+			items[i].ID = sources[i].ID
+		}
+		sources, err = mirrorResultsToFileStorage(reqCtx, cfg, sources)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"detail": "store original: " + err.Error()})
+		}
 		results, err := ingest.Ingest(items, cfg.StoragePath)
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"detail": err.Error()})
@@ -239,6 +261,12 @@ func addHandler(cfg APIConfig) fiber.Handler {
 		results, err = mirrorResultsToFileStorage(reqCtx, cfg, results)
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"detail": err.Error()})
+		}
+		for i := range results {
+			results[i].OriginalFilePath = sources[i].FilePath
+			results[i].OriginalContentHash = sources[i].ContentHash
+			results[i].OriginalFileSize = sources[i].FileSize
+			results[i].Name, results[i].Extension, results[i].MimeType = sources[i].Name, sources[i].Extension, sources[i].MimeType
 		}
 
 		// Write metadata — reuse existing dataset by name
@@ -252,7 +280,9 @@ func addHandler(cfg APIConfig) fiber.Handler {
 		if cfg.DB != nil {
 			ownerID, _ := c.Locals("user_id").(string)
 			mw := ingest.NewMetadataWriterFromDB(cfg.DB)
-			mw.WriteMetadata(reqCtx, results, ownerID, dsID, datasetName)
+			if _, err := mw.WriteMetadata(reqCtx, results, ownerID, dsID, datasetName); err != nil {
+				return c.Status(500).JSON(fiber.Map{"detail": "save upload metadata: " + err.Error()})
+			}
 		}
 		attachStructuredArtifacts(cfg.StoragePath, results, structuredResults)
 
@@ -405,35 +435,29 @@ func CheckPipelineStatus(db *sql.DB, datasetID, collection string) bool {
 	if db == nil || datasetID == "" {
 		return false
 	}
-	// Count items with empty/missing pipeline_status for this collection
-	var unprocessed int
-	err := db.QueryRowContext(context.Background(), Q(`
-		SELECT COUNT(*) FROM data
-		WHERE id IN (SELECT data_id FROM dataset_data WHERE dataset_id = $1)
-		AND (pipeline_status = '{}' OR pipeline_status = '' OR pipeline_status IS NULL)
-	`), datasetID).Scan(&unprocessed)
-	if err != nil || unprocessed > 0 {
-		return false // has unprocessed items
-	}
-	// Check first processed item for this specific collection
-	var statusStr string
-	err = db.QueryRowContext(context.Background(), Q(`
+	rows, err := db.QueryContext(context.Background(), Q(`
 		SELECT pipeline_status FROM data
 		WHERE id IN (SELECT data_id FROM dataset_data WHERE dataset_id = $1)
-		AND pipeline_status != '{}' LIMIT 1
-	`), datasetID).Scan(&statusStr)
-	if err != nil || statusStr == "" {
+	`), datasetID)
+	if err != nil {
 		return false
 	}
-	var statuses map[string]map[string]any
-	if json.Unmarshal([]byte(statusStr), &statuses) != nil {
-		return false
+	defer rows.Close()
+	count := 0
+	for rows.Next() {
+		var raw sql.NullString
+		if err := rows.Scan(&raw); err != nil || !raw.Valid {
+			return false
+		}
+		var statuses map[string]struct {
+			Status string `json:"status"`
+		}
+		if json.Unmarshal([]byte(raw.String), &statuses) != nil || statuses[collection].Status != "COMPLETED" {
+			return false
+		}
+		count++
 	}
-	collStatus, ok := statuses[collection]
-	if !ok {
-		return false
-	}
-	return collStatus["status"] == "COMPLETED"
+	return count > 0 && rows.Err() == nil
 }
 
 func ocrHandler(cfg APIConfig) fiber.Handler {

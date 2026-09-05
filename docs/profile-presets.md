@@ -1,11 +1,15 @@
 # Profile Presets
 
-Date: 2026-06-06
+Date: 2026-09-05 (documentation/source cross-check)
 Status: operator guide
 
 This guide maps the product ladder to runnable configuration presets. The
 presets live under `deploy/profiles/` and are examples, not secrets; copy the
 relevant file into your deployment environment and replace placeholder values.
+The server does not load `.env` automatically. Export the edited file before
+config-check or start (`set -a; source .env; set +a` in Bash). `LEVARA_PROFILE`
+sets product requirements; the separate `-profile` flag selects functional
+bootstrap behavior. Use `-require-auth` for Team/Enterprise token deployments.
 
 ## Preset Matrix
 
@@ -27,6 +31,9 @@ Start from:
 
 ```bash
 cp deploy/profiles/personal.local.env.example .env
+# Edit .env for this deployment before exporting it.
+set -a && source .env && set +a
+./levara-server -config-check
 ```
 
 Expected workflow:
@@ -48,6 +55,9 @@ Start from:
 
 ```bash
 cp deploy/profiles/solo_pro.sync.env.example .env
+# Edit .env for this deployment before exporting it.
+set -a && source .env && set +a
+./levara-server -config-check
 ```
 
 Expected workflow:
@@ -67,6 +77,9 @@ Start from:
 
 ```bash
 cp deploy/profiles/team.postgres.env.example .env
+# Edit .env for this deployment before exporting it.
+set -a && source .env && set +a
+./levara-server -require-auth -config-check
 ```
 
 Required runtime facts:
@@ -84,16 +97,17 @@ corporate storage controls matter. The current implementation has tenant
 hardening, strict profile checks, audit export, an OIDC verified-claims adapter,
 raw OIDC bearer verification against a JWKS (RS256/ES256, iss/aud allowlists,
 key rotation; env: `LEVARA_OIDC_JWKS_URL`, `LEVARA_OIDC_ISSUERS`,
-`LEVARA_OIDC_AUDIENCES`), a SAML 2.0 service provider (`/saml/login`,
-`/saml/acs`, `/saml/metadata`; env: `LEVARA_SAML_ENABLED`,
+`LEVARA_OIDC_AUDIENCES`), a SAML 2.0 service provider (`/api/v1/saml/login`,
+`/api/v1/saml/acs`, `/api/v1/saml/metadata`; env: `LEVARA_SAML_ENABLED`,
 `LEVARA_SAML_ENTITY_ID`, `LEVARA_SAML_ACS_URL`, `LEVARA_SAML_IDP_METADATA_URL`
 or `LEVARA_SAML_IDP_METADATA_FILE`, `LEVARA_SAML_KEY_FILE`,
 `LEVARA_SAML_CERT_FILE` — SP-initiated flows only), a SCIM 2.0 provisioning
 surface (`/scim/v2`; env: `LEVARA_SCIM_TOKEN`, `LEVARA_SCIM_ISSUER` — the
-surface does not exist without the token; Users CRUD with soft delete,
+surface does not exist without the token; Users GET/POST/PATCH/DELETE with soft delete,
 externalId-primary identity matching, email collisions reject with 409),
 SSO seams, and
-storage/KMS adapter contracts. SCIM HTTP surfaces, SIEM sinks, KMS/BYOK
+storage/KMS adapter contracts. Native LDAP/LDAPS, browser OIDC login, SCIM-to-SSO
+linking, SCIM Groups, effective document/group grants, SIEM sinks, KMS/BYOK
 implementations, legal-hold enforcement, and corporate object storage backends
 remain follow-up work.
 
@@ -101,11 +115,19 @@ Start from:
 
 ```bash
 cp deploy/profiles/enterprise.strict.env.example .env
+# Edit .env for this deployment before exporting it.
+set -a && source .env && set +a
+./levara-server -require-auth -config-check
 ```
 
 Do not treat the Enterprise preset as proof that KMS/BYOK or corporate object
 storage is already production-ready. The adapter contracts are in place; the
 concrete production backends remain follow-up work tracked after C4.
+
+For a corporate pilot, follow [LDAP/AD and SSO setup](enterprise-identity.md).
+The preset validates declared configuration; it does not test your identity
+provider, establish group permissions, or make directory users interchangeable
+with existing local accounts. Verify these boundaries before adding documents.
 
 ## Validation
 
@@ -131,4 +153,6 @@ set -a; source deploy/profiles/personal.local.env.example; set +a
 smoke tests; it documents that gap in its output.
 
 For access, tenant, audit export, storage/KMS, and MCP memory ownership changes,
-also use `docs/security-diff-checklist.md`.
+use the supported/gaps matrix and acceptance checks in
+[enterprise identity](enterprise-identity.md) and
+[document management](document-management.md).

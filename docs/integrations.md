@@ -1,5 +1,10 @@
 # Levara — Документация по интеграциям
 
+Для корпоративного входа LDAP/AD, OIDC, SAML и provisioning используйте
+[enterprise identity](enterprise-identity.md): там перечислены точные URL,
+поддерживаемые операции и ограничения. Загрузку, обработку и индивидуальный
+доступ к файлам описывает [document management](document-management.md).
+
 ## Содержание
 1. [LLM Providers](#1-llm-providers)
 2. [Embedding Servers](#2-embedding-servers)

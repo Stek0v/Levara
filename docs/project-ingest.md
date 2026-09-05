@@ -1,12 +1,15 @@
 # One-command project ingest
 
 Use this when an existing project should become searchable/useful for Levara
-and AI agents.
+and AI agents. Run commands from the repository root. For individual uploaded
+files, extraction quality, retries and sharing, use
+[document management](document-management.md) and
+[acceptance scenarios](document-workflow-scenarios.md).
 
 ## Fast default for an existing project
 
 ```bash
-python3 /Users/stek0v/src/levara/scripts/levara_project_ingest.py \
+python3 scripts/levara_project_ingest.py \
   /path/to/project \
   --collection my-project
 ```
@@ -28,7 +31,7 @@ LLM graph extraction.
 ## Dry run first
 
 ```bash
-python3 /Users/stek0v/src/levara/scripts/levara_project_ingest.py \
+python3 scripts/levara_project_ingest.py \
   /path/to/project \
   --collection my-project \
   --dry-run
@@ -40,7 +43,7 @@ files before mutating Levara or writing `AGENTS.md`.
 ## Heavy full graph/LLM processing
 
 ```bash
-python3 /Users/stek0v/src/levara/scripts/levara_project_ingest.py \
+python3 scripts/levara_project_ingest.py \
   /path/to/project \
   --collection my-project \
   --mode full \
@@ -53,7 +56,7 @@ It can be slow even on small inputs depending on the local LLM provider.
 ## Workspace only
 
 ```bash
-python3 /Users/stek0v/src/levara/scripts/levara_project_ingest.py \
+python3 scripts/levara_project_ingest.py \
   /path/to/project \
   --collection my-project \
   --pipeline workspace
@@ -65,7 +68,7 @@ workspace index needs refresh.
 ## Smoke test
 
 ```bash
-python3 /Users/stek0v/src/levara/scripts/levara_project_ingest.py \
+python3 scripts/levara_project_ingest.py \
   /path/to/project \
   --collection my-project-smoke \
   --limit 3 \
@@ -77,10 +80,11 @@ the project `AGENTS.md`.
 
 ## Nightly full enrichment for `~/src/*`
 
-Installed local cron entry:
+Example schedule to install after a successful manual run (replace `/path/to/levara`
+and the log path; the server/preset does not install this cron job):
 
 ```cron
-10 3 * * * /bin/bash /Users/stek0v/src/levara/scripts/levara_nightly_full_enrich.sh >> /Users/stek0v/Library/Logs/levara/nightly-full-enrich/cron.log 2>&1
+10 3 * * * /bin/bash /path/to/levara/scripts/levara_nightly_full_enrich.sh >> /path/to/logs/nightly-full-enrich.log 2>&1
 ```
 
 The batch script:
@@ -102,17 +106,17 @@ Useful manual checks:
 ```bash
 crontab -l
 tail -f ~/Library/Logs/levara/nightly-full-enrich/cron.log
-DRY_RUN=1 MAX_PROJECTS=2 /Users/stek0v/src/levara/scripts/levara_nightly_full_enrich.sh
+DRY_RUN=1 MAX_PROJECTS=2 /path/to/levara/scripts/levara_nightly_full_enrich.sh
 ```
 
 Useful overrides:
 
 ```bash
-PROJECT_ROOT=/Users/stek0v/src \
+PROJECT_ROOT="$HOME/src" \
 TIMEOUT_SECONDS=21600 \
 MODE=full \
 PIPELINE=all \
-/Users/stek0v/src/levara/scripts/levara_nightly_full_enrich.sh
+/path/to/levara/scripts/levara_nightly_full_enrich.sh
 ```
 
 ## After ingest: check agent memory behavior

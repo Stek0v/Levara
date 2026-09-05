@@ -128,9 +128,10 @@ func datasetShareCreateHandler(cfg APIConfig) fiber.Handler {
 		shareID := uuid.New().String()
 		upsertSQL, upsertArgs := QArgs(`INSERT INTO dataset_shares (id, dataset_id, user_id, role, granted_by, created_at)
 			 VALUES ($1, $2, $3, $4, $5, NOW())
-			 ON CONFLICT (dataset_id, user_id) DO UPDATE SET role = $4`,
+			 ON CONFLICT (dataset_id, user_id) DO UPDATE SET role = EXCLUDED.role, granted_by = EXCLUDED.granted_by
+ RETURNING id`,
 			shareID, dsID, targetUserID, req.Role, granterID)
-		_, err = cfg.DB.ExecContext(ctx, upsertSQL, upsertArgs...)
+		err = cfg.DB.QueryRowContext(ctx, upsertSQL, upsertArgs...).Scan(&shareID)
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"detail": "share failed: " + err.Error()})
 		}
@@ -159,7 +160,9 @@ func datasetShareDeleteHandler(cfg APIConfig) fiber.Handler {
 			return c.Status(403).JSON(fiber.Map{"detail": "only owner or admin can revoke shares"})
 		}
 
-		cfg.DB.ExecContext(ctx, Q("DELETE FROM dataset_shares WHERE id = $1"), shareID)
+		if _, err := cfg.DB.ExecContext(ctx, Q("DELETE FROM dataset_shares WHERE id = $1 AND dataset_id = $2"), shareID, dsID); err != nil {
+			return c.Status(500).JSON(fiber.Map{"detail": "share revoke failed: " + err.Error()})
+		}
 		return c.JSON(fiber.Map{"deleted": true})
 	}
 }

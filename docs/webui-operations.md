@@ -62,7 +62,7 @@ The default local development stack on Mac is:
 
 - Levara HTTP: `http://127.0.0.1:8081`
 - WebUI dev server: `http://localhost:3000`
-- Playwright WebUI server: `http://localhost:3001`
+- Playwright WebUI server: `http://127.0.0.1:3011` by default (`PLAYWRIGHT_PORT` overrides it)
 - PostgreSQL dev metadata: `localhost:5433` when using `start-levara.sh`
 - Local embedding service: `http://127.0.0.1:9101/v1/embeddings` when using
   `start-levara.sh`
@@ -129,6 +129,11 @@ LEVARA_API_URL=http://127.0.0.1:8081 npm run dev
 ```
 
 Open `http://localhost:3000`.
+
+For file types, extracted-text inspection, processing failures and reprocessing,
+follow [document management](document-management.md). Upload completion means
+bytes were accepted; verify terminal processing status and a known-answer search
+before treating a document as usable. See [acceptance scenarios](document-workflow-scenarios.md).
 
 ### 3. First solo checks
 
@@ -223,6 +228,18 @@ Minimum team requirements:
 - Stable backups for database and object storage.
 - A clear owner for backend logs, Prometheus, and incident response.
 
+### Identity and individual sharing
+
+The WebUI login uses the local account/token flow. OIDC bearer verification or
+SAML endpoints on the backend do not automatically add a browser SSO login.
+Native LDAP, browser OIDC and SCIM-to-SSO linking are absent; use
+[enterprise identity](enterprise-identity.md) before an AD/SSO pilot.
+
+The dataset detail page can grant an individual viewer/editor/admin. For one
+document, use a separate dataset; independent document ACLs and effective group
+grants are absent. Follow [document management](document-management.md) and test
+grant/revoke across download, retrieval and chat with separate users.
+
 ### WebUI deployment options
 
 **Option A: Next.js server next to backend**
@@ -232,9 +249,12 @@ Run WebUI as a Node service and point rewrites to the backend:
 ```bash
 cd webui
 npm ci
-npm run build
+LEVARA_API_URL=http://127.0.0.1:8080 npm run build
 LEVARA_API_URL=http://127.0.0.1:8080 npm run start -- -p 3000
 ```
+
+Set the same backend URL during build and runtime: Next.js records rewrites
+in the build output. There is no default backend `/ui` route.
 
 Put a reverse proxy in front of the WebUI. The browser sees only the WebUI
 origin; API calls go through Next rewrites.

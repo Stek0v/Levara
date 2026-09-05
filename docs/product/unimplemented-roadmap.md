@@ -1,5 +1,12 @@
 # Levara — полный список нереализованного (2026-09-04)
 
+> Статус документа на 2026-09-05: это датированный backlog, а не руководство
+> эксплуатации. Отметка о реализации SAML/SCIM обозначает ограниченную HTTP-поверхность,
+> а не готовую связку с AD/LDAP, browser SSO или права групп. Текущие ограничения:
+> [enterprise identity](../enterprise-identity.md), [управление документами](../document-management.md),
+> [приёмочные сценарии](../document-workflow-scenarios.md).
+
+
 Источник: сравнительная страница режимов (`docs/marketing/modes-comparison.html`)
 и её первоисточники — `docs/marketing/{personal,solo-pro,team,enterprise}.md`,
 `docs/profile-presets.md`, `docs/deployment-matrix.md`, `docs/long-horizon-runtime.md`.

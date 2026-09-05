@@ -83,6 +83,13 @@ func TestSAMLSPConfigValidation(t *testing.T) {
 	}, testBridge()); err == nil {
 		t.Fatal("missing IdP metadata accepted")
 	}
+	for _, acs := range []string{"http://sp.example.test/saml/acs", "https:///saml/acs", "https://user@sp.example.test/saml/acs"} {
+		if _, err := NewSAMLSP(ctx, SAMLSPConfig{
+			EntityID: "e", AcsURL: acs, Key: key, Certificate: cert, IDPMetadataXML: minimalIDPMetadata(t),
+		}, testBridge()); err == nil {
+			t.Errorf("unsafe ACS accepted: %s", acs)
+		}
+	}
 }
 
 func TestSAMLSPDeadIDPMetadataFailsClosed(t *testing.T) {
@@ -132,17 +139,17 @@ func TestSAMLSPIdPMetadataXMLFromLocalFile(t *testing.T) {
 func TestSAMLIDStoreConsumeIsOneTime(t *testing.T) {
 	s := newSAMLIDStore(time.Minute)
 	s.track("req-1")
-	if !s.consumeAll([]string{"req-1"}) {
+	if !s.consume("req-1") {
 		t.Fatal("first consume failed")
 	}
-	if s.consumeAll([]string{"req-1"}) {
+	if s.consume("req-1") {
 		t.Fatal("second consume succeeded — replay possible")
 	}
 }
 
 func TestSAMLIDStoreUnknownIDRejected(t *testing.T) {
 	s := newSAMLIDStore(time.Minute)
-	if s.consumeAll([]string{"never-tracked"}) {
+	if s.consume("never-tracked") {
 		t.Fatal("unknown id consumed")
 	}
 }
@@ -151,7 +158,7 @@ func TestSAMLIDStoreTTLExpiry(t *testing.T) {
 	s := newSAMLIDStore(10 * time.Millisecond)
 	s.track("req-1")
 	time.Sleep(30 * time.Millisecond)
-	if s.consumeAll([]string{"req-1"}) {
+	if s.consume("req-1") {
 		t.Fatal("expired id consumed")
 	}
 }
@@ -197,7 +204,7 @@ func TestSAMLConsumeResponseRequiresFormField(t *testing.T) {
 	}
 	r := httptest.NewRequest(http.MethodPost, "/acs", nil)
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	if _, err := sp.ConsumeResponse(context.Background(), r); err == nil || !strings.Contains(err.Error(), "missing SAMLResponse") {
+	if _, err := sp.ConsumeResponse(context.Background(), httptest.NewRecorder(), r); err == nil || !strings.Contains(err.Error(), "missing SAMLResponse") {
 		t.Fatalf("want missing-field error, got %v", err)
 	}
 	// Garbage base64 — the library wraps decode failures in an opaque
@@ -205,15 +212,14 @@ func TestSAMLConsumeResponseRequiresFormField(t *testing.T) {
 	// so assert rejection rather than a specific message.
 	r2 := httptest.NewRequest(http.MethodPost, "/acs", strings.NewReader("SAMLResponse=!!!not-base64!!!"))
 	r2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	if _, err := sp.ConsumeResponse(context.Background(), r2); err == nil {
+	if _, err := sp.ConsumeResponse(context.Background(), httptest.NewRecorder(), r2); err == nil {
 		t.Fatal("garbage SAMLResponse accepted")
 	}
 }
 
 // minimalIDPMetadata returns structurally valid IdP metadata with an empty
-// certificate slot: enough for construction and request-side tests. Response
-// signature validation requires a real IdP and is covered by the library's
-// own extensive tests plus live-stand verification.
+// certificate slot: enough for construction and request-side tests. The server
+// route tests separately exercise signed responses from an isolated local IdP.
 func minimalIDPMetadata(t *testing.T) []byte {
 	t.Helper()
 	return []byte(`<?xml version="1.0"?>

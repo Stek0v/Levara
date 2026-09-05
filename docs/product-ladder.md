@@ -26,6 +26,18 @@ The implementation rule is simple: shared engine capabilities stay in the core;
 identity, access, audit, storage, and enterprise integrations attach as
 profiles or adapters.
 
+## Current user workflows and boundaries
+
+Use [document management](document-management.md) to upload, check processing,
+verify search against a source and grant an individual dataset role. Sharing a
+single document currently means a separate dataset; there is no independent
+document ACL or effective group grant. Tenant membership and dataset permissions
+are different checks, not an automatic organization-wide sharing policy.
+
+[Enterprise identity](enterprise-identity.md) distinguishes native LDAP/AD access
+(absent) from OIDC/SAML federation and limited SCIM Users provisioning. Endpoint
+availability does not imply a complete browser SSO or directory lifecycle.
+
 ## Product Tiers
 
 | Tier | Audience | Default runtime | Implemented foundation | Remaining hardening | Future adapters |
@@ -33,7 +45,7 @@ profiles or adapters.
 | Personal / Local | One developer using Codex, Claude, Cursor, or similar agents | SQLite, local filesystem, local MCP, auth optional | MCP tools, memory palace, workspace context/search/read/write, local BM25/vector search, local manifests and jobs, permissive `personal` profile, preset env, config-check | Clearer local backup runbook | None required |
 | Solo Pro | One power user with several machines or a Mac/Pi setup | SQLite or Postgres, local or S3-compatible storage, sync enabled | Cross-instance sync, backups, API keys, Prometheus metrics, optional S3 backend, `solo_pro` sync-token validation, preset env | Sync conflict guidance, personal ops dashboard | Managed backup target, hosted edge relay |
 | Team | Small team with humans and AI agents sharing project workspaces | Postgres, required auth, per-agent tokens, shared workspace root | JWT/API keys, dataset/project shares, shared `pkg/access` policy facade, workspace ACL preflight, workspace audit, async indexing jobs, strict-profile fail-fast, preset env | Admin/operator UI | Centralized log sink, team admin UI |
-| Enterprise | Corporate teams with compliance and central governance | Postgres or managed SQL, object storage, required auth or SSO bridge, enforced tenants | Tenant membership checks, tenant-safe SQL fragments, strict-profile fail-fast, audit export boundary with async JSONL adapter, OIDC verified-claims adapter, SSO/SCIM seams, storage/KMS contract shapes | Concrete SAML/SCIM protocol surfaces, concrete corporate storage/KMS/BYOK backends, SIEM adapter | SAML protocol adapter, SCIM HTTP surface, KMS/BYOK implementations, SIEM export, S3/GCS/Azure Blob adapters, legal hold enforcement in concrete backends |
+| Enterprise | Corporate teams with compliance and central governance | Postgres or managed SQL, object storage, required auth or SSO bridge, enforced tenants | Tenant membership checks, tenant-safe SQL fragments, strict-profile fail-fast, audit export boundary with async JSONL adapter, OIDC bearer verification, SAML SP, limited SCIM Users HTTP, storage/KMS contract shapes | Browser SSO and directory lifecycle integration; corporate storage/KMS/BYOK backends; SIEM adapter | Native LDAP/LDAPS, browser OIDC, SCIM-to-SSO linking and group permissions; KMS/BYOK, SIEM, corporate storage controls and legal hold |
 
 ## Capability Placement
 
@@ -53,7 +65,7 @@ profiles or adapters.
 | Dataset/project sharing | access layer | no default | optional | yes | yes |
 | Tenant isolation | access layer | no default | no default | optional | required |
 | Workspace audit | audit layer | optional | yes | yes | yes, exportable |
-| OIDC/SAML/SCIM/KMS/SIEM | enterprise adapters | no | no | no | partial: OIDC verified-claims, identity/audit/storage/KMS seams implemented; SAML, SCIM HTTP, SIEM, and concrete storage backends pending |
+| OIDC/SAML/SCIM/KMS/SIEM | enterprise adapters | no | no | no | partial: OIDC bearer, SAML SP and limited SCIM Users implemented; browser login, directory linkage/groups, SIEM and corporate KMS backends pending |
 
 ## Target Runtime Profiles
 
@@ -139,7 +151,8 @@ Remaining debt:
 - Complete foundation: audit export boundary, async JSONL exporter, SSO bridge
   interface, OIDC verified-claims adapter, SCIM-shaped provisioner interface,
   storage metadata contract, direct-read contract, and KMS/BYOK hook contract.
-- Remaining work: SAML/SCIM HTTP surfaces, SIEM sink, and concrete corporate
+- Remaining work: native LDAP, browser OIDC login, SCIM-to-SSO linking and group
+  authorization, SIEM sink, and concrete corporate
   storage/KMS backends for S3/GCS/Azure-style object stores.
 
 ## Acceptance Criteria For Future Implementation

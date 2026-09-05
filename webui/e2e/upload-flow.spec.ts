@@ -1,171 +1,262 @@
-import { test, expect } from '@playwright/test'
-import path from 'path'
-import fs from 'fs'
-import { authenticate } from './helpers'
+import { test, expect, type Page, type Request } from '@playwright/test'
+import { readFile } from 'node:fs/promises'
 
-/**
- * Full upload flow E2E test — creates real files, uploads through UI,
- * verifies they appear in datasets, then searches for content.
- */
+const dataset = { id: 'shared-dataset-id', name: 'Shared handbook', owner_id: 'other-owner', role: 'editor' }
+const file = { name: 'handbook.txt', mimeType: 'text/plain', buffer: Buffer.from('Original handbook bytes — UTF-8\n') }
 
-const TMP = '/tmp/levara_e2e_files'
-
-test.beforeAll(() => {
-  fs.mkdirSync(TMP, { recursive: true })
-  fs.writeFileSync(path.join(TMP, 'test.md'), '# Levara E2E Test\n\nThis markdown document is about quantum computing and photonic processors.')
-  fs.writeFileSync(path.join(TMP, 'test.txt'), 'Plain text file about renewable energy sources including solar and wind power.')
-  fs.writeFileSync(path.join(TMP, 'test.html'), '<html><body><h1>HTML Doc</h1><p>This document discusses neural network architectures.</p></body></html>')
-  fs.writeFileSync(path.join(TMP, 'test.csv'), 'name,value\ntemperature,25.3\nhumidity,60.1\npressure,1013.2')
-})
-
-test.afterAll(() => {
-  fs.rmSync(TMP, { recursive: true, force: true })
-})
-
-test.describe('Upload Flow', () => {
-  test.beforeEach(async ({ page }) => {
-    await authenticate(page)
-  })
-
-  test('U1. Upload .md file via file input', async ({ page }) => {
-    await page.goto('/datasets')
-    await page.waitForTimeout(1000)
-
-    // Use the hidden file input
-    const fileInput = page.locator('input[type="file"]')
-    await fileInput.setInputFiles(path.join(TMP, 'test.md'))
-
-    // Wait for upload to complete
-    await page.waitForTimeout(3000)
-
-    // Should not show an error
-    const bodyText = await page.textContent('body')
-    expect(bodyText).not.toContain('Error')
-  })
-
-  test('U2. Upload .txt file via file input', async ({ page }) => {
-    await page.goto('/datasets')
-    await page.waitForTimeout(1000)
-
-    const fileInput = page.locator('input[type="file"]')
-    await fileInput.setInputFiles(path.join(TMP, 'test.txt'))
-    await page.waitForTimeout(3000)
-
-    const bodyText = await page.textContent('body')
-    expect(bodyText).not.toContain('Error')
-  })
-
-  test('U3. Upload .html file via file input', async ({ page }) => {
-    await page.goto('/datasets')
-    const fileInput = page.locator('input[type="file"]')
-    await fileInput.setInputFiles(path.join(TMP, 'test.html'))
-    await page.waitForTimeout(3000)
-
-    const bodyText = await page.textContent('body')
-    expect(bodyText).not.toContain('Error')
-  })
-
-  test('U4. Upload .csv file via file input', async ({ page }) => {
-    await page.goto('/datasets')
-    const fileInput = page.locator('input[type="file"]')
-    await fileInput.setInputFiles(path.join(TMP, 'test.csv'))
-    await page.waitForTimeout(3000)
-
-    const bodyText = await page.textContent('body')
-    expect(bodyText).not.toContain('Error')
-  })
-
-  test('U5. Upload multiple files at once', async ({ page }) => {
-    await page.goto('/datasets')
-    const fileInput = page.locator('input[type="file"]')
-    await fileInput.setInputFiles([
-      path.join(TMP, 'test.md'),
-      path.join(TMP, 'test.txt'),
-    ])
-    await page.waitForTimeout(3000)
-
-    const bodyText = await page.textContent('body')
-    expect(bodyText).not.toContain('Error')
-  })
-
-  test('U6. Upload shows success banner', async ({ page }) => {
-    await page.goto('/datasets')
-    const fileInput = page.locator('input[type="file"]')
-    await fileInput.setInputFiles(path.join(TMP, 'test.txt'))
-    await page.waitForTimeout(3000)
-
-    // Should show upload result banner OR dataset in list
-    const bodyText = await page.textContent('body')
-    expect(
-      bodyText?.includes('uploaded') ||
-      bodyText?.includes('records') ||
-      bodyText?.includes('default')
-    ).toBeTruthy()
-  })
-
-  test('U7. Search finds uploaded content (sparse/BM25)', async ({ page }) => {
-    await page.goto('/search')
-
-    // Switch to Sparse (BM25) — no embedding needed
-    await page.getByRole('button', { name: 'Sparse' }).first().click()
-
-    // Search for content from uploaded files
-    await page.getByPlaceholder(/query/i).fill('quantum computing')
-    await page.getByRole('button', { name: 'Search' }).click()
-    await page.waitForTimeout(5000)
-
-    // Check results area
-    const bodyText = await page.textContent('body')
-    // Either found results or empty — no crash
-    expect(bodyText?.includes('results') || bodyText?.includes('No results') || bodyText?.includes('score')).toBeTruthy()
-  })
-
-  test('U8. Search finds uploaded content (renewable energy)', async ({ page }) => {
-    await page.goto('/search')
-    await page.getByRole('button', { name: 'Sparse' }).first().click()
-    await page.getByPlaceholder(/query/i).fill('renewable energy solar')
-    await page.getByRole('button', { name: 'Search' }).click()
-    await page.waitForTimeout(5000)
-
-    const bodyText = await page.textContent('body')
-    expect(bodyText?.includes('results') || bodyText?.includes('No results') || bodyText?.includes('score')).toBeTruthy()
-  })
-
-  test('U9. Chat about uploaded content', async ({ page }) => {
-    await page.goto('/chat')
-    await page.locator('textarea').fill('What do the documents say about energy?')
-
-    const sendBtn = page.locator('button').filter({ has: page.locator('svg.lucide-send') })
-    await sendBtn.click()
-
-    // Wait for response
-    await page.waitForTimeout(10000)
-
-    // Should show user message
-    await expect(page.getByText('energy').first()).toBeVisible()
-  })
-
-  test('U10. Take screenshot of each page for visual verification', async ({ page }) => {
-    test.setTimeout(90000)
-    const pages = [
-      { url: '/', name: 'dashboard' },
-      { url: '/datasets', name: 'datasets' },
-      { url: '/search', name: 'search' },
-      { url: '/chat', name: 'chat' },
-      { url: '/graph', name: 'graph' },
-      { url: '/collections', name: 'collections' },
-      { url: '/memories', name: 'memories' },
-      { url: '/notebooks', name: 'notebooks' },
-      { url: '/analytics', name: 'analytics' },
-      { url: '/settings', name: 'settings' },
-      { url: '/login', name: 'login' },
-    ]
-
-    for (const p of pages) {
-      await page.goto(p.url, { waitUntil: 'domcontentloaded' })
-      await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {})
-      await page.waitForTimeout(500)
-      await page.screenshot({ path: `test-results/screenshot-${p.name}.png`, fullPage: true })
+async function mockAPI(page: Page) {
+  const state = {
+    uploads: [] as Request[], cognify: [] as Request[], downloads: [] as Request[], statusRequests: [] as Request[],
+    uploadStatus: 200, uploadError: 'Text extraction failed: no readable content',
+    start: { status: 'PipelineRunStarted', pipeline_run_id: 'run-1' } as Record<string, unknown>,
+    progress: { pipeline_run_id: 'run-1', status: 'COMPLETED', stage: 'done' } as Record<string, unknown>,
+    downloadStatus: 200, statusCode: 200, datasetsReady: Promise.resolve(),
+    shares: [] as { id: string; user_email: string; role: string }[],
+  }
+  await page.addInitScript(() => localStorage.setItem('levara_token', 'upload-test-token'))
+  await page.route('**/api/v1/**', async (route) => {
+    const request = route.request()
+    const url = new URL(request.url())
+    const path = url.pathname
+    let body: unknown = []
+    if (path === '/api/v1/auth/me') body = { id: 'editor', email: 'editor@test.local', username: 'editor' }
+    else if (path === '/api/v1/settings') body = { locale: 'en', theme: 'light' }
+    else if (path === '/api/v1/datasets') {
+      await state.datasetsReady
+      body = [dataset]
     }
+    else if (path === '/api/v1/add') {
+      state.uploads.push(request)
+      return route.fulfill({ status: state.uploadStatus, json: state.uploadStatus === 200
+        ? { status: 'ok', items: 1, dataset_id: dataset.id, dataset_name: dataset.name }
+        : { detail: state.uploadError } })
+    } else if (path === '/api/v1/cognify') {
+      state.cognify.push(request)
+      body = state.start
+    } else if (/\/cognify\/[^/]+\/status$/.test(path)) {
+      state.statusRequests.push(request)
+      return route.fulfill({ status: state.statusCode, json: state.progress })
+    }
+    else if (/\/cognify\/[^/]+\/stream$/.test(path)) {
+      return route.fulfill({ contentType: 'text/event-stream', body: `event: done\ndata: ${JSON.stringify(state.progress)}\n\n` })
+    } else if (path === `/api/v1/datasets/${dataset.id}/data`) body = [
+      { id: 'doc-1', name: file.name, extension: '.txt', data_size: file.buffer.length,
+        pipeline_status: JSON.stringify({ [dataset.name]: { status: 'COMPLETED' } }) },
+      { id: 'doc-2', name: 'other-collection.txt', pipeline_status: JSON.stringify({ unrelated: { status: 'COMPLETED' } }) },
+    ]
+    else if (path.endsWith('/raw')) {
+      state.downloads.push(request)
+      return state.downloadStatus === 200
+        ? route.fulfill({ contentType: 'text/plain', body: file.buffer, headers: { 'content-disposition': 'attachment; filename="handbook.txt"' } })
+        : route.fulfill({ status: 403, json: { detail: 'Download access denied' } })
+    } else if (path === `/api/v1/datasets/${dataset.id}/shares`) {
+      if (request.method() === 'POST') {
+        const data = request.postDataJSON()
+        state.shares = [{ id: 'share-1', user_email: data.email, role: data.role }]
+        body = state.shares[0]
+      } else body = state.shares
+    } else if (path.endsWith('/shares/share-1') && request.method() === 'DELETE') state.shares = []
+    await route.fulfill({ status: 200, json: body })
   })
+  await page.route('**/health**', (route) => route.fulfill({ json: { status: 'ok' } }))
+  return state
+}
+
+async function upload(page: Page) {
+  await page.getByLabel('Target dataset').selectOption({ label: dataset.name })
+  await page.locator('input[type=file]').setInputFiles(file)
+}
+
+test('existing shared dataset sends its ID, name, exact bytes and bearer', async ({ page }) => {
+  const state = await mockAPI(page)
+  await page.goto('/datasets')
+  await upload(page)
+  await expect.poll(() => state.uploads.length).toBe(1)
+  const request = state.uploads[0]
+  const form = await new Response(new Uint8Array(request.postDataBuffer()!), { headers: { 'Content-Type': request.headers()['content-type'] } }).formData()
+  expect(form.get('datasetId')).toBe(dataset.id)
+  expect(form.get('datasetName')).toBe(dataset.name)
+  expect(Buffer.from(await (form.get('data') as File).arrayBuffer())).toEqual(file.buffer)
+  expect(request.headers().authorization).toBe('Bearer upload-test-token')
+  await expect(page.getByText('Ready to search', { exact: true })).toBeVisible()
+  expect(state.cognify[0].postDataJSON()).toEqual({ datasets: [dataset.id], collection: dataset.name, skip_graph: true })
+})
+
+test('extraction failure is visible and the same file can be retried', async ({ page }) => {
+  const state = await mockAPI(page)
+  state.uploadStatus = 422
+  await page.goto('/datasets')
+  await upload(page)
+  await expect(page.getByText(state.uploadError, { exact: true })).toBeVisible()
+  expect(state.cognify).toHaveLength(0)
+  await expect(page.locator('input[type=file]')).toHaveValue('')
+  state.uploadStatus = 200
+  await page.locator('input[type=file]').setInputFiles(file)
+  await expect(page.getByText('Ready to search', { exact: true })).toBeVisible()
+  expect(state.uploads).toHaveLength(2)
+  await expect(page.getByText(state.uploadError, { exact: true })).toBeVisible()
+})
+
+test('missing cognify run ID is a visible failure, not readiness', async ({ page }) => {
+  const state = await mockAPI(page)
+  state.start = { status: 'PipelineRunStarted' }
+  await page.goto('/datasets')
+  await upload(page)
+  await expect(page.getByText('Processing did not return a run ID.', { exact: true })).toBeVisible()
+  await expect(page.getByText('Ready to search', { exact: true })).toHaveCount(0)
+  await expect(page.getByLabel('Target dataset')).toBeEnabled()
+})
+
+for (const status of ['COMPLETED', 'SKIPPED', 'already_processed']) {
+  test(`explicit ${status} without a run ID is ready`, async ({ page }) => {
+    const state = await mockAPI(page)
+    state.start = { status }
+    await page.goto('/datasets')
+    await upload(page)
+    await expect(page.getByText('Ready to search', { exact: true })).toBeVisible()
+    await expect(page.locator('input[type=file]')).toBeEnabled()
+  })
+}
+
+test('failed processing reports the reason and preserves earlier completed uploads', async ({ page }) => {
+  const state = await mockAPI(page)
+  await page.goto('/datasets')
+  await upload(page)
+  await expect(page.getByText('Ready to search', { exact: true })).toBeVisible()
+  state.start = { status: 'PipelineRunStarted', pipeline_run_id: 'run-2' }
+  state.progress = { pipeline_run_id: 'run-2', status: 'FAILED', message: 'Embedding provider unavailable' }
+  await page.locator('input[type=file]').setInputFiles({ ...file, name: 'second.txt' })
+  await expect(page.getByText('Embedding provider unavailable', { exact: true })).toBeVisible()
+  await expect(page.getByText('Ready to search', { exact: true })).toHaveCount(1)
+})
+
+test('active batch disables uploads and ignores drops until matching run completes', async ({ page }) => {
+  const state = await mockAPI(page)
+  state.progress = { pipeline_run_id: 'run-1', status: 'RUNNING', stage: 'embedding' }
+  await page.goto('/datasets')
+  await upload(page)
+  await expect(page.getByLabel('Target dataset')).toBeDisabled()
+  await expect(page.locator('input[type=file]')).toBeDisabled()
+  const drop = await page.evaluateHandle(() => {
+    const dt = new DataTransfer()
+    dt.items.add(new File(['must not upload'], 'overlap.txt', { type: 'text/plain' }))
+    return dt
+  })
+  await page.locator('div.border-dashed').dispatchEvent('drop', { dataTransfer: drop })
+  await drop.dispose()
+  state.progress = { pipeline_run_id: 'run-1', status: 'COMPLETED' }
+  await expect(page.getByText('Ready to search', { exact: true })).toBeVisible()
+  expect(state.uploads).toHaveLength(1)
+  expect(state.statusRequests[0].headers().authorization).toBe('Bearer upload-test-token')
+  await expect(page.getByLabel('Target dataset')).toBeEnabled()
+})
+
+test('detail shows completion only for its collection and downloads authenticated original bytes', async ({ page, context }) => {
+  const state = await mockAPI(page)
+  await page.goto(`/datasets/${dataset.id}`)
+  await context.addCookies([{ name: 'download-cookie', value: 'test', domain: '127.0.0.1', path: '/' }])
+  const row = page.getByRole('row').filter({ hasText: file.name })
+  await expect(row.getByText('Processed', { exact: true })).toBeVisible()
+  await expect(page.getByRole('row').filter({ hasText: 'other-collection.txt' }).getByText('Processed', { exact: true })).toHaveCount(0)
+  const downloadEvent = page.waitForEvent('download')
+  await row.getByRole('button', { name: 'Download original' }).click()
+  const download = await downloadEvent
+  expect(download.suggestedFilename()).toBe(file.name)
+  expect(await readFile((await download.path())!)).toEqual(file.buffer)
+  expect(state.downloads).toHaveLength(1)
+  expect(new URL(state.downloads[0].url()).searchParams.get('original')).toBe('true')
+  expect(state.downloads[0].headers().authorization).toBe('Bearer upload-test-token')
+  expect((await state.downloads[0].allHeaders()).cookie).toContain('download-cookie=test')
+  state.downloadStatus = 403
+  await row.getByRole('button', { name: 'Download original' }).click()
+  await expect(page.getByText('Download access denied', { exact: true })).toBeVisible()
+  expect(state.downloads).toHaveLength(2)
+})
+
+test('individual viewer share is granted and revoked in the selected dataset', async ({ page }) => {
+  const state = await mockAPI(page)
+  await page.goto(`/datasets/${dataset.id}`)
+  await page.getByPlaceholder('User email').fill('reader@test.local')
+  await page.getByRole('button', { name: 'Grant access' }).click()
+  await expect(page.getByText('reader@test.local', { exact: true })).toBeVisible()
+  expect(state.shares[0].role).toBe('viewer')
+  await page.getByTitle('Revoke', { exact: true }).click()
+  await expect(page.getByText('reader@test.local', { exact: true })).toHaveCount(0)
+})
+
+for (const payload of [
+  { pipeline_run_id: 'wrong-run', status: 'COMPLETED' },
+  { pipeline_run_id: 'run-1', stage: 'done' },
+]) {
+  test(`unconfirmed processing result never becomes ready: ${JSON.stringify(payload)}`, async ({ page }) => {
+    const state = await mockAPI(page)
+    state.progress = payload
+    await page.goto('/datasets')
+    await upload(page)
+    await expect(page.getByText('Invalid processing status response.', { exact: true })).toBeVisible()
+    await expect(page.getByText('Ready to search', { exact: true })).toHaveCount(0)
+    await expect(page.locator('input[type=file]')).toBeEnabled()
+  })
+}
+
+test('status access failure ends the batch with an error', async ({ page }) => {
+  const state = await mockAPI(page)
+  state.statusCode = 403
+  state.progress = { detail: 'Processing access denied' }
+  await page.goto('/datasets')
+  await upload(page)
+  await expect(page.getByText('Processing access denied', { exact: true })).toBeVisible()
+  await expect(page.getByText('Ready to search', { exact: true })).toHaveCount(0)
+  await expect(page.getByLabel('Target dataset')).toBeEnabled()
+})
+
+test('new upload creates a named dataset without claiming an existing ID', async ({ page }) => {
+  const state = await mockAPI(page)
+  await page.goto('/datasets')
+  await expect(page.getByLabel('Target dataset')).toHaveValue('')
+  await page.locator('input[type=file]').setInputFiles(file)
+  await expect(page.getByText('Ready to search', { exact: true })).toBeVisible()
+  const request = state.uploads[0]
+  const form = await new Response(new Uint8Array(request.postDataBuffer()!), { headers: { 'Content-Type': request.headers()['content-type'] } }).formData()
+  expect(form.get('datasetId')).toBeNull()
+  expect(form.get('datasetName')).toMatch(/^upload-\d+$/)
+})
+
+test('detail cognify handles missing ID, FAILED, and explicit completion with retry', async ({ page }) => {
+  const state = await mockAPI(page)
+  state.start = { status: 'PipelineRunStarted' }
+  await page.goto(`/datasets/${dataset.id}`)
+  const button = page.getByRole('button', { name: 'Cognify', exact: true })
+  await button.click()
+  await expect(page.getByText('Processing did not return a run ID.', { exact: true })).toBeVisible()
+  await expect(button).toBeEnabled()
+  state.start = { status: 'PipelineRunStarted', pipeline_run_id: 'run-1' }
+  state.progress = { pipeline_run_id: 'run-1', status: 'FAILED', message: 'Cannot embed this document' }
+  await button.click()
+  await expect(page.getByText('Cannot embed this document', { exact: true })).toBeVisible()
+  await expect(button).toBeEnabled()
+  state.start = { status: 'already_processed' }
+  await button.click()
+  await expect(button).toBeEnabled()
+  await expect(page.getByText('Cannot embed this document', { exact: true })).toHaveCount(0)
+  expect(state.cognify).toHaveLength(3)
+  expect(state.cognify[0].postDataJSON()).toEqual({ datasets: [dataset.id], collection: dataset.name })
+})
+
+test('detail waits for the collection name before allowing Cognify', async ({ page }) => {
+  const state = await mockAPI(page)
+  let resolveDatasets!: () => void
+  state.datasetsReady = new Promise<void>((resolve) => { resolveDatasets = resolve })
+  try {
+    await page.goto(`/datasets/${dataset.id}`)
+    const button = page.getByRole('button', { name: 'Cognify', exact: true })
+    await expect(button).toBeDisabled()
+    await expect(page.getByRole('row').filter({ hasText: file.name }).getByText('Processed', { exact: true })).toHaveCount(0)
+    expect(state.cognify).toHaveLength(0)
+    resolveDatasets()
+    await expect(button).toBeEnabled()
+    await expect(page.getByRole('row').filter({ hasText: file.name }).getByText('Processed', { exact: true })).toBeVisible()
+  } finally {
+    resolveDatasets()
+  }
 })

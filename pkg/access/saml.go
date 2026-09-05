@@ -39,16 +39,16 @@ type SAMLSPConfig struct {
 	RootURL string
 }
 
-// SAMLSP is the Levara-facing SAML 2.0 service provider. Verification
-// (signature over assertion, NotBefore/NotOnOrAfter with the library's
-// MaxClockSkew, audience restriction, destination, InResponseTo binding and
-// replay rejection) is delegated to crewjam/saml — hand-rolling XML-DSig is
-// how signature-wrapping bugs happen. This type adapts that library to the
-// same IdentityBridge seam the OIDC path uses.
+// SAMLSP is the Levara-facing SAML 2.0 service provider. XML signatures,
+// assertion times, audience, destination and InResponseTo are verified by
+// crewjam/saml. Signed browser state selects the exact expected request, and
+// the local pending store enforces one-time consumption. Verified identities
+// use the same IdentityBridge seam as OIDC.
 type SAMLSP struct {
 	sp      *saml.ServiceProvider
 	bridge  IdentityBridge
 	pending *samlIDStore
+	tracker samlsp.CookieRequestTracker
 }
 
 // NewSAMLSP validates config, loads IdP metadata, and returns a ready SP.
@@ -99,6 +99,9 @@ func NewSAMLSP(ctx context.Context, cfg SAMLSPConfig, bridge IdentityBridge) (*S
 	if err != nil {
 		return nil, fmt.Errorf("saml: acs url: %w", err)
 	}
+	if acs.Scheme != "https" || acs.Hostname() == "" || acs.User != nil || acs.Fragment != "" {
+		return nil, errors.New("saml: ACS must be an absolute HTTPS URL without userinfo or fragment")
+	}
 	sp := &saml.ServiceProvider{
 		EntityID:    cfg.EntityID,
 		Key:         cfg.Key,
@@ -116,67 +119,70 @@ func NewSAMLSP(ctx context.Context, cfg SAMLSPConfig, bridge IdentityBridge) (*S
 		}
 		sp.MetadataURL = *mu
 	}
-	return &SAMLSP{sp: sp, bridge: bridge, pending: newSAMLIDStore(15 * time.Minute)}, nil
+	const requestTTL = 15 * time.Minute
+	opts := samlsp.Options{URL: *acs, Key: cfg.Key, CookieSameSite: http.SameSiteNoneMode}
+	tracker := samlsp.DefaultRequestTracker(opts, sp)
+	tracker.NamePrefix = "__Secure-levara_saml_"
+	tracker.MaxAge = requestTTL
+	codec := samlsp.DefaultTrackedRequestCodec(opts)
+	codec.MaxAge = requestTTL
+	tracker.Codec = codec
+	return &SAMLSP{sp: sp, bridge: bridge, pending: newSAMLIDStore(requestTTL), tracker: tracker}, nil
 }
 
 // StartAuth creates an SP-initiated AuthnRequest and returns the IdP redirect
-// URL. The tracked request ID binds the eventual assertion (one-time use).
-func (s *SAMLSP) StartAuth(relayState string) (string, error) {
+// URL. A signed, per-request browser cookie binds the random RelayState to
+// the exact AuthnRequest; callers must send the Set-Cookie header to the browser.
+func (s *SAMLSP) StartAuth(w http.ResponseWriter, r *http.Request) (string, error) {
 	req, err := s.sp.MakeAuthenticationRequest(
 		s.sp.GetSSOBindingLocation(saml.HTTPRedirectBinding),
 		saml.HTTPRedirectBinding, saml.HTTPPostBinding)
 	if err != nil {
 		return "", fmt.Errorf("saml: authn request: %w", err)
 	}
-	s.pending.track(req.ID)
+	relayState, err := s.tracker.TrackRequest(w, r, req.ID)
+	if err != nil {
+		return "", fmt.Errorf("saml: request tracking: %w", err)
+	}
 	u, err := req.Redirect(relayState, s.sp)
 	if err != nil {
 		return "", fmt.Errorf("saml: redirect: %w", err)
 	}
+	s.pending.track(req.ID)
 	return u.String(), nil
 }
 
 // ConsumeResponse verifies a base64 SAMLResponse POSTed to the ACS and
 // resolves the verified identity through the identity bridge. Every failure
 // mode returns an error; callers treat the response as rejected.
-func (s *SAMLSP) ConsumeResponse(ctx context.Context, r *http.Request) (Principal, error) {
+func (s *SAMLSP) ConsumeResponse(ctx context.Context, w http.ResponseWriter, r *http.Request) (Principal, error) {
 	if r.PostFormValue("SAMLResponse") == "" {
 		return Principal{}, errors.New("saml: missing SAMLResponse form field")
 	}
-	// Track the request ID the assertion must answer. PossibleRequestIDs of
-	// exactly [trackedID] makes any other InResponseTo (including empty)
-	// fail validation; the tracked ID is consumed atomically after success,
-	// so replay of the same response fails request-ID validation.
-	tracked := s.trackedRequestIDs()
-	assertion, err := s.sp.ParseResponse(r, tracked)
+	tracked, err := s.tracker.GetTrackedRequest(r, r.PostFormValue("RelayState"))
+	if err != nil || tracked.SAMLRequestID == "" {
+		return Principal{}, errors.New("saml: missing or invalid browser request state")
+	}
+	assertion, err := s.sp.ParseResponse(r, []string{tracked.SAMLRequestID})
 	if err != nil {
 		return Principal{}, fmt.Errorf("saml: response rejected: %w", err)
-	}
-	if !s.pending.consumeAll(tracked) {
-		return Principal{}, errors.New("saml: request id not pending (possible replay)")
 	}
 	ext, err := s.identityFromAssertion(assertion)
 	if err != nil {
 		return Principal{}, err
 	}
+	if !s.pending.consume(tracked.SAMLRequestID) {
+		return Principal{}, errors.New("saml: request id not pending (possible replay)")
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name: s.tracker.NamePrefix + tracked.Index, Path: s.sp.AcsURL.Path,
+		MaxAge: -1, Secure: true, HttpOnly: true, SameSite: http.SameSiteNoneMode,
+	})
 	principal, err := s.bridge.ResolveExternal(ctx, ext)
 	if err != nil {
 		return Principal{}, fmt.Errorf("saml: identity resolution: %w", err)
 	}
 	return principal, nil
-}
-
-// trackedRequestIDs returns the single most-recently tracked request ID (the
-// AuthnRequest that initiated the browser flow now POSTing back). Levara's
-// flow is strictly SP-initiated and serial per browser session, so a
-// single-element allowlist is correct; anything else fails InResponseTo
-// validation in the library.
-func (s *SAMLSP) trackedRequestIDs() []string {
-	id, ok := s.pending.latest()
-	if !ok {
-		return []string{""} // forces InResponseTo mismatch → reject
-	}
-	return []string{id}
 }
 
 // identityFromAssertion extracts NameID and attribute claims into the
@@ -236,23 +242,7 @@ type trackedID struct {
 }
 
 func newSAMLIDStore(ttl time.Duration) *samlIDStore {
-	s := &samlIDStore{ttl: ttl}
-	go func() {
-		t := time.NewTicker(time.Minute)
-		for range t.C {
-			now := time.Now()
-			s.mu.Lock()
-			kept := s.ids[:0]
-			for _, id := range s.ids {
-				if now.Before(id.expires) {
-					kept = append(kept, id)
-				}
-			}
-			s.ids = kept
-			s.mu.Unlock()
-		}
-	}()
-	return s
+	return &samlIDStore{ttl: ttl}
 }
 
 func (s *samlIDStore) track(id string) {
@@ -265,38 +255,19 @@ func (s *samlIDStore) track(id string) {
 	}
 }
 
-func (s *samlIDStore) latest() (string, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for i := len(s.ids) - 1; i >= 0; i-- {
-		if time.Now().Before(s.ids[i].expires) {
-			return s.ids[i].id, true
-		}
-	}
-	return "", false
-}
-
-// consumeAll removes the given IDs, returning true only if at least one was
-// still pending (live, not expired) — post-ParseResponse this confirms first
-// use. Expired entries are treated as absent.
-func (s *samlIDStore) consumeAll(ids []string) bool {
+// consume atomically removes one specific live request after signature and
+// browser-state verification. The bounded store needs no background reaper.
+func (s *samlIDStore) consume(id string) bool {
 	now := time.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	used := false
 	kept := s.ids[:0]
 	for _, e := range s.ids {
-		remove := false
-		for _, id := range ids {
-			if e.id == id {
-				remove = true
-				if now.Before(e.expires) {
-					used = true
-				}
-				break
-			}
+		if e.id == id && now.Before(e.expires) {
+			used = true
 		}
-		if !remove {
+		if e.id != id && now.Before(e.expires) {
 			kept = append(kept, e)
 		}
 	}

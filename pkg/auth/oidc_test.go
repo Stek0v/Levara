@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -413,4 +414,82 @@ func TestOIDCConcurrentVerifyWithRotation(t *testing.T) {
 		}
 	}
 	<-done
+}
+
+type oidcTestTransport func(*http.Request) (*http.Response, error)
+
+func (f oidcTestTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestOIDCJWKSTransportURLValidation(t *testing.T) {
+	tk := newTestKeys(t)
+	for _, tc := range []struct {
+		url string
+		ok  bool
+	}{
+		{"https://idp.example.com/jwks", true},
+		{"http://localhost:8080/jwks", true},
+		{"http://127.0.0.1:8080/jwks", true},
+		{"http://[::1]:8080/jwks", true},
+		{"http://localhost.attacker.invalid/jwks", false},
+		{"http://127.0.0.1.attacker.invalid/jwks", false},
+		{"http://localhost@attacker.invalid/jwks", false},
+		{"http://127.0.0.1@attacker.invalid/jwks", false},
+		{"https://user:password@idp.example.com/jwks", false},
+		{"http://192.168.1.2/jwks", false},
+		{"https:///jwks", false},
+		{"https://idp.example.com/jwks#fragment", false},
+	} {
+		t.Run(tc.url, func(t *testing.T) {
+			requests := 0
+			client := &http.Client{Transport: oidcTestTransport(func(r *http.Request) (*http.Response, error) {
+				requests++
+				w := httptest.NewRecorder()
+				tk.server.Config.Handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/jwks", nil))
+				return w.Result(), nil
+			})}
+			_, err := NewOIDCVerifier(OIDCVerifierConfig{JWKSURL: tc.url, Issuers: []string{"iss"}, Audiences: []string{"aud"}, HTTPClient: client})
+			if (err == nil) != tc.ok {
+				t.Errorf("accepted = %v, want %v; error: %v", err == nil, tc.ok, err)
+			}
+			if !tc.ok && requests != 0 {
+				t.Errorf("unsafe URL reached transport (%d requests)", requests)
+			}
+		})
+	}
+}
+
+func TestOIDCJWKSTransportRedirectsAndTLS(t *testing.T) {
+	tk := newTestKeys(t)
+	var targetRequests atomic.Int32
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		targetRequests.Add(1)
+		tk.server.Config.Handler.ServeHTTP(w, r)
+	}))
+	defer target.Close()
+	secure := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/redirect" {
+			http.Redirect(w, r, target.URL+"/jwks", http.StatusFound)
+			return
+		}
+		tk.server.Config.Handler.ServeHTTP(w, r)
+	}))
+	defer secure.Close()
+	cfg := OIDCVerifierConfig{JWKSURL: secure.URL + "/jwks", Issuers: []string{"iss"}, Audiences: []string{"aud"}}
+	if _, err := NewOIDCVerifier(cfg); err == nil {
+		t.Fatal("untrusted TLS certificate accepted")
+	}
+	cfg.HTTPClient = secure.Client()
+	if _, err := NewOIDCVerifier(cfg); err != nil {
+		t.Fatalf("trusted TLS certificate rejected: %v", err)
+	}
+	cfg.JWKSURL = secure.URL + "/redirect"
+	if _, err := NewOIDCVerifier(cfg); err == nil {
+		t.Error("HTTPS to HTTP redirect accepted")
+	}
+	if got := targetRequests.Load(); got != 0 {
+		t.Errorf("redirect target received %d requests", got)
+	}
+	if cfg.HTTPClient.CheckRedirect != nil {
+		t.Error("constructor mutated caller's HTTP client")
+	}
 }

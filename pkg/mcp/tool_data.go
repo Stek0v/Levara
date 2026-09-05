@@ -7,19 +7,23 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/stek0v/levara/pkg/access"
 	"github.com/stek0v/levara/pkg/ingest"
 )
 
-// ToolDelete deletes a dataset row by id.
-//
-// The DELETE is best-effort: any SQL error is swallowed to match the
-// pre-refactor behavior in internal/http (MCP clients treat the
-// response text as the source of truth, not the DB state). Returns an
-// error ToolResult only when 'dataset_id' is missing or empty.
+// dataActor uses only the identity attached by the authenticated MCP transport.
+func dataActor(ctx context.Context) access.Actor {
+	user, _ := ctx.Value(UserIDKey).(string)
+	permissions, _ := ctx.Value(ContextKey("mcp_api_key_permissions")).(string)
+	return access.Actor{UserID: user, APIKeyPermissions: permissions}
+}
+
+// ToolDelete deletes a dataset after the shared object-level access check.
 func ToolDelete(ctx context.Context, deps Deps, args map[string]any) ToolResult {
 	dsID, _ := args["dataset_id"].(string)
 	if dsID == "" {
@@ -29,8 +33,17 @@ func ToolDelete(ctx context.Context, deps Deps, args map[string]any) ToolResult 
 		}
 	}
 
+	decision, err := (access.SQLPolicy{DB: deps.DB(), Q: deps.Q}).AuthorizeDataset(ctx, dataActor(ctx), dsID, access.ActionDelete)
+	if err != nil {
+		return toolError("dataset access check failed")
+	}
+	if !decision.Allowed {
+		return toolError("dataset access denied")
+	}
 	if db := deps.DB(); db != nil {
-		db.ExecContext(ctx, deps.Q("DELETE FROM datasets WHERE id = $1"), dsID)
+		if _, err := db.ExecContext(ctx, deps.Q("DELETE FROM datasets WHERE id = $1"), dsID); err != nil {
+			return toolError("dataset delete failed: " + err.Error())
+		}
 	}
 
 	return statusResult(true, fmt.Sprintf("Dataset %s deleted.", dsID))
@@ -48,16 +61,40 @@ var pruneTables = []string{
 	"graph_edges",
 }
 
-// ToolPrune clears all dataset, document, and graph rows.
-//
-// Like ToolDelete, each DELETE is best-effort: SQL errors are swallowed
-// to match pre-refactor behavior. The queries are static (no placeholders),
-// so Deps.Q is not needed — a plain ExecContext is fine on both Postgres
-// and SQLite. nil DB is a silent no-op.
+// ToolPrune clears all rows atomically. Authenticated callers must be active
+// instance administrators because this operation spans every dataset owner.
 func ToolPrune(ctx context.Context, deps Deps) ToolResult {
+	actor := dataActor(ctx)
+	if !access.APIKeyAllows(actor.APIKeyPermissions, access.ActionDelete) {
+		return toolError("API key permissions denied")
+	}
+	if actor.UserID != "" {
+		policy := access.SQLPolicy{DB: deps.DB(), Q: deps.Q}
+		active, err := policy.IsActive(ctx, actor.UserID)
+		if err != nil {
+			return toolError("admin access check failed")
+		}
+		super, err := policy.IsSuperuser(ctx, actor.UserID)
+		if err != nil {
+			return toolError("admin access check failed")
+		}
+		if !active || !super {
+			return toolError("active instance administrator required")
+		}
+	}
 	if db := deps.DB(); db != nil {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			return toolError("prune failed: " + err.Error())
+		}
+		defer tx.Rollback()
 		for _, table := range pruneTables {
-			db.ExecContext(ctx, "DELETE FROM "+table)
+			if _, err := tx.ExecContext(ctx, "DELETE FROM "+table); err != nil {
+				return toolError("prune failed: " + err.Error())
+			}
+		}
+		if err := tx.Commit(); err != nil {
+			return toolError("prune failed: " + err.Error())
 		}
 	}
 	return statusResult(true, "All data pruned.")
@@ -101,13 +138,15 @@ func ToolListData(ctx context.Context, deps Deps, args map[string]any) ToolResul
 	// (superuser or no-auth mode); a non-nil, empty slice means the caller
 	// may see nothing; otherwise only the listed dataset IDs are visible.
 	allowed := deps.AllowedDatasetIDs(ctx)
-	allowedSet := map[string]bool{}
+	allowedDatasetSet := map[string]bool{}
+	allowedCollectionNames := map[string]bool{}
 	for _, id := range allowed {
-		allowedSet[id] = true
+		allowedDatasetSet[id] = true
 	}
 	// Vector collections are named after their dataset, so a caller allowed
 	// to see a dataset may also see its collection by name. Resolve visible
-	// dataset names and add them to the allowed set.
+	// dataset names separately: names must never authorize dataset IDs,
+	// and dataset IDs must never authorize another dataset's collection name.
 	if allowed != nil && deps.DB() != nil && len(allowed) > 0 {
 		ph := make([]string, len(allowed))
 		args := make([]any, len(allowed))
@@ -120,7 +159,7 @@ func ToolListData(ctx context.Context, deps Deps, args map[string]any) ToolResul
 			for rows.Next() {
 				var name string
 				if rows.Scan(&name) == nil {
-					allowedSet[name] = true
+					allowedCollectionNames[name] = true
 				}
 			}
 			rows.Close()
@@ -130,7 +169,7 @@ func ToolListData(ctx context.Context, deps Deps, args map[string]any) ToolResul
 	var items []map[string]any
 	if !hasFilter {
 		for _, c := range deps.ListCollections() {
-			if allowed != nil && !allowedSet[c] {
+			if allowed != nil && !allowedCollectionNames[c] {
 				continue
 			}
 			items = append(items, map[string]any{"collection": c, "type": "vector_collection"})
@@ -139,9 +178,9 @@ func ToolListData(ctx context.Context, deps Deps, args map[string]any) ToolResul
 
 	if db := deps.DB(); db != nil {
 		if hasFilter {
-			items = append(items, listDataFiltered(ctx, db, deps.Q, roomFilter, wantTags)...)
+			items = append(items, listDataFiltered(ctx, db, deps.Q, roomFilter, wantTags, allowed)...)
 		} else {
-			items = append(items, listDataUnfiltered(ctx, db, deps.Q, allowed, allowedSet)...)
+			items = append(items, listDataUnfiltered(ctx, db, deps.Q, allowed, allowedDatasetSet)...)
 		}
 	}
 
@@ -152,7 +191,7 @@ func ToolListData(ctx context.Context, deps Deps, args map[string]any) ToolResul
 // table. Returns an empty slice if the query fails — MCP callers
 // distinguish "no match" from "error" by checking the enclosing
 // ToolResult.IsError flag, which the filtered path never sets.
-func listDataFiltered(ctx context.Context, db *sql.DB, rewrite func(string) string, roomFilter string, wantTags []string) []map[string]any {
+func listDataFiltered(ctx context.Context, db *sql.DB, rewrite func(string) string, roomFilter string, wantTags []string, allowed []string) []map[string]any {
 	var conds []string
 	var qargs []any
 	pos := 1
@@ -167,6 +206,18 @@ func listDataFiltered(ctx context.Context, db *sql.DB, rewrite func(string) stri
 		conds = append(conds, fmt.Sprintf("tags LIKE $%d", pos))
 		qargs = append(qargs, "%\""+t+"\"%")
 		pos++
+	}
+	if allowed != nil {
+		if len(allowed) == 0 {
+			return nil
+		}
+		ph := make([]string, len(allowed))
+		for i, id := range allowed {
+			ph[i] = fmt.Sprintf("$%d", pos)
+			qargs = append(qargs, id)
+			pos++
+		}
+		conds = append(conds, "EXISTS (SELECT 1 FROM dataset_data dd WHERE dd.data_id = data.id AND dd.dataset_id IN ("+strings.Join(ph, ",")+"))")
 	}
 	sqlStr := `SELECT id, name, extension, room, tags FROM data`
 	if len(conds) > 0 {
@@ -200,7 +251,7 @@ func listDataFiltered(ctx context.Context, db *sql.DB, rewrite func(string) stri
 // room/tags filter is supplied). allowed == nil means no ACL filtering
 // (anonymous/dev/superuser); otherwise only datasets whose id is in the
 // allowed set are returned (finding H13, 2026-09-03 review).
-func listDataUnfiltered(ctx context.Context, db *sql.DB, rewrite func(string) string, allowed []string, allowedSet map[string]bool) []map[string]any {
+func listDataUnfiltered(ctx context.Context, db *sql.DB, rewrite func(string) string, allowed []string, allowedDatasetSet map[string]bool) []map[string]any {
 	rows, err := db.QueryContext(ctx, rewrite(fmt.Sprintf("SELECT id, name FROM datasets ORDER BY created_at DESC LIMIT %d", listDataDatasetsCap)))
 	if err != nil {
 		return nil
@@ -211,7 +262,7 @@ func listDataUnfiltered(ctx context.Context, db *sql.DB, rewrite func(string) st
 	for rows.Next() {
 		var id, name string
 		rows.Scan(&id, &name)
-		if allowed != nil && !allowedSet[id] {
+		if allowed != nil && !allowedDatasetSet[id] {
 			continue
 		}
 		out = append(out, map[string]any{"id": id, "name": name, "type": "dataset"})
@@ -223,25 +274,8 @@ func listDataUnfiltered(ctx context.Context, db *sql.DB, rewrite func(string) st
 // Matches the pre-refactor fallback in internal/http.
 const defaultStoragePath = "data/uploads"
 
-// mcpToolAddOwnerID is the owner ID stamped on records produced by the
-// MCP add tool. Empty today because MCP tool calls run without user
-// context; callers that need attribution should use the HTTP /add
-// endpoint which reads the authenticated user from the JWT.
-const mcpToolAddOwnerID = ""
-
-// ToolAdd ingests raw text into a named dataset.
-//
-// Two side effects in order:
-//  1. ingest.Ingest writes the raw bytes to disk under Deps.StoragePath
-//     and returns Result rows with hashes + file paths.
-//  2. When Deps.DB() is configured, ingest.MetadataWriter commits a
-//     transaction inserting the dataset row (if new) and one data +
-//     dataset_data link per result.
-//
-// DB metadata failures are silently swallowed to match pre-refactor
-// behavior — the filesystem ingest is the authoritative side effect.
-// Ingest failures, however, surface as IsError results because they
-// indicate the data was not persisted at all.
+// ToolAdd resolves and authorizes its dataset before writing bytes, then
+// commits metadata using the authenticated owner's identity.
 func ToolAdd(ctx context.Context, deps Deps, args map[string]any) ToolResult {
 	data, _ := args["data"].(string)
 	if data == "" {
@@ -254,6 +288,28 @@ func ToolAdd(ctx context.Context, deps Deps, args map[string]any) ToolResult {
 	datasetName, _ := args["dataset_name"].(string)
 	if datasetName == "" {
 		datasetName = "default"
+	}
+
+	actor := dataActor(ctx)
+	if !access.APIKeyAllows(actor.APIKeyPermissions, access.ActionWrite) {
+		return toolError("API key permissions denied")
+	}
+	dsID := uuid.New().String()
+	if db := deps.DB(); db != nil {
+		var existing string
+		err := db.QueryRowContext(ctx, deps.Q("SELECT id FROM datasets WHERE name = $1"), datasetName).Scan(&existing)
+		if err == nil {
+			decision, err := (access.SQLPolicy{DB: db, Q: deps.Q}).AuthorizeDataset(ctx, actor, existing, access.ActionWrite)
+			if err != nil {
+				return toolError("dataset access check failed")
+			}
+			if !decision.Allowed {
+				return toolError("dataset access denied")
+			}
+			dsID = existing
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return toolError("dataset lookup failed: " + err.Error())
+		}
 	}
 
 	storagePath := deps.StoragePath()
@@ -274,7 +330,7 @@ func ToolAdd(ctx context.Context, deps Deps, args map[string]any) ToolResult {
 	items := []ingest.Item{{
 		Text:        data,
 		DatasetName: datasetName,
-		OwnerID:     mcpToolAddOwnerID,
+		OwnerID:     actor.UserID,
 		Tags:        tags,
 		Room:        room,
 	}}
@@ -286,14 +342,11 @@ func ToolAdd(ctx context.Context, deps Deps, args map[string]any) ToolResult {
 		}
 	}
 
-	dsID := uuid.New().String()
 	if db := deps.DB(); db != nil {
 		mw := ingest.NewMetadataWriterFromDB(db)
-		// Pre-refactor used context.Background() here rather than the
-		// tool's ctx. Preserved for byte-for-byte parity — the metadata
-		// write must not be cancelled if the MCP client disconnects
-		// mid-call, since the filesystem side has already committed.
-		mw.WriteMetadata(context.Background(), results, mcpToolAddOwnerID, dsID, datasetName)
+		if _, err := mw.WriteMetadata(ctx, results, actor.UserID, dsID, datasetName); err != nil {
+			return toolError("metadata write failed: " + err.Error())
+		}
 	}
 
 	dataID := ""

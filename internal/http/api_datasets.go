@@ -309,10 +309,13 @@ func datasetDataRawHandler(cfg APIConfig) fiber.Handler {
 			return err
 		}
 
-		var location string
-		err := cfg.DB.QueryRowContext(ctx, Q(`SELECT d.raw_data_location FROM data d
+		var location, originalLocation string
+		err := cfg.DB.QueryRowContext(ctx, Q(`SELECT d.raw_data_location, COALESCE(d.original_data_location, '') FROM data d
 			JOIN dataset_data dd ON dd.data_id = d.id
-			WHERE d.id = $1 AND dd.dataset_id = $2`), dataID, datasetID).Scan(&location)
+			WHERE d.id = $1 AND dd.dataset_id = $2`), dataID, datasetID).Scan(&location, &originalLocation)
+		if c.QueryBool("original") {
+			location = originalLocation
+		}
 		if errors.Is(err, sql.ErrNoRows) || location == "" {
 			return c.Status(404).JSON(fiber.Map{"detail": "not found"})
 		}

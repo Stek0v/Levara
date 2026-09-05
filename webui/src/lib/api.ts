@@ -75,7 +75,7 @@ export function setAuthToken(token: string | null) {
   }
 }
 
-export async function api<T>(path: string, options?: RequestInit): Promise<T> {
+async function request(path: string, options?: RequestInit): Promise<Response> {
   const traceId = crypto.randomUUID()
   const isFormData = options?.body instanceof FormData
   const headers: Record<string, string> = {
@@ -97,7 +97,19 @@ export async function api<T>(path: string, options?: RequestInit): Promise<T> {
       ...options?.headers,
     },
   })
-  return handleResponse<T>(res, path)
+  return res
+}
+
+export async function api<T>(path: string, options?: RequestInit): Promise<T> {
+  return handleResponse<T>(await request(path, options), path)
+}
+
+// Keep the same bearer token, cookies and error handling as JSON requests.
+async function downloadOriginal(datasetId: string, recordId: string): Promise<Blob> {
+  const path = `/api/v1/datasets/${encodeURIComponent(datasetId)}/data/${encodeURIComponent(recordId)}/raw?original=true`
+  const res = await request(path)
+  if (!res.ok) await handleResponse<never>(res, path)
+  return res.blob()
 }
 
 export const levara = {
@@ -138,11 +150,12 @@ export const levara = {
     api<void>(`/api/v1/datasets/${id}`, { method: 'DELETE' }),
 
   // Upload
-  upload: (files: File[], datasetName?: string) => {
+  upload: (files: File[], datasetName?: string, datasetId?: string) => {
     const form = new FormData()
     files.forEach((f) => form.append('data', f))
     if (datasetName) form.append('datasetName', datasetName)
-    return api<{ status: string; items: unknown[]; dataset_id: string }>('/api/v1/add', {
+    if (datasetId) form.append('datasetId', datasetId)
+    return api<{ status: string; items: number; dataset_id: string; dataset_name: string }>('/api/v1/add', {
       method: 'POST',
       body: form,
       headers: {}, // let browser set Content-Type for FormData
@@ -185,13 +198,19 @@ export const levara = {
       body.datasets = [params.dataset_id]
       delete body.dataset_id
     }
-    return api<{ status: string; pipeline_run_id: string }>('/api/v1/cognify', {
+    return api<{ status: string; pipeline_run_id?: string; message?: string }>('/api/v1/cognify', {
       method: 'POST',
       body: JSON.stringify(body),
     })
   },
-  cognifyStatus: (runId: string) =>
-    api<CognifyStatus>(`/api/v1/cognify/${runId}/status`),
+  cognifyStatus: async (runId: string) => {
+    const progress = await api<CognifyStatus>(`/api/v1/cognify/${encodeURIComponent(runId)}/status`)
+    if (!progress || !['RUNNING', 'COMPLETED', 'FAILED'].includes(progress.status) ||
+        (progress.pipeline_run_id && progress.pipeline_run_id !== runId)) {
+      throw new Error('Invalid processing status response.')
+    }
+    return progress
+  },
 
   // Feedback
   submitFeedback: (params: { query: string; result_id?: string; rating: number; comment?: string; search_type?: string }) =>
@@ -211,6 +230,7 @@ export const levara = {
     api<DatasetDataResponse | DatasetDataRow[]>(
       `/api/v1/datasets/${id}/data?page=${page}&limit=${limit}`,
     ),
+  downloadDatasetOriginal: downloadOriginal,
   deleteDatasetRecord: (datasetId: string, recordId: string) =>
     api<void>(`/api/v1/datasets/${datasetId}/data/${recordId}`, { method: 'DELETE' }),
   getDatasetGraph: (id: string) =>
@@ -491,7 +511,11 @@ export interface Memory {
 }
 
 export interface CognifyStatus {
+  pipeline_run_id?: string
   status: string
+  chunks_created?: number
+  entities_extracted?: number
+  edges_extracted?: number
   stage?: string
   message?: string
   chunks?: number

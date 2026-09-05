@@ -4,7 +4,8 @@
 //
 //	levara health [--details]
 //	levara add <file|url|text> [--dataset=name]
-//	levara cognify [--dataset=name] [--collection=name] [--wait]
+//	levara add --file=path [--dataset=name]
+//	levara cognify [--dataset=name-or-id] [--collection=name] [--wait]
 //	levara search <query> [--type=CHUNKS] [--top-k=10]
 //	levara datasets list
 //	levara datasets create <name>
@@ -166,24 +167,51 @@ func cmdHealth(args []string) {
 
 func cmdAdd(args []string) {
 	dataset := flagValue(args, "--dataset", "default")
+	file := flagValue(args, "--file", "")
+	explicitFile := false
+	for _, arg := range args {
+		switch {
+		case strings.HasPrefix(arg, "--file="):
+			explicitFile = true
+		case strings.HasPrefix(arg, "--dataset="):
+		case strings.HasPrefix(arg, "--"):
+			fatalf("unknown add flag: %s (use --file=path and --dataset=name)", arg)
+		}
+	}
+	if strings.TrimSpace(dataset) == "" {
+		fatalf("dataset name must not be empty")
+	}
 	positional := positionalArgs(args)
-
-	if len(positional) == 0 {
-		fatalf("usage: levara add <file|url|text> [--dataset=name]")
+	if explicitFile {
+		if file == "" || len(positional) != 0 {
+			fatalf("usage: levara add --file=path [--dataset=name]")
+		}
+		addFile(file, dataset)
+		return
+	}
+	if len(positional) != 1 {
+		fatalf("usage: levara add <file|url|text> [--dataset=name] (quote text containing spaces)")
 	}
 	input := positional[0]
-
-	// Determine if input is a file path.
-	if fi, err := os.Stat(input); err == nil && !fi.IsDir() {
+	if fi, err := os.Stat(input); err == nil {
+		if !fi.Mode().IsRegular() {
+			fatalf("not a regular file: %s", input)
+		}
 		addFile(input, dataset)
 		return
 	}
-
-	// URL or plain text — send as raw body.
+	// Preserve positional text/URL behavior. --file makes missing paths an error.
 	addText(input, dataset)
 }
 
 func addFile(path, dataset string) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		fatalf("read file: %v", err)
+	}
+	if !fi.Mode().IsRegular() {
+		fatalf("not a regular file: %s", path)
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		fatalf("read file: %v", err)
@@ -204,61 +232,100 @@ func addFile(path, dataset string) {
 	if err := w.Close(); err != nil {
 		fatalf("close writer: %v", err)
 	}
-
-	req, _ := http.NewRequest("POST", baseURL+"/add", &buf)
-	req.Header.Set("Content-Type", w.FormDataContentType())
-	applyAuth(req)
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		fatalf("request failed: %v", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	body, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode >= 400 {
-		fatalf("server error %d: %s", resp.StatusCode, body)
-	}
-
-	var result map[string]any
-	_ = json.Unmarshal(body, &result)
-	items, _ := result["items"].(float64)
-	dsName, _ := result["dataset_name"].(string)
-	dsID, _ := result["dataset_id"].(string)
-	fmt.Printf("%s%sOK%s  ingested %s → %d item(s) into dataset %q (%s)\n",
-		colorBold, colorGreen, colorReset, filepath.Base(path), int(items), dsName, dsID[:min(8, len(dsID))])
+	body := ingestRequest(http.MethodPost, baseURL+"/add", w.FormDataContentType(), &buf)
+	printAddResult(body, filepath.Base(path), dataset)
 }
 
 func addText(text, dataset string) {
-	// Send as raw body with datasetName query param.
-	endpoint := fmt.Sprintf("%s/add?datasetName=%s", baseURL, dataset)
-	req, _ := http.NewRequest("POST", endpoint, strings.NewReader(text))
-	req.Header.Set("Content-Type", "text/plain")
-	applyAuth(req)
-
-	resp, err := http.DefaultClient.Do(req)
+	if strings.TrimSpace(text) == "" {
+		fatalf("text must not be empty")
+	}
+	data, err := json.Marshal(map[string]string{"data": text, "dataset_name": dataset})
 	if err != nil {
-		fatalf("request failed: %v", err)
+		fatalf("encode input: %v", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
-	body, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode >= 400 {
-		fatalf("server error %d: %s", resp.StatusCode, body)
-	}
-
-	var result map[string]any
-	_ = json.Unmarshal(body, &result)
-	items, _ := result["items"].(float64)
-	dsName, _ := result["dataset_name"].(string)
-	dsID, _ := result["dataset_id"].(string)
-
+	body := ingestRequest(http.MethodPost, baseURL+"/add", "application/json", bytes.NewReader(data))
 	label := "text"
 	if strings.HasPrefix(text, "http://") || strings.HasPrefix(text, "https://") {
 		label = "url"
 	}
+	printAddResult(body, label, dataset)
+}
+
+func printAddResult(body []byte, label, dataset string) {
+	var result struct {
+		Status      string `json:"status"`
+		Items       int    `json:"items"`
+		DatasetName string `json:"dataset_name"`
+		DatasetID   string `json:"dataset_id"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		fatalf("invalid upload response: %v", err)
+	}
+	if result.Status != "ok" || result.Items <= 0 || strings.TrimSpace(result.DatasetID) == "" || result.DatasetName != dataset {
+		fatalf("invalid upload response: expected successful items in dataset %q", dataset)
+	}
 	fmt.Printf("%s%sOK%s  ingested %s → %d item(s) into dataset %q (%s)\n",
-		colorBold, colorGreen, colorReset, label, int(items), dsName, dsID[:min(8, len(dsID))])
+		colorBold, colorGreen, colorReset, label, result.Items, result.DatasetName, result.DatasetID)
+}
+
+// ingestRequest keeps add/cognify failures observable without changing other commands.
+func ingestRequest(method, endpoint, contentType string, body io.Reader) []byte {
+	req, err := http.NewRequest(method, endpoint, body)
+	if err != nil {
+		fatalf("create request: %v", err)
+	}
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	applyAuth(req)
+	client := *http.DefaultClient
+	// A redirect must not turn an upload into a login page or replay it elsewhere.
+	client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
+	resp, err := client.Do(req)
+	if err != nil {
+		fatalf("request failed: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	response, err := io.ReadAll(resp.Body)
+	if err != nil {
+		fatalf("read response: %v", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		fatalf("server error %d: %s", resp.StatusCode, response)
+	}
+	return response
+}
+
+func cognifyDatasetID(value string) string {
+	body := ingestRequest(http.MethodGet, baseURL+"/datasets", "", nil)
+	var datasets []struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(body, &datasets); err != nil {
+		fatalf("invalid dataset list: %v", err)
+	}
+	// Existing ID-based calls keep their meaning even if a dataset has that name.
+	for _, dataset := range datasets {
+		if dataset.ID == value {
+			return dataset.ID
+		}
+	}
+	matched := ""
+	for _, dataset := range datasets {
+		if dataset.Name != value || dataset.ID == "" {
+			continue
+		}
+		if matched != "" && matched != dataset.ID {
+			fatalf("ambiguous dataset name %q; use its ID", value)
+		}
+		matched = dataset.ID
+	}
+	if matched == "" {
+		fatalf("dataset %q not found or not accessible", value)
+	}
+	return matched
 }
 
 // ── cognify ─────────────────────────────────────────────────────────────────
@@ -270,20 +337,32 @@ func cmdCognify(args []string) {
 
 	payload := map[string]any{}
 	if dataset != "" {
-		payload["datasets"] = []string{dataset}
+		payload["datasets"] = []string{cognifyDatasetID(dataset)}
 	}
 	if collection != "" {
 		payload["collection"] = collection
 	}
 
-	body, status := doPost(baseURL+"/cognify", payload)
-	if status >= 400 {
-		fatalf("cognify failed (%d): %s", status, body)
+	data, err := json.Marshal(payload)
+	if err != nil {
+		fatalf("encode cognify request: %v", err)
 	}
-
-	var resp map[string]any
-	json.Unmarshal(body, &resp)
-	runID, _ := resp["pipeline_run_id"].(string)
+	body := ingestRequest(http.MethodPost, baseURL+"/cognify", "application/json", bytes.NewReader(data))
+	var resp struct {
+		RunID  string `json:"pipeline_run_id"`
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		fatalf("invalid cognify response: %v", err)
+	}
+	if resp.Status == "already_processed" {
+		fmt.Println("Already processed for this collection")
+		return
+	}
+	if strings.TrimSpace(resp.RunID) == "" {
+		fatalf("invalid cognify response: missing or invalid pipeline_run_id")
+	}
+	runID := resp.RunID
 	fmt.Printf("Pipeline started: %s\n", runID)
 
 	if !wait {
@@ -294,15 +373,15 @@ func cmdCognify(args []string) {
 	fmt.Print("Progress: ")
 	lastStage := ""
 	for {
-		statusBody, sc := doGet(fmt.Sprintf("%s/cognify/%s/status", baseURL, runID))
-		if sc != 200 {
-			fmt.Printf("\n%sERROR%s  status check failed: %d\n", colorRed, colorReset, sc)
-			os.Exit(1)
-		}
-
+		statusBody := ingestRequest(http.MethodGet, fmt.Sprintf("%s/cognify/%s/status", baseURL, url.PathEscape(runID)), "", nil)
 		var run map[string]any
-		json.Unmarshal(statusBody, &run)
+		if err := json.Unmarshal(statusBody, &run); err != nil {
+			fatalf("invalid cognify status: %v", err)
+		}
 		st, _ := run["status"].(string)
+		if st != "RUNNING" && st != "COMPLETED" && st != "FAILED" {
+			fatalf("invalid cognify status: %q", st)
+		}
 		stage, _ := run["stage"].(string)
 		elapsed, _ := run["elapsed_ms"].(float64)
 
@@ -1474,7 +1553,8 @@ func printUsage() {
 Commands:
   health   [--details]                       Server health check
   add      <file|url|text> [--dataset=name]  Ingest data
-  cognify  [--dataset=name] [--collection=name] [--wait]  Run cognify pipeline
+  add      --file=path [--dataset=name]       Require an existing local file
+  cognify  [--dataset=name-or-id] [--collection=name] [--wait]  Run cognify pipeline
   search   <query> [--type=CHUNKS] [--top-k=10] [--collection=name]
   datasets [list|create <name>|delete <id>]  Manage datasets
   cache    stats                             LLM cache statistics

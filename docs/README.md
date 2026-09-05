@@ -2,7 +2,7 @@
 
 Local-first context infrastructure for AI agents: durable memory, hybrid
 search, a temporal knowledge graph, a verifiable Markdown workspace, sync,
-observability, and scoped long-running tasks in one Go binary.
+observability, and scoped long-running tasks in one Go server binary. The optional WebUI is a separate Next.js service.
 
 Entry points by role:
 
@@ -13,7 +13,10 @@ Entry points by role:
 | Learn by doing (RU, step-by-step) | [tutorials/00-getting-started-ru.md](tutorials/00-getting-started-ru.md) |
 | First memory in 15 minutes | [tutorials/01-first-memory.md](tutorials/01-first-memory.md) |
 | Connect Claude Code / Cursor / Codex | [tutorials/02-agent-integration.md](tutorials/02-agent-integration.md) |
-| Ingest documents and search them | [tutorials/03-knowledge-base.md](tutorials/03-knowledge-base.md) |
+| Upload, process and verify documents (WebUI / CLI) | [document-management.md](document-management.md), [document-workflow-scenarios.md](document-workflow-scenarios.md) |
+| Share one document with a colleague; understand group limits | [document-management.md](document-management.md) |
+| Connect LDAP/AD, OIDC, SAML and SCIM | [enterprise-identity.md](enterprise-identity.md) |
+| Learn the ingestion API | [tutorials/03-knowledge-base.md](tutorials/03-knowledge-base.md) |
 | Deploy for a team with auth | [tutorials/04-team-deploy.md](tutorials/04-team-deploy.md) |
 | Find the right tool/command for my task | [features-guide.md](features-guide.md) |
 | Integrate my agent (Claude Code, Cursor, Codex) | [getting-started.md → MCP integration](getting-started.md) and [integrations.md](integrations.md) |
@@ -26,13 +29,18 @@ Entry points by role:
 | Check the API surface | [api-contract.md](api-contract.md) (SSOT), [api-reference.md](api-reference.md), [contract.json](contract.json) |
 | Evaluate Levara for my org | [product-ladder.md](product-ladder.md), [product/market-segments.md](product/market-segments.md), [unimplemented-roadmap.md](product/unimplemented-roadmap.md), [task-backlog.md](product/task-backlog.md) |
 
-## Verified state
+## Evidence and document status
 
-- 2026-09-03: full code review — 54 findings, 52 fixed, 2 documented as
-  deliberate design choices. CI 19/19 green (lint, vet, race, govulncheck,
-  npm audit, contract check). Multi-user load suite 6/6 PASS — see
-  [../benchmark/results/multi_user/](../benchmark/results/multi_user/).
-- Current operational snapshot: [current-state.md](current-state.md).
+The [2026-09-03 load run](../benchmark/results/multi_user/run2_summary.json)
+records six passing scenarios with a named revision and backend. Treat latency,
+isolation and recovery observations as workload-specific, not general guarantees.
+The [CI definition](../.github/workflows/go-ci.yml) describes current gates;
+results belong to an individual run.
+
+[current-state.md](current-state.md) is a dated snapshot of one local deployment,
+not installation defaults. Tutorials and guides describe supported workflows;
+ADRs and design proposals preserve decisions and may contain unimplemented targets.
+Local marketing and internal notes are not published or normative API contracts.
 
 ## Directory map
 

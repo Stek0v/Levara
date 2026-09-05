@@ -1,0 +1,291 @@
+package main
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/base64"
+	"encoding/json"
+	"encoding/xml"
+	"math/big"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/beevik/etree"
+	"github.com/crewjam/saml"
+	"github.com/crewjam/saml/samlsp"
+	"github.com/gofiber/fiber/v2"
+	dsig "github.com/russellhaering/goxmldsig"
+	accesspkg "github.com/stek0v/levara/pkg/access"
+)
+
+const samlTestACS = "https://sp.example.test/saml/acs"
+
+type samlBrowserFlow struct {
+	request *saml.IdpAuthnRequest
+	cookies []*http.Cookie
+	body    string
+}
+
+type samlBrowserFixture struct {
+	app   *fiber.App
+	idp   *saml.IdentityProvider
+	spKey *rsa.PrivateKey
+	meta  *saml.EntityDescriptor
+}
+
+func newSAMLBrowserFixture(t *testing.T) samlBrowserFixture {
+	t.Helper()
+	certificate := func(name string) (*rsa.PrivateKey, *x509.Certificate) {
+		t.Helper()
+		key, err := rsa.GenerateKey(rand.Reader, 2048)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tmpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: name},
+			NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), KeyUsage: x509.KeyUsageDigitalSignature}
+		der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cert, err := x509.ParseCertificate(der)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return key, cert
+	}
+	idpKey, idpCert := certificate("idp")
+	idp := &saml.IdentityProvider{Key: idpKey, Certificate: idpCert,
+		MetadataURL: url.URL{Scheme: "https", Host: "idp.example.test", Path: "/metadata"},
+		SSOURL:      url.URL{Scheme: "https", Host: "idp.example.test", Path: "/sso"}, SignatureMethod: dsig.RSASHA256SignatureMethod}
+	idpXML, err := xml.Marshal(idp.Metadata())
+	if err != nil {
+		t.Fatal(err)
+	}
+	spKey, spCert := certificate("sp")
+	sp, err := accesspkg.NewSAMLSP(context.Background(), accesspkg.SAMLSPConfig{
+		EntityID: "https://sp.example.test/saml/metadata", AcsURL: samlTestACS,
+		Key: spKey, Certificate: spCert, IDPMetadataXML: idpXML,
+	}, accesspkg.SimpleMappingBridge{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta, err := samlsp.ParseMetadata([]byte(sp.Metadata()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Exercise signed plaintext assertions and signed responses (encryption is
+	// orthogonal to request binding and would hide tampering in this test).
+	meta.SPSSODescriptors[0].KeyDescriptors = nil
+	app := fiber.New()
+	samlRoutes(app, sp, "local-test-session-secret")
+	return samlBrowserFixture{app: app, idp: idp, spKey: spKey, meta: meta}
+}
+
+func (f samlBrowserFixture) start(t *testing.T, user string) samlBrowserFlow {
+	t.Helper()
+	resp, err := f.app.Test(httptest.NewRequest("GET", "https://sp.example.test/saml/login?RelayState=untrusted-input", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 302 {
+		t.Fatalf("login status=%d", resp.StatusCode)
+	}
+	req, err := saml.NewIdpAuthnRequest(f.idp, httptest.NewRequest("GET", resp.Header.Get("Location"), nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := xml.Unmarshal(req.RequestBuffer, &req.Request); err != nil {
+		t.Fatal(err)
+	}
+	req.ServiceProviderMetadata = f.meta
+	req.SPSSODescriptor = &f.meta.SPSSODescriptors[0]
+	req.ACSEndpoint = &req.SPSSODescriptor.AssertionConsumerServices[0]
+	if err := (saml.DefaultAssertionMaker{}).MakeAssertion(req, &saml.Session{NameID: user, UserEmail: user + "@corp.test", CreateTime: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	return samlBrowserFlow{request: req, cookies: resp.Cookies(), body: signedSAMLBody(t, req)}
+}
+
+func signedSAMLBody(t *testing.T, req *saml.IdpAuthnRequest) string {
+	t.Helper()
+	if err := req.MakeResponse(); err != nil {
+		t.Fatal(err)
+	}
+	doc := etree.NewDocument()
+	doc.SetRoot(req.ResponseEl)
+	xmlBody, err := doc.WriteToBytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return url.Values{"SAMLResponse": {base64.StdEncoding.EncodeToString(xmlBody)}, "RelayState": {req.RelayState}}.Encode()
+}
+
+func (f samlBrowserFixture) consume(t *testing.T, body string, cookies []*http.Cookie, want int) *http.Response {
+	t.Helper()
+	req := httptest.NewRequest("POST", samlTestACS, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	for _, cookie := range cookies {
+		req.AddCookie(cookie)
+	}
+	resp, err := f.app.Test(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	if resp.StatusCode != want {
+		t.Errorf("ACS status=%d want=%d", resp.StatusCode, want)
+	}
+	return resp
+}
+
+func TestSAMLConcurrentBrowserFlows(t *testing.T) {
+	for _, order := range [][2]int{{0, 1}, {1, 0}} {
+		t.Run(string(rune('0'+order[0])), func(t *testing.T) {
+			f := newSAMLBrowserFixture(t)
+			flows := []samlBrowserFlow{f.start(t, "alice"), f.start(t, "bob")}
+			// Both correlation cookies can coexist in one browser (parallel tabs).
+			browserCookies := append(append([]*http.Cookie{}, flows[0].cookies...), flows[1].cookies...)
+			for _, i := range order {
+				flow := flows[i]
+				if flow.request.RelayState == "" || flow.request.RelayState == "untrusted-input" || len(flow.cookies) != 1 {
+					t.Errorf("login did not generate browser-bound state: relay=%q cookies=%d", flow.request.RelayState, len(flow.cookies))
+				}
+				for _, cookie := range flow.cookies {
+					if !cookie.Secure || !cookie.HttpOnly || cookie.SameSite != http.SameSiteNoneMode || cookie.Path != "/saml/acs" || cookie.Domain != "" {
+						t.Errorf("unsafe correlation cookie: %s", cookie)
+					}
+				}
+				response := f.consume(t, flow.body, browserCookies, 200)
+				var result map[string]interface{}
+				if err := json.NewDecoder(response.Body).Decode(&result); err != nil || result["access_token"] == nil {
+					t.Errorf("missing session token: %v %v", result, err)
+				} else {
+					parts := strings.Split(result["access_token"].(string), ".")
+					if len(parts) != 3 {
+						t.Fatal("session token is not a JWT")
+					}
+					payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+					var claims map[string]interface{}
+					if err != nil || json.Unmarshal(payload, &claims) != nil || claims["sub"] != accesspkg.SyntheticUserID(f.idp.MetadataURL.String(), []string{"alice", "bob"}[i]) {
+						t.Errorf("session has wrong identity: %v", claims)
+					}
+				}
+				cleared := response.Cookies()
+				if len(cleared) != 1 || cleared[0].MaxAge >= 0 || !cleared[0].Secure || !cleared[0].HttpOnly || cleared[0].Path != "/saml/acs" {
+					t.Errorf("completed request cookie was not securely cleared: %v", cleared)
+				}
+				f.consume(t, flow.body, flow.cookies, 401)
+			}
+		})
+	}
+}
+
+func TestSAMLBrowserStateAndSignatureRejection(t *testing.T) {
+	f := newSAMLBrowserFixture(t)
+	first, second := f.start(t, "alice"), f.start(t, "bob")
+	// The assertion from browser B must not log in a browser without B's cookie.
+	f.consume(t, second.body, nil, 401)
+	f.consume(t, second.body, first.cookies, 401)
+	// Even valid browser state must name the exact request answered by the IdP.
+	mismatched, _ := url.ParseQuery(second.body)
+	mismatched.Set("RelayState", first.request.RelayState)
+	f.consume(t, mismatched.Encode(), first.cookies, 401)
+	// Failed XML signature verification must not burn a legitimate login.
+	tampered, _ := url.ParseQuery(second.body)
+	xmlBody, _ := base64.StdEncoding.DecodeString(tampered.Get("SAMLResponse"))
+	tampered.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(strings.ReplaceAll(string(xmlBody), "bob", "mallory"))))
+	f.consume(t, tampered.Encode(), second.cookies, 401)
+	f.consume(t, second.body, second.cookies, 200)
+	f.consume(t, first.body, first.cookies, 200)
+}
+
+func TestSAMLExpiredTamperedAndUnknownBrowserState(t *testing.T) {
+	f := newSAMLBrowserFixture(t)
+	acs, _ := url.Parse(samlTestACS)
+	codec := samlsp.DefaultTrackedRequestCodec(samlsp.Options{URL: *acs, Key: f.spKey})
+	for _, invalid := range []string{"expired", "tampered", "unknown"} {
+		t.Run(invalid, func(t *testing.T) {
+			flow := f.start(t, "alice")
+			if len(flow.cookies) != 1 {
+				t.Fatal("missing browser cookie")
+			}
+			cookie := *flow.cookies[0]
+			body := flow.body
+			signer := codec
+			tracked := samlsp.TrackedRequest{Index: flow.request.RelayState, SAMLRequestID: flow.request.Request.ID}
+			switch invalid {
+			case "expired":
+				signer.MaxAge = -time.Minute
+			case "unknown":
+				tracked.SAMLRequestID = "_unknown-request"
+				flow.request.Request.ID = tracked.SAMLRequestID
+				flow.request.Assertion.Subject.SubjectConfirmations[0].SubjectConfirmationData.InResponseTo = tracked.SAMLRequestID
+				flow.request.Assertion.Signature = nil
+				flow.request.AssertionEl = nil
+				body = signedSAMLBody(t, flow.request)
+			}
+			var err error
+			cookie.Value, err = signer.Encode(tracked)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if invalid == "tampered" {
+				parts := strings.Split(cookie.Value, ".")
+				parts[1] = base64.RawURLEncoding.EncodeToString([]byte(`{"sub":"forged"}`))
+				cookie.Value = strings.Join(parts, ".")
+			}
+			f.consume(t, body, []*http.Cookie{&cookie}, 401)
+			f.consume(t, flow.body, flow.cookies, 200)
+		})
+	}
+}
+
+func TestSAMLConcurrentReplayAcceptedOnce(t *testing.T) {
+	f := newSAMLBrowserFixture(t)
+	flow := f.start(t, "alice")
+	statuses := make(chan int, 8)
+	var wg sync.WaitGroup
+	for i := 0; i < cap(statuses); i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			req := httptest.NewRequest("POST", samlTestACS, strings.NewReader(flow.body))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			for _, cookie := range flow.cookies {
+				req.AddCookie(cookie)
+			}
+			resp, err := f.app.Test(req)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			_ = resp.Body.Close()
+			statuses <- resp.StatusCode
+		}()
+	}
+	wg.Wait()
+	close(statuses)
+	accepted, rejected := 0, 0
+	for status := range statuses {
+		switch status {
+		case 200:
+			accepted++
+		case 401:
+			rejected++
+		default:
+			t.Errorf("unexpected ACS status: %d", status)
+		}
+	}
+	if accepted != 1 || rejected != 7 {
+		t.Fatalf("concurrent replay: accepted=%d rejected=%d", accepted, rejected)
+	}
+}

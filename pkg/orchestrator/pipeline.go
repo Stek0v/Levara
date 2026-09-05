@@ -237,6 +237,11 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 	var allParentChunks []indexedChunk // parent chunks for parent-child mode
 	for i, text := range texts {
 		docID := cfg.DocumentID
+		if docID != "" && cfg.DatasetID != "" {
+			// A document may belong to multiple datasets with different readers.
+			// Scope internal chunk/parent IDs while retaining its original metadata ID.
+			docID = uuid.NewSHA1(uuid.NameSpaceOID, []byte(cfg.DatasetID+"\x00"+docID)).String()
+		}
 		if docID == "" {
 			docID = fmt.Sprintf("%s-doc-%d", runPrefix, i)
 		}

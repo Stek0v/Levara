@@ -22,7 +22,8 @@
 Levara — локальная инфраструктура контекста для AI-агентов. Она объединяет
 долговременную память, гибридный поиск, темпоральный граф знаний, проверяемый
 Markdown workspace, синхронизацию, наблюдаемость и ограниченные по полномочиям
-долгие задачи в одном Go-бинарнике.
+долгие задачи в одном серверном Go-бинарнике. Опциональный WebUI работает
+отдельным сервисом Next.js.
 
 <p align="center">
   <img src="./assets/readme/proof-ru.svg" width="100%" alt="Проверенный MCP-сценарий: решение об оформлении README сохранено на одном ходе агента и восстановлено с provenance на следующем">
@@ -60,15 +61,17 @@ Levara даёт агентам плоскость управления конт�
 
 ## Подтверждённое качество
 
-- **Полное код-ревью (2026-09-03)**: 54 находки — 52 исправлено, 2
-  задокументированы как осознанные дизайн-решения; все critical и high закрыты
-  с регрессионными тестами.
-- **CI, 19 зелёных проверок**: golangci-lint, vet, race detector, govulncheck
-  (0 достижимых уязвимостей), npm audit (0 уязвимостей), проверка дрейфа
-  контракта, Postgres-интеграционные шарды.
-- **Нагрузочный набор, 6/6 PASS**: 50 параллельных агентов — запись p95 22 мс,
-  recall p95 238 мс, ноль утечек между агентами; 3 200 фоновых задач на двух
-  серверах с общей БД — ноль дублей.
+[Нагрузочный прогон 2026-09-03](benchmark/results/multi_user/run2_summary.json)
+содержит шесть успешных сценариев на ревизии `1bb5bab`, с PostgreSQL и
+эмбеддингами `potion-code-16M` размерности 256. При 50 агентах и 60 записях
+на агента p95 записи составил 22,2 мс, recall — 238,5 мс. Отдельный сценарий
+outbox не обнаружил повторных завершений. Это результаты конкретной нагрузки,
+а не гарантия для любого развёртывания или пути авторизации.
+
+[CI workflow](.github/workflows/go-ci.yml) задаёт lint, vet, race,
+проверку контрактов, уязвимостей и интеграции с PostgreSQL для pull request
+и push в main. npm audit проверяет production-зависимости; актуальный результат
+нужно смотреть в прогоне нужной ревизии.
 
 ## Карта возможностей
 
@@ -81,14 +84,12 @@ Levara даёт агентам плоскость управления конт�
 | **Long-Horizon Task Runtime** | Изолированные задачи, Definition of Done, версионированные планы, зависимые шаги, атомарные leases, неизменяемые receipts, checkpoints, blockers, восстановление после сбоя, reviewer policy по риску, детерминированное завершение и продвижение проверенной памяти |
 | **Эксплуатация** | Doctor-проверки, снимки runtime и ingestion, последние ошибки, heartbeat, состояние/повтор индексации памяти, SQL↔vector reconciliation, здоровье workspace jobs/watch, метрики Prometheus |
 | **Синхронизация и хранение** | Sync Mac/Pi и peer-инстансов, ограниченные манифесты и статусы, backup/restore, SQLite или PostgreSQL для метаданных, локальное или S3-совместимое raw-object storage |
-| **Идентификация и governance** | JWT и API-ключи, sharing dataset/project, workspace ACL, проверки tenant membership, экспорт аудита, адаптер проверенных OIDC claims, границы SSO/SCIM, storage и KMS |
+| **Идентификация и governance** | JWT и API-ключи, индивидуальный доступ к датасетам, workspace ACL, tenant membership, экспорт аудита, OIDC bearer, SAML SP, ограниченный SCIM Users API, контракты storage/KMS |
 | **Продуктовые интерфейсы** | MCP Streamable HTTP, REST, gRPC v1/v2, CLI-инструменты, Next.js WebUI, notebooks, feedback и аналитика поведения памяти |
 
-Сгенерированный контракт сейчас содержит **82 канонических MCP-инструмента**,
-**148 REST-маршрута** и **45 gRPC-методов**. Полный машинно-сформированный
-инвентарь находится в [docs/api-contract.md](docs/api-contract.md); README
-группирует интерфейс по пользовательским задачам, а не повторяет каждый
-endpoint.
+Актуальный [сгенерированный каталог API](docs/api-contract.md) перечисляет
+MCP tools и REST/gRPC entries, включая aliases и операционные маршруты.
+Отдельные bootstrap-маршруты идентичности описаны в [API guide](docs/api-reference.md).
 
 <details>
 <summary><strong>Группы MCP-инструментов</strong></summary>
@@ -96,7 +97,7 @@ endpoint.
 | Группа | Инструменты | Ответственность |
 |---|---:|---|
 | Workspace | 25 | Контекст, артефакты, авторинг, ревизии, индексация, jobs и аудит |
-| Memory | 11 | Жизненный цикл, recall, консолидация, supersession и wake-up |
+| Memory | 14 | Жизненный цикл, recall, консолидация, supersession и wake-up |
 | Operations | 9 | Здоровье, ошибки, reconciliation, индексация и состояние runtime |
 | Task | 8 | Long-Horizon Task Runtime |
 | Data | 5 | Добавление, список, drift, удаление и prune |
@@ -152,7 +153,7 @@ set -a && source .env && set +a
 
 > [!IMPORTANT]
 > В режиме Personal аутентификация по умолчанию не требуется. Оставляйте
-> listener в доверенной локальной сети или включите аутентификацию, прежде чем
+> listener на loopback или включите аутентификацию, прежде чем
 > открывать доступ другим машинам.
 
 ### Docker
@@ -164,6 +165,18 @@ docker compose up -d --build
 Production-подобные примеры конфигурации Personal, Solo Pro, Team и Enterprise
 смотрите в [docs/profile-presets.md](docs/profile-presets.md).
 
+## Документы и совместная работа
+
+Загрузите документ через WebUI или CLI, проверьте извлечение текста и
+индексацию, затем сверьте ответ с источником. Полный процесс описан в
+[управлении документами](docs/document-management.md), а ошибки, повторная
+обработка и проверки доступа — в [приёмочных сценариях](docs/document-workflow-scenarios.md).
+
+Для доступа к одному документу сейчас нужен отдельный датасет и индивидуальная
+роль viewer/editor/admin. Групповых прав и независимого ACL документа пока нет.
+Варианты подключения AD, LDAP и SSO разобраны в
+[руководстве по корпоративному входу](docs/enterprise-identity.md).
+
 ## Как это работает
 
 ```mermaid
@@ -174,7 +187,8 @@ flowchart LR
 
   MCP --> Policy[Политика доступа и tenant]
   REST --> Policy
-  GRPC --> Search[Поисковый движок]
+  GRPC --> Admin[Активный superuser при включённой auth]
+  Admin --> Search[Поисковый движок]
 
   Policy --> Memory[Долговременная память]
   Policy --> Workspace[Markdown workspace]
@@ -255,9 +269,10 @@ Levara использует три разных переключателя пр�
 
 | Поверхность | По умолчанию | Текущий контракт | Для чего |
 |---|---:|---:|---|
-| MCP Streamable HTTP | `/mcp` | 79 канонических инструментов | AI-агенты и интеграции IDE |
-| REST | `:8080` | 144 канонических маршрута | WebUI, приложения и эксплуатация |
-| gRPC v1/v2 | `:50051` | 45 канонических методов | Типизированные SDK и поисковые клиенты |
+| MCP Streamable HTTP (latest) | `/mcp/2026-07-28` | stateless, metadata в каждом запросе | современные MCP-клиенты |
+| MCP Streamable HTTP (legacy) | `/mcp` | [Каталог инструментов](docs/api-contract.md) | AI-агенты и интеграции IDE |
+| REST | `:8080` | [Каталог маршрутов](docs/api-contract.md) | WebUI, приложения и эксплуатация |
+| gRPC v1/v2 | `:50051` | Привилегированный raw-storage API | SDK операторов; active superuser при включённой auth |
 | CLI | Локальные бинарники | server, client, backup, contract и host tooling | Операторы и автоматизация |
 | WebUI | `:3000` в разработке | Приложение Next.js | Пользователи, операторы и reviewers |
 
@@ -294,27 +309,25 @@ WebUI — реальная эксплуатационная поверхност
 
 ## Безопасность и enterprise-границы
 
-Реализованная основа:
+Доступны JWT/API-ключи, индивидуальные права на датасет, проверки доступа
+к workspace и tenant membership, строгая проверка запуска и экспорт аудита.
+`room` и `hall` упорядочивают память; они не назначают и не ограничивают права.
 
-- независимые от транспорта access policy и проверки tenant membership;
-- JWT, API keys, отдельные credentials агентов, sharing datasets и workspace
-  ACL;
-- строгая валидация профилей и tenant-safe границы SQL;
-- асинхронный экспорт аудита с retry/backpressure и JSONL-выводом;
-- mapping проверенных OIDC claims и seams для identity/provisioning;
-- metadata хранилища и контракты адаптеров KMS/BYOK.
+Для корпоративной идентичности есть проверка OIDC bearer-токенов, HTTP-процесс
+SAML service provider и ограниченный SCIM Users API. Прямой LDAP/LDAPS,
+браузерный OIDC-вход, связка SCIM с SSO и действующие права на группы/отдельные
+документы не реализованы. Для AD нужны схема федерации и приёмочная проверка;
+один Enterprise preset этого не обеспечивает.
+[Руководство по корпоративному входу](docs/enterprise-identity.md) описывает
+операции, адреса и ограничения жизненного цикла, а
+[управление документами](docs/document-management.md) — индивидуальный доступ.
 
-Что остаётся адаптерной или production-hardening работой:
-
-- конкретные HTTP-интерфейсы протоколов SAML и SCIM;
-- адаптеры доставки в SIEM;
-- production-реализации KMS/BYOK;
-- дополнительные интеграции корпоративных object storage и enforcement
-  legal hold.
-
-Enterprise preset проверяет governance-требования, но это не означает, что
-каждый внешний enterprise-адаптер уже реализован. Точная граница описана в
-[docs/product-ladder.md](docs/product-ladder.md).
+SIEM, production-бэкенды KMS/BYOK, корпоративные политики объектного хранилища
+и исполнение legal hold остаются работой над адаптерами. Локальное хранение
+не означает локальный inference: адреса embeddings, extraction, LLM, tracing
+и sync определяются настройками. Для работы без сети нужны локальные модели
+и провайдеры. Перед развёртыванием смотрите
+[продуктовую лестницу](docs/product-ladder.md) и [пресеты](docs/profile-presets.md).
 
 ## Разработка
 
@@ -340,7 +353,6 @@ make test-release-candidate
 | [docs/product-ladder.md](docs/product-ladder.md) | Источник истины возможностей и enterprise-границ |
 | [docs/webui-operations.md](docs/webui-operations.md) | Настройка WebUI, мониторинг и процессы |
 | [docs/current-state.md](docs/current-state.md) | Проверенный снимок локальной среды разработки |
-
 | [docs/memory-workflow-skill.ru.md](docs/memory-workflow-skill.ru.md) | Установка и использование skill автоматической памяти Levara |
 | [docs/long-horizon-runtime.ru.md](docs/long-horizon-runtime.ru.md) | Настройка Task Runtime, жизненный цикл, evidence и восстановление |
 | [docs/long-horizon-alpha-report.md](docs/long-horizon-alpha-report.md) | Доказательства acceptance и recovery для Task Runtime |

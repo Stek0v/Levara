@@ -32,9 +32,14 @@ type scimStore interface {
 
 // scimQuerier is the read side the HTTP layer needs over the users table.
 type scimQuerier interface {
-	ByEmail(ctx context.Context, issuer, email string) (uids []string, externalIDs []string, total int, err error)
-	List(ctx context.Context, issuer string, start, count int) (uids []string, externalIDs []string, total int, err error)
-	ByID(ctx context.Context, id string) (email string, active bool, externalID string, err error)
+	ByEmail(ctx context.Context, issuer, email string) (users []scimUserRecord, total int, err error)
+	List(ctx context.Context, issuer string, start, count int) (users []scimUserRecord, total int, err error)
+	ByID(ctx context.Context, issuer, id string) (email string, active bool, externalID string, err error)
+}
+
+type scimUserRecord struct {
+	ID, Email, ExternalID string
+	Active                bool
 }
 
 type scimService struct {
@@ -139,22 +144,27 @@ func SCIMRoutes(public fiber.Router, store scimStore, query scimQuerier, audit f
 		}
 		svc.audit("create", external, uid)
 		status := 201
+		email := req.UserName
 		if !created {
 			status = 200
+			email, active, external, err = svc.query.ByID(c.Context(), svc.issuer, uid)
+			if err != nil {
+				return scimErr(c, 500, "", "lookup failed")
+			}
 		}
-		return c.Status(status).JSON(scimUserResource(uid, req.UserName, external, active))
+		return c.Status(status).JSON(scimUserResource(uid, email, external, active))
 	})
 
 	g.Get("/Users", func(c *fiber.Ctx) error {
 		if filter := c.Query("filter"); filter != "" {
 			if val, ok := scimEqFilter(filter, "userName"); ok {
-				uids, exts, total, err := svc.query.ByEmail(c.Context(), svc.issuer, val)
+				records, total, err := svc.query.ByEmail(c.Context(), svc.issuer, val)
 				if err != nil {
 					return scimErr(c, 500, "", "lookup failed")
 				}
-				users := make([]fiber.Map, 0, len(uids))
-				for i, uid := range uids {
-					users = append(users, scimUserResource(uid, val, exts[i], true))
+				users := make([]fiber.Map, 0, len(records))
+				for _, u := range records {
+					users = append(users, scimUserResource(u.ID, u.Email, u.ExternalID, u.Active))
 				}
 				return c.JSON(scimListResponse(users, 1, total))
 			}
@@ -166,25 +176,29 @@ func SCIMRoutes(public fiber.Router, store scimStore, query scimQuerier, audit f
 				if err != nil {
 					return scimErr(c, 500, "", "lookup failed")
 				}
-				return c.JSON(scimListResponse([]fiber.Map{scimUserResource(uid, "", val, true)}, 1, 1))
+				email, active, external, err := svc.query.ByID(c.Context(), svc.issuer, uid)
+				if err != nil {
+					return scimErr(c, 500, "", "lookup failed")
+				}
+				return c.JSON(scimListResponse([]fiber.Map{scimUserResource(uid, email, external, active)}, 1, 1))
 			}
 			return scimErr(c, 400, "invalidFilter", "only userName eq / externalId eq are supported")
 		}
 		start, count := scimPagination(c)
-		uids, exts, total, err := svc.query.List(c.Context(), svc.issuer, start, count)
+		records, total, err := svc.query.List(c.Context(), svc.issuer, start, count)
 		if err != nil {
 			return scimErr(c, 500, "", "list failed")
 		}
-		users := make([]fiber.Map, 0, len(uids))
-		for i, uid := range uids {
-			users = append(users, scimUserResource(uid, "", exts[i], true))
+		users := make([]fiber.Map, 0, len(records))
+		for _, u := range records {
+			users = append(users, scimUserResource(u.ID, u.Email, u.ExternalID, u.Active))
 		}
 		return c.JSON(scimListResponse(users, start, total))
 	})
 
 	g.Get("/Users/:id", func(c *fiber.Ctx) error {
 		uid := c.Params("id")
-		email, active, external, err := svc.query.ByID(c.Context(), uid)
+		email, active, external, err := svc.query.ByID(c.Context(), svc.issuer, uid)
 		if errors.Is(err, accesspkg.ErrUserNotFound) {
 			return scimErr(c, 404, "", "user not found")
 		}
@@ -206,7 +220,7 @@ func SCIMRoutes(public fiber.Router, store scimStore, query scimQuerier, audit f
 		if err := json.Unmarshal(c.Body(), &req); err != nil {
 			return scimErr(c, 400, "invalidValue", "malformed PATCH body")
 		}
-		email, active, external, err := svc.query.ByID(c.Context(), uid)
+		email, active, external, err := svc.query.ByID(c.Context(), svc.issuer, uid)
 		if errors.Is(err, accesspkg.ErrUserNotFound) {
 			return scimErr(c, 404, "", "user not found")
 		}
@@ -255,7 +269,7 @@ func SCIMRoutes(public fiber.Router, store scimStore, query scimQuerier, audit f
 
 	g.Delete("/Users/:id", func(c *fiber.Ctx) error {
 		uid := c.Params("id")
-		_, _, external, err := svc.query.ByID(c.Context(), uid)
+		_, _, external, err := svc.query.ByID(c.Context(), svc.issuer, uid)
 		if errors.Is(err, accesspkg.ErrUserNotFound) {
 			return scimErr(c, 404, "", "user not found")
 		}
@@ -275,9 +289,6 @@ func SCIMRoutes(public fiber.Router, store scimStore, query scimQuerier, audit f
 // ── resource shaping ──
 
 func scimUserResource(id, userName, externalID string, active bool) fiber.Map {
-	if userName == "" {
-		userName = externalID
-	}
 	return fiber.Map{
 		"schemas":    []string{"urn:ietf:params:scim:schemas:core:2.0:User"},
 		"id":         id,

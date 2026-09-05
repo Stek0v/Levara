@@ -1,8 +1,16 @@
 # Current implementation and local runtime state
 
+> Snapshot status, 2026-09-05: the observations and local paths below describe
+> the explicitly dated deployment checks recorded here. They do not certify the
+> currently running service or define fresh-install defaults. Use
+> [getting started](getting-started.md), [profile presets](profile-presets.md),
+> [identity](enterprise-identity.md) and [documents](document-management.md) for
+> maintained workflows.
+
+
 _Last verified: 2026-09-03 from the Mac launchd runtime, `/version`, and `/health`._
 
-This page is the operational truth for the local Mac deployment. Product roadmap documents may describe target profiles or enterprise seams; use this page when you need to know what is actually running now.
+This page preserves the recorded 2026-09-03 local Mac deployment snapshot. Verify the current process, version and health before operational decisions; this historical snapshot is not a current-runtime guarantee.
 
 ## Source tree
 

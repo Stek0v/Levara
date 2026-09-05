@@ -24,6 +24,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/stek0v/levara/internal/metrics"
+	accesspkg "github.com/stek0v/levara/pkg/access"
 	"github.com/stek0v/levara/pkg/orchestrator"
 	"github.com/stek0v/levara/pkg/runreg"
 )
@@ -96,99 +97,97 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 			// callers can opt into the fastest deterministic ingest path.
 			SkipGraph bool `json:"skip_graph"`
 		}
-		c.BodyParser(&req)
+		if err := c.BodyParser(&req); err != nil {
+			return c.Status(400).JSON(fiber.Map{"detail": "invalid request"})
+		}
 		req.SkipGraph = cognifySkipGraphFromMode(req.Mode, req.SkipGraph)
 
-		// Merge datasets and datasetIds
-		allDatasetIDs := append(req.Datasets, req.DatasetIds...)
-
-		// Collect texts: either from request body or from dataset files
-		var texts []string
-		if len(req.Texts) > 0 {
-			texts = req.Texts
-		} else if cfg.DB != nil && len(allDatasetIDs) > 0 {
-			for _, dsID := range allDatasetIDs {
-				rows, err := cfg.DB.QueryContext(reqCtx,
-					Q(`SELECT d.raw_data_location FROM data d
-					 JOIN dataset_data dd ON d.id = dd.data_id
-					 WHERE dd.dataset_id = $1`), dsID)
-				if err != nil {
-					continue
-				}
-				for rows.Next() {
-					var loc string
-					rows.Scan(&loc)
-					if data, err := loadRawDataByLocation(reqCtx, cfg, loc); err == nil {
-						texts = append(texts, string(data))
-					}
-				}
-				rows.Close()
-			}
-			// If no files found, check if data was stored as inline text (ingest stores to disk)
-			if len(texts) == 0 {
-				for _, dsID := range allDatasetIDs {
-					rows, err := cfg.DB.QueryContext(reqCtx,
-						Q(`SELECT d.name FROM data d
-						 JOIN dataset_data dd ON d.id = dd.data_id
-						 WHERE dd.dataset_id = $1`), dsID)
-					if err != nil {
-						continue
-					}
-					for rows.Next() {
-						var name string
-						rows.Scan(&name)
-						if name != "" {
-							texts = append(texts, name)
-						}
-					}
-					rows.Close()
-				}
-			}
-		}
-
-		if len(texts) == 0 {
-			return c.Status(400).JSON(fiber.Map{"detail": "no texts to cognify (provide texts[] or datasets[])"})
-		}
-
-		runID := uuid.New().String()
 		collection := req.Collection
 		if collection == "" {
 			collection = "default"
 		}
+		runID := uuid.New().String()
+		userID, _ := c.Locals("user_id").(string)
 
-		// Skip if already processed (check pipeline_status in data table)
-		if len(allDatasetIDs) > 0 && CheckPipelineStatus(cfg.DB, allDatasetIDs[0], collection) {
-			return c.JSON(fiber.Map{
-				"status":  "already_processed",
-				"message": fmt.Sprintf("Dataset already cognified for collection %q. Delete pipeline_status to re-process.", collection),
-			})
+		// Check every source before loading any bytes. Cognify also writes derived
+		// records for each dataset, so read-only shares cannot start this mutation.
+		var allDatasetIDs []string
+		seen := map[string]bool{}
+		for _, id := range append(req.Datasets, req.DatasetIds...) {
+			if seen[id] {
+				continue
+			}
+			if err := authorizeDatasetFiber(c, cfg, id, accesspkg.ActionWrite); err != nil {
+				return err
+			}
+			seen[id] = true
+			allDatasetIDs = append(allDatasetIDs, id)
+		}
+		if len(req.Texts) > 0 && len(allDatasetIDs) > 1 {
+			return c.Status(400).JSON(fiber.Map{"detail": "inline texts require at most one dataset"})
+		}
+		if len(allDatasetIDs) > 0 {
+			alreadyProcessed := true
+			for _, id := range allDatasetIDs {
+				alreadyProcessed = CheckPipelineStatus(cfg.DB, id, collection) && alreadyProcessed
+			}
+			if alreadyProcessed {
+				return c.JSON(fiber.Map{"status": "already_processed", "message": fmt.Sprintf("Dataset already cognified for collection %q. Delete pipeline_status to re-process.", collection)})
+			}
 		}
 
-		runStatus := &runreg.Status{
-			RunID:     runID,
-			Status:    "RUNNING",
-			Stage:     "starting",
-			StartedAt: time.Now(),
+		var sources []cognifySource
+		var texts []string
+		if len(req.Texts) > 0 {
+			datasetID := runID
+			if len(allDatasetIDs) > 0 {
+				datasetID = allDatasetIDs[0]
+			} else if cfg.DB != nil {
+				datasetID = ensureCognifyDataset(reqCtx, cfg.DB, userID, collection, runID)
+				if err := authorizeDatasetFiber(c, cfg, datasetID, accesspkg.ActionWrite); err != nil {
+					return err
+				}
+			}
+			sources = append(sources, cognifySource{datasetID: datasetID, texts: req.Texts})
+			texts = req.Texts
+		} else if cfg.DB != nil {
+			for _, datasetID := range allDatasetIDs {
+				rows, err := cfg.DB.QueryContext(reqCtx, Q(`SELECT d.id, d.name, d.raw_data_location FROM data d
+     JOIN dataset_data dd ON d.id = dd.data_id WHERE dd.dataset_id = $1 ORDER BY d.id`), datasetID)
+				if err != nil {
+					return c.Status(500).JSON(fiber.Map{"detail": "dataset source lookup failed"})
+				}
+				for rows.Next() {
+					var documentID, title, location string
+					if err := rows.Scan(&documentID, &title, &location); err != nil {
+						rows.Close()
+						return c.Status(500).JSON(fiber.Map{"detail": "dataset source lookup failed"})
+					}
+					raw, err := loadRawDataByLocation(reqCtx, cfg, location)
+					if err != nil {
+						rows.Close()
+						return c.Status(422).JSON(fiber.Map{"detail": "unable to read document " + documentID})
+					}
+					text := string(raw)
+					sources = append(sources, cognifySource{datasetID: datasetID, documentID: documentID, title: title, texts: []string{text}})
+					texts = append(texts, text)
+				}
+				err = rows.Err()
+				rows.Close()
+				if err != nil {
+					return c.Status(500).JSON(fiber.Map{"detail": "dataset source lookup failed"})
+				}
+			}
 		}
+		if len(texts) == 0 {
+			return c.Status(400).JSON(fiber.Map{"detail": "no texts to cognify (provide texts[] or datasets[])"})
+		}
+
+		runStatus := &runreg.Status{RunID: runID, Status: "RUNNING", Stage: "starting", StartedAt: time.Now()}
 		cfg.Runs.Store(runID, runStatus)
-
-		// P2.1: Load session context if session_id provided
 		var sessionContext string
 		if req.SessionID != "" && cfg.DB != nil {
 			sessionContext = GetSessionContext(cfg.DB, reqCtx, req.SessionID, 5)
-		}
-		userID, _ := c.Locals("user_id").(string)
-
-		// Resolve the dataset id chunks/graph rows are stamped with. An
-		// explicit dataset wins; otherwise register a per-(owner,collection)
-		// cognify dataset owned by the caller so search's RBAC gate
-		// (filterByAllowedDatasets) does not silently drop every chunk this
-		// run produces. A bare ephemeral runID is in no caller's allowed-set.
-		effectiveDatasetID := runID
-		if len(allDatasetIDs) > 0 {
-			effectiveDatasetID = allDatasetIDs[0]
-		} else if cfg.DB != nil {
-			effectiveDatasetID = ensureCognifyDataset(reqCtx, cfg.DB, userID, collection, runID)
 		}
 
 		// Build orchestrator config from server config + request overrides
@@ -217,7 +216,7 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 			GenerateTriplets:    !req.SkipGraph,
 			SkipGraph:           req.SkipGraph,
 			SystemPrompt:        sessionContext,
-			DatasetID:           effectiveDatasetID,
+			DatasetID:           sources[0].datasetID,
 			DB:                  cfg.DB,
 			LLMCache:            cfg.LLMCache,
 			LLMProvider:         cfg.LLMProvider,
@@ -276,8 +275,9 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 					// Best-effort persistence; swallow further panics to avoid crash loops.
 					func() {
 						defer func() { _ = recover() }()
-						PersistPipelineStatus(cfg.DB, pipeCfg.DatasetID, collection,
-							runStatus.Status, runStatus.Chunks, runStatus.Entities, runStatus.Edges, runStatus.ElapsedMs)
+						for _, source := range sources {
+							PersistPipelineStatus(cfg.DB, source.datasetID, collection, runStatus.Status, runStatus.Chunks, runStatus.Entities, runStatus.Edges, runStatus.ElapsedMs)
+						}
 					}()
 				}
 			}()
@@ -287,7 +287,7 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 				// the closure is safe to invoke from a panic unwinding while
 				// the outer goroutine may still be mutating runStatus.Stage.
 				errCh <- runWithPanicGuard(runID, readStage, func() error {
-					return orchestrator.Run(bgCtx, texts, pipeCfg, progressCh)
+					return runCognifySources(bgCtx, sources, pipeCfg, progressCh)
 				})
 			}()
 
@@ -311,10 +311,16 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 			runStatus.ElapsedMs = time.Since(runStatus.StartedAt).Milliseconds()
 
 			// Persist pipeline status to data table
-			PersistPipelineStatus(cfg.DB, pipeCfg.DatasetID, collection,
-				runStatus.Status, runStatus.Chunks, runStatus.Entities, runStatus.Edges, runStatus.ElapsedMs)
-			if runStatus.Status == "COMPLETED" && !pipeCfg.SkipGraph {
-				rebuildVSAMemory(bgCtx, cfg, pipeCfg.DatasetID, "cognify")
+			persisted := map[string]bool{}
+			for _, source := range sources {
+				if persisted[source.datasetID] {
+					continue
+				}
+				persisted[source.datasetID] = true
+				PersistPipelineStatus(cfg.DB, source.datasetID, collection, runStatus.Status, runStatus.Chunks, runStatus.Entities, runStatus.Edges, runStatus.ElapsedMs)
+				if runStatus.Status == "COMPLETED" && !pipeCfg.SkipGraph {
+					rebuildVSAMemory(bgCtx, cfg, source.datasetID, "cognify")
+				}
 			}
 
 			recordInteraction(bgCtx, cfg, sessionID, userID, strings.Join(texts, " "),
@@ -326,6 +332,45 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 			"pipeline_run_id": runID,
 		})
 	}
+}
+
+// A source owns its dataset and document attribution throughout the pipeline.
+type cognifySource struct {
+	datasetID  string
+	documentID string
+	title      string
+	texts      []string
+}
+
+func runCognifySources(ctx context.Context, sources []cognifySource, cfg orchestrator.Config, progress chan<- orchestrator.Progress) error {
+	defer close(progress)
+	var totals orchestrator.Progress
+	for _, source := range sources {
+		sourceCfg := cfg
+		sourceCfg.DatasetID, sourceCfg.DocumentID, sourceCfg.DocumentTitle = source.datasetID, source.documentID, source.title
+		updates := make(chan orchestrator.Progress, 100)
+		done := make(chan error, 1)
+		go func() {
+			done <- runWithPanicGuard(source.datasetID, func() string { return "cognify" }, func() error { return orchestrator.Run(ctx, source.texts, sourceCfg, updates) })
+		}()
+		var last orchestrator.Progress
+		for update := range updates {
+			last = update
+			update.ChunksCreated += totals.ChunksCreated
+			update.EntitiesExtracted += totals.EntitiesExtracted
+			update.EdgesExtracted += totals.EdgesExtracted
+			update.ElapsedMs += totals.ElapsedMs
+			progress <- update
+		}
+		if err := <-done; err != nil {
+			return err
+		}
+		totals.ChunksCreated += last.ChunksCreated
+		totals.EntitiesExtracted += last.EntitiesExtracted
+		totals.EdgesExtracted += last.EdgesExtracted
+		totals.ElapsedMs += last.ElapsedMs
+	}
+	return nil
 }
 
 // cognifyStatusHandler — GET /cognify/:runId/status (one-shot poll).

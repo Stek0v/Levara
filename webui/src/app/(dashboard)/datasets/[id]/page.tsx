@@ -3,7 +3,6 @@
 import { useState, useEffect, startTransition } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { levara } from '@/lib/api'
-import { useCognifyProgress } from '@/hooks/use-sse'
 import {
   useDatasets,
   useDatasetData,
@@ -14,7 +13,7 @@ import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { EmptyState } from '@/components/ui/empty-state'
-import { ArrowLeft, Play, Trash2, FileText, ChevronLeft, ChevronRight } from 'lucide-react'
+import { ArrowLeft, Play, Trash2, Download, FileText, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useT, formatBytes, formatDate, formatCount } from '@/lib/i18n'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { ProjectContextItem, ProjectActivityItem, GitCommit } from '@/lib/api'
@@ -38,6 +37,18 @@ interface DataRecord {
   [key: string]: unknown
 }
 
+function pipelineStatus(raw: string | undefined, collection: string): string {
+  if (!raw) return ''
+  try {
+    const parsed = JSON.parse(raw)
+    // A completed run in another collection says nothing about this project.
+    const status = typeof parsed === 'string' ? parsed : parsed?.[collection]?.status
+    return typeof status === 'string' ? status.toUpperCase() : ''
+  } catch {
+    return raw.toUpperCase() // Older APIs returned a plain status string.
+  }
+}
+
 export default function DatasetDetailPage() {
   const t = useT()
   const { data: settings } = useSettings()
@@ -51,7 +62,17 @@ export default function DatasetDetailPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [cognifyRunning, setCognifyRunning] = useState(false)
   const [activeCognifyRunId, setActiveCognifyRunId] = useState<string | null>(null)
-  const cognifyProgress = useCognifyProgress(activeCognifyRunId)
+  const [cognifyError, setCognifyError] = useState('')
+  const [downloadError, setDownloadError] = useState('')
+  const [downloading, setDownloading] = useState<string | null>(null)
+  const cognifyProgress = useQuery({
+    queryKey: ['cognify-status', activeCognifyRunId],
+    queryFn: () => levara.cognifyStatus(activeCognifyRunId!),
+    enabled: !!activeCognifyRunId,
+    refetchInterval: 1000,
+    refetchOnWindowFocus: false,
+    retry: false,
+  })
   const limit = 20
 
   // Block ③: tabs. Context/history fetch lazily — only when the tab is
@@ -139,37 +160,58 @@ export default function DatasetDetailPage() {
   const total = dataPage?.total ?? 0
   const deleteRecordMutation = useDeleteDatasetRecord()
 
-  // SSE-driven completion: when the stream emits a terminal status,
-  // stop showing the "running" spinner (T8). Replaces the previous
-  // 3s cognifyStatus polling loop which raced with SSE updates.
   useEffect(() => {
-    const d = cognifyProgress.data
-    if (!d) return
-    const terminal = d._complete || d.status === 'COMPLETED' || d.status === 'FAILED'
-    if (!terminal) return
+    if (!activeCognifyRunId) return
+    const progress = cognifyProgress.data
+    if (!cognifyProgress.error && (!progress || progress.status === 'RUNNING')) return
+    const reason = cognifyProgress.error?.message || (progress?.status === 'FAILED' ? progress.message || 'Processing failed.' : '')
     startTransition(() => {
+      setCognifyError(reason)
       setCognifyRunning(false)
       setActiveCognifyRunId(null)
     })
-  }, [cognifyProgress.data])
-
-  // datasets list + page data come from React Query now (see above). No
-  // standalone useEffect — queries refetch automatically on key change.
+    void queryClient.invalidateQueries({ queryKey: ['datasetData', datasetId] })
+    void queryClient.invalidateQueries({ queryKey: ['datasetGraph', datasetId] })
+    void queryClient.invalidateQueries({ queryKey: ['collections'] })
+  }, [activeCognifyRunId, cognifyProgress.data, cognifyProgress.error, datasetId, queryClient])
 
   const handleCognify = async () => {
+    if (cognifyRunning || !dsName) return
     setCognifyRunning(true)
+    setCognifyError('')
     try {
       const res = await levara.cognify({ dataset_id: datasetId, collection: dsName })
-      const runId = res?.pipeline_run_id
-      if (!runId) {
+      if (['COMPLETED', 'SKIPPED', 'already_processed'].includes(res.status)) {
         setCognifyRunning(false)
+        void queryClient.invalidateQueries({ queryKey: ['datasetData', datasetId] })
         return
       }
-      // Hand off to SSE — the useEffect above flips cognifyRunning off
-      // when the stream reports a terminal state.
-      setActiveCognifyRunId(runId)
-    } catch {
+      if (res.status === 'FAILED') throw new Error(res.message || 'Processing failed.')
+      if (!res.pipeline_run_id) throw new Error('Processing did not return a run ID.')
+      setActiveCognifyRunId(res.pipeline_run_id)
+    } catch (err) {
+      setCognifyError(err instanceof Error ? err.message : 'Processing failed.')
       setCognifyRunning(false)
+    }
+  }
+
+  const handleDownload = async (record: DataRecord) => {
+    setDownloadError('')
+    setDownloading(record.id)
+    try {
+      const blob = await levara.downloadDatasetOriginal(datasetId, record.id)
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = record.name || record.id
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+    } catch (err) {
+      setDownloadError(err instanceof Error ? err.message : 'Download failed.')
+    } finally {
+      setDownloading(null)
     }
   }
 
@@ -211,10 +253,13 @@ export default function DatasetDetailPage() {
           <h1 className="text-2xl font-bold">{dsName || 'Dataset'}</h1>
           <p className="text-sm text-gray-500">{formatCount(total, locale)} {t('projects.files').toLowerCase()}{dsSize ? ` · ${formatBytes(dsSize, locale)}` : ''}</p>
         </div>
-        <Button variant="secondary" size="sm" onClick={handleCognify} loading={cognifyRunning} disabled={cognifyRunning}>
+        <Button variant="secondary" size="sm" onClick={handleCognify} loading={cognifyRunning} disabled={cognifyRunning || !dsName}>
           <Play className="h-4 w-4" /> Cognify
         </Button>
       </div>
+
+      {cognifyError && <p role="alert" className="mb-4 text-sm text-red-600">{cognifyError}</p>}
+      {downloadError && <p role="alert" className="mb-4 text-sm text-red-600">{downloadError}</p>}
 
       {/* Repo binding (block ④) */}
       <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-4 mb-4">
@@ -362,7 +407,9 @@ export default function DatasetDetailPage() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((r) => (
+                {filtered.map((r) => {
+                  const status = pipelineStatus(r.pipeline_status, dsName)
+                  return (
                   <tr key={r.id} className="border-b border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/50">
                     <td className="px-3 py-2">
                       <input type="checkbox" checked={selected.has(r.id)} onChange={() => toggleSelect(r.id)} className="rounded" aria-label={`Select ${r.name || r.id}`} />
@@ -374,20 +421,24 @@ export default function DatasetDetailPage() {
                     <td className="px-3 py-2 text-gray-500 text-xs">{r.extension || r.mime_type || '—'}</td>
                     <td className="px-3 py-2 text-gray-500 text-xs">{formatSize(r.data_size)}</td>
                     <td className="px-3 py-2">
-                      <Badge variant={r.pipeline_status === 'completed' ? 'success' : r.pipeline_status === 'processing' ? 'warning' : 'default'}>
-                        {r.pipeline_status === 'completed' ? t('project.status.ready')
-                          : r.pipeline_status === 'processing' ? t('project.status.processing')
-                          : r.pipeline_status === 'error' ? t('project.status.error')
+                      <Badge variant={status === 'COMPLETED' ? 'success' : ['RUNNING', 'PROCESSING'].includes(status) ? 'warning' : 'default'}>
+                        {status === 'COMPLETED' ? t('project.status.ready')
+                          : ['RUNNING', 'PROCESSING'].includes(status) ? t('project.status.processing')
+                          : ['FAILED', 'ERROR'].includes(status) ? t('project.status.error')
                           : t('project.status.unknown')}
                       </Badge>
                     </td>
                     <td className="px-3 py-2">
-                      <Button variant="ghost" size="sm" onClick={() => handleDelete(r.id)}>
+                      <Button variant="ghost" size="sm" aria-label="Download original" title="Download original"
+                        disabled={downloading !== null} loading={downloading === r.id} onClick={() => handleDownload(r)}>
+                        <Download className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button variant="ghost" size="sm" aria-label={`Delete ${r.name || r.id}`} onClick={() => handleDelete(r.id)}>
                         <Trash2 className="h-3.5 w-3.5 text-red-400" />
                       </Button>
                     </td>
                   </tr>
-                ))}
+                )})}
               </tbody>
             </table>
           </div>

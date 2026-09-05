@@ -4,10 +4,15 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 	_ "github.com/ncruces/go-sqlite3/driver"
 )
 
@@ -24,6 +29,12 @@ func scimTestDB(t *testing.T) *sql.DB {
 func newSCIMStore(t *testing.T) SCIMStore {
 	t.Helper()
 	s := SCIMStore{DB: scimTestDB(t), Q: pgToSQLiteForTests}
+	initSCIMTestSchema(t, s)
+	return s
+}
+
+func initSCIMTestSchema(t *testing.T, s SCIMStore) {
+	t.Helper()
 	if err := s.EnsureSchema(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -31,13 +42,90 @@ func newSCIMStore(t *testing.T) SCIMStore {
 	ctx := context.Background()
 	for _, q := range []string{
 		`CREATE TABLE IF NOT EXISTS principals (id TEXT PRIMARY KEY, type TEXT NOT NULL DEFAULT 'user', created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
-		`CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY REFERENCES principals(id), email TEXT NOT NULL UNIQUE, hashed_password TEXT NOT NULL, is_active BOOLEAN NOT NULL DEFAULT true, is_superuser BOOLEAN NOT NULL DEFAULT false, is_verified BOOLEAN NOT NULL DEFAULT false, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+		`CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY REFERENCES principals(id), email TEXT NOT NULL UNIQUE CHECK (email <> 'blocked@corp.test'), hashed_password TEXT NOT NULL, is_active BOOLEAN NOT NULL DEFAULT true, is_superuser BOOLEAN NOT NULL DEFAULT false, is_verified BOOLEAN NOT NULL DEFAULT false, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
 	} {
-		if _, err := s.DB.ExecContext(ctx, pgToSQLiteForTests(q)); err != nil {
+		if _, err := s.DB.ExecContext(ctx, s.rewrite(q)); err != nil {
 			t.Fatal(err)
 		}
 	}
+}
+
+func scimStoreForDialect(t *testing.T, dialect string) SCIMStore {
+	t.Helper()
+	if dialect == "sqlite" {
+		return newSCIMStore(t)
+	}
+	dsn := os.Getenv("LEVARA_TEST_POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("LEVARA_TEST_POSTGRES_DSN is not set")
+	}
+	cfg, err := pgx.ParseConfig(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema := fmt.Sprintf("scim_test_%d", time.Now().UnixNano())
+	cfg.RuntimeParams["search_path"] = schema
+	db := stdlib.OpenDB(*cfg)
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.Exec("CREATE SCHEMA " + schema); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = db.Exec("DROP SCHEMA " + schema + " CASCADE") })
+	s := SCIMStore{DB: db}
+	initSCIMTestSchema(t, s)
 	return s
+}
+
+func TestSCIMUpdateAtomic(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			s := scimStoreForDialect(t, dialect)
+			ctx := context.Background()
+			u := SCIMUser{Issuer: "iss", ExternalID: "first", Email: "first@corp.test"}
+			uid, _, err := s.ProvisionCreate(ctx, u)
+			if err != nil {
+				t.Fatal(err)
+			}
+			otherID, _, err := s.ProvisionCreate(ctx, SCIMUser{Issuer: "iss", ExternalID: "other", Email: "other@corp.test"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.DB.ExecContext(ctx, s.rewrite("UPDATE users SET is_verified = false WHERE id = $1"), uid); err != nil {
+				t.Fatal(err)
+			}
+			assertState := func(wantEmail string, wantActive, wantVerified bool) {
+				t.Helper()
+				var email string
+				var active, verified bool
+				if err := s.DB.QueryRowContext(ctx, s.rewrite("SELECT email, is_active, is_verified FROM users WHERE id = $1"), uid).Scan(&email, &active, &verified); err != nil {
+					t.Fatal(err)
+				}
+				if email != wantEmail || active != wantActive || verified != wantVerified {
+					t.Errorf("state=(%s,%v,%v), want=(%s,%v,%v)", email, active, verified, wantEmail, wantActive, wantVerified)
+				}
+			}
+			u.Active = true
+			if err := s.ProvisionUpdate(ctx, u, "other@corp.test"); !errors.Is(err, ErrSCIMEmailConflict) {
+				t.Fatalf("want email conflict, got %v", err)
+			}
+			assertState(u.Email, false, false)
+			// Force a database failure after the conflict guard, exercising rollback
+			// of all writes rather than just pre-validating the email.
+			if err := s.ProvisionUpdate(ctx, u, "blocked@corp.test"); err == nil {
+				t.Fatal("constraint failure accepted")
+			}
+			assertState(u.Email, false, false)
+			if err := s.ProvisionUpdate(ctx, u, "renamed@corp.test"); err != nil {
+				t.Fatal(err)
+			}
+			assertState("renamed@corp.test", true, true)
+			for externalID, wantID := range map[string]string{"first": uid, "other": otherID} {
+				if got, err := s.Lookup(ctx, "iss", externalID); err != nil || got != wantID {
+					t.Errorf("identity %s changed: %s, %v", externalID, got, err)
+				}
+			}
+		})
+	}
 }
 
 // pgToSQLiteForTests rewrites $N placeholders for the sqlite test driver.
