@@ -5,6 +5,9 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"time"
+
+	"github.com/stek0v/levara/pkg/sqlcompat"
 )
 
 // PruneConfig controls graph edge cleanup.
@@ -33,67 +36,78 @@ func PruneGraph(ctx context.Context, db *sql.DB, cfg PruneConfig) (PruneResult, 
 		cfg.MaxAgeDays = 90
 	}
 
+	// Bind one UTC cutoff using placeholders understood by both SQL drivers.
+	// SQLite stores timestamps as text in multiple formats; normalize them so
+	// offsets and the space/T separator cannot change chronological ordering.
+	cutoff := time.Now().UTC().AddDate(0, 0, -cfg.MaxAgeDays).Format(time.RFC3339Nano)
+	agePredicate := "valid_until < $1"
+	if sqlcompat.CurrentProvider() == sqlcompat.SQLite {
+		agePredicate = "julianday(valid_until) < julianday($1)"
+	}
+	candidates := "superseded_by != '' AND valid_until IS NOT NULL AND " + agePredicate
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return PruneResult{}, fmt.Errorf("begin prune: %w", err)
+	}
+	defer tx.Rollback()
 	var result PruneResult
 
-	// Count candidates: superseded edges older than MaxAgeDays
-	interval := fmt.Sprintf("-%d days", cfg.MaxAgeDays)
-	countQuery := `SELECT COUNT(*) FROM graph_edges
-		WHERE superseded_by != ''
-		AND valid_until IS NOT NULL
-		AND valid_until < datetime('now', ?)`
-
-	var count int
-	if err := db.QueryRowContext(ctx, countQuery, interval).Scan(&count); err != nil {
-		// Might fail if datetime function not available — try simpler approach
-		log.Printf("[prune] count query: %v", err)
-		count = 0
-	}
-
 	if cfg.DryRun {
-		result.EdgesWouldDelete = count
-		// Count orphan nodes
+		if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM graph_edges WHERE "+candidates, cutoff).Scan(&result.EdgesWouldDelete); err != nil {
+			return PruneResult{}, fmt.Errorf("count superseded edges: %w", err)
+		}
+		// Preview the same orphan set as deletion, ignoring candidate edges.
+		// IS NOT TRUE retains edges with NULL fields that are not candidates.
 		if cfg.IncludeOrphans {
-			var orphans int
-			db.QueryRowContext(ctx, `SELECT COUNT(*) FROM graph_nodes gn
-				WHERE NOT EXISTS (SELECT 1 FROM graph_edges ge WHERE ge.source_id = gn.id OR ge.target_id = gn.id)`).Scan(&orphans)
-			result.OrphanNodes = orphans
+			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM graph_nodes gn
+				WHERE NOT EXISTS (SELECT 1 FROM graph_edges ge
+					WHERE (ge.source_id = gn.id OR ge.target_id = gn.id)
+					AND (`+candidates+`) IS NOT TRUE)`, cutoff).Scan(&result.OrphanNodes); err != nil {
+				return PruneResult{}, fmt.Errorf("count orphan nodes: %w", err)
+			}
 		}
-		return result, nil
-	}
-
-	// Delete superseded edges
-	deleteQuery := `DELETE FROM graph_edges
-		WHERE superseded_by != ''
-		AND valid_until IS NOT NULL
-		AND valid_until < datetime('now', ?)`
-
-	res, err := db.ExecContext(ctx, deleteQuery, interval)
-	if err != nil {
-		return result, fmt.Errorf("delete superseded edges: %w", err)
-	}
-	affected, _ := res.RowsAffected()
-	result.EdgesDeleted = int(affected)
-
-	// Delete orphaned nodes if requested
-	if cfg.IncludeOrphans {
-		orphanRes, err := db.ExecContext(ctx, `DELETE FROM graph_nodes
-			WHERE NOT EXISTS (SELECT 1 FROM graph_edges ge WHERE ge.source_id = graph_nodes.id OR ge.target_id = graph_nodes.id)`)
-		if err == nil {
-			aff, _ := orphanRes.RowsAffected()
-			result.OrphanNodes = int(aff)
+	} else {
+		res, err := tx.ExecContext(ctx, "DELETE FROM graph_edges WHERE "+candidates, cutoff)
+		if err != nil {
+			return PruneResult{}, fmt.Errorf("delete superseded edges: %w", err)
 		}
+		affected, err := res.RowsAffected()
+		if err != nil {
+			return PruneResult{}, fmt.Errorf("count deleted edges: %w", err)
+		}
+		result.EdgesDeleted = int(affected)
+
+		if cfg.IncludeOrphans {
+			res, err := tx.ExecContext(ctx, `DELETE FROM graph_nodes
+				WHERE NOT EXISTS (SELECT 1 FROM graph_edges ge WHERE ge.source_id = graph_nodes.id OR ge.target_id = graph_nodes.id)`)
+			if err != nil {
+				return PruneResult{}, fmt.Errorf("delete orphan nodes: %w", err)
+			}
+			affected, err := res.RowsAffected()
+			if err != nil {
+				return PruneResult{}, fmt.Errorf("count deleted orphan nodes: %w", err)
+			}
+			result.OrphanNodes = int(affected)
+		}
+
+		res, err = tx.ExecContext(ctx, `DELETE FROM community_members
+			WHERE node_id NOT IN (SELECT id FROM graph_nodes)`)
+		if err != nil {
+			return PruneResult{}, fmt.Errorf("clean community members: %w", err)
+		}
+		affected, err = res.RowsAffected()
+		if err != nil {
+			return PruneResult{}, fmt.Errorf("count cleaned community members: %w", err)
+		}
+		result.MembersCleanedUp = int(affected)
 	}
-
-	// Clean up community_members for nodes no longer in graph
-	cleanRes, err := db.ExecContext(ctx, `DELETE FROM community_members
-		WHERE node_id NOT IN (SELECT id FROM graph_nodes)`)
-	if err == nil {
-		aff, _ := cleanRes.RowsAffected()
-		result.MembersCleanedUp = int(aff)
+	if err := tx.Commit(); err != nil {
+		return PruneResult{}, fmt.Errorf("commit prune: %w", err)
 	}
-
-	log.Printf("[prune] deleted %d edges, %d orphan nodes, %d stale community members",
-		result.EdgesDeleted, result.OrphanNodes, result.MembersCleanedUp)
-
+	if !cfg.DryRun {
+		log.Printf("[prune] deleted %d edges, %d orphan nodes, %d stale community members",
+			result.EdgesDeleted, result.OrphanNodes, result.MembersCleanedUp)
+	}
 	return result, nil
 }

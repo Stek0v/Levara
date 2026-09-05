@@ -55,8 +55,8 @@
 | U19 | Большой/зашифрованный/сложный документ, zip expansion, timeout/cancel, memory pressure | MANUAL: отдельный ресурсный прогон; простой fixture не доказывает защиту от всех parser bombs |
 | U20 | Реальный S3: потеря сети, retry, presign expiry, восстановление после рестарта | MANUAL: in-memory storage проверяет кодовую границу, не провайдера |
 | U21 | Upload → cognify → BM25/vector с точным источником и вторым dataset | PASS: `TestDocumentACLCognify*`, fake embedding + реальные индексы |
-| U23 | Повтор cognify возвращает already_processed без polling; изменённый derived hash сбрасывает старую готовность | PASS: CLI no-op + metadata SQLite/PostgreSQL + HTTP re-upload |
 | U22 | Re-upload после смены extractor, одновременный upload/cognify/delete, состояние после crash | MANUAL / SOURCE: нужны отдельные lifecycle гарантии; не считать upload транзакцией всех sidecars |
+| U23 | Повтор cognify возвращает already_processed без polling; изменённый derived hash сбрасывает старую готовность | PASS: CLI no-op + metadata SQLite/PostgreSQL + HTTP re-upload |
 
 ## Права и жизненный цикл
 
@@ -76,10 +76,12 @@
 | A12 | Удалённый файл исчезает из всех vector/BM25/graph/community/VSA/RAG источников и MCP | GAP: SQL-only delete не гарантирует этого |
 | A13 | Удаление во время обработки не допускает повторной публикации старых derivatives | GAP: требуется единый lifecycle/tombstone и проверка перед publication |
 | A14 | Старые chunks без document_id, SQL/Neo4j граф и aggregates имеют проверяемый источник | GAP: нужна миграция/перестройка и полная provenance |
-| A15 | MCP query_entity/communities всегда ограничены разрешёнными datasets | SOURCE: отдельные graph surfaces требуют устранения глобальных выборок; не считать общую изоляцию доказанной |
+| A15 | MCP query_entity проверяет разрешённые datasets у узлов, связей и обоих концов; глобальные communities доступны только активному instance admin | PASS: `TestGraphACL*`, SQLite + PostgreSQL и оба HTTP транспорта; это не гарантия всех graph/RAG путей |
 | A16 | Отзыв grant закрывает ранее выданный presigned URL/скачанную копию | Не поддерживается по природе этих копий; использовать authenticated proxy для новых запросов |
+| A17 | MCP prune_graph требует активного instance admin и права записи API-ключа, включая dry-run | PASS: `TestGraphACLPrune` и transport controls; обычный пользователь не получает счётчики и не удаляет граф |
+| A18 | Graph prune: ошибки SQL откатывают весь batch; dry-run предсказывает удаляемые узлы, даты сравниваются с учётом timezone | PASS: `TestPruneRegression*`, SQLite + PostgreSQL; preview/apply сравниваются без одновременного изменения графа |
 
-Проверки A12–A15 — блокеры заявления «полная изоляция и отзыв документа во
+Проверки A12–A14 — блокеры заявления «полная изоляция и отзыв документа во
 всех каналах». До их закрытия нельзя считать один успешный negative search
 тест доказательством безопасности всего многоарендного развёртывания.
 Отключение отдельных MCP-инструментов само по себе не доказывает защиту
@@ -94,14 +96,16 @@ multipart, ответ ошибки, retry того же файла, terminal sta
 Выполнено: 16/16 профильных проверок upload-flow и 42/42 тестов общего
 curated browser suite. TypeScript и scoped ESLint прошли. Браузер настоящий,
 ответы API замоканы; реальные backend/индексы проверены отдельно. Полный
-обычный и race-прогон девяти затронутых Go-пакетов также прошёл. Это не
+обычный и race-прогон девяти Go-пакетов основного исправления также прошёл.
+После graph/prune патча прошли обычный прогон десяти пакетов, race всех
+тестов MCP/community и четырёх graph HTTP transport сценариев. Это не
 доказательство интеграции с рабочим AD, OCR или объектным хранилищем.
 
 ## Повторение локальных проверок
 
 ```sh
-go test ./pkg/ingest ./pkg/extract ./pkg/auth ./pkg/access ./pkg/mcp ./pkg/orchestrator ./cmd/server ./cmd/cli ./internal/http -count=1
-go test -race ./pkg/ingest ./pkg/auth ./pkg/access ./cmd/server ./cmd/cli -count=1
+go test ./pkg/ingest ./pkg/extract ./pkg/auth ./pkg/access ./pkg/mcp ./pkg/community ./pkg/orchestrator ./cmd/server ./cmd/cli ./internal/http -count=1
+go test -race ./pkg/mcp ./pkg/community ./internal/http -run 'TestGraphACL|TestPruneRegression' -count=1
 make contract-check
 make profile-config-check
 ```

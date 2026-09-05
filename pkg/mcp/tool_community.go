@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/stek0v/levara/pkg/access"
 	"github.com/stek0v/levara/pkg/community"
 )
 
@@ -23,6 +24,16 @@ func ToolListCommunities(ctx context.Context, deps Deps, args map[string]any) To
 	db := deps.DB()
 	if db == nil {
 		return jsonResult(map[string]any{"communities": []any{}})
+	}
+
+	allowed, err := graphDatasetScope(ctx, deps)
+	if err != nil {
+		return toolError(err.Error())
+	}
+	// Community summaries aggregate the global graph without trustworthy
+	// dataset provenance; a dataset allowlist cannot safely filter them.
+	if allowed != nil {
+		return toolError("instance administrator required for global community summaries")
 	}
 
 	limit := 20
@@ -87,6 +98,25 @@ func ToolListCommunities(ctx context.Context, deps Deps, args map[string]any) To
 // Error branch: DB nil → `{"edges_deleted":0}` (not IsError);
 // community.PruneGraph error → IsError.
 func ToolPruneGraph(ctx context.Context, deps Deps, args map[string]any) ToolResult {
+	actor := dataActor(ctx)
+	if !access.APIKeyAllows(actor.APIKeyPermissions, access.ActionDelete) {
+		return toolError("API key permissions denied")
+	}
+	// Dry-run counts also expose the global graph and require the same role.
+	if actor.UserID != "" {
+		policy := access.SQLPolicy{DB: deps.DB(), Q: deps.Q}
+		active, err := policy.IsActive(ctx, actor.UserID)
+		if err != nil {
+			return toolError("admin access check failed")
+		}
+		super, err := policy.IsSuperuser(ctx, actor.UserID)
+		if err != nil {
+			return toolError("admin access check failed")
+		}
+		if !active || !super {
+			return toolError("active instance administrator required")
+		}
+	}
 	db := deps.DB()
 	if db == nil {
 		return jsonResult(map[string]any{"edges_deleted": 0, "nodes_deleted": 0, "dry_run": true})

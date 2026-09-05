@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/stek0v/levara/pkg/access"
 )
 
 const (
@@ -55,7 +57,26 @@ func ToolQueryEntity(ctx context.Context, deps Deps, args map[string]any) ToolRe
 		limit = int(l)
 	}
 
-	nodeIDs := resolveEntityNodes(ctx, db, deps.Q, name, datasetID)
+	allowed, err := graphDatasetScope(ctx, deps)
+	if err != nil {
+		return toolError(err.Error())
+	}
+	if allowed != nil && datasetID != "" {
+		permitted := false
+		for _, id := range allowed {
+			if id == datasetID {
+				permitted = true
+				break
+			}
+		}
+		if !permitted {
+			return toolError("dataset access denied")
+		}
+	}
+	if datasetID != "" {
+		allowed = []string{datasetID}
+	}
+	nodeIDs := resolveEntityNodes(ctx, db, deps.Q, name, datasetID, allowed)
 	if len(nodeIDs) == 0 {
 		return ToolResult{Content: []Content{{
 			Type: "text",
@@ -63,7 +84,7 @@ func ToolQueryEntity(ctx context.Context, deps Deps, args map[string]any) ToolRe
 		}}}
 	}
 
-	edges, err := queryEntityEdges(ctx, db, deps.Q, nodeIDs, asOf, datasetID, limit)
+	edges, err := queryEntityEdges(ctx, db, deps.Q, nodeIDs, asOf, datasetID, limit, allowed)
 	if err != nil {
 		return ToolResult{
 			Content: []Content{{Type: "text", Text: "Error: " + err.Error()}},
@@ -81,23 +102,58 @@ func ToolQueryEntity(ctx context.Context, deps Deps, args map[string]any) ToolRe
 	return jsonResult(resp)
 }
 
-// resolveEntityNodes returns the graph node IDs that share the given
-// entity name. When datasetID is non-empty, results are scoped to that
-// dataset; an empty datasetID matches all rows (legacy/global behaviour).
-// Capped at queryEntityNodeResolveLimit; silent failure returns an empty
-// slice (callers surface "No entity found").
-func resolveEntityNodes(ctx context.Context, db *sql.DB, rewrite func(string) string, name, datasetID string) []string {
-	var (
-		query string
-		args  []any
-	)
-	if datasetID == "" {
-		query = fmt.Sprintf("SELECT id FROM graph_nodes WHERE name = $1 LIMIT %d", queryEntityNodeResolveLimit)
-		args = []any{name}
-	} else {
-		query = fmt.Sprintf("SELECT id FROM graph_nodes WHERE name = $1 AND dataset_id = $2 LIMIT %d", queryEntityNodeResolveLimit)
-		args = []any{name, datasetID}
+// graphDatasetScope accepts unrestricted reads only in standalone mode or for
+// an active instance administrator. Dataset policy failures remain fail-closed.
+func graphDatasetScope(ctx context.Context, deps Deps) ([]string, error) {
+	actor := dataActor(ctx)
+	policy := access.SQLPolicy{DB: deps.DB(), Q: deps.Q}
+	if actor.UserID != "" {
+		active, err := policy.IsActive(ctx, actor.UserID)
+		if err != nil || !active {
+			return nil, fmt.Errorf("graph access denied")
+		}
 	}
+	allowed := deps.AllowedDatasetIDs(ctx)
+	if actor.UserID != "" && allowed == nil {
+		super, err := policy.IsSuperuser(ctx, actor.UserID)
+		if err != nil || !super {
+			return nil, fmt.Errorf("graph access denied")
+		}
+	}
+	return allowed, nil
+}
+
+// graphDatasetPredicate allocates fresh parameter positions on every use so
+// SQLite's positional rewrite and PostgreSQL use the same argument sequence.
+func graphDatasetPredicate(column string, allowed []string, args *[]any) string {
+	if allowed == nil {
+		return ""
+	}
+	if len(allowed) == 0 {
+		return " AND 1=0"
+	}
+	placeholders := make([]string, 0, len(allowed))
+	for _, id := range allowed {
+		*args = append(*args, id)
+		placeholders = append(placeholders, fmt.Sprintf("$%d", len(*args)))
+	}
+	return " AND " + column + " IN (" + strings.Join(placeholders, ",") + ")"
+}
+
+// resolveEntityNodes filters both explicit dataset scope and caller access
+// before applying the node limit. SQL failure preserves the not-found result.
+func resolveEntityNodes(ctx context.Context, db *sql.DB, rewrite func(string) string, name, datasetID string, allowed []string) []string {
+	if allowed != nil && len(allowed) == 0 {
+		return nil
+	}
+	query := "SELECT id FROM graph_nodes WHERE name = $1"
+	args := []any{name}
+	if datasetID != "" {
+		query += " AND dataset_id = $2"
+		args = append(args, datasetID)
+	}
+	query += graphDatasetPredicate("dataset_id", allowed, &args)
+	query += fmt.Sprintf(" LIMIT %d", queryEntityNodeResolveLimit)
 	rows, err := db.QueryContext(ctx, rewrite(query), args...)
 	if err != nil {
 		return nil
@@ -118,7 +174,7 @@ func resolveEntityNodes(ctx context.Context, db *sql.DB, rewrite func(string) st
 // or target), applying the active-now or as_of-based validity filter.
 // Returns SQL errors to the caller since a malformed query here is a
 // real fault, not a not-found.
-func queryEntityEdges(ctx context.Context, db *sql.DB, rewrite func(string) string, nodeIDs []string, asOf, datasetID string, limit int) ([]map[string]any, error) {
+func queryEntityEdges(ctx context.Context, db *sql.DB, rewrite func(string) string, nodeIDs []string, asOf, datasetID string, limit int, allowed []string) ([]map[string]any, error) {
 	srcPlaceholders := make([]string, 0, len(nodeIDs))
 	tgtPlaceholders := make([]string, 0, len(nodeIDs))
 	qargs := make([]any, 0, len(nodeIDs)*2+2)
@@ -146,14 +202,22 @@ func queryEntityEdges(ctx context.Context, db *sql.DB, rewrite func(string) stri
 		pos += 2
 	}
 
-	// Tenant scope: when caller supplies dataset_id, drop edges from other
-	// datasets. Empty dataset_id keeps the legacy/global view.
+	// Explicit scope narrows the caller-authorized graph.
 	var datasetClause string
 	if datasetID != "" {
 		datasetClause = fmt.Sprintf(" AND dataset_id = $%d", pos)
 		qargs = append(qargs, datasetID)
 		pos++
 	}
+
+	accessClause := graphDatasetPredicate("graph_edges.dataset_id", allowed, &qargs)
+	if allowed != nil {
+		// An allowed edge alone does not authorize disclosing a foreign or
+		// missing endpoint. Check both nodes independently of edge provenance.
+		accessClause += " AND EXISTS (SELECT 1 FROM graph_nodes src WHERE src.id = graph_edges.source_id" + graphDatasetPredicate("src.dataset_id", allowed, &qargs) + ")"
+		accessClause += " AND EXISTS (SELECT 1 FROM graph_nodes dst WHERE dst.id = graph_edges.target_id" + graphDatasetPredicate("dst.dataset_id", allowed, &qargs) + ")"
+	}
+	pos = len(qargs) + 1
 
 	// Scan timestamp columns as NullString so the driver returns "" for NULL
 	// without forcing a Postgres-specific COALESCE(..::text, ''). SQLite (used
@@ -163,9 +227,9 @@ func queryEntityEdges(ctx context.Context, db *sql.DB, rewrite func(string) stri
 		SELECT id, source_id, target_id, relationship_name, properties,
 			valid_from, valid_until, superseded_by, confidence
 		FROM graph_edges
-		WHERE (source_id IN (%s) OR target_id IN (%s))%s%s
+		WHERE (source_id IN (%s) OR target_id IN (%s))%s%s%s
 		ORDER BY updated_at DESC LIMIT $%d
-	`, strings.Join(srcPlaceholders, ","), strings.Join(tgtPlaceholders, ","), validityClause, datasetClause, pos)
+	`, strings.Join(srcPlaceholders, ","), strings.Join(tgtPlaceholders, ","), validityClause, datasetClause, accessClause, pos)
 	qargs = append(qargs, limit)
 
 	rows, err := db.QueryContext(ctx, rewrite(sqlStr), qargs...)
