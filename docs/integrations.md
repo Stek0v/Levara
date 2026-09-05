@@ -1,467 +1,189 @@
-# Levara — Документация по интеграциям
+# Интеграции Levara
 
-Для корпоративного входа LDAP/AD, OIDC, SAML и provisioning используйте
-[enterprise identity](enterprise-identity.md): там перечислены точные URL,
-поддерживаемые операции и ограничения. Загрузку, обработку и индивидуальный
-доступ к файлам описывает [document management](document-management.md).
-
-## Содержание
-1. [LLM Providers](#1-llm-providers)
-2. [Embedding Servers](#2-embedding-servers)
-3. [Neo4j Graph Database](#3-neo4j-graph-database)
-4. [PostgreSQL](#4-postgresql)
-5. [Whisper Audio Transcription](#5-whisper-audio-transcription)
-6. [S3 Cloud Storage](#6-s3-cloud-storage)
-7. [Langfuse LLM Tracing](#7-langfuse-llm-tracing)
-8. [Prometheus Monitoring](#8-prometheus-monitoring)
-9. [MCP (Model Context Protocol)](#9-mcp-model-context-protocol)
-10. [Ollama](#10-ollama)
-11. [Docker Compose](#11-docker-compose)
-
----
+Levara подключается к отдельно запущенным сервисам. Этот справочник описывает
+настройки, которые читает сервер; конкретные модели, версии контейнеров и их
+скорость нужно проверять в выбранном окружении. Базовый запуск с SQLite приведён
+в [getting started](getting-started.md), сервисы и резервирование — в
+[deployment](deployment.md).
 
 ## 1. LLM Providers
 
-### Поддерживаемые провайдеры
-- OpenAI (GPT-4o, GPT-3.5)
-- Ollama (gemma3, qwen3.5, llama3.1, любая модель)
-- Anthropic Claude (Claude 3.5/4)
+LLM нужен для генерации ответов и извлечения графа, но не для SQL-памяти или
+лексического recall. Серверный адаптер выбирается через `LLM_PROVIDER`:
 
-### Настройка
-
-#### OpenAI / Ollama (OpenAI-compatible)
 ```bash
-LLM_PROVIDER=openai
-LLM_ENDPOINT=http://localhost:11434/v1    # Ollama
-# или
-LLM_ENDPOINT=https://api.openai.com/v1   # OpenAI
-LLM_API_KEY=sk-...                         # для OpenAI
-LLM_MODEL=gemma3:4b                        # для Ollama
-# или
-LLM_MODEL=gpt-4o-mini                     # для OpenAI
+export LLM_PROVIDER=openai
+export LLM_ENDPOINT=http://127.0.0.1:11434/v1
+export LLM_MODEL=YOUR_INSTALLED_CHAT_MODEL
+# Для провайдера с аутентификацией задайте LLM_API_KEY через хранилище секретов.
 ```
 
-#### Anthropic Claude
-```bash
-LLM_PROVIDER=anthropic
-LLM_API_KEY=sk-ant-...
-LLM_MODEL=claude-sonnet-4-20250514
-# ENDPOINT не нужен — hardcoded https://api.anthropic.com/v1/messages
-```
+Это пример OpenAI-compatible сервиса, в том числе совместимого режима Ollama.
+Укажите реально установленную модель. Для адаптера Anthropic используются
+`LLM_PROVIDER=anthropic`, `LLM_API_KEY` и `LLM_MODEL`; проверьте доступ модели
+в вашем аккаунте. Нативный протокол каждого провайдера не становится автоматически
+OpenAI-compatible.
 
-### Structured Output
-Автоматически: JSON Schema mode для OpenAI, prompt-based для Anthropic.
-Retry до 3 раз при невалидном JSON.
+`-llm-upstream` задаёт совместимый upstream в серверных флагах; `LLM_MODEL` —
+переменная окружения, флага `-llm-model` нет. Для полного набора интеграций
+используйте `-profile=full` или явно передайте нужные флаги: `standalone`
+подавляет неявно унаследованные внешние настройки.
 
-### Rate Limiting
-```bash
-LLM_RATE_LIMIT_REQUESTS=60   # max requests
-LLM_RATE_LIMIT_INTERVAL=60   # per N seconds
-```
-
-### LLM Cache
-Автоматический — persistent JSONL file (`data/llm_cache.jsonl`).
-Key = SHA256(model + prompt + system_prompt + temperature).
-Повторный cognify того же текста: 77x speedup.
-
----
+Опциональный лимитер читает `LLM_RATE_LIMIT_REQUESTS` и
+`LLM_RATE_LIMIT_INTERVAL` (секунды). Это ограничение исходящих LLM-запросов,
+отдельное от входящих HTTP rate limits. Кэш LLM сохраняется в
+`<data-dir>/llm_cache.jsonl` (основной cache; optional proxy использует каталог `<data-dir>/<node-id>/`); совпадение кэша зависит от запроса.
+Фиксированного коэффициента ускорения для произвольного корпуса нет.
 
 ## 2. Embedding Servers
 
-### Поддерживаемые
-- Ollama (nomic-embed-text, mxbai-embed-large)
-- OpenAI Embeddings API (text-embedding-3-small)
-- Любой OpenAI-compatible embedding server
+Нужен полный URL OpenAI-compatible embeddings endpoint:
 
-### Настройка
 ```bash
-EMBEDDING_ENDPOINT=http://localhost:11434/v1/embeddings
-EMBEDDING_MODEL=nomic-embed-text-v2-moe
+export EMBEDDING_ENDPOINT=http://127.0.0.1:11434/v1/embeddings
+export EMBEDDING_MODEL=nomic-embed-text
 ```
 
-### Размерность
-Сервер автоматически определяет dim из первого embedding. Поддерживаемые: 384, 768, 1024, 1536, 3072.
+Проверьте реальный ответ провайдера и передайте серверу `-dim=768`, если модель
+возвращает именно 768 чисел. По умолчанию сервер использует 128, а не выводит
+размерность из первого embedding. Имя модели само по себе не гарантирует
+совместимость токенизатора, нормализации и размерности с существующей коллекцией.
 
----
+Используйте `-profile=standalone-embed` для локального сервера с embeddings.
+Смена модели требует повторной индексации, даже если размерность совпала:
+[процедура миграции](deployment.md#embedding-migration-shadow-evaluate-cut-over-roll-back).
+Проверяйте не только `/health` провайдера, но и известный документ в выдаче.
 
 ## 3. Neo4j Graph Database
 
-### Назначение
-Knowledge graph: entities, relationships, temporal events.
+Neo4j подключается явными флагами сервера:
 
-### Настройка
-```bash
-# CLI flags:
--neo4j-url="bolt://localhost:7687"
+```text
+-neo4j-url=bolt://127.0.0.1:7687
 -neo4j-user=neo4j
--neo4j-password=<change-me>
+-neo4j-password=YOUR_SECRET
 -neo4j-database=neo4j
 ```
 
-### Docker
+Не сохраняйте пароль в общей истории команд; задайте конфигурацию через
+защищённый сервисный запуск. SQL-база также может хранить граф в `graph_nodes`
+и `graph_edges`; отсутствие Neo4j не означает отсутствие SQL-графа, а отсутствие
+обоих хранилищ не даёт долговечного графа. Возможности отдельных поисковых
+стратегий различаются: [поиск](search-strategies-guide.md).
+
+`NEO4J_BOOTSTRAP_SCHEMA=false` отключает создание индексов/constraints при старте.
+`ALLOW_CYPHER_QUERY=true` включает отдельную поверхность raw Cypher; используйте
+её только после проверки модели доступа, а не как обычный поиск документов.
+
+## 4. PostgreSQL и SQLite
+
+SQL хранит пользователей, datasets, grants, память, Task Runtime и метаданные.
+Выберите один вариант:
+
 ```bash
-docker run -d --name neo4j \
-  -p 7687:7687 -p 7474:7474 \
-  -e NEO4J_AUTH=neo4j/password \
-  -e NEO4J_PLUGINS='["apoc"]' \
-  neo4j:5-community
+export DB_PROVIDER=sqlite
+export DB_PATH="$PWD/data/levara.db"
 ```
 
-### Что хранится
-- Entity nodes (name, type, description, dataset_id)
-- Relationship edges (source -> target, relationship_name)
-- TemporalEvent nodes (date, text context)
-- HAPPENED_AT edges (entity -> temporal event)
+или PostgreSQL DSN в `DATABASE_URL` / `POSTGRES_DSN` либо `-pg-url`. Есть также
+раздельные `DB_HOST`, `DB_PORT`, `DB_USERNAME`, `DB_PASSWORD`, `DB_NAME`.
+При запуске выполняется инициализация SQL-схемы. Для обновления существующего
+окружения сначала сделайте резервную копию и проверьте совместимость.
 
-### Cypher Queries
-```bash
-ALLOW_CYPHER_QUERY=true  # разрешить raw Cypher через API
-# Optional startup toggle (default: enabled):
-NEO4J_BOOTSTRAP_SCHEMA=false  # не выполнять startup CREATE INDEX/CONSTRAINT
-```
-Защита: CREATE/MERGE/DELETE/SET/REMOVE/DROP блокируются.
-
-### Fallback
-Без Neo4j -> graph data хранится в PostgreSQL (graph_nodes, graph_edges).
-
----
-
-## 4. PostgreSQL
-
-### Назначение
-Metadata, users, datasets, sessions, ACL, notebooks.
-
-### Настройка
-```bash
-DB_HOST=localhost
-DB_USERNAME=levara
-DB_PASSWORD=<change-me>
-DB_NAME=levara_db
-DB_PORT=5432
-```
-
-### Таблицы (18)
-users, datasets, data, dataset_data, user_settings, graph_nodes, graph_edges,
-notebooks, notebook_cells, dataset_shares, tenants, user_tenant, roles, user_role,
-acl, interactions, ontologies, principals
-
-### Auto-migration
-При старте сервер автоматически создаёт все таблицы.
-
-### Без PostgreSQL
-Сервер работает, но: нет auth, нет datasets persistence, нет RBAC.
-
----
+PostgreSQL требуется строгому Team/Enterprise профилю. Для локальной памяти
+достаточно SQLite; без обеих SQL-конфигураций WAL-векторный сервер не заменяет
+SQL-backed возможности. См. [профили](profile-presets.md).
 
 ## 5. Whisper Audio Transcription
 
-### Назначение
-Транскрипция аудио файлов (mp3, wav, m4a, ogg, flac, webm) в текст.
+Аудио направляется в настроенный сервис транскрипции:
 
-### Настройка
 ```bash
-WHISPER_ENDPOINT=http://localhost:9002/v1/audio/transcriptions
-WHISPER_API_KEY=sk-...    # для OpenAI, опционально для local
-WHISPER_MODEL=whisper-1   # или "base", "small", "medium", "large"
+export WHISPER_ENDPOINT=http://127.0.0.1:9002/v1/audio/transcriptions
+export WHISPER_MODEL=YOUR_INSTALLED_TRANSCRIPTION_MODEL
+# WHISPER_API_KEY — при необходимости.
 ```
 
-### Поддерживаемые форматы
-mp3, mp4, mpeg, mpga, m4a, wav, webm, ogg, flac
-
-### Как работает
-1. POST /add с аудио файлом
-2. Detect audio format по расширению
-3. Отправить в Whisper API (multipart/form-data)
-4. Получить текст транскрипции
-5. Текст проходит через обычный pipeline (chunk -> cognify -> search)
-
-### Варианты Whisper сервера
-
-#### OpenAI API
-```bash
-WHISPER_ENDPOINT=https://api.openai.com/v1/audio/transcriptions
-WHISPER_API_KEY=sk-...
-WHISPER_MODEL=whisper-1
-```
-
-#### whisper.cpp (local)
-```bash
-# Запуск whisper.cpp server:
-./server -m models/ggml-base.bin --host 0.0.0.0 --port 9002
-
-WHISPER_ENDPOINT=http://localhost:9002/v1/audio/transcriptions
-WHISPER_MODEL=base
-```
-
-#### Faster-Whisper (Python)
-```bash
-pip install faster-whisper
-# Запуск: faster-whisper-server --host 0.0.0.0 --port 9002
-
-WHISPER_ENDPOINT=http://localhost:9002/v1/audio/transcriptions
-```
-
-### Без Whisper
-Аудио файлы -> ошибка "WHISPER_ENDPOINT not configured". Остальные форматы работают.
-
----
+Endpoint должен принимать совместимый multipart-запрос; установка библиотеки
+распознавания сама по себе не создаёт HTTP endpoint. Без `WHISPER_ENDPOINT`
+обработка аудио завершается ошибкой. Загрузка/извлечение и последующий cognify —
+разные стадии. Форматы, OCR, оригиналы и критерии качества описаны в
+[document management](document-management.md) и [сценариях](document-workflow-scenarios.md).
 
 ## 6. S3 Cloud Storage
 
-### Назначение
-Хранение загруженных файлов в AWS S3 или совместимом хранилище.
+Текущий S3-адаптер читает:
 
-### Настройка
 ```bash
-STORAGE_BACKEND=s3
-S3_BUCKET=levara-data
-S3_REGION=us-east-1
-S3_ENDPOINT=https://s3.amazonaws.com  # или MinIO URL
-AWS_ACCESS_KEY_ID=AKIA...
-AWS_SECRET_ACCESS_KEY=secret...
+export STORAGE_BACKEND=s3
+export S3_BUCKET=YOUR_BUCKET
+export S3_REGION=YOUR_REGION
+export S3_ENDPOINT=https://YOUR_S3_ENDPOINT
+# AWS_ACCESS_KEY_ID и AWS_SECRET_ACCESS_KEY задайте через секреты окружения.
 ```
 
-### MinIO (self-hosted S3)
-```bash
-# Docker:
-docker run -d --name minio \
-  -p 9000:9000 -p 9001:9001 \
-  -e MINIO_ROOT_USER=admin \
-  -e MINIO_ROOT_PASSWORD=<change-me> \
-  minio/minio server /data --console-address ":9001"
+Адаптер поддерживает сохранение, чтение, удаление, listing и проверку объекта.
+Проверьте эти операции с выбранным S3-compatible сервисом и его политикой
+доступа. По умолчанию локальное хранилище использует `<data-dir>/uploads`;
+`STORAGE_PATH` не переопределяет этот путь в bootstrap сервера.
 
-S3_ENDPOINT=http://localhost:9000
-S3_BUCKET=levara
-AWS_ACCESS_KEY_ID=admin
-AWS_SECRET_ACCESS_KEY=password
-```
-
-### Операции
-- Save: PUT с AWS Signature V4
-- Load: GET
-- Delete: DELETE (idempotent)
-- List: GET с prefix + pagination
-- Exists: HEAD
-
-### Без S3
-По умолчанию `STORAGE_BACKEND=local` -- файлы в `data/uploads/`.
-
----
+Исходные файлы и производный текст требуют согласованного backup. Наличие
+S3-адаптера не означает готовые KMS/BYOK, legal hold или отдельные document ACL.
+Оригиналы скачиваются через авторизованный API, см. [document management](document-management.md).
 
 ## 7. Langfuse LLM Tracing
 
-### Назначение
-Мониторинг LLM вызовов: latency, tokens, input/output, ошибки.
+Для обёртки LLM tracing используются `LANGFUSE_PUBLIC_KEY`,
+`LANGFUSE_SECRET_KEY`, `LANGFUSE_ENDPOINT`. Успешные вызовы семплируются:
+`LANGFUSE_SAMPLE_RATE`, по умолчанию 0.1; это не полный журнал каждого запроса.
+Трейсы могут содержать prompt и ответ, поэтому учитывайте этот исходящий поток
+данных при выборе внешнего или локального сервиса. Не считайте наличие ключей
+проверкой доставки trace; выполните и найдите конкретный тестовый вызов.
 
-### Настройка
-```bash
-LANGFUSE_PUBLIC_KEY=pk-lf-...
-LANGFUSE_SECRET_KEY=sk-lf-...
-LANGFUSE_ENDPOINT=https://cloud.langfuse.com  # или self-hosted
-```
+## 8. Prometheus Monitoring и rerank
 
-### Что трейсится
-Каждый LLM вызов (entity extraction, RAG completion, COT reasoning, NL->Cypher):
-- Model, input prompt, output response
-- Latency (ms)
-- Token count (input + output)
-- Status (success/error)
-- Trace ID для корреляции
+Метрики доступны на HTTP-origin сервера, путь `/metrics`. Например, для
+Prometheus в том же сетевом пространстве:
 
-### Self-hosted Langfuse
-```bash
-docker run -d --name langfuse \
-  -p 3000:3000 \
-  -e DATABASE_URL=postgresql://user:pass@host:5432/langfuse \
-  langfuse/langfuse
-
-LANGFUSE_ENDPOINT=http://localhost:3000
-```
-
-### Без Langfuse
-Трейсинг отключён. Нет overhead.
-
----
-
-## 8. Prometheus Monitoring
-
-### Назначение
-Метрики производительности: latency, throughput, errors.
-
-### Endpoint
-```
-GET /metrics
-```
-
-### Метрики
-- `levara_http_requests_total` -- счётчик запросов
-- `levara_http_request_duration_seconds` -- гистограмма latency
-- `levara_search_requests_total` -- поисковые запросы по типу
-- `levara_cognify_duration_seconds` -- время cognify pipeline
-- `levara_vectors_total` -- количество vectors в коллекциях
-
-### Prometheus config
 ```yaml
 scrape_configs:
   - job_name: levara
-    static_configs:
-      - targets: ['localhost:8080']
     metrics_path: /metrics
-    scrape_interval: 10s
+    static_configs:
+      - targets: ['127.0.0.1:8080']
 ```
 
-### Grafana Dashboard
-Импортировать metrics в Grafana для визуализации.
-
----
+В контейнере адрес должен указывать на сервис Levara, а не loopback Prometheus.
+[Workspace recipes](markdown-workspace-deployment-recipes.md) содержат alert и
+dashboard fixtures. [Rerank sidecar](../deploy/rerank/README.md) подключается
+через `RERANK_ENDPOINT`, `RERANK_MODEL`, `RERANK_BUDGET_MS`; defaults REST и MCP,
+fallback и метрики различаются — см. [search guide](search-strategies-guide.md).
 
 ## 9. MCP (Model Context Protocol)
 
-### Назначение
-Интеграция с AI-агентами: Claude Desktop, Cursor, Cline.
+Подключайте клиент к `/mcp`; REST base `/api/v1` не является MCP URL.
+Строгий stateless transport `/mcp/2026-07-28` требует дополнительных headers/meta,
+перечисленных в [API guide](api-reference.md). Реестр инструментов и схемы:
+[API contract](api-contract.md). Видимость зависит от `LEVARA_MCP_TOOLSET` и
+feature flags, а доступ к данным — от аутентификации и политики.
 
-### Endpoint
-```
-POST /mcp  (JSON-RPC 2.0)
-```
+Настройка агентов: [tutorial 02](tutorials/02-agent-integration.md),
+[workspace host examples](../examples/agent-hosts/README.md),
+[memory skill](memory-workflow-skill.md).
 
-### Tools (7)
-| Tool | Описание |
-|------|----------|
-| cognify | Запустить pipeline extraction |
-| search | Поиск по knowledge graph |
-| add | Добавить данные |
-| list_data | Список datasets |
-| delete | Удалить данные |
-| prune | Очистить данные |
-| cognify_status | Статус pipeline |
+## 10. LDAP/AD и SSO
 
-### Claude Desktop config
-```json
-{
-  "mcpServers": {
-    "levara": {
-      "url": "http://localhost:8080/mcp"
-    }
-  }
-}
-```
-
----
-
-## 10. Ollama
-
-### Назначение
-Локальный LLM + embedding server.
-
-### Установка
-```bash
-curl -fsSL https://ollama.ai/install.sh | sh
-```
-
-### Модели
-```bash
-ollama pull gemma3:4b            # LLM (3.2GB)
-ollama pull nomic-embed-text     # Embeddings (261MB)
-ollama pull qwen3.5:latest       # Альтернативный LLM
-```
-
-### Настройка для Levara
-```bash
-LLM_PROVIDER=openai
-LLM_ENDPOINT=http://localhost:11434/v1
-LLM_MODEL=gemma3:4b
-EMBEDDING_ENDPOINT=http://localhost:11434/v1/embeddings
-EMBEDDING_MODEL=nomic-embed-text
-```
-
-### GPU ускорение
-Ollama автоматически использует GPU если доступен.
-Для принудительного GPU: `OLLAMA_NUM_GPU=99`
-
----
+OIDC bearer verification, SAML и SCIM Users имеют отдельные HTTP-поверхности.
+Native LDAP/LDAPS, встроенный browser OIDC login, SCIM→SSO identity linkage и
+эффективные group grants отсутствуют. Настройки и проверяемые ограничения:
+[enterprise identity](enterprise-identity.md). Не используйте product preset
+как свидетельство, что корпоративный пользователь уже может войти и читать
+только разрешённые документы.
 
 ## 11. Docker Compose
 
-### Полный стек
-```yaml
-services:
-  levara:
-    build: .
-    ports: ["8080:8080", "50051:50051"]
-    environment:
-      - DB_HOST=postgres
-      - LLM_ENDPOINT=http://ollama:11434/v1
-      - EMBEDDING_ENDPOINT=http://ollama:11434/v1/embeddings
-    depends_on: [postgres, neo4j, ollama]
-
-  postgres:
-    image: postgres:16
-    environment:
-      POSTGRES_USER: levara
-      POSTGRES_PASSWORD: <change-me>
-      POSTGRES_DB: levara_db
-    ports: ["5432:5432"]
-
-  neo4j:
-    image: neo4j:5-community
-    environment:
-      NEO4J_AUTH: neo4j/password
-      NEO4J_PLUGINS: '["apoc"]'
-    ports: ["7687:7687", "7474:7474"]
-
-  ollama:
-    image: ollama/ollama
-    ports: ["11434:11434"]
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - capabilities: [gpu]
-
-  prometheus:
-    image: prom/prometheus
-    ports: ["9090:9090"]
-    volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml
-```
-
-### Минимальный стек (без GPU)
-```bash
-docker compose up -d levara postgres
-# LLM через внешний Ollama или OpenAI API
-```
-
----
-
-## Переменные окружения (полный список)
-
-| Переменная | Описание | Default |
-|-----------|----------|---------|
-| `LLM_PROVIDER` | openai, anthropic | openai |
-| `LLM_ENDPOINT` | URL LLM API | -- |
-| `LLM_MODEL` | Имя модели | -- |
-| `LLM_API_KEY` | API ключ | -- |
-| `LLM_RATE_LIMIT_REQUESTS` | Max requests | -- (unlimited) |
-| `LLM_RATE_LIMIT_INTERVAL` | Interval (sec) | 60 |
-| `EMBEDDING_ENDPOINT` | URL embedding API | -- |
-| `EMBEDDING_MODEL` | Имя модели | -- |
-| `DB_HOST` | PostgreSQL host | -- |
-| `DB_USERNAME` | PG user | levara |
-| `DB_PASSWORD` | PG password | `<change-me>` |
-| `DB_NAME` | PG database | levara_db |
-| `DB_PORT` | PG port | 5432 |
-| `WHISPER_ENDPOINT` | Whisper API URL | -- |
-| `WHISPER_API_KEY` | Whisper API key | -- |
-| `WHISPER_MODEL` | Whisper model | whisper-1 |
-| `STORAGE_BACKEND` | local, s3 | local |
-| `S3_BUCKET` | S3 bucket name | -- |
-| `S3_REGION` | AWS region | us-east-1 |
-| `S3_ENDPOINT` | Custom S3 endpoint | -- |
-| `AWS_ACCESS_KEY_ID` | AWS key | -- |
-| `AWS_SECRET_ACCESS_KEY` | AWS secret | -- |
-| `LANGFUSE_PUBLIC_KEY` | Langfuse key | -- |
-| `LANGFUSE_SECRET_KEY` | Langfuse secret | -- |
-| `LANGFUSE_ENDPOINT` | Langfuse URL | https://cloud.langfuse.com |
-| `ALLOW_CYPHER_QUERY` | Allow raw Cypher | false |
-| `LOG_LEVEL` | DEBUG/INFO/WARN/ERROR | INFO |
+[Deployment](deployment.md#docker) описывает фактический Compose и правильный
+command override. Compose не устанавливает все описанные здесь сервисы.
+Полностью локальная обработка требует локальных моделей, extractors, storage и
+tracing; один локальный процесс Levara не гарантирует, что данные не покидают
+машину.

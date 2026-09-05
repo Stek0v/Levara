@@ -1,110 +1,73 @@
 # Cron-профили
 
-Рекомендуемые расписания обслуживания Levara. Используй внешний cron (crontab, launchd, systemd timer) для вызова MCP-инструментов по HTTP.
+Планировщик внешний: cron, launchd или systemd timer. Сервер не устанавливает
+эти задания сам. Сначала проверьте один вызов на выбранном окружении, затем
+настройте частоту, timeout и ротацию логов. [Deployment](deployment.md) описывает
+эксплуатацию; [watchdog](macos-levara-watchdog.md) — отдельный macOS helper.
 
-## Вызов MCP-инструментов из cron
+## Диагностика с проверкой MCP-ошибок
 
-Все MCP-инструменты доступны через `POST /mcp` с JSON-RPC:
+Пример тела запроса для `POST /mcp`:
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"doctor","arguments":{}}}
+```
+
+Для cron создайте собственный скрипт с абсолютными путями, заданным origin и
+credentials из защищённого environment-файла. В нём можно использовать:
 
 ```bash
-# Универсальный вызов MCP-инструмента
-curl -s -X POST http://localhost:8080/mcp \
-  -H "Content-Type: application/json" \
-  -d '{
-    "jsonrpc": "2.0",
-    "id": 1,
-    "method": "tools/call",
-    "params": {
-      "name": "doctor",
-      "arguments": {}
-    }
-  }'
-```
-
-## Профили
-
-### Легковесный (персональный/dev)
-
-```crontab
-# Проверка здоровья каждые 15 минут
-*/15 * * * * curl -s -X POST http://localhost:8080/mcp -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"doctor","arguments":{}}}' >> /tmp/levara-doctor.log 2>&1
-
-# Проверка очистки графа (dry run) ежедневно в 3:00
-0 3 * * * curl -s -X POST http://localhost:8080/mcp -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"prune_graph","arguments":{"dry_run":true,"max_age_days":90}}}' >> /tmp/levara-prune.log 2>&1
-
-# Проверка дрифта эмбеддингов еженедельно (воскресенье 2:00)
-0 2 * * 0 curl -s -X POST http://localhost:8080/mcp -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"check_drift","arguments":{}}}' >> /tmp/levara-drift.log 2>&1
-```
-
-### Продакшн (сервер)
-
-```crontab
-# Проверка здоровья каждые 5 минут
-*/5 * * * * /usr/local/bin/levara-doctor.sh
-
-# Синхронизация Mac <-> Pi каждые 15 минут
-*/15 * * * * curl -s -X POST http://localhost:8080/mcp -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"sync","arguments":{"remote_url":"http://10.23.0.53:8080/api/v1","direction":"pull","types":["memories","interactions"]}}}' >> /tmp/levara-sync.log 2>&1
-
-# Очистка графа (реальное удаление) еженедельно
-0 3 * * 0 curl -s -X POST http://localhost:8080/mcp -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"prune_graph","arguments":{"dry_run":false,"max_age_days":90,"include_orphan_nodes":true}}}' >> /tmp/levara-prune.log 2>&1
-
-# Проверка дрифта еженедельно
-0 2 * * 0 curl -s -X POST http://localhost:8080/mcp -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"check_drift","arguments":{}}}' >> /tmp/levara-drift.log 2>&1
-```
-
-### Вспомогательный скрипт: `levara-doctor.sh`
-
-```bash
-#!/bin/bash
-RESULT=$(curl -s -X POST http://localhost:8080/mcp \
-  -H "Content-Type: application/json" \
+#!/usr/bin/env bash
+set -euo pipefail
+: "${LEVARA_ORIGIN:?set the backend origin without /api/v1}"
+: "${LEVARA_TOKEN:?set a credential for the configured server}"
+result=$(curl --fail-with-body --silent --show-error --max-time 30 \
+  -H "Authorization: Bearer $LEVARA_TOKEN" \
+  -H 'Content-Type: application/json' \
+  "$LEVARA_ORIGIN/mcp" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"doctor","arguments":{}}}')
-
-STATUS=$(echo "$RESULT" | jq -r '.result.content[0].text' | jq -r '.status')
-
-if [ "$STATUS" = "fail" ]; then
-  echo "[$(date)] DOCTOR FAIL: $RESULT" >> /var/log/levara-alerts.log
-  # Опционально: отправить уведомление
-fi
+printf '%s\n' "$result" | jq -e \
+  'if .error or .result.isError == true then error("MCP tool failed") else .result end'
 ```
 
-## macOS launchd
+Этот wrapper требует Bash, curl и jq. Он проверяет transport/tool error, но
+диагностические предупреждения внутри содержимого `doctor` требуют отдельного
+анализа. Нельзя считать любой HTTP 200 здоровым состоянием. Не выводите token
+в лог и не помещайте его непосредственно в общедоступный crontab.
 
-На Mac используй `launchd` вместо cron:
+## Расписание
 
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.levara.doctor</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/usr/local/bin/levara-doctor.sh</string>
-    </array>
-    <key>StartInterval</key>
-    <integer>900</integer>
-    <key>StandardOutPath</key>
-    <string>/tmp/levara-doctor.log</string>
-    <key>StandardErrorPath</key>
-    <string>/tmp/levara-doctor-err.log</string>
-</dict>
-</plist>
+| Работа | Начальная частота | Условие |
+|---|---|---|
+| Health и `doctor` | 5–15 минут | Настроены alert/dedup и ограничение времени |
+| `check_drift` | Раз в неделю или после смены модели | Проверяются конкретные коллекции и embedding contract |
+| Workspace jobs/status | По нужной задержке индексации | Используйте [workspace metrics](markdown-workspace-deployment-recipes.md) |
+| Backup | По допустимой потере данных | Регулярно проверяется восстановление |
+| Консолидация/удаление | Сначала ручной dry-run | Отдельно одобрены scope и retention |
+
+Например, после создания и проверки своего wrapper:
+
+```cron
+*/15 * * * * /absolute/path/levara-doctor.sh >> /absolute/path/levara-doctor.log 2>&1
 ```
 
-Установка: `cp com.levara.doctor.plist ~/Library/LaunchAgents/ && launchctl load ~/Library/LaunchAgents/com.levara.doctor.plist`
+Не копируйте расписание реального `prune_graph(dry_run=false)` на общий сервер
+как часть установки. Сначала исследуйте dry-run, backup и область удаления.
+[Консолидация](features-guide.md#консолидация-памяти) имеет собственные guard и
+revert; она не эквивалентна prune.
 
-## Мониторинг истории heartbeat
+## Sync
 
-Проверка недавней активности системы через MCP или REST:
+Sync настраивается отдельно: точный `LEVARA_SYNC_REMOTE_URL`, credentials и
+при включённой аутентификации активный глобальный superuser. Конфигурируемый
+server token отправляется только на этот точный URL; перенаправления не
+поддерживаются. [Workspace recipes](markdown-workspace-deployment-recipes.md#4-sync-between-machines)
+показывает MCP-вызов и различие между sync записей, коллекций и truth-файлов.
+У CLI нет команды `sync`, а личные shell-функции не поставляются как API.
 
-```bash
-# MCP-инструмент
-curl -s -X POST http://localhost:8080/mcp \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"heartbeat","arguments":{"event_type":"doctor","limit":5}}}'
+## Heartbeats
 
-# REST-эндпоинт
-curl -s http://localhost:8080/api/v1/heartbeats?type=doctor&limit=5
-```
+Вызов `heartbeat(event_type="doctor", limit=5)` через MCP или
+`GET /api/v1/heartbeats?type=doctor&limit=5` показывает доступную историю.
+В shell заключайте URL с `&` в кавычки и передавайте credentials. История
+событий не заменяет проверку результата конкретного текущего задания.

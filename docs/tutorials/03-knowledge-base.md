@@ -1,150 +1,84 @@
-# Tutorial 03 — Build a Knowledge Base (20 minutes)
+# Tutorial 03 — Build a Knowledge Base
 
-Tutorial 01 stored discrete memories. This one ingests **documents** — raw
-text or files — and makes them searchable, so an agent can answer questions
-from your own material. Every call below was verified against a live server
-(2026-09-03).
+This workflow stores a document, processes it, and verifies retrieval from the
+same collection. Start the SQLite-backed semantic server in
+[getting started](../getting-started.md#add-semantic-document-search). It needs a
+working embedding endpoint with matching dimension. An LLM is optional for
+chunk search and required for full model-based graph extraction.
 
-Prerequisite: a running server with the embed sidecar (the
-`standalone-embed` profile from [01-first-memory.md](01-first-memory.md)).
+## 1. Add and process
 
-## 1. Ingest a document
-
-The `add` tool stores raw text into a dataset (on disk and in the DB
-metadata):
+From the checkout root:
 
 ```bash
-curl -s -X POST http://127.0.0.1:8080/mcp/2026-07-28 \
-  -H 'Content-Type: application/json' \
-  -H 'Accept: application/json, text/event-stream' \
-  -H 'MCP-Protocol-Version: 2026-07-28' \
-  -H 'Mcp-Method: tools/call' \
-  -H 'Mcp-Name: add' \
-  -d '{
-    "jsonrpc":"2.0","id":1,"method":"tools/call",
-    "params":{
-      "name":"add",
-      "arguments":{
-        "data":"Alice works at Acme Corp. Bob reports to Alice. Acme is based in Berlin.",
-        "dataset_name":"company-notes"
-      },
-      "_meta":{
-        "io.modelcontextprotocol/protocolVersion":"2026-07-28",
-        "io.modelcontextprotocol/clientInfo":{"name":"curl","version":"0"},
-        "io.modelcontextprotocol/clientCapabilities":{}
-      }
-    }
-  }'
+export LEVARA_URL=http://127.0.0.1:8080/api/v1
+./levara add 'Alice works at Acme. Bob reports to Alice.' --dataset=company-notes
+./levara cognify --dataset=company-notes --collection=company-kb --wait
 ```
 
-Response: `Data ingested into dataset 'company-notes' (items: 1)` with
-`data_id` and `dataset_id`.
+For a file, use `./levara add --file=./company.md --dataset=company-notes`.
+`add` persists input; `cognify` processes selected dataset records. The dataset
+and retrieval collection have different names here deliberately: permissions
+are attached to the dataset, while `collection` routes the index/search.
 
-## 2. Cognify — chunk, embed, index
+Require an explicit successful terminal result. A run ID, an accepted upload or
+an HTTP 200 is not proof that extraction/indexing completed. See
+[document management](../document-management.md) for failed extraction, retries,
+already-processed no-ops and selected-collection status.
 
-`add` stores bytes; `cognify` turns them into searchable knowledge: it
-chunks the text, embeds the chunks into the vector store, and (when an LLM
-endpoint is configured) extracts entities and relations into the temporal
-knowledge graph.
+## 2. Check lexical and semantic retrieval
 
 ```bash
-curl -s -X POST http://127.0.0.1:8080/mcp/2026-07-28 \
-  -H 'Content-Type: application/json' \
-  -H 'Accept: application/json, text/event-stream' \
-  -H 'MCP-Protocol-Version: 2026-07-28' \
-  -H 'Mcp-Method: tools/call' \
-  -H 'Mcp-Name: cognify' \
-  -d '{
-    "jsonrpc":"2.0","id":2,"method":"tools/call",
-    "params":{
-      "name":"cognify",
-      "arguments":{
-        "data":"Alice works at Acme Corp. Bob reports to Alice. Acme is based in Berlin.",
-        "collection":"kb"
-      },
-      "_meta":{
-        "io.modelcontextprotocol/protocolVersion":"2026-07-28",
-        "io.modelcontextprotocol/clientInfo":{"name":"curl","version":"0"},
-        "io.modelcontextprotocol/clientCapabilities":{}
-      }
-    }
-  }'
-# Cognify pipeline started. Run ID: 3a95aa6c-... Use cognify_status tool to check progress.
+./levara search 'Alice Acme' --collection=company-kb --type=CHUNKS_LEXICAL --top-k=3
+./levara search 'who employs Alice' --collection=company-kb --type=HYBRID --top-k=3
 ```
 
-Poll until `status` is `COMPLETED`:
+The equivalent REST lexical request is:
 
 ```bash
-curl -s -X POST http://127.0.0.1:8080/mcp/2026-07-28 \
+curl -fsS http://127.0.0.1:8080/api/v1/search/text \
   -H 'Content-Type: application/json' \
-  -H 'Accept: application/json, text/event-stream' \
-  -H 'MCP-Protocol-Version: 2026-07-28' \
-  -H 'Mcp-Method: tools/call' \
-  -H 'Mcp-Name: cognify_status' \
-  -d '{
-    "jsonrpc":"2.0","id":3,"method":"tools/call",
-    "params":{
-      "name":"cognify_status",
-      "arguments":{"run_id":"<RUN-ID-FROM-STEP-2>"},
-      "_meta":{
-        "io.modelcontextprotocol/protocolVersion":"2026-07-28",
-        "io.modelcontextprotocol/clientInfo":{"name":"curl","version":"0"},
-        "io.modelcontextprotocol/clientCapabilities":{}
-      }
-    }
-  }'
-# {"status":"COMPLETED","chunks_created":1,"entities_extracted":...,"elapsed_ms":21,...}
+  -d '{"query_text":"Alice Acme","query_type":"CHUNKS_LEXICAL","collection":"company-kb","top_k":3}'
 ```
 
-Note the honest detail: without an LLM endpoint configured, `entities_extracted`
-is `0` — chunking and embeddings still work, graph extraction needs the LLM.
-
-## 3. Ask questions
-
-Keyword search (BM25, no embedding needed):
-
-```bash
-curl -s -X POST http://127.0.0.1:8080/api/v1/search/text \
-  -H 'Content-Type: application/json' \
-  -d '{"query_text":"Alice Acme","top_k":3}'
-```
-
-Full search from an agent — the MCP `search` tool runs hybrid retrieval
-(semantic + keyword fusion, optional rerank) and logs an interaction id:
-
-> search: { "search_query": "who works at Acme", "collection": "kb", "limit": 3 }
-
-The `collection` argument scopes results; omit it to search everything the
-caller can access.
-
-## 4. The knowledge graph (with LLM)
-
-With an LLM endpoint configured (`LEVARA_LLM_*` env), cognify also builds
-the graph: entities like `Alice`, `Acme Corp` with edges like
-`works_at`, `reports_to`. Query it:
-
-> query_entity: { "name": "Acme Corp" }
-
-Edges carry validity windows; `query_entity` returns currently-valid edges,
-and relations like `assigned_to` / `role_is` auto-supersede when new facts
-arrive (old edges keep `valid_until` + `superseded_by` — history is never
-deleted, just no longer current).
-
-Without an LLM configured the graph stays empty — the search path is fully
-functional regardless.
-
-## 5. Clean up
+For MCP, use the actual argument names:
 
 ```text
-delete:   { "data_id": "<DATA-ID>" }          # remove ingested document
-prune:    { ... }                             # bulk cleanup
+search(search_query="who employs Alice", search_type="HYBRID",
+       collection="company-kb", top_k=3, rerank=false)
 ```
 
-## Next
+Omitting the search type selects AUTO, not a guaranteed BM25 or HYBRID path.
+Inspect the returned text and its source, not just the number of hits.
+[Search strategies](../search-strategies-guide.md) covers routing and rerank.
 
-- [04-team-deploy.md](04-team-deploy.md) — take this from your laptop to a
-  shared team deployment
-- [search-strategies-guide.md](../search-strategies-guide.md) — how routing
-  between semantic, keyword, and graph search works
+## 3. Optional graph extraction
 
-_Last verified: 2026-09-03 (main; cognify without LLM = chunks+embeddings only)._
+Configure `LLM_PROVIDER`, `LLM_ENDPOINT`, `LLM_MODEL` and any provider key using
+[integrations](../integrations.md). Graph persistence also needs configured SQL
+or Neo4j. Model output is variable: do not assert a particular edge just because
+the input contains two names. Inspect the graph after a completed extraction.
+
+```text
+query_entity(name="Alice")
+```
+
+`query_entity(name=..., as_of=...)` reads a historical view of edges with temporal
+validity. It does not infer a historical fact missing from your source material.
+
+## 4. Manage and share the document
+
+Use the WebUI dataset page to inspect extracted text, download the original,
+and grant an individual user viewer/editor/admin access. For a single document,
+use a separate dataset; native document ACLs and effective group grants are not
+available. Shared editors should target the existing dataset ID through WebUI/API;
+CLI `add --dataset` currently resolves a dataset name for the caller.
+
+Deletion is not the inverse of every ingestion path. MCP `delete` takes
+`dataset_id`, not `data_id`, and does not promise complete physical erasure of
+all originals and derivatives. Do not use global `prune` as tutorial rollback.
+Use an isolated tutorial dataset and follow [document management](../document-management.md)
+for the implemented deletion scope.
+
+Next: [Team deployment](04-team-deploy.md), [document acceptance scenarios](../document-workflow-scenarios.md),
+or [project ingestion](../project-ingest.md) for a complete repository.

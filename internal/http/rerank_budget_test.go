@@ -617,7 +617,7 @@ func TestHybridSearch_RerankApplied_Phase25(t *testing.T) {
 		t.Fatalf("status=%d, want 200", status)
 	}
 	if !hit {
-		t.Fatal("sidecar was NOT called for query_type=HYBRID — Phase 2.5 wires rerank through HYBRID; if intentionally reverted, update phase2-rerank-default-design.md")
+		t.Fatal("sidecar was NOT called for query_type=HYBRID — Phase 2.5 wires rerank through HYBRID; if intentionally reverted, update docs/search-strategies-guide.md")
 	}
 	okAfter := testutil.ToFloat64(metrics.RerankInvocations.WithLabelValues("ok"))
 	if okAfter <= okBefore {

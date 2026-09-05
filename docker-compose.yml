@@ -24,7 +24,7 @@ services:
     # `-require-auth=false` keeps the gRPC + HTTP interceptors permissive
     # so unauthenticated calls log instead of reject — useful during the
     # client-upgrade window. Flip to true in prod once every consumer
-    # ships a token (see docs/MIGRATION-20.04.md).
+    # ships a token (see docs/deployment.md).
     command: ["./levara", "-standalone=true", "-dim=${LEVARA_DIM:-${EMBEDDING_DIMENSIONS:-1024}}", "-shards=${LEVARA_SHARDS:-3}", "-port=8080", "-grpc-port=50051", "-hnsw-m=${HNSW_M:-20}", "-hnsw-ef-mult=${HNSW_EF_MULT:-10}", "-hnsw-ef-min=${HNSW_EF_MIN:-64}", "-require-auth=${REQUIRE_AUTH:-false}"]
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/metrics"]

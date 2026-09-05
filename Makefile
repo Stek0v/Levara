@@ -61,7 +61,7 @@ benchmark:
 	@echo "Running Benchmark Suite..."
 	@go run ./cmd/benchmark/main.go
 
-# --- Test gates (docs/full-testing-scenarios.md) ---
+# --- Test gates (docs/testing.md) ---
 
 # Every-commit gate: the focused S0-S4 suites a change must pass before it is
 # committed. Ordered cheapest-first so a static/docs slip fails fast. Each suite
@@ -99,7 +99,7 @@ test-release-candidate:
 	@echo "[RC] workspace retrieval-quality eval"
 	@go test -count=1 ./internal/http -run 'TestWorkspaceRetrievalQualityEval|TestWorkspaceEvalMetricsEmpty'
 	@echo "test-release-candidate: automated gates green."
-	@echo "NOTE: not automated by this target (run manually — see docs/full-testing-scenarios.md):"
+	@echo "NOTE: not automated by this target (run manually — see docs/testing.md):"
 	@echo "  - Pi-hardware edge smoke (10.23.0.53)"
 	@echo "  - two-server sync/backup mock harness (S3 cross-instance)"
 
@@ -187,7 +187,6 @@ contract:
 	@go run ./cmd/contract generate -out docs -repo .
 
 # CI gate: fail when committed contract artefacts drift from current
-# inventories or when docs/deployment-matrix.md references an unknown
-# REST endpoint.
+# inventories.
 contract-check:
 	@go run ./cmd/contract validate -out docs -repo .

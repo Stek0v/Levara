@@ -1,15 +1,9 @@
 # Levara Product Ladder
 
-Date: 2026-06-06
-Status: implemented foundation and product presets; concrete enterprise adapters pending
-
-This document translates the current Levara architecture into a product ladder.
-It started as a planning document. The foundation has since moved into code:
-access policy, runtime profile validation, audit export, and enterprise
-identity seams and storage/KMS adapter contracts now exist, and each tier ships
-a runnable preset (`deploy/profiles/*.env.example` + `docs/profile-presets.md`,
-validated by `server -config-check` / `make profile-config-check`). The remaining work
-is concrete enterprise protocol/storage integrations.
+Reviewed: 2026-09-05. Current profile IDs and capability placement are below.
+Runnable presets live in [profile presets](profile-presets.md). A preset
+validates configuration fields; it is not certification of a deployment or
+completion of all enterprise integrations.
 
 ## Goal
 
@@ -55,7 +49,7 @@ availability does not imply a complete browser SSO or directory lifecycle.
 | BM25, hybrid search, rerank routing | yes | yes | yes | yes | yes |
 | Cognify, graph, temporal validity | yes | yes | yes | yes | yes |
 | MCP tool contracts | adapter | yes | yes | yes | yes |
-| Memory palace | domain layer | yes | yes | yes | yes, tenant-scoped |
+| Memory palace | domain layer | yes | yes | yes | yes; owner, collection and tenant checks have separate scope |
 | Markdown workspace truth layer | domain layer | yes | yes | yes | yes, tenant-scoped |
 | Local filesystem storage | adapter | yes | yes | optional | optional |
 | S3-compatible storage | adapter | optional | yes | yes | yes |
@@ -63,7 +57,7 @@ availability does not imply a complete browser SSO or directory lifecycle.
 | Postgres | adapter | optional | optional | yes | yes |
 | JWT and API keys | identity layer | optional | optional | required | required or bridged from SSO |
 | Dataset/project sharing | access layer | no default | optional | yes | yes |
-| Tenant isolation | access layer | no default | no default | optional | required |
+| Tenant context/membership checks | access layer | no default | no default | optional | required on guarded operations; not organization-wide document ACL |
 | Workspace audit | audit layer | optional | yes | yes | yes, exportable |
 | OIDC/SAML/SCIM/KMS/SIEM | enterprise adapters | no | no | no | partial: OIDC bearer, SAML SP and limited SCIM Users implemented; browser login, directory linkage/groups, SIEM and corporate KMS backends pending |
 
@@ -72,21 +66,22 @@ availability does not imply a complete browser SSO or directory lifecycle.
 The runtime profile interface is explicit:
 
 ```bash
-LEVARA_PROFILE=personal|solo_pro|team|enterprise
-LEVARA_PROFILE_STRICT=1  # optional fail-fast mode
+export LEVARA_PROFILE=personal  # choose personal, solo_pro, team or enterprise
+export LEVARA_PROFILE_STRICT=1  # optional fail-fast mode
 ```
 
 Profile behavior is validation and defaults, not a forked codebase. By default
 Levara logs warnings so existing deployments keep starting during migration.
-When `LEVARA_PROFILE_STRICT=1` is set, unsafe `solo_pro`, `team`, and
-`enterprise` profile combinations fail fast at startup.
+When `LEVARA_PROFILE_STRICT=1` is set, missing requirements listed below
+fail at startup. The validator checks fields, not secret strength, TLS,
+IdP reachability or full authorization coverage.
 
 | Profile | Required | Defaults | Must fail fast when |
 |---|---|---|---|
-| `personal` | writable data dir | SQLite, local storage, MCP enabled, auth optional | data dir cannot be created |
-| `solo_pro` | writable data dir, stable sync token when sync is enabled | SQLite or Postgres, optional S3, API keys available | sync is configured without credentials |
-| `team` | Postgres, stable `JWT_SECRET`, `-require-auth`, project shares | workspace audit, async index jobs, per-agent credentials | auth is disabled or DB is missing |
-| `enterprise` | Postgres, stable `JWT_SECRET` or SSO bridge, tenant enforcement, audit sink | required tenant context, audit export, future retention/object storage | tenant enforcement, audit sink, auth/SSO, or stable signing config is missing |
+| `personal` | no profile-specific requirements | SQLite, local storage, MCP enabled, auth optional | no profile-specific rejection; ordinary runtime errors still apply |
+| `solo_pro` | stable sync token when sync is enabled | SQLite or Postgres, optional S3, API keys available | sync is configured without credentials |
+| `team` | Postgres, configured `JWT_SECRET`, `-require-auth` | workspace audit, async index jobs, per-agent credentials | auth is disabled, Postgres is missing or JWT_SECRET is unset |
+| `enterprise` | Postgres, configured `JWT_SECRET`, required auth or declared SSO bridge, tenant enforcement, audit sink configuration | required tenant context, audit export, future retention/object storage | tenant enforcement, audit sink, auth/SSO, or stable signing config is missing |
 
 The profile variables above are current runtime behavior. They do not change
 REST, MCP, or gRPC wire contracts.
@@ -111,63 +106,22 @@ Remaining debt:
 
 - `APIConfig` still exists as a broad wrapper; typed groups are projections,
   not a full call-site migration.
-- Enterprise storage/KMS/BYOK contract shapes exist, but concrete corporate
-  backends are not yet implemented.
+- S3-compatible raw storage exists. GCS/Azure, corporate KMS/BYOK, SIEM
+  and enforced legal hold remain implementation gaps.
 - One-command packaged runbooks per audience are not yet complete; env presets
   and config-check validation are implemented.
 
-## Roadmap
+## Acceptance and remaining work
 
-### Phase 1: product and architecture docs
+Use [testing](testing.md) for observed results and the commands that produced
+them. The [document scenario matrix](document-workflow-scenarios.md) separates
+implemented behavior, source-only checks, manual acceptance and gaps.
 
-- Status: complete.
-- Public REST, MCP, and gRPC contracts stayed unchanged.
-- Land this product ladder and ADR-002.
-- Cross-link with the markdown workspace deployment recipes and capability gate.
-- Record acceptance criteria for future profile behavior.
+Before selecting Team or Enterprise for real data, check individual dataset
+sharing and revocation, document processing quality, the chosen IdP lifecycle,
+backup/restore and the known limits of derived-data deletion. Native LDAP,
+SCIM-to-SSO identity linking, group/document grants and browser OIDC are not
+provided by selecting an enterprise profile.
 
-### Phase 2: access policy extraction
-
-- Status: complete for the current HTTP policy boundary.
-- `pkg/access` now owns `Actor`, `Resource`, `Authorize`, tenant membership,
-  activation checks, API-key permission checks, and identity/provisioning
-  shapes.
-- REST/MCP workspace parity tests exist.
-- Boundary guard tests now prevent new direct policy SQL in HTTP handlers
-  outside the approved compatibility files.
-
-### Phase 3: runtime profiles
-
-- Status: complete as a validation layer.
-- `LEVARA_PROFILE=personal|solo_pro|team|enterprise` is implemented.
-- `LEVARA_PROFILE_STRICT=1` is implemented.
-- Unsafe production combinations fail fast in strict mode, especially missing
-  auth/SSO, stable `JWT_SECRET`, Postgres for team/enterprise, tenant
-  enforcement, and audit sink for enterprise.
-
-### Phase 4: enterprise adapters
-
-- Status: partial.
-- Complete foundation: audit export boundary, async JSONL exporter, SSO bridge
-  interface, OIDC verified-claims adapter, SCIM-shaped provisioner interface,
-  storage metadata contract, direct-read contract, and KMS/BYOK hook contract.
-- Remaining work: native LDAP, browser OIDC login, SCIM-to-SSO linking and group
-  authorization, SIEM sink, and concrete corporate
-  storage/KMS backends for S3/GCS/Azure-style object stores.
-
-## Acceptance Criteria For Future Implementation
-
-- [x] Personal profile starts with SQLite and no required auth.
-- [x] Team profile refuses to start without Postgres, stable JWT secret, and
-  auth in strict mode.
-- [x] Enterprise profile refuses to start without tenant enforcement and an
-  audit sink in strict mode.
-- [x] HTTP and MCP workspace access decisions share one policy implementation.
-- [x] Denied team and enterprise operations have focused non-leakage coverage.
-- [x] Existing REST, MCP, and gRPC clients continue to work during policy
-  extraction.
-- [x] Corporate storage/KMS/retention adapter contracts are implemented and
-  tested.
-- [x] Product presets make each tier runnable without reading unrelated tier
-  documentation (`deploy/profiles/*.env.example` + `docs/profile-presets.md`,
-  validated by `server -config-check` / `make profile-config-check`).
+The current [roadmap](product/unimplemented-roadmap.md) owns remaining work;
+this guide describes present capability placement rather than completed phases.

@@ -21,11 +21,14 @@ code change there.
 
 ## Prerequisites
 
-The base Compose file starts Levara and Prometheus only. Configure and start
-embedding and LLM providers separately; set `EMBEDDING_ENDPOINT`,
-`EMBEDDING_MODEL`, a matching `LEVARA_DIM`, and the `LLM_*` provider values.
-See [integrations](../../docs/integrations.md). Containers need an endpoint
-reachable from inside the container, not the host's loopback address.
+Start a dedicated SQL-backed server using [getting started](../../docs/getting-started.md)
+and add the LLM settings from [integrations](../../docs/integrations.md). Configure
+SQL or Neo4j for durable graph state. The base Compose file starts Levara and
+Prometheus only; it does not supply that complete graph/model environment.
+
+The script hardcodes `http://localhost:8080`, so use that port on a dedicated
+local instance. Match the vector dimension to the embedding service. A model
+service inside a container needs an address reachable from that container.
 
 The script sends no credentials, so use an isolated local test instance or
 adapt its HTTP/MCP requests for auth. This example tests temporal extraction;
@@ -34,46 +37,24 @@ it is not a document-sharing or corporate identity acceptance test.
 ## Run
 
 ```bash
-docker compose up -d --build                                        # in repo root
 cd examples/rag-with-temporal-kg
 pip install -r requirements.txt
 python main.py
 ```
 
-Expected output (real run, qwen2.5:1.5b on CPU, ~7 min total):
+## Inspect the result
 
-```
-→ Step 1: ingest first fact (Alice-1778291171 works at Acme)
-  → run 934089ef done: 2 entities, 1 edges (126430ms)
+The script prints the two run results, current edges and an `as_of` historical
+view. Require successful processing, then compare the actual extracted entities
+and relations with the input. A particular LLM is not guaranteed to emit the
+same relation spelling or number of edges every time. Supersession only applies
+when the same source and an exclusive relation are actually persisted.
 
-→ Step 2: ingest the update (Alice-1778291171 now works at Globex)
-  → run e8111aea done: 3 entities, 2 edges (297356ms)
-
---- query_entity(Alice-1778291171) — active edges now ---
-  [ACTIVE ] works_at  src=2c8b7ec8 tgt=cb7f94c2  valid_from=...  valid_until=∞
-  [ACTIVE ] left      src=2c8b7ec8 tgt=690c7235  valid_from=...  valid_until=∞
-
---- query_entity(Alice-1778291171, as_of=2026-05-09T01:48:20Z) — historical snapshot ---
-  [HISTORY] works_at  src=2c8b7ec8 tgt=690c7235  valid_from=...  valid_until=...  superseded_by=...
-```
-
-The script suffixes the entity name with `int(time.time())` so each run
-creates a fresh person and never collides with rows from earlier runs or
-Levara's persistent LLM cache.
-
-## Tuning
-
-- **LLM**: the historical output above used qwen2.5:1.5b; Compose does not
-  install a model or choose an LLM provider. Configure your provider and model
-  explicitly. Entity and edge extraction vary with input/model; inspect the
-  result rather than accepting a run solely because it completed.
-- **Latency**: each `cognify` waits for one full LLM call. The recorded CPU run above is a historical
-  observation, not a latency guarantee. The script polls every 2s and times out
-  after 600s.
-- **Determinism**: small models occasionally emit synthetic IDs (`A1`,
-  `B1`) for entities. The pipeline maps known names to UUIDs but cannot
-  recover unknown synthetic IDs — they end up in `source_id`/`target_id`
-  unchanged. Re-run if a step looks degenerate.
+The script polls at two-second intervals with a 600-second limit. That is a
+client timeout, not a latency target. It suffixes entity names with a timestamp
+to reduce collisions across runs; it does not provide a general isolation or
+rollback mechanism. Run against disposable data and inspect degenerate results
+instead of repeatedly adding them to a shared graph.
 
 ## Related
 

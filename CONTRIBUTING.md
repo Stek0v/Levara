@@ -1,168 +1,82 @@
 # Contributing to Levara
 
-Thank you for your interest in contributing to Levara. This document outlines the process for contributing to the project.
+Use the Go version declared in [go.mod](go.mod). Docker/PostgreSQL, Neo4j,
+model endpoints and browser binaries are needed only for the corresponding
+integration scenarios. Run commands from the repository root.
 
-## Development Setup
-
-### Prerequisites
-
-- Go 1.26+
-- Docker and Docker Compose (for integration tests)
-- `protoc` with Go and Python plugins (for proto changes)
-- `grpcurl` (for manual gRPC testing)
-
-### Getting Started
-
-```bash
-# Clone the repository
-git clone https://github.com/stek0v/levara.git
-cd levara
-
-# Build
+```sh
 make build
-
-# Run tests
-make test
-
-# Run locally
-make run
+make test-commit
+make profile-config-check
+make contract-check
 ```
 
-### Project Structure
+For a persistent local server, follow [getting started](docs/getting-started.md):
+select a SQL backend explicitly. A bare server invocation does not configure
+all persistence and model dependencies for you.
 
-```
-cmd/server/     # Server entry point
-cmd/cli/        # CLI tool
-cmd/benchmark/  # Benchmark suite
-internal/       # Core engine (store, HNSW, WAL, arena, HTTP, cluster)
-pkg/            # Feature packages (LLM, graph, embed, chunker, etc.)
-pipeline/       # Pipeline definitions
-proto/          # Protobuf definitions
-deploy/         # Docker and Raspberry Pi deployment
-docs/           # Documentation
-```
+## Change and review
 
-## Code Style
+Keep changes focused, preserve unrelated work, format Go with `gofmt` and run
+checks appropriate to the changed behavior. Add a regression test for a bug or
+new behavior; use temporary directories and isolated test services. Security
+changes must include denied-access cases, and SQL changes must cover both
+SQLite and PostgreSQL where supported.
 
-- Follow standard Go conventions (`gofmt`, `go vet`, `golangci-lint`)
-- Use meaningful variable names; avoid single-letter names outside of loops
-- Keep functions focused and under 80 lines where practical
-- Write table-driven tests
-- Add comments for exported types and functions
-- Error messages should be lowercase, without trailing punctuation
+A pull request should state the problem, resulting behavior, validation and
+remaining gaps. Performance claims need before/after measurements on the same
+workload and hardware, with raw results. Do not describe an unrun test as passed.
+Consult [testing](docs/testing.md) for release gates, environment variables,
+opt-in integrations and the distinction between browser mocks and full E2E.
 
-### Imports
+## Repository map
 
-Group imports in this order, separated by blank lines:
+| Path | Responsibility |
+|---|---|
+| `cmd/server`, `cmd/cli` | Server and command-line entry points |
+| `internal` | Engine, HTTP, SQL, vector storage, WAL and cluster |
+| `pkg` | Auth/access, ingestion, extraction, MCP, workspace, tasks and providers |
+| `proto`, `proto/pb` | Protobuf definitions and generated bindings |
+| `pipeline` | Pipeline definitions |
+| `deploy` | Deployment examples and profile validation |
+| `docs` | Usage, configuration, architecture decisions and contracts |
+| `benchmark`, `tests` | Measurement harnesses and integration scenarios |
+| `webui` | Optional Next.js application |
 
-1. Standard library
-2. External dependencies
-3. Internal packages
+## Public contracts
 
-### Naming
+Edit the source inventories/descriptors, then run `make contract` and
+`make contract-check`. Generated `docs/api-contract.md`, `docs/contract.json`
+and the marked MCP table in `AGENTS.md` have one owner and are not hand-edited.
+Swagger is annotation-derived; use `make swag` for its generated files when
+annotations change. For protobuf changes, use the repository generation
+commands and the matching compiler/plugins.
 
-- Package names: lowercase, single word
-- Exported types: `PascalCase`
-- Unexported: `camelCase`
-- Constants: `PascalCase` for exported, `camelCase` for unexported
-- Interfaces: use `-er` suffix where appropriate (`Searcher`, `Embedder`)
+MCP changes must keep descriptor, schema, dispatch, profiles/feature flags and
+backward-compatible result/error shapes consistent. Auth/bootstrap routes may
+be registered separately from the generated application route inventory.
 
-## Pull Requests
+## Documentation and recipes
 
-### Before Submitting
+Keep one current guide for each workflow and link to it from [the index](docs/README.md).
+A recipe should provide prerequisites, a copyable command using an explicit
+server URL, necessary authentication, expected output, failure checks and a
+scoped rollback. Explain dependencies such as embeddings, SQL, OCR and LLMs.
+Never use instance-wide prune as rollback for a single document.
 
-1. Create a feature branch from `main`: `git checkout -b feat/my-feature`
-2. Write tests for new functionality
-3. Run the full test suite: `make test`
-4. Run linting: `golangci-lint run`
-5. Ensure your code compiles: `make build`
+When consolidating obsolete guides, move useful unique instructions first,
+delete obsolete files, and repair Markdown, HTML and fixture references.
+Preserve ADR rationale and raw historical test evidence; remove stale product
+claims. Local `docs/internal` and `docs/marketing` are ignored by Git, so updates
+to them are not automatically published. Test reports must identify source
+revision, environment, command, result and limitations; see [testing](docs/testing.md).
 
-### PR Guidelines
+## Releases and issues
 
-- Keep PRs focused on a single change
-- Write a clear title (under 70 characters)
-- Include a description of what changed and why
-- Reference related issues with `Fixes #123` or `Relates to #123`
-- Add benchmark results if the change affects performance
+The current workflows define CI checks; this repository does not provide an
+automatic tagged binary/container release pipeline. A release needs an explicit
+packaging and publishing procedure for its target environment.
 
-### Commit Messages
-
-Use conventional commits:
-
-```
-feat(store): add batch upsert support
-fix(wal): prevent fsync stall on high write load
-docs: update API reference for search types
-test(hnsw): add concurrent insert/delete test
-perf(arena): reduce page allocation overhead by 30%
-refactor(llm): extract provider interface
-```
-
-### Review Process
-
-1. All PRs require at least one review
-2. CI must pass (tests, linting, build)
-3. Performance-sensitive changes should include benchmark comparisons
-4. Breaking API changes require discussion in an issue first
-
-## Testing
-
-### Running Tests
-
-```bash
-# All tests
-make test
-
-# Specific package
-go test ./internal/store/... -v
-
-# With race detection
-go test -race ./...
-
-# Benchmarks
-go test -bench=. ./internal/store/...
-```
-
-### Writing Tests
-
-- Place tests in `_test.go` files alongside the code they test
-- Use `testing.T` for unit tests, `testing.B` for benchmarks
-- Use subtests (`t.Run`) for table-driven tests
-- Clean up test data (use `t.TempDir()` for temporary directories)
-- Mock external dependencies (LLM, Neo4j) in unit tests
-
-### Integration Tests
-
-Integration tests require running services (Levara server, Neo4j, etc.). Tag them with build constraints:
-
-```go
-//go:build integration
-
-package store_test
-```
-
-Run with:
-
-```bash
-go test -tags=integration ./...
-```
-
-## Release Process
-
-1. Update version in relevant files
-2. Update CHANGELOG.md
-3. Create a git tag: `git tag v1.x.x`
-4. Push tag: `git push origin v1.x.x`
-5. CI builds release binaries (linux/amd64, linux/arm64, darwin/amd64, darwin/arm64)
-6. Docker image is published to registry
-
-## Reporting Issues
-
-- Use GitHub Issues for bug reports and feature requests
-- Include Go version, OS, and relevant configuration
-- For bugs: include steps to reproduce, expected vs actual behavior
-- For performance issues: include benchmark data and hardware specs
-
-## License
-
-By contributing to Levara, you agree that your contributions will be licensed under the MIT License.
+For issues, include reproduction steps, expected/actual behavior, version,
+operating system and sanitized configuration. Do not include tokens or private
+documents. Contributions are covered by the [MIT license](LICENSE).

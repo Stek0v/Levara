@@ -490,7 +490,7 @@ func chunksSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 	// Record sub-query × collection fan-out for capacity planning. The
 	// rerank outcome counter is bumped per inner iteration, so dashboards
 	// translating outcome-delta back into request count must divide by the
-	// mean of this histogram. See docs/phase2-rerank-default-design.md
+	// mean of this histogram. See docs/search-strategies-guide.md
 	// ("Sub-query fan-out").
 	metrics.SearchChunksSubqueryFanout.Observe(float64(len(subQueries) * len(colls)))
 

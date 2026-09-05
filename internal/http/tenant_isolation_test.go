@@ -1,5 +1,5 @@
 // tenant_isolation_test.go — negative tests for tenant isolation across the
-// three request surfaces called out in docs/full-testing-scenarios.md (P4
+// three request surfaces called out in docs/testing.md (Enterprise
 // Enterprise + the S8 security-isolation suite): graph, search, workspace.
 //
 // The existing RBAC tests (rbac_search_test.go, workspace_test.go) prove the

@@ -1,75 +1,79 @@
 # Levara Agent Memory Evaluation
 
-Harness mapping the Mem0/Zep/LangMem comparison framework onto Levara MCP tools.
+A 12-category MCP evaluation harness for CRUD, retrieval, session continuity
+and bounded isolation checks. This is a protocol and tool guide; current
+verified results and historical limitations are in [testing](../../docs/testing.md).
 
-## Quick start
+## Run on an isolated target
+
+Prepare a disposable Levara instance with its own SQL database and vector data
+directory. Choose the server origin explicitly; the harness adds API paths.
+Use only synthetic memories. The harness creates users, collections and records.
 
 ```bash
-# All 3 hosts (Mac :8081, qwen-64 :8080, Pi5 :8090)
-bash benchmark/memory_eval/run_all_hosts.sh
-
-# Or manually:
+export LEVARA_EVAL_URL=http://127.0.0.1:18081
 python3 benchmark/memory_eval/run_memory_eval.py \
-  --targets benchmark/memory_eval/targets.json -v
-
-# Single host
-python3 benchmark/memory_eval/run_memory_eval.py \
-  --url http://localhost:8081 --label local-mac -v
-
-python3 benchmark/memory_eval/run_memory_eval.py \
-  --url http://10.23.0.64:8080 --label qwen-64 --auth -v
-
-python3 benchmark/memory_eval/run_memory_eval.py \
-  --url http://10.23.0.53:8090 --label pi5 --auth -v
+  --url "$LEVARA_EVAL_URL" --label isolated-local --auth \
+  --scale-memories 50 -v
 ```
 
-Artifacts land in `benchmark/memory_eval/results/`:
-- `memory_eval_<label>_<timestamp>.json` — full structured report
-- `memory_eval_<label>_<timestamp>.log` — step-by-step log
+For several isolated targets, create your own JSON file:
 
-## Categories (12 × score 0–3, 36 pts max)
+```json
+[
+  {"url": "http://127.0.0.1:18081", "label": "candidate-a", "auth": true},
+  {"url": "http://127.0.0.1:18082", "label": "candidate-b", "auth": true}
+]
+```
+
+Pass it with `--targets /path/to/eval-targets.json`. The repository's
+`targets.json` and `run_all_hosts.sh` contain environment-specific host settings;
+they are not portable setup instructions. Do not run them against live data.
+
+Artifacts default to `benchmark/memory_eval/results/`; use `--output-dir` for a
+separate run directory:
+
+- `memory_eval_<label>_<timestamp>.json` — structured report;
+- `memory_eval_<label>_<timestamp>.log` — execution log.
+
+## Categories (12 × score 0–3, 36 points maximum)
 
 | # | Category | What it measures |
 |---|----------|------------------|
-| 1 | CRUD + memory types | semantic / episodic / procedural save, recall, upsert, delete |
-| 2 | Retrieval quality | R@3, P@3, NDCG@3, MRR, Hit on `golden_dataset.json` v2 (~25 queries); **isolated collection per case** |
-| 3 | Latency | save/recall p50/p95/p99, 10-way concurrent recall |
-| 4 | Consolidation | `consolidate` dry_run, `wake_up` + pin |
-| 5 | Integration | MCP tool surface, diary namespace, agent contract |
-| 6 | Isolation | collection-scoped recall (no cross-tenant leakage) |
-| 7 | Edge cases | invalid hall, empty query, unicode, contradiction upsert |
-| 8 | Observability | doctor, runtime_stats, heartbeat |
-| 9 | Cross-session | MCP reconnect → same JWT → recall persists |
-| 10 | Owner isolation | JWT user A vs B (`--auth`) |
-| 11 | Context efficiency | `wake_up` respects `max_tokens` budget |
-| 12 | Scale smoke | N saves → recall latency (`--scale-memories`, default 50) |
+| 1 | CRUD + memory types | save, recall, upsert and delete on test records |
+| 2 | Retrieval quality | R@3, P@3, NDCG@3, MRR and Hit; golden v2 has 15 cases and 19 queries, with an isolated collection per case |
+| 3 | Latency | save/recall percentiles and 10-way concurrent recall |
+| 4 | Consolidation | dry-run consolidation, pin and wake-up |
+| 5 | Integration | MCP tool surface, diary namespace and agent contract |
+| 6 | Collection isolation | cross-collection recall on the configured cases; not tenant authorization proof |
+| 7 | Edge cases | invalid hall, empty query, Unicode and contradiction upsert |
+| 8 | Observability | doctor, runtime_stats and heartbeat |
+| 9 | Cross-session | reconnect with the same credentials and recall |
+| 10 | Owner isolation | JWT user A versus B; requires `--auth` |
+| 11 | Context efficiency | wake_up budget checks |
+| 12 | Scale smoke | N saves and recall latency; `--scale-memories` defaults to 50 |
 
-See [`COVERAGE.md`](COVERAGE.md) for Mem0/Zep mapping and known gaps.
+The displayed overall percentage normalizes category points. **36/36 does not
+mean 100% retrieval accuracy**, complete code coverage or proof of every access
+path. Read per-query metrics, skips, errors and authentication mode separately.
+See [COVERAGE.md](COVERAGE.md) for test mapping and gaps.
 
-## Prerequisites
+## Preparation and interpretation
 
-- Running Levara HTTP + MCP endpoint
-- **PostgreSQL** + **embed sidecar** on all hosts (see `targets.json`):
-  - **Mac:** `scripts/postgres-dev.sh` + `scripts/start-embed-local.sh` + `./start-levara.sh`
-  - **qwen-64:** `scripts/postgres-remote-ensure.sh`
-  - **Pi5:** prod systemd on `:8090` (potion embed `:9101`)
-- Remote auth: `--auth` or `"auth": true` in targets
-- Verify: `curl -s http://<host>/health/details | jq '{embed,postgres:.postgres}'`
-
-**Auth rate limit (not PostgreSQL):** `/auth/login` + `/auth/register` share **10 req/min per IP** by default. The memory eval issues many logins — on Mac set `RATE_LIMIT_AUTH_MAX=10000` (already in `local.postgres.env.example` / `start-levara.sh`) and restart levara. Tests reuse fixed users (`memeval@bench.local`) and login-before-register.
-
-## Host matrix
-
-| Host | URL | Auth | Embed |
-|------|-----|------|-------|
-| Mac | `localhost:8081` | yes | potion `:9101` |
-| qwen-64 | `10.23.0.64:8080` | yes | qwen3 `:9001` |
-| Pi5 | `10.23.0.53:8090` | yes | potion `:9101` |
-
-## Known deployment checks (2026-06-16)
-
-| Host | Status |
-|------|--------|
-| `localhost:8081` | PG + potion embed via `start-levara.sh` |
-| `10.23.0.64:8080` | PG + qwen3 embed |
-| `10.23.0.53:8090` | Pi prod, auth required |
+- Install dependencies needed by the harness and its imported MCP test client
+  in a separate Python environment; check imports before a timed run.
+- Record revision, dirty diff, SQL backend/version, model revision/dimension,
+  corpus digest, settings and run command alongside the results.
+- Use PostgreSQL if evaluating that backend; a SQLite run cannot establish
+  PostgreSQL behavior. A configured embedding service is needed for semantic
+  cases; skipped cases must stay visible in the report.
+- `--auth` registers/logs in test accounts. `LEVARA_TEST_EMAIL` and
+  `LEVARA_TEST_PASSWORD` override the main fixture account; the harness also
+  uses test identities for owner checks. These accounts belong only on the
+  disposable target. Review logs before sharing them: authentication metadata
+  includes a token prefix.
+- Keep normal authentication and rate-limit policy. If the run receives 429,
+  report it and schedule a fresh run after the limit window; weakening a live
+  service's auth limit changes the experiment and its security boundary.
+- Remove only the disposable instance and its data after preserving the report.
+  The harness is not a production health check or a backup mechanism.

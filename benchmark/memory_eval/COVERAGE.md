@@ -1,82 +1,74 @@
-# Levara Memory Eval — Coverage Matrix
+# Levara Memory Eval — Test Coverage Map
 
-Maps the Mem0/Zep/LangMem evaluation framework to what this harness tests today,
-what lives elsewhere in the repo, and planned gaps.
+This map describes checks present in the harness and related suites. It does
+not report current statement coverage or benchmark results. See
+[testing evidence](../../docs/testing.md) for observed runs and their limits.
 
-## Layer model
+## Layers
 
 | Layer | Question | Harness |
 |-------|----------|---------|
-| **L0** | MCP contract / tools exist | cat 5, 8 |
-| **L1** | CRUD + PG persist | cat 1 |
-| **L2** | Retrieval quality (golden) | cat 2 |
-| **L3** | Latency smoke | cat 3 |
-| **L4** | Consolidation / wake_up | cat 4 |
-| **L5** | Tenant / owner isolation | cat 6, 10 |
-| **L6** | Session continuity | cat 9 |
-| **L7** | Context budget | cat 11 |
-| **L8** | Scale smoke | cat 12 |
-| **L9** | Agent e2e + LLM judge | `tests/test_mcp_e2e.py` (partial) |
-| **L10** | Load / 1M memories | not automated |
+| L0 | MCP tools exist | categories 5, 8 |
+| L1 | CRUD persistence on selected backend | category 1 |
+| L2 | Retrieval on the golden corpus | category 2 |
+| L3 | Latency smoke | category 3 |
+| L4 | Consolidation dry-run and wake_up | category 4 |
+| L5 | Collection and owner scope | categories 6, 10; owner requires auth |
+| L6 | Session continuity | category 9 |
+| L7 | Context budget | category 11 |
+| L8 | Scale smoke | category 12 |
+| L9 | Agent dialogue and answer correctness | separate `tests/test_mcp_e2e.py`; not established by this score |
+| L10 | Sustained load or one million memories | not established by the default smoke run |
 
-## Category map (12 × 0–3 = 36 pts max)
+## Categories (12 × 0–3 = 36 points maximum)
 
-| Cat | Name | Mem0/Zep block | In harness |
-|-----|------|----------------|------------|
-| 1 | CRUD + types | §1 Functional | semantic/episodic/procedural, upsert, delete |
-| 2 | Retrieval | §2 Quality | R@3, P@3, NDCG@3, MRR, Hit; ~25 golden queries |
-| 3 | Latency | §3 Performance | p50/p95 save+recall, 10-way burst |
-| 4 | Consolidation | §4 Forgetting | dry_run, wake_up+pin |
-| 5 | Integration | §5 LLM/agent | MCP tools, diary, instructions |
-| 6 | Collection isolation | §6 Multi-tenant | cross-collection recall |
-| 7 | Edge cases | §7 Resilience | hall, unicode, contradiction, long text |
-| 8 | Observability | §8 Checklist | doctor, runtime_stats, heartbeat |
-| 9 | Cross-session | §2 cross-session | reconnect MCP → recall |
-| 10 | Owner isolation | §6 Multi-tenant | JWT user A vs B (`--auth`) |
-| 11 | Context efficiency | §3 tokens | wake_up budget trim |
-| 12 | Scale smoke | §3 scale | N saves → recall latency |
+| Category | Checks |
+|----------|--------|
+| 1. CRUD + types | semantic/episodic/procedural fixtures, upsert, delete |
+| 2. Retrieval | R@3, P@3, NDCG@3, MRR, Hit; golden v2 has 15 cases and 19 queries |
+| 3. Latency | save/recall percentiles, 10-way burst |
+| 4. Consolidation | dry-run, wake_up and pin |
+| 5. Integration | MCP tools, diary and instructions |
+| 6. Collection scope | cross-collection recall |
+| 7. Edge cases | hall, Unicode, contradiction and long text |
+| 8. Observability | doctor, runtime_stats and heartbeat |
+| 9. Cross-session | reconnect MCP and recall |
+| 10. Owner scope | JWT user A versus B with `--auth` |
+| 11. Context efficiency | wake_up budget trimming |
+| 12. Scale smoke | N saves and recall latency |
 
-## Go unit / integration coverage (memory layer)
+A score of 36/36 represents category points. It is not 100% retrieval quality,
+100% code coverage, or complete tenant isolation. Collection separation and
+JWT owner checks cover different boundaries. Inspect per-query results and
+skipped embedding/auth cases before comparing runs.
 
-| Package | Stmt coverage | Memory-related tests |
-|---------|---------------|----------------------|
-| `pkg/mcp` | **88.7%** | `tool_save_recall_memory_test.go` (25 tests), `tool_memory_test.go` (29) |
-| `internal/http` | **54.5%** | `sync_memory_test.go`, `memory_events_*`, `mcp_reconcile_memory_test.go` |
-
-**Well covered in Go:** `ToolSaveMemory`, `ToolRecallMemory` (vector + SQL paths), consolidate dry_run, pin/wake_up at pkg layer, collection_name upsert, owner scope.
-
-**Thin in Go (HTTP wiring only):** `internal/http/mcp_palace.go` tool handlers (0% — exercised via MCP pytest instead), REST `memories.go` handlers (~4–11%).
-
-**New pytest layer (cats 9–12):** `tests/test_memory_eval_extended.py` — cross-session, owner isolation, wake_up budget, scale smoke.
-
-## Elsewhere in repo
+## Related suites
 
 | Area | Location |
 |------|----------|
-| Go unit tests (memory tools) | `pkg/mcp/tool_*_memory*_test.go` |
-| Palace MCP pytest | `tests/test_mcp_palace.py` |
-| MCP integration / stress | `tests/test_mcp_integration.py`, `test_mcp_stress.py` |
-| Consolidate engine | `pkg/consolidate/*_test.go` |
-| Full product scenarios | `docs/full-testing-scenarios.md` |
-| Search relevance (non-memory) | `internal/http` eval tests |
+| Go memory tools | `pkg/mcp/tool_save_recall_memory_test.go`, `pkg/mcp/tool_memory_test.go` and related tests |
+| HTTP memory and sync | `internal/http/sync_memory_test.go`, `memory_events_*`, `mcp_reconcile_memory_test.go` |
+| Palace MCP integration | `tests/test_mcp_palace.py` |
+| MCP integration / stress | `tests/test_mcp_integration.py`, `tests/test_mcp_stress.py` |
+| Extended harness scenarios | `tests/test_memory_eval_extended.py` |
+| Consolidation engine | `pkg/consolidate/*_test.go` |
+| Document, identity and sharing acceptance | [document scenario matrix](../../docs/document-workflow-scenarios.md) |
+| Search relevance | evaluation tests in `internal/http` |
 
-## Known gaps (not in harness)
+Statement coverage must be measured for a specific revision and command with
+its coverage artifact. This guide does not retain undated package percentages
+or infer coverage from the existence of a test file.
 
-- LoCoMo / LongMemEval import
-- LLM-as-judge e2e dialog (10-turn → answer correctness)
-- TTL / decay automatic expiry
-- consolidate **apply** (non-dry_run) on prod collections
-- BM25 vs vector A/B in memory recall
-- Cost per 1M memories
-- Crash recovery / backup restore of memories
-- Write-time noise filter (agent policy, not server)
+## Not established by this harness
 
-## Running full matrix
+- LoCoMo / LongMemEval results or cross-product comparisons;
+- multi-turn answer correctness judged against ground truth;
+- TTL/decay enforcement or consolidation apply behavior;
+- BM25 versus vector A/B in memory recall;
+- costs at one million memories;
+- crash recovery, backup restore and independent-node synchronization;
+- all document, group, tenant or organization authorization paths;
+- whether an agent consistently chooses what to save and recall.
 
-```bash
-bash benchmark/memory_eval/run_all_hosts.sh
-# or single host with auth for cat 10:
-python3 benchmark/memory_eval/run_memory_eval.py \
-  --url http://localhost:8081 --label local --auth \
-  --scale-memories 50 -v
-```
+Run against a disposable, explicitly chosen target using the
+[README procedure](README.md). Do not point benchmark host scripts at production.

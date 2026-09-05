@@ -89,12 +89,11 @@ an environment variable:
 [mcp_servers.levara]
 url = "http://127.0.0.1:8080/mcp"
 enabled = true
-env_http_headers = { "X-API-Key" = "LEVARA_MCP_API_KEY" }
-default_tools_approval_mode = "writes"
+bearer_token_env_var = "LEVARA_TOKEN"
 ```
 
-Set `LEVARA_MCP_API_KEY` outside the configuration file. Omit
-`env_http_headers` only for isolated single-user loopback development when the
+Set `LEVARA_TOKEN` outside the configuration file. Omit
+`bearer_token_env_var` only for isolated single-user loopback development when the
 server itself has authentication intentionally disabled
 (`-require-auth=false`). Do not omit credentials for shared, remote, or
 persistent deployments. Use HTTPS for endpoints accessed across an untrusted
@@ -160,3 +159,14 @@ response.
 Delete the copied `levara-memory-workflow` directory from the client's skills
 directory and restart the client. Removing the skill does not delete existing
 Levara memories.
+
+## Related workflows
+
+[Workspace host examples](../examples/agent-hosts/README.md) describe Markdown
+operations, not the complete memory playbook. Use [Task Runtime](long-horizon-runtime.md)
+for leases and receipts; temporary checkpoints are not durable memories.
+[Memory consolidation](features-guide.md#консолидация-памяти) covers dry-run,
+guards and revert. Verify the MCP connection in the actual client: structural
+config tests do not prove support across all IDEs. Action approval follows host
+policy and the user’s existing authorization; installing the skill grants no
+additional authority.

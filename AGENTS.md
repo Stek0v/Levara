@@ -5,7 +5,7 @@ via MCP, custom Agent SDK clients) on how to use the Levara MCP memory layer
 effectively. The goal: nothing important from a session should ever be lost,
 and every future session should be able to reconstruct context cheaply.
 
-Mirror of the "Levara MCP Memory" section in `CLAUDE.md`. Update both together.
+`CLAUDE.md` links to this canonical memory playbook; keep that entry point consistent.
 
 ## Levara memory
 
@@ -169,20 +169,11 @@ into the vector store.
 
 ---
 
-## Tool catalog (25 MCP tools)
+## Tool catalog
 
-**Knowledge graph & search:** `cognify`, `cognify_status`, `search`,
-`cross_search`, `query_entity`, `analyze_commits`, `git_search`, `codify`
-
-**Data ingestion:** `add`, `list_data`, `delete`, `prune`
-
-**Memory palace:** `save_memory`, `recall_memory`, `list_memories`,
-`pin_memory`, `unpin_memory`, `wake_up`, `diary_write`, `diary_read`
-
-**Chat history:** `save_chat`, `recall_chat`, `search_chats`
-
-**Context & sync:** `set_context`, `get_project_context`, `sync`,
-`add_feedback`, `get_feedback_stats`
+Use the generated [MCP Tools](#mcp-tools) table below and
+[API contract](docs/api-contract.md). Runtime profiles and feature flags can
+expose a subset; inspect the active server's tool list for available operations.
 
 ---
 

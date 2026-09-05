@@ -20,27 +20,27 @@ Entry points by role:
 | Deploy for a team with auth | [tutorials/04-team-deploy.md](tutorials/04-team-deploy.md) |
 | Find the right tool/command for my task | [features-guide.md](features-guide.md) |
 | Integrate my agent (Claude Code, Cursor, Codex) | [getting-started.md → MCP integration](getting-started.md) and [integrations.md](integrations.md) |
-| Deploy for a team | [deployment.md](deployment.md), [deployment-matrix.md](deployment-matrix.md) |
+| Deploy for a team | [deployment.md](deployment.md) |
 | Configure runtime profiles | [profile-presets.md](profile-presets.md) |
 | Understand search strategies | [search-strategies-guide.md](search-strategies-guide.md) |
 | Use the Markdown workspace | [markdown-native-workspace.md](markdown-native-workspace.md), [recipes/](recipes/) |
 | Run long-horizon tasks | [long-horizon-runtime.md](long-horizon-runtime.md) ([RU](long-horizon-runtime.ru.md)) |
 | Operate and observe | [webui-operations.md](webui-operations.md), [cron-profiles.md](cron-profiles.md), [macos-levara-watchdog.md](macos-levara-watchdog.md) |
+| Verify tests and published claims | [testing.md](testing.md) |
 | Check the API surface | [api-contract.md](api-contract.md) (SSOT), [api-reference.md](api-reference.md), [contract.json](contract.json) |
-| Evaluate Levara for my org | [product-ladder.md](product-ladder.md), [product/market-segments.md](product/market-segments.md), [unimplemented-roadmap.md](product/unimplemented-roadmap.md), [task-backlog.md](product/task-backlog.md) |
+| Evaluate Levara for my org | [product-ladder.md](product-ladder.md), [product/market-segments.md](product/market-segments.md), [unimplemented-roadmap.md](product/unimplemented-roadmap.md) |
 
 ## Evidence and document status
 
-The [2026-09-03 load run](../benchmark/results/multi_user/run2_summary.json)
-records six passing scenarios with a named revision and backend. Treat latency,
-isolation and recovery observations as workload-specific, not general guarantees.
-The [CI definition](../.github/workflows/go-ci.yml) describes current gates;
-results belong to an individual run.
+[Testing](testing.md) lists dated observed results, commands, mocks, skipped
+integrations and remaining acceptance work. [Document scenarios](document-workflow-scenarios.md)
+map current behavior to tests and distinguish source inspection from live validation.
+The [CI definition](../.github/workflows/go-ci.yml) describes gates, not their latest result.
 
-[current-state.md](current-state.md) is a dated snapshot of one local deployment,
-not installation defaults. Tutorials and guides describe supported workflows;
-ADRs and design proposals preserve decisions and may contain unimplemented targets.
-Local marketing and internal notes are not published or normative API contracts.
+Obsolete deployment snapshots, completed plans and duplicate marketing articles
+have been removed. Current guides describe supported workflows; ADRs retain
+architecture rationale with explicit implementation limits. Historical raw
+benchmark results remain separate from current product claims.
 
 ## Directory map
 

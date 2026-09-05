@@ -1,107 +1,67 @@
-# Рецепт: Markdown-файлы в Brain
+# Рецепт: Markdown-файлы в Levara
 
-## Назначение
+Для исходных документов используйте upload → processing → search. Если нужны
+редактируемые truth-файлы и exact read по пути, выбирайте отдельный
+[Markdown workspace](../markdown-native-workspace.md) workflow.
 
-Загрузка markdown-документации в Levara для семантического поиска и RAG. Поддерживает два режима:
-- **RAG-режим** (быстрый): только chunk + embed, LLM не нужен
-- **Full-режим** (полный): извлечение сущностей + граф знаний + chunk + embed
+## Требования
 
-## Предварительные требования
+Запустите SQL-backed сервер и совместимый embedding endpoint по
+[getting started](../getting-started.md). Семантическая индексация требует модели;
+полный graph extraction дополнительно использует LLM и graph storage.
+Файлы должны содержать материал, разрешённый для выбранных providers.
 
-- [ ] Levara-сервер запущен (`curl http://localhost:8080/health`)
-- [ ] Embedding-сервис работает (`doctor()` показывает embed_service = "ok")
-- [ ] Для full-режима: LLM настроен (`doctor()` показывает llm = "ok")
+## Загрузить и обработать документ
 
-## Шаги
+Из корня репозитория:
 
-### Вариант A: RAG-режим (быстрый, без LLM)
-
-1. **Установить контекст**:
-   ```
-   set_context(collection="docs")
-   ```
-
-2. **Загрузить каждый файл** — прочитать содержимое и передать в cognify:
-   ```
-   cognify(
-     data="<содержимое_файла>",
-     collection="docs",
-     mode="rag",
-     room="<тема>",
-     tags=["documentation"],
-     document_title="<имя_файла>",
-     chunk_strategy="merged"
-   )
-   ```
-
-3. **Проверить**:
-   ```
-   search(search_query="<известный контент из файлов>", collection="docs")
-   ```
-
-### Вариант B: Full-режим (извлечение сущностей)
-
-1. **Установить контекст**:
-   ```
-   set_context(collection="docs")
-   ```
-
-2. **Загрузить с полным пайплайном**:
-   ```
-   cognify(
-     data="<содержимое_файла>",
-     collection="docs",
-     mode="full",
-     room="<тема>",
-     tags=["documentation"],
-     document_title="<имя_файла>",
-     chunk_strategy="merged",
-     community_resolution=1.0,
-     dedup_threshold=0.95
-   )
-   ```
-
-3. **Проверить статус** (full-режим асинхронный):
-   ```
-   cognify_status(run_id="<returned_id>")
-   ```
-
-4. **Проверить сущности**:
-   ```
-   list_communities()
-   query_entity(name="<ожидаемая_сущность>")
-   ```
-
-## Smoke-тест
-
-```
-search(search_query="<уникальная фраза из одного из файлов>", collection="docs")
+```bash
+export LEVARA_URL=http://127.0.0.1:8080/api/v1
+./levara add --file=./README.md --dataset=docs-example
+./levara cognify --dataset=docs-example --collection=docs-example --wait
+./levara search 'Levara' --collection=docs-example --type=CHUNKS_LEXICAL --top-k=5
 ```
 
-Ожидание: минимум 1 результат с правильным document_title в metadata.
+Это локальный пример для изолированного tutorial-сервера. Для auth задайте
+`LEVARA_TOKEN`. Имя dataset в CLI `add` разрешается для текущего пользователя;
+для shared editor target используйте WebUI/API с существующим dataset ID.
 
+`add` сохраняет сырой материал, `cognify` создаёт поисковые производные. Проверяйте
+явный успешный terminal status и исходный текст результата, не фиксированный
+sleep. Ошибка extraction, неизвестный run ID и failed processing не означают
+готовность. Для форматов, повторного запуска и оригиналов:
+[document management](../document-management.md).
+
+## Прямой MCP RAG/full вызов
+
+Когда raw-объект уже сохранён отдельно или нужен одноразовый индекс inline-текста,
+можно передать содержимое непосредственно:
+
+```text
+cognify(data="APPROVED_MARKDOWN_TEXT", collection="docs-example",
+        mode="rag", room="docs", tags=["documentation"],
+        document_title="example.md", chunk_strategy="merged")
 ```
-search(search_query="<тема>", search_type="HYBRID", collection="docs")
-```
 
-Ожидание: гибридный поиск возвращает и семантические, и ключевые совпадения.
+`mode="rag"` пропускает graph extraction; `mode="full"` включает полный
+настроенный pipeline. Оба режима требуют проверки возвращённого run через
+`cognify_status`. Inline cognify не следует считать сохранением оригинального
+файла для дальнейшего скачивания. Дополнительные chunking-параметры сверяйте с
+[контрактом](../api-contract.md), а улучшение retrieval — с реальным корпусом.
 
-## Откат
+## Пакетный проект и проверка качества
 
-```
-delete(dataset_id="<dataset_id>")
-```
+[Project ingest](../project-ingest.md) сканирует проект своими фильтрами, не
+`.gitignore`; начните с dry-run и просмотра selected files. После обработки
+сравните точную фразу и смысловой вопрос с тем же collection scope. Для ответа
+агента проверяйте источник, для workspace — ещё и exact read актуального файла.
+[Сценарии документов](../document-workflow-scenarios.md) описывают проверку
+ошибок, повторной обработки и доступа двух пользователей.
 
-Или удалить все данные коллекции docs:
-```
-prune()  # ВНИМАНИЕ: удаляет ВСЕ данные
-```
+## Очистка
 
-## Заметки
-
-- **Стратегии чанкинга**: `merged` (по умолчанию, объединяет короткие абзацы), `paragraph`, `sentence`, `sliding` (фиксированное окно с перекрытием)
-- **Sliding window** лучше всего для длинных документов: `chunk_strategy="sliding", max_chunk_chars=500, overlap_chars=100`
-- **Parent-child** чанкинг (`parent_child=true`) даёт лучшую точность поиска с полным контекстом при извлечении
-- **Room/tags** критичны для фильтрованного поиска потом — всегда устанавливай их при загрузке
-- Большие файлы: рекомендуется разбивать на секции перед загрузкой (< 50 КБ на вызов)
-- **Пакетная загрузка**: для многих файлов сначала вызови `add()` для сохранения сырого текста, потом `cognify` на dataset — это предотвращает потерю данных если пайплайн упадёт на полпути
+MCP `delete` принимает `dataset_id`, не `data_id`; операция не гарантирует
+физическое удаление всех originals/derivatives любого ingestion flow. Сохраните
+созданные IDs и применяйте только документированную операцию к своему dataset.
+Глобальный `prune` не является откатом одной collection. Полная стратегия
+восстановления: [deployment](../deployment.md#backup-and-recovery).

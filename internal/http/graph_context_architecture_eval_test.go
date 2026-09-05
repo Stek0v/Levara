@@ -319,7 +319,7 @@ func writeGraphContextArchReportIfRequested(t *testing.T, report graphContextArc
 	if err := os.WriteFile(filepath.Join(resultsDir, "graph_context_architecture_eval_latest.json"), raw, 0644); err != nil {
 		t.Fatalf("write graph context architecture json: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(repoRoot, "docs", "graph-context-architecture-eval-report.md"), []byte(renderGraphContextArchMarkdown(report)), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(resultsDir, "graph-context-architecture-eval-report.md"), []byte(renderGraphContextArchMarkdown(report)), 0644); err != nil {
 		t.Fatalf("write graph context architecture markdown: %v", err)
 	}
 }

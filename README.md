@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <a href="https://go.dev/"><img src="https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go&logoColor=white" alt="Go 1.26 or newer"></a>
+  <a href="https://go.dev/"><img src="https://img.shields.io/badge/Go-1.26.6-00ADD8?logo=go&logoColor=white" alt="Go version: see go.mod"></a>
   <a href="./docs/api-contract.md"><img src="https://img.shields.io/badge/MCP-native-2658D8" alt="Native Model Context Protocol support"></a>
   <a href="./docs/profile-presets.md"><img src="https://img.shields.io/badge/profiles-personal%20%E2%86%92%20enterprise-17202A" alt="Personal through enterprise runtime profiles"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-28835E" alt="MIT license"></a>
@@ -24,16 +24,6 @@ memory, hybrid search, a temporal knowledge graph, a verifiable Markdown
 workspace, synchronization, observability, and scoped long-running tasks in one
 Go server binary. The optional WebUI runs as a separate Next.js service.
 
-<p align="center">
-  <img src="./assets/readme/proof.svg" width="100%" alt="A verified MCP flow where a README decision is saved in one agent turn and recalled with provenance in the next">
-</p>
-
-The flow above is based on a real project memory used while redesigning this
-README: the visual direction was stored as a scoped `decision`, then recovered
-in the next agent turn without replaying the previous chat. Levara keeps the
-record in SQL and maintains searchable index sidecars; the conversation itself
-is not the source of truth.
-
 ## Why Levara
 
 AI agents are powerful inside one prompt window and forgetful outside it. Chat
@@ -48,25 +38,24 @@ Levara gives agents a context control plane:
   search, temporal graph queries, and bounded task bootstraps keep context small.
 - **Keep work inspectable** — Markdown remains the workspace source of truth;
   indexes are disposable derivatives that can be reconciled or rebuilt.
-- **Prove long-running work** — the alpha Task Runtime connects Definition of
+- **Prove long-running work** — Task Runtime connects Definition of
   Done criteria to steps, leases, immutable receipts, checkpoints, and
   deterministic validation.
 - **Scale the operating model** — the same engine supports a local developer,
   a multi-device setup, a shared team, or enterprise adapter boundaries.
 
-## Verified quality
+## Verification and quality
 
-The [2026-09-03 multi-user run](benchmark/results/multi_user/run2_summary.json)
-records six passing scenarios at revision `1bb5bab`, using PostgreSQL and a
-`potion-code-16M` embedding sidecar (256 dimensions). With 50 agents writing
-60 keys each, save p95 was 22.2 ms and recall p95 was 238.5 ms. The separate
-outbox scenario observed no duplicate completions. These are results for that
-workload, not guarantees for every deployment or authorization path.
+[Testing results and commands](docs/testing.md) record the 2026-09-05 run:
+backend regressions with SQLite/PostgreSQL, real parsers for seven document
+formats, and 42 Chromium WebUI tests with mocked APIs. The guide identifies
+the revision, local changes, coverage limits and scenarios needing a separate
+integration environment.
 
-The [CI workflow](.github/workflows/go-ci.yml) defines lint, vet, race,
-contract-drift, vulnerability and PostgreSQL integration checks for pull
-requests and main-branch pushes. Its npm audit covers production dependencies;
-consult the run for a particular revision for current results.
+Historical benchmark JSON remains available as raw evidence. Its pass labels
+do not establish authenticated owner isolation, independent-node sync convergence
+or OCR accuracy. The [CI workflow](.github/workflows/go-ci.yml) defines checks;
+a result belongs to a particular run.
 
 ## Capability map
 
@@ -152,9 +141,10 @@ live in [examples/agent-hosts](examples/agent-hosts).
 
 ### Docker
 
-```bash
-docker compose up -d --build
-```
+Choose loopback port publishing or authenticated network access before starting
+Compose. The base compose file publishes host ports on all interfaces and leaves
+auth disabled by default. Follow the [Docker recipe](docs/deployment.md#docker)
+with explicit settings.
 
 See [docs/profile-presets.md](docs/profile-presets.md) for production-shaped
 Personal, Solo Pro, Team, and Enterprise configuration examples.
@@ -225,14 +215,12 @@ agent needs:
 `light` remains a legacy alias for `memory`. Tool profiles are not authorization
 boundaries; JWT/API-key and workspace policy checks still apply independently.
 
-> [!WARNING]
-> Long-Horizon Task Runtime is alpha and feature-flagged. Set
-> `LEVARA_LONG_HORIZON_RUNTIME=1` and use the `long-horizon` MCP tool profile.
-> The current alpha suite covers dependency handling, idempotent retries,
-> concurrent claims, stale evidence, reviewer policy, crash recovery, bounded
-> bootstrap relevance, blocker resolution, and verified memory promotion. Start
-> with the [Long-Horizon Runtime guide](docs/long-horizon-runtime.md); the
-> [alpha report](docs/long-horizon-alpha-report.md) records the acceptance run.
+Task Runtime is opt-in with `LEVARA_LONG_HORIZON_RUNTIME=1` and the
+`long-horizon` tool profile. It manages steps and evidence; the WebUI provides
+read-only task inspection. The built-in worker uses a logging/no-op executor;
+a separate executor must perform actions. Authority manifests bind a digest
+at claim time but do not by themselves sandbox tool, file or network execution.
+See the [runtime guide](docs/long-horizon-runtime.md) and [tests](docs/testing.md).
 
 ## Runtime profiles
 
@@ -253,8 +241,8 @@ Product profiles share one core engine:
 | **Team** | PostgreSQL, required auth, shared workspace, per-agent credentials | Project sharing, ACL, audit and async jobs |
 | **Enterprise** | PostgreSQL, tenant enforcement, central identity/audit boundaries | Governance and adapter-based integration |
 
-Strict validation is available with `LEVARA_PROFILE_STRICT=1`; unsafe Team and
-Enterprise combinations fail before listeners are opened.
+`LEVARA_PROFILE_STRICT=1` checks required Team/Enterprise configuration before
+opening listeners. It does not validate IdP connectivity or the entire deployment.
 
 ## Interfaces
 
@@ -267,9 +255,8 @@ Enterprise combinations fail before listeners are opened.
 | CLI | local binaries | server, client, backup, contract and host tooling | Operators and automation |
 | WebUI | `:3000` in development | Next.js application | Users, operators and reviewers |
 
-Defaults describe the normal deployment shape, not any specific developer
-machine. For a verified local development snapshot, use
-[docs/current-state.md](docs/current-state.md).
+Configure addresses, SQL and model endpoints using the
+[deployment guide](docs/deployment.md).
 
 ## Operations and WebUI
 
@@ -338,13 +325,12 @@ Useful references:
 | Document | Purpose |
 |---|---|
 | [docs/api-contract.md](docs/api-contract.md) | Generated REST, gRPC, MCP and schema inventory |
+| [docs/testing.md](docs/testing.md) | Results, reproduction commands and coverage limits |
 | [docs/profile-presets.md](docs/profile-presets.md) | Runnable product-profile examples |
 | [docs/product-ladder.md](docs/product-ladder.md) | Capability and enterprise boundary source of truth |
 | [docs/webui-operations.md](docs/webui-operations.md) | WebUI setup, monitoring and workflows |
-| [docs/current-state.md](docs/current-state.md) | Verified local development snapshot |
 | [docs/memory-workflow-skill.md](docs/memory-workflow-skill.md) | Install and operate the automatic Levara memory workflow skill |
 | [docs/long-horizon-runtime.md](docs/long-horizon-runtime.md) | Task Runtime setup, lifecycle, evidence and recovery guide |
-| [docs/long-horizon-alpha-report.md](docs/long-horizon-alpha-report.md) | Task Runtime acceptance and recovery evidence |
 
 ## Contributing
 

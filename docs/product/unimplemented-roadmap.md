@@ -1,115 +1,144 @@
-# Levara — полный список нереализованного (2026-09-04)
+# Незавершённые возможности и критерии приёмки
 
-> Статус документа на 2026-09-05: это датированный backlog, а не руководство
-> эксплуатации. Отметка о реализации SAML/SCIM обозначает ограниченную HTTP-поверхность,
-> а не готовую связку с AD/LDAP, browser SSO или права групп. Текущие ограничения:
-> [enterprise identity](../enterprise-identity.md), [управление документами](../document-management.md),
-> [приёмочные сценарии](../document-workflow-scenarios.md).
+Сверено с исходниками 2026-09-05. Это backlog разработки, не инструкция по
+включению функций. Приоритеты: P1 — доступ, идентичность и исполнение задач;
+P2 — эксплуатация и интеграции; P3 — удобство и отдельные эксперименты.
+Перечисленные критерии не считаются выполненными без соответствующего прогона.
 
+Текущие возможности описаны в [продуктовой лестнице](../product-ladder.md),
+[руководстве по идентичности](../enterprise-identity.md),
+[управлении документами](../document-management.md) и
+[Task Runtime](../long-horizon-runtime.md). Результаты и ограничения проверок —
+в [testing](../testing.md), сценарии документов — в
+[приёмочной матрице](../document-workflow-scenarios.md).
 
-Источник: сравнительная страница режимов (`docs/marketing/modes-comparison.html`)
-и её первоисточники — `docs/marketing/{personal,solo-pro,team,enterprise}.md`,
-`docs/profile-presets.md`, `docs/deployment-matrix.md`, `docs/long-horizon-runtime.md`.
-Каждый пункт помечен режимом (①②③④) и приоритетом (P1 — блокирует апгрейд по
-лестнице, P2 — важно для целевой аудитории режима, P3 — можно отложить).
+## Идентичность и права — P1
 
-## A. Enterprise-инфраструктура — контракты есть, бэкендов нет (④)
+OIDC bearer verification, SAML SP и ограниченный SCIM Users API уже существуют.
+Прямого LDAP/LDAPS, browser OIDC flow, SCIM Groups и готовой связки SCIM↔SSO
+нет. Для отдельного документа сейчас используется отдельный датасет с
+индивидуальной ролью; независимого ACL документа и групповых grants нет.
 
-Документы честно разделяют: seams/contracts готовы, конкретные реализации — нет.
+Критерии следующего этапа:
 
-- [x] A1 (P1). **Raw OIDC token verification** — реализовано 2026-09-04:
-  `pkg/auth/oidc.go` (JWKS + RS256/ES256 + iss/aud allowlist + exp/nbf skew +
-  rotation), middleware-фолбэк в HTTP-слое, env `LEVARA_OIDC_JWKS_URL` /
-  `LEVARA_OIDC_ISSUERS` / `LEVARA_OIDC_AUDIENCES`; биндинг к identity bridge —
-  в composition root (архитектурный guard соблюдён). ADR на surface не нужен.
-- [x] A2 (P1). **SAML HTTP surface** — реализовано 2026-09-04: SP на
-  crewjam/saml v0.5.1, `/saml/login|acs|metadata` за `LEVARA_SAML_ENABLED`,
-  SP-initiated only (unsolicited отклоняются), one-time-use request-ID store,
-  identity через общий IdentityBridge.
-- [x] A3 (P1). **SCIM HTTP surface (provisioning)** — реализовано 2026-09-04
-  по ADR-003: `/scim/v2` Users CRUD за отдельным bearer-токеном, externalId
-  primary, email-конфликт → 409 uniqueness, soft delete = is_active=false.
-- [ ] A4 (P2). **KMS / BYOK реализации** — storage/KMS contracts задают scope,
-  digest, retention class, legal hold flag, key reference; конкретных
-  production-бэкендов нет.
-- [ ] A5 (P2). **Корпоративные object storage backends** (S3 / GCS / Azure Blob
-  в enterprise-качестве) — базовый S3-адаптер есть, корпоративные требования
-  (шифрование на стороне провайдера, lifecycle, residency) не закрыты.
-- [ ] A6 (P2). **SIEM sink** — приёмник аудит-событий для корпоративных SIEM.
-- [ ] A7 (P2). **Legal hold enforcement** — флаг в контракте есть, принудительного
-  исполнения нет.
-- [x] A8 (P3). **ADR на SCIM HTTP surface** — ADR-003 принят; A3 реализован.
+- Проверить два равноценных корпоративных пути: федерацию AD через IdP и
+  прямой LDAP/LDAPS, если он реализуется. Для LDAP нужны проверка сертификата,
+  безопасные bind/search, ограниченная service account, escaping фильтров,
+  nested groups, disabled/locked account и недоступность каталога.
+- Завершить browser login/callback/session/logout. Приёмка: неверные
+  issuer/audience, неподписанный или повторный ответ, nonce/state, clock skew,
+  expiry, rotation, logout и безопасный redirect. Проверка bearer сама по себе
+  не закрывает браузерную сессию.
+- Связать provisioning и вход стабильным идентификатором без склейки по email.
+  Проверить rename, повторный create, конкуренцию, email conflict, deactivate,
+  re-provision и уже выданные JWT/API-ключи. Отзыв должен действовать на всех
+  поверхностях, включая активные сессии и фоновые операции.
+- Ввести доступ к документу пользователю/группе внутри организации: назначение
+  и отзыв роли, понятное наследование, аудит, tenant boundary. Смена групп и
+  отзыв доступа должны применяться до поиска, rerank, graph expansion,
+  чтения raw/artifacts и отправки контекста в LLM. Проверить прямой URL,
+  чужой ID, кэши, выгрузки и concurrent revoke.
+- SCIM Groups, provisioning audit и EnterpriseUser extension требуют отдельного
+  согласованного контракта; текущий Users subset не объявлять полным SCIM.
 
-## B. Task Runtime — alpha-границы (③④)
+Аналитические read models agent trajectories / memory behavior также требуют
+owner/tenant-фильтрации и проверки доступа до агрегации; их collection/client
+селекторы сами по себе не являются ACL.
 
-- [x] B1 (P1). **WebUI-воркфлоу для задач** — read-only alpha готова
-  (2026-09-04): страница Tasks (список/детали/lease/receipts/checkpoints)
-  поверх GET-only REST; мутации остаются в MCP task_* tools. Write-фаза —
-  будущая работа.
-- [x] B2 (P1). **Автономный планировщик / worker** — in-process worker
-  готов (2026-09-04): opt-in LEVARA_TASK_WORKER=1, auto_run-политика в
-  authority_json, retry/deadline/exhaustion, deadlock-детектор, работа
-  строго через существующие task_step CAS-примитивы.
-- [x] B3 (P2). **Выход из alpha** — схемы v1 заморожены (additive-only),
-  alpha-boundary секция заменена текущими ограничениями, S2/S3 load-гейт
-  идёт в CI на каждый RC (2026-09-04). Осталось доказательство: зелёный
-  e2e на 3 последовательных релизах (отслеживается в backlog B3).
-- [x] B4 (P3). **Расширяемая модель authority** — декларативные
-  манифесты в workspace с digest-pinning, symlink-контейнментом,
-  явными отказами и гайдом автора (2026-09-04); network остаётся
-  deny-by-default (зарезервировано).
+## Task Runtime — P1/P2
 
-## C. Режимы и лестница — что мешает апгрейду (①②③)
+Уже есть CAS/leases, receipts/checkpoints, bounded bootstrap, read-only Tasks
+в WebUI, opt-in scheduler и digest binding манифеста при claim. Стандартный
+executor worker только пишет лог; проверки tool/path/network из манифеста
+не образуют универсальный механизм контроля исполнения.
 
-- [x] C1 (P1). **Enterprise strict preset e2e** — реализовано 2026-09-04:
-  `deploy/profiles/enterprise_e2e.sh` в CI (job `enterprise strict preset e2e`);
-  матрица mandatory-checks + live strict-старт (13 проверок, 13/13 PASS локально).
-- [ ] C2 (P2). **Team onboarding path** — туториал 04 есть, но нет
-  автоматизированного «создать пользователей → выдать API-ключи агентам →
-  проверить изоляцию» скрипта.
-- [ ] C3 (P2). **Sync UI/наблюдаемость для Solo Pro** — статус синхронизации
-  двух нод виден только через API/логи; в WebUI нет страницы sync-состояния.
-- [ ] C4 (P3). **Personal: первый запуск без Postgres, но с embed** — сейчас
-  potion-подход требует sidecar; одиночный бинарник с встроенной лёгкой моделью
-  упростил бы 5-минутный старт.
-- [ ] C5 (P3). **Рафт-шардирование** — experimental/legacy path; «needs explicit
-  e2e before production use» (deployment-matrix).
+Оставшиеся критерии:
 
-## D. Платформа — фичи с ограниченной поддержкой (все режимы)
+- P1: подключить реальный executor с явной разрешённой областью, deadline,
+  budgets, ограничением concurrency, retry/backoff и kill-switch. Три шага
+  должны выполнить наблюдаемые действия и оставить receipts; no-op успех
+  не считается выполнением работы.
+- P1: enforce authority в каждой точке вызова tool/file/network, включая
+  redirects, symlinks, смену манифеста, операции после expiry и передачу
+  полномочий между шагами. Запрещённое действие должно отклоняться до эффекта.
+- P2: если нужны UI-мутации, использовать те же version/lease/idempotency
+  примитивы. Проверить stale version, чужую задачу, restart, длинный план,
+  большие списки и согласованность MCP/WebUI. Текущий refresh — не обещание
+  обновления за пять секунд.
+- P2: подтвердить recovery, гонку worker/ручного клиента, исчерпание попыток,
+  зависший шаг и deadlock на реальном executor. Выход из ограниченной стадии
+  требует воспроизводимого полного lifecycle на трёх последовательных
+  релизах; наличие CI load gate или стабильной схемы не заменяет эту историю.
 
-- [ ] D1 (P2). **Реранкер по умолчанию без ручной настройки** — rerank работает,
-  но требует отдельного endpoint; пресеты не включают готовый конфиг.
-- [ ] D2 (P2). **Structured extraction (lift sidecar)** — маршрут table-heavy/visual
-  PDF в schema-driven extraction описан в internal-доке; production-поверхность
-  не выделена.
-- [ ] D3 (P3). **Graph extras** — predicate synonyms, community detection и
-  продвинутое temporal-поведение графа — части за флагами/в эксперименте.
-- [ ] D4 (P3). **Legacy vector endpoints** — `/insert`, `/batch_insert`,
-  `/delete` держатся для совместимости; план вывода из эксплуатации не зафиксирован.
+Для gated memory commit отдельно нужны проверка прав и связи source task/receipt,
+если статус используется как доказательство: текущее поле `verified` не означает
+серверную проверку истинности evidence. Preview сохраняет SQL-план с содержимым;
+его нельзя считать операцией без записи.
 
-## E. Качество и наблюдаемость (сквозные)
+## Корпоративное хранение и аудит — P2
 
-- [ ] E1 (P2). **SIEM/внешний sink для audit export** — экспорт в файл есть,
-  стриминга во внешние системы нет (см. A6).
-- [ ] E2 (P3). **Alerting/SLO-шаблоны** — `/metrics` и `/health/details` есть,
-  готовых alert-правил в поставке нет.
-- [ ] E3 (P3). **Backup-автоматизация** — cmd/backup и runbook'и есть; cron-level
-  автопилот с проверкой восстановления — нет.
+Базовый S3 и storage/KMS contracts существуют. Не закрыты production KMS/BYOK,
+GCS/Azure Blob, корпоративные политики хранения, внешний SIEM и legal hold.
 
-## Сводка
+| Возможность | Критерий приёмки | Ошибки и границы |
+|---|---|---|
+| KMS/BYOK | Выбранные backend, например AWS KMS/Vault Transit: envelope encryption, TTL кэша ключей, версии, rotation и чтение старых объектов; конфигурация и метрики | Удалённый ключ, повреждённый envelope, outage, timeout и истечение кэша; ограниченная очередь, явная ошибка |
+| Object storage | Общий put/get/list/delete/range contract, побайтовый roundtrip; encryption, region/residency и lifecycle recipe | Большие multipart, Unicode, пустые объекты, concurrent write, network flap; resume/abort и восстановление без частичного успеха |
+| SIEM | Webhook/syslog либо выбранный sink: схема, audit actor, batch, bounded retry, dead-letter и документированная at-least-once доставка | Медленный/недоступный приёмник, duplicate retry, большой event, заполнение буфера; потеря не должна быть молчаливой |
+| Legal hold | Авторизованная установка/снятие, audit; блокировка delete/overwrite на API/storage/sync путях | Hold во время удаления, parent/child и sync-конфликт; чтение/экспорт продолжают работать, потеря данных не допускается |
 
-| Блок | Пунктов | P1 | P2 | P3 |
-|---|---|---|---|---|
-| A. Enterprise-инфраструктура | 8 | 3 | 4 | 1 |
-| B. Task Runtime | 4 | 2 | 1 | 1 |
-| C. Режимы и лестница | 5 | 1 | 2 | 2 |
-| D. Платформа | 4 | 0 | 2 | 2 |
-| E. Качество | 3 | 0 | 1 | 2 |
-| **Итого** | **24** | **6** | **10** | **8** |
+Не добавлять вымышленные env-флаги в руководства до появления реализации.
+Строгий Enterprise preset проверяет обязательную конфигурацию; end-to-end
+проверка конкретного IdP, storage или SIEM остаётся отдельным gate.
 
-Критический путь по лестнице: A1–A3 (identity) + B1–B2 (задачи) + C1 (e2e
-enterprise-пресета) — это то, что отделяет «пилот Enterprise» от «Enterprise в
-продакшене».
+## Документы, поиск и модели — P2/P3
 
-Развёртка каждой позиции с DoD, тест-планами и corner cases:
-[task-backlog.md](task-backlog.md).
+- P2: качество извлечения на размеченном корпусе PDF/Office/HTML/таблиц,
+  включая минимум десять разных PDF: сканы, несколько колонок, таблица между
+  страницами, кириллица, защищённые/повреждённые и большие документы. Базовые
+  парсеры и structured-extraction route существуют; проценты точности требуют
+  реальных запусков OCR/schema sidecar и проверки фактов/чисел/ссылок на страницы.
+- P2: provenance и удаление должны покрывать raw, extracted/structured artifacts,
+  chunks, embeddings, graph и ответы. Проверять повторный импорт, partial failure,
+  tombstone, удаление/отзыв во время обработки и отсутствие недоступного текста
+  в LLM payload. Не считать наличие одного ACL helper сквозным доказательством.
+- P2: удобная установка embed/rerank вместе с выбранным preset. Текущие endpoint
+  adapters уже работают; нужны проверенные рецепты, timeout/partial-response
+  fallback, ACL-before-rerank, метрики и качество на одном corpus.
+- P3: встроенные embeddings только при подтверждённой потребности в едином
+  бинарнике. Приёмка: offline без модели, повреждённый cache, ARM/AMD64,
+  ограниченная RAM и явная переиндексация при смене пространства embeddings.
+- P3: для graph extras и экспериментального routing принять решение
+  promote/keep-flag/remove на основании quality/performance gates. DCD filtering
+  ещё не равнозначен реализованным observe/boost; его подробные ограничения
+  ведутся в локальном DCD architecture roadmap.
+- P3: отдельный план compatibility/sunset legacy vector API с измерением
+  использования, сроком миграции, обновлением собственных клиентов и минимум
+  двумя релизами наблюдения. Существующие endpoints остаются действующими.
+
+## Эксплуатация и интерфейсы — P2/P3
+
+- P2: Team onboarding с dry-run и повторяемым созданием пользователей/ключей,
+  коллекций и индивидуальных grants. В конце — проверка входа и отрицательная
+  проверка доступа A/B. Дубли email, Unicode, отказ сервера и частичное выполнение
+  должны давать понятный отчёт без утечки admin token.
+- P2: расширить существующую sync-страницу до наблюдения двух независимых нод,
+  pending/lag и объяснения конфликтов. Проверить offline peer, пустую историю,
+  clock skew и обновление состояния. Сам экран sync уже есть.
+- P2: verified backup по расписанию: SQL + workspace + raw/structured artifacts
+  и необходимые индексы, восстановление в sandbox, дата последнего успешного
+  восстановления. Проверить активные записи, повреждённый архив, полный диск
+  и несовместимую версию. Наличие команды backup не доказывает recoverability.
+- P3: Prometheus rules/examples уже поставляются. Нужны согласованные SLO,
+  применимость к выбранной конфигурации, promtool и проверка искусственного
+  инцидента; учитывать maintenance, flapping и missing series.
+- P3: для Raft/sharding зафиксировать проверенную область эксплуатации либо
+  явно оставить experimental; нужны durable metadata, recovery, partition,
+  membership и многонодовый E2E до заявлений о production readiness.
+- P3: расширять workspace dashboard/evaluation только для подтверждённых
+  пробелов текущей страницы: lag, freshness, explainability и correctness
+  source citations. Не создавать второй backlog уже реализованных операций.
+
+Начать с identity и отзыва доступа, затем реального executor и эксплуатационной
+приёмки. Для каждой реализации нужны соответствующий узкий тест, contract-check
+при изменении публичной поверхности и релизные проверки из [testing](../testing.md).

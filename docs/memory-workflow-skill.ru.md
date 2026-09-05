@@ -87,12 +87,11 @@ project-skill discovery может использовать его без пер
 [mcp_servers.levara]
 url = "http://127.0.0.1:8080/mcp"
 enabled = true
-env_http_headers = { "X-API-Key" = "LEVARA_MCP_API_KEY" }
-default_tools_approval_mode = "writes"
+bearer_token_env_var = "LEVARA_TOKEN"
 ```
 
-Храните `LEVARA_MCP_API_KEY` вне файла конфигурации. Удаляйте
-`env_http_headers` только для изолированного single-user loopback, когда на
+Храните `LEVARA_TOKEN` вне файла конфигурации. Удаляйте
+`bearer_token_env_var` только для изолированного single-user loopback, когда на
 сервере аутентификация намеренно отключена (`-require-auth=false`). Не
 опускайте credentials для shared, remote или persistent deployments. Для
 подключения через недоверенную сеть используйте HTTPS.
@@ -155,3 +154,14 @@ collection you selected and recall prior decisions about deployment.
 
 Удалите каталог `levara-memory-workflow` из каталога skills клиента и
 перезапустите клиент. Удаление skill не удаляет существующую память Levara.
+
+## Отдельные workflows
+
+[Workspace host examples](../examples/agent-hosts/README.md) задают работу с
+Markdown, а не полный memory playbook. Для задач с leases/receipts используйте
+[Task Runtime](long-horizon-runtime.ru.md); временные checkpoints не являются
+долговечной памятью. [Features guide](features-guide.md#консолидация-памяти)
+описывает dry-run, guards и откат консолидации. Проверяйте MCP-подключение в
+реальном клиенте: структурные тесты конфигурации не доказывают совместимость
+всех IDE. Правила подтверждения действий задаёт host и текущая авторизация
+пользователя; установка skill не выдаёт дополнительных полномочий.

@@ -329,7 +329,7 @@ func writeDCDVSALoadReportIfRequested(t *testing.T, report dcdVSALoadReport) {
 	if err := os.WriteFile(filepath.Join(resultsDir, "dcd_vsa_load_baseline_latest.json"), raw, 0644); err != nil {
 		t.Fatalf("write DCD VSA load json: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(repoRoot, "docs", "dcd-vsa-load-baseline-report.md"), []byte(renderDCDVSALoadMarkdown(report)), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(resultsDir, "dcd-vsa-load-baseline-report.md"), []byte(renderDCDVSALoadMarkdown(report)), 0644); err != nil {
 		t.Fatalf("write DCD VSA load markdown: %v", err)
 	}
 }
@@ -595,7 +595,7 @@ func writeDCDVSABaselineReportIfRequested(t *testing.T, report dcdVSABaselineRep
 	if err := os.WriteFile(filepath.Join(resultsDir, "dcd_vsa_baseline_latest.json"), raw, 0644); err != nil {
 		t.Fatalf("write DCD VSA baseline json: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(repoRoot, "docs", "dcd-vsa-baseline-report.md"), []byte(renderDCDVSABaselineMarkdown(report)), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(resultsDir, "dcd-vsa-baseline-report.md"), []byte(renderDCDVSABaselineMarkdown(report)), 0644); err != nil {
 		t.Fatalf("write DCD VSA baseline markdown: %v", err)
 	}
 }

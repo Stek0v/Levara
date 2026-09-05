@@ -478,7 +478,7 @@ func (h *HNSWIndex) isDeleted(arenaOffset uint32) bool {
 // Add mutate nodesByIdx, EntryNodeID, and existing nodes' Connections
 // (newNode.Connections in Add was even modified without newNode.Lock).
 // That was a real data race flagged by -race in TestRecallAt10; see F-6 in
-// docs/testing-roadmap.md. Holding RLock serialises writers against readers
+// docs/testing.md. Holding RLock serialises writers against readers
 // — writers (Add) block while any Search is running, readers run concurrently
 // with each other. Fine-grained unlock is possible but requires Add to also
 // lock newNode during its link-up phase; deferred until there's a measured

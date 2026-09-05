@@ -157,6 +157,6 @@ done
 echo "=== analyze ==="
 python3 scripts/load-profiles/analyze.py --by-model \
   "$OUT_DIR"/p3_*.jsonl "$OUT_DIR"/p4_*.jsonl "$OUT_DIR"/p5_*.jsonl \
-  > docs/load-profile-analysis-pi-multimodel.md
+  > "$OUT_DIR/analysis.md"
 
-echo "OK. Output: docs/load-profile-analysis-pi-multimodel.md"
+echo "OK. Output: $OUT_DIR/analysis.md"

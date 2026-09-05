@@ -64,7 +64,7 @@ func TestDocSurfaceCounts(t *testing.T) {
 		"../README.md",
 		"../README_RU.md",
 		"api-reference.md",
-		"current-state.md",
+		"testing.md",
 		"features-guide.md",
 		"api-contract.md",
 	}

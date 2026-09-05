@@ -19,8 +19,9 @@ export LEVARA_TOKEN="<jwt-or-api-key>"
 ```
 
 Some hosts do not expand environment variables inside MCP config files. If so,
-replace `${LEVARA_TOKEN}` with the actual token or use the host's secret
-management feature.
+use the host’s supported secret/environment-header feature rather than
+committing a literal token. The current Codex example uses
+`bearer_token_env_var = "LEVARA_TOKEN"`.
 
 ## Required Agent Flow
 
@@ -40,9 +41,19 @@ From the Levara module root:
 ```bash
 go run ./cmd/agent-hosts -host claude -target .mcp.json
 go run ./cmd/agent-hosts -host cursor -target .cursor/mcp.json
-go run ./cmd/agent-hosts -host codex -target .codex/config.toml
 ```
 
 The installer preserves unrelated MCP servers/settings, replaces only the
 `levara` stanza, and creates a timestamped backup before writing an existing
 file. Add `-dry-run` to print the merged config without writing.
+
+For current Codex configure the [TOML example](codex-config.toml) manually, or
+use `codex mcp add levara --url http://127.0.0.1:8080/mcp --bearer-token-env-var LEVARA_TOKEN`.
+The repository installer still generates an older Codex headers layout; it
+is not the recommended authenticated Codex setup. Structural config tests do
+not prove that every installed IDE expands placeholders or loads the same path.
+
+These instructions describe workspace artifacts. Add the separate
+[memory workflow](../../docs/memory-workflow-skill.md) for `set_context`,
+`wake_up`, room/hall and durable save/recall rules. Merge into existing project
+instructions rather than replacing them. See [agent tutorial](../../docs/tutorials/02-agent-integration.md).

@@ -1,5 +1,8 @@
 # Levara WebUI Operations Guide
 
+_Last verified: 2026-09-05 against source; observed test runs and limitations
+are recorded in [testing](testing.md)._
+
 This guide covers how to run, connect, configure, and monitor the Levara WebUI
 for two deployment shapes:
 
@@ -37,6 +40,7 @@ Main screens:
 | Analytics | `/analytics` | Health details, VSA status, embedding migration controls |
 | Memory Behavior | `/memory-behavior` | MCP trajectory metrics: recall-before-save, repeats, zero-results, context bytes |
 | Scaffold Proposals | `/memory-scaffold` | Human approval queue for AGENTS.md / memory policy recommendations |
+| Tasks | `/tasks` | Read-only task, lease, receipt and checkpoint inspection |
 | Admin | `/admin` | MCP tools, MCP sessions, admin summary |
 | Settings | `/settings` | User settings and visible API base |
 
@@ -58,17 +62,10 @@ Levara backend (:8081 local dev, :8080 default deploy)
   -> optional sync peer
 ```
 
-The default local development stack on Mac is:
-
-- Levara HTTP: `http://127.0.0.1:8081`
-- WebUI dev server: `http://localhost:3000`
-- Playwright WebUI server: `http://127.0.0.1:3011` by default (`PLAYWRIGHT_PORT` overrides it)
-- PostgreSQL dev metadata: `localhost:5433` when using `start-levara.sh`
-- Local embedding service: `http://127.0.0.1:9101/v1/embeddings` when using
-  `start-levara.sh`
-
-The default production-style backend port in older docs and Docker examples is
-`:8080`. Always check the real backend URL with `/health`.
+Next.js rewrites default to `http://127.0.0.1:8081`; the server binary defaults
+to port `8080`. Set `LEVARA_API_URL` to the actual backend when starting/building
+the WebUI. Playwright uses port `3011` unless `PLAYWRIGHT_PORT` overrides it.
+SQL and model endpoints come from the chosen deployment, not the WebUI.
 
 ---
 
@@ -93,7 +90,8 @@ Use `NEXT_PUBLIC_API_URL` only when:
 - you intentionally want the browser to call a different API origin.
 
 When `NEXT_PUBLIC_API_URL` is non-empty, the browser will call that origin for
-API client requests and Cognify SSE URLs. Configure backend CORS accordingly.
+API client requests and optional SSE clients. The current dataset page uses
+status polling. Configure backend CORS accordingly.
 
 ---
 
@@ -101,31 +99,23 @@ API client requests and Cognify SSE URLs. Configure backend CORS accordingly.
 
 ### 1. Start the backend
 
-For the current Mac dev stack with PostgreSQL metadata and local embeddings:
+Follow [getting started](getting-started.md) for Personal/SQLite or
+[deployment](deployment.md) for PostgreSQL and embeddings. The repository's
+`start-levara.sh` is a local development helper: it can stop a process on 8081
+and relax auth rate limits. It is not the shared-server startup procedure.
 
-```bash
-cd /Users/stek0v/src/levara
-./start-levara.sh
+For a backend on port 8080:
+
+```sh
+curl --fail-with-body -sS http://127.0.0.1:8080/health
 ```
-
-Verify:
-
-```bash
-curl -sS http://127.0.0.1:8081/health
-curl -sS http://127.0.0.1:8081/health/details
-```
-
-For a simpler personal SQLite setup, copy `deploy/profiles/personal.local.env.example`
-into your shell or `.env`, then start `levara-server` with the matching data
-directory and port. Keep auth off only when the port is bound to a trusted local
-interface.
 
 ### 2. Start the WebUI
 
 ```bash
-cd /Users/stek0v/src/levara/webui
-npm install
-LEVARA_API_URL=http://127.0.0.1:8081 npm run dev
+cd webui # from the repository root
+npm ci
+LEVARA_API_URL=http://127.0.0.1:8080 npm run dev
 ```
 
 Open `http://localhost:3000`.
@@ -140,7 +130,7 @@ before treating a document as usable. See [acceptance scenarios](document-workfl
 1. Open `/` and confirm Dashboard health is healthy.
 2. Open `/datasets`, upload a small text file, and confirm the dataset appears.
 3. Open the dataset detail page and run Cognify.
-4. Watch the Cognify progress stream. If it stalls, check backend logs and
+4. Watch Cognify status polling. If it stalls, check backend logs and
    `/api/v1/cognify/<runId>/status`.
 5. Open `/search` and query the collection.
 6. Open `/settings` and confirm the API base shown there is what you intended.
@@ -149,6 +139,12 @@ before treating a document as usable. See [acceptance scenarios](document-workfl
    audit read-model health.
 
 ### Memory behavior operations
+
+The current trajectory/memory-behavior read model is not filtered by owner or
+tenant. Collection/client selectors and sanitized arguments are not access
+controls. Shared deployments must restrict these analytics routes at the
+operator boundary until read-model isolation is implemented; see the
+[remaining work](product/unimplemented-roadmap.md).
 
 Use `/memory-behavior` to answer whether agents are using memory efficiently:
 
@@ -176,18 +172,21 @@ Use `deploy/profiles/solo_pro.sync.env.example` as the backend profile template.
 Typical flow:
 
 ```bash
-curl -sS http://127.0.0.1:8081/api/v1/sync/manifest
+curl --fail-with-body -sS -H "Authorization: Bearer ${LEVARA_TOKEN:?set active instance-admin token}" \
+  http://127.0.0.1:8080/api/v1/sync/manifest
 ```
 
 In the WebUI:
 
 1. Open `/sync`.
-2. Set the remote API URL, for example `http://10.23.0.53:8080/api/v1`.
+2. Set the remote API URL, using the exact configured `LEVARA_SYNC_REMOTE_URL`.
 3. Check local and remote manifests.
 4. Run pull or push intentionally.
 5. Confirm `/sync` status and backend logs.
 
-Sync defaults should move memories, interactions, and graph data. Vector
+With auth enabled, sync requires an active instance superuser. The server forwards
+`LEVARA_TOKEN` only to the exact configured remote base URL.
+Sync defaults move memories, interactions, and graph data. Vector
 collections are intentionally heavier because they require compatible embedding
 contracts and re-embedding strategy.
 
@@ -202,22 +201,18 @@ shared operational surface.
 
 Use `deploy/profiles/team.postgres.env.example` as the baseline:
 
-```bash
-LEVARA_PROFILE=team
-LEVARA_PROFILE_STRICT=1
-DB_PROVIDER=postgres
-POSTGRES_DSN=postgres://levara:change-me@localhost:5432/levara?sslmode=disable
-JWT_SECRET=replace-with-stable-random-secret
-LEVARA_WORKSPACE_WATCH=1
-LEVARA_WORKSPACE_INDEX_WORKER=1
-LEVARA_WORKSPACE_AUDIT_EXPORT=1
+Copy the preset into a private env file and set its PostgreSQL DSN and stable
+JWT secret. Export the values before validating or starting the binary:
+
+```sh
+set -a
+. ./team.env
+set +a
+./levara-server -config-check -require-auth=true
+./levara-server -profile=standalone -port=8080 -require-auth=true
 ```
 
-Start the backend with auth required:
-
-```bash
-./levara-server -standalone=true -port=8080 -require-auth=true
-```
+See [profile presets](profile-presets.md) for required fields and their limits.
 
 Minimum team requirements:
 
@@ -316,11 +311,20 @@ CORS_ALLOWED_ORIGINS=https://levara.example.com
 | `NEXT_PUBLIC_API_URL` | empty | empty unless direct browser API origin is required |
 | Node mode | `npm run dev` | `npm run build` + `npm run start` |
 | Port | `3000` | behind reverse proxy |
-| Tests | Playwright against `3001` | CI + smoke after deploy |
+| Tests | Playwright against `3011` by default | CI + smoke after deploy |
 
 ---
 
 ## Monitoring
+
+Set the actual backend origin (without `/api/v1`) and supply an active
+instance-admin token through your secret store for protected/admin checks:
+
+```sh
+export LEVARA_ORIGIN=http://127.0.0.1:8080
+: "${LEVARA_TOKEN:?set active instance-admin token}"
+```
+
 
 ### WebUI-level checks
 
@@ -329,7 +333,7 @@ Run from the WebUI host:
 ```bash
 curl -sS http://127.0.0.1:3000/
 curl -sS http://127.0.0.1:3000/health
-curl -sS http://127.0.0.1:3000/health/details
+curl --fail-with-body -sS -H "Authorization: Bearer $LEVARA_TOKEN" http://127.0.0.1:3000/health/details
 ```
 
 Because `/health` and `/health/details` are rewritten by Next, these checks
@@ -340,18 +344,18 @@ validate both WebUI routing and backend reachability.
 Run from the backend host:
 
 ```bash
-curl -sS http://127.0.0.1:8081/health
-curl -sS http://127.0.0.1:8081/health/details
-curl -sS http://127.0.0.1:8081/api/v1/info
-curl -sS http://127.0.0.1:8081/api/v1/errors?limit=10
+curl --fail-with-body -sS -H "Authorization: Bearer $LEVARA_TOKEN" "$LEVARA_ORIGIN/health"
+curl --fail-with-body -sS -H "Authorization: Bearer $LEVARA_TOKEN" "$LEVARA_ORIGIN/health/details"
+curl --fail-with-body -sS -H "Authorization: Bearer $LEVARA_TOKEN" "$LEVARA_ORIGIN/api/v1/info"
+curl --fail-with-body -sS -H "Authorization: Bearer $LEVARA_TOKEN" "$LEVARA_ORIGIN/api/v1/errors?limit=10"
 ```
 
 For MCP/WebUI admin observability:
 
 ```bash
-curl -sS http://127.0.0.1:8081/api/v1/admin/mcp/tools
-curl -sS http://127.0.0.1:8081/api/v1/admin/mcp/summary
-curl -sS http://127.0.0.1:8081/api/v1/admin/mcp/sessions?limit=20
+curl --fail-with-body -sS -H "Authorization: Bearer $LEVARA_TOKEN" "$LEVARA_ORIGIN/api/v1/admin/mcp/tools"
+curl --fail-with-body -sS -H "Authorization: Bearer $LEVARA_TOKEN" "$LEVARA_ORIGIN/api/v1/admin/mcp/summary"
+curl --fail-with-body -sS -H "Authorization: Bearer $LEVARA_TOKEN" "$LEVARA_ORIGIN/api/v1/admin/mcp/sessions?limit=20"
 ```
 
 ### Prometheus
@@ -394,39 +398,34 @@ Use:
 ### Local smoke
 
 ```bash
-cd /Users/stek0v/src/levara/webui
-LEVARA_API_URL=http://127.0.0.1:8081 npm run dev -- -p 3001
+cd webui # from the repository root
+LEVARA_API_URL=http://127.0.0.1:8080 npm run dev -- -p 3001
 ```
 
 In another shell:
 
 ```bash
 curl -sS http://127.0.0.1:3001/health
-curl -sS http://127.0.0.1:3001/api/v1/info
+curl --fail-with-body -sS -H "Authorization: Bearer $LEVARA_TOKEN" http://127.0.0.1:3001/api/v1/info
 ```
 
 ### Playwright
 
-The Playwright config starts the WebUI on port `3001` and uses
-`LEVARA_API_URL`, defaulting to `http://127.0.0.1:8081`.
+The curated suite uses mocked API responses and a real Chromium browser:
 
-```bash
-cd /Users/stek0v/src/levara/webui
-LEVARA_API_URL=http://127.0.0.1:8081 npx playwright test
+```sh
+cd webui # from the repository root
+LEVARA_API_URL=http://127.0.0.1:1 npm run test:e2e
 ```
 
-Use targeted suites while debugging:
-
-```bash
-npx playwright test e2e/auth-flow.spec.ts
-npx playwright test e2e/upload-flow.spec.ts
-npx playwright test e2e/full-integration.spec.ts
-```
+The complete `npm run test:e2e:integration` also contains tests that contact the
+configured backend. Use a separate test server and an explicit `LEVARA_API_URL`;
+see [testing](testing.md) for commands, dependencies and observed results.
 
 ### Build check
 
 ```bash
-cd /Users/stek0v/src/levara/webui
+cd webui # from the repository root
 npm run lint
 npm run build
 ```
@@ -440,9 +439,9 @@ npm run build
 1. Upload files in `/datasets`.
 2. Open the dataset detail page.
 3. Start Cognify.
-4. Watch SSE progress in the page.
+4. The dataset page polls `/api/v1/cognify/<runId>/status` once per second until terminal status.
 5. If progress disappears, check:
-   - browser DevTools Network for `/api/v1/cognify/<runId>/stream`;
+   - browser DevTools Network for `/api/v1/cognify/<runId>/status`;
    - `GET /api/v1/cognify/<runId>/status`;
    - backend logs;
    - `/api/v1/errors?limit=10`.
@@ -483,7 +482,8 @@ Use `/admin` to inspect:
 For direct MCP endpoint checks:
 
 ```bash
-curl -sS -X POST http://127.0.0.1:8081/mcp \
+curl --fail-with-body -sS -X POST "$LEVARA_ORIGIN/mcp" \
+  -H "Authorization: Bearer $LEVARA_TOKEN" \
   -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' \
   --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"webui-runbook-check","version":"0.1"}}}'
@@ -495,10 +495,10 @@ curl -sS -X POST http://127.0.0.1:8081/mcp \
 
 | Symptom | Likely cause | Check / fix |
 |---|---|---|
-| WebUI loads but Dashboard cards fail | `LEVARA_API_URL` points at the wrong backend | `curl http://localhost:3000/health/details`; restart WebUI with correct env |
+| WebUI loads but Dashboard cards fail | `LEVARA_API_URL` points at the wrong backend | Check authenticated health request; rebuild/restart WebUI with correct env |
 | Browser calls `localhost:8081` directly and hits CORS | `NEXT_PUBLIC_API_URL` is set | Prefer empty `NEXT_PUBLIC_API_URL`; otherwise add WebUI origin to backend CORS |
-| Login/register returns 429 during tests | Auth rate limit | For local benches use `RATE_LIMIT_AUTH_MAX=10000`; do not copy this blindly to production |
-| Cognify progress reconnects forever | SSE buffering or backend run disappeared | Disable proxy buffering; check `/api/v1/cognify/<runId>/status` |
+| Test auth hits 429 | Auth rate limit reached | Wait for the window and reuse fixture credentials; rerun on an isolated test server with recorded rate policy |
+| Cognify progress does not finish | Failed status request or backend run disappeared | Check polling errors and `/api/v1/cognify/<runId>/status`, then backend logs |
 | Upload succeeds but dataset list is stale | Client cache not invalidated or backend delayed | Refresh page; check `/api/v1/datasets`; inspect backend logs |
 | `/workspace` is empty | No project scope or index worker disabled | Set project/branch, enable `LEVARA_WORKSPACE_INDEX_WORKER=1`, run index |
 | `/sync` fails | bad remote URL or token mismatch | Check remote `/api/v1/sync/manifest`, `LEVARA_TOKEN`, and sync logs |
@@ -530,5 +530,5 @@ Before changing WebUI connection or deployment behavior:
 2. Run `npm run lint` and `npm run build` in `webui/`.
 3. Run at least the affected Playwright suite.
 4. Verify `/health`, `/health/details`, `/api/v1/info`, and the affected screen.
-5. For team changes, verify auth, CORS, SSE, and reverse proxy behavior.
+5. For team changes, verify auth, CORS, status polling and reverse proxy behavior; test SSE separately if a client uses it.
 6. For sync or workspace changes, verify audit/status screens after the run.

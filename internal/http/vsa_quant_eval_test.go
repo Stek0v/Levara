@@ -526,7 +526,7 @@ func writeVSAEvalReportIfRequested(t *testing.T, report vsaEvalReport) {
 	repoRoot := filepath.Clean(filepath.Join("..", ".."))
 	resultsDir := filepath.Join(repoRoot, "benchmark", "results")
 	jsonPath := filepath.Join(resultsDir, "vsa_quantitative_eval_latest.json")
-	mdPath := filepath.Join(repoRoot, "docs", "vsa-quantitative-eval-report.md")
+	mdPath := filepath.Join(resultsDir, "vsa-quantitative-eval-report.md")
 	if err := os.MkdirAll(resultsDir, 0755); err != nil {
 		t.Fatalf("mkdir benchmark/results: %v", err)
 	}

@@ -1,326 +1,254 @@
 # Deployment Guide
 
-This guide contains generic recipes and a dated local Mac example. Start new
-deployments with [profile presets](profile-presets.md); use
-[enterprise identity](enterprise-identity.md) and [document management](document-management.md)
-for corporate login and individual sharing. [current-state.md](current-state.md)
-is a historical observation, not proof of the currently running binary.
+Choose a deployment from the table, validate the exact startup configuration,
+and establish a restore procedure before storing shared data. Start a first
+local instance with [getting started](getting-started.md); product requirements
+and copyable environment files are in [profile presets](profile-presets.md).
 
-## Historical local Mac launchd example
+## Operating modes
 
-The local service recorded in the snapshot (substitute your own paths):
+| Need | Configuration | Additional services |
+|---|---|---|
+| Local durable memory | `DB_PROVIDER=sqlite`, loopback, `-profile=standalone` | None for lexical memory |
+| Local semantic search | SQLite, `-profile=standalone-embed`, correct `-dim` | Embedding endpoint; LLM only for generation/extraction |
+| Shared team | PostgreSQL, `-require-auth`, stable `JWT_SECRET`, Team preset | TLS proxy, optional model services, backup destination |
+| Corporate pilot | Enterprise preset plus verified integration | Follow [identity](enterprise-identity.md) and [document access](document-management.md); the preset is not complete directory/group enforcement |
+| Containers | [deploy/docker](../deploy/docker/docker-compose.yml) | Model endpoints supplied separately |
+| Raspberry Pi | [Pi guide](../deploy/raspberry/README.md) | Models and capacity selected for the actual device |
 
-```text
-LaunchAgent: ~/Library/LaunchAgents/com.stek0v.levara.plist
-Binary:      /Users/stek0v/src/levara/levara-server
-Working dir: /Users/stek0v/src/levara
-HTTP/MCP:    http://127.0.0.1:8081 and /mcp
-Log:         /Users/stek0v/src/levara/levara.log
-Data:        /Users/stek0v/src/levara/data
-```
+`-standalone` controls WAL versus Raft. `-profile` controls functional bootstrap
+suppression. `LEVARA_PROFILE` validates product requirements. These are different
+settings. Do not infer PostgreSQL, models, authentication or clustering from a
+profile name alone.
 
-Actual server args:
+## Configuration that must agree
+
+The server reads exported environment variables and flags, not `.env` files
+implicitly. For an environment file you have edited for this deployment:
 
 ```bash
-/Users/stek0v/src/levara/levara-server \
-  -profile=standalone-embed \
-  -dim=256 \
-  -port=8081 \
-  -grpc-port=0 \
-  -data-dir=/Users/stek0v/src/levara/data \
-  -node-id=mac1 \
-  -require-auth=false \
-  -embed-endpoint=http://127.0.0.1:9101/v1/embeddings \
-  -embed-model=potion-code-16M \
-  -llm-upstream=http://localhost:11434/v1 \
-  -pg-url='postgres://stek0v@localhost:5432/levara?sslmode=disable' \
-  -embed-keepalive-interval=5m
+set -a
+source ./levara.env
+set +a
+./levara-server -require-auth -config-check
 ```
 
-Current dependencies:
+Use the same functional profile, authentication and connection flags in the
+check and the actual service. Team strict checks require `-require-auth` during
+validation too. `-config-check` validates declared configuration without opening
+listeners or connecting to a database/provider; it is not a connectivity test.
 
-| Dependency | State |
+| Setting | Actual server behavior |
 |---|---|
-| PostgreSQL | connected, `postgres://stek0v@localhost:5432/levara?sslmode=disable` |
-| Embeddings | connected, `potion-code-16M`, 256d, `http://127.0.0.1:9101/v1/embeddings` |
-| LLM | connected, OpenAI-compatible Ollama at `http://localhost:11434/v1`, model `gemma4:e2b` |
-| Neo4j | disabled |
-| Rerank | disabled |
-| gRPC | disabled with `-grpc-port=0` |
+| `DB_PROVIDER=sqlite`, `DB_PATH` | Embedded SQL at the chosen file; otherwise SQL may be absent |
+| `DATABASE_URL` / `POSTGRES_DSN` / `-pg-url` | PostgreSQL DSN; choose one explicit source |
+| `-data-dir` / `LEVARA_DATA_DIR` | Vector state and default local workspace/upload roots |
+| `EMBEDDING_ENDPOINT` | Full embeddings URL, including `/v1/embeddings` |
+| `EMBEDDING_MODEL`, `-dim` | Must match the provider output and collection contract |
+| `LLM_PROVIDER`, `LLM_ENDPOINT`, `LLM_MODEL`, `LLM_API_KEY` | Optional language-model provider; no `-llm-model` flag |
+| `-host` / `LEVARA_HTTP_HOST` | HTTP bind address; default loopback |
+| `-grpc-host` / `LEVARA_GRPC_HOST`, `-grpc-port` | Separate gRPC listener; port `0` disables it |
+| `JWT_SECRET`, `LEVARA_API_KEY_PEPPER` | Stable signing/key-hashing secrets; protect and back them up |
+| `STORAGE_BACKEND=s3` | Optional S3 storage; configure `S3_BUCKET`, `S3_REGION`, `S3_ENDPOINT` and AWS credentials |
 
-Verify:
+Local upload storage defaults to `<data-dir>/uploads`; `STORAGE_PATH` is not a
+server override for that path. Configuring a remote model or extractor sends
+relevant content to that provider. See [integrations](integrations.md).
 
-```bash
-curl -fsS http://127.0.0.1:8081/health
-curl -fsS http://127.0.0.1:8081/version
-curl -fsS http://127.0.0.1:9101/health
-ps -p $(pgrep -f '/levara-server' | head -1) -o pid,lstart,args=
-LEVARA_URL=http://127.0.0.1:8081/api/v1 ./levara health --details
-```
+## Linux/systemd
 
-Example health response:
-
-```json
-{"health":"healthy","status":"ready","version":"levara-go"}
-```
-
-Doctor currently reports `8/9 ok, 1 warn, 0 fail`; the only warning is BM25 coverage for `_memories_pd`.
-
-### Rebuild and restart on Mac
-
-```bash
-cd /Users/stek0v/src/levara
-make build
-kill $(pgrep -f '/levara-server' | head -1)
-sleep 2
-curl -fsS http://127.0.0.1:8081/version
-curl -fsS http://127.0.0.1:8081/health
-```
-
-Because launchd owns the service, `kill` restarts the server with the same plist args. Use `launchctl bootout/bootstrap` only when changing the plist itself.
-
-### Update launchd registration
-
-```bash
-UID_NUM=$(id -u)
-PLIST="$HOME/Library/LaunchAgents/com.stek0v.levara.plist"
-launchctl bootout gui/$UID_NUM "$PLIST" 2>&1 || true
-launchctl bootstrap gui/$UID_NUM "$PLIST"
-launchctl enable gui/$UID_NUM/com.stek0v.levara 2>&1 || true
-launchctl kickstart -kp gui/$UID_NUM/com.stek0v.levara
-curl -fsS http://127.0.0.1:8081/health
-```
-
-### Embed sidecar
-
-The embed sidecar is a separate service. Levara pings it but does not start it.
-
-```text
-Endpoint: http://127.0.0.1:9101
-Embeddings: /v1/embeddings
-Model: potion-code-16M
-Dim: 256
-Backend: model2vec
-```
-
-Verify:
-
-```bash
-curl -fsS http://127.0.0.1:9101/health
-pgrep -f embed_bench.server
-launchctl list | grep embed
-```
-
-The Levara embed endpoint must include `/v1/embeddings`, not just `/v1`.
-
-## Bare-metal Linux/systemd
-
-Use this as a template; adjust dimensions, endpoints, and auth for the target host.
-
-### Install
-
-```bash
-make build
-sudo mkdir -p /opt/levara/data
-sudo cp levara-server /opt/levara/
-sudo useradd --system --no-create-home --shell /usr/sbin/nologin levara || true
-sudo chown -R levara:levara /opt/levara
-```
-
-### Service file
-
-Create `/etc/systemd/system/levara.service`:
+Install a built server at `/opt/levara/levara-server`, create a dedicated
+`levara` service account, and give it write access to `/var/lib/levara`.
+Place deployment secrets in `/etc/levara/levara.env` readable by that account.
+Example for a PostgreSQL-backed team behind a local TLS proxy:
 
 ```ini
 [Unit]
-Description=Levara Memory and Search Server
-After=network-online.target postgresql.service
+Description=Levara
+After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=simple
 User=levara
 Group=levara
-WorkingDirectory=/opt/levara
-EnvironmentFile=-/opt/levara/levara.env
-ExecStart=/opt/levara/levara-server -profile=standalone-embed -dim=256 -port=8080 -grpc-port=0 -data-dir=/opt/levara/data
-Restart=always
+WorkingDirectory=/var/lib/levara
+EnvironmentFile=/etc/levara/levara.env
+ExecStart=/opt/levara/levara-server -profile=full -require-auth -host=127.0.0.1 -port=8080 -grpc-port=0 -dim=768 -data-dir=/var/lib/levara
+Restart=on-failure
 RestartSec=5
-LimitNOFILE=65535
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/opt/levara
+ReadWritePaths=/var/lib/levara
 PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-### Environment file
+Fill the environment from the Team preset and configure the actual 768d model,
+or change `-dim` before creating collections. Validate the exported environment
+with the same flags before enabling the unit. Use `systemctl status levara` and
+`journalctl -u levara` to inspect your installed service. Updating the binary
+requires an intentional restart of this unit, not killing an arbitrary process
+selected by a substring.
 
-Create `/opt/levara/levara.env` as needed:
+## macOS launchd
 
-```bash
-DATABASE_URL=postgres://levara:change-me@127.0.0.1:5432/levara?sslmode=disable
-EMBEDDING_ENDPOINT=http://127.0.0.1:9101/v1/embeddings
-EMBEDDING_MODEL=potion-code-16M
-LLM_PROVIDER=openai
-LLM_ENDPOINT=http://127.0.0.1:11434/v1
-LLM_MODEL=gemma4:e2b
+Use an absolute binary path, working directory, data directory and log paths in
+your own LaunchAgent. Shell startup files and `.env` are not loaded by launchd.
+Set needed variables in its `EnvironmentVariables` dictionary or use an explicit
+wrapper that exports an environment file before `exec`-ing the server.
+
+A minimal local `ProgramArguments` template is:
+
+```xml
+<key>ProgramArguments</key>
+<array>
+  <string>/absolute/path/levara-server</string>
+  <string>-profile=standalone</string>
+  <string>-host=127.0.0.1</string>
+  <string>-port=8080</string>
+  <string>-grpc-port=0</string>
+  <string>-dim=768</string>
+  <string>-data-dir=/absolute/path/levara-data</string>
+</array>
+<key>EnvironmentVariables</key>
+<dict>
+  <key>DB_PROVIDER</key><string>sqlite</string>
+  <key>DB_PATH</key><string>/absolute/path/levara-data/levara.db</string>
+</dict>
 ```
 
-There is no `-llm-model` server flag. Use `LLM_MODEL`.
-
-### Start and verify
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now levara
-systemctl status levara --no-pager
-curl -fsS http://127.0.0.1:8080/health
-curl -fsS http://127.0.0.1:8080/version
-journalctl -u levara -f
-```
+This is a fragment for a plist, not a complete install script. Supply `Label`,
+`WorkingDirectory`, log destinations and your chosen restart policy. Inspect
+that exact label with `launchctl print gui/$(id -u)/YOUR_LABEL` after installing.
+The [watchdog](macos-levara-watchdog.md) is a separate opt-in notification helper.
+Agent client configuration belongs in [agent integration](tutorials/02-agent-integration.md).
 
 ## Docker
 
-The Docker path is still available for isolated deployments.
+The checked-in [Compose recipe](../deploy/docker/docker-compose.yml) includes
+SQLite configuration; it does not launch an embedding or LLM service. Its
+default port publication is broader than loopback, so review its bind/auth
+settings before starting it. For the portable first run, use this loopback-only
+container command:
 
 ```bash
-docker compose -f deploy/docker/docker-compose.yml up -d --build
+docker build -t levara:local -f deploy/docker/Dockerfile .
+docker run --rm --name levara-local \
+  -p 127.0.0.1:8080:8080 -v levara-data:/app/data \
+  -e DB_PROVIDER=sqlite -e DB_PATH=/app/data/levara.db \
+  levara:local ./levara-server -profile=standalone -host=0.0.0.0 \
+  -port=8080 -grpc-port=0 -dim=768 -data-dir=/app/data
 ```
 
-The compose file is the authority for container ports and services; do not assume it matches the local Mac launchd runtime. After startup:
+The image uses `CMD`, not `ENTRYPOINT`: a command override must include
+`./levara-server`. In containers `127.0.0.1` points at the container itself;
+use a reachable provider address. `host.docker.internal` depends on the Docker
+host setup and is not a universal Linux hostname.
 
-```bash
-docker compose -f deploy/docker/docker-compose.yml ps
-curl -fsS http://127.0.0.1:8080/health
-```
+## Authentication and network exposure
 
-Build a custom image:
+Keep the backend on loopback behind a TLS proxy where possible. Preserve MCP
+streaming and authentication headers through the proxy; configure WebUI
+separately using [its README](../webui/README.md). Health/version availability
+is not proof that protected routes accept the intended user.
 
-```bash
-docker build -t levara:latest -f deploy/docker/Dockerfile .
-```
+Use separate credentials for each person or agent. Authenticated raw-storage
+gRPC requires an active global superuser; ordinary document workflows use
+REST/MCP. A collection name or MCP toolset is not an ACL. Dataset sharing is
+individual; document/group grants and native LDAP are not implemented. See
+[enterprise identity](enterprise-identity.md) for the supported SSO surfaces.
 
-Minimal docker run example:
+## Monitoring and scheduled maintenance
 
-```bash
-docker run -d \
-  -p 8080:8080 \
-  -v levara-data:/app/data \
-  -e EMBEDDING_ENDPOINT=http://host.docker.internal:9101/v1/embeddings \
-  -e EMBEDDING_MODEL=potion-code-16M \
-  -e LLM_PROVIDER=openai \
-  -e LLM_ENDPOINT=http://host.docker.internal:11434/v1 \
-  -e LLM_MODEL=gemma4:e2b \
-  --name levara \
-  levara:latest \
-  -profile=standalone-embed -dim=256 -port=8080 -grpc-port=0
-```
+Inspect `/health`, `/health/details`, `/version` and `/metrics` on your configured
+origin. Use authenticated MCP `doctor`, `runtime_stats`, `recent_errors` and
+`check_drift` where exposed. A provider health response does not demonstrate
+retrieval quality; run representative queries and inspect source evidence.
 
-## Raspberry Pi / ARM64
-
-See [../deploy/raspberry/](../deploy/raspberry/) for Pi-specific scripts and [../deploy/raspberry/TUNING.md](../deploy/raspberry/TUNING.md) for tuning.
-
-Cross-compile the server:
-
-```bash
-make arm64
-```
-
-Deploy pattern:
-
-```bash
-scp levara-arm64 pi@raspberrypi:~/levara/levara-server
-scp deploy/raspberry/{levara.service,levara.env,setup.sh} pi@raspberrypi:~/
-ssh pi@raspberrypi
-sudo bash ~/setup.sh
-```
-
-## Monitoring
-
-Levara exposes Prometheus metrics on the HTTP port:
-
-```bash
-curl -fsS http://127.0.0.1:8081/metrics | head
-```
-
-Useful runtime checks:
-
-```bash
-curl -fsS http://127.0.0.1:8081/health
-curl -fsS http://127.0.0.1:8081/health/details
-curl -fsS http://127.0.0.1:8081/version
-```
-
-Inside Hermes, prefer the MCP diagnostics:
-
-```text
-mcp_levara_doctor(verbose=true)
-mcp_levara_runtime_stats()
-mcp_levara_check_drift()
-mcp_levara_recent_errors(limit=20)
-```
+[Workspace operations](markdown-workspace-deployment-recipes.md) covers watchers,
+index jobs and audit files. [Cron profiles](cron-profiles.md) separates diagnostic
+schedules from destructive maintenance. [Search strategies](search-strategies-guide.md)
+explains rerank outcome and fan-out metrics.
 
 ## Backup and recovery
 
-File-backed state lives under the configured `-data-dir`. For the local Mac runtime that is `/Users/stek0v/src/levara/data`.
+Back up one consistent recovery point across these stores:
 
-Cold backup:
+- PostgreSQL with its backup tools, or a SQLite online backup / quiesced database
+  including any WAL state; copying only an actively written `.db` is insufficient.
+- The complete configured vector data directory, snapshots and WAL files.
+- Markdown workspace truth, `.kb` manifests, job state, audit and artifact files,
+  including an external workspace root if configured.
+- Original uploads and derived text, extraction metadata/structured artifacts;
+  if using S3, include the bucket/object backup policy rather than only local files.
+- Configuration and secrets, model/embedding contract identifiers, and a binary
+  version that can read the backup. The primary LLM cache is
+  `<data-dir>/llm_cache.jsonl`; an optional LLM proxy also uses the node directory
+  `<data-dir>/<node-id>/`.
 
-```bash
-# Optional for a fully quiescent snapshot:
-kill $(pgrep -f '/levara-server' | head -1)
+Quiesce writes or use storage-consistent snapshots; stop the actual service
+manager during a cold backup so it cannot immediately restart the process.
+Restore into an isolated destination first. Restore SQL and file/object state,
+start with workspace watchers disabled, inspect health and dataset counts, then
+reconcile stale workspace generations and verify original downloads and search.
+Vector indexes are derivatives, but reconstruction requires preserved source
+text and compatible models. A successful WAL replay is not a full backup test.
 
-tar -czf levara-data-$(date +%Y%m%d_%H%M%S).tar.gz /Users/stek0v/src/levara/data
+## Embedding migration: shadow, evaluate, cut over, roll back
 
-curl -fsS http://127.0.0.1:8081/health
-```
+Use the migration API for one collection at a time. Inventory collection names,
+record counts, source text availability, model/dimension contracts and a fixed
+query set first. Keep old model access and a restorable backup. The following
+JSON is a request template for `POST /api/v1/embedding-migrations`:
 
-Linux/systemd variant:
-
-```bash
-sudo systemctl stop levara
-tar -czf levara-backup-$(date +%Y%m%d).tar.gz /opt/levara/data
-sudo systemctl start levara
-curl -fsS http://127.0.0.1:8080/health
-```
-
-WAL replay restores the last consistent file-backed vector state after process crash. PostgreSQL still needs its own backup policy if used.
-
-## Reverse proxy
-
-Example nginx config for an HTTP/MCP deployment on `127.0.0.1:8080`:
-
-```nginx
-upstream levara {
-    server 127.0.0.1:8080;
-}
-
-server {
-    listen 80;
-    server_name levara.example.com;
-
-    location / {
-        proxy_pass http://levara;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
+```json
+{
+  "source_collection": "manuals",
+  "target_collection": "manuals_shadow",
+  "target_endpoint": "http://127.0.0.1:11434/v1/embeddings",
+  "target_model": "YOUR_TARGET_MODEL",
+  "target_dim": 768,
+  "batch_size": 32,
+  "max_attempts": 3,
+  "dry_run": true,
+  "enable_dual_write": false
 }
 ```
 
-Enable auth before exposing Levara outside a trusted network.
+1. Validate with `dry_run:true`; this validates the request and records a run,
+   not vector-quality parity. Change target endpoint/model/dimension to actual
+   provider values, then submit `dry_run:false` to build a separate collection.
+2. Poll `GET /api/v1/embedding-migrations/{run_id}/status`. Require `COMPLETED`,
+   inspect `processed`, `failed` and `failed_ids`. `POST .../{run_id}/retry`
+   retries failed records within the attempt cap.
+3. Compare source and shadow using `POST /api/v1/embedding-migrations/shadow-read`.
+   Supply `source_collection`, `shadow_collection`, `queries`, `top_k`, both
+   endpoints/models and workload-specific gate thresholds. Review overlap,
+   top-1 stability, empty-result rate, latency and the `cutover_ready` report;
+   supplement overlap with labeled relevance and permission checks.
+4. Quiesce writes and coordinate readers for cutover. Optional dual-write hooks
+   are not a substitute for checking consistency and failures. Submit
+   `POST .../{run_id}/cutover` with `{"archive_collection":"manuals_previous","retention_days":7}`.
+   Update query embedding configuration to the new contract and verify again.
+5. Keep the archive and old model for the agreed rollback window. To roll back
+   during a maintenance window, rename the new live collection to a spare name
+   with `POST /api/v1/collections/manuals/rename` and `{"new_name":"manuals_rejected"}`,
+   then rename `manuals_previous` to `manuals` and restore the old query model.
+   Verify the resulting names and records after each step; retain the backup if
+   either operation fails.
 
-## Common pitfalls
+The cutover implementation performs several renames with best-effort rollback;
+it is not an atomic multi-collection transaction. It requires a completed run
+but does not itself enforce a preceding shadow-read gate. Retention metadata is
+not a promise of automatic deletion. Review/disable remaining dual-write rules
+through `/api/v1/embedding-migrations/dual-write` before rollback. Do not reuse
+production names or endpoints while rehearsing this procedure.
 
-- `-grpc-port=0` disables gRPC, but `/health/details` may still show a `grpc` row with `port=0`.
-- `./levara-server -standalone=true` is legacy shorthand; prefer explicit `-profile=standalone` or `-profile=standalone-embed`.
-- `LLM_MODEL` is an environment variable, not a CLI flag.
-- Build the CLI explicitly with `go build -o ./bin/levara ./cmd/cli`; use that output path in local examples.
-- The local Mac runtime uses port `8081`; many generic examples use `8080`.
-- Neo4j and rerank are optional and are not configured in the current Mac deployment.
+## Validation
+
+See [testing](testing.md) for checks that do not touch live services. Source
+contracts are in [API contract](api-contract.md); operational availability and
+model quality must be checked on the intended deployment separately.

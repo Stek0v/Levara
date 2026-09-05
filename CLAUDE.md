@@ -40,5 +40,8 @@ make test-release-candidate
 - Do not reintroduce pre-Levara names, adapter experiments, or external
   benchmark scaffolding into top-level docs.
 - Keep product claims aligned with `docs/product-ladder.md`.
-- Keep enterprise claims honest: SSO/storage/KMS/SIEM production backends are
-  adapter roadmap unless concrete implementations and tests exist.
+- Keep enterprise claims aligned with `docs/enterprise-identity.md`: OIDC bearer,
+  SAML SP, limited SCIM Users and basic S3 exist; native LDAP, browser OIDC,
+  SCIM↔SSO linkage, group/document ACL and production KMS/SIEM remain gaps.
+- Use `docs/testing.md` for observed test results and their limits; do not turn
+  historical benchmark pass labels into current security or quality claims.

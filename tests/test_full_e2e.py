@@ -23,8 +23,8 @@ _DOCS_DIR = os.path.join(os.path.dirname(__file__), "..")
 TEST_DOCS = {}
 for name, path in [
     ("CLAUDE.md", os.path.join(_DOCS_DIR, "..", "CLAUDE.md")),
-    ("per-project-collections.md", os.path.join(_DOCS_DIR, "docs", "per-project-collections.md")),
-    ("setup-levara-workstation.md", os.path.join(_DOCS_DIR, "docs", "setup-levara-workstation.md")),
+    ("project-ingest.md", os.path.join(_DOCS_DIR, "docs", "project-ingest.md")),
+    ("deployment.md", os.path.join(_DOCS_DIR, "docs", "deployment.md")),
 ]:
     if os.path.exists(path):
         with open(path) as f:
@@ -438,8 +438,8 @@ class TestCompleteness:
             pytest.skip("No cognified data yet")
         doc_queries = {
             "CLAUDE.md": "Levara benchmark vector database",
-            "per-project-collections.md": "per-project collection isolation",
-            "setup-levara-workstation.md": "launchd systemd workstation setup",
+            "project-ingest.md": "project ingest workspace manifest",
+            "deployment.md": "launchd systemd deployment setup",
         }
         found = 0
         for doc_name, query in doc_queries.items():

@@ -29,7 +29,7 @@ chmod +x levara-server.new
 mv levara-server levara-server.bak.\$(date +%Y%m%d%H%M%S) 2>/dev/null || true
 mv levara-server.new levara-server
 
-# Qwen embed + rerank sidecars (see docs/MIGRATION-QWEN3.md)
+# Qwen embed + rerank sidecars (see docs/deployment.md and deploy/rerank/README.md)
 if [ -f docker-compose.qwen3.yml ]; then
   docker compose -f docker-compose.yml -f docker-compose.qwen3.yml up -d qwen3-embed qwen3-rerank-llm qwen3-rerank-front || true
 fi

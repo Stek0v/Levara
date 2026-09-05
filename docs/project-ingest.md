@@ -6,13 +6,27 @@ files, extraction quality, retries and sharing, use
 [document management](document-management.md) and
 [acceptance scenarios](document-workflow-scenarios.md).
 
-## Fast default for an existing project
+## Configure the target and inspect the corpus
 
 ```bash
+export LEVARA_URL=http://127.0.0.1:8080/api/v1
+# Set LEVARA_TOKEN for an authenticated server.
 python3 scripts/levara_project_ingest.py \
   /path/to/project \
-  --collection my-project
+  --collection my-project \
+  --dry-run
 ```
+
+Remove `--dry-run` after reviewing the selected corpus. The script has its own
+directory/suffix filters and does **not** honor `.gitignore`. Inspect ignored
+JSON/YAML/config files for secrets before sending content to Levara or a model.
+The default URL is `http://127.0.0.1:8081/api/v1`; the explicit environment above
+aligns with the portable first-run server. Python argparse accepts space-separated
+values here; the Go CLI uses `--key=value`.
+
+In authenticated workspace mode, add `--project-id DATASET_ID` using an existing
+accessible dataset ID; a project slug is not automatically a valid authorized
+dataset. Use [document management](document-management.md) to create/share it.
 
 Default behavior:
 
@@ -21,7 +35,8 @@ Default behavior:
   generated/heavy folders;
 - creates or appends a local `AGENTS.md` Levara memory contract;
 - runs classic `cognify` in `rag` mode;
-- builds a workspace index for `workspace_search` / `workspace_read`;
+- builds workspace search derivatives; confirm the corresponding truth files are
+  available to `workspace_read` before treating an indexed hit as an exact source;
 - writes a JSON report to stdout.
 
 The default `rag` mode is intentional: it is the practical fast path for
@@ -125,7 +140,8 @@ Once agents start using a newly ingested project, inspect whether the project
 scaffold is working:
 
 ```bash
-curl -sS 'http://127.0.0.1:8081/api/v1/memory-behavior?hours=24&collection=my-project'
+curl -fsS -H "Authorization: Bearer $LEVARA_TOKEN" \
+  "${LEVARA_URL}/memory-behavior?hours=24&collection=my-project"
 ```
 
 In WebUI open:
@@ -135,14 +151,22 @@ In WebUI open:
 - `/memory-scaffold` after running a meta-review to approve/reject proposed
   `AGENTS.md` or memory-policy improvements.
 
-Before changing the local project memory contract, capture a baseline:
+The fake evaluator checks only the harness against fixed fixtures:
 
 ```bash
 python3 benchmark/memory_behavior_eval/run_memory_behavior_eval.py \
   --fake \
-  --label my-project-scaffold-baseline
+  --label harness-smoke
 ```
 
-After changing the scaffold, rerun the same eval and compare behavior score and
-context bytes. For the full operator workflow see
-the internal memory-behavior notes (local-only, gitignored).
+It does not read your project or `AGENTS.md`; changing the scaffold cannot
+change these fixed-fixture results. To compare a memory contract before/after,
+run the same real agent tasks with the same model/corpus and collect their audit
+events, behavior score, context bytes and answer correctness. The canary driver
+also emits scripted tool calls; it does not evaluate an agent following your
+instructions. See [testing](testing.md) for measurement limits and
+[workspace operations](markdown-workspace-deployment-recipes.md) for exact-read
+and index freshness checks.
+
+Collection/client analytics selectors are not owner/tenant access controls;
+restrict shared analytics endpoints until that read-model boundary is enforced.

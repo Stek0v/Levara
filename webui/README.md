@@ -1,82 +1,70 @@
 # Levara WebUI
 
-Next.js operator UI for Levara.
+Next.js UI for document upload/processing, search, chat, workspace and operations.
+The frontend is a separate service; the Go backend does not serve it at `/ui`.
 
-Full operating guide: [`../docs/webui-operations.md`](../docs/webui-operations.md).
-Document upload, processing, retries and individual sharing:
-[document management](../docs/document-management.md),
-[acceptance scenarios](../docs/document-workflow-scenarios.md).
-Corporate login boundaries: [LDAP/AD and SSO](../docs/enterprise-identity.md).
+## Local start
 
-## Local Start
-
-The command below starts the project's macOS development stack with PostgreSQL
-and a local embedding sidecar; it may restart its existing port 8081 process.
-For a fresh portable server, use [getting started](../docs/getting-started.md).
-
-Start that development backend first:
+Start the SQLite-backed backend from [getting started](../docs/getting-started.md)
+on `127.0.0.1:8080`. From this directory:
 
 ```bash
-cd ..
-./start-levara.sh
+npm ci
+LEVARA_API_URL=http://127.0.0.1:8080 npm run dev
 ```
 
-Then start the WebUI:
-
-```bash
-cd webui
-npm install
-LEVARA_API_URL=http://127.0.0.1:8081 npm run dev
-```
-
-Open `http://localhost:3000`.
+Open `http://127.0.0.1:3000`. For semantic search and processing configure the
+backend model services and matching dimension first. The repository's personal
+macOS startup helper is not needed for this portable workflow.
 
 ## Configuration
 
-| Variable | Default | Use |
+| Variable | Default | Meaning |
 |---|---|---|
-| `LEVARA_API_URL` | `http://127.0.0.1:8081` | Backend target for Next rewrites from `/api/*`, `/health`, `/health/details` |
-| `NEXT_PUBLIC_API_URL` | empty | Optional browser-visible API base; leave empty for same-origin rewrites |
+| `LEVARA_API_URL` | `http://127.0.0.1:8081` | Backend origin for Next rewrites; no `/api/v1` suffix |
+| `NEXT_PUBLIC_API_URL` | empty | Optional browser API base; empty uses same-origin rewrites |
 
-Recommended local and team default: set `LEVARA_API_URL`, leave
-`NEXT_PUBLIC_API_URL` empty. For a production build, set `LEVARA_API_URL`
-when running `npm run build` as well as `npm run start`; rewrites are built
-into the Next.js output. WebUI is a separate service, not backend `/ui`.
+Set `LEVARA_API_URL` explicitly to match your server. Keep
+`NEXT_PUBLIC_API_URL` empty for the normal same-origin proxy setup. Configure
+`LEVARA_API_URL` at both `npm run build` and `npm run start` because rewrites
+are included in the build output. In a container, loopback is the container
+itself, not the backend on another host.
 
-## Scripts
+## Document workflow
+
+Select an existing dataset by ID or create a new named dataset, upload, inspect
+extraction and wait for an explicit processing result. Failed extraction/run
+status is not Ready; a missing run ID alone is not completion. Retry the same
+file after correcting the cause. The original download goes through the
+credentialed API and can be denied after access changes.
+
+Shares are individual viewer/editor/admin grants on a dataset. Use a separate
+dataset for one document; document/group ACLs are not implemented. Backend
+OIDC/SAML endpoints do not imply a built-in browser OIDC login flow. See
+[document management](../docs/document-management.md),
+[acceptance scenarios](../docs/document-workflow-scenarios.md) and
+[enterprise identity](../docs/enterprise-identity.md).
+
+## Checks and tests
 
 ```bash
-npm run dev
 npm run lint
-npm run build
-npm run start
+npx tsc --noEmit
+LEVARA_API_URL=http://127.0.0.1:1 npm run test:e2e
 ```
 
-## Tests
+The curated Playwright suite uses deterministic route mocks; its default WebUI
+port is `3011`, configurable by the Playwright environment. It checks browser
+behavior, not real backend authentication/extraction or external model quality.
 
-Playwright starts the WebUI on port `3001` and points it at
-`LEVARA_API_URL`:
+`npm run test:e2e:integration` runs the wider suite containing live-backend
+scenarios. Do not point it at an existing service by habit; inspect test targets,
+provide a dedicated backend/data/credentials and follow [testing](../docs/testing.md).
+The mocked upload suite can be run with
+`LEVARA_API_URL=http://127.0.0.1:1 npx playwright test e2e/upload-flow.spec.ts`.
 
-```bash
-LEVARA_API_URL=http://127.0.0.1:8081 npx playwright test
-```
-
-Useful targeted suites:
-
-```bash
-npx playwright test e2e/auth-flow.spec.ts
-npx playwright test e2e/upload-flow.spec.ts
-npx playwright test e2e/full-integration.spec.ts
-```
-
-## Screens
-
-The sidebar exposes Dashboard, Datasets, Search, Chat, Graph, Collections,
-Workspace, Sync, Memories, Notebooks, Analytics, Admin, Onboarding, and Settings.
-
-Individual shares apply to a dataset; use a separate dataset for one document.
-Group grants and independent document ACLs are not available. Backend OIDC/SAML
-surfaces do not imply a built-in browser SSO flow.
-
-For deployment, monitoring, reverse proxy, solo/team setup, and troubleshooting,
-use [`../docs/webui-operations.md`](../docs/webui-operations.md).
+Build/start commands are `npm run build` and `npm run start`. Operational
+configuration, proxying and deployment checks are in
+[WebUI operations](../docs/webui-operations.md). Aggregate analytics should not
+be treated as a fully isolated per-tenant reporting surface; verify its access
+scope before exposing it to untrusted users.

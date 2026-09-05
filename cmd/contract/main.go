@@ -17,7 +17,7 @@ func main() {
 	cmd := os.Args[1]
 	fs := flag.NewFlagSet(cmd, flag.ExitOnError)
 	outDir := fs.String("out", "docs", "output directory")
-	repoRoot := fs.String("repo", ".", "repo root (for AGENTS.md, deployment-matrix)")
+	repoRoot := fs.String("repo", ".", "repo root (for AGENTS.md and contract inventories)")
 	if err := fs.Parse(os.Args[2:]); err != nil {
 		fail(err.Error())
 	}

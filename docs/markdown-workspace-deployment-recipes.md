@@ -1,238 +1,119 @@
 # Markdown Workspace Deployment Recipes
 
-Date: 2026-05-11
-
-This document turns the markdown-native workspace architecture into copyable
-operator recipes for solo development, a shared team server, and Mac/Pi sync.
-For the broader product ladder and enterprise layering plan, see
-`docs/product-ladder.md` and `docs/adr/002-product-ladder-and-layering.md`.
+Use [getting started](getting-started.md) for the server, [profile presets](profile-presets.md)
+for product configuration, and [workspace concepts](markdown-native-workspace.md)
+for truth files, generations and guarded writes.
 
 ## 1. Single-Node Development
 
-Use this for one developer on one machine.
+From the repository root, with no other test instance using this data path:
 
 ```bash
-export DB_PROVIDER=sqlite
-export DB_PATH="$PWD/data/levara.db"
-export LEVARA_WORKSPACE_WATCH=1
-export LEVARA_WORKSPACE_INDEX_WORKER=1
-export LEVARA_WORKSPACE_WATCH_ASYNC_INDEX=1
-export LEVARA_WORKSPACE_WATCH_CHUNK_STRATEGY=merged
-
-levara-server \
-  -standalone \
-  -dim 1536 \
-  -data-dir "$PWD/data" \
-  -port 8080
+DB_PROVIDER=sqlite DB_PATH="$PWD/data/levara.db" \
+LEVARA_WORKSPACE_WATCH=1 LEVARA_WORKSPACE_INDEX_WORKER=1 \
+LEVARA_WORKSPACE_WATCH_ASYNC_INDEX=1 \
+LEVARA_WORKSPACE_WATCH_CHUNK_STRATEGY=merged \
+./levara-server -profile=standalone -host=127.0.0.1 -port=8080 \
+  -grpc-port=0 -dim=768 -data-dir="$PWD/data"
 ```
 
-Recommended workflow:
-
-1. Write Markdown with `workspace_write`.
-2. Let watcher enqueue reconcile jobs.
-3. Let the worker drain `.kb/jobs`.
-4. Ask agents to start with `workspace_context`.
-5. Use `workspace_search -> workspace_read` for answers.
-
-If no embedder is configured, use `CHUNKS_LEXICAL` or configure
-`EMBEDDING_ENDPOINT` / `EMBEDDING_MODEL` before dense or hybrid search.
+Write Markdown truth, inspect watcher/jobs, then search and exact-read the source.
+Lexical workspace retrieval works without embeddings; dense search needs a
+provider, matching dimension and `standalone-embed` or explicit embedding flags.
 
 ## 2. Team Server
 
-Use this when multiple users/agents share projects with RBAC.
+Follow [Team setup](tutorials/04-team-deploy.md): PostgreSQL, required auth,
+stable signing secret and one credential per user/agent. Add the workspace flags
+above to the exported environment. Use dataset IDs for `project_id`; granting
+an individual viewer/editor/admin role does not establish group or organization
+permissions automatically.
 
 ```bash
-export ENV=prod
-export DB_HOST=postgres.internal
-export DB_PORT=5432
-export DB_NAME=levara_db
-export DB_USERNAME=levara
-export DB_PASSWORD="<secret>"
-export JWT_SECRET="<long-random-secret>"
-export LEVARA_WORKSPACE_WATCH=1
-export LEVARA_WORKSPACE_INDEX_WORKER=1
-export LEVARA_WORKSPACE_WATCH_ASYNC_INDEX=1
-export LEVARA_WORKSPACE_INDEX_WORKER_MAX_ATTEMPTS=3
-export LEVARA_WORKSPACE_INDEX_WORKER_BACKOFF=5s
-export EMBEDDING_ENDPOINT="http://embedder.internal/v1"
-export EMBEDDING_MODEL="text-embedding-3-small"
-
-levara-server \
-  -standalone \
-  -dim 1536 \
-  -data-dir /var/lib/levara \
-  -port 8080 \
-  -require-auth
+curl -fsS -H "Authorization: Bearer $LEVARA_TOKEN" \
+  'http://127.0.0.1:8080/api/v1/workspace/ops/status?project_id=DATASET_ID&branch=main'
 ```
 
-Team setup checklist:
+Every workspace REST path is under `/api/v1/workspace`, not root `/workspace`.
+Inspect `workspace_conflicts` before concurrent edits and use MCP/REST
+`expected_file_digest` for optimistic writes. The CLI currently does not expose
+that digest parameter. `workspace_audit_log` reports recorded access/change
+entries; it is not proof that every external filesystem edit is fully audited.
 
-- Create a dataset/project row for each `project_id`.
-- Grant `viewer`, `editor`, or `admin` shares.
-- Give agents user-scoped JWT/API keys, not a shared admin token.
-- Require agents to run `workspace_access_check` before write/revert/gc.
-- Use `workspace_ops_status` for one-call operational health.
-- Use `workspace_conflicts` before team writes or when freshness is uncertain.
-- Monitor `.kb/jobs` through `workspace_index_jobs`.
-- Review `.kb/audit/<project>/audit-YYYY-MM.jsonl` through
-  `workspace_audit_log`.
+Useful metrics include workspace index job status/lag/dead letters, watcher
+pending branches/errors and recorded audit events. Copyable operator fixtures:
 
-Operational health checks:
+- [examples/ops/prometheus-alerts.yml](../examples/ops/prometheus-alerts.yml)
+- [examples/ops/grafana-workspace-dashboard.json](../examples/ops/grafana-workspace-dashboard.json)
 
-```bash
-# REST
-curl -H "Authorization: Bearer $LEVARA_TOKEN" \
-  "http://localhost:8080/workspace/ops/status?project_id=payments&branch=main"
+Inspect labels and thresholds against your deployed `/metrics`; fixture
+thresholds are examples, not a service-level objective.
 
-# MCP
-workspace_ops_status(project_id="payments", branch="main")
-```
+## 3. Context artifacts
 
-Prometheus `/metrics` includes:
-
-- `levara_workspace_index_jobs{status}`
-- `levara_workspace_index_job_max_lag_seconds`
-- `levara_workspace_index_dead_letters`
-- `levara_workspace_watcher_pending_branches`
-- `levara_workspace_watcher_errors`
-- `levara_workspace_audit_events_total{source,operation,result}`
-- `levara_workspace_audit_stored_events`
-
-Copyable operator files:
-
-- `examples/ops/prometheus-alerts.yml`
-- `examples/ops/grafana-workspace-dashboard.json`
-
-Context artifacts:
+A rules file at `<workspace-root>/.kb/context-artifacts.json` can include
+structured project artifacts:
 
 ```json
 {
   "version": 1,
   "includes": [
-    {
-      "project_id": "payments",
-      "branch": "main",
-      "glob": "artifacts/api/**/*.yaml",
-      "kind": "openapi",
-      "room": "api",
-      "tags": ["payments"]
-    },
-    {
-      "project_id": "payments",
-      "branch": "main",
-      "glob": "artifacts/db/**/*.sql",
-      "kind": "ddl",
-      "room": "db",
-      "tags": ["schema"]
-    }
+    {"project_id":"DATASET_ID","branch":"main","glob":"artifacts/api/**/*.yaml","kind":"openapi","room":"api","tags":["api"]},
+    {"project_id":"DATASET_ID","branch":"main","glob":"artifacts/db/**/*.sql","kind":"ddl","room":"db","tags":["schema"]}
   ]
 }
 ```
 
-Save that as `data/workspace/.kb/context-artifacts.json`, then call
-`workspace_context_artifacts` to inspect it and `workspace_reindex_artifacts`
-with a fresh generation to publish artifacts into search.
+Inspect with `workspace_context_artifacts` and reindex through
+`workspace_reindex_artifacts` using a fresh generation. Review source contents
+before indexing; include rules are not a secret scanner.
 
-## 3. Mac ↔ Pi Sync
+## 4. Sync between machines
 
-Use this when a Mac is the primary coding machine and a Raspberry Pi keeps a
-durable Levara copy.
+Sync is an MCP/REST operation, not a `levara sync` CLI command. Configure an
+exact `LEVARA_SYNC_REMOTE_URL` and credentials for your remote deployment.
+Authenticated sync requires an active global superuser. The configured server
+token is forwarded only to the exact configured URL, without redirects.
 
-```bash
-# Pull memory/graph/chat state from Pi to Mac.
-sync_levara
+Example MCP arguments, with your own remote API base:
 
-# Manual MCP equivalent:
-sync \
-  --remote-url "http://10.23.0.53:8080/api/v1" \
-  --direction pull
+```text
+sync(remote_url="https://levara.example.com/api/v1", direction="pull",
+     types=["memories", "interactions", "graph"])
 ```
 
-Vector collections are excluded by default because they require re-embedding.
-For markdown workspace projects, sync or copy the Markdown truth layer first,
-then run:
+Vectors are excluded by default; collection sync is explicit and requires a
+compatible embedding contract. Do not assume this also synchronizes workspace
+truth files. Transfer/restore those through your chosen backup/file workflow,
+then reconcile on the destination:
 
 ```bash
-levara workspace reconcile \
-  --project payments \
-  --branch main \
-  --generation "sync-$(date -u +%Y%m%dT%H%M%SZ)" \
-  --chunk-strategy merged \
-  --activate
+export LEVARA_URL=http://127.0.0.1:8080/api/v1
+./levara workspace reconcile --project=DATASET_ID --branch=main \
+  --generation=after-sync-001 --chunk-strategy=merged --activate
 ```
 
-## 4. Agent Host Configs
+## 5. Agent Host Configs
 
-Copyable examples live in `examples/agent-hosts/`:
+- [examples/agent-hosts/claude-mcp.json](../examples/agent-hosts/claude-mcp.json)
+- [examples/agent-hosts/cursor-mcp.json](../examples/agent-hosts/cursor-mcp.json)
+- [examples/agent-hosts/codex-config.toml](../examples/agent-hosts/codex-config.toml)
+- [examples/agent-hosts/workspace-agent-instructions.md](../examples/agent-hosts/workspace-agent-instructions.md)
 
-- `examples/agent-hosts/claude-mcp.json`
-- `examples/agent-hosts/cursor-mcp.json`
-- `examples/agent-hosts/codex-config.toml`
-- `examples/agent-hosts/workspace-agent-instructions.md`
+Merge the selected template into the installed host's actual config. For current
+Codex use `bearer_token_env_var = "LEVARA_TOKEN"`; the repository installer still
+produces an older Codex header layout. [Agent integration](tutorials/02-agent-integration.md)
+explains this limitation and direct configuration.
 
-Host instructions must say:
+Workspace flow: context → search → exact read → optional guarded write → commit.
+Add [memory instructions](memory-workflow-skill.md) separately for durable
+room/hall records. Never replace existing project instructions blindly.
 
-1. Start every workspace session with `workspace_context`.
-2. Use `workspace_search` for retrieval.
-3. Use `workspace_read` before answering from a hit.
-4. Use `workspace_write` for durable generated notes.
-5. Use `workspace_commit` after meaningful changes.
+## 6. Backup and Restore
 
-You can also merge Levara into an existing host config without overwriting
-other MCP servers:
-
-```bash
-# Claude-style project config: .mcp.json
-go run ./cmd/agent-hosts \
-  -host claude \
-  -target .mcp.json \
-  -server-url http://localhost:8080/mcp
-
-# Cursor project config: .cursor/mcp.json
-go run ./cmd/agent-hosts \
-  -host cursor \
-  -target .cursor/mcp.json \
-  -server-url http://localhost:8080/mcp
-
-# Codex project config: .codex/config.toml
-go run ./cmd/agent-hosts \
-  -host codex \
-  -target .codex/config.toml \
-  -server-url http://localhost:8080/mcp
-```
-
-The installer preserves unrelated config, replaces only the `levara` MCP
-server stanza, and writes a timestamped `.bak-YYYYMMDDTHHMMSSZ` file before
-modifying an existing target. Use `-dry-run` to inspect the merged config.
-
-## 5. Backup and Restore
-
-Back up:
-
-- `data/workspace/projects/` - Markdown truth.
-- `data/workspace/.kb/manifests/` - active generations and chunk metadata.
-- `data/workspace/.kb/jobs/` - durable indexing jobs.
-- `data/workspace/.kb/audit/` - sanitized access/change audit.
-- vector collection storage under the configured Levara data dir.
-- SQL database if auth, shares, graph, or API keys are enabled.
-
-Restore order:
-
-1. Restore SQL database and data dir.
-2. Start Levara with watcher disabled.
-3. Run `workspace_context` to inspect manifests and branches.
-4. Run `workspace_reconcile` for projects with missing/stale generations.
-5. Enable watcher and index worker.
-
-## 6. Troubleshooting
-
-| Symptom | Likely Cause | Action |
-|---|---|---|
-| `workspace_context` has no projects | No local workspace and no accessible DB projects | Create/share a project or write initial Markdown. |
-| `workspace_search` says active generation missing | Manifest is not initialized | Run `workspace_reconcile` with `activate_generation=true`. |
-| Search is stale | Watcher has pending branch or failed reconcile | Inspect `workspace_context`, then `workspace_ops_status`. |
-| Jobs stay `pending` | Worker not running | Set `LEVARA_WORKSPACE_INDEX_WORKER=1`. |
-| Job reaches `dead_letter` | Repeated embed/read/upsert failure | Fix root cause, then retry or enqueue a fresh generation. |
-| Agent write is rejected with digest conflict | File changed since the agent read it | Run `workspace_read`, review diff, then retry with the new `expected_file_digest`. |
-| Active generation disagrees with files | Manual edit, deleted file, or watcher lag | Run `workspace_conflicts`, then reconcile a fresh generation. |
-| Viewer cannot write | Expected RBAC behavior | Grant `editor` or `admin`, or use read-only workflow. |
+Use the [complete backup inventory](deployment.md#backup-and-recovery), including
+SQL, vectors, truth files, manifests, jobs, audit, original uploads and derived
+artifacts. Restore into an isolated destination with watcher disabled first.
+Inspect project access and exact reads, reconcile stale generations, and only
+then enable watcher/index worker. See [user scenarios](markdown-workspace-user-scenarios.md)
+and [testing](testing.md) for verification boundaries.

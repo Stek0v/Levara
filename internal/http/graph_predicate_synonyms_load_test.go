@@ -228,7 +228,7 @@ func writePredicateSynonymLoadReportIfRequested(t *testing.T, metrics predicateS
 	if err := os.WriteFile(jsonPath, raw, 0644); err != nil {
 		t.Fatalf("write predicate synonym load json: %v", err)
 	}
-	mdPath := filepath.Join(repoRoot, "docs", "predicate-synonym-load-report.md")
+	mdPath := filepath.Join(resultsDir, "predicate-synonym-load-report.md")
 	if err := os.WriteFile(mdPath, []byte(renderPredicateSynonymLoadMarkdown(metrics)), 0644); err != nil {
 		t.Fatalf("write predicate synonym load markdown: %v", err)
 	}

@@ -31,7 +31,7 @@ USER levara
 EXPOSE 8080 50051
 
 # Defaults for environment variables that have hard production
-# requirements (see docs/MIGRATION-20.04.md):
+# requirements (see docs/deployment.md):
 #   JWT_SECRET — generate via `openssl rand -hex 32`, persist in secrets store
 #   ENV=production — disables /swagger/* exposure
 #   REQUIRE_AUTH=true — flips gRPC + HTTP auth from permissive to strict

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/stek0v/levara/internal/contract"
@@ -26,9 +25,6 @@ func validate(c contract.Contract, outDir, repoRoot string) error {
 		return err
 	}
 	if err := compareFile(cmp, outDir, "api-contract.md", renderMarkdownBytes); err != nil {
-		return err
-	}
-	if err := validateDeploymentMatrix(c, repoRoot); err != nil {
 		return err
 	}
 	return nil
@@ -102,28 +98,4 @@ func renderMarkdownBytes(c contract.Contract) ([]byte, error) {
 		fmt.Fprintf(&b, "| %s | %s | %s |\n", s.Provider, s.Kind, s.Name)
 	}
 	return []byte(b.String()), nil
-}
-
-var endpointRe = regexp.MustCompile("`(GET|POST|PUT|DELETE|PATCH|HEAD) (/[^`]+)`")
-
-func validateDeploymentMatrix(c contract.Contract, repoRoot string) error {
-	path := filepath.Join(repoRoot, "docs/deployment-matrix.md")
-	raw, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	known := map[string]bool{}
-	for _, r := range c.REST {
-		known[r.Method+" "+r.Path] = true
-	}
-	for _, m := range endpointRe.FindAllStringSubmatch(string(raw), -1) {
-		key := m[1] + " " + m[2]
-		if !known[key] {
-			return fmt.Errorf("deployment-matrix references unknown REST endpoint: %s", key)
-		}
-	}
-	return nil
 }

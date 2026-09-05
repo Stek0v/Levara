@@ -12,10 +12,13 @@ and the `mem0` collection in `main.py`; environment variables do not change them
 Its vectors have 768 dimensions, so start a matching fresh Levara test instance:
 
 ```bash
-LEVARA_DIM=768 docker compose up -d --build   # from the repository root
+./levara-server -profile=standalone -host=127.0.0.1 -port=8080 \
+  -grpc-port=0 -dim=768 -data-dir=./data-vector-example
 ```
 
-Compose starts Levara and Prometheus, not Ollama. Do not reuse a `mem0` collection
+Build the server with `make build` first. This raw-vector example does not
+require SQL; [durable memory](../../docs/getting-started.md) does. Levara does not
+start Ollama. Do not reuse a `mem0` collection
 created with a different dimension. The script sends no token; run only against
 your isolated local development server, or adapt its requests for authenticated
 use. This is a raw-vector example, not the document upload/sharing workflow.
@@ -28,7 +31,7 @@ pip install -r requirements.txt
 python main.py
 ```
 
-Expected output:
+Illustrative output; exact scores depend on the model/index:
 
 ```
 → embedding 3 notes via Ollama (nomic-embed-text)

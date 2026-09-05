@@ -2,7 +2,7 @@
 
 [English version](long-horizon-runtime.md)
 
-Long-Horizon Task Runtime — alpha-журнал исполнения Levara для работы, которая
+Long-Horizon Task Runtime — включаемый отдельно журнал исполнения Levara для работы, которая
 должна переживать сжатие контекста, перезапуски процесса, передачу между
 агентами и продолжение по расписанию. В SQL сохраняются цель, полномочия,
 Definition of Done, версионированный план, атомарные leases шагов, неизменяемые
@@ -22,7 +22,7 @@ export DB_PROVIDER=sqlite
 export DB_PATH=./data/levara.db
 export LEVARA_LONG_HORIZON_RUNTIME=1
 export LEVARA_MCP_TOOLSET=long-horizon
-./levara-server -profile=standalone -port=8080 -grpc-port=0
+./levara-server -profile=standalone -host=127.0.0.1 -port=8080 -grpc-port=0
 ```
 
 Профиль `full` также включает Task Runtime, пока активен feature flag. После
@@ -237,18 +237,24 @@ receipts; неподдерживаемые или недостаточно до�
 - Один actor должен выполнять один claimed step за раз. Проверка зависимостей и
   claim lease атомарны.
 
-## Безопасность и границы alpha
+## Безопасность и ограничения
 
-- В alpha Task Runtime доступен через MCP; отдельного процесса в WebUI пока нет.
-- Runtime записывает authority, но не выдаёт права на filesystem, network,
-  deploy, payment или publication.
-- Tool profiles уменьшают размер схемы, но не являются границей авторизации.
-- Доступ к task учитывает authenticated owner и изоляцию collection/room.
-- Локальная проверка artifacts отклоняет выход через symlink и пути вне
-  настроенных roots. Неподдерживаемые URI-схемы не считаются доверенными.
-- Автономного scheduler/worker нет: задачу продолжает MCP host или внешний
-  запуск по расписанию.
+Task Runtime хранит состояние и доказательства в SQL. Read-only WebUI `/tasks`
+показывает задачи, шаги, lease, receipts, checkpoints и blockers. Работу выполняет
+внешний агент/host; этот журнал не выдаёт новые права.
 
-Проверенные сценарии и команды воспроизведения приведены в
-[alpha-отчёте](long-horizon-alpha-report.md). Канонические входные и выходные
-схемы генерируются в [api-contract.md](api-contract.md).
+- Профиль инструментов управляет видимостью, но не заменяет авторизацию.
+- Scope задачи включает владельца, collection и room.
+- Artifact verification проверяет поддерживаемые источники и containment путей;
+  неизвестные URI не становятся доверенными автоматически.
+- `LEVARA_TASK_WORKER=1` включает цикл worker, однако server bootstrap подключает
+  `NewLoggingStepExecutor`: он пишет лог и возвращает синтетическое наблюдение,
+  не выполняя полезную задачу. Не используйте такой результат как evidence
+  выполнения команды, изменения файла или проверки качества.
+- [Authority-манифест](authority-manifests.md) может быть привязан к задаче;
+  digest проверяется на HTTP claim. Tool/path/network helpers не подключены
+  ко всем production-действиям и не образуют универсальный sandbox.
+
+Схемы — [API contract](api-contract.md), реальные границы тестового evidence —
+[testing](testing.md). [English version](long-horizon-runtime.md) описывает тот же
+runtime; maturity-ярлык не заменяет проверку вашего executor и хранилища.

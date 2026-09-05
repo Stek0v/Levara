@@ -1,140 +1,58 @@
-# Tutorial 01 — First Memory (15 minutes)
+# Tutorial 01 — First Memory
 
-Every command in this tutorial was verified against a live Levara server
-(main, 2026-09-03). Prerequisites: Go 1.26+ and PostgreSQL (any 14+), or
-Docker for the database.
+Use the SQLite-backed loopback server in [getting started](../getting-started.md).
+No embedding or LLM service is needed for this lexical memory exercise.
+The commands below are source-checked examples, not a claim of a current live run.
+[Русский старт](00-getting-started-ru.md).
 
-_Русская версия: [00-getting-started-ru.md](00-getting-started-ru.md)._
-
-## 1. Start Levara
-
-```bash
-git clone https://github.com/Stek0v/Levara.git && cd Levara
-make build
-
-createdb levara_tutorial   # or: docker run -e POSTGRES_HOST_AUTH_METHOD=trust -p 5432:5432 postgres:16
-
-./levara-server -profile=standalone-embed -port=8080 -grpc-port=0 \
-  -data-dir=./data -node-id=tutorial \
-  -pg-url="postgres://$(whoami)@localhost:5432/levara_tutorial?sslmode=disable"
-```
-
-Health check (in a second terminal):
+## 1. Save a scoped record
 
 ```bash
-curl -s http://127.0.0.1:8080/health
-# {"health":"healthy","status":"ready","version":"levara-go"}
-```
-
-## 2. Save a memory via MCP
-
-Levara speaks MCP. The fastest way to see memory work is a raw JSON-RPC call
-to the stateless transport (no session needed):
-
-```bash
-curl -s -X POST http://127.0.0.1:8080/mcp/2026-07-28 \
+curl -fsS http://127.0.0.1:8080/mcp \
   -H 'Content-Type: application/json' \
-  -H 'Accept: application/json, text/event-stream' \
-  -H 'MCP-Protocol-Version: 2026-07-28' \
-  -H 'Mcp-Method: tools/call' \
-  -H 'Mcp-Name: save_memory' \
-  -d '{
-    "jsonrpc":"2.0","id":1,"method":"tools/call",
-    "params":{
-      "name":"save_memory",
-      "arguments":{
-        "collection":"notes",
-        "room":"tutorial",
-        "hall":"fact",
-        "key":"first-memory",
-        "value":"Levara runs as one Go binary; memory survives agent restarts"
-      },
-      "_meta":{
-        "io.modelcontextprotocol/protocolVersion":"2026-07-28",
-        "io.modelcontextprotocol/clientInfo":{"name":"curl","version":"0"},
-        "io.modelcontextprotocol/clientCapabilities":{}
-      }
-    }
-  }'
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"save_memory","arguments":{"collection":"tutorial","room":"onboarding","hall":"fact","key":"first-memory","value":"The tutorial stores durable memory in SQLite."}}}'
 ```
 
-Expected: `"index_status":"pending"` and a `Memory saved: first-memory = …`
-message. The record is durable immediately; the vector index builds in the
-background (a second or two).
+Inspect the tool result, including `result.isError` or JSON-RPC `error`. An HTTP
+200 alone is insufficient. With authentication enabled, include your bearer
+credential; this example targets the deliberately unauthenticated local server.
 
-The `room × hall` pair is Levara's taxonomy: `room` answers "about what?",
-`hall` answers "what kind of fact?" (`fact`, `decision`, `event`,
-`preference`, `advice`, `discovery`).
+`collection` selects project context, `room` the subject, and `hall` the kind of
+record: `fact`, `decision`, `event`, `preference`, `advice`, or `discovery`.
+A collection name is not an access-control boundary by itself.
 
-In practice you won't hand-write JSON — your MCP client (Claude Code, Cursor,
-Codex) sends these calls. Tutorial 02 covers that.
-
-## 3. Recall it
-
-Semantic recall — ask a question, get the memory back even though no word
-matches exactly:
+## 2. Recall an exact term
 
 ```bash
-sleep 3   # let the background index finish
-
-curl -s -X POST http://127.0.0.1:8080/mcp/2026-07-28 \
+curl -fsS http://127.0.0.1:8080/mcp \
   -H 'Content-Type: application/json' \
-  -H 'Accept: application/json, text/event-stream' \
-  -H 'MCP-Protocol-Version: 2026-07-28' \
-  -H 'Mcp-Method: tools/call' \
-  -H 'Mcp-Name: recall_memory' \
-  -d '{
-    "jsonrpc":"2.0","id":2,"method":"tools/call",
-    "params":{
-      "name":"recall_memory",
-      "arguments":{"collection":"notes","query":"does memory persist restarts","limit":3},
-      "_meta":{
-        "io.modelcontextprotocol/protocolVersion":"2026-07-28",
-        "io.modelcontextprotocol/clientInfo":{"name":"curl","version":"0"},
-        "io.modelcontextprotocol/clientCapabilities":{}
-      }
-    }
-  }' | grep -o 'first-memory'
-# first-memory
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"recall_memory","arguments":{"collection":"tutorial","query":"SQLite","limit":3}}}'
 ```
 
-## 4. Get a morning briefing
+Expect the key `first-memory` and its stored text. This tests the SQL/lexical
+path; synonym-only semantic recall requires configured embeddings and a ready
+index. Do not use a fixed sleep as proof that background indexing completed.
 
-`wake_up` condenses a collection into a bounded briefing:
+## 3. Recover context and verify persistence
 
 ```bash
-curl -s -X POST http://127.0.0.1:8080/mcp/2026-07-28 \
+curl -fsS http://127.0.0.1:8080/mcp \
   -H 'Content-Type: application/json' \
-  -H 'Accept: application/json, text/event-stream' \
-  -H 'MCP-Protocol-Version: 2026-07-28' \
-  -H 'Mcp-Method: tools/call' \
-  -H 'Mcp-Name: wake_up' \
-  -d '{
-    "jsonrpc":"2.0","id":3,"method":"tools/call",
-    "params":{
-      "name":"wake_up",
-      "arguments":{"collection":"notes","max_tokens":200},
-      "_meta":{
-        "io.modelcontextprotocol/protocolVersion":"2026-07-28",
-        "io.modelcontextprotocol/clientInfo":{"name":"curl","version":"0"},
-        "io.modelcontextprotocol/clientCapabilities":{}
-      }
-    }
-  }'
+  -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"wake_up","arguments":{"collection":"tutorial","max_tokens":300}}}'
 ```
 
-The response includes `scope_status` and the pinned/recent records that fit
-the token budget.
+Stop your foreground test server with Ctrl-C, restart the same command and
+repeat recall. Use the same `DB_PATH`; memory resides in SQL, not the process.
+Each sessionless call supplies its own collection. A normal MCP host can keep
+session context through `set_context`.
 
-## 5. Verify persistence
+## 4. Use memory for real work
 
-Restart the server (`Ctrl-C`, start it again) and repeat step 3. The memory
-is still there — it lives in Postgres, not in the process.
+Recall before investigating unfamiliar decisions. Save verified durable facts
+and decisions with their reasons, rather than raw chat, secrets, code paths or
+temporary task state. Follow [the memory skill](../memory-workflow-skill.md) and
+the repository's memory contract. Do not repeatedly create demonstration records
+in a shared project collection.
 
-## Next
-
-- [02-agent-integration.md](02-agent-integration.md) — connect Claude Code,
-  Cursor, or Codex instead of curl
-- [features-guide.md](../features-guide.md) — everything else the server can do
-
-_Last verified: 2026-09-03 (standalone-embed, potion-code-16M, main branch)._
+Continue with [agent integration](02-agent-integration.md),
+[documents](03-knowledge-base.md), or [search strategies](../search-strategies-guide.md).

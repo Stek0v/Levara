@@ -46,8 +46,7 @@ func TestMarkdownWorkspaceAgentHostExamples(t *testing.T) {
 	for _, required := range []string{
 		"[mcp_servers.levara]",
 		`url = "http://localhost:8080/mcp"`,
-		"[mcp_servers.levara.headers]",
-		`Authorization = "Bearer ${LEVARA_TOKEN}"`,
+		`bearer_token_env_var = "LEVARA_TOKEN"`,
 	} {
 		if !strings.Contains(codex, required) {
 			t.Fatalf("codex-config.toml missing %q", required)
@@ -117,8 +116,11 @@ func internalDocRaw(t *testing.T, name string) []byte {
 	return raw
 }
 
-func TestFullTestingScenariosCoversProductLadder(t *testing.T) {
-	raw := internalDocRaw(t, "full-testing-scenarios.md")
+func TestTestingGuideCoversProductLadder(t *testing.T) {
+	raw, err := os.ReadFile("testing.md")
+	if err != nil {
+		t.Fatal(err)
+	}
 	text := string(raw)
 	for _, required := range []string{
 		"Personal / Local",
@@ -133,7 +135,7 @@ func TestFullTestingScenariosCoversProductLadder(t *testing.T) {
 		"Automation Backlog",
 	} {
 		if !strings.Contains(text, required) {
-			t.Fatalf("full-testing-scenarios.md missing %q", required)
+			t.Fatalf("testing.md missing %q", required)
 		}
 	}
 }
@@ -204,9 +206,9 @@ func TestProductDocsDoNotDriftFromProfileConstants(t *testing.T) {
 		}
 	}
 	for _, implemented := range []string{
-		"storage/KMS adapter contracts now exist",
-		"OIDC verified-claims adapter",
-		"concrete enterprise protocol/storage integrations",
+		"storage/KMS contract shapes",
+		"OIDC bearer verification",
+		"SCIM-to-SSO identity linking",
 	} {
 		if !strings.Contains(product, implemented) {
 			t.Fatalf("product-ladder.md missing implemented state %q", implemented)
@@ -342,7 +344,7 @@ func TestMarkdownWorkspaceCapabilityParity(t *testing.T) {
 		"| Log | `GET /workspace/log` | `levara workspace log` | `workspace_log` | `parity` |",
 		"| Revert | `POST /workspace/revert` | `levara workspace revert` | `workspace_revert` | `parity` |",
 		"| GC / dry-run | `POST /workspace/gc` | `levara workspace gc` | `workspace_gc` | `parity` |",
-		"| Search by active generation | `GET /search` plus workspace resolution in server layer | `levara search ...` | `workspace_search` | `functional-parity` |",
+		"| Search by active generation | `POST /workspace/search` | `not exposed` | `workspace_search` | `intentional-gap` |",
 	} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("capability parity doc missing row %q", required)
@@ -393,6 +395,13 @@ func TestMarkdownWorkspaceCapabilityParityMatchesSource(t *testing.T) {
 	}
 
 	rows := []parityRow{
+		{
+			name:         "workspace search",
+			docRow:       "| Search by active generation | `POST /workspace/search` | `not exposed` | `workspace_search` | `intentional-gap` |",
+			restNeedle:   `app.Post("/workspace/search", workspaceSearchHandler(cfg))`,
+			mcpNeedle:    `case "workspace_search":`,
+			cliForbidden: `/workspace/search`,
+		},
 		{
 			name:         "access preflight",
 			docRow:       "| Access preflight | `POST /workspace/access/check` | `not exposed` | `workspace_access_check` | `intentional-gap` |",

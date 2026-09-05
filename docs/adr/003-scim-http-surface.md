@@ -1,130 +1,80 @@
-# ADR-003: SCIM HTTP Surface (Enterprise Provisioning)
+# ADR-003: SCIM HTTP surface
 
-- **Статус:** Proposed
-- **Дата:** 2026-09-04
-- **Связанные задачи:** backlog A3 (блокируется этим ADR), A2 (SAML), A8
-- **Чек-лист:** `docs/internal/security-diff-checklist.md` (access, tenant, audit)
+Дата: 2026-09-04. Статус целевого решения: Proposed.
+Ограниченная реализация существует; исходники проверены 2026-09-05. Этот ADR
+сохраняет обоснование и открытые решения, а доступные операции описаны в
+[enterprise identity](../enterprise-identity.md).
 
-## Статус реализации на 2026-09-05
+## Контекст и границы
 
-Текст решения ниже сохраняет исходную целевую архитектуру и не является
-перечнем доступных endpoint-ов. Уже реализован ограниченный `/scim/v2` Users
-API: GET/POST, GET/PATCH/DELETE по ID, ServiceProviderConfig и Schemas под
-отдельным bearer-токеном. Groups, PUT, Bulk, ResourceTypes, связка SCIM↔SSO
-и действующий group→role mapping не реализованы. Описанные ниже audit/rate-limit
-и немедленный отзыв всех JWT/API-ключей нельзя считать действующей гарантией.
-Точные операции и проверки: [enterprise identity](../enterprise-identity.md).
+Корпоративный каталог должен управлять жизненным циклом учётной записи через
+адаптер над `pkg/access`. Provisioning и вход пользователя — разные процессы.
+Создание SCIM-записи не означает, что вход через OIDC/SAML автоматически связан
+с тем же внутренним пользователем или что ему выданы права на документы.
 
-## Контекст
+Стабильная внешняя идентичность определяется парой issuer + externalId.
+Email может переименоваться или перейти другому человеку, поэтому тихое
+объединение разных внешних идентичностей по email недопустимо. Этот принцип
+сохраняется независимо от будущего расширения HTTP API.
 
-Enterprise-профиль требует корпоративного provisioning: пользователи и группы
-создаются в IdP (Entra ID, Okta) и должны появляться в Levara без ручного
-заведения. Стандарт де-факто — SCIM 2.0 (RFC 7644). В коде уже есть
-write-side seam: `pkg/access/provisioning.go` определяет SCIM-shaped
-`Provisioner` (пользователи и group→role bindings). HTTP-поверхности нет.
+## Реализованный ограниченный API
 
-ADR-002 оставляет enterprise как слой адаптеров над тем же движком. Этот ADR
-фиксирует форму SCIM-адаптера до реализации (бэклог A3).
+При настроенном отдельном provisioning bearer-токене доступны:
 
-## Решение
-
-### 1. Поверхность
-
-Минимальный, но полный для Entra ID/Okta набор (RFC 7644 §3–4):
-
-```
+```text
 GET    /scim/v2/ServiceProviderConfig
 GET    /scim/v2/Schemas
-GET    /scim/v2/ResourceTypes
-POST   /scim/v2/Users
 GET    /scim/v2/Users
+POST   /scim/v2/Users
 GET    /scim/v2/Users/{id}
-PUT    /scim/v2/Users/{id}
 PATCH  /scim/v2/Users/{id}
 DELETE /scim/v2/Users/{id}
-GET    /scim/v2/Groups
-POST   /scim/v2/Groups
-PATCH  /scim/v2/Groups/{id}
-DELETE /scim/v2/Groups/{id}
 ```
 
-- `/Schemas`, `/ResourceTypes`, `/ServiceProviderConfig` — статические
-  манифесты (фиксируются в contract.json как генерируемые).
-- Фильтрация: только `userName eq "…"` и `externalId eq "…"` (достаточно для
-  Entra ID/Okta matching); остальное → 400 `invalidFilter`.
-- Пагинация: `startIndex`/`count` (максимум 200), ответ `totalResults`.
+Токен требуется и для служебных манифестов. `LEVARA_SCIM_TOKEN` не является
+обычным пользовательским JWT и не должен предоставлять доступ ко всему API.
+Без настроенного токена SCIM-маршруты не регистрируются. Конфигурация issuer
+задаёт пространство внешних идентификаторов; её смена требует отдельной
+процедуры сопоставления существующих пользователей.
 
-### 2. Аутентификация
+Повторный POST для существующего issuer/externalId обновляет активность
+существующей записи; переименование выполняется PATCH. Занятый email другой
+идентичности вызывает конфликт. `externalId` после привязки неизменяем.
+SQL-создание пользователя, principal и внешней привязки выполняется
+транзакционно. Реализация: [SCIM store](../../pkg/access/scim.go) и
+[регрессии](../../pkg/access/scim_test.go).
 
-Отдельный provisioning-токен: `LEVARA_SCIM_TOKEN` (статический bearer),
-передаётся как `Authorization: Bearer …`. Обоснование: SCIM-клиенты (Entra)
-умеют только статические токены; JWT-флоу сюда сознательно не примешиваем.
+DELETE означает `is_active=false` с сохранением идентификатора и ссылок.
+Это не hard delete, не стирание документов и не доказательство немедленного
+отзыва всех ранее выданных JWT/API-ключей на каждом транспорте. Проверки
+активности и поведение повторного provisioning тестируются отдельно.
 
-- Токен **не** даёт доступа к остальному API — это отдельное middleware на
-  группе `/scim/v2`, а не общий JWTMiddleware.
-- Токен обязателен: endpoint'ы не существуют (404 route не зарегистрирован),
-  если `LEVARA_SCIM_TOKEN` пуст. Совпадение — constant-time compare.
-- Доступ к `/scim/v2/ServiceProviderConfig` без токена разрешён (IdP так
-  проверяет доступность перед настройкой коннектора).
+## Нереализованная часть целевого решения
 
-### 3. Identity-matching policy (ключевое решение)
+Groups, PUT Users, Bulk, ResourceTypes и полноценный group→role/tenant mapping
+не входят в текущую HTTP-поверхность. Не следует выдавать её за полный набор,
+проверенный с любым IdP. SCIM↔SSO linking, политика деактивации/повторной
+активации и отзыв действующих credentials требуют сквозного дизайна и тестов.
 
-При `POST /Users` с `externalId`, который уже существует:
+Отдельный audit для каждой provisioning-мутации, специальный rate limit,
+распределённая инвалидация и измеренный срок отзыва остаются требованиями для
+расширенного корпоративного сценария, а не действующими гарантиями. Удалены
+прежние неподтверждённые отметки «все проверки выполнены» и обещание 5 секунд.
 
-- матч по `externalId` → обновление существующего (идемпотентно, 200);
-- матч по `userName` (email) при отсутствии `externalId` → **409
-  `uniqueness`** (никаких тихих слияний личностей: внешнее несоответствие
-  mail-алиасов не должно молча склеивать двух людей).
-- Переименование email (PATCH `userName`) разрешено; `externalId` неизменяем
-  (попытка изменить → 400 `mutability`).
+При добавлении Groups сначала утвердить источник и семантику membership,
+маппинг на существующие роли и tenants, поведение пустого маппинга и отзыв прав.
+Не выводить права из названия группы или email и не расширять доступ по
+заявленному клиентом actor_id.
 
-Обоснование: IdP — источник истины по `externalId`; email меняется, личности
-— нет. Тихий матч по email склеил бы разных людей при переиспользовании
-корпоративного адреса.
+## Приёмка расширений
 
-### 4. Deletion semantics
+Проверять на SQLite и PostgreSQL одинаковые сценарии: создание и повтор,
+email collision/rename, неизменяемый externalId, foreign issuer/ID, partial
+PATCH, malformed payload, SQL error/rollback, deactivation/reactivation,
+неверный/отсутствующий токен. Для каждого нового IdP нужны реальные provisioning
+и sign-in проверки с явно связанными идентичностями; mocks их не заменяют.
 
-- `DELETE /Users/{id}` → **soft delete**: `active=false`, сессии и API-ключи
-  пользователя инвалидируются немедленно, запись сохраняется (audit + ссылки
-  из receipts/workspace).
-- `active=false` → все запросы с его JWT/API-ключом → 401 (проверка
-  `active` в auth-middleware, кэш инвалидации ≤ 5 c).
-- Hard delete — вне scope до появления retention-политики (задача A4/E3).
-
-### 5. Groups → roles
-
-`PATCH /Groups/{id}` `add/remove members` синхронизирует membership.
-Маппинг group→role/tenant — через существующий `GroupTenantMap` /
-`SuperuserGroups` из OIDCAdapter (единая политика в `pkg/access`), не новый
-механизм прав. Groups с пустым маппингом создаются, но прав не дают
-(лог warning при первой ссылке).
-
-### 6. Аудит и rate limit
-
-- Каждая мутация — audit event `actor=scim`, с `externalId` в атрибутах.
-- Rate limit: отдельный бакет 10 rps burst 20 (provisioning-пики синков
-  ограничены, DDoS-защита не цель — endpoint за корпоративным периметром).
-
-### 7. Чего сознательно НЕТ (не scope)
-
-- `/Me`, EnterpriseUser extension-поля кроме `externalId`/`active`.
-- Bulk (`POST /Bulk`) — Entra/Okta синкают поштучно.
-- Password sync — пароли остаются в Levara (bcrypt) либо SSO.
-- SCIM → SSO «прозрачная связка»: включение A2 (SAML) независимо.
-
-## Последствия
-
-- Плюс: provisioning закрывается стандартным протоколом, seams уже есть,
-  объем — HTTP-адаптер + invalidation-крючок в auth-middleware.
-- Минус/риск: invalidation active-flag в auth-пути добавляет проверку в
-  hot path — делаем через локальный кэш с TTL 5 c (см. DoD A3), не запрос
-  в БД на каждый вызов.
-- Нейтрально: soft delete сохраняет записи — соответствует audit-требованиям
-  и ссылочной целостности receipts.
-
-## Чек-лист безопасности (из security-diff-checklist)
-
-- [x] access: отдельный токен, не расширяет существующие права
-- [x] tenant: provisioned users получают tenant только через group-маппинг
-- [x] audit: все мутации с actor=scim
-- [x] MCP memory ownership: не затрагивается (SCIM не создаёт коллекций)
+См. [contributor checks](../../CONTRIBUTING.md) и
+[testing](../testing.md). Принятие этого целевого ADR и расширение реализации
+должны сопровождаться конкретными проверяемыми контрактами, а не общей
+гарантией «SSO поддерживается».

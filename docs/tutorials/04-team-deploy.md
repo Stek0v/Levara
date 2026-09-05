@@ -1,11 +1,10 @@
-# Tutorial 04 — Deploy for a Team (30 minutes)
+# Tutorial 04 — Deploy for a Team
 
 Take Levara from a laptop to a shared server: Postgres, authentication,
-workspace access checks, and indexing for the team. Core token-flow examples
-were exercised on 2026-09-03; documentation was cross-checked with source on
-2026-09-05. This is not an LDAP/AD or organizational-isolation acceptance test.
+workspace access checks, and indexing for the team. This is a configuration guide; complete the
+identity and document-access acceptance scenarios for the intended deployment.
 
-Prerequisites: a Linux host (or Mac) with Go 1.26+, PostgreSQL 14+, and
+Prerequisites: a Linux host (or Mac) with the Go version in [go.mod](../../go.mod), PostgreSQL, and
 optionally Docker.
 
 ## 1. Database and build
@@ -33,21 +32,20 @@ The team profile example enables:
   silent fallbacks to local SQLite)
 - workspace watch + index worker + audit export — shared Markdown workspaces
   stay indexed and audited
-- `LEVARA_TENANT_ENFORCED=0` — optional for teams, **required** for
-  enterprise isolation
+- `LEVARA_TENANT_ENFORCED=0` — optional for teams, required by the Enterprise preset; not complete group/document isolation
 
 ## 3. Start with auth enforced
 
 ```bash
 set -a && source .env && set +a
-./levara-server -config-check              # validate before serving
+./levara-server -require-auth -config-check # validate the same auth mode
 ./levara-server -require-auth \
-  -host=0.0.0.0 -port=8080 -grpc-port=0
+  -host=127.0.0.1 -port=8080 -grpc-port=0 -dim=768
 ```
 
-This example explicitly binds the team listener; use HTTPS at the reverse proxy
-and restrict direct backend access. Keep `-host=127.0.0.1` when the proxy runs
-on the same host. The default listener is loopback, not a public team endpoint.
+This listener stays on loopback behind a same-host HTTPS proxy. If a separate
+proxy requires another bind address, explicitly configure it and restrict direct
+backend access. Match `-dim` and provider settings before creating collections.
 
 With `-require-auth`, `/health` stays public for load balancers, but
 protected resource calls require credentials. Registration/login, enabled
@@ -55,8 +53,8 @@ identity handshakes and transport discovery have their own access rules.
 gRPC raw-storage methods require an active global superuser with auth enabled;
 use REST/MCP for ordinary users or disable gRPC with `-grpc-port=0`.
 
-The MCP endpoint `http://your-host:8080/mcp` now requires
-`Authorization: Bearer <token>` on every call — see
+Protected MCP operations require a valid credential; use
+`Authorization: Bearer <token>` on your host connection — see
 [02-agent-integration.md](02-agent-integration.md) for client config.
 
 ## 4. Create users
@@ -80,9 +78,13 @@ Use the returned `access_token` for API and MCP calls:
 curl -s -X POST http://127.0.0.1:8080/api/v1/collections \
   -H "Authorization: Bearer $ACCESS_TOKEN" \
   -H 'Content-Type: application/json' \
-  -d '{"name":"teamkb","dimension":256}'
+  -d '{"name":"teamkb","embedding_dim":768}'
 # 201 Created
 ```
+
+`embedding_dim` matches this tutorial’s `-dim=768`. Before enabling embeddings,
+choose a provider/model with that output dimension or change both values; the
+collection request does not start an embedding model.
 
 JWTs are signed with `JWT_SECRET` — keep it stable across restarts and
 identical if you run more than one server process. For HMAC-peppered API-key
@@ -111,22 +113,16 @@ the team a common memory; `room × hall` taxonomy keeps it navigable;
 ## 7. Verify the deployment
 
 ```bash
-curl -s http://127.0.0.1:8080/health/details
-# database: postgres/connected, embed: connected
+curl --fail-with-body -sS -H "Authorization: Bearer $ACCESS_TOKEN" http://127.0.0.1:8080/health/details
+# database: postgres/connected, embed: depends on configured provider
 
 # two users cannot see each other by default:
 # follow document-workflow-scenarios.md with separate users and known IDs
 ```
 
-Historical observation from the [2026-09-03 run](../../benchmark/results/multi_user/run2_summary.json): 50
-concurrent agents, save p95 22 ms, recall p95 238 ms, zero cross-agent
-leaks, zero duplicate task executions across two server processes on one
-database. This workload does not certify every access path or set a latency SLA.
-
 ## Operations
 
-- Backups: `cmd/backup` wraps pg_dump/pg_restore, including schema-only and
-  restore verification
+- Backups: follow the complete SQL/files/object inventory in [deployment](../deployment.md#backup-and-recovery)
 - WebUI: a separate Next.js service (port 3000 in development); configure
   its backend target/reverse proxy using [WebUI operations](../webui-operations.md)
 - Upgrades: rebuild the binary; indexes are disposable derivatives and
@@ -135,7 +131,4 @@ database. This workload does not certify every access path or set a latency SLA.
 ## Next
 
 - [../deployment.md](../deployment.md) — systemd/launchd/Docker specifics
-- [../deployment-matrix.md](../deployment-matrix.md) — which profile fits
-  which operating model
-
-_Historical token-flow test: 2026-09-03. Documentation/source cross-check: 2026-09-05._
+- [Profile presets](../profile-presets.md) — configuration requirements by operating model

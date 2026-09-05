@@ -356,7 +356,7 @@ func (cm *CollectionManager) Drop(name string) error {
 // closed during the rename — readers/writers calling Get/Insert against the
 // old name during this window will see "not found" (the maps are updated
 // only after the on-disk rename + reopen succeeds). Used by the
-// blue-green embed-model migration (see docs/MIGRATION-EMBED-POTION.md
+// blue-green embed-model migration (see docs/deployment.md
 // Phase 4.5) where the shadow collection is promoted to the live name
 // in a sub-second window.
 func (cm *CollectionManager) Rename(oldName, newName string) error {

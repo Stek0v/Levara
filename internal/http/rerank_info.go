@@ -1,9 +1,7 @@
 // rerank_info.go — GET /api/v1/models/rerank surface for clients that
 // need to verify which reranker is configured. Cheap pure-config read;
-// no sidecar round-trip. Answers the Phase 2 design's open question
-// (docs/phase2-rerank-default-design.md): "Should we expose the model
-// behind a /models/rerank endpoint?" Yes — needed for dashboards and
-// for E2E gates that assert the expected variant is serving.
+// no sidecar round-trip. See docs/search-strategies-guide.md for model
+// configuration, fallback behavior and interpreting rerank metrics.
 
 package http
 

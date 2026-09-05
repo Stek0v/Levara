@@ -6,7 +6,6 @@ on:
       - '**'
       - 'docs/api-contract.md'
       - 'docs/contract.json'
-      - 'docs/deployment-matrix.md'
       - 'AGENTS.md'
       - '.github/workflows/go-ci.yml'
   push:
@@ -15,7 +14,6 @@ on:
       - '**'
       - 'docs/api-contract.md'
       - 'docs/contract.json'
-      - 'docs/deployment-matrix.md'
       - 'AGENTS.md'
       - '.github/workflows/go-ci.yml'
 

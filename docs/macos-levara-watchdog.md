@@ -1,15 +1,12 @@
 # macOS Levara watchdog
 
-Date: 2026-06-22
-Status: local operations helper
-
 This watchdog notifies through macOS Notification Center when the local Levara
 backend becomes unreachable, reports tracked errors, or writes panic/error lines
 to the configured local log file.
 
 ## What it checks
 
-- `GET $LEVARA_URL/health`
+- `GET $LEVARA_URL/health/details`
 - `GET $LEVARA_URL/api/v1/errors?limit=5`
 - new lines in `$LEVARA_LOG_PATH` matching `panic:`, `fatal`, JSON
   `"level":"ERROR"`, ` ERROR `, or `error=`
@@ -76,7 +73,7 @@ Set these in the plist or environment:
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `LEVARA_URL` | `http://127.0.0.1:8081` | Local Levara backend URL |
+| `LEVARA_URL` | `http://127.0.0.1:8081` | Backend origin, without `/api/v1` |
 | `LEVARA_LOG_PATH` | repo `data/logs/levara-local.log` | Local server stderr/stdout log to scan |
 | `LEVARA_WATCHDOG_STATE_DIR` | `~/Library/Application Support/Levara/watchdog` | State and dedupe files |
 | `LEVARA_WATCHDOG_COOLDOWN_SECONDS` | `900` | Minimum seconds before repeating the same alert |
@@ -86,3 +83,15 @@ Set these in the plist or environment:
 For a server launched by launchd with logs in `~/Library/Logs`, point
 `LEVARA_LOG_PATH` at that stderr or combined log file. For a systemd/Linux host,
 use the Raspberry monitor or journal tooling instead.
+
+## Authentication limit
+
+The current script sends no Authorization header. On an authenticated server it
+can observe public health and local logs, but it cannot inspect a protected
+errors feed as the intended user. Do not disable server authentication to make
+that check work. Use authenticated diagnostics from [cron profiles](cron-profiles.md)
+or your monitoring system when that feed is required. Unlike the CLI variable
+of the same name, watchdog `LEVARA_URL` is an origin, not an `/api/v1` base.
+
+The installed plist uses its own configured paths and port; review it before
+loading. It does not inherit values exported in a different interactive shell.

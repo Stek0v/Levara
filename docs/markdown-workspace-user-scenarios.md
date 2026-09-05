@@ -87,7 +87,7 @@ Corner cases: битый registry, пустой registry, удалённый art
 ### S11. Ops status для self-serve диагностики
 Mode: `solo`
 Goal: понять здоровье workspace без чтения внутренних файлов руками.
-Flow: `workspace_ops_status` или `kb workspace ops-status`.
+Flow: `workspace_ops_status` или `levara workspace ops-status`.
 Expected: пользователь видит jobs, watcher lag, audit summary, metrics rollup.
 Автотесты: `internal/http/workspace_test.go::TestWorkspaceOpsStatusReportsJobsWatcherAuditAndMetrics`, `internal/http/workspace_test.go::TestWorkspaceOpsStatusHandlesInvalidJobTimestamp`
 Corner cases: malformed audit rows, invalid timestamps, project scope по нескольким веткам.
@@ -111,7 +111,7 @@ Corner cases: запрос без expected hit, heading mismatch, пустая �
 ### S14. CLI full-cycle без прямого HTTP
 Mode: `solo`
 Goal: пройти весь поток через CLI и убедиться, что parity с API сохранён.
-Flow: `kb workspace write` -> `kb search` -> `kb workspace commit` -> `kb workspace revert`.
+Flow: `levara workspace write` -> `levara search` -> `levara workspace commit` -> `levara workspace revert`.
 Expected: CLI использует те же серверные semantics, что и REST/MCP.
 Автотесты: `cmd/cli/workspace_e2e_test.go::TestWorkspaceCLIFullCycleWriteSearchCommitRevert`
 Corner cases: commit/revert через CLI, смена generation names, watcher status через CLI.

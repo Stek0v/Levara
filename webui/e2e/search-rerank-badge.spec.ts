@@ -7,8 +7,7 @@
 //      and surfaces per-result `reranked` from the response instead of
 //      its own toggle. If a future PR adds a UI toggle that sets
 //      `rerank: true|false`, this assertion forces an explicit doc
-//      update (see docs/phase2-rerank-default-design.md migration plan
-//      PR C).
+//      update (see docs/search-strategies-guide.md).
 //
 //   2. The `reranked` Badge appears on result rows where the response
 //      sets `reranked: true` and is absent on the rest. The A.2 fix in

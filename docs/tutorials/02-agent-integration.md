@@ -1,95 +1,88 @@
-# Tutorial 02 — Connect Your Agent (10 minutes)
+# Tutorial 02 — Connect Your Agent
 
-Levara is an MCP server, so any MCP-capable coding agent can use it as its
-memory layer. Verified against Claude Code, Cursor, and Codex CLI configs on
-2026-09-03 (the JSON/TOML snippets here are covered by doc tests in
-`docs/markdown_workspace_docs_test.go`).
+Start a server with [getting started](../getting-started.md), then connect your
+MCP host to `http://127.0.0.1:8080/mcp`. Shared deployments need an individual
+credential and HTTPS or a trusted local tunnel. Tool availability depends on
+`LEVARA_MCP_TOOLSET` and feature flags; product profiles are a separate setting.
 
-Prerequisite: a running Levara server — see
-[01-first-memory.md](01-first-memory.md) step 1 if you don't have one.
+## Merge the configuration
 
-## Claude Code
+The repository includes a config-merging helper. From its root, inspect a dry
+run before writing an existing client config:
 
-Add Levara to your project's `.mcp.json` (or `~/.claude.json` for all
-projects):
-
-```json
-{
-  "mcpServers": {
-    "levara": {
-      "url": "http://localhost:8080/mcp",
-      "headers": {
-        "Authorization": "Bearer ${LEVARA_TOKEN}"
-      }
-    }
-  }
-}
+```bash
+go run ./cmd/agent-hosts -host claude -target .mcp.json \
+  -server-url http://127.0.0.1:8080/mcp -dry-run
+go run ./cmd/agent-hosts -host cursor -target .cursor/mcp.json \
+  -server-url http://127.0.0.1:8080/mcp -dry-run
 ```
 
-Running without auth (dev default)? Keep the header — set
-`LEVARA_TOKEN=dev` in your shell, or drop the `headers` block entirely.
-With `-require-auth`, the token is a Levara API key or JWT.
-
-## Cursor
-
-`~/.cursor/mcp.json` — same shape:
-
-```json
-{
-  "mcpServers": {
-    "levara": {
-      "url": "http://localhost:8080/mcp",
-      "headers": {
-        "Authorization": "Bearer ${LEVARA_TOKEN}"
-      }
-    }
-  }
-}
-```
-
-## Codex CLI
-
-`~/.codex/config.toml`:
+For current Codex, configure it directly:
 
 ```toml
 [mcp_servers.levara]
-url = "http://localhost:8080/mcp"
+url = "http://127.0.0.1:8080/mcp"
+bearer_token_env_var = "LEVARA_TOKEN"
 ```
 
-## Give the agent its operating rules
+Or use `codex mcp add levara --url http://127.0.0.1:8080/mcp --bearer-token-env-var LEVARA_TOKEN`.
+The repository installer still generates an older Codex headers layout; its
+structural tests are not proof that current Codex reads that authentication field.
+Omit the bearer setting only for the deliberately no-auth loopback tutorial.
 
-Copy `examples/agent-hosts/workspace-agent-instructions.md` into your
-repo as `AGENTS.md` (or append it). It teaches the agent when to call
-`save_memory` (every decision, discovery, preference — immediately, not at
-session end), when to `recall_memory` (before researching something
-unfamiliar), and what never to store (code paths, git history, secrets).
+Choose the target your installed client actually reads. Remove `-dry-run` only
+for that chosen file; the helper preserves unrelated settings and backs up an
+existing target. It does not validate the live client's authentication behavior.
 
-## Verify the loop
+[Host examples](../../examples/agent-hosts/README.md) contain JSON/TOML templates.
+A minimal JSON configuration for the no-auth loopback tutorial is:
 
-Ask your agent:
+```json
+{"mcpServers":{"levara":{"url":"http://127.0.0.1:8080/mcp"}}}
+```
 
-> Save a memory: in room "onboarding", hall "preference", key
-> "reply-style", value "terse replies, no emoji".
+For an authenticated server configure a valid `Authorization: Bearer ...` or
+`X-API-Key` using the client's secret/environment-header support. The checked-in
+`${LEVARA_TOKEN}` placeholders are templates; some hosts send them literally.
+Do not copy a token into a committed project file. The [memory skill guide](../memory-workflow-skill.md)
+shows a Codex environment-header example; verify it with your installed client.
 
-Then open a **new** session and ask:
+## Give the agent the right workflow
 
-> What do you remember about my reply style?
+For durable project memory use [memory-workflow-skill](../memory-workflow-skill.md)
+and a project memory contract like [AGENTS.md](../../AGENTS.md): choose a stable
+collection, `set_context`, `wake_up`, recall relevant decisions before research,
+and save only verified durable outcomes with room/hall.
 
-The agent should call `recall_memory` and answer from Levara, not from the
-chat history. That's the whole point: the memory outlives the conversation.
+For Markdown artifacts append the relevant rules from
+[workspace-agent-instructions.md](../../examples/agent-hosts/workspace-agent-instructions.md):
+`workspace_context → workspace_search → workspace_read`, followed by guarded
+writes and commits when needed. That file teaches the workspace workflow; it
+is not the complete memory playbook. Merge instructions into existing project
+rules instead of replacing the whole `AGENTS.md`.
 
-## Trouble-shooting
+## Verify with a real session
 
-| Symptom | Fix |
+Ask the agent to report its selected collection and recall an existing project
+fact. Check the tool calls and source record, then repeat in a fresh session.
+When a real decision is reached, verify it is saved once with its reason and
+correct scope. You do not need a dummy memory write to prove the connection.
+
+For shared documents test with two accounts and a known denied dataset as well
+as an allowed one: [document scenarios](../document-workflow-scenarios.md).
+Client tool approval, server authentication and dataset permissions are separate
+controls. An MCP toolset is not an authorization boundary.
+
+## Troubleshooting
+
+| Symptom | Check |
 |---|---|
-| Client shows the server but no tools | Check the profile: tool visibility depends on `LEVARA_PROFILE` and feature flags (e.g. task tools need `LEVARA_LONG_HORIZON_RUNTIME=1`) |
-| 401 on every call | Server runs with `-require-auth`; set a valid `Authorization: Bearer <key>` |
-| 404 on `/mcp/2026-07-28` | Stateless transport requires the strict header set; use the session transport `/mcp` (what the configs above use) or add `MCP-Protocol-Version` + `Mcp-Method` headers |
-| Agent saves nothing | It needs instructions — see previous section |
+| No tools after reconnect | `LEVARA_MCP_TOOLSET`, relevant feature flag, client refresh of `tools/list` |
+| Authenticated call fails | Actual transmitted header, token validity and resource grants; legacy MCP may deliberately return 404 |
+| Stateless transport rejects a request | Required headers and metadata in [API guide](../api-reference.md); normal host examples use `/mcp` |
+| Context changes between curl calls | Sessionless calls need an explicit collection each time |
+| Agent searches but does not recall decisions | Install the memory instructions as well as the transport config |
 
-## Next
-
-- [03-knowledge-base.md](03-knowledge-base.md) — beyond memory: documents,
-  hybrid search, the knowledge graph
-
-_Last verified: 2026-09-03 (main; config snippets are doc-tested)._
+Continue with [knowledge base](03-knowledge-base.md),
+[workspace recipes](../markdown-workspace-deployment-recipes.md) and
+[Team deployment](04-team-deploy.md).

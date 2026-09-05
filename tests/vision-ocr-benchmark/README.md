@@ -1,178 +1,85 @@
-# Vision OCR Model Benchmark — Test Plan
+# Vision/OCR benchmark protocol
 
-## Цель
-Выбрать оптимальную модель для извлечения текста из изображений на Mac и Pi.
-Дополнительно: протестировать LFM2.5-350M как замену qwen3:0.6b для entity extraction.
+This directory contains a runner for OCR and entity-extraction experiments.
+It does not contain an accepted ranking of models. Earlier sample accuracy,
+latency and RAM numbers were illustrative, not measurements, and have been
+removed. Current product validation is described in
+[testing](../../docs/testing.md).
 
-## Модели для тестирования
+## Prepare inputs and a target
 
-### Vision/OCR модели
-| # | Модель | Размер | Ollama ID | Платформа |
-|---|--------|--------|-----------|-----------|
-| 1 | moondream 1.8b | 1.7 GB | `moondream:1.8b` | Mac + Pi |
-| 2 | granite3.2-vision 2b | 1.5 GB | `granite3.2-vision:2b` | Mac + Pi |
-| 3 | llava 7b | 4.7 GB | `llava:7b` | Mac only |
-| 4 | minicpm-v 8b | 4.9 GB | `minicpm-v:8b` | Mac only |
+Use a local or explicitly selected isolated Ollama instance and synthetic or
+approved test documents. The runner sends image/text contents to that instance.
+Pin the model artifacts and record their digests; a mutable model tag alone
+is not enough to reproduce a comparison.
 
-### Text extraction модели (не vision, для сравнения cognify quality)
-| # | Модель | Размер | Ollama ID | Платформа |
-|---|--------|--------|-----------|-----------|
-| 5 | LFM2.5-350M | ~350 MB | `hf.co/LiquidAI/LFM2.5-350M-GGUF` | Mac + Pi |
-| 6 | qwen3:0.6b (baseline) | 400 MB | `qwen3:0.6b` | Mac + Pi |
+The runner reads `images/*.png` and `texts/*.txt` below this directory.
+Suggested corpus, with a manually checked ground-truth transcription for each:
 
-## Тестовые сеты
+| Set | Inputs | What to check |
+|-----|--------|---------------|
+| A. UI and code | dashboard, terminal, diff, chat | small text, symbols, line ordering |
+| B. Documents | printed Russian/English, handwriting, receipt, table | exact numbers, names, columns and missing content |
+| C. Diagrams | architecture and entity relationships | labels, edges and invented text |
+| D. Entity extraction | technical paragraphs with expected entities/relations | valid JSON, precision and recall against labels |
 
-### Set A: Скриншоты UI (5 изображений)
-- A1: Скриншот WebUI dashboard Levara (статистика, таблица)
-- A2: Скриншот терминала с кодом Go (синтаксис, цвета)
-- A3: Скриншот Grafana dashboard (графики, метрики)
-- A4: Скриншот Telegram чата (текст, аватары, timestamps)
-- A5: Скриншот GitHub PR с diff (добавления/удаления, номера строк)
+Keep input digests, language, image resolution and labels with the report.
+Do not infer accuracy from output length or a successful HTTP response.
 
-### Set B: Документы (5 изображений)
-- B1: Фото страницы книги (печатный текст, русский)
-- B2: Фото рукописного текста (заметки, почерк)
-- B3: Скан визитки (контакты, логотип, мелкий шрифт)
-- B4: Фото таблицы/чека (числа, столбцы, суммы)
-- B5: Фото whiteboard (маркер, схема, стрелки)
+## Run the existing CLI
 
-### Set C: Технические диаграммы (3 изображения)
-- C1: Архитектурная диаграмма (блоки, стрелки, подписи)
-- C2: UML/ER диаграмма (сущности, связи)
-- C3: Мем/инфографика (текст + изображение, смешанный контент)
+First inspect options without sending requests:
 
-### Set D: Entity extraction тексты (для LFM2.5 vs qwen3, не vision)
-- D1: Абзац о Levara архитектуре (EN)
-- D2: Описание sync механизма (RU)
-- D3: Changelog с версиями и датами
-- D4: Список зависимостей с версиями
-- D5: Описание бага с техническими деталями
-
-## Метрики
-
-### Для Vision/OCR (Sets A, B, C)
-1. **Время ответа** (ms) — от отправки до получения текста
-2. **Полнота извлечения** (%) — сколько текста из изображения извлечено
-3. **Точность** (%) — правильность извлечённого текста (орфография, числа)
-4. **Структура** — сохранение таблиц, списков, иерархии
-5. **RAM usage** (MB) — потребление памяти моделью
-6. **Ошибки** — галлюцинации, выдуманный текст
-
-### Для Entity Extraction (Set D)
-1. **Время ответа** (ms)
-2. **Entities extracted** — количество
-3. **Precision** — % правильных сущностей
-4. **Recall** — % найденных из ожидаемых
-5. **JSON validity** — парсится ли structured output
-6. **RAM usage** (MB)
-
-## Процедура тестирования
-
-### Шаг 1: Подготовка тестовых данных
 ```bash
-# Создать директорию
-mkdir -p tests/vision-ocr-benchmark/{images,texts,results}
-
-# Сгенерировать скриншоты Sets A, C через playwright
-# Подготовить фото Sets B вручную (или скачать примеры)
-# Подготовить тексты Set D
+python3 tests/vision-ocr-benchmark/run_benchmark.py --help
 ```
 
-### Шаг 2: Установка моделей
+After selecting and preparing a model supported by the runner:
+
 ```bash
-# Mac
-ollama pull moondream:1.8b
-ollama pull granite3.2-vision:2b
-ollama pull llava:7b
-ollama pull minicpm-v:8b
-ollama run hf.co/LiquidAI/LFM2.5-350M-GGUF  # первый запуск скачает
-
-# Pi (только маленькие)
-ssh stek0v@10.23.0.53 'ollama pull moondream:1.8b'
-ssh stek0v@10.23.0.53 'ollama pull granite3.2-vision:2b'
-ssh stek0v@10.23.0.53 'ollama run hf.co/LiquidAI/LFM2.5-350M-GGUF'
-```
-
-### Шаг 3: Запуск бенчмарка
-```bash
-# Для каждой модели × каждого изображения:
-# 1. Замерить RAM до
-# 2. Отправить запрос с base64 image
-# 3. Замерить время ответа
-# 4. Сохранить результат
-# 5. Замерить RAM после
-# 6. Оценить качество (automated + manual review)
-
+export LEVARA_OCR_TEST_URL=http://127.0.0.1:11434
 python3 tests/vision-ocr-benchmark/run_benchmark.py \
-  --platform mac \
-  --ollama-url http://localhost:11434 \
-  --output-dir tests/vision-ocr-benchmark/results
+  --platform mac --ollama-url "$LEVARA_OCR_TEST_URL" \
+  --vision-only --model moondream
 ```
 
-### Шаг 4: Анализ результатов
-- Таблица: модель × метрика × тестовый сет
-- Графики: время vs качество
-- Рекомендация: какая модель для Mac, какая для Pi
+`--model` is a substring filter on names hardcoded in `VISION_MODELS` or
+`TEXT_MODELS`, not an arbitrary model selector. The source currently lists
+moondream, granite3.2-vision, llava and minicpm-v for vision, and qwen3:0.6b
+for text. These are experiment candidates, not hardware compatibility or
+quality recommendations. LFM2.5 is not in the current runner.
 
-## Формат лога
+`--platform` selects the runner's predefined candidate list; it does not detect
+hardware or validate that the model fits. `--entity-only` runs text cases.
+There is **no `--output-dir` option**: the runner writes individual JSON files
+and `benchmark_<platform>_<timestamp>.json` into this directory's `results/`.
+Individual case filenames can be overwritten on a later run, so retain the
+combined artifact for each experiment.
 
-Каждый тест генерирует JSON:
-```json
-{
-  "test_id": "A1_moondream_mac",
-  "model": "moondream:1.8b",
-  "platform": "mac",
-  "image": "A1_dashboard.png",
-  "image_size_bytes": 245632,
-  "timestamp": "2026-04-01T12:00:00Z",
+## What the runner actually measures
 
-  "timing": {
-    "model_load_ms": 1200,
-    "inference_ms": 8500,
-    "total_ms": 9700
-  },
+| Field | Actual behavior | Limit |
+|-------|-----------------|-------|
+| `timing.total_seconds` | wall-clock HTTP request duration | includes any loading inside the request; no separate load/inference timing |
+| OCR text and word count | response text length, words, error flag | response stored only up to 5,000 characters; length is not accuracy |
+| `memory.before_mb` / `after_mb` | local `ps -C ollama` RSS snapshots | not model peak RAM, not the remote host; unsupported commands can yield zero |
+| Entity JSON validity | parses a JSON-looking response substring | counts entities/relations but does not judge correctness |
+| Summary | means of successful OCR timing/word counts; entity JSON counts | excludes failed OCR calls from timing means; report failures separately |
 
-  "memory": {
-    "before_mb": 2048,
-    "during_mb": 3800,
-    "after_mb": 2100
-  },
+The runner does **not** calculate OCR accuracy/completeness, table fidelity,
+hallucination rate, entity precision/recall, peak memory or model-load time.
+Measure these separately against the labelled corpus. A reported memory zero
+means the probe may be unavailable; it does not mean zero memory use.
 
-  "result": {
-    "extracted_text": "Dashboard\nVectors: 129\nMemories: 97\n...",
-    "text_length": 342,
-    "word_count": 48
-  },
+## Report template
 
-  "quality": {
-    "completeness_pct": 85,
-    "accuracy_pct": 92,
-    "structure_preserved": true,
-    "hallucinations": false,
-    "notes": "Missed small footer text, numbers correct"
-  }
-}
-```
+Leave unmeasured values blank. Attach raw results and manually scored examples.
 
-## Ожидаемый output
+| Model artifact | Hardware | Corpus digest | Successful / attempted | Request p50/p95 | OCR CER/WER | Exact numbers / expected | Table checks | Peak RAM |
+|----------------|----------|---------------|------------------------|-----------------|-------------|--------------------------|--------------|----------|
+| — | — | — | — | — | — | — | — | — |
 
-```
-╔══════════════════════╦═══════════╦═══════════╦═══════════╦═══════════╗
-║ Model                ║ Avg Time  ║ Accuracy  ║ Complete  ║ RAM (MB)  ║
-╠══════════════════════╬═══════════╬═══════════╬═══════════╬═══════════╣
-║ moondream:1.8b (Mac) ║    5.2s   ║   78%     ║   72%     ║   1,700   ║
-║ moondream:1.8b (Pi)  ║   18.5s   ║   78%     ║   72%     ║   1,700   ║
-║ granite3.2-v:2b(Mac) ║    6.1s   ║   85%     ║   80%     ║   1,500   ║
-║ granite3.2-v:2b(Pi)  ║   22.0s   ║   85%     ║   80%     ║   1,500   ║
-║ llava:7b (Mac)       ║    8.3s   ║   91%     ║   88%     ║   4,700   ║
-║ minicpm-v:8b (Mac)   ║   12.1s   ║   94%     ║   92%     ║   4,900   ║
-╠══════════════════════╬═══════════╬═══════════╬═══════════╬═══════════╣
-║ LFM2.5-350M (Mac)    ║    0.8s   ║   --      ║   --      ║    350    ║
-║ qwen3:0.6b (Mac)     ║    1.2s   ║   --      ║   --      ║    400    ║
-╚══════════════════════╩═══════════╩═══════════╩═══════════╩═══════════╝
-
-Recommendation:
-  Pi:  granite3.2-vision:2b (best quality/size ratio)
-  Mac: llava:7b (best quality, acceptable speed)
-  Entity extraction: LFM2.5-350M (faster, better instruction following than qwen3)
-```
+For entity extraction, add per-case expected/found/correct entities and
+relations, precision, recall and invalid JSON count. Distinguish cold and warm
+requests, record software versions and commands, and repeat on the actual
+target hardware before making a model recommendation.

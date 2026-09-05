@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <a href="https://go.dev/"><img src="https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go&logoColor=white" alt="Go 1.26 или новее"></a>
+  <a href="https://go.dev/"><img src="https://img.shields.io/badge/Go-1.26.6-00ADD8?logo=go&logoColor=white" alt="Go 1.26 или новее"></a>
   <a href="./docs/api-contract.md"><img src="https://img.shields.io/badge/MCP-native-2658D8" alt="Нативная поддержка Model Context Protocol"></a>
   <a href="./docs/profile-presets.md"><img src="https://img.shields.io/badge/profiles-personal%20%E2%86%92%20enterprise-17202A" alt="Профили исполнения от Personal до Enterprise"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-28835E" alt="Лицензия MIT"></a>
@@ -25,16 +25,6 @@ Markdown workspace, синхронизацию, наблюдаемость и о
 долгие задачи в одном серверном Go-бинарнике. Опциональный WebUI работает
 отдельным сервисом Next.js.
 
-<p align="center">
-  <img src="./assets/readme/proof-ru.svg" width="100%" alt="Проверенный MCP-сценарий: решение об оформлении README сохранено на одном ходе агента и восстановлено с provenance на следующем">
-</p>
-
-Сценарий выше основан на реальной памяти проекта, использованной при редизайне
-этого README: визуальное направление было сохранено как ограниченное по
-контексту `decision`, а на следующем ходе агента восстановлено без повторного
-чтения предыдущего чата. Levara хранит запись в SQL и поддерживает поисковые
-индексы-сайдкары; сам разговор не является источником истины.
-
 ## Зачем нужна Levara
 
 AI-агенты сильны внутри одного контекстного окна и забывчивы за его пределами.
@@ -52,26 +42,24 @@ Levara даёт агентам плоскость управления конт�
 - **Оставлять работу проверяемой** — Markdown остаётся источником истины
   workspace; индексы являются производными и могут быть сверены или
   перестроены.
-- **Доказывать выполнение долгих задач** — alpha-версия Task Runtime связывает
+- **Доказывать выполнение долгих задач** — Task Runtime связывает
   критерии Definition of Done с шагами, lease-захватами, неизменяемыми
   квитанциями, checkpoint-состояниями и детерминированной валидацией.
 - **Масштабировать модель эксплуатации** — одно ядро поддерживает локального
   разработчика, несколько устройств, общую командную среду и границы
   enterprise-адаптеров.
 
-## Подтверждённое качество
+## Проверки и качество
 
-[Нагрузочный прогон 2026-09-03](benchmark/results/multi_user/run2_summary.json)
-содержит шесть успешных сценариев на ревизии `1bb5bab`, с PostgreSQL и
-эмбеддингами `potion-code-16M` размерности 256. При 50 агентах и 60 записях
-на агента p95 записи составил 22,2 мс, recall — 238,5 мс. Отдельный сценарий
-outbox не обнаружил повторных завершений. Это результаты конкретной нагрузки,
-а не гарантия для любого развёртывания или пути авторизации.
+[Результаты и команды проверки](docs/testing.md) фиксируют прогон 2026-09-05:
+backend-регрессии с SQLite/PostgreSQL, реальные парсеры семи форматов и
+42 Chromium-теста WebUI с API-моками. Там указаны ревизия, локальные изменения,
+границы покрытия и сценарии, требующие отдельного стенда.
 
-[CI workflow](.github/workflows/go-ci.yml) задаёт lint, vet, race,
-проверку контрактов, уязвимостей и интеграции с PostgreSQL для pull request
-и push в main. npm audit проверяет production-зависимости; актуальный результат
-нужно смотреть в прогоне нужной ревизии.
+Старые benchmark-JSON сохранены как исторические данные. Их статусы не
+подтверждают изоляцию владельцев, сходимость независимых sync-узлов или
+точность OCR. [CI workflow](.github/workflows/go-ci.yml) задаёт проверки;
+результат относится к конкретному запуску.
 
 ## Карта возможностей
 
@@ -158,9 +146,10 @@ set -a && source .env && set +a
 
 ### Docker
 
-```bash
-docker compose up -d --build
-```
+Перед запуском Compose задайте публикацию портов на loopback либо включите
+аутентификацию для сетевого доступа. В базовом compose-файле порты публикуются
+на всех интерфейсах хоста, а auth по умолчанию выключена. Используйте
+[рецепт Docker](docs/deployment.md#docker) с явными настройками.
 
 Production-подобные примеры конфигурации Personal, Solo Pro, Team и Enterprise
 смотрите в [docs/profile-presets.md](docs/profile-presets.md).
@@ -232,16 +221,13 @@ Levara отделяет авторитетные записи от произв�
 являются границами авторизации; проверки JWT/API key и workspace policy
 применяются независимо.
 
-> [!WARNING]
-> Long-Horizon Task Runtime находится в alpha и включается feature flag.
-> Установите `LEVARA_LONG_HORIZON_RUNTIME=1` и используйте профиль MCP
-> `long-horizon`. Текущий alpha-набор проверяет зависимости, идемпотентные
-> retries, конкурентные claims, устаревшие evidence, reviewer policy,
-> восстановление после сбоя, релевантность ограниченного bootstrap, разрешение
-> blockers и продвижение проверенной памяти. Начните с
-> [руководства по Long-Horizon Runtime](docs/long-horizon-runtime.ru.md); результаты
-> acceptance-прогона находятся в
-> [alpha-отчёте](docs/long-horizon-alpha-report.md).
+Task Runtime включается через `LEVARA_LONG_HORIZON_RUNTIME=1` и профиль
+`long-horizon`. Есть управление шагами и evidence, а WebUI показывает задачи
+в режиме чтения. Встроенный worker использует logging/no-op executor;
+для выполнения действий нужен внешний исполнитель. Манифест authority
+привязывается по digest при claim, но сам по себе не обеспечивает изоляцию
+выполнения инструментов, файловых и сетевых операций. См.
+[руководство](docs/long-horizon-runtime.ru.md) и [проверки](docs/testing.md).
 
 ## Профили исполнения
 
@@ -262,8 +248,8 @@ Levara использует три разных переключателя пр�
 | **Team** | PostgreSQL, обязательный auth, общий workspace, отдельные credentials агентов | Project sharing, ACL, аудит и async jobs |
 | **Enterprise** | PostgreSQL, tenant enforcement, центральные границы identity/audit | Governance и интеграция через адаптеры |
 
-Строгая валидация доступна через `LEVARA_PROFILE_STRICT=1`; небезопасные
-комбинации Team и Enterprise завершаются ошибкой до открытия listener.
+`LEVARA_PROFILE_STRICT=1` проверяет обязательную конфигурацию Team/Enterprise
+до открытия listener. Она не проверяет доступность IdP или всю защиту окружения.
 
 ## Интерфейсы
 
@@ -276,9 +262,7 @@ Levara использует три разных переключателя пр�
 | CLI | Локальные бинарники | server, client, backup, contract и host tooling | Операторы и автоматизация |
 | WebUI | `:3000` в разработке | Приложение Next.js | Пользователи, операторы и reviewers |
 
-Значения по умолчанию описывают обычную форму развёртывания, а не конкретную
-машину разработчика. Проверенный снимок локальной среды разработки находится
-в [docs/current-state.md](docs/current-state.md).
+Настройка адресов, SQL и моделей описана в [руководстве по развёртыванию](docs/deployment.md).
 
 ## Эксплуатация и WebUI
 
@@ -349,13 +333,12 @@ make test-release-candidate
 | Документ | Назначение |
 |---|---|
 | [docs/api-contract.md](docs/api-contract.md) | Сгенерированный инвентарь REST, gRPC, MCP и схем |
+| [docs/testing.md](docs/testing.md) | Результаты, воспроизведение и ограничения проверок |
 | [docs/profile-presets.md](docs/profile-presets.md) | Рабочие примеры продуктовых профилей |
 | [docs/product-ladder.md](docs/product-ladder.md) | Источник истины возможностей и enterprise-границ |
 | [docs/webui-operations.md](docs/webui-operations.md) | Настройка WebUI, мониторинг и процессы |
-| [docs/current-state.md](docs/current-state.md) | Проверенный снимок локальной среды разработки |
 | [docs/memory-workflow-skill.ru.md](docs/memory-workflow-skill.ru.md) | Установка и использование skill автоматической памяти Levara |
 | [docs/long-horizon-runtime.ru.md](docs/long-horizon-runtime.ru.md) | Настройка Task Runtime, жизненный цикл, evidence и восстановление |
-| [docs/long-horizon-alpha-report.md](docs/long-horizon-alpha-report.md) | Доказательства acceptance и recovery для Task Runtime |
 
 ## Участие в разработке
 

@@ -1,86 +1,70 @@
-# Bench stack on Pi (10.23.0.53)
+# Isolated model benchmark setup
 
-Isolated from production `levara.service` on :8090. Lifecycle controlled by
-`scripts/load-profiles/run_all_models.sh`.
+This directory contains example systemd units for an embedding sidecar and a
+Levara benchmark process. They are environment-specific templates, not a
+portable installer or evidence that a model is suitable for a device.
 
-## Architecture
+Use a disposable host or VM with its own database, vector directory and ports.
+Choose the host yourself; do not copy benchmark data over a running service.
+See [testing](../../docs/testing.md) for result requirements and known limits.
 
-| Service | Port | Notes |
-|---------|------|-------|
-| `embed-bench` | 9201 | FastAPI sidecar; serves `/v1/embeddings` for whatever model drop-in selects (was 9101, moved 2026-05-27 because prod `embed-potion.service` now owns 9101) |
-| `levara-bench` | 8091 | Levara in sqlite mode; consumes embed-bench |
+## Components
 
-`embed-bench` runs from `WorkingDirectory=/home/stek0v/embed-bench/scripts/load-profiles`
-so that `embed_bench` (the actual Python package directory) is importable directly.
-The uvicorn invocation is `uvicorn embed_bench.server:app` — **not**
-`scripts.load_profiles.embed_bench.server:app` (the latter would fail because
-`load-profiles` contains a hyphen and cannot be a Python package name).
+| Component | Example port | Purpose |
+|-----------|-------------:|---------|
+| `embed-bench` | 9201 | Python `/v1/embeddings` service with a selected model |
+| `levara-bench` | 8091 | Separate Levara instance using the embedding service |
 
-## One-time setup
+The embedding module is `embed_bench.server:app`. Its working directory must
+be `scripts/load-profiles` so Python can import `embed_bench`; the hyphenated
+parent directory is not a Python package name.
 
-1. Sync the repo to the Pi:
+## Prepare the experiment
+
+1. Build the current server revision for the test machine. For an ARM64 Linux
+   target, build from the repository root:
+
    ```bash
-   rsync -a --delete /Users/stek0v/src/levara/ stek0v@10.23.0.53:/home/stek0v/levara-source/
+   GOOS=linux GOARCH=arm64 go build -mod=readonly -o ./levara-bench-arm64 ./cmd/server
    ```
 
-2. Cross-compile the Levara binary for arm64 and place it on the Pi:
-   ```bash
-   GOOS=linux GOARCH=arm64 go build -o levara-arm64 ./cmd/server
-   scp levara-arm64 stek0v@10.23.0.53:/home/stek0v/levara-bench/levara
-   ```
+2. Install the embedding sidecar's dependencies from
+   `scripts/load-profiles/embed_bench/requirements.txt` into an isolated Python
+   environment. Record Python, dependency and model revisions. Model downloads
+   require network access and storage; allow them to finish before timing.
+3. Configure two dedicated foreground processes or adapt copies of the unit
+   templates to the test machine. Review `User`, `WorkingDirectory`, `ExecStart`,
+   paths, ports, listener addresses and all provider endpoints. Bind locally
+   when the test driver runs on the same host. The supplied embedding unit
+   binds `0.0.0.0`; it is not a secured network deployment by itself.
+4. Set `EMBED_BENCH_MODEL` for the sidecar. Set Levara's `EMBEDDING_ENDPOINT`,
+   `EMBEDDING_MODEL` and `-dim` to the actual model output. Use a new vector
+   directory for a different model or dimension.
+5. Keep authentication and rate-limit settings consistent between candidates.
+   If a script cannot exercise the intended authentication mode, report that
+   limitation instead of using its results as access-control evidence.
 
-3. Run the setup script (idempotent):
-   ```bash
-   ssh stek0v@10.23.0.53 bash -s < deploy/bench/setup_pi.sh
-   ```
+`setup_pi.sh` embeds one developer's paths, uses `rsync --delete`, installs
+systemd units and reloads systemd. Do not run it unchanged as a setup shortcut.
+This guide does not require SSH to an existing host or service restarts.
 
-   The script:
-   - Creates `$EMBED_DIR/hf-cache` and `$BENCH_DIR/data`
-   - Creates a venv and installs `embed_bench/requirements.txt`
-   - Syncs `scripts/` into `$EMBED_DIR/scripts/`
-   - Generates a random `JWT_SECRET` drop-in for `levara-bench` (once)
-   - Installs both `.service` files and reloads systemd
+## Per-model run
 
-## Per-model run (three drop-ins)
+Run the same synthetic corpus, queries and load profile for each candidate.
+Separate cold startup/model loading from warmed request timing. Record:
 
-For each model under test, create three drop-ins then restart both units:
+- server and runner revisions, command, backend and independent data paths;
+- model identifier, immutable artifact digest, tokenizer and output dimension;
+- hardware, available memory, process CPU/RSS and any swap activity;
+- request count, concurrency, failures, latency distribution and retrieval
+  results against labelled answers;
+- skipped scenarios and external calls made by the providers.
 
-```bash
-# 1. Tell embed-bench which model to load
-sudo mkdir -p /etc/systemd/system/embed-bench.service.d
-sudo tee /etc/systemd/system/embed-bench.service.d/model.conf >/dev/null <<EOF
-[Service]
-Environment=EMBED_BENCH_MODEL=nomic-ai/nomic-embed-text-v2-moe
-EOF
-
-# 2. Tell levara-bench which embedding model name to advertise
-sudo tee /etc/systemd/system/levara-bench.service.d/embed.conf >/dev/null <<EOF
-[Service]
-Environment=EMBEDDING_MODEL=nomic-embed-text-v2-moe
-EOF
-
-# 3. Override vector dimension if the model differs from the default
-sudo tee /etc/systemd/system/levara-bench.service.d/dim.conf >/dev/null <<EOF
-[Service]
-ExecStart=
-ExecStart=/home/stek0v/levara-bench/levara -standalone=true -port=8091 -grpc-port=0 -data-dir=/home/stek0v/levara-bench/data -node-id=pi-bench -dim=768
-EOF
-
-sudo systemctl daemon-reload
-sudo systemctl restart embed-bench levara-bench
-```
-
-Wait for embed-bench to finish downloading the model weights (check
-`journalctl -u embed-bench -f`) before running the benchmark suite.
+A model's download size is not its runtime memory use. Compare quality and
+resource measurements from actual runs before choosing a deployment model.
 
 ## Cleanup
 
-Stop both units to free memory:
-```bash
-sudo systemctl stop embed-bench levara-bench
-```
-
-Data persists in `/home/stek0v/levara-bench/data`. Remove manually for a fresh start:
-```bash
-rm -rf /home/stek0v/levara-bench/data && mkdir -p /home/stek0v/levara-bench/data
-```
+Stop only the processes created for the experiment. Save logs and result
+artifacts, then remove the explicitly recorded disposable data directories.
+Do not use an existing service's data path as a fresh benchmark directory.

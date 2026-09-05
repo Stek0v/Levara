@@ -2,7 +2,7 @@
 
 [Русская версия](long-horizon-runtime.ru.md)
 
-Long-Horizon Task Runtime is Levara's alpha execution ledger for work that must
+Long-Horizon Task Runtime is Levara's opt-in execution ledger for work that must
 survive context compaction, process restarts, agent handoffs, or scheduled
 continuation. It stores the task objective, authority, Definition of Done,
 versioned plan, atomic step leases, immutable evidence, checkpoints, blockers,
@@ -22,7 +22,7 @@ export DB_PROVIDER=sqlite
 export DB_PATH=./data/levara.db
 export LEVARA_LONG_HORIZON_RUNTIME=1
 export LEVARA_MCP_TOOLSET=long-horizon
-./levara-server -profile=standalone -port=8080 -grpc-port=0
+./levara-server -profile=standalone -host=127.0.0.1 -port=8080 -grpc-port=0
 ```
 
 The `full` tool profile also includes Task Runtime tools while the flag is on.
@@ -239,28 +239,23 @@ provenance; unsupported or insufficiently evidenced candidates are rejected.
 
 ## Security and current limitations
 
-The Task Runtime graduated from alpha (2026-09-04). The tool schemas are
-frozen as canonical v1 in [contract.json](contract.json); additive changes
-only from here on. A read-only WebUI dashboard (`/tasks`) observes tasks,
-steps, leases, receipts, checkpoints, and blockers — mutations remain
-MCP-only by design so leases and idempotency keys cannot be bypassed.
+Task Runtime stores state and evidence in SQL. The read-only WebUI `/tasks`
+displays tasks, steps, leases, receipts, checkpoints and blockers. An external
+agent/host performs the actual work; the ledger grants no additional authority.
 
-- The runtime records authority but does not grant filesystem, network,
-  deployment, payment, or publication permission.
-- Tool profiles reduce schema size; they are not authorization boundaries.
-- Task access follows the authenticated owner scope plus collection/room
-  isolation.
-- Local artifact verification rejects symlink escapes and paths outside the
-  configured roots. Unsupported URI schemes are never trusted implicitly.
-- The optional in-process worker (`LEVARA_TASK_WORKER=1`) advances auto_run
-  tasks through the same task_step CAS primitives as external hosts, with
-  retry caps, deadlines, and deadlock detection. External MCP hosts remain
-  free to resume or schedule tasks themselves.
-- Declarative authority manifests (per-task tool/file/network allowlists
-  validated at claim time) are not yet implemented — see backlog B4.
+- Tool profiles control visibility, not authorization.
+- Task access includes owner, collection and room scope.
+- Artifact verification checks supported sources and path containment;
+  unsupported URI schemes are not automatically trusted.
+- `LEVARA_TASK_WORKER=1` enables the worker loop, but server bootstrap wires
+  `NewLoggingStepExecutor`: it logs and returns a synthetic observation without
+  performing useful task work. Do not treat it as evidence that a command ran,
+  a file changed or a quality check passed. Integrating a real executor is
+  separate work.
+- An [authority manifest](authority-manifests.md) can bind a task; its digest is
+  verified on HTTP claim. Tool/path/network helpers are not called by every
+  production action and do not provide a universal sandbox.
 
-For the original alpha acceptance evidence, see the
-[alpha report](long-horizon-alpha-report.md). The canonical input/output
-schemas are generated in [api-contract.md](api-contract.md). The S2/S3
-multi-user load gate runs per release candidate (CI job "task runtime load
-gate (S2/S3)", benchmark/task_load_gate.sh).
+Canonical schemas are in [API contract](api-contract.md). See [testing](testing.md)
+for observed evidence and remaining integration limits, and the
+[Russian version](long-horizon-runtime.ru.md) for the same workflow.

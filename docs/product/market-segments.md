@@ -9,7 +9,7 @@ and `docs/profile-presets.md`.
 | Segment | ICP | Main pain | Levara hook | Best CTA |
 |---|---|---|---|---|
 | S1. AI-agent developers | Claude Code, Cursor, Codex, Cline users | agents forget project context between sessions | MCP-first memory palace, room x hall taxonomy, wake-up briefings, per-agent diaries | “Add Levara MCP and save your first decision” |
-| S2. Self-hosters and privacy-conscious developers | homelab, local-first, air-gapped users | SaaS memory is opaque or unacceptable | one Go binary, SQLite/local files, Mac-Pi sync, no required cloud | “Run local memory on your own disk” |
+| S2. Self-hosters and privacy-conscious developers | homelab, local-first, air-gapped users | SaaS memory is opaque or unacceptable | Go backend, SQLite/local files, configured sync; local inference requires local providers | “Run local memory on your own disk” |
 | S3. RAG/KG researchers | retrieval, KG, temporal-memory builders | vector-only memory loses relationships and time | temporal KG, hybrid BM25/vector, graph-aware rerank, reproducible tests | “Use Levara as a temporal memory research harness” |
 | S4. Small startups and product teams | 2-15 person teams replacing hosted vector/memory SaaS | cost, control, and multi-agent collaboration | self-hosted Team profile, Postgres, auth, audit, workspace ACL | “Pilot shared agent memory for one project” |
 | S5. Edge/on-device AI | Pi, Jetson, local inference, field devices | memory must run near the agent and survive network loss | ARM64 build, local profiles, sync, local embeddings/LLMs | “Run memory at the edge” |
@@ -21,14 +21,14 @@ and `docs/profile-presets.md`.
 | Individual developers | “Your AI remembers the project without sending memory to a SaaS.” | Personal preset, MCP tools, local SQLite/files, Markdown workspace | “Enterprise-ready KMS” |
 | Power users | “One memory follows you across machines.” | Solo Pro sync token, backup/restore tests, Pi docs | “transparent multi-master cloud sync” unless implemented |
 | Teams | “Humans and agents share context with auth, ACL, and audit.” | Team strict profile, `pkg/access`, workspace audit, policy boundary tests | “SSO/SCIM complete” |
-| Enterprise | “Governed agent memory with clear adapter seams.” | enterprise strict checks, OIDC verified-claims adapter, audit export, storage/KMS contracts | “complete browser SSO, directory/group authorization or KMS/SIEM ready” |
+| Enterprise | “Pilot corporate agent memory with explicit integration boundaries.” | enterprise strict checks, OIDC verified-claims adapter, audit export, storage/KMS contracts | “complete browser SSO, directory/group authorization or KMS/SIEM ready” |
 
 ## Campaign Backlog
 
 ### S1: AI-Agent Developers
 
 1. **Memory Palace for Claude/Codex/Cursor**
-   A 10-minute guide: start Levara, add MCP config, call `save_memory`, then
+   A first-use guide: start Levara, add MCP config, call `save_memory`, then
    `wake_up`. KPI: installs, MCP configs added, GitHub stars.
 2. **Room x Hall content series**
    Seven short posts explaining `fact`, `event`, `decision`, `preference`,
@@ -46,7 +46,7 @@ and `docs/profile-presets.md`.
    Manifest-style post against opaque SaaS memory. KPI: self-hosted/homelab
    shares.
 2. **One-binary install demo**
-   60-second screencast: build, config-check, run, connect MCP. KPI: video views
+   A recorded screencast: build, config-check, run, connect MCP. KPI: video views
    and install conversion.
 3. **Mac-Pi sync deep dive**
    Explain bearer-auth sync, version-skew warning, and backup boundaries. KPI:
@@ -108,7 +108,10 @@ and `docs/profile-presets.md`.
   authorization. Follow [enterprise identity](../enterprise-identity.md).
 - Do not claim production SIEM, KMS/BYOK, corporate Azure/GCS controls or legal
   hold enforcement until concrete backends and acceptance evidence exist.
-- Performance claims should link to a reproducible benchmark or be phrased as
-  historical benchmark results, not universal guarantees.
+- Use [testing evidence](../testing.md) for verified results and known
+  limitations. Historical multi-user JSON does not prove authenticated owner
+  isolation, successful fresh workspace writes or independent-node sync.
+- Strict profiles validate configured fields; they do not certify deployment
+  security, working SSO or organization-wide document governance.
 - Product profile claims should be backed by `deploy/profiles/*` and
   `pkg/profile` tests.
