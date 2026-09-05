@@ -125,3 +125,48 @@ func TestDirectNode_BroadcastOnlyWhenReplicasAttached(t *testing.T) {
 		t.Error("expected one entry in replica channel")
 	}
 }
+
+func TestDirectNodeBatchDeleteBroadcastsOnlySuccessfulIDs(t *testing.T) {
+	dn, cleanup := newDirectNode(t, 2, true)
+	defer cleanup()
+	if err := dn.Insert("a", []float32{1, 0}, nil); err != nil {
+		t.Fatal(err)
+	}
+	ch := dn.Repl.AddReplica("r1")
+	if errs := dn.BatchDelete([]string{"missing", "a", "a"}); len(errs) != 2 {
+		t.Fatalf("expected missing and duplicate errors: %v", errs)
+	}
+	if len(ch) != 1 {
+		t.Fatalf("broadcast %d entries, want one successful deletion", len(ch))
+	}
+	if entry := <-ch; entry.ID != "a" || entry.Op != store.OpDelete {
+		t.Fatalf("unexpected broadcast: %+v", entry)
+	}
+	if err := dn.Insert("b", []float32{1, 0}, nil); err != nil {
+		t.Fatal(err)
+	}
+	<-ch
+	if err := dn.DB.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if errs := dn.BatchDelete([]string{"b", "missing"}); len(errs) != 2 || len(ch) != 0 {
+		t.Fatalf("failed WAL deletes: errors=%v broadcasts=%d", errs, len(ch))
+	}
+}
+
+func TestDirectNodeBatchDeleteWithoutListeners(t *testing.T) {
+	dn, cleanup := newDirectNode(t, 2, true)
+	defer cleanup()
+	if err := dn.Insert("a", []float32{1, 0}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if errs := dn.BatchDelete([]string{"a", "missing", "a"}); len(errs) != 2 {
+		t.Fatal(errs)
+	}
+	if dn.DB.Count() != 0 || dn.Repl.seq.Load() != 0 {
+		t.Fatal("batch did not delete locally or broadcast with no listeners")
+	}
+	if errs := dn.BatchDelete(nil); len(errs) != 0 {
+		t.Fatal(errs)
+	}
+}

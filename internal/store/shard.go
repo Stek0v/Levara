@@ -21,6 +21,7 @@ type ShardHandler interface {
 	BatchInsert(records []BatchItem) []error
 	Search(query []float32, topK int) []VectroRecord
 	Delete(id string) error
+	// BatchDelete returns one error per failed record, including shard-wide failures.
 	BatchDelete(ids []string) []error
 }
 
@@ -39,13 +40,17 @@ func NewCluster(shards []ShardHandler) *Cluster {
 func (c *Cluster) NumShards() int { return c.numShards }
 
 func (c *Cluster) getShard(id string) ShardHandler {
+	return c.shards[c.shardIndex(id)]
+}
+
+func (c *Cluster) shardIndex(id string) int {
 	h := fnv.New32a()
 	h.Write([]byte(id))
 	idx := int(h.Sum32()) % c.numShards
 	if idx < 0 {
 		idx = -idx
 	}
-	return c.shards[idx]
+	return idx
 }
 
 func (c *Cluster) Insert(id string, vector []float32, data any) error {
@@ -63,12 +68,7 @@ func (c *Cluster) BatchInsert(items []BatchItem) []error {
 		groups[i] = []BatchItem{}
 	}
 	for _, item := range items {
-		h := fnv.New32a()
-		h.Write([]byte(item.ID))
-		idx := int(h.Sum32()) % c.numShards
-		if idx < 0 {
-			idx = -idx
-		}
+		idx := c.shardIndex(item.ID)
 		groups[idx] = append(groups[idx], item)
 	}
 
@@ -105,11 +105,27 @@ func (c *Cluster) Delete(id string) error {
 }
 
 func (c *Cluster) BatchDelete(ids []string) []error {
-	var allErrs []error
+	groups := make([][]string, c.numShards)
 	for _, id := range ids {
-		if err := c.Delete(id); err != nil {
-			allErrs = append(allErrs, err)
+		idx := c.shardIndex(id)
+		groups[idx] = append(groups[idx], id)
+	}
+	errs := make([][]error, c.numShards)
+	var wg sync.WaitGroup
+	for i, group := range groups {
+		if len(group) == 0 {
+			continue
 		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs[i] = c.shards[i].BatchDelete(group)
+		}()
+	}
+	wg.Wait()
+	var allErrs []error
+	for _, shardErrs := range errs {
+		allErrs = append(allErrs, shardErrs...)
 	}
 	return allErrs
 }

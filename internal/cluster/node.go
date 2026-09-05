@@ -233,22 +233,33 @@ func (rn *RaftNode) Delete(id string) error {
 }
 
 func (rn *RaftNode) BatchDelete(ids []string) []error {
+	if len(ids) == 0 {
+		return nil
+	}
+	fail := func(err error) []error {
+		errs := make([]error, len(ids))
+		for i := range errs {
+			errs[i] = err
+		}
+		return errs
+	}
 	if rn.Raft.State() != raft.Leader {
-		return []error{fmt.Errorf("not the leader of this shard")}
+		return fail(fmt.Errorf("not the leader of this shard"))
 	}
 	cmd := Command{Op: "batch_delete", IDs: ids}
 	b, err := json.Marshal(cmd)
 	if err != nil {
-		return []error{err}
+		return fail(err)
 	}
 	future := rn.Raft.Apply(b, RaftTimeout)
 	if err := future.Error(); err != nil {
-		return []error{err}
+		return fail(err)
 	}
-	if resp := future.Response(); resp != nil {
-		if errs, ok := resp.([]error); ok {
-			return errs
-		}
+	switch resp := future.Response().(type) {
+	case []error:
+		return resp
+	case error:
+		return fail(resp)
 	}
 	return nil
 }

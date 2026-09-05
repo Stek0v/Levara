@@ -45,10 +45,23 @@ func (dn *DirectNode) Delete(id string) error {
 }
 
 func (dn *DirectNode) BatchDelete(ids []string) []error {
-	errs := dn.DB.BatchDelete(ids)
-	if dn.Repl != nil && dn.Repl.ReplicaCount() > 0 {
-		for _, id := range ids {
-			dn.Repl.Broadcast(WALEntryFromDelete(id))
+	if dn.Repl == nil {
+		return dn.DB.BatchDelete(ids)
+	}
+	// Keep replica registration outside a batch that won't be broadcast.
+	dn.Repl.mu.RLock()
+	if len(dn.Repl.listeners) == 0 {
+		defer dn.Repl.mu.RUnlock()
+		return dn.DB.BatchDelete(ids)
+	}
+	dn.Repl.mu.RUnlock()
+
+	// ponytail: active replication keeps per-ID deletes until batch results
+	// identify successful IDs, so failures never become replica deletes.
+	var errs []error
+	for _, id := range ids {
+		if err := dn.Delete(id); err != nil {
+			errs = append(errs, err)
 		}
 	}
 	return errs

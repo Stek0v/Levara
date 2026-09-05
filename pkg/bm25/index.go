@@ -10,6 +10,7 @@
 package bm25
 
 import (
+	"container/heap"
 	"math"
 	"sort"
 	"strings"
@@ -43,6 +44,20 @@ type Result struct {
 	ID       string
 	Score    float64
 	Metadata string
+}
+
+// resultHeap keeps the lowest retained score at the root.
+type resultHeap []Result
+
+func (h resultHeap) Len() int           { return len(h) }
+func (h resultHeap) Less(i, j int) bool { return h[i].Score < h[j].Score }
+func (h resultHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+func (h *resultHeap) Push(value any)    { *h = append(*h, value.(Result)) }
+func (h *resultHeap) Pop() any {
+	last := len(*h) - 1
+	value := (*h)[last]
+	*h = (*h)[:last]
+	return value
 }
 
 // Index is a thread-safe BM25 inverted index.
@@ -193,22 +208,32 @@ func (idx *Index) Search(query string, topK int) []Result {
 		}
 	}
 
-	// Sort by score descending
-	results := make([]Result, 0, len(scores))
-	for id, score := range scores {
-		results = append(results, Result{
-			ID:       id,
-			Score:    score,
-			Metadata: idx.docs[id].Metadata,
-		})
+	if topK >= len(scores) {
+		results := make([]Result, 0, len(scores))
+		for id, score := range scores {
+			results = append(results, Result{ID: id, Score: score, Metadata: idx.docs[id].Metadata})
+		}
+		sort.Slice(results, func(i, j int) bool { return results[i].Score > results[j].Score })
+		return results
 	}
 
-	sort.Slice(results, func(i, j int) bool {
-		return results[i].Score > results[j].Score
-	})
-
-	if len(results) > topK {
-		results = results[:topK]
+	results := make(resultHeap, 0, topK)
+	for id, score := range scores {
+		if len(results) < topK {
+			results = append(results, Result{ID: id, Score: score})
+			if len(results) == topK {
+				heap.Init(&results)
+			}
+			continue
+		}
+		if score > results[0].Score {
+			results[0] = Result{ID: id, Score: score}
+			heap.Fix(&results, 0)
+		}
+	}
+	sort.Slice(results, func(i, j int) bool { return results[i].Score > results[j].Score })
+	for i := range results {
+		results[i].Metadata = idx.docs[results[i].ID].Metadata
 	}
 
 	return results
