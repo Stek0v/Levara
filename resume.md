@@ -12,7 +12,8 @@
 удалять, актуальные материалы обновлять по проверенному поведению.
 
 - Ветка: `codex/complete-roadmap`.
-- Текущий HEAD: `0fbebf1` (`feat: add tenant-scoped document sharing UX`).
+- Upload transport block сохранён коммитом `308d628`
+  (`feat: harden CLI and gRPC upload transports`).
 - Реализация этого блока собрана в текущей ветке; развёртывание не выполнялось.
 - Четыре регрессии последних коммитов и семь красных семейств широкого HTTP-прогона исправлены; targeted SQLite/PostgreSQL/race проверки зелёные, полный `internal/http -race` проходит.
 - Inline HTTP/MCP cognify, атомарные server attempts, точные document/source
@@ -26,7 +27,7 @@
   составом групп. Credential recheck и SQL fence действуют до commit для API
   key и browser session и до drain read-ответа; WebUI восстанавливает актуальную
   revision после 409.
-- В текущем проходе построена карта upload transports и добавлен
+- В коммите `308d628` построена карта upload transports и добавлен
   реальный CLI→authenticated `/add` сценарий. SQLite/PostgreSQL PASS: новый
   dataset создаётся один раз, повторный upload выбирает его по имени, исходный
   файл сохраняется побайтово и CLI сообщает именно об ingest. `IngestData`
@@ -174,7 +175,8 @@ SQLite/PostgreSQL, metadata-backed gRPC `IngestData` failure matrix, contracts �
 документация прошли проверку. Независимое ревью не нашло P0–P2 в коде и выявило
 одно завышенное обещание rollback для trusted-local no-DB; граница режима теперь
 явно отражена в contract, roadmap и руководстве. Точные receipts и состояние
-финализации сохраняются в Task Runtime по этому ID.
+финализации сохраняются в Task Runtime по этому ID. Задача завершена на версии
+22; финальный reviewer receipt — `139f54fb-0e98-457a-8bfa-c97e4398b3b6`.
 
 Текущий проход использует изолированный PostgreSQL 16 на loopback, порт 56202,
 данные `/tmp/levara-structured-pg-review`. Доступность проверить заново;

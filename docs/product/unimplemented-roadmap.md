@@ -37,7 +37,8 @@
 - [x] Authenticated metadata-backed контракт `IngestData` для batch: dataset ID без
   имени, конфликт request/item dataset, ровно один payload на item, корректные
   gRPC statuses, invalid item N до первого Save, partial backend failure,
-  cancellation, late completion, duplicate/retry и обе SQL.
+  cancellation, late completion, duplicate/retry и обе SQL. CLI и gRPC блок
+  сохранён коммитом `308d628`.
 - [ ] **P2:** решить судьбу trusted-local `IngestData` без metadata DB: сохранить
   compatibility и добавить journal/batch cleanup либо ограничить режим одним
   item. Сейчас прямые записи этого режима не гарантируют rollback всего batch.
