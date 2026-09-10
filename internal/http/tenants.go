@@ -30,9 +30,12 @@ func RegisterTenantAPI(app fiber.Router, cfg APIConfig) {
 // Sets c.Locals("tenant_id") for downstream handlers.
 func TenantMiddleware(accessCfg AccessConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
+		c.SetUserContext(ctx)
 		db := accessCfg.DB
 		// 1. Explicit header
-		tenantID := c.Get("X-Tenant-Id")
+		tenantID := strings.Clone(c.Get("X-Tenant-Id"))
 		if tenantID != "" {
 			if db != nil {
 				userID, _ := c.Locals("user_id").(string)
@@ -51,12 +54,16 @@ func TenantMiddleware(accessCfg AccessConfig) fiber.Handler {
 			return c.Next()
 		}
 
-		// 2. Resolve from user's tenant memberships (policy decides; a query
-		// failure leaves the request in the no-isolation path, as before).
+		// 2. Resolve from verified membership; SQL failure cannot remove isolation.
 		userID, _ := c.Locals("user_id").(string)
 		if userID != "" && db != nil {
-			if tid, _ := tenantDefaultForUser(c.UserContext(), db, userID); tid != "" {
+			tid, err := tenantDefaultForUser(c.UserContext(), db, userID)
+			if err != nil {
+				return fiber.NewError(503, "tenant resolution unavailable")
+			}
+			if tid != "" {
 				c.Locals("tenant_id", tid)
+				return c.Next()
 			}
 		}
 

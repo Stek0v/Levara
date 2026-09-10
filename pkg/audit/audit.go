@@ -73,6 +73,8 @@ type Entry struct {
 	TraceID       string         `json:"trace_id,omitempty"`
 	BlindSave     bool           `json:"blind_save,omitempty"`
 	RepeatSave    bool           `json:"repeat_save,omitempty"`
+	TenantID      string         `json:"tenant_id,omitempty"`
+	ScopeVerified bool           `json:"scope_verified,omitempty"`
 }
 
 // Sink is the abstract write-side of an audit log. Both Logger (plain
@@ -84,13 +86,14 @@ type Sink interface {
 // Event is a generic audit event for non-MCP surfaces such as workspace,
 // profile validation, and future enterprise export sinks.
 type Event struct {
-	TS       string         `json:"ts"`
-	Source   string         `json:"source"`
-	Type     string         `json:"type"`
-	Subject  string         `json:"subject,omitempty"`
-	ActorID  string         `json:"actor_id,omitempty"`
-	Outcome  string         `json:"outcome,omitempty"`
-	Metadata map[string]any `json:"metadata,omitempty"`
+	VerifiedScope VerifiedScope  `json:"-"` // set only at the authenticated server boundary
+	TS            string         `json:"ts"`
+	Source        string         `json:"source"`
+	Type          string         `json:"type"`
+	Subject       string         `json:"subject,omitempty"`
+	ActorID       string         `json:"actor_id,omitempty"`
+	Outcome       string         `json:"outcome,omitempty"`
+	Metadata      map[string]any `json:"metadata,omitempty"`
 }
 
 // EventSink is the generic audit-export boundary. Implementations may write

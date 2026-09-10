@@ -80,6 +80,16 @@ func runStatusSchema() map[string]any {
 		"edges_extracted":    integerProp("Graph edges extracted so far."),
 		"elapsed_ms":         integerProp("Milliseconds since run start."),
 		"started_at":         stringProp("RFC3339 start timestamp."),
+		"events": arrayOfObjectsProp(objectSchema(map[string]any{
+			"stage":              stringProp("Pipeline stage."),
+			"message":            stringProp("Stage message."),
+			"at":                 stringProp("RFC3339 event time."),
+			"elapsed_ms":         integerProp("Elapsed milliseconds at this event."),
+			"chunks_created":     integerProp("Chunks created at this event."),
+			"entities_extracted": integerProp("Entities extracted at this event."),
+			"edges_extracted":    integerProp("Edges extracted at this event."),
+			"terminal":           booleanProp("True for the final event."),
+		}, "stage", "at"), "Bounded stage transition history."),
 	}, "pipeline_run_id", "status")
 }
 

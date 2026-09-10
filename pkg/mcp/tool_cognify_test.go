@@ -2,9 +2,8 @@ package mcp
 
 import (
 	"context"
-	"database/sql"
+	"encoding/json"
 	"errors"
-	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -30,26 +29,20 @@ func waitDone(t *testing.T, done <-chan struct{}, deadline time.Duration) {
 	}
 }
 
-// extractRunID pulls the run ID out of the human-readable success
-// message returned by ToolCognify. Breaks when the message format
-// changes — good, because the format is part of the MCP contract.
+// extractRunID pulls the run ID out of the structured success payload.
 func extractRunID(t *testing.T, res ToolResult) string {
 	t.Helper()
 	if res.IsError {
 		t.Fatalf("ToolCognify returned IsError=true; content=%q", contentText(res))
 	}
-	text := contentText(res)
-	const marker = "Run ID: "
-	idx := strings.Index(text, marker)
-	if idx < 0 {
-		t.Fatalf("success message missing %q marker; got %q", marker, text)
+	var started struct {
+		RunID  string `json:"pipeline_run_id"`
+		Status string `json:"status"`
 	}
-	rest := text[idx+len(marker):]
-	dot := strings.Index(rest, ".")
-	if dot < 0 {
-		t.Fatalf("success message missing period after run id; got %q", text)
+	if err := json.Unmarshal([]byte(contentText(res)), &started); err != nil || started.RunID == "" || started.Status != "RUNNING" {
+		t.Fatalf("invalid start payload: %q err=%v", contentText(res), err)
 	}
-	return rest[:dot]
+	return started.RunID
 }
 
 func contentText(res ToolResult) string {
@@ -82,13 +75,9 @@ func TestToolCognify_NoEmbedEndpoint(t *testing.T) {
 	if !strings.Contains(contentText(res), "embedding service not configured") {
 		t.Errorf("unexpected error text: %q", contentText(res))
 	}
-	// The registry should hold a FAILED entry for the assigned runID —
-	// tested indirectly: exactly one entry exists and it's FAILED.
-	// We cannot enumerate a sync.Map, so iterate by timing: ToolCognify
-	// must assign an ID before the EmbedEndpoint check, so Runs() is
-	// non-empty. Skip for now; the registry state is covered by the
-	// happy-path tests below.
-	_ = deps
+	if len(deps.Runs().Snapshot()) != 0 {
+		t.Fatal("configuration failure left a source-less run")
+	}
 }
 
 func TestToolCognify_HappyPathCompletes(t *testing.T) {
@@ -100,7 +89,7 @@ func TestToolCognify_HappyPathCompletes(t *testing.T) {
 	done := make(chan struct{})
 	var gotStatus, gotCollection, heartbeatEvent string
 	deps := &fakeDeps{baseCfg: orchestrator.Config{EmbedEndpoint: "http://embed"}}
-	deps.persistFn = func(datasetID, collection, status string, chunks, entities, edges int, elapsedMs int64) {
+	deps.persistFn = func(datasetID, _, collection, status string, _ int64, _ string, chunks, entities, edges int, elapsedMs int64) {
 		gotStatus = status
 		gotCollection = collection
 	}
@@ -144,7 +133,7 @@ func TestToolCognify_PipelineErrorMarksFailed(t *testing.T) {
 			return errors.New("boom")
 		},
 	}
-	deps.persistFn = func(datasetID, _, status string, _, _, _ int, _ int64) {
+	deps.persistFn = func(datasetID, _, _, status string, _ int64, _ string, _, _, _ int, _ int64) {
 		gotStatus = status
 		gotRunID = datasetID
 		close(done)
@@ -176,7 +165,7 @@ func TestToolCognify_ProgressUpdatesStatusFields(t *testing.T) {
 		},
 	}
 	var gotRunID string
-	deps.persistFn = func(datasetID, _, _ string, chunks, entities, edges int, _ int64) {
+	deps.persistFn = func(datasetID, _, _, _ string, _ int64, _ string, chunks, entities, edges int, _ int64) {
 		gotChunks = chunks
 		gotEntities = entities
 		gotEdges = edges
@@ -208,7 +197,7 @@ func TestToolCognify_RAGModeSetsSkipGraph(t *testing.T) {
 			return nil
 		},
 	}
-	deps.persistFn = func(string, string, string, int, int, int, int64) { close(done) }
+	deps.persistFn = func(string, string, string, string, int64, string, int, int, int, int64) { close(done) }
 	ToolCognify(context.Background(), deps, map[string]any{"data": "x", "mode": "rag"})
 	waitDone(t, done, 2*time.Second)
 
@@ -242,7 +231,7 @@ func TestToolCognify_CustomCollectionAndPrompt(t *testing.T) {
 			return nil
 		},
 	}
-	deps.persistFn = func(string, string, string, int, int, int, int64) { close(done) }
+	deps.persistFn = func(string, string, string, string, int64, string, int, int, int, int64) { close(done) }
 	ToolCognify(context.Background(), deps, map[string]any{
 		"data":          "x",
 		"collection":    "my_coll",
@@ -274,22 +263,22 @@ func TestToolCognify_ChunkingOverrides(t *testing.T) {
 			return nil
 		},
 	}
-	deps.persistFn = func(string, string, string, int, int, int, int64) { close(done) }
+	deps.persistFn = func(string, string, string, string, int64, string, int, int, int, int64) { close(done) }
 	snap := false
 	ToolCognify(context.Background(), deps, map[string]any{
-		"data":              "x",
-		"chunk_strategy":    "sentence",
-		"overlap_chars":     float64(32),
-		"snap_to_sentence":  snap,
-		"parent_child":      true,
-		"document_title":    "My Doc",
-		"document_id":       "doc-42",
-		"min_chunk_chars":   float64(10),
-		"max_chunk_chars":   float64(500),
-		"dedup_threshold":   float64(0.8),
+		"data":                 "x",
+		"chunk_strategy":       "sentence",
+		"overlap_chars":        float64(32),
+		"snap_to_sentence":     snap,
+		"parent_child":         true,
+		"document_title":       "My Doc",
+		"document_id":          "doc-42",
+		"min_chunk_chars":      float64(10),
+		"max_chunk_chars":      float64(500),
+		"dedup_threshold":      float64(0.8),
 		"community_resolution": float64(1.5),
-		"room":              "auth",
-		"tags":              []any{"security", ""},
+		"room":                 "auth",
+		"tags":                 []any{"security", ""},
 	})
 	waitDone(t, done, 2*time.Second)
 
@@ -307,7 +296,7 @@ func TestToolCognify_ChunkingOverrides(t *testing.T) {
 	if !captured.ParentChild {
 		t.Error("ParentChild not set")
 	}
-	if captured.DocumentTitle != "My Doc" || captured.DocumentID != "doc-42" {
+	if captured.DocumentTitle != "My Doc" || captured.DocumentID != "" {
 		t.Errorf("Document fields wrong: title=%q id=%q", captured.DocumentTitle, captured.DocumentID)
 	}
 	if captured.MinChunkChars != 10 || captured.MaxChunkChars != 500 {
@@ -338,7 +327,7 @@ func TestToolCognify_DefaultCollectionWhenEmpty(t *testing.T) {
 			return nil
 		},
 	}
-	deps.persistFn = func(string, string, string, int, int, int, int64) { close(done) }
+	deps.persistFn = func(string, string, string, string, int64, string, int, int, int, int64) { close(done) }
 	res := ToolCognify(context.Background(), deps, map[string]any{"data": "x"})
 	runID := extractRunID(t, res)
 	waitDone(t, done, 2*time.Second)
@@ -352,98 +341,53 @@ func TestToolCognify_DefaultCollectionWhenEmpty(t *testing.T) {
 	}
 }
 
-// setupCognifyDatasetDB returns a fakeDeps backed by an in-memory sqlite DB
-// carrying the datasets schema ensureCognifyDatasetID writes (name UNIQUE so
-// the ON CONFLICT(name) clause has an index to fire against).
-func setupCognifyDatasetDB(t *testing.T) *fakeDeps {
-	t.Helper()
-	f, _ := os.CreateTemp("", "mcp-cognify-ds-*.db")
-	path := f.Name()
-	f.Close()
-
-	db, err := sql.Open("sqlite3", path)
-	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
-	}
-	t.Cleanup(func() {
-		db.Close()
-		os.Remove(path)
-	})
-
-	if _, err := db.Exec(`CREATE TABLE datasets (
-		id TEXT PRIMARY KEY, name TEXT UNIQUE, owner_id TEXT,
-		created_at TEXT, updated_at TEXT
-	)`); err != nil {
-		t.Fatalf("create datasets: %v", err)
-	}
-	return &fakeDeps{db: db}
-}
-
 // ctxWithUser tags a context with the MCP user id the same way the HTTP
 // handler does on auth, so extractOwnerID(ctx) resolves to owner.
 func ctxWithUser(owner string) context.Context {
 	return context.WithValue(context.Background(), UserIDKey, owner)
 }
 
-func TestEnsureCognifyDatasetID_GetOrCreateIsIdempotent(t *testing.T) {
-	deps := setupCognifyDatasetDB(t)
-	ctx := ctxWithUser("alice")
-
-	// First call creates a row and returns the fallback id (the runID it
-	// was seeded with). Second call into the same (owner, collection) must
-	// reuse it — same id back, and no second datasets row accreted.
-	id1 := ensureCognifyDatasetID(ctx, deps, "run-1", "docs")
-	id2 := ensureCognifyDatasetID(ctx, deps, "run-2", "docs")
-
-	if id1 != "run-1" {
-		t.Errorf("first id = %q, want the fallback run-1 (it created the row)", id1)
+func TestCognifyPreparesServerSourceBeforeRunVisibility(t *testing.T) {
+	done := make(chan struct{})
+	deps := &fakeDeps{baseCfg: orchestrator.Config{EmbedEndpoint: "http://embed"}}
+	deps.prepareFn = func(_ context.Context, texts []string, cfg orchestrator.Config) (orchestrator.Config, error) {
+		if len(deps.Runs().Snapshot()) != 0 {
+			t.Fatal("run became visible before source preparation")
+		}
+		if len(texts) != 1 || texts[0] != "private" {
+			t.Fatalf("texts=%v", texts)
+		}
+		cfg.DatasetID, cfg.DocumentID = "server-dataset", "server-document"
+		cfg.ContentRevision, cfg.SourceRevision = 1, 7
+		cfg.RawContentHash = strings.Repeat("a", 64)
+		return cfg, nil
 	}
-	if id2 != id1 {
-		t.Errorf("second id = %q, want %q (reuse, not a fresh runID)", id2, id1)
+	deps.persistFn = func(string, string, string, string, int64, string, int, int, int, int64) { close(done) }
+	result := ToolCognify(ctxWithUser("alice"), deps, map[string]any{"data": "private", "document_id": "forged"})
+	if result.IsError {
+		t.Fatal(result)
 	}
-
-	var rows int
-	if err := deps.db.QueryRow(
-		"SELECT COUNT(*) FROM datasets WHERE name = '__cognify__:alice:docs'").Scan(&rows); err != nil {
-		t.Fatalf("count: %v", err)
+	snapshot := deps.Runs().Snapshot()
+	if len(snapshot) != 1 || snapshot[0].DatasetID != "server-dataset" {
+		t.Fatalf("snapshot=%+v", snapshot)
 	}
-	if rows != 1 {
-		t.Errorf("datasets rows = %d, want exactly 1 (no per-run accretion)", rows)
+	var proof []map[string]any
+	if err := json.Unmarshal([]byte(snapshot[0].SourcesJSON), &proof); err != nil || len(proof) != 1 || proof[0]["document_id"] != "server-document" {
+		t.Fatalf("proof=%v err=%v", proof, err)
 	}
+	waitDone(t, done, 2*time.Second)
 }
 
-func TestEnsureCognifyDatasetID_ScopesByOwnerAndCollection(t *testing.T) {
-	deps := setupCognifyDatasetDB(t)
-
-	alice := ensureCognifyDatasetID(ctxWithUser("alice"), deps, "r-a", "docs")
-	bob := ensureCognifyDatasetID(ctxWithUser("bob"), deps, "r-b", "docs")
-	aliceOther := ensureCognifyDatasetID(ctxWithUser("alice"), deps, "r-a2", "notes")
-
-	if alice == bob {
-		t.Errorf("alice and bob share dataset id %q; owner scoping broken", alice)
+func TestCognifyPreparationFailureLeavesNoRun(t *testing.T) {
+	deps := &fakeDeps{baseCfg: orchestrator.Config{EmbedEndpoint: "http://embed"}}
+	deps.prepareFn = func(context.Context, []string, orchestrator.Config) (orchestrator.Config, error) {
+		return orchestrator.Config{}, errors.New("source write failed")
 	}
-	if alice == aliceOther {
-		t.Errorf("alice's docs and notes share id %q; collection scoping broken", alice)
+	if result := ToolCognify(ctxWithUser("alice"), deps, map[string]any{"data": "private"}); !result.IsError {
+		t.Fatalf("result=%+v", result)
 	}
-
-	// The row alice created is owned by alice, not anonymous — without this
-	// the RBAC gate would still drop her chunks.
-	var owner string
-	if err := deps.db.QueryRow(
-		"SELECT owner_id FROM datasets WHERE id = ?", alice).Scan(&owner); err != nil {
-		t.Fatalf("select owner: %v", err)
-	}
-	if owner != "alice" {
-		t.Errorf("owner_id = %q, want alice", owner)
-	}
-}
-
-func TestEnsureCognifyDatasetID_NilDBFallsBack(t *testing.T) {
-	// No DB → RBAC is inert (every chunk already passes), so the helper
-	// returns the ephemeral id unchanged rather than touching a nil *sql.DB.
-	got := ensureCognifyDatasetID(context.Background(), nilDBDeps{}, "run-x", "docs")
-	if got != "run-x" {
-		t.Errorf("got %q, want fallback run-x when DB is nil", got)
+	if len(deps.Runs().Snapshot()) != 0 {
+		t.Fatal("failed source preparation left a visible run")
 	}
 }
 
@@ -517,7 +461,7 @@ func TestToolCognify_StageTransitionsRecorded(t *testing.T) {
 			return nil
 		},
 	}
-	deps.persistFn = func(datasetID, _, _ string, _, _, _ int, _ int64) {
+	deps.persistFn = func(datasetID, _, _, _ string, _ int64, _ string, _, _, _ int, _ int64) {
 		gotRunID = datasetID
 	}
 	deps.heartbeatFn = func(string, any) { close(done) }
@@ -559,7 +503,7 @@ func TestToolCognify_TerminalEventOnFailure(t *testing.T) {
 			return errors.New("boom")
 		},
 	}
-	deps.persistFn = func(datasetID, _, _ string, _, _, _ int, _ int64) { gotRunID = datasetID }
+	deps.persistFn = func(datasetID, _, _, _ string, _ int64, _ string, _, _, _ int, _ int64) { gotRunID = datasetID }
 	deps.heartbeatFn = func(string, any) { close(done) }
 
 	ToolCognify(context.Background(), deps, map[string]any{"data": "x"})
@@ -592,4 +536,30 @@ func TestFakeDeps_RunsIsStable(t *testing.T) {
 	if _, ok := d.Runs().Load("x"); !ok {
 		t.Error("Store via one ref not visible via another")
 	}
+}
+
+func TestCognifyBackgroundRetainsCallerAndHasDeadline(t *testing.T) {
+	t.Setenv("BACKGROUND_TASK_TIMEOUT_MS", "1000")
+	done := make(chan struct{})
+	deps := &fakeDeps{baseCfg: orchestrator.Config{EmbedEndpoint: "http://embed"}}
+	deps.pipelineFn = func(ctx context.Context, texts []string, cfg orchestrator.Config, progress chan<- orchestrator.Progress) error {
+		defer close(progress)
+		if extractOwnerID(ctx) != "alice" || ctx.Value(TenantIDKey) != "tenant-a" {
+			t.Error("background lost verified scope")
+		}
+		if dl, ok := ctx.Deadline(); !ok || time.Until(dl) > time.Second {
+			t.Error("background is unbounded")
+		}
+		if ctx.Err() != nil {
+			t.Error("request cancellation killed detached pipeline")
+		}
+		return nil
+	}
+	deps.heartbeatFn = func(string, any) { close(done) }
+	ctx, cancel := context.WithCancel(context.WithValue(ctxWithUser("alice"), TenantIDKey, "tenant-a"))
+	cancel()
+	if result := ToolCognify(ctx, deps, map[string]any{"data": "private"}); result.IsError {
+		t.Fatal(result)
+	}
+	waitDone(t, done, 2*time.Second)
 }

@@ -29,8 +29,9 @@ var (
 // principals tables the local auth flow already owns. SQL matches the
 // existing schema contract (Postgres $N rewritten for sqlite via Q).
 type SCIMStore struct {
-	DB *sql.DB
-	Q  QueryRewriter
+	DB       *sql.DB
+	Q        QueryRewriter
+	TenantID string // optional fixed managed-directory tenant, validated against scim_directories
 }
 
 func (s SCIMStore) rewrite(q string) string {
@@ -59,15 +60,24 @@ func (s SCIMStore) EnsureSchema(ctx context.Context) error {
 		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 		PRIMARY KEY (issuer, external_id)
 	)`))
-	return err
+	if err != nil {
+		return err
+	}
+	if err := EnsureIdentitySchema(ctx, s.DB, s.Q); err != nil {
+		return err
+	}
+	return s.ensureUserSchema(ctx)
 }
 
 // SCIMUser is the desired state a directory pushed for one identity.
 type SCIMUser struct {
-	Issuer     string // directory tenant identifier (e.g. the IdP entityID)
-	ExternalID string // IdP-owned immutable user identifier
-	Email      string // userName claim
-	Active     bool
+	Issuer          string // directory tenant identifier (e.g. the IdP entityID)
+	ExternalID      string // IdP-owned immutable user identifier
+	Email           string // userName claim
+	Active          bool
+	ActiveUnchanged bool // PATCH omission preserves the locked current value
+	Enterprise      *SCIMEnterpriseUser
+	EnterprisePatch map[string]*string
 }
 
 // ProvisionCreate implements the ADR-003 create semantics: match on
@@ -82,37 +92,48 @@ func (s SCIMStore) ProvisionCreate(ctx context.Context, u SCIMUser) (userID stri
 	if strings.TrimSpace(u.Issuer) == "" || strings.TrimSpace(u.ExternalID) == "" || strings.TrimSpace(u.Email) == "" {
 		return "", false, errors.New("scim: issuer, externalId and userName are required")
 	}
+	if s.TenantID != "" && (!scimExactID(u.Issuer) || !scimExactID(u.ExternalID)) {
+		return "", false, ErrSCIMInvalid
+	}
 	uid := SCIMUserID(u.Issuer, u.ExternalID)
-
-	// Existing mapping for this identity?
-	var existing string
-	err = s.DB.QueryRowContext(ctx,
-		s.rewrite("SELECT user_id FROM scim_identities WHERE issuer = $1 AND external_id = $2"),
-		u.Issuer, u.ExternalID).Scan(&existing)
-	switch {
-	case err == nil:
-		// Idempotent re-provision: refresh active state, never touch email
-		// (directory renames come through PATCH, handled in ProvisionUpdate).
-		if _, err := s.DB.ExecContext(ctx,
-			s.rewrite("UPDATE users SET is_active = $1, is_verified = true WHERE id = $2"),
-			u.Active, existing); err != nil {
-			return "", false, err
-		}
-		return existing, false, nil
-	case errors.Is(err, sql.ErrNoRows):
-		// fall through to create
-	default:
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
 		return "", false, err
 	}
-
-	// Email collision guard: another identity already owns the address.
+	defer tx.Rollback()
+	if err := s.lockDirectory(ctx, tx, u.Issuer); err != nil {
+		return "", false, err
+	}
+	// The first write serializes concurrent creates of this deterministic ID.
+	// Using a write before reads also avoids SQLite read-to-write upgrades.
+	if _, err := tx.ExecContext(ctx, s.rewrite(
+		"INSERT INTO principals (id, type) VALUES ($1, 'user') ON CONFLICT DO NOTHING"), uid); err != nil {
+		return "", false, err
+	}
+	var existing string
+	err = tx.QueryRowContext(ctx, s.rewrite("SELECT user_id FROM scim_identities WHERE issuer = $1 AND external_id = $2"), u.Issuer, u.ExternalID).Scan(&existing)
+	if err == nil {
+		if err := s.updateActive(ctx, tx, existing, u.Active); err != nil {
+			return "", false, err
+		}
+		if err := s.putEnterprise(ctx, tx, u); err != nil {
+			return "", false, err
+		}
+		if err := s.auditMutation(ctx, tx, u.Issuer, "create_retry", "User", existing, 0, 0); err != nil {
+			return "", false, err
+		}
+		return existing, false, tx.Commit()
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return "", false, err
+	}
+	// Never attach an existing user merely because a derived ID or email matches.
 	var other string
-	err = s.DB.QueryRowContext(ctx,
-		s.rewrite("SELECT id FROM users WHERE email = $1"), u.Email).Scan(&other)
-	switch {
-	case err == nil && other != uid:
-		return "", false, ErrSCIMEmailConflict
-	case err != nil && !errors.Is(err, sql.ErrNoRows):
+	err = tx.QueryRowContext(ctx, s.rewrite("SELECT id FROM users WHERE id = $1"), uid).Scan(&other)
+	if err == nil {
+		return "", false, ErrSCIMExternalIDBound
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
 		return "", false, err
 	}
 
@@ -123,23 +144,24 @@ func (s SCIMStore) ProvisionCreate(ctx context.Context, u SCIMUser) (userID stri
 	}
 	lockedHash := hex.EncodeToString(buf)
 
-	tx, err := s.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return "", false, err
-	}
-	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, s.rewrite(
-		"INSERT INTO principals (id, type) VALUES ($1, 'user') ON CONFLICT DO NOTHING"), uid); err != nil {
-		return "", false, err
-	}
-	if _, err := tx.ExecContext(ctx, s.rewrite(
+	if result, err := tx.ExecContext(ctx, s.rewrite(
 		`INSERT INTO users (id, email, hashed_password, is_active, is_superuser, is_verified)
-		 VALUES ($1, $2, $3, $4, false, true)`), uid, u.Email, lockedHash, u.Active); err != nil {
+		 VALUES ($1, $2, $3, $4, false, true) ON CONFLICT (email) DO NOTHING`), uid, u.Email, lockedHash, u.Active); err != nil {
 		return "", false, err
+	} else if n, err := result.RowsAffected(); err != nil {
+		return "", false, err
+	} else if n != 1 {
+		return "", false, ErrSCIMEmailConflict
 	}
 	if _, err := tx.ExecContext(ctx, s.rewrite(
 		"INSERT INTO scim_identities (issuer, external_id, user_id) VALUES ($1, $2, $3)"),
 		u.Issuer, u.ExternalID, uid); err != nil {
+		return "", false, err
+	}
+	if err := s.putEnterprise(ctx, tx, u); err != nil {
+		return "", false, err
+	}
+	if err := s.auditMutation(ctx, tx, u.Issuer, "create", "User", uid, 0, 0); err != nil {
 		return "", false, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -148,9 +170,9 @@ func (s SCIMStore) ProvisionCreate(ctx context.Context, u SCIMUser) (userID stri
 	return uid, true, nil
 }
 
-// ProvisionUpdate applies a desired-state patch: activation flips are the
-// only directory-driven mutation; email renames are honored when the target
-// address is free. externalId immutability is enforced by the caller (HTTP
+// ProvisionUpdate atomically patches activation, email and enterprise metadata.
+// Email renames are honored when the target address is free. externalId
+// immutability is enforced by the caller (HTTP
 // layer), which rejects any attempt to change the mapping key.
 func (s SCIMStore) ProvisionUpdate(ctx context.Context, u SCIMUser, newEmail string) error {
 	if s.DB == nil {
@@ -165,12 +187,20 @@ func (s SCIMStore) ProvisionUpdate(ctx context.Context, u SCIMUser, newEmail str
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx,
-		s.rewrite("UPDATE users SET is_active = $1, is_verified = true WHERE id = $2"),
-		u.Active, uid); err != nil {
+	if err := s.lockDirectory(ctx, tx, u.Issuer); err != nil {
 		return err
 	}
-	if newEmail != "" && newEmail != u.Email {
+	// Acquire the user write lock even when active was omitted, so concurrent
+	// metadata/email patches cannot overwrite an intervening deactivation.
+	if _, err := tx.ExecContext(ctx, s.rewrite("UPDATE users SET id=id WHERE id=$1"), uid); err != nil {
+		return err
+	}
+	if !u.ActiveUnchanged {
+		if err := s.updateActive(ctx, tx, uid, u.Active); err != nil {
+			return err
+		}
+	}
+	if newEmail != "" {
 		var other string
 		err = tx.QueryRowContext(ctx,
 			s.rewrite("SELECT id FROM users WHERE email = $1"), newEmail).Scan(&other)
@@ -184,6 +214,12 @@ func (s SCIMStore) ProvisionUpdate(ctx context.Context, u SCIMUser, newEmail str
 			s.rewrite("UPDATE users SET email = $1 WHERE id = $2"), newEmail, uid); err != nil {
 			return err
 		}
+	}
+	if err := s.putEnterprise(ctx, tx, u); err != nil {
+		return err
+	}
+	if err := s.auditMutation(ctx, tx, u.Issuer, "update", "User", uid, 0, 0); err != nil {
+		return err
 	}
 	return tx.Commit()
 }
@@ -199,9 +235,37 @@ func (s SCIMStore) ProvisionDeactivate(ctx context.Context, issuer, externalID s
 	if err != nil {
 		return err
 	}
-	_, err = s.DB.ExecContext(ctx,
-		s.rewrite("UPDATE users SET is_active = false WHERE id = $1"), uid)
-	return err
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := s.lockDirectory(ctx, tx, issuer); err != nil {
+		return err
+	}
+	if err := s.updateActive(ctx, tx, uid, false); err != nil {
+		return err
+	}
+	if err := s.auditMutation(ctx, tx, issuer, "deactivate", "User", uid, 0, 0); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s SCIMStore) updateActive(ctx context.Context, tx *sql.Tx, uid string, active bool) error {
+	result, err := tx.ExecContext(ctx, s.rewrite("UPDATE users SET is_active = $1, is_verified = true WHERE id = $2"), active, uid)
+	if err != nil {
+		return err
+	}
+	if n, err := result.RowsAffected(); err != nil {
+		return err
+	} else if n != 1 {
+		return ErrUserNotFound
+	}
+	if !active {
+		return revokeUserCredentials(ctx, tx, s.Q, uid)
+	}
+	return nil
 }
 
 // Lookup maps (issuer, externalId) to the local user id, or ErrUserNotFound.

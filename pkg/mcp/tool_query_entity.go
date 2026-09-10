@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/stek0v/levara/pkg/access"
+	"github.com/stek0v/levara/pkg/sqlcompat"
 )
 
 const (
@@ -56,10 +57,19 @@ func ToolQueryEntity(ctx context.Context, deps Deps, args map[string]any) ToolRe
 	if l, ok := args["limit"].(float64); ok && l > 0 {
 		limit = int(l)
 	}
+	if limit > 200 {
+		limit = 200
+	}
 
 	allowed, err := graphDatasetScope(ctx, deps)
 	if err != nil {
 		return toolError(err.Error())
+	}
+	if scope, ok := deps.(GraphAssertionAuthorizer); ok {
+		allowed, err = scope.GraphDatasetIDs(ctx)
+		if err != nil {
+			return toolError("graph access denied")
+		}
 	}
 	if allowed != nil && datasetID != "" {
 		permitted := false
@@ -76,15 +86,18 @@ func ToolQueryEntity(ctx context.Context, deps Deps, args map[string]any) ToolRe
 	if datasetID != "" {
 		allowed = []string{datasetID}
 	}
-	nodeIDs := resolveEntityNodes(ctx, db, deps.Q, name, datasetID, allowed)
+	nodeIDs, err := resolveEntityNodes(ctx, db, deps.Q, name, datasetID, allowed, deps)
+	if err != nil {
+		return toolError(err.Error())
+	}
 	if len(nodeIDs) == 0 {
-		return ToolResult{Content: []Content{{
-			Type: "text",
-			Text: fmt.Sprintf("No entity found with name '%s'", name),
-		}}}
+		return jsonResult(map[string]any{
+			"entity": name, "as_of": asOf, "dataset_id": datasetID,
+			"node_ids": []any{}, "edges": []any{},
+		})
 	}
 
-	edges, err := queryEntityEdges(ctx, db, deps.Q, nodeIDs, asOf, datasetID, limit, allowed)
+	edges, err := queryEntityEdges(ctx, db, deps.Q, nodeIDs, asOf, datasetID, limit, allowed, deps)
 	if err != nil {
 		return ToolResult{
 			Content: []Content{{Type: "text", Text: "Error: " + err.Error()}},
@@ -123,8 +136,9 @@ func graphDatasetScope(ctx context.Context, deps Deps) ([]string, error) {
 	return allowed, nil
 }
 
-// graphDatasetPredicate allocates fresh parameter positions on every use so
-// SQLite's positional rewrite and PostgreSQL use the same argument sequence.
+// graphDatasetPredicate passes the allowlist as one JSON value. Expanding one
+// placeholder per dataset exceeded SQLite and PostgreSQL parameter limits, and
+// the edge query repeated that expansion for the edge and both endpoints.
 func graphDatasetPredicate(column string, allowed []string, args *[]any) string {
 	if allowed == nil {
 		return ""
@@ -132,49 +146,88 @@ func graphDatasetPredicate(column string, allowed []string, args *[]any) string 
 	if len(allowed) == 0 {
 		return " AND 1=0"
 	}
-	placeholders := make([]string, 0, len(allowed))
-	for _, id := range allowed {
-		*args = append(*args, id)
-		placeholders = append(placeholders, fmt.Sprintf("$%d", len(*args)))
+	encoded, err := json.Marshal(allowed)
+	if err != nil {
+		// []string cannot fail JSON encoding. Keep this branch fail-closed if
+		// the type changes later.
+		return " AND 1=0"
 	}
-	return " AND " + column + " IN (" + strings.Join(placeholders, ",") + ")"
+	*args = append(*args, string(encoded))
+	placeholder := fmt.Sprintf("$%d", len(*args))
+	if sqlcompat.CurrentProvider() == sqlcompat.SQLite {
+		return " AND " + column + " IN (SELECT value FROM json_each(" + placeholder + "))"
+	}
+	return " AND " + column + " IN (SELECT value FROM jsonb_array_elements_text(CAST(" + placeholder + " AS jsonb)))"
 }
 
 // resolveEntityNodes filters both explicit dataset scope and caller access
-// before applying the node limit. SQL failure preserves the not-found result.
-func resolveEntityNodes(ctx context.Context, db *sql.DB, rewrite func(string) string, name, datasetID string, allowed []string) []string {
+// before applying the node limit. SQL failures remain distinguishable from an
+// unknown entity name.
+func resolveEntityNodes(ctx context.Context, db *sql.DB, rewrite func(string) string, name, datasetID string, allowed []string, deps Deps) ([]string, error) {
 	if allowed != nil && len(allowed) == 0 {
-		return nil
+		return nil, nil
 	}
-	query := "SELECT id FROM graph_nodes WHERE name = $1"
-	args := []any{name}
-	if datasetID != "" {
-		query += " AND dataset_id = $2"
-		args = append(args, datasetID)
-	}
-	query += graphDatasetPredicate("dataset_id", allowed, &args)
-	query += fmt.Sprintf(" LIMIT %d", queryEntityNodeResolveLimit)
-	rows, err := db.QueryContext(ctx, rewrite(query), args...)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
-
 	var out []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err == nil {
-			out = append(out, id)
+	afterID := ""
+	for len(out) < queryEntityNodeResolveLimit {
+		query := "SELECT id,dataset_id,COALESCE(properties,'{}') FROM graph_nodes WHERE name = $1 AND id > $2"
+		args := []any{name, afterID}
+		if datasetID != "" {
+			query += " AND dataset_id = $3"
+			args = append(args, datasetID)
+		}
+		query += graphDatasetPredicate("dataset_id", allowed, &args)
+		query += " ORDER BY id LIMIT 128"
+		rows, err := db.QueryContext(ctx, rewrite(query), args...)
+		if err != nil {
+			return nil, err
+		}
+		type candidate struct {
+			id, dataset string
+			properties  []byte
+		}
+		var candidates []candidate
+		fetched := 0
+		for rows.Next() {
+			fetched++
+			var c candidate
+			if err := rows.Scan(&c.id, &c.dataset, &c.properties); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			afterID = c.id
+			candidates = append(candidates, c)
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return nil, err
+		}
+		for _, c := range candidates {
+			if graphAssertionsAllowed(ctx, deps, []GraphAssertion{{DatasetID: c.dataset, Properties: c.properties}}) {
+				out = append(out, c.id)
+				if len(out) == queryEntityNodeResolveLimit {
+					break
+				}
+			}
+		}
+		if fetched < 128 {
+			break
 		}
 	}
-	return out
+	return out, nil
+}
+
+func graphAssertionsAllowed(ctx context.Context, deps Deps, assertions []GraphAssertion) bool {
+	authorizer, ok := deps.(GraphAssertionAuthorizer)
+	return !ok || authorizer.GraphAssertionsAllowed(ctx, assertions)
 }
 
 // queryEntityEdges fetches edges touching any of nodeIDs (as source
 // or target), applying the active-now or as_of-based validity filter.
 // Returns SQL errors to the caller since a malformed query here is a
 // real fault, not a not-found.
-func queryEntityEdges(ctx context.Context, db *sql.DB, rewrite func(string) string, nodeIDs []string, asOf, datasetID string, limit int, allowed []string) ([]map[string]any, error) {
+func queryEntityEdges(ctx context.Context, db *sql.DB, rewrite func(string) string, nodeIDs []string, asOf, datasetID string, limit int, allowed []string, deps Deps) ([]map[string]any, error) {
 	srcPlaceholders := make([]string, 0, len(nodeIDs))
 	tgtPlaceholders := make([]string, 0, len(nodeIDs))
 	qargs := make([]any, 0, len(nodeIDs)*2+2)
@@ -192,10 +245,10 @@ func queryEntityEdges(ctx context.Context, db *sql.DB, rewrite func(string) stri
 
 	var validityClause string
 	if asOf == "" {
-		validityClause = " AND (valid_until IS NULL OR valid_until > CURRENT_TIMESTAMP)"
+		validityClause = " AND (graph_edges.valid_until IS NULL OR graph_edges.valid_until > CURRENT_TIMESTAMP)"
 	} else {
 		validityClause = fmt.Sprintf(
-			" AND (valid_from IS NULL OR valid_from <= $%d) AND (valid_until IS NULL OR valid_until > $%d)",
+			" AND (graph_edges.valid_from IS NULL OR graph_edges.valid_from <= $%d) AND (graph_edges.valid_until IS NULL OR graph_edges.valid_until > $%d)",
 			pos, pos+1,
 		)
 		qargs = append(qargs, asOf, asOf)
@@ -205,7 +258,7 @@ func queryEntityEdges(ctx context.Context, db *sql.DB, rewrite func(string) stri
 	// Explicit scope narrows the caller-authorized graph.
 	var datasetClause string
 	if datasetID != "" {
-		datasetClause = fmt.Sprintf(" AND dataset_id = $%d", pos)
+		datasetClause = fmt.Sprintf(" AND graph_edges.dataset_id = $%d", pos)
 		qargs = append(qargs, datasetID)
 		pos++
 	}
@@ -214,49 +267,93 @@ func queryEntityEdges(ctx context.Context, db *sql.DB, rewrite func(string) stri
 	if allowed != nil {
 		// An allowed edge alone does not authorize disclosing a foreign or
 		// missing endpoint. Check both nodes independently of edge provenance.
-		accessClause += " AND EXISTS (SELECT 1 FROM graph_nodes src WHERE src.id = graph_edges.source_id" + graphDatasetPredicate("src.dataset_id", allowed, &qargs) + ")"
-		accessClause += " AND EXISTS (SELECT 1 FROM graph_nodes dst WHERE dst.id = graph_edges.target_id" + graphDatasetPredicate("dst.dataset_id", allowed, &qargs) + ")"
+		accessClause += graphDatasetPredicate("src.dataset_id", allowed, &qargs)
+		accessClause += graphDatasetPredicate("dst.dataset_id", allowed, &qargs)
 	}
-	pos = len(qargs) + 1
 
-	// Scan timestamp columns as NullString so the driver returns "" for NULL
-	// without forcing a Postgres-specific COALESCE(..::text, ''). SQLite (used
-	// by tests) and Postgres both accept this — earlier `COALESCE(col, '')`
-	// failed under PG because '' isn't a valid timestamptz.
-	sqlStr := fmt.Sprintf(`
-		SELECT id, source_id, target_id, relationship_name, properties,
-			valid_from, valid_until, superseded_by, confidence
-		FROM graph_edges
-		WHERE (source_id IN (%s) OR target_id IN (%s))%s%s%s
-		ORDER BY updated_at DESC LIMIT $%d
-	`, strings.Join(srcPlaceholders, ","), strings.Join(tgtPlaceholders, ","), validityClause, datasetClause, accessClause, pos)
-	qargs = append(qargs, limit)
-
-	rows, err := db.QueryContext(ctx, rewrite(sqlStr), qargs...)
-	if err != nil {
-		return nil, err
+	type candidate struct {
+		id, src, tgt, rel, props, sb           string
+		srcDataset, srcProperties, edgeDataset string
+		dstDataset, dstProperties              string
+		vf, vu                                 sql.NullString
+		conf                                   float64
 	}
-	defer rows.Close()
-
 	var edges []map[string]any
-	for rows.Next() {
-		var id, src, tgt, rel, props, sb string
-		var vf, vu sql.NullString
-		var conf float64
-		if err := rows.Scan(&id, &src, &tgt, &rel, &props, &vf, &vu, &sb, &conf); err != nil {
-			continue
+	authorizations := map[string]bool{}
+	for offset := 0; len(edges) < limit; offset += 128 {
+		pos = len(qargs) + 1
+		sqlStr := fmt.Sprintf(`
+			SELECT graph_edges.id, graph_edges.source_id, graph_edges.target_id,
+				graph_edges.relationship_name, graph_edges.properties,
+				graph_edges.valid_from, graph_edges.valid_until,
+				graph_edges.superseded_by, graph_edges.confidence,
+				COALESCE(src.dataset_id,''), COALESCE(src.properties,'{}'),
+				COALESCE(graph_edges.dataset_id,''),
+				COALESCE(dst.dataset_id,''), COALESCE(dst.properties,'{}')
+			FROM graph_edges
+			JOIN graph_nodes src ON src.id=graph_edges.source_id
+			JOIN graph_nodes dst ON dst.id=graph_edges.target_id
+			WHERE (graph_edges.source_id IN (%s) OR graph_edges.target_id IN (%s))%s%s%s
+			ORDER BY graph_edges.updated_at DESC,graph_edges.id LIMIT $%d OFFSET $%d
+		`, strings.Join(srcPlaceholders, ","), strings.Join(tgtPlaceholders, ","), validityClause, datasetClause, accessClause, pos, pos+1)
+		args := append(append([]any(nil), qargs...), 128, offset)
+		rows, err := db.QueryContext(ctx, rewrite(sqlStr), args...)
+		if err != nil {
+			return nil, err
 		}
-		edges = append(edges, map[string]any{
-			"id":            id,
-			"source_id":     src,
-			"target_id":     tgt,
-			"relationship":  rel,
-			"properties":    json.RawMessage(props),
-			"valid_from":    vf.String,
-			"valid_until":   vu.String,
-			"superseded_by": sb,
-			"confidence":    conf,
-		})
+		var candidates []candidate
+		fetched := 0
+		for rows.Next() {
+			fetched++
+			var c candidate
+			if err := rows.Scan(&c.id, &c.src, &c.tgt, &c.rel, &c.props, &c.vf, &c.vu, &c.sb, &c.conf,
+				&c.srcDataset, &c.srcProperties, &c.edgeDataset, &c.dstDataset, &c.dstProperties); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			candidates = append(candidates, c)
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return nil, err
+		}
+		for _, c := range candidates {
+			if c.edgeDataset == "" && c.srcDataset == c.dstDataset {
+				c.edgeDataset = c.srcDataset
+			}
+			assertions := []GraphAssertion{
+				{DatasetID: c.srcDataset, Properties: []byte(c.srcProperties)},
+				{DatasetID: c.edgeDataset, Properties: []byte(c.props)},
+				{DatasetID: c.dstDataset, Properties: []byte(c.dstProperties)},
+			}
+			key, _ := json.Marshal(assertions)
+			allowed, checked := authorizations[string(key)]
+			if !checked {
+				allowed = graphAssertionsAllowed(ctx, deps, assertions)
+				authorizations[string(key)] = allowed
+			}
+			if !allowed {
+				continue
+			}
+			edges = append(edges, map[string]any{
+				"id":            c.id,
+				"source_id":     c.src,
+				"target_id":     c.tgt,
+				"relationship":  c.rel,
+				"properties":    json.RawMessage(c.props),
+				"valid_from":    c.vf.String,
+				"valid_until":   c.vu.String,
+				"superseded_by": c.sb,
+				"confidence":    c.conf,
+			})
+			if len(edges) == limit {
+				break
+			}
+		}
+		if fetched < 128 {
+			break
+		}
 	}
 	return edges, nil
 }

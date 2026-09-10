@@ -25,7 +25,6 @@ import (
 	"unicode"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/google/uuid"
 
 	"github.com/stek0v/levara/internal/metrics"
 	"github.com/stek0v/levara/pipeline"
@@ -241,99 +240,6 @@ func filterByTags(results []fiber.Map, tags []string) []fiber.Map {
 	return filtered
 }
 
-// filterByAllowedDatasets post-filters search results by allowed dataset IDs.
-// If allowedIDs is nil, no filtering is applied (dev mode / backward compat).
-func filterByAllowedDatasets(results []fiber.Map, allowedIDs []string) []fiber.Map {
-	if allowedIDs == nil {
-		return results
-	}
-	if len(allowedIDs) == 0 {
-		return []fiber.Map{}
-	}
-	allowed := make(map[string]bool, len(allowedIDs))
-	for _, id := range allowedIDs {
-		allowed[id] = true
-	}
-	filtered := []fiber.Map{}
-	for _, r := range results {
-		dsID := extractDatasetID(r)
-		if dsID == "" || allowed[dsID] {
-			filtered = append(filtered, r)
-		}
-	}
-	return filtered
-}
-
-// filterScoredByAllowedDatasets drops pipeline.ScoredResult rows whose
-// metadata names a dataset outside allowedIDs. Used to ACL-filter
-// vector candidates BEFORE they are shipped to the rerank sidecar —
-// prevents forbidden chunks leaking to a third-party reranker even
-// when the user-visible response will hide them.
-func filterScoredByAllowedDatasets(results []pipeline.ScoredResult, allowedIDs []string) []pipeline.ScoredResult {
-	if allowedIDs == nil {
-		return results
-	}
-	if len(allowedIDs) == 0 {
-		return []pipeline.ScoredResult{}
-	}
-	allowed := make(map[string]bool, len(allowedIDs))
-	for _, id := range allowedIDs {
-		allowed[id] = true
-	}
-	filtered := results[:0]
-	for _, r := range results {
-		dsID := extractDatasetIDFromRaw(r.Metadata)
-		if dsID == "" || allowed[dsID] {
-			filtered = append(filtered, r)
-		}
-	}
-	return filtered
-}
-
-// extractDatasetIDFromRaw is the pipeline.ScoredResult counterpart of
-// extractDatasetID — same `dataset_id → project_id` fallback rule,
-// applied to raw metadata JSON before it gets boxed into a fiber.Map.
-func extractDatasetIDFromRaw(meta json.RawMessage) string {
-	if len(meta) == 0 {
-		return ""
-	}
-	var m map[string]any
-	if err := json.Unmarshal(meta, &m); err != nil {
-		return ""
-	}
-	if d, ok := m["dataset_id"].(string); ok && d != "" {
-		return d
-	}
-	if d, ok := m["project_id"].(string); ok {
-		return d
-	}
-	return ""
-}
-
-// extractDatasetID extracts dataset_id from a result's metadata field.
-func extractDatasetID(r fiber.Map) string {
-	meta, ok := r["metadata"]
-	if !ok {
-		return ""
-	}
-	var m map[string]any
-	switch v := meta.(type) {
-	case json.RawMessage:
-		json.Unmarshal(v, &m)
-	case []byte:
-		json.Unmarshal(v, &m)
-	case string:
-		json.Unmarshal([]byte(v), &m)
-	case map[string]any:
-		m = v
-	}
-	dsID, _ := m["dataset_id"].(string)
-	if dsID == "" {
-		dsID, _ = m["project_id"].(string)
-	}
-	return dsID
-}
-
 // searchHandler — POST /search, /search/text, /search/ (all aliases).
 // Dispatches to the right strategy via the SearchStrategies registry
 // (T5); unknown query_type falls back to CHUNKS.
@@ -364,6 +270,8 @@ func searchHandler(cfg APIConfig) fiber.Handler {
 		// Request-scoped deadline for all downstream operations in this call.
 		reqCtx, cancel := searchRequestContext(c)
 		defer cancel()
+		reqCtx = searchEgressContext(c, cfg, reqCtx)
+		c.SetUserContext(reqCtx)
 
 		// RBAC: resolve allowed dataset IDs for this user
 		userID, _ := c.Locals("user_id").(string)
@@ -403,6 +311,23 @@ func searchHandler(cfg APIConfig) fiber.Handler {
 			routingDecision = &d
 			queryType = d.SearchType
 		}
+		if globalSearchStrategy(queryType) {
+			if !globalSearchGraphAllowed(reqCtx, cfg) {
+				if source == "explicit" {
+					return fiber.NewError(403, "global search requires instance administrator")
+				}
+				queryType = "CHUNKS"
+				if routingDecision != nil {
+					routingDecision.SearchType = queryType
+					routingDecision.Reason = "source-scoped search"
+				}
+			} else {
+				e, _ := reqCtx.Value(searchEgressKey{}).(searchEgress)
+				e.global = true
+				reqCtx = context.WithValue(reqCtx, searchEgressKey{}, e)
+				c.SetUserContext(reqCtx)
+			}
+		}
 		if dcdRouteSupportedSearchType(queryType) {
 			maybeAttachDCDRouteObserve(reqCtx, c, cfg, req, userID)
 		}
@@ -421,7 +346,10 @@ func searchHandler(cfg APIConfig) fiber.Handler {
 		if registry == nil {
 			registry = NewDefaultStrategyRegistry()
 		}
-		return registry.Get(queryType).Execute(c, cfg, req)
+		if err := registry.Get(queryType).Execute(c, cfg, req); err != nil {
+			return err
+		}
+		return sendProtectedResponseWithFence(c, reqCtx)
 	}
 }
 
@@ -528,7 +456,10 @@ func chunksSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 					log.Printf("chunksSearch: SearchByText(coll=%s, sq=%q) [rerank path]: %v", coll, sq, rerr)
 					continue
 				}
-				filtered := filterScoredByAllowedDatasets(raw, req.AllowedDatasetIDs)
+				filtered, accessErr := filterScoredSearchDocuments(c, cfg, raw)
+				if accessErr != nil {
+					return accessErr
+				}
 				forceRerank := req.Rerank != nil && *req.Rerank
 				rerankedThisCall, results = applyRerankToScored(ctx, cfg, rerankClient, sq, filtered, req.TopK, forceRerank)
 			} else {
@@ -561,7 +492,7 @@ func chunksSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 	}
 
 	// Graph-aware reranking: boost results that are graph-neighbors of query entities
-	if cfg.DB != nil && len(allResults) > 1 {
+	if cfg.DB != nil && len(allResults) > 1 && globalSearchGraphAllowed(ctx, cfg) {
 		queryEntityNames := extractQueryEntities(ctx, cfg.DB, req.QueryText)
 		if len(queryEntityNames) > 0 {
 			grResults := make([]graphrank.ScoredResult, len(allResults))
@@ -585,7 +516,11 @@ func chunksSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 	}
 
 	// RBAC post-filter by allowed datasets
-	allResults = filterByAllowedDatasets(allResults, req.AllowedDatasetIDs)
+	if filtered, err := filterSearchDocuments(c, cfg, allResults); err != nil {
+		return err
+	} else {
+		allResults = filtered
+	}
 
 	// Tag-based post-filter
 	allResults = filterByTags(allResults, req.Tags)
@@ -628,7 +563,11 @@ func bm25Search(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 	}
 
 	// RBAC post-filter
-	allResults = filterByAllowedDatasets(allResults, req.AllowedDatasetIDs)
+	if filtered, err := filterSearchDocuments(c, cfg, allResults); err != nil {
+		return err
+	} else {
+		allResults = filtered
+	}
 
 	if len(allResults) > req.TopK {
 		allResults = allResults[:req.TopK]
@@ -670,7 +609,7 @@ func hybridSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 		// BM25 search with optional graph-based query expansion
 		bm25Query := req.QueryText
 		if cfg.DB != nil {
-			if expanded := expandQueryFromGraph(ctx, cfg.DB, req.QueryText); expanded != "" {
+			if expanded := scopedQueryExpansion(ctx, cfg, req.QueryText); expanded != "" {
 				bm25Query = req.QueryText + " " + expanded
 			}
 		}
@@ -702,11 +641,15 @@ func hybridSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 	}
 
 	// ACL pre-rerank: drop forbidden datasets BEFORE shipping text to the
-	// rerank sidecar. The trailing filterByAllowedDatasets call below stays
+	// rerank sidecar. The trailing document policy check below stays
 	// for defense-in-depth, but this one is the load-bearing fix — once a
 	// forbidden chunk leaves the host it has leaked, even if the response
 	// hides it.
-	allResults = filterByAllowedDatasets(allResults, req.AllowedDatasetIDs)
+	if filtered, err := filterSearchDocuments(c, cfg, allResults); err != nil {
+		return err
+	} else {
+		allResults = filtered
+	}
 
 	// Phase 2.5: rerank the fused candidates when configured. Mirrors the
 	// chunksSearch outcome scheme (ok|budget|error|no_text|disabled) so the
@@ -718,7 +661,11 @@ func hybridSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 	}
 
 	// RBAC defense-in-depth (already filtered above; no-op when ids unchanged)
-	allResults = filterByAllowedDatasets(allResults, req.AllowedDatasetIDs)
+	if filtered, err := filterSearchDocuments(c, cfg, allResults); err != nil {
+		return err
+	} else {
+		allResults = filtered
+	}
 
 	// Tag-based post-filter
 	allResults = filterByTags(allResults, req.Tags)
@@ -748,10 +695,17 @@ func applyRerankToScored(
 	if force {
 		threshold = 0
 	}
-	return pipeline.ApplyRerankToScored(ctx, pipeline.ApplyRerankConfig{
-		BudgetMs:          cfg.RerankBudgetMs,
-		ScoreGapThreshold: threshold,
-	}, rerankClient, query, in, topK)
+	var ran bool
+	var out []pipeline.ScoredResult
+	if err := withSearchReadFence(ctx, func(ctx context.Context) error {
+		ran, out = pipeline.ApplyRerankToScored(ctx, pipeline.ApplyRerankConfig{
+			BudgetMs: cfg.RerankBudgetMs, ScoreGapThreshold: threshold,
+		}, rerankClient, query, in, topK)
+		return ctx.Err()
+	}); err != nil {
+		return false, nil
+	}
+	return ran, out
 }
 
 func rerankResponseDecision(flag *bool, reranked bool) (string, string) {
@@ -783,6 +737,13 @@ func hybridApplyRerank(
 	allResults *[]fiber.Map,
 	force bool,
 ) {
+	_ = withSearchReadFence(ctx, func(ctx context.Context) error {
+		hybridApplyRerankUnchecked(ctx, cfg, rerankClient, queryText, allResults, force)
+		return ctx.Err()
+	})
+}
+
+func hybridApplyRerankUnchecked(ctx context.Context, cfg APIConfig, rerankClient *rerank.Client, queryText string, allResults *[]fiber.Map, force bool) {
 	rows := *allResults
 	docs := make([]string, 0, len(rows))
 	mapping := make([]int, 0, len(rows))
@@ -908,7 +869,11 @@ func temporalSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error
 	}
 
 	// RBAC post-filter
-	vectorResults = filterByAllowedDatasets(vectorResults, req.AllowedDatasetIDs)
+	if filtered, err := filterSearchDocuments(c, cfg, vectorResults); err != nil {
+		return err
+	} else {
+		vectorResults = filtered
+	}
 
 	// Combine: temporal results first, then vector results
 	combined := make([]fiber.Map, 0, len(temporalResults)+len(vectorResults))
@@ -1086,7 +1051,11 @@ func ragCompletionSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) 
 		}
 	}
 	// RBAC post-filter
-	chunks = filterByAllowedDatasets(chunks, req.AllowedDatasetIDs)
+	if filtered, err := filterSearchDocuments(c, cfg, chunks); err != nil {
+		return err
+	} else {
+		chunks = filtered
+	}
 	chunks, verification := verifyScoredResults(chunks, req.MinScore, req.VerifyResults)
 
 	threshold := ragAbstainThresholdFor("RAG_COMPLETION")
@@ -1140,27 +1109,12 @@ func ragCompletionSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) 
 			}
 		}
 
-		// Load conversation history if session_id provided
 		var historySection string
 		if req.SessionID != "" && cfg.DB != nil {
-			rows, err := cfg.DB.QueryContext(ctx,
-				Q(`SELECT query, response FROM interactions
-				   WHERE session_id = $1 ORDER BY created_at DESC LIMIT 5`), req.SessionID)
-			if err == nil {
-				defer rows.Close()
-				var turns []string
-				for rows.Next() {
-					var q, r string
-					rows.Scan(&q, &r)
-					turns = append(turns, fmt.Sprintf("User: %s\nAssistant: %s", truncate(q, 200), truncate(r, 300)))
-				}
-				if len(turns) > 0 {
-					// Reverse order (oldest first)
-					for i, j := 0, len(turns)-1; i < j; i, j = i+1, j-1 {
-						turns[i], turns[j] = turns[j], turns[i]
-					}
-					historySection = "\n\nPrevious conversation:\n" + strings.Join(turns, "\n\n")
-				}
+			var err error
+			historySection, err = GetScopedSessionContext(ctx, cfg, req.SessionID, 5)
+			if err != nil {
+				return sessionHTTPError(err)
 			}
 		}
 
@@ -1169,13 +1123,12 @@ func ragCompletionSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) 
 
 		answer = callLLMFromAPI(ctx, llmEndpoint, llmModel, prompt, cfg.LLMProvider)
 
-		// Save this interaction for future conversational context
 		if req.SessionID != "" && cfg.DB != nil {
-			cfg.DB.ExecContext(ctx,
-				Q(`INSERT INTO interactions (id, session_id, user_id, query, response, search_type, created_at)
-				   VALUES ($1, $2, $3, $4, $5, $6, NOW())`),
-				uuid.New().String(), req.SessionID, "", req.QueryText, truncate(answer, 500), "RAG_COMPLETION")
+			if _, err := RecordSessionInteraction(ctx, cfg, req.SessionID, req.QueryText, answer, "RAG_COMPLETION"); err != nil {
+				return sessionHTTPError(err)
+			}
 		}
+
 	}
 
 	return c.JSON(attachSearchDebugMetadata(c, fiber.Map{
@@ -1268,7 +1221,11 @@ func summariesSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) erro
 	}
 
 	// RBAC post-filter
-	allResults = filterByAllowedDatasets(allResults, req.AllowedDatasetIDs)
+	if filtered, err := filterSearchDocuments(c, cfg, allResults); err != nil {
+		return err
+	} else {
+		allResults = filtered
+	}
 
 	if len(allResults) > req.TopK {
 		allResults = allResults[:req.TopK]
@@ -1281,6 +1238,17 @@ func summariesSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) erro
 // If provider is non-nil, uses the provider abstraction (supports Anthropic, etc.).
 // Otherwise falls back to raw HTTP POST to OpenAI-compatible endpoint.
 func callLLMFromAPI(ctx context.Context, endpoint, model, prompt string, provider ...llm.Provider) string {
+	var answer string
+	if err := withSearchReadFence(ctx, func(ctx context.Context) error {
+		answer = callLLMFromAPIUnchecked(ctx, endpoint, model, prompt, provider...)
+		return ctx.Err()
+	}); err != nil {
+		return ""
+	}
+	return answer
+}
+
+func callLLMFromAPIUnchecked(ctx context.Context, endpoint, model, prompt string, provider ...llm.Provider) string {
 	// Provider path: use abstraction if available.
 	if len(provider) > 0 && provider[0] != nil {
 		resp, err := provider[0].ChatCompletion(ctx, llm.CompletionRequest{

@@ -72,15 +72,17 @@ type jsonWebKey struct {
 }
 
 type idTokenClaims struct {
-	Issuer   string   `json:"iss"`
-	Subject  string   `json:"sub"`
-	Audience audience `json:"aud"`
-	Expiry   int64    `json:"exp"`
-	NotBef   int64    `json:"nbf"`
-	IssuedAt int64    `json:"iat"`
-	Email    string   `json:"email"`
-	Name     string   `json:"name"`
-	Groups   []string `json:"groups"`
+	Issuer          string   `json:"iss"`
+	Subject         string   `json:"sub"`
+	Audience        audience `json:"aud"`
+	Expiry          int64    `json:"exp"`
+	NotBef          int64    `json:"nbf"`
+	IssuedAt        int64    `json:"iat"`
+	Nonce           string   `json:"nonce"`
+	AuthorizedParty string   `json:"azp"`
+	Email           string   `json:"email"`
+	Name            string   `json:"name"`
+	Groups          []string `json:"groups"`
 	// PreferredUsername is the OIDC standard claim; used as fallback email hint.
 	PreferredUsername string `json:"preferred_username"`
 }
@@ -226,22 +228,32 @@ func (v *OIDCVerifier) Verify(token string) (*OIDCTokenClaims, error) {
 		email = claims.PreferredUsername
 	}
 	return &OIDCTokenClaims{
-		Issuer:      claims.Issuer,
-		Subject:     claims.Subject,
-		Email:       email,
-		DisplayName: claims.Name,
-		Groups:      append([]string(nil), claims.Groups...),
+		IssuedAt:        claims.IssuedAt,
+		ExpiresAt:       claims.Expiry,
+		Nonce:           claims.Nonce,
+		AuthorizedParty: claims.AuthorizedParty,
+		Audiences:       append([]string(nil), claims.Audience...),
+		Issuer:          claims.Issuer,
+		Subject:         claims.Subject,
+		Email:           email,
+		DisplayName:     claims.Name,
+		Groups:          append([]string(nil), claims.Groups...),
 	}, nil
 }
 
 // OIDCTokenClaims is the verified identity payload handed to OIDCAdapter
 // (pkg/access) for bridge resolution.
 type OIDCTokenClaims struct {
-	Issuer      string
-	Subject     string
-	Email       string
-	DisplayName string
-	Groups      []string
+	Nonce           string
+	AuthorizedParty string
+	Audiences       []string
+	IssuedAt        int64 // verified iat, zero only when absent from the token
+	ExpiresAt       int64 // verified exp, without extending it by verifier clock skew
+	Issuer          string
+	Subject         string
+	Email           string
+	DisplayName     string
+	Groups          []string
 }
 
 func (c idTokenClaims) validateTimes(now time.Time, skew time.Duration) error {

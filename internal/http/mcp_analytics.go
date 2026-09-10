@@ -19,11 +19,19 @@ func mcpAnalyticsHandler(cfg APIConfig) fiber.Handler {
 				hours = n
 			}
 		}
-		summary, err := cfg.MCPAuditReadModel.Summary(c.UserContext(), time.Now().Add(-time.Duration(hours)*time.Hour))
+		filter, err := scopedAuditFilter(c, cfg, audit.EventFilter{Since: time.Now().Add(-time.Duration(hours) * time.Hour)})
+		if err != nil {
+			return err
+		}
+		summary, err := cfg.MCPAuditReadModel.SummaryFiltered(c.UserContext(), filter)
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": "MCP analytics query failed"})
 		}
-		return c.JSON(fiber.Map{"window_hours": hours, "summary": summary, "projection": cfg.MCPAuditReadModel.Health()})
+		result := fiber.Map{"window_hours": hours, "summary": summary}
+		if filter.AgentID == "" && !filter.RestrictTenant {
+			result["projection"] = cfg.MCPAuditReadModel.Health()
+		}
+		return c.JSON(result)
 	}
 }
 
@@ -44,7 +52,11 @@ func mcpAnalyticsEventsHandler(cfg APIConfig) fiber.Handler {
 				return err
 			}
 		}
-		events, err := cfg.MCPAuditReadModel.Events(c.UserContext(), audit.EventFilter{Since: time.Now().Add(-time.Duration(hours) * time.Hour), Tool: c.Query("tool"), Outcome: c.Query("outcome"), Client: c.Query("client"), Collection: c.Query("collection"), Limit: limit, Offset: offset, IncludeArgs: includeArgs})
+		filter, err := scopedAuditFilter(c, cfg, audit.EventFilter{Since: time.Now().Add(-time.Duration(hours) * time.Hour), Tool: c.Query("tool"), Outcome: c.Query("outcome"), Client: c.Query("client"), Collection: c.Query("collection"), Limit: limit, Offset: offset, IncludeArgs: includeArgs})
+		if err != nil {
+			return err
+		}
+		events, err := cfg.MCPAuditReadModel.Events(c.UserContext(), filter)
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": "MCP audit event query failed"})
 		}

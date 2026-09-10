@@ -16,7 +16,8 @@ export class ApiError extends Error {
 // Paths that must NEVER trigger the global 401 redirect. /auth/me is the
 // probe itself; redirecting on its 401 would loop. /auth/login is obviously
 // exempt for the same reason.
-const AUTH_EXEMPT_PATHS = ['/api/v1/auth/me', '/api/v1/auth/login', '/api/v1/auth/register']
+const AUTH_ENTRY_PATHS = ['/api/v1/auth/login', '/api/v1/auth/register', '/api/v1/auth/directory/login', '/api/v1/auth/methods']
+const AUTH_EXEMPT_PATHS = [...AUTH_ENTRY_PATHS, '/api/v1/auth/me', '/api/v1/auth/logout']
 
 function shouldRedirectOn401(requestPath: string): boolean {
   if (typeof window === 'undefined') return false
@@ -26,6 +27,7 @@ function shouldRedirectOn401(requestPath: string): boolean {
 
 async function handleResponse<T>(res: Response, requestPath: string): Promise<T> {
   if (res.status === 401 && shouldRedirectOn401(requestPath)) {
+    sessionChecked = false
     const next = encodeURIComponent(window.location.pathname + window.location.search)
     window.location.href = `/login?next=${next}`
     // Still throw so React Query / callers see a terminal failure — the
@@ -54,7 +56,31 @@ async function handleResponse<T>(res: Response, requestPath: string): Promise<T>
 
 // ── Auth token management ──
 
+export interface AuthMethods {
+  password: boolean
+  registration: boolean
+  directory: boolean
+  oidc: boolean
+  saml: boolean
+}
+export interface AuthUser { id: string; email: string; username?: string }
+export const SSO_NEXT_KEY = 'levara_sso_next'
+
+export function sanitizeAuthNext(raw: string | null): string {
+  if (!raw?.startsWith('/') || raw.startsWith('//') || /[\\\x00-\x1f\x7f]/.test(raw)) return '/'
+  try {
+    const origin = 'http://levara.invalid'
+    const next = new URL(raw, origin)
+    if (next.origin !== origin || next.pathname.startsWith('//') || next.pathname.startsWith('/login')) return '/'
+    return next.pathname + next.search + next.hash
+  } catch { return '/' }
+}
+
 let authToken: string | null = null
+let credentialVersion = 0
+let sessionChecked = false
+let cookieSession = false
+let pendingSession: Promise<Response> | null = null
 
 export function getAuthToken(): string | null {
   if (authToken) return authToken
@@ -66,6 +92,10 @@ export function getAuthToken(): string | null {
 
 export function setAuthToken(token: string | null) {
   authToken = token
+  credentialVersion++
+  pendingSession = null
+  sessionChecked = false
+  cookieSession = false
   if (typeof window !== 'undefined') {
     if (token) {
       localStorage.setItem('levara_token', token)
@@ -75,13 +105,60 @@ export function setAuthToken(token: string | null) {
   }
 }
 
+// Probe the HttpOnly cookie before considering a legacy stored bearer. All
+// first protected requests share this probe so settings cannot race the guard
+// and redirect an otherwise valid SSO session because of a stale token.
+async function probeSession(): Promise<Response> {
+  if (!pendingSession) {
+    const version = credentialVersion
+    const operation = (async () => {
+      const probe = (token?: string) => fetch(`${API_BASE}/api/v1/auth/me`, {
+        credentials: 'include', cache: 'no-store',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+      let res = await probe()
+      if (version !== credentialVersion) return probeSession()
+      const fromCookie = res.ok
+      if (res.status === 401) {
+        const token = getAuthToken()
+        if (token) res = await probe(token)
+      }
+      if (version !== credentialVersion) return probeSession()
+      if (res.ok) {
+        const user = await res.clone().json().catch(() => null)
+        if (!user || typeof user.id !== 'string' || !user.id) {
+          throw new ApiError(502, 'INVALID_SESSION', 'Invalid session response.')
+        }
+        if (version !== credentialVersion) return probeSession()
+        if (fromCookie) {
+          authToken = null
+          localStorage.removeItem('levara_token')
+        }
+        cookieSession = fromCookie
+        sessionChecked = true
+      } else {
+        sessionChecked = false
+      }
+      return res
+    })().finally(() => { if (pendingSession === operation) pendingSession = null })
+    pendingSession = operation
+  }
+  return (await pendingSession).clone()
+}
+
 async function request(path: string, options?: RequestInit): Promise<Response> {
+  if (path === '/api/v1/auth/me') return probeSession()
+  const entry = AUTH_ENTRY_PATHS.includes(path)
+  if (!entry && !sessionChecked && typeof window !== 'undefined') {
+    const probe = await probeSession()
+    if (!probe.ok) return probe
+  }
   const traceId = crypto.randomUUID()
   const isFormData = options?.body instanceof FormData
   const headers: Record<string, string> = {
     'X-Trace-ID': traceId,
   }
-  const token = getAuthToken()
+  const token = entry || cookieSession ? null : getAuthToken()
   if (token) {
     headers['Authorization'] = `Bearer ${token}`
   }
@@ -119,23 +196,54 @@ export const levara = {
   info: () => api<{ dimension: number; shards: number; status: string }>('/api/v1/info'),
 
   // Auth
+  authMethods: async () => {
+    const methods = await api<AuthMethods>('/api/v1/auth/methods')
+    if (!methods || ['password', 'registration', 'directory', 'oidc', 'saml'].some(key => typeof methods[key as keyof AuthMethods] !== 'boolean')) {
+      throw new Error('Invalid authentication methods response.')
+    }
+    return methods
+  },
+  startSSO: (method: 'oidc' | 'saml', next: string) => {
+    sessionStorage.setItem(SSO_NEXT_KEY, sanitizeAuthNext(next))
+    setAuthToken(null)
+    const path = method === 'oidc' ? '/api/v1/auth/oidc/login' : '/api/v1/saml/login'
+    window.location.assign(`${API_BASE}${path}`)
+  },
+  directoryLogin: (username: string, password: string) =>
+    api<{ access_token?: string }>('/api/v1/auth/directory/login', {
+      method: 'POST', body: JSON.stringify({ username, password }),
+    }).then(async res => {
+      setAuthToken(res.access_token || null)
+      await handleResponse<AuthUser>(await probeSession(), '/api/v1/auth/me')
+      return res
+    }),
+  logout: async () => {
+    const res = await request('/api/v1/auth/logout', { method: 'POST' })
+    // A rejected/expired session is already unusable; transport/server failures
+    // must remain visible because revocation has not been confirmed.
+    if (res.status !== 401) await handleResponse<void>(res, '/api/v1/auth/logout')
+    setAuthToken(null)
+    sessionStorage.removeItem(SSO_NEXT_KEY)
+  },
   login: (email: string, password: string) =>
     api<{ access_token?: string; token?: string; token_type?: string }>('/api/v1/auth/login', {
       method: 'POST',
       body: JSON.stringify({ email, password }),
-    }).then((res) => {
+    }).then(async (res) => {
       setAuthToken(res.access_token || res.token || null)
+      await handleResponse<AuthUser>(await probeSession(), '/api/v1/auth/me')
       return res
     }),
   register: (email: string, password: string, username?: string) =>
     api<{ access_token?: string; token?: string; token_type?: string }>('/api/v1/auth/register', {
       method: 'POST',
       body: JSON.stringify({ email, password, username }),
-    }).then((res) => {
+    }).then(async (res) => {
       setAuthToken(res.access_token || res.token || null)
+      await handleResponse<AuthUser>(await probeSession(), '/api/v1/auth/me')
       return res
     }),
-  me: () => api<{ id: string; email: string; username: string }>('/api/v1/auth/me'),
+  me: () => api<AuthUser>('/api/v1/auth/me'),
 
   // Datasets
   datasets: async (page = 1, limit = 20) => {
@@ -185,8 +293,8 @@ export const levara = {
       body: JSON.stringify({ key, value, type, room, hall }),
     }),
 
-  deleteMemory: (key: string) =>
-    api<{ deleted: boolean }>(`/api/v1/memories/${encodeURIComponent(key)}`, {
+  deleteMemory: (memoryId: string) =>
+    api<{ deleted: boolean; id: string; key: string }>(`/api/v1/memories/by-id/${encodeURIComponent(memoryId)}`, {
       method: 'DELETE',
     }),
 

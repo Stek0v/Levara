@@ -75,7 +75,7 @@ func ToolAnalyzeCommits(ctx context.Context, deps Deps, args map[string]any) Too
 	}
 
 	if len(commits) == 0 {
-		return ToolResult{Content: []Content{{Type: "text", Text: "No commits found."}}}
+		return jsonResult(map[string]any{"commits_analyzed": 0, "entities": 0, "edges": 0, "summary": "No commits found."})
 	}
 
 	text := git.CommitsToText(commits)
@@ -106,15 +106,31 @@ func ToolAnalyzeCommits(ctx context.Context, deps Deps, args map[string]any) Too
 	runID := uuid.New().String()
 	pipeCfg.Collection = analyzeCommitsCollection
 	pipeCfg.DatasetID = runID
+	pipeCfg, err = deps.PrepareCognify(ctx, []string{text}, pipeCfg)
+	if err != nil {
+		return toolError("git source unavailable")
+	}
+	pipeCfg.AttemptID = runID
+	if err := deps.ClaimPipelineAttempt(ctx, pipeCfg.DatasetID, pipeCfg.DocumentID, analyzeCommitsCollection, runID, pipeCfg.SourceRevision, pipeCfg.RawContentHash); err != nil {
+		return toolError("git source unavailable")
+	}
 	pipeCfg.GenerateTriplets = true
 
-	status := &runreg.Status{
-		RunID: runID, Status: "RUNNING", Stage: "starting", StartedAt: time.Now(),
+	tenantID, _ := ctx.Value(TenantIDKey).(string)
+	status := &runreg.Status{RequiresAdmin: true,
+		OwnerID: extractOwnerID(ctx), TenantID: tenantID, DatasetID: pipeCfg.DatasetID, SourcesJSON: cognifySourcesJSON(pipeCfg), RunID: runID, Status: "RUNNING", Stage: "starting", StartedAt: time.Now(),
 	}
 	deps.Runs().Store(runID, status)
 
 	go func() {
-		runPipelineWithStatus(deps, []string{text}, pipeCfg, status)
+		runPipelineWithStatus(ctx, deps, []string{text}, pipeCfg, status)
+		if status.Status != "COMPLETED" || !deps.PipelineFinalizesStatus() {
+			if err := deps.PersistPipelineStatus(pipeCfg.DatasetID, pipeCfg.DocumentID, analyzeCommitsCollection,
+				status.Status, pipeCfg.SourceRevision, pipeCfg.RawContentHash, status.Chunks, status.Entities, status.Edges, status.ElapsedMs, pipeCfg.AttemptID); err != nil {
+				status.Message = "pipeline status persistence failed"
+				deps.Runs().Store(runID, status)
+			}
+		}
 		// Heartbeat so long-running tool observability matches cognify.
 		// Added in wave 3m — pre-refactor skipped it. No other
 		// consumer assumes its absence so the semantic change is safe.
@@ -160,10 +176,7 @@ func ToolGitSearch(ctx context.Context, deps Deps, args map[string]any) ToolResu
 
 	sp := deps.NewSearchPipeline(false)
 	if sp == nil {
-		return ToolResult{Content: []Content{{
-			Type: "text",
-			Text: "No results (embedding service not configured)",
-		}}}
+		return jsonResult(map[string]any{"results": []any{}, "message": "No results (embedding service not configured)"})
 	}
 
 	res, err := sp.SearchByText(ctx, analyzeCommitsCollection, query, gitSearchTopK)

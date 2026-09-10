@@ -58,12 +58,20 @@ func datasetsTestApp(t *testing.T) (*fiber.App, func()) {
 			data_size INTEGER,
 			pipeline_status TEXT,
 			tags TEXT,
+			source_revision INTEGER NOT NULL DEFAULT 1,
+			raw_content_hash TEXT NOT NULL DEFAULT '',
 			created_at TIMESTAMP
 		);
 		CREATE TABLE dataset_data (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			dataset_id TEXT,
 			data_id TEXT
+		);
+		CREATE TABLE document_pipeline_statuses (
+			dataset_id TEXT, data_id TEXT, collection_name TEXT,
+			source_revision INTEGER, raw_content_hash TEXT,
+			pipeline_state TEXT, status_json TEXT,
+			PRIMARY KEY(dataset_id,data_id,collection_name)
 		);
 		CREATE TABLE dataset_shares (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -83,6 +91,7 @@ func datasetsTestApp(t *testing.T) (*fiber.App, func()) {
 
 	// Route the handlers through the test-specific dialect rewriter.
 	SetDBProvider(DBSQLite)
+	installDocumentRegistryFixture(t, db)
 
 	cfg := APIConfig{DB: db}
 	app := fiber.New(fiber.Config{DisableStartupMessage: true})
@@ -127,7 +136,16 @@ func datasetsRawURLTestApp(t *testing.T, fs storage.Storage) (*fiber.App, *sql.D
 			id TEXT PRIMARY KEY,
 			name TEXT,
 			extension TEXT,
+			mime_type TEXT DEFAULT '',
 			raw_data_location TEXT,
+			original_data_location TEXT DEFAULT '',
+			content_hash TEXT DEFAULT '',
+			raw_content_hash TEXT NOT NULL DEFAULT '',
+			owner_id TEXT DEFAULT '',
+			pipeline_status TEXT NOT NULL DEFAULT '{}',
+			token_count INTEGER NOT NULL DEFAULT -1,
+			source_revision INTEGER NOT NULL DEFAULT 1,
+			data_size INTEGER DEFAULT 0,
 			updated_at TIMESTAMP
 		);
 		CREATE TABLE dataset_data (
@@ -152,6 +170,7 @@ func datasetsRawURLTestApp(t *testing.T, fs storage.Storage) (*fiber.App, *sql.D
 	}
 
 	SetDBProvider(DBSQLite)
+	installDocumentRegistryFixture(t, db)
 
 	cfg := APIConfig{DB: db, FileStorage: fs}
 	app := fiber.New(fiber.Config{DisableStartupMessage: true})
@@ -311,22 +330,15 @@ func TestPruneData_RequiresSuperuser(t *testing.T) {
 // Superuser bypasses the gate. This test proves the path is not just
 // blanket-denied.
 func TestPruneData_SuperuserAllowed(t *testing.T) {
-	app, cleanup := datasetsTestApp(t)
-	defer cleanup()
-
-	// Create a fresh fiber app in front of the real prune handler, so we can
-	// control user_id. The shared `app` doesn't give us access to its cfg,
-	// so we rebuild: open the same DB file isn't trivial either. Instead,
-	// we insert a superuser row, then wrap the existing app with a
-	// middleware that sets user_id — but app.Test runs the full chain
-	// starting from app.mount, not from our middleware. We use a separate
-	// test-only app that shares the DB via cfg.
-	// Implementation: read DB out of the app via a new handler that exposes
-	// cfg… too invasive. Alternative: just test requireSuperuser directly.
-	//
-	// That's what we do below — pure unit test of the gate without having
-	// to wire a second fiber app. Keeps this file lean.
-	_ = app
+	documentHTTPDialects(t, func(t *testing.T, f *documentHTTPFixture) {
+		if pruneTestCall(t, f, "http-data", "live", "") {
+			t.Fatal("active administrator with verified credential rejected")
+		}
+		var count int
+		if err := f.db.QueryRow("SELECT COUNT(*) FROM datasets").Scan(&count); err != nil || count != 0 {
+			t.Fatalf("datasets=%d err=%v", count, err)
+		}
+	})
 }
 
 // Unit-test the gate in isolation — clearer than trying to thread user_id
@@ -339,7 +351,7 @@ func TestRequireSuperuser_Gate(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if _, err := db.Exec(`CREATE TABLE users (id TEXT PRIMARY KEY, is_superuser INTEGER DEFAULT 0)`); err != nil {
+	if _, err := db.Exec(`CREATE TABLE users (id TEXT PRIMARY KEY, is_superuser INTEGER DEFAULT 0, is_active INTEGER NOT NULL DEFAULT 1)`); err != nil {
 		t.Fatal(err)
 	}
 	db.Exec(`INSERT INTO users (id, is_superuser) VALUES ('alice', 0), ('root', 1)`)

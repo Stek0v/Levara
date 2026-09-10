@@ -11,10 +11,12 @@ import (
 	"database/sql"
 
 	"github.com/stek0v/levara/pipeline"
+	"github.com/stek0v/levara/pkg/access"
 	"github.com/stek0v/levara/pkg/llm"
 	"github.com/stek0v/levara/pkg/orchestrator"
 	"github.com/stek0v/levara/pkg/router"
 	"github.com/stek0v/levara/pkg/runreg"
+	"github.com/stek0v/levara/pkg/storage"
 )
 
 // SQLDeps is the database surface used by tools that read/write palace,
@@ -47,6 +49,8 @@ type CollectionDeps interface {
 // StorageDeps is the filesystem/object-storage surface used by ingest tools.
 type StorageDeps interface {
 	StoragePath() string
+	StorageBackend() storage.Storage
+	MetadataActor(context.Context) access.MetadataActor
 }
 
 // EmbedDeps is the embedding surface used by memory, codify, and search tools.
@@ -69,9 +73,12 @@ type MemoryDeps interface {
 type PipelineDeps interface {
 	Runs() *runreg.Registry
 	BaseCognifyConfig() orchestrator.Config
+	PrepareCognify(ctx context.Context, texts []string, cfg orchestrator.Config) (orchestrator.Config, error)
+	ClaimPipelineAttempt(ctx context.Context, datasetID, documentID, collection, attemptID string, sourceRevision int64, rawContentHash string) error
 	OntologyPromptSuffix(collection string) string
-	PersistPipelineStatus(datasetID, collection, status string, chunks, entities, edges int, elapsedMs int64)
+	PersistPipelineStatus(datasetID, documentID, collection, status string, sourceRevision int64, rawContentHash string, chunks, entities, edges int, elapsedMs int64, attemptID string) error
 	RunPipeline(ctx context.Context, texts []string, cfg orchestrator.Config, progress chan<- orchestrator.Progress) error
+	PipelineFinalizesStatus() bool
 }
 
 // SearchDeps is the semantic/lexical/graph search surface.
@@ -95,6 +102,18 @@ type SyncDeps interface {
 // ObservabilityDeps is the heartbeat/ops event surface.
 type ObservabilityDeps interface {
 	LogHeartbeat(eventType string, payload any)
+}
+
+// GraphAssertionAuthorizer is an optional production policy seam for graph
+// assertions whose document publication facts live in node/edge properties.
+type GraphAssertionAuthorizer interface {
+	GraphDatasetIDs(context.Context) ([]string, error)
+	GraphAssertionsAllowed(context.Context, []GraphAssertion) bool
+}
+
+type GraphAssertion struct {
+	DatasetID  string
+	Properties []byte
 }
 
 // ArtifactVerifier is an optional capability used by Task Runtime completion

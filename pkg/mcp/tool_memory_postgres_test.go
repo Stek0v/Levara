@@ -10,6 +10,7 @@ import (
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/stek0v/levara/pkg/memoryindex"
 )
 
 type postgresMemoryDeps struct{ *fakeDeps }
@@ -101,4 +102,50 @@ func TestToolMemoryPostgresPinUnpin(t *testing.T) {
 			t.Fatalf("unpin state=(%v,%d), want (false,0)", pinned, priority)
 		}
 	})
+}
+
+func TestToolDeleteMemoryPostgresExactIDAndAmbiguousLegacy(t *testing.T) {
+	db := openPostgresMemoryTestDB(t)
+	if _, err := db.Exec(`CREATE TABLE memories (
+		id TEXT PRIMARY KEY, key TEXT NOT NULL, value TEXT NOT NULL DEFAULT '', type TEXT NOT NULL DEFAULT '',
+		owner_id TEXT NOT NULL DEFAULT '', collection_name TEXT NOT NULL DEFAULT '', room TEXT NOT NULL DEFAULT '', hall TEXT NOT NULL DEFAULT '',
+		is_pinned BOOLEAN NOT NULL DEFAULT FALSE, pin_priority INTEGER NOT NULL DEFAULT 0,
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), superseded_by TEXT NOT NULL DEFAULT '',
+		UNIQUE(key,owner_id,collection_name)
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	outbox, err := memoryindex.NewStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deps := &postgresMemoryDeps{fakeDeps: &fakeDeps{db: db, hasColls: true, memoryIndexOutbox: outbox}}
+	for _, stmt := range []string{
+		`INSERT INTO memories(id,key,value,owner_id,collection_name) VALUES('selected','dup','one','alice','one')`,
+		`INSERT INTO memories(id,key,value,owner_id,collection_name) VALUES('sibling','dup','two','alice','two')`,
+		`INSERT INTO memories(id,key,value,owner_id,collection_name) VALUES('shared','dup','shared','','one')`,
+		`INSERT INTO memories(id,key,value,owner_id,collection_name) VALUES('foreign','dup','foreign','bob','one')`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx := context.WithValue(context.Background(), UserIDKey, "alice")
+	if got := ToolDeleteMemory(ctx, deps, map[string]any{"key": "dup"}); !got.IsError || !strings.Contains(got.Content[0].Text, "ambiguous") {
+		t.Fatalf("legacy ambiguity result=%+v", got)
+	}
+	var before int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM memories`).Scan(&before); err != nil || before != 4 {
+		t.Fatalf("ambiguous delete changed rows: count=%d err=%v", before, err)
+	}
+	if got := ToolDeleteMemory(ctx, deps, map[string]any{"memory_id": "selected"}); got.IsError {
+		t.Fatalf("ID delete failed: %+v", got)
+	}
+	var remaining, jobs int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM memories WHERE id IN ('sibling','shared','foreign')`).Scan(&remaining); err != nil || remaining != 3 {
+		t.Fatalf("control rows=%d err=%v", remaining, err)
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM memory_index_jobs WHERE memory_id='selected' AND operation='delete_vector' AND collection_name='one' AND owner_id='alice' AND digest='delete:selected'`).Scan(&jobs); err != nil || jobs != 1 {
+		t.Fatalf("exact vector jobs=%d err=%v", jobs, err)
+	}
 }

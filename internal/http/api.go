@@ -31,6 +31,7 @@ type APIConfig struct {
 	WorkspacePath string
 	JWTSecret     string
 	RequireAuth   bool
+	AuthCookieOrigins []string
 	// Version is the build SHA (cmd/server.GitSHA) surfaced in the sync
 	// manifest so a pull/push can warn on instance version skew.
 	Version string
@@ -149,6 +150,7 @@ func RegisterAPI(app fiber.Router, cfg APIConfig) {
 	app.Delete("/datasets/:id/data/:dataId", datasetDataDeleteHandler(cfg))
 	app.Get("/datasets/:id/data/:dataId/raw", datasetDataRawHandler(cfg))
 	app.Get("/datasets/:id/data/:dataId/raw/url", datasetDataRawURLHandler(cfg))
+	app.Get("/datasets/:id/data/:dataId/structured-artifacts/:artifactId", structuredArtifactHandler(cfg))
 	app.Get("/datasets/status", datasetStatusHandler(cfg))
 
 	// U3: File upload (multipart)

@@ -21,6 +21,24 @@ import (
 	"github.com/stek0v/levara/pkg/router"
 )
 
+// SearchAccess is supplied by the authenticated transport. Missing callbacks
+// retain the legacy dataset policy for independent pipeline clients.
+type SearchAccess struct {
+	Filter      func(context.Context, []pipeline.ScoredResult) ([]pipeline.ScoredResult, error)
+	GlobalGraph bool
+}
+type searchAccessKey struct{}
+
+func WithSearchAccess(ctx context.Context, access SearchAccess) context.Context {
+	return context.WithValue(ctx, searchAccessKey{}, access)
+}
+func filterSearchAccess(ctx context.Context, results []pipeline.ScoredResult, allowedDatasets []string) ([]pipeline.ScoredResult, error) {
+	if access, ok := ctx.Value(searchAccessKey{}).(SearchAccess); ok && access.Filter != nil {
+		return access.Filter(ctx, results)
+	}
+	return pipeline.FilterScoredByAllowedDatasets(results, allowedDatasets), nil
+}
+
 const (
 	// searchDefaultTopK is the result cap when the caller omits top_k.
 	searchDefaultTopK = 10
@@ -297,6 +315,9 @@ func ToolSearch(ctx context.Context, deps Deps, args map[string]any) ToolResult 
 	}
 
 	applyTypeFlags(a.searchType, &a)
+	if access, ok := ctx.Value(searchAccessKey{}).(SearchAccess); ok && !access.GlobalGraph {
+		a.doGraphRerank = false
+	}
 
 	var sp SearchPipeline
 	if searchNeedsVector(a) {
@@ -324,6 +345,9 @@ func ToolSearch(ctx context.Context, deps Deps, args map[string]any) ToolResult 
 		fetchK = a.topK * searchMetaOverfetchFactor
 	}
 	allowedDatasetIDs := deps.AllowedDatasetIDs(ctx)
+	if access, ok := ctx.Value(searchAccessKey{}).(SearchAccess); ok && access.Filter != nil {
+		allowedDatasetIDs = nil
+	}
 	if allowedDatasetIDs != nil && len(allowedDatasetIDs) == 0 {
 		return jsonResult(map[string]any{
 			"search_type": a.searchType,
@@ -336,7 +360,14 @@ func ToolSearch(ctx context.Context, deps Deps, args map[string]any) ToolResult 
 	wasReranked := false
 
 	for _, coll := range colls {
-		res, reranked := runSearchStrategy(ctx, deps, sp, coll, a.query, fetchK, a, allowedDatasetIDs)
+		res, reranked, err := runSearchStrategy(ctx, deps, sp, coll, a.query, fetchK, a, allowedDatasetIDs)
+		if err != nil {
+			return toolError("search authorization unavailable")
+		}
+		res, err = filterSearchAccess(ctx, res, allowedDatasetIDs)
+		if err != nil {
+			return toolError("search authorization unavailable")
+		}
 		if reranked {
 			wasReranked = true
 		}
@@ -469,25 +500,25 @@ func searchMetadataDatasetID(metadata json.RawMessage) string {
 // rerank actually ran (only the WithRerank branch may set this true).
 // Errors from the pipeline are swallowed per branch — the caller
 // continues to the next collection, matching pre-refactor behavior.
-func runSearchStrategy(ctx context.Context, deps Deps, sp SearchPipeline, coll, query string, fetchK int, a searchArgs, allowedDatasetIDs []string) (results []pipeline.ScoredResult, reranked bool) {
+func runSearchStrategy(ctx context.Context, deps Deps, sp SearchPipeline, coll, query string, fetchK int, a searchArgs, allowedDatasetIDs []string) (results []pipeline.ScoredResult, reranked bool, authErr error) {
 	switch {
 	case isLexicalSearchType(a.searchType):
-		return runLexicalSearch(deps, coll, query, fetchK), false
+		return runLexicalSearch(deps, coll, query, fetchK), false, nil
 	case isHybridSearchType(a.searchType):
-		return runHybridSearch(ctx, deps, sp, coll, query, fetchK, a), false
+		return runHybridSearch(ctx, deps, sp, coll, query, fetchK, a), false, nil
 	case a.doParentChild:
 		res, err := sp.SearchByTextParentChild(ctx, coll, query, fetchK)
 		if err != nil {
-			return nil, false
+			return nil, false, nil
 		}
-		return res, false
+		return res, false, nil
 	case a.doMultiQuery && deps.LLMProvider() != nil:
 		res, err := sp.SearchByTextMultiQuery(ctx, coll, query, fetchK,
 			deps.LLMProvider(), deps.LLMModel(), searchMultiQueryN)
 		if err != nil {
-			return nil, false
+			return nil, false, nil
 		}
-		return res, false
+		return res, false, nil
 	case a.doRerank && sp.RerankEnabled():
 		// Phase 2.5: overfetch → ACL pre-filter → shared rerank helper.
 		// Mirrors internal/http chunksSearch so forbidden chunks never
@@ -499,15 +530,18 @@ func runSearchStrategy(ctx context.Context, deps Deps, sp SearchPipeline, coll, 
 		}
 		candidates, err := sp.SearchByText(ctx, coll, query, overfetch)
 		if err != nil {
-			return nil, false
+			return nil, false, nil
 		}
-		filtered := pipeline.FilterScoredByAllowedDatasets(candidates, allowedDatasetIDs)
+		filtered, err := filterSearchAccess(ctx, candidates, allowedDatasetIDs)
+		if err != nil {
+			return nil, false, err
+		}
 		rr, ordered := sp.ApplyRerank(ctx, query, filtered, fetchK)
-		return ordered, rr
+		return ordered, rr, nil
 	case a.doGraphRerank && deps.DB() != nil:
 		res, err := sp.SearchByText(ctx, coll, query, fetchK)
 		if err != nil || len(res) == 0 {
-			return res, false
+			return res, false, nil
 		}
 		// Convert to graphrank.ScoredResult, rerank, convert back.
 		grRes := make([]graphrank.ScoredResult, len(res))
@@ -522,13 +556,13 @@ func runSearchStrategy(ctx context.Context, deps Deps, sp SearchPipeline, coll, 
 			}
 			res[i] = pipeline.ScoredResult{ID: r.ID, Score: r.Score, Metadata: r.Metadata}
 		}
-		return res, false
+		return res, false, nil
 	default:
 		res, err := sp.SearchByText(ctx, coll, query, fetchK)
 		if err != nil {
-			return nil, false
+			return nil, false, nil
 		}
-		return res, false
+		return res, false, nil
 	}
 }
 

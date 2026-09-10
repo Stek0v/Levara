@@ -5,6 +5,8 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"mime/multipart"
 	stdhttp "net/http"
@@ -12,12 +14,30 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	_ "github.com/ncruces/go-sqlite3/driver"
+	accesspkg "github.com/stek0v/levara/pkg/access"
+	"github.com/stek0v/levara/pkg/ingest"
 	"github.com/stek0v/levara/pkg/structuredextract"
 )
+
+type artifactDeleteStorage struct {
+	*memStorage
+	fail atomic.Bool
+}
+
+func (s *artifactDeleteStorage) Delete(ctx context.Context, key string) error {
+	if s.fail.Load() {
+		return errors.New("delete unavailable")
+	}
+	return s.memStorage.Delete(ctx, key)
+}
 
 func uploadDatasetDB(t *testing.T) *sql.DB {
 	t.Helper()
@@ -44,6 +64,9 @@ func uploadDatasetDB(t *testing.T) *sql.DB {
 		role TEXT
 	)`); err != nil {
 		t.Fatalf("create dataset_shares: %v", err)
+	}
+	if _, err := db.Exec(`CREATE TABLE users(id TEXT PRIMARY KEY, is_active BOOLEAN NOT NULL DEFAULT true); INSERT INTO users(id) VALUES ('alice'), ('bob')`); err != nil {
+		t.Fatal(err)
 	}
 	SetDBProvider(DBSQLite)
 	t.Cleanup(func() { SetDBProvider(DBPostgres) })
@@ -288,8 +311,8 @@ func TestAddHandler_PDFTableRunsStructuredExtraction(t *testing.T) {
 	if got.Status != "ok" {
 		t.Fatalf("structured status = %q reason=%q", got.Status, got.Reason)
 	}
-	if got.ArtifactPath == "" {
-		t.Fatal("artifact_path is empty")
+	if got.ArtifactPath != "" {
+		t.Fatalf("database-less upload returned unmanaged artifact path %q", got.ArtifactPath)
 	}
 	if !bytes.Contains(got.Extraction, []byte("INV-42")) {
 		t.Fatalf("response extraction missing invoice number: %s", got.Extraction)
@@ -297,8 +320,769 @@ func TestAddHandler_PDFTableRunsStructuredExtraction(t *testing.T) {
 	if sidecarReq.Filename != "invoice.pdf" || sidecarReq.Schema == "" {
 		t.Fatalf("bad sidecar request: %+v", sidecarReq)
 	}
-	if matches, _ := filepath.Glob(filepath.Join(storage, "structured_extractions", "*.json")); len(matches) != 1 {
-		t.Fatalf("structured artifact count = %d, want 1 (%v)", len(matches), matches)
+	if matches, _ := filepath.Glob(filepath.Join(storage, "structured_extractions", "*.json")); len(matches) != 0 {
+		t.Fatalf("database-less upload wrote unmanaged structured artifacts: %v", matches)
+	}
+}
+
+func TestAddHandlerValidatesBatchBeforeStructuredExtraction(t *testing.T) {
+	called := 0
+	sidecar := httptest.NewServer(stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, _ *stdhttp.Request) {
+		called++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"extraction":{"value":"ok"}}`))
+	}))
+	defer sidecar.Close()
+
+	app := fiber.New()
+	RegisterAPI(app, APIConfig{StoragePath: t.TempDir(), StructuredExtractEndpoint: sidecar.URL})
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	if err := mw.WriteField("schema", `{"type":"object"}`); err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range []struct {
+		name string
+		data []byte
+	}{{"scan.pdf", []byte("%PDF-1.4\n")}, {"empty.txt", nil}} {
+		part, err := mw.CreateFormFile("data", file.name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := part.Write(file.data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest("POST", "/add", &body)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	resp, err := app.Test(req, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 422 {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status=%d, want 422: %s", resp.StatusCode, raw)
+	}
+	if called != 0 {
+		t.Fatalf("structured sidecar called %d times before full batch validation", called)
+	}
+}
+
+func TestBeginStructuredUploadAccessRechecksCredential(t *testing.T) {
+	_, cfg := documentWorkflowApp(t)
+	actor := accesspkg.MetadataActor{
+		Actor:      accesspkg.Actor{UserID: "alice"},
+		Credential: accesspkg.MetadataCredential{Kind: "jwt", Epoch: 0, ExpiresAt: time.Now().Add(time.Hour).Unix()},
+	}
+	if _, err := cfg.DB.Exec("UPDATE users SET is_active=false WHERE id='alice'"); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	if release, err := beginStructuredUploadAccess(ctx, cfg, actor, "new-dataset", "new-dataset", "", nil); !errors.Is(err, accesspkg.ErrRevokedCredential) {
+		if release != nil {
+			release()
+		}
+		t.Fatalf("revoked credential reached structured transfer boundary: %v", err)
+	}
+}
+
+func structuredUploadRequest(t *testing.T, app *fiber.App, names ...string) (int, []byte) {
+	t.Helper()
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	if err := mw.WriteField("schema", `{"type":"object"}`); err != nil {
+		t.Fatal(err)
+	}
+	if err := mw.WriteField("datasetName", "structured"); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range names {
+		part, err := mw.CreateFormFile("data", name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := part.Write([]byte("%PDF-1.4\n")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest("POST", "/add", &body)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	resp, err := app.Test(req, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp.StatusCode, raw
+}
+
+func structuredFileRequest(t *testing.T, app *fiber.App, fields map[string]string, data []byte) (int, []byte) {
+	t.Helper()
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	if err := mw.WriteField("schema", `{"type":"object"}`); err != nil {
+		t.Fatal(err)
+	}
+	for key, value := range fields {
+		if err := mw.WriteField(key, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	part, err := mw.CreateFormFile("data", "report.pdf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest("POST", "/add", &body)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	resp, err := app.Test(req, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp.StatusCode, raw
+}
+
+func TestStructuredUploadPartialFailurePublishesNothing(t *testing.T) {
+	_, cfg := documentWorkflowApp(t)
+	sidecar := httptest.NewServer(stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		var req structuredextract.Request
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatal(err)
+		}
+		if req.Filename == "second.pdf" {
+			w.WriteHeader(500)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"extraction":{"value":"ok"}}`))
+	}))
+	defer sidecar.Close()
+	cfg.StructuredExtractEndpoint = sidecar.URL
+	app := fiber.New()
+	app.Use(func(c *fiber.Ctx) error { c.Locals("user_id", "alice"); return c.Next() })
+	RegisterAPI(app, cfg)
+	status, raw := structuredUploadRequest(t, app, "first.pdf", "second.pdf")
+	if status != 422 {
+		t.Fatalf("partial structured failure=%d: %s", status, raw)
+	}
+	for _, table := range []string{"data", "dataset_data", "ingest_pending_uploads"} {
+		var count int
+		if err := cfg.DB.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&count); err != nil || count != 0 {
+			t.Fatalf("%s count=%d err=%v", table, count, err)
+		}
+	}
+	if matches, _ := filepath.Glob(filepath.Join(cfg.StoragePath, "structured_extractions", "*.json")); len(matches) != 0 {
+		t.Fatalf("partial failure left structured artifacts: %v", matches)
+	}
+}
+
+func TestStructuredUploadFailureWithLocalTextPublishesNothing(t *testing.T) {
+	app, cfg := documentWorkflowApp(t)
+	pdf, err := os.ReadFile(filepath.Join("..", "..", "pkg", "extract", "testdata", "report.pdf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sidecar := httptest.NewServer(stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, _ *stdhttp.Request) { w.WriteHeader(500) }))
+	defer sidecar.Close()
+	cfg.StructuredExtractEndpoint = sidecar.URL
+	app = fiber.New()
+	app.Use(func(c *fiber.Ctx) error { c.Locals("user_id", "alice"); return c.Next() })
+	RegisterAPI(app, cfg)
+	status, raw := structuredFileRequest(t, app, map[string]string{"datasetName": "structured"}, pdf)
+	if status != 422 {
+		t.Fatalf("structured failure with local text=%d: %s", status, raw)
+	}
+	for _, table := range []string{"data", "dataset_data", "ingest_pending_uploads"} {
+		var count int
+		if err := cfg.DB.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&count); err != nil || count != 0 {
+			t.Fatalf("%s count=%d err=%v", table, count, err)
+		}
+	}
+}
+
+func TestBeginStructuredUploadAccessRequiresDatasetAndDocumentWrite(t *testing.T) {
+	_, cfg := documentWorkflowApp(t)
+	hash := strings.Repeat("a", 64)
+	if _, err := cfg.DB.Exec(`INSERT INTO principals(id) VALUES('bob');
+		INSERT INTO users(id,email,hashed_password,is_active) VALUES('bob','bob@example.test','unused',true);
+		INSERT INTO tenants(id,name,owner_id) VALUES('a','A','alice');
+		INSERT INTO user_tenant(user_id,tenant_id) VALUES('alice','a'),('bob','a');
+		INSERT INTO datasets(id,name,owner_id) VALUES('owned','Owned','alice');
+		INSERT INTO data(id,name,owner_id,source_revision,raw_content_hash) VALUES('source','source','alice',1,'` + hash + `');
+		INSERT INTO dataset_data(dataset_id,data_id) VALUES('owned','source');
+		INSERT INTO document_resources(dataset_id,data_id,tenant_id,mode) VALUES('owned','source','a','restricted');
+		INSERT INTO document_grants(dataset_id,data_id,principal_kind,principal_id,role,granted_by) VALUES('owned','source','user','bob','editor','alice')`); err != nil {
+		t.Fatal(err)
+	}
+	actor := accesspkg.MetadataActor{Actor: accesspkg.Actor{UserID: "bob", TenantID: "a"}, TrustedLocal: true}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	if release, err := beginStructuredUploadAccess(ctx, cfg, actor, "owned", "Owned", "source", &ingest.SourceCAS{Revision: 1, RawContentHash: hash}); !errors.Is(err, accesspkg.ErrDocumentForbidden) {
+		if release != nil {
+			release()
+		}
+		t.Fatalf("document grant bypassed dataset write denial: %v", err)
+	}
+}
+
+func TestStructuredReplacementConflictsAreRejectedBeforeSidecar(t *testing.T) {
+	pdf, err := os.ReadFile(filepath.Join("..", "..", "pkg", "extract", "testdata", "report.pdf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, scenario := range []string{"stale", "dataset-name", "shared"} {
+		t.Run(scenario, func(t *testing.T) {
+			app, cfg := documentWorkflowApp(t)
+			status, raw := uploadDocumentFixture(t, app, map[string][]byte{"source.txt": []byte("version A")})
+			if status != 200 {
+				t.Fatalf("initial upload=%d: %s", status, raw)
+			}
+			var datasetID, dataID, datasetName, hash string
+			var revision int64
+			if err := cfg.DB.QueryRow(`SELECT ds.id,d.id,ds.name,d.source_revision,d.raw_content_hash FROM data d JOIN dataset_data dd ON dd.data_id=d.id JOIN datasets ds ON ds.id=dd.dataset_id`).Scan(&datasetID, &dataID, &datasetName, &revision, &hash); err != nil {
+				t.Fatal(err)
+			}
+			if scenario == "stale" {
+				revision++
+			}
+			if scenario == "dataset-name" {
+				datasetName = "wrong"
+			}
+			if scenario == "shared" {
+				if _, err := cfg.DB.Exec("INSERT INTO datasets(id,name,owner_id) VALUES('alias','Alias','alice')"); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := cfg.DB.Exec("INSERT INTO dataset_data(dataset_id,data_id) VALUES('alias',$1)", dataID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var calls atomic.Int32
+			sidecar := httptest.NewServer(stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, _ *stdhttp.Request) {
+				calls.Add(1)
+				w.WriteHeader(200)
+			}))
+			defer sidecar.Close()
+			cfg.StructuredExtractEndpoint = sidecar.URL
+			app = fiber.New()
+			app.Use(func(c *fiber.Ctx) error { c.Locals("user_id", "alice"); return c.Next() })
+			RegisterAPI(app, cfg)
+			status, raw = structuredFileRequest(t, app, map[string]string{
+				"datasetId": datasetID, "datasetName": datasetName, "replace_data_id": dataID,
+				"source_revision": strconv.FormatInt(revision, 10), "raw_content_hash": hash,
+			}, pdf)
+			if status != 409 || calls.Load() != 0 {
+				t.Fatalf("%s status=%d sidecar_calls=%d body=%s", scenario, status, calls.Load(), raw)
+			}
+		})
+	}
+}
+
+func TestStructuredUploadDatasetIdentityConflictsAreRejectedBeforeSidecar(t *testing.T) {
+	pdf, err := os.ReadFile(filepath.Join("..", "..", "pkg", "extract", "testdata", "report.pdf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, scenario := range []string{"existing-id-wrong-name", "new-id-reserved-name"} {
+		t.Run(scenario, func(t *testing.T) {
+			app, cfg := documentWorkflowApp(t)
+			status, raw := uploadDocumentFixture(t, app, map[string][]byte{"source.txt": []byte("version A")})
+			if status != 200 {
+				t.Fatalf("initial upload=%d: %s", status, raw)
+			}
+			var datasetID, datasetName string
+			if err := cfg.DB.QueryRow("SELECT id,name FROM datasets").Scan(&datasetID, &datasetName); err != nil {
+				t.Fatal(err)
+			}
+			if scenario == "existing-id-wrong-name" {
+				datasetName = "wrong"
+			} else {
+				datasetID = "new-id"
+			}
+			var calls atomic.Int32
+			sidecar := httptest.NewServer(stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, _ *stdhttp.Request) {
+				calls.Add(1)
+				w.WriteHeader(200)
+			}))
+			defer sidecar.Close()
+			cfg.StructuredExtractEndpoint = sidecar.URL
+			app = fiber.New()
+			app.Use(func(c *fiber.Ctx) error { c.Locals("user_id", "alice"); return c.Next() })
+			RegisterAPI(app, cfg)
+			status, raw = structuredFileRequest(t, app, map[string]string{"datasetId": datasetID, "datasetName": datasetName}, pdf)
+			if status != 409 || calls.Load() != 0 {
+				t.Fatalf("%s status=%d sidecar_calls=%d body=%s", scenario, status, calls.Load(), raw)
+			}
+		})
+	}
+}
+
+func TestStructuredArtifactIsInventoriedAndPathSafe(t *testing.T) {
+	app, cfg := documentWorkflowApp(t)
+	pdf, err := os.ReadFile(filepath.Join("..", "..", "pkg", "extract", "testdata", "report.pdf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sidecar := httptest.NewServer(stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, _ *stdhttp.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"extraction":{"value":"inventoried"}}`))
+	}))
+	defer sidecar.Close()
+	cfg.StructuredExtractEndpoint = sidecar.URL
+	app = fiber.New()
+	app.Use(func(c *fiber.Ctx) error { c.Locals("user_id", "alice"); return c.Next() })
+	RegisterAPI(app, cfg)
+	status, raw := structuredFileRequest(t, app, map[string]string{"datasetName": "structured"}, pdf)
+	if status != 200 {
+		t.Fatalf("structured upload=%d: %s", status, raw)
+	}
+	var response struct {
+		Structured []struct {
+			ArtifactPath string `json:"artifact_path"`
+		} `json:"structured_extractions"`
+	}
+	if err := json.Unmarshal(raw, &response); err != nil || len(response.Structured) != 1 {
+		t.Fatalf("decode response: %v body=%s", err, raw)
+	}
+	path := response.Structured[0].ArtifactPath
+	if path == "" || strings.HasPrefix(path, "file://") || strings.HasPrefix(path, "storage://") {
+		t.Fatalf("internal artifact location exposed: %q", path)
+	}
+	var count int
+	if err := cfg.DB.QueryRow("SELECT COUNT(*) FROM document_structured_artifacts").Scan(&count); err != nil || count != 1 {
+		t.Fatalf("artifact inventory count=%d err=%v", count, err)
+	}
+}
+
+func TestStructuredArtifactReadGrantAndReplacementLifecycle(t *testing.T) {
+	_, cfg := documentWorkflowApp(t)
+	if _, err := cfg.DB.Exec(`INSERT INTO principals(id) VALUES('bob');
+		INSERT INTO users(id,email,hashed_password,is_active) VALUES('bob','bob@example.test','unused',true);
+		INSERT INTO tenants(id,name,owner_id) VALUES('a','A','alice');
+		INSERT INTO user_tenant(user_id,tenant_id) VALUES('alice','a'),('bob','a')`); err != nil {
+		t.Fatal(err)
+	}
+	var calls atomic.Int32
+	sidecar := httptest.NewServer(stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, _ *stdhttp.Request) {
+		value := "first"
+		if calls.Add(1) > 2 {
+			value = "second"
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"extraction":{"value":"` + value + `"}}`))
+	}))
+	defer sidecar.Close()
+	cfg.StructuredExtractEndpoint = sidecar.URL
+	app := fiber.New()
+	app.Use(func(c *fiber.Ctx) error {
+		user := c.Get("X-Test-User")
+		if user == "" {
+			user = "alice"
+		}
+		c.Locals("user_id", user)
+		c.Locals("tenant_id", "a")
+		return c.Next()
+	})
+	RegisterAPI(app, cfg)
+
+	type extractionRef struct {
+		ArtifactID   string `json:"artifact_id"`
+		ArtifactPath string `json:"artifact_path"`
+	}
+	type uploadResponse struct {
+		DatasetID  string          `json:"dataset_id"`
+		Structured []extractionRef `json:"structured_extractions"`
+	}
+	pdf, err := os.ReadFile(filepath.Join("..", "..", "pkg", "extract", "testdata", "report.pdf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, raw := structuredFileRequest(t, app, map[string]string{"datasetName": "structured"}, pdf)
+	var first uploadResponse
+	if status != 200 || json.Unmarshal(raw, &first) != nil || len(first.Structured) != 1 {
+		t.Fatalf("first upload=%d: %s", status, raw)
+	}
+	if strings.Contains(first.Structured[0].ArtifactPath, "file://") || strings.Contains(first.Structured[0].ArtifactPath, "storage://") {
+		t.Fatalf("internal artifact location exposed: %s", first.Structured[0].ArtifactPath)
+	}
+	var dataID, rawHash, oldLocation string
+	var sourceRevision int64
+	if err := cfg.DB.QueryRow(`SELECT d.id,d.source_revision,d.raw_content_hash,a.storage_location FROM data d
+		JOIN document_structured_artifacts a ON a.data_id=d.id WHERE a.id=?`, first.Structured[0].ArtifactID).
+		Scan(&dataID, &sourceRevision, &rawHash, &oldLocation); err != nil {
+		t.Fatal(err)
+	}
+	artifactPath := "/datasets/" + first.DatasetID + "/data/" + dataID + "/structured-artifacts/" + first.Structured[0].ArtifactID
+	get := func(user, path string) (int, []byte) {
+		t.Helper()
+		req := httptest.NewRequest("GET", path, nil)
+		req.Header.Set("X-Test-User", user)
+		resp, err := app.Test(req, -1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, body
+	}
+	if status, body := get("alice", artifactPath); status != 200 || string(body) != `{"value":"first"}` {
+		t.Fatalf("owner read=%d: %s", status, body)
+	}
+	status, raw = structuredFileRequest(t, app, map[string]string{
+		"datasetId": first.DatasetID, "datasetName": "structured", "replace_data_id": dataID,
+		"source_revision": strconv.FormatInt(sourceRevision, 10), "raw_content_hash": rawHash,
+	}, pdf)
+	var unchanged uploadResponse
+	if status != 200 || json.Unmarshal(raw, &unchanged) != nil || len(unchanged.Structured) != 1 || unchanged.Structured[0].ArtifactID != first.Structured[0].ArtifactID {
+		t.Fatalf("unchanged replacement=%d: %s", status, raw)
+	}
+	if status, body := get("alice", artifactPath); status != 200 || string(body) != `{"value":"first"}` {
+		t.Fatalf("unchanged replacement invalidated artifact=%d: %s", status, body)
+	}
+
+	policy := accesspkg.SQLPolicy{DB: cfg.DB, Q: Q, QA: QArgs}
+	ref := accesspkg.DocumentRef{DatasetID: first.DatasetID, DataID: dataID}
+	resource, err := policy.RegisterDocument(t.Context(), accesspkg.Actor{UserID: "alice", TenantID: "a"}, ref, "a", accesspkg.DocumentRestricted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status, _ := get("bob", artifactPath); status != 403 {
+		t.Fatalf("ungranted read=%d, want 403", status)
+	}
+	resource, err = policy.GrantDocument(t.Context(), accesspkg.Actor{UserID: "alice", TenantID: "a"}, ref, resource.ACLRevision, accesspkg.DocumentPrincipal{Kind: accesspkg.DocumentUser, ID: "bob"}, accesspkg.RoleViewer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status, body := get("bob", artifactPath); status != 200 || string(body) != `{"value":"first"}` {
+		t.Fatalf("granted read=%d: %s", status, body)
+	}
+	resource, err = policy.RevokeDocument(t.Context(), accesspkg.Actor{UserID: "alice", TenantID: "a"}, ref, resource.ACLRevision, accesspkg.DocumentPrincipal{Kind: accesspkg.DocumentUser, ID: "bob"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status, _ := get("bob", artifactPath); status != 403 {
+		t.Fatalf("revoked read=%d, want 403", status)
+	}
+	group, err := policy.CreateGroup(t.Context(), accesspkg.Actor{UserID: "alice", TenantID: "a"}, "a", "Artifact readers")
+	if err != nil {
+		t.Fatal(err)
+	}
+	group, err = policy.ReplaceGroupMembers(t.Context(), accesspkg.Actor{UserID: "alice", TenantID: "a"}, group.ID, group.Revision, []string{"bob"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resource, err = policy.GrantDocument(t.Context(), accesspkg.Actor{UserID: "alice", TenantID: "a"}, ref, resource.ACLRevision, accesspkg.DocumentPrincipal{Kind: accesspkg.DocumentGroup, ID: group.ID}, accesspkg.RoleViewer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status, body := get("bob", artifactPath); status != 200 || string(body) != `{"value":"first"}` {
+		t.Fatalf("group-granted read=%d: %s", status, body)
+	}
+	if _, err = policy.ReplaceGroupMembers(t.Context(), accesspkg.Actor{UserID: "alice", TenantID: "a"}, group.ID, group.Revision, nil); err != nil {
+		t.Fatal(err)
+	}
+	if status, _ := get("bob", artifactPath); status != 403 {
+		t.Fatalf("removed group member read=%d, want 403", status)
+	}
+
+	status, raw = structuredFileRequest(t, app, map[string]string{
+		"datasetId": first.DatasetID, "datasetName": "structured", "replace_data_id": dataID,
+		"source_revision": strconv.FormatInt(sourceRevision, 10), "raw_content_hash": rawHash,
+	}, pdf)
+	var second uploadResponse
+	if status != 200 || json.Unmarshal(raw, &second) != nil || len(second.Structured) != 1 {
+		t.Fatalf("replacement=%d: %s", status, raw)
+	}
+	if status, _ := get("alice", artifactPath); status != 404 {
+		t.Fatalf("superseded artifact read=%d, want 404", status)
+	}
+	newPath := "/datasets/" + first.DatasetID + "/data/" + dataID + "/structured-artifacts/" + second.Structured[0].ArtifactID
+	if status, body := get("alice", newPath); status != 200 || string(body) != `{"value":"second"}` {
+		t.Fatalf("replacement artifact read=%d: %s", status, body)
+	}
+	if _, err := os.Stat(strings.TrimPrefix(oldLocation, "file://")); !os.IsNotExist(err) {
+		t.Fatalf("superseded artifact was not deleted: %v", err)
+	}
+	var retired int
+	if err := cfg.DB.QueryRow("SELECT COUNT(*) FROM document_structured_artifacts WHERE state='retired'").Scan(&retired); err != nil || retired != 0 {
+		t.Fatalf("retired cleanup rows=%d err=%v", retired, err)
+	}
+	var newLocation string
+	if err := cfg.DB.QueryRow("SELECT storage_location FROM document_structured_artifacts WHERE id=?", second.Structured[0].ArtifactID).Scan(&newLocation); err != nil {
+		t.Fatal(err)
+	}
+	resource, err = policy.GetDocumentResource(t.Context(), ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resource, err = policy.SetDocumentHold(t.Context(), accesspkg.Actor{UserID: "alice", TenantID: "a"}, ref, resource.ACLRevision, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deleteDocument := func(etag string) (int, []byte) {
+		t.Helper()
+		req := httptest.NewRequest("DELETE", "/datasets/"+first.DatasetID+"/data/"+dataID, nil)
+		req.Header.Set("X-Test-User", "alice")
+		req.Header.Set("If-Match", etag)
+		resp, err := app.Test(req, -1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, body
+	}
+	if status, _ := deleteDocument(documentETag(resource)); status != 403 {
+		t.Fatalf("held delete=%d, want 403", status)
+	}
+	if _, err := os.Stat(strings.TrimPrefix(newLocation, "file://")); err != nil {
+		t.Fatalf("held delete removed artifact: %v", err)
+	}
+	resource, err = policy.SetDocumentHold(t.Context(), accesspkg.Actor{UserID: "alice", TenantID: "a"}, ref, resource.ACLRevision, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status, body := deleteDocument(documentETag(resource)); status != 200 || !bytes.Contains(body, []byte(`"artifact_cleanup_pending":false`)) {
+		t.Fatalf("document delete=%d: %s", status, body)
+	}
+	if _, err := os.Stat(strings.TrimPrefix(newLocation, "file://")); !os.IsNotExist(err) {
+		t.Fatalf("document delete left artifact: %v", err)
+	}
+	if err := cfg.DB.QueryRow("SELECT COUNT(*) FROM document_structured_artifacts").Scan(&retired); err != nil || retired != 0 {
+		t.Fatalf("document delete inventory=%d err=%v", retired, err)
+	}
+}
+
+func TestStructuredArtifactOrdinaryReingestReplacesEqualProjection(t *testing.T) {
+	_, cfg := documentWorkflowApp(t)
+	var calls atomic.Int32
+	sidecar := httptest.NewServer(stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, _ *stdhttp.Request) {
+		switch calls.Add(1) {
+		case 1:
+			_, _ = w.Write([]byte(`{"extraction":{"a":1,"b":2}}`))
+		case 2:
+			_, _ = w.Write([]byte(`{"extraction":{"b":2,"a":1}}`))
+		default:
+			_, _ = w.Write([]byte(`{"extraction": { "a":1, "b":2 }}`))
+		}
+	}))
+	defer sidecar.Close()
+	cfg.StructuredExtractEndpoint = sidecar.URL
+	app := fiber.New()
+	app.Use(func(c *fiber.Ctx) error { c.Locals("user_id", "alice"); return c.Next() })
+	RegisterAPI(app, cfg)
+	type uploadResponse struct {
+		DatasetID      string `json:"dataset_id"`
+		CleanupPending bool   `json:"artifact_cleanup_pending"`
+		SourceRevision int64  `json:"source_revision"`
+		Structured     []struct {
+			ArtifactID string `json:"artifact_id"`
+		} `json:"structured_extractions"`
+	}
+	pdf, err := os.ReadFile(filepath.Join("..", "..", "pkg", "extract", "testdata", "report.pdf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, raw := structuredFileRequest(t, app, map[string]string{"datasetName": "structured"}, pdf)
+	var first uploadResponse
+	if status != 200 || json.Unmarshal(raw, &first) != nil || len(first.Structured) != 1 {
+		t.Fatalf("first upload=%d: %s", status, raw)
+	}
+	var dataID, oldLocation string
+	if err := cfg.DB.QueryRow("SELECT data_id,storage_location FROM document_structured_artifacts WHERE id=?", first.Structured[0].ArtifactID).Scan(&dataID, &oldLocation); err != nil {
+		t.Fatal(err)
+	}
+	status, raw = structuredFileRequest(t, app, map[string]string{"datasetId": first.DatasetID, "datasetName": "structured"}, pdf)
+	var second uploadResponse
+	if status != 200 || json.Unmarshal(raw, &second) != nil || len(second.Structured) != 1 || second.Structured[0].ArtifactID == first.Structured[0].ArtifactID || second.CleanupPending {
+		t.Fatalf("second upload=%d: %s", status, raw)
+	}
+	get := func(id string) (int, []byte) {
+		t.Helper()
+		resp, err := app.Test(httptest.NewRequest("GET", "/datasets/"+first.DatasetID+"/data/"+dataID+"/structured-artifacts/"+id, nil), -1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, body
+	}
+	if status, _ := get(first.Structured[0].ArtifactID); status != 404 {
+		t.Fatalf("superseded artifact read=%d, want 404", status)
+	}
+	if status, body := get(second.Structured[0].ArtifactID); status != 200 || string(body) != `{"b":2,"a":1}` {
+		t.Fatalf("current artifact read=%d: %s", status, body)
+	}
+	if _, err := os.Stat(strings.TrimPrefix(oldLocation, "file://")); !os.IsNotExist(err) {
+		t.Fatalf("superseded object remains: %v", err)
+	}
+	var count int
+	if err := cfg.DB.QueryRow("SELECT COUNT(*) FROM document_structured_artifacts").Scan(&count); err != nil || count != 1 {
+		t.Fatalf("artifact inventory=%d err=%v", count, err)
+	}
+	var revision int64
+	var rawHash string
+	if err := cfg.DB.QueryRow("SELECT source_revision,raw_content_hash FROM data WHERE id=?", dataID).Scan(&revision, &rawHash); err != nil {
+		t.Fatal(err)
+	}
+	replacement := map[string]string{
+		"datasetId": first.DatasetID, "datasetName": "structured", "replace_data_id": dataID,
+		"source_revision": strconv.FormatInt(revision, 10), "raw_content_hash": rawHash,
+	}
+	status, raw = structuredFileRequest(t, app, replacement, pdf)
+	var winner uploadResponse
+	if status != 200 || json.Unmarshal(raw, &winner) != nil || len(winner.Structured) != 1 || winner.SourceRevision <= revision {
+		t.Fatalf("artifact-only replacement=%d: %s", status, raw)
+	}
+	status, raw = structuredFileRequest(t, app, replacement, pdf)
+	if status != 409 || calls.Load() != 3 {
+		t.Fatalf("stale artifact-only replacement=%d calls=%d: %s", status, calls.Load(), raw)
+	}
+	if status, _ := get(second.Structured[0].ArtifactID); status != 404 {
+		t.Fatalf("artifact-only superseded read=%d, want 404", status)
+	}
+	if status, _ := get(winner.Structured[0].ArtifactID); status != 200 {
+		t.Fatalf("artifact-only winner read=%d, want 200", status)
+	}
+}
+
+func TestStructuredArtifactRemoteCleanupCanRetry(t *testing.T) {
+	_, cfg := documentWorkflowApp(t)
+	backend := &artifactDeleteStorage{memStorage: newMemStorage()}
+	cfg.FileStorage = backend
+	var calls atomic.Int32
+	sidecar := httptest.NewServer(stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, _ *stdhttp.Request) {
+		value := calls.Add(1)
+		_, _ = w.Write([]byte(fmt.Sprintf(`{"extraction":{"version":%d}}`, value)))
+	}))
+	defer sidecar.Close()
+	cfg.StructuredExtractEndpoint = sidecar.URL
+	app := fiber.New()
+	app.Use(func(c *fiber.Ctx) error { c.Locals("user_id", "alice"); return c.Next() })
+	RegisterAPI(app, cfg)
+	pdf, err := os.ReadFile(filepath.Join("..", "..", "pkg", "extract", "testdata", "report.pdf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	type response struct {
+		DatasetID  string `json:"dataset_id"`
+		Structured []struct {
+			ArtifactID string `json:"artifact_id"`
+		} `json:"structured_extractions"`
+	}
+	status, raw := structuredFileRequest(t, app, map[string]string{"datasetName": "structured"}, pdf)
+	var first response
+	if status != 200 || json.Unmarshal(raw, &first) != nil || len(first.Structured) != 1 {
+		t.Fatalf("remote upload=%d: %s", status, raw)
+	}
+	var dataID, rawHash, oldLocation string
+	var revision int64
+	if err := cfg.DB.QueryRow(`SELECT d.id,d.source_revision,d.raw_content_hash,a.storage_location FROM data d
+		JOIN document_structured_artifacts a ON a.data_id=d.id WHERE a.id=?`, first.Structured[0].ArtifactID).
+		Scan(&dataID, &revision, &rawHash, &oldLocation); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(oldLocation, "storage://") {
+		t.Fatalf("remote artifact location=%q", oldLocation)
+	}
+	backend.fail.Store(true)
+	status, raw = structuredFileRequest(t, app, map[string]string{
+		"datasetId": first.DatasetID, "datasetName": "structured", "replace_data_id": dataID,
+		"source_revision": strconv.FormatInt(revision, 10), "raw_content_hash": rawHash,
+	}, pdf)
+	if status != 200 || !bytes.Contains(raw, []byte(`"artifact_cleanup_pending":true`)) {
+		t.Fatalf("replacement with pending cleanup=%d: %s", status, raw)
+	}
+	var retired int
+	if err := cfg.DB.QueryRow("SELECT COUNT(*) FROM document_structured_artifacts WHERE state='retired'").Scan(&retired); err != nil || retired != 1 {
+		t.Fatalf("pending cleanup rows=%d err=%v", retired, err)
+	}
+	oldKey := strings.TrimPrefix(oldLocation, "storage://")
+	if _, ok := backend.objects[oldKey]; !ok {
+		t.Fatal("failed cleanup lost old artifact")
+	}
+	backend.fail.Store(false)
+	if cleanupRetiredStructuredArtifacts(t.Context(), cfg, dataID) {
+		t.Fatal("cleanup retry still pending")
+	}
+	if _, ok := backend.objects[oldKey]; ok {
+		t.Fatal("cleanup retry left old artifact")
+	}
+	if err := cfg.DB.QueryRow("SELECT COUNT(*) FROM document_structured_artifacts WHERE state='retired'").Scan(&retired); err != nil || retired != 0 {
+		t.Fatalf("cleanup retry rows=%d err=%v", retired, err)
+	}
+}
+
+func TestStructuredUploadPublicDatasetIsDeniedBeforeSidecar(t *testing.T) {
+	_, cfg := documentWorkflowApp(t)
+	if _, err := cfg.DB.Exec("INSERT INTO datasets(id,name,owner_id) VALUES('public','structured','')"); err != nil {
+		t.Fatal(err)
+	}
+	var calls atomic.Int32
+	sidecar := httptest.NewServer(stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, _ *stdhttp.Request) {
+		calls.Add(1)
+		w.WriteHeader(200)
+	}))
+	defer sidecar.Close()
+	cfg.StructuredExtractEndpoint = sidecar.URL
+	app := fiber.New()
+	app.Use(func(c *fiber.Ctx) error { c.Locals("user_id", "alice"); return c.Next() })
+	RegisterAPI(app, cfg)
+	status, raw := structuredUploadRequest(t, app, "private.pdf")
+	if status != 403 || calls.Load() != 0 {
+		t.Fatalf("public dataset upload status=%d sidecar_calls=%d body=%s", status, calls.Load(), raw)
+	}
+}
+
+func TestStructuredUploadTimeoutCanRetryCleanly(t *testing.T) {
+	_, cfg := documentWorkflowApp(t)
+	var calls atomic.Int32
+	sidecar := httptest.NewServer(stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, _ *stdhttp.Request) {
+		if calls.Add(1) == 1 {
+			time.Sleep(100 * time.Millisecond)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"extraction":{"value":"retry-ok"}}`))
+	}))
+	defer sidecar.Close()
+	cfg.StructuredExtractEndpoint = sidecar.URL
+	cfg.StructuredExtractTimeoutMs = 20
+	app := fiber.New()
+	app.Use(func(c *fiber.Ctx) error { c.Locals("user_id", "alice"); return c.Next() })
+	RegisterAPI(app, cfg)
+	if status, raw := structuredUploadRequest(t, app, "retry.pdf"); status != 422 {
+		t.Fatalf("timeout=%d: %s", status, raw)
+	}
+	var count int
+	if err := cfg.DB.QueryRow("SELECT COUNT(*) FROM data").Scan(&count); err != nil || count != 0 {
+		t.Fatalf("timeout published data=%d err=%v", count, err)
+	}
+	if status, raw := structuredUploadRequest(t, app, "retry.pdf"); status != 200 {
+		t.Fatalf("retry=%d: %s", status, raw)
+	}
+	if err := cfg.DB.QueryRow("SELECT COUNT(*) FROM data").Scan(&count); err != nil || count != 1 {
+		t.Fatalf("retry data=%d err=%v", count, err)
 	}
 }
 

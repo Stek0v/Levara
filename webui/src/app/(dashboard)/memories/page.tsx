@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useMemories, useSaveMemory, useDeleteMemory } from '@/hooks/use-levara'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -27,6 +27,9 @@ export default function MemoriesPage() {
   const [newRoom, setNewRoom] = useState('')
   const [newHall, setNewHall] = useState('decision')
   const [formError, setFormError] = useState('')
+  const [deleteError, setDeleteError] = useState('')
+  const [deletingID, setDeletingID] = useState<string | null>(null)
+  const deleteInFlight = useRef(false)
   const deleteMutation = useDeleteMemory()
 
   const { data: memories = [], isLoading } = useMemories(filter)
@@ -40,6 +43,21 @@ export default function MemoriesPage() {
       setNewKey(''); setNewValue(''); setNewRoom(''); setShowAdd(false)
     } catch (err) {
       setFormError(err instanceof Error ? err.message : t('mem.error'))
+    }
+  }
+
+  const handleDelete = async (memoryId?: string) => {
+    if (!memoryId || deleteInFlight.current) return
+    deleteInFlight.current = true
+    setDeletingID(memoryId)
+    setDeleteError('')
+    try {
+      await deleteMutation.mutateAsync(memoryId)
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : t('mem.error'))
+    } finally {
+      deleteInFlight.current = false
+      setDeletingID(null)
     }
   }
 
@@ -93,6 +111,8 @@ export default function MemoriesPage() {
         ))}
       </div>
 
+      {deleteError && <p role="alert" className="text-sm text-red-500 mb-4">{deleteError}</p>}
+
       {memories.length === 0 ? (
         <EmptyState icon={Brain} title={t('mem.empty')} description={t('mem.empty.desc')}
           action={{ label: t('mem.add'), onClick: () => setShowAdd(true) }} />
@@ -106,9 +126,11 @@ export default function MemoriesPage() {
                 {m.room && <span className="text-xs text-gray-400">· {m.room}</span>}
                 {m.hall && <span className="text-xs text-gray-400">· {m.hall}</span>}
                 <button
-                  className="ml-auto text-xs text-gray-400 hover:text-red-500"
-                  onClick={() => deleteMutation.mutate(m.key)}
+                  className="ml-auto text-xs text-gray-400 hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-40"
+                  onClick={() => handleDelete(m.id)}
+                  disabled={!m.id || deletingID !== null}
                   title={t('mem.delete')}
+                  aria-label={`${t('mem.delete')} ${m.key}`}
                 >✕</button>
               </div>
               <p className="text-sm text-gray-900 dark:text-gray-100">{m.value}</p>

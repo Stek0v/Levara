@@ -12,6 +12,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
+	"github.com/stek0v/levara/pkg/audit"
 )
 
 const memoryScaffoldDDL = `
@@ -36,6 +37,8 @@ CREATE TABLE IF NOT EXISTS memory_scaffold_proposals (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_scaffold_proposals_digest ON memory_scaffold_proposals(digest);`
 
 type memoryScaffoldProposal struct {
+	AgentID          string   `json:"-"`
+	TenantID         string   `json:"-"`
 	ID               string   `json:"id"`
 	Digest           string   `json:"digest,omitempty"`
 	Target           string   `json:"target"`
@@ -67,7 +70,12 @@ func memoryScaffoldProposalListHandler(cfg APIConfig) fiber.Handler {
 		if err := ensureMemoryScaffoldSchema(c.UserContext(), cfg.DB); err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": "memory scaffold schema unavailable"})
 		}
+		filter, err := scopedAuditFilter(c, cfg, audit.EventFilter{})
+		if err != nil {
+			return err
+		}
 		proposals, err := listMemoryScaffoldProposals(c.UserContext(), cfg.DB, scaffoldProposalFilter{
+			Scope:      filter,
 			Status:     c.Query("status"),
 			Collection: c.Query("collection"),
 			Target:     c.Query("target"),
@@ -89,7 +97,11 @@ func memoryScaffoldProposalDetailHandler(cfg APIConfig) fiber.Handler {
 		if err := ensureMemoryScaffoldSchema(c.UserContext(), cfg.DB); err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": "memory scaffold schema unavailable"})
 		}
-		proposal, err := getMemoryScaffoldProposal(c.UserContext(), cfg.DB, c.Params("id"))
+		filter, err := scopedAuditFilter(c, cfg, audit.EventFilter{})
+		if err != nil {
+			return err
+		}
+		proposal, err := getMemoryScaffoldProposal(c.UserContext(), cfg.DB, c.Params("id"), filter)
 		if errors.Is(err, sql.ErrNoRows) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "memory scaffold proposal not found"})
 		}
@@ -115,7 +127,11 @@ func memoryScaffoldProposalDecisionHandler(cfg APIConfig) fiber.Handler {
 		if err := c.BodyParser(&req); err != nil {
 			return c.Status(400).JSON(fiber.Map{"error": "invalid request body"})
 		}
-		proposal, err := decideMemoryScaffoldProposal(c.UserContext(), cfg.DB, c.Params("id"), req.Status, req.Note, c.Locals("user_id"))
+		filter, err := scopedAuditFilter(c, cfg, audit.EventFilter{})
+		if err != nil {
+			return err
+		}
+		proposal, err := decideMemoryScaffoldProposal(c.UserContext(), cfg.DB, c.Params("id"), req.Status, req.Note, c.Locals("user_id"), filter)
 		if errors.Is(err, sql.ErrNoRows) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "memory scaffold proposal not found"})
 		}
@@ -157,6 +173,7 @@ func proposalFromFinding(run memoryReviewRun, finding memoryReviewFinding, now s
 	summary := fallbackString(finding.Summary, "Improve memory scaffold for "+finding.Category)
 	change := fallbackString(finding.Recommendation, defaultScaffoldChange(finding.Category))
 	proposal := memoryScaffoldProposal{
+		AgentID: run.Scope.AgentID, TenantID: run.Scope.TenantID,
 		ID:               uuid.New().String(),
 		Target:           target,
 		Collection:       run.Scope.Collection,
@@ -215,6 +232,7 @@ func riskForSeverity(severity string) string {
 
 func scaffoldProposalDigest(proposal memoryScaffoldProposal) string {
 	h := sha256.Sum256([]byte(strings.Join([]string{
+		proposal.AgentID, proposal.TenantID,
 		proposal.Target,
 		proposal.Collection,
 		proposal.Summary,
@@ -234,7 +252,16 @@ func ensureMemoryScaffoldSchema(ctx context.Context, db *sql.DB) error {
 			return err
 		}
 	}
-	return nil
+	for _, column := range []string{"agent_id", "tenant_id"} {
+		if err := audit.EnsureColumn(db, "memory_scaffold_proposals", column, "TEXT NOT NULL DEFAULT ''"); err != nil {
+			return err
+		}
+	}
+	if err := audit.EnsureColumn(db, "memory_scaffold_proposals", "scope_verified", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	_, err := db.ExecContext(ctx, "CREATE INDEX IF NOT EXISTS memory_scaffold_actor_tenant_updated ON memory_scaffold_proposals(agent_id,tenant_id,updated_at)")
+	return err
 }
 
 func upsertMemoryScaffoldProposal(ctx context.Context, db *sql.DB, proposal memoryScaffoldProposal) (memoryScaffoldProposal, error) {
@@ -242,7 +269,7 @@ func upsertMemoryScaffoldProposal(ctx context.Context, db *sql.DB, proposal memo
 	if err == nil {
 		merged := mergeFindingIDs(existing.SourceFindingIDs, proposal.SourceFindingIDs)
 		idsJSON, _ := json.Marshal(merged)
-		_, err = db.ExecContext(ctx, Q(`UPDATE memory_scaffold_proposals SET source_finding_ids_json=?, updated_at=? WHERE id=?`), string(idsJSON), proposal.UpdatedAt, existing.ID)
+		_, err = db.ExecContext(ctx, memoryReviewQuery(`UPDATE memory_scaffold_proposals SET source_finding_ids_json=?, updated_at=? WHERE id=?`), string(idsJSON), proposal.UpdatedAt, existing.ID)
 		if err != nil {
 			return existing, err
 		}
@@ -254,17 +281,18 @@ func upsertMemoryScaffoldProposal(ctx context.Context, db *sql.DB, proposal memo
 		return proposal, err
 	}
 	idsJSON, _ := json.Marshal(proposal.SourceFindingIDs)
-	_, err = db.ExecContext(ctx, Q(`INSERT INTO memory_scaffold_proposals (id,digest,target,collection_name,summary,current_problem,proposed_change,risk,status,source_run_id,source_finding_ids_json,created_at,updated_at,decided_at,decided_by,decision_note) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
-		proposal.ID, proposal.Digest, proposal.Target, proposal.Collection, proposal.Summary, proposal.CurrentProblem, proposal.ProposedChange, proposal.Risk, proposal.Status, proposal.SourceRunID, string(idsJSON), proposal.CreatedAt, proposal.UpdatedAt, proposal.DecidedAt, proposal.DecidedBy, proposal.DecisionNote)
+	_, err = db.ExecContext(ctx, memoryReviewQuery(`INSERT INTO memory_scaffold_proposals (id,digest,target,collection_name,summary,current_problem,proposed_change,risk,status,source_run_id,source_finding_ids_json,created_at,updated_at,decided_at,decided_by,decision_note,agent_id,tenant_id,scope_verified) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)`),
+		proposal.ID, proposal.Digest, proposal.Target, proposal.Collection, proposal.Summary, proposal.CurrentProblem, proposal.ProposedChange, proposal.Risk, proposal.Status, proposal.SourceRunID, string(idsJSON), proposal.CreatedAt, proposal.UpdatedAt, proposal.DecidedAt, proposal.DecidedBy, proposal.DecisionNote, proposal.AgentID, proposal.TenantID)
 	return proposal, err
 }
 
 func getMemoryScaffoldProposalByDigest(ctx context.Context, db *sql.DB, digest string) (memoryScaffoldProposal, error) {
-	row := db.QueryRowContext(ctx, Q(`SELECT id,digest,target,collection_name,summary,current_problem,proposed_change,risk,status,source_run_id,source_finding_ids_json,created_at,updated_at,decided_at,decided_by,decision_note FROM memory_scaffold_proposals WHERE digest=?`), digest)
+	row := db.QueryRowContext(ctx, memoryReviewQuery(`SELECT id,digest,target,collection_name,summary,current_problem,proposed_change,risk,status,source_run_id,source_finding_ids_json,created_at,updated_at,decided_at,decided_by,decision_note,agent_id,tenant_id FROM memory_scaffold_proposals WHERE digest=?`), digest)
 	return scanMemoryScaffoldProposal(row)
 }
 
 type scaffoldProposalFilter struct {
+	Scope                      audit.EventFilter
 	Status, Collection, Target string
 	Limit, Offset              int
 }
@@ -272,7 +300,7 @@ type scaffoldProposalFilter struct {
 func listMemoryScaffoldProposals(ctx context.Context, db *sql.DB, f scaffoldProposalFilter) ([]memoryScaffoldProposal, error) {
 	limit := normalizePageLimit(f.Limit)
 	offset := maxInt(f.Offset, 0)
-	query := `SELECT id,digest,target,collection_name,summary,current_problem,proposed_change,risk,status,source_run_id,source_finding_ids_json,created_at,updated_at,decided_at,decided_by,decision_note FROM memory_scaffold_proposals WHERE 1=1`
+	query := `SELECT id,digest,target,collection_name,summary,current_problem,proposed_change,risk,status,source_run_id,source_finding_ids_json,created_at,updated_at,decided_at,decided_by,decision_note,agent_id,tenant_id FROM memory_scaffold_proposals WHERE 1=1`
 	args := []any{}
 	for _, x := range []struct{ column, value string }{{"status", f.Status}, {"collection_name", f.Collection}, {"target", f.Target}} {
 		if strings.TrimSpace(x.value) != "" {
@@ -280,9 +308,10 @@ func listMemoryScaffoldProposals(ctx context.Context, db *sql.DB, f scaffoldProp
 			args = append(args, strings.TrimSpace(x.value))
 		}
 	}
+	query, args = audit.ScopeQuery(query, args, f.Scope)
 	query += " ORDER BY updated_at DESC LIMIT ? OFFSET ?"
 	args = append(args, limit, offset)
-	rows, err := db.QueryContext(ctx, Q(query), args...)
+	rows, err := db.QueryContext(ctx, memoryReviewQuery(query), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -298,8 +327,9 @@ func listMemoryScaffoldProposals(ctx context.Context, db *sql.DB, f scaffoldProp
 	return out, rows.Err()
 }
 
-func getMemoryScaffoldProposal(ctx context.Context, db *sql.DB, id string) (memoryScaffoldProposal, error) {
-	row := db.QueryRowContext(ctx, Q(`SELECT id,digest,target,collection_name,summary,current_problem,proposed_change,risk,status,source_run_id,source_finding_ids_json,created_at,updated_at,decided_at,decided_by,decision_note FROM memory_scaffold_proposals WHERE id=?`), id)
+func getMemoryScaffoldProposal(ctx context.Context, db *sql.DB, id string, filter audit.EventFilter) (memoryScaffoldProposal, error) {
+	query, args := audit.ScopeQuery(`SELECT id,digest,target,collection_name,summary,current_problem,proposed_change,risk,status,source_run_id,source_finding_ids_json,created_at,updated_at,decided_at,decided_by,decision_note,agent_id,tenant_id FROM memory_scaffold_proposals WHERE id=?`, []any{id}, filter)
+	row := db.QueryRowContext(ctx, memoryReviewQuery(query), args...)
 	return scanMemoryScaffoldProposal(row)
 }
 
@@ -310,19 +340,19 @@ type scaffoldProposalScanner interface {
 func scanMemoryScaffoldProposal(scanner scaffoldProposalScanner) (memoryScaffoldProposal, error) {
 	var p memoryScaffoldProposal
 	var idsJSON string
-	if err := scanner.Scan(&p.ID, &p.Digest, &p.Target, &p.Collection, &p.Summary, &p.CurrentProblem, &p.ProposedChange, &p.Risk, &p.Status, &p.SourceRunID, &idsJSON, &p.CreatedAt, &p.UpdatedAt, &p.DecidedAt, &p.DecidedBy, &p.DecisionNote); err != nil {
+	if err := scanner.Scan(&p.ID, &p.Digest, &p.Target, &p.Collection, &p.Summary, &p.CurrentProblem, &p.ProposedChange, &p.Risk, &p.Status, &p.SourceRunID, &idsJSON, &p.CreatedAt, &p.UpdatedAt, &p.DecidedAt, &p.DecidedBy, &p.DecisionNote, &p.AgentID, &p.TenantID); err != nil {
 		return p, err
 	}
 	_ = json.Unmarshal([]byte(idsJSON), &p.SourceFindingIDs)
 	return p, nil
 }
 
-func decideMemoryScaffoldProposal(ctx context.Context, db *sql.DB, id, status, note string, actor any) (memoryScaffoldProposal, error) {
+func decideMemoryScaffoldProposal(ctx context.Context, db *sql.DB, id, status, note string, actor any, filter audit.EventFilter) (memoryScaffoldProposal, error) {
 	status = strings.ToLower(strings.TrimSpace(status))
 	if status != "approved" && status != "rejected" {
 		return memoryScaffoldProposal{}, errors.New("status must be approved or rejected")
 	}
-	proposal, err := getMemoryScaffoldProposal(ctx, db, id)
+	proposal, err := getMemoryScaffoldProposal(ctx, db, id, filter)
 	if err != nil {
 		return proposal, err
 	}
@@ -331,7 +361,7 @@ func decideMemoryScaffoldProposal(ctx context.Context, db *sql.DB, id, status, n
 	}
 	actorID, _ := actor.(string)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	_, err = db.ExecContext(ctx, Q(`UPDATE memory_scaffold_proposals SET status=?, updated_at=?, decided_at=?, decided_by=?, decision_note=? WHERE id=?`),
+	_, err = db.ExecContext(ctx, memoryReviewQuery(`UPDATE memory_scaffold_proposals SET status=?, updated_at=?, decided_at=?, decided_by=?, decision_note=? WHERE id=?`),
 		status, now, now, actorID, truncateReviewText(note, 1000), id)
 	if err != nil {
 		return proposal, err

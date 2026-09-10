@@ -27,6 +27,9 @@ func (h *mcpHandler) handleLatestRPC(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil {
 		return latestMCPError(c, req.ID, fiber.StatusBadRequest, -32700, "Parse error", nil)
 	}
+	ctx, cancel := mcpRequestContext(c, req)
+	defer cancel()
+	c.SetUserContext(ctx)
 	if err := validateLatestMCPRequest(c, req); err != nil {
 		return latestMCPError(c, req.ID, fiber.StatusBadRequest, err.Code, err.Message, err.Data)
 	}

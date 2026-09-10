@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -46,18 +47,19 @@ type workspaceAuditListRequest struct {
 }
 
 type workspaceAuditEvent struct {
-	ID        string         `json:"id"`
-	At        string         `json:"at"`
-	Source    string         `json:"source"`
-	Operation string         `json:"operation"`
-	ProjectID string         `json:"project_id"`
-	Branch    string         `json:"branch,omitempty"`
-	UserID    string         `json:"user_id,omitempty"`
-	Access    string         `json:"access,omitempty"`
-	Result    string         `json:"result"`
-	Status    int            `json:"status,omitempty"`
-	Error     string         `json:"error,omitempty"`
-	Metadata  map[string]any `json:"metadata,omitempty"`
+	Scope     audit.VerifiedScope `json:"-"`
+	ID        string              `json:"id"`
+	At        string              `json:"at"`
+	Source    string              `json:"source"`
+	Operation string              `json:"operation"`
+	ProjectID string              `json:"project_id"`
+	Branch    string              `json:"branch,omitempty"`
+	UserID    string              `json:"user_id,omitempty"`
+	Access    string              `json:"access,omitempty"`
+	Result    string              `json:"result"`
+	Status    int                 `json:"status,omitempty"`
+	Error     string              `json:"error,omitempty"`
+	Metadata  map[string]any      `json:"metadata,omitempty"`
 }
 
 type workspaceAuditLogResponse struct {
@@ -89,6 +91,7 @@ func workspaceAuditMiddleware(cfg APIConfig) fiber.Handler {
 		metadata["duration_ms"] = time.Since(start).Milliseconds()
 		userID, _ := c.Locals("user_id").(string)
 		_ = recordWorkspaceAuditEvent(cfg, workspaceAuditEvent{
+			Scope:     verifiedAuditScope(searchEgressContext(c, cfg, c.UserContext())),
 			ID:        uuid.NewString(),
 			At:        time.Now().UTC().Format(time.RFC3339Nano),
 			Source:    "rest",
@@ -189,7 +192,7 @@ func workspaceAccessLevelFromString(access string) (workspaceAccessLevel, error)
 	}
 }
 
-func recordWorkspaceAuditEvent(cfg APIConfig, event workspaceAuditEvent) error {
+func recordWorkspaceAuditEvent(cfg APIConfig, event workspaceAuditEvent) (writeErr error) {
 	if event.ProjectID == "" || event.Operation == "" {
 		return nil
 	}
@@ -202,6 +205,13 @@ func recordWorkspaceAuditEvent(cfg APIConfig, event workspaceAuditEvent) error {
 	if event.Branch == "" {
 		event.Branch = "main"
 	}
+	// An unavailable local JSONL log must not prevent durable SIEM admission.
+	defer func() {
+		mirrorWorkspaceAuditEvent(cfg.Audit(), event)
+		if writeErr != nil {
+			log.Print("workspace audit local write failed")
+		}
+	}()
 	event.ProjectID = safeWorkspaceID(event.ProjectID)
 	event.Branch = defaultBranch(event.Branch)
 	path := workspaceAuditPath(cfg, event.ProjectID, time.Now().UTC())
@@ -221,7 +231,6 @@ func recordWorkspaceAuditEvent(cfg APIConfig, event workspaceAuditEvent) error {
 		return err
 	}
 	metrics.WorkspaceAuditEventsTotal.WithLabelValues(event.Source, event.Operation, event.Result).Inc()
-	mirrorWorkspaceAuditEvent(cfg.Audit(), event)
 	return nil
 }
 
@@ -236,12 +245,13 @@ func mirrorWorkspaceAuditEvent(ac AuditConfig, event workspaceAuditEvent) {
 		return
 	}
 	ac.WorkspaceAuditSink.LogEvent(audit.Event{
-		TS:      event.At,
-		Source:  "workspace." + event.Source,
-		Type:    event.Operation,
-		Subject: event.ProjectID,
-		ActorID: event.UserID,
-		Outcome: event.Result,
+		VerifiedScope: event.Scope,
+		TS:            event.At,
+		Source:        "workspace." + event.Source,
+		Type:          event.Operation,
+		Subject:       event.ProjectID,
+		ActorID:       event.UserID,
+		Outcome:       event.Result,
 		Metadata: map[string]any{
 			"branch": event.Branch,
 			"access": event.Access,
@@ -472,6 +482,7 @@ func (h *mcpHandler) auditWorkspaceTool(ctx context.Context, name string, args m
 		}
 	}
 	_ = recordWorkspaceAuditEvent(h.cfg, workspaceAuditEvent{
+		Scope:     verifiedAuditScope(ctx),
 		ID:        uuid.NewString(),
 		At:        time.Now().UTC().Format(time.RFC3339Nano),
 		Source:    "mcp",

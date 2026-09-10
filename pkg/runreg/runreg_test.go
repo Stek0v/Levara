@@ -2,6 +2,7 @@ package runreg
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -46,8 +47,8 @@ func TestRegistry_StoreLoadRoundTrip(t *testing.T) {
 	if !ok {
 		t.Fatal("Load after Store returned ok=false")
 	}
-	if got != s {
-		t.Errorf("Load returned a different pointer (got %p want %p)", got, s)
+	if got == s || !reflect.DeepEqual(got, s) {
+		t.Errorf("Load should return an equal isolated snapshot (got %p source %p)", got, s)
 	}
 }
 
@@ -69,24 +70,35 @@ func TestRegistry_StoreOverwrites(t *testing.T) {
 	r.Store("x", first)
 	r.Store("x", second)
 	got, _ := r.Load("x")
-	if got != second {
+	if got == second || !reflect.DeepEqual(got, second) {
 		t.Errorf("Store should overwrite; got %p want %p", got, second)
 	}
 }
 
-func TestRegistry_MutationThroughLoadedPointerIsVisible(t *testing.T) {
-	// This is the pre-refactor contract: background goroutines mutate the
-	// struct they stored and readers see those changes through Load. Lock
-	// it in so future refactors that copy the value by mistake blow up here.
+func TestRegistry_SnapshotsIsolateConcurrentProgress(t *testing.T) {
 	r := New()
-	s := &Status{RunID: "r1", Status: "RUNNING"}
+	s := &Status{RunID: "r1", Status: "RUNNING", Events: []StageEvent{{Stage: "first"}}}
 	r.Store("r1", s)
-	s.Status = "COMPLETED"
-	s.Message = "done"
-
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 1000; i++ {
+			s.Message = "progress"
+			s.Events[0].Stage = "updated"
+			r.Store("r1", s)
+		}
+	}()
+	for i := 0; i < 1000; i++ {
+		got, _ := r.Load("r1")
+		got.Message = "reader"
+		got.Events[0].Stage = "reader"
+		r.Snapshot()
+		r.PruneTerminalOlderThan(time.Hour)
+	}
+	<-done
 	got, _ := r.Load("r1")
-	if got.Status != "COMPLETED" || got.Message != "done" {
-		t.Errorf("Load did not observe mutations: %+v", got)
+	if got.Message != "progress" || got.Events[0].Stage != "updated" {
+		t.Fatalf("reader mutated registry: %+v", got)
 	}
 }
 

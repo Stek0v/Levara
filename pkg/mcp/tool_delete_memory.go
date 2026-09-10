@@ -2,130 +2,223 @@ package mcp
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+	"fmt"
 	"strconv"
 
+	"github.com/stek0v/levara/pkg/access"
 	"github.com/stek0v/levara/pkg/memoryindex"
 )
 
-// ToolDeleteMemory permanently removes a memory by key — both the SQL row
-// (source of truth) and its vector sidecar entry, so the record stops
-// surfacing in recall.
-//
-// Ownership scope matches pin/unpin: the delete only matches rows owned by
-// the caller or owned by the empty string (shared memories). An optional
-// `collection` narrows the delete to a single pinned-context shard.
-//
-// Zero rows matched is surfaced as IsError (like pin, unlike the idempotent
-// unpin): delete is a state-change request and the caller needs to know
-// whether it took effect. The vector cleanup is best-effort — an orphaned
-// vector is reaped by the reconcile_memory sweep, whereas a stale SQL row
-// left by a failed delete is worse, so the SQL delete is authoritative.
-func ToolDeleteMemory(ctx context.Context, deps Deps, args map[string]any) ToolResult {
-	db := deps.DB()
-	if db == nil {
-		return ToolResult{
-			Content: []Content{{Type: "text", Text: "Error: database not configured"}},
-			IsError: true,
-		}
-	}
-	key, _ := args["key"].(string)
-	if key == "" {
-		return ToolResult{
-			Content: []Content{{Type: "text", Text: "Error: 'key' required"}},
-			IsError: true,
-		}
-	}
-	collectionName, _ := args["collection"].(string)
-	ownerID := extractOwnerID(ctx)
+var (
+	ErrMemoryDeleteNotFound  = errors.New("memory delete target not found")
+	ErrMemoryDeleteAmbiguous = errors.New("memory delete key is ambiguous")
+	ErrMemoryDeleteSelectors = errors.New("memory delete selectors conflict")
+)
 
-	// Resolve the target rows first (id + collection_name) so we know which
-	// vector sidecar/id to drop. (key, owner_id) is unique, so at most two
-	// rows match — the caller's own and the shared empty-owner one. The
-	// optional collection filter narrows it further. Each placeholder is
-	// used once so Q (not QArgs) is sufficient (see Q placeholder gotcha).
-	selSQL := `SELECT id, collection_name FROM memories WHERE key = $1 AND (owner_id = $2 OR owner_id = '')`
-	qargs := []any{key, ownerID}
-	if collectionName != "" {
-		selSQL += ` AND collection_name = $3`
-		qargs = append(qargs, collectionName)
+// DeleteMemoryRequest identifies one memory either by its durable row ID or by
+// a legacy key. MemoryID cannot be combined with Key or Collection. Key-only
+// deletion is limited to one personal row; Collection may narrow that legacy
+// lookup to one shard.
+type DeleteMemoryRequest struct {
+	MemoryID   string
+	Key        string
+	Collection string
+}
+
+// DeletedMemory is the exact row identity committed by DeleteMemory.
+type DeletedMemory struct {
+	ID, Key, Collection, OwnerID string
+}
+
+// DeleteMemory resolves authorization, deletes one concrete SQL row, and
+// enqueues its exact vector retirement in the same transaction. Shared rows
+// require an explicit MemoryID and a live administrator credential.
+func DeleteMemory(ctx context.Context, deps Deps, req DeleteMemoryRequest) (DeletedMemory, error) {
+	if req.MemoryID != "" && (req.Key != "" || req.Collection != "") {
+		return DeletedMemory{}, ErrMemoryDeleteSelectors
 	}
-	rows, err := db.QueryContext(ctx, deps.Q(selSQL), qargs...)
+	if req.MemoryID == "" && req.Key == "" {
+		return DeletedMemory{}, ErrMemoryDeleteSelectors
+	}
+
+	tx, actor, policy, err := beginMemoryDelete(ctx, deps)
 	if err != nil {
-		return ToolResult{
-			Content: []Content{{Type: "text", Text: "Error: " + err.Error()}},
-			IsError: true,
-		}
+		return DeletedMemory{}, err
 	}
-	type target struct{ id, collection string }
-	var targets []target
-	for rows.Next() {
-		var id, coll string
-		if scanErr := rows.Scan(&id, &coll); scanErr != nil {
-			continue
-		}
-		targets = append(targets, target{id: id, collection: coll})
+	defer tx.Rollback()
+
+	target, err := resolveMemoryDeleteTarget(ctx, tx, deps, actor, req)
+	if err != nil {
+		return DeletedMemory{}, err
 	}
-	rows.Close()
-	if rowsErr := rows.Err(); rowsErr != nil {
-		return ToolResult{
-			Content: []Content{{Type: "text", Text: "Error: " + rowsErr.Error()}},
-			IsError: true,
-		}
+	if target.OwnerID == "" && actor.UserID != "" && !memoryCommitCanMutateShared(ctx, policy, actor) {
+		return DeletedMemory{}, access.ErrDocumentForbidden
 	}
 
-	if len(targets) == 0 {
-		return ToolResult{
-			Content: []Content{{Type: "text", Text: "No memory matched key " + key}},
-			IsError: true,
-		}
+	result, err := tx.ExecContext(ctx, deps.Q(`DELETE FROM memories
+		WHERE id=$1 AND key=$2 AND owner_id=$3 AND collection_name=$4 AND superseded_by=''`),
+		target.ID, target.Key, target.OwnerID, target.Collection)
+	if err != nil {
+		return DeletedMemory{}, err
+	}
+	if rowsAffected(result) != 1 {
+		return DeletedMemory{}, ErrMemoryDeleteNotFound
 	}
 
-	// Delete the SQL rows (source of truth) with the same WHERE used to
-	// resolve targets, so we remove exactly what we matched.
-	delSQL := `DELETE FROM memories WHERE key = $1 AND (owner_id = $2 OR owner_id = '')`
-	if collectionName != "" {
-		delSQL += ` AND collection_name = $3`
+	provider, hasOutbox := deps.(interface{ MemoryIndexOutbox() *memoryindex.Store })
+	var outbox *memoryindex.Store
+	if hasOutbox {
+		outbox = provider.MemoryIndexOutbox()
 	}
-	var deleteErr error
-	queued := false
-	if provider, ok := deps.(interface{ MemoryIndexOutbox() *memoryindex.Store }); ok && provider.MemoryIndexOutbox() != nil {
-		tx, err := db.BeginTx(ctx, nil)
-		if err != nil {
-			deleteErr = err
-		} else {
-			defer tx.Rollback()
-			_, deleteErr = tx.ExecContext(ctx, deps.Q(delSQL), qargs...)
-			if deleteErr == nil {
-				for _, target := range targets {
-					_, deleteErr = provider.MemoryIndexOutbox().EnqueueTx(ctx, tx, memoryindex.Job{MemoryID: target.id, Operation: "delete_vector", Collection: target.collection, OwnerID: ownerID, Digest: "delete:" + target.id})
-					if deleteErr != nil {
-						break
-					}
-				}
-			}
-			if deleteErr == nil {
-				deleteErr = tx.Commit()
-				queued = deleteErr == nil
-			}
+	if outbox != nil {
+		if _, err = outbox.EnqueueTx(ctx, tx, memoryindex.Job{
+			MemoryID: target.ID, Operation: "delete_vector", Collection: target.Collection,
+			OwnerID: target.OwnerID, Digest: "delete:" + target.ID,
+		}); err != nil {
+			return DeletedMemory{}, err
 		}
+	} else if deps.HasCollections() {
+		return DeletedMemory{}, errors.New("memory index outbox not configured")
+	}
+	if err := tx.Commit(); err != nil {
+		return DeletedMemory{}, err
+	}
+	return target, nil
+}
+
+func beginMemoryDelete(ctx context.Context, deps Deps) (*sql.Tx, access.MetadataActor, access.SQLPolicy, error) {
+	actor := deps.MetadataActor(ctx)
+	policy := access.SQLPolicy{DB: deps.DB(), Q: deps.Q}
+	if !access.APIKeyAllows(actor.APIKeyPermissions, access.ActionWrite) || !actor.TrustedLocal && actor.UserID == "" {
+		return nil, actor, policy, access.ErrDocumentForbidden
+	}
+	var tx *sql.Tx
+	var err error
+	if actor.TrustedLocal {
+		tx, err = deps.DB().BeginTx(ctx, nil)
 	} else {
-		_, deleteErr = db.ExecContext(ctx, deps.Q(delSQL), qargs...)
+		tx, policy, err = policy.BeginMetadataWrite(ctx, actor, memoryCommitSQLite(deps))
 	}
-	if deleteErr != nil {
-		return ToolResult{
-			Content: []Content{{Type: "text", Text: "Error: " + deleteErr.Error()}},
-			IsError: true,
+	if err != nil {
+		return nil, actor, policy, err
+	}
+	fail := func(err error) (*sql.Tx, access.MetadataActor, access.SQLPolicy, error) {
+		_ = tx.Rollback()
+		return nil, actor, policy, err
+	}
+	if memoryCommitSQLite(deps) {
+		_, err = tx.ExecContext(ctx, "UPDATE memories SET id=id WHERE 1=0")
+	} else {
+		_, err = tx.ExecContext(ctx, "LOCK TABLE memories IN SHARE ROW EXCLUSIVE MODE")
+	}
+	if err != nil {
+		return fail(err)
+	}
+	return tx, actor, policy.WithReadTransaction(tx), nil
+}
+
+func resolveMemoryDeleteTarget(ctx context.Context, tx *sql.Tx, deps Deps, actor access.MetadataActor, req DeleteMemoryRequest) (DeletedMemory, error) {
+	if req.MemoryID != "" {
+		row := tx.QueryRowContext(ctx, deps.Q(`SELECT id,key,collection_name,owner_id FROM memories
+			WHERE id=$1 AND (owner_id=$2 OR owner_id='') AND superseded_by=''`), req.MemoryID, actor.UserID)
+		var target DeletedMemory
+		if err := row.Scan(&target.ID, &target.Key, &target.Collection, &target.OwnerID); errors.Is(err, sql.ErrNoRows) {
+			return DeletedMemory{}, ErrMemoryDeleteNotFound
+		} else if err != nil {
+			return DeletedMemory{}, err
 		}
+		return target, nil
 	}
 
-	// Best-effort vector cleanup so the record stops surfacing in recall
-	// (unfiltered recall returns vector metadata directly). We don't fail the
-	// delete if a sidecar drop errors — reconcile_memory reaps the orphan.
-	if !queued && deps.HasCollections() {
-		for _, t := range targets {
-			_ = deps.CollectionDelete(memoryCollectionName(t.collection), t.id)
+	query := `SELECT id,key,collection_name,owner_id FROM memories
+		WHERE key=$1 AND owner_id=$2 AND superseded_by=''`
+	args := []any{req.Key, actor.UserID}
+	if req.Collection != "" {
+		query += ` AND collection_name=$3`
+		args = append(args, req.Collection)
+	}
+	query += ` ORDER BY id LIMIT 2`
+	rows, err := tx.QueryContext(ctx, deps.Q(query), args...)
+	if err != nil {
+		return DeletedMemory{}, err
+	}
+	defer rows.Close()
+	targets := make([]DeletedMemory, 0, 2)
+	for rows.Next() {
+		var target DeletedMemory
+		if err := rows.Scan(&target.ID, &target.Key, &target.Collection, &target.OwnerID); err != nil {
+			return DeletedMemory{}, err
 		}
+		targets = append(targets, target)
+	}
+	if err := rows.Err(); err != nil {
+		return DeletedMemory{}, err
+	}
+	switch len(targets) {
+	case 0:
+		return DeletedMemory{}, ErrMemoryDeleteNotFound
+	case 1:
+		return targets[0], nil
+	default:
+		return DeletedMemory{}, ErrMemoryDeleteAmbiguous
+	}
+}
+
+// ToolDeleteMemory permanently removes exactly one memory. memory_id is the
+// canonical selector. The legacy key selector remains available for a unique
+// personal match and returns an error when it is ambiguous or absent.
+func ToolDeleteMemory(ctx context.Context, deps Deps, args map[string]any) ToolResult {
+	if deps == nil || deps.DB() == nil {
+		return toolError("database not configured")
+	}
+	memoryID, memoryIDPresent, err := deleteMemoryStringArg(args, "memory_id")
+	if err != nil {
+		return toolError(err.Error())
+	}
+	key, keyPresent, err := deleteMemoryStringArg(args, "key")
+	if err != nil {
+		return toolError(err.Error())
+	}
+	collection, collectionPresent, err := deleteMemoryStringArg(args, "collection")
+	if err != nil {
+		return toolError(err.Error())
+	}
+	if memoryIDPresent && (keyPresent || collectionPresent) {
+		return toolError("memory_id cannot be combined with key or collection")
+	}
+	if (!memoryIDPresent || memoryID == "") && (!keyPresent || key == "") {
+		return toolError("exactly one of 'memory_id' or 'key' is required")
 	}
 
-	return statusResult(true, "Deleted "+key+" ("+strconv.Itoa(len(targets))+" record(s))")
+	target, err := DeleteMemory(ctx, deps, DeleteMemoryRequest{MemoryID: memoryID, Key: key, Collection: collection})
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrMemoryDeleteNotFound):
+			if memoryID != "" {
+				return toolError("No memory matched memory_id " + memoryID)
+			}
+			return toolError("No memory matched key " + key)
+		case errors.Is(err, ErrMemoryDeleteAmbiguous):
+			return toolError("Memory key " + key + " is ambiguous; pass memory_id or collection")
+		case errors.Is(err, ErrMemoryDeleteSelectors):
+			return toolError("memory delete selectors conflict")
+		default:
+			return toolError(err.Error())
+		}
+	}
+	return statusResult(true, "Deleted "+target.Key+" ("+strconv.Itoa(1)+" record(s))")
+}
+
+func deleteMemoryStringArg(args map[string]any, name string) (string, bool, error) {
+	value, present := args[name]
+	if !present {
+		return "", false, nil
+	}
+	text, ok := value.(string)
+	if !ok {
+		return "", true, fmt.Errorf("'%s' must be a string", name)
+	}
+	return text, true, nil
 }

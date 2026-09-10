@@ -6,14 +6,18 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
+	"net/url"
 	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 
+	accesspkg "github.com/stek0v/levara/pkg/access"
+	"github.com/stek0v/levara/pkg/mcp"
 	"github.com/stek0v/levara/pkg/memoryindex"
 )
 
@@ -23,6 +27,7 @@ func RegisterMemoryAPI(app fiber.Router, cfg APIConfig) {
 	app.Get("/memories", listMemoriesHandler(cfg))
 	app.Get("/memories/stream", memoryEventsStreamHandler())
 	app.Get("/memories/:key", getMemoryHandler(cfg))
+	app.Delete("/memories/by-id/:id", deleteMemoryByIDHandler(cfg))
 	app.Delete("/memories/:key", deleteMemoryHandler(cfg))
 }
 
@@ -211,8 +216,29 @@ func getMemoryHandler(cfg APIConfig) fiber.Handler {
 	}
 }
 
-// deleteMemoryHandler — DELETE /memories/:key. Idempotent — missing key
-// still returns 200 to keep retries safe.
+// deleteMemoryByIDHandler — DELETE /memories/by-id/:id. The path is distinct
+// from the legacy key route so an ID is never reinterpreted as a display key.
+//
+// @Summary     Delete exactly one memory by ID
+// @Tags        memories
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id path string true "Memory ID"
+// @Success     200 {object} map[string]any
+// @Failure     404 {object} map[string]any "memory not found or inaccessible"
+// @Router      /memories/by-id/{id} [delete]
+func deleteMemoryByIDHandler(cfg APIConfig) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		id, err := url.PathUnescape(c.Params("id"))
+		if err != nil {
+			return c.Status(400).JSON(fiber.Map{"detail": "invalid memory id"})
+		}
+		return deleteMemoryHTTP(c, cfg, mcp.DeleteMemoryRequest{MemoryID: id}, false)
+	}
+}
+
+// deleteMemoryHandler — DELETE /memories/:key. Idempotent for a missing key;
+// an ambiguous personal key returns 409 without changing any row.
 //
 // @Summary     Delete a memory by key (idempotent)
 // @Tags        memories
@@ -223,26 +249,46 @@ func getMemoryHandler(cfg APIConfig) fiber.Handler {
 // @Router      /memories/{key} [delete]
 func deleteMemoryHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		key := c.Params("key")
-		if cfg.DB == nil {
-			return c.Status(500).JSON(fiber.Map{"detail": "database not configured"})
+		key, err := url.PathUnescape(c.Params("key"))
+		if err != nil {
+			return c.Status(400).JSON(fiber.Map{"detail": "invalid memory key"})
 		}
-		ownerID, _ := c.Locals("user_id").(string)
+		return deleteMemoryHTTP(c, cfg, mcp.DeleteMemoryRequest{Key: key, Collection: c.Query("collection")}, true)
+	}
+}
 
-		if _, err := cfg.DB.ExecContext(context.Background(),
-			Q(`DELETE FROM memories WHERE key = $1 AND (owner_id = $2 OR owner_id = '')`), key, ownerID); err != nil {
+func deleteMemoryHTTP(c *fiber.Ctx, cfg APIConfig, req mcp.DeleteMemoryRequest, legacyNoop bool) error {
+	if cfg.DB == nil {
+		return c.Status(500).JSON(fiber.Map{"detail": "database not configured"})
+	}
+	ctx, cancel := apiRequestContext(c)
+	defer cancel()
+	ctx = searchEgressContext(c, cfg, ctx)
+	target, err := mcp.DeleteMemory(ctx, &mcpHandler{cfg: cfg}, req)
+	if err != nil {
+		switch {
+		case legacyNoop && errors.Is(err, mcp.ErrMemoryDeleteNotFound):
+			return c.JSON(fiber.Map{"deleted": true, "key": req.Key})
+		case errors.Is(err, mcp.ErrMemoryDeleteNotFound):
+			return c.Status(404).JSON(fiber.Map{"detail": "not found"})
+		case errors.Is(err, mcp.ErrMemoryDeleteAmbiguous):
+			return c.Status(409).JSON(fiber.Map{"detail": "memory key is ambiguous; delete by id"})
+		case errors.Is(err, accesspkg.ErrRevokedCredential):
+			return c.Status(401).JSON(fiber.Map{"detail": "credential revoked"})
+		case errors.Is(err, accesspkg.ErrDocumentForbidden):
+			return c.Status(403).JSON(fiber.Map{"detail": "memory delete forbidden"})
+		default:
 			return c.Status(500).JSON(fiber.Map{"detail": "delete failed: " + err.Error()})
 		}
-
-		memoryEvents.Publish(MemoryEvent{
-			Kind:      "memory.deleted",
-			Key:       key,
-			OwnerID:   ownerID,
-			Timestamp: time.Now().UTC().Format(time.RFC3339),
-		})
-
-		return c.JSON(fiber.Map{"deleted": true, "key": key})
 	}
+
+	memoryEvents.Publish(MemoryEvent{
+		Kind:      "memory.deleted",
+		Key:       target.Key,
+		OwnerID:   target.OwnerID,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	})
+	return c.JSON(fiber.Map{"deleted": true, "id": target.ID, "key": target.Key})
 }
 
 // memoryEventsStreamHandler — GET /memories/stream. Streams memory

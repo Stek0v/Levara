@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "users": [
+    {
+      "name": "alice",
+      "email": "alice@example.invalid",
+      "password_env": "LEVARA_TEAM_ALICE_PASSWORD",
+      "key_name": "team-cli-alice"
+    },
+    {
+      "name": "bob",
+      "email": "bob@example.invalid",
+      "password_env": "LEVARA_TEAM_BOB_PASSWORD",
+      "key_name": "team-cli-bob"
+    }
+  ],
+  "datasets": [
+    { "name": "Alice private", "owner": "alice" },
+    { "name": "Bob private", "owner": "bob" },
+    { "name": "Командные заметки", "owner": "alice" }
+  ],
+  "grants": [
+    { "dataset": "Командные заметки", "user": "bob", "role": "viewer" }
+  ]
+}

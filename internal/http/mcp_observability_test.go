@@ -190,7 +190,7 @@ func TestToolSyncStatus_GroupsByDirection(t *testing.T) {
 	rows := []struct {
 		id, payload, at string
 	}{
-		{"s1", `{"direction":"push","remote":"http://a","types":["mem"]}`, now.Format(time.RFC3339)},
+		{"s1", `{"direction":"push","remote":"http://a","types":["mem"],"status":"partial","result":{"memories":{"imported":2,"failed":1}}}`, now.Format(time.RFC3339)},
 		{"s2", `{"direction":"pull","remote":"http://b","types":["mem"]}`, now.Add(-time.Minute).Format(time.RFC3339)},
 		{"s3", `{"direction":"push","remote":"http://a","types":["mem","feedback"]}`, now.Add(-2 * time.Minute).Format(time.RFC3339)},
 	}
@@ -217,10 +217,17 @@ func TestToolSyncStatus_GroupsByDirection(t *testing.T) {
 	if pull["count"].(float64) != 1 {
 		t.Errorf("pull count = %v, want 1", pull["count"])
 	}
+	if push["last_status"] != "partial" || pull["last_status"] != "unknown" {
+		t.Fatalf("invented or lost outcome: %+v", byDir)
+	}
 	if push["last_remote"] != "http://a" {
 		t.Errorf("push last_remote = %v, want http://a", push["last_remote"])
 	}
 	events := out["events"].([]any)
+	first := events[0].(map[string]any)
+	if first["status"] != "partial" || first["result"] == nil {
+		t.Fatalf("lost per-type outcome: %+v", first)
+	}
 	if len(events) != 3 {
 		t.Errorf("events len = %d, want 3", len(events))
 	}

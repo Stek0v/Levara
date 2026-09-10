@@ -36,16 +36,20 @@ func (h *mcpHandler) authenticateMCPRequest(c *fiber.Ctx) (accesspkg.Actor, erro
 		if h.cfg.DB == nil {
 			return accesspkg.Actor{}, fmt.Errorf("database required for API key auth")
 		}
-		id := verifyAPIKey(h.cfg.DB, apiKey)
+		id := verifyAPIKey(c.UserContext(), h.cfg.DB, apiKey)
 		if !id.Valid() {
 			return accesspkg.Actor{}, fmt.Errorf("invalid API key")
 		}
+		c.Locals("verified_api_key", id)
 		return accesspkg.Actor{UserID: id.UserID, APIKeyPermissions: id.Permissions, AuthMethod: "api_key"}, nil
 	}
 
 	token := bearerToken(c.Get("Authorization"))
 	if token == "" {
 		token = c.Cookies("auth_token")
+		if token != "" && !cookieMutationAllowed(c, h.cfg.AuthCookieOrigins...) {
+			return accesspkg.Actor{}, fmt.Errorf("cookie origin denied")
+		}
 	}
 	if token == "" {
 		if h.cfg.RequireAuth {
@@ -61,11 +65,16 @@ func (h *mcpHandler) authenticateMCPRequest(c *fiber.Ctx) (accesspkg.Actor, erro
 		// Not a Levara JWT: fall back to the external OIDC provider (A1),
 		// mirroring JWTMiddlewareWithOIDC. Fail-closed when both reject.
 		if h.cfg.OIDCBearer != nil {
-			if principal, err := h.cfg.OIDCBearer.Authenticate(c.Context(), token); err == nil {
+			if principal, err := h.cfg.OIDCBearer.Authenticate(c.UserContext(), token); err == nil && activeExternalUser(c.UserContext(), h.cfg.DB, principal) {
+				c.Locals("verified_external", principal)
 				return accesspkg.Actor{UserID: principal.UserID, AuthMethod: "oidc"}, nil
 			}
 		}
 		return accesspkg.Actor{}, fmt.Errorf("invalid token")
 	}
+	if !validSession(c.UserContext(), h.cfg.DB, h.cfg.RequireAuth, payload) {
+		return accesspkg.Actor{}, fmt.Errorf("invalid or revoked user credential")
+	}
+	c.Locals("verified_jwt", *payload)
 	return accesspkg.Actor{UserID: payload.Sub, AuthMethod: "jwt"}, nil
 }

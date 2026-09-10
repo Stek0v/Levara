@@ -22,6 +22,8 @@ type Client struct {
 	Timeout  time.Duration
 }
 
+const maxResponseBytes = 16 << 20
+
 // Request is the JSON contract Levara sends to the sidecar.
 type Request struct {
 	Filename      string   `json:"filename"`
@@ -79,7 +81,13 @@ func (c Client) Extract(ctx context.Context, data []byte, filename, schema strin
 		return Result{}, fmt.Errorf("structured extraction call: %w", err)
 	}
 	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(resp.Body)
+	respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
+	if readErr != nil {
+		return Result{}, fmt.Errorf("read structured extraction response: %w", readErr)
+	}
+	if len(respBody) > maxResponseBytes {
+		return Result{}, fmt.Errorf("structured extraction response exceeds %d bytes", maxResponseBytes)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return Result{}, fmt.Errorf("structured extraction status %d: %s", resp.StatusCode, truncate(string(respBody), 300))
 	}

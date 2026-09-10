@@ -62,7 +62,11 @@ func TestMCPReadOnlyAPIKeyCannotCallMutatingTool(t *testing.T) {
 
 func TestMCPDeleteSessionRequiresBoundOwner(t *testing.T) {
 	const secret = "session-owner-secret"
-	h := &mcpHandler{cfg: APIConfig{RequireAuth: true, JWTSecret: secret}, sessions: mcp.NewSessionStore()}
+	db, cleanup := newAuthTestDB(t)
+	defer cleanup()
+	seedAuthUser(t, db, "owner-a")
+	seedAuthUser(t, db, "intruder")
+	h := &mcpHandler{cfg: APIConfig{DB: db, RequireAuth: true, JWTSecret: secret}, sessions: mcp.NewSessionStore()}
 	sessionID := h.createSession("owner-a")
 	app := fiber.New(fiber.Config{DisableStartupMessage: true})
 	app.Delete("/mcp", h.handleDeleteSession)

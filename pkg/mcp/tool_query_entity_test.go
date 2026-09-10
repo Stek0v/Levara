@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	_ "github.com/ncruces/go-sqlite3/driver"
+	"github.com/stek0v/levara/pkg/sqlcompat"
 )
 
 // setupQueryEntityDB builds the graph_nodes + graph_edges schema
@@ -16,6 +17,9 @@ import (
 // ones the tool scans matter for assertions.
 func setupQueryEntityDB(t *testing.T) *fakeDeps {
 	t.Helper()
+	previous := sqlcompat.CurrentProvider()
+	sqlcompat.SetProvider(sqlcompat.SQLite)
+	t.Cleanup(func() { sqlcompat.SetProvider(previous) })
 	f, _ := os.CreateTemp("", "mcp-queryentity-test-*.db")
 	path := f.Name()
 	f.Close()
@@ -32,7 +36,7 @@ func setupQueryEntityDB(t *testing.T) *fakeDeps {
 	stmts := []string{
 		`CREATE TABLE graph_nodes (
 			id TEXT PRIMARY KEY, name TEXT, type TEXT,
-			dataset_id TEXT NOT NULL DEFAULT '', updated_at TEXT
+			dataset_id TEXT NOT NULL DEFAULT '', properties TEXT NOT NULL DEFAULT '{}', updated_at TEXT
 		)`,
 		`CREATE TABLE graph_edges (
 			id TEXT PRIMARY KEY, source_id TEXT, target_id TEXT,
@@ -76,7 +80,12 @@ func TestToolQueryEntity_UnknownNameIsNotError(t *testing.T) {
 	if got.IsError {
 		t.Fatalf("IsError = true, want false for unknown name")
 	}
-	if !strings.Contains(got.Content[0].Text, "No entity found with name 'ghost'") {
+	var result struct {
+		Entity  string   `json:"entity"`
+		NodeIDs []string `json:"node_ids"`
+		Edges   []any    `json:"edges"`
+	}
+	if json.Unmarshal([]byte(got.Content[0].Text), &result) != nil || result.Entity != "ghost" || len(result.NodeIDs) != 0 || len(result.Edges) != 0 {
 		t.Errorf("content = %q", got.Content[0].Text)
 	}
 }

@@ -26,7 +26,7 @@ const listMemoriesCap = 100
 func ToolListMemories(ctx context.Context, deps Deps, args map[string]any) ToolResult {
 	db := deps.DB()
 	if db == nil {
-		return jsonResult(map[string]any{"memories": []any{}, "total": 0})
+		return toolError("database not configured")
 	}
 
 	filterType, _ := args["type"].(string)
@@ -72,7 +72,7 @@ func ToolListMemories(ctx context.Context, deps Deps, args map[string]any) ToolR
 
 	rows, err := db.QueryContext(ctx, deps.Q(sqlStr), qargs...)
 	if err != nil {
-		return jsonResult(map[string]any{"memories": []any{}, "total": 0})
+		return toolError(err.Error())
 	}
 	defer rows.Close()
 
@@ -82,7 +82,7 @@ func ToolListMemories(ctx context.Context, deps Deps, args map[string]any) ToolR
 		var pinned bool
 		var prio int
 		if err := rows.Scan(&id, &key, &value, &typ, &ownerID, &rm, &hl, &pinned, &prio, &ca, &ua); err != nil {
-			continue
+			return toolError(err.Error())
 		}
 		results = append(results, map[string]any{
 			"id": id, "key": key, "value": value, "type": typ,
@@ -92,6 +92,9 @@ func ToolListMemories(ctx context.Context, deps Deps, args map[string]any) ToolR
 		})
 	}
 
+	if err := rows.Err(); err != nil {
+		return toolError(err.Error())
+	}
 	if results == nil {
 		return jsonResult(map[string]any{"memories": []any{}, "total": 0})
 	}

@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily offline Levara backup and isolated restore verification
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+RandomizedDelaySec=10min
+Persistent=true
+Unit=levara-backup.service
+
+[Install]
+WantedBy=timers.target

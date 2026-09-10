@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 
@@ -19,16 +20,22 @@ import (
 // OIDC provider, mirroring JWTMiddlewareWithOIDC on the HTTP side.
 
 type stubOIDCBearer struct {
-	accept func(token string) bool
-	userID string
-	email  string
+	accept    func(token string) bool
+	userID    string
+	email     string
+	issuedAt  int64
+	expiresAt int64
 }
 
 func (s *stubOIDCBearer) Authenticate(_ context.Context, token string) (ExternalPrincipal, error) {
 	if s.accept == nil || !s.accept(token) {
 		return ExternalPrincipal{}, context.Canceled // any non-nil error
 	}
-	return ExternalPrincipal{UserID: s.userID, Email: s.email}, nil
+	expires := s.expiresAt
+	if expires == 0 {
+		expires = time.Now().Add(time.Hour).Unix()
+	}
+	return ExternalPrincipal{UserID: s.userID, Email: s.email, IssuedAt: s.issuedAt, ExpiresAt: expires}, nil
 }
 
 // mintOIDCToken produces a token that is NOT a valid Levara JWT (signed with
@@ -44,12 +51,17 @@ func mintOIDCToken(secret string) string {
 }
 
 func TestMCPOIDCBearerFallback(t *testing.T) {
+	db, cleanup := newAuthTestDB(t)
+	defer cleanup()
+	seedAuthUser(t, db, "oidc-user-1")
+	seedAuthUser(t, db, "local-user")
 	bearer := &stubOIDCBearer{userID: "oidc-user-1", email: "alice@clienta.example"}
 	// The stub accepts only its own tokens; a real deployment plugs the
 	// verifier + identity bridge here (cmd/server oidcBearerAuth).
 	bearer.accept = func(token string) bool { return strings.Count(token, ".") == 2 }
 
 	h := &mcpHandler{cfg: APIConfig{
+		DB:          db,
 		JWTSecret:   "test-secret",
 		RequireAuth: true,
 		OIDCBearer:  bearer,

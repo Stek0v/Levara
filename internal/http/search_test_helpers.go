@@ -26,6 +26,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 
@@ -216,6 +217,13 @@ func newSearchTestEnv(t testing.TB) *searchTestEnv {
 		cm.Close()
 		os.RemoveAll(dir)
 		t.Fatalf("create graph schema: %v", err)
+	}
+	for _, stmt := range schemaSQLiteStatements {
+		if strings.HasPrefix(stmt, "CREATE TABLE IF NOT EXISTS document_resources") {
+			if _, err := db.Exec(stmt); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
 
 	// Handler code uses $N placeholders — switch global dialect to SQLite

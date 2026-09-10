@@ -7,7 +7,6 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
-	"encoding/json"
 	"encoding/xml"
 	"math/big"
 	"net/http"
@@ -23,7 +22,9 @@ import (
 	"github.com/crewjam/saml/samlsp"
 	"github.com/gofiber/fiber/v2"
 	dsig "github.com/russellhaering/goxmldsig"
+	vectorHttp "github.com/stek0v/levara/internal/http"
 	accesspkg "github.com/stek0v/levara/pkg/access"
+	vectorAuth "github.com/stek0v/levara/pkg/auth"
 )
 
 const samlTestACS = "https://sp.example.test/saml/acs"
@@ -36,12 +37,17 @@ type samlBrowserFlow struct {
 
 type samlBrowserFixture struct {
 	app   *fiber.App
+	store *accesspkg.SCIMStore
 	idp   *saml.IdentityProvider
 	spKey *rsa.PrivateKey
 	meta  *saml.EntityDescriptor
 }
 
 func newSAMLBrowserFixture(t *testing.T) samlBrowserFixture {
+	return newSAMLBrowserFixtureDialect(t, "sqlite")
+}
+
+func newSAMLBrowserFixtureDialect(t *testing.T, dialect string) samlBrowserFixture {
 	t.Helper()
 	certificate := func(name string) (*rsa.PrivateKey, *x509.Certificate) {
 		t.Helper()
@@ -69,11 +75,17 @@ func newSAMLBrowserFixture(t *testing.T) samlBrowserFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
+	store := newBrowserAuthStore(t, dialect)
+	for _, user := range []string{"alice", "bob"} {
+		if _, _, err := store.ProvisionCreate(context.Background(), accesspkg.SCIMUser{Issuer: "directory", ExternalID: user, Email: user + "@corp.test", Active: true}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	spKey, spCert := certificate("sp")
 	sp, err := accesspkg.NewSAMLSP(context.Background(), accesspkg.SAMLSPConfig{
 		EntityID: "https://sp.example.test/saml/metadata", AcsURL: samlTestACS,
 		Key: spKey, Certificate: spCert, IDPMetadataXML: idpXML,
-	}, accesspkg.SimpleMappingBridge{})
+	}, accesspkg.SQLIdentityBridge{DB: store.DB, Q: store.Q, TrustedIssuers: map[string]string{idp.MetadataURL.String(): "directory"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,8 +97,54 @@ func newSAMLBrowserFixture(t *testing.T) samlBrowserFixture {
 	// orthogonal to request binding and would hide tampering in this test).
 	meta.SPSSODescriptors[0].KeyDescriptors = nil
 	app := fiber.New()
-	samlRoutes(app, sp, "local-test-session-secret")
-	return samlBrowserFixture{app: app, idp: idp, spKey: spKey, meta: meta}
+	samlRoutes(app, sp, vectorHttp.AuthConfig{DB: store.DB, RequireAuth: true, JWTSecret: "local-test-session-secret", CookieSecure: true}, "/")
+	return samlBrowserFixture{app: app, store: store, idp: idp, spKey: spKey, meta: meta}
+}
+
+func TestSAMLPreRevocationResponseCannotRecreateSession(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			f := newSAMLBrowserFixtureDialect(t, dialect)
+			flow := f.start(t, "alice")
+			flow.request.Assertion.IssueInstant = time.Now().Add(-time.Minute)
+			flow.body = signedSAMLBody(t, flow.request)
+			if err := f.store.ProvisionDeactivate(context.Background(), "directory", "alice"); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := f.store.ProvisionCreate(context.Background(), accesspkg.SCIMUser{Issuer: "directory", ExternalID: "alice", Email: "alice@corp.test", Active: true}); err != nil {
+				t.Fatal(err)
+			}
+			f.consume(t, flow.body, flow.cookies, http.StatusUnauthorized)
+			var sessions int
+			if err := f.store.DB.QueryRow("SELECT COUNT(*) FROM auth_sessions").Scan(&sessions); err != nil || sessions != 0 {
+				t.Fatalf("revoked assertion created sessions=%d err=%v", sessions, err)
+			}
+			// A newly issued assertion strictly after the revocation watermark
+			// may create a session at the current epoch (within normal clock skew).
+			fresh := f.start(t, "alice")
+			fresh.request.Assertion.IssueInstant = time.Now().Add(time.Second)
+			fresh.body = signedSAMLBody(t, fresh.request)
+			resp := f.consume(t, fresh.body, fresh.cookies, http.StatusSeeOther)
+			for _, cookie := range resp.Cookies() {
+				if cookie.Name != "auth_token" {
+					continue
+				}
+				claims, valid := vectorAuth.VerifyJWT(cookie.Value, "local-test-session-secret")
+				if !valid || claims.CredentialEpoch != 1 || claims.SessionID == "" {
+					t.Fatalf("new session claims=%+v valid=%v", claims, valid)
+				}
+				return
+			}
+			t.Fatal("fresh assertion did not create a session cookie")
+		})
+	}
+}
+
+func TestSAMLFutureIssueTimeRejected(t *testing.T) {
+	f := newSAMLBrowserFixture(t)
+	flow := f.start(t, "alice")
+	flow.request.Assertion.IssueInstant = time.Now().Add(time.Hour)
+	f.consume(t, signedSAMLBody(t, flow.request), flow.cookies, http.StatusUnauthorized)
 }
 
 func (f samlBrowserFixture) start(t *testing.T, user string) samlBrowserFlow {
@@ -117,6 +175,10 @@ func (f samlBrowserFixture) start(t *testing.T, user string) samlBrowserFlow {
 
 func signedSAMLBody(t *testing.T, req *saml.IdpAuthnRequest) string {
 	t.Helper()
+	// Re-sign the current assertion after a test changes a claim; MakeResponse
+	// otherwise reuses a previously signed, cached AssertionEl.
+	req.AssertionEl = nil
+	req.Assertion.Signature = nil
 	if err := req.MakeResponse(); err != nil {
 		t.Fatal(err)
 	}
@@ -164,25 +226,29 @@ func TestSAMLConcurrentBrowserFlows(t *testing.T) {
 						t.Errorf("unsafe correlation cookie: %s", cookie)
 					}
 				}
-				response := f.consume(t, flow.body, browserCookies, 200)
-				var result map[string]interface{}
-				if err := json.NewDecoder(response.Body).Decode(&result); err != nil || result["access_token"] == nil {
-					t.Errorf("missing session token: %v %v", result, err)
-				} else {
-					parts := strings.Split(result["access_token"].(string), ".")
-					if len(parts) != 3 {
-						t.Fatal("session token is not a JWT")
-					}
-					payload, err := base64.RawURLEncoding.DecodeString(parts[1])
-					var claims map[string]interface{}
-					if err != nil || json.Unmarshal(payload, &claims) != nil || claims["sub"] != accesspkg.SyntheticUserID(f.idp.MetadataURL.String(), []string{"alice", "bob"}[i]) {
-						t.Errorf("session has wrong identity: %v", claims)
+				response := f.consume(t, flow.body, browserCookies, 303)
+				if response.Header.Get("Location") != "/" {
+					t.Errorf("untrusted redirect %q", response.Header.Get("Location"))
+				}
+				var session, cleared *http.Cookie
+				for _, cookie := range response.Cookies() {
+					if cookie.Name == "auth_token" {
+						session = cookie
+					} else if cookie.MaxAge < 0 {
+						cleared = cookie
 					}
 				}
-				cleared := response.Cookies()
-				if len(cleared) != 1 || cleared[0].MaxAge >= 0 || !cleared[0].Secure || !cleared[0].HttpOnly || cleared[0].Path != "/saml/acs" {
-					t.Errorf("completed request cookie was not securely cleared: %v", cleared)
+				if session == nil || !session.HttpOnly || !session.Secure || session.SameSite != http.SameSiteLaxMode || session.Path != "/" {
+					t.Fatalf("unsafe session cookie: %v", session)
 				}
+				claims, valid := vectorAuth.VerifyJWT(session.Value, "local-test-session-secret")
+				if !valid || claims.SessionID == "" || claims.Sub != accesspkg.SCIMUserID("directory", []string{"alice", "bob"}[i]) {
+					t.Fatalf("wrong session principal: %+v", claims)
+				}
+				if cleared == nil || !cleared.Secure || !cleared.HttpOnly || cleared.Path != "/saml/acs" {
+					t.Errorf("request cookie not cleared: %v", cleared)
+				}
+
 				f.consume(t, flow.body, flow.cookies, 401)
 			}
 		})
@@ -204,8 +270,8 @@ func TestSAMLBrowserStateAndSignatureRejection(t *testing.T) {
 	xmlBody, _ := base64.StdEncoding.DecodeString(tampered.Get("SAMLResponse"))
 	tampered.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(strings.ReplaceAll(string(xmlBody), "bob", "mallory"))))
 	f.consume(t, tampered.Encode(), second.cookies, 401)
-	f.consume(t, second.body, second.cookies, 200)
-	f.consume(t, first.body, first.cookies, 200)
+	f.consume(t, second.body, second.cookies, 303)
+	f.consume(t, first.body, first.cookies, 303)
 }
 
 func TestSAMLExpiredTamperedAndUnknownBrowserState(t *testing.T) {
@@ -244,7 +310,7 @@ func TestSAMLExpiredTamperedAndUnknownBrowserState(t *testing.T) {
 				cookie.Value = strings.Join(parts, ".")
 			}
 			f.consume(t, body, []*http.Cookie{&cookie}, 401)
-			f.consume(t, flow.body, flow.cookies, 200)
+			f.consume(t, flow.body, flow.cookies, 303)
 		})
 	}
 }
@@ -277,7 +343,7 @@ func TestSAMLConcurrentReplayAcceptedOnce(t *testing.T) {
 	accepted, rejected := 0, 0
 	for status := range statuses {
 		switch status {
-		case 200:
+		case 303:
 			accepted++
 		case 401:
 			rejected++

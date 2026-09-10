@@ -1,6 +1,6 @@
 # Корпоративный вход: LDAP/AD, OIDC, SAML и SCIM
 
-Проверено по исходникам и локальным тестам 2026-09-05. Прямое подключение
+Проверено по исходникам и локальным тестам 2026-09-10. Прямое подключение
 LDAP/AD и вход через корпоративный IdP рассматриваются как равноправные
 сценарии. Готовность продукта у них различается.
 
@@ -8,13 +8,14 @@ LDAP/AD и вход через корпоративный IdP рассматри
 
 | Сценарий | Реализация | Ограничение |
 |---|---|---|
-| Прямой bind/search в LDAP или AD по LDAPS | Нет | Нет LDAP-коннектора, настроек bind DN/base DN, синхронизации и групп |
+| Прямой bind/search в LDAP или AD | `ldap://` с обязательным StartTLS либо `ldaps://`; service search + user bind | Один настроенный endpoint; реальный AD, CA rotation и DC failover требуют стенда |
 | AD → Keycloak → OIDC bearer → HTTP/MCP | Составной интеграционный путь | Levara проверяет JWT; LDAP обслуживает Keycloak. Реальный каталог в этом аудите не подключался |
-| AD FS / Entra → OIDC bearer → HTTP/MCP | Проверка подписи и claims | Требуются точные issuer, audience и конечный JWKS URL; нет встроенного браузерного Authorization Code/PKCE |
+| AD FS / Entra → OIDC bearer → HTTP/MCP | Проверка подписи и claims | Требуются точные issuer, audience и конечный JWKS URL |
+| Browser OIDC | Authorization Code + PKCE, state, nonce, session cookie и logout | Один issuer на browser flow; pending state хранится в процессе; реальный IdP не проверен |
 | SAML SP | login, ACS, metadata | ACS возвращает JSON с JWT; автоматический вход в WebUI, SLO и IdP-initiated login не заявлены |
-| SCIM Users | Создание, чтение, PATCH, мягкая деактивация | Подмножество SCIM; нет Groups, PUT Users, ResourceTypes, bulk |
-| SCIM → существующая SSO-учётная запись | Нет production-связи | SCIM и SSO используют разные пространства идентификаторов |
-| AD-группа → права на файл | Нет | Текущие grants относятся к пользователям и наборам данных |
+| SCIM Users/Groups | Users и Groups CRUD/PATCH, пагинация, мягкая деактивация | Управляемый subset; нет Bulk и полной vendor certification |
+| SCIM → SSO/LDAP-учётная запись | SQL bridge по доверенному issuer и неизменяемому subject | Требует заранее согласованных `LEVARA_SCIM_ISSUER` и tenant; live provisioning job не проверен |
+| AD-группа → права на документ | Локальная group/document policy реализована | Публичный document ACL API ещё не подключён к основному router |
 
 Наличие корректного JWT подтверждает личность, но не создаёт автоматически
 локального пользователя, его членство в организации или доступ к данным.
@@ -22,7 +23,7 @@ LDAP/AD и вход через корпоративный IdP рассматри
 
 ## Быстрый пилот с AD через Keycloak
 
-Это путь интеграции через брокер, а не встроенный LDAP-вход Levara.
+Это альтернативный путь интеграции через брокер; встроенный LDAP-вход описан ниже.
 Keycloak поддерживает федерацию LDAP/Active Directory, режим READ_ONLY и
 LDAPS. Для пилота задайте LDAP vendor, URL каталога, base DN и отдельную
 учётную запись чтения; проверьте соединение и аутентификацию, затем импорт
@@ -62,9 +63,23 @@ curl --fail-with-body -H "Authorization: Bearer $ACCESS_TOKEN" \
   "$LEVARA_URL/api/v1/datasets"
 ```
 
-Успех `/datasets` не доказывает работоспособность WebUI: `/auth/me` и
-браузерная сессия используют отдельный локальный механизм. Не сохраняйте
-OIDC-токен в WebUI вручную как обход отсутствующего входа.
+Успех `/datasets` не доказывает browser flow. Для WebUI настройте также
+Authorization Code + PKCE и проверьте `/auth/me` после callback:
+
+```sh
+export LEVARA_OIDC_CLIENT_ID='levara-web'
+# LEVARA_OIDC_CLIENT_SECRET задаётся для confidential client; не печатайте его.
+export LEVARA_OIDC_AUTHORIZATION_URL='https://idp.example.org/authorize'
+export LEVARA_OIDC_TOKEN_URL='https://idp.example.org/token'
+export LEVARA_OIDC_REDIRECT_URL='https://levara.example.org/api/v1/auth/oidc/callback'
+export LEVARA_AUTH_BROWSER_RETURN_PATH='/chat'
+export LEVARA_AUTH_PUBLIC_ORIGIN='https://levara.example.org'
+```
+
+Вход начинается с `/api/v1/auth/oidc/login`. Browser flow требует ровно один
+issuer в `LEVARA_OIDC_ISSUERS`; bearer-проверка API может иметь свой audience в
+`LEVARA_OIDC_AUDIENCES`. Pending state живёт пять минут в процессе, поэтому
+multi-node deployment требует affinity либо общего хранилища состояния.
 
 ## AD FS и Microsoft Entra
 
@@ -141,22 +156,52 @@ email тогда нарушает устойчивую связь с катал�
 ID не доступны через SCIM. DELETE деактивирует пользователя, не удаляя
 его документы и историю.
 
-Полная совместимость с Entra provisioning не доказана одним успешным
+Для управляемых Groups дополнительно задайте точный существующий tenant:
+
+```sh
+export LEVARA_SCIM_TENANT_ID='tenant-id'
+```
+
+После этого доступны `/scim/v2/Groups` с GET/POST/PUT/PATCH/DELETE и membership
+users. Локальные тесты покрывают idempotent create, версии, membership,
+deactivation и оба SQL-диалекта. Полная совместимость с Entra provisioning не доказана одним успешным
 POST. Потребуются проверка connectivity, mappings, фильтров, пагинации,
 rename/deactivate и повторной синхронизации реального provisioning job.
-Поддержка Groups в протоколе Microsoft не означает её наличие в Levara.
 [Требования Microsoft к SCIM endpoint](https://learn.microsoft.com/en-us/entra/identity/app-provisioning/use-scim-to-provision-users-and-groups).
 
-Не обещайте немедленное отключение всех SSO-токенов после SCIM DELETE:
-production bridge не связывает `scim-*` и SSO-идентичность. Проверки active
-в отдельных object policies не заменяют общую проверку сессии. Audit hook
-существует, но в запуске сервера передаётся `nil`; отдельный журнал всех
-SCIM-операций также не заявлен.
+SCIM DELETE деактивирует управляемую запись и отзывает локальные credentials;
+реальный IdP access token остаётся ограничен сроком и политикой самого IdP.
+Проверьте уже открытые browser sessions и API tokens в целевой интеграции.
 
-## Прямой LDAP/AD: условия реализации и приёмки
+## Прямой LDAP/AD: настройка и приёмка
 
-У этого варианта сейчас нет команды включения. До реализации необходимо
-зафиксировать следующий контракт и проверить его на тестовом AD и LDAP:
+Connector включается наличием `LEVARA_LDAP_URL` и требует SQL identity storage.
+Service password читается только из файла:
+
+```sh
+export LEVARA_LDAP_URL='ldaps://dc1.example.org:636'
+export LEVARA_LDAP_ISSUER='corp-directory'
+export LEVARA_LDAP_DIRECTORY_KIND='ad' # ad или ldap
+export LEVARA_LDAP_BASE_DN='DC=example,DC=org'
+export LEVARA_LDAP_BIND_DN='CN=levara-reader,OU=Service,DC=example,DC=org'
+export LEVARA_LDAP_BIND_PASSWORD_FILE='/run/secrets/levara-ldap-bind-password'
+export LEVARA_LDAP_CA_FILE='/run/secrets/corporate-ca.pem'
+export LEVARA_LDAP_TIMEOUT='5s'
+# Для допуска только одной группы:
+export LEVARA_LDAP_REQUIRED_GROUP_DN='CN=Levara Users,OU=Groups,DC=example,DC=org'
+export LEVARA_LDAP_GROUP_BASE_DN='OU=Groups,DC=example,DC=org'
+```
+
+Для `ad` атрибуты по умолчанию — `sAMAccountName` и неизменяемый `objectGUID`;
+для `ldap` — `uid` и `entryUUID`. При необходимости задайте
+`LEVARA_LDAP_USERNAME_ATTRIBUTE`, `LEVARA_LDAP_SUBJECT_ATTRIBUTE` и
+`LEVARA_LDAP_GROUP_MEMBER_ATTRIBUTE`. `ldap://` автоматически выполняет
+StartTLS; plaintext bind и отключение проверки сертификата не поддерживаются.
+Вход WebUI использует `/api/v1/auth/directory/login` и после успешного bind
+выдаёт ту же browser session cookie.
+
+Локальные тесты подтверждают следующий контракт; пункты с реальным каталогом
+нужно повторить на тестовом AD/LDAP:
 
 1. Только проверенный LDAPS или обязательный StartTLS; CA, hostname,
    таймауты, предел результатов и ограниченные referrals.
@@ -173,9 +218,9 @@ SCIM-операций также не заявлен.
 6. Общий отзыв сессий/API-ключей и прав; проверка уже выданного токена,
    скачивания, поиска, RAG/MCP и фоновой обработки после деактивации.
 
-Эти требования — список недостающей разработки и приёмки, не реализованные
-функции. Сначала нужна единая идентичность для LDAP/SSO/SCIM и модель групп,
-затем её подключение ко всем путям авторизации документов.
+Connector не выполняет background sync и не имеет списка DC для failover.
+Nested membership ограничено по глубине и числу просмотренных групп; задержку
+применения изменений и поведение нескольких DC проверяйте на реальном каталоге.
 
 ## Диагностика
 
@@ -183,12 +228,12 @@ SCIM-операций также не заявлен.
 |---|---|
 | Сервер не стартует после включения OIDC | Доступность конечного JWKS, CA, HTTPS, обязательные allowlists |
 | JWT отклонён | `kid`, alg, подпись, точные `iss`/`aud`, `exp`/`nbf`, часы |
-| API принимает токен, WebUI возвращает на login | Нет browser OIDC flow и совместимой `/auth/me` сессии |
+| API принимает токен, WebUI возвращает на login | Browser client URLs, единственный issuer, callback cookie, identity mapping и `/auth/me` |
 | SAML ACS 401 | Подпись, destination/audience, тот же браузер, request ID, срок действия |
 | SCIM 404 | База `/scim/v2`, включённый token/DB, issuer и SCIM resource ID |
 | SCIM 409 после rename | Email принадлежит другой identity; не выполнять ручное объединение по email |
-| Группа AD не даёт доступа к документу | Group provisioning и group grants отсутствуют |
-| Пользователь деактивирован, SSO всё ещё работает | Проверить связь identity и действующие токены; общей связи сейчас нет |
+| Группа AD не даёт доступа к документу | SCIM tenant/membership, required LDAP group и факт подключения document ACL API |
+| Пользователь деактивирован, SSO всё ещё работает | Проверить identity mapping, browser credential epoch и срок внешнего IdP token |
 
 Доказательства и оставшиеся ручные проверки: [сценарии](document-workflow-scenarios.md).
 Права на материалы: [управление документами](document-management.md).

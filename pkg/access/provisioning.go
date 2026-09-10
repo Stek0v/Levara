@@ -109,15 +109,31 @@ func (p SQLProvisioner) ProvisionUser(ctx context.Context, u ProvisionedUser) er
 	if u.UserID == "" {
 		return ErrUserNotFound
 	}
-	res, err := p.DB.ExecContext(ctx,
+	tx, err := p.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx,
 		p.rewrite("UPDATE users SET is_active = $1, is_superuser = $2 WHERE id = $3"),
 		u.Active, u.Superuser, u.UserID)
 	if err != nil {
 		return err
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
 		return ErrUserNotFound
 	}
+	if !u.Active {
+		if err := revokeUserCredentials(ctx, tx, p.Q, u.UserID); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
 	if u.TenantIDs != nil {
 		return p.SyncTenantMembership(ctx, u.UserID, u.TenantIDs)
 	}
@@ -133,16 +149,24 @@ func (p SQLProvisioner) DeactivateUser(ctx context.Context, userID string) error
 	if userID == "" {
 		return ErrUserNotFound
 	}
-	res, err := p.DB.ExecContext(ctx,
-		p.rewrite("UPDATE users SET is_active = $1 WHERE id = $2"),
-		false, userID)
+	tx, err := p.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, p.rewrite("UPDATE users SET is_active = false WHERE id = $1"), userID)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
 		return ErrUserNotFound
 	}
-	return nil
+	if err := revokeUserCredentials(ctx, tx, p.Q, userID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // SyncTenantMembership reconciles user_tenant to exactly tenantIDs in one

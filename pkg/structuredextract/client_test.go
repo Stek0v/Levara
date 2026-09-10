@@ -40,6 +40,16 @@ func TestClientExtract(t *testing.T) {
 	}
 }
 
+func TestClientRejectsOversizedResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(make([]byte, maxResponseBytes+1))
+	}))
+	t.Cleanup(srv.Close)
+	if _, err := (Client{Endpoint: srv.URL}).Extract(context.Background(), []byte("pdf"), "invoice.pdf", "", nil); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("oversized response error=%v", err)
+	}
+}
+
 func TestProjectionMarkdown(t *testing.T) {
 	md := ProjectionMarkdown("invoice.pdf", json.RawMessage(`{"total":42.5,"invoice_number":"INV-1","line_items":[{"amount":10,"description":"Compute"}]}`))
 	for _, want := range []string{"# Structured extraction: invoice.pdf", "invoice_number: INV-1", "total: 42.5", "line_items", "description: Compute"} {

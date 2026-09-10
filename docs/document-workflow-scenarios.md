@@ -1,6 +1,6 @@
 # Матрица приёмки документов и корпоративного доступа
 
-Аудит 2026-09-05 охватил 183 исходных материала: активные руководства,
+Аудит 2026-09-10 продолжает проверку исходных материалов и текущего рабочего дерева: активные руководства,
 контракты, инструкции агентов, примеры, локальные маркетинговые страницы и
 исторические заметки. Материалы отделены от исходников и генераторов;
 числа ниже описывают конкретные проверки, а не «полное покрытие продукта».
@@ -23,12 +23,12 @@
 | I07 | SCIM create → rename → disable → GET/filter/list → повтор POST | PASS: SQLite + PostgreSQL16 |
 | I08 | Конфликт email и поздний SQL сбой не меняют ни active, ни email | PASS: `TestSCIMUpdateAtomic`, оба диалекта |
 | I09 | Чужой issuer/local user/неизвестный ID недоступны для GET/PATCH/DELETE | PASS: `TestSCIMIssuerIsolation`, оба диалекта |
-| I10 | Прямой LDAP/AD: bind/search, CA/StartTLS, отключённый пользователь, DC failover | GAP: нет native connector; критерии в identity guide |
+| I10 | Прямой LDAP/AD: bind/search, CA/StartTLS, отключённый пользователь, DC failover | PASS локального connector/test LDAP; MANUAL реального AD, CA rotation и DC failover |
 | I11 | AD → Keycloak, AD FS и Entra выдача реального API token | MANUAL: нет тестового каталога/tenant в этой проверке |
 | I12 | SCIM provisioning job Microsoft: connectivity/mappings/paging/rename/deactivate/resync | MANUAL: локальный HTTP subset не равен vendor certification |
-| I13 | Удаление SCIM mapping блокирует уже выданную SSO-сессию и ключи | GAP: нет общей production identity linkage/revocation |
-| I14 | Прямые/вложенные AD-группы, cycles, removal, sync delay | GAP: нет group grants/provisioning |
-| I15 | Browser OIDC/PKCE, WebUI session, logout и multi-node SAML | GAP / MANUAL: отдельная разработка и стенд; SAML pending store процессный |
+| I13 | Удаление SCIM mapping блокирует уже выданную SSO-сессию и ключи | PASS локальных deactivation/credential checks; MANUAL сквозного vendor provisioning |
+| I14 | Прямые/вложенные AD-группы, cycles, removal, sync delay | PASS bounded nested-group и local group-grant tests; MANUAL реального каталога и latency изменений |
+| I15 | Browser OIDC/PKCE, WebUI session, logout и multi-node SAML | PASS локальных browser/session/logout tests; MANUAL реального IdP и multi-node pending store |
 
 ## Загрузка и качество
 
@@ -49,14 +49,14 @@
 | U13 | Все документы завершены именно для выбранной коллекции | PASS: `TestPipelineStatusRequiresEveryDocumentInCollection` |
 | U14 | CLI file/text/URL, Unicode dataset, HTTP/JSON/read failures, redirects | PASS: subprocess + isolated HTTP tests |
 | U15 | CLI cognify принимает точное имя/ID; неизвестное/неоднозначное отвергает | PASS: `TestCLICognify` |
-| U16 | PDF таблица → schema → structured JSON/projection | Локальный тест с реальным PDF и fake extractor; не качество реальной модели |
+| U16 | PDF таблица → schema → structured JSON/projection; неверный второй файл не вызывает sidecar; partial failure/timeout не публикуют batch, retry проходит | PASS локального preflight/failure matrix с fake extractor; DB-backed artifact публикуется одним ingest attempt и не раскрывает storage location; не качество реальной модели |
 | U17 | OCR скана/изображения: CER/WER, поворот, шум, мелкий шрифт, язык | MANUAL: размеченный корпус и реальный OCR backend |
 | U18 | Whisper: речь/тишина/разные языки/длинные записи/отказ сервиса | MANUAL: реальный backend; unconfigured audio отрицательный контроль PASS |
 | U19 | Большой/зашифрованный/сложный документ, zip expansion, timeout/cancel, memory pressure | MANUAL: отдельный ресурсный прогон; простой fixture не доказывает защиту от всех parser bombs |
 | U20 | Реальный S3: потеря сети, retry, presign expiry, восстановление после рестарта | MANUAL: in-memory storage проверяет кодовую границу, не провайдера |
-| U21 | Upload → cognify → BM25/vector с точным источником и вторым dataset | PASS: `TestDocumentACLCognify*`, fake embedding + реальные индексы |
-| U22 | Re-upload после смены extractor, одновременный upload/cognify/delete, состояние после crash | MANUAL / SOURCE: нужны отдельные lifecycle гарантии; не считать upload транзакцией всех sidecars |
-| U23 | Повтор cognify возвращает already_processed без polling; изменённый derived hash сбрасывает старую готовность | PASS: CLI no-op + metadata SQLite/PostgreSQL + HTTP re-upload |
+| U21 | Upload/inline → cognify → BM25/vector с точным источником и вторым dataset | PASS: HTTP inline, MCP legacy/latest и `TestDocumentACLCognify*`, fake embedding + реальные индексы, обе SQL |
+| U22 | Явная замена source использует revision/hash CAS; stale/concurrent writer не заменяет winner, storage failure очищает attempt | PASS: HTTP SQLite и `ReplaceAuthorized` race на SQLite/PostgreSQL; A→B→A создаёт новые revisions/artifact IDs, старый artifact сразу недоступен и cleanup retry сохраняется при отказе storage; shared physical source получает 409. Crash после внешнего sidecar остаётся GAP |
+| U23 | Повтор cognify возвращает already_processed без polling; изменённый source сбрасывает старую готовность | SOURCE/PASS отдельных status/source-version tests; активный HTTP cognify всегда создаёт run, поэтому общий product contract ещё не закрыт |
 
 ## Права и жизненный цикл
 
@@ -72,14 +72,15 @@
 | A08 | Повтор grant возвращает сохранённый ID и обновляет роль | PASS: SQLite + PostgreSQL |
 | A09 | viewer не пишет; editor пишет и может удалить набор; read-only API key не повышается share | PASS: scoped ACL regressions |
 | A10 | Удаление связи в A сохраняет SQL/raw/index copy документа в B | PASS: source association control; это не полная очистка A |
-| A11 | Per-document и group permissions, запрет grant вне организации | GAP: нет соответствующей модели/проверки membership |
+| A11 | Per-document и group permissions, запрет grant вне организации | PASS policy/group tests; GAP: публичный API ещё не подключён к основному router |
 | A12 | Удалённый файл исчезает из всех vector/BM25/graph/community/VSA/RAG источников и MCP | GAP: SQL-only delete не гарантирует этого |
-| A13 | Удаление во время обработки не допускает повторной публикации старых derivatives | GAP: требуется единый lifecycle/tombstone и проверка перед publication |
+| A13 | Удаление/изменение во время cognify не допускает публикации старых derivatives | PASS для cognify source revision/revoke/publication; GAP для остальных mutation/sync/reindex путей |
 | A14 | Старые chunks без document_id, SQL/Neo4j граф и aggregates имеют проверяемый источник | GAP: нужна миграция/перестройка и полная provenance |
-| A15 | MCP query_entity проверяет разрешённые datasets у узлов, связей и обоих концов; глобальные communities доступны только активному instance admin | PASS: `TestGraphACL*`, SQLite + PostgreSQL и оба HTTP транспорта; это не гарантия всех graph/RAG путей |
+| A15 | MCP query_entity проверяет publication/grant у узлов, связей и обоих концов; глобальные communities доступны только активному instance admin | PASS: SQLite + PostgreSQL, legacy/latest MCP, direct document revoke, stale generation и >128 неподтверждённых assertions; это не гарантия всех graph/RAG путей |
 | A16 | Отзыв grant закрывает ранее выданный presigned URL/скачанную копию | Не поддерживается по природе этих копий; использовать authenticated proxy для новых запросов |
 | A17 | MCP prune_graph требует активного instance admin и права записи API-ключа, включая dry-run | PASS: `TestGraphACLPrune` и transport controls; обычный пользователь не получает счётчики и не удаляет граф |
 | A18 | Graph prune: ошибки SQL откатывают весь batch; dry-run предсказывает удаляемые узлы, даты сравниваются с учётом timezone | PASS: `TestPruneRegression*`, SQLite + PostgreSQL; preview/apply сравниваются без одновременного изменения графа |
+| A19 | Structured artifact доступен только по document ACL и текущей source lineage; replacement/re-ingest/rename/delete/last alias/prune закрывают старый URL до physical cleanup | PASS: owner, user/group grants и revoke, hold, shared alias, exact A→A, artifact-only CAS race, equal-projection re-ingest, duplicate batch local/remote, cleanup retry и SQLite/PostgreSQL inventory tests |
 
 Проверки A12–A14 — блокеры заявления «полная изоляция и отзыв документа во
 всех каналах». До их закрытия нельзя считать один успешный negative search
@@ -122,8 +123,9 @@ WebUI с default backend на рабочем сервере.
 1. **Изоляция и отзыв:** единая граница разрешений до rerank/LLM и во всех
    MCP/graph путях; provenance, tombstones и защита от повторной публикации.
    Затем document ACL и групповые grants с организационной membership.
-2. **Корпоративная идентичность:** immutable identity linkage, деактивация
-   всех сессий/ключей, browser OIDC; после этого native LDAPS и AD-группы.
+2. **Корпоративная идентичность:** принять на реальном AD/IdP уже реализованные
+   immutable identity linkage, деактивацию, browser OIDC, LDAPS и группы;
+   отдельно проверить multi-DC failover и задержку применения membership.
 3. **Приёмка интеграций:** настоящий AD/LDAP, Keycloak, AD FS/Entra, SCIM
    provisioning job, OCR/Whisper и S3 на изолированном стенде.
 4. **Измеряемые оптимизации:** лимит параллельного извлечения и размеры

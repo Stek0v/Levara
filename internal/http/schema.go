@@ -7,6 +7,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	accesspkg "github.com/stek0v/levara/pkg/access"
+	"github.com/stek0v/levara/pkg/ingest"
 	"log"
 	"strings"
 )
@@ -38,6 +40,19 @@ func MigrateSchema(db *sql.DB) error {
 		}
 	}
 
+	if err := accesspkg.EnsureDirectoryGroupSchema(ctx, db, Q); err != nil {
+		return fmt.Errorf("migrate managed directory groups: %w", err)
+	}
+	if err := ingest.EnsureIngestJournalSchema(ctx, db); err != nil {
+		return fmt.Errorf("migrate ingest journal: %w", err)
+	}
+	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS source_revision_counter(id INTEGER PRIMARY KEY CHECK(id=1),value BIGINT NOT NULL CHECK(value>=1))`); err != nil {
+		return fmt.Errorf("migrate source revision counter: %w", err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO source_revision_counter(id,value) VALUES(1,COALESCE((SELECT MAX(source_revision) FROM data),1))
+ ON CONFLICT(id) DO UPDATE SET value=CASE WHEN source_revision_counter.value<EXCLUDED.value THEN EXCLUDED.value ELSE source_revision_counter.value END`); err != nil {
+		return fmt.Errorf("initialize source revision counter: %w", err)
+	}
 	label := "PostgreSQL"
 	if activeDBProvider == DBSQLite {
 		label = "SQLite"
@@ -86,6 +101,7 @@ var schemaStatements = []string{
 		original_data_location TEXT NOT NULL DEFAULT '',
 		content_hash TEXT NOT NULL DEFAULT '',
 		raw_content_hash TEXT NOT NULL DEFAULT '',
+		source_revision BIGINT NOT NULL DEFAULT 1 CHECK(source_revision>0),
 		owner_id TEXT NOT NULL DEFAULT '',
 		loader_engine TEXT NOT NULL DEFAULT 'go_ingest',
 		pipeline_status TEXT NOT NULL DEFAULT '{}',
@@ -331,6 +347,23 @@ var schemaStatements = []string{
 		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 	)`,
 
+	// A session anchor fixes owner/tenant even after turns are deleted. Each
+	// turn's provenance is committed atomically with its interaction row.
+	`CREATE TABLE IF NOT EXISTS interaction_provenance (
+		id TEXT PRIMARY KEY,
+		interaction_id TEXT UNIQUE REFERENCES interactions(id) ON DELETE CASCADE,
+		session_id TEXT NOT NULL CHECK (session_id <> ''),
+		owner_id TEXT NOT NULL,
+		tenant_id TEXT NOT NULL DEFAULT '',
+		kind TEXT NOT NULL CHECK (kind IN ('session', 'server', 'client')),
+		sources TEXT NOT NULL DEFAULT '[]',
+		requires_admin INTEGER NOT NULL DEFAULT 0 CHECK (requires_admin IN (0,1)),
+		created_at TEXT NOT NULL,
+		CHECK ((kind = 'session' AND interaction_id IS NULL) OR (kind IN ('server', 'client') AND interaction_id IS NOT NULL))
+	)`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS idx_interaction_provenance_session ON interaction_provenance(session_id) WHERE kind = 'session'`,
+	`CREATE INDEX IF NOT EXISTS idx_interaction_provenance_owner ON interaction_provenance(owner_id, tenant_id, created_at)`,
+
 	// Ontologies
 	`CREATE TABLE IF NOT EXISTS ontologies (
 		id TEXT PRIMARY KEY,
@@ -412,6 +445,7 @@ var schemaStatements = []string{
 	`ALTER TABLE memories ADD COLUMN IF NOT EXISTS supersedes_memory_id TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE memories ADD COLUMN IF NOT EXISTS supersession_reason TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE data ADD COLUMN IF NOT EXISTS room TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE data ADD COLUMN IF NOT EXISTS source_revision BIGINT NOT NULL DEFAULT 1 CHECK(source_revision>0)`,
 	`ALTER TABLE graph_edges ADD COLUMN IF NOT EXISTS valid_from TIMESTAMPTZ`,
 	`ALTER TABLE graph_edges ADD COLUMN IF NOT EXISTS valid_until TIMESTAMPTZ`,
 	`ALTER TABLE graph_edges ADD COLUMN IF NOT EXISTS superseded_by TEXT NOT NULL DEFAULT ''`,
@@ -471,7 +505,7 @@ var schemaStatements = []string{
 	`CREATE TABLE IF NOT EXISTS task_steps (
 		id TEXT NOT NULL, task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
 		description TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', required BOOLEAN NOT NULL DEFAULT TRUE,
-		dependencies_json TEXT NOT NULL DEFAULT '[]', criterion_ids_json TEXT NOT NULL DEFAULT '[]',
+		dependencies_json TEXT NOT NULL DEFAULT '[]', criterion_ids_json TEXT NOT NULL DEFAULT '[]', action_json TEXT NOT NULL DEFAULT '{}',
 		attempts INTEGER NOT NULL DEFAULT 0, position INTEGER NOT NULL DEFAULT 0,
 		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 		PRIMARY KEY(task_id, id)
@@ -528,6 +562,7 @@ var schemaStatements = []string{
 		relation TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY(task_id, memory_id, relation)
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_tasks_scope_status ON tasks(owner_id, collection_name, status)`,
+	`ALTER TABLE task_steps ADD COLUMN action_json TEXT NOT NULL DEFAULT '{}'`,
 	`CREATE INDEX IF NOT EXISTS idx_task_steps_task_status ON task_steps(task_id, status, position)`,
 	`CREATE INDEX IF NOT EXISTS idx_task_receipts_task ON task_receipts(task_id, created_at DESC)`,
 	`CREATE INDEX IF NOT EXISTS idx_task_events_task ON task_events(task_id, created_at DESC)`,
@@ -611,6 +646,84 @@ var schemaStatements = []string{
 		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_heartbeats_type_time ON heartbeats(event_type, created_at DESC)`,
+
+	// Explicit document registrations survive dataset_data unlink/data deletion.
+	// No cascade to source rows: a retained tombstone must never become legacy
+	// inheritance again. API registration verifies the live association first.
+	`CREATE TABLE IF NOT EXISTS document_resources (
+		dataset_id TEXT NOT NULL,
+		data_id TEXT NOT NULL,
+		tenant_id TEXT NOT NULL REFERENCES tenants(id),
+		mode TEXT NOT NULL CHECK (mode IN ('inherit', 'restricted')),
+		acl_revision BIGINT NOT NULL DEFAULT 1 CHECK (acl_revision > 0),
+		content_revision BIGINT NOT NULL DEFAULT 1 CHECK (content_revision > 0),
+		tombstoned BOOLEAN NOT NULL DEFAULT FALSE,
+		hold BOOLEAN NOT NULL DEFAULT FALSE,
+		PRIMARY KEY (dataset_id, data_id)
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_document_resources_tenant ON document_resources(tenant_id, dataset_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_document_resources_data ON document_resources(data_id)`,
+	`CREATE TABLE IF NOT EXISTS document_structured_artifacts (
+		id TEXT PRIMARY KEY,
+		data_id TEXT NOT NULL,
+		source_revision BIGINT NOT NULL CHECK(source_revision > 0),
+		raw_content_hash TEXT NOT NULL CHECK(raw_content_hash <> ''),
+		artifact_sha256 TEXT NOT NULL CHECK(artifact_sha256 <> ''),
+		byte_size BIGINT NOT NULL CHECK(byte_size >= 0),
+		storage_location TEXT NOT NULL UNIQUE,
+		destination TEXT NOT NULL DEFAULT '',
+		state TEXT NOT NULL DEFAULT 'active' CHECK(state IN ('active','retired')),
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_document_structured_artifacts_source ON document_structured_artifacts(data_id, source_revision, state)`,
+	`CREATE TABLE IF NOT EXISTS document_index_publications (
+        dataset_id TEXT NOT NULL, data_id TEXT NOT NULL, collection_name TEXT NOT NULL,
+        content_revision BIGINT NOT NULL CHECK(content_revision >= 0), generation TEXT NOT NULL,
+        source_revision BIGINT NOT NULL DEFAULT 0, raw_content_hash TEXT NOT NULL DEFAULT '',
+        sources_json TEXT NOT NULL DEFAULT '[]', requires_admin INTEGER NOT NULL DEFAULT 0 CHECK(requires_admin IN (0,1)),
+        lineage_verified INTEGER NOT NULL DEFAULT 0 CHECK(lineage_verified IN (0,1)),
+        PRIMARY KEY(dataset_id,data_id,collection_name),
+        FOREIGN KEY(dataset_id,data_id) REFERENCES dataset_data(dataset_id,data_id) ON DELETE CASCADE
+    )`,
+	`CREATE INDEX IF NOT EXISTS idx_document_index_publications_data ON document_index_publications(data_id)`,
+	`CREATE TABLE IF NOT EXISTS document_pipeline_statuses (
+        dataset_id TEXT NOT NULL, data_id TEXT NOT NULL, collection_name TEXT NOT NULL,
+        source_revision BIGINT NOT NULL CHECK(source_revision > 0), raw_content_hash TEXT NOT NULL,
+        attempt_id TEXT NOT NULL DEFAULT '', pipeline_state TEXT NOT NULL, status_json TEXT NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY(dataset_id,data_id,collection_name),
+        FOREIGN KEY(dataset_id,data_id) REFERENCES dataset_data(dataset_id,data_id) ON DELETE CASCADE
+    )`,
+	`ALTER TABLE document_pipeline_statuses ADD COLUMN IF NOT EXISTS attempt_id TEXT NOT NULL DEFAULT ''`,
+	`CREATE TABLE IF NOT EXISTS access_groups (
+		id TEXT PRIMARY KEY REFERENCES principals(id),
+		tenant_id TEXT NOT NULL REFERENCES tenants(id),
+		name TEXT NOT NULL CHECK (name <> ''),
+		revision BIGINT NOT NULL DEFAULT 1 CHECK (revision > 0),
+		UNIQUE (tenant_id, name),
+		UNIQUE (id, tenant_id)
+	)`,
+	`CREATE TABLE IF NOT EXISTS access_group_members (
+		group_id TEXT NOT NULL,
+		tenant_id TEXT NOT NULL,
+		user_id TEXT NOT NULL REFERENCES users(id),
+		PRIMARY KEY (group_id, user_id),
+		FOREIGN KEY (group_id, tenant_id) REFERENCES access_groups(id, tenant_id) ON DELETE CASCADE,
+		FOREIGN KEY (user_id, tenant_id) REFERENCES user_tenant(user_id, tenant_id) ON DELETE CASCADE
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_access_group_members_user ON access_group_members(tenant_id, user_id, group_id)`,
+	`CREATE TABLE IF NOT EXISTS document_grants (
+		dataset_id TEXT NOT NULL,
+		data_id TEXT NOT NULL,
+		principal_kind TEXT NOT NULL CHECK (principal_kind IN ('user', 'group')),
+		principal_id TEXT NOT NULL REFERENCES principals(id) ON DELETE CASCADE,
+		role TEXT NOT NULL CHECK (role IN ('viewer', 'editor', 'admin')),
+		granted_by TEXT NOT NULL,
+		PRIMARY KEY (dataset_id, data_id, principal_kind, principal_id),
+		FOREIGN KEY (dataset_id, data_id) REFERENCES document_resources(dataset_id, data_id) ON DELETE CASCADE
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_document_grants_principal ON document_grants(principal_kind, principal_id, dataset_id, data_id)`,
 }
 
 // schemaSQLiteStatements — SQLite-compatible DDL.
@@ -660,6 +773,7 @@ var schemaSQLiteStatements = []string{
 		original_data_location TEXT NOT NULL DEFAULT '',
 		content_hash TEXT NOT NULL DEFAULT '',
 		raw_content_hash TEXT NOT NULL DEFAULT '',
+		source_revision BIGINT NOT NULL DEFAULT 1 CHECK(source_revision>0),
 		owner_id TEXT NOT NULL DEFAULT '',
 		loader_engine TEXT NOT NULL DEFAULT 'go_ingest',
 		pipeline_status TEXT NOT NULL DEFAULT '{}',
@@ -884,6 +998,21 @@ var schemaSQLiteStatements = []string{
 		created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 	)`,
 
+	`CREATE TABLE IF NOT EXISTS interaction_provenance (
+		id TEXT PRIMARY KEY,
+		interaction_id TEXT UNIQUE REFERENCES interactions(id) ON DELETE CASCADE,
+		session_id TEXT NOT NULL CHECK (session_id <> ''),
+		owner_id TEXT NOT NULL,
+		tenant_id TEXT NOT NULL DEFAULT '',
+		kind TEXT NOT NULL CHECK (kind IN ('session', 'server', 'client')),
+		sources TEXT NOT NULL DEFAULT '[]',
+		requires_admin INTEGER NOT NULL DEFAULT 0 CHECK (requires_admin IN (0,1)),
+		created_at TEXT NOT NULL,
+		CHECK ((kind = 'session' AND interaction_id IS NULL) OR (kind IN ('server', 'client') AND interaction_id IS NOT NULL))
+	)`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS idx_interaction_provenance_session ON interaction_provenance(session_id) WHERE kind = 'session'`,
+	`CREATE INDEX IF NOT EXISTS idx_interaction_provenance_owner ON interaction_provenance(owner_id, tenant_id, created_at)`,
+
 	`CREATE TABLE IF NOT EXISTS ontologies (
 		id TEXT PRIMARY KEY,
 		name TEXT NOT NULL UNIQUE,
@@ -973,6 +1102,7 @@ var schemaSQLiteStatements = []string{
 	// so old DBs receive the new columns first.
 	`ALTER TABLE data ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'`,
 	`ALTER TABLE data ADD COLUMN room TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE data ADD COLUMN source_revision BIGINT NOT NULL DEFAULT 1 CHECK(source_revision>0)`,
 	`ALTER TABLE memories ADD COLUMN room TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE memories ADD COLUMN hall TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE memories ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0`,
@@ -1035,7 +1165,7 @@ var schemaSQLiteStatements = []string{
 	`CREATE TABLE IF NOT EXISTS task_steps (
 		id TEXT NOT NULL, task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
 		description TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', required INTEGER NOT NULL DEFAULT 1,
-		dependencies_json TEXT NOT NULL DEFAULT '[]', criterion_ids_json TEXT NOT NULL DEFAULT '[]',
+		dependencies_json TEXT NOT NULL DEFAULT '[]', criterion_ids_json TEXT NOT NULL DEFAULT '[]', action_json TEXT NOT NULL DEFAULT '{}',
 		attempts INTEGER NOT NULL DEFAULT 0, position INTEGER NOT NULL DEFAULT 0,
 		created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		PRIMARY KEY(task_id, id)
@@ -1084,6 +1214,7 @@ var schemaSQLiteStatements = []string{
 		PRIMARY KEY(task_id, memory_id, relation)
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_tasks_scope_status ON tasks(owner_id, collection_name, status)`,
+	`ALTER TABLE task_steps ADD COLUMN action_json TEXT NOT NULL DEFAULT '{}'`,
 	`CREATE INDEX IF NOT EXISTS idx_task_steps_task_status ON task_steps(task_id, status, position)`,
 	`CREATE INDEX IF NOT EXISTS idx_task_receipts_task ON task_receipts(task_id, created_at DESC)`,
 	`CREATE INDEX IF NOT EXISTS idx_task_events_task ON task_events(task_id, created_at DESC)`,
@@ -1134,4 +1265,82 @@ var schemaSQLiteStatements = []string{
 		created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_heartbeats_type_time ON heartbeats(event_type, created_at DESC)`,
+
+	// Explicit document registrations survive dataset_data unlink/data deletion.
+	// No cascade to source rows: a retained tombstone must never become legacy
+	// inheritance again. API registration verifies the live association first.
+	`CREATE TABLE IF NOT EXISTS document_resources (
+		dataset_id TEXT NOT NULL,
+		data_id TEXT NOT NULL,
+		tenant_id TEXT NOT NULL REFERENCES tenants(id),
+		mode TEXT NOT NULL CHECK (mode IN ('inherit', 'restricted')),
+		acl_revision BIGINT NOT NULL DEFAULT 1 CHECK (acl_revision > 0),
+		content_revision BIGINT NOT NULL DEFAULT 1 CHECK (content_revision > 0),
+		tombstoned BOOLEAN NOT NULL DEFAULT FALSE,
+		hold BOOLEAN NOT NULL DEFAULT FALSE,
+		PRIMARY KEY (dataset_id, data_id)
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_document_resources_tenant ON document_resources(tenant_id, dataset_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_document_resources_data ON document_resources(data_id)`,
+	`CREATE TABLE IF NOT EXISTS document_structured_artifacts (
+		id TEXT PRIMARY KEY,
+		data_id TEXT NOT NULL,
+		source_revision INTEGER NOT NULL CHECK(source_revision > 0),
+		raw_content_hash TEXT NOT NULL CHECK(raw_content_hash <> ''),
+		artifact_sha256 TEXT NOT NULL CHECK(artifact_sha256 <> ''),
+		byte_size INTEGER NOT NULL CHECK(byte_size >= 0),
+		storage_location TEXT NOT NULL UNIQUE,
+		destination TEXT NOT NULL DEFAULT '',
+		state TEXT NOT NULL DEFAULT 'active' CHECK(state IN ('active','retired')),
+		created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_document_structured_artifacts_source ON document_structured_artifacts(data_id, source_revision, state)`,
+	`CREATE TABLE IF NOT EXISTS document_index_publications (
+        dataset_id TEXT NOT NULL, data_id TEXT NOT NULL, collection_name TEXT NOT NULL,
+        content_revision BIGINT NOT NULL CHECK(content_revision >= 0), generation TEXT NOT NULL,
+        source_revision BIGINT NOT NULL DEFAULT 0, raw_content_hash TEXT NOT NULL DEFAULT '',
+        sources_json TEXT NOT NULL DEFAULT '[]', requires_admin INTEGER NOT NULL DEFAULT 0 CHECK(requires_admin IN (0,1)),
+        lineage_verified INTEGER NOT NULL DEFAULT 0 CHECK(lineage_verified IN (0,1)),
+        PRIMARY KEY(dataset_id,data_id,collection_name),
+        FOREIGN KEY(dataset_id,data_id) REFERENCES dataset_data(dataset_id,data_id) ON DELETE CASCADE
+    )`,
+	`CREATE INDEX IF NOT EXISTS idx_document_index_publications_data ON document_index_publications(data_id)`,
+	`CREATE TABLE IF NOT EXISTS document_pipeline_statuses (
+        dataset_id TEXT NOT NULL, data_id TEXT NOT NULL, collection_name TEXT NOT NULL,
+        source_revision BIGINT NOT NULL CHECK(source_revision > 0), raw_content_hash TEXT NOT NULL,
+        attempt_id TEXT NOT NULL DEFAULT '', pipeline_state TEXT NOT NULL, status_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY(dataset_id,data_id,collection_name),
+        FOREIGN KEY(dataset_id,data_id) REFERENCES dataset_data(dataset_id,data_id) ON DELETE CASCADE
+    )`,
+	`ALTER TABLE document_pipeline_statuses ADD COLUMN attempt_id TEXT NOT NULL DEFAULT ''`,
+	`CREATE TABLE IF NOT EXISTS access_groups (
+		id TEXT PRIMARY KEY REFERENCES principals(id),
+		tenant_id TEXT NOT NULL REFERENCES tenants(id),
+		name TEXT NOT NULL CHECK (name <> ''),
+		revision BIGINT NOT NULL DEFAULT 1 CHECK (revision > 0),
+		UNIQUE (tenant_id, name),
+		UNIQUE (id, tenant_id)
+	)`,
+	`CREATE TABLE IF NOT EXISTS access_group_members (
+		group_id TEXT NOT NULL,
+		tenant_id TEXT NOT NULL,
+		user_id TEXT NOT NULL REFERENCES users(id),
+		PRIMARY KEY (group_id, user_id),
+		FOREIGN KEY (group_id, tenant_id) REFERENCES access_groups(id, tenant_id) ON DELETE CASCADE,
+		FOREIGN KEY (user_id, tenant_id) REFERENCES user_tenant(user_id, tenant_id) ON DELETE CASCADE
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_access_group_members_user ON access_group_members(tenant_id, user_id, group_id)`,
+	`CREATE TABLE IF NOT EXISTS document_grants (
+		dataset_id TEXT NOT NULL,
+		data_id TEXT NOT NULL,
+		principal_kind TEXT NOT NULL CHECK (principal_kind IN ('user', 'group')),
+		principal_id TEXT NOT NULL REFERENCES principals(id) ON DELETE CASCADE,
+		role TEXT NOT NULL CHECK (role IN ('viewer', 'editor', 'admin')),
+		granted_by TEXT NOT NULL,
+		PRIMARY KEY (dataset_id, data_id, principal_kind, principal_id),
+		FOREIGN KEY (dataset_id, data_id) REFERENCES document_resources(dataset_id, data_id) ON DELETE CASCADE
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_document_grants_principal ON document_grants(principal_kind, principal_id, dataset_id, data_id)`,
 }

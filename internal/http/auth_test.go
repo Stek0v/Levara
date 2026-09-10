@@ -2,10 +2,12 @@ package http
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	accesspkg "github.com/stek0v/levara/pkg/access"
 	"io"
 	"net/http/httptest"
 	"os"
@@ -36,11 +38,12 @@ func newAuthTestDB(t *testing.T) (*sql.DB, func()) {
 		t.Fatal(err)
 	}
 	dbPath := filepath.Join(dir, "auth.db")
-	db, err := sql.Open("sqlite3", "file:"+dbPath+"?_pragma=journal_mode(WAL)")
+	db, err := sql.Open("sqlite3", "file:"+dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
 	if err != nil {
 		os.RemoveAll(dir)
 		t.Fatal(err)
 	}
+	db.SetMaxOpenConns(4) // match the SQLite server pool
 	if _, err := db.Exec(`
 		CREATE TABLE principals (
 			id TEXT PRIMARY KEY,
@@ -54,6 +57,7 @@ func newAuthTestDB(t *testing.T) (*sql.DB, func()) {
 			is_superuser INTEGER DEFAULT 0,
 			is_verified INTEGER DEFAULT 0
 		);
+		CREATE TABLE user_tenant (user_id TEXT, tenant_id TEXT, PRIMARY KEY (user_id,tenant_id));
 		CREATE TABLE api_keys (
 			id TEXT PRIMARY KEY,
 			key_hash TEXT UNIQUE,
@@ -70,6 +74,12 @@ func newAuthTestDB(t *testing.T) (*sql.DB, func()) {
 		t.Fatalf("schema: %v", err)
 	}
 	SetDBProvider(DBSQLite)
+	if err := accesspkg.EnsureIdentitySchema(context.Background(), db, Q); err != nil {
+		t.Fatal(err)
+	}
+	if err := accesspkg.EnsureBrowserSessionSchema(context.Background(), db, Q); err != nil {
+		t.Fatal(err)
+	}
 	cleanup := func() {
 		_ = db.Close()
 		os.RemoveAll(dir)
@@ -287,6 +297,7 @@ func TestJWTMiddleware_PrefersAPIKeyOverBearer(t *testing.T) {
 	db, cleanup := newAuthTestDB(t)
 	defer cleanup()
 
+	seedAuthUser(t, db, "user-from-key")
 	// Seed a valid API key for user-from-key.
 	plainKey := "lk_test_abcdefabcdef"
 	keyHash := sha256Hash(plainKey)
@@ -386,6 +397,7 @@ func TestAPIKeyPermissionMiddlewareBlocksMutationsForReadKey(t *testing.T) {
 func TestAPIKey_CreateRevokeListLifecycle(t *testing.T) {
 	db, cleanup := newAuthTestDB(t)
 	defer cleanup()
+	seedAuthUser(t, db, "u-keys")
 
 	app := fiber.New(fiber.Config{DisableStartupMessage: true})
 	cfg := AuthConfig{JWTSecret: "s", DB: db}

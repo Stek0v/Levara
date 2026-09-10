@@ -156,23 +156,33 @@ func (s *SAMLSP) StartAuth(w http.ResponseWriter, r *http.Request) (string, erro
 // resolves the verified identity through the identity bridge. Every failure
 // mode returns an error; callers treat the response as rejected.
 func (s *SAMLSP) ConsumeResponse(ctx context.Context, w http.ResponseWriter, r *http.Request) (Principal, error) {
+	principal, _, err := s.ConsumeResponseWithIssuedAt(ctx, w, r)
+	return principal, err
+}
+
+// ConsumeResponseWithIssuedAt also exposes the signed assertion's IssueInstant
+// after signature and browser-state verification, for live revocation checks.
+func (s *SAMLSP) ConsumeResponseWithIssuedAt(ctx context.Context, w http.ResponseWriter, r *http.Request) (Principal, time.Time, error) {
 	if r.PostFormValue("SAMLResponse") == "" {
-		return Principal{}, errors.New("saml: missing SAMLResponse form field")
+		return Principal{}, time.Time{}, errors.New("saml: missing SAMLResponse form field")
 	}
 	tracked, err := s.tracker.GetTrackedRequest(r, r.PostFormValue("RelayState"))
 	if err != nil || tracked.SAMLRequestID == "" {
-		return Principal{}, errors.New("saml: missing or invalid browser request state")
+		return Principal{}, time.Time{}, errors.New("saml: missing or invalid browser request state")
 	}
 	assertion, err := s.sp.ParseResponse(r, []string{tracked.SAMLRequestID})
 	if err != nil {
-		return Principal{}, fmt.Errorf("saml: response rejected: %w", err)
+		return Principal{}, time.Time{}, fmt.Errorf("saml: response rejected: %w", err)
+	}
+	if assertion.IssueInstant.IsZero() || assertion.IssueInstant.After(time.Now().Add(saml.MaxClockSkew)) {
+		return Principal{}, time.Time{}, errors.New("saml: invalid assertion issue time")
 	}
 	ext, err := s.identityFromAssertion(assertion)
 	if err != nil {
-		return Principal{}, err
+		return Principal{}, time.Time{}, err
 	}
 	if !s.pending.consume(tracked.SAMLRequestID) {
-		return Principal{}, errors.New("saml: request id not pending (possible replay)")
+		return Principal{}, time.Time{}, errors.New("saml: request id not pending (possible replay)")
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name: s.tracker.NamePrefix + tracked.Index, Path: s.sp.AcsURL.Path,
@@ -180,9 +190,9 @@ func (s *SAMLSP) ConsumeResponse(ctx context.Context, w http.ResponseWriter, r *
 	})
 	principal, err := s.bridge.ResolveExternal(ctx, ext)
 	if err != nil {
-		return Principal{}, fmt.Errorf("saml: identity resolution: %w", err)
+		return Principal{}, time.Time{}, fmt.Errorf("saml: identity resolution: %w", err)
 	}
-	return principal, nil
+	return principal, assertion.IssueInstant, nil
 }
 
 // identityFromAssertion extracts NameID and attribute claims into the
@@ -274,3 +284,6 @@ func (s *samlIDStore) consume(id string) bool {
 	s.ids = kept
 	return used
 }
+
+// IDPIssuer returns the exact entity ID from the metadata accepted at startup.
+func (s *SAMLSP) IDPIssuer() string { return s.sp.IDPMetadata.EntityID }

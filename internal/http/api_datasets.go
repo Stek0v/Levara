@@ -83,6 +83,9 @@ func datasetsListHandler(cfg APIConfig) fiber.Handler {
 		}
 
 		userID, _ := c.Locals("user_id").(string)
+		if !accesspkg.APIKeyAllows(workspaceActorFromFiber(c).APIKeyPermissions, accesspkg.ActionRead) {
+			return fiber.NewError(403, "dataset access denied")
+		}
 		visible, err := accesspkg.SQLPolicy{DB: cfg.DB, Q: Q, QA: QArgs}.ListVisibleDatasets(ctx, userID)
 		// BL-3: surface SQL errors instead of returning []. Silent empty
 		// responses made bad credentials / missing tables indistinguishable
@@ -96,13 +99,17 @@ func datasetsListHandler(cfg APIConfig) fiber.Handler {
 
 		datasets := make([]DatasetDTO, 0, len(visible))
 		for _, d := range visible {
+			count, size, err := documentDatasetStats(ctx, c, cfg, d.ID)
+			if err != nil {
+				return documentHTTPError(err)
+			}
 			datasets = append(datasets, DatasetDTO{
 				ID:          d.ID,
 				Name:        d.Name,
 				CreatedAt:   d.CreatedAt,
 				OwnerID:     d.OwnerID,
-				RecordCount: d.RecordCount,
-				TotalSize:   d.TotalSize,
+				RecordCount: count,
+				TotalSize:   size,
 				GitHubRepo:  d.GitHubRepo,
 			})
 		}
@@ -180,13 +187,14 @@ func datasetDeleteHandler(cfg APIConfig) fiber.Handler {
 		defer cancel()
 
 		id := c.Params("id")
+		cleanupPending := false
 		if cfg.DB != nil {
-			if err := authorizeDatasetFiber(c, cfg, id, accesspkg.ActionWrite); err != nil {
-				return err
+			if err := documentSQLPolicy(cfg).DeleteDatasetWithDocuments(ctx, workspaceActorFromFiber(c), id); err != nil {
+				if !errors.Is(err, accesspkg.ErrDocumentNotFound) {
+					return documentHTTPError(err)
+				}
 			}
-			if _, err := cfg.DB.ExecContext(ctx, Q("DELETE FROM datasets WHERE id = $1"), id); err != nil {
-				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"detail": "delete dataset failed"})
-			}
+			cleanupPending = cleanupRetiredStructuredArtifacts(ctx, cfg, "")
 		} else {
 			memDatasets.mu.Lock()
 			filtered := memDatasets.data[:0]
@@ -198,7 +206,7 @@ func datasetDeleteHandler(cfg APIConfig) fiber.Handler {
 			memDatasets.data = filtered
 			memDatasets.mu.Unlock()
 		}
-		return c.JSON(fiber.Map{"deleted": true})
+		return c.JSON(fiber.Map{"deleted": true, "artifact_cleanup_pending": cleanupPending})
 	}
 }
 
@@ -211,6 +219,8 @@ type DataDTO struct {
 	DataSize        int64  `json:"data_size"`
 	PipelineStatus  string `json:"pipeline_status"`
 	Tags            string `json:"tags"`
+	SourceRevision  int64  `json:"source_revision"`
+	RawContentHash  string `json:"raw_content_hash"`
 	CreatedAt       string `json:"created_at"`
 }
 
@@ -229,7 +239,8 @@ func datasetDataHandler(cfg APIConfig) fiber.Handler {
 
 		rows, err := cfg.DB.QueryContext(ctx,
 			Q(`SELECT d.id, d.name, d.extension, d.mime_type, d.raw_data_location,
-			 COALESCE(d.data_size, 0), COALESCE(d.pipeline_status, '{}'), COALESCE(d.tags, '[]'), d.created_at
+			 COALESCE(d.data_size, 0), COALESCE(d.pipeline_status, '{}'), COALESCE(d.tags, '[]'),
+			 d.source_revision,LOWER(d.raw_content_hash),d.created_at
 			 FROM data d JOIN dataset_data dd ON d.id = dd.data_id
 			 WHERE dd.dataset_id = $1 ORDER BY d.created_at DESC`), dsID)
 		// BL-3: same fix as datasetsListHandler — don't silently mask SQL
@@ -239,23 +250,41 @@ func datasetDataHandler(cfg APIConfig) fiber.Handler {
 			return c.Status(fiber.StatusInternalServerError).
 				JSON(fiber.Map{"detail": "load dataset data: " + err.Error()})
 		}
-		defer rows.Close()
-
 		var items []DataDTO
 		for rows.Next() {
 			var d DataDTO
 			var createdAt string
-			if err := rows.Scan(&d.ID, &d.Name, &d.Extension, &d.MimeType, &d.RawDataLocation, &d.DataSize, &d.PipelineStatus, &d.Tags, &createdAt); err != nil {
-				log.Printf("[datasets] data scan ds=%s: %v", dsID, err)
-				continue
+			if err := rows.Scan(&d.ID, &d.Name, &d.Extension, &d.MimeType, &d.RawDataLocation, &d.DataSize, &d.PipelineStatus, &d.Tags, &d.SourceRevision, &d.RawContentHash, &createdAt); err != nil {
+				rows.Close()
+				return documentHTTPError(err)
 			}
 			d.CreatedAt = createdAt
 			items = append(items, d)
 		}
-		if items == nil {
-			items = []DataDTO{}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return documentHTTPError(err)
 		}
-		return c.JSON(items)
+		for i := range items {
+			items[i].PipelineStatus, err = pipelineStatusForDocument(ctx, cfg.DB, dsID, items[i].ID, items[i].PipelineStatus)
+			if err != nil {
+				return documentHTTPError(err)
+			}
+		}
+		filtered := make([]DataDTO, 0, len(items))
+		for _, d := range items {
+			ref := accesspkg.DocumentRef{DatasetID: dsID, DataID: d.ID}
+			decision, err := documentSQLPolicy(cfg).AuthorizeDocument(ctx, workspaceActorFromFiber(c), ref, accesspkg.ActionRead)
+			if err != nil {
+				return documentHTTPError(err)
+			}
+			if decision.Allowed {
+				d.RawDataLocation = documentRawProxy(c, ref)
+				filtered = append(filtered, d)
+			}
+		}
+		return c.JSON(filtered)
 	}
 }
 
@@ -264,34 +293,29 @@ func datasetDataDeleteHandler(cfg APIConfig) fiber.Handler {
 		ctx, cancel := apiRequestContext(c)
 		defer cancel()
 
-		dataID := c.Params("dataId")
-		dsID := c.Params("id")
+		cleanupPending := false
 		if cfg.DB != nil {
-			if err := authorizeDatasetFiber(c, cfg, dsID, accesspkg.ActionWrite); err != nil {
+			ref := documentRefFromFiber(c)
+			r, err := documentRegistration(c, cfg, ref)
+			if err != nil {
 				return err
 			}
-			tx, err := cfg.DB.BeginTx(ctx, nil)
-			if err != nil {
-				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"detail": "delete data failed"})
+			var acl, content int64
+			if r != nil {
+				if err := authorizeDocumentFiber(c, cfg, ref, accesspkg.ActionDelete); err != nil {
+					return err
+				}
+				acl, content, err = documentExpectedVersion(c)
+				if err != nil {
+					return err
+				}
 			}
-			defer tx.Rollback()
-			result, err := tx.ExecContext(ctx, Q("DELETE FROM dataset_data WHERE dataset_id = $1 AND data_id = $2"), dsID, dataID)
-			if err != nil {
-				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"detail": "delete data failed"})
+			if err := documentSQLPolicy(cfg).DeleteDocumentAssociation(ctx, workspaceActorFromFiber(c), ref, acl, content); err != nil {
+				return documentHTTPError(err)
 			}
-			if deleted, err := result.RowsAffected(); err == nil && deleted == 0 {
-				return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"detail": "not found"})
-			}
-			query, args := QArgs(`DELETE FROM data WHERE id = $1
-				AND NOT EXISTS (SELECT 1 FROM dataset_data WHERE data_id = $1)`, dataID)
-			if _, err := tx.ExecContext(ctx, query, args...); err != nil {
-				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"detail": "delete data failed"})
-			}
-			if err := tx.Commit(); err != nil {
-				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"detail": "delete data failed"})
-			}
+			cleanupPending = cleanupRetiredStructuredArtifacts(ctx, cfg, ref.DataID)
 		}
-		return c.JSON(fiber.Map{"deleted": true})
+		return c.JSON(fiber.Map{"deleted": true, "artifact_cleanup_pending": cleanupPending})
 	}
 }
 
@@ -305,8 +329,13 @@ func datasetDataRawHandler(cfg APIConfig) fiber.Handler {
 		if cfg.DB == nil {
 			return c.Status(404).JSON(fiber.Map{"detail": "not found"})
 		}
-		if err := authorizeDatasetFiber(c, cfg, datasetID, accesspkg.ActionRead); err != nil {
+		if err := authorizeDocumentFiber(c, cfg, documentRefFromFiber(c), accesspkg.ActionRead); err != nil {
 			return err
+		}
+
+		ctx, accessErr := documentReadContext(c, cfg, ctx, documentRefFromFiber(c))
+		if accessErr != nil {
+			return accessErr
 		}
 
 		var location, originalLocation string
@@ -316,25 +345,42 @@ func datasetDataRawHandler(cfg APIConfig) fiber.Handler {
 		if c.QueryBool("original") {
 			location = originalLocation
 		}
-		if errors.Is(err, sql.ErrNoRows) || location == "" {
+		if errors.Is(err, sql.ErrNoRows) {
 			return c.Status(404).JSON(fiber.Map{"detail": "not found"})
 		}
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"detail": "load raw data failed"})
+		}
+		if location == "" {
+			return c.Status(404).JSON(fiber.Map{"detail": "not found"})
 		}
 		raw, err := loadRawDataByLocation(ctx, cfg, location)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) || os.IsNotExist(err) {
 				return c.Status(404).JSON(fiber.Map{"detail": "not found"})
 			}
-			return c.Status(500).JSON(fiber.Map{"detail": "load raw data: " + err.Error()})
+			return c.Status(500).JSON(fiber.Map{"detail": "load raw data failed"})
 		}
+		if err := authorizeDocumentFiber(c, cfg, documentRefFromFiber(c), accesspkg.ActionRead); err != nil {
+			return err
+		}
+		r, err := documentRegistration(c, cfg, documentRefFromFiber(c))
+		if err != nil {
+			return err
+		}
+		if r != nil {
+			c.Set("ETag", documentETag(*r))
+		}
+		c.Set("Cache-Control", "private, no-store")
 		// Download semantics (finding L7, 2026-09-03 review): opaque
 		// octet-stream plus no-sniff prevents browser content sniffing of
 		// attacker-supplied bytes.
 		c.Set("Content-Type", "application/octet-stream")
 		c.Set("X-Content-Type-Options", "nosniff")
-		return c.Send(raw)
+		if err := c.Send(raw); err != nil {
+			return err
+		}
+		return sendProtectedResponseWithFence(c, ctx)
 	}
 }
 
@@ -348,7 +394,7 @@ func datasetDataRawURLHandler(cfg APIConfig) fiber.Handler {
 		if cfg.DB == nil {
 			return c.Status(404).JSON(fiber.Map{"detail": "not found"})
 		}
-		if err := authorizeDatasetFiber(c, cfg, datasetID, accesspkg.ActionRead); err != nil {
+		if err := authorizeDocumentFiber(c, cfg, documentRefFromFiber(c), accesspkg.ActionRead); err != nil {
 			return err
 		}
 
@@ -356,11 +402,25 @@ func datasetDataRawURLHandler(cfg APIConfig) fiber.Handler {
 		err := cfg.DB.QueryRowContext(ctx, Q(`SELECT d.raw_data_location FROM data d
 			JOIN dataset_data dd ON dd.data_id = d.id
 			WHERE d.id = $1 AND dd.dataset_id = $2`), dataID, datasetID).Scan(&location)
-		if errors.Is(err, sql.ErrNoRows) || location == "" {
+		if errors.Is(err, sql.ErrNoRows) {
 			return c.Status(404).JSON(fiber.Map{"detail": "not found"})
 		}
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"detail": "load raw data failed"})
+		}
+		if location == "" {
+			return c.Status(404).JSON(fiber.Map{"detail": "not found"})
+		}
+		r, err := documentRegistration(c, cfg, documentRefFromFiber(c))
+		if err != nil {
+			return err
+		}
+		if r != nil {
+			// This response mints no storage capability that could bypass the
+			// proxy's authorization checks on a later download request.
+			c.Set("ETag", documentETag(*r))
+			c.Set("Cache-Control", "private, no-store")
+			return c.JSON(fiber.Map{"url": documentRawProxy(c, documentRefFromFiber(c)), "expires_in": 0, "location": "", "presigned": false})
 		}
 
 		ttlSec := c.QueryInt("ttl_seconds", 900)

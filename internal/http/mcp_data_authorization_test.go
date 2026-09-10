@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"encoding/json"
+	accesspkg "github.com/stek0v/levara/pkg/access"
 	"io"
 	"net/http/httptest"
 	"strings"
@@ -22,6 +23,9 @@ func TestDocumentACLMCPTransports(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			_, db := documentACLHTTPFixture(t)
+			if err := accesspkg.EnsureIdentitySchema(context.Background(), db, Q); err != nil {
+				t.Fatal(err)
+			}
 			ingest.SetSQLiteMode(true)
 			t.Cleanup(func() { ingest.SetSQLiteMode(false) })
 			cm, err := store.NewCollectionManager(2, t.TempDir())
@@ -234,6 +238,9 @@ func TestGraphACLMCPTransports(t *testing.T) {
 			}
 			t.Run(dialect+"/"+transport, func(t *testing.T) {
 				_, db := documentACLHTTPFixture(t, dialect)
+				if err := accesspkg.EnsureIdentitySchema(context.Background(), db, Q); err != nil {
+					t.Fatal(err)
+				}
 				for _, q := range []string{
 					`INSERT INTO datasets(id,name,owner_id) VALUES('public','public',''),('foreign','foreign','bob')`,
 					`INSERT INTO graph_nodes(id,name,dataset_id) VALUES('a-node','entity','a'),('b-node','entity','b'),('public-node','entity','public'),('foreign-node','entity','foreign'),('global-node','entity','')`,
@@ -253,7 +260,7 @@ func TestGraphACLMCPTransports(t *testing.T) {
 				} else {
 					app.Post(path, h.handleRPC)
 				}
-				call := func(user, tool, args string) mcp.ToolResult {
+				call := func(user, tool, args string, expectedStatus ...int) mcp.ToolResult {
 					t.Helper()
 					meta := ""
 					if latest {
@@ -281,6 +288,12 @@ func TestGraphACLMCPTransports(t *testing.T) {
 					}
 					var rpc struct {
 						Result mcp.ToolResult `json:"result"`
+					}
+					if len(expectedStatus) > 0 {
+						if resp.StatusCode != expectedStatus[0] || string(raw) != "Not Found" {
+							t.Fatalf("tool=%s user=%s HTTP=%d body=%s, want generic 404", tool, user, resp.StatusCode, raw)
+						}
+						return mcp.ToolResult{}
 					}
 					if resp.StatusCode != 200 || json.Unmarshal(raw, &rpc) != nil || len(rpc.Result.Content) == 0 {
 						t.Fatalf("tool=%s user=%s HTTP=%d body=%s", tool, user, resp.StatusCode, raw)
@@ -342,7 +355,7 @@ func TestGraphACLMCPTransports(t *testing.T) {
 				if _, err := db.Exec(`ALTER TABLE dataset_shares RENAME TO unavailable_shares`); err != nil {
 					t.Fatal(err)
 				}
-				if result := call("alice", "query_entity", `{"name":"entity"}`); result.IsError || !strings.Contains(result.Content[0].Text, "No entity found") {
+				if result := call("alice", "query_entity", `{"name":"entity"}`); !result.IsError || strings.Contains(result.Content[0].Text, "foreign") {
 					t.Errorf("failed policy exposed graph: %+v", result)
 				}
 				if result := call("alice", "list_communities", `{}`); !result.IsError {
@@ -370,17 +383,13 @@ func TestGraphACLMCPTransports(t *testing.T) {
 					t.Fatal(err)
 				}
 				for _, tool := range []string{"query_entity", "list_communities", "prune_graph"} {
-					if result := call("alice", tool, `{"name":"entity"}`); !result.IsError {
-						t.Errorf("inactive admin reached %s: %+v", tool, result)
-					}
+					call("alice", tool, `{"name":"entity"}`, fiber.StatusNotFound)
 				}
 				if _, err := db.Exec(`ALTER TABLE users RENAME TO unavailable_users`); err != nil {
 					t.Fatal(err)
 				}
 				for _, tool := range []string{"query_entity", "list_communities", "prune_graph"} {
-					if result := call("alice", tool, `{"name":"entity"}`); !result.IsError {
-						t.Errorf("user SQL failure reached %s: %+v", tool, result)
-					}
+					call("alice", tool, `{"name":"entity"}`, fiber.StatusNotFound)
 				}
 			})
 		}

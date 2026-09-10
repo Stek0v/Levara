@@ -64,6 +64,7 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"       // pgx via database/sql (binary protocol, prepared stmts)
 	_ "github.com/ncruces/go-sqlite3/driver" // pure-Go SQLite driver (no CGO, ARM64 ready)
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stek0v/levara/internal/cluster"
 	vectorGrpc "github.com/stek0v/levara/internal/grpc"
 	"github.com/stek0v/levara/internal/metrics"
@@ -73,11 +74,13 @@ import (
 	accesspkg "github.com/stek0v/levara/pkg/access"
 	"github.com/stek0v/levara/pkg/audit"
 	vectorAuth "github.com/stek0v/levara/pkg/auth"
+	"github.com/stek0v/levara/pkg/backup"
 	"github.com/stek0v/levara/pkg/bm25"
 	"github.com/stek0v/levara/pkg/consolidate"
 	"github.com/stek0v/levara/pkg/embcontract"
 	"github.com/stek0v/levara/pkg/embed"
 	"github.com/stek0v/levara/pkg/graphdb"
+	"github.com/stek0v/levara/pkg/ingest"
 	"github.com/stek0v/levara/pkg/llmcache"
 	"github.com/stek0v/levara/pkg/mcp"
 	"github.com/stek0v/levara/pkg/memoryindex"
@@ -206,6 +209,10 @@ func firstNonEmpty(values ...string) string {
 	}
 	return ""
 }
+
+// Kept open until OS process exit, including detached background writers.
+// An offline snapshot must never acquire the root while a writer is alive.
+var processWriterLease *backup.Lease
 
 func main() {
 	if len(os.Args) >= 2 && os.Args[1] == "mcp" {
@@ -370,6 +377,11 @@ func main() {
 	if *configCheck {
 		os.Exit(runConfigCheck(os.Stdout, *requireAuth, *mcpAuditPath, truthyEnv("LEVARA_PROFILE_STRICT")))
 	}
+	var leaseErr error
+	processWriterLease, leaseErr = backup.AcquireWriterLease(*dataDir)
+	if leaseErr != nil {
+		log.Fatalf("data root writer lock: %v", leaseErr)
+	}
 
 	// ---------------------------------------------------------------
 	// Structured logging + error tracker (P3.4)
@@ -469,6 +481,25 @@ func main() {
 	sqlRuntime := initSQLRuntimeSuppressed(*dataDir, runtimeDSN, pgSuppressed)
 	pgDSN := sqlRuntime.DSN
 	pgDB := sqlRuntime.DB
+	if pgDB != nil {
+		writer, err := ingest.NewMetadataWriterForStorage(pgDB, fileStore)
+		if err != nil {
+			log.Fatalf("ingest storage configuration: %v", err)
+		}
+		// Recovery requires exclusive ownership of SQL and the storage namespace.
+		// The process lease provides that only for standalone local SQLite here.
+		if *standalone && vectorHttp.GetDBProvider() == vectorHttp.DBSQLite && storageBackend == "local" {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			n, err := writer.RecoverPendingIngestOffline(ctx, *dataDir+"/uploads", fileStore)
+			cancel()
+			if err != nil {
+				log.Fatalf("offline ingest recovery: %v", err)
+			}
+			if n > 0 {
+				log.Printf("recovered %d abandoned ingest attempts", n)
+			}
+		}
+	}
 	profileStrict := truthyEnv("LEVARA_PROFILE_STRICT")
 	if enforceRuntimeProfile(srvLog, buildRuntimeProfileConfig(pgDB, *requireAuth, *mcpAuditPath), profileStrict) {
 		srvLog.Error("runtime_profile_strict_fatal", nil, map[string]any{
@@ -548,26 +579,27 @@ func main() {
 	colManager.SetDefaultModel(embedModel)
 	colManager.SetDefaultEmbeddingContract(embcontract.FromEnv(embedModel, *dim, "cosine"))
 
-	// Auth endpoints (public — no JWT required)
-	jwtSecret := os.Getenv("JWT_SECRET")
-	authCfg := &vectorHttp.AuthConfig{
-		PostgresDSN: pgDSN,
-		JWTSecret:   jwtSecret,
-		DB:          pgDB,
-	}
-	vectorHttp.RegisterAuthAPI(api, authCfg) // may generate JWTSecret if empty
-
-	// SAML HTTP surface (backlog A2) — disabled unless LEVARA_SAML_ENABLED
-	// is set AND IdP metadata is configured. Construction is fail-closed: a
-	// broken SAML config aborts startup rather than registering dead routes.
-	samlSP, err := newSAMLSPFromEnv(context.Background(), accesspkg.SimpleMappingBridge{})
+	// Resolve identity stores and providers before accepting auth requests.
+	authCfg, samlSP, oidcAuth, oidcBrowser, err := prepareIdentityAuth(context.Background(), pgDB, os.Getenv("JWT_SECRET"), *requireAuth)
 	if err != nil {
-		log.Fatalf("saml: %v", err)
+		log.Fatalf("identity auth: %v", err)
 	}
+	authCfg.PostgresDSN = pgDSN
+	authCfg.DirectoryAuth, err = newDirectoryAuthFromEnv(*authCfg)
+	if err != nil {
+		log.Fatalf("directory auth: %v", err)
+	}
+	vectorHttp.RegisterAuthAPI(api, authCfg)
+	registerAuthMethods(api, *authCfg, samlSP != nil, oidcBrowser != nil)
 	if samlSP != nil {
-		samlRoutes(api, samlSP, authCfg.JWTSecret)
-		log.Printf("saml sp enabled: entity=%s acs=%s",
-			os.Getenv("LEVARA_SAML_ENTITY_ID"), os.Getenv("LEVARA_SAML_ACS_URL"))
+		returnPath, err := vectorHttp.BrowserReturnPath(os.Getenv("LEVARA_AUTH_BROWSER_RETURN_PATH"))
+		if err != nil {
+			log.Fatalf("browser return path: %v", err)
+		}
+		samlRoutes(api, samlSP, *authCfg, returnPath)
+	}
+	if oidcBrowser != nil {
+		oidcBrowser.routes(api)
 	}
 
 	// SCIM HTTP surface (backlog A3, ADR-003) — inactive unless
@@ -601,29 +633,7 @@ func main() {
 		return c.Next()
 	})
 
-	// JWT + API Key middleware on all protected routes below this point.
-	// With LEVARA_OIDC_JWKS_URL set, an additional fallback verifies bearer
-	// tokens issued by the external OIDC provider (backlog A1) and resolves
-	// them through the identity bridge. Fail-closed: a misconfigured or
-	// unreachable JWKS aborts startup right below.
-	var oidcAuth vectorHttp.ExternalBearerAuth
-	if jwksURL := strings.TrimSpace(os.Getenv("LEVARA_OIDC_JWKS_URL")); jwksURL != "" {
-		oidcCfg := vectorAuth.OIDCVerifierConfig{
-			JWKSURL:   jwksURL,
-			Issuers:   splitCSVEnv("LEVARA_OIDC_ISSUERS"),
-			Audiences: splitCSVEnv("LEVARA_OIDC_AUDIENCES"),
-		}
-		verifier, err := vectorAuth.NewOIDCVerifier(oidcCfg)
-		if err != nil {
-			log.Fatalf("oidc bearer verification: %v (check LEVARA_OIDC_JWKS_URL/LEVARA_OIDC_ISSUERS/LEVARA_OIDC_AUDIENCES)", err)
-		}
-		oidcAuth = vectorHttp.ExternalBearerAuth(&oidcBearerAuth{
-			verifier: verifier,
-			adapter:  accesspkg.OIDCAdapter{Bridge: accesspkg.SimpleMappingBridge{}},
-		})
-		log.Printf("oidc bearer verification enabled: jwks=%s issuers=%v", jwksURL, oidcCfg.Issuers)
-	}
-	api.Use(vectorHttp.JWTMiddlewareWithOIDC(authCfg.JWTSecret, *requireAuth, oidcAuth))
+	api.Use(vectorHttp.JWTMiddlewareWithOIDC(authCfg.JWTSecret, *requireAuth, oidcAuth, authCfg.CookieOrigins...))
 	api.Use(vectorHttp.APIKeyPermissionMiddleware())
 
 	// Per-user rate limit (T2 / D10): 100 req/min keyed on the user_id resolved
@@ -687,6 +697,8 @@ func main() {
 
 	// Create gRPC service (shared between gRPC server and HTTP handlers for BM25 indexes)
 	grpcSvc := vectorGrpc.NewService(colManager, c, *dim)
+	grpcSvc.SetIngestStorage(*dataDir+"/uploads", fileStore)
+	grpcSvc.SetIngestMetadata(pgDB, *requireAuth, vectorHttp.SQLRewriter())
 	bm25Store := bm25.NewSnapshotStore(*dataDir + "/bm25")
 	if loaded, err := bm25Store.LoadAll(); err != nil {
 		log.Printf("BM25 snapshot load failed (%v), starting with empty lexical indexes", err)
@@ -797,6 +809,27 @@ func main() {
 		}
 	}
 	mcpAuditSink := audit.MultiSink{mcpPrimaryAudit, mcpAuditReadModel}
+	auditWebhookCfg, err := auditWebhookFromEnv(os.Getenv)
+	if err != nil {
+		log.Fatalf("audit webhook configuration: %v", err)
+	}
+	auditWebhook, err := startAuditWebhook(context.Background(), pgDB, string(vectorHttp.GetDBProvider()), auditWebhookCfg, prometheus.DefaultRegisterer, func(error) { srvLog.Warn("audit webhook admission or delivery failed; inspect spool metrics", nil) })
+	if err != nil {
+		log.Fatalf("audit webhook initialization: %v", err)
+	}
+	var stopAuditWebhook func()
+	if auditWebhook != nil {
+		stopAuditWebhook = auditWebhook.stop
+		defer stopAuditWebhook()
+		mcpAuditSink = append(mcpAuditSink, auditWebhook.sink)
+		legacyWorkspaceAudit := wsAuditSink
+		wsAuditSink = audit.EventSinkFunc(func(e audit.Event) {
+			auditWebhook.sink.LogEvent(e)
+			if legacyWorkspaceAudit != nil {
+				legacyWorkspaceAudit.LogEvent(e)
+			}
+		})
+	}
 
 	apiCfg := vectorHttp.APIConfig{
 		PostgresDSN:                pgDSN,
@@ -872,6 +905,7 @@ func main() {
 		MCPAgentBucket:             metrics.NewUserBucket(20, time.Minute),
 		WorkspaceAuditSink:         wsAuditSink,
 		OIDCBearer:                 oidcAuth, // nil unless LEVARA_OIDC_JWKS_URL set
+		AuthCookieOrigins:          authCfg.CookieOrigins,
 	}
 
 	// MCP (Model Context Protocol) server — JSON-RPC 2.0 for AI agent integration
@@ -900,7 +934,7 @@ func main() {
 	// advances auto_run tasks through the SAME MCP task_step CAS path as
 	// external hosts; kill-switch = process exit (leases expire naturally).
 	if taskWorkerEnabled() && pgDB != nil {
-		worker := mcp.NewTaskWorker(vectorHttp.NewMCPDeps(mcpCfg), mcp.NewLoggingStepExecutor(), mcp.TaskWorkerConfig{})
+		worker := mcp.NewTaskWorker(vectorHttp.NewMCPDeps(mcpCfg), vectorHttp.NewTaskExecutor(mcpCfg), mcp.TaskWorkerConfig{})
 		worker.Start(context.Background())
 		defer worker.Stop()
 		log.Printf("autonomous task worker enabled (actor=levara:task-worker)")
@@ -991,7 +1025,7 @@ func main() {
 	log.Printf("Levara listening on HTTP:%d gRPC:%d (dim=%d, shards=%d, mode=%s, node=%s)", *port, *grpcPort, *dim, numShards, mode, nodeID)
 
 	// Graceful shutdown — see bootstrap.go for the full close ordering.
-	shutdownDone := installGracefulShutdown(app, shards, colManager, pgDB, grpcServer)
+	shutdownDone := installGracefulShutdown(app, shards, colManager, pgDB, grpcServer, stopAuditWebhook)
 
 	// Embed model keep-alive ticker (Ollama eviction defence).
 	startEmbedKeepAlive(embedEndpoint, embedModel, keepaliveDur)
@@ -1040,5 +1074,5 @@ func (o *oidcBearerAuth) Authenticate(ctx context.Context, token string) (vector
 	if err != nil {
 		return vectorHttp.ExternalPrincipal{}, err
 	}
-	return vectorHttp.ExternalPrincipal{UserID: principal.UserID, Email: principal.Email}, nil
+	return vectorHttp.ExternalPrincipal{UserID: principal.UserID, Email: principal.Email, IssuedAt: claims.IssuedAt, ExpiresAt: claims.ExpiresAt}, nil
 }

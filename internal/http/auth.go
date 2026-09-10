@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"log"
 	"os"
 	"strconv"
@@ -26,12 +27,16 @@ import (
 
 // AuthConfig holds auth settings.
 type AuthConfig struct {
-	PostgresDSN string
-	JWTSecret   string  // random secret for signing tokens
-	DB          *sql.DB // shared connection pool (nil if no PostgresDSN)
+	DirectoryAuth ExternalPasswordAuth // optional provisioned directory password login
+	CookieOrigins []string             // public callback origins for cookie CSRF validation behind proxies
+	CookieSecure  bool
+	RequireAuth   bool // only explicit no-auth mode permits a missing SQL identity store
+	PostgresDSN   string
+	JWTSecret     string  // random secret for signing tokens
+	DB            *sql.DB // shared connection pool (nil if no PostgresDSN)
 }
 
-// RegisterAuthAPI registers /auth/login and /auth/register.
+// RegisterAuthAPI registers local and optional directory login and session routes.
 // It mutates cfg.JWTSecret in-place if empty (generates random secret).
 //
 // Swagger annotations (T13) for the endpoints registered below live
@@ -47,11 +52,11 @@ func RegisterAuthAPI(app fiber.Router, cfg *AuthConfig) {
 		cfg.JWTSecret = hex.EncodeToString(b)
 	}
 
-	// Per-IP rate limit on /auth/login and /auth/register (T2 / D10): caps
+	// Per-IP rate limit on local/directory login and registration (T2 / D10): caps
 	// credential stuffing at 10 req/min per source IP. /auth/me is read-only
 	// and falls under the per-user limiter added later in the chain.
 	//
-	// SHARED bucket intent (20.04 review M4): both routes go through the
+	// SHARED bucket intent (20.04 review M4): all credential routes go through the
 	// SAME limiter instance, so the budget is combined — an attacker cannot
 	// burn 10 logins and then 10 registrations from the same IP in the same
 	// minute. If you're tempted to split them per-route to give users more
@@ -61,12 +66,16 @@ func RegisterAuthAPI(app fiber.Router, cfg *AuthConfig) {
 	authLimiter := AuthRateLimiter(authRL)
 	app.Post("/auth/login", authLimiter, loginHandler(*cfg))
 	app.Post("/auth/register", authLimiter, registerHandler(*cfg))
+	if cfg.DirectoryAuth != nil {
+		app.Post("/auth/directory/login", authLimiter, directoryLoginHandler(*cfg))
+	}
 
 	// /auth/me — Levara frontend calls this to check current user after login
 	app.Get("/auth/me", authMeHandler(*cfg))
+	app.Post("/auth/logout", logoutHandler(*cfg))
 }
 
-// authRateLimitFromEnv tunes the combined /auth/login + /auth/register bucket.
+// authRateLimitFromEnv tunes the combined local/directory login + register bucket.
 // Defaults: 10 req/min per IP (credential-stuffing guard).
 // Dev/bench: RATE_LIMIT_AUTH_MAX=10000 (see deploy/profiles/local.postgres.env.example).
 func authRateLimitFromEnv() RateLimitConfig {
@@ -92,29 +101,48 @@ type jwtHeader struct {
 }
 
 type jwtPayload struct {
-	Sub   string `json:"sub"` // user ID
-	Email string `json:"email"`
-	Exp   int64  `json:"exp"` // expiry timestamp
-	Iat   int64  `json:"iat"` // issued at
+	Sub             string `json:"sub"` // user ID
+	Email           string `json:"email"`
+	Exp             int64  `json:"exp"` // expiry timestamp
+	CredentialEpoch int64  `json:"credential_epoch,omitempty"`
+	SessionID       string `json:"sid,omitempty"`
+	Iat             int64  `json:"iat"` // issued at
 }
 
-// CreateSessionJWT issues a Levara session token for an identity resolved
-// by an external authentication flow (composition-root callers only; the
-// name deliberately carries no protocol terms — see the architecture guard
-// in pkg/access). Exposed for SSO flows wired in cmd/server.
+// CreateSessionJWT is the legacy epoch-zero issuer for no-auth development.
+// SQL-backed authentication callbacks must use IssueSessionJWT instead.
 func CreateSessionJWT(userID, email, secret string) string {
 	return createJWT(userID, email, secret)
 }
 
+// IssueSessionJWT verifies the live user and stamps the current credential
+// epoch. External authentication callbacks must use this SQL-backed issuer.
+func IssueSessionJWT(ctx context.Context, db *sql.DB, userID, email, secret string) (string, error) {
+	epoch, err := accesspkg.CurrentCredentialEpoch(ctx, db, Q, userID)
+	if err != nil {
+		return "", err
+	}
+	return createJWTAtEpoch(userID, email, secret, epoch), nil
+}
+
 func createJWT(userID, email, secret string) string {
-	header := jwtHeader{Alg: "HS256", Typ: "JWT"}
+	return createJWTAtEpoch(userID, email, secret, 0)
+}
+
+func createJWTAtEpoch(userID, email, secret string, epoch int64) string {
 	payload := jwtPayload{
-		Sub:   userID,
-		Email: email,
-		Exp:   time.Now().Add(24 * time.Hour).Unix(),
-		Iat:   time.Now().Unix(),
+		CredentialEpoch: epoch,
+		Sub:             userID,
+		Email:           email,
+		Exp:             time.Now().Add(24 * time.Hour).Unix(),
+		Iat:             time.Now().Unix(),
 	}
 
+	return signSessionPayload(payload, secret)
+}
+
+func signSessionPayload(payload jwtPayload, secret string) string {
+	header := jwtHeader{Alg: "HS256", Typ: "JWT"}
 	hJSON, _ := json.Marshal(header)
 	pJSON, _ := json.Marshal(payload)
 
@@ -139,7 +167,7 @@ func verifyJWT(token, secret string) (*jwtPayload, bool) {
 	if !ok {
 		return nil, false
 	}
-	return &jwtPayload{Sub: p.Sub, Email: p.Email, Exp: p.Exp, Iat: p.Iat}, true
+	return &jwtPayload{Sub: p.Sub, Email: p.Email, Exp: p.Exp, Iat: p.Iat, CredentialEpoch: p.CredentialEpoch, SessionID: p.SessionID}, true
 }
 
 // ── Handlers ──
@@ -160,6 +188,13 @@ func verifyJWT(token, secret string) (*jwtPayload, bool) {
 // @Router      /auth/login [post]
 func loginHandler(cfg AuthConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
+		c.SetUserContext(ctx)
+		c.Set("Cache-Control", "no-store")
+		if !CookieRequestAllowed(c, false, cfg.CookieOrigins...) {
+			return c.SendStatus(fiber.StatusForbidden)
+		}
 		// Support both JSON and form-encoded (Levara frontend uses form)
 		email := c.FormValue("username")
 		password := c.FormValue("password")
@@ -187,18 +222,18 @@ func loginHandler(cfg AuthConfig) fiber.Handler {
 		}
 
 		if cfg.DB == nil {
-			if os.Getenv("ENV") == "production" {
+			if cfg.RequireAuth || os.Getenv("ENV") == "production" {
 				return c.Status(500).JSON(fiber.Map{"detail": "database required in production mode"})
 			}
 			// No DB — accept any credentials in dev mode
 			log.Printf("[WARN] dev-mode login: accepting any credentials for %s", email)
 			token := createJWT("dev-user", email, cfg.JWTSecret)
-			setAuthCookie(c, token)
+			setAuthCookie(c, token, cfg.CookieSecure)
 			return c.JSON(fiber.Map{"access_token": token, "token_type": "bearer"})
 		}
 
 		var userID, hashedPassword string
-		err := cfg.DB.QueryRowContext(context.Background(),
+		err := cfg.DB.QueryRowContext(c.UserContext(),
 			Q("SELECT id, hashed_password FROM users WHERE email = $1"), email).Scan(&userID, &hashedPassword)
 		if err != nil {
 			return c.Status(401).JSON(fiber.Map{"detail": "invalid credentials"})
@@ -208,8 +243,11 @@ func loginHandler(cfg AuthConfig) fiber.Handler {
 			return c.Status(401).JSON(fiber.Map{"detail": "invalid credentials"})
 		}
 
-		token := createJWT(userID, email, cfg.JWTSecret)
-		setAuthCookie(c, token)
+		token, err := IssueBrowserSessionJWT(c.UserContext(), cfg.DB, userID, email, cfg.JWTSecret)
+		if err != nil {
+			return c.Status(401).JSON(fiber.Map{"detail": "invalid credentials"})
+		}
+		setAuthCookie(c, token, cfg.CookieSecure)
 		return c.JSON(fiber.Map{"access_token": token, "token_type": "bearer"})
 	}
 }
@@ -229,6 +267,12 @@ func loginHandler(cfg AuthConfig) fiber.Handler {
 // @Router      /auth/register [post]
 func registerHandler(cfg AuthConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
+		c.Set("Cache-Control", "no-store")
+		if !CookieRequestAllowed(c, false, cfg.CookieOrigins...) {
+			return c.SendStatus(fiber.StatusForbidden)
+		}
 		var req struct {
 			Email    string `json:"email"`
 			Password string `json:"password"`
@@ -237,6 +281,9 @@ func registerHandler(cfg AuthConfig) fiber.Handler {
 			return c.Status(400).JSON(fiber.Map{"detail": "email and password required"})
 		}
 
+		if cfg.DB == nil && (cfg.RequireAuth || os.Getenv("ENV") == "production") {
+			return c.Status(503).JSON(fiber.Map{"detail": "database required for registration"})
+		}
 		hashedPw, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"detail": "hash error"})
@@ -245,20 +292,40 @@ func registerHandler(cfg AuthConfig) fiber.Handler {
 		userID := generateUUID()
 
 		if cfg.DB != nil {
-			// Insert into principals first (FK requirement)
-			_, _ = cfg.DB.ExecContext(context.Background(),
-				Q("INSERT INTO principals (id, type) VALUES ($1, 'user') ON CONFLICT DO NOTHING"), userID)
-
-			_, err = cfg.DB.ExecContext(context.Background(),
-				Q(`INSERT INTO users (id, email, hashed_password, is_active, is_superuser, is_verified)
-				 VALUES ($1, $2, $3, true, false, false)`),
-				userID, req.Email, string(hashedPw))
+			// A duplicate email or database failure must not leave an orphan
+			// principal. Only the email conflict is a 409; SQL faults are retryable.
+			tx, err := cfg.DB.BeginTx(ctx, nil)
 			if err != nil {
-				return c.Status(409).JSON(fiber.Map{"detail": "user already exists or db error: " + err.Error()})
+				return c.Status(503).JSON(fiber.Map{"detail": "registration unavailable"})
+			}
+			defer tx.Rollback()
+			if _, err = tx.ExecContext(ctx, Q("INSERT INTO principals (id, type) VALUES ($1, 'user')"), userID); err != nil {
+				return c.Status(503).JSON(fiber.Map{"detail": "registration unavailable"})
+			}
+			var inserted string
+			err = tx.QueryRowContext(ctx,
+				Q(`INSERT INTO users (id, email, hashed_password, is_active, is_superuser, is_verified)
+				 VALUES ($1, $2, $3, true, false, false) ON CONFLICT(email) DO NOTHING RETURNING id`),
+				userID, req.Email, string(hashedPw)).Scan(&inserted)
+			if errors.Is(err, sql.ErrNoRows) {
+				return c.Status(409).JSON(fiber.Map{"detail": "email already registered"})
+			}
+			if err != nil {
+				return c.Status(503).JSON(fiber.Map{"detail": "registration unavailable"})
+			}
+			if err = tx.Commit(); err != nil {
+				return c.Status(503).JSON(fiber.Map{"detail": "registration unavailable"})
 			}
 		}
 
 		token := createJWT(userID, req.Email, cfg.JWTSecret)
+		if cfg.DB != nil {
+			token, err = IssueBrowserSessionJWT(ctx, cfg.DB, userID, req.Email, cfg.JWTSecret)
+			if err != nil {
+				return c.Status(503).JSON(fiber.Map{"detail": "cannot issue session"})
+			}
+		}
+		setAuthCookie(c, token, cfg.CookieSecure)
 		return c.Status(201).JSON(fiber.Map{
 			"id":           userID,
 			"email":        req.Email,
@@ -292,6 +359,10 @@ func generateUUID() string {
 // @Router      /auth/me [get]
 func authMeHandler(cfg AuthConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
+		c.SetUserContext(ctx)
+		c.Set("Cache-Control", "no-store")
 		token := ""
 		auth := c.Get("Authorization")
 		if auth != "" {
@@ -307,7 +378,7 @@ func authMeHandler(cfg AuthConfig) fiber.Handler {
 			return c.Status(401).JSON(fiber.Map{"detail": "not authenticated"})
 		}
 		payload, valid := verifyJWT(token, cfg.JWTSecret)
-		if !valid {
+		if !valid || !validSession(c.UserContext(), cfg.DB, cfg.RequireAuth, payload) {
 			return c.Status(401).JSON(fiber.Map{"detail": "invalid token"})
 		}
 
@@ -315,10 +386,10 @@ func authMeHandler(cfg AuthConfig) fiber.Handler {
 		if cfg.DB != nil {
 			var email string
 			var isActive, isSuperuser, isVerified bool
-			err := cfg.DB.QueryRowContext(context.Background(),
+			err := cfg.DB.QueryRowContext(c.UserContext(),
 				Q("SELECT email, is_active, is_superuser, is_verified FROM users WHERE id = $1"),
 				payload.Sub).Scan(&email, &isActive, &isSuperuser, &isVerified)
-			if err == nil {
+			if err == nil && isActive {
 				return c.JSON(fiber.Map{
 					"id":           payload.Sub,
 					"email":        email,
@@ -327,6 +398,7 @@ func authMeHandler(cfg AuthConfig) fiber.Handler {
 					"is_verified":  isVerified,
 				})
 			}
+			return c.Status(401).JSON(fiber.Map{"detail": "invalid user"})
 		}
 
 		return c.JSON(fiber.Map{
@@ -337,24 +409,19 @@ func authMeHandler(cfg AuthConfig) fiber.Handler {
 }
 
 // setAuthCookie sets the JWT token as an HttpOnly cookie for browser sessions.
-func setAuthCookie(c *fiber.Ctx, token string) {
-	c.Cookie(&fiber.Cookie{
-		Name:     "auth_token",
-		Value:    token,
-		Path:     "/",
-		MaxAge:   86400, // 24 hours
-		HTTPOnly: true,
-		SameSite: "Lax",
-		Secure:   c.Protocol() == "https",
-	})
+func setAuthCookie(c *fiber.Ctx, token string, secure bool) {
+	c.Response().Header.Add("Set-Cookie", BrowserSessionCookie(token, secure || c.Context().IsTLS()).String())
 }
 
 // JWTMiddleware validates JWT token on protected routes.
 // Reads token from: 1) Authorization header, 2) auth_token cookie.
 // If requireAuth is true, requests without a token are rejected (401).
 // If false, unauthenticated requests pass through (dev mode).
-func JWTMiddleware(secret string, requireAuth bool) fiber.Handler {
+func JWTMiddleware(secret string, requireAuth bool, cookieOrigins ...string) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
+		c.SetUserContext(ctx)
 		// 1. Try X-API-Key or X-Api-Key header (programmatic access)
 		apiKey := c.Get("X-API-Key")
 		if apiKey == "" {
@@ -364,8 +431,9 @@ func JWTMiddleware(secret string, requireAuth bool) fiber.Handler {
 			// auth_db may be wrapped in a struct (to prevent fasthttp io.Closer auto-close)
 			authDB := extractAuthDB(c)
 			if authDB != nil {
-				id := verifyAPIKey(authDB, apiKey)
+				id := verifyAPIKey(c.UserContext(), authDB, apiKey)
 				if id.Valid() {
+					c.Locals("verified_api_key", id)
 					c.Locals("user_id", id.UserID)
 					c.Locals("api_key_permissions", id.Permissions)
 					return c.Next()
@@ -387,6 +455,9 @@ func JWTMiddleware(secret string, requireAuth bool) fiber.Handler {
 		// 3. Fallback: cookie
 		if token == "" {
 			token = c.Cookies("auth_token")
+			if token != "" && !cookieMutationAllowed(c, cookieOrigins...) {
+				return c.SendStatus(fiber.StatusForbidden)
+			}
 		}
 
 		if token == "" {
@@ -397,12 +468,13 @@ func JWTMiddleware(secret string, requireAuth bool) fiber.Handler {
 		}
 
 		payload, valid := verifyJWT(token, secret)
-		if !valid {
+		if !valid || !validSession(c.UserContext(), extractAuthDB(c), requireAuth, payload) {
 			return c.Status(401).JSON(fiber.Map{"detail": "invalid token"})
 		}
 
 		c.Locals("user_id", payload.Sub)
 		c.Locals("email", payload.Email)
+		c.Locals("verified_jwt", *payload)
 		return c.Next()
 	}
 }
@@ -412,34 +484,24 @@ func JWTMiddleware(secret string, requireAuth bool) fiber.Handler {
 // provider (A1) and resolved through the external identity bridge.
 // Order of attempts per request: API key → Levara JWT → OIDC bearer.
 // When oidc is nil this is equivalent to JWTMiddleware.
-func JWTMiddlewareWithOIDC(secret string, requireAuth bool, oidc ExternalBearerAuth) fiber.Handler {
-	base := JWTMiddleware(secret, requireAuth)
+func JWTMiddlewareWithOIDC(secret string, requireAuth bool, oidc ExternalBearerAuth, cookieOrigins ...string) fiber.Handler {
+	base := JWTMiddleware(secret, requireAuth, cookieOrigins...)
 	if oidc == nil {
 		return base
 	}
 	return func(c *fiber.Ctx) error {
-		// API-key and Levara-JWT requests must still take the base path.
-		if apiKey := c.Get("X-API-Key"); apiKey == "" {
-			apiKey = c.Get("X-Api-Key")
-			if apiKey == "" {
-				if authHeader := c.Get("Authorization"); strings.HasPrefix(authHeader, "Bearer ") {
-					if token := bearerToken(authHeader); token != "" {
-						if _, valid := verifyJWT(token, secret); !valid {
-							// Not a Levara JWT: try the external provider before
-							// rejecting. Verified claims resolve to a Principal
-							// through the same bridge the adapter seam uses.
-							if principal, err := oidc.Authenticate(c.Context(), token); err == nil {
-								c.Locals("user_id", principal.UserID)
-								c.Locals("email", principal.Email)
-								c.Locals("principal", principal)
-								return c.Next()
-							}
-						} else {
-							c.Locals("user_id", jwtSub(token, secret))
-							c.Locals("email", jwtEmail(token, secret))
-							return c.Next()
-						}
-					}
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
+		c.SetUserContext(ctx)
+		if c.Get("X-API-Key") == "" && strings.HasPrefix(c.Get("Authorization"), "Bearer ") {
+			token := bearerToken(c.Get("Authorization"))
+			if _, valid := verifyJWT(token, secret); token != "" && !valid {
+				if principal, err := oidc.Authenticate(c.UserContext(), token); err == nil && activeExternalUser(c.UserContext(), extractAuthDB(c), principal) {
+					c.Locals("user_id", principal.UserID)
+					c.Locals("email", principal.Email)
+					c.Locals("principal", principal)
+					c.Locals("verified_external", principal)
+					return c.Next()
 				}
 			}
 		}
@@ -447,21 +509,19 @@ func JWTMiddlewareWithOIDC(secret string, requireAuth bool, oidc ExternalBearerA
 	}
 }
 
-// jwtSub / jwtEmail re-parse a token already validated by verifyJWT in the
-// caller; failures yield empty strings (claims are best-effort locals here,
-// authorization decisions were already made by verifyJWT).
-func jwtSub(token, secret string) string {
-	if p, ok := verifyJWT(token, secret); ok {
-		return p.Sub
+func validSession(ctx context.Context, db *sql.DB, requireAuth bool, payload *jwtPayload) bool {
+	if payload == nil || payload.Sub == "" {
+		return false
 	}
-	return ""
+	if db == nil {
+		return !requireAuth
+	}
+	return accesspkg.ValidateCredential(ctx, db, Q, payload.Sub, payload.CredentialEpoch) == nil && accesspkg.ValidateBrowserSession(ctx, db, Q, payload.Sub, payload.SessionID) == nil
 }
 
-func jwtEmail(token, secret string) string {
-	if p, ok := verifyJWT(token, secret); ok {
-		return p.Email
-	}
-	return ""
+func activeExternalUser(ctx context.Context, db *sql.DB, principal ExternalPrincipal) bool {
+	err := accesspkg.ValidateExternalCredential(ctx, db, Q, principal.UserID, principal.IssuedAt)
+	return err == nil
 }
 
 // ExternalBearerAuth is the minimal seam the HTTP layer needs from an
@@ -476,8 +536,10 @@ type ExternalBearerAuth interface {
 
 // ExternalPrincipal is the identity fact set the HTTP middleware consumes.
 type ExternalPrincipal struct {
-	UserID string
-	Email  string
+	IssuedAt  int64 // verified external token iat; never taken from an unverified payload
+	ExpiresAt int64 // verified bearer exp; directory password login instead creates a local session
+	UserID    string
+	Email     string
 }
 
 // APIKeyPermissionMiddleware enforces the read/write label attached by
@@ -504,19 +566,23 @@ func APIKeyPermissionMiddleware() fiber.Handler {
 // verifyAPIKey checks X-API-Key against api_keys table. Token hashing and the
 // key→user lookup stay here in the auth layer; the result is returned as the
 // transport-independent accesspkg.APIKeyIdentity (zero value when invalid).
-func verifyAPIKey(db *sql.DB, key string) accesspkg.APIKeyIdentity {
+func verifyAPIKey(ctx context.Context, db *sql.DB, key string) accesspkg.APIKeyIdentity {
 	h := apikeyHash(key)
-	var userID, permissions string
-	err := db.QueryRow(
-		Q(`SELECT user_id, permissions FROM api_keys WHERE key_hash = $1 AND revoked = FALSE`), h,
-	).Scan(&userID, &permissions)
-	if err != nil {
+	var keyID, userID, permissions string
+	err := db.QueryRowContext(ctx,
+		Q(`SELECT k.id, k.user_id, k.permissions FROM api_keys k JOIN users u ON u.id = k.user_id
+		WHERE k.key_hash = $1 AND k.revoked = FALSE AND u.is_active = true`), h,
+	).Scan(&keyID, &userID, &permissions)
+	if err != nil || keyID == "" {
 		return accesspkg.APIKeyIdentity{}
 	}
 	// Update last_used
-	db.Exec(Q(`UPDATE api_keys SET last_used = $1 WHERE key_hash = $2`),
+	db.ExecContext(ctx, Q(`UPDATE api_keys SET last_used = $1 WHERE key_hash = $2`),
 		time.Now().UTC().Format(time.RFC3339), h)
-	return accesspkg.APIKeyIdentity{UserID: userID, Permissions: permissions}
+	if ctx.Err() != nil {
+		return accesspkg.APIKeyIdentity{}
+	}
+	return accesspkg.APIKeyIdentity{KeyID: keyID, UserID: userID, Permissions: permissions}
 }
 
 func sha256Hash(s string) string {
@@ -552,6 +618,9 @@ func RegisterAPIKeyEndpoints(app fiber.Router, cfg AuthConfig) {
 
 func createAPIKeyHandler(cfg AuthConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
+		c.SetUserContext(ctx)
 		userID, _ := c.Locals("user_id").(string)
 		if userID == "" {
 			return c.Status(401).JSON(fiber.Map{"detail": "authentication required to create API key"})
@@ -581,7 +650,19 @@ func createAPIKeyHandler(cfg AuthConfig) fiber.Handler {
 		keyHash := apikeyHash(plainKey)
 		id := generateUUID()
 
-		_, err := cfg.DB.Exec(
+		tx, err := cfg.DB.BeginTx(c.UserContext(), nil)
+		if err != nil {
+			return c.Status(503).JSON(fiber.Map{"detail": "database unavailable"})
+		}
+		defer tx.Rollback()
+		result, err := tx.ExecContext(c.UserContext(), Q(`UPDATE users SET is_active = is_active WHERE id = $1 AND is_active = true`), userID)
+		if err != nil {
+			return c.Status(503).JSON(fiber.Map{"detail": "database unavailable"})
+		}
+		if n, err := result.RowsAffected(); err != nil || n != 1 {
+			return c.Status(401).JSON(fiber.Map{"detail": "invalid user"})
+		}
+		_, err = tx.ExecContext(c.UserContext(),
 			Q(`INSERT INTO api_keys (id, key_hash, user_id, name, permissions, created_at)
 			   VALUES ($1, $2, $3, $4, $5, $6)`),
 			id, keyHash, userID, req.Name, req.Permissions,
@@ -590,6 +671,9 @@ func createAPIKeyHandler(cfg AuthConfig) fiber.Handler {
 			return c.Status(500).JSON(fiber.Map{"detail": "failed to create key: " + err.Error()})
 		}
 
+		if err := tx.Commit(); err != nil {
+			return c.Status(503).JSON(fiber.Map{"detail": "failed to create key"})
+		}
 		return c.Status(201).JSON(fiber.Map{
 			"id":          id,
 			"key":         plainKey, // shown only once!
@@ -602,16 +686,21 @@ func createAPIKeyHandler(cfg AuthConfig) fiber.Handler {
 
 func listAPIKeysHandler(cfg AuthConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
 		userID, _ := c.Locals("user_id").(string)
+		if userID == "" {
+			return c.Status(401).JSON(fiber.Map{"detail": "authentication required"})
+		}
 		if cfg.DB == nil {
-			return c.JSON([]any{})
+			return c.Status(503).JSON(fiber.Map{"detail": "database not configured"})
 		}
 
-		rows, err := cfg.DB.Query(
+		rows, err := cfg.DB.QueryContext(ctx,
 			Q(`SELECT id, name, permissions, created_at, last_used, revoked
 			   FROM api_keys WHERE user_id = $1 ORDER BY created_at DESC`), userID)
 		if err != nil {
-			return c.JSON([]any{})
+			return c.Status(503).JSON(fiber.Map{"detail": "key listing unavailable"})
 		}
 		defer rows.Close()
 
@@ -620,12 +709,17 @@ func listAPIKeysHandler(cfg AuthConfig) fiber.Handler {
 			var id, name, perms, created string
 			var lastUsed sql.NullString
 			var revoked bool
-			rows.Scan(&id, &name, &perms, &created, &lastUsed, &revoked)
+			if err := rows.Scan(&id, &name, &perms, &created, &lastUsed, &revoked); err != nil {
+				return c.Status(503).JSON(fiber.Map{"detail": "key listing unavailable"})
+			}
 			keys = append(keys, fiber.Map{
 				"id": id, "name": name, "permissions": perms,
 				"created_at": created, "last_used": lastUsed.String,
 				"revoked": revoked,
 			})
+		}
+		if err := rows.Err(); err != nil {
+			return c.Status(503).JSON(fiber.Map{"detail": "key listing unavailable"})
 		}
 		if keys == nil {
 			keys = []fiber.Map{}
@@ -636,12 +730,15 @@ func listAPIKeysHandler(cfg AuthConfig) fiber.Handler {
 
 func revokeAPIKeyHandler(cfg AuthConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
+		c.SetUserContext(ctx)
 		keyID := c.Params("id")
 		userID, _ := c.Locals("user_id").(string)
 		if cfg.DB == nil {
 			return c.JSON(fiber.Map{"revoked": false})
 		}
-		cfg.DB.Exec(
+		cfg.DB.ExecContext(c.UserContext(),
 			Q(`UPDATE api_keys SET revoked = TRUE WHERE id = $1 AND user_id = $2`),
 			keyID, userID)
 		return c.JSON(fiber.Map{"revoked": true})

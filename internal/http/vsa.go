@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	accesspkg "github.com/stek0v/levara/pkg/access"
 	"log"
 	"sort"
 	"strconv"
@@ -188,6 +189,23 @@ func vsaGraphContextItems(ctx context.Context, cfg APIConfig, entityNames []stri
 		}
 		datasets = ids
 	}
+	// VSA shards aggregate a dataset without per-assertion generation proof.
+	// Registered document datasets use the SQL graph path; legacy datasets
+	// remain eligible only after the live dataset policy check.
+	if actor, scoped := ctx.Value(searchActorKey{}).(accesspkg.Actor); scoped || cfg.RequireAuth {
+		eligible := make([]string, 0, len(datasets))
+		for _, id := range datasets {
+			allowed, err := searchDocumentAllowed(ctx, cfg, actor, searchDocumentSource{DatasetID: id})
+			if err != nil {
+				return nil
+			}
+			if allowed {
+				eligible = append(eligible, id)
+			}
+		}
+		datasets = eligible
+		allowedDatasetIDs = eligible
+	}
 	if len(datasets) == 0 {
 		return nil
 	}
@@ -250,6 +268,7 @@ func vsaGraphContextItems(ctx context.Context, cfg APIConfig, entityNames []stri
 						continue
 					}
 					seen[key] = struct{}{}
+					trackSearchSource(ctx, searchDocumentSource{DatasetID: datasetID})
 					out = append(out, graphContextItem{
 						SourceName:   source.Name,
 						Predicate:    predicate,

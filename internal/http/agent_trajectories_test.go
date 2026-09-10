@@ -111,7 +111,7 @@ func TestAgentTrajectoriesFiltersPaginationAndAdminArgs(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if _, err := db.Exec(`CREATE TABLE users (id TEXT PRIMARY KEY, is_superuser INTEGER DEFAULT 0)`); err != nil {
+	if _, err := db.Exec(`CREATE TABLE users (id TEXT PRIMARY KEY, is_active INTEGER NOT NULL DEFAULT 1, is_superuser INTEGER DEFAULT 0)`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`INSERT INTO users(id, is_superuser) VALUES ('root', 1), ('user', 0)`); err != nil {

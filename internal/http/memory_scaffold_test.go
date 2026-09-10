@@ -12,6 +12,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	_ "github.com/ncruces/go-sqlite3/driver"
+	"github.com/stek0v/levara/pkg/audit"
 )
 
 func TestMemoryScaffoldProposalsFromFindingsCollapseDuplicates(t *testing.T) {
@@ -67,24 +68,24 @@ func TestMemoryScaffoldProposalDecisionTransitions(t *testing.T) {
 	if _, err := upsertMemoryScaffoldProposal(ctx, db, proposal); err != nil {
 		t.Fatal(err)
 	}
-	approved, err := decideMemoryScaffoldProposal(ctx, db, "p1", "approved", "looks good", "root")
+	approved, err := decideMemoryScaffoldProposal(ctx, db, "p1", "approved", "looks good", "root", audit.EventFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if approved.Status != "approved" || approved.DecidedBy != "root" {
 		t.Fatalf("approved=%+v", approved)
 	}
-	if _, err := decideMemoryScaffoldProposal(ctx, db, "p1", "rejected", "", "root"); err == nil {
+	if _, err := decideMemoryScaffoldProposal(ctx, db, "p1", "rejected", "", "root", audit.EventFilter{}); err == nil {
 		t.Fatal("terminal proposal should reject second decision")
 	}
-	if _, err := decideMemoryScaffoldProposal(ctx, db, "missing", "approved", "", "root"); err != sql.ErrNoRows {
+	if _, err := decideMemoryScaffoldProposal(ctx, db, "missing", "approved", "", "root", audit.EventFilter{}); err != sql.ErrNoRows {
 		t.Fatalf("missing err=%v", err)
 	}
 }
 
 func TestMemoryScaffoldProposalAPI(t *testing.T) {
 	db := newScaffoldDB(t)
-	if _, err := db.Exec(`CREATE TABLE users (id TEXT PRIMARY KEY, is_superuser INTEGER DEFAULT 0)`); err != nil {
+	if _, err := db.Exec(`CREATE TABLE users (id TEXT PRIMARY KEY, is_superuser INTEGER DEFAULT 0, is_active INTEGER NOT NULL DEFAULT 1)`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`INSERT INTO users(id, is_superuser) VALUES ('root', 1), ('user', 0)`); err != nil {
@@ -173,7 +174,7 @@ func TestMemoryScaffoldProposalAPI(t *testing.T) {
 
 func TestMemoryScaffoldDecisionRequiresAdmin(t *testing.T) {
 	db := newScaffoldDB(t)
-	if _, err := db.Exec(`CREATE TABLE users (id TEXT PRIMARY KEY, is_superuser INTEGER DEFAULT 0)`); err != nil {
+	if _, err := db.Exec(`CREATE TABLE users (id TEXT PRIMARY KEY, is_superuser INTEGER DEFAULT 0, is_active INTEGER NOT NULL DEFAULT 1)`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`INSERT INTO users(id, is_superuser) VALUES ('user', 0)`); err != nil {

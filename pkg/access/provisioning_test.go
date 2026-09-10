@@ -21,6 +21,7 @@ func newProvisioningTestDB(t *testing.T) *sql.DB {
 	}
 	t.Cleanup(func() { db.Close() })
 	for _, stmt := range []string{
+		`CREATE TABLE api_keys (id TEXT PRIMARY KEY, user_id TEXT, revoked BOOLEAN NOT NULL DEFAULT false)`,
 		`CREATE TABLE users (id TEXT PRIMARY KEY, is_active INTEGER NOT NULL DEFAULT 1, is_superuser INTEGER NOT NULL DEFAULT 0)`,
 		`CREATE TABLE datasets (id TEXT PRIMARY KEY, owner_id TEXT)`,
 		`CREATE TABLE dataset_shares (id TEXT PRIMARY KEY, dataset_id TEXT, user_id TEXT, role TEXT)`,
@@ -34,6 +35,9 @@ func newProvisioningTestDB(t *testing.T) *sql.DB {
 		if _, err := db.Exec(stmt); err != nil {
 			t.Fatalf("exec %q: %v", stmt, err)
 		}
+	}
+	if err := EnsureIdentitySchema(context.Background(), db, sqliteQ); err != nil {
+		t.Fatal(err)
 	}
 	return db
 }

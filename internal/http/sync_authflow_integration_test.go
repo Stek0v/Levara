@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"database/sql"
+	accesspkg "github.com/stek0v/levara/pkg/access"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -60,6 +61,9 @@ func newSyncIntegDB(t *testing.T, name string) *sql.DB {
 		_ = db.Close()
 		t.Fatal(err)
 	}
+	if err := accesspkg.EnsureIdentitySchema(context.Background(), db, Q); err != nil {
+		t.Fatal(err)
+	}
 	return db
 }
 
@@ -69,6 +73,7 @@ func startAuthRemote(t *testing.T, db *sql.DB, version string) string {
 	t.Helper()
 	app := fiber.New()
 	api := app.Group("/api/v1")
+	api.Use(func(c *fiber.Ctx) error { c.Locals("auth_db", &DBRef{DB: db}); return c.Next() })
 	api.Use(JWTMiddleware(syncTestSecret, true)) // requireAuth=true
 	RegisterSyncAPI(api, APIConfig{DB: db, RequireAuth: true, Version: version, EmbedModel: "potion-256"})
 	srv := httptest.NewServer(adaptor.FiberApp(app))

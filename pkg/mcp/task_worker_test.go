@@ -35,7 +35,13 @@ func (f *fakeExecutor) ExecuteStep(ctx context.Context, taskID, stepID, descript
 	delay := f.execDelay
 	f.mu.Unlock()
 	if delay > 0 {
-		time.Sleep(delay)
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			return false, "cancelled fake", ctx.Err()
+		}
 	}
 	if !ok {
 		return true, "default ok", nil

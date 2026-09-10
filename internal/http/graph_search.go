@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/stek0v/levara/pipeline"
@@ -46,6 +47,10 @@ func graphCompletionSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest
 		if err != nil {
 			continue
 		}
+		results, err = filterScoredSearchDocuments(c, cfg, results)
+		if err != nil {
+			return err
+		}
 		for _, r := range results {
 			meta := string(r.Metadata)
 			vectorChunks = append(vectorChunks, fiber.Map{
@@ -64,7 +69,11 @@ func graphCompletionSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest
 		}
 	}
 	// RBAC post-filter
-	vectorChunks = filterByAllowedDatasets(vectorChunks, req.AllowedDatasetIDs)
+	if filtered, err := filterSearchDocuments(c, cfg, vectorChunks); err != nil {
+		return err
+	} else {
+		vectorChunks = filtered
+	}
 	vectorChunks, verification := verifyScoredResults(vectorChunks, req.MinScore, req.VerifyResults)
 
 	if len(vectorChunks) > req.TopK {
@@ -187,6 +196,10 @@ func contextExtensionSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchReques
 		if err != nil {
 			continue
 		}
+		results, err = filterScoredSearchDocuments(c, cfg, results)
+		if err != nil {
+			return err
+		}
 		for _, r := range results {
 			meta := string(r.Metadata)
 			vectorChunks = append(vectorChunks, fiber.Map{
@@ -201,7 +214,11 @@ func contextExtensionSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchReques
 			}
 		}
 	}
-	vectorChunks = filterByAllowedDatasets(vectorChunks, req.AllowedDatasetIDs)
+	if filtered, err := filterSearchDocuments(c, cfg, vectorChunks); err != nil {
+		return err
+	} else {
+		vectorChunks = filtered
+	}
 	vectorChunks, verification := verifyScoredResults(vectorChunks, req.MinScore, req.VerifyResults)
 	if len(vectorChunks) > req.TopK {
 		vectorChunks = vectorChunks[:req.TopK]
@@ -346,41 +363,13 @@ func contextExtensionSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchReques
 
 // graphContextWithTargetsNeo4j returns context strings AND target entity names (for 2nd hop).
 func graphContextWithTargetsNeo4j(ctx context.Context, cfg APIConfig, names []string, allowedDatasetIDs []string) ([]string, []string) {
-	writer, err := graphdb.NewWriter(ctx, cfg.Neo4jCfg.Neo4jURL, cfg.Neo4jCfg.Neo4jUser,
-		cfg.Neo4jCfg.Neo4jPassword, cfg.Neo4jCfg.Neo4jDatabase)
-	if err != nil {
-		log.Printf("[context-extension] neo4j connect: %v", err)
-		return nil, nil
+	items := graphContextItemsFromNeo4j(ctx, cfg, names, allowedDatasetIDs)
+	var lines, targets []string
+	for _, item := range items {
+		lines = append(lines, item.format())
+		targets = append(targets, item.TargetName)
 	}
-	defer writer.Close(ctx)
-
-	var cypher string
-	params := map[string]any{"names": names}
-	if allowedDatasetIDs != nil {
-		cypher = "MATCH (n:`__Node__`)-[r]-(m:`__Node__`) WHERE n.name IN $names AND TYPE(r) <> 'HAPPENED_AT' AND (m.type IS NULL OR m.type <> 'TemporalEvent') AND (n.dataset_id IS NULL OR n.dataset_id IN $allowedIDs) RETURN n.name AS source, TYPE(r) AS rel, m.name AS target LIMIT 50"
-		params["allowedIDs"] = allowedDatasetIDs
-	} else {
-		cypher = "MATCH (n:`__Node__`)-[r]-(m:`__Node__`) WHERE n.name IN $names AND TYPE(r) <> 'HAPPENED_AT' AND (m.type IS NULL OR m.type <> 'TemporalEvent') RETURN n.name AS source, TYPE(r) AS rel, m.name AS target LIMIT 50"
-	}
-
-	rows, err := writer.Query(ctx, cypher, params)
-	if err != nil {
-		log.Printf("[context-extension] neo4j query: %v", err)
-		return nil, nil
-	}
-
-	var contextLines []string
-	var targetNames []string
-	for _, row := range rows {
-		src, _ := row["source"].(string)
-		rel, _ := row["rel"].(string)
-		tgt, _ := row["target"].(string)
-		if src != "" && tgt != "" {
-			contextLines = append(contextLines, fmt.Sprintf("%s is related to %s via %s", src, tgt, rel))
-			targetNames = append(targetNames, tgt)
-		}
-	}
-	return contextLines, targetNames
+	return lines, targets
 }
 
 // cotSearch performs multi-step Chain-of-Thought search:
@@ -439,6 +428,10 @@ func cotSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) error {
 			results, err := sp.SearchByText(ctx, coll, sub, req.TopK)
 			if err != nil {
 				continue
+			}
+			results, err = filterScoredSearchDocuments(c, cfg, results)
+			if err != nil {
+				return err
 			}
 			for _, r := range results {
 				var metaMap map[string]any
@@ -563,6 +556,10 @@ func codingRulesSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) er
 		if err != nil {
 			continue
 		}
+		results, err = filterScoredSearchDocuments(c, cfg, results)
+		if err != nil {
+			return err
+		}
 		for _, r := range results {
 			meta := string(r.Metadata)
 			var metaMap map[string]any
@@ -594,7 +591,11 @@ func codingRulesSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest) er
 	}
 
 	// RBAC post-filter.
-	codeEntities = filterByAllowedDatasets(codeEntities, req.AllowedDatasetIDs)
+	if filtered, err := filterSearchDocuments(c, cfg, codeEntities); err != nil {
+		return err
+	} else {
+		codeEntities = filtered
+	}
 	if len(codeEntities) > req.TopK {
 		codeEntities = codeEntities[:req.TopK]
 	}
@@ -829,6 +830,10 @@ func tripletCompletionSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchReque
 		if err != nil {
 			continue
 		}
+		results, err = filterScoredSearchDocuments(c, cfg, results)
+		if err != nil {
+			return err
+		}
 		for _, r := range results {
 			meta := string(r.Metadata)
 			triplets = append(triplets, fiber.Map{
@@ -851,7 +856,11 @@ func tripletCompletionSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchReque
 		}
 	}
 	// RBAC post-filter
-	triplets = filterByAllowedDatasets(triplets, req.AllowedDatasetIDs)
+	if filtered, err := filterSearchDocuments(c, cfg, triplets); err != nil {
+		return err
+	} else {
+		triplets = filtered
+	}
 
 	if len(triplets) > req.TopK {
 		triplets = triplets[:req.TopK]
@@ -1078,6 +1087,8 @@ func graphContextFromNeo4j(ctx context.Context, cfg APIConfig, names []string, a
 }
 
 func graphContextItemsFromNeo4j(ctx context.Context, cfg APIConfig, names []string, allowedDatasetIDs []string) []graphContextItem {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
 	writer, err := graphdb.NewWriter(ctx, cfg.Neo4jCfg.Neo4jURL, cfg.Neo4jCfg.Neo4jUser,
 		cfg.Neo4jCfg.Neo4jPassword, cfg.Neo4jCfg.Neo4jDatabase)
 	if err != nil {
@@ -1086,43 +1097,51 @@ func graphContextItemsFromNeo4j(ctx context.Context, cfg APIConfig, names []stri
 	}
 	defer writer.Close(ctx)
 
-	var cypher string
-	params := map[string]any{"names": names}
-	if allowedDatasetIDs != nil {
-		// Filter BOTH endpoints — otherwise a cross-dataset edge would leak the
-		// target's name into a different tenant's graph context.
-		cypher = `MATCH (n:` + "`__Node__`" + `)-[r]-(m:` + "`__Node__`" + `)
-		 WHERE n.name IN $names
-		   AND (n.dataset_id IS NULL OR n.dataset_id IN $allowedIDs)
-		   AND (m.dataset_id IS NULL OR m.dataset_id IN $allowedIDs)
-		 RETURN n.name AS source, TYPE(r) AS rel, m.name AS target
-		 LIMIT 50`
-		params["allowedIDs"] = allowedDatasetIDs
-	} else {
-		cypher = `MATCH (n:` + "`__Node__`" + `)-[r]-(m:` + "`__Node__`" + `)
-		 WHERE n.name IN $names
-		 RETURN n.name AS source, TYPE(r) AS rel, m.name AS target
-		 LIMIT 50`
-	}
-
-	rows, err := writer.Query(ctx, cypher, params)
-	if err != nil {
-		log.Printf("[graph-search] neo4j query: %v", err)
-		return nil
-	}
-
+	cypher := "MATCH (n:`__Node__`)-[r]-(m:`__Node__`) WHERE n.name IN $names " +
+		"AND TYPE(r) <> 'HAPPENED_AT' AND (m.type IS NULL OR m.type <> 'TemporalEvent') " +
+		"AND (elementId(r) > $after_edge OR (elementId(r) = $after_edge AND elementId(n) > $after_source)) " +
+		"RETURN elementId(r) AS edge_cursor, elementId(n) AS source_cursor, n.name AS source, TYPE(r) AS rel, m.name AS target, properties(n) AS source_properties, " +
+		"properties(r) AS edge_properties, properties(m) AS target_properties ORDER BY edge_cursor, source_cursor LIMIT 128"
 	var items []graphContextItem
-	for _, row := range rows {
-		src, _ := row["source"].(string)
-		rel, _ := row["rel"].(string)
-		tgt, _ := row["target"].(string)
-		if src != "" && tgt != "" {
-			items = append(items, graphContextItem{
-				SourceName: src,
-				Predicate:  rel,
-				TargetName: tgt,
-				Provider:   graphContextProviderNeo4j,
-			})
+	afterEdge, afterSource := "", ""
+	for ctx.Err() == nil {
+		rows, err := writer.Query(ctx, cypher, map[string]any{"names": names, "after_edge": afterEdge, "after_source": afterSource})
+		if err != nil {
+			return nil
+		}
+		for _, row := range rows {
+			afterEdge, _ = row["edge_cursor"].(string)
+			afterSource, _ = row["source_cursor"].(string)
+			var sources []searchDocumentSource
+			for _, key := range []string{"source_properties", "edge_properties", "target_properties"} {
+				source, err := decodeSearchDocumentSource(row[key])
+				if err != nil {
+					sources = nil
+					break
+				}
+				sources = append(sources, source)
+			}
+			if len(sources) != 3 {
+				continue
+			}
+			if sources[1].DatasetID == "" && sources[0].DatasetID == sources[2].DatasetID {
+				sources[1].DatasetID = sources[0].DatasetID
+			}
+			if !graphSourcesAllowed(ctx, cfg, sources, allowedDatasetIDs) {
+				continue
+			}
+			src, _ := row["source"].(string)
+			rel, _ := row["rel"].(string)
+			tgt, _ := row["target"].(string)
+			if src != "" && tgt != "" {
+				items = append(items, graphContextItem{SourceName: src, Predicate: rel, TargetName: tgt, DatasetID: sources[1].DatasetID, DocumentID: sources[1].DocumentID, Provider: graphContextProviderNeo4j})
+			}
+			if len(items) == 50 {
+				return items
+			}
+		}
+		if len(rows) < 128 {
+			break
 		}
 	}
 	return items
@@ -1140,79 +1159,93 @@ func graphContextFromPostgres(ctx context.Context, cfg APIConfig, names []string
 }
 
 func graphContextItemsFromPostgres(ctx context.Context, cfg APIConfig, names []string, allowedDatasetIDs []string) []graphContextItem {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
 	if cfg.DB == nil {
 		return nil
 	}
 
-	// Build placeholders for names
-	placeholders := make([]string, len(names))
-	args := make([]any, len(names))
-	for i, name := range names {
-		placeholders[i] = fmt.Sprintf("$%d", i+1)
-		args[i] = name
-	}
-
-	// Build query with optional dataset_id filter
-	var dsFilter string
-	if allowedDatasetIDs != nil {
-		// Build two independent placeholder sets — one per endpoint. Q()
-		// rewrites $N to positional '?' for the sqlite dialect, where each '?'
-		// consumes the next arg rather than referring back to a reused index;
-		// reusing one placeholder set across both IN clauses would emit more
-		// '?' than args and fail with "expected N arguments, got M". Appending
-		// the ids once per endpoint keeps the count aligned on both dialects.
-		srcPlaceholders := make([]string, len(allowedDatasetIDs))
-		for i, id := range allowedDatasetIDs {
-			srcPlaceholders[i] = fmt.Sprintf("$%d", len(args)+1)
-			args = append(args, id)
-		}
-		tgtPlaceholders := make([]string, len(allowedDatasetIDs))
-		for i, id := range allowedDatasetIDs {
-			tgtPlaceholders[i] = fmt.Sprintf("$%d", len(args)+1)
-			args = append(args, id)
-		}
-		// Filter both endpoints (gn = source, gn2 = target). A cross-dataset
-		// edge can otherwise leak the target's name into another tenant.
-		dsFilter = fmt.Sprintf(
-			" AND (gn.dataset_id IS NULL OR gn.dataset_id = '' OR gn.dataset_id IN (%s))"+
-				" AND (gn2.dataset_id IS NULL OR gn2.dataset_id = '' OR gn2.dataset_id IN (%s))",
-			strings.Join(srcPlaceholders, ","), strings.Join(tgtPlaceholders, ","))
-	}
-
-	limitIdx := len(args) + 1
-	args = append(args, 50)
-
-	nameFilter := InPlaceholders(len(names), 1)
-	query := Q(fmt.Sprintf(`
-		SELECT gn.name AS source, ge.relationship_name AS rel, gn2.name AS target,
-		       COALESCE(gn.dataset_id, gn2.dataset_id, '') AS dataset_id
-		FROM graph_edges ge
-		JOIN graph_nodes gn ON ge.source_id = gn.id
-		JOIN graph_nodes gn2 ON ge.target_id = gn2.id
-		WHERE gn.name %s AND ge.relationship_name <> 'HAPPENED_AT' AND (gn2.type IS NULL OR gn2.type <> 'TemporalEvent')%s
-		ORDER BY ge.id
-		LIMIT $%d`, nameFilter, dsFilter, limitIdx))
-
-	rows, err := cfg.DB.QueryContext(ctx, query, args...)
-	if err != nil {
-		log.Printf("[graph-search] postgres query: %v", err)
+	if len(names) == 0 {
 		return nil
 	}
-	defer rows.Close()
-
+	args := make([]any, 0, len(names)+2)
+	for _, name := range names {
+		args = append(args, name)
+	}
+	args = append(args, "", 128)
+	query := Q(fmt.Sprintf(`SELECT ge.id, gn.name, ge.relationship_name, gn2.name,
+	 COALESCE(gn.dataset_id,''), COALESCE(gn.properties,'{}'),
+	 COALESCE(ge.dataset_id,''), COALESCE(ge.properties,'{}'),
+	 COALESCE(gn2.dataset_id,''), COALESCE(gn2.properties,'{}')
+	 FROM graph_edges ge JOIN graph_nodes gn ON ge.source_id=gn.id
+	 JOIN graph_nodes gn2 ON ge.target_id=gn2.id
+	 WHERE gn.name %s AND ge.relationship_name <> 'HAPPENED_AT'
+	 AND (gn2.type IS NULL OR gn2.type <> 'TemporalEvent')
+	 AND ge.id > $%d ORDER BY ge.id LIMIT $%d`, InPlaceholders(len(names), 1), len(args)-1, len(args)))
 	var items []graphContextItem
-	for rows.Next() {
-		var src, rel, tgt, datasetID string
-		rows.Scan(&src, &rel, &tgt, &datasetID)
-		if src != "" && tgt != "" {
-			items = append(items, graphContextItem{
-				SourceName: src,
-				Predicate:  rel,
-				TargetName: tgt,
-				DatasetID:  datasetID,
-				Provider:   graphContextProviderSQL,
-			})
+	for ctx.Err() == nil {
+		rows, err := cfg.DB.QueryContext(ctx, query, args...)
+		if err != nil {
+			return nil
 		}
+		type candidate struct {
+			item    graphContextItem
+			sources []searchDocumentSource
+		}
+		var candidates []candidate
+		fetched := 0
+		afterID := ""
+		for rows.Next() {
+			fetched++
+			var c candidate
+			var datasets [3]string
+			var properties [3][]byte
+			if err := rows.Scan(&afterID, &c.item.SourceName, &c.item.Predicate, &c.item.TargetName,
+				&datasets[0], &properties[0], &datasets[1], &properties[1], &datasets[2], &properties[2]); err != nil {
+				_ = rows.Close()
+				return nil
+			}
+			// Old edges omit their dataset. Both endpoints must agree before that
+			// legacy association can be inferred; registered documents still require
+			// explicit document/version metadata on every assertion.
+			if datasets[1] == "" && datasets[0] == datasets[2] {
+				datasets[1] = datasets[0]
+			}
+			valid := true
+			for i := range datasets {
+				source, err := decodeSearchDocumentSource(properties[i])
+				if err != nil {
+					valid = false
+					break
+				}
+				source.DatasetID = datasets[i]
+				c.sources = append(c.sources, source)
+			}
+			if valid {
+				c.item.DatasetID = datasets[1]
+				c.item.DocumentID = c.sources[1].DocumentID
+				c.item.Provider = graphContextProviderSQL
+				candidates = append(candidates, c)
+			}
+		}
+		readErr := rows.Err()
+		closeErr := rows.Close()
+		if readErr != nil || closeErr != nil {
+			return nil
+		}
+		// Release rows before policy queries; single-connection pools must work.
+		for _, c := range candidates {
+			if graphSourcesAllowed(ctx, cfg, c.sources, allowedDatasetIDs) {
+				items = append(items, c.item)
+				if len(items) == 50 {
+					return items
+				}
+			}
+		}
+		if fetched < 128 {
+			break
+		}
+		args[len(args)-2] = afterID
 	}
 	return items
 }
@@ -1318,6 +1351,10 @@ func communityLocalSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest)
 		results, err := sp.SearchByText(ctx, coll, req.QueryText, req.TopK)
 		if err != nil {
 			continue
+		}
+		results, err = filterScoredSearchDocuments(c, cfg, results)
+		if err != nil {
+			return err
 		}
 		for _, r := range results {
 			var meta map[string]any

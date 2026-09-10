@@ -18,6 +18,7 @@ package ingest
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -70,31 +71,38 @@ func isInside(root, child string) bool {
 
 // Item is input to ingest.
 type Item struct {
-	ID          string
-	Text        string // for text input
-	FileData    []byte // for binary file input
-	Filename    string
-	DatasetName string
-	OwnerID     string   // user who uploaded (for dedup scoping)
-	Tags        []string // semantic tags for grouping (node_set equivalent)
-	Room        string   // sub-topic within collection (auth, deploy, ocr-bench)
+	ID                 string
+	Text               string // for text input
+	FileData           []byte // for binary file input
+	StructuredArtifact []byte // optional structured extraction bound to this source version
+	Filename           string
+	DatasetName        string
+	OwnerID            string   // user who uploaded (for dedup scoping)
+	Tags               []string // semantic tags for grouping (node_set equivalent)
+	Room               string   // sub-topic within collection (auth, deploy, ocr-bench)
 }
 
 // Result is the output of ingesting one item.
 type Result struct {
-	OriginalFilePath    string // optional source bytes, separate from extracted text
-	OriginalContentHash string
-	OriginalFileSize    int64
-	ID                  string
-	ContentHash         string
-	FilePath            string // file:// URI
-	MimeType            string
-	Extension           string
-	FileSize            int64
-	Name                string
-	Tags                string // JSON array string, e.g. '["backend","api"]'
-	Room                string // sub-topic, propagated from Item
-	AlreadyExists       bool
+	OriginalFilePath          string // optional source bytes, separate from extracted text
+	OriginalContentHash       string
+	OriginalFileSize          int64
+	ID                        string
+	ContentHash               string
+	FilePath                  string // file:// URI
+	MimeType                  string
+	Extension                 string
+	FileSize                  int64
+	Name                      string
+	Tags                      string // JSON array string, e.g. '["backend","api"]'
+	Room                      string // sub-topic, propagated from Item
+	AlreadyExists             bool
+	SourceRevision            int64 // populated by explicit source replacement
+	StructuredArtifactID      string
+	StructuredArtifactPath    string
+	StructuredArtifactHash    string
+	StructuredArtifactSize    int64
+	structuredArtifactChanged bool
 }
 
 // ingestPrep holds the pre-computed data from Phase 1 (sequential).
@@ -226,11 +234,8 @@ func prepareItem(item Item, storagePath string, seen map[string]bool) (ingestPre
 
 	tagsJSON := "[]"
 	if len(item.Tags) > 0 {
-		parts := make([]string, len(item.Tags))
-		for i, t := range item.Tags {
-			parts[i] = `"` + strings.ReplaceAll(t, `"`, `\"`) + `"`
-		}
-		tagsJSON = "[" + strings.Join(parts, ",") + "]"
+		encoded, _ := json.Marshal(item.Tags) // []string is always JSON-encodable.
+		tagsJSON = string(encoded)
 	}
 
 	return ingestPrep{

@@ -19,7 +19,7 @@ func agentTrajectoriesHandler(cfg APIConfig) fiber.Handler {
 				return err
 			}
 		}
-		rows, err := cfg.MCPAuditReadModel.EventsForTrajectories(c.UserContext(), audit.EventFilter{
+		filter, err := scopedAuditFilter(c, cfg, audit.EventFilter{
 			Since:       time.Now().Add(-time.Duration(windowHours(c)) * time.Hour),
 			Tool:        c.Query("tool"),
 			Client:      c.Query("client"),
@@ -27,6 +27,10 @@ func agentTrajectoriesHandler(cfg APIConfig) fiber.Handler {
 			Limit:       20000,
 			IncludeArgs: includeArgs,
 		})
+		if err != nil {
+			return err
+		}
+		rows, err := cfg.MCPAuditReadModel.EventsForTrajectories(c.UserContext(), filter)
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": "agent trajectory query failed"})
 		}
@@ -58,11 +62,15 @@ func agentTrajectoryDetailHandler(cfg APIConfig) fiber.Handler {
 				return err
 			}
 		}
-		rows, err := cfg.MCPAuditReadModel.EventsForTrajectories(c.UserContext(), audit.EventFilter{
+		filter, err := scopedAuditFilter(c, cfg, audit.EventFilter{
 			Since:       time.Now().Add(-time.Duration(windowHours(c)) * time.Hour),
 			Limit:       20000,
 			IncludeArgs: includeArgs,
 		})
+		if err != nil {
+			return err
+		}
+		rows, err := cfg.MCPAuditReadModel.EventsForTrajectories(c.UserContext(), filter)
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": "agent trajectory query failed"})
 		}

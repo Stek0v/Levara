@@ -101,13 +101,14 @@ and `docs/profile-presets.md`.
 
 ## Claim Guardrails
 
-- Use “adapter contract”, “seam”, or “verified-claims adapter” for current
-  enterprise identity/storage/KMS work.
-- OIDC bearer verification, SAML SP and limited SCIM Users HTTP exist; do not
-  equate them with browser OIDC login, native LDAP, SCIM-to-SSO linking or group
-  authorization. Follow [enterprise identity](../enterprise-identity.md).
-- Do not claim production SIEM, KMS/BYOK, corporate Azure/GCS controls or legal
-  hold enforcement until concrete backends and acceptance evidence exist.
+- State that LDAP/LDAPS/StartTLS, browser OIDC, SAML, SCIM Users/Groups and SQL
+  identity linking are implemented locally; do not claim real AD/IdP or vendor
+  certification without deployment evidence. Follow [enterprise identity](../enterprise-identity.md).
+- State that AWS S3/KMS implementations pass local contract tests; do not claim
+  production SIEM, Azure/GCS controls, external KMS acceptance or end-to-end
+  legal hold without provider evidence.
+- Document/group authorization exists as policy code, while the public API and
+  WebUI flow remain unavailable until router integration.
 - Use [testing evidence](../testing.md) for verified results and known
   limitations. Historical multi-user JSON does not prove authenticated owner
   isolation, successful fresh workspace writes or independent-node sync.

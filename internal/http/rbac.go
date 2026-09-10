@@ -62,17 +62,20 @@ func datasetSharesListHandler(cfg APIConfig) fiber.Handler {
 			 FROM dataset_shares s LEFT JOIN users u ON s.user_id = u.id
 			 WHERE s.dataset_id = $1 ORDER BY s.created_at`), dsID)
 		if err != nil {
-			return c.JSON([]ShareDTO{})
+			return c.Status(503).JSON(fiber.Map{"detail": "share listing unavailable"})
 		}
 		defer rows.Close()
 
 		var shares []ShareDTO
 		for rows.Next() {
 			var s ShareDTO
-			var ca time.Time
-			rows.Scan(&s.ID, &s.DatasetID, &s.UserID, &s.UserEmail, &s.Role, &s.GrantedBy, &ca)
-			s.CreatedAt = ca.Format(time.RFC3339)
+			if err := rows.Scan(&s.ID, &s.DatasetID, &s.UserID, &s.UserEmail, &s.Role, &s.GrantedBy, &s.CreatedAt); err != nil {
+				return c.Status(503).JSON(fiber.Map{"detail": "share listing unavailable"})
+			}
 			shares = append(shares, s)
+		}
+		if err := rows.Err(); err != nil {
+			return c.Status(503).JSON(fiber.Map{"detail": "share listing unavailable"})
 		}
 		if shares == nil {
 			shares = []ShareDTO{}

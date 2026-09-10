@@ -5,10 +5,12 @@ import { usePathname } from 'next/navigation'
 import { cn } from '@/lib/utils'
 import {
   LayoutDashboard, Database, Search, MessageCircle, Share2,
-  Brain, Settings, BarChart3, BookOpen, Menu, X, Files, RefreshCw, Shield, Activity, ListTodo,
+  LogOut, Brain, Settings, BarChart3, BookOpen, Menu, X, Files, RefreshCw, Shield, Activity, ListTodo,
 } from 'lucide-react'
 import { useState } from 'react'
 import { useT } from '@/lib/i18n'
+import { levara } from '@/lib/api'
+import { useQueryClient } from '@tanstack/react-query'
 
 // nameKey is resolved through i18n at render time so the sidebar follows
 // the active locale without a reload.
@@ -69,6 +71,22 @@ const navGroups: NavGroup[] = [
 export function Sidebar() {
   const t = useT()
   const pathname = usePathname()
+  const queryClient = useQueryClient()
+  const [loggingOut, setLoggingOut] = useState(false)
+  const [logoutError, setLogoutError] = useState('')
+  const logoutLabel = t('nav.logout') === 'Выйти' ? 'Выйти' : 'Log out'
+  const logout = async () => {
+    setLoggingOut(true)
+    setLogoutError('')
+    try {
+      await levara.logout()
+      queryClient.clear()
+      window.location.assign('/login')
+    } catch {
+      setLogoutError(logoutLabel === 'Выйти' ? 'Не удалось завершить сессию. Повторите выход.' : 'Could not end the session. Please retry logout.')
+      setLoggingOut(false)
+    }
+  }
   const [collapsed, setCollapsed] = useState(true) // default collapsed on mobile
 
   return (
@@ -139,6 +157,13 @@ export function Sidebar() {
             </div>
           ))}
         </nav>
+        <div className="border-t border-gray-200 dark:border-gray-800 p-2">
+          {logoutError && <p role="alert" className="text-xs text-red-600 mb-2">{logoutError}</p>}
+          <button type="button" onClick={logout} disabled={loggingOut} aria-label={logoutLabel} title={logoutLabel} className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-50">
+            <LogOut className="h-5 w-5 shrink-0" />
+            {!collapsed && logoutLabel}
+          </button>
+        </div>
       </aside>
     </>
   )

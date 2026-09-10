@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	accesspkg "github.com/stek0v/levara/pkg/access"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -18,6 +19,9 @@ import (
 
 func TestSyncRejectsOrdinaryAuthenticatedUser(t *testing.T) {
 	db := newMCPMemoryBehaviorDB(t)
+	if err := accesspkg.EnsureIdentitySchema(context.Background(), db, Q); err != nil {
+		t.Fatal(err)
+	}
 	for _, q := range []string{
 		`INSERT INTO principals(id) VALUES('ordinary')`,
 		`INSERT INTO users(id,email,hashed_password) VALUES('ordinary','ordinary@example.test','unused')`,
@@ -28,7 +32,7 @@ func TestSyncRejectsOrdinaryAuthenticatedUser(t *testing.T) {
 		}
 	}
 	app := fiber.New()
-	api := app.Group("/api/v1", JWTMiddleware(syncTestSecret, true), APIKeyPermissionMiddleware())
+	api := app.Group("/api/v1", func(c *fiber.Ctx) error { c.Locals("auth_db", &DBRef{DB: db}); return c.Next() }, JWTMiddleware(syncTestSecret, true), APIKeyPermissionMiddleware())
 	RegisterSyncAPI(api, APIConfig{DB: db, RequireAuth: true})
 	for _, tc := range []struct{ method, path, body string }{
 		{"GET", "/sync/export/memories", ""},

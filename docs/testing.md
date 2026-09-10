@@ -1,11 +1,74 @@
 # Проверки и результаты тестирования
 
-Проверено 2026-09-05. Результат теста относится к указанным исходникам,
+Обновлено 2026-09-10. Результат теста относится к указанным исходникам,
 зависимостям и сценарию. Наличие теста или зелёный статус benchmark-скрипта
 само по себе не подтверждает качество поиска, изоляцию пользователей или
 работу реального внешнего сервиса.
 
-## Последний подтверждённый прогон документов и идентичности
+## Публикация и статусы документов — 2026-09-10
+
+На текущем рабочем дереве выполнены race-прогоны с SQLite и изолированным
+PostgreSQL 16:
+
+| Проверка | Наблюдаемый результат | Граница доказательства |
+|---|---|---|
+| `go test -race -p 1 ./pkg/mcp ./pkg/orchestrator ./pkg/access -count=1` | PASS: MCP 12.477s, orchestrator 1.565s, access 10.235s | Полные suites этих трёх пакетов |
+| 21 профильный `internal/http` сценарий с `-race` | PASS: 33.399s | Inline HTTP/MCP legacy/latest, atomic attempt/publication, batch claim rollback, partial batch failure, exact counters/status/lineage, source replacement, activity ACL, graph и session provenance на обеих SQL |
+| `LEVARA_TEST_POSTGRES_DSN=... go test -race ./internal/http -count=1` | PASS: 1189 тестов/подтестов, 0 FAIL; 185 PostgreSQL pass-событий | Весь HTTP package; пропущен только opt-in load-baseline `TestDCDVSALoadBaseline` |
+| `make contract && make contract-check` | PASS | Generated MCP/API contract соответствует descriptors и schema |
+| `go test ./docs -count=1` | PASS | Ссылки и заявленные capability markers; не внешний provider test |
+
+Подтверждено, что run появляется только после сохранения server-assigned source
+и атомарного claim всех источников; несколько inline texts получают отдельные
+terminal statuses, counters и lineage. Publication и `COMPLETED` фиксируются
+одной транзакцией по точному ключу dataset, document, collection, source
+revision/hash и attempt; поздний worker не заменяет более новый запуск, а неудачный reprocess
+не стирает последнюю успешную publication. Частичный batch сохраняет первый
+успех, помечает failed/unattempted sources и откатывает весь claim, если один
+source устарел. Замена source и перенос alias не возрождают старый `COMPLETED`. Старые значения
+только в `data.pipeline_status` не имеют dataset provenance, поэтому после
+обновления показываются как неизвестные до повторной обработки.
+
+`query_entity` проверяет publication и document grants для всех assertions.
+`git_search` и `analyze_commits` требуют активного instance administrator, а
+dataset activity не возвращает metadata restricted-документа без прямого
+доступа. MCP start/status payloads и пустые success-ветви `query_entity`,
+`git_search`, `analyze_commits` проходят заявленный output schema, включая stage
+events.
+
+Широкий `internal/http` race-прогон теперь зелёный. Исправлены terminal barrier
+и атомарная фиксация failure всех точных источников batch cognify, legacy dataset ACL для DCD/VSA/RBAC/tenant graph, атомарная
+постановка memory delete в доступный outbox, схема `sync_status` и граница
+workspace policy SQL. Полный release gate по-прежнему требует внешних сервисов
+и остальных перечисленных ниже проверок; локальный HTTP gate закрыт.
+
+## Structured upload и source replacement — 2026-09-10
+
+| Проверка | Наблюдаемый результат | Граница доказательства |
+|---|---|---|
+| HTTP preflight/failure matrix с `-race` | PASS: неверный второй файл, sidecar failure при доступном локальном тексте, revoked credential, раздельные dataset/document права, timeout/retry, pre-sidecar replacement conflicts | Реальный Fiber handler, SQLite, fake structured extractor |
+| `TestReplaceAuthorizedSourceCAS` с `-race -v` | PASS: SQLite + PostgreSQL 16 | Uppercase hash, content/source revision, publication invalidation, storage cleanup, stale CAS, shared source |
+| `TestReplaceAuthorizedConcurrentCAS` с `-race -v` | PASS: SQLite + PostgreSQL 16 | Два одновременных writer: один success, один version conflict |
+| `TestStructuredArtifactOnlyReplacementUsesSourceCAS` с `-race -v` | PASS: SQLite + PostgreSQL 16 | Разный JSON при одинаковой projection входит в source/content CAS: один writer success, второй conflict; no-CAS для registered document отклонён |
+| `TestStructuredArtifactDuplicateBatch` с `-race -v` | PASS: SQLite + PostgreSQL 16, local + remote | Дубликаты получают общий artifact ID/path и одну inventory-запись |
+
+Проверки не измеряют качество реального structured extractor. Инвентаризация
+и retention проверены отдельно: SQLite/PostgreSQL publication rollback,
+current-lineage API read, user/group grant и revoke, A→B→A, hold, shared alias,
+точный A→A no-op, artifact-only replacement, обычный re-ingest при равной
+projection, rename retirement, local cleanup и retry после отказа remote storage. Реальный S3/KMS и corpus
+остаются отдельной приёмкой.
+
+```sh
+LEVARA_TEST_POSTGRES_DSN="$TEST_DSN" go test -race ./pkg/ingest ./pkg/access \
+  -run 'TestStructuredArtifact|TestPruneRetiresStructuredArtifacts' -count=1
+go test -race ./internal/http \
+  -run 'TestStructuredArtifact|TestRESTRouteInventoryMatchesRegisterAPI' -count=1
+go test ./pkg/structuredextract \
+  -run 'TestClient(Extract|RejectsOversizedResponse)' -count=1
+```
+
+## Исторический прогон документов и идентичности — 2026-09-05
 
 Исходники: `06bfa774cfb5bbadb8052c84e4b62ff1a7dd2fac`; среда: macOS arm64,
 Go из `go.mod`, SQLite и изолированный PostgreSQL 16. Прогон выполнен

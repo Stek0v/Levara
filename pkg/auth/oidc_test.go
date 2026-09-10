@@ -169,6 +169,41 @@ func TestOIDCAudienceAsString(t *testing.T) {
 	}
 }
 
+func TestOIDCReturnsVerifiedIssuedAt(t *testing.T) {
+	tk := newTestKeys(t)
+	v := newVerifier(t, tk)
+	for _, issuedAt := range []int64{0, time.Now().Add(-time.Minute).Unix()} {
+		input := baseClaims(time.Now())
+		if issuedAt == 0 {
+			delete(input, "iat")
+		} else {
+			input["iat"] = issuedAt
+		}
+		claims, err := v.Verify(tk.signRS256(t, tk.rsaKid, nil, input))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if claims.IssuedAt != issuedAt {
+			t.Errorf("issuedAt=%d, want %d", claims.IssuedAt, issuedAt)
+		}
+	}
+}
+
+func TestOIDCReturnsVerifiedExpiresAt(t *testing.T) {
+	tk := newTestKeys(t)
+	v := newVerifier(t, tk)
+	input := baseClaims(time.Now())
+	want := time.Now().Add(42 * time.Second).Unix()
+	input["exp"] = want
+	claims, err := v.Verify(tk.signRS256(t, tk.rsaKid, nil, input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claims.ExpiresAt != want {
+		t.Fatalf("verified expiry lost: %d, want %d", claims.ExpiresAt, want)
+	}
+}
+
 // ── signature corner cases ──
 
 func TestOIDCRejectsTamperedPayload(t *testing.T) {

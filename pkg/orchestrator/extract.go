@@ -55,6 +55,13 @@ func useStructuredOutput(cfg Config) bool {
 // to produce JSON, but parseEntities tolerates markdown wrappers via
 // extractJSON.
 func extractEntities(ctx context.Context, client *http.Client, cfg Config, text string) ([]graph.DedupNode, []graph.DedupEdge, error) {
+	if cfg.GuardTransfer != nil {
+		release, err := cfg.GuardTransfer(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		defer release()
+	}
 	sysPrompt := cfg.SystemPrompt
 	if sysPrompt == "" {
 		sysPrompt = defaultExtractionPrompt

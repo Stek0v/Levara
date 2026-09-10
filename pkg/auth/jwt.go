@@ -21,10 +21,12 @@ import (
 // internal/http.jwtPayload it was extracted from; changing them would
 // silently invalidate tokens already in the wild.
 type Payload struct {
-	Sub   string `json:"sub"`   // user ID
-	Email string `json:"email"` // may be empty for API-key derived tokens
-	Exp   int64  `json:"exp"`   // expiry (unix seconds)
-	Iat   int64  `json:"iat"`   // issued at (unix seconds)
+	Sub             string `json:"sub"`   // user ID
+	Email           string `json:"email"` // may be empty for API-key derived tokens
+	Exp             int64  `json:"exp"`   // expiry (unix seconds)
+	CredentialEpoch int64  `json:"credential_epoch,omitempty"`
+	SessionID       string `json:"sid,omitempty"`
+	Iat             int64  `json:"iat"` // issued at (unix seconds)
 }
 
 // VerifyJWT validates an HS256-signed JWT against secret and returns the
@@ -36,7 +38,15 @@ type Payload struct {
 // trust the payload on a false return value.
 func VerifyJWT(token, secret string) (*Payload, bool) {
 	parts := strings.SplitN(token, ".", 3)
-	if len(parts) != 3 {
+	if len(parts) != 3 || secret == "" {
+		return nil, false
+	}
+
+	headerJSON, err := base64.RawURLEncoding.DecodeString(parts[0])
+	var header struct {
+		Alg string `json:"alg"`
+	}
+	if err != nil || json.Unmarshal(headerJSON, &header) != nil || header.Alg != "HS256" {
 		return nil, false
 	}
 
@@ -57,7 +67,7 @@ func VerifyJWT(token, secret string) (*Payload, bool) {
 	if err := json.Unmarshal(pJSON, &p); err != nil {
 		return nil, false
 	}
-	if p.Exp < time.Now().Unix() {
+	if p.Exp <= time.Now().Unix() || p.Sub == "" || p.CredentialEpoch < 0 {
 		return nil, false
 	}
 	return &p, true

@@ -5,7 +5,9 @@ package http
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -92,6 +94,8 @@ type syncRunRequest struct {
 
 func syncRunHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		ctx, cancel := syncRequestContext(c)
+		defer cancel()
 		var req syncRunRequest
 		if err := c.BodyParser(&req); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
@@ -106,16 +110,19 @@ func syncRunHandler(cfg APIConfig) fiber.Handler {
 		if direction != "pull" && direction != "push" {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "direction must be pull or push"})
 		}
-		result, manifest, err := (&mcpHandler{cfg: cfg}).DoSync(c.UserContext(), strings.TrimRight(req.RemoteURL, "/"), direction, req.Types, req.Since, req.Collections)
+		result, manifest, err := (&mcpHandler{cfg: cfg}).DoSync(ctx, strings.TrimRight(req.RemoteURL, "/"), direction, req.Types, req.Since, req.Collections)
 		if err != nil {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+			(&mcpHandler{cfg: cfg}).logHeartbeatContext(ctx, "sync", map[string]any{"direction": direction, "types": req.Types, "status": "error", "error": syncErrorText(err, cfg.SyncToken)})
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": syncErrorText(err, cfg.SyncToken)})
 		}
 		result["remote_manifest"] = manifest
 		if cfg.DB != nil {
-			(&mcpHandler{cfg: cfg}).LogHeartbeat("sync", map[string]any{
+			(&mcpHandler{cfg: cfg}).logHeartbeatContext(ctx, "sync", map[string]any{
 				"direction": direction,
 				"remote":    strings.TrimRight(req.RemoteURL, "/"),
 				"types":     req.Types,
+				"status":    result["status"],
+				"result":    result,
 			})
 		}
 		return c.JSON(result)
@@ -186,12 +193,21 @@ func syncManifestHandler(identityCfg IdentityConfig, accessCfg AccessConfig, sea
 			}
 		}
 		if accessCfg.DB != nil {
-			accessCfg.DB.QueryRowContext(ctx, Q(`SELECT COUNT(*) FROM memories`)).Scan(&m.Memories.Count)
-			accessCfg.DB.QueryRowContext(ctx, Q(`SELECT COALESCE(MAX(updated_at),'') FROM memories`)).Scan(&m.Memories.LatestUpdated)
-			accessCfg.DB.QueryRowContext(ctx, Q(`SELECT COUNT(*) FROM interactions`)).Scan(&m.Interactions.Count)
-			accessCfg.DB.QueryRowContext(ctx, Q(`SELECT COALESCE(MAX(created_at),'') FROM interactions`)).Scan(&m.Interactions.LatestUpdated)
-			accessCfg.DB.QueryRowContext(ctx, Q(`SELECT COUNT(*) FROM graph_nodes`)).Scan(&m.GraphNodes.Count)
-			accessCfg.DB.QueryRowContext(ctx, Q(`SELECT COUNT(*) FROM graph_edges`)).Scan(&m.GraphEdges.Count)
+			for _, query := range []struct {
+				sql    string
+				target any
+			}{
+				{`SELECT COUNT(*) FROM memories`, &m.Memories.Count},
+				{`SELECT COALESCE(CAST(MAX(updated_at) AS TEXT),'') FROM memories`, &m.Memories.LatestUpdated},
+				{`SELECT COUNT(*) FROM interactions`, &m.Interactions.Count},
+				{`SELECT COALESCE(CAST(MAX(created_at) AS TEXT),'') FROM interactions`, &m.Interactions.LatestUpdated},
+				{`SELECT COUNT(*) FROM graph_nodes`, &m.GraphNodes.Count},
+				{`SELECT COUNT(*) FROM graph_edges`, &m.GraphEdges.Count},
+			} {
+				if err := accessCfg.DB.QueryRowContext(ctx, Q(query.sql)).Scan(query.target); err != nil {
+					return c.Status(500).JSON(fiber.Map{"detail": "sync manifest database query failed"})
+				}
+			}
 		}
 		return c.JSON(m)
 	}
@@ -218,46 +234,53 @@ func syncExportMemoriesHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		ctx, cancel := syncRequestContext(c)
 		defer cancel()
-
-		if cfg.DB == nil {
-			return c.JSON([]syncMemory{})
-		}
-		since := c.Query("since")
-		var rows interface {
-			Next() bool
-			Scan(...any) error
-			Close() error
-		}
-		var err error
-		if since != "" {
-			rows, err = cfg.DB.QueryContext(ctx,
-				Q(`SELECT id, key, value, type, owner_id, collection_name,
-					 COALESCE(room,''), COALESCE(hall,''), is_pinned, pin_priority,
-					 created_at, updated_at
-					 FROM memories WHERE updated_at > $1 ORDER BY updated_at LIMIT 10000`), since)
-		} else {
-			rows, err = cfg.DB.QueryContext(ctx,
-				Q(`SELECT id, key, value, type, owner_id, collection_name,
-					 COALESCE(room,''), COALESCE(hall,''), is_pinned, pin_priority,
-					 created_at, updated_at
-					 FROM memories ORDER BY updated_at LIMIT 10000`))
-		}
+		result, err := exportSyncMemories(ctx, cfg, c.Query("since"))
 		if err != nil {
-			return c.Status(500).JSON(fiber.Map{"detail": err.Error()})
-		}
-		defer rows.Close()
-		var result []syncMemory
-		for rows.Next() {
-			var m syncMemory
-			rows.Scan(&m.ID, &m.Key, &m.Value, &m.Type, &m.OwnerID, &m.CollectionName,
-				&m.Room, &m.Hall, &m.IsPinned, &m.PinPriority, &m.CreatedAt, &m.UpdatedAt)
-			result = append(result, m)
-		}
-		if result == nil {
-			result = []syncMemory{}
+			return c.Status(500).JSON(fiber.Map{"detail": syncErrorText(err, cfg.SyncToken)})
 		}
 		return c.JSON(result)
 	}
+}
+
+func exportSyncMemories(ctx context.Context, cfg APIConfig, since string) ([]syncMemory, error) {
+	if cfg.DB == nil {
+		return nil, fmt.Errorf("database not configured")
+	}
+	var rows *sql.Rows
+	var err error
+	if since != "" {
+		rows, err = cfg.DB.QueryContext(ctx,
+			Q(`SELECT id, key, value, type, owner_id, collection_name,
+					 COALESCE(room,''), COALESCE(hall,''), is_pinned, pin_priority,
+					 created_at, updated_at
+					 FROM memories WHERE updated_at > $1 ORDER BY updated_at LIMIT 10000`), since)
+	} else {
+		rows, err = cfg.DB.QueryContext(ctx,
+			Q(`SELECT id, key, value, type, owner_id, collection_name,
+					 COALESCE(room,''), COALESCE(hall,''), is_pinned, pin_priority,
+					 created_at, updated_at
+					 FROM memories ORDER BY updated_at LIMIT 10000`))
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []syncMemory
+	for rows.Next() {
+		var m syncMemory
+		if err := rows.Scan(&m.ID, &m.Key, &m.Value, &m.Type, &m.OwnerID, &m.CollectionName,
+			&m.Room, &m.Hall, &m.IsPinned, &m.PinPriority, &m.CreatedAt, &m.UpdatedAt); err != nil {
+			return nil, err
+		}
+		result = append(result, m)
+	}
+	if result == nil {
+		result = []syncMemory{}
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 func syncImportMemoriesHandler(cfg APIConfig) fiber.Handler {
@@ -273,34 +296,8 @@ func syncImportMemoriesHandler(cfg APIConfig) fiber.Handler {
 			return c.Status(400).JSON(fiber.Map{"detail": "invalid JSON array"})
 		}
 
-		imported, skipped := 0, 0
-		for _, m := range memories {
-			// Last-writer-wins, enforced atomically (finding H5, 2026-09-03
-			// review): the conflict clause carries a WHERE guard so a
-			// concurrent import that lands between our SELECT and INSERT can
-			// never be overwritten by an older row. The conditional insert
-			// also avoids the separate SELECT entirely.
-			q, qargs := QArgs(`INSERT INTO memories (
-					id, key, value, type, owner_id, collection_name, room, hall,
-					is_pinned, pin_priority, created_at, updated_at
-				)
-				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-				 ON CONFLICT(key, owner_id, collection_name) DO UPDATE SET
-					value = $3, type = $4, collection_name = $6, room = $7, hall = $8,
-					is_pinned = $9, pin_priority = $10, updated_at = $12
-				 WHERE memories.updated_at < EXCLUDED.updated_at`,
-				m.ID, m.Key, m.Value, m.Type, m.OwnerID, m.CollectionName,
-				m.Room, m.Hall, m.IsPinned, m.PinPriority, m.CreatedAt, m.UpdatedAt)
-			res, err := cfg.DB.ExecContext(ctx, q, qargs...)
-			if err != nil {
-				continue
-			}
-			if n, _ := res.RowsAffected(); n > 0 {
-				imported++
-			} else {
-				skipped++
-			}
-		}
+		counts, accepted, importErr := importSyncMemories(ctx, cfg, memories)
+		imported := counts["imported"]
 
 		metrics.SyncOperations.WithLabelValues("import", "memories", "ok").Add(float64(imported))
 
@@ -315,7 +312,7 @@ func syncImportMemoriesHandler(cfg APIConfig) fiber.Handler {
 			if embedClient == nil {
 				embedClient = embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 3)
 			}
-			memoriesSnapshot := memories
+			memoriesSnapshot := accepted
 			go func() {
 				defer func() {
 					if r := recover(); r != nil {
@@ -349,7 +346,9 @@ func syncImportMemoriesHandler(cfg APIConfig) fiber.Handler {
 			}()
 		}
 
-		return c.JSON(fiber.Map{"imported": imported, "skipped": skipped, "total": len(memories), "embedding": imported > 0})
+		result := syncCountsResult(counts, importErr, cfg.SyncToken)
+		result["embedding"] = imported > 0 && cfg.EmbedEndpoint != "" && cfg.Collections != nil
+		return c.JSON(result)
 	}
 }
 
@@ -369,41 +368,48 @@ func syncExportInteractionsHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		ctx, cancel := syncRequestContext(c)
 		defer cancel()
-
-		if cfg.DB == nil {
-			return c.JSON([]syncInteraction{})
-		}
-		since := c.Query("since")
-		var rows interface {
-			Next() bool
-			Scan(...any) error
-			Close() error
-		}
-		var err error
-		if since != "" {
-			rows, err = cfg.DB.QueryContext(ctx,
-				Q(`SELECT id, session_id, user_id, query, response, search_type, created_at
-					 FROM interactions WHERE created_at > $1 ORDER BY created_at LIMIT 10000`), since)
-		} else {
-			rows, err = cfg.DB.QueryContext(ctx,
-				Q(`SELECT id, session_id, user_id, query, response, search_type, created_at
-					 FROM interactions ORDER BY created_at LIMIT 10000`))
-		}
+		result, err := exportSyncInteractions(ctx, cfg, c.Query("since"))
 		if err != nil {
-			return c.Status(500).JSON(fiber.Map{"detail": err.Error()})
-		}
-		defer rows.Close()
-		var result []syncInteraction
-		for rows.Next() {
-			var i syncInteraction
-			rows.Scan(&i.ID, &i.SessionID, &i.UserID, &i.Query, &i.Response, &i.SearchType, &i.CreatedAt)
-			result = append(result, i)
-		}
-		if result == nil {
-			result = []syncInteraction{}
+			return c.Status(500).JSON(fiber.Map{"detail": syncErrorText(err, cfg.SyncToken)})
 		}
 		return c.JSON(result)
 	}
+}
+
+func exportSyncInteractions(ctx context.Context, cfg APIConfig, since string) ([]syncInteraction, error) {
+	if cfg.DB == nil {
+		return nil, fmt.Errorf("database not configured")
+	}
+	var rows *sql.Rows
+	var err error
+	if since != "" {
+		rows, err = cfg.DB.QueryContext(ctx,
+			Q(`SELECT id, COALESCE(session_id,''), COALESCE(user_id,''), COALESCE(query,''), COALESCE(response,''), COALESCE(search_type,''), created_at
+					 FROM interactions WHERE created_at > $1 ORDER BY created_at LIMIT 10000`), since)
+	} else {
+		rows, err = cfg.DB.QueryContext(ctx,
+			Q(`SELECT id, COALESCE(session_id,''), COALESCE(user_id,''), COALESCE(query,''), COALESCE(response,''), COALESCE(search_type,''), created_at
+					 FROM interactions ORDER BY created_at LIMIT 10000`))
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []syncInteraction
+	for rows.Next() {
+		var i syncInteraction
+		if err := rows.Scan(&i.ID, &i.SessionID, &i.UserID, &i.Query, &i.Response, &i.SearchType, &i.CreatedAt); err != nil {
+			return nil, err
+		}
+		result = append(result, i)
+	}
+	if result == nil {
+		result = []syncInteraction{}
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 func syncImportInteractionsHandler(cfg APIConfig) fiber.Handler {
@@ -419,23 +425,8 @@ func syncImportInteractionsHandler(cfg APIConfig) fiber.Handler {
 			return c.Status(400).JSON(fiber.Map{"detail": "invalid JSON array"})
 		}
 
-		imported, skipped := 0, 0
-		for _, i := range interactions {
-			q, qargs := QArgs(`INSERT INTO interactions (id, session_id, user_id, query, response, search_type, created_at)
-				 VALUES ($1, $2, $3, $4, $5, $6, $7)
-				 ON CONFLICT(id) DO NOTHING`,
-				i.ID, i.SessionID, i.UserID, i.Query, i.Response, i.SearchType, i.CreatedAt)
-			res, err := cfg.DB.ExecContext(ctx, q, qargs...)
-			if err == nil {
-				if n, _ := res.RowsAffected(); n > 0 {
-					imported++
-				} else {
-					skipped++
-				}
-			}
-		}
-
-		return c.JSON(fiber.Map{"imported": imported, "skipped": skipped, "total": len(interactions)})
+		counts, err := importSyncInteractions(ctx, cfg, interactions)
+		return c.JSON(syncCountsResult(counts, err, cfg.SyncToken))
 	}
 }
 
@@ -472,50 +463,64 @@ func syncExportGraphHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		ctx, cancel := syncRequestContext(c)
 		defer cancel()
-
-		if cfg.DB == nil {
-			return c.JSON(syncGraph{Nodes: []syncGraphNode{}, Edges: []syncGraphEdge{}})
+		result, err := exportSyncGraph(ctx, cfg)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"detail": syncErrorText(err, cfg.SyncToken)})
 		}
-		g := syncGraph{}
+		return c.JSON(result)
+	}
+}
+func exportSyncGraph(ctx context.Context, cfg APIConfig) (syncGraph, error) {
+	if cfg.DB == nil {
+		return syncGraph{}, fmt.Errorf("database not configured")
+	}
+	g := syncGraph{}
 
-		nodeRows, err := cfg.DB.QueryContext(ctx,
-			Q(`SELECT id, name, type, COALESCE(description,''), COALESCE(properties,'{}'), COALESCE(dataset_id,'') FROM graph_nodes LIMIT 50000`))
-		if err == nil {
-			defer nodeRows.Close()
-			for nodeRows.Next() {
-				var n syncGraphNode
-				if err := nodeRows.Scan(&n.ID, &n.Name, &n.Type, &n.Description, &n.Properties, &n.DatasetID); err != nil {
-					continue
-				}
-				g.Nodes = append(g.Nodes, n)
-			}
+	nodeRows, err := cfg.DB.QueryContext(ctx,
+		Q(`SELECT id, name, type, COALESCE(description,''), COALESCE(properties,'{}'), COALESCE(dataset_id,'') FROM graph_nodes LIMIT 50000`))
+	if err != nil {
+		return syncGraph{}, err
+	}
+	defer nodeRows.Close()
+	for nodeRows.Next() {
+		var n syncGraphNode
+		if err := nodeRows.Scan(&n.ID, &n.Name, &n.Type, &n.Description, &n.Properties, &n.DatasetID); err != nil {
+			return syncGraph{}, err
 		}
-		if g.Nodes == nil {
-			g.Nodes = []syncGraphNode{}
-		}
+		g.Nodes = append(g.Nodes, n)
+	}
+	if err := errors.Join(nodeRows.Err(), nodeRows.Close()); err != nil {
+		return syncGraph{}, err
+	}
+	if g.Nodes == nil {
+		g.Nodes = []syncGraphNode{}
+	}
 
-		edgeRows, err := cfg.DB.QueryContext(ctx,
-			Q(`SELECT id, source_id, target_id, relationship_name, COALESCE(properties,'{}'),
-				  COALESCE(valid_from,''), COALESCE(valid_until,''), COALESCE(superseded_by,''),
+	edgeRows, err := cfg.DB.QueryContext(ctx,
+		Q(`SELECT id, source_id, target_id, relationship_name, COALESCE(properties,'{}'),
+				  COALESCE(CAST(valid_from AS TEXT),''), COALESCE(CAST(valid_until AS TEXT),''), COALESCE(superseded_by,''),
 				  COALESCE(confidence,1.0), COALESCE(dataset_id,'')
 			   FROM graph_edges LIMIT 50000`))
-		if err == nil {
-			defer edgeRows.Close()
-			for edgeRows.Next() {
-				var e syncGraphEdge
-				if err := edgeRows.Scan(&e.ID, &e.SourceID, &e.TargetID, &e.RelationshipName, &e.Properties,
-					&e.ValidFrom, &e.ValidUntil, &e.SupersededBy, &e.Confidence, &e.DatasetID); err != nil {
-					continue
-				}
-				g.Edges = append(g.Edges, e)
-			}
-		}
-		if g.Edges == nil {
-			g.Edges = []syncGraphEdge{}
-		}
-
-		return c.JSON(g)
+	if err != nil {
+		return syncGraph{}, err
 	}
+	defer edgeRows.Close()
+	for edgeRows.Next() {
+		var e syncGraphEdge
+		if err := edgeRows.Scan(&e.ID, &e.SourceID, &e.TargetID, &e.RelationshipName, &e.Properties,
+			&e.ValidFrom, &e.ValidUntil, &e.SupersededBy, &e.Confidence, &e.DatasetID); err != nil {
+			return syncGraph{}, err
+		}
+		g.Edges = append(g.Edges, e)
+	}
+	if err := errors.Join(edgeRows.Err(), edgeRows.Close()); err != nil {
+		return syncGraph{}, err
+	}
+	if g.Edges == nil {
+		g.Edges = []syncGraphEdge{}
+	}
+
+	return g, nil
 }
 
 func syncImportGraphHandler(cfg APIConfig) fiber.Handler {
@@ -531,43 +536,8 @@ func syncImportGraphHandler(cfg APIConfig) fiber.Handler {
 			return c.Status(400).JSON(fiber.Map{"detail": "invalid JSON"})
 		}
 
-		nodesImported, edgesImported := 0, 0
-
-		for _, n := range g.Nodes {
-			q, qargs := QArgs(`INSERT INTO graph_nodes (id, name, type, description, properties, dataset_id)
-				 VALUES ($1, $2, $3, $4, $5, $6)
-				 ON CONFLICT(id) DO UPDATE SET
-					name = $2, type = $3, description = $4, properties = $5, dataset_id = $6`,
-				n.ID, n.Name, n.Type, n.Description, n.Properties, n.DatasetID)
-			if _, err := cfg.DB.ExecContext(ctx, q, qargs...); err == nil {
-				nodesImported++
-			}
-		}
-
-		for _, e := range g.Edges {
-			if e.Confidence == 0 {
-				e.Confidence = 1.0
-			}
-			q, qargs := QArgs(`INSERT INTO graph_edges (
-					id, source_id, target_id, relationship_name, properties,
-					valid_from, valid_until, superseded_by, confidence, dataset_id
-				)
-				 VALUES ($1, $2, $3, $4, $5, nullif($6,''), nullif($7,''), $8, $9, $10)
-				 ON CONFLICT(id) DO UPDATE SET
-					source_id = $2, target_id = $3, relationship_name = $4, properties = $5,
-					valid_from = nullif($6,''), valid_until = nullif($7,''), superseded_by = $8,
-					confidence = $9, dataset_id = $10`,
-				e.ID, e.SourceID, e.TargetID, e.RelationshipName, e.Properties,
-				e.ValidFrom, e.ValidUntil, e.SupersededBy, e.Confidence, e.DatasetID)
-			if _, err := cfg.DB.ExecContext(ctx, q, qargs...); err == nil {
-				edgesImported++
-			}
-		}
-
-		return c.JSON(fiber.Map{
-			"nodes_imported": nodesImported, "edges_imported": edgesImported,
-			"nodes_total": len(g.Nodes), "edges_total": len(g.Edges),
-		})
+		counts, err := importSyncGraph(ctx, cfg, g)
+		return c.JSON(syncCountsResult(counts, err, cfg.SyncToken))
 	}
 }
 
@@ -777,6 +747,9 @@ func startSyncCollectionImport(cfg APIConfig, export syncCollectionExport) (fibe
 				continue
 			}
 
+			if len(vecs) < len(batch) {
+				status.Failed += len(batch) - len(vecs)
+			}
 			for j, vec := range vecs {
 				if j < len(batch) {
 					if err := cfg.Collections.Insert(export.Collection, batch[j].id, vec, batch[j].meta); err != nil {
@@ -792,6 +765,9 @@ func startSyncCollectionImport(cfg APIConfig, export syncCollectionExport) (fibe
 		}
 
 		status.Status = "COMPLETED"
+		if status.Failed > 0 {
+			status.Status = "FAILED"
+		}
 		status.ElapsedMs = time.Since(start).Milliseconds()
 		status.Message = fmt.Sprintf("imported %d/%d units from %d records (%s dim=%d → %s dim=%d) in %dms",
 			status.Processed, len(units), len(export.Records), export.SourceModel, export.SourceDim, cfg.EmbedModel, targetDim, status.ElapsedMs)
@@ -824,7 +800,11 @@ func syncImportCollectionStatusHandler() fiber.Handler {
 // when token is non-empty. Empty token preserves the original
 // unauthenticated behaviour (remote with auth disabled).
 func syncAuthGet(client *http.Client, url, token string) (*http.Response, error) {
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	return syncAuthGetContext(context.Background(), client, url, token)
+}
+
+func syncAuthGetContext(ctx context.Context, client *http.Client, url, token string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -839,7 +819,11 @@ func syncAuthGet(client *http.Client, url, token string) (*http.Response, error)
 // syncAuthPost performs a POST with the given body, attaching an
 // Authorization: Bearer header when token is non-empty.
 func syncAuthPost(client *http.Client, url, contentType, body, token string) (*http.Response, error) {
-	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(body))
+	return syncAuthPostContext(context.Background(), client, url, contentType, body, token)
+}
+
+func syncAuthPostContext(ctx context.Context, client *http.Client, url, contentType, body, token string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -857,262 +841,164 @@ func syncAuthPost(client *http.Client, url, contentType, body, token string) (*h
 // SyncPull fetches data from a remote Levara instance and imports it locally.
 // Used by the MCP sync tool and CLI.
 func SyncPull(cfg APIConfig, remoteURL string, types []string, since string) map[string]any {
+	ctx, cancel := backgroundTaskContext()
+	defer cancel()
+	return syncPullContext(ctx, cfg, remoteURL, types, since)
+}
+
+func syncPullContext(ctx context.Context, cfg APIConfig, remoteURL string, types []string, since string) map[string]any {
 	results := map[string]any{}
 	client := &http.Client{Timeout: 30 * time.Second}
-	bgCtx, bgCancel := backgroundTaskContext()
-	defer bgCancel()
-
-	shouldSync := func(t string) bool {
-		if len(types) == 0 {
-			return true
+	for _, kind := range []string{"memories", "interactions", "graph"} {
+		if len(types) > 0 && !containsType(types, kind) {
+			continue
 		}
-		for _, tt := range types {
-			if tt == t {
-				return true
-			}
+		if cfg.DB == nil {
+			results[kind+"_error"] = "database not configured"
+			continue
 		}
-		return false
-	}
-
-	if shouldSync("memories") {
-		url := remoteURL + "/sync/export/memories"
-		if since != "" {
-			url += "?since=" + since
+		endpoint := remoteURL + "/sync/export/" + kind
+		if since != "" && kind != "graph" {
+			endpoint += "?since=" + url.QueryEscape(since)
 		}
-		resp, err := syncAuthGet(client, url, cfg.SyncToken)
+		resp, err := syncAuthGetContext(ctx, client, endpoint, cfg.SyncToken)
 		if err != nil {
-			results["memories_error"] = err.Error()
-		} else {
-			defer resp.Body.Close()
-			body, _ := io.ReadAll(resp.Body)
-			var memories []syncMemory
-			if json.Unmarshal(body, &memories) == nil && len(memories) > 0 {
-				imported, skipped := 0, 0
-				for _, m := range memories {
-					// Atomic last-writer-wins, same guard as the pull handler
-					// (finding H5, 2026-09-03 review).
-					q, qargs := QArgs(`INSERT INTO memories (
-								id, key, value, type, owner_id, collection_name, room, hall,
-								is_pinned, pin_priority, created_at, updated_at
-							)
-							 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-							 ON CONFLICT(key, owner_id, collection_name) DO UPDATE SET
-								value = $3, type = $4, collection_name = $6, room = $7, hall = $8,
-								is_pinned = $9, pin_priority = $10, updated_at = $12
-							 WHERE memories.updated_at < EXCLUDED.updated_at`,
-						m.ID, m.Key, m.Value, m.Type, m.OwnerID, m.CollectionName,
-						m.Room, m.Hall, m.IsPinned, m.PinPriority, m.CreatedAt, m.UpdatedAt)
-					res, err := cfg.DB.ExecContext(bgCtx, q, qargs...)
-					if err != nil {
-						continue
-					}
-					if n, _ := res.RowsAffected(); n > 0 {
-						imported++
-					} else {
-						skipped++
-					}
+			results[kind+"_error"] = syncErrorText(err, cfg.SyncToken)
+			continue
+		}
+		var counts map[string]int
+		switch kind {
+		case "memories":
+			var records []syncMemory
+			if err = decodeSyncResponse(resp, &records); err == nil {
+				if len(records) == 0 {
+					results[kind] = "no data"
+				} else {
+					counts, _, err = importSyncMemories(ctx, cfg, records)
 				}
-				results["memories"] = map[string]int{"imported": imported, "skipped": skipped, "total": len(memories)}
-			} else {
-				results["memories"] = "no data"
+			}
+		case "interactions":
+			var records []syncInteraction
+			if err = decodeSyncResponse(resp, &records); err == nil {
+				if len(records) == 0 {
+					results[kind] = "no data"
+				} else {
+					counts, err = importSyncInteractions(ctx, cfg, records)
+				}
+			}
+		case "graph":
+			var graph syncGraph
+			if err = decodeSyncResponse(resp, &graph); err == nil {
+				counts, err = importSyncGraph(ctx, cfg, graph)
 			}
 		}
-	}
-
-	if shouldSync("interactions") {
-		url := remoteURL + "/sync/export/interactions"
-		if since != "" {
-			url += "?since=" + since
+		if counts != nil {
+			results[kind] = counts
 		}
-		resp, err := syncAuthGet(client, url, cfg.SyncToken)
 		if err != nil {
-			results["interactions_error"] = err.Error()
-		} else {
-			defer resp.Body.Close()
-			body, _ := io.ReadAll(resp.Body)
-			var interactions []syncInteraction
-			if json.Unmarshal(body, &interactions) == nil && len(interactions) > 0 {
-				imported := 0
-				for _, i := range interactions {
-					q, qargs := QArgs(`INSERT INTO interactions (id, session_id, user_id, query, response, search_type, created_at)
-							 VALUES ($1, $2, $3, $4, $5, $6, $7)
-							 ON CONFLICT(id) DO NOTHING`,
-						i.ID, i.SessionID, i.UserID, i.Query, i.Response, i.SearchType, i.CreatedAt)
-					if res, err := cfg.DB.ExecContext(bgCtx, q, qargs...); err == nil {
-						if n, _ := res.RowsAffected(); n > 0 {
-							imported++
-						}
-					}
-				}
-				results["interactions"] = map[string]int{"imported": imported, "total": len(interactions)}
-			} else {
-				results["interactions"] = "no data"
-			}
+			results[kind+"_error"] = syncErrorText(err, cfg.SyncToken)
 		}
 	}
-
-	if shouldSync("graph") {
-		resp, err := syncAuthGet(client, remoteURL+"/sync/export/graph", cfg.SyncToken)
-		if err != nil {
-			results["graph_error"] = err.Error()
-		} else {
-			defer resp.Body.Close()
-			body, _ := io.ReadAll(resp.Body)
-			var g syncGraph
-			if json.Unmarshal(body, &g) == nil {
-				nodesImported, edgesImported := 0, 0
-				for _, n := range g.Nodes {
-					q, qargs := QArgs(`INSERT INTO graph_nodes (id, name, type, description, properties, dataset_id)
-							 VALUES ($1, $2, $3, $4, $5, $6)
-							 ON CONFLICT(id) DO UPDATE SET
-								name = $2, type = $3, description = $4, properties = $5, dataset_id = $6`,
-						n.ID, n.Name, n.Type, n.Description, n.Properties, n.DatasetID)
-					if _, err := cfg.DB.ExecContext(bgCtx, q, qargs...); err == nil {
-						nodesImported++
-					}
-				}
-				for _, e := range g.Edges {
-					if e.Confidence == 0 {
-						e.Confidence = 1.0
-					}
-					q, qargs := QArgs(`INSERT INTO graph_edges (
-								id, source_id, target_id, relationship_name, properties,
-								valid_from, valid_until, superseded_by, confidence, dataset_id
-							)
-							 VALUES ($1, $2, $3, $4, $5, nullif($6,''), nullif($7,''), $8, $9, $10)
-							 ON CONFLICT(id) DO UPDATE SET
-								source_id = $2, target_id = $3, relationship_name = $4, properties = $5,
-								valid_from = nullif($6,''), valid_until = nullif($7,''), superseded_by = $8,
-								confidence = $9, dataset_id = $10`,
-						e.ID, e.SourceID, e.TargetID, e.RelationshipName, e.Properties,
-						e.ValidFrom, e.ValidUntil, e.SupersededBy, e.Confidence, e.DatasetID)
-					if _, err := cfg.DB.ExecContext(bgCtx, q, qargs...); err == nil {
-						edgesImported++
-					}
-				}
-				results["graph"] = map[string]int{
-					"nodes_imported": nodesImported, "edges_imported": edgesImported,
-					"nodes_total": len(g.Nodes), "edges_total": len(g.Edges),
-				}
-			}
-		}
-	}
-
 	return results
 }
 
-// SyncManifestFromRemote fetches the manifest from a remote Levara instance.
-// token is attached as Authorization: Bearer when non-empty.
+// SyncManifestFromRemote preserves the standalone caller API.
 func SyncManifestFromRemote(remoteURL, token string) (*syncManifest, error) {
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := syncAuthGet(client, remoteURL+"/sync/manifest", token)
+	return syncManifestFromRemoteContext(context.Background(), remoteURL, token)
+}
+
+func syncManifestFromRemoteContext(ctx context.Context, remoteURL, token string) (*syncManifest, error) {
+	resp, err := syncAuthGetContext(ctx, &http.Client{Timeout: 10 * time.Second}, remoteURL+"/sync/manifest", token)
 	if err != nil {
-		return nil, fmt.Errorf("failed to reach remote: %w", err)
+		return nil, fmt.Errorf("failed to reach remote: %s", syncErrorText(err, token))
 	}
-	defer resp.Body.Close()
-	var m syncManifest
-	if err := json.NewDecoder(resp.Body).Decode(&m); err != nil {
-		return nil, fmt.Errorf("invalid manifest: %w", err)
+	var manifest syncManifest
+	if err := decodeSyncResponse(resp, &manifest); err != nil {
+		return nil, fmt.Errorf("invalid manifest: %s", syncErrorText(err, token))
 	}
-	return &m, nil
+	return &manifest, nil
+}
+
+// Decode only a complete successful response. Neither remote error bodies nor
+// credential-bearing URLs are copied into diagnostics.
+func decodeSyncResponse(resp *http.Response, out any) error {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return errors.Join(fmt.Errorf("remote HTTP status %d", resp.StatusCode), resp.Body.Close())
+	}
+	body, err := io.ReadAll(resp.Body)
+	err = errors.Join(err, resp.Body.Close())
+	if err != nil {
+		return fmt.Errorf("read remote response: %w", err)
+	}
+	if strings.TrimSpace(string(body)) == "null" {
+		return fmt.Errorf("invalid remote JSON: null payload")
+	}
+	if err := json.Unmarshal(body, out); err != nil {
+		return fmt.Errorf("invalid remote JSON: %w", err)
+	}
+	return nil
 }
 
 func syncPush(ctx context.Context, cfg APIConfig, remoteURL string, types []string, since string) map[string]any {
 	results := map[string]any{}
 	client := &http.Client{Timeout: 30 * time.Second}
-
-	shouldSync := func(t string) bool {
-		if len(types) == 0 {
-			return true
+	for _, kind := range []string{"memories", "interactions", "graph"} {
+		if len(types) > 0 && !containsType(types, kind) {
+			continue
 		}
-		for _, tt := range types {
-			if tt == t {
-				return true
-			}
+		var payload any
+		var err error
+		empty := false
+		switch kind {
+		case "memories":
+			var records []syncMemory
+			records, err = exportSyncMemories(ctx, cfg, since)
+			payload = records
+			empty = len(records) == 0
+		case "interactions":
+			var records []syncInteraction
+			records, err = exportSyncInteractions(ctx, cfg, since)
+			payload = records
+			empty = len(records) == 0
+		case "graph":
+			var graph syncGraph
+			graph, err = exportSyncGraph(ctx, cfg)
+			payload = graph
+			empty = len(graph.Nodes) == 0 && len(graph.Edges) == 0
 		}
-		return false
-	}
-
-	if shouldSync("memories") && cfg.DB != nil {
-		var memories []syncMemory
-		query := Q(`SELECT id, key, value, type, owner_id, collection_name,
-			 COALESCE(room,''), COALESCE(hall,''), is_pinned, pin_priority,
-			 created_at, updated_at FROM memories ORDER BY updated_at LIMIT 10000`)
-		args := []any{}
-		if since != "" {
-			query = Q(`SELECT id, key, value, type, owner_id, collection_name,
-				 COALESCE(room,''), COALESCE(hall,''), is_pinned, pin_priority,
-				 created_at, updated_at FROM memories WHERE updated_at > $1 ORDER BY updated_at LIMIT 10000`)
-			args = []any{since}
+		if err != nil {
+			results[kind+"_error"] = syncErrorText(err, cfg.SyncToken)
+			continue
 		}
-		rows, err := cfg.DB.QueryContext(ctx, query, args...)
-		if err == nil {
-			defer rows.Close()
-			for rows.Next() {
-				var m syncMemory
-				rows.Scan(&m.ID, &m.Key, &m.Value, &m.Type, &m.OwnerID, &m.CollectionName,
-					&m.Room, &m.Hall, &m.IsPinned, &m.PinPriority, &m.CreatedAt, &m.UpdatedAt)
-				memories = append(memories, m)
-			}
+		if empty {
+			results[kind] = "no data to push"
+			continue
 		}
-		if len(memories) > 0 {
-			body, _ := json.Marshal(memories)
-			resp, err := syncAuthPost(client, remoteURL+"/sync/import/memories", "application/json", string(body), cfg.SyncToken)
-			if err != nil {
-				results["memories_error"] = err.Error()
-			} else {
-				defer resp.Body.Close()
-				var r map[string]any
-				json.NewDecoder(resp.Body).Decode(&r)
-				results["memories"] = r
-			}
-		} else {
-			results["memories"] = "no data to push"
+		body, err := json.Marshal(payload)
+		if err != nil {
+			results[kind+"_error"] = syncErrorText(err, cfg.SyncToken)
+			continue
 		}
-	}
-
-	if shouldSync("graph") && cfg.DB != nil {
-		var g syncGraph
-		nodeRows, err := cfg.DB.QueryContext(ctx,
-			Q(`SELECT id, name, type, COALESCE(description,''), COALESCE(properties,'{}'), COALESCE(dataset_id,'') FROM graph_nodes LIMIT 50000`))
-		if err == nil {
-			defer nodeRows.Close()
-			for nodeRows.Next() {
-				var n syncGraphNode
-				nodeRows.Scan(&n.ID, &n.Name, &n.Type, &n.Description, &n.Properties, &n.DatasetID)
-				g.Nodes = append(g.Nodes, n)
-			}
+		resp, err := syncAuthPostContext(ctx, client, remoteURL+"/sync/import/"+kind, "application/json", string(body), cfg.SyncToken)
+		if err != nil {
+			results[kind+"_error"] = syncErrorText(err, cfg.SyncToken)
+			continue
 		}
-		edgeRows, err := cfg.DB.QueryContext(ctx,
-			Q(`SELECT id, source_id, target_id, relationship_name, COALESCE(properties,'{}'),
-				  COALESCE(valid_from,''), COALESCE(valid_until,''), COALESCE(superseded_by,''),
-				  COALESCE(confidence,1.0), COALESCE(dataset_id,'')
-			   FROM graph_edges LIMIT 50000`))
-		if err == nil {
-			defer edgeRows.Close()
-			for edgeRows.Next() {
-				var e syncGraphEdge
-				edgeRows.Scan(&e.ID, &e.SourceID, &e.TargetID, &e.RelationshipName, &e.Properties,
-					&e.ValidFrom, &e.ValidUntil, &e.SupersededBy, &e.Confidence, &e.DatasetID)
-				g.Edges = append(g.Edges, e)
-			}
+		var result map[string]any
+		if err = decodeSyncResponse(resp, &result); err != nil {
+			results[kind+"_error"] = syncErrorText(err, cfg.SyncToken)
+			continue
 		}
-		if len(g.Nodes) > 0 || len(g.Edges) > 0 {
-			body, _ := json.Marshal(g)
-			resp, err := syncAuthPost(client, remoteURL+"/sync/import/graph", "application/json", string(body), cfg.SyncToken)
-			if err != nil {
-				results["graph_error"] = err.Error()
-			} else {
-				defer resp.Body.Close()
-				var r map[string]any
-				json.NewDecoder(resp.Body).Decode(&r)
-				results["graph"] = r
-			}
-		} else {
-			results["graph"] = "no data to push"
+		if err := validateSyncImportAck(result, payload); err != nil {
+			results[kind+"_error"] = err.Error()
+		}
+		results[kind] = result
+		if failure, ok := result["error"]; ok {
+			message := syncErrorText(fmt.Errorf("%v", failure), cfg.SyncToken)
+			result["error"] = message
+			results[kind+"_error"] = message
 		}
 	}
-
 	return results
 }
 
@@ -1126,20 +1012,26 @@ func containsType(types []string, t string) bool {
 }
 
 func syncPullCollections(cfg APIConfig, remoteURL string, collections []string) map[string]any {
+	return syncPullCollectionsContext(context.Background(), cfg, remoteURL, collections)
+}
+
+func syncPullCollectionsContext(ctx context.Context, cfg APIConfig, remoteURL string, collections []string) map[string]any {
 	client := &http.Client{Timeout: 120 * time.Second}
 	results := map[string]any{}
 
 	for _, coll := range collections {
-		resp, err := syncAuthGet(client, remoteURL+"/sync/export/collection/"+url.PathEscape(coll), cfg.SyncToken)
+		resp, err := syncAuthGetContext(ctx, client, remoteURL+"/sync/export/collection/"+url.PathEscape(coll), cfg.SyncToken)
 		if err != nil {
-			results[coll] = map[string]string{"error": err.Error()}
+			results[coll] = map[string]string{"error": syncErrorText(err, cfg.SyncToken)}
 			continue
 		}
 		var export syncCollectionExport
-		err = json.NewDecoder(resp.Body).Decode(&export)
-		resp.Body.Close()
-		if resp.StatusCode != http.StatusOK || err != nil || export.Collection != coll {
-			results[coll] = map[string]string{"error": "invalid remote collection export"}
+		if err = decodeSyncResponse(resp, &export); err != nil {
+			results[coll] = map[string]string{"error": syncErrorText(err, cfg.SyncToken)}
+			continue
+		}
+		if export.Collection != coll {
+			results[coll] = map[string]string{"error": "remote collection name mismatch"}
 			continue
 		}
 		result, _ := startSyncCollectionImport(cfg, export)
@@ -1161,7 +1053,7 @@ func syncPushCollections(ctx context.Context, cfg APIConfig, remoteURL string, c
 
 		ids, _, metas, err := cfg.Collections.AllRecords(coll)
 		if err != nil {
-			results[coll] = map[string]string{"error": err.Error()}
+			results[coll] = map[string]string{"error": syncErrorText(err, cfg.SyncToken)}
 			continue
 		}
 
@@ -1179,17 +1071,389 @@ func syncPushCollections(ctx context.Context, cfg APIConfig, remoteURL string, c
 			})
 		}
 
-		body, _ := json.Marshal(export)
-		resp, err := syncAuthPost(client, remoteURL+"/sync/import/collection", "application/json", string(body), cfg.SyncToken)
+		body, err := json.Marshal(export)
 		if err != nil {
-			results[coll] = map[string]string{"error": err.Error()}
+			results[coll] = map[string]string{"error": syncErrorText(err, cfg.SyncToken)}
 			continue
 		}
-		defer resp.Body.Close()
+		resp, err := syncAuthPostContext(ctx, client, remoteURL+"/sync/import/collection", "application/json", string(body), cfg.SyncToken)
+		if err != nil {
+			results[coll] = map[string]string{"error": syncErrorText(err, cfg.SyncToken)}
+			continue
+		}
 		var r map[string]any
-		json.NewDecoder(resp.Body).Decode(&r)
+		if err := decodeSyncResponse(resp, &r); err != nil {
+			results[coll] = map[string]string{"error": syncErrorText(err, cfg.SyncToken)}
+			continue
+		}
+		if r["error"] == nil && r["detail"] == nil {
+			status, _ := r["status"].(string)
+			valid := false
+			switch status {
+			case "empty":
+				valid = len(export.Records) == 0
+			case "started":
+				records, started := syncStartedCollection(r)
+				valid = started && records == len(export.Records)
+			}
+			if !valid {
+				results[coll] = map[string]string{"error": "invalid remote collection import acknowledgement"}
+				continue
+			}
+		}
+		for _, key := range []string{"error", "detail"} {
+			if value, ok := r[key]; ok {
+				r[key] = syncErrorText(fmt.Errorf("%v", value), cfg.SyncToken)
+			}
+		}
 		results[coll] = r
 	}
 
 	return results
+}
+
+func importSyncMemories(ctx context.Context, cfg APIConfig, memories []syncMemory) (map[string]int, []syncMemory, error) {
+	if cfg.DB == nil {
+		return nil, nil, fmt.Errorf("database not configured")
+	}
+	imported, skipped, failed := 0, 0, 0
+	var firstErr error
+	var accepted []syncMemory
+	for _, m := range memories {
+		// Last-writer-wins, enforced atomically (finding H5, 2026-09-03
+		// review): the conflict clause carries a WHERE guard so a
+		// concurrent import that lands between our SELECT and INSERT can
+		// never be overwritten by an older row. The conditional insert
+		// also avoids the separate SELECT entirely.
+		q, qargs := QArgs(`INSERT INTO memories (
+					id, key, value, type, owner_id, collection_name, room, hall,
+					is_pinned, pin_priority, created_at, updated_at
+				)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+				 ON CONFLICT(key, owner_id, collection_name) DO UPDATE SET
+					value = $3, type = $4, collection_name = $6, room = $7, hall = $8,
+					is_pinned = $9, pin_priority = $10, updated_at = $12
+				 WHERE memories.updated_at < EXCLUDED.updated_at`,
+			m.ID, m.Key, m.Value, m.Type, m.OwnerID, m.CollectionName,
+			m.Room, m.Hall, m.IsPinned, m.PinPriority, m.CreatedAt, m.UpdatedAt)
+		res, err := cfg.DB.ExecContext(ctx, q, qargs...)
+		if err != nil {
+			failed++
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			failed++
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		if n > 0 {
+			imported++
+			accepted = append(accepted, m)
+		} else {
+			skipped++
+		}
+	}
+
+	return map[string]int{"imported": imported, "skipped": skipped, "failed": failed, "total": len(memories)}, accepted, firstErr
+}
+
+func importSyncInteractions(ctx context.Context, cfg APIConfig, interactions []syncInteraction) (map[string]int, error) {
+	if cfg.DB == nil {
+		return nil, fmt.Errorf("database not configured")
+	}
+	imported, skipped, failed := 0, 0, 0
+	var firstErr error
+	for _, i := range interactions {
+		q, qargs := QArgs(`INSERT INTO interactions (id, session_id, user_id, query, response, search_type, created_at)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7)
+				 ON CONFLICT(id) DO NOTHING`,
+			i.ID, i.SessionID, i.UserID, i.Query, i.Response, i.SearchType, i.CreatedAt)
+		res, err := cfg.DB.ExecContext(ctx, q, qargs...)
+		if err != nil {
+			failed++
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			failed++
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		if n > 0 {
+			imported++
+		} else {
+			skipped++
+		}
+	}
+
+	return map[string]int{"imported": imported, "skipped": skipped, "failed": failed, "total": len(interactions)}, firstErr
+}
+
+func importSyncGraph(ctx context.Context, cfg APIConfig, g syncGraph) (map[string]int, error) {
+	if cfg.DB == nil {
+		return nil, fmt.Errorf("database not configured")
+	}
+	nodesImported, edgesImported, nodesFailed, edgesFailed := 0, 0, 0, 0
+	var firstErr error
+
+	for _, n := range g.Nodes {
+		q, qargs := QArgs(`INSERT INTO graph_nodes (id, name, type, description, properties, dataset_id)
+				 VALUES ($1, $2, $3, $4, $5, $6)
+				 ON CONFLICT(id) DO UPDATE SET
+					name = $2, type = $3, description = $4, properties = $5, dataset_id = $6`,
+			n.ID, n.Name, n.Type, n.Description, n.Properties, n.DatasetID)
+		if _, err := cfg.DB.ExecContext(ctx, q, qargs...); err == nil {
+			nodesImported++
+		} else {
+			nodesFailed++
+			if firstErr == nil {
+				firstErr = err
+			}
+		}
+	}
+
+	for _, e := range g.Edges {
+		if e.Confidence == 0 {
+			e.Confidence = 1.0
+		}
+		q, qargs := QArgs(`INSERT INTO graph_edges (
+					id, source_id, target_id, relationship_name, properties,
+					valid_from, valid_until, superseded_by, confidence, dataset_id
+				)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+				 ON CONFLICT(id) DO UPDATE SET
+					source_id = $2, target_id = $3, relationship_name = $4, properties = $5,
+					valid_from = $6, valid_until = $7, superseded_by = $8,
+					confidence = $9, dataset_id = $10`,
+			e.ID, e.SourceID, e.TargetID, e.RelationshipName, e.Properties,
+			syncOptionalTime(e.ValidFrom), syncOptionalTime(e.ValidUntil), e.SupersededBy, e.Confidence, e.DatasetID)
+		if _, err := cfg.DB.ExecContext(ctx, q, qargs...); err == nil {
+			edgesImported++
+		} else {
+			edgesFailed++
+			if firstErr == nil {
+				firstErr = err
+			}
+		}
+	}
+
+	return map[string]int{"nodes_imported": nodesImported, "edges_imported": edgesImported, "nodes_failed": nodesFailed, "edges_failed": edgesFailed, "nodes_total": len(g.Nodes), "edges_total": len(g.Edges)}, firstErr
+}
+
+func syncErrorText(err error, token string) string {
+	if err == nil {
+		return ""
+	}
+	// Transport errors need their cause, not a URL that can carry credentials.
+	var transport *url.Error
+	if errors.As(err, &transport) {
+		err = fmt.Errorf("%s: %w", transport.Op, transport.Err)
+	}
+	text := err.Error()
+	if token != "" {
+		text = strings.ReplaceAll(text, token, "[redacted]")
+	}
+	return text
+}
+
+func syncCountsResult(counts map[string]int, err error, token string) map[string]any {
+	result := map[string]any{}
+	for k, v := range counts {
+		result[k] = v
+	}
+	if err != nil {
+		result["error"] = syncErrorText(err, token)
+	}
+	return result
+}
+
+// syncResultStatus is additive: legacy per-type counts and *_error fields
+// remain available, including counts from a partially imported batch.
+func syncResultStatus(result map[string]any) string {
+	success, failed, running := false, false, false
+	for _, kind := range []string{"memories", "interactions", "graph"} {
+		_, typeFailed := result[kind+"_error"]
+		failed = failed || typeFailed
+		if value, ok := result[kind]; ok {
+			accepted, bad, pending := syncTypeOutcome(value)
+			failed = failed || bad
+			running = running || pending
+			success = success || (accepted && (!typeFailed || syncAcceptedCount(value) > 0))
+		}
+	}
+	if collections, ok := result["collections_sync"].(map[string]any); ok {
+		for _, value := range collections {
+			accepted, bad, pending := syncTypeOutcome(value)
+			success = success || accepted
+			failed = failed || bad
+			running = running || pending
+		}
+	}
+	if failed {
+		if success || running {
+			return "partial"
+		}
+		return "error"
+	}
+	if running {
+		return "running"
+	}
+	return "ok"
+}
+
+func syncAcceptedCount(value any) int {
+	count := 0
+	switch data := value.(type) {
+	case map[string]int:
+		for _, key := range []string{"imported", "skipped", "nodes_imported", "edges_imported"} {
+			count += data[key]
+		}
+	case map[string]any:
+		for _, key := range []string{"imported", "skipped", "nodes_imported", "edges_imported"} {
+			switch n := data[key].(type) {
+			case int:
+				count += n
+			case float64:
+				count += int(n)
+			}
+		}
+	case fiber.Map:
+		return syncAcceptedCount(map[string]any(data))
+	}
+	return count
+}
+
+func syncTypeOutcome(value any) (bool, bool, bool) {
+	var fields map[string]any
+	switch data := value.(type) {
+	case map[string]any:
+		fields = data
+	case fiber.Map:
+		fields = map[string]any(data)
+	case map[string]string:
+		fields = map[string]any{}
+		for k, v := range data {
+			fields[k] = v
+		}
+	case map[string]int:
+		fields = map[string]any{}
+		for k, v := range data {
+			fields[k] = v
+		}
+	default:
+		return true, false, false
+	}
+	failed := fields["error"] != nil || fields["detail"] != nil
+	for _, key := range []string{"failed", "nodes_failed", "edges_failed"} {
+		switch n := fields[key].(type) {
+		case int:
+			failed = failed || n > 0
+		case float64:
+			failed = failed || n > 0
+		}
+	}
+	running := false
+	if raw, exists := fields["status"]; exists {
+		status, ok := raw.(string)
+		if !ok {
+			return false, true, false
+		}
+		switch status {
+		case "started":
+			_, valid := syncStartedCollection(fields)
+			if !valid {
+				return false, true, false
+			}
+			running = true
+		case "running", "RUNNING":
+			runID, _ := fields["run_id"].(string)
+			if strings.TrimSpace(runID) == "" {
+				return false, true, false
+			}
+			running = true
+		case "empty", "ok", "COMPLETED":
+		case "error", "partial", "failed", "FAILED":
+			failed = true
+		default:
+			return false, true, false
+		}
+	}
+	return !running && (!failed || syncAcceptedCount(value) > 0), failed, running
+}
+
+func syncOptionalTime(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
+}
+
+// Older peers can omit explicit failure fields. A complete acknowledgement
+// still accounts for every sent row as imported or skipped; missing rows must
+// not turn an old peer's swallowed SQL error into a successful push.
+func validateSyncImportAck(result map[string]any, payload any) error {
+	type batch struct {
+		prefix string
+		count  int
+	}
+	var batches []batch
+	switch records := payload.(type) {
+	case []syncMemory:
+		batches = []batch{{"", len(records)}}
+	case []syncInteraction:
+		batches = []batch{{"", len(records)}}
+	case syncGraph:
+		batches = []batch{{"nodes_", len(records.Nodes)}, {"edges_", len(records.Edges)}}
+	}
+	for _, batch := range batches {
+		read := func(key string, optional bool) (int, bool) {
+			value, exists := result[batch.prefix+key]
+			if !exists {
+				return 0, optional
+			}
+			n, ok := value.(float64)
+			return int(n), ok && n >= 0 && n <= float64(batch.count) && n == float64(int(n))
+		}
+		imported, validImported := read("imported", false)
+		skipped, validSkipped := read("skipped", true)
+		total, validTotal := read("total", false)
+		if !validImported || !validSkipped || !validTotal {
+			return fmt.Errorf("invalid remote import counts")
+		}
+		if total != batch.count || imported+skipped != total {
+			return fmt.Errorf("remote import acknowledged %d of %d %srecords", imported+skipped, batch.count, batch.prefix)
+		}
+	}
+	return nil
+}
+
+// A collection import is asynchronous. A start acknowledgement must identify
+// the job and account for the records it accepted; status alone is not proof.
+func syncStartedCollection(result map[string]any) (int, bool) {
+	runID, _ := result["run_id"].(string)
+	if strings.TrimSpace(runID) == "" {
+		return 0, false
+	}
+	switch n := result["records"].(type) {
+	case int:
+		return n, n > 0
+	case float64:
+		if n <= 0 || n >= float64(int(^uint(0)>>1)) {
+			return 0, false
+		}
+		return int(n), n == float64(int(n))
+	default:
+		return 0, false
+	}
 }

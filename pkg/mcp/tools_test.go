@@ -7,9 +7,13 @@ import (
 	"math"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stek0v/levara/pipeline"
+	"github.com/stek0v/levara/pkg/orchestrator"
+	"github.com/stek0v/levara/pkg/runreg"
 )
 
 // Smoke tests for the MCP tool registry. These lock in the contract that
@@ -21,6 +25,32 @@ func TestToolDescriptors_NotEmpty(t *testing.T) {
 	if len(tools) < 15 {
 		t.Errorf("got %d tools, want ≥ 15 (Levara advertises ~25)", len(tools))
 	}
+}
+
+func TestGitToolDescriptorsDeclareInstanceAdmin(t *testing.T) {
+	for _, tool := range ToolDescriptors() {
+		if tool.Name == "analyze_commits" || tool.Name == "git_search" {
+			if !strings.Contains(tool.Description, "instance administrator") {
+				t.Errorf("%s description does not declare runtime authority: %q", tool.Name, tool.Description)
+			}
+		}
+	}
+}
+
+func TestCognifyOutputsMatchRunStatusSchema(t *testing.T) {
+	byName := map[string]Tool{}
+	for _, tool := range ToolDescriptors() {
+		byName[tool.Name] = tool
+	}
+	done := make(chan struct{})
+	deps := &fakeDeps{baseCfg: orchestrator.Config{EmbedEndpoint: "http://embed"}}
+	deps.heartbeatFn = func(string, any) { close(done) }
+	started := ToolCognify(context.Background(), deps, map[string]any{"data": "schema fixture", "mode": "rag"})
+	assertOutputSchema(t, byName["cognify"], started)
+	waitDone(t, done, 2*time.Second)
+
+	deps.Runs().Store("schema-run", &runreg.Status{RunID: "schema-run", Status: "COMPLETED", Stage: "done", StartedAt: time.Now(), Events: []runreg.StageEvent{{Stage: "done", At: time.Now(), Terminal: true}}})
+	assertOutputSchema(t, byName["cognify_status"], ToolCognifyStatus(deps, map[string]any{"run_id": "schema-run"}))
 }
 
 func TestTaskOpenSchemaDescribesDefinitionOfDone(t *testing.T) {
@@ -298,6 +328,18 @@ func TestToolOutputsMatchRegisteredSchemas_RoundTrip(t *testing.T) {
 			assertOutputSchema(t, byName[tc.name], tc.res)
 		})
 	}
+}
+
+func TestEmptyToolBranchesMatchRegisteredSchemas(t *testing.T) {
+	byName := make(map[string]Tool)
+	for _, tool := range ToolDescriptors() {
+		byName[tool.Name] = tool
+	}
+	assertOutputSchema(t, byName["query_entity"], ToolQueryEntity(context.Background(), setupQueryEntityDB(t), map[string]any{"name": "missing"}))
+	assertOutputSchema(t, byName["git_search"], ToolGitSearch(context.Background(), &fakeDeps{}, map[string]any{"query": "missing"}))
+
+	repo := makeGitRepo(t)
+	assertOutputSchema(t, byName["analyze_commits"], ToolAnalyzeCommits(context.Background(), &fakeDeps{}, map[string]any{"repo_path": repo, "since": "2999-01-01"}))
 }
 
 func TestToolDescriptors_DoNotAdvertiseKnownStaleOutputFields(t *testing.T) {

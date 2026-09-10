@@ -16,6 +16,8 @@ Entry points by role:
 | Upload, process and verify documents (WebUI / CLI) | [document-management.md](document-management.md), [document-workflow-scenarios.md](document-workflow-scenarios.md) |
 | Share one document with a colleague; understand group limits | [document-management.md](document-management.md) |
 | Connect LDAP/AD, OIDC, SAML and SCIM | [enterprise-identity.md](enterprise-identity.md) |
+| Configure S3, AWS KMS and durable SIEM delivery | [enterprise-storage-audit.md](enterprise-storage-audit.md) |
+| Onboard users and verify team access | [team-onboarding.md](team-onboarding.md) |
 | Learn the ingestion API | [tutorials/03-knowledge-base.md](tutorials/03-knowledge-base.md) |
 | Deploy for a team with auth | [tutorials/04-team-deploy.md](tutorials/04-team-deploy.md) |
 | Find the right tool/command for my task | [features-guide.md](features-guide.md) |

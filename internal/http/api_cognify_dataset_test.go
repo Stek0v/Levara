@@ -3,16 +3,17 @@ package http
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
 	_ "github.com/ncruces/go-sqlite3/driver"
+	accesspkg "github.com/stek0v/levara/pkg/access"
 )
 
 // cognifyDatasetDB opens an in-memory-ish sqlite DB with just the datasets
-// schema ensureCognifyDataset writes (name UNIQUE so ON CONFLICT(name) has an
-// index), and pins the dialect to SQLite for Q() placeholder rewriting.
+// schema resolveCognifyDataset reads, and pins the dialect to SQLite for Q().
 func cognifyDatasetDB(t *testing.T) *sql.DB {
 	t.Helper()
 	dir := t.TempDir()
@@ -38,55 +39,35 @@ func cognifyDatasetDB(t *testing.T) *sql.DB {
 	return db
 }
 
-// ensureCognifyDataset is the REST mirror of the MCP helper: it must
-// get-or-create exactly one caller-owned datasets row per (owner,collection)
-// so search's RBAC gate doesn't drop the chunks this run stamps. Without it,
-// an unregistered ephemeral runID is in no caller's allowed-set and every
-// cognified chunk reads back empty (the P2.1/Issue-2 regression).
-func TestEnsureCognifyDataset_GetOrCreateIsIdempotent(t *testing.T) {
+func TestResolveCognifyDatasetDoesNotCreateBeforeAuthorizedSource(t *testing.T) {
 	db := cognifyDatasetDB(t)
 	ctx := context.Background()
 
-	id1 := ensureCognifyDataset(ctx, db, "alice", "docs", "run-1")
-	id2 := ensureCognifyDataset(ctx, db, "alice", "docs", "run-2")
-
-	if id1 != "run-1" {
-		t.Errorf("first id = %q, want fallback run-1 (created the row)", id1)
-	}
-	if id2 != id1 {
-		t.Errorf("second id = %q, want %q (reuse, not a fresh runID)", id2, id1)
+	id, name, err := resolveCognifyDataset(ctx, db, "alice", "docs", "run-1")
+	if err != nil || id != "run-1" || name != "__cognify__:alice:docs" {
+		t.Fatalf("id=%q name=%q err=%v", id, name, err)
 	}
 
 	var rows int
-	if err := db.QueryRow(
-		"SELECT COUNT(*) FROM datasets WHERE name = '__cognify__:alice:docs'").Scan(&rows); err != nil {
+	if err := db.QueryRow("SELECT COUNT(*) FROM datasets").Scan(&rows); err != nil {
 		t.Fatalf("count: %v", err)
 	}
-	if rows != 1 {
-		t.Errorf("datasets rows = %d, want exactly 1 (no per-run accretion)", rows)
+	if rows != 0 {
+		t.Fatalf("resolver created %d dataset rows before authorization", rows)
 	}
 }
 
-func TestEnsureCognifyDataset_ScopesByOwnerAndCollection(t *testing.T) {
+func TestResolveCognifyDatasetReusesOnlyOwnerRow(t *testing.T) {
 	db := cognifyDatasetDB(t)
 	ctx := context.Background()
-
-	alice := ensureCognifyDataset(ctx, db, "alice", "docs", "r-a")
-	bob := ensureCognifyDataset(ctx, db, "bob", "docs", "r-b")
-	aliceOther := ensureCognifyDataset(ctx, db, "alice", "notes", "r-a2")
-
-	if alice == bob {
-		t.Errorf("alice and bob share dataset id %q; owner scoping broken", alice)
+	if _, err := db.Exec(`INSERT INTO datasets(id,name,owner_id) VALUES('owned','__cognify__:alice:docs','alice'),('foreign','__cognify__:bob:docs','mallory')`); err != nil {
+		t.Fatal(err)
 	}
-	if alice == aliceOther {
-		t.Errorf("alice's docs and notes share id %q; collection scoping broken", alice)
+	id, _, err := resolveCognifyDataset(ctx, db, "alice", "docs", "new")
+	if err != nil || id != "owned" {
+		t.Fatalf("owner row id=%q err=%v", id, err)
 	}
-
-	var owner string
-	if err := db.QueryRow("SELECT owner_id FROM datasets WHERE id = ?", alice).Scan(&owner); err != nil {
-		t.Fatalf("select owner: %v", err)
-	}
-	if owner != "alice" {
-		t.Errorf("owner_id = %q, want alice (RBAC gate keys on ownership)", owner)
+	if _, _, err := resolveCognifyDataset(ctx, db, "bob", "docs", "new"); !errors.Is(err, accesspkg.ErrDocumentForbidden) {
+		t.Fatalf("foreign preclaim err=%v", err)
 	}
 }

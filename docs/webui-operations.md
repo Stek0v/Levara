@@ -225,15 +225,17 @@ Minimum team requirements:
 
 ### Identity and individual sharing
 
-The WebUI login uses the local account/token flow. OIDC bearer verification or
-SAML endpoints on the backend do not automatically add a browser SSO login.
-Native LDAP, browser OIDC and SCIM-to-SSO linking are absent; use
-[enterprise identity](enterprise-identity.md) before an AD/SSO pilot.
+The WebUI discovers configured login methods from `/api/v1/auth/methods`.
+Local password, direct LDAP/AD and browser OIDC are wired to browser sessions;
+SAML still has a separate response contract. Configure the identity bridge and
+repeat the real AD/IdP flow described in
+[enterprise identity](enterprise-identity.md) before a pilot.
 
 The dataset detail page can grant an individual viewer/editor/admin. For one
-document, use a separate dataset; independent document ACLs and effective group
-grants are absent. Follow [document management](document-management.md) and test
-grant/revoke across download, retrieval and chat with separate users.
+document, use a separate dataset until the implemented document/group policy
+handlers are connected to the public router and WebUI. Follow
+[document management](document-management.md) and test grant/revoke across
+download, retrieval and chat with separate users.
 
 ### WebUI deployment options
 

@@ -44,9 +44,18 @@ func TestMetadataConsistency(t *testing.T) {
 			CREATE TABLE datasets (id TEXT PRIMARY KEY, name TEXT UNIQUE, owner_id TEXT, created_at TIMESTAMP, updated_at TIMESTAMP);
 			CREATE TABLE data (id TEXT PRIMARY KEY, name TEXT, extension TEXT, mime_type TEXT, raw_data_location TEXT,
 			 original_data_location TEXT, content_hash TEXT, raw_content_hash TEXT, owner_id TEXT, loader_engine TEXT,
-			 pipeline_status TEXT, tags TEXT, room TEXT, token_count INTEGER, data_size BIGINT, created_at TIMESTAMP, updated_at TIMESTAMP);
+			 source_revision BIGINT NOT NULL DEFAULT 1, pipeline_status TEXT, tags TEXT, room TEXT, token_count INTEGER, data_size BIGINT, created_at TIMESTAMP, updated_at TIMESTAMP);
 			CREATE TABLE dataset_data (dataset_id TEXT REFERENCES datasets(id), data_id TEXT REFERENCES data(id),
-			 PRIMARY KEY(dataset_id,data_id), CHECK(dataset_id <> 'reject-link'));`)
+			 PRIMARY KEY(dataset_id,data_id), CHECK(dataset_id <> 'reject-link'));
+ CREATE TABLE document_index_publications (dataset_id TEXT,data_id TEXT,source_revision BIGINT);
+ CREATE TABLE document_structured_artifacts (
+  id TEXT PRIMARY KEY,data_id TEXT NOT NULL,source_revision BIGINT NOT NULL,raw_content_hash TEXT NOT NULL,
+  artifact_sha256 TEXT NOT NULL,byte_size BIGINT NOT NULL,storage_location TEXT NOT NULL UNIQUE,
+  destination TEXT NOT NULL DEFAULT '',state TEXT NOT NULL DEFAULT 'active',created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+ );
+ CREATE TABLE source_revision_counter(id INTEGER PRIMARY KEY,value BIGINT NOT NULL);
+ INSERT INTO source_revision_counter(id,value) VALUES(1,1);`)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -69,7 +78,7 @@ func TestMetadataConsistency(t *testing.T) {
 				t.Error("existing blob did not produce metadata and association")
 			}
 			// A repeated source may produce new text after parser/schema changes.
-			if _, err := db.Exec(`UPDATE data SET pipeline_status='{"docs":{"status":"COMPLETED"}}',raw_content_hash='old' WHERE id='document'`); err != nil {
+			if _, err := db.Exec(`UPDATE data SET pipeline_status='{"docs":{"status":"COMPLETED"}}',raw_content_hash='old',content_hash='old' WHERE id='document'`); err != nil {
 				t.Fatal(err)
 			}
 			result.ContentHash = "old"

@@ -18,26 +18,31 @@ type DeduplicateResult struct {
 
 // DedupNode is a node for deduplication (preserves all original fields).
 type DedupNode struct {
-	ID            string
-	Name          string
-	Description   string
-	Type          string
-	Text          string
-	Properties    map[string]string // additional key-value pairs
+	ID          string
+	Name        string
+	Description string
+	Type        string
+	Text        string
+	Properties  map[string]string // additional key-value pairs
 	// DataPoint provenance (GAP-9)
-	Confidence    float32 // 0-1, LLM extraction confidence
-	SourceChunkID string  // chunk ID this entity was extracted from
-	SourceDocID   string  // document ID
-	ExtractedAt   string  // RFC3339 timestamp
+	Confidence             float32 // 0-1, LLM extraction confidence
+	SourceChunkID          string  // chunk ID this entity was extracted from
+	SourceDocID            string  // document ID
+	ContentRevision        int64
+	Generation, Collection string
+	ExtractedAt            string // RFC3339 timestamp
 }
 
 // DedupEdge is an edge for deduplication.
 type DedupEdge struct {
-	SourceID         string
-	TargetID         string
-	RelationshipName string
-	EdgeText         string
-	Properties       map[string]string
+	SourceID               string
+	TargetID               string
+	RelationshipName       string
+	EdgeText               string
+	Properties             map[string]string
+	SourceDocID            string
+	ContentRevision        int64
+	Generation, Collection string
 }
 
 // Triplet is the result of triplet generation from deduplicated graph.

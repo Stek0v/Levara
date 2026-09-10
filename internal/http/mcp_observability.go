@@ -9,6 +9,8 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"github.com/stek0v/levara/pkg/runreg"
 	"os"
 	"runtime"
 	"strings"
@@ -117,7 +119,17 @@ func (h *mcpHandler) toolIngestionStatus(ctx context.Context, args map[string]an
 		limit = 100
 	}
 
-	all := h.cfg.Runs.Snapshot()
+	ctx = context.WithValue(ctx, searchActorKey{}, workspaceActorFromMCP(ctx))
+	all := make([]*runreg.Status, 0)
+	for _, status := range h.cfg.Runs.Snapshot() {
+		if err := authorizeRunStatus(ctx, h.cfg, status); err != nil {
+			if errors.Is(err, errSessionForbidden) {
+				continue
+			}
+			return mcpErrorResult("run authorization unavailable")
+		}
+		all = append(all, status)
+	}
 	running := 0
 	completed := 0
 	failed := 0
@@ -184,9 +196,16 @@ func (h *mcpHandler) toolRecentErrors(ctx context.Context, args map[string]any) 
 	}
 
 	var entries []errorEntry
+	ctx = context.WithValue(ctx, searchActorKey{}, workspaceActorFromMCP(ctx))
 
 	if h.cfg.Runs != nil {
 		for _, s := range h.cfg.Runs.Snapshot() {
+			if err := authorizeRunStatus(ctx, h.cfg, s); err != nil {
+				if errors.Is(err, errSessionForbidden) {
+					continue
+				}
+				return mcpErrorResult("run authorization unavailable")
+			}
 			if s.Status != "FAILED" {
 				continue
 			}
@@ -200,7 +219,8 @@ func (h *mcpHandler) toolRecentErrors(ctx context.Context, args map[string]any) 
 		}
 	}
 
-	if h.cfg.DB != nil {
+	if h.cfg.DB != nil && globalSearchGraphAllowed(ctx, h.cfg) {
+		requireAdminSearchEvidence(ctx)
 		rows, err := h.cfg.DB.QueryContext(ctx,
 			Q(`SELECT id, payload, created_at FROM heartbeats
 			   WHERE event_type = 'doctor' ORDER BY created_at DESC LIMIT $1`), 50)
@@ -250,10 +270,8 @@ func (h *mcpHandler) toolRecentErrors(ctx context.Context, args map[string]any) 
 }
 
 // toolSyncStatus summarizes recent sync events per direction (push|pull)
-// from the heartbeats table. Returns last-seen-at and count for each
-// direction plus the most recent N events. Sync only emits a heartbeat
-// on success today, so this view answers "did sync run lately?" rather
-// than "did sync fail?".
+// from the heartbeats table, preserving reported outcomes and per-type details.
+// Missing historical outcome remains unknown, never inferred as success.
 func (h *mcpHandler) toolSyncStatus(ctx context.Context, args map[string]any) mcpToolResult {
 	if err := authorizeSync(ctx, h.cfg); err != nil {
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: err.Error()}}, IsError: true}
@@ -282,6 +300,7 @@ func (h *mcpHandler) toolSyncStatus(ctx context.Context, args map[string]any) mc
 		Count      int    `json:"count"`
 		LastAt     string `json:"last_at"`
 		LastRemote string `json:"last_remote"`
+		LastStatus string `json:"last_status"`
 	}
 	byDir := map[string]*perDirection{}
 	type evt struct {
@@ -290,6 +309,9 @@ func (h *mcpHandler) toolSyncStatus(ctx context.Context, args map[string]any) mc
 		Remote    string          `json:"remote"`
 		Types     json.RawMessage `json:"types,omitempty"`
 		At        string          `json:"at"`
+		Status    string          `json:"status"`
+		Error     string          `json:"error,omitempty"`
+		Result    json.RawMessage `json:"result,omitempty"`
 	}
 	events := []evt{}
 
@@ -302,9 +324,15 @@ func (h *mcpHandler) toolSyncStatus(ctx context.Context, args map[string]any) mc
 			Direction string          `json:"direction"`
 			Remote    string          `json:"remote"`
 			Types     json.RawMessage `json:"types"`
+			Status    string          `json:"status"`
+			Error     string          `json:"error"`
+			Result    json.RawMessage `json:"result"`
 		}
 		if json.Unmarshal([]byte(payload), &p) != nil {
 			continue
+		}
+		if p.Status == "" {
+			p.Status = "unknown"
 		}
 		dir := p.Direction
 		if dir == "" {
@@ -312,7 +340,7 @@ func (h *mcpHandler) toolSyncStatus(ctx context.Context, args map[string]any) mc
 		}
 		entry := byDir[dir]
 		if entry == nil {
-			entry = &perDirection{LastAt: createdAt, LastRemote: p.Remote}
+			entry = &perDirection{LastAt: createdAt, LastRemote: p.Remote, LastStatus: p.Status}
 			byDir[dir] = entry
 		}
 		entry.Count++
@@ -322,9 +350,13 @@ func (h *mcpHandler) toolSyncStatus(ctx context.Context, args map[string]any) mc
 			Remote:    p.Remote,
 			Types:     p.Types,
 			At:        createdAt,
+			Status:    p.Status, Error: p.Error, Result: p.Result,
 		})
 	}
 
+	if err := rows.Err(); err != nil {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "sync heartbeats query failed"}}, IsError: true}
+	}
 	return mcpJSONResult(map[string]any{
 		"by_direction": byDir,
 		"events":       events,

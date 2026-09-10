@@ -6,6 +6,7 @@ package access
 // adapters and policy code consume, so callers stop passing bare
 // (userID, permissions) tuples around.
 type APIKeyIdentity struct {
+	KeyID       string // verified database identifier; never the API key secret
 	UserID      string
 	Permissions string
 }

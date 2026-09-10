@@ -19,7 +19,12 @@ async function mockAPI(page: Page) {
     const url = new URL(request.url())
     const path = url.pathname
     let body: unknown = []
-    if (path === '/api/v1/auth/me') body = { id: 'editor', email: 'editor@test.local', username: 'editor' }
+    if (path === '/api/v1/auth/me') {
+      if (request.headers().authorization !== 'Bearer upload-test-token') {
+        return route.fulfill({ status: 401, json: { error: 'missing bearer' } })
+      }
+      body = { id: 'editor', email: 'editor@test.local', username: 'editor' }
+    }
     else if (path === '/api/v1/settings') body = { locale: 'en', theme: 'light' }
     else if (path === '/api/v1/datasets') {
       await state.datasetsReady

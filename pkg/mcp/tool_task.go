@@ -223,8 +223,8 @@ func ToolTaskPlan(ctx context.Context, deps Deps, args map[string]any) ToolResul
 	defer tx.Rollback()
 	owner := taskOwner(ctx)
 	var current int
-	var status string
-	if err := tx.QueryRowContext(ctx, deps.Q(`SELECT status,version FROM tasks WHERE id=$1 AND (owner_id=$2 OR owner_id='')`), taskID, owner).Scan(&status, &current); err != nil {
+	var status, authorityJSON string
+	if err := tx.QueryRowContext(ctx, deps.Q(`SELECT status,version,authority_json FROM tasks WHERE id=$1 AND (owner_id=$2 OR owner_id='')`), taskID, owner).Scan(&status, &current, &authorityJSON); err != nil {
 		return toolError("task not found")
 	}
 	if status == "completed" {
@@ -269,16 +269,42 @@ func ToolTaskPlan(ctx context.Context, deps Deps, args map[string]any) ToolResul
 	if hasDependencyCycle(dependencyGraph) {
 		return toolError("step dependencies must form an acyclic graph")
 	}
+	var policy workerTaskPolicy
+	if err := json.Unmarshal([]byte(authorityJSON), &policy); err != nil {
+		return toolError("invalid task authority")
+	}
 	for i, raw := range steps {
 		item := raw.(map[string]any)
 		id, description := stringArg(item, "step_id"), stringArg(item, "description")
 		if description == "" {
 			return toolError(fmt.Sprintf("steps[%d].description required", i))
 		}
+		actionJSON := "{}"
+		if action, present := item["action"]; present {
+			data, err := json.Marshal(action)
+			if err != nil {
+				return toolError("invalid action")
+			}
+			if _, err = parseTaskAction(data); err != nil {
+				return toolError(err.Error())
+			}
+			actionJSON = string(data)
+		} else if policy.AutoRun {
+			return toolError("auto_run steps require an action")
+		}
+		if policy.AutoRun && len(stringSliceArg(item, "criterion_ids")) == 0 {
+			return toolError("auto_run steps require criterion_ids")
+		}
+		for _, criterion := range stringSliceArg(item, "criterion_ids") {
+			var found int
+			if err := tx.QueryRowContext(ctx, deps.Q(`SELECT COUNT(*) FROM task_criteria WHERE task_id=$1 AND id=$2`), taskID, criterion).Scan(&found); err != nil || found != 1 {
+				return toolError("unknown criterion_id: " + criterion)
+			}
+		}
 		_, err = tx.ExecContext(ctx, deps.Q(`INSERT INTO task_steps
-			(id,task_id,description,status,required,dependencies_json,criterion_ids_json,attempts,position,created_at,updated_at)
-			VALUES($1,$2,$3,'pending',$4,$5,$6,0,$7,$8,$9)`), id, taskID, description,
-			boolArg(item, "required", true), jsonArg(item, "dependencies", []string{}), jsonArg(item, "criterion_ids", []string{}),
+			(id,task_id,description,status,required,dependencies_json,criterion_ids_json,action_json,attempts,position,created_at,updated_at)
+			VALUES($1,$2,$3,'pending',$4,$5,$6,$7,0,$8,$9,$10)`), id, taskID, description,
+			boolArg(item, "required", true), jsonArg(item, "dependencies", []string{}), jsonArg(item, "criterion_ids", []string{}), actionJSON,
 			i, time.Now().UTC().Format(time.RFC3339Nano), time.Now().UTC().Format(time.RFC3339Nano))
 		if err != nil {
 			return toolError(err.Error())
@@ -362,16 +388,20 @@ func ToolTaskStep(ctx context.Context, deps Deps, args map[string]any) ToolResul
 		return toolError(fmt.Sprintf("version conflict: current=%d", version))
 	}
 	now := time.Now().UTC()
+	// A legacy expiry cleanup may have left an active step without a lease.
+	// Reclaim only when no live lease exists, preserving the task/step scope.
 	if action == "claim" {
 		_, err = tx.ExecContext(ctx, deps.Q(`UPDATE task_steps SET status='pending',updated_at=$1
-			WHERE task_id=$2 AND id=$3 AND status='active' AND EXISTS (
-				SELECT 1 FROM task_leases l WHERE l.task_id=$4 AND l.step_id=$5 AND l.expires_at<=$6
+			WHERE task_id=$2 AND id=$3 AND status='active' AND NOT EXISTS (
+				SELECT 1 FROM task_leases l WHERE l.task_id=$4 AND l.step_id=$5 AND l.expires_at>$6
 			)`), now.Format(time.RFC3339Nano), taskID, stepID, taskID, stepID, now.Format(time.RFC3339Nano))
 		if err != nil {
 			return toolError(err.Error())
 		}
 	}
-	_, _ = tx.ExecContext(ctx, deps.Q(`DELETE FROM task_leases WHERE task_id=$1 AND expires_at<=$2`), taskID, now.Format(time.RFC3339Nano))
+	if _, err := tx.ExecContext(ctx, deps.Q(`DELETE FROM task_leases WHERE task_id=$1 AND step_id=$2 AND expires_at<=$3`), taskID, stepID, now.Format(time.RFC3339Nano)); err != nil {
+		return toolError(err.Error())
+	}
 	var stepStatus, depsJSON string
 	if err := tx.QueryRowContext(ctx, deps.Q(`SELECT status,dependencies_json FROM task_steps WHERE id=$1 AND task_id=$2`), stepID, taskID).Scan(&stepStatus, &depsJSON); err != nil {
 		return toolError("step not found")
@@ -404,7 +434,7 @@ func ToolTaskStep(ctx context.Context, deps Deps, args map[string]any) ToolResul
 		if n, _ := res.RowsAffected(); n != 1 {
 			return toolError("step already leased")
 		}
-		_, err = tx.ExecContext(ctx, deps.Q(`UPDATE task_steps SET status='active',attempts=attempts+1,updated_at=$1 WHERE id=$2`), now.Format(time.RFC3339Nano), stepID)
+		_, err = tx.ExecContext(ctx, deps.Q(`UPDATE task_steps SET status='active',attempts=attempts+1,updated_at=$1 WHERE id=$2 AND task_id=$3`), now.Format(time.RFC3339Nano), stepID, taskID)
 		if err != nil {
 			return toolError(err.Error())
 		}
@@ -425,7 +455,7 @@ func ToolTaskStep(ctx context.Context, deps Deps, args map[string]any) ToolResul
 			return toolError("active lease not owned by actor")
 		}
 		status := map[string]string{"release": "pending", "pass": "passed", "fail": "failed"}[action]
-		_, err = tx.ExecContext(ctx, deps.Q(`UPDATE task_steps SET status=$1,updated_at=$2 WHERE id=$3`), status, now.Format(time.RFC3339Nano), stepID)
+		_, err = tx.ExecContext(ctx, deps.Q(`UPDATE task_steps SET status=$1,updated_at=$2 WHERE id=$3 AND task_id=$4`), status, now.Format(time.RFC3339Nano), stepID, taskID)
 		if err != nil {
 			return toolError(err.Error())
 		}
@@ -476,6 +506,15 @@ func ToolTaskReceipt(ctx context.Context, deps Deps, args map[string]any) ToolRe
 		return toolError(err.Error())
 	}
 	defer tx.Rollback()
+	if stepID := stringArg(args, "step_id"); stepID != "" {
+		res, err := tx.ExecContext(ctx, deps.Q(`UPDATE task_leases SET actor_id=actor_id WHERE task_id=$1 AND step_id=$2 AND actor_id=$3 AND expires_at>$4`), taskID, stepID, taskActor(ctx, args), time.Now().UTC().Format(time.RFC3339Nano))
+		if err != nil {
+			return toolError(err.Error())
+		}
+		if n, _ := res.RowsAffected(); n != 1 {
+			return toolError("execution receipt requires the live step lease")
+		}
+	}
 	var current int
 	var currentStatus string
 	if err := tx.QueryRowContext(ctx, deps.Q(`SELECT status,version FROM tasks WHERE id=$1 AND (owner_id=$2 OR owner_id='')`), taskID, taskOwner(ctx)).Scan(&currentStatus, &current); err != nil {
@@ -494,11 +533,27 @@ func ToolTaskReceipt(ctx context.Context, deps Deps, args map[string]any) ToolRe
 	if current != baseVersion {
 		return toolError(fmt.Sprintf("version conflict: current=%d", current))
 	}
+	if execution := TaskExecutionFromContext(ctx); execution != nil {
+		if taskID != execution.TaskID || stringArg(args, "step_id") != execution.StepID || taskActor(ctx, args) != execution.ActorID || taskOwner(ctx) != execution.OwnerID {
+			return toolError("execution receipt identity mismatch")
+		}
+		var actionJSON, authorityJSON string
+		var attempt int
+		if err := tx.QueryRowContext(ctx, deps.Q(`SELECT s.action_json,t.authority_json,s.attempts FROM tasks t JOIN task_steps s ON s.task_id=t.id WHERE t.id=$1 AND s.id=$2 AND t.owner_id=$3 AND t.status='running' AND s.status='active'`), taskID, execution.StepID, execution.OwnerID).Scan(&actionJSON, &authorityJSON, &attempt); err != nil || actionJSON != execution.actionJSON || authorityJSON != execution.AuthorityJSON || attempt != execution.Attempt {
+			return toolError("execution receipt authority changed")
+		}
+	}
 	for _, criterionID := range criteria {
 		var count int
 		_ = tx.QueryRowContext(ctx, deps.Q(`SELECT COUNT(*) FROM task_criteria WHERE task_id=$1 AND id=$2`), taskID, criterionID).Scan(&count)
 		if count != 1 {
 			return toolError("unknown criterion_id: " + criterionID)
+		}
+	}
+	if stepID := stringArg(args, "step_id"); stepID != "" {
+		var live int
+		if err := tx.QueryRowContext(ctx, deps.Q(`SELECT COUNT(*) FROM task_leases l JOIN task_steps s ON s.task_id=l.task_id AND s.id=l.step_id WHERE l.task_id=$1 AND l.step_id=$2 AND l.actor_id=$3 AND l.expires_at>$4 AND s.status='active'`), taskID, stepID, taskActor(ctx, args), time.Now().UTC().Format(time.RFC3339Nano)).Scan(&live); err != nil || live != 1 {
+			return toolError("execution receipt lease expired")
 		}
 	}
 	now, receiptID := time.Now().UTC().Format(time.RFC3339Nano), uuid.NewString()
@@ -857,7 +912,14 @@ func ToolTaskBootstrap(ctx context.Context, deps Deps, args map[string]any) Tool
 		return toolError("task not found")
 	}
 	criteria := queryMaps(ctx, db, deps.Q, `SELECT id,description,required,verification_json FROM task_criteria WHERE task_id=$1 ORDER BY created_at`, taskID)
-	steps := queryMaps(ctx, db, deps.Q, `SELECT id,description,status,required,dependencies_json,criterion_ids_json,attempts,position FROM task_steps WHERE task_id=$1 ORDER BY position`, taskID)
+	steps := queryMaps(ctx, db, deps.Q, `SELECT id,description,status,required,dependencies_json,criterion_ids_json,action_json,attempts,position FROM task_steps WHERE task_id=$1 ORDER BY position`, taskID)
+	for _, step := range steps {
+		var action any
+		if json.Unmarshal([]byte(fmt.Sprint(step["action_json"])), &action) == nil {
+			step["action"] = action
+		}
+		delete(step, "action_json")
+	}
 	blockers := queryMaps(ctx, db, deps.Q, `SELECT id,reason,required_decision,status,created_at FROM task_blockers WHERE task_id=$1 AND status='active' ORDER BY created_at`, taskID)
 	checkpoint := queryMaps(ctx, db, deps.Q, `SELECT id,step_id,summary,verified_json,failed_json,next_action,workspace_revision,created_at FROM task_checkpoints WHERE task_id=$1 ORDER BY created_at DESC LIMIT 1`, taskID)
 	memories := queryMaps(ctx, db, deps.Q, `SELECT id,key,value,hall,room,is_pinned,pin_priority FROM memories WHERE collection_name=$1 AND (owner_id=$2 OR owner_id='') AND superseded_by='' AND (room=$3 OR room='') AND hall IN ('decision','discovery','fact') ORDER BY is_pinned DESC,pin_priority DESC,updated_at DESC LIMIT 12`, collection, owner, room)

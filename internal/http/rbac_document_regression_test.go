@@ -1,9 +1,11 @@
 package http
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	accesspkg "github.com/stek0v/levara/pkg/access"
 	"net/http/httptest"
 	"os"
 	"strings"
@@ -42,6 +44,12 @@ func documentACLHTTPFixture(t *testing.T, dialect ...string) (*fiber.App, *sql.D
 		}
 	} else {
 		db = newMCPMemoryBehaviorDB(t)
+	}
+	if err := accesspkg.EnsureIdentitySchema(context.Background(), db, Q); err != nil {
+		t.Fatal(err)
+	}
+	if err := accesspkg.EnsureBrowserSessionSchema(context.Background(), db, Q); err != nil {
+		t.Fatal(err)
 	}
 	for _, q := range []string{
 		`INSERT INTO principals(id) VALUES('alice'),('bob')`,

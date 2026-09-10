@@ -27,7 +27,6 @@ func ToolDescriptors() []Tool {
 					"snap_to_sentence":     map[string]any{"type": "boolean", "default": true, "description": "Snap sliding window boundaries to sentence/word ends (avoids cutting words)."},
 					"parent_child":         map[string]any{"type": "boolean", "default": false, "description": "Enable parent-child chunking. Small chunks for search precision, large chunks for context."},
 					"document_title":       map[string]any{"type": "string", "description": "Document title for attribution. Prepended as contextual header to chunk embeddings."},
-					"document_id":          map[string]any{"type": "string", "description": "Stable document ID for metadata tracking."},
 					"community_resolution": map[string]any{"type": "number", "default": 1.0, "description": "Louvain resolution (γ). >1=finer, <1=coarser. Presets: 0.5=coarse, 1.0=medium, 2.0=fine."},
 					"dedup_threshold":      map[string]any{"type": "number", "default": 0.95, "description": "Semantic entity dedup threshold (0.5-1.0). Higher=stricter."},
 					"min_chunk_chars":      map[string]any{"type": "integer", "default": 80, "description": "Min chunk size in characters."},
@@ -851,7 +850,7 @@ func ToolDescriptors() []Tool {
 		// ── Git Commit Analyzer tools ──
 		{
 			Name:        "analyze_commits",
-			Description: "Analyze git repository commits and build knowledge graph.",
+			Description: "Analyze the server git repository and build its knowledge graph. Requires an active instance administrator.",
 			OutputSchema: objectSchema(map[string]any{
 				"commits_analyzed": integerProp("Number of commits scanned."),
 				"entities":         integerProp("Entities extracted across the commit history."),
@@ -870,7 +869,7 @@ func ToolDescriptors() []Tool {
 		},
 		{
 			Name:        "git_search",
-			Description: "Search through analyzed git commits in the knowledge graph.",
+			Description: "Search analyzed commits from the server git repository. Requires an active instance administrator.",
 			OutputSchema: objectSchema(map[string]any{
 				"results": arrayOfObjectsProp(searchResultItemSchema(), "Commit-bearing hits ranked by relevance."),
 				"message": stringProp("Optional empty-result explanation."),
@@ -1085,15 +1084,19 @@ func ToolDescriptors() []Tool {
 		},
 		{
 			Name:         "delete_memory",
-			Description:  "Permanently delete a memory by key — removes both the stored row and its vector so it no longer surfaces in recall. Scoped to your own (or shared) memories. Optional collection narrows the delete to one pinned-context shard. Reports an error if no memory matched.",
+			Description:  "Permanently delete exactly one memory and its vector. Prefer memory_id for an exact own-row delete or an administrator-authorized shared-row delete. Legacy key selects one personal row; collection may narrow that lookup. Ambiguous or absent matches are errors.",
 			OutputSchema: statusMessageSchema(),
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"key":        map[string]any{"type": "string", "description": "Memory key to delete"},
-					"collection": map[string]any{"type": "string", "description": "Optional: only delete the row in this pinned-context collection."},
+					"memory_id":  map[string]any{"type": "string", "description": "Exact memory row ID. Cannot be combined with key or collection."},
+					"key":        map[string]any{"type": "string", "description": "Legacy selector for one unique personal memory."},
+					"collection": map[string]any{"type": "string", "description": "Optional collection scope for a legacy key selector."},
 				},
-				"required": []string{"key"},
+				"oneOf": []any{
+					map[string]any{"required": []string{"memory_id"}, "not": map[string]any{"anyOf": []any{map[string]any{"required": []string{"key"}}, map[string]any{"required": []string{"collection"}}}}},
+					map[string]any{"required": []string{"key"}, "not": map[string]any{"required": []string{"memory_id"}}},
+				},
 			},
 		},
 		{
@@ -1299,11 +1302,18 @@ func ToolDescriptors() []Tool {
 			Name:        "sync",
 			Description: "Synchronize data with a remote Levara instance. Syncs memories, interactions, graph, and vector collections (re-embedded with local model). Handles different embedding dimensions automatically.",
 			OutputSchema: objectSchema(map[string]any{
-				"direction": stringProp("pull | push."),
-				"counts": map[string]any{
+				"direction":    stringProp("pull | push."),
+				"status":       stringProp("ok | partial | error | running; running is accepted asynchronous work, not completed import."),
+				"memories":     map[string]any{"description": "Per-type imported/skipped/failed counts or push acknowledgement; absent unless requested."},
+				"interactions": map[string]any{"description": "Per-type imported/skipped/failed counts or push acknowledgement; absent unless requested."},
+				"graph": map[string]any{
 					"type":        "object",
-					"description": "Per-type counts: {memories: {pushed, pulled, errors}, graph: {...}, ...}.",
+					"description": "Graph outcome including node and edge counts; absent unless requested.",
 				},
+				"collections_sync":   map[string]any{"type": "object", "description": "Per-collection import outcomes or accepted asynchronous run IDs; absent unless requested."},
+				"memories_error":     stringProp("Memory transfer failure, when present."),
+				"interactions_error": stringProp("Interaction transfer failure, when present."),
+				"graph_error":        stringProp("Graph transfer failure, when present."),
 				"remote_manifest": map[string]any{
 					"type":        "object",
 					"description": "Remote-side manifest snapshot echoed for observability.",
@@ -1543,11 +1553,17 @@ func ToolDescriptors() []Tool {
 		},
 		{
 			Name:        "sync_status",
-			Description: "Summarize recent sync events per direction (push|pull) from heartbeats: count, last-seen-at, last remote URL, and the most recent N events. Sync emits a heartbeat on success only — answers 'did sync run lately?' rather than 'did sync fail?'.",
+			Description: "Summarize recent sync outcomes per direction (push|pull) from heartbeats: count, last-seen-at, last remote URL, last status, and the most recent N success or failure events.",
 			OutputSchema: objectSchema(map[string]any{
 				"by_direction": map[string]any{
 					"type":        "object",
-					"description": "Per-direction summary: count, last_at, last_remote.",
+					"description": "Per-direction outcome summary.",
+					"additionalProperties": objectSchema(map[string]any{
+						"count":       integerProp("Number of recorded sync attempts."),
+						"last_at":     stringProp("Most recent event timestamp."),
+						"last_remote": stringProp("Most recent remote URL."),
+						"last_status": stringProp("Most recent reported outcome."),
+					}),
 				},
 				"events": arrayOfObjectsProp(objectSchema(map[string]any{
 					"id":        stringProp("Heartbeat UUID."),
@@ -1555,6 +1571,9 @@ func ToolDescriptors() []Tool {
 					"remote":    stringProp("Remote URL."),
 					"types":     map[string]any{"description": "Sync types payload as recorded."},
 					"at":        stringProp("RFC3339."),
+					"status":    stringProp("Reported outcome, or unknown for legacy events."),
+					"error":     stringProp("Reported failure detail when present."),
+					"result":    map[string]any{"description": "Reported sync result when present."},
 				}), "Recent sync events, newest first."),
 			}),
 			InputSchema: map[string]any{

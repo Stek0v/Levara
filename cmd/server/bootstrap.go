@@ -55,12 +55,19 @@ func initStorageBackend(dataDir string, srvLog *observe.Logger) (storage.Storage
 	if err != nil {
 		log.Fatalf("storage init: %v", err)
 	}
+	fileStore, err = configureStorageEncryption(context.Background(), fileStore)
+	if err != nil {
+		log.Fatalf("storage encryption init: %v", err)
+	}
 	storageBackend := strings.ToLower(os.Getenv("STORAGE_BACKEND"))
+	if storageBackend == "" {
+		storageBackend = "local"
+	}
 	if srvLog != nil {
 		srvLog.Info("storage backend ready", map[string]any{"backend": storageBackend, "path": storagePath})
 		if storageBackend == "s3" {
 			srvLog.Info("S3 storage enabled for upload hot-path", map[string]any{
-				"hot_path":     "/api/v1/add -> ingest + mirror to cfg.FileStorage",
+				"hot_path":     "HTTP/MCP/gRPC ingest -> configured object storage",
 				"location_uri": "storage://<key> for non-local backend",
 				"storage_path": storagePath,
 			})
@@ -196,12 +203,14 @@ func initHTTPRuntime(clusterStore *store.Cluster, dim int, replServer *cluster.R
 	// BodyLimit: fiber's 4 MiB default silently truncated real PDF uploads —
 	// the connection was reset mid-body and the WebUI proxy surfaced it as an
 	// opaque EPIPE (dogfood 2026-09-04). 100 MiB covers large documents; the
-	// upload handler streams and enforces its own per-file checks.
-	app := fiber.New(fiber.Config{BodyLimit: 100 << 20})
+	// upload handler keeps multipart parts in this bounded body memory, avoiding
+	// fasthttp's plaintext temporary files before encryption.
+	app := fiber.New(fiber.Config{BodyLimit: 100 << 20, DisablePreParseMultipartForm: true})
 	app.Use(cors.New(cors.Config{
 		AllowOrigins:     "http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000,http://127.0.0.1:3001,http://localhost:8080,http://localhost:8081",
 		AllowMethods:     "GET,POST,PUT,DELETE,PATCH,OPTIONS",
-		AllowHeaders:     "Origin,Content-Type,Accept,Authorization,X-Api-Key,X-Trace-ID",
+		AllowHeaders:     "Origin,Content-Type,Accept,Authorization,X-Api-Key,X-Trace-ID,If-Match",
+		ExposeHeaders:    "ETag",
 		AllowCredentials: true,
 	}))
 	if httpAccessLogEnabled() {
@@ -483,7 +492,7 @@ func startEmbedKeepAlive(embedEndpoint, embedModel string, interval time.Duratio
 // installGracefulShutdown stops accepting traffic first, then closes backing
 // services after in-flight HTTP requests have drained. The returned channel is
 // closed only after all cleanup finishes so main does not exit early.
-func installGracefulShutdown(app *fiber.App, shards []store.ShardHandler, colManager *store.CollectionManager, pgDB *sql.DB, grpcServer *grpc.Server) <-chan struct{} {
+func installGracefulShutdown(app *fiber.App, shards []store.ShardHandler, colManager *store.CollectionManager, pgDB *sql.DB, grpcServer *grpc.Server, beforeClose ...func()) <-chan struct{} {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -509,6 +518,11 @@ func installGracefulShutdown(app *fiber.App, shards []store.ShardHandler, colMan
 			}
 		}
 
+		for _, stop := range beforeClose {
+			if stop != nil {
+				stop()
+			}
+		}
 		for i, shard := range shards {
 			if dn, ok := shard.(*cluster.DirectNode); ok {
 				if err := dn.DB.Close(); err != nil {
@@ -861,13 +875,21 @@ func buildConfigCheckProfileConfig(requireAuth bool, mcpAuditPath string) profil
 func runConfigCheck(w io.Writer, requireAuth bool, mcpAuditPath string, strict bool) int {
 	cfg := buildConfigCheckProfileConfig(requireAuth, mcpAuditPath)
 	findings, fatal := evaluateRuntimeProfile(cfg, strict)
+	_, encryptionErr := storageEncryptionFromEnv(os.Getenv)
+	_, auditErr := auditWebhookFromEnv(os.Getenv)
+	for _, err := range []error{encryptionErr, auditErr} {
+		if err != nil {
+			fmt.Fprintf(w, "  [error] integration_configuration: %v\n", err)
+			fatal = true
+		}
+	}
 	fmt.Fprintf(w, "profile: %s (strict=%v, db_provider=%s, require_auth=%v)\n",
 		profile.Normalize(cfg.Profile), strict, cfg.DBProvider, cfg.RequireAuth)
 	for _, f := range findings {
 		fmt.Fprintf(w, "  [%s] %s: %s\n", f.Level, f.Code, f.Message)
 	}
 	if fatal {
-		fmt.Fprintln(w, "config-check: FAIL (strict-mode profile errors)")
+		fmt.Fprintln(w, "config-check: FAIL (invalid configuration)")
 		return 1
 	}
 	fmt.Fprintln(w, "config-check: OK")
@@ -888,7 +910,7 @@ func ssoBridgeConfigured() bool {
 // explicitly disabled ("-"), with the default ("") path counting only when
 // workspace audit export is independently turned on.
 func auditSinkConfigured(mcpAuditPath string) bool {
-	return mcpAuditPath != "-" && (mcpAuditPath != "" || truthyEnv("LEVARA_WORKSPACE_AUDIT_EXPORT"))
+	return strings.TrimSpace(os.Getenv("AUDIT_WEBHOOK_URL")) != "" || (mcpAuditPath != "-" && (mcpAuditPath != "" || truthyEnv("LEVARA_WORKSPACE_AUDIT_EXPORT")))
 }
 
 // splitCSVEnv reads a comma-separated env var into a trimmed, non-empty

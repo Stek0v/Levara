@@ -10,6 +10,7 @@ package http
 import (
 	"context"
 
+	accesspkg "github.com/stek0v/levara/pkg/access"
 	"github.com/stek0v/levara/pkg/mcp"
 )
 
@@ -43,6 +44,45 @@ func (h *mcpHandler) toolDeleteMemory(ctx context.Context, args map[string]any) 
 // toolQueryEntity is a thin shim over mcp.ToolQueryEntity (F-4 wave 3h).
 func (h *mcpHandler) toolQueryEntity(ctx context.Context, args map[string]any) mcpToolResult {
 	return mcp.ToolQueryEntity(ctx, h, args)
+}
+
+func (h *mcpHandler) GraphDatasetIDs(ctx context.Context) ([]string, error) {
+	return documentSQLPolicy(h.cfg).GraphDatasetIDs(ctx, workspaceActorFromMCP(ctx))
+}
+
+func (h *mcpHandler) GraphAssertionsAllowed(ctx context.Context, assertions []mcp.GraphAssertion) bool {
+	actor, ok := ctx.Value(searchActorKey{}).(accesspkg.Actor)
+	if !ok {
+		actor = workspaceActorFromMCP(ctx)
+		ctx = context.WithValue(ctx, searchActorKey{}, actor)
+	}
+	policy := documentSQLPolicy(h.cfg)
+	for _, assertion := range assertions {
+		source, err := decodeSearchDocumentSource(assertion.Properties)
+		if err != nil {
+			return false
+		}
+		source.DatasetID = assertion.DatasetID
+		if source.DocumentID == "" && source.DatasetID != "" {
+			registered, err := policy.HasRegisteredDocuments(ctx, source.DatasetID)
+			if err != nil || registered {
+				return false
+			}
+			decision, err := policy.AuthorizeDataset(ctx, actor, source.DatasetID, accesspkg.ActionRead)
+			if err != nil || !decision.Allowed {
+				return false
+			}
+			trackSearchSource(ctx, searchDocumentSource{DatasetID: source.DatasetID, DatasetMetadataOnly: true})
+			continue
+		}
+		source.Derived = true
+		allowed, err := searchDocumentAllowed(ctx, h.cfg, actor, source)
+		if err != nil || !allowed {
+			return false
+		}
+		trackSearchSource(ctx, source)
+	}
+	return len(assertions) > 0
 }
 
 // ── Agent diaries ──

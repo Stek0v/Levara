@@ -7,16 +7,20 @@
 package http
 
 import (
-	"bufio"
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -25,38 +29,28 @@ import (
 
 	"github.com/stek0v/levara/internal/metrics"
 	accesspkg "github.com/stek0v/levara/pkg/access"
+	"github.com/stek0v/levara/pkg/ingest"
 	"github.com/stek0v/levara/pkg/orchestrator"
 	"github.com/stek0v/levara/pkg/runreg"
 )
 
-// ensureCognifyDataset get-or-creates a per-(owner,collection) dataset owned
-// by the caller and returns its id, so chunks/graph rows this run stamps are
-// reachable through search's RBAC gate (filterByAllowedDatasets keeps a hit
-// only when its dataset_id is "" or in the caller's allowed-set). An
-// unregistered ephemeral runID belongs to neither, so without this every
-// cognified chunk is silently dropped on read-back. Mirrors the MCP-surface
-// helper ensureCognifyDatasetID (pkg/mcp/tool_cognify.go). Best-effort: any
-// DB error falls back to the ephemeral id unchanged.
-func ensureCognifyDataset(ctx context.Context, db *sql.DB, owner, collection, fallbackID string) string {
+// resolveCognifyDataset reuses only the caller's own internal dataset. A new
+// dataset is returned as a target and created later by IngestAuthorized in the
+// same authorized transaction as the immutable source.
+func resolveCognifyDataset(ctx context.Context, db *sql.DB, owner, collection, fallbackID string) (string, string, error) {
 	name := fmt.Sprintf("__cognify__:%s:%s", owner, collection)
-
-	var existing string
-	if err := db.QueryRowContext(ctx, Q(`SELECT id FROM datasets WHERE name = $1`), name).Scan(&existing); err == nil && existing != "" {
-		return existing
+	var id, actualOwner string
+	err := db.QueryRowContext(ctx, Q(`SELECT id,COALESCE(owner_id,'') FROM datasets WHERE name = $1`), name).Scan(&id, &actualOwner)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fallbackID, name, nil
 	}
-
-	now := time.Now().UTC()
-	if _, err := db.ExecContext(ctx,
-		Q(`INSERT INTO datasets (id, name, owner_id, created_at, updated_at)
-		   VALUES ($1, $2, $3, $4, $5) ON CONFLICT (name) DO NOTHING`),
-		fallbackID, name, owner, now, now); err != nil {
-		return fallbackID
+	if err != nil {
+		return "", "", err
 	}
-	var resolved string
-	if err := db.QueryRowContext(ctx, Q(`SELECT id FROM datasets WHERE name = $1`), name).Scan(&resolved); err == nil && resolved != "" {
-		return resolved
+	if id == "" || actualOwner != owner {
+		return "", "", accesspkg.ErrDocumentForbidden
 	}
-	return fallbackID
+	return id, name, nil
 }
 
 func cognifySkipGraphFromMode(mode string, skipGraph bool) bool {
@@ -79,11 +73,17 @@ func cognifySkipGraphFromMode(mode string, skipGraph bool) bool {
 // @Router      /cognify [post]
 func cognifyHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		reqCtx, cancel := apiRequestContext(c)
+		reqCtx, cancel := searchRequestContext(c)
 		defer cancel()
+		reqCtx = searchEgressContext(c, cfg, reqCtx)
+		c.SetUserContext(reqCtx)
 
 		var req struct {
-			Datasets        []string `json:"datasets"`
+			Datasets  []string `json:"datasets"`
+			Documents []struct {
+				DatasetID  string `json:"dataset_id"`
+				DocumentID string `json:"document_id"`
+			} `json:"documents"`
 			DatasetIds      []string `json:"datasetIds"` // Levara frontend format
 			Texts           []string `json:"texts"`
 			LLMModel        string   `json:"llm_model"`
@@ -123,72 +123,129 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 			seen[id] = true
 			allDatasetIDs = append(allDatasetIDs, id)
 		}
+		if len(req.Documents) > 0 && (len(allDatasetIDs) > 0 || len(req.Texts) > 0) {
+			return fiber.NewError(400, "documents cannot be mixed with datasets or inline texts")
+		}
 		if len(req.Texts) > 0 && len(allDatasetIDs) > 1 {
 			return c.Status(400).JSON(fiber.Map{"detail": "inline texts require at most one dataset"})
-		}
-		if len(allDatasetIDs) > 0 {
-			alreadyProcessed := true
-			for _, id := range allDatasetIDs {
-				alreadyProcessed = CheckPipelineStatus(cfg.DB, id, collection) && alreadyProcessed
-			}
-			if alreadyProcessed {
-				return c.JSON(fiber.Map{"status": "already_processed", "message": fmt.Sprintf("Dataset already cognified for collection %q. Delete pipeline_status to re-process.", collection)})
-			}
 		}
 
 		var sources []cognifySource
 		var texts []string
 		if len(req.Texts) > 0 {
 			datasetID := runID
+			datasetName := ""
 			if len(allDatasetIDs) > 0 {
 				datasetID = allDatasetIDs[0]
 			} else if cfg.DB != nil {
-				datasetID = ensureCognifyDataset(reqCtx, cfg.DB, userID, collection, runID)
-				if err := authorizeDatasetFiber(c, cfg, datasetID, accesspkg.ActionWrite); err != nil {
-					return err
+				var err error
+				datasetID, datasetName, err = resolveCognifyDataset(reqCtx, cfg.DB, userID, collection, runID)
+				if err != nil {
+					return documentHTTPError(err)
 				}
 			}
-			sources = append(sources, cognifySource{datasetID: datasetID, texts: req.Texts})
+			var err error
+			sources, err = ingestCognifySources(reqCtx, cfg, uploadMetadataActor(c, cfg, reqCtx), datasetID, datasetName, "", req.Texts)
+			if err != nil {
+				return documentHTTPError(err)
+			}
 			texts = req.Texts
 		} else if cfg.DB != nil {
+			type locationSource struct {
+				source   cognifySource
+				location string
+			}
+			var pending []locationSource
 			for _, datasetID := range allDatasetIDs {
 				rows, err := cfg.DB.QueryContext(reqCtx, Q(`SELECT d.id, d.name, d.raw_data_location FROM data d
-     JOIN dataset_data dd ON d.id = dd.data_id WHERE dd.dataset_id = $1 ORDER BY d.id`), datasetID)
+                    JOIN dataset_data dd ON d.id=dd.data_id WHERE dd.dataset_id=$1 ORDER BY d.id`), datasetID)
 				if err != nil {
-					return c.Status(500).JSON(fiber.Map{"detail": "dataset source lookup failed"})
+					return fiber.NewError(503, "dataset source lookup failed")
 				}
 				for rows.Next() {
-					var documentID, title, location string
-					if err := rows.Scan(&documentID, &title, &location); err != nil {
+					item := locationSource{source: cognifySource{datasetID: datasetID}}
+					if err := rows.Scan(&item.source.documentID, &item.source.title, &item.location); err != nil {
 						rows.Close()
-						return c.Status(500).JSON(fiber.Map{"detail": "dataset source lookup failed"})
+						return fiber.NewError(503, "dataset source lookup failed")
 					}
-					raw, err := loadRawDataByLocation(reqCtx, cfg, location)
-					if err != nil {
-						rows.Close()
-						return c.Status(422).JSON(fiber.Map{"detail": "unable to read document " + documentID})
-					}
-					text := string(raw)
-					sources = append(sources, cognifySource{datasetID: datasetID, documentID: documentID, title: title, texts: []string{text}})
-					texts = append(texts, text)
+					pending = append(pending, item)
 				}
-				err = rows.Err()
-				rows.Close()
+				readErr, closeErr := rows.Err(), rows.Close()
+				if readErr != nil || closeErr != nil {
+					return fiber.NewError(503, "dataset source lookup failed")
+				}
+			}
+			for _, doc := range req.Documents {
+				if doc.DatasetID == "" || doc.DocumentID == "" {
+					return fiber.NewError(400, "document requires dataset_id and document_id")
+				}
+				item := locationSource{source: cognifySource{datasetID: doc.DatasetID, documentID: doc.DocumentID}}
+				err := cfg.DB.QueryRowContext(reqCtx, Q(`SELECT d.name,d.raw_data_location FROM data d JOIN dataset_data dd ON dd.data_id=d.id
+                    WHERE dd.dataset_id=$1 AND dd.data_id=$2`), doc.DatasetID, doc.DocumentID).Scan(&item.source.title, &item.location)
+				if errors.Is(err, sql.ErrNoRows) {
+					return fiber.NewError(404, "document not found")
+				}
 				if err != nil {
-					return c.Status(500).JSON(fiber.Map{"detail": "dataset source lookup failed"})
+					return fiber.NewError(503, "document source lookup failed")
 				}
+				pending = append(pending, item)
+			}
+			// Buffer IDs and release every cursor before ACL queries or I/O.
+			// Authorize every source before loading the first document.
+			for i := range pending {
+				item := &pending[i]
+				ref := accesspkg.DocumentRef{DatasetID: item.source.datasetID, DataID: item.source.documentID}
+				d, err := documentSQLPolicy(cfg).AuthorizeDocument(reqCtx, workspaceActorFromFiber(c), ref, accesspkg.ActionWrite)
+				if err != nil {
+					return documentHTTPError(err)
+				}
+				if !d.Allowed {
+					return fiber.NewError(403, "document processing denied")
+				}
+				resource, err := documentSQLPolicy(cfg).GetDocumentResource(reqCtx, ref)
+				if err != nil && !errors.Is(err, accesspkg.ErrDocumentNotFound) {
+					return documentHTTPError(err)
+				}
+				item.source.contentRevision = resource.ContentRevision
+				item.source.sourceRevision, item.source.rawContentHash, err = documentSQLPolicy(cfg).SourceVersion(reqCtx, ref)
+				if err != nil {
+					return fiber.NewError(409, "source version unavailable; reimport the document")
+				}
+			}
+			for _, item := range pending {
+				raw, err := loadRawDataByLocation(reqCtx, cfg, item.location)
+				if err != nil {
+					return fiber.NewError(422, "unable to read document "+item.source.documentID)
+				}
+				if fmt.Sprintf("%x", sha256.Sum256(raw)) != item.source.rawContentHash {
+					return fiber.NewError(409, "document bytes changed; reimport the document")
+				}
+				item.source.texts = []string{string(raw)}
+				sources = append(sources, item.source)
+				texts = append(texts, string(raw))
 			}
 		}
 		if len(texts) == 0 {
 			return c.Status(400).JSON(fiber.Map{"detail": "no texts to cognify (provide texts[] or datasets[])"})
 		}
 
-		runStatus := &runreg.Status{RunID: runID, Status: "RUNNING", Stage: "starting", StartedAt: time.Now()}
-		cfg.Runs.Store(runID, runStatus)
 		var sessionContext string
 		if req.SessionID != "" && cfg.DB != nil {
-			sessionContext = GetSessionContext(cfg.DB, reqCtx, req.SessionID, 5)
+			var err error
+			sessionContext, err = GetScopedSessionContext(reqCtx, cfg, req.SessionID, 5)
+			if err != nil {
+				return sessionHTTPError(err)
+			}
 		}
+
+		actor, _ := reqCtx.Value(searchActorKey{}).(accesspkg.Actor)
+		proofs := make([]searchDocumentSource, 0, len(sources))
+		for _, source := range sources {
+			proofs = append(proofs, source.proof())
+		}
+		proofs = append(proofs, searchSources(reqCtx)...)
+		rawProofs, _ := json.Marshal(proofs)
+		runStatus := &runreg.Status{RequiresAdmin: searchEvidenceRequiresAdmin(reqCtx), OwnerID: actor.UserID, TenantID: actor.TenantID, SourcesJSON: string(rawProofs), RunID: runID, Status: "RUNNING", Stage: "starting", StartedAt: time.Now()}
 
 		// Build orchestrator config from server config + request overrides
 		pipeCfg := orchestrator.Config{
@@ -225,6 +282,17 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 		if req.LLMModel != "" {
 			pipeCfg.LLMModel = req.LLMModel
 		}
+		pipeCfg.AttemptID = runID
+		if cfg.DB != nil {
+			claims := make([]pipelineAttemptSource, 0, len(sources))
+			for _, source := range sources {
+				claims = append(claims, pipelineAttemptSource{datasetID: source.datasetID, dataID: source.documentID, sourceRevision: source.sourceRevision, rawContentHash: source.rawContentHash})
+			}
+			if err := claimPipelineAttempts(reqCtx, cfg.DB, claims, collection, runID); err != nil {
+				return documentHTTPError(err)
+			}
+		}
+		cfg.Runs.Store(runID, runStatus)
 
 		// Capture for background goroutine
 		sessionID := req.SessionID
@@ -240,8 +308,7 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 		// goroutine boundary so panic-recover can read it without racing with
 		// the progress loop that updates runStatus.Stage (C2 from the 2d15b38
 		// review). The progress loop stores to both the snapshot AND the
-		// runStatus field; SSE reader continues to read runStatus directly and
-		// is left as a pre-existing tolerated race (tracked separately).
+		// runStatus field; readers receive immutable registry snapshots.
 		var stageSnapshot atomic.Pointer[string]
 		start := "starting"
 		stageSnapshot.Store(&start)
@@ -256,7 +323,7 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 			// Bound the detached pipeline so a stuck downstream (Neo4j, LLM,
 			// embed) cannot keep the goroutine alive forever. Tunable via
 			// BACKGROUND_TASK_TIMEOUT_MS; default 30 minutes.
-			bgCtx, bgCancel := backgroundTaskContext()
+			bgCtx, bgCancel := context.WithTimeout(context.WithoutCancel(reqCtx), timeoutFromEnvMs("BACKGROUND_TASK_TIMEOUT_MS", defaultBackgroundTaskTimeout))
 			defer bgCancel()
 
 			progressCh := make(chan orchestrator.Progress, 100)
@@ -272,13 +339,7 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 					runStatus.Status = "FAILED"
 					runStatus.Message = fmt.Sprintf("panic: %v", r)
 					runStatus.ElapsedMs = time.Since(runStatus.StartedAt).Milliseconds()
-					// Best-effort persistence; swallow further panics to avoid crash loops.
-					func() {
-						defer func() { _ = recover() }()
-						for _, source := range sources {
-							PersistPipelineStatus(cfg.DB, source.datasetID, collection, runStatus.Status, runStatus.Chunks, runStatus.Entities, runStatus.Edges, runStatus.ElapsedMs)
-						}
-					}()
+					publishCognifyFailure(cfg.DB, cfg.Runs, sources, collection, runID, runStatus)
 				}
 			}()
 
@@ -287,7 +348,7 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 				// the closure is safe to invoke from a panic unwinding while
 				// the outer goroutine may still be mutating runStatus.Stage.
 				errCh <- runWithPanicGuard(runID, readStage, func() error {
-					return runCognifySources(bgCtx, sources, pipeCfg, progressCh)
+					return runCognifySources(bgCtx, sources, cfg, pipeCfg, progressCh)
 				})
 			}()
 
@@ -300,6 +361,7 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 				runStatus.Entities = p.EntitiesExtracted
 				runStatus.Edges = p.EdgesExtracted
 				runStatus.ElapsedMs = p.ElapsedMs
+				cfg.Runs.Store(runID, runStatus)
 			}
 
 			if err := <-errCh; err != nil {
@@ -309,16 +371,19 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 				runStatus.Status = "COMPLETED"
 			}
 			runStatus.ElapsedMs = time.Since(runStatus.StartedAt).Milliseconds()
-
-			// Persist pipeline status to data table
-			persisted := map[string]bool{}
-			for _, source := range sources {
-				if persisted[source.datasetID] {
-					continue
+			if runStatus.Status != "COMPLETED" {
+				if !publishCognifyFailure(cfg.DB, cfg.Runs, sources, collection, runID, runStatus) {
+					return
 				}
-				persisted[source.datasetID] = true
-				PersistPipelineStatus(cfg.DB, source.datasetID, collection, runStatus.Status, runStatus.Chunks, runStatus.Entities, runStatus.Edges, runStatus.ElapsedMs)
-				if runStatus.Status == "COMPLETED" && !pipeCfg.SkipGraph {
+			} else {
+				cfg.Runs.Store(runID, runStatus)
+			}
+
+			// VSA remains dataset-scoped.
+			rebuilt := map[string]bool{}
+			for _, source := range sources {
+				if runStatus.Status == "COMPLETED" && !pipeCfg.SkipGraph && !rebuilt[source.datasetID] {
+					rebuilt[source.datasetID] = true
 					rebuildVSAMemory(bgCtx, cfg, source.datasetID, "cognify")
 				}
 			}
@@ -334,24 +399,191 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 	}
 }
 
-// A source owns its dataset and document attribution throughout the pipeline.
-type cognifySource struct {
-	datasetID  string
-	documentID string
-	title      string
-	texts      []string
+func publishCognifyFailure(db *sql.DB, runs *runreg.Registry, sources []cognifySource, collection, runID string, status *runreg.Status) bool {
+	if err := finalizeCognifyFailure(db, sources, collection, runID, status); err != nil {
+		log.Printf("cognify status finalization pending run_id=%s: %v", runID, err)
+		pending := *status
+		pending.Status = "RUNNING"
+		pending.Stage = "finalizing"
+		pending.Message = "pipeline failed; exact source status finalization pending"
+		runs.Store(runID, &pending)
+		return false
+	}
+	runs.Store(runID, status)
+	return true
 }
 
-func runCognifySources(ctx context.Context, sources []cognifySource, cfg orchestrator.Config, progress chan<- orchestrator.Progress) error {
+func finalizeCognifyFailure(db *sql.DB, sources []cognifySource, collection, runID string, status *runreg.Status) error {
+	if db == nil {
+		return nil
+	}
+	if status == nil || len(sources) == 0 || collection == "" || runID == "" {
+		return accesspkg.ErrDocumentInvalid
+	}
+	for _, source := range sources {
+		if source.datasetID == "" || source.documentID == "" || source.sourceRevision <= 0 || len(source.rawContentHash) != 64 {
+			return accesspkg.ErrDocumentInvalid
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	statusJSON := pipelineStatusJSON("FAILED", status.Chunks, status.Entities, status.Edges, status.ElapsedMs)
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		lastErr = finalizeCognifyFailureAttempt(ctx, db, sources, collection, runID, statusJSON)
+		if lastErr == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			break
+		}
+		time.Sleep(time.Duration(attempt+1) * 10 * time.Millisecond)
+	}
+	return lastErr
+}
+
+func finalizeCognifyFailureAttempt(ctx context.Context, db *sql.DB, sources []cognifySource, collection, runID, statusJSON string) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panic: %v", r)
+		}
+	}()
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	updated := make([]cognifySource, 0, len(sources))
+	for _, source := range sources {
+		query, args := QArgs(`UPDATE document_pipeline_statuses SET
+			pipeline_state='FAILED',status_json=$1,updated_at=CURRENT_TIMESTAMP
+			WHERE dataset_id=$2 AND data_id=$3 AND collection_name=$4
+			AND source_revision=$5 AND LOWER(raw_content_hash)=$6 AND attempt_id=$7
+			AND pipeline_state<>'COMPLETED'
+			AND EXISTS (SELECT 1 FROM data d JOIN dataset_data dd ON dd.data_id=d.id
+				WHERE d.id=$3 AND dd.dataset_id=$2 AND d.source_revision=$5 AND LOWER(d.raw_content_hash)=$6)`,
+			statusJSON, source.datasetID, source.documentID, collection, source.sourceRevision, source.rawContentHash, runID)
+		result, err := tx.ExecContext(ctx, query, args...)
+		if err != nil {
+			return err
+		}
+		n, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n == 1 {
+			updated = append(updated, source)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	for _, source := range updated {
+		mirrorSingleDatasetPipelineStatus(ctx, db, source.datasetID, source.documentID, collection, []byte(statusJSON), source.sourceRevision, source.rawContentHash)
+	}
+	return nil
+}
+
+// A source owns its dataset and document attribution throughout the pipeline.
+type cognifySource struct {
+	datasetID       string
+	documentID      string
+	contentRevision int64
+	sourceRevision  int64
+	rawContentHash  string
+	title           string
+	texts           []string
+}
+
+func (s cognifySource) proof() searchDocumentSource {
+	return searchDocumentSource{DatasetID: s.datasetID, DocumentID: s.documentID, ContentRevision: s.contentRevision, SourceRevision: s.sourceRevision, RawContentHash: s.rawContentHash}
+}
+
+// Inline input becomes an ordinary immutable source before any model call.
+func ingestCognifySources(ctx context.Context, cfg APIConfig, actor accesspkg.MetadataActor, datasetID, datasetName, title string, texts []string) ([]cognifySource, error) {
+	if cfg.DB == nil {
+		if cfg.RequireAuth {
+			return nil, accesspkg.ErrDocumentForbidden
+		}
+		return []cognifySource{{datasetID: datasetID, title: title, texts: texts}}, nil
+	}
+	if datasetName == "" {
+		if err := cfg.DB.QueryRowContext(ctx, Q("SELECT name FROM datasets WHERE id=$1"), datasetID).Scan(&datasetName); err != nil {
+			return nil, err
+		}
+	}
+	items := make([]ingest.Item, len(texts))
+	for i, text := range texts {
+		if strings.TrimSpace(text) == "" {
+			return nil, accesspkg.ErrDocumentInvalid
+		}
+		items[i] = ingest.Item{Text: text, DatasetName: datasetName}
+	}
+	w, err := ingest.NewMetadataWriterForStorage(cfg.DB, cfg.FileStorage)
+	if err != nil {
+		return nil, err
+	}
+	results, _, err := w.IngestAuthorized(ctx, items, nil, cfg.StoragePath, cfg.FileStorage, actor, datasetID, datasetName)
+	if err != nil {
+		return nil, err
+	}
+	sources := make([]cognifySource, 0, len(results))
+	seen := map[string]bool{}
+	for i, result := range results {
+		if seen[result.ID] {
+			continue
+		}
+		seen[result.ID] = true
+		ref := accesspkg.DocumentRef{DatasetID: datasetID, DataID: result.ID}
+		version, hash, err := documentSQLPolicy(cfg).SourceVersion(ctx, ref)
+		if err != nil {
+			return nil, err
+		}
+		if hash != result.ContentHash {
+			return nil, accesspkg.ErrDocumentVersionConflict
+		}
+		r, err := documentSQLPolicy(cfg).GetDocumentResource(ctx, ref)
+		if err != nil && !errors.Is(err, accesspkg.ErrDocumentNotFound) {
+			return nil, err
+		}
+		sources = append(sources, cognifySource{datasetID: datasetID, documentID: result.ID, contentRevision: r.ContentRevision, sourceRevision: version, rawContentHash: hash, title: title, texts: []string{texts[i]}})
+	}
+	return sources, nil
+}
+
+func runCognifySources(ctx context.Context, sources []cognifySource, apiCfg APIConfig, cfg orchestrator.Config, progress chan<- orchestrator.Progress) error {
 	defer close(progress)
 	var totals orchestrator.Progress
+	inheritedSources := append([]searchDocumentSource(nil), searchSources(ctx)...)
 	for _, source := range sources {
 		sourceCfg := cfg
 		sourceCfg.DatasetID, sourceCfg.DocumentID, sourceCfg.DocumentTitle = source.datasetID, source.documentID, source.title
+		sourceCfg.ContentRevision = source.contentRevision
+		if apiCfg.DB != nil {
+			if source.documentID == "" || source.sourceRevision <= 0 || len(source.rawContentHash) != 64 || len(source.texts) != 1 || fmt.Sprintf("%x", sha256.Sum256([]byte(source.texts[0]))) != source.rawContentHash {
+				return accesspkg.ErrDocumentVersionConflict
+			}
+			sourceCfg.Generation = uuid.NewString()
+		}
+		evidence := &searchEvidence{requiresAdmin: searchEvidenceRequiresAdmin(ctx), sources: make(map[searchDocumentSource]struct{})}
+		for _, inherited := range inheritedSources {
+			evidence.sources[inherited] = struct{}{}
+		}
+		sourceCtx := context.WithValue(ctx, searchEvidenceKey{}, evidence)
+		trackSearchSource(sourceCtx, source.proof())
+		sourceCfg.GuardTransfer = func(ctx context.Context) (func(), error) { return beginCognifyTransfer(ctx, apiCfg, source) }
+		sourceCfg.CheckWrite = func(ctx context.Context) error {
+			release, err := sourceCfg.GuardTransfer(ctx)
+			if err != nil {
+				return err
+			}
+			release()
+			return nil
+		}
 		updates := make(chan orchestrator.Progress, 100)
 		done := make(chan error, 1)
 		go func() {
-			done <- runWithPanicGuard(source.datasetID, func() string { return "cognify" }, func() error { return orchestrator.Run(ctx, source.texts, sourceCfg, updates) })
+			done <- runWithPanicGuard(source.datasetID, func() string { return "cognify" }, func() error { return orchestrator.Run(sourceCtx, source.texts, sourceCfg, updates) })
 		}()
 		var last orchestrator.Progress
 		for update := range updates {
@@ -365,10 +597,116 @@ func runCognifySources(ctx context.Context, sources []cognifySource, cfg orchest
 		if err := <-done; err != nil {
 			return err
 		}
+		if apiCfg.DB != nil {
+			fenced, release, err := beginSearchReadFence(sourceCtx)
+			if err != nil {
+				return err
+			}
+			p, ok := fenced.Value(searchReadPolicyKey{}).(accesspkg.SQLPolicy)
+			if !ok {
+				release()
+				return fiber.NewError(503, "document publication authorization unavailable")
+			}
+			actor, _ := fenced.Value(searchActorKey{}).(accesspkg.Actor)
+			lineage, marshalErr := json.Marshal(searchSources(fenced))
+			if marshalErr != nil {
+				release()
+				return marshalErr
+			}
+			err = p.CommitDocumentIndexVersioned(fenced, actor, accesspkg.DocumentRef{DatasetID: source.datasetID, DataID: source.documentID}, source.contentRevision, sourceCfg.Collection, sourceCfg.Generation, accesspkg.DocumentPublicationLineage{
+				SourcesJSON: string(lineage), RequiresAdmin: searchEvidenceRequiresAdmin(fenced),
+				SourceRevision: source.sourceRevision, RawContentHash: source.rawContentHash,
+				AttemptID:          sourceCfg.AttemptID,
+				PipelineStatusJSON: pipelineStatusJSON("COMPLETED", last.ChunksCreated, last.EntitiesExtracted, last.EdgesExtracted, last.ElapsedMs),
+			})
+			release()
+			if err != nil {
+				return err
+			}
+		}
+		for _, used := range searchSources(sourceCtx) {
+			trackSearchSource(ctx, used)
+		}
 		totals.ChunksCreated += last.ChunksCreated
 		totals.EntitiesExtracted += last.EntitiesExtracted
 		totals.EdgesExtracted += last.EdgesExtracted
 		totals.ElapsedMs += last.ElapsedMs
+	}
+	return nil
+}
+
+// Each outgoing model request holds the same read fence as search and also
+// requires processing permission; an editor revoked after enqueue cannot run.
+func beginCognifyTransfer(ctx context.Context, cfg APIConfig, source cognifySource) (func(), error) {
+	fenced, release, err := beginSearchReadFence(ctx)
+	if err != nil {
+		return nil, err
+	}
+	actor, _ := ctx.Value(searchActorKey{}).(accesspkg.Actor)
+	if cfg.DB == nil && !cfg.RequireAuth {
+		return release, nil
+	}
+	p := documentSQLPolicy(cfg)
+	if locked, ok := fenced.Value(searchReadPolicyKey{}).(accesspkg.SQLPolicy); ok {
+		p = locked
+	}
+	var d accesspkg.Decision
+	if source.documentID != "" {
+		d, err = p.AuthorizeDocument(fenced, actor, accesspkg.DocumentRef{DatasetID: source.datasetID, DataID: source.documentID}, accesspkg.ActionWrite)
+	} else {
+		d, err = p.AuthorizeDataset(fenced, actor, source.datasetID, accesspkg.ActionWrite)
+	}
+	if err != nil || !d.Allowed {
+		release()
+		return nil, fiber.NewError(403, "document processing revoked")
+	}
+	version, hash, err := p.SourceVersion(fenced, accesspkg.DocumentRef{DatasetID: source.datasetID, DataID: source.documentID})
+	if err != nil || version != source.sourceRevision || hash != source.rawContentHash {
+		release()
+		return nil, accesspkg.ErrDocumentVersionConflict
+	}
+	return release, nil
+}
+
+// The binding is server-created and omitted from public run JSON. Legacy runs
+// with no owner remain visible only to an active instance administrator.
+func authorizeRunStatus(ctx context.Context, cfg APIConfig, status *runreg.Status) error {
+	if status == nil {
+		return errSessionForbidden
+	}
+	actor, err := sessionActor(ctx, cfg, accesspkg.ActionRead)
+	if err != nil {
+		return err
+	}
+	if actor.UserID == "" && !cfg.RequireAuth {
+		return nil
+	}
+	if status.OwnerID == "" || status.RequiresAdmin {
+		if !globalSearchGraphAllowed(ctx, cfg) {
+			return errSessionForbidden
+		}
+		requireAdminSearchEvidence(ctx)
+	}
+	if status.OwnerID != "" && (status.OwnerID != actor.UserID || status.TenantID != actor.TenantID) {
+		return errSessionForbidden
+	}
+	var sources []searchDocumentSource
+	if status.SourcesJSON != "" {
+		if err := json.Unmarshal([]byte(status.SourcesJSON), &sources); err != nil {
+			return errSessionInvalidProvenance
+		}
+	} else if status.DatasetID != "" {
+		sources = []searchDocumentSource{{DatasetID: status.DatasetID}}
+	}
+	for _, source := range sources {
+		allowed, err := searchDocumentAllowed(ctx, cfg, actor, source)
+		if err != nil {
+			return err
+		}
+		if !allowed {
+			return errSessionForbidden
+		}
+		trackSearchSource(ctx, source)
 	}
 	return nil
 }
@@ -385,9 +723,16 @@ func runCognifySources(ctx context.Context, sources []cognifySource, cfg orchest
 // @Router      /cognify/{runId}/status [get]
 func cognifyStatusHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		runID := c.Params("runId")
-		if val, ok := cfg.Runs.Load(runID); ok {
-			return c.JSON(val)
+		ctx, cancel := searchRequestContext(c)
+		defer cancel()
+		ctx = searchEgressContext(c, cfg, ctx)
+		c.SetUserContext(ctx)
+		runID := strings.Clone(c.Params("runId"))
+		if val, ok := cfg.Runs.Load(runID); ok && authorizeRunStatus(ctx, cfg, val) == nil {
+			if err := c.JSON(val); err != nil {
+				return err
+			}
+			return sendProtectedResponseWithFence(c, ctx)
 		}
 		return c.Status(404).JSON(fiber.Map{"detail": "run not found"})
 	}
@@ -409,71 +754,107 @@ func cognifyStatusHandler(cfg APIConfig) fiber.Handler {
 // @Router      /cognify/{runId}/stream [get]
 func cognifyStreamHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		runID := c.Params("runId")
-		if _, ok := cfg.Runs.Load(runID); !ok {
-			return c.Status(404).JSON(fiber.Map{"detail": "run not found"})
+		ctx, cancel := searchRequestContext(c)
+		defer cancel()
+		ctx = searchEgressContext(c, cfg, ctx)
+		runID := strings.Clone(c.Params("runId"))
+		status, ok := cfg.Runs.Load(runID)
+		if !ok || authorizeRunStatus(ctx, cfg, status) != nil {
+			return fiber.NewError(404, "run not found")
 		}
-
+		deadline, _ := ctx.Deadline()
+		streamCtx, streamCancel := context.WithDeadline(context.WithoutCancel(ctx), deadline)
+		stream := &runProgressStream{ctx: streamCtx, cancel: streamCancel, cfg: cfg, runID: runID}
 		c.Set("Content-Type", "text/event-stream")
-		c.Set("Cache-Control", "no-cache")
-		c.Set("Connection", "keep-alive")
+		c.Set("Cache-Control", "private, no-store")
 		c.Set("X-Accel-Buffering", "no")
-
-		// Capture the request context so we can notice client disconnects
-		// inside the body-stream writer goroutine. fasthttp's RequestCtx
-		// satisfies context.Context — Done() closes when the underlying
-		// connection drops, and Err() returns non-nil at the same moment.
-		// Without this check the goroutine would keep running until the
-		// pipeline itself finished (1–5 min per cognify benchmark), leaking
-		// one goroutine + bufio.Writer per disconnected client (C3).
-		reqCtx := c.Context()
-
-		c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
-			lastStage := ""
-			// flushOrExit writes its argument, flushes, and returns true if
-			// the client went away (so the caller returns immediately).
-			flushOrExit := func() bool {
-				if err := w.Flush(); err != nil {
-					return true
-				}
-				return reqCtx.Err() != nil
-			}
-			for {
-				// Early exit if the client has disconnected.
-				if reqCtx.Err() != nil {
-					return
-				}
-				status, ok := cfg.Runs.Load(runID)
-				if !ok {
-					fmt.Fprintf(w, "event: error\ndata: {\"error\":\"run not found\"}\n\n")
-					_ = w.Flush()
-					return
-				}
-
-				// Send update if stage changed or terminal
-				if status.Stage != lastStage || status.Status != "RUNNING" {
-					data, _ := json.Marshal(status)
-					fmt.Fprintf(w, "event: progress\ndata: %s\n\n", data)
-					if flushOrExit() {
-						return
-					}
-					lastStage = status.Stage
-				}
-
-				if status.Status != "RUNNING" {
-					fmt.Fprintf(w, "event: done\ndata: %s\n\n", func() string { d, _ := json.Marshal(status); return string(d) }())
-					_ = w.Flush()
-					return
-				}
-
-				// time.Sleep blocks for the full 500ms even if the client
-				// disconnects mid-sleep. That's acceptable — one extra
-				// iteration of an unused goroutine at worst.
-				time.Sleep(500 * time.Millisecond)
-			}
-		})
+		if err := c.SendStream(stream); err != nil {
+			stream.Close()
+			return err
+		}
 		return nil
 	}
+}
+
+// Each frame rechecks the run's sources and credential. Close cancels pending
+// SQL/poll work; no Fiber context survives the handler's return.
+type runProgressStream struct {
+	ctx              context.Context
+	cancel           context.CancelFunc
+	cfg              APIConfig
+	runID, lastStage string
+	frame            *bytes.Reader
+	release          func()
+	terminal         bool
+	mu               sync.Mutex
+}
+
+func (s *runProgressStream) Read(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(p) == 0 {
+		return 0, nil
+	}
+	for {
+		if err := s.ctx.Err(); err != nil {
+			return 0, err
+		}
+		if s.frame != nil && s.frame.Len() > 0 {
+			return s.frame.Read(p)
+		}
+		if s.release != nil {
+			s.release()
+			s.release = nil
+		}
+		if s.terminal {
+			return 0, io.EOF
+		}
+		status, ok := s.cfg.Runs.Load(s.runID)
+		if !ok {
+			return 0, io.EOF
+		}
+		if err := authorizeRunStatus(s.ctx, s.cfg, status); err != nil {
+			return 0, err
+		}
+		if status.Stage == s.lastStage && status.Status == "RUNNING" {
+			timer := time.NewTimer(500 * time.Millisecond)
+			select {
+			case <-s.ctx.Done():
+				timer.Stop()
+				return 0, s.ctx.Err()
+			case <-timer.C:
+			}
+			continue
+		}
+		_, release, err := beginSearchReadFence(s.ctx)
+		if err != nil {
+			return 0, err
+		}
+		s.release = release
+		data, err := json.Marshal(status)
+		if err != nil {
+			release()
+			s.release = nil
+			return 0, err
+		}
+		frame := fmt.Sprintf("event: progress\ndata: %s\n\n", data)
+		s.lastStage = status.Stage
+		if status.Status != "RUNNING" {
+			s.terminal = true
+			frame += fmt.Sprintf("event: done\ndata: %s\n\n", data)
+		}
+		s.frame = bytes.NewReader([]byte(frame))
+	}
+}
+func (s *runProgressStream) Close() error {
+	s.cancel()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.release != nil {
+		s.release()
+		s.release = nil
+	}
+	return nil
 }
 
 // batchSizeFromEnv reads LEVARA_LLM_EXTRACT_BATCH_SIZE (M8); values < 1

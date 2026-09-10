@@ -1,93 +1,67 @@
 #!/bin/bash
 set -euo pipefail
 
-# ============================================================
-# Levara Backup Script
-# Usage: sudo ./backup.sh [backup_dir]
-# ============================================================
-
-BACKUP_BASE="${1:-/var/backups/levara}"
-LEVARA_DIR="/var/lib/levara"
-DB_PATH="$LEVARA_DIR/levara.db"
-DATA_DIR="$LEVARA_DIR/data"
-
-DATE=$(date +%Y%m%d_%H%M%S)
-BACKUP_DIR="$BACKUP_BASE/$DATE"
-RETENTION_DAYS=7
-
-# Colors
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-NC='\033[0m'
-
-log()  { echo -e "${GREEN}[backup]${NC} $(date '+%H:%M:%S') $1"; }
-warn() { echo -e "${YELLOW}[backup]${NC} $(date '+%H:%M:%S') $1"; }
-err()  { echo -e "${RED}[backup]${NC} $(date '+%H:%M:%S') $1"; exit 1; }
-
-# --- Pre-checks ---
-if [ ! -f "$DB_PATH" ]; then
-    err "Database not found: $DB_PATH"
+# Prepared offline workflow. Set LEVARA_BACKUP_QUIESCE=1 explicitly to stop an
+# active local service, and configure its exact inventory in backup.env.
+# Never install/enable this script or timer without choosing a downtime window.
+: "${LEVARA_BACKUP_NODE_ID:?Set the exact running server node ID}"
+: "${LEVARA_BACKUP_SHARDS:?Set the exact running server shard count}"
+: "${LEVARA_BACKUP_DIM:?Set the exact running server default vector dimension}"
+: "${DB_PROVIDER:?Set sqlite or postgres}"
+if [[ "${LEVARA_BACKUP_STANDALONE:-}" != "true" ]]; then
+    echo 'backup: only an explicitly configured standalone local node is supported' >&2
+    exit 1
 fi
 
-if ! command -v sqlite3 &>/dev/null; then
-    err "sqlite3 not installed. Run: sudo apt install sqlite3"
-fi
+backup_dir="${1:-${LEVARA_BACKUP_DIR:-/var/backups/levara}}"
+data_dir="${LEVARA_DATA_DIR:-/var/lib/levara/data}"
+service_name="${LEVARA_BACKUP_SERVICE:-levara.service}"
+backup_user="${LEVARA_BACKUP_USER:-levara}"
+backup_bin="${LEVARA_BACKUP_BIN:-/usr/local/bin/levara-backup}"
+was_active=0
 
-# --- Create backup directory ---
-mkdir -p "$BACKUP_DIR"
-log "Backup directory: $BACKUP_DIR"
-
-# --- 1. SQLite backup (online, WAL-safe) ---
-log "Backing up SQLite database..."
-sqlite3 "$DB_PATH" ".backup '$BACKUP_DIR/levara.db'"
-if [ $? -eq 0 ]; then
-    log "SQLite backup OK ($(du -h "$BACKUP_DIR/levara.db" | cut -f1))"
-else
-    err "SQLite backup failed!"
-fi
-
-# --- 2. HNSW data directory ---
-if [ -d "$DATA_DIR" ]; then
-    log "Backing up HNSW data..."
-    rsync -a --quiet "$DATA_DIR/" "$BACKUP_DIR/data/"
-    log "Data backup OK ($(du -sh "$BACKUP_DIR/data/" | cut -f1))"
-else
-    warn "Data directory not found: $DATA_DIR (skipping)"
-fi
-
-# --- 3. Config backup ---
-if [ -f /etc/levara/levara.env ]; then
-    log "Backing up config..."
-    cp /etc/levara/levara.env "$BACKUP_DIR/levara.env"
-fi
-
-# --- 4. Create symlink to latest ---
-ln -sfn "$BACKUP_DIR" "$BACKUP_BASE/latest"
-log "Symlink updated: $BACKUP_BASE/latest"
-
-# --- 5. Cleanup old backups ---
-log "Cleaning backups older than ${RETENTION_DAYS} days..."
-CLEANED=0
-if [ -d "$BACKUP_BASE" ]; then
-    for OLD_DIR in "$BACKUP_BASE"/[0-9]*; do
-        if [ -d "$OLD_DIR" ] && [ "$OLD_DIR" != "$BACKUP_DIR" ]; then
-            DIR_DATE=$(basename "$OLD_DIR" | cut -d_ -f1)
-            if [ -n "$DIR_DATE" ]; then
-                DIR_EPOCH=$(date -d "$DIR_DATE" +%s 2>/dev/null || date -j -f "%Y%m%d" "$DIR_DATE" +%s 2>/dev/null || echo "0")
-                CUTOFF_EPOCH=$(date -d "-${RETENTION_DAYS} days" +%s 2>/dev/null || date -j -v-${RETENTION_DAYS}d +%s 2>/dev/null || echo "0")
-                if [ "$DIR_EPOCH" -gt 0 ] && [ "$CUTOFF_EPOCH" -gt 0 ] && [ "$DIR_EPOCH" -lt "$CUTOFF_EPOCH" ]; then
-                    rm -rf "$OLD_DIR"
-                    CLEANED=$((CLEANED + 1))
-                fi
-            fi
+finish() {
+    result=$?
+    trap - EXIT
+    if [[ "$was_active" == 1 ]]; then
+        if ! systemctl start "$service_name"; then
+            echo 'backup: failed to restart the previously active service' >&2
+            result=1
         fi
-    done
-fi
-if [ "$CLEANED" -gt 0 ]; then
-    log "Cleaned $CLEANED old backup(s)"
+    fi
+    exit "$result"
+}
+trap finish EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+if [[ "${LEVARA_BACKUP_QUIESCE:-0}" == 1 ]]; then
+    if [[ "$(id -u)" != 0 ]]; then
+        echo 'backup: service quiescence requires running this prepared script as root' >&2
+        exit 1
+    fi
+    if systemctl is-active --quiet "$service_name"; then
+        was_active=1
+        systemctl stop "$service_name"
+    fi
 fi
 
-# --- Summary ---
-TOTAL_SIZE=$(du -sh "$BACKUP_DIR" | cut -f1)
-log "Backup complete: $BACKUP_DIR ($TOTAL_SIZE)"
+args=(verified --standalone=true --data-dir "$data_dir"
+      --node-id "$LEVARA_BACKUP_NODE_ID" --shards "$LEVARA_BACKUP_SHARDS"
+      --dim "$LEVARA_BACKUP_DIM" --db-provider "$DB_PROVIDER"
+      --output-dir "$backup_dir" --timeout "${LEVARA_BACKUP_TIMEOUT:-15m}")
+[[ -z "${LEVARA_WORKSPACE_PATH:-}" ]] || args+=(--workspace-path "$LEVARA_WORKSPACE_PATH")
+[[ -z "${LEVARA_UPLOADS_PATH:-}" ]] || args+=(--uploads-path "$LEVARA_UPLOADS_PATH")
+[[ -z "${LEVARA_SQLITE_PATH:-}" ]] || args+=(--sqlite-path "$LEVARA_SQLITE_PATH")
+[[ -z "${LEVARA_POSTGRES_BIN_DIR:-}" ]] || args+=(--postgres-bin-dir "$LEVARA_POSTGRES_BIN_DIR")
+
+# initdb must run unprivileged. Credentials stay in the inherited environment;
+# backup receipts contain inventory/proof only, never a copied environment file.
+if [[ "$(id -u)" == 0 ]]; then
+    install -d -m 0700 -o "$backup_user" -g "$backup_user" "$backup_dir"
+    runuser --preserve-environment -u "$backup_user" -- "$backup_bin" "${args[@]}"
+else
+    "$backup_bin" "${args[@]}"
+fi
+# Keep every immutable successful archive. Configure retention separately only
+# after proving off-host durability; a failed run never advances last success.

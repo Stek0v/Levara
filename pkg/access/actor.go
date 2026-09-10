@@ -62,7 +62,7 @@ func (p SQLPolicy) IsTenantMember(ctx context.Context, userID, tenantID string) 
 		return false, nil
 	}
 	var count int
-	err := p.DB.QueryRowContext(ctx,
+	err := p.reader().QueryRowContext(ctx,
 		p.rewrite("SELECT COUNT(*) FROM user_tenant WHERE user_id = $1 AND tenant_id = $2"),
 		userID, tenantID,
 	).Scan(&count)

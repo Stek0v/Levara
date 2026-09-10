@@ -164,10 +164,12 @@ Product profiles `personal`, `solo_pro`, `team`, `enterprise` задают тр�
 к конфигурации. Functional `-profile` и `LEVARA_MCP_TOOLSET` решают другие задачи.
 [Presets](profile-presets.md) связывают их с фактическим запуском.
 
-Индивидуальные viewer/editor/admin grants доступны на dataset. Отдельных document
-ACL и effective group grants нет. Native LDAP, browser OIDC login и связь
-SCIM identity с SSO также не реализованы. Поддерживаемые SAML/OIDC/SCIM-поверхности
-и корпоративные проверки: [enterprise identity](enterprise-identity.md).
+Индивидуальные viewer/editor/admin grants доступны на dataset. Document/group
+policy реализована локально, но её публичные handlers ещё не подключены к
+основному router. LDAP/LDAPS/StartTLS, browser OIDC и SCIM Users/Groups с
+identity bridge также реализованы локально; реальный AD/IdP и vendor
+provisioning требуют отдельной приёмки. Настройка и ограничения:
+[enterprise identity](enterprise-identity.md).
 
 ## Веб-интерфейс и аналитика
 

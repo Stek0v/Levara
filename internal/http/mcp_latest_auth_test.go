@@ -14,9 +14,12 @@ import (
 // unauthenticated callers, while discovery and tools/list stay public for
 // capability negotiation. Regression test for the auth-bypass finding (2026-09-03).
 
-func latestMCPTestAppWithAuth(secret string) *fiber.App {
+func latestMCPTestAppWithAuth(t *testing.T, secret string) *fiber.App {
+	db, cleanup := newAuthTestDB(t)
+	t.Cleanup(cleanup)
+	seedAuthUser(t, db, "alice")
 	app := fiber.New(fiber.Config{DisableStartupMessage: true})
-	h := &mcpHandler{cfg: APIConfig{RequireAuth: true, JWTSecret: secret}, sessions: mcp.NewSessionStore()}
+	h := &mcpHandler{cfg: APIConfig{DB: db, RequireAuth: true, JWTSecret: secret}, sessions: mcp.NewSessionStore()}
 	app.Post(latestMCPPath, h.handleLatestRPC)
 	app.Get(latestMCPPath, methodNotAllowed)
 	app.Delete(latestMCPPath, methodNotAllowed)
@@ -31,7 +34,7 @@ func latestMCPMetaParams() string {
 
 func TestMCPLatestRequiresAuthForToolCall(t *testing.T) {
 	const secret = "latest-transport-secret"
-	app := latestMCPTestAppWithAuth(secret)
+	app := latestMCPTestAppWithAuth(t, secret)
 
 	headers := latestMCPHeaders("tools/call")
 	headers["Mcp-Name"] = "levara_instructions"
@@ -44,7 +47,7 @@ func TestMCPLatestRequiresAuthForToolCall(t *testing.T) {
 
 func TestMCPLatestRequiresAuthForResources(t *testing.T) {
 	const secret = "latest-transport-secret"
-	app := latestMCPTestAppWithAuth(secret)
+	app := latestMCPTestAppWithAuth(t, secret)
 
 	headers := latestMCPHeaders("resources/list")
 	resp := latestMCPPost(t, app, `{"jsonrpc":"2.0","id":1,"method":"resources/list","params":`+latestMCPMeta()+`}`, headers)
@@ -64,7 +67,7 @@ func TestMCPLatestRequiresAuthForResources(t *testing.T) {
 
 func TestMCPLatestAllowsAuthenticatedToolCall(t *testing.T) {
 	const secret = "latest-transport-secret"
-	app := latestMCPTestAppWithAuth(secret)
+	app := latestMCPTestAppWithAuth(t, secret)
 
 	headers := latestMCPHeaders("tools/call")
 	headers["Mcp-Name"] = "levara_instructions"
@@ -78,7 +81,7 @@ func TestMCPLatestAllowsAuthenticatedToolCall(t *testing.T) {
 
 func TestMCPLatestDiscoveryAndToolsListStayPublic(t *testing.T) {
 	const secret = "latest-transport-secret"
-	app := latestMCPTestAppWithAuth(secret)
+	app := latestMCPTestAppWithAuth(t, secret)
 
 	for _, method := range []string{"server/discover", "tools/list"} {
 		resp := latestMCPPost(t, app, `{"jsonrpc":"2.0","id":1,"method":"`+method+`","params":`+latestMCPMeta()+`}`, latestMCPHeaders(method))

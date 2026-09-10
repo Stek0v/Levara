@@ -99,3 +99,35 @@ func TestVerifyJWT_TamperedPayload(t *testing.T) {
 		t.Fatal("expected payload-swap attack to be rejected")
 	}
 }
+
+func TestVerifyJWTCredentialClaims(t *testing.T) {
+	for _, tc := range []struct {
+		name, alg, subject string
+		epoch              int64
+		exp                int64
+		want               bool
+	}{
+		{"legacy epoch", "HS256", "user", 0, time.Now().Add(time.Hour).Unix(), true},
+		{"current epoch", "HS256", "user", 7, time.Now().Add(time.Hour).Unix(), true},
+		{"negative epoch", "HS256", "user", -1, time.Now().Add(time.Hour).Unix(), false},
+		{"missing subject", "HS256", "", 0, time.Now().Add(time.Hour).Unix(), false},
+		{"wrong algorithm", "none", "user", 0, time.Now().Add(time.Hour).Unix(), false},
+		{"expiry boundary", "HS256", "user", 0, time.Now().Unix(), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			header, _ := json.Marshal(map[string]string{"alg": tc.alg})
+			payload, _ := json.Marshal(Payload{Sub: tc.subject, Exp: tc.exp, CredentialEpoch: tc.epoch})
+			input := base64.RawURLEncoding.EncodeToString(header) + "." + base64.RawURLEncoding.EncodeToString(payload)
+			mac := hmac.New(sha256.New, []byte("secret"))
+			mac.Write([]byte(input))
+			token := input + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+			p, ok := VerifyJWT(token, "secret")
+			if ok != tc.want {
+				t.Fatalf("valid=%v, want=%v", ok, tc.want)
+			}
+			if ok && p.CredentialEpoch != tc.epoch {
+				t.Fatalf("epoch=%d, want=%d", p.CredentialEpoch, tc.epoch)
+			}
+		})
+	}
+}

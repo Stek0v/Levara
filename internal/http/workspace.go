@@ -19,6 +19,7 @@ import (
 	accesspkg "github.com/stek0v/levara/pkg/access"
 	"github.com/stek0v/levara/pkg/bm25"
 	"github.com/stek0v/levara/pkg/embed"
+	"github.com/stek0v/levara/pkg/mcp"
 	"github.com/stek0v/levara/pkg/vectorstore"
 	"github.com/stek0v/levara/pkg/workspace"
 )
@@ -651,7 +652,8 @@ func workspaceActorFromFiber(c *fiber.Ctx) accesspkg.Actor {
 func workspaceActorFromMCP(ctx context.Context) accesspkg.Actor {
 	userID, _ := ctx.Value(mcpUserIDKey).(string)
 	permissions, _ := ctx.Value(mcpAPIKeyPermissionsKey).(string)
-	return accesspkg.Actor{UserID: userID, APIKeyPermissions: permissions}
+	tenantID, _ := ctx.Value(mcp.TenantIDKey).(string)
+	return accesspkg.Actor{UserID: userID, APIKeyPermissions: permissions, TenantID: tenantID}
 }
 
 // authorizeWorkspace is the single shared decision used by both transports.
@@ -789,6 +791,9 @@ func readWorkspaceMarkdown(cfg APIConfig, req workspaceReadRequest) (workspaceRe
 }
 
 func writeWorkspaceMarkdown(ctx context.Context, cfg APIConfig, req workspaceWriteRequest) (workspaceWriteResponse, error) {
+	if execution := mcp.TaskExecutionFromContext(ctx); execution != nil {
+		return taskWriteWorkspaceMarkdown(ctx, cfg, req, execution)
+	}
 	branch := defaultBranch(req.Branch)
 	filePath, relPath, err := workspaceFilePath(cfg, req.ProjectID, branch, req.Path)
 	if err != nil {
@@ -2005,7 +2010,13 @@ func (h *mcpHandler) toolWorkspaceRead(ctx context.Context, args map[string]any)
 	if err := authorizeWorkspaceMCP(ctx, h.cfg, req.ProjectID, workspaceAccessRead); err != nil {
 		return workspaceMCPError(err)
 	}
-	resp, err := readWorkspaceMarkdown(h.cfg, req)
+	var resp workspaceReadResponse
+	var err error
+	if execution := mcp.TaskExecutionFromContext(ctx); execution != nil {
+		resp, err = taskReadWorkspaceMarkdown(ctx, h.cfg, req, execution)
+	} else {
+		resp, err = readWorkspaceMarkdown(h.cfg, req)
+	}
 	if err != nil {
 		return workspaceMCPError(err)
 	}

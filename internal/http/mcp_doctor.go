@@ -9,6 +9,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"github.com/google/uuid"
+	"log"
 	"net/http"
 	"os"
 	"sort"
@@ -627,14 +629,23 @@ func (h *mcpHandler) checkMemoryUpsertIndex(ctx context.Context) doctorCheck {
 
 // logHeartbeat records an event to the heartbeats table (if DB is available).
 func (h *mcpHandler) logHeartbeat(eventType string, payload any) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	h.logHeartbeatContext(ctx, eventType, payload)
+}
+
+func (h *mcpHandler) logHeartbeatContext(ctx context.Context, eventType string, payload any) {
 	if h.cfg.DB == nil {
 		return
 	}
-	data, _ := json.Marshal(payload)
-	id := fmt.Sprintf("hb-%s", time.Now().UTC().Format("20060102T150405.000"))
-	_, _ = h.cfg.DB.ExecContext(context.Background(),
-		Q(`INSERT INTO heartbeats (id, event_type, payload, created_at) VALUES ($1, $2, $3, $4)`),
-		id, eventType, string(data), time.Now().UTC().Format(time.RFC3339))
+	data, err := json.Marshal(payload)
+	if err == nil {
+		_, err = h.cfg.DB.ExecContext(ctx, Q(`INSERT INTO heartbeats(id,event_type,payload,created_at) VALUES($1,$2,$3,$4)`),
+			"hb-"+uuid.NewString(), eventType, string(data), time.Now().UTC().Format(time.RFC3339Nano))
+	}
+	if err != nil {
+		log.Printf("[heartbeat] event persistence failed (%s)", eventType)
+	}
 }
 
 // toolHeartbeat queries recent heartbeat events.

@@ -4,6 +4,8 @@ package backup
 import (
 	"archive/tar"
 	"compress/gzip"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -22,26 +24,44 @@ const (
 // FullBackup creates a tar.gz archive with all Levara data.
 // Includes: collections/, uploads/, *.jsonl caches, and pg_dump output.
 func FullBackup(dataDir, dbDSN, output string) error {
-	f, err := os.Create(output)
+	f, err := os.CreateTemp(filepath.Dir(output), ".levara-backup-*.tar.gz")
 	if err != nil {
 		return fmt.Errorf("create output: %w", err)
 	}
-	defer f.Close()
+	defer os.Remove(f.Name())
+	// Publish only a complete archive; any failure leaves the previous one intact.
+	err = errors.Join(writeBackupArchive(f, dataDir, dbDSN), f.Sync(), f.Close())
+	if err != nil {
+		return fmt.Errorf("write backup: %w", err)
+	}
+	if err := os.Rename(f.Name(), output); err != nil {
+		return fmt.Errorf("publish backup: %w", err)
+	}
+	log.Printf("[backup] complete: %s", output)
+	return nil
+}
 
-	gz := gzip.NewWriter(f)
-	defer gz.Close()
+func writeBackupArchive(w io.Writer, dataDir, dbDSN string) error {
+	gz := gzip.NewWriter(w)
 	tw := tar.NewWriter(gz)
-	defer tw.Close()
+	return errors.Join(writeBackupEntries(tw, dataDir, dbDSN), tw.Close(), gz.Close())
+}
 
+func writeBackupEntries(tw *tar.Writer, dataDir, dbDSN string) error {
 	// Find node dir (first subdir with collections/)
 	nodeDir := ""
-	entries, _ := os.ReadDir(dataDir)
+	entries, err := os.ReadDir(dataDir)
+	if err != nil {
+		return fmt.Errorf("read data directory: %w", err)
+	}
 	for _, e := range entries {
 		if e.IsDir() {
 			colPath := filepath.Join(dataDir, e.Name(), "collections")
-			if _, err := os.Stat(colPath); err == nil {
+			if _, err := os.Lstat(colPath); err == nil {
 				nodeDir = filepath.Join(dataDir, e.Name())
 				break
+			} else if !os.IsNotExist(err) {
+				return fmt.Errorf("inspect collections: %w", err)
 			}
 		}
 	}
@@ -53,7 +73,10 @@ func FullBackup(dataDir, dbDSN, output string) error {
 		colDir := filepath.Join(nodeDir, "collections")
 		if _, err := os.Stat(colDir); err == nil {
 			log.Printf("[backup] backing up collections from %s", colDir)
-			collections, _ := os.ReadDir(colDir)
+			collections, err := os.ReadDir(colDir)
+			if err != nil {
+				return fmt.Errorf("read collections: %w", err)
+			}
 			for _, c := range collections {
 				if c.IsDir() {
 					manifest.Collections = append(manifest.Collections, c.Name())
@@ -62,71 +85,94 @@ func FullBackup(dataDir, dbDSN, output string) error {
 			if err := addDirToTar(tw, colDir, "collections"); err != nil {
 				return fmt.Errorf("tar collections: %w", err)
 			}
+		} else {
+			return fmt.Errorf("inspect collections: %w", err)
 		}
 	}
 
 	// 2. Backup uploads/
 	uploadsDir := filepath.Join(dataDir, "uploads")
-	if _, err := os.Stat(uploadsDir); err == nil {
+	if info, err := os.Lstat(uploadsDir); err == nil {
+		if !info.IsDir() {
+			return fmt.Errorf("backup uploads source is not a directory")
+		}
 		log.Printf("[backup] backing up uploads from %s", uploadsDir)
-		count, size := countFiles(uploadsDir)
+		count, size, err := countFiles(uploadsDir)
+		if err != nil {
+			return fmt.Errorf("count uploads: %w", err)
+		}
 		manifest.UploadsCount = count
 		manifest.UploadsSizeB = size
 		if err := addDirToTar(tw, uploadsDir, "uploads"); err != nil {
 			return fmt.Errorf("tar uploads: %w", err)
 		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("inspect uploads: %w", err)
 	}
 
 	// 3. Backup JSONL caches
 	for _, name := range []string{"llm_cache.jsonl", "bm25_index.jsonl", "embed_cache.jsonl"} {
 		p := filepath.Join(dataDir, name)
-		if _, err := os.Stat(p); err == nil {
+		if _, err := os.Lstat(p); err == nil {
 			log.Printf("[backup] backing up %s", name)
 			if err := addFileToTar(tw, p, name); err != nil {
-				log.Printf("[backup] warning: %s: %v", name, err)
+				return fmt.Errorf("tar %s: %w", name, err)
 			}
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("inspect cache %s: %w", name, err)
 		}
 	}
 
 	// 4. PostgreSQL dump
 	if dbDSN != "" {
 		log.Printf("[backup] dumping PostgreSQL...")
-		sqlPath := filepath.Join(os.TempDir(), "levara_backup.sql")
+		sqlFile, err := os.CreateTemp("", "levara-backup-*.sql")
+		if err != nil {
+			return fmt.Errorf("create temporary database dump: %w", err)
+		}
+		sqlPath := sqlFile.Name()
+		defer os.Remove(sqlPath)
+		if err := sqlFile.Close(); err != nil {
+			return fmt.Errorf("close temporary database dump: %w", err)
+		}
 		if err := PgDump(dbDSN, sqlPath); err != nil {
-			log.Printf("[backup] WARNING: pg_dump failed: %v (continuing without DB)", err)
-		} else {
-			if err := addFileToTar(tw, sqlPath, "db.sql"); err != nil {
-				log.Printf("[backup] warning: db.sql: %v", err)
-			}
-			os.Remove(sqlPath)
+			return err
+		}
+		if err := addFileToTar(tw, sqlPath, "db.sql"); err != nil {
+			return fmt.Errorf("tar database dump: %w", err)
 		}
 	}
 
 	// 5. Write manifest
-	manifestPath := filepath.Join(os.TempDir(), "levara_manifest.json")
-	if err := manifest.Write(manifestPath); err != nil {
-		return fmt.Errorf("write manifest: %w", err)
+	data, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode manifest: %w", err)
 	}
-	_ = addFileToTar(tw, manifestPath, "manifest.json")
-	os.Remove(manifestPath)
-
-	log.Printf("[backup] complete: %s (%d collections, %d uploads)", output, len(manifest.Collections), manifest.UploadsCount)
-	return nil
+	if err := tw.WriteHeader(&tar.Header{Name: "manifest.json", Size: int64(len(data)), Mode: 0600}); err != nil {
+		return fmt.Errorf("tar manifest: %w", err)
+	}
+	_, err = tw.Write(data)
+	return err
 }
 
 // FullRestore extracts a tar.gz backup into data-dir and restores PostgreSQL.
-func FullRestore(input, dataDir, dbDSN string) error {
+func FullRestore(input, dataDir, dbDSN string) (restoreErr error) {
+	defer func() {
+		if restoreErr == nil {
+			log.Printf("[restore] complete: data extracted to %s", dataDir)
+		}
+	}()
 	f, err := os.Open(input)
 	if err != nil {
 		return fmt.Errorf("open input: %w", err)
 	}
-	defer f.Close()
+	defer func() { restoreErr = errors.Join(restoreErr, f.Close()) }()
 
 	gz, err := gzip.NewReader(f)
 	if err != nil {
 		return fmt.Errorf("gzip reader: %w", err)
 	}
-	defer gz.Close()
+	defer func() { restoreErr = errors.Join(restoreErr, gz.Close()) }()
 
 	tr := tar.NewReader(gz)
 	dbSQL := ""
@@ -159,6 +205,9 @@ func FullRestore(input, dataDir, dbDSN string) error {
 		}
 
 		if cleanName == "db.sql" {
+			if dbSQL != "" {
+				return fmt.Errorf("duplicate database dump entry")
+			}
 			if !regularFile {
 				return fmt.Errorf("database dump entry must be a regular file")
 			}
@@ -257,17 +306,26 @@ func FullRestore(input, dataDir, dbDSN string) error {
 		log.Printf("[restore] extracted: %s", cleanName)
 	}
 
+	// tar EOF does not validate the gzip trailer. Consume it before running SQL.
+	// Bound trailing data too, so appended gzip streams cannot bypass size limits.
+	if n, err := io.Copy(io.Discard, io.LimitReader(gz, maxRestoreTotalBytes-restoredBytes+1)); err != nil {
+		return fmt.Errorf("finish gzip archive: %w", err)
+	} else if n > maxRestoreTotalBytes-restoredBytes {
+		return fmt.Errorf("restore archive exceeds size limits")
+	}
+	if dbDSN != "" && dbSQL == "" {
+		return fmt.Errorf("backup has no database dump to restore")
+	}
 	// Restore PostgreSQL
 	if dbSQL != "" && dbDSN != "" {
 		log.Printf("[restore] restoring PostgreSQL...")
 		if err := PgRestore(dbDSN, dbSQL); err != nil {
-			log.Printf("[restore] WARNING: pg_restore failed: %v", err)
+			return err
 		}
 		_ = os.Remove(dbSQL)
 		dbSQL = ""
 	}
 
-	log.Printf("[restore] complete: data extracted to %s", dataDir)
 	return nil
 }
 
@@ -340,12 +398,17 @@ func mkdirAllNoSymlink(root, target string) error {
 // helpers
 
 func findOrCreateNodeDir(dataDir string) (string, error) {
-	entries, _ := os.ReadDir(dataDir)
+	entries, err := os.ReadDir(dataDir)
+	if err != nil {
+		return "", fmt.Errorf("read restore data directory: %w", err)
+	}
 	for _, e := range entries {
 		if e.IsDir() {
 			colPath := filepath.Join(dataDir, e.Name(), "collections")
 			if _, err := os.Stat(colPath); err == nil {
 				return filepath.Join(dataDir, e.Name()), nil
+			} else if !os.IsNotExist(err) {
+				return "", fmt.Errorf("inspect restore collections: %w", err)
 			}
 		}
 	}
@@ -362,7 +425,10 @@ func addDirToTar(tw *tar.Writer, srcDir, prefix string) error {
 		if err != nil {
 			return err
 		}
-		rel, _ := filepath.Rel(srcDir, path)
+		rel, err := filepath.Rel(srcDir, path)
+		if err != nil {
+			return err
+		}
 		name := filepath.Join(prefix, rel)
 
 		if info.IsDir() {
@@ -373,13 +439,20 @@ func addDirToTar(tw *tar.Writer, srcDir, prefix string) error {
 	})
 }
 
-func addFileToTar(tw *tar.Writer, path, name string) error {
+func addFileToTar(tw *tar.Writer, path, name string) (addErr error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("backup source %q is not a regular file", path)
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	info, err := f.Stat()
+	defer func() { addErr = errors.Join(addErr, f.Close()) }()
+	info, err = f.Stat()
 	if err != nil {
 		return err
 	}
@@ -391,15 +464,18 @@ func addFileToTar(tw *tar.Writer, path, name string) error {
 	return err
 }
 
-func countFiles(dir string) (int, int64) {
+func countFiles(dir string) (int, int64, error) {
 	count := 0
 	var size int64
-	_ = filepath.Walk(dir, func(_ string, info os.FileInfo, _ error) error {
+	err := filepath.Walk(dir, func(_ string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
 		if info != nil && !info.IsDir() {
 			count++
 			size += info.Size()
 		}
 		return nil
 	})
-	return count, size
+	return count, size, err
 }

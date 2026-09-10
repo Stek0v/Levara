@@ -5,7 +5,10 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -29,15 +32,15 @@ const cognifyDefaultCollection = "default"
 // Returns immediately with a RUNNING status entry in the registry; the
 // caller polls via cognify_status (or subscribes to the REST SSE stream)
 // to observe progress. The pipeline goroutine runs under
-// context.Background so an MCP client disconnect during ingestion does
-// not cancel the work mid-way.
+// a detached, bounded context retaining the verified caller, so a client
+// disconnect does not erase identity or cancel ingestion mid-way.
 //
 // Error branches that produce IsError=true:
 //   - Missing 'data' arg.
-//   - EmbedEndpoint not configured (registry gets FAILED state first).
+//   - EmbedEndpoint not configured.
 //
-// Successful start returns a human-readable RunID pointer; the caller
-// feeds that ID back into cognify_status.
+// Successful start returns the initial structured run status; the caller
+// feeds pipeline_run_id back into cognify_status.
 func ToolCognify(ctx context.Context, deps Deps, args map[string]any) ToolResult {
 	data, _ := args["data"].(string)
 	if data == "" {
@@ -50,15 +53,13 @@ func ToolCognify(ctx context.Context, deps Deps, args map[string]any) ToolResult
 		collection = cognifyDefaultCollection
 	}
 
+	tenantID, _ := ctx.Value(TenantIDKey).(string)
 	status := &runreg.Status{
-		RunID: runID, Status: "RUNNING", Stage: "starting", StartedAt: time.Now(),
+		OwnerID: extractOwnerID(ctx), TenantID: tenantID, RunID: runID, Status: "RUNNING", Stage: "starting", StartedAt: time.Now(),
 	}
-	deps.Runs().Store(runID, status)
 
 	pipeCfg := deps.BaseCognifyConfig()
 	if pipeCfg.EmbedEndpoint == "" {
-		status.Status = "FAILED"
-		status.Message = "Embedding service not configured (EMBED_ENDPOINT)"
 		return ToolResult{
 			Content: []Content{{Type: "text", Text: "Error: embedding service not configured"}},
 			IsError: true,
@@ -66,12 +67,7 @@ func ToolCognify(ctx context.Context, deps Deps, args map[string]any) ToolResult
 	}
 
 	pipeCfg.Collection = collection
-	// Stamp chunks/graph rows with a dataset id that is *registered* in the
-	// `datasets` SQL table owned by the caller. A bare ephemeral runID is in
-	// no caller's RBAC allowed-set, so search's filterByAllowedDatasets would
-	// silently drop every chunk this run produces (the agent could not
-	// retrieve content it just cognified). See ensureCognifyDatasetID.
-	pipeCfg.DatasetID = ensureCognifyDatasetID(ctx, deps, runID, collection)
+	pipeCfg.DatasetID = runID
 	pipeCfg.GenerateTriplets = true
 	trueVal := true
 	pipeCfg.UseStructuredOutput = &trueVal
@@ -95,9 +91,6 @@ func ToolCognify(ctx context.Context, deps Deps, args map[string]any) ToolResult
 	}
 	if dt, _ := args["document_title"].(string); dt != "" {
 		pipeCfg.DocumentTitle = dt
-	}
-	if di, _ := args["document_id"].(string); di != "" {
-		pipeCfg.DocumentID = di
 	}
 	if cr, ok := args["community_resolution"].(float64); ok && cr > 0 {
 		pipeCfg.CommunityResolution = cr
@@ -129,58 +122,47 @@ func ToolCognify(ctx context.Context, deps Deps, args map[string]any) ToolResult
 	}
 
 	texts := []string{data}
-
-	go runCognifyPipeline(deps, runID, collection, texts, pipeCfg, status)
-
-	return ToolResult{
-		Content: []Content{{
-			Type: "text",
-			Text: fmt.Sprintf("Cognify pipeline started. Run ID: %s. Use cognify_status tool to check progress.", runID),
-		}},
+	var err error
+	pipeCfg, err = deps.PrepareCognify(ctx, texts, pipeCfg)
+	if err != nil {
+		return toolError("cognify source unavailable")
 	}
+	status.DatasetID = pipeCfg.DatasetID
+	status.SourcesJSON = cognifySourcesJSON(pipeCfg)
+	pipeCfg.AttemptID = runID
+	if err := deps.ClaimPipelineAttempt(ctx, pipeCfg.DatasetID, pipeCfg.DocumentID, collection, runID, pipeCfg.SourceRevision, pipeCfg.RawContentHash); err != nil {
+		return toolError("cognify source unavailable")
+	}
+
+	deps.Runs().Store(runID, status)
+	go runCognifyPipeline(ctx, deps, runID, collection, texts, pipeCfg, status)
+
+	return jsonResult(map[string]any{
+		"pipeline_run_id": runID,
+		"status":          "RUNNING",
+		"stage":           "starting",
+		"message":         "Cognify pipeline started; use cognify_status to check progress.",
+	})
 }
 
-// ensureCognifyDatasetID returns the dataset id that cognify stamps onto
-// every chunk and graph row, guaranteeing it is registered in the `datasets`
-// SQL table owned by the calling user. Without registration, search's RBAC
-// gate (filterByAllowedDatasets) drops every freshly cognified chunk: an
-// unregistered id is in no caller's allowed-set, so an agent could never
-// retrieve content it just ingested (HTTP 200 + empty result, no error).
-//
-// One row is get-or-created per (owner, collection) — repeated cognify runs
-// into the same collection reuse it, so the datasets table does not accrete a
-// row per run. The "__cognify__:" name prefix avoids colliding with
-// human-created dataset names. Best-effort: any DB error (or a nil store,
-// where RBAC is inert and every chunk already passes) falls back to the
-// ephemeral id unchanged — no worse than the pre-fix behavior.
-func ensureCognifyDatasetID(ctx context.Context, deps Deps, fallbackID, collection string) string {
-	db := deps.DB()
-	if db == nil {
-		return fallbackID
+func cognifySourcesJSON(cfg orchestrator.Config) string {
+	if cfg.DocumentID == "" {
+		return ""
 	}
-	owner := extractOwnerID(ctx)
-	name := fmt.Sprintf("__cognify__:%s:%s", owner, collection)
+	proof, _ := json.Marshal([]map[string]any{{
+		"dataset_id": cfg.DatasetID, "document_id": cfg.DocumentID,
+		"content_revision": cfg.ContentRevision, "source_revision": cfg.SourceRevision,
+		"raw_content_hash": cfg.RawContentHash,
+	}})
+	return string(proof)
+}
 
-	// Reuse an existing per-(owner,collection) cognify dataset if present.
-	var existing string
-	if err := db.QueryRowContext(ctx, deps.Q(`SELECT id FROM datasets WHERE name = $1`), name).Scan(&existing); err == nil && existing != "" {
-		return existing
+func pipelineBackgroundContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	timeout := 30 * time.Minute
+	if ms, err := strconv.Atoi(os.Getenv("BACKGROUND_TASK_TIMEOUT_MS")); err == nil && ms > 0 {
+		timeout = time.Duration(ms) * time.Millisecond
 	}
-
-	now := time.Now().UTC()
-	// ON CONFLICT(name) DO NOTHING absorbs a concurrent create; the follow-up
-	// SELECT resolves whichever id won the race.
-	if _, err := db.ExecContext(ctx, deps.Q(
-		`INSERT INTO datasets (id, name, owner_id, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5) ON CONFLICT (name) DO NOTHING`),
-		fallbackID, name, owner, now, now); err != nil {
-		return fallbackID
-	}
-	var resolved string
-	if err := db.QueryRowContext(ctx, deps.Q(`SELECT id FROM datasets WHERE name = $1`), name).Scan(&resolved); err == nil && resolved != "" {
-		return resolved
-	}
-	return fallbackID
+	return context.WithTimeout(context.WithoutCancel(ctx), timeout)
 }
 
 // runPipelineWithStatus drives the orchestrator to completion and
@@ -189,12 +171,14 @@ func ensureCognifyDatasetID(ctx context.Context, deps Deps, fallbackID, collecti
 // synchronously; callers wrap in a goroutine for fire-and-forget.
 // Shared between cognify (adds Persist + Heartbeat after) and
 // analyze_commits (bare-bones — see tool_git.go).
-func runPipelineWithStatus(deps Deps, texts []string, pipeCfg orchestrator.Config, status *runreg.Status) {
+func runPipelineWithStatus(parent context.Context, deps Deps, texts []string, pipeCfg orchestrator.Config, status *runreg.Status) {
+	ctx, cancel := pipelineBackgroundContext(parent)
+	defer cancel()
 	progressCh := make(chan orchestrator.Progress, cognifyProgressBufSize)
 	errCh := make(chan error, 1)
 
 	go func() {
-		errCh <- deps.RunPipeline(context.Background(), texts, pipeCfg, progressCh)
+		errCh <- deps.RunPipeline(ctx, texts, pipeCfg, progressCh)
 	}()
 
 	// T9: emit one event per stage transition so MCP clients polling
@@ -221,6 +205,7 @@ func runPipelineWithStatus(deps Deps, texts []string, pipeCfg orchestrator.Confi
 			})
 			lastStage = p.Stage
 		}
+		deps.Runs().Store(status.RunID, status)
 	}
 
 	if err := <-errCh; err != nil {
@@ -240,17 +225,23 @@ func runPipelineWithStatus(deps Deps, texts []string, pipeCfg orchestrator.Confi
 		Edges:     status.Edges,
 		Terminal:  true,
 	})
+	deps.Runs().Store(status.RunID, status)
 }
 
 // runCognifyPipeline wraps runPipelineWithStatus with cognify-specific
 // post-run bookkeeping: PersistPipelineStatus (skip-if-done) and
 // heartbeat log. Analyze_commits and other pipeline-driving tools
 // either call the helper directly or add their own post-run hooks.
-func runCognifyPipeline(deps Deps, runID, collection string, texts []string, pipeCfg orchestrator.Config, status *runreg.Status) {
-	runPipelineWithStatus(deps, texts, pipeCfg, status)
+func runCognifyPipeline(ctx context.Context, deps Deps, runID, collection string, texts []string, pipeCfg orchestrator.Config, status *runreg.Status) {
+	runPipelineWithStatus(ctx, deps, texts, pipeCfg, status)
 
-	deps.PersistPipelineStatus(runID, collection,
-		status.Status, status.Chunks, status.Entities, status.Edges, status.ElapsedMs)
+	if status.Status != "COMPLETED" || !deps.PipelineFinalizesStatus() {
+		if err := deps.PersistPipelineStatus(pipeCfg.DatasetID, pipeCfg.DocumentID, collection,
+			status.Status, pipeCfg.SourceRevision, pipeCfg.RawContentHash, status.Chunks, status.Entities, status.Edges, status.ElapsedMs, pipeCfg.AttemptID); err != nil {
+			status.Message = "pipeline status persistence failed"
+			deps.Runs().Store(runID, status)
+		}
+	}
 
 	deps.LogHeartbeat("cognify", map[string]any{
 		"run_id":     runID,

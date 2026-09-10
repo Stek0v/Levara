@@ -36,7 +36,7 @@ func createTaskTestSchema(t *testing.T, db *sql.DB) {
 	ddl := []string{
 		`CREATE TABLE tasks(id TEXT PRIMARY KEY,idempotency_key TEXT,owner_id TEXT DEFAULT '',collection_name TEXT,room TEXT,objective TEXT,authority_json TEXT,risk_level TEXT,status TEXT,version INTEGER,current_workspace_revision TEXT DEFAULT '',created_at TEXT,updated_at TEXT,completed_at TEXT,UNIQUE(owner_id,collection_name,idempotency_key))`,
 		`CREATE TABLE task_criteria(id TEXT,task_id TEXT,description TEXT,required BOOLEAN,verification_json TEXT,created_at TEXT,PRIMARY KEY(task_id,id))`,
-		`CREATE TABLE task_steps(id TEXT,task_id TEXT,description TEXT,status TEXT,required BOOLEAN,dependencies_json TEXT,criterion_ids_json TEXT,attempts INTEGER,position INTEGER,created_at TEXT,updated_at TEXT,PRIMARY KEY(task_id,id))`,
+		`CREATE TABLE task_steps(id TEXT,task_id TEXT,description TEXT,status TEXT,required BOOLEAN,dependencies_json TEXT,criterion_ids_json TEXT,action_json TEXT NOT NULL DEFAULT '{}',attempts INTEGER,position INTEGER,created_at TEXT,updated_at TEXT,PRIMARY KEY(task_id,id))`,
 		`CREATE TABLE task_leases(step_id TEXT,task_id TEXT,actor_id TEXT,expires_at TEXT,created_at TEXT,PRIMARY KEY(task_id,step_id))`,
 		`CREATE TABLE task_receipts(id TEXT PRIMARY KEY,task_id TEXT,idempotency_key TEXT,owner_id TEXT,receipt_type TEXT,status TEXT,criterion_ids_json TEXT,observation TEXT,exit_code INTEGER,evidence_uri TEXT,artifact_digest TEXT,workspace_revision TEXT,metadata_json TEXT,created_at TEXT,UNIQUE(task_id,idempotency_key))`,
 		`CREATE TABLE task_checkpoints(id TEXT PRIMARY KEY,task_id TEXT,idempotency_key TEXT,step_id TEXT,summary TEXT,verified_json TEXT,failed_json TEXT,next_action TEXT,workspace_revision TEXT,created_at TEXT,UNIQUE(task_id,idempotency_key))`,

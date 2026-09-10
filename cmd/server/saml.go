@@ -131,7 +131,7 @@ func parseCertificatePEM(pemStr string) (*x509.Certificate, error) {
 //
 // A successful ACS exchange issues a session JWT via the auth config so
 // downstream middleware sees a normal authenticated principal.
-func samlRoutes(public fiber.Router, sp *accesspkg.SAMLSP, jwtSecret string) {
+func samlRoutes(public fiber.Router, sp *accesspkg.SAMLSP, cfg vectorHttp.AuthConfig, returnPath string) {
 	if sp == nil {
 		return
 	}
@@ -146,16 +146,25 @@ func samlRoutes(public fiber.Router, sp *accesspkg.SAMLSP, jwtSecret string) {
 		http.Redirect(w, r, redirect, http.StatusFound)
 	}))
 	public.Post("/saml/acs", adaptor.HTTPHandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Content-Type", "application/json")
-		principal, err := sp.ConsumeResponse(r.Context(), w, r)
-		if err != nil {
+		principal, issuedAt, err := sp.ConsumeResponseWithIssuedAt(r.Context(), w, r)
+		if err != nil || issuedAt.IsZero() {
 			// Opaque rejection: never echo IdP response details to the client.
 			w.WriteHeader(http.StatusUnauthorized)
 			_ = json.NewEncoder(w).Encode(fiber.Map{"detail": "saml authentication failed"})
 			return
 		}
-		token := vectorHttp.CreateSessionJWT(principal.UserID, principal.Email, jwtSecret)
-		_ = json.NewEncoder(w).Encode(fiber.Map{"access_token": token, "token_type": "bearer"})
+		token, err := vectorHttp.IssueExternalBrowserSessionJWT(r.Context(), cfg.DB, principal.UserID, principal.Email, cfg.JWTSecret, issuedAt.Unix())
+		if err != nil {
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(fiber.Map{"detail": "saml authentication failed"})
+			return
+		}
+		w.Header().Del("Content-Type")
+		http.SetCookie(w, vectorHttp.BrowserSessionCookie(token, cfg.CookieSecure || r.TLS != nil))
+		http.Redirect(w, r, returnPath, http.StatusSeeOther)
 	}))
 	public.Get("/saml/metadata", func(c *fiber.Ctx) error {
 		c.Set("Content-Type", "application/samlmetadata+xml")

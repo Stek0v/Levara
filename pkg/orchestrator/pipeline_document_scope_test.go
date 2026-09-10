@@ -3,13 +3,55 @@ package orchestrator
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stek0v/levara/internal/store"
 	"github.com/stek0v/levara/pkg/bm25"
 )
+
+func TestDocumentPipelineGuardRejectsBeforeExternalEffect(t *testing.T) {
+	for _, rag := range []bool{false, true} {
+		t.Run(map[bool]string{false: "graph", true: "rag"}[rag], func(t *testing.T) {
+			var calls atomic.Int32
+			endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls.Add(1); http.Error(w, "unexpected request", 500) }))
+			defer endpoint.Close()
+			cm, err := store.NewCollectionManager(2, t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer cm.Close()
+			cfg := Config{MinChunkChars: 1, Collection: "docs", Collections: cm, EmbedEndpoint: endpoint.URL, LLMEndpoint: endpoint.URL, LLMModel: "test", SkipGraph: rag,
+				DocumentID: "doc", DatasetID: "dataset", ContentRevision: 1,
+				GuardTransfer: func(context.Context) (func(), error) { return nil, errors.New("source revoked") }}
+			updates := make(chan Progress, 100)
+			if err := Run(context.Background(), []string{"Protected source must never leave the process after access was revoked."}, cfg, updates); err == nil {
+				t.Fatal("rejected transfer reported a completed document")
+			}
+			if calls.Load() != 0 {
+				t.Fatalf("rejected source sent to external service %d times", calls.Load())
+			}
+		})
+	}
+}
+
+func TestDocumentEmbeddingFailureIsNotCompleted(t *testing.T) {
+	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Error(w, "unavailable", 503) }))
+	defer endpoint.Close()
+	cm, err := store.NewCollectionManager(2, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cm.Close()
+	updates := make(chan Progress, 100)
+	err = Run(context.Background(), []string{"Document ingestion must report a failed embedding request instead of claiming the document is ready."}, Config{Collection: "docs", Collections: cm, EmbedEndpoint: endpoint.URL, SkipGraph: true, DocumentID: "doc", DatasetID: "dataset"}, updates)
+	if err == nil {
+		t.Fatal("failed document embedding reported completed")
+	}
+}
 
 func TestDocumentACLChunkIdentity(t *testing.T) {
 	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -33,11 +33,10 @@ Storage retention/key metadata and KMS/BYOK interfaces do not by themselves prov
 that a deployment has a working corporate KMS, encryption, or retention service.
 Validate the concrete provider and operational failure behavior separately.
 
-OIDC bearer verification, a SAML SP flow, and limited SCIM Users HTTP now exist
-in-tree. Native LDAP bind, browser OIDC login, complete SCIM groups, and transparent
-SCIM-to-SSO identity linking must not be inferred from these components.
-Supported operations and exact identity limitations are maintained in
-[enterprise identity](../enterprise-identity.md).
+Status update 2026-09-10: native LDAP/LDAPS/StartTLS, browser OIDC, SCIM
+Users/Groups and SQL identity linking now exist in-tree. They remain optional
+adapters and require real provider acceptance. Supported operations and exact
+identity limitations are maintained in [enterprise identity](../enterprise-identity.md).
 
 ## Consequences and non-goals
 

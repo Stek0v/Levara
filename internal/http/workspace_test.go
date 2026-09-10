@@ -300,6 +300,10 @@ func TestWorkspaceAccessCheckPreflightHonorsRoles(t *testing.T) {
 	defer closeFn()
 	seedWorkspaceACL(t, cfg.DB, "user-a", "user-b", "payments", RoleViewer)
 
+	if _, err := cfg.DB.Exec(`INSERT INTO users(id,email,is_active) VALUES ('user-c','c@example.test',true)`); err != nil {
+		t.Fatal(err)
+	}
+
 	ownerApp := workspaceACLApp("user-a", cfg)
 	body, status := workspaceTestPost(t, ownerApp, "/workspace/access/check", map[string]any{
 		"project_id": "payments",
@@ -3328,9 +3332,12 @@ func TestWorkspaceMCPForeignProjectOpsDoNotLeakMetadata(t *testing.T) {
 }
 
 func TestMCPInitializeStoresAuthenticatedUser(t *testing.T) {
+	db, cleanup := newAuthTestDB(t)
+	defer cleanup()
+	seedAuthUser(t, db, "user-b")
 	secret := "test-secret"
 	h := &mcpHandler{
-		cfg:      APIConfig{JWTSecret: secret, RequireAuth: true},
+		cfg:      APIConfig{DB: db, JWTSecret: secret, RequireAuth: true},
 		sessions: mcppkg.NewSessionStore(),
 	}
 	app := fiber.New()

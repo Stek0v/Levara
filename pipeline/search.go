@@ -16,9 +16,18 @@ import (
 // No HTTP round-trip — embed client calls embed-server directly,
 // vector search calls CollectionManager in-process.
 type SearchPipeline struct {
-	embedClient *embed.Client
-	collections *store.CollectionManager
-	reranker    *rerank.Client // nil = no reranking
+	embedClient  *embed.Client
+	collections  *store.CollectionManager
+	reranker     *rerank.Client // nil = no reranking
+	resultFilter func(context.Context, []ScoredResult) ([]ScoredResult, error)
+}
+
+// WithResultFilter returns an operation-local pipeline. Filtering happens
+// before parent expansion or multi-query fusion consumes source metadata.
+func (p *SearchPipeline) WithResultFilter(filter func(context.Context, []ScoredResult) ([]ScoredResult, error)) *SearchPipeline {
+	copy := *p
+	copy.resultFilter = filter
+	return &copy
 }
 
 // NewSearchPipeline creates a pipeline backed by CollectionManager + embed client.
@@ -50,7 +59,11 @@ func (p *SearchPipeline) SearchByText(ctx context.Context, collection, queryText
 	}
 
 	// Step 2: Vector search (IN-PROCESS — 0ms transport!)
-	return p.SearchByVector(collection, vec, limit)
+	results, err := p.SearchByVector(collection, vec, limit)
+	if err != nil || p.resultFilter == nil {
+		return results, err
+	}
+	return p.resultFilter(ctx, results)
 }
 
 func (p *SearchPipeline) validateQueryContract(collection string, dim int) error {

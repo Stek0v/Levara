@@ -198,3 +198,23 @@ func TestWithTimeoutOverridesDefault(t *testing.T) {
 		t.Errorf("timeout = %v, want unchanged 5m after WithTimeout(0)", c.httpClient.Timeout)
 	}
 }
+
+func TestEmbedRejectsIncompleteAndMisindexedResponses(t *testing.T) {
+	for _, body := range []string{
+		`{}`, `{"data":[{"index":0,"embedding":[1]}]}`,
+		`{"data":[{"index":0,"embedding":[1]},{"index":0,"embedding":[2]}]}`,
+		`{"data":[{"index":0,"embedding":[1]},{"index":2,"embedding":[2]}]}`,
+		`{"data":[{"index":0,"embedding":[1]},{"index":1,"embedding":[2]},{"index":2,"embedding":[3]}]}`,
+		`{"embeddings":[[1],[]]}`, `{"embeddings":[[1],[1,2]]}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(body)) }))
+			defer srv.Close()
+			c := NewClient(srv.URL, "test", 0, 1)
+			vectors, err := c.EmbedTexts(context.Background(), []string{"first", "second"})
+			if err == nil || vectors != nil {
+				t.Fatalf("invalid response accepted: %v %v", vectors, err)
+			}
+		})
+	}
+}

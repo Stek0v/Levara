@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -32,11 +33,12 @@ type memoryCommitCandidate struct {
 }
 
 type memoryCommitItem struct {
-	CandidateID    string `json:"candidate_id"`
-	Action         string `json:"action"`
-	ReasonCode     string `json:"reason_code"`
-	TargetMemoryID string `json:"target_memory_id"`
-	TargetDigest   string `json:"target_digest,omitempty"`
+	CandidateID        string `json:"candidate_id"`
+	VerificationStatus string `json:"verification_status,omitempty"`
+	Action             string `json:"action"`
+	ReasonCode         string `json:"reason_code"`
+	TargetMemoryID     string `json:"target_memory_id"`
+	TargetDigest       string `json:"target_digest,omitempty"`
 }
 
 type memoryCommitPlan struct {
@@ -50,53 +52,70 @@ type memoryCommitPlan struct {
 // mutate memories; only prepared-plan state is written so apply can detect a
 // stale comparison instead of silently recalculating it.
 func ToolMemoryCommitPreview(ctx context.Context, deps Deps, args map[string]any) ToolResult {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 	collection, _ := args["collection"].(string)
 	idempotencyKey, _ := args["idempotency_key"].(string)
 	candidates, ok := memoryCommitCandidates(args["candidates"])
-	if strings.TrimSpace(collection) == "" || strings.TrimSpace(idempotencyKey) == "" || !ok || len(candidates) == 0 || len(candidates) > 20 {
+	if strings.TrimSpace(collection) == "" || strings.TrimSpace(idempotencyKey) == "" || len(idempotencyKey) > 256 || len(collection) > 256 || !ok || len(candidates) == 0 || len(candidates) > 20 {
 		return toolError("'collection', 'idempotency_key', and 1-20 'candidates' required")
 	}
-	db := deps.DB()
-	if db == nil {
-		return toolError("database not configured")
+	tx, actor, policy, err := memoryCommitBegin(ctx, deps)
+	if err != nil {
+		return toolError("memory commit authorization failed")
 	}
-	ownerID := extractOwnerID(ctx)
+	defer tx.Rollback()
+	ownerID := actor.UserID
 	requestDigest := memoryCommitDigest(map[string]any{"collection": collection, "idempotency_key": idempotencyKey, "candidates": candidates})
 
 	var commitID, status, existingRequestDigest, storedPlan, expiresAt string
-	err := db.QueryRowContext(ctx, deps.Q(`SELECT id,status,request_digest,plan_json,expires_at FROM memory_commits WHERE owner_id=$1 AND collection_name=$2 AND idempotency_key=$3`), ownerID, collection, idempotencyKey).
+	err = tx.QueryRowContext(ctx, deps.Q(`SELECT id,status,request_digest,plan_json,expires_at FROM memory_commits WHERE owner_id=$1 AND collection_name=$2 AND idempotency_key=$3`), ownerID, collection, idempotencyKey).
 		Scan(&commitID, &status, &existingRequestDigest, &storedPlan, &expiresAt)
 	if err == nil {
 		if existingRequestDigest != requestDigest {
 			return toolError("idempotency key reused with different request")
 		}
-		if status == "applied" || !memoryCommitExpired(expiresAt) {
-			return memoryCommitPreviewResult(commitID, status, collection, storedPlan, expiresAt)
+
+		if status != "applied" && memoryCommitExpired(expiresAt) {
+			return toolError("prepared commit expired; use a new idempotency key")
 		}
+		if err = tx.Commit(); err != nil {
+			return toolError(err.Error())
+		}
+		return memoryCommitPreviewResult(commitID, status, collection, storedPlan, expiresAt)
 	} else if err != sql.ErrNoRows {
 		return toolError(err.Error())
 	}
 
 	plan := memoryCommitPlan{Collection: collection, OwnerID: ownerID, Candidates: candidates, Items: make([]memoryCommitItem, 0, len(candidates))}
 	seen := map[string]bool{}
-	for _, candidate := range candidates {
-		item := memoryCommitItem{CandidateID: candidate.CandidateID}
+	for i, candidate := range candidates {
+		candidate.VerificationStatus = "unverified"
+		verification, evidenceErr := memoryCommitValidateEvidence(ctx, tx, deps, ownerID, collection, candidate)
+		candidate.VerificationStatus = verification
+		plan.Candidates[i] = candidate
+		item := memoryCommitItem{CandidateID: candidate.CandidateID, VerificationStatus: verification}
 		switch {
-		case strings.TrimSpace(candidate.CandidateID) == "" || seen[candidate.CandidateID] || strings.TrimSpace(candidate.Key) == "" || strings.TrimSpace(candidate.Value) == "" || strings.TrimSpace(candidate.Room) == "" || !IsValidHall(candidate.Hall):
+		case strings.TrimSpace(candidate.CandidateID) == "" || seen[candidate.CandidateID] || len(candidate.CandidateID) > 256 || len(candidate.Key) > 1024 || len(candidate.Value) > 64<<10 || len(candidate.Room) > 256 || strings.TrimSpace(candidate.Key) == "" || strings.TrimSpace(candidate.Value) == "" || strings.TrimSpace(candidate.Room) == "" || !IsValidHall(candidate.Hall):
 			item.Action, item.ReasonCode = "reject", "schema_invalid"
+		case evidenceErr != nil:
+			item.Action, item.ReasonCode = "reject", "invalid_evidence"
 		case memoryCommitSecret.MatchString(candidate.Value):
 			item.Action, item.ReasonCode = "reject", "secret_rejected"
 		case candidate.SupersedesMemoryID != "":
-			var id, key, value string
-			err := db.QueryRowContext(ctx, deps.Q(`SELECT id,key,value FROM memories WHERE id=$1 AND collection_name=$2 AND (owner_id=$3 OR owner_id='') AND superseded_by=''`), candidate.SupersedesMemoryID, collection, ownerID).Scan(&id, &key, &value)
+			var id, key, value, targetOwner string
+			err := tx.QueryRowContext(ctx, deps.Q(`SELECT id,key,value,owner_id FROM memories WHERE id=$1 AND collection_name=$2 AND (owner_id=$3 OR owner_id='') AND superseded_by=''`), candidate.SupersedesMemoryID, collection, ownerID).Scan(&id, &key, &value, &targetOwner)
 			if err != nil {
 				item.Action, item.ReasonCode = "reject", "stale_target"
+
+			} else if targetOwner == "" && !memoryCommitCanMutateShared(ctx, policy, actor) {
+				item.Action, item.ReasonCode = "reject", "shared_target_forbidden"
 			} else {
 				item.Action, item.ReasonCode, item.TargetMemoryID, item.TargetDigest = "supersede", "explicit_supersede", id, memoryCommitTargetDigest(key, value)
 			}
 		default:
 			var id, value string
-			err := db.QueryRowContext(ctx, deps.Q(`SELECT id,value FROM memories WHERE key=$1 AND collection_name=$2 AND (owner_id=$3 OR owner_id='') AND superseded_by='' ORDER BY owner_id DESC LIMIT 1`), candidate.Key, collection, ownerID).Scan(&id, &value)
+			err := tx.QueryRowContext(ctx, deps.Q(`SELECT id,value FROM memories WHERE key=$1 AND collection_name=$2 AND (owner_id=$3 OR owner_id='') AND superseded_by='' ORDER BY owner_id DESC LIMIT 1`), candidate.Key, collection, ownerID).Scan(&id, &value)
 			switch {
 			case err == sql.ErrNoRows:
 				item.Action, item.ReasonCode = "add", "no_equivalent"
@@ -117,36 +136,43 @@ func ToolMemoryCommitPreview(ctx context.Context, deps Deps, args map[string]any
 		commitID = "mc_" + uuid.NewString()
 	}
 	expiresAt = time.Now().UTC().Add(memoryCommitTTL).Format(time.RFC3339Nano)
-	_, err = db.ExecContext(ctx, deps.Q(`INSERT INTO memory_commits(id,owner_id,collection_name,idempotency_key,status,request_digest,plan_digest,plan_json,result_json,created_at,expires_at,applied_at)
-		VALUES($1,$2,$3,$4,'prepared',$5,$6,$7,'',$8,$9,NULL)
-		ON CONFLICT(owner_id,collection_name,idempotency_key) DO UPDATE SET status='prepared',request_digest=$10,plan_digest=$11,plan_json=$12,result_json='',created_at=$13,expires_at=$14,applied_at=NULL`),
-		commitID, ownerID, collection, idempotencyKey, requestDigest, planDigest, string(planJSON), time.Now().UTC().Format(time.RFC3339Nano), expiresAt,
-		requestDigest, planDigest, string(planJSON), time.Now().UTC().Format(time.RFC3339Nano), expiresAt)
+	_, err = tx.ExecContext(ctx, deps.Q(`INSERT INTO memory_commits(id,owner_id,collection_name,idempotency_key,status,request_digest,plan_digest,plan_json,result_json,created_at,expires_at,applied_at)
+ VALUES($1,$2,$3,$4,'prepared',$5,$6,$7,'',$8,$9,NULL) ON CONFLICT(owner_id,collection_name,idempotency_key) DO NOTHING`), commitID, ownerID, collection, idempotencyKey, requestDigest, planDigest, string(planJSON), time.Now().UTC().Format(time.RFC3339Nano), expiresAt)
 	if err != nil {
 		return toolError(err.Error())
 	}
-	return memoryCommitPreviewResult(commitID, "prepared", collection, string(planJSON), expiresAt)
+	if err = tx.QueryRowContext(ctx, deps.Q(`SELECT id,status,request_digest,plan_json,expires_at FROM memory_commits WHERE owner_id=$1 AND collection_name=$2 AND idempotency_key=$3`), ownerID, collection, idempotencyKey).Scan(&commitID, &status, &existingRequestDigest, &storedPlan, &expiresAt); err != nil {
+		return toolError(err.Error())
+	}
+	if existingRequestDigest != requestDigest {
+		return toolError("idempotency key reused with different request")
+	}
+	if err = memoryCommitRecheck(ctx, policy, actor); err != nil {
+		return toolError("memory commit authorization changed")
+	}
+	if err = tx.Commit(); err != nil {
+		return toolError(err.Error())
+	}
+	return memoryCommitPreviewResult(commitID, status, collection, storedPlan, expiresAt)
 }
 
 // ToolMemoryCommitApply applies selected add/supersede actions from a stored
 // plan. A status update claims the plan inside the transaction, making retry
 // idempotent and preventing concurrent applies from duplicating mutations.
 func ToolMemoryCommitApply(ctx context.Context, deps Deps, args map[string]any) ToolResult {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 	commitID, _ := args["commit_id"].(string)
 	planDigest, _ := args["plan_digest"].(string)
 	if strings.TrimSpace(commitID) == "" || strings.TrimSpace(planDigest) == "" {
 		return toolError("'commit_id' and 'plan_digest' required")
 	}
-	db := deps.DB()
-	if db == nil {
-		return toolError("database not configured")
-	}
-	tx, err := db.BeginTx(ctx, nil)
+	tx, actor, policy, err := memoryCommitBegin(ctx, deps)
 	if err != nil {
-		return toolError(err.Error())
+		return toolError("memory commit authorization failed")
 	}
 	defer tx.Rollback()
-	ownerID := extractOwnerID(ctx)
+	ownerID := actor.UserID
 	var status, storedDigest, storedPlan, storedResult, expiresAt string
 	err = tx.QueryRowContext(ctx, deps.Q(`SELECT status,plan_digest,plan_json,result_json,expires_at FROM memory_commits WHERE id=$1 AND owner_id=$2`), commitID, ownerID).
 		Scan(&status, &storedDigest, &storedPlan, &storedResult, &expiresAt)
@@ -169,7 +195,7 @@ func ToolMemoryCommitApply(ctx context.Context, deps Deps, args map[string]any) 
 	if err := json.Unmarshal([]byte(storedPlan), &plan); err != nil {
 		return toolError("stored plan is invalid")
 	}
-	if memoryCommitDigest(plan) != storedDigest {
+	if memoryCommitDigest(plan) != storedDigest || plan.OwnerID != ownerID || len(plan.Candidates) != len(plan.Items) {
 		return toolError("stored plan digest is invalid")
 	}
 	claimed, err := tx.ExecContext(ctx, deps.Q(`UPDATE memory_commits SET status='applying' WHERE id=$1 AND owner_id=$2 AND status='prepared'`), commitID, ownerID)
@@ -179,13 +205,27 @@ func ToolMemoryCommitApply(ctx context.Context, deps Deps, args map[string]any) 
 	if n, _ := claimed.RowsAffected(); n != 1 {
 		return toolError("prepared commit is already applying")
 	}
-	accepted := memoryCommitAccepted(args["accepted_candidate_ids"], plan.Items)
+	selection, provided := args["accepted_candidate_ids"]
+	accepted, err := memoryCommitAccepted(selection, plan.Items, provided)
+	if err != nil {
+		return toolError(err.Error())
+	}
 	result := map[string]any{"commit_id": commitID, "status": "applied", "added": 0, "superseded": 0, "skipped": 0, "index_jobs": []map[string]any{}}
 	indexJobs := result["index_jobs"].([]map[string]any)
 	for i, item := range plan.Items {
 		if !accepted[item.CandidateID] {
 			continue
 		}
+
+		if item.Action != "add" && item.Action != "supersede" && item.Action != "skip" {
+			continue
+		}
+		candidate := plan.Candidates[i]
+		verification, err := memoryCommitValidateEvidence(ctx, tx, deps, ownerID, plan.Collection, candidate)
+		if err != nil {
+			return toolError("prepared evidence is no longer valid")
+		}
+		candidate.VerificationStatus = verification
 		if item.Action == "skip" {
 			var key, value string
 			err := tx.QueryRowContext(ctx, deps.Q(`SELECT key,value FROM memories WHERE id=$1 AND collection_name=$2 AND (owner_id=$3 OR owner_id='') AND superseded_by=''`), item.TargetMemoryID, plan.Collection, ownerID).Scan(&key, &value)
@@ -198,8 +238,8 @@ func ToolMemoryCommitApply(ctx context.Context, deps Deps, args map[string]any) 
 		if item.Action != "add" && item.Action != "supersede" {
 			continue
 		}
-		candidate := plan.Candidates[i]
 		var newID, oldID string
+		mutationOwner := ownerID
 		if item.Action == "add" {
 			var existing string
 			err := tx.QueryRowContext(ctx, deps.Q(`SELECT id FROM memories WHERE key=$1 AND collection_name=$2 AND (owner_id=$3 OR owner_id='') AND superseded_by='' ORDER BY owner_id DESC LIMIT 1`), candidate.Key, plan.Collection, ownerID).Scan(&existing)
@@ -218,15 +258,20 @@ func ToolMemoryCommitApply(ctx context.Context, deps Deps, args map[string]any) 
 			if err != nil || memoryCommitTargetDigest(oldKey, oldValue) != item.TargetDigest {
 				return toolError("prepared plan is stale")
 			}
+
+			if oldOwner == "" && !memoryCommitCanMutateShared(ctx, policy, actor) {
+				return toolError("shared memory mutation requires an active administrator")
+			}
 			var collision string
 			err = tx.QueryRowContext(ctx, deps.Q(`SELECT id FROM memories WHERE key=$1 AND collection_name=$2 AND (owner_id=$3 OR owner_id='') AND superseded_by='' AND id<>$4`), candidate.Key, plan.Collection, ownerID, item.TargetMemoryID).Scan(&collision)
 			if err != sql.ErrNoRows {
 				return toolError("prepared plan is stale")
 			}
 			newID, oldID = uuid.NewString(), item.TargetMemoryID
+			mutationOwner = oldOwner
 			now := time.Now().UTC().Format(time.RFC3339Nano)
 			archiveKey := fmt.Sprintf("%s#superseded:%s", oldKey, oldID)
-			updated, err := tx.ExecContext(ctx, deps.Q(`UPDATE memories SET key=$1,superseded_by=$2,supersession_reason=$3,valid_until=$4,updated_at=$5 WHERE id=$6 AND superseded_by=''`), archiveKey, newID, "memory commit", now, now, oldID)
+			updated, err := tx.ExecContext(ctx, deps.Q(`UPDATE memories SET key=$1,superseded_by=$2,supersession_reason=$3,valid_until=$4,updated_at=$5 WHERE id=$6 AND owner_id=$7 AND collection_name=$8 AND superseded_by=''`), archiveKey, newID, "memory commit", now, now, oldID, oldOwner, plan.Collection)
 			if err != nil || rowsAffected(updated) != 1 {
 				return toolError("prepared plan is stale")
 			}
@@ -237,14 +282,14 @@ func ToolMemoryCommitApply(ctx context.Context, deps Deps, args map[string]any) 
 		}
 		if provider, ok := deps.(interface{ MemoryIndexOutbox() *memoryindex.Store }); ok && provider.MemoryIndexOutbox() != nil {
 			if oldID != "" && deps.HasCollections() {
-				job, err := provider.MemoryIndexOutbox().EnqueueTx(ctx, tx, memoryindex.Job{MemoryID: oldID, Operation: "delete_vector", Collection: plan.Collection, OwnerID: ownerID, Digest: item.TargetDigest})
+				job, err := provider.MemoryIndexOutbox().EnqueueTx(ctx, tx, memoryindex.Job{MemoryID: oldID, Operation: "delete_vector", Collection: plan.Collection, OwnerID: mutationOwner, Digest: item.TargetDigest})
 				if err != nil {
 					return toolError(err.Error())
 				}
 				indexJobs = append(indexJobs, map[string]any{"memory_id": oldID, "job_id": job.ID, "status": job.Status})
 			}
 			if deps.EmbedAvailable() {
-				job, err := provider.MemoryIndexOutbox().EnqueueTx(ctx, tx, memoryindex.Job{MemoryID: newID, Operation: "upsert_vector", Collection: plan.Collection, OwnerID: ownerID, Digest: fmt.Sprintf("%x", sha256.Sum256([]byte(candidate.Key+"\x00"+candidate.Value))), Model: deps.EmbedModel()})
+				job, err := provider.MemoryIndexOutbox().EnqueueTx(ctx, tx, memoryindex.Job{MemoryID: newID, Operation: "upsert_vector", Collection: plan.Collection, OwnerID: mutationOwner, Digest: fmt.Sprintf("%x", sha256.Sum256([]byte(candidate.Key+"\x00"+candidate.Value))), Model: deps.EmbedModel()})
 				if err != nil {
 					return toolError(err.Error())
 				}
@@ -257,6 +302,10 @@ func ToolMemoryCommitApply(ctx context.Context, deps Deps, args map[string]any) 
 	_, err = tx.ExecContext(ctx, deps.Q(`UPDATE memory_commits SET status='applied',result_json=$1,applied_at=$2 WHERE id=$3 AND status='applying'`), string(resultJSON), time.Now().UTC().Format(time.RFC3339Nano), commitID)
 	if err != nil {
 		return toolError(err.Error())
+	}
+
+	if err = memoryCommitRecheck(ctx, policy, actor); err != nil {
+		return toolError("memory commit authorization changed")
 	}
 	if err := tx.Commit(); err != nil {
 		return toolError(err.Error())
@@ -271,7 +320,7 @@ func memoryCommitInsert(ctx context.Context, tx *sql.Tx, deps Deps, id string, c
 	receipts := memoryReceiptJSON(candidate.SourceReceiptIDs)
 	verification := candidate.VerificationStatus
 	if verification == "" {
-		verification = "verified"
+		verification = "unverified"
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	_, err := tx.ExecContext(ctx, deps.Q(`INSERT INTO memories(id,key,value,type,owner_id,collection_name,room,hall,is_pinned,pin_priority,superseded_by,source_task_id,source_receipt_ids,verification_status,supersedes_memory_id,created_at,updated_at)
@@ -281,7 +330,7 @@ func memoryCommitInsert(ctx context.Context, tx *sql.Tx, deps Deps, id string, c
 
 func memoryCommitCandidates(value any) ([]memoryCommitCandidate, bool) {
 	raw, ok := value.([]any)
-	if !ok {
+	if !ok || len(raw) > 20 {
 		return nil, false
 	}
 	out := make([]memoryCommitCandidate, 0, len(raw))
@@ -290,7 +339,14 @@ func memoryCommitCandidates(value any) ([]memoryCommitCandidate, bool) {
 		if !ok {
 			return nil, false
 		}
-		out = append(out, memoryCommitCandidate{CandidateID: stringArg(candidate, "candidate_id"), Key: stringArg(candidate, "key"), Value: stringArg(candidate, "value"), Room: stringArg(candidate, "room"), Hall: stringArg(candidate, "hall"), SupersedesMemoryID: stringArg(candidate, "supersedes_memory_id"), VerificationStatus: stringArg(candidate, "verification_status"), SourceTaskID: stringArg(candidate, "source_task_id"), SourceReceiptIDs: stringSliceArg(candidate, "source_receipt_ids")})
+		receipts, valid := memoryCommitSourceReceipts(candidate["source_receipt_ids"])
+		if !valid {
+			return nil, false
+		}
+		if len(stringArg(candidate, "value")) > 64<<10 {
+			return nil, false
+		}
+		out = append(out, memoryCommitCandidate{CandidateID: stringArg(candidate, "candidate_id"), Key: stringArg(candidate, "key"), Value: stringArg(candidate, "value"), Room: stringArg(candidate, "room"), Hall: stringArg(candidate, "hall"), SupersedesMemoryID: stringArg(candidate, "supersedes_memory_id"), VerificationStatus: stringArg(candidate, "verification_status"), SourceTaskID: stringArg(candidate, "source_task_id"), SourceReceiptIDs: receipts})
 	}
 	return out, true
 }
@@ -303,8 +359,11 @@ func memoryCommitPreviewResult(commitID, status, collection, storedPlan, expires
 	summary := map[string]int{"add": 0, "supersede": 0, "skip": 0, "conflict": 0, "reject": 0}
 	items := make([]map[string]any, 0, len(plan.Items))
 	for _, item := range plan.Items {
+		if item.VerificationStatus == "" {
+			item.VerificationStatus = "unverified"
+		}
 		summary[item.Action]++
-		items = append(items, map[string]any{"candidate_id": item.CandidateID, "action": item.Action, "reason_code": item.ReasonCode, "target_memory_id": item.TargetMemoryID, "warnings": []any{}})
+		items = append(items, map[string]any{"candidate_id": item.CandidateID, "verification_status": item.VerificationStatus, "action": item.Action, "reason_code": item.ReasonCode, "target_memory_id": item.TargetMemoryID, "warnings": []any{}})
 	}
 	return jsonResult(map[string]any{"commit_id": commitID, "status": status, "collection": collection, "plan_digest": memoryCommitDigest(plan), "expires_at": expiresAt, "summary": summary, "items": items})
 }
@@ -317,21 +376,45 @@ func memoryCommitStoredResult(value string) ToolResult {
 	return jsonResult(result)
 }
 
-func memoryCommitAccepted(value any, items []memoryCommitItem) map[string]bool {
-	selected := stringSliceArg(map[string]any{"ids": value}, "ids")
+func memoryCommitAccepted(value any, items []memoryCommitItem, provided bool) (map[string]bool, error) {
 	accepted := map[string]bool{}
-	if len(selected) == 0 {
-		for _, item := range items {
-			if item.Action == "add" || item.Action == "supersede" || item.Action == "skip" {
-				accepted[item.CandidateID] = true
-			}
+	eligible := map[string]bool{}
+	for _, item := range items {
+		if item.Action == "add" || item.Action == "supersede" || item.Action == "skip" {
+			eligible[item.CandidateID] = true
 		}
-		return accepted
+	}
+	if !provided {
+		return eligible, nil
+	}
+	var selected []string
+	switch values := value.(type) {
+	case []string:
+		selected = values
+	case []any:
+		if len(values) > 20 {
+			return nil, errors.New("accepted_candidate_ids exceeds limit")
+		}
+		for _, v := range values {
+			id, ok := v.(string)
+			if !ok {
+				return nil, errors.New("accepted_candidate_ids must contain strings")
+			}
+			selected = append(selected, id)
+		}
+	default:
+		return nil, errors.New("accepted_candidate_ids must be an array")
+	}
+	if len(selected) > 20 {
+		return nil, errors.New("accepted_candidate_ids exceeds limit")
 	}
 	for _, id := range selected {
+		if !eligible[id] {
+			return nil, errors.New("accepted candidate is unknown or not applicable")
+		}
 		accepted[id] = true
 	}
-	return accepted
+	return accepted, nil
 }
 
 func memoryCommitDigest(value any) string {
@@ -352,6 +435,9 @@ func memoryCommitExpired(expiresAt string) bool {
 func normalizeMemoryCommitText(value string) string { return strings.Join(strings.Fields(value), " ") }
 
 func rowsAffected(result sql.Result) int64 {
+	if result == nil {
+		return 0
+	}
 	n, _ := result.RowsAffected()
 	return n
 }

@@ -10,6 +10,8 @@ import (
 	"time"
 
 	_ "github.com/ncruces/go-sqlite3/driver"
+	"github.com/stek0v/levara/pkg/access"
+	"github.com/stek0v/levara/pkg/memoryindex"
 )
 
 // setupMemoryTestDB builds the memories schema used by the palace
@@ -78,14 +80,10 @@ func seedMemory(t *testing.T, db *sql.DB, id, key, value, typ, owner, coll, room
 
 // ── ToolListMemories ──
 
-func TestToolListMemories_NilDBReturnsEmpty(t *testing.T) {
+func TestToolListMemories_NilDBReturnsError(t *testing.T) {
 	got := ToolListMemories(context.Background(), nilDBDeps{}, map[string]any{})
-	if got.IsError {
-		t.Fatalf("IsError = true, want false")
-	}
-	items := decodeListMemories(t, got)
-	if len(items) != 0 {
-		t.Errorf("got %+v, want empty memories", items)
+	if !got.IsError {
+		t.Fatal("missing database must not become successful empty evidence")
 	}
 }
 
@@ -205,6 +203,21 @@ func TestToolPinMemory_RequiresKey(t *testing.T) {
 	}
 	if !strings.Contains(got.Content[0].Text, "'key' required") {
 		t.Errorf("content = %q, want 'key' required", got.Content[0].Text)
+	}
+}
+
+func TestToolDeleteMemory_RejectsConflictingOrInvalidSelectors(t *testing.T) {
+	deps := setupMemoryTestDB(t)
+	for name, args := range map[string]map[string]any{
+		"id-and-key":        {"memory_id": "m1", "key": "key"},
+		"id-and-collection": {"memory_id": "m1", "collection": "levara"},
+		"non-string-id":     {"memory_id": 12},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := ToolDeleteMemory(context.Background(), deps, args); !got.IsError {
+				t.Fatalf("selectors accepted: %+v", got)
+			}
+		})
 	}
 }
 
@@ -328,14 +341,40 @@ func TestToolUnpinMemory_ClearsFlagsOnRealRow(t *testing.T) {
 
 // ── ToolDeleteMemory ──
 
+func TestToolDeleteMemory_DescriptorSupportsExactIDAndLegacyKey(t *testing.T) {
+	var descriptor Tool
+	for _, candidate := range ToolDescriptors() {
+		if candidate.Name == "delete_memory" {
+			descriptor = candidate
+			break
+		}
+	}
+	properties, _ := descriptor.InputSchema["properties"].(map[string]any)
+	for _, field := range []string{"memory_id", "key", "collection"} {
+		if _, ok := properties[field]; !ok {
+			t.Fatalf("delete_memory schema lacks %s", field)
+		}
+	}
+	if choices, _ := descriptor.InputSchema["oneOf"].([]any); len(choices) != 2 {
+		t.Fatalf("delete_memory schema oneOf=%v, want ID or key selector", descriptor.InputSchema["oneOf"])
+	}
+	output, _ := descriptor.OutputSchema["properties"].(map[string]any)
+	if output["ok"] == nil || output["message"] == nil {
+		t.Fatalf("delete_memory output schema changed: %+v", descriptor.OutputSchema)
+	}
+	if !ToolAllowedForMode("memory", "delete_memory") || !ToolAllowedForMode("full", "delete_memory") || ToolAllowedForMode("core", "delete_memory") {
+		t.Fatal("delete_memory profile visibility changed")
+	}
+}
+
 func TestToolDeleteMemory_RequiresKey(t *testing.T) {
 	deps := setupMemoryTestDB(t)
 	got := ToolDeleteMemory(context.Background(), deps, map[string]any{})
 	if !got.IsError {
 		t.Fatalf("missing key: IsError = false, want true")
 	}
-	if !strings.Contains(got.Content[0].Text, "'key' required") {
-		t.Errorf("content = %q, want 'key' required", got.Content[0].Text)
+	if !strings.Contains(got.Content[0].Text, "exactly one of 'memory_id' or 'key' is required") {
+		t.Errorf("content = %q", got.Content[0].Text)
 	}
 }
 
@@ -367,9 +406,10 @@ func TestToolDeleteMemory_NoMatchingRowIsError(t *testing.T) {
 func TestToolDeleteMemory_HappyPathRemovesRow(t *testing.T) {
 	// Delete removes the SQL row and reports the count.
 	deps := setupMemoryTestDB(t)
-	seedMemory(t, deps.db, "m1", "stale", "v", "fact", "", "", "", "", 0, 0)
+	seedMemory(t, deps.db, "m1", "stale", "v", "fact", "alice", "", "", "", 0, 0)
 
-	got := ToolDeleteMemory(context.Background(), deps, map[string]any{"key": "stale"})
+	ctx := context.WithValue(context.Background(), UserIDKey, "alice")
+	got := ToolDeleteMemory(ctx, deps, map[string]any{"key": "stale"})
 	if got.IsError {
 		t.Fatalf("IsError = true; content=%+v", got.Content)
 	}
@@ -384,32 +424,22 @@ func TestToolDeleteMemory_HappyPathRemovesRow(t *testing.T) {
 	}
 }
 
-func TestToolDeleteMemory_OwnershipScoped(t *testing.T) {
-	// Caller deletes only its own rows and shared (empty-owner) rows;
-	// another user's row with the same key survives. Three rows with the
-	// same key but distinct owner_ids is a valid production state under
-	// UNIQUE(key, owner_id).
+func TestToolDeleteMemory_AmbiguousPersonalKeyChangesNothing(t *testing.T) {
 	deps := setupMemoryTestDB(t)
-	seedMemory(t, deps.db, "m1", "secret", "mine", "fact", "alice", "", "", "", 0, 0)
+	seedMemory(t, deps.db, "m1", "secret", "mine", "fact", "alice", "one", "", "", 0, 0)
+	seedMemory(t, deps.db, "m4", "secret", "also-mine", "fact", "alice", "two", "", "", 0, 0)
 	seedMemory(t, deps.db, "m2", "secret", "theirs", "fact", "bob", "", "", "", 0, 0)
 	seedMemory(t, deps.db, "m3", "secret", "shared", "fact", "", "", "", "", 0, 0)
 
 	ctx := context.WithValue(context.Background(), UserIDKey, "alice")
 	got := ToolDeleteMemory(ctx, deps, map[string]any{"key": "secret"})
-	if got.IsError {
-		t.Fatalf("IsError = true; content=%+v", got.Content)
-	}
-	if !strings.Contains(got.Content[0].Text, "Deleted secret (2 record(s))") {
-		t.Errorf("content = %q, want 2 records", got.Content[0].Text)
+	if !got.IsError || !strings.Contains(got.Content[0].Text, "ambiguous") {
+		t.Fatalf("ambiguous delete result=%+v", got)
 	}
 
-	// Only bob's row remains.
-	var remaining string
-	if err := deps.db.QueryRow("SELECT owner_id FROM memories WHERE key = 'secret'").Scan(&remaining); err != nil {
-		t.Fatalf("expected bob's row to survive: %v", err)
-	}
-	if remaining != "bob" {
-		t.Errorf("surviving owner = %q, want bob", remaining)
+	var remaining int
+	if err := deps.db.QueryRow("SELECT COUNT(*) FROM memories WHERE key = 'secret'").Scan(&remaining); err != nil || remaining != 4 {
+		t.Fatalf("remaining=%d err=%v, want all four rows", remaining, err)
 	}
 }
 
@@ -419,8 +449,9 @@ func TestToolDeleteMemory_CollectionFilterNarrows(t *testing.T) {
 	// UNIQUE(key, owner_id)) sit in different collections; the filter
 	// keeps the non-matching one.
 	deps := setupMemoryTestDB(t)
-	seedMemory(t, deps.db, "m1", "dup", "in-levara", "fact", "", "levara", "", "", 0, 0)
+	seedMemory(t, deps.db, "m1", "dup", "in-levara", "fact", "alice", "levara", "", "", 0, 0)
 	seedMemory(t, deps.db, "m2", "dup", "in-other", "fact", "alice", "other", "", "", 0, 0)
+	seedMemory(t, deps.db, "m3", "dup", "shared", "fact", "", "levara", "", "", 0, 0)
 
 	ctx := context.WithValue(context.Background(), UserIDKey, "alice")
 	got := ToolDeleteMemory(ctx, deps, map[string]any{"key": "dup", "collection": "levara"})
@@ -431,54 +462,153 @@ func TestToolDeleteMemory_CollectionFilterNarrows(t *testing.T) {
 		t.Errorf("content = %q, want 1 record", got.Content[0].Text)
 	}
 
-	var coll string
-	if err := deps.db.QueryRow("SELECT collection_name FROM memories WHERE key = 'dup'").Scan(&coll); err != nil {
-		t.Fatalf("expected the 'other' row to survive: %v", err)
-	}
-	if coll != "other" {
-		t.Errorf("surviving collection = %q, want other", coll)
+	var remaining int
+	if err := deps.db.QueryRow("SELECT COUNT(*) FROM memories WHERE key = 'dup'").Scan(&remaining); err != nil || remaining != 2 {
+		t.Fatalf("remaining=%d err=%v, want other personal plus shared", remaining, err)
 	}
 }
 
-func TestToolDeleteMemory_DropsVectorSidecar(t *testing.T) {
-	// When collections are configured, the matching vector sidecar entry
-	// is dropped so the record stops surfacing in recall. The sidecar name
-	// derives from the row's collection_name via memoryCollectionName.
+func TestToolDeleteMemory_ByIDQueuesExactVectorRetirement(t *testing.T) {
 	deps := setupMemoryTestDB(t)
 	deps.hasColls = true
-	seedMemory(t, deps.db, "m1", "base", "v", "fact", "", "", "", "", 0, 0)
-	seedMemory(t, deps.db, "m2", "shard", "v", "fact", "", "levara", "", "", 0, 0)
-	// Pretend both vectors were previously indexed.
-	deps.CollectionInsert("_memories", "m1", []float32{1}, nil)
-	deps.CollectionInsert("_memories_levara", "m2", []float32{1}, nil)
+	var err error
+	deps.memoryIndexOutbox, err = memoryindex.NewStore(deps.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedMemory(t, deps.db, "m1", "dup", "selected", "fact", "alice", "levara", "", "", 0, 0)
+	seedMemory(t, deps.db, "m2", "dup", "keep", "fact", "alice", "other", "", "", 0, 0)
 
-	if got := ToolDeleteMemory(context.Background(), deps, map[string]any{"key": "base"}); got.IsError {
-		t.Fatalf("delete base IsError; content=%+v", got.Content)
+	ctx := context.WithValue(context.Background(), UserIDKey, "alice")
+	if got := ToolDeleteMemory(ctx, deps, map[string]any{"memory_id": "m1"}); got.IsError {
+		t.Fatalf("delete by ID failed: %+v", got)
 	}
-	if got := ToolDeleteMemory(context.Background(), deps, map[string]any{"key": "shard"}); got.IsError {
-		t.Fatalf("delete shard IsError; content=%+v", got.Content)
+	var remaining int
+	if err := deps.db.QueryRow("SELECT COUNT(*) FROM memories WHERE id='m2'").Scan(&remaining); err != nil || remaining != 1 {
+		t.Fatalf("sibling row missing: count=%d err=%v", remaining, err)
 	}
-
-	deleted := deps.getDeleted()
-	want := map[string]string{"_memories": "m1", "_memories_levara": "m2"}
-	if len(deleted) != 2 {
-		t.Fatalf("CollectionDelete calls = %d, want 2 (%+v)", len(deleted), deleted)
+	var memoryID, operation, collection, owner, digest string
+	if err := deps.db.QueryRow(`SELECT memory_id,operation,collection_name,owner_id,digest FROM memory_index_jobs`).Scan(&memoryID, &operation, &collection, &owner, &digest); err != nil {
+		t.Fatal(err)
 	}
-	for _, d := range deleted {
-		if want[d.collection] != d.id {
-			t.Errorf("unexpected sidecar delete %s/%s", d.collection, d.id)
-		}
-	}
-	// And the records no longer verify as present.
-	if deps.CollectionHasRecord("_memories", "m1") {
-		t.Errorf("_memories/m1 still present after delete")
+	if memoryID != "m1" || operation != "delete_vector" || collection != "levara" || owner != "alice" || digest != "delete:m1" {
+		t.Fatalf("unexpected job identity: %q %q %q %q %q", memoryID, operation, collection, owner, digest)
 	}
 }
 
-func TestToolDeleteMemory_NoVectorWhenCollectionsAbsent(t *testing.T) {
-	// With collections unconfigured the SQL delete still succeeds and no
-	// vector delete is attempted (HasCollections gate).
+func TestToolDeleteMemory_SharedKeyOnlyIsNotSelected(t *testing.T) {
+	deps := setupMemoryTestDB(t)
+	seedMemory(t, deps.db, "shared", "policy", "shared", "fact", "", "levara", "", "", 0, 0)
+	ctx := context.WithValue(context.Background(), UserIDKey, "alice")
+	got := ToolDeleteMemory(ctx, deps, map[string]any{"key": "policy", "collection": "levara"})
+	if !got.IsError || !strings.Contains(got.Content[0].Text, "No memory matched key") {
+		t.Fatalf("shared key-only result=%+v", got)
+	}
+	var remaining int
+	if err := deps.db.QueryRow("SELECT COUNT(*) FROM memories WHERE id='shared'").Scan(&remaining); err != nil || remaining != 1 {
+		t.Fatalf("shared row changed: count=%d err=%v", remaining, err)
+	}
+}
+
+func TestToolDeleteMemory_IDHidesForeignAndMissingTargets(t *testing.T) {
+	deps := setupMemoryTestDB(t)
+	seedMemory(t, deps.db, "foreign", "secret", "value", "fact", "bob", "levara", "", "", 0, 0)
+	ctx := context.WithValue(context.Background(), UserIDKey, "alice")
+	foreign := ToolDeleteMemory(ctx, deps, map[string]any{"memory_id": "foreign"})
+	missing := ToolDeleteMemory(ctx, deps, map[string]any{"memory_id": "missing"})
+	if !foreign.IsError || !missing.IsError || foreign.Content[0].Text != "Error: No memory matched memory_id foreign" || missing.Content[0].Text != "Error: No memory matched memory_id missing" {
+		t.Fatalf("foreign=%+v missing=%+v", foreign, missing)
+	}
+}
+
+func TestToolDeleteMemory_OutboxFailureRollsBackRow(t *testing.T) {
+	deps := setupMemoryTestDB(t)
+	deps.hasColls = true
+	var err error
+	deps.memoryIndexOutbox, err = memoryindex.NewStore(deps.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedMemory(t, deps.db, "m1", "rollback", "value", "fact", "alice", "levara", "", "", 0, 0)
+	if _, err := deps.db.Exec("DROP TABLE memory_index_jobs"); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.WithValue(context.Background(), UserIDKey, "alice")
+	if got := ToolDeleteMemory(ctx, deps, map[string]any{"memory_id": "m1"}); !got.IsError {
+		t.Fatalf("outbox failure returned success: %+v", got)
+	}
+	var remaining int
+	if err := deps.db.QueryRow("SELECT COUNT(*) FROM memories WHERE id='m1'").Scan(&remaining); err != nil || remaining != 1 {
+		t.Fatalf("delete was not rolled back: count=%d err=%v", remaining, err)
+	}
+}
+
+type deleteMemoryActorDeps struct {
+	*fakeDeps
+	actor access.MetadataActor
+}
+
+func (d *deleteMemoryActorDeps) MetadataActor(context.Context) access.MetadataActor { return d.actor }
+
+func TestToolDeleteMemory_SharedIDRequiresLiveAdministrator(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		superuser bool
+		epoch     int64
+		wantError bool
+	}{
+		{name: "active-admin", superuser: true, epoch: 1},
+		{name: "ordinary-user", superuser: false, epoch: 1, wantError: true},
+		{name: "revoked-admin", superuser: true, epoch: 0, wantError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			base := setupMemoryTestDB(t)
+			for _, stmt := range []string{
+				`CREATE TABLE users(id TEXT PRIMARY KEY,is_active BOOLEAN,is_superuser BOOLEAN)`,
+				`CREATE TABLE credential_epochs(user_id TEXT PRIMARY KEY,epoch BIGINT,revoked_before BIGINT)`,
+				`INSERT INTO credential_epochs(user_id,epoch,revoked_before) VALUES('alice',1,0)`,
+			} {
+				if _, err := base.db.Exec(stmt); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := base.db.Exec(`INSERT INTO users(id,is_active,is_superuser) VALUES('alice',TRUE,?)`, tc.superuser); err != nil {
+				t.Fatal(err)
+			}
+			seedMemory(t, base.db, "shared", "policy", "value", "fact", "", "levara", "", "", 0, 0)
+			deps := &deleteMemoryActorDeps{fakeDeps: base, actor: access.MetadataActor{
+				Actor:      access.Actor{UserID: "alice"},
+				Credential: access.MetadataCredential{Kind: "jwt", Epoch: tc.epoch, ExpiresAt: time.Now().Add(time.Hour).Unix()},
+			}}
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			got := ToolDeleteMemory(ctx, deps, map[string]any{"memory_id": "shared"})
+			if got.IsError != tc.wantError {
+				t.Fatalf("result=%+v wantError=%t", got, tc.wantError)
+			}
+			var remaining int
+			if err := base.db.QueryRow("SELECT COUNT(*) FROM memories WHERE id='shared'").Scan(&remaining); err != nil {
+				t.Fatal(err)
+			}
+			wantRemaining := 0
+			if tc.wantError {
+				wantRemaining = 1
+			}
+			if remaining != wantRemaining {
+				t.Fatalf("remaining=%d want=%d", remaining, wantRemaining)
+			}
+		})
+	}
+}
+
+func TestToolDeleteMemory_OutboxWithoutCollections(t *testing.T) {
+	// Durable retirement depends on the outbox, not a live collection manager.
 	deps := setupMemoryTestDB(t) // hasColls=false
+	var err error
+	deps.memoryIndexOutbox, err = memoryindex.NewStore(deps.db)
+	if err != nil {
+		t.Fatal(err)
+	}
 	seedMemory(t, deps.db, "m1", "k", "v", "fact", "", "", "", "", 0, 0)
 
 	if got := ToolDeleteMemory(context.Background(), deps, map[string]any{"key": "k"}); got.IsError {
@@ -486,6 +616,23 @@ func TestToolDeleteMemory_NoVectorWhenCollectionsAbsent(t *testing.T) {
 	}
 	if d := deps.getDeleted(); len(d) != 0 {
 		t.Errorf("CollectionDelete called %d times, want 0 when collections absent", len(d))
+	}
+	var jobs int
+	if err := deps.db.QueryRow("SELECT COUNT(*) FROM memory_index_jobs WHERE memory_id='m1' AND operation='delete_vector'").Scan(&jobs); err != nil || jobs != 1 {
+		t.Errorf("index jobs=%d err=%v, want 1 with durable outbox", jobs, err)
+	}
+}
+
+func TestToolDeleteMemory_SQLOnlyWithoutOutboxOrCollections(t *testing.T) {
+	deps := setupMemoryTestDB(t)
+	seedMemory(t, deps.db, "m1", "k", "v", "fact", "", "", "", "", 0, 0)
+
+	if got := ToolDeleteMemory(context.Background(), deps, map[string]any{"key": "k"}); got.IsError {
+		t.Fatalf("IsError = true; content=%+v", got.Content)
+	}
+	var remaining int
+	if err := deps.db.QueryRow("SELECT COUNT(*) FROM memories WHERE id='m1'").Scan(&remaining); err != nil || remaining != 0 {
+		t.Errorf("remaining=%d err=%v, want SQL row deleted", remaining, err)
 	}
 }
 

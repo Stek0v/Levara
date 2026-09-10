@@ -235,7 +235,7 @@ export function useSaveMemory() {
 export function useDeleteMemory() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (key: string) => levara.deleteMemory(key),
+    mutationFn: (memoryId: string) => levara.deleteMemory(memoryId),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['memories'] }) },
   })
 }

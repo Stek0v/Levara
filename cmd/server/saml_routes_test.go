@@ -19,6 +19,7 @@ import (
 
 	"github.com/crewjam/saml"
 	"github.com/gofiber/fiber/v2"
+	vectorHttp "github.com/stek0v/levara/internal/http"
 	accesspkg "github.com/stek0v/levara/pkg/access"
 )
 
@@ -93,7 +94,7 @@ func newSAMLE2E(t *testing.T) *samlE2E {
 	authCfg := "e2e-saml-secret"
 	// Routes at root for the test; prod mounts on the public router group.
 	app := fiber.New()
-	samlRoutes(app, sp, authCfg)
+	samlRoutes(app, sp, vectorHttp.AuthConfig{JWTSecret: authCfg}, "/")
 
 	_ = idp
 	return &samlE2E{idp: idp, idpURL: idpSrv.URL, sp: sp, app: app, authCfg: authCfg}
@@ -161,7 +162,7 @@ func TestSAMLRoutesACSMissingBody(t *testing.T) {
 // SP is nil (feature flag off) — fail-closed surface behavior.
 func TestSAMLRoutesDisabledWhenNil(t *testing.T) {
 	app := fiber.New()
-	samlRoutes(app, nil, "s")
+	samlRoutes(app, nil, vectorHttp.AuthConfig{}, "/")
 	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/saml/login", nil))
 	if err != nil {
 		t.Fatal(err)

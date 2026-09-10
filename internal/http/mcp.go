@@ -17,6 +17,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -35,6 +36,7 @@ import (
 	"github.com/stek0v/levara/pkg/rerank"
 	"github.com/stek0v/levara/pkg/router"
 	"github.com/stek0v/levara/pkg/runreg"
+	"github.com/stek0v/levara/pkg/storage"
 )
 
 // F-4 wave 1b: the canonical type definitions live in pkg/mcp now. Local
@@ -124,19 +126,67 @@ func (h *mcpHandler) ListCollections() []string {
 // StoragePath implements mcp.Deps: returns the on-disk directory for
 // ingested files. Empty string is returned as-is; the tool layer
 // applies the legacy "data/uploads" default.
+func (h *mcpHandler) StorageBackend() storage.Storage { return h.cfg.FileStorage }
+
+func (h *mcpHandler) MetadataActor(ctx context.Context) accesspkg.MetadataActor {
+	e, _ := ctx.Value(searchEgressKey{}).(searchEgress)
+	actor := e.actor
+	if actor.UserID == "" {
+		actor = workspaceActorFromMCP(ctx)
+	}
+	return accesspkg.MetadataActor{Actor: actor, TrustedLocal: !h.cfg.RequireAuth && e.kind == "", Credential: accesspkg.MetadataCredential{Kind: e.kind, KeyID: e.keyID, SessionID: e.sessionID, Epoch: e.epoch, IssuedAt: e.issuedAt, ExpiresAt: e.expiresAt}}
+}
 func (h *mcpHandler) StoragePath() string { return h.cfg.StoragePath }
 
-// VerifyArtifact implements mcp.ArtifactVerifier. Local files are restricted
-// to Levara's configured storage/workspace roots; object-storage artifacts are
-// loaded through the configured storage backend. Unsupported URI schemes are
-// unverifiable rather than implicitly trusted.
+// VerifyArtifact checks access and digest under the same SQL fence. A receipt
+// can attest matching accessible bytes, never the truth of the candidate text.
 func (h *mcpHandler) VerifyArtifact(ctx context.Context, evidenceURI, expectedDigest string) error {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	expected := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(expectedDigest)), "sha256:")
+	if len(expected) != 64 {
+		return fmt.Errorf("artifact digest must be a full SHA-256 value")
+	}
 	uri := strings.TrimSpace(evidenceURI)
+	localRoot, relative, projectDirectory := "", "", ""
 	switch {
 	case strings.HasPrefix(uri, "file://"):
-		path := strings.TrimPrefix(uri, "file://")
-		if !pathWithinAnyRoot(path, h.cfg.StoragePath, h.cfg.WorkspacePath) {
-			return fmt.Errorf("artifact path is outside configured storage/workspace roots")
+		file := strings.TrimPrefix(uri, "file://")
+		for _, root := range []string{h.cfg.WorkspacePath, h.cfg.StoragePath} {
+			if root == "" {
+				continue
+			}
+			absRoot, err := filepath.Abs(root)
+			if err != nil {
+				return err
+			}
+			absFile, err := filepath.Abs(file)
+			if err != nil {
+				return err
+			}
+			rel, inside := rawPathRelative(absRoot, absFile)
+			if !inside {
+				canonical, err := filepath.EvalSymlinks(absRoot)
+				if err != nil {
+					continue
+				}
+				rel, inside = rawPathRelative(canonical, absFile)
+			}
+			if !inside {
+				continue
+			}
+			localRoot, relative = root, filepath.ToSlash(rel)
+			if root == h.cfg.WorkspacePath {
+				parts := strings.Split(relative, "/")
+				if len(parts) < 4 || parts[0] != "projects" {
+					return fmt.Errorf("artifact is not a workspace source")
+				}
+				projectDirectory = parts[1]
+			}
+			break
+		}
+		if localRoot == "" {
+			return fmt.Errorf("artifact path is outside configured roots")
 		}
 	case strings.HasPrefix(uri, storageURIPrefix):
 		if h.cfg.FileStorage == nil {
@@ -145,18 +195,81 @@ func (h *mcpHandler) VerifyArtifact(ctx context.Context, evidenceURI, expectedDi
 	default:
 		return fmt.Errorf("unsupported artifact URI scheme")
 	}
-
-	data, err := loadRawDataByLocation(ctx, h.cfg, uri)
+	actor := h.MetadataActor(ctx)
+	if !actor.TrustedLocal {
+		if h.cfg.DB == nil || actor.UserID == "" {
+			return accesspkg.ErrDocumentForbidden
+		}
+		p, locked := mcp.ArtifactReadPolicy(ctx)
+		if !locked {
+			var release func()
+			var err error
+			p, release, err = documentSQLPolicy(h.cfg).BeginReadFence(ctx, GetDBProvider() == DBSQLite)
+			if err != nil {
+				return err
+			}
+			defer release()
+		} else if p.DB != h.cfg.DB {
+			return accesspkg.ErrDocumentForbidden
+		}
+		c := actor.Credential
+		if err := p.RecheckCredential(ctx, actor.UserID, c.Kind, c.KeyID, actor.APIKeyPermissions, c.SessionID, c.Epoch, c.IssuedAt, c.ExpiresAt); err != nil {
+			return err
+		}
+		var allowed bool
+		var err error
+		if projectDirectory != "" {
+			allowed, err = p.AuthorizeWorkspaceDirectory(ctx, actor.Actor, projectDirectory)
+		} else {
+			allowed, err = p.AuthorizeArtifactLocation(ctx, actor.Actor, uri)
+		}
+		if err != nil {
+			return err
+		}
+		if !allowed {
+			return accesspkg.ErrDocumentForbidden
+		}
+	}
+	var data []byte
+	var err error
+	if localRoot != "" {
+		data, err = readConfinedArtifact(ctx, localRoot, relative)
+	} else {
+		r, loadErr := h.cfg.FileStorage.Load(ctx, strings.TrimPrefix(uri, storageURIPrefix))
+		if loadErr != nil {
+			if r != nil {
+				_ = r.Close()
+			}
+			return loadErr
+		}
+		if r == nil {
+			return fmt.Errorf("artifact storage returned no reader")
+		}
+		hash := sha256.New()
+		n, readErr := io.Copy(hash, io.LimitReader(r, (64<<20)+1))
+		closeErr := r.Close()
+		if readErr != nil {
+			return readErr
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if n > 64<<20 {
+			return fmt.Errorf("artifact exceeds 64 MiB limit")
+		}
+		if fmt.Sprintf("%x", hash.Sum(nil)) != expected {
+			return fmt.Errorf("artifact digest mismatch")
+		}
+		return nil
+	}
 	if err != nil {
 		return fmt.Errorf("load artifact: %w", err)
 	}
 	actual := fmt.Sprintf("%x", sha256.Sum256(data))
-	expected := strings.ToLower(strings.TrimSpace(expectedDigest))
-	expected = strings.TrimPrefix(expected, "sha256:")
-	if len(expected) != 64 {
-		return fmt.Errorf("artifact digest must be a full SHA-256 value")
-	}
-	if !strings.EqualFold(actual, expected) {
+	if actual != expected {
 		return fmt.Errorf("artifact digest mismatch")
 	}
 	return nil
@@ -312,6 +425,42 @@ func (h *mcpHandler) BaseCognifyConfig() orchestrator.Config {
 	}
 }
 
+// PrepareCognify persists the server-assigned immutable source before the MCP
+// run is visible. Dataset creation, source bytes and metadata are committed by
+// the existing authorized ingest transaction.
+func (h *mcpHandler) PrepareCognify(ctx context.Context, texts []string, cfg orchestrator.Config) (orchestrator.Config, error) {
+	ctx = context.WithValue(ctx, searchActorKey{}, workspaceActorFromMCP(ctx))
+	if _, ok := ctx.Value(searchEvidenceKey{}).(*searchEvidence); !ok {
+		ctx = context.WithValue(ctx, searchEvidenceKey{}, &searchEvidence{sources: make(map[searchDocumentSource]struct{})})
+	}
+	if _, ok := ctx.Value(searchEgressKey{}).(searchEgress); !ok {
+		ctx = context.WithValue(ctx, searchEgressKey{}, searchEgress{cfg: h.cfg, actor: workspaceActorFromMCP(ctx)})
+	}
+	datasetID, datasetName := cfg.DatasetID, ""
+	if h.cfg.DB != nil {
+		var err error
+		datasetID, datasetName, err = resolveCognifyDataset(ctx, h.cfg.DB, h.MetadataActor(ctx).UserID, cfg.Collection, cfg.DatasetID)
+		if err != nil {
+			return cfg, err
+		}
+	}
+	sources, err := ingestCognifySources(ctx, h.cfg, h.MetadataActor(ctx), datasetID, datasetName, cfg.DocumentTitle, texts)
+	if err != nil {
+		return cfg, err
+	}
+	if len(sources) != 1 {
+		return cfg, accesspkg.ErrDocumentInvalid
+	}
+	source := sources[0]
+	cfg.DatasetID, cfg.DocumentID, cfg.DocumentTitle = source.datasetID, source.documentID, source.title
+	cfg.ContentRevision, cfg.SourceRevision, cfg.RawContentHash = source.contentRevision, source.sourceRevision, source.rawContentHash
+	return cfg, nil
+}
+
+func (h *mcpHandler) ClaimPipelineAttempt(ctx context.Context, datasetID, documentID, collection, attemptID string, sourceRevision int64, rawContentHash string) error {
+	return claimPipelineAttempts(ctx, h.cfg.DB, []pipelineAttemptSource{{datasetID: datasetID, dataID: documentID, sourceRevision: sourceRevision, rawContentHash: rawContentHash}}, collection, attemptID)
+}
+
 // OntologyPromptSuffix implements mcp.Deps: forwards to the package-level
 // helper in ontologies.go. Empty string when the collection has no
 // ontology configured — tool code concatenates unconditionally.
@@ -322,9 +471,11 @@ func (h *mcpHandler) OntologyPromptSuffix(collection string) string {
 // PersistPipelineStatus implements mcp.Deps: forwards to the package-level
 // helper in api.go so REST and MCP share the same skip-if-done logic.
 // DB may be nil — the helper no-ops in that case.
-func (h *mcpHandler) PersistPipelineStatus(datasetID, collection, status string, chunks, entities, edges int, elapsedMs int64) {
-	PersistPipelineStatus(h.cfg.DB, datasetID, collection, status, chunks, entities, edges, elapsedMs)
+func (h *mcpHandler) PersistPipelineStatus(datasetID, documentID, collection, status string, sourceRevision int64, rawContentHash string, chunks, entities, edges int, elapsedMs int64, attemptID string) error {
+	return persistPipelineStatus(h.cfg.DB, datasetID, documentID, collection, status, sourceRevision, rawContentHash, chunks, entities, edges, elapsedMs, attemptID)
 }
+
+func (h *mcpHandler) PipelineFinalizesStatus() bool { return true }
 
 // LogHeartbeat implements mcp.Deps: forwards to the handler's own
 // heartbeat logger (in mcp_doctor.go). Defined on *mcpHandler to reach
@@ -352,6 +503,17 @@ func (h *mcpHandler) LogHeartbeat(eventType string, payload any) {
 // cognify goroutine's post-run bookkeeping without spinning up the real
 // LLM + embed stack.
 func (h *mcpHandler) RunPipeline(ctx context.Context, texts []string, cfg orchestrator.Config, progress chan<- orchestrator.Progress) error {
+	ctx = context.WithValue(ctx, searchActorKey{}, workspaceActorFromMCP(ctx))
+	if _, ok := ctx.Value(searchEvidenceKey{}).(*searchEvidence); !ok {
+		ctx = context.WithValue(ctx, searchEvidenceKey{}, &searchEvidence{sources: make(map[searchDocumentSource]struct{})})
+	}
+	if _, ok := ctx.Value(searchEgressKey{}).(searchEgress); !ok {
+		ctx = context.WithValue(ctx, searchEgressKey{}, searchEgress{cfg: h.cfg, actor: workspaceActorFromMCP(ctx)})
+	}
+	if h.cfg.DB != nil && cfg.DocumentID != "" {
+		source := cognifySource{datasetID: cfg.DatasetID, documentID: cfg.DocumentID, contentRevision: cfg.ContentRevision, sourceRevision: cfg.SourceRevision, rawContentHash: cfg.RawContentHash, title: cfg.DocumentTitle, texts: texts}
+		return runCognifySources(ctx, []cognifySource{source}, h.cfg, cfg, progress)
+	}
 	return orchestrator.Run(ctx, texts, cfg, progress)
 }
 
@@ -377,7 +539,15 @@ func (a *searchPipelineAdapter) SearchByTextMultiQuery(ctx context.Context, coll
 }
 
 func (a *searchPipelineAdapter) ApplyRerank(ctx context.Context, query string, in []pipeline.ScoredResult, topK int) (bool, []pipeline.ScoredResult) {
-	return pipeline.ApplyRerankToScored(ctx, a.rerankCfg, a.rerankClient, query, in, topK)
+	var reranked bool
+	var out []pipeline.ScoredResult
+	if err := withSearchReadFence(ctx, func(fenced context.Context) error {
+		reranked, out = pipeline.ApplyRerankToScored(fenced, a.rerankCfg, a.rerankClient, query, in, topK)
+		return nil
+	}); err != nil {
+		return false, nil
+	}
+	return reranked, out
 }
 
 func (a *searchPipelineAdapter) RerankEnabled() bool {
@@ -401,7 +571,12 @@ func (h *mcpHandler) NewSearchPipeline(doRerank bool) mcp.SearchPipeline {
 	if doRerank {
 		rerankClient = rerank.NewClient(h.cfg.RerankEndpoint, h.cfg.RerankModel, 0, h.cfg.RerankTimeoutMs)
 	}
-	sp := pipeline.NewSearchPipeline(embedClient, h.cfg.Collections, rerankClient)
+	sp := pipeline.NewSearchPipeline(embedClient, h.cfg.Collections, rerankClient).WithResultFilter(func(ctx context.Context, results []pipeline.ScoredResult) ([]pipeline.ScoredResult, error) {
+		if _, ok := ctx.Value(searchActorKey{}).(accesspkg.Actor); !ok {
+			ctx = context.WithValue(ctx, searchActorKey{}, workspaceActorFromMCP(ctx))
+		}
+		return filterMCPDocumentResults(ctx, h.cfg, results)
+	})
 	return &searchPipelineAdapter{
 		sp:           sp,
 		rerankClient: rerankClient,
@@ -480,7 +655,7 @@ func (h *mcpHandler) DoSync(ctx context.Context, remoteURL, direction string, ty
 	if err := validateSyncRemote(h.cfg, remoteURL); err != nil {
 		return nil, nil, err
 	}
-	rawManifest, err := SyncManifestFromRemote(remoteURL, h.cfg.SyncToken)
+	rawManifest, err := syncManifestFromRemoteContext(ctx, remoteURL, h.cfg.SyncToken)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -506,9 +681,9 @@ func (h *mcpHandler) DoSync(ctx context.Context, remoteURL, direction string, ty
 
 	var result map[string]any
 	if direction == "pull" {
-		result = SyncPull(h.cfg, remoteURL, types, since)
+		result = syncPullContext(ctx, h.cfg, remoteURL, types, since)
 		if containsType(types, "collections") && len(collections) > 0 {
-			result["collections_sync"] = syncPullCollections(h.cfg, remoteURL, collections)
+			result["collections_sync"] = syncPullCollectionsContext(ctx, h.cfg, remoteURL, collections)
 		}
 	} else {
 		result = syncPush(ctx, h.cfg, remoteURL, types, since)
@@ -522,6 +697,8 @@ func (h *mcpHandler) DoSync(ctx context.Context, remoteURL, direction string, ty
 		}
 		result["version_warning"] = versionWarning
 	}
+	result["status"] = syncResultStatus(result)
+	result["direction"] = direction
 	return result, manifest, nil
 }
 
@@ -570,6 +747,9 @@ func (h *mcpHandler) handleRPC(c *fiber.Ctx) error {
 			Error:   &rpcError{Code: -32700, Message: "Parse error"},
 		})
 	}
+	ctx, cancel := mcpRequestContext(c, req)
+	defer cancel()
+	c.SetUserContext(ctx)
 
 	// Notifications (no "id") → 202 Accepted, no body
 	if req.ID == nil || string(req.ID) == "null" {
@@ -720,16 +900,19 @@ func (h *mcpHandler) handleToolCallWithSession(c *fiber.Ctx, req jsonRPCRequest,
 	// the session binding only when the request carries no identity. This also
 	// closes the owner_id='' footgun where a client that dropped its
 	// Mcp-Session-Id would otherwise write records with no owner.
-	toolCtx := context.Background()
+	toolCtx := c.UserContext()
 	if traceID := firstNonEmpty(c.Get("X-Trace-ID"), c.Get("X-Request-ID")); traceID != "" {
-		toolCtx = context.WithValue(toolCtx, mcpTraceIDKey, traceID)
+		toolCtx = context.WithValue(toolCtx, mcpTraceIDKey, strings.Clone(traceID))
 	}
-	actor := accesspkg.Actor{}
-	if authenticated, err := h.authenticateMCPRequest(c); err == nil && authenticated.UserID != "" {
-		actor = authenticated
-	} else if sess != nil {
-		actor.UserID = sess.GetUserID()
+	actor, authErr := h.authenticateMCPRequest(c)
+	if authErr != nil || (actor.UserID == "" && sess != nil && sess.GetUserID() != "") {
+		return c.SendStatus(fiber.StatusNotFound)
 	}
+	actor, authErr = h.resolveMCPActorTenant(c, actor)
+	if authErr != nil {
+		return c.SendStatus(fiber.StatusNotFound)
+	}
+	toolCtx = context.WithValue(toolCtx, mcp.TenantIDKey, actor.TenantID)
 	if actor.UserID != "" {
 		toolCtx = context.WithValue(toolCtx, mcpUserIDKey, actor.UserID)
 		if actor.APIKeyPermissions != "" {
@@ -742,6 +925,36 @@ func (h *mcpHandler) handleToolCallWithSession(c *fiber.Ctx, req jsonRPCRequest,
 		}
 	}
 
+	// Preserve verified credential facts for transactional mutations as well as reads.
+	toolCtx = searchEgressContext(c, h.cfg, toolCtx)
+	credential, _ := toolCtx.Value(searchEgressKey{}).(searchEgress)
+	credential.actor = actor
+	toolCtx = context.WithValue(toolCtx, searchEgressKey{}, credential)
+	if params.Name == "search" || params.Name == "cross_search" || params.Name == "git_search" || params.Name == "query_entity" ||
+		params.Name == "cognify" || params.Name == "analyze_commits" || params.Name == "cognify_status" ||
+		params.Name == "ingestion_status" || params.Name == "recent_errors" || params.Name == "recall_chat" || params.Name == "search_chats" || params.Name == "save_chat" || params.Name == "list_data" || params.Name == "add" {
+		var cancel context.CancelFunc
+		toolCtx, cancel = context.WithTimeout(toolCtx, timeoutFromEnvMs("SEARCH_REQUEST_TIMEOUT_MS", defaultSearchRequestTimeout))
+		defer cancel()
+		toolCtx = context.WithValue(toolCtx, searchActorKey{}, actor)
+		toolCtx = context.WithValue(toolCtx, searchEvidenceKey{}, &searchEvidence{sources: make(map[searchDocumentSource]struct{})})
+		toolCtx = searchEgressContext(c, h.cfg, toolCtx)
+		e, _ := toolCtx.Value(searchEgressKey{}).(searchEgress)
+		e.actor = actor
+		e.global = params.Name == "search" && globalSearchGraphAllowed(toolCtx, h.cfg) && actor.UserID != ""
+		toolCtx = context.WithValue(toolCtx, searchEgressKey{}, e)
+		result := h.executeTool(toolCtx, sess, params.Name, params.Arguments)
+		if err := c.JSON(jsonRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: result}); err != nil {
+			return err
+		}
+		if result.IsError {
+			return nil
+		}
+		if err := sendProtectedResponseWithFence(c, toolCtx); err != nil {
+			return c.JSON(jsonRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: mcpToolResult{Content: []mcpContent{{Type: "text", Text: "search access revoked or unavailable"}}, IsError: true}})
+		}
+		return nil
+	}
 	result := h.executeTool(toolCtx, sess, params.Name, params.Arguments)
 	return c.JSON(jsonRPCResponse{
 		JSONRPC: "2.0", ID: req.ID, Result: result,
@@ -794,10 +1007,12 @@ func mcpToolAction(name string) string {
 // without changing call-sites.
 func (h *mcpHandler) recordMCPAudit(ctx context.Context, sess *mcpSession, name string, args map[string]any, result mcpToolResult, duration time.Duration) {
 	outcome := classifyOutcome(result)
-	agentID := ""
+	agentID, _ := ctx.Value(mcpUserIDKey).(string)
 	sessionID := ""
 	if sess != nil {
-		agentID = sess.UserID
+		if agentID == "" {
+			agentID = sess.GetUserID()
+		}
 		sessionID = sess.ID
 	}
 	if agentID == "" {
@@ -831,6 +1046,8 @@ func (h *mcpHandler) recordMCPAudit(ctx context.Context, sess *mcpSession, name 
 		ResponseBytes: resultSize,
 		Toolset:       mcp.ToolsetName(os.Getenv("LEVARA_MCP_TOOLSET")),
 	}
+	scope := verifiedAuditScope(ctx)
+	entry.TenantID, entry.ScopeVerified = scope.TenantID, scope.Verified
 	if requestJSON, err := json.Marshal(args); err == nil {
 		entry.RequestBytes = len(requestJSON)
 	}
@@ -971,7 +1188,7 @@ func (h *mcpHandler) executeToolInner(ctx context.Context, sess *mcpSession, nam
 	case "prune":
 		return h.toolPrune(ctx)
 	case "cognify_status":
-		return h.toolCognifyStatus(args)
+		return h.toolCognifyStatus(ctx, args)
 	case "list_communities":
 		return h.toolListCommunities(ctx, args)
 	case "check_drift":
@@ -1108,14 +1325,19 @@ func (h *mcpHandler) toolCognify(ctx context.Context, args map[string]any) mcpTo
 // forwarders (NewSearchPipeline, LLMProvider, LLMModel,
 // SearchCapabilities) defined above.
 func (h *mcpHandler) toolSearch(ctx context.Context, args map[string]any) mcpToolResult {
-	return mcp.ToolSearch(ctx, h, args)
+	ctx = context.WithValue(ctx, searchActorKey{}, workspaceActorFromMCP(ctx))
+	if _, ok := ctx.Value(searchEvidenceKey{}).(*searchEvidence); !ok {
+		ctx = context.WithValue(ctx, searchEvidenceKey{}, &searchEvidence{sources: make(map[searchDocumentSource]struct{})})
+	}
+	return mcp.ToolSearch(mcp.WithSearchAccess(ctx, mcp.SearchAccess{Filter: func(ctx context.Context, results []pipeline.ScoredResult) ([]pipeline.ScoredResult, error) {
+		return filterMCPDocumentResults(ctx, h.cfg, results)
+	}, GlobalGraph: globalSearchGraphAllowed(ctx, h.cfg)}), h, args)
 }
 
-// toolListData is a thin shim over mcp.ToolListData. F-4 wave 3c moved
-// the body into pkg/mcp; the filter parsing and SQL live in
-// pkg/mcp/deps.go's listDataFiltered / listDataUnfiltered helpers.
+// toolListData applies live inclusion policy to filtered document metadata and
+// dataset-level policy to dataset names, then retains proof for the egress fence.
 func (h *mcpHandler) toolListData(ctx context.Context, args map[string]any) mcpToolResult {
-	return mcp.ToolListData(ctx, h, args)
+	return h.listDocumentMetadata(ctx, args)
 }
 
 // toolDelete is a thin shim over mcp.ToolDelete. F-4 wave 3a moved the
@@ -1133,8 +1355,13 @@ func (h *mcpHandler) toolPrune(ctx context.Context) mcpToolResult {
 }
 
 // toolCognifyStatus is a thin shim over mcp.ToolCognifyStatus. F-4 wave 3j.
-func (h *mcpHandler) toolCognifyStatus(args map[string]any) mcpToolResult {
-	return mcp.ToolCognifyStatus(h, args)
+func (h *mcpHandler) toolCognifyStatus(ctx context.Context, args map[string]any) mcpToolResult {
+	id, _ := args["run_id"].(string)
+	status, ok := h.cfg.Runs.Load(id)
+	if !ok || authorizeRunStatus(ctx, h.cfg, status) != nil {
+		return mcpErrorResult("run not found or access denied")
+	}
+	return mcpJSONResult(status)
 }
 
 // toolAdd is a thin shim over mcp.ToolAdd. F-4 wave 3d moved the body
@@ -1150,6 +1377,11 @@ func (h *mcpHandler) toolAdd(ctx context.Context, args map[string]any) mcpToolRe
 // goroutine) into pkg/mcp. Reuses Runs/BaseCognifyConfig/LogHeartbeat
 // from wave 3j; no new Deps methods.
 func (h *mcpHandler) toolAnalyzeCommits(ctx context.Context, args map[string]any) mcpToolResult {
+	ctx = context.WithValue(ctx, searchActorKey{}, workspaceActorFromMCP(ctx))
+	if !globalSearchGraphAllowed(ctx, h.cfg) {
+		return mcpErrorResult("server repository access requires instance administrator")
+	}
+	requireAdminSearchEvidence(ctx)
 	return mcp.ToolAnalyzeCommits(ctx, h, args)
 }
 
@@ -1157,6 +1389,11 @@ func (h *mcpHandler) toolAnalyzeCommits(ctx context.Context, args map[string]any
 // Reuses NewSearchPipeline from wave 3k; hardcoded topK=10 against
 // the git_commits collection lives in pkg/mcp.
 func (h *mcpHandler) toolGitSearch(ctx context.Context, args map[string]any) mcpToolResult {
+	ctx = context.WithValue(ctx, searchActorKey{}, workspaceActorFromMCP(ctx))
+	if !globalSearchGraphAllowed(ctx, h.cfg) {
+		return mcpErrorResult("server repository access requires instance administrator")
+	}
+	requireAdminSearchEvidence(ctx)
 	return mcp.ToolGitSearch(ctx, h, args)
 }
 
@@ -1272,18 +1509,84 @@ func (h *mcpHandler) toolConsolidationRevert(ctx context.Context, args map[strin
 
 // ── Chat History handlers ──
 
-// toolSaveChat / toolRecallChat / toolSearchChats are thin shims over
-// their pkg/mcp counterparts (F-4 wave 3g).
+// Chat uses the same owner, tenant and document provenance checks as HTTP.
 func (h *mcpHandler) toolSaveChat(ctx context.Context, args map[string]any) mcpToolResult {
-	return mcp.ToolSaveChat(ctx, h, args)
+	ctx = context.WithValue(ctx, searchActorKey{}, workspaceActorFromMCP(ctx))
+	sid, _ := args["session_id"].(string)
+	messages, ok := args["messages"].([]any)
+	if sid == "" || !ok || len(messages) == 0 || len(messages) > 100 {
+		return mcpErrorResult("session_id and 1–100 messages required")
+	}
+	if h.cfg.DB == nil {
+		return mcpErrorResult("session storage unavailable")
+	}
+	turns := make([]sessionTurn, 0, len(messages))
+	for _, raw := range messages {
+		message, ok := raw.(map[string]any)
+		if !ok {
+			return mcpErrorResult("invalid message")
+		}
+		role, _ := message["role"].(string)
+		text, _ := message["content"].(string)
+		if text == "" || (role != "user" && role != "assistant" && role != "system" && role != "tool") {
+			return mcpErrorResult("invalid message role or content")
+		}
+		turn := sessionTurn{}
+		if role == "user" {
+			turn.Query = text
+		} else {
+			turn.Response = text
+		}
+		turns = append(turns, turn)
+	}
+	for i, turn := range turns {
+		if _, err := recordSessionTurn(ctx, h.cfg, sid, turn.Query, turn.Response, "chat", "client"); err != nil {
+			result := mcpJSONResult(map[string]any{"ok": false, "saved": i, "error": "session write failed or access denied"})
+			result.IsError = true
+			return result
+		}
+	}
+	return mcpJSONResult(map[string]any{"ok": true, "saved": len(turns), "message": fmt.Sprintf("Saved %d messages to session %s", len(turns), sid)})
 }
 
 func (h *mcpHandler) toolRecallChat(ctx context.Context, args map[string]any) mcpToolResult {
-	return mcp.ToolRecallChat(ctx, h, args)
+	ctx = context.WithValue(ctx, searchActorKey{}, workspaceActorFromMCP(ctx))
+	sid, _ := args["session_id"].(string)
+	if sid == "" {
+		return mcpErrorResult("session_id required")
+	}
+	turns, err := loadSessionTurns(ctx, h.cfg, sid, 100)
+	if err != nil {
+		return mcpErrorResult("session unavailable or access denied")
+	}
+	messages := []any{}
+	for i := len(turns) - 1; i >= 0; i-- {
+		turn := turns[i]
+		if turn.Query != "" {
+			messages = append(messages, map[string]any{"role": "user", "content": turn.Query, "created_at": turn.CreatedAt, "source_type": turn.Kind})
+		}
+		if turn.Response != "" {
+			messages = append(messages, map[string]any{"role": "assistant", "content": turn.Response, "created_at": turn.CreatedAt, "source_type": turn.Kind})
+		}
+	}
+	return mcpJSONResult(map[string]any{"session_id": sid, "messages": messages})
 }
 
 func (h *mcpHandler) toolSearchChats(ctx context.Context, args map[string]any) mcpToolResult {
-	return mcp.ToolSearchChats(ctx, h, args)
+	ctx = context.WithValue(ctx, searchActorKey{}, workspaceActorFromMCP(ctx))
+	query, _ := args["query"].(string)
+	if query == "" {
+		return mcpErrorResult("query required")
+	}
+	turns, err := loadSessionTurnsMatching(ctx, h.cfg, "", 20, query)
+	if err != nil {
+		return mcpErrorResult("session search unavailable or access denied")
+	}
+	results := []any{}
+	for _, turn := range turns {
+		results = append(results, map[string]any{"id": turn.ID, "session_id": turn.SessionID, "query": turn.Query, "response": turn.Response, "created_at": turn.CreatedAt, "source_type": turn.Kind, "snippet": firstNonEmpty(turn.Query, turn.Response), "role": "chat", "score": 1.0})
+	}
+	return mcpJSONResult(map[string]any{"results": results})
 }
 
 // truncate cuts a string to maxLen and adds "..." if truncated.
@@ -1397,8 +1700,18 @@ func (h *mcpHandler) toolCrossSearch(ctx context.Context, args map[string]any) m
 // (arg parsing, direction gate, manifest fetch, SyncPull/Push, heartbeat)
 // into pkg/mcp. DoSync wraps all the internal/http sync helpers so
 // pkg/mcp stays free of APIConfig and *store.CollectionManager.
+// Retain the Deps contract while binding sync telemetry to its request deadline.
+type syncContextDeps struct {
+	*mcpHandler
+	ctx context.Context
+}
+
+func (d *syncContextDeps) LogHeartbeat(eventType string, payload any) {
+	d.logHeartbeatContext(d.ctx, eventType, payload)
+}
+
 func (h *mcpHandler) toolSync(ctx context.Context, args map[string]any) mcpToolResult {
-	return mcp.ToolSync(ctx, h, args)
+	return mcp.ToolSync(ctx, &syncContextDeps{mcpHandler: h, ctx: ctx}, args)
 }
 
 // toolGetProjectContext is a thin shim over mcp.ToolGetProjectContext.
@@ -1492,6 +1805,10 @@ func (h *mcpHandler) requestOwnsMCPSession(c *fiber.Ctx, sess *mcpSession) bool 
 	if sess == nil {
 		return false
 	}
+	previous := c.UserContext()
+	ctx, cancel := apiRequestContext(c)
+	c.SetUserContext(ctx)
+	defer func() { c.SetUserContext(previous); cancel() }()
 	actor, err := h.authenticateMCPRequest(c)
 	if err != nil {
 		return false

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	accesspkg "github.com/stek0v/levara/pkg/access"
@@ -43,24 +44,26 @@ type scimUserRecord struct {
 }
 
 type scimService struct {
-	store  scimStore
-	query  scimQuerier
-	issuer string
-	token  string
-	audit  func(action, externalID, userID string)
+	store   scimStore
+	query   scimQuerier
+	issuer  string
+	token   string
+	audit   func(action, externalID, userID string)
+	managed *accesspkg.SCIMStore
 }
 
 // scimError renders RFC 7644 §3.12 error shapes.
 type scimError struct {
-	Status   string `json:"status"`
-	ScimType string `json:"scimType,omitempty"`
-	Detail   string `json:"detail"`
+	Schemas  []string `json:"schemas"`
+	Status   string   `json:"status"`
+	ScimType string   `json:"scimType,omitempty"`
+	Detail   string   `json:"detail"`
 }
 
 func scimErr(c *fiber.Ctx, status int, scimType, detail string) error {
 	return c.Status(status).JSON(scimError{
-		Status: fmt.Sprint(status), ScimType: scimType, Detail: detail,
-	})
+		Schemas: []string{"urn:ietf:params:scim:api:messages:2.0:Error"}, Status: fmt.Sprint(status), ScimType: scimType, Detail: detail,
+	}, "application/scim+json")
 }
 
 // SCIMRoutes registers /scim/v2/* on the public router. Returns silently
@@ -78,6 +81,11 @@ func SCIMRoutes(public fiber.Router, store scimStore, query scimQuerier, audit f
 	if err := store.EnsureSchema(context.Background()); err != nil {
 		return fmt.Errorf("scim: schema: %w", err)
 	}
+	configured, managed, err := configureSCIMStore(context.Background(), store, issuer)
+	if err != nil {
+		return fmt.Errorf("scim: directory binding: %w", err)
+	}
+	svc.store, svc.managed = configured, managed
 	svc.audit = func(action, externalID, userID string) {
 		if audit != nil {
 			audit(scimAuditLine(action, svc.issuer, externalID, userID))
@@ -85,13 +93,19 @@ func SCIMRoutes(public fiber.Router, store scimStore, query scimQuerier, audit f
 	}
 
 	guard := func(c *fiber.Ctx) error {
+		c.Set("Cache-Control", "no-store")
 		auth := c.Get("Authorization")
 		const prefix = "Bearer "
 		if !strings.HasPrefix(auth, prefix) ||
 			!accesspkg.TokenCheck(strings.TrimPrefix(auth, prefix), svc.token) {
-			return c.Status(401).JSON(scimError{Status: "401", Detail: "invalid scim token"})
+			return scimErr(c, 401, "", "invalid scim token")
 		}
-		return c.Next()
+		ctx, cancel := context.WithTimeout(c.UserContext(), 5*time.Second)
+		defer cancel()
+		c.SetUserContext(ctx)
+		err := c.Next()
+		c.Set("Content-Type", "application/scim+json")
+		return err
 	}
 
 	g := public.Group("/scim/v2", guard)
@@ -106,18 +120,18 @@ func SCIMRoutes(public fiber.Router, store scimStore, query scimQuerier, audit f
 		})
 	})
 
-	g.Get("/Schemas", func(c *fiber.Ctx) error {
-		return c.JSON(fiber.Map{"schemas": []string{
-			"urn:ietf:params:scim:schemas:core:2.0:User",
-		}, "id": "urn:ietf:params:scim:schemas:core:2.0:User"})
-	})
+	svc.discoveryRoutes(g)
+	if svc.managed != nil {
+		svc.groupRoutes(g)
+	}
 
 	g.Post("/Users", func(c *fiber.Ctx) error {
 		var req struct {
-			UserName   string   `json:"userName"`
-			ExternalID string   `json:"externalId"`
-			Active     *bool    `json:"active"`
-			Schemas    []string `json:"schemas"`
+			UserName   string          `json:"userName"`
+			ExternalID string          `json:"externalId"`
+			Active     *bool           `json:"active"`
+			Schemas    []string        `json:"schemas"`
+			Enterprise json.RawMessage `json:"urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"`
 		}
 		if err := json.Unmarshal(c.Body(), &req); err != nil {
 			return scimErr(c, 400, "invalidValue", "malformed JSON body")
@@ -129,154 +143,131 @@ func SCIMRoutes(public fiber.Router, store scimStore, query scimQuerier, audit f
 		if req.Active != nil {
 			active = *req.Active
 		}
+		var enterprise *accesspkg.SCIMEnterpriseUser
+		if len(req.Enterprise) > 0 {
+			if svc.managed == nil {
+				return scimErr(c, 400, "invalidValue", "enterprise extension requires configured tenant")
+			}
+			fields, err := enterpriseFields(req.Enterprise)
+			if err != nil {
+				return scimStoreError(c, err)
+			}
+			enterprise = enterpriseProfile(fields)
+		}
 		external := req.ExternalID
+		if external == "" && svc.managed != nil {
+			return scimErr(c, 400, "invalidValue", "externalId is required for managed identities")
+		}
 		if external == "" {
 			external = req.UserName // some IdP flows omit externalId on create
 		}
-		uid, created, err := svc.store.ProvisionCreate(c.Context(), accesspkg.SCIMUser{
-			Issuer: svc.issuer, ExternalID: external, Email: req.UserName, Active: active,
+		uid, created, err := svc.store.ProvisionCreate(c.UserContext(), accesspkg.SCIMUser{
+			Issuer: svc.issuer, ExternalID: external, Email: req.UserName, Active: active, Enterprise: enterprise,
 		})
 		if errors.Is(err, accesspkg.ErrSCIMEmailConflict) {
 			return scimErr(c, 409, "uniqueness", "userName already belongs to another identity")
 		}
 		if err != nil {
-			return scimErr(c, 500, "", "provisioning failed")
+			return scimStoreError(c, err)
 		}
 		svc.audit("create", external, uid)
 		status := 201
 		email := req.UserName
 		if !created {
 			status = 200
-			email, active, external, err = svc.query.ByID(c.Context(), svc.issuer, uid)
+			email, active, external, err = svc.query.ByID(c.UserContext(), svc.issuer, uid)
 			if err != nil {
 				return scimErr(c, 500, "", "lookup failed")
 			}
 		}
-		return c.Status(status).JSON(scimUserResource(uid, email, external, active))
+		resource, err := svc.userResource(c.UserContext(), uid, email, external, active)
+		if err != nil {
+			return scimStoreError(c, err)
+		}
+		return c.Status(status).JSON(resource)
 	})
 
 	g.Get("/Users", func(c *fiber.Ctx) error {
 		if filter := c.Query("filter"); filter != "" {
 			if val, ok := scimEqFilter(filter, "userName"); ok {
-				records, total, err := svc.query.ByEmail(c.Context(), svc.issuer, val)
+				records, total, err := svc.query.ByEmail(c.UserContext(), svc.issuer, val)
 				if err != nil {
 					return scimErr(c, 500, "", "lookup failed")
 				}
 				users := make([]fiber.Map, 0, len(records))
 				for _, u := range records {
-					users = append(users, scimUserResource(u.ID, u.Email, u.ExternalID, u.Active))
+					resource, err := svc.userResource(c.UserContext(), u.ID, u.Email, u.ExternalID, u.Active)
+					if err != nil {
+						return scimStoreError(c, err)
+					}
+					users = append(users, resource)
 				}
 				return c.JSON(scimListResponse(users, 1, total))
 			}
 			if val, ok := scimEqFilter(filter, "externalId"); ok {
-				uid, err := svc.store.Lookup(c.Context(), svc.issuer, val)
+				uid, err := svc.store.Lookup(c.UserContext(), svc.issuer, val)
 				if errors.Is(err, accesspkg.ErrUserNotFound) {
 					return c.JSON(scimListResponse(nil, 1, 0))
 				}
 				if err != nil {
 					return scimErr(c, 500, "", "lookup failed")
 				}
-				email, active, external, err := svc.query.ByID(c.Context(), svc.issuer, uid)
+				email, active, external, err := svc.query.ByID(c.UserContext(), svc.issuer, uid)
 				if err != nil {
 					return scimErr(c, 500, "", "lookup failed")
 				}
-				return c.JSON(scimListResponse([]fiber.Map{scimUserResource(uid, email, external, active)}, 1, 1))
+				resource, err := svc.userResource(c.UserContext(), uid, email, external, active)
+				if err != nil {
+					return scimStoreError(c, err)
+				}
+				return c.JSON(scimListResponse([]fiber.Map{resource}, 1, 1))
 			}
 			return scimErr(c, 400, "invalidFilter", "only userName eq / externalId eq are supported")
 		}
 		start, count := scimPagination(c)
-		records, total, err := svc.query.List(c.Context(), svc.issuer, start, count)
+		records, total, err := svc.query.List(c.UserContext(), svc.issuer, start, count)
 		if err != nil {
 			return scimErr(c, 500, "", "list failed")
 		}
 		users := make([]fiber.Map, 0, len(records))
 		for _, u := range records {
-			users = append(users, scimUserResource(u.ID, u.Email, u.ExternalID, u.Active))
+			resource, err := svc.userResource(c.UserContext(), u.ID, u.Email, u.ExternalID, u.Active)
+			if err != nil {
+				return scimStoreError(c, err)
+			}
+			users = append(users, resource)
 		}
 		return c.JSON(scimListResponse(users, start, total))
 	})
 
 	g.Get("/Users/:id", func(c *fiber.Ctx) error {
 		uid := c.Params("id")
-		email, active, external, err := svc.query.ByID(c.Context(), svc.issuer, uid)
+		email, active, external, err := svc.query.ByID(c.UserContext(), svc.issuer, uid)
 		if errors.Is(err, accesspkg.ErrUserNotFound) {
 			return scimErr(c, 404, "", "user not found")
 		}
 		if err != nil {
 			return scimErr(c, 500, "", "lookup failed")
 		}
-		return c.JSON(scimUserResource(uid, email, external, active))
+		resource, err := svc.userResource(c.UserContext(), uid, email, external, active)
+		if err != nil {
+			return scimStoreError(c, err)
+		}
+		return c.JSON(resource)
 	})
 
-	g.Patch("/Users/:id", func(c *fiber.Ctx) error {
-		uid := c.Params("id")
-		var req struct {
-			Operations []struct {
-				Op    string          `json:"op"`
-				Path  string          `json:"path"`
-				Value json.RawMessage `json:"value"`
-			} `json:"Operations"`
-		}
-		if err := json.Unmarshal(c.Body(), &req); err != nil {
-			return scimErr(c, 400, "invalidValue", "malformed PATCH body")
-		}
-		email, active, external, err := svc.query.ByID(c.Context(), svc.issuer, uid)
-		if errors.Is(err, accesspkg.ErrUserNotFound) {
-			return scimErr(c, 404, "", "user not found")
-		}
-		if err != nil {
-			return scimErr(c, 500, "", "lookup failed")
-		}
-		desired := accesspkg.SCIMUser{Issuer: svc.issuer, ExternalID: external, Email: email, Active: active}
-		var newEmail string
-		for _, op := range req.Operations {
-			switch strings.ToLower(strings.TrimSpace(op.Path)) {
-			case "active":
-				var v bool
-				if err := json.Unmarshal(op.Value, &v); err != nil {
-					return scimErr(c, 400, "invalidValue", "active must be boolean")
-				}
-				desired.Active = v
-			case "username", "emails", "name":
-				var v string
-				if err := json.Unmarshal(op.Value, &v); err == nil && v != "" {
-					newEmail = strings.TrimSpace(v)
-				}
-			case "":
-				// Entra sends {"active": true} without a path on some flows.
-				var m map[string]interface{}
-				if err := json.Unmarshal(op.Value, &m); err == nil {
-					if b, ok := m["active"].(bool); ok {
-						desired.Active = b
-					}
-					if s, ok := m["userName"].(string); ok && s != "" {
-						newEmail = strings.TrimSpace(s)
-					}
-				}
-			default:
-				return scimErr(c, 400, "invalidPath", "unsupported PATCH path: "+op.Path)
-			}
-		}
-		if err := svc.store.ProvisionUpdate(c.Context(), desired, newEmail); err != nil {
-			if errors.Is(err, accesspkg.ErrSCIMEmailConflict) {
-				return scimErr(c, 409, "uniqueness", "userName already belongs to another identity")
-			}
-			return scimErr(c, 500, "", "update failed")
-		}
-		svc.audit("update", external, uid)
-		return c.JSON(scimUserResource(uid, newEmailOr(newEmail, email), external, desired.Active))
-	})
+	g.Patch("/Users/:id", svc.patchUser)
 
 	g.Delete("/Users/:id", func(c *fiber.Ctx) error {
 		uid := c.Params("id")
-		_, _, external, err := svc.query.ByID(c.Context(), svc.issuer, uid)
+		_, _, external, err := svc.query.ByID(c.UserContext(), svc.issuer, uid)
 		if errors.Is(err, accesspkg.ErrUserNotFound) {
 			return scimErr(c, 404, "", "user not found")
 		}
 		if err != nil {
 			return scimErr(c, 500, "", "lookup failed")
 		}
-		if err := svc.store.ProvisionDeactivate(c.Context(), svc.issuer, external); err != nil {
+		if err := svc.store.ProvisionDeactivate(c.UserContext(), svc.issuer, external); err != nil {
 			return scimErr(c, 500, "", "deactivate failed")
 		}
 		svc.audit("deactivate", external, uid)
@@ -314,13 +305,16 @@ func scimListResponse(resources []fiber.Map, startIndex, total int) fiber.Map {
 
 // scimEqFilter parses `attr eq "value"` (case-insensitive attr, quoted value).
 func scimEqFilter(filter, attr string) (string, bool) {
-	f := strings.ToLower(strings.TrimSpace(filter))
-	needle := strings.ToLower(attr) + " eq "
-	if !strings.HasPrefix(f, needle) {
+	f := strings.TrimSpace(filter)
+	parts := strings.SplitN(f, " ", 3)
+	if len(parts) != 3 || !strings.EqualFold(parts[0], attr) || !strings.EqualFold(parts[1], "eq") {
 		return "", false
 	}
-	v := strings.TrimSpace(filter[len(needle):])
-	return strings.Trim(v, `"`), v != ""
+	var value string
+	if json.Unmarshal([]byte(strings.TrimSpace(parts[2])), &value) != nil || value == "" {
+		return "", false
+	}
+	return value, true
 }
 
 func scimPagination(c *fiber.Ctx) (start, count int) {
@@ -345,7 +339,9 @@ func newEmailOr(new, old string) string {
 	return old
 }
 
-func scimAuditLine(action, issuer, externalID, userID string) string {
-	return fmt.Sprintf("actor=scim action=%s issuer=%s external_id=%s user=%s",
-		action, issuer, externalID, userID)
+func scimAuditLine(action, issuer, _ string, userID string) string {
+	// Mirror only stable IDs. JSON escaping prevents log-line injection and
+	// externalId may be a legacy email, so it is not copied to the log sink.
+	line, _ := json.Marshal(map[string]string{"actor": "scim", "action": action, "issuer": issuer, "user_id": userID})
+	return string(line)
 }

@@ -93,3 +93,6 @@ type ContextKey string
 // UserIDKey identifies the per-call user ID (extracted from auth) for
 // scoping memories, diaries, and rate limits in tool implementations.
 const UserIDKey ContextKey = "mcp_user_id"
+
+// TenantIDKey carries the server-verified tenant, never a tool argument.
+const TenantIDKey ContextKey = "mcp_tenant_id"

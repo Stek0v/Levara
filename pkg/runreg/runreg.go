@@ -5,9 +5,8 @@
 // those tools need, so it must live in a neutral package both packages can
 // import without creating a cycle.
 //
-// Behavior matches the pre-refactor sync.Map: each run is a *Status pointer
-// and Store/Load callers mutate the struct directly. Fire-and-forget update
-// goroutines therefore do not require the registry to expose an update API.
+// Registry entries are immutable snapshots. Writers own their Status and
+// publish a new copy after each update; readers never share a mutable pointer.
 package runreg
 
 import (
@@ -20,15 +19,20 @@ import (
 // pre-refactor internal/http.pipelineRunStatus so REST and SSE clients see
 // identical payloads.
 type Status struct {
-	RunID     string    `json:"pipeline_run_id"`
-	Status    string    `json:"status"` // RUNNING, COMPLETED, FAILED
-	Stage     string    `json:"stage"`
-	Message   string    `json:"message"`
-	Chunks    int       `json:"chunks_created"`
-	Entities  int       `json:"entities_extracted"`
-	Edges     int       `json:"edges_extracted"`
-	ElapsedMs int64     `json:"elapsed_ms"`
-	StartedAt time.Time `json:"started_at"`
+	RequiresAdmin bool      `json:"-"`
+	OwnerID       string    `json:"-"`
+	TenantID      string    `json:"-"`
+	DatasetID     string    `json:"-"`
+	SourcesJSON   string    `json:"-"`
+	RunID         string    `json:"pipeline_run_id"`
+	Status        string    `json:"status"` // RUNNING, COMPLETED, FAILED
+	Stage         string    `json:"stage"`
+	Message       string    `json:"message"`
+	Chunks        int       `json:"chunks_created"`
+	Entities      int       `json:"entities_extracted"`
+	Edges         int       `json:"edges_extracted"`
+	ElapsedMs     int64     `json:"elapsed_ms"`
+	StartedAt     time.Time `json:"started_at"`
 	// Events is a per-stage transition log (T9). The pipeline appends one
 	// entry every time Stage transitions to a new value, plus one terminal
 	// entry when Status flips to COMPLETED or FAILED. MCP clients poll
@@ -60,7 +64,7 @@ type StageEvent struct {
 // AppendEvent adds an event to Status.Events, dropping the oldest entry once
 // MaxStageEvents is reached. Not safe for concurrent use — callers funnel
 // appends through a single pipeline goroutine, matching the existing
-// sync-Map-without-locking pattern for Status field mutation.
+// single-writer ownership of Status before publication.
 func (s *Status) AppendEvent(ev StageEvent) {
 	if len(s.Events) >= MaxStageEvents {
 		s.Events = append(s.Events[:0], s.Events[1:]...)
@@ -85,16 +89,25 @@ func New() *Registry { return &Registry{} }
 
 // Store associates s with runID, overwriting any previous value.
 func (r *Registry) Store(runID string, s *Status) {
-	r.runs.Store(runID, s)
+	r.runs.Store(runID, cloneStatus(s))
 }
 
-// Load returns the Status for runID, or nil and false if absent.
+func cloneStatus(s *Status) *Status {
+	if s == nil {
+		return nil
+	}
+	copy := *s
+	copy.Events = append([]StageEvent(nil), s.Events...)
+	return &copy
+}
+
+// Load returns a copy of the Status for runID, or nil and false if absent.
 func (r *Registry) Load(runID string) (*Status, bool) {
 	v, ok := r.runs.Load(runID)
 	if !ok {
 		return nil, false
 	}
-	return v.(*Status), true
+	return cloneStatus(v.(*Status)), true
 }
 
 // Delete removes runID from the registry. No-op when absent. Used by the
@@ -137,13 +150,12 @@ func (r *Registry) PruneTerminalOlderThan(age time.Duration) int {
 
 // Snapshot returns a copy of every run currently tracked, sorted by
 // StartedAt descending (newest first). Callers may safely mutate the
-// returned slice; the *Status pointers themselves are shared but the
-// registry treats stored entries as immutable after Store.
+// returned values, including their event slices.
 func (r *Registry) Snapshot() []*Status {
 	var out []*Status
 	r.runs.Range(func(_, v any) bool {
 		if s, ok := v.(*Status); ok && s != nil {
-			out = append(out, s)
+			out = append(out, cloneStatus(s))
 		}
 		return true
 	})

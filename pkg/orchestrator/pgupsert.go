@@ -18,8 +18,10 @@ import (
 // can have at most one valid target at any moment in time. When a new edge
 // is inserted for such a relationship, all PRIOR edges with the same source +
 // relationship_name (and a different target) are marked as superseded:
-//   valid_until = now()
-//   superseded_by = <new edge id>
+//
+//	valid_until = now()
+//	superseded_by = <new edge id>
+//
 // This implements temporal validity for the knowledge graph.
 //
 // Non-exclusive relations (knows, mentions, related_to) are NEVER auto-
@@ -70,8 +72,9 @@ func UpsertGraphToPostgres(ctx context.Context, db *sql.DB, datasetID string, no
 
 	// Batch upsert nodes
 	for _, n := range nodes {
-		props, _ := json.Marshal(map[string]string{
+		props, _ := json.Marshal(map[string]any{
 			"name": n.Name, "type": n.Type, "description": n.Description,
+			"document_id": n.SourceDocID, "content_revision": n.ContentRevision, "generation": n.Generation, "collection": n.Collection,
 		})
 		_, err := tx.ExecContext(ctx,
 			`INSERT INTO graph_nodes (id, name, type, description, properties, dataset_id, created_at, updated_at)
@@ -93,7 +96,7 @@ func UpsertGraphToPostgres(ctx context.Context, db *sql.DB, datasetID string, no
 	// Batch upsert edges
 	for _, e := range edges {
 		edgeID := fmt.Sprintf("%s_%s_%s", e.SourceID, e.RelationshipName, e.TargetID)
-		props, _ := json.Marshal(map[string]string{"edge_text": e.EdgeText})
+		props, _ := json.Marshal(map[string]any{"edge_text": e.EdgeText, "document_id": e.SourceDocID, "content_revision": e.ContentRevision, "generation": e.Generation, "collection": e.Collection})
 		_, err := tx.ExecContext(ctx,
 			`INSERT INTO graph_edges (id, source_id, target_id, relationship_name, properties, valid_from, dataset_id, created_at, updated_at)
 			 VALUES ($1, $2, $3, $4, $5, $6, $7, $6, $6)

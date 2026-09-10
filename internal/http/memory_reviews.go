@@ -61,10 +61,14 @@ type memoryReviewRun struct {
 }
 
 type memoryReviewScope struct {
-	Hours      int    `json:"hours"`
-	Collection string `json:"collection,omitempty"`
-	Client     string `json:"client,omitempty"`
-	Limit      int    `json:"limit"`
+	AgentID              string `json:"agent_id,omitempty"`
+	TenantID             string `json:"tenant_id,omitempty"`
+	RestrictTenant       bool   `json:"restrict_tenant,omitempty"`
+	RequireVerifiedScope bool   `json:"require_verified_scope,omitempty"`
+	Hours                int    `json:"hours"`
+	Collection           string `json:"collection,omitempty"`
+	Client               string `json:"client,omitempty"`
+	Limit                int    `json:"limit"`
 }
 
 type memoryReviewFinding struct {
@@ -109,11 +113,30 @@ func memoryReviewRunHandler(cfg APIConfig) fiber.Handler {
 			}
 		}
 		scope := normalizeMemoryReviewScope(req)
+		filter, err := scopedAuditFilter(c, cfg, audit.EventFilter{})
+		if err != nil {
+			return err
+		}
+		scope.AgentID, scope.TenantID, scope.RestrictTenant = filter.AgentID, filter.TenantID, filter.RestrictTenant
+		scope.RequireVerifiedScope = filter.RequireVerifiedScope
 		traces, err := loadReviewTrajectories(c.UserContext(), cfg, scope)
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": "agent trajectory query failed"})
 		}
 		prompt := buildMemoryReviewPrompt(traces)
+		checkScope := func() error {
+			current, err := scopedAuditFilter(c, cfg, audit.EventFilter{})
+			if err != nil {
+				return err
+			}
+			if current.AgentID != filter.AgentID || current.TenantID != filter.TenantID || current.RestrictTenant != filter.RestrictTenant {
+				return fiber.NewError(fiber.StatusForbidden, "analytics scope changed")
+			}
+			return nil
+		}
+		if err := checkScope(); err != nil {
+			return err
+		}
 		if req.DryRun {
 			return c.JSON(fiber.Map{
 				"dry_run":            true,
@@ -134,6 +157,13 @@ func memoryReviewRunHandler(cfg APIConfig) fiber.Handler {
 			return c.Status(500).JSON(fiber.Map{"error": "memory review run create failed"})
 		}
 		run = executeMemoryReview(c.UserContext(), cfg, run, traces, prompt)
+		if err := checkScope(); err != nil {
+			run.Status, run.Summary, run.Error = "failed", "", "analytics access revoked"
+			if updateErr := updateMemoryReviewRun(c.UserContext(), cfg.DB, run); updateErr != nil {
+				return fiber.NewError(500, "memory review run update failed")
+			}
+			return err
+		}
 		if err := updateMemoryReviewRun(c.UserContext(), cfg.DB, run); err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": "memory review run update failed"})
 		}
@@ -163,7 +193,11 @@ func memoryReviewListHandler(cfg APIConfig) fiber.Handler {
 		}
 		limit := c.QueryInt("limit", 50)
 		offset := c.QueryInt("offset", 0)
-		runs, err := listMemoryReviewRuns(c.UserContext(), cfg.DB, limit, offset)
+		filter, err := scopedAuditFilter(c, cfg, audit.EventFilter{})
+		if err != nil {
+			return err
+		}
+		runs, err := listMemoryReviewRuns(c.UserContext(), cfg.DB, limit, offset, filter)
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": "memory review list failed"})
 		}
@@ -179,7 +213,11 @@ func memoryReviewDetailHandler(cfg APIConfig) fiber.Handler {
 		if err := ensureMemoryReviewSchema(c.UserContext(), cfg.DB); err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": "memory review schema unavailable"})
 		}
-		run, err := getMemoryReviewRun(c.UserContext(), cfg.DB, c.Params("id"))
+		filter, err := scopedAuditFilter(c, cfg, audit.EventFilter{})
+		if err != nil {
+			return err
+		}
+		run, err := getMemoryReviewRun(c.UserContext(), cfg.DB, c.Params("id"), filter)
 		if errors.Is(err, sql.ErrNoRows) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "memory review run not found"})
 		}
@@ -209,7 +247,8 @@ func normalizeMemoryReviewScope(req memoryReviewRunRequest) memoryReviewScope {
 
 func loadReviewTrajectories(ctx context.Context, cfg APIConfig, scope memoryReviewScope) ([]trajectory.Trajectory, error) {
 	rows, err := cfg.MCPAuditReadModel.EventsForTrajectories(ctx, audit.EventFilter{
-		Since:      time.Now().Add(-time.Duration(scope.Hours) * time.Hour),
+		Since:   time.Now().Add(-time.Duration(scope.Hours) * time.Hour),
+		AgentID: scope.AgentID, TenantID: scope.TenantID, RestrictTenant: scope.RestrictTenant, RequireVerifiedScope: scope.RequireVerifiedScope,
 		Client:     scope.Client,
 		Collection: scope.Collection,
 		Limit:      20000,
@@ -384,25 +423,34 @@ func ensureMemoryReviewSchema(ctx context.Context, db *sql.DB) error {
 			return err
 		}
 	}
-	return nil
+	for _, column := range []string{"agent_id", "tenant_id"} {
+		if err := audit.EnsureColumn(db, "memory_review_runs", column, "TEXT NOT NULL DEFAULT ''"); err != nil {
+			return err
+		}
+	}
+	if err := audit.EnsureColumn(db, "memory_review_runs", "scope_verified", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	_, err := db.ExecContext(ctx, "CREATE INDEX IF NOT EXISTS memory_review_actor_tenant_created ON memory_review_runs(agent_id,tenant_id,created_at)")
+	return err
 }
 
 func insertMemoryReviewRun(ctx context.Context, db *sql.DB, run memoryReviewRun) error {
 	scope, _ := json.Marshal(run.Scope)
-	_, err := db.ExecContext(ctx, Q(`INSERT INTO memory_review_runs (id,status,scope_json,summary,error,prompt_preview,created_at,completed_at) VALUES (?,?,?,?,?,?,?,?)`),
-		run.ID, run.Status, string(scope), run.Summary, run.Error, run.PromptPreview, run.CreatedAt, run.CompletedAt)
+	_, err := db.ExecContext(ctx, memoryReviewQuery(`INSERT INTO memory_review_runs (id,status,scope_json,summary,error,prompt_preview,created_at,completed_at,agent_id,tenant_id,scope_verified) VALUES (?,?,?,?,?,?,?,?,?,?,1)`),
+		run.ID, run.Status, string(scope), run.Summary, run.Error, run.PromptPreview, run.CreatedAt, run.CompletedAt, run.Scope.AgentID, run.Scope.TenantID)
 	return err
 }
 
 func updateMemoryReviewRun(ctx context.Context, db *sql.DB, run memoryReviewRun) error {
-	_, err := db.ExecContext(ctx, Q(`UPDATE memory_review_runs SET status=?, summary=?, error=?, completed_at=? WHERE id=?`),
+	_, err := db.ExecContext(ctx, memoryReviewQuery(`UPDATE memory_review_runs SET status=?, summary=?, error=?, completed_at=? WHERE id=?`),
 		run.Status, run.Summary, run.Error, run.CompletedAt, run.ID)
 	return err
 }
 
 func insertMemoryReviewFindings(ctx context.Context, db *sql.DB, findings []memoryReviewFinding) error {
 	for _, f := range findings {
-		if _, err := db.ExecContext(ctx, Q(`INSERT INTO memory_review_findings (id,run_id,category,severity,trajectory_id,summary,evidence,recommendation,created_at) VALUES (?,?,?,?,?,?,?,?,?)`),
+		if _, err := db.ExecContext(ctx, memoryReviewQuery(`INSERT INTO memory_review_findings (id,run_id,category,severity,trajectory_id,summary,evidence,recommendation,created_at) VALUES (?,?,?,?,?,?,?,?,?)`),
 			f.ID, f.RunID, f.Category, f.Severity, f.TrajectoryID, f.Summary, f.Evidence, f.Recommendation, f.CreatedAt); err != nil {
 			return err
 		}
@@ -410,10 +458,13 @@ func insertMemoryReviewFindings(ctx context.Context, db *sql.DB, findings []memo
 	return nil
 }
 
-func listMemoryReviewRuns(ctx context.Context, db *sql.DB, limit, offset int) ([]memoryReviewRun, error) {
+func listMemoryReviewRuns(ctx context.Context, db *sql.DB, limit, offset int, filter audit.EventFilter) ([]memoryReviewRun, error) {
 	limit = normalizePageLimit(limit)
 	offset = maxInt(offset, 0)
-	rows, err := db.QueryContext(ctx, Q(`SELECT id,status,scope_json,summary,error,prompt_preview,created_at,completed_at FROM memory_review_runs ORDER BY created_at DESC LIMIT ? OFFSET ?`), limit, offset)
+	query, args := audit.ScopeQuery(`SELECT id,status,scope_json,summary,error,prompt_preview,created_at,completed_at FROM memory_review_runs WHERE 1=1`, nil, filter)
+	query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+	args = append(args, limit, offset)
+	rows, err := db.QueryContext(ctx, memoryReviewQuery(query), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -429,8 +480,9 @@ func listMemoryReviewRuns(ctx context.Context, db *sql.DB, limit, offset int) ([
 	return out, rows.Err()
 }
 
-func getMemoryReviewRun(ctx context.Context, db *sql.DB, id string) (memoryReviewRun, error) {
-	row := db.QueryRowContext(ctx, Q(`SELECT id,status,scope_json,summary,error,prompt_preview,created_at,completed_at FROM memory_review_runs WHERE id=?`), id)
+func getMemoryReviewRun(ctx context.Context, db *sql.DB, id string, filter audit.EventFilter) (memoryReviewRun, error) {
+	query, args := audit.ScopeQuery(`SELECT id,status,scope_json,summary,error,prompt_preview,created_at,completed_at FROM memory_review_runs WHERE id=?`, []any{id}, filter)
+	row := db.QueryRowContext(ctx, memoryReviewQuery(query), args...)
 	return scanMemoryReviewRun(row)
 }
 
@@ -449,7 +501,7 @@ func scanMemoryReviewRun(scanner memoryReviewRunScanner) (memoryReviewRun, error
 }
 
 func getMemoryReviewFindings(ctx context.Context, db *sql.DB, runID string) ([]memoryReviewFinding, error) {
-	rows, err := db.QueryContext(ctx, Q(`SELECT id,run_id,category,severity,trajectory_id,summary,evidence,recommendation,created_at FROM memory_review_findings WHERE run_id=? ORDER BY created_at ASC, id ASC`), runID)
+	rows, err := db.QueryContext(ctx, memoryReviewQuery(`SELECT id,run_id,category,severity,trajectory_id,summary,evidence,recommendation,created_at FROM memory_review_findings WHERE run_id=? ORDER BY created_at ASC, id ASC`), runID)
 	if err != nil {
 		return nil, err
 	}
@@ -485,4 +537,8 @@ func truncateReviewText(s string, max int) string {
 		return s
 	}
 	return s[:max]
+}
+
+func memoryReviewQuery(query string) string {
+	return audit.BindQuery(query, GetDBProvider() == DBPostgres)
 }

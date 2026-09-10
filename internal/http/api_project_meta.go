@@ -106,10 +106,15 @@ func datasetActivityHandler(cfg APIConfig) fiber.Handler {
 		}
 
 		items := []ActivityItem{}
+		type uploadActivity struct {
+			id, name, status string
+			at               any
+		}
+		uploads := []uploadActivity{}
 
 		// Uploads.
 		rows, err := cfg.DB.QueryContext(ctx,
-			Q(`SELECT d.name, COALESCE(d.pipeline_status, ''), d.created_at
+			Q(`SELECT d.id,d.name, COALESCE(d.pipeline_status, ''), d.created_at
 			   FROM data d JOIN dataset_data dd ON d.id = dd.data_id
 			   WHERE dd.dataset_id = $1 ORDER BY d.created_at DESC LIMIT 50`), dsID)
 		if err != nil {
@@ -117,14 +122,31 @@ func datasetActivityHandler(cfg APIConfig) fiber.Handler {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"detail": "load activity: " + err.Error()})
 		}
 		for rows.Next() {
-			var name, status string
-			var at any
-			if err := rows.Scan(&name, &status, &at); err != nil {
+			var upload uploadActivity
+			if err := rows.Scan(&upload.id, &upload.name, &upload.status, &upload.at); err != nil {
 				continue
 			}
-			items = append(items, ActivityItem{Type: "upload", Title: name, Detail: status, CreatedAt: timestampString(at)})
+			uploads = append(uploads, upload)
 		}
 		rows.Close()
+		actor := workspaceActorFromFiber(c)
+		policy := documentSQLPolicy(cfg)
+		for _, upload := range uploads {
+			if cfg.RequireAuth || actor.UserID != "" {
+				decision, err := policy.AuthorizeDocument(ctx, actor, accesspkg.DocumentRef{DatasetID: dsID, DataID: upload.id}, accesspkg.ActionRead)
+				if err != nil {
+					return documentHTTPError(err)
+				}
+				if !decision.Allowed {
+					continue
+				}
+			}
+			status, err := pipelineStatusForDocument(ctx, cfg.DB, dsID, upload.id, upload.status)
+			if err != nil {
+				return documentHTTPError(err)
+			}
+			items = append(items, ActivityItem{Type: "upload", Title: upload.name, Detail: status, CreatedAt: timestampString(upload.at)})
+		}
 
 		// Share grants — via the rbac.go helper (policy boundary).
 		grants, err := datasetShareGrants(Q, cfg.DB, ctx, dsID)

@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-09-04T18:27:52+03:00",
-  "git_rev": "05731feea1d815a4e2a68af21a24ed0bc731f5a2",
+  "generated_at": "2026-09-05T09:26:57+03:00",
+  "git_rev": "3de3ac0d3d4af22264cf76f9db0e6e01a5473af3",
   "rest": [
     {
       "method": "POST",
@@ -190,6 +190,12 @@
     },
     {
       "method": "GET",
+      "path": "/datasets/:id/data/:dataId/structured-artifacts/:artifactId",
+      "status": "canonical",
+      "group": "datasets"
+    },
+    {
+      "method": "GET",
       "path": "/datasets/:id/shares",
       "status": "canonical",
       "group": "rbac"
@@ -371,6 +377,12 @@
     {
       "method": "GET",
       "path": "/memories/:key",
+      "status": "canonical",
+      "group": "memory"
+    },
+    {
+      "method": "DELETE",
+      "path": "/memories/by-id/:id",
       "status": "canonical",
       "group": "memory"
     },
@@ -1544,11 +1556,21 @@
     {
       "provider": "postgres",
       "kind": "alter",
+      "name": "data"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
       "name": "datasets"
     },
     {
       "provider": "postgres",
       "kind": "alter",
+      "name": "document_pipeline_statuses"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
       "name": "graph_edges"
     },
     {
@@ -1755,6 +1777,16 @@
       "provider": "postgres",
       "kind": "alter",
       "name": "task_steps"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "task_steps"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_access_group_members_user"
     },
     {
       "provider": "postgres",
@@ -1815,6 +1847,31 @@
       "provider": "postgres",
       "kind": "index",
       "name": "idx_datasets_owner"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_document_grants_principal"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_document_index_publications_data"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_document_resources_data"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_document_resources_tenant"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_document_structured_artifacts_source"
     },
     {
       "provider": "postgres",
@@ -1880,6 +1937,11 @@
       "provider": "postgres",
       "kind": "index",
       "name": "idx_heartbeats_type_time"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_interaction_provenance_owner"
     },
     {
       "provider": "postgres",
@@ -1994,6 +2056,16 @@
     {
       "provider": "postgres",
       "kind": "table",
+      "name": "access_group_members"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "access_groups"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
       "name": "acl"
     },
     {
@@ -2029,6 +2101,31 @@
     {
       "provider": "postgres",
       "kind": "table",
+      "name": "document_grants"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "document_index_publications"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "document_pipeline_statuses"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "document_resources"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "document_structured_artifacts"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
       "name": "graph_communities"
     },
     {
@@ -2050,6 +2147,11 @@
       "provider": "postgres",
       "kind": "table",
       "name": "heartbeats"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "interaction_provenance"
     },
     {
       "provider": "postgres",
@@ -2214,11 +2316,21 @@
     {
       "provider": "sqlite",
       "kind": "alter",
+      "name": "data"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
       "name": "datasets"
     },
     {
       "provider": "sqlite",
       "kind": "alter",
+      "name": "document_pipeline_statuses"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
       "name": "graph_edges"
     },
     {
@@ -2370,6 +2482,16 @@
       "provider": "sqlite",
       "kind": "alter",
       "name": "memories"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "task_steps"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_access_group_members_user"
     },
     {
       "provider": "sqlite",
@@ -2430,6 +2552,31 @@
       "provider": "sqlite",
       "kind": "index",
       "name": "idx_datasets_owner"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_document_grants_principal"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_document_index_publications_data"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_document_resources_data"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_document_resources_tenant"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_document_structured_artifacts_source"
     },
     {
       "provider": "sqlite",
@@ -2495,6 +2642,11 @@
       "provider": "sqlite",
       "kind": "index",
       "name": "idx_heartbeats_type_time"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_interaction_provenance_owner"
     },
     {
       "provider": "sqlite",
@@ -2609,6 +2761,16 @@
     {
       "provider": "sqlite",
       "kind": "table",
+      "name": "access_group_members"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "access_groups"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
       "name": "acl"
     },
     {
@@ -2644,6 +2806,31 @@
     {
       "provider": "sqlite",
       "kind": "table",
+      "name": "document_grants"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "document_index_publications"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "document_pipeline_statuses"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "document_resources"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "document_structured_artifacts"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
       "name": "graph_communities"
     },
     {
@@ -2665,6 +2852,11 @@
       "provider": "sqlite",
       "kind": "table",
       "name": "heartbeats"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "interaction_provenance"
     },
     {
       "provider": "sqlite",

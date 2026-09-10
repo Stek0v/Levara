@@ -92,15 +92,16 @@ hashing, set `LEVARA_API_KEY_PEPPER` too.
 
 ## 5. Identity and permission boundaries
 
-`LEVARA_TENANT_ENFORCED=1` requires tenant context on guarded operations; it
-does not create group grants or a document ACL. Dataset sharing is individual,
-with viewer/editor/admin roles. To share one document, use a separate dataset
-and verify both allowed and denied operations in
+`LEVARA_TENANT_ENFORCED=1` requires tenant context on guarded operations.
+Dataset sharing is individual, with viewer/editor/admin roles. Document/group
+policy exists locally but is not yet exposed by the main router; until it is,
+share one document through a separate dataset and verify both allowed and denied operations in
 [document management](../document-management.md).
 
 For LDAP/AD and SSO, follow [enterprise identity](../enterprise-identity.md).
-Native LDAP, browser OIDC login and SCIM-to-SSO linking are absent; provisioning
-an account is not proof that its browser/API identity or permissions are wired.
+Direct LDAP/LDAPS/StartTLS, browser OIDC and SQL identity linking are implemented
+locally; provisioning an account still does not prove that the real browser/API
+identity and document permissions are wired on the target deployment.
 
 ## 6. Point every agent at the server
 

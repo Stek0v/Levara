@@ -67,6 +67,7 @@ func ToolSync(ctx context.Context, deps Deps, args map[string]any) ToolResult {
 
 	result, manifest, err := deps.DoSync(ctx, remoteURL, direction, types, since, collectionNames)
 	if err != nil {
+		deps.LogHeartbeat("sync", map[string]any{"direction": direction, "types": types, "status": "error", "error": err.Error()})
 		return ToolResult{
 			Content: []Content{{Type: "text", Text: fmt.Sprintf("Error: %s", err.Error())}},
 			IsError: true,
@@ -78,6 +79,8 @@ func ToolSync(ctx context.Context, deps Deps, args map[string]any) ToolResult {
 		"direction": direction,
 		"remote":    remoteURL,
 		"types":     types,
+		"status":    result["status"],
+		"result":    result,
 	})
 
 	return jsonResult(result)

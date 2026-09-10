@@ -1,0 +1,19 @@
+[Unit]
+Description=Verify an offline local Levara backup by restoring fresh resources
+Documentation=https://github.com/stek0v/levara
+
+[Service]
+Type=oneshot
+User=root
+EnvironmentFile=/etc/levara/levara.env
+EnvironmentFile=/etc/levara/backup.env
+ExecStart=/usr/local/libexec/levara-backup.sh
+TimeoutStartSec=30min
+# The script returns to the original active/inactive service state on exit.
+# backup.env must explicitly opt in to service downtime; no live installation
+# or schedule enablement is performed by this repository.
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/backups/levara /var/lib/levara /run

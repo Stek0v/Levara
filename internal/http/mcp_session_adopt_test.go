@@ -18,6 +18,14 @@ import (
 // where a client's previously-issued Mcp-Session-Id is no longer known.
 func mcpAdoptApp(t *testing.T, cfg APIConfig) (*fiber.App, *mcpHandler) {
 	t.Helper()
+	if cfg.RequireAuth && cfg.DB == nil {
+		db, cleanup := newAuthTestDB(t)
+		t.Cleanup(cleanup)
+		cfg.DB = db
+		for _, uid := range []string{"owner-xyz", "caller-1", "caller-2", "original-owner", "attacker"} {
+			seedAuthUser(t, db, uid)
+		}
+	}
 	app := fiber.New()
 	h := &mcpHandler{cfg: cfg, sessions: mcp.NewSessionStore()}
 	app.Post("/mcp", h.handleRPC)

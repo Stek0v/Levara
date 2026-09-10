@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -12,12 +13,14 @@ import (
 
 	_ "github.com/ncruces/go-sqlite3/driver"
 	"github.com/stek0v/levara/pipeline"
+	"github.com/stek0v/levara/pkg/access"
 	"github.com/stek0v/levara/pkg/ingest"
 	"github.com/stek0v/levara/pkg/llm"
 	"github.com/stek0v/levara/pkg/memoryindex"
 	"github.com/stek0v/levara/pkg/orchestrator"
 	"github.com/stek0v/levara/pkg/router"
 	"github.com/stek0v/levara/pkg/runreg"
+	"github.com/stek0v/levara/pkg/storage"
 )
 
 // fakeDeps is the minimum Deps implementation for unit-testing tool
@@ -64,8 +67,9 @@ type fakeDeps struct {
 	runs        *runreg.Registry
 	baseCfg     orchestrator.Config
 	ontologyFn  func(collection string) string
-	persistFn   func(datasetID, collection, status string, chunks, entities, edges int, elapsedMs int64)
+	persistFn   func(datasetID, documentID, collection, status string, sourceRevision int64, rawContentHash string, chunks, entities, edges int, elapsedMs int64)
 	heartbeatFn func(eventType string, payload any)
+	prepareFn   func(ctx context.Context, texts []string, cfg orchestrator.Config) (orchestrator.Config, error)
 	pipelineFn  func(ctx context.Context, texts []string, cfg orchestrator.Config, progress chan<- orchestrator.Progress) error
 
 	// Search stubs.
@@ -117,9 +121,13 @@ func (f *fakeDeps) Q(query string) string {
 	return pgPlaceholderRe.ReplaceAllString(query, "?")
 }
 
-func (f *fakeDeps) HasCollections() bool      { return f.hasColls }
-func (f *fakeDeps) ListCollections() []string { return f.collections }
-func (f *fakeDeps) StoragePath() string       { return f.storagePath }
+func (f *fakeDeps) HasCollections() bool            { return f.hasColls }
+func (f *fakeDeps) ListCollections() []string       { return f.collections }
+func (f *fakeDeps) StorageBackend() storage.Storage { return nil }
+func (f *fakeDeps) MetadataActor(ctx context.Context) access.MetadataActor {
+	return access.MetadataActor{Actor: dataActor(ctx), TrustedLocal: true}
+}
+func (f *fakeDeps) StoragePath() string { return f.storagePath }
 
 func (f *fakeDeps) CollectionExists(name string) bool {
 	if !f.hasColls {
@@ -241,6 +249,15 @@ func (f *fakeDeps) Runs() *runreg.Registry {
 }
 
 func (f *fakeDeps) BaseCognifyConfig() orchestrator.Config { return f.baseCfg }
+func (f *fakeDeps) PrepareCognify(ctx context.Context, texts []string, cfg orchestrator.Config) (orchestrator.Config, error) {
+	if f.prepareFn != nil {
+		return f.prepareFn(ctx, texts, cfg)
+	}
+	return cfg, nil
+}
+func (f *fakeDeps) ClaimPipelineAttempt(context.Context, string, string, string, string, int64, string) error {
+	return nil
+}
 
 func (f *fakeDeps) EmbedEndpoint() string { return f.baseCfg.EmbedEndpoint }
 func (f *fakeDeps) EmbedModel() string    { return f.baseCfg.EmbedModel }
@@ -252,11 +269,13 @@ func (f *fakeDeps) OntologyPromptSuffix(collection string) string {
 	return ""
 }
 
-func (f *fakeDeps) PersistPipelineStatus(datasetID, collection, status string, chunks, entities, edges int, elapsedMs int64) {
+func (f *fakeDeps) PersistPipelineStatus(datasetID, documentID, collection, status string, sourceRevision int64, rawContentHash string, chunks, entities, edges int, elapsedMs int64, _ string) error {
 	if f.persistFn != nil {
-		f.persistFn(datasetID, collection, status, chunks, entities, edges, elapsedMs)
+		f.persistFn(datasetID, documentID, collection, status, sourceRevision, rawContentHash, chunks, entities, edges, elapsedMs)
 	}
+	return nil
 }
+func (f *fakeDeps) PipelineFinalizesStatus() bool { return false }
 
 func (f *fakeDeps) LogHeartbeat(eventType string, payload any) {
 	if f.heartbeatFn != nil {
@@ -286,8 +305,8 @@ func (f *fakeDeps) NewSearchPipeline(doRerank bool) SearchPipeline {
 	return nil
 }
 
-func (f *fakeDeps) LLMProvider() llm.Provider               { return f.llmProvider }
-func (f *fakeDeps) LLMModel() string                        { return f.llmModel }
+func (f *fakeDeps) LLMProvider() llm.Provider                     { return f.llmProvider }
+func (f *fakeDeps) LLMModel() string                              { return f.llmModel }
 func (f *fakeDeps) SearchCapabilities(string) router.Capabilities { return f.capabilities }
 func (f *fakeDeps) AllowedDatasetIDs(context.Context) []string {
 	return f.allowedDatasetIDs
@@ -366,10 +385,14 @@ func (p *fakeSearchPipeline) RerankEnabled() bool { return p.rerankEnabled }
 // HasCollections defaults to false, matching an unconfigured deployment.
 type nilDBDeps struct{}
 
-func (nilDBDeps) DB() *sql.DB                                               { return nil }
-func (nilDBDeps) Q(q string) string                                         { return q }
-func (nilDBDeps) HasCollections() bool                                      { return false }
-func (nilDBDeps) ListCollections() []string                                 { return nil }
+func (nilDBDeps) DB() *sql.DB                     { return nil }
+func (nilDBDeps) Q(q string) string               { return q }
+func (nilDBDeps) HasCollections() bool            { return false }
+func (nilDBDeps) ListCollections() []string       { return nil }
+func (nilDBDeps) StorageBackend() storage.Storage { return nil }
+func (nilDBDeps) MetadataActor(ctx context.Context) access.MetadataActor {
+	return access.MetadataActor{Actor: dataActor(ctx), TrustedLocal: true}
+}
 func (nilDBDeps) StoragePath() string                                       { return "" }
 func (nilDBDeps) CollectionExists(string) bool                              { return false }
 func (nilDBDeps) EmbedAvailable() bool                                      { return false }
@@ -381,19 +404,28 @@ func (nilDBDeps) CollectionHasRecord(string, string) bool                   { re
 func (nilDBDeps) CollectionSearch(string, []float32, int) ([]SearchResult, error) {
 	return nil, nil
 }
-func (nilDBDeps) Runs() *runreg.Registry                                             { return runreg.New() }
-func (nilDBDeps) BaseCognifyConfig() orchestrator.Config                             { return orchestrator.Config{} }
-func (nilDBDeps) EmbedEndpoint() string                                              { return "" }
-func (nilDBDeps) EmbedModel() string                                                 { return "" }
-func (nilDBDeps) OntologyPromptSuffix(string) string                                 { return "" }
-func (nilDBDeps) PersistPipelineStatus(string, string, string, int, int, int, int64) {}
-func (nilDBDeps) LogHeartbeat(string, any)                                           {}
+func (nilDBDeps) Runs() *runreg.Registry                 { return runreg.New() }
+func (nilDBDeps) BaseCognifyConfig() orchestrator.Config { return orchestrator.Config{} }
+func (nilDBDeps) PrepareCognify(_ context.Context, _ []string, cfg orchestrator.Config) (orchestrator.Config, error) {
+	return cfg, nil
+}
+func (nilDBDeps) ClaimPipelineAttempt(context.Context, string, string, string, string, int64, string) error {
+	return nil
+}
+func (nilDBDeps) EmbedEndpoint() string              { return "" }
+func (nilDBDeps) EmbedModel() string                 { return "" }
+func (nilDBDeps) OntologyPromptSuffix(string) string { return "" }
+func (nilDBDeps) PersistPipelineStatus(string, string, string, string, int64, string, int, int, int, int64, string) error {
+	return nil
+}
+func (nilDBDeps) PipelineFinalizesStatus() bool { return false }
+func (nilDBDeps) LogHeartbeat(string, any)      {}
 func (nilDBDeps) RunPipeline(context.Context, []string, orchestrator.Config, chan<- orchestrator.Progress) error {
 	return nil
 }
-func (nilDBDeps) NewSearchPipeline(bool) SearchPipeline   { return nil }
-func (nilDBDeps) LLMProvider() llm.Provider               { return nil }
-func (nilDBDeps) LLMModel() string                        { return "" }
+func (nilDBDeps) NewSearchPipeline(bool) SearchPipeline         { return nil }
+func (nilDBDeps) LLMProvider() llm.Provider                     { return nil }
+func (nilDBDeps) LLMModel() string                              { return "" }
 func (nilDBDeps) SearchCapabilities(string) router.Capabilities { return router.Capabilities{} }
 func (nilDBDeps) AllowedDatasetIDs(context.Context) []string {
 	return nil
@@ -425,6 +457,10 @@ func setupDepsTestDB(t *testing.T) *fakeDeps {
 	if _, err := db.Exec(`CREATE TABLE datasets (id TEXT PRIMARY KEY, name TEXT)`); err != nil {
 		t.Fatalf("create table: %v", err)
 	}
+	if _, err := db.Exec(`CREATE TABLE dataset_data (dataset_id TEXT, data_id TEXT)`); err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+	installPrunePolicyFixture(t, db)
 	return &fakeDeps{db: db}
 }
 
@@ -457,15 +493,9 @@ func TestToolDelete_WrongTypeIsError(t *testing.T) {
 }
 
 func TestToolDelete_NilDBNoPanic(t *testing.T) {
-	// No Postgres configured → Deps.DB() returns nil. Tool must treat
-	// this as a no-op and still return a success message, matching the
-	// pre-refactor behavior.
-	got := ToolDelete(context.Background(), nilDBDeps{}, map[string]any{"dataset_id": "abc"})
-	if got.IsError {
-		t.Fatalf("IsError = true, want false (nil DB should be a silent no-op)")
-	}
-	if len(got.Content) == 0 || !strings.Contains(got.Content[0].Text, "abc") {
-		t.Fatalf("content = %+v, want message containing 'abc'", got.Content)
+	// A missing database cannot establish legal-hold or authorization state.
+	if got := ToolDelete(context.Background(), nilDBDeps{}, map[string]any{"dataset_id": "abc"}); !got.IsError {
+		t.Fatal("missing database reported success")
 	}
 }
 
@@ -474,8 +504,23 @@ func TestToolDelete_HappyPathDeletesRow(t *testing.T) {
 	// $1 placeholder is rewritten via Deps.Q() so the sqlite backend
 	// accepts it.
 	deps := setupDepsTestDB(t)
+	deps.storagePath = t.TempDir()
 	deps.db.Exec("INSERT INTO datasets (id, name) VALUES ('ds1', 'alpha')")
 	deps.db.Exec("INSERT INTO datasets (id, name) VALUES ('ds2', 'beta')")
+	root, err := filepath.EvalSymlinks(deps.storagePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact := filepath.Join(root, "ingest-authorized", "attempt", "0-structured")
+	if err := os.MkdirAll(filepath.Dir(artifact), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(artifact, []byte(`{"value":"old"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := deps.db.Exec(`INSERT INTO document_structured_artifacts(id,data_id,storage_location,destination,state) VALUES('artifact','data','file://` + artifact + `','local:` + root + `','active')`); err != nil {
+		t.Fatal(err)
+	}
 
 	got := ToolDelete(context.Background(), deps, map[string]any{"dataset_id": "ds1"})
 	if got.IsError {
@@ -491,6 +536,12 @@ func TestToolDelete_HappyPathDeletesRow(t *testing.T) {
 	}
 	if count != 0 {
 		t.Fatalf("ds1 row count = %d after delete, want 0", count)
+	}
+	if _, err := os.Stat(artifact); !os.IsNotExist(err) {
+		t.Fatalf("MCP dataset delete left structured artifact: %v", err)
+	}
+	if err := deps.db.QueryRow("SELECT COUNT(*) FROM document_structured_artifacts").Scan(&count); err != nil || count != 0 {
+		t.Fatalf("structured artifact inventory=%d err=%v", count, err)
 	}
 
 	// Other rows untouched.
@@ -561,17 +612,14 @@ func setupPruneTestDB(t *testing.T) *fakeDeps {
 			t.Fatalf("seed: %v", err)
 		}
 	}
+	installPrunePolicyFixture(t, db)
 	return &fakeDeps{db: db}
 }
 
 func TestToolPrune_NilDBNoPanic(t *testing.T) {
-	// nil DB path mirrors ToolDelete: silent no-op, success message.
-	got := ToolPrune(context.Background(), nilDBDeps{})
-	if got.IsError {
-		t.Fatalf("IsError = true, want false (nil DB should be a silent no-op)")
-	}
-	if len(got.Content) == 0 || !strings.Contains(got.Content[0].Text, "pruned") {
-		t.Fatalf("content = %+v, want 'pruned' message", got.Content)
+	// A missing database cannot establish legal-hold or authorization state.
+	if got := ToolPrune(context.Background(), nilDBDeps{}); !got.IsError {
+		t.Fatal("missing database reported success")
 	}
 }
 
@@ -852,6 +900,8 @@ func setupAddTestDB(t *testing.T) *fakeDeps {
 	// columns (e.g. content_hash, raw_content_hash) matter because the
 	// ON CONFLICT DO UPDATE clause reads EXCLUDED.* on conflict.
 	stmts := []string{
+		`CREATE TABLE users(id TEXT PRIMARY KEY, is_active BOOLEAN, is_superuser BOOLEAN)`,
+		`CREATE TABLE document_resources(dataset_id TEXT, data_id TEXT, tenant_id TEXT, mode TEXT, acl_revision INTEGER, content_revision INTEGER, tombstoned BOOLEAN, hold BOOLEAN)`,
 		`CREATE TABLE datasets (
 			id TEXT PRIMARY KEY, name TEXT, owner_id TEXT,
 			created_at TEXT, updated_at TEXT
@@ -861,15 +911,28 @@ func setupAddTestDB(t *testing.T) *fakeDeps {
 			raw_data_location TEXT, original_data_location TEXT,
 			content_hash TEXT, raw_content_hash TEXT, owner_id TEXT,
 			loader_engine TEXT, pipeline_status TEXT, tags TEXT, room TEXT,
-			token_count INTEGER, data_size INTEGER,
+			token_count INTEGER, data_size INTEGER, source_revision INTEGER NOT NULL DEFAULT 0,
 			created_at TEXT, updated_at TEXT
 		)`,
 		`CREATE TABLE dataset_data (dataset_id TEXT, data_id TEXT, PRIMARY KEY (dataset_id, data_id))`,
+		`CREATE TABLE source_revision_counter(id INTEGER PRIMARY KEY, value INTEGER NOT NULL)`,
+		`INSERT INTO source_revision_counter(id,value) VALUES(1,1)`,
+		`CREATE TABLE document_index_publications(data_id TEXT)`,
+		`CREATE TABLE document_structured_artifacts (
+			id TEXT PRIMARY KEY, data_id TEXT NOT NULL, source_revision INTEGER NOT NULL,
+			raw_content_hash TEXT NOT NULL, artifact_sha256 TEXT NOT NULL, byte_size INTEGER NOT NULL,
+			storage_location TEXT NOT NULL UNIQUE, destination TEXT NOT NULL DEFAULT '',
+			state TEXT NOT NULL DEFAULT 'active', created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+			updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+		)`,
 	}
 	for _, s := range stmts {
 		if _, err := db.Exec(s); err != nil {
 			t.Fatalf("create: %v", err)
 		}
+	}
+	if err := ingest.EnsureIngestJournalSchema(context.Background(), db); err != nil {
+		t.Fatal(err)
 	}
 
 	return &fakeDeps{

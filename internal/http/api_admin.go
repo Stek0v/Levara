@@ -6,6 +6,7 @@ package http
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 
 	"github.com/gofiber/fiber/v2"
 	accesspkg "github.com/stek0v/levara/pkg/access"
@@ -22,22 +23,20 @@ import (
 // role — prune is destructive enough to justify fail-closed.
 func requireSuperuser(c *fiber.Ctx, cfg APIConfig) error {
 	if cfg.DB == nil {
-		return c.Status(fiber.StatusServiceUnavailable).
-			JSON(fiber.Map{"detail": "database required to verify superuser role"})
+		return fiber.NewError(fiber.StatusServiceUnavailable, "database required to verify superuser role")
 	}
 	userID, _ := c.Locals("user_id").(string)
 	if userID == "" {
-		return c.Status(fiber.StatusForbidden).
-			JSON(fiber.Map{"detail": "superuser role required"})
+		return fiber.NewError(fiber.StatusForbidden, "superuser role required")
 	}
-	isSuperuser, err := (accesspkg.SQLPolicy{DB: cfg.DB, Q: Q}).IsSuperuser(c.Context(), userID)
-	if err != nil {
-		return c.Status(fiber.StatusForbidden).
-			JSON(fiber.Map{"detail": "superuser role required"})
+	policy := accesspkg.SQLPolicy{DB: cfg.DB, Q: Q}
+	active, err := policy.IsActive(c.UserContext(), userID)
+	if err != nil || !active {
+		return fiber.NewError(fiber.StatusForbidden, "superuser role required")
 	}
-	if !isSuperuser {
-		return c.Status(fiber.StatusForbidden).
-			JSON(fiber.Map{"detail": "superuser role required"})
+	isSuperuser, err := policy.IsSuperuser(c.UserContext(), userID)
+	if err != nil || !isSuperuser {
+		return fiber.NewError(fiber.StatusForbidden, "superuser role required")
 	}
 	return nil
 }
@@ -55,20 +54,25 @@ func requireSuperuser(c *fiber.Ctx, cfg APIConfig) error {
 // @Router      /prune/data [post]
 func pruneDataHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		if err := requireSuperuser(c, cfg); err != nil {
-			return err
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
+		if cfg.DB == nil {
+			return fiber.NewError(fiber.StatusServiceUnavailable, "prune unavailable")
 		}
-		ctx := c.Context()
-		if _, err := cfg.DB.ExecContext(ctx, "DELETE FROM dataset_data"); err != nil {
-			return c.Status(500).JSON(fiber.Map{"detail": err.Error()})
+		actor := uploadMetadataActor(c, cfg, ctx)
+		// Preserve the HTTP administrator-only entry point even in no-auth mode.
+		// Current role and credential checks happen under the shared SQL fence.
+		if actor.UserID == "" {
+			return fiber.NewError(fiber.StatusForbidden, "administrator required")
 		}
-		if _, err := cfg.DB.ExecContext(ctx, "DELETE FROM data"); err != nil {
-			return c.Status(500).JSON(fiber.Map{"detail": err.Error()})
+		if err := (accesspkg.SQLPolicy{DB: cfg.DB, Q: Q}).PruneData(ctx, actor, false); err != nil {
+			status := fiber.StatusInternalServerError
+			if errors.Is(err, accesspkg.ErrDocumentForbidden) || errors.Is(err, accesspkg.ErrRevokedCredential) {
+				status = fiber.StatusForbidden
+			}
+			return c.Status(status).JSON(fiber.Map{"detail": "prune denied or unavailable"})
 		}
-		if _, err := cfg.DB.ExecContext(ctx, "DELETE FROM datasets"); err != nil {
-			return c.Status(500).JSON(fiber.Map{"detail": err.Error()})
-		}
-		return c.JSON(fiber.Map{"status": "ok", "pruned": "data"})
+		return c.JSON(fiber.Map{"status": "ok", "pruned": "data", "artifact_cleanup_pending": cleanupRetiredStructuredArtifacts(ctx, cfg, "")})
 	}
 }
 
@@ -86,52 +90,61 @@ func pruneDataHandler(cfg APIConfig) fiber.Handler {
 // @Router      /prune/system [post]
 func pruneSystemHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		if err := requireSuperuser(c, cfg); err != nil {
-			return err
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
+		if cfg.DB == nil {
+			return fiber.NewError(fiber.StatusServiceUnavailable, "prune unavailable")
 		}
-		ctx := c.Context()
-		// Fail fast on the first SQL error rather than plowing through a
-		// partial wipe; the caller can inspect the error and retry.
-		for _, stmt := range []string{
-			"DELETE FROM graph_nodes",
-			"DELETE FROM graph_edges",
-			"DELETE FROM dataset_data",
-			"DELETE FROM data",
-			"DELETE FROM datasets",
-		} {
-			if _, err := cfg.DB.ExecContext(ctx, stmt); err != nil {
-				return c.Status(500).JSON(fiber.Map{"detail": err.Error()})
+		actor := uploadMetadataActor(c, cfg, ctx)
+		// Preserve the HTTP administrator-only entry point even in no-auth mode.
+		// Current role and credential checks happen under the shared SQL fence.
+		if actor.UserID == "" {
+			return fiber.NewError(fiber.StatusForbidden, "administrator required")
+		}
+		if err := (accesspkg.SQLPolicy{DB: cfg.DB, Q: Q}).PruneData(ctx, actor, true); err != nil {
+			status := fiber.StatusInternalServerError
+			if errors.Is(err, accesspkg.ErrDocumentForbidden) || errors.Is(err, accesspkg.ErrRevokedCredential) {
+				status = fiber.StatusForbidden
 			}
+			return c.Status(status).JSON(fiber.Map{"detail": "prune denied or unavailable"})
 		}
-		return c.JSON(fiber.Map{"status": "ok", "pruned": "system"})
+		return c.JSON(fiber.Map{"status": "ok", "pruned": "system", "artifact_cleanup_pending": cleanupRetiredStructuredArtifacts(ctx, cfg, "")})
 	}
 }
 
 func updateDataHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		datasetID := c.Params("id")
 		dataID := c.Params("dataId")
 		if cfg.DB == nil {
 			return c.Status(503).JSON(fiber.Map{"detail": "database required"})
 		}
-		if err := authorizeDatasetFiber(c, cfg, datasetID, accesspkg.ActionWrite); err != nil {
+		if err := authorizeDocumentFiber(c, cfg, documentRefFromFiber(c), accesspkg.ActionWrite); err != nil {
 			return err
 		}
 		body := c.Body()
 		if len(body) == 0 {
 			return c.Status(400).JSON(fiber.Map{"detail": "content required"})
 		}
-		query, args := QArgs(`UPDATE data SET name = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2
-			AND EXISTS (SELECT 1 FROM dataset_data WHERE dataset_id = $3 AND data_id = $2)`,
-			string(body), dataID, datasetID)
-		result, err := cfg.DB.ExecContext(c.UserContext(), query, args...)
+		r, err := documentRegistration(c, cfg, documentRefFromFiber(c))
 		if err != nil {
-			return c.Status(500).JSON(fiber.Map{"detail": err.Error()})
+			return err
 		}
-		if updated, err := result.RowsAffected(); err == nil && updated == 0 {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"detail": "not found"})
+		if r != nil {
+			acl, content, err := documentExpectedVersion(c)
+			if err != nil {
+				return err
+			}
+			updated, err := documentSQLPolicy(cfg).RenameDocument(c.UserContext(), workspaceActorFromFiber(c), documentRefFromFiber(c), acl, content, string(body))
+			if err != nil {
+				return documentHTTPError(err)
+			}
+			c.Set("ETag", documentETag(updated))
+			return c.JSON(fiber.Map{"id": dataID, "updated": true, "artifact_cleanup_pending": cleanupRetiredStructuredArtifacts(c.UserContext(), cfg, dataID)})
 		}
-		return c.JSON(fiber.Map{"id": dataID, "updated": true})
+		if err := documentSQLPolicy(cfg).RenameLegacyDocument(c.UserContext(), workspaceActorFromFiber(c), documentRefFromFiber(c), string(body)); err != nil {
+			return documentHTTPError(err)
+		}
+		return c.JSON(fiber.Map{"id": dataID, "updated": true, "artifact_cleanup_pending": cleanupRetiredStructuredArtifacts(c.UserContext(), cfg, dataID)})
 	}
 }
 

@@ -151,8 +151,9 @@ func TestProtocolAdaptersStayOutOfCoreAndWorkspaceHandlers(t *testing.T) {
 				if strings.Contains(text, "OIDCAdapter") ||
 					strings.Contains(text, "OIDCClaims") ||
 					strings.Contains(text, "SAML") ||
-					strings.Contains(text, "SCIM") {
-					t.Fatalf("%s contains protocol adapter code; keep OIDC/SAML/SCIM out of core and workspace handlers", path)
+					strings.Contains(text, "SCIM") ||
+					strings.Contains(text, "LDAP") {
+					t.Fatalf("%s contains protocol adapter code; keep OIDC/SAML/SCIM/LDAP out of core and workspace handlers", path)
 				}
 				return nil
 			})

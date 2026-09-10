@@ -789,3 +789,36 @@ func TestParseSearchArgs_HybridWeights(t *testing.T) {
 		t.Errorf("bm25Weight=%v, want 4", a.bm25Weight)
 	}
 }
+
+func TestToolSearchDocumentPolicyRunsBeforeRerank(t *testing.T) {
+	rerankCalls := 0
+	pipe := &fakeSearchPipeline{rerankEnabled: true,
+		byText: func(context.Context, string, string, int) ([]pipeline.ScoredResult, error) {
+			return []pipeline.ScoredResult{scoredRes("denied", 1), scoredRes("shared-document", .9)}, nil
+		},
+		applyRerank: func(_ context.Context, _ string, in []pipeline.ScoredResult, _ int) (bool, []pipeline.ScoredResult) {
+			rerankCalls++
+			if len(in) != 1 || in[0].ID != "shared-document" {
+				t.Fatalf("unfiltered rerank input=%+v", in)
+			}
+			return true, in
+		},
+	}
+	deps := &fakeDeps{collections: []string{"docs"}, hasColls: true, allowedDatasetIDs: []string{}, searchPipelineFn: func(bool) SearchPipeline { return pipe }}
+	ctx := WithSearchAccess(context.Background(), SearchAccess{Filter: func(_ context.Context, in []pipeline.ScoredResult) ([]pipeline.ScoredResult, error) {
+		out := []pipeline.ScoredResult{}
+		for _, r := range in {
+			if r.ID == "shared-document" {
+				out = append(out, r)
+			}
+		}
+		return out, nil
+	}})
+	result := ToolSearch(ctx, deps, map[string]any{"search_query": "test", "search_type": "RERANK"})
+	if result.IsError || rerankCalls != 1 {
+		t.Fatalf("result=%+v calls=%d", result, rerankCalls)
+	}
+	if strings.Contains(result.Content[0].Text, "denied") {
+		t.Fatal("denied source escaped")
+	}
+}

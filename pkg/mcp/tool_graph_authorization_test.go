@@ -42,7 +42,7 @@ func graphACLFixture(t *testing.T, dialect string) (Deps, *fakeDeps) {
 	for _, query := range []string{
 		`CREATE TABLE users(id TEXT PRIMARY KEY, is_active BOOLEAN, is_superuser BOOLEAN)`,
 		`INSERT INTO users VALUES ('alice',TRUE,FALSE),('admin',TRUE,TRUE),('inactive',FALSE,TRUE)`,
-		`CREATE TABLE graph_nodes(id TEXT PRIMARY KEY, name TEXT, dataset_id TEXT NOT NULL DEFAULT '', updated_at TEXT)`,
+		`CREATE TABLE graph_nodes(id TEXT PRIMARY KEY, name TEXT, dataset_id TEXT NOT NULL DEFAULT '', properties TEXT NOT NULL DEFAULT '{}', updated_at TEXT)`,
 		fmt.Sprintf(`CREATE TABLE graph_edges(id TEXT PRIMARY KEY, source_id TEXT, target_id TEXT, relationship_name TEXT, properties TEXT, valid_from %s, valid_until %s, superseded_by TEXT, confidence REAL, dataset_id TEXT NOT NULL DEFAULT '', updated_at TEXT)`, validityType, validityType),
 		`CREATE TABLE graph_communities(id TEXT PRIMARY KEY, level INTEGER, parent_id TEXT, member_count INTEGER, summary TEXT)`,
 		`CREATE TABLE community_members(id TEXT PRIMARY KEY, community_id TEXT, node_id TEXT)`,
@@ -120,7 +120,7 @@ func TestGraphACLQueryEntity(t *testing.T) {
 				t.Errorf("explicit foreign dataset accepted: %+v", got)
 			}
 			fake.allowedDatasetIDs = []string{}
-			if got := ToolQueryEntity(ctx, deps, map[string]any{"name": "entity"}); got.IsError || !strings.Contains(got.Content[0].Text, "No entity found") {
+			if got := ToolQueryEntity(ctx, deps, map[string]any{"name": "entity"}); got.IsError || !strings.Contains(got.Content[0].Text, `"node_ids": []`) {
 				t.Errorf("empty scope leaked graph: %+v", got)
 			}
 			fake.allowedDatasetIDs = nil
@@ -257,5 +257,77 @@ func TestGraphACLExplicitDatasetExcludesOtherReadableEndpoints(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestGraphACLLargeDatasetScopeUsesBoundedParameters(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			deps, fake := graphACLFixture(t, dialect)
+			allowed := make([]string, 0, 23000)
+			allowed = append(allowed, "owned")
+			for i := 1; i < 23000; i++ {
+				allowed = append(allowed, fmt.Sprintf("unused-%d", i))
+			}
+			fake.allowedDatasetIDs = allowed
+			ctx := context.WithValue(context.Background(), UserIDKey, "alice")
+
+			got := ToolQueryEntity(ctx, deps, map[string]any{"name": "entity", "limit": float64(1)})
+			if got.IsError {
+				t.Fatalf("large allowed scope: %+v", got)
+			}
+			var result struct {
+				NodeIDs []string         `json:"node_ids"`
+				Edges   []map[string]any `json:"edges"`
+			}
+			if err := json.Unmarshal([]byte(got.Content[0].Text), &result); err != nil {
+				t.Fatal(err)
+			}
+			if len(result.Edges) != 1 || result.Edges[0]["id"] != "owned-edge" {
+				t.Fatalf("large scope result: %+v", result)
+			}
+
+			got = ToolQueryEntity(ctx, deps, map[string]any{"name": "entity", "dataset_id": "owned", "limit": float64(1)})
+			if got.IsError || !strings.Contains(got.Content[0].Text, "owned-edge") {
+				t.Fatalf("explicit scope control: %+v", got)
+			}
+		})
+	}
+}
+
+func TestGraphDatasetPredicateParameterCountIsBounded(t *testing.T) {
+	allowed := make([]string, 23000)
+	for i := range allowed {
+		allowed[i] = fmt.Sprintf("dataset-%d", i)
+	}
+	for _, dialect := range []sqlcompat.Provider{sqlcompat.SQLite, sqlcompat.Postgres} {
+		t.Run(string(dialect), func(t *testing.T) {
+			previous := sqlcompat.CurrentProvider()
+			t.Cleanup(func() { sqlcompat.SetProvider(previous) })
+			sqlcompat.SetProvider(dialect)
+			var args []any
+			clause := graphDatasetPredicate("dataset_id", allowed, &args)
+			if len(args) != 1 {
+				t.Fatalf("parameter count=%d want=1", len(args))
+			}
+			if !strings.Contains(clause, "$1") || strings.Contains(clause, "$2") {
+				t.Fatalf("unexpected clause: %s", clause)
+			}
+			var decoded []string
+			if err := json.Unmarshal([]byte(args[0].(string)), &decoded); err != nil || len(decoded) != len(allowed) {
+				t.Fatalf("encoded allowlist len=%d error=%v", len(decoded), err)
+			}
+		})
+	}
+}
+
+func TestToolQueryEntityReportsNodeResolutionSQLError(t *testing.T) {
+	deps := setupQueryEntityDB(t)
+	if _, err := deps.db.Exec(`DROP TABLE graph_nodes`); err != nil {
+		t.Fatal(err)
+	}
+	got := ToolQueryEntity(context.Background(), deps, map[string]any{"name": "entity"})
+	if !got.IsError || !strings.Contains(strings.ToLower(got.Content[0].Text), "graph_nodes") {
+		t.Fatalf("SQL failure was reported as not-found: %+v", got)
 	}
 }

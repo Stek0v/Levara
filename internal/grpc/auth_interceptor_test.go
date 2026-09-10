@@ -26,12 +26,17 @@ import (
 // import from a test file.
 func signJWT(t *testing.T, sub, secret string, ttl time.Duration) string {
 	t.Helper()
-	header := map[string]string{"alg": "HS256", "typ": "JWT"}
 	payload := vectorAuth.Payload{
 		Sub: sub,
 		Exp: time.Now().Add(ttl).Unix(),
 		Iat: time.Now().Unix(),
 	}
+	return signJWTPayload(t, payload, secret)
+}
+
+func signJWTPayload(t *testing.T, payload vectorAuth.Payload, secret string) string {
+	t.Helper()
+	header := map[string]string{"alg": "HS256", "typ": "JWT"}
 	hJSON, _ := json.Marshal(header)
 	pJSON, _ := json.Marshal(payload)
 	hEnc := base64.RawURLEncoding.EncodeToString(hJSON)
@@ -171,7 +176,18 @@ func newGRPCAuthPolicy(t *testing.T) access.SQLPolicy {
 		INSERT INTO users VALUES ('alice', true, true), ('ordinary-user', false, true), ('disabled-superuser', true, false)`); err != nil {
 		t.Fatal(err)
 	}
-	return access.SQLPolicy{DB: db, Q: func(q string) string { return strings.ReplaceAll(q, "$1", "?") }}
+	policy := access.SQLPolicy{DB: db, Q: func(q string) string {
+		q = strings.ReplaceAll(q, "$1", "?")
+		q = strings.ReplaceAll(q, "$2", "?")
+		return strings.ReplaceAll(q, "$3", "?")
+	}}
+	if err := access.EnsureIdentitySchema(context.Background(), db, policy.Q); err != nil {
+		t.Fatal(err)
+	}
+	if err := access.EnsureBrowserSessionSchema(context.Background(), db, policy.Q); err != nil {
+		t.Fatal(err)
+	}
+	return policy
 }
 
 func TestAuthInterceptorsGlobalStoragePolicy(t *testing.T) {
@@ -223,6 +239,58 @@ func TestAuthInterceptorsGlobalStoragePolicy(t *testing.T) {
 				})
 			if status.Code(err) != tc.want || called != (tc.want == codes.OK) {
 				t.Fatalf("stream: error=%v called=%v, want %s", err, called, tc.want)
+			}
+		})
+	}
+}
+
+func TestGRPCRejectsRevokedCredentialEpoch(t *testing.T) {
+	p := newGRPCAuthPolicy(t)
+	if err := access.EnsureIdentitySchema(context.Background(), p.DB, p.Q); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.DB.Exec(`INSERT INTO credential_epochs(user_id,epoch) VALUES ('alice',1)`); err != nil {
+		t.Fatal(err)
+	}
+	ctx := ctxWithToken(signJWT(t, "alice", "secret", time.Hour))
+	_, err := UnaryAuthInterceptor("secret", true, p)(ctx, nil, &grpclib.UnaryServerInfo{FullMethod: "/levara.v1.LevaraService/Search"}, func(context.Context, any) (any, error) { t.Error("revoked JWT reached unary handler"); return nil, nil })
+	if status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("revoked epoch unary=%v", err)
+	}
+}
+
+func TestGRPCBrowserSessionLifecycle(t *testing.T) {
+	p := newGRPCAuthPolicy(t)
+	if _, err := p.DB.Exec(`INSERT INTO credential_epochs(user_id,epoch) VALUES ('alice',3)`); err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`INSERT INTO auth_sessions(id,user_id,expires_at,revoked) VALUES ('active','alice',9999999999,false)`,
+		`INSERT INTO auth_sessions(id,user_id,expires_at,revoked) VALUES ('revoked','alice',9999999999,true)`,
+		`INSERT INTO auth_sessions(id,user_id,expires_at,revoked) VALUES ('expired','alice',1,false)`,
+	} {
+		if _, err := p.DB.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct {
+		name, sid string
+		epoch     int64
+		want      codes.Code
+	}{
+		{"active", "active", 3, codes.OK}, {"programmatic", "", 3, codes.OK}, {"revoked", "revoked", 3, codes.Unauthenticated}, {"expired", "expired", 3, codes.Unauthenticated}, {"unknown", "unknown", 3, codes.Unauthenticated}, {"old epoch", "active", 0, codes.Unauthenticated},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := ctxWithToken(signJWTPayload(t, vectorAuth.Payload{Sub: "alice", Exp: time.Now().Add(time.Hour).Unix(), CredentialEpoch: tc.epoch, SessionID: tc.sid}, "secret"))
+			called := false
+			_, err := UnaryAuthInterceptor("secret", true, p)(ctx, nil, &grpclib.UnaryServerInfo{FullMethod: "/levara.v2.LevaraServiceV2/Search"}, func(context.Context, any) (any, error) { called = true; return nil, nil })
+			if status.Code(err) != tc.want || called != (tc.want == codes.OK) {
+				t.Fatalf("unary=%v called=%v", err, called)
+			}
+			called = false
+			err = StreamAuthInterceptor("secret", true, p)(nil, &authedStream{ctx: ctx}, &grpclib.StreamServerInfo{FullMethod: "/levara.v1.LevaraService/PipelineCognify"}, func(any, grpclib.ServerStream) error { called = true; return nil })
+			if status.Code(err) != tc.want || called != (tc.want == codes.OK) {
+				t.Fatalf("stream=%v called=%v", err, called)
 			}
 		})
 	}

@@ -2,7 +2,6 @@ package storage
 
 import (
 	"context"
-	"encoding/hex"
 	"io"
 	"net/url"
 	"os"
@@ -16,7 +15,6 @@ import (
 
 // T-9 smoke tests for pkg/storage:
 //   - LocalStorage round-trip (Save → Exists → Load → List → Delete)
-//   - AWS Sig V4 primitives against canonical test vectors
 //   - NewFromEnv dispatch
 
 func TestLocalStorage_RoundTrip(t *testing.T) {
@@ -98,40 +96,6 @@ func TestLocalStorage_ListEmpty(t *testing.T) {
 	}
 	if len(paths) != 0 {
 		t.Errorf("empty prefix should yield 0 paths, got %v", paths)
-	}
-}
-
-// TestSigV4_DeriveSigningKey_CanonicalVector verifies the AWS Sig V4 signing
-// key derivation against the canonical example from AWS docs (example from
-// https://docs.aws.amazon.com/AmazonS3/latest/API/sigv4-test-suite.html).
-//
-//	secretKey: wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY
-//	datestamp: 20120215
-//	region:    us-east-1
-//	service:   iam
-//
-// Expected signing key (hex):
-//
-//	f4780e2d9f65fa895f9c67b32ce1baf0b0d8a43505a000a1a9e090d414db404d
-func TestSigV4_DeriveSigningKey_CanonicalVector(t *testing.T) {
-	key := deriveSigningKey(
-		"wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
-		"20120215",
-		"us-east-1",
-		"iam",
-	)
-	want := "f4780e2d9f65fa895f9c67b32ce1baf0b0d8a43505a000a1a9e090d414db404d"
-	if got := hex.EncodeToString(key); got != want {
-		t.Errorf("signingKey = %s, want %s", got, want)
-	}
-}
-
-func TestSigV4_Sha256Hex_EmptyBody(t *testing.T) {
-	// SHA-256 of empty string is the well-known constant used for payloadHash
-	// on GET/DELETE requests with no body.
-	const empty = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-	if got := sha256Hex(nil); got != empty {
-		t.Errorf("sha256Hex(nil) = %s, want %s", got, empty)
 	}
 }
 

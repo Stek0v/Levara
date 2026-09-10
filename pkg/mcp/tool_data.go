@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stek0v/levara/pkg/access"
@@ -20,7 +21,8 @@ import (
 func dataActor(ctx context.Context) access.Actor {
 	user, _ := ctx.Value(UserIDKey).(string)
 	permissions, _ := ctx.Value(ContextKey("mcp_api_key_permissions")).(string)
-	return access.Actor{UserID: user, APIKeyPermissions: permissions}
+	tenant, _ := ctx.Value(TenantIDKey).(string)
+	return access.Actor{UserID: user, APIKeyPermissions: permissions, TenantID: tenant}
 }
 
 // ToolDelete deletes a dataset after the shared object-level access check.
@@ -33,71 +35,43 @@ func ToolDelete(ctx context.Context, deps Deps, args map[string]any) ToolResult 
 		}
 	}
 
-	decision, err := (access.SQLPolicy{DB: deps.DB(), Q: deps.Q}).AuthorizeDataset(ctx, dataActor(ctx), dsID, access.ActionDelete)
-	if err != nil {
-		return toolError("dataset access check failed")
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	policy := access.SQLPolicy{DB: deps.DB(), Q: deps.Q}
+	actor := deps.MetadataActor(ctx)
+	if deps.DB() == nil {
+		return toolError("dataset delete unavailable")
 	}
-	if !decision.Allowed {
+	if !access.APIKeyAllows(actor.APIKeyPermissions, access.ActionDelete) || actor.Credential.Kind == "api_key" && strings.TrimSpace(actor.APIKeyPermissions) == "" {
 		return toolError("dataset access denied")
 	}
-	if db := deps.DB(); db != nil {
-		if _, err := db.ExecContext(ctx, deps.Q("DELETE FROM datasets WHERE id = $1"), dsID); err != nil {
-			return toolError("dataset delete failed: " + err.Error())
+	if !actor.TrustedLocal {
+		c := actor.Credential
+		if actor.UserID == "" || policy.RecheckCredential(ctx, actor.UserID, c.Kind, c.KeyID, actor.APIKeyPermissions, c.SessionID, c.Epoch, c.IssuedAt, c.ExpiresAt) != nil {
+			return toolError("dataset access denied")
 		}
 	}
-
-	return statusResult(true, fmt.Sprintf("Dataset %s deleted.", dsID))
+	if err := policy.DeleteDatasetWithDocuments(ctx, actor.Actor, dsID); err != nil && !(actor.TrustedLocal && errors.Is(err, access.ErrDocumentNotFound)) {
+		return toolError("dataset delete denied or unavailable")
+	}
+	message := fmt.Sprintf("Dataset %s deleted.", dsID)
+	if writer, err := ingest.NewMetadataWriterForStorage(deps.DB(), deps.StorageBackend()); err != nil || writer.CleanupRetiredStructuredArtifacts(ctx, "", deps.StoragePath(), deps.StorageBackend()) != nil {
+		message += " Structured artifact cleanup is pending."
+	}
+	return statusResult(true, message)
 }
 
-// pruneTables lists every table cleared by ToolPrune, in the order the
-// DELETEs are issued. Child tables come first so a future FK constraint
-// wouldn't block the parent delete — today the schema has no cross-table
-// FKs enforced, but the order is cheap to keep correct.
-var pruneTables = []string{
-	"dataset_data",
-	"data",
-	"datasets",
-	"graph_nodes",
-	"graph_edges",
-}
-
-// ToolPrune clears all rows atomically. Authenticated callers must be active
-// instance administrators because this operation spans every dataset owner.
+// ToolPrune shares the HTTP policy: live authority, every legal hold, durable
+// tombstones, and all SQL deletes are checked under one bounded transaction.
 func ToolPrune(ctx context.Context, deps Deps) ToolResult {
-	actor := dataActor(ctx)
-	if !access.APIKeyAllows(actor.APIKeyPermissions, access.ActionDelete) {
-		return toolError("API key permissions denied")
+	if err := (access.SQLPolicy{DB: deps.DB(), Q: deps.Q}).PruneData(ctx, deps.MetadataActor(ctx), true); err != nil {
+		return toolError("prune denied or unavailable")
 	}
-	if actor.UserID != "" {
-		policy := access.SQLPolicy{DB: deps.DB(), Q: deps.Q}
-		active, err := policy.IsActive(ctx, actor.UserID)
-		if err != nil {
-			return toolError("admin access check failed")
-		}
-		super, err := policy.IsSuperuser(ctx, actor.UserID)
-		if err != nil {
-			return toolError("admin access check failed")
-		}
-		if !active || !super {
-			return toolError("active instance administrator required")
-		}
+	message := "All data pruned."
+	if writer, err := ingest.NewMetadataWriterForStorage(deps.DB(), deps.StorageBackend()); err != nil || writer.CleanupRetiredStructuredArtifacts(ctx, "", deps.StoragePath(), deps.StorageBackend()) != nil {
+		message += " Structured artifact cleanup is pending."
 	}
-	if db := deps.DB(); db != nil {
-		tx, err := db.BeginTx(ctx, nil)
-		if err != nil {
-			return toolError("prune failed: " + err.Error())
-		}
-		defer tx.Rollback()
-		for _, table := range pruneTables {
-			if _, err := tx.ExecContext(ctx, "DELETE FROM "+table); err != nil {
-				return toolError("prune failed: " + err.Error())
-			}
-		}
-		if err := tx.Commit(); err != nil {
-			return toolError("prune failed: " + err.Error())
-		}
-	}
-	return statusResult(true, "All data pruned.")
+	return statusResult(true, message)
 }
 
 // listDataItemCap is the LIMIT applied to the data / datasets SELECTs.
@@ -334,19 +308,21 @@ func ToolAdd(ctx context.Context, deps Deps, args map[string]any) ToolResult {
 		Tags:        tags,
 		Room:        room,
 	}}
-	results, err := ingest.Ingest(items, storagePath)
-	if err != nil {
-		return ToolResult{
-			Content: []Content{{Type: "text", Text: fmt.Sprintf("Ingest error: %s", err.Error())}},
-			IsError: true,
-		}
-	}
-
+	var results []ingest.Result
+	var err error
 	if db := deps.DB(); db != nil {
-		mw := ingest.NewMetadataWriterFromDB(db)
-		if _, err := mw.WriteMetadata(ctx, results, actor.UserID, dsID, datasetName); err != nil {
-			return toolError("metadata write failed: " + err.Error())
+		w, configErr := ingest.NewMetadataWriterForStorage(db, deps.StorageBackend())
+		if configErr != nil {
+			return toolError("storage destination unavailable")
 		}
+		results, _, err = w.IngestAuthorized(ctx, items, nil, storagePath, deps.StorageBackend(), deps.MetadataActor(ctx), dsID, datasetName)
+	} else if deps.MetadataActor(ctx).TrustedLocal {
+		results, err = ingest.IngestStored(ctx, items, storagePath, deps.StorageBackend())
+	} else {
+		return toolError("metadata storage unavailable")
+	}
+	if err != nil {
+		return toolError("ingestion denied or unavailable")
 	}
 
 	dataID := ""

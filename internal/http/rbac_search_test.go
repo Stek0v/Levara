@@ -138,11 +138,9 @@ func TestRBAC_SuperuserBypass(t *testing.T) {
 	}
 }
 
-// Chunks with no dataset_id on their metadata must pass the filter even
-// when the user has a narrow allow-list. This matches production
-// filterByAllowedDatasets behaviour (empty dsID → always allowed) and
-// protects legacy data without dataset tags.
-func TestRBAC_OrphanChunksAllowed(t *testing.T) {
+// Legacy chunks without source scope require administrative review/reindexing.
+// An ordinary user cannot establish ownership from missing metadata.
+func TestRBAC_OrphanChunksDenied(t *testing.T) {
 	env := newSearchTestEnv(t)
 	env.startWithUser("user-b")
 
@@ -156,7 +154,7 @@ func TestRBAC_OrphanChunksAllowed(t *testing.T) {
 		"name": "Alice", "dataset_id": "ds-a",
 	})
 	env.insertVector("entities", "orphan", vec, map[string]any{
-		"name": "Orphan", // no dataset_id → always visible
+		"name": "Orphan", // missing source does not establish a grant
 	})
 
 	_, body := env.postSearch(map[string]any{
@@ -165,12 +163,8 @@ func TestRBAC_OrphanChunksAllowed(t *testing.T) {
 		"collection": "entities",
 	})
 	chunks, _ := body["chunks"].([]any)
-	if len(chunks) != 1 {
-		t.Fatalf("chunks len=%d, want 1 (orphan only; ds-a filtered out)", len(chunks))
-	}
-	chunk, _ := chunks[0].(map[string]any)
-	if id, _ := chunk["id"].(string); id != "orphan" {
-		t.Errorf("visible chunk id=%q, want orphan", id)
+	if len(chunks) != 0 {
+		t.Fatalf("chunks len=%d, want 0 (unknown scope and foreign dataset)", len(chunks))
 	}
 }
 

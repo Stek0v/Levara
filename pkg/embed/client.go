@@ -22,12 +22,24 @@ type Client struct {
 	concurrency int
 	httpClient  *http.Client
 	cache       *Cache // optional embedding cache
+	guard       func(context.Context) (func(), error)
+}
+
+// WithGuard returns a per-operation copy; shared client configuration stays
+// unchanged. The caller holds authorization until each HTTP batch drains.
+func (c *Client) WithGuard(guard func(context.Context) (func(), error)) *Client {
+	copy := *c
+	copy.guard = guard
+	return &copy
 }
 
 // NewClient creates an embedding client with connection pooling.
 // concurrency controls how many batch HTTP requests run simultaneously.
 // Pass 1 for sequential (default/test-safe), 3+ for production throughput.
 func NewClient(url, model string, batchSize, concurrency int) *Client {
+	if batchSize < 1 {
+		batchSize = 16
+	}
 	if concurrency < 1 {
 		concurrency = 1
 	}
@@ -125,7 +137,7 @@ func (c *Client) EmbedTexts(ctx context.Context, texts []string) ([][]float32, e
 	// Embed only misses
 	missVecs := make([][]float32, len(missTexts))
 	g, gctx := errgroup.WithContext(ctx)
-	sem := make(chan struct{}, c.concurrency)
+	g.SetLimit(c.concurrency)
 
 	for start := 0; start < len(missTexts); start += c.batchSize {
 		start := start
@@ -135,9 +147,6 @@ func (c *Client) EmbedTexts(ctx context.Context, texts []string) ([][]float32, e
 		}
 
 		g.Go(func() error {
-			sem <- struct{}{}
-			defer func() { <-sem }()
-
 			vecs, err := c.embedBatch(gctx, missTexts[start:end])
 			if err != nil {
 				return fmt.Errorf("batch [%d:%d]: %w", start, end, err)
@@ -183,6 +192,13 @@ func (c *Client) EmbedSingle(ctx context.Context, text string) ([]float32, error
 // embedBatch sends one batch to the embedding API.
 func (c *Client) embedBatch(ctx context.Context, texts []string) (vecs [][]float32, err error) {
 	defer metrics.ObserveExternalCall("embed", "embed", time.Now(), &err)
+	if c.guard != nil {
+		release, err := c.guard(ctx)
+		if err != nil {
+			return nil, err
+		}
+		defer release()
+	}
 	reqBody, err := json.Marshal(embeddingRequest{
 		Input: texts,
 		Model: c.model,
@@ -212,8 +228,6 @@ func (c *Client) embedBatch(ctx context.Context, texts []string) (vecs [][]float
 		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("embed API status %d: %s", resp.StatusCode, string(body))
 	}
-	metrics.EmbedRequests.WithLabelValues(c.model, "ok").Inc()
-
 	var result embeddingResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("decode response: %w", err)
@@ -221,17 +235,25 @@ func (c *Client) embedBatch(ctx context.Context, texts []string) (vecs [][]float
 
 	// Ollama /api/embed returns {"embeddings": [[...]]} instead of OpenAI's {"data": [...]}
 	if len(result.Data) == 0 && len(result.Embeddings) > 0 {
-		return result.Embeddings, nil
+		vecs = result.Embeddings
+	} else {
+		sort.Slice(result.Data, func(i, j int) bool { return result.Data[i].Index < result.Data[j].Index })
+		vecs = make([][]float32, len(result.Data))
+		for i, d := range result.Data {
+			if d.Index != i {
+				return nil, fmt.Errorf("embedding response has invalid index %d at %d", d.Index, i)
+			}
+			vecs[i] = d.Embedding
+		}
 	}
-
-	sort.Slice(result.Data, func(i, j int) bool {
-		return result.Data[i].Index < result.Data[j].Index
-	})
-
-	vecs = make([][]float32, len(result.Data))
-	for i, d := range result.Data {
-		vecs[i] = d.Embedding
+	if len(vecs) != len(texts) {
+		return nil, fmt.Errorf("embedding count %d does not match input %d", len(vecs), len(texts))
 	}
-
+	for i, v := range vecs {
+		if len(v) == 0 || len(v) != len(vecs[0]) {
+			return nil, fmt.Errorf("embedding %d has invalid dimension", i)
+		}
+	}
+	metrics.EmbedRequests.WithLabelValues(c.model, "ok").Inc()
 	return vecs, nil
 }

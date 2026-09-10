@@ -2,13 +2,16 @@ package http
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
+	accesspkg "github.com/stek0v/levara/pkg/access"
 	"github.com/stek0v/levara/pkg/ingest"
 	"github.com/stek0v/levara/pkg/storage"
 )
@@ -38,7 +41,7 @@ func mirrorResultsToFileStorage(ctx context.Context, cfg APIConfig, results []in
 			continue
 		}
 		localPath := strings.TrimPrefix(loc, "file://")
-		f, err := os.Open(localPath)
+		f, err := openRawLocal(ctx, cfg, localPath)
 		if err != nil {
 			return nil, fmt.Errorf("open local ingest artifact %q: %w", localPath, err)
 		}
@@ -72,51 +75,129 @@ func loadRawDataByLocation(ctx context.Context, cfg APIConfig, location string) 
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	switch {
-	case strings.HasPrefix(location, "file://"):
-		path := strings.TrimPrefix(location, "file://")
-		if !pathInsideStorageRoot(cfg.StoragePath, path) {
-			return nil, fmt.Errorf("raw location %q is outside the storage root", location)
-		}
-		return os.ReadFile(path)
-	case strings.HasPrefix(location, storageURIPrefix):
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if strings.HasPrefix(location, storageURIPrefix) {
 		if cfg.FileStorage == nil {
-			return nil, fmt.Errorf("file storage backend is not configured")
+			return nil, errors.New("file storage backend is not configured")
 		}
-		key := strings.TrimPrefix(location, storageURIPrefix)
-		rc, err := cfg.FileStorage.Load(ctx, key)
+		rc, err := cfg.FileStorage.Load(ctx, strings.TrimPrefix(location, storageURIPrefix))
+		if err != nil {
+			if rc != nil {
+				err = errors.Join(err, rc.Close())
+			}
+			return nil, err
+		}
+		if rc == nil {
+			return nil, errors.New("file storage returned no reader")
+		}
+		return readRawAndClose(ctx, rc)
+	}
+	file, err := openRawLocal(ctx, cfg, strings.TrimPrefix(location, "file://"))
+	if err != nil {
+		return nil, err
+	}
+	return readRawAndClose(ctx, file)
+}
+
+func readRawAndClose(ctx context.Context, reader io.ReadCloser) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, errors.Join(err, reader.Close())
+	}
+	data, readErr := io.ReadAll(reader)
+	if err := errors.Join(readErr, reader.Close(), ctx.Err()); err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
+// openRawLocal opens relative to a native directory handle, so containment
+// survives symlink swaps between checking a row's location and opening it.
+// Configured ancestors are canonicalized for /var -> /private/var and equivalent
+// deployment aliases. A symlink within the root may never escape that root.
+func openRawLocal(ctx context.Context, cfg APIConfig, path string) (*os.File, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	rootPath := cfg.StoragePath
+	if strings.TrimSpace(rootPath) == "" {
+		// Legacy helpers/no-SQL development may read trusted local artifacts without
+		// configured roots. Authenticated requests must never inherit that fallback.
+		e, _ := ctx.Value(searchEgressKey{}).(searchEgress)
+		actor, _ := ctx.Value(searchActorKey{}).(accesspkg.Actor)
+		if cfg.RequireAuth || cfg.DB != nil || e.kind != "" || e.actor.UserID != "" || actor.UserID != "" {
+			return nil, errors.New("authenticated local reads require a storage root")
+		}
+		absolute, err := filepath.Abs(path)
 		if err != nil {
 			return nil, err
 		}
-		defer rc.Close()
-		return io.ReadAll(rc)
-	default:
-		// Backward compatibility for plain local paths — same containment.
-		if !pathInsideStorageRoot(cfg.StoragePath, location) {
-			return nil, fmt.Errorf("raw location %q is outside the storage root", location)
-		}
-		return os.ReadFile(location)
+		rootPath = filepath.VolumeName(absolute) + string(filepath.Separator)
 	}
+	rootAbs, err := filepath.Abs(rootPath)
+	if err != nil {
+		return nil, err
+	}
+	rootCanonical, err := filepath.EvalSymlinks(rootAbs)
+	if err != nil {
+		return nil, err
+	}
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	relative, inside := rawPathRelative(rootAbs, absolute)
+	if !inside {
+		relative, inside = rawPathRelative(rootCanonical, absolute)
+	}
+	if !inside {
+		// A legacy location can use a different alias of the same existing parent.
+		parent, err := filepath.EvalSymlinks(filepath.Dir(absolute))
+		if err != nil {
+			return nil, err
+		}
+		relative, inside = rawPathRelative(rootCanonical, filepath.Join(parent, filepath.Base(absolute)))
+	}
+	if !inside {
+		return nil, errors.New("raw location is outside the storage root")
+	}
+	root, err := os.OpenRoot(rootCanonical)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	info, err := root.Stat(relative)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, errors.New("raw location must be a regular file")
+	}
+	// O_NONBLOCK avoids a FIFO substitution hanging Open before descriptor-level
+	// regular-file validation. It has no effect on ordinary regular-file reads.
+	file, err := root.OpenFile(relative, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	info, err = file.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		file.Close()
+		if err != nil {
+			return nil, err
+		}
+		return nil, errors.New("raw location must be a regular file")
+	}
+	if err := ctx.Err(); err != nil {
+		file.Close()
+		return nil, err
+	}
+	return file, nil
 }
 
-// pathInsideStorageRoot reports whether path resolves inside root without
-// traversal. Empty root disables the check (unconfigured deployments).
-func pathInsideStorageRoot(root, path string) bool {
-	if strings.TrimSpace(root) == "" {
-		return true
-	}
-	rootAbs, err := filepath.Abs(root)
-	if err != nil {
-		return false
-	}
-	pathAbs, err := filepath.Abs(path)
-	if err != nil {
-		return false
-	}
-	if pathAbs == rootAbs {
-		return true
-	}
-	return strings.HasPrefix(pathAbs, rootAbs+string(filepath.Separator))
+func rawPathRelative(root, path string) (string, bool) {
+	relative, err := filepath.Rel(root, path)
+	return relative, err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) && !filepath.IsAbs(relative)
 }
 
 func storageKeyForData(id, extension, fallbackPath string) string {

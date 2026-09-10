@@ -110,7 +110,17 @@ type Config struct {
 	// DocumentTitle for contextual chunk headers (prepended before embedding).
 	DocumentTitle string
 	// DocumentID stable document identifier for metadata.
-	DocumentID string
+	DocumentID      string
+	ContentRevision int64
+	SourceRevision  int64
+	RawContentHash  string
+	Generation      string
+	AttemptID       string
+	// GuardTransfer holds live source authorization through a model request.
+	GuardTransfer func(context.Context) (func(), error)
+	// CheckWrite revalidates source generation and write/hold policy before
+	// indexing. Publication still requires a separate successful CAS.
+	CheckWrite func(context.Context) error
 	// CommunityResolution (γ) for Louvain. >1=finer, <1=coarser. Default 1.0.
 	CommunityResolution float64
 	// DedupThreshold for semantic entity dedup. Default 0.95.
@@ -195,6 +205,17 @@ func RunWithItems(ctx context.Context, items []TextItem, cfg Config, progressCh 
 func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Progress) error {
 	start := time.Now()
 	defer close(progressCh)
+	if cfg.CheckWrite != nil {
+		if err := cfg.CheckWrite(ctx); err != nil {
+			return err
+		}
+	}
+	if cfg.GuardTransfer != nil && cfg.EmbedEndpoint != "" {
+		if cfg.EmbedClient == nil {
+			cfg.EmbedClient = embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 3)
+		}
+		cfg.EmbedClient = cfg.EmbedClient.WithGuard(cfg.GuardTransfer)
+	}
 
 	if cfg.LLMConcurrency <= 0 {
 		cfg.LLMConcurrency = 5
@@ -240,7 +261,7 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 		if docID != "" && cfg.DatasetID != "" {
 			// A document may belong to multiple datasets with different readers.
 			// Scope internal chunk/parent IDs while retaining its original metadata ID.
-			docID = uuid.NewSHA1(uuid.NameSpaceOID, []byte(cfg.DatasetID+"\x00"+docID)).String()
+			docID = documentScopedID(cfg, docID)
 		}
 		if docID == "" {
 			docID = fmt.Sprintf("%s-doc-%d", runPrefix, i)
@@ -358,12 +379,13 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 		progressCh <- Progress{Stage: "extracting", ChunksCreated: len(allChunks), ElapsedMs: ms(start)}
 
 		var (
-			allNodes  []graph.DedupNode
-			allEdges  []graph.DedupEdge
-			nodesMu   sync.Mutex
-			extracted atomic.Int32
-			entCount  atomic.Int32
-			edgeCount atomic.Int32
+			allNodes         []graph.DedupNode
+			allEdges         []graph.DedupEdge
+			nodesMu          sync.Mutex
+			extracted        atomic.Int32
+			entCount         atomic.Int32
+			edgeCount        atomic.Int32
+			extractionErrors atomic.Int32
 		)
 
 		httpClient := &http.Client{Timeout: 600 * time.Second}
@@ -411,6 +433,7 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 						for _, ch := range batch {
 							n, e, err := extractEntities(ctx, httpClient, cfg, ch.text)
 							if err != nil {
+								extractErr = err
 								continue
 							}
 							batchNodes = append(batchNodes, n...)
@@ -419,13 +442,13 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 					}
 				} else {
 					chunk := batch[0]
-					nodes, edges, extractErr := extractEntities(ctx, httpClient, cfg, chunk.text)
-					batchNodes, batchEdges = nodes, edges
+					batchNodes, batchEdges, extractErr = extractEntities(ctx, httpClient, cfg, chunk.text)
 					if extractErr != nil {
 						log.Printf("[pipeline] LLM extract chunk %s: %v", chunk.id, extractErr)
 					}
 				}
 				if extractErr != nil {
+					extractionErrors.Add(1)
 					log.Printf("[pipeline] LLM extract failed: %v", extractErr)
 					extracted.Add(int32(len(batch)))
 					return
@@ -468,6 +491,9 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 		}
 
 		wg.Wait()
+		if cfg.DocumentID != "" && extractionErrors.Load() > 0 {
+			return fmt.Errorf("document extraction incomplete: %d failed batches", extractionErrors.Load())
+		}
 
 		progressCh <- Progress{
 			Stage: "extracting", ChunksCreated: len(allChunks),
@@ -605,6 +631,12 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 	}
 
 	// --- Stage 4: Write to DBs (parallel: Neo4j + vector) ---
+	if cfg.CheckWrite != nil {
+		if err := cfg.CheckWrite(ctx); err != nil {
+			return err
+		}
+	}
+	dedupResult = scopeDocumentGraph(cfg, dedupResult)
 	progressCh <- Progress{Stage: "writing", EntitiesExtracted: len(dedupResult.Nodes), EdgesExtracted: len(dedupResult.Edges), ElapsedMs: ms(start)}
 
 	var writeWg sync.WaitGroup
@@ -634,6 +666,7 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 					"dataset_id": cfg.DatasetID, "confidence": n.Confidence,
 					"source_chunk": n.SourceChunkID, "source_doc": n.SourceDocID,
 					"extracted_at": n.ExtractedAt,
+					"document_id":  cfg.DocumentID, "content_revision": cfg.ContentRevision, "generation": cfg.Generation, "collection": cfg.Collection,
 				}
 				// Add date property for TemporalEvent nodes
 				if n.Type == "TemporalEvent" && n.Properties != nil {
@@ -651,7 +684,7 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 				neoEdges[i] = graphdb.EdgeRecord{
 					SourceID: e.SourceID, TargetID: e.TargetID,
 					RelationshipName: e.RelationshipName,
-					Properties:       map[string]any{"edge_text": e.EdgeText, "dataset_id": cfg.DatasetID},
+					Properties:       map[string]any{"edge_text": e.EdgeText, "dataset_id": cfg.DatasetID, "document_id": cfg.DocumentID, "content_revision": cfg.ContentRevision, "generation": cfg.Generation, "collection": cfg.Collection},
 				}
 			}
 
@@ -702,11 +735,13 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 
 			// Helper to build chunk metadata JSON
 			buildChunkMeta := func(ch indexedChunk) string {
-				meta := fmt.Sprintf(`{"text":%s,"dataset_id":"%s","room":%s,"tags":%s`,
-					mustJSON(ch.text), cfg.DatasetID,
+				meta := fmt.Sprintf(`{"text":%s,"dataset_id":%s,"room":%s,"tags":%s`,
+					mustJSON(ch.text), mustJSON(cfg.DatasetID),
 					mustJSON(cfg.Room), tagsJSON)
 				if cfg.DocumentID != "" {
 					meta += `,"document_id":` + mustJSON(cfg.DocumentID)
+					meta += fmt.Sprintf(`,"content_revision":%d`, cfg.ContentRevision)
+					meta += `,"generation":` + mustJSON(cfg.Generation) + `,"collection":` + mustJSON(cfg.Collection)
 				}
 				if cfg.DocumentTitle != "" {
 					meta += `,"document_title":` + mustJSON(cfg.DocumentTitle)
@@ -753,6 +788,7 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 				chunkVecs, err := embedClient.EmbedTexts(ctx, embedTexts)
 				if err != nil {
 					log.Printf("[pipeline] chunk embed FAILED (%d chunks): %v", len(embedTexts), err)
+					writeErrors.Add(1)
 				} else {
 					for i, vec := range chunkVecs {
 						if i < len(chunkIDs) {
@@ -797,6 +833,7 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 					pVecs, err := embedClient.EmbedTexts(ctx, parentEmbedTexts)
 					if err != nil {
 						log.Printf("[pipeline] parent embed FAILED: %v", err)
+						writeErrors.Add(1)
 					} else {
 						parentInserted := 0
 						for i, vec := range pVecs {
@@ -804,6 +841,7 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 								meta := buildChunkMeta(parentMetas[i])
 								if err := cfg.Collections.Insert(coll, parentIDs[i], vec, meta); err != nil {
 									log.Printf("[pipeline] parent insert error: %v", err)
+									writeErrors.Add(1)
 								} else {
 									parentInserted++
 								}
@@ -830,13 +868,15 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 					vecs, err := embedClient.EmbedTexts(ctx, texts)
 					if err != nil {
 						log.Printf("[pipeline] embed FAILED (%d texts): %v", len(texts), err)
+						writeErrors.Add(1)
 						// Don't return — continue to triplets which may use different texts
 					} else {
 						for i, n := range dedupResult.Nodes {
 							if i < len(vecs) {
-								meta := fmt.Sprintf(`{"name":"%s","type":"%s","dataset_id":"%s"}`, n.Name, n.Type, cfg.DatasetID)
+								meta := documentMetadata(cfg, map[string]any{"name": n.Name, "type": n.Type, "description": n.Description})
 								if err := cfg.Collections.Insert(coll, n.ID, vecs[i], meta); err != nil {
 									log.Printf("[pipeline] vector insert %q error: %v", n.Name, err)
+									writeErrors.Add(1)
 								} else {
 									inserted++
 									// Update BM25 index for lexical search
@@ -866,13 +906,15 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 					}
 					if tvecs, err := embedClient.EmbedTexts(ctx, tripletTexts); err != nil {
 						log.Printf("[pipeline] triplet embed FAILED: %v", err)
+						writeErrors.Add(1)
 					} else {
 						tripletInserted := 0
 						for i, t := range dedupResult.Triplets {
 							if i < len(tvecs) {
-								meta := fmt.Sprintf(`{"from":"%s","to":"%s","dataset_id":"%s"}`, t.FromNodeID, t.ToNodeID, cfg.DatasetID)
+								meta := documentMetadata(cfg, map[string]any{"from": t.FromNodeID, "to": t.ToNodeID, "text": t.Text})
 								if err := cfg.Collections.Insert(tripletColl, t.ID, tvecs[i], meta); err != nil {
 									log.Printf("[pipeline] triplet insert error: %v", err)
+									writeErrors.Add(1)
 								} else {
 									tripletInserted++
 								}
@@ -893,6 +935,7 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 			nw, ew, err := UpsertGraphToPostgres(ctx, cfg.DB, cfg.DatasetID, dedupResult.Nodes, dedupResult.Edges)
 			if err != nil {
 				log.Printf("[pipeline] pg upsert: %v", err)
+				writeErrors.Add(1)
 			} else {
 				log.Printf("[pipeline] pg upsert: %d nodes, %d edges", nw, ew)
 			}
@@ -902,10 +945,10 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 	writeWg.Wait()
 
 	// --- Stage 5: Community Detection + Hierarchical Summarization ---
-	// Runs on FULL graph (not per-dataset) to capture cross-document relationships.
-	// Skipped in RAG mode (no graph) or when DB is nil.
+	// Global community rebuilding has no per-source ACL. Dataset ingestion
+	// leaves it to the explicitly authorized global maintenance operation.
 	communitiesDetected := 0
-	if !cfg.SkipGraph && cfg.DB != nil && len(dedupResult.Nodes) >= 3 {
+	if cfg.DatasetID == "" && cfg.DocumentID == "" && !cfg.SkipGraph && cfg.DB != nil && len(dedupResult.Nodes) >= 3 {
 		progressCh <- Progress{Stage: "communities", Message: "detecting communities", ElapsedMs: ms(start)}
 
 		g, gErr := community.BuildGraphFromSQL(ctx, cfg.DB)

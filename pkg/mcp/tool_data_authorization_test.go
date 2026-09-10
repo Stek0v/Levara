@@ -9,7 +9,7 @@ func dataACLDeps(t *testing.T) *fakeDeps {
 	t.Helper()
 	d := setupAddTestDB(t)
 	for _, q := range []string{
-		`CREATE TABLE users(id TEXT PRIMARY KEY, is_active BOOLEAN, is_superuser BOOLEAN)`,
+		`CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY, is_active BOOLEAN, is_superuser BOOLEAN)`,
 		`CREATE TABLE dataset_shares(id TEXT PRIMARY KEY, dataset_id TEXT, user_id TEXT, role TEXT)`,
 		`INSERT INTO users VALUES ('alice',TRUE,FALSE),('bob',TRUE,FALSE),('admin',TRUE,TRUE),('inactive',FALSE,TRUE)`,
 		`CREATE TABLE graph_nodes(id TEXT)`, `CREATE TABLE graph_edges(id TEXT)`,
@@ -19,6 +19,7 @@ func dataACLDeps(t *testing.T) *fakeDeps {
 			t.Fatal(err)
 		}
 	}
+	installPrunePolicyFixture(t, d.db)
 	return d
 }
 

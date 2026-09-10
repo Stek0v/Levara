@@ -3,6 +3,7 @@ package grpc
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -13,22 +14,24 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/stek0v/levara/internal/metrics"
 	"github.com/stek0v/levara/internal/store"
+	"github.com/stek0v/levara/pipeline"
+	"github.com/stek0v/levara/pkg/access"
 	"github.com/stek0v/levara/pkg/aggregator"
+	"github.com/stek0v/levara/pkg/bm25"
 	"github.com/stek0v/levara/pkg/chunker"
 	"github.com/stek0v/levara/pkg/embed"
 	"github.com/stek0v/levara/pkg/extract"
-	"github.com/stek0v/levara/pkg/ingest"
-	"github.com/stek0v/levara/pkg/temporal"
 	"github.com/stek0v/levara/pkg/fileio"
 	"github.com/stek0v/levara/pkg/graph"
-	"github.com/stek0v/levara/pkg/bm25"
 	"github.com/stek0v/levara/pkg/graphdb"
+	"github.com/stek0v/levara/pkg/ingest"
 	"github.com/stek0v/levara/pkg/llmcache"
 	"github.com/stek0v/levara/pkg/orchestrator"
 	"github.com/stek0v/levara/pkg/rerank"
-	"github.com/stek0v/levara/internal/metrics"
-	"github.com/stek0v/levara/pipeline"
+	"github.com/stek0v/levara/pkg/storage"
+	"github.com/stek0v/levara/pkg/temporal"
 	pb "github.com/stek0v/levara/proto/pb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -36,22 +39,27 @@ import (
 
 // Service implements the LevaraService gRPC server.
 type Service struct {
+	fileStorage       storage.Storage
+	ingestPath        string
+	ingestDB          *sql.DB
+	ingestRequireAuth bool
+	ingestQ           func(string) string
 	pb.UnimplementedLevaraServiceServer
-	collections *store.CollectionManager
-	cluster     *store.Cluster // legacy: for non-collection operations
-	dim            int
-	llmCache       *llmcache.Cache
-	bm25Indexes    *bm25.IndexRegistry
-	bm25Store      *bm25.SnapshotStore
-	graphCaches    map[string]*graphdb.CachedWriter
-	graphCacheMu   sync.Mutex
+	collections  *store.CollectionManager
+	cluster      *store.Cluster // legacy: for non-collection operations
+	dim          int
+	llmCache     *llmcache.Cache
+	bm25Indexes  *bm25.IndexRegistry
+	bm25Store    *bm25.SnapshotStore
+	graphCaches  map[string]*graphdb.CachedWriter
+	graphCacheMu sync.Mutex
 	// Shared embed client + defaults (T3 / P3.1). When req.EmbedEndpoint is
 	// empty the handlers fall back to embedClient so gRPC traffic can reuse
 	// the same TCP pool as HTTP/MCP. Per-request endpoints still build their
 	// own *embed.Client.
-	embedClient    *embed.Client
-	embedEndpoint  string
-	embedModel     string
+	embedClient   *embed.Client
+	embedEndpoint string
+	embedModel    string
 }
 
 // NewService creates a gRPC service backed by CollectionManager.
@@ -64,6 +72,17 @@ func NewService(collections *store.CollectionManager, cluster *store.Cluster, di
 		bm25Indexes: bm25.NewIndexRegistry(),
 		graphCaches: make(map[string]*graphdb.CachedWriter),
 	}
+}
+
+// SetIngestStorage routes console ingestion through the same backend as HTTP.
+func (s *Service) SetIngestStorage(path string, backend storage.Storage) {
+	s.ingestPath = path
+	s.fileStorage = backend
+}
+
+func (s *Service) SetIngestMetadata(db *sql.DB, requireAuth bool, rewrite func(string) string) {
+	s.ingestDB, s.ingestRequireAuth = db, requireAuth
+	s.ingestQ = rewrite
 }
 
 // SetEmbedDefaults wires the process-wide *embed.Client (T3 shared pool) plus
@@ -1186,8 +1205,11 @@ func (s *Service) GraphCompletionSearch(ctx context.Context, req *pb.GraphComple
 
 	type vsResult struct {
 		collection string
-		results    []struct{ id string; score float32 }
-		isEdge     bool
+		results    []struct {
+			id    string
+			score float32
+		}
+		isEdge bool
 	}
 
 	allCollections := make([]string, 0, len(req.NodeCollections)+1)
@@ -1206,7 +1228,10 @@ func (s *Service) GraphCompletionSearch(ctx context.Context, req *pb.GraphComple
 				searchResults, err := s.collections.Search(coll, queryVec, vectorTopK)
 				if err == nil {
 					for _, sr := range searchResults {
-						r.results = append(r.results, struct{ id string; score float32 }{sr.ID, sr.Score})
+						r.results = append(r.results, struct {
+							id    string
+							score float32
+						}{sr.ID, sr.Score})
 					}
 				}
 			}
@@ -1539,12 +1564,12 @@ func (s *Service) HybridSearch(ctx context.Context, req *pb.HybridSearchReq) (*p
 	pbResults := make([]*pb.HybridResult, len(hybridResults))
 	for i, r := range hybridResults {
 		pbResults[i] = &pb.HybridResult{
-			Id:          r.ID,
-			VectorScore: r.VectorScore,
-			Bm25Score:   r.BM25Score,
-			FusedScore:  r.FusedScore,
-			VectorRank:  int32(r.VectorRank),
-			Bm25Rank:    int32(r.BM25Rank),
+			Id:           r.ID,
+			VectorScore:  r.VectorScore,
+			Bm25Score:    r.BM25Score,
+			FusedScore:   r.FusedScore,
+			VectorRank:   int32(r.VectorRank),
+			Bm25Rank:     int32(r.BM25Rank),
 			MetadataJson: r.Metadata,
 		}
 	}
@@ -1560,23 +1585,23 @@ func (s *Service) PipelineCognify(req *pb.PipelineCognifyReq, stream pb.LevaraSe
 	}
 
 	cfg := orchestrator.Config{
-		ChunkStrategy:   req.ChunkStrategy,
-		MinChunkChars:   int(req.MinChunkChars),
-		MaxChunkChars:   int(req.MaxChunkChars),
-		LLMEndpoint:     req.LlmEndpoint,
-		LLMModel:        req.LlmModel,
-		SystemPrompt:    req.ExtractionSystemPrompt,
-		Temperature:     req.LlmTemperature,
-		LLMConcurrency:  int(req.LlmConcurrency),
-		EmbedEndpoint:   req.EmbedEndpoint,
-		EmbedModel:      req.EmbedModel,
-		EmbedClient:     s.embedClient,
-		Neo4jURL:        req.Neo4JUrl,
-		Neo4jUser:       req.Neo4JUser,
-		Neo4jPassword:   req.Neo4JPassword,
-		Neo4jDatabase:   req.Neo4JDatabase,
-		Collection:      req.Collection,
-		Collections:     s.collections,
+		ChunkStrategy:    req.ChunkStrategy,
+		MinChunkChars:    int(req.MinChunkChars),
+		MaxChunkChars:    int(req.MaxChunkChars),
+		LLMEndpoint:      req.LlmEndpoint,
+		LLMModel:         req.LlmModel,
+		SystemPrompt:     req.ExtractionSystemPrompt,
+		Temperature:      req.LlmTemperature,
+		LLMConcurrency:   int(req.LlmConcurrency),
+		EmbedEndpoint:    req.EmbedEndpoint,
+		EmbedModel:       req.EmbedModel,
+		EmbedClient:      s.embedClient,
+		Neo4jURL:         req.Neo4JUrl,
+		Neo4jUser:        req.Neo4JUser,
+		Neo4jPassword:    req.Neo4JPassword,
+		Neo4jDatabase:    req.Neo4JDatabase,
+		Collection:       req.Collection,
+		Collections:      s.collections,
 		GenerateTriplets: req.GenerateTriplets,
 	}
 
@@ -1718,16 +1743,59 @@ func (s *Service) MultiQuerySearch(ctx context.Context, req *pb.MultiQuerySearch
 // Replaces Python's 3x MD5 + 2x disk write with single-pass SHA256 + 1 write.
 func (s *Service) IngestData(ctx context.Context, req *pb.IngestDataReq) (*pb.IngestDataResp, error) {
 	start := time.Now()
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if req.PostgresDsn != "" {
+		return nil, status.Error(codes.InvalidArgument, "database overrides are disabled; configure server metadata storage")
+	}
+	if len(req.Items) == 0 || len(req.Items) > 100 {
+		return nil, status.Error(codes.InvalidArgument, "1 to 100 items required")
+	}
+	actor, verified := ctx.Value(ctxMetadataActorKey{}).(access.MetadataActor)
+	if !verified {
+		if s.ingestRequireAuth {
+			return nil, status.Error(codes.Unauthenticated, "verified identity required")
+		}
+		actor = access.MetadataActor{Actor: access.Actor{UserID: UserIDFromContext(ctx)}, TrustedLocal: true}
+	}
+	if s.ingestRequireAuth && s.ingestDB == nil {
+		return nil, status.Error(codes.Unavailable, "metadata storage unavailable")
+	}
+	datasetName, datasetID := req.DatasetName, req.DatasetId
+	if datasetName == "" {
+		datasetName = "default"
+	}
+	if s.ingestDB != nil && datasetID == "" {
+		query := "SELECT id FROM datasets WHERE name=$1"
+		if s.ingestQ != nil {
+			query = s.ingestQ(query)
+		}
+		err := s.ingestDB.QueryRowContext(ctx, query, datasetName).Scan(&datasetID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return nil, status.Error(codes.Unavailable, "metadata lookup failed")
+		}
+		if datasetID == "" {
+			datasetID = uuid.NewString()
+		}
+	}
 
 	storagePath := req.StoragePath
+	if s.ingestPath != "" {
+		storagePath = s.ingestPath
+	}
 	if storagePath == "" {
 		storagePath = "data/ingested"
 	}
 
+	ownerID := actor.UserID
 	items := make([]ingest.Item, len(req.Items))
 	for i, it := range req.Items {
+		if it == nil {
+			return nil, status.Error(codes.InvalidArgument, "empty item")
+		}
 		items[i] = ingest.Item{
 			ID:          it.Id,
+			OwnerID:     ownerID,
 			Text:        it.Text,
 			FileData:    it.FileData,
 			Filename:    it.Filename,
@@ -1735,9 +1803,20 @@ func (s *Service) IngestData(ctx context.Context, req *pb.IngestDataReq) (*pb.In
 		}
 	}
 
-	results, err := ingest.Ingest(items, storagePath)
+	var results []ingest.Result
+	var rowsWritten int
+	var err error
+	if s.ingestDB != nil {
+		w, configErr := ingest.NewMetadataWriterForStorage(s.ingestDB, s.fileStorage)
+		if configErr != nil {
+			return nil, status.Error(codes.Unavailable, "storage destination unavailable")
+		}
+		results, rowsWritten, err = w.IngestAuthorized(ctx, items, nil, storagePath, s.fileStorage, actor, datasetID, datasetName)
+	} else {
+		results, err = ingest.IngestStored(ctx, items, storagePath, s.fileStorage)
+	}
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "ingest: %v", err)
+		return nil, status.Error(codes.FailedPrecondition, "ingestion denied or unavailable")
 	}
 
 	pbResults := make([]*pb.IngestResult, len(results))
@@ -1759,17 +1838,8 @@ func (s *Service) IngestData(ctx context.Context, req *pb.IngestDataReq) (*pb.In
 		TotalMs: time.Since(start).Milliseconds(),
 	}
 
-	// Optional: write metadata to PostgreSQL
-	if req.PostgresDsn != "" && req.OwnerId != "" {
-		mw, err := ingest.NewMetadataWriter(req.PostgresDsn)
-		if err == nil {
-			defer mw.Close()
-			n, err := mw.WriteMetadata(ctx, results, req.OwnerId, req.DatasetId, req.DatasetName)
-			if err == nil {
-				resp.DbRowsWritten = int32(n)
-				resp.DatasetId = req.DatasetId
-			}
-		}
+	if s.ingestDB != nil {
+		resp.DbRowsWritten, resp.DatasetId = int32(rowsWritten), datasetID
 	}
 
 	resp.TotalMs = time.Since(start).Milliseconds()

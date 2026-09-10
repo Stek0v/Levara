@@ -38,6 +38,34 @@ func TestTenantMiddlewareHeaderRequiresMembership(t *testing.T) {
 	}
 }
 
+func TestTenantEnforcementAcceptsVerifiedDefaultMembership(t *testing.T) {
+	t.Setenv("LEVARA_TENANT_ENFORCED", "true")
+	documentHTTPDialects(t, func(t *testing.T, f *documentHTTPFixture) {
+		app := fiber.New()
+		app.Use(func(c *fiber.Ctx) error { c.Locals("user_id", "owner"); return c.Next() })
+		app.Use(TenantMiddleware(AccessConfig{DB: f.db}))
+		app.Get("/tenant", func(c *fiber.Ctx) error { return c.SendString(ResolveTenantID(c)) })
+		resp, err := app.Test(httptest.NewRequest("GET", "/tenant", nil))
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil || resp.StatusCode != 200 || string(body) != "a" {
+			t.Fatalf("default membership: status=%d body=%s err=%v", resp.StatusCode, body, err)
+		}
+		f.exec(`DELETE FROM user_tenant WHERE user_id='owner'`)
+		resp, err = app.Test(httptest.NewRequest("GET", "/tenant", nil))
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != 403 {
+			t.Fatalf("missing membership: %d", resp.StatusCode)
+		}
+	})
+}
+
 func TestTenantMiddlewareHeaderRejectsNonMember(t *testing.T) {
 	db := newTenantTestDB(t)
 
@@ -197,7 +225,7 @@ func newTenantAdminTestDB(t *testing.T) *sql.DB {
 	}
 	t.Cleanup(func() { db.Close() })
 	for _, stmt := range []string{
-		`CREATE TABLE users (id TEXT PRIMARY KEY, is_superuser BOOLEAN DEFAULT FALSE)`,
+		`CREATE TABLE users (id TEXT PRIMARY KEY, is_superuser BOOLEAN DEFAULT FALSE, is_active BOOLEAN NOT NULL DEFAULT TRUE)`,
 		`CREATE TABLE tenants (id TEXT PRIMARY KEY, name TEXT UNIQUE, owner_id TEXT, created_at TEXT)`,
 		`CREATE TABLE user_tenant (user_id TEXT, tenant_id TEXT, UNIQUE(user_id, tenant_id))`,
 		`CREATE TABLE datasets (id TEXT PRIMARY KEY, owner_id TEXT)`,

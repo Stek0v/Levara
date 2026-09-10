@@ -2,12 +2,24 @@ package http
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"strconv"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 )
+
+func mcpRequestContext(c *fiber.Ctx, req jsonRPCRequest) (context.Context, context.CancelFunc) {
+	var params struct {
+		Name string `json:"name"`
+	}
+	_ = json.Unmarshal(req.Params, &params)
+	if req.Method == "tools/call" && (params.Name == "sync" || params.Name == "sync_status") {
+		return syncRequestContext(c)
+	}
+	return apiRequestContext(c)
+}
 
 const (
 	// Default upper bound for one search request end-to-end (vector/graph/LLM).
@@ -25,7 +37,15 @@ const (
 // Timeout can be tuned via SEARCH_REQUEST_TIMEOUT_MS.
 func searchRequestContext(c *fiber.Ctx) (context.Context, context.CancelFunc) {
 	timeout := timeoutFromEnvMs("SEARCH_REQUEST_TIMEOUT_MS", defaultSearchRequestTimeout)
-	return requestContextWithTimeout(c, timeout)
+	ctx, cancel := requestContextWithTimeout(c, timeout)
+	if c != nil {
+		ctx = context.WithValue(ctx, searchActorKey{}, workspaceActorFromFiber(c))
+		if _, ok := ctx.Value(searchEvidenceKey{}).(*searchEvidence); !ok {
+			ctx = context.WithValue(ctx, searchEvidenceKey{}, &searchEvidence{sources: make(map[searchDocumentSource]struct{})})
+		}
+		c.SetUserContext(ctx)
+	}
+	return ctx, cancel
 }
 
 // apiRequestContext returns a request-scoped context for regular API handlers.

@@ -282,7 +282,7 @@ func TestCanUseDatasetForUpload(t *testing.T) {
 		// read-only, uploading mutates the dataset.
 		{"viewer share denied", "user-b", "payments", false},
 		{"foreign", "user-c", "payments", false},
-		{"public", "user-c", "public", true},
+		{"public read-only", "user-c", "public", false},
 		{"missing allowed for create", "user-c", "new-dataset", true},
 		{"anonymous dev mode", "", "payments", true},
 	}
@@ -449,8 +449,8 @@ func TestIsActive(t *testing.T) {
 	}{
 		{"active user", "user-b", true},
 		{"deactivated user", "user-a", false},
-		{"missing user fails open active", "ghost", true},
-		{"empty user is active", "", true},
+		{"missing user fails closed", "ghost", false},
+		{"empty user is not an active identity", "", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -464,9 +464,35 @@ func TestIsActive(t *testing.T) {
 		})
 	}
 
-	// A nil DB never queries and treats everyone as active — dev/single-user mode.
-	if got, err := (SQLPolicy{}).IsActive(ctx, "user-a"); !got || err != nil {
-		t.Fatalf("nil-db IsActive=%v,%v want true,nil", got, err)
+	// A nil DB cannot establish an active identity; policy callers own dev mode.
+	if got, err := (SQLPolicy{}).IsActive(ctx, "user-a"); got || err != nil {
+		t.Fatalf("nil-db IsActive=%v,%v want false,nil", got, err)
+	}
+}
+
+func TestInactiveIdentityCannotUseVisibilityHelpers(t *testing.T) {
+	db := newPolicyTestDB(t)
+	p := SQLPolicy{DB: db, Q: sqliteQ}
+	ctx := context.Background()
+	if _, err := db.Exec(`UPDATE users SET is_active=false WHERE id IN ('user-a','root')`); err != nil {
+		t.Fatal(err)
+	}
+	for _, uid := range []string{"user-a", "root", "missing"} {
+		if ids := p.AllowedDatasetIDs(ctx, uid); ids == nil || len(ids) != 0 {
+			t.Errorf("%s unrestricted IDs=%v", uid, ids)
+		}
+		if ids, err := p.VisibleDatasetIDs(ctx, uid); err == nil || len(ids) != 0 {
+			t.Errorf("%s visible=%v err=%v", uid, ids, err)
+		}
+		if rows, err := p.ListVisibleDatasets(ctx, uid); err == nil || len(rows) != 0 {
+			t.Errorf("%s rows=%v err=%v", uid, rows, err)
+		}
+		if p.CanAccessDataset(ctx, "payments", uid) || p.CanManageDatasetShares(ctx, "payments", uid) {
+			t.Errorf("%s granted access", uid)
+		}
+		if allowed, err := p.CanUseDatasetForUpload(ctx, "new-dataset", uid); allowed || err != nil {
+			t.Errorf("%s upload allowed=%v err=%v", uid, allowed, err)
+		}
 	}
 }
 
@@ -481,7 +507,7 @@ func newPolicyTestDB(t *testing.T) *sql.DB {
 		`CREATE TABLE users (id TEXT PRIMARY KEY, email TEXT DEFAULT '', is_active INTEGER NOT NULL DEFAULT 1, is_superuser INTEGER NOT NULL DEFAULT 0)`,
 		`CREATE TABLE datasets (id TEXT PRIMARY KEY, name TEXT DEFAULT '', owner_id TEXT, created_at TEXT DEFAULT '', github_repo TEXT DEFAULT '')`,
 		`CREATE TABLE dataset_shares (id TEXT PRIMARY KEY, dataset_id TEXT, user_id TEXT, role TEXT)`,
-		`INSERT INTO users(id, email, is_superuser) VALUES ('user-a', 'user-a@example.com', 0), ('user-b', 'user-b@example.com', 0), ('user-c', 'user-c@example.com', 0), ('root', 'root@example.com', 1)`,
+		`INSERT INTO users(id, email, is_superuser) VALUES ('user-a', 'user-a@example.com', 0), ('user-b', 'user-b@example.com', 0), ('user-c', 'user-c@example.com', 0), ('user-d', 'user-d@example.com', 0), ('root', 'root@example.com', 1)`,
 		`INSERT INTO datasets(id, name, owner_id, created_at) VALUES ('payments', 'Payments', 'user-a', '2026-01-01T00:00:00Z')`,
 		`INSERT INTO datasets(id, name, owner_id, created_at) VALUES ('owned-b', 'Owned B', 'user-b', '2026-01-02T00:00:00Z')`,
 		`INSERT INTO datasets(id, name, owner_id, created_at) VALUES ('public', 'Public', '', '2026-01-03T00:00:00Z')`,

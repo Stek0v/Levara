@@ -86,8 +86,19 @@ func newMW(t *testing.T, tk *oidcTestKeys, requireAuth bool) (*fiber.App, *vecto
 	if err != nil {
 		t.Fatal(err)
 	}
-	oidcAuth := ExternalBearerAuth(&testExternalAuth{verifier: verifier})
+	db, cleanup := newAuthTestDB(t)
+	t.Cleanup(cleanup)
+	s := accesspkg.SCIMStore{DB: db, Q: Q}
+	if err := s.EnsureSchema(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.ProvisionCreate(context.Background(), accesspkg.SCIMUser{Issuer: "directory", ExternalID: "ext-user-1", Email: "alice@example.com", Active: true}); err != nil {
+		t.Fatal(err)
+	}
+	seedAuthUser(t, db, "local-user-1")
+	oidcAuth := ExternalBearerAuth(&testExternalAuth{verifier: verifier, bridge: accesspkg.SQLIdentityBridge{DB: db, Q: Q, TrustedIssuers: map[string]string{"https://idp.example.com": "directory"}}})
 	app := fiber.New()
+	app.Use(func(c *fiber.Ctx) error { c.Locals("auth_db", &DBRef{DB: db}); return c.Next() })
 	app.Use(JWTMiddlewareWithOIDC("test-secret-not-used-by-oidc", requireAuth, oidcAuth))
 	app.Get("/whoami", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"user_id": c.Locals("user_id")})
@@ -233,15 +244,17 @@ func isExternalOIDCID(id string) bool {
 // tests the same way cmd/server's composition root does in production.
 type testExternalAuth struct {
 	verifier *vectorAuth.OIDCVerifier
+	bridge   accesspkg.IdentityBridge
 }
 
-func (t *testExternalAuth) Authenticate(_ context.Context, token string) (ExternalPrincipal, error) {
+func (t *testExternalAuth) Authenticate(ctx context.Context, token string) (ExternalPrincipal, error) {
 	claims, err := t.verifier.Verify(token)
 	if err != nil {
 		return ExternalPrincipal{}, err
 	}
-	return ExternalPrincipal{
-		UserID: accesspkg.SyntheticUserID(claims.Issuer, claims.Subject),
-		Email:  claims.Email,
-	}, nil
+	p, err := t.bridge.ResolveExternal(ctx, accesspkg.ExternalIdentity{Issuer: claims.Issuer, Subject: claims.Subject, Email: claims.Email})
+	if err != nil {
+		return ExternalPrincipal{}, err
+	}
+	return ExternalPrincipal{UserID: p.UserID, Email: p.Email, IssuedAt: claims.IssuedAt, ExpiresAt: claims.ExpiresAt}, nil
 }

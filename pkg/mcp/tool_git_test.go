@@ -247,7 +247,11 @@ func TestToolGitSearch_EmbedNotConfigured(t *testing.T) {
 	if res.IsError {
 		t.Errorf("unexpected IsError: %q", res.Content[0].Text)
 	}
-	if res.Content[0].Text != "No results (embedding service not configured)" {
+	var payload struct {
+		Results []any  `json:"results"`
+		Message string `json:"message"`
+	}
+	if json.Unmarshal([]byte(res.Content[0].Text), &payload) != nil || len(payload.Results) != 0 || payload.Message != "No results (embedding service not configured)" {
 		t.Errorf("wrong text: %q", res.Content[0].Text)
 	}
 }

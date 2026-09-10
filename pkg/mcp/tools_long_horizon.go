@@ -15,6 +15,27 @@ func longHorizonToolDescriptors() []Tool {
 			"verification": obj(),
 		}, "required": []string{"criterion_id", "description"}},
 	}
+	actionSchema := map[string]any{
+		"type": "object", "additionalProperties": false,
+		"description": "Optional for manual steps; required for auto_run. Only a structured tool call executes. Maximum encoded size 64 KiB.",
+		"required":    []string{"kind", "name", "arguments", "assertions"},
+		"properties": map[string]any{
+			"kind":      map[string]any{"type": "string", "enum": []string{"mcp_tool"}},
+			"name":      nonEmpty("Tool name. Autonomous executor currently supports workspace_read and non-indexing workspace_write."),
+			"arguments": obj(),
+			"assertions": map[string]any{"type": "array", "minItems": 1, "maxItems": 16, "items": map[string]any{
+				"type": "object", "additionalProperties": false, "required": []string{"pointer", "equals"},
+				"properties": map[string]any{"pointer": stringProp("RFC 6901 JSON pointer into the actual tool result. Empty pointer means the whole value."), "equals": map[string]any{"description": "Required exact JSON value, including explicit null. Numbers retain their JSON representation."}},
+			}},
+		},
+	}
+	stepsSchema := map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "object",
+		"required": []string{"description"}, "properties": map[string]any{
+			"step_id": nonEmpty("Stable step ID; generated when omitted."), "description": nonEmpty("Human-readable work description; never executed."),
+			"required": booleanProp("Defaults to true."), "dependencies": arrayOfStringsProp("Existing step IDs forming an acyclic graph."),
+			"criterion_ids": arrayOfStringsProp("Existing DoD criteria. Required and nonempty for auto_run steps."), "action": actionSchema,
+		},
+	}}
 	validationSchema := objectSchema(map[string]any{
 		"valid": booleanProp("True when all completion invariants hold."), "task_id": stringProp("Task ID."),
 		"mode": stringProp("checkpoint or completion."), "version": integerProp("Current task version."),
@@ -35,7 +56,7 @@ func longHorizonToolDescriptors() []Tool {
 			InputSchema:  map[string]any{"type": "object", "properties": map[string]any{"task_id": nonEmpty("Task ID."), "max_tokens": integerProp("100-4000 token budget.")}, "required": []string{"task_id"}}},
 		{Name: "task_plan", Group: "task", Description: "Replace a not-yet-started task plan using optimistic concurrency and validated dependencies.",
 			OutputSchema: objectSchema(map[string]any{"ok": booleanProp("True when saved."), "task_id": stringProp("Task ID."), "status": stringProp("planned."), "version": integerProp("New version."), "steps": integerProp("Step count.")}),
-			InputSchema:  map[string]any{"type": "object", "properties": map[string]any{"task_id": nonEmpty("Task ID."), "base_version": integerProp("Expected version."), "steps": arrObj(), "actor_id": stringProp("Agent identity.")}, "required": []string{"task_id", "base_version", "steps"}}},
+			InputSchema:  map[string]any{"type": "object", "properties": map[string]any{"task_id": nonEmpty("Task ID."), "base_version": integerProp("Expected version."), "steps": stepsSchema, "actor_id": stringProp("Agent identity.")}, "required": []string{"task_id", "base_version", "steps"}}},
 		{Name: "task_step", Group: "task", Description: "Atomically claim, renew, release, pass, or fail a task step lease.",
 			OutputSchema: objectSchema(map[string]any{"ok": booleanProp("True when transitioned."), "task_id": stringProp("Task ID."), "step_id": stringProp("Step ID."), "action": stringProp("Applied action."), "version": integerProp("New version.")}),
 			InputSchema:  map[string]any{"type": "object", "properties": map[string]any{"task_id": nonEmpty("Task ID."), "step_id": nonEmpty("Step ID."), "action": map[string]any{"type": "string", "enum": []string{"claim", "renew", "release", "pass", "fail"}}, "base_version": integerProp("Expected task version."), "actor_id": stringProp("Lease owner."), "lease_seconds": integerProp("30-3600 seconds.")}, "required": []string{"task_id", "step_id", "action", "base_version"}}},
@@ -44,7 +65,7 @@ func longHorizonToolDescriptors() []Tool {
 			InputSchema:  map[string]any{"type": "object", "properties": map[string]any{"task_id": nonEmpty("Task ID."), "idempotency_key": nonEmpty("Stable checkpoint key."), "base_version": integerProp("Expected version."), "step_id": stringProp("Current step."), "summary": nonEmpty("Verified compact summary."), "verified": arrayOfStringsProp("Verified items."), "failed": arrayOfStringsProp("Failed items."), "next_action": stringProp("Next action."), "workspace_revision": stringProp("Current revision."), "blocker": obj(), "resolved_blocker_ids": arrayOfStringsProp("Active blocker IDs resolved by this checkpoint."), "memory_candidates": arrObj(), "actor_id": stringProp("Agent identity.")}, "required": []string{"task_id", "idempotency_key", "base_version", "summary"}}},
 		{Name: "task_receipt", Group: "task", Description: "Record immutable command, artifact, source, observation, or reviewer evidence for Definition of Done criteria.",
 			OutputSchema: objectSchema(map[string]any{"ok": booleanProp("True when recorded."), "task_id": stringProp("Task ID."), "receipt_id": stringProp("Receipt ID."), "version": integerProp("New version."), "idempotent_replay": booleanProp("True when an existing receipt was returned.")}),
-			InputSchema:  map[string]any{"type": "object", "properties": map[string]any{"task_id": nonEmpty("Task ID."), "idempotency_key": nonEmpty("Stable receipt key."), "base_version": integerProp("Expected version."), "receipt_type": map[string]any{"type": "string", "enum": []string{"command", "artifact", "source", "observation", "reviewer"}}, "status": map[string]any{"type": "string", "enum": []string{"pass", "fail"}}, "criterion_ids": arrayOfStringsProp("DoD criterion IDs."), "observation": stringProp("Observed result."), "exit_code": integerProp("Command exit code."), "evidence_uri": stringProp("External artifact URI."), "artifact_digest": stringProp("SHA-256 or equivalent."), "workspace_revision": stringProp("Workspace revision."), "metadata": obj(), "actor_id": stringProp("Agent identity.")}, "required": []string{"task_id", "idempotency_key", "base_version", "receipt_type", "status", "criterion_ids"}}},
+			InputSchema:  map[string]any{"type": "object", "properties": map[string]any{"task_id": nonEmpty("Task ID."), "idempotency_key": nonEmpty("Stable receipt key."), "base_version": integerProp("Expected version."), "receipt_type": map[string]any{"type": "string", "enum": []string{"command", "artifact", "source", "observation", "reviewer"}}, "status": map[string]any{"type": "string", "enum": []string{"pass", "fail"}}, "criterion_ids": arrayOfStringsProp("DoD criterion IDs."), "observation": stringProp("Observed result."), "exit_code": integerProp("Command exit code."), "evidence_uri": stringProp("External artifact URI."), "artifact_digest": stringProp("SHA-256 or equivalent."), "workspace_revision": stringProp("Workspace revision."), "metadata": obj(), "actor_id": stringProp("Lease/audit identity, never authorization. Required to match the lease when step_id is supplied."), "step_id": stringProp("Optional execution binding. A new receipt requires this step to be active under the same unexpired actor lease.")}, "required": []string{"task_id", "idempotency_key", "base_version", "receipt_type", "status", "criterion_ids"}}},
 		{Name: "task_validate", Group: "task", Description: "Deterministically evaluate receipts, freshness, steps, blockers, leases, and risk-based reviewer policy.", OutputSchema: validationSchema,
 			InputSchema: map[string]any{"type": "object", "properties": map[string]any{"task_id": nonEmpty("Task ID."), "mode": map[string]any{"type": "string", "enum": []string{"checkpoint", "completion"}}}, "required": []string{"task_id"}}},
 		{Name: "task_complete", Group: "task", Description: "Atomically complete a valid task and promote verified durable-memory candidates.",

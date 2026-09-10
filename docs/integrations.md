@@ -173,12 +173,12 @@ feature flags, а доступ к данным — от аутентификац
 
 ## 10. LDAP/AD и SSO
 
-OIDC bearer verification, SAML и SCIM Users имеют отдельные HTTP-поверхности.
-Native LDAP/LDAPS, встроенный browser OIDC login, SCIM→SSO identity linkage и
-эффективные group grants отсутствуют. Настройки и проверяемые ограничения:
-[enterprise identity](enterprise-identity.md). Не используйте product preset
-как свидетельство, что корпоративный пользователь уже может войти и читать
-только разрешённые документы.
+OIDC bearer verification, browser OIDC/PKCE, SAML, прямой LDAP/LDAPS/StartTLS
+и SCIM Users/Groups имеют отдельные HTTP-поверхности. SQL identity bridge
+связывает доверенный issuer/subject с provisioned user. Document/group policy
+реализована, но её публичный router ещё не подключён. Настройки и проверяемые
+ограничения: [enterprise identity](enterprise-identity.md). Product preset сам
+по себе не доказывает работу реального каталога, входа и прав на документы.
 
 ## 11. Docker Compose
 

@@ -17,6 +17,31 @@ var profileEnvKeys = []string{
 	"LEVARA_TENANT_ENFORCED",
 	"LEVARA_WORKSPACE_AUDIT_EXPORT",
 	"LEVARA_SSO_BRIDGE",
+	"STORAGE_ENCRYPTION", "KMS_KEY_ARN", "KMS_READ_KEY_ARNS", "KMS_REGION", "KMS_ENDPOINT", "KMS_TIMEOUT", "KMS_CACHE_TTL",
+	"STORAGE_ENCRYPTION_MAX_OBJECT_BYTES", "STORAGE_ENCRYPTION_MAX_SPOOL_BYTES", "STORAGE_ENCRYPTION_MAX_IN_FLIGHT", "STORAGE_ENCRYPTION_MAX_WAITERS", "STORAGE_ENCRYPTION_TIMEOUT", "STORAGE_ENCRYPTION_SPOOL_DIRECTORY",
+	"AUDIT_WEBHOOK_URL", "AUDIT_WEBHOOK_TOKEN_FILE", "AUDIT_DESTINATION_ID", "AUDIT_QUEUE_MAX_EVENTS", "AUDIT_QUEUE_MAX_BYTES", "AUDIT_MAX_ATTEMPTS", "AUDIT_ADMISSION_TIMEOUT", "AUDIT_WEBHOOK_TIMEOUT",
+}
+
+func TestRunConfigCheckValidatesIntegrationsOffline(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		env  map[string]string
+		want int
+	}{
+		{"valid", map[string]string{"STORAGE_ENCRYPTION": "aws-kms", "KMS_KEY_ARN": "arn:aws:kms:eu-central-1:123456789012:key/test-key", "KMS_ENDPOINT": "https://unreachable.invalid", "AUDIT_WEBHOOK_URL": "https://siem.invalid/events"}, 0},
+		{"bad-key", map[string]string{"STORAGE_ENCRYPTION": "aws-kms", "KMS_KEY_ARN": "alias/current"}, 1},
+		{"bad-ttl", map[string]string{"STORAGE_ENCRYPTION": "aws-kms", "KMS_KEY_ARN": "arn:aws:kms:eu-central-1:123456789012:key/test-key", "KMS_CACHE_TTL": "6m"}, 1},
+		{"bad-capacity", map[string]string{"AUDIT_WEBHOOK_URL": "https://siem.invalid/events", "AUDIT_QUEUE_MAX_EVENTS": "1000001"}, 1},
+		{"bad-timeout", map[string]string{"AUDIT_WEBHOOK_URL": "https://siem.invalid/events", "AUDIT_WEBHOOK_TIMEOUT": "30s"}, 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			setProfileEnv(t, test.env)
+			var out strings.Builder
+			if code := runConfigCheck(&out, false, "", false); code != test.want {
+				t.Fatalf("code=%d want=%d %s", code, test.want, out.String())
+			}
+		})
+	}
 }
 
 func setProfileEnv(t *testing.T, overrides map[string]string) {

@@ -7,27 +7,29 @@ import (
 	"testing"
 )
 
-// T-9b smoke for backup utility. Covers the pure DSN parser and the
-// manifest read/write roundtrip. PgDump/PgRestore/FullBackup require live
-// binaries (pg_dump, psql) and a real PostgreSQL — out of scope for unit
-// tests; covered by the cmd/backup integration suite.
+// Parser and manifest checks complement the fake PostgreSQL client failure tests.
 
 func TestParseDSNToArgs_URIFormat(t *testing.T) {
-	cases := []string{
-		"postgres://user:pass@localhost:5432/dbname",
-		"postgresql://x:y@host/db",
+	cases := []struct{ dsn, sanitized, password string }{
+		{"postgres://user:pass@localhost:5432/dbname", "postgres://user@localhost:5432/dbname", "pass"},
+		{"postgresql://x:y@host/db", "postgresql://x@host/db", "y"},
+		{"postgres://x:y@host/db?password=p%40ss&sslmode=require", "postgres://x@host/db?sslmode=require", "p@ss"},
+		{"postgres://x:y@host/db?password=first&password=last", "postgres://x@host/db", "last"},
+		{"postgres://x:@host/db", "postgres://x@host/db", ""},
+		{"postgres://x@host/db?password=p+ass&application_name=a%20b&options=-c%20work_mem%3D64MB", "postgres://x@host/db?application_name=a%20b&options=-c%20work_mem%3D64MB", "p+ass"},
+		{"postgres://x@host/db?%70assword=s%26ecret&sslmode=require&sslmode=verify-full", "postgres://x@host/db?sslmode=require&sslmode=verify-full", "s&ecret"},
 	}
-	for _, dsn := range cases {
-		args, _ := parseDSNToArgs(dsn)
-		if len(args) != 1 || args[0] != dsn {
-			t.Errorf("URI dsn %q → args %v, want [%q]", dsn, args, dsn)
+	for _, tc := range cases {
+		args, password, err := parseDSNToArgs(tc.dsn)
+		if err != nil || !reflect.DeepEqual(args, []string{"--dbname", tc.sanitized}) || password == nil || *password != tc.password {
+			t.Errorf("URI args=%v password=%v err=%v", args, password, err)
 		}
 	}
 }
 
 func TestParseDSNToArgs_KeyValueFormat(t *testing.T) {
 	dsn := "host=localhost port=5433 user=levara password=<test-secret> dbname=levara"
-	args, _ := parseDSNToArgs(dsn)
+	args, _, _ := parseDSNToArgs(dsn)
 
 	want := []string{
 		"-h", "localhost",
@@ -40,15 +42,15 @@ func TestParseDSNToArgs_KeyValueFormat(t *testing.T) {
 	}
 	// Password must NOT leak into argv — it's passed via PGPASSWORD env.
 	for _, a := range args {
-		if a == "secret" {
+		if strings.Contains(a, "<test-secret>") {
 			t.Error("password leaked into argv (must use PGPASSWORD instead)")
 		}
 	}
 }
 
 func TestParseDSNToArgs_UsernameAlias(t *testing.T) {
-	// libpq accepts both `user=` and `username=`; we should map both to -U.
-	args, _ := parseDSNToArgs("username=alice dbname=db")
+	// Keep the backup utility's legacy username= alias.
+	args, _, _ := parseDSNToArgs("username=alice dbname=db")
 	got := strings.Join(args, " ")
 	if !strings.Contains(got, "-U alice") {
 		t.Errorf("username= alias not mapped: %v", args)
@@ -57,7 +59,7 @@ func TestParseDSNToArgs_UsernameAlias(t *testing.T) {
 
 func TestParseDSNToArgs_MalformedToken(t *testing.T) {
 	// Tokens without "=" are silently skipped — keeps the parser robust.
-	args, _ := parseDSNToArgs("host=localhost weirdtoken port=5432")
+	args, _, _ := parseDSNToArgs("host=localhost weirdtoken port=5432")
 	got := strings.Join(args, " ")
 	if !strings.Contains(got, "-h localhost") || !strings.Contains(got, "-p 5432") {
 		t.Errorf("unexpected args: %v", args)

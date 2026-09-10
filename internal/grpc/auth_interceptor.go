@@ -12,7 +12,9 @@ package grpc
 
 import (
 	"context"
+	"os"
 	"strings"
+	"time"
 
 	grpclib "google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -27,6 +29,7 @@ import (
 // is stored. Typed struct keeps it from colliding with any string key a
 // downstream library might use.
 type ctxUserIDKey struct{}
+type ctxMetadataActorKey struct{}
 
 type ctxPrivateInfoKey struct{}
 
@@ -52,7 +55,13 @@ func UnaryAuthInterceptor(secret string, requireAuth bool, policy access.SQLPoli
 		if publicMethods[info.FullMethod] {
 			return handler(context.WithValue(ctx, ctxPrivateInfoKey{}, requireAuth), req)
 		}
-		uid, ok := authFromMetadata(ctx, secret)
+		scopedIngest := info.FullMethod == "/levara.v1.LevaraService/IngestData"
+		if scopedIngest {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
+			defer cancel()
+		}
+		payload, ok := authFromMetadata(ctx, secret)
 		if !ok {
 			if requireAuth {
 				return nil, status.Error(codes.Unauthenticated, "missing or invalid authorization token")
@@ -61,11 +70,42 @@ func UnaryAuthInterceptor(secret string, requireAuth bool, policy access.SQLPoli
 			return handler(ctx, req)
 		}
 		if requireAuth {
-			if err := authorizeGlobalStorage(ctx, uid, policy); err != nil {
+			if scopedIngest {
+				active, err := policy.IsActive(ctx, payload.Sub)
+				if err != nil || !active {
+					return nil, status.Error(codes.PermissionDenied, "active identity required")
+				}
+			} else if err := authorizeGlobalStorage(ctx, payload.Sub, policy); err != nil {
 				return nil, err
 			}
 		}
-		ctx = context.WithValue(ctx, ctxUserIDKey{}, uid)
+		if requireAuth && (access.ValidateCredential(ctx, policy.DB, policy.Q, payload.Sub, payload.CredentialEpoch) != nil || access.ValidateBrowserSession(ctx, policy.DB, policy.Q, payload.Sub, payload.SessionID) != nil) {
+			return nil, status.Error(codes.Unauthenticated, "revoked credential")
+		}
+		ctx = context.WithValue(ctx, ctxUserIDKey{}, payload.Sub)
+		actor := access.Actor{UserID: payload.Sub}
+		if scopedIngest {
+			md, _ := metadata.FromIncomingContext(ctx)
+			values := md.Get("x-tenant-id")
+			if len(values) > 1 || (len(values) == 1 && len(values[0]) > 256) {
+				return nil, status.Error(codes.InvalidArgument, "invalid tenant selector")
+			}
+			if len(values) == 1 {
+				actor.TenantID = values[0]
+			}
+			if requireAuth && actor.TenantID == "" {
+				var err error
+				actor.TenantID, err = policy.DefaultTenantForUser(ctx, payload.Sub)
+				if err != nil {
+					return nil, status.Error(codes.Unavailable, "tenant resolution unavailable")
+				}
+			}
+
+			if requireAuth && actor.TenantID == "" && (strings.EqualFold(strings.TrimSpace(os.Getenv("LEVARA_TENANT_ENFORCED")), "true") || os.Getenv("LEVARA_TENANT_ENFORCED") == "1") {
+				return nil, status.Error(codes.PermissionDenied, "tenant membership required")
+			}
+		}
+		ctx = context.WithValue(ctx, ctxMetadataActorKey{}, access.MetadataActor{Actor: actor, Credential: access.MetadataCredential{Kind: "jwt", SessionID: payload.SessionID, Epoch: payload.CredentialEpoch, IssuedAt: payload.Iat, ExpiresAt: payload.Exp}})
 		return handler(ctx, req)
 	}
 }
@@ -78,7 +118,7 @@ func StreamAuthInterceptor(secret string, requireAuth bool, policy access.SQLPol
 		if publicMethods[info.FullMethod] {
 			return handler(srv, ss)
 		}
-		uid, ok := authFromMetadata(ss.Context(), secret)
+		payload, ok := authFromMetadata(ss.Context(), secret)
 		if !ok {
 			if requireAuth {
 				return status.Error(codes.Unauthenticated, "missing or invalid authorization token")
@@ -86,11 +126,14 @@ func StreamAuthInterceptor(secret string, requireAuth bool, policy access.SQLPol
 			return handler(srv, ss)
 		}
 		if requireAuth {
-			if err := authorizeGlobalStorage(ss.Context(), uid, policy); err != nil {
+			if err := authorizeGlobalStorage(ss.Context(), payload.Sub, policy); err != nil {
 				return err
 			}
 		}
-		return handler(srv, &authedStream{ServerStream: ss, ctx: context.WithValue(ss.Context(), ctxUserIDKey{}, uid)})
+		if requireAuth && (access.ValidateCredential(ss.Context(), policy.DB, policy.Q, payload.Sub, payload.CredentialEpoch) != nil || access.ValidateBrowserSession(ss.Context(), policy.DB, policy.Q, payload.Sub, payload.SessionID) != nil) {
+			return status.Error(codes.Unauthenticated, "revoked credential")
+		}
+		return handler(srv, &authedStream{ServerStream: ss, ctx: context.WithValue(ss.Context(), ctxUserIDKey{}, payload.Sub)})
 	}
 }
 
@@ -117,23 +160,23 @@ func authorizeGlobalStorage(ctx context.Context, uid string, policy access.SQLPo
 // authFromMetadata extracts and verifies the JWT. Accepts "Bearer <token>"
 // or raw token in the authorization header; gRPC metadata keys are
 // lower-cased on transport so we look up the lowercase form.
-func authFromMetadata(ctx context.Context, secret string) (string, bool) {
+func authFromMetadata(ctx context.Context, secret string) (*vectorAuth.Payload, bool) {
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
-		return "", false
+		return nil, false
 	}
 	vals := md.Get("authorization")
 	if len(vals) == 0 {
-		return "", false
+		return nil, false
 	}
 	token := strings.TrimSpace(vals[0])
 	token = strings.TrimPrefix(token, "Bearer ")
 	token = strings.TrimPrefix(token, "bearer ")
 	p, ok := vectorAuth.VerifyJWT(token, secret)
 	if !ok || p.Sub == "" {
-		return "", false
+		return nil, false
 	}
-	return p.Sub, true
+	return p, true
 }
 
 // authedStream is a thin grpclib.ServerStream wrapper that overrides

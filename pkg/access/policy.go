@@ -22,9 +22,10 @@ const (
 type QueryRewriter func(string) string
 
 type SQLPolicy struct {
-	DB *sql.DB
-	Q  QueryRewriter
-	QA QueryArgsRewriter
+	DB     *sql.DB
+	readTx *sql.Tx
+	Q      QueryRewriter
+	QA     QueryArgsRewriter
 }
 
 type QueryArgsRewriter func(string, ...any) (string, []any)
@@ -101,7 +102,7 @@ func (p SQLPolicy) AuthorizeWorkspace(ctx context.Context, req WorkspaceRequest)
 	}
 
 	var ownerID string
-	err := p.DB.QueryRowContext(ctx, q("SELECT COALESCE(owner_id, '') FROM datasets WHERE id = $1"), req.ProjectID).Scan(&ownerID)
+	err := p.reader().QueryRowContext(ctx, q("SELECT COALESCE(owner_id, '') FROM datasets WHERE id = $1"), req.ProjectID).Scan(&ownerID)
 	if errors.Is(err, sql.ErrNoRows) {
 		decision.Reason = "denied"
 		return decision, nil
@@ -117,7 +118,7 @@ func (p SQLPolicy) AuthorizeWorkspace(ctx context.Context, req WorkspaceRequest)
 	}
 
 	var role string
-	err = p.DB.QueryRowContext(ctx, q("SELECT role FROM dataset_shares WHERE dataset_id = $1 AND user_id = $2"), req.ProjectID, req.UserID).Scan(&role)
+	err = p.reader().QueryRowContext(ctx, q("SELECT role FROM dataset_shares WHERE dataset_id = $1 AND user_id = $2"), req.ProjectID, req.UserID).Scan(&role)
 	if errors.Is(err, sql.ErrNoRows) {
 		decision.Reason = "denied"
 		return decision, nil
@@ -176,7 +177,7 @@ func (p SQLPolicy) AuthorizeDataset(ctx context.Context, actor Actor, datasetID,
 	}
 
 	var ownerID string
-	err := p.DB.QueryRowContext(ctx,
+	err := p.reader().QueryRowContext(ctx,
 		p.rewrite("SELECT COALESCE(owner_id, '') FROM datasets WHERE id = $1"),
 		datasetID,
 	).Scan(&ownerID)
@@ -205,7 +206,7 @@ func (p SQLPolicy) AuthorizeDataset(ctx context.Context, actor Actor, datasetID,
 	}
 
 	var role string
-	err = p.DB.QueryRowContext(ctx,
+	err = p.reader().QueryRowContext(ctx,
 		p.rewrite("SELECT role FROM dataset_shares WHERE dataset_id = $1 AND user_id = $2"),
 		datasetID, actor.UserID,
 	).Scan(&role)
@@ -250,7 +251,7 @@ func (p SQLPolicy) IsSuperuser(ctx context.Context, userID string) (bool, error)
 		return false, nil
 	}
 	var isSuperuser bool
-	err := p.DB.QueryRowContext(ctx, p.rewrite("SELECT COALESCE(is_superuser, false) FROM users WHERE id = $1"), userID).Scan(&isSuperuser)
+	err := p.reader().QueryRowContext(ctx, p.rewrite("SELECT COALESCE(is_superuser, false) FROM users WHERE id = $1"), userID).Scan(&isSuperuser)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -260,21 +261,16 @@ func (p SQLPolicy) IsSuperuser(ctx context.Context, userID string) (bool, error)
 	return isSuperuser, nil
 }
 
-// IsActive reports whether userID's account is active. It is the canonical
-// activation lookup the policy facades route through so a SCIM-deprovisioned
-// user (users.is_active = false) is denied everywhere. A nil DB or empty user
-// is "active" (dev-mode/anonymous never reach the gate), and a missing user row
-// is fail-open active (COALESCE default true) — the deny path is an explicit
-// is_active = false, not the mere absence of a row, matching IsSuperuser's
-// ErrNoRows handling. Only a real query failure returns an error.
+// IsActive only recognizes an existing active SQL user. Explicit dev-mode
+// bypasses belong to the calling policy/auth boundary, never this lookup.
 func (p SQLPolicy) IsActive(ctx context.Context, userID string) (bool, error) {
 	if p.DB == nil || userID == "" {
-		return true, nil
+		return false, nil
 	}
 	var active bool
-	err := p.DB.QueryRowContext(ctx, p.rewrite("SELECT COALESCE(is_active, true) FROM users WHERE id = $1"), userID).Scan(&active)
+	err := p.reader().QueryRowContext(ctx, p.rewrite("SELECT COALESCE(is_active, false) FROM users WHERE id = $1"), userID).Scan(&active)
 	if errors.Is(err, sql.ErrNoRows) {
-		return true, nil
+		return false, nil
 	}
 	if err != nil {
 		return false, err
@@ -291,6 +287,9 @@ func (p SQLPolicy) AllowedDatasetIDs(ctx context.Context, userID string) []strin
 		return nil
 	}
 
+	if active, err := p.IsActive(ctx, userID); err != nil || !active {
+		return []string{}
+	}
 	if super, err := p.IsSuperuser(ctx, userID); err == nil && super {
 		return nil
 	}
@@ -298,7 +297,7 @@ func (p SQLPolicy) AllowedDatasetIDs(ctx context.Context, userID string) []strin
 	query, args := p.rewriteArgs(`SELECT DISTINCT d.id FROM datasets d
 		 LEFT JOIN dataset_shares s ON s.dataset_id = d.id AND s.user_id = $1
 		 WHERE d.owner_id = $1 OR d.owner_id = '' OR d.owner_id IS NULL OR s.id IS NOT NULL`, userID)
-	rows, err := p.DB.QueryContext(ctx, query, args...)
+	rows, err := p.reader().QueryContext(ctx, query, args...)
 	if err != nil {
 		return []string{}
 	}
@@ -327,6 +326,16 @@ func (p SQLPolicy) VisibleDatasetIDs(ctx context.Context, userID string) ([]stri
 	if p.DB == nil {
 		return nil, nil
 	}
+	if userID != "" {
+		active, err := p.IsActive(ctx, userID)
+		if err != nil {
+			return nil, err
+		}
+		if !active {
+			return nil, ErrInactiveIdentity
+		}
+	}
+
 	showAll := userID == ""
 	if !showAll {
 		super, err := p.IsSuperuser(ctx, userID)
@@ -341,13 +350,13 @@ func (p SQLPolicy) VisibleDatasetIDs(ctx context.Context, userID string) ([]stri
 		err  error
 	)
 	if showAll {
-		rows, err = p.DB.QueryContext(ctx, p.rewrite("SELECT id FROM datasets ORDER BY id"))
+		rows, err = p.reader().QueryContext(ctx, p.rewrite("SELECT id FROM datasets ORDER BY id"))
 	} else {
 		query, args := p.rewriteArgs(`SELECT DISTINCT d.id FROM datasets d
 			LEFT JOIN dataset_shares s ON s.dataset_id = d.id AND s.user_id = $1
 			WHERE d.owner_id = $1 OR d.owner_id = '' OR d.owner_id IS NULL OR s.id IS NOT NULL
 			ORDER BY d.id`, userID)
-		rows, err = p.DB.QueryContext(ctx, query, args...)
+		rows, err = p.reader().QueryContext(ctx, query, args...)
 	}
 	if err != nil {
 		return nil, err
@@ -374,6 +383,16 @@ func (p SQLPolicy) ListVisibleDatasets(ctx context.Context, userID string) ([]Vi
 	if p.DB == nil {
 		return nil, nil
 	}
+	if userID != "" {
+		active, err := p.IsActive(ctx, userID)
+		if err != nil {
+			return nil, err
+		}
+		if !active {
+			return nil, ErrInactiveIdentity
+		}
+	}
+
 	showAll := userID == ""
 	if !showAll {
 		super, err := p.IsSuperuser(ctx, userID)
@@ -388,7 +407,7 @@ func (p SQLPolicy) ListVisibleDatasets(ctx context.Context, userID string) ([]Vi
 		err  error
 	)
 	if showAll {
-		rows, err = p.DB.QueryContext(ctx,
+		rows, err = p.reader().QueryContext(ctx,
 			p.rewrite(`SELECT d.id, d.name, d.created_at, COALESCE(d.owner_id,''), COUNT(dd.data_id),
 			 COALESCE(SUM(sz.data_size), 0), COALESCE(d.github_repo, '')
 			 FROM datasets d
@@ -404,7 +423,7 @@ func (p SQLPolicy) ListVisibleDatasets(ctx context.Context, userID string) ([]Vi
 			 LEFT JOIN data sz ON sz.id = dd.data_id
 			 WHERE d.owner_id = $1 OR d.owner_id = '' OR d.owner_id IS NULL OR s.id IS NOT NULL
 			 GROUP BY d.id ORDER BY d.created_at DESC`, userID)
-		rows, err = p.DB.QueryContext(ctx, query, args...)
+		rows, err = p.reader().QueryContext(ctx, query, args...)
 	}
 	if err != nil {
 		return nil, err
@@ -430,37 +449,48 @@ func (p SQLPolicy) CanAccessDataset(ctx context.Context, datasetID, userID strin
 		return true
 	}
 
+	if active, err := p.IsActive(ctx, userID); err != nil || !active {
+		return false
+	}
+
 	var ownerID string
-	_ = p.DB.QueryRowContext(ctx, p.rewrite("SELECT owner_id FROM datasets WHERE id = $1"), datasetID).Scan(&ownerID)
+	_ = p.reader().QueryRowContext(ctx, p.rewrite("SELECT owner_id FROM datasets WHERE id = $1"), datasetID).Scan(&ownerID)
 	if ownerID == "" || ownerID == userID {
 		return true
 	}
 
 	var shareID string
-	_ = p.DB.QueryRowContext(ctx, p.rewrite("SELECT id FROM dataset_shares WHERE dataset_id = $1 AND user_id = $2"), datasetID, userID).Scan(&shareID)
+	_ = p.reader().QueryRowContext(ctx, p.rewrite("SELECT id FROM dataset_shares WHERE dataset_id = $1 AND user_id = $2"), datasetID, userID).Scan(&shareID)
 	return shareID != ""
 }
 
 // CanUseDatasetForUpload validates an explicit upload dataset id. Missing
 // dataset rows are allowed so upload can create caller-owned datasets with a
-// client-supplied id; existing rows require public, owner, or shared access.
+// client-supplied id; existing rows require owner or editor/admin access.
 func (p SQLPolicy) CanUseDatasetForUpload(ctx context.Context, datasetID, userID string) (bool, error) {
 	if p.DB == nil || datasetID == "" || userID == "" {
 		return true, nil
 	}
+	if active, err := p.IsActive(ctx, userID); err != nil || !active {
+		return false, err
+	}
+
 	var ownerID string
-	err := p.DB.QueryRowContext(ctx, p.rewrite("SELECT COALESCE(owner_id, '') FROM datasets WHERE id = $1"), datasetID).Scan(&ownerID)
+	err := p.reader().QueryRowContext(ctx, p.rewrite("SELECT COALESCE(owner_id, '') FROM datasets WHERE id = $1"), datasetID).Scan(&ownerID)
 	if err == sql.ErrNoRows {
 		return true, nil
 	}
 	if err != nil {
 		return false, err
 	}
-	if ownerID == "" || ownerID == userID {
+	if ownerID == userID {
 		return true, nil
 	}
+	if ownerID == "" {
+		return false, nil
+	}
 	var role string
-	err = p.DB.QueryRowContext(ctx, p.rewrite("SELECT role FROM dataset_shares WHERE dataset_id = $1 AND user_id = $2"), datasetID, userID).Scan(&role)
+	err = p.reader().QueryRowContext(ctx, p.rewrite("SELECT role FROM dataset_shares WHERE dataset_id = $1 AND user_id = $2"), datasetID, userID).Scan(&role)
 	if err == sql.ErrNoRows {
 		return false, nil
 	}
@@ -482,13 +512,17 @@ func (p SQLPolicy) CanManageDatasetShares(ctx context.Context, datasetID, grante
 	if p.DB == nil {
 		return false
 	}
+	if active, err := p.IsActive(ctx, granterID); err != nil || !active {
+		return false
+	}
+
 	var ownerID string
-	_ = p.DB.QueryRowContext(ctx, p.rewrite("SELECT owner_id FROM datasets WHERE id = $1"), datasetID).Scan(&ownerID)
+	_ = p.reader().QueryRowContext(ctx, p.rewrite("SELECT owner_id FROM datasets WHERE id = $1"), datasetID).Scan(&ownerID)
 	if ownerID == granterID {
 		return true
 	}
 	var role string
-	_ = p.DB.QueryRowContext(ctx, p.rewrite("SELECT role FROM dataset_shares WHERE dataset_id = $1 AND user_id = $2"), datasetID, granterID).Scan(&role)
+	_ = p.reader().QueryRowContext(ctx, p.rewrite("SELECT role FROM dataset_shares WHERE dataset_id = $1 AND user_id = $2"), datasetID, granterID).Scan(&role)
 	return role == RoleAdmin
 }
 
@@ -519,7 +553,7 @@ func (p SQLPolicy) ResolveUserID(ctx context.Context, explicitUserID, email stri
 		return "", nil
 	}
 	var userID string
-	err := p.DB.QueryRowContext(ctx, p.rewrite("SELECT id FROM users WHERE email = $1"), email).Scan(&userID)
+	err := p.reader().QueryRowContext(ctx, p.rewrite("SELECT id FROM users WHERE email = $1"), email).Scan(&userID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}

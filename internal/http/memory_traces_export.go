@@ -35,11 +35,15 @@ func memoryTraceExportHandler(cfg APIConfig) fiber.Handler {
 			return c.Status(400).JSON(fiber.Map{"error": "unsupported quality"})
 		}
 		hours := windowHours(c)
-		rows, err := cfg.MCPAuditReadModel.EventsForTrajectories(c.UserContext(), audit.EventFilter{
+		filter, err := scopedAuditFilter(c, cfg, audit.EventFilter{
 			Since:      time.Now().Add(-time.Duration(hours) * time.Hour),
 			Collection: c.Query("collection"),
 			Limit:      20000,
 		})
+		if err != nil {
+			return err
+		}
+		rows, err := cfg.MCPAuditReadModel.EventsForTrajectories(c.UserContext(), filter)
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": "memory trace export query failed"})
 		}
