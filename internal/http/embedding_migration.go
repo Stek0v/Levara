@@ -176,13 +176,14 @@ type embeddingShadowReadReport struct {
 
 func RegisterEmbeddingMigrationAPI(app fiber.Router, cfg APIConfig) {
 	installEmbeddingMigrationDualWriteHook(cfg)
-	app.Post("/embedding-migrations", embeddingMigrationStartHandler(cfg))
-	app.Get("/embedding-migrations/:runId/status", embeddingMigrationStatusHandler(cfg))
-	app.Post("/embedding-migrations/:runId/retry", embeddingMigrationRetryHandler(cfg))
-	app.Post("/embedding-migrations/:runId/cutover", embeddingMigrationCutoverHandler(cfg))
-	app.Get("/embedding-migrations/dual-write", embeddingMigrationDualWriteListHandler(cfg))
-	app.Delete("/embedding-migrations/dual-write/:source", embeddingMigrationDualWriteDisableHandler(cfg))
-	app.Post("/embedding-migrations/shadow-read", embeddingShadowReadHandler(cfg))
+	adminOnly := GlobalResourceAdminOnly(cfg)
+	app.Post("/embedding-migrations", adminOnly, embeddingMigrationStartHandler(cfg))
+	app.Get("/embedding-migrations/:runId/status", adminOnly, embeddingMigrationStatusHandler(cfg))
+	app.Post("/embedding-migrations/:runId/retry", adminOnly, embeddingMigrationRetryHandler(cfg))
+	app.Post("/embedding-migrations/:runId/cutover", adminOnly, embeddingMigrationCutoverHandler(cfg))
+	app.Get("/embedding-migrations/dual-write", adminOnly, embeddingMigrationDualWriteListHandler(cfg))
+	app.Delete("/embedding-migrations/dual-write/:source", adminOnly, embeddingMigrationDualWriteDisableHandler(cfg))
+	app.Post("/embedding-migrations/shadow-read", adminOnly, embeddingShadowReadHandler(cfg))
 }
 
 func embeddingMigrationStartHandler(cfg APIConfig) fiber.Handler {

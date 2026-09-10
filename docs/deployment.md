@@ -159,7 +159,7 @@ Use separate credentials for each person or agent. Authenticated raw-storage
 gRPC requires an active global superuser; ordinary document workflows use
 REST/MCP. A collection name or MCP toolset is not an ACL. Dataset sharing is
 individual in the current public UI. Document/group policy and native
-LDAP/LDAPS/StartTLS are implemented locally; public document ACL routing and
+LDAP/LDAPS/StartTLS are implemented locally; document ACL WebUI/CLI and
 real directory acceptance remain open. See [enterprise identity](enterprise-identity.md).
 
 ## Monitoring and scheduled maintenance

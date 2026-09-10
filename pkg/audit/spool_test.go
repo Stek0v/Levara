@@ -168,6 +168,43 @@ func mustSpoolJSON(t *testing.T, e SpoolEnvelope) int {
 	return len(raw)
 }
 
+func TestDocumentEventEnvelopeKeepsBoundedResourceAndTarget(t *testing.T) {
+	scope := VerifiedScope{ActorID: "owner", TenantID: "tenant-a", Verified: true}
+	envelope := EnvelopeFromEvent(Event{
+		Source:  "document.rest",
+		Type:    "grant",
+		Subject: "dataset-a/document-1",
+		Outcome: "success",
+		Metadata: map[string]any{
+			"principal_kind": "group",
+			"principal_id":   "finance-readers",
+			"token":          "must-not-export",
+		},
+	}, scope)
+	if envelope.Resource != "dataset-a/document-1" || envelope.Target != "group/finance-readers" {
+		t.Fatalf("document attribution lost: %+v", envelope)
+	}
+	raw, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "must-not-export") || strings.Contains(string(raw), "token") {
+		t.Fatalf("arbitrary metadata exported: %s", raw)
+	}
+	if err := envelope.validate(); err != nil {
+		t.Fatalf("document envelope invalid: %v", err)
+	}
+
+	forged := EnvelopeFromEvent(Event{Source: "document.rest", Type: "grant", Subject: "dataset/private content", Metadata: map[string]any{"principal_kind": "user", "principal_id": "../../secret"}}, scope)
+	if forged.Resource != "" || forged.Target != "" {
+		t.Fatalf("unsafe attribution exported: %+v", forged)
+	}
+	generic := EnvelopeFromEvent(Event{Source: "workspace", Type: "write", Subject: "workspace/private"}, scope)
+	if generic.Resource != "" || generic.Target != "" {
+		t.Fatalf("generic subject exported: %+v", generic)
+	}
+}
+
 func TestSQLSpoolAtomicCapacityIncludesDead(t *testing.T) {
 	spoolDialects(t, func(t *testing.T, db *sql.DB, dialect string) {
 		s := spoolFixture(t, db, dialect, func(c *SpoolConfig) { c.MaxEvents = 2; c.MaxAttempts = 1 })

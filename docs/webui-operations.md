@@ -231,11 +231,11 @@ SAML still has a separate response contract. Configure the identity bridge and
 repeat the real AD/IdP flow described in
 [enterprise identity](enterprise-identity.md) before a pilot.
 
-The dataset detail page can grant an individual viewer/editor/admin. For one
-document, use a separate dataset until the implemented document/group policy
-handlers are connected to the public router and WebUI. Follow
-[document management](document-management.md) and test grant/revoke across
-download, retrieval and chat with separate users.
+The dataset detail page can grant an individual viewer/editor/admin for the
+whole dataset. Per-document user/group grants are available through the
+authenticated REST API, while the WebUI panel and recipient selector remain
+pending. Follow [document management](document-management.md) and test
+grant/revoke across download, retrieval and chat with separate users.
 
 ### WebUI deployment options
 

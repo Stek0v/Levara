@@ -83,8 +83,8 @@ func (s *reembedStatus) snapshot() reembedStatusSnapshot {
 var reembedRuns sync.Map
 
 func RegisterReembedAPI(app fiber.Router, cfg APIConfig) {
-	app.Post("/reembed", reembedHandler(cfg))
-	app.Get("/reembed/:runId/status", reembedStatusHandler())
+	app.Post("/reembed", GlobalResourceAdminOnly(cfg), reembedHandler(cfg))
+	app.Get("/reembed/:runId/status", GlobalResourceAdminOnly(cfg), reembedStatusHandler())
 }
 
 func reembedHandler(cfg APIConfig) fiber.Handler {

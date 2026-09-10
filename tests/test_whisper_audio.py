@@ -424,8 +424,8 @@ async def test_audio_pipeline_smoke():
 
         # Шаг 4: search по транскрибированному тексту
         async with s.post(
-            f"{BASE}/search",
-            json={"query": "lecture audio content", "top_k": 5},
+            f"{BASE}/search/text",
+            json={"query_text": "lecture audio content", "top_k": 5},
             headers=h,
         ) as r:
             if r.status == 200:

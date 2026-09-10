@@ -275,11 +275,13 @@ func (p SQLPolicy) RegisterDocument(ctx context.Context, actor Actor, ref Docume
 	if p.DB == nil || ref.DatasetID == "" || ref.DataID == "" || tenantID == "" || !documentModeValid(mode) {
 		return DocumentResource{}, ErrDocumentInvalid
 	}
-	tx, err := p.DB.BeginTx(ctx, nil)
+	tx, owned, err := p.documentMutationTransaction(ctx)
 	if err != nil {
 		return DocumentResource{}, err
 	}
-	defer tx.Rollback()
+	if owned {
+		defer tx.Rollback()
+	}
 	if err := p.lockDocumentDataset(ctx, tx, ref.DatasetID); err != nil {
 		return DocumentResource{}, err
 	}
@@ -320,7 +322,7 @@ func (p SQLPolicy) RegisterDocument(ctx context.Context, actor Actor, ref Docume
 	if r.TenantID != tenantID || r.Mode != mode || r.Tombstoned {
 		return DocumentResource{}, ErrDocumentVersionConflict
 	}
-	if err := tx.Commit(); err != nil {
+	if err := finishDocumentMutation(tx, owned); err != nil {
 		return DocumentResource{}, err
 	}
 	return r, nil
@@ -330,22 +332,39 @@ func documentModeValid(mode string) bool {
 	return mode == DocumentInherit || mode == DocumentRestricted
 }
 
+func (p SQLPolicy) documentMutationTransaction(ctx context.Context) (*sql.Tx, bool, error) {
+	if p.readTx != nil {
+		return p.readTx, false, nil
+	}
+	tx, err := p.DB.BeginTx(ctx, nil)
+	return tx, true, err
+}
+
+func finishDocumentMutation(tx *sql.Tx, owned bool) error {
+	if !owned {
+		return nil
+	}
+	return tx.Commit()
+}
+
 // mutateDocument locks the revision with CAS before dependent SQL mutations.
 // Errors roll back the revision and every grant/state change together.
 func (p SQLPolicy) mutateDocument(ctx context.Context, actor Actor, ref DocumentRef, aclRevision int64, contentRevision int64, action string, mutate func(*sql.Tx, DocumentResource) error) (DocumentResource, error) {
 	if p.DB == nil || aclRevision <= 0 {
 		return DocumentResource{}, ErrDocumentInvalid
 	}
-	tx, err := p.DB.BeginTx(ctx, nil)
+	tx, owned, err := p.documentMutationTransaction(ctx)
 	if err != nil {
 		return DocumentResource{}, err
 	}
-	defer tx.Rollback()
+	if owned {
+		defer tx.Rollback()
+	}
 	r, err := p.mutateDocumentTx(ctx, tx, actor, ref, aclRevision, contentRevision, action, mutate)
 	if err != nil {
 		return DocumentResource{}, err
 	}
-	if err := tx.Commit(); err != nil {
+	if err := finishDocumentMutation(tx, owned); err != nil {
 		return DocumentResource{}, err
 	}
 	return r, nil

@@ -41,6 +41,21 @@ func requireSuperuser(c *fiber.Ctx, cfg APIConfig) error {
 	return nil
 }
 
+// GlobalResourceAdminOnly keeps legacy/global collection operations available
+// in local no-auth mode and restricts them to active superusers everywhere auth
+// is required. These routes cannot enforce dataset/document ACLs themselves.
+func GlobalResourceAdminOnly(cfg APIConfig) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		if !cfg.RequireAuth {
+			return c.Next()
+		}
+		if err := requireSuperuser(c, cfg); err != nil {
+			return err
+		}
+		return c.Next()
+	}
+}
+
 // pruneDataHandler — POST /prune/data. Destructive: wipes datasets +
 // dataset_data + data. Superuser-only (M5).
 //

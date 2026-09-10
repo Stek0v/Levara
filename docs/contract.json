@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-09-05T09:26:57+03:00",
-  "git_rev": "3de3ac0d3d4af22264cf76f9db0e6e01a5473af3",
+  "generated_at": "2026-09-10T16:57:00+03:00",
+  "git_rev": "170a74374eacdff64596c22243550242aef11eef",
   "rest": [
     {
       "method": "POST",
@@ -171,10 +171,46 @@
       "group": "datasets"
     },
     {
+      "method": "GET",
+      "path": "/datasets/:id/data/:dataId",
+      "status": "canonical",
+      "group": "documents"
+    },
+    {
       "method": "PATCH",
       "path": "/datasets/:id/data/:dataId",
       "status": "canonical",
       "group": "datasets"
+    },
+    {
+      "method": "POST",
+      "path": "/datasets/:id/data/:dataId/grants",
+      "status": "canonical",
+      "group": "documents"
+    },
+    {
+      "method": "DELETE",
+      "path": "/datasets/:id/data/:dataId/grants/:kind/:principalId",
+      "status": "canonical",
+      "group": "documents"
+    },
+    {
+      "method": "GET",
+      "path": "/datasets/:id/data/:dataId/policy",
+      "status": "canonical",
+      "group": "documents"
+    },
+    {
+      "method": "PATCH",
+      "path": "/datasets/:id/data/:dataId/policy",
+      "status": "canonical",
+      "group": "documents"
+    },
+    {
+      "method": "POST",
+      "path": "/datasets/:id/data/:dataId/policy",
+      "status": "canonical",
+      "group": "documents"
     },
     {
       "method": "GET",
@@ -223,6 +259,24 @@
       "path": "/delete",
       "status": "legacy_compat",
       "group": "vector"
+    },
+    {
+      "method": "POST",
+      "path": "/document-groups",
+      "status": "canonical",
+      "group": "documents"
+    },
+    {
+      "method": "GET",
+      "path": "/document-groups/:groupId",
+      "status": "canonical",
+      "group": "documents"
+    },
+    {
+      "method": "PUT",
+      "path": "/document-groups/:groupId/members",
+      "status": "canonical",
+      "group": "documents"
     },
     {
       "method": "POST",
@@ -569,14 +623,8 @@
     {
       "method": "POST",
       "path": "/search",
-      "status": "alias",
-      "group": "search"
-    },
-    {
-      "method": "POST",
-      "path": "/search/",
-      "status": "alias",
-      "group": "search"
+      "status": "legacy_compat",
+      "group": "vector"
     },
     {
       "method": "POST",

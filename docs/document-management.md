@@ -7,23 +7,22 @@
 
 ## Можно ли поделиться отдельным документом
 
-**Рабочий WebUI/REST сценарий сейчас выдаёт пользователю доступ к набору
-данных.** В коде реализована отдельная ACL документа и групп, включая tenant
-boundary, CAS revision, revoke и nested membership, но эти handlers ещё не
-подключены к основному router. До подключения используйте отдельный набор с
-одним файлом и учитывайте, что grant распространяется на добавленные позже
-документы.
+REST API может выдать пользователю или группе организации доступ к одной
+связке `dataset_id + data_id`. Document ACL проверяет tenant boundary,
+активность principal, роль, CAS revision, revoke и вложенное членство групп.
+WebUI пока управляет только grants всего набора; для отдельного документа
+используйте REST-сценарий ниже.
 
 | Получатель / действие | Текущее поведение |
 |---|---|
-| Существующий пользователь | Выдача доступа по email через WebUI или REST |
-| Группа организации / AD | Policy и SCIM membership реализованы локально; пользовательский API ещё не подключён |
-| Только один файл в общем наборе | Модель document ACL есть, но текущий рабочий путь — отдельный набор |
-| Запрет передачи вне организации | Document policy проверяет tenant; legacy dataset grant остаётся отдельным старым контрактом |
+| Существующий пользователь | Набор — по email через WebUI/REST; документ — по неизменяемому user ID через REST |
+| Группа организации / AD | REST принимает group ID; состав группы задаётся document-group API или provisioned SCIM membership |
+| Только один файл в общем наборе | Grant/revoke через document REST API не открывает остальные файлы набора |
+| Запрет передачи вне организации | Document policy отклоняет user/group principal другого tenant; legacy dataset grant остаётся отдельным контрактом |
 | Анонимная внешняя ссылка | Не является сценарием внутренней ACL |
-| Отзыв grant | Закрывает последующие запросы пользователя к защищённому набору |
+| Отзыв grant | Закрывает последующие metadata/raw/artifact/search/graph запросы к зарегистрированному документу |
 | Уже скачанная копия | Не отзывается |
-| Ранее выданный S3 presigned URL | Работает до истечения срока; отзыв grant его не аннулирует |
+| URL зарегистрированного документа | Metadata возвращает авторизованный `/raw` proxy; скопированный внешний presigned URL живёт до собственного expiry |
 
 При работе с конфиденциальными материалами выбирайте явно созданный
 приватный набор и проверяйте его ID. Legacy-наборы с пустым owner считаются
@@ -66,9 +65,9 @@ WebUI запускается отдельным Next.js сервисом; пар
    коллекции; скачайте оригинал кнопкой Download original. Запрос проходит
    через API с текущими credentials. Legacy-загрузка могла не сохранить
    исходные байты — проверьте формат скачанного файла.
-5. В панели доступа задайте email уже существующего пользователя и роль.
-   Для ознакомления выбирайте viewer. Group selector и отдельной панели
-   разрешений файла сейчас нет.
+5. В панели доступа задайте email уже существующего пользователя и роль для
+   всего набора. Для одного файла или группы используйте document REST API:
+   отдельной панели разрешений файла в WebUI пока нет.
 6. Проверьте доступ в отдельной сессии получателя: список, скачивание и
    поисковый факт. Отзовите grant и повторите те же запросы. Проверка должна
    включать lifecycle ограничения A12–A14 и проверки graph/MCP прав A15/A17.
@@ -83,8 +82,10 @@ WebUI запускается отдельным Next.js сервисом; пар
 ## Быстрый сценарий через консоль
 
 Примеры используют существующий сервер с обязательной аутентификацией.
-`LEVARA_TOKEN` — токен локального пользователя или подходящий API-ключ.
-Нужен `curl`, для выбора ID из JSON — установленный `jq`.
+`LEVARA_TOKEN` — JWT локального/SSO пользователя. Для API-ключа замените
+`Authorization: Bearer ...` на `X-API-Key: ...`; его read/write permission
+остаётся дополнительным ограничением. Нужен `curl`, для выбора ID из JSON —
+установленный `jq`.
 
 ```sh
 export LEVARA_URL='https://levara.example.org'
@@ -169,9 +170,9 @@ levara --url="$LEVARA_URL/api/v1" cognify --dataset=finance-pilot-document-001 -
 ID через список доступных наборов. Если аргумент означает путь, применяйте
 `--file=`: для совместимости несуществующий позиционный путь остаётся
 обычным текстом. Ошибка HTTP, некорректный JSON или отсутствие обязательных
-полей ответа завершают команду с ненулевым кодом. Для dataset grants
-используйте приведённые REST-команды. Публичных CLI-команд для document/group
-ACL пока нет.
+полей ответа завершают команду с ненулевым кодом. Для dataset и document
+grants используйте приведённые REST-команды. Встроенных CLI-команд для
+document/group ACL пока нет.
 
 MCP `cognify` с inline `data` и HTTP `cognify` с `texts[]` сначала атомарно
 создают серверный dataset/document source, source revision и SHA-256, затем
@@ -203,6 +204,48 @@ curl --fail-with-body -sS -X DELETE -H "Authorization: Bearer $LEVARA_TOKEN" \
 проверяет одновременно dataset ID и share ID. После него проверьте list,
 raw download, sparse/vector search и RAG/MCP тем же токеном получателя.
 Не передавайте пользователю ваш токен и не создавайте общую учётную запись.
+
+Для одного уже зарегистрированного документа переведите policy в
+`restricted`, затем выдайте grant по неизменяемому ID пользователя:
+
+```sh
+DOCUMENT_ID='document-id-from-dataset-data'
+USER_ID='existing-user-id-in-the-same-tenant'
+
+POLICY=$(curl --fail-with-body -sS \
+  -H "Authorization: Bearer $LEVARA_TOKEN" \
+  "$LEVARA_URL/api/v1/datasets/$DATASET_ID/data/$DOCUMENT_ID/policy")
+ACL_REVISION=$(printf '%s' "$POLICY" | jq -er '.acl_revision')
+
+POLICY=$(curl --fail-with-body -sS -X PATCH \
+  -H "Authorization: Bearer $LEVARA_TOKEN" -H 'Content-Type: application/json' \
+  --data "$(jq -n --argjson rev "$ACL_REVISION" \
+    '{acl_revision:$rev,mode:"restricted"}')" \
+  "$LEVARA_URL/api/v1/datasets/$DATASET_ID/data/$DOCUMENT_ID/policy")
+ACL_REVISION=$(printf '%s' "$POLICY" | jq -er '.acl_revision')
+
+POLICY=$(curl --fail-with-body -sS -X POST \
+  -H "Authorization: Bearer $LEVARA_TOKEN" -H 'Content-Type: application/json' \
+  --data "$(jq -n --argjson rev "$ACL_REVISION" --arg uid "$USER_ID" \
+    '{acl_revision:$rev,principal_kind:"user",principal_id:$uid,role:"viewer"}')" \
+  "$LEVARA_URL/api/v1/datasets/$DATASET_ID/data/$DOCUMENT_ID/grants")
+ACL_REVISION=$(printf '%s' "$POLICY" | jq -er '.acl_revision')
+
+curl --fail-with-body -sS -X DELETE \
+  -H "Authorization: Bearer $LEVARA_TOKEN" -H 'Content-Type: application/json' \
+  --data "$(jq -n --argjson rev "$ACL_REVISION" '{acl_revision:$rev}')" \
+  "$LEVARA_URL/api/v1/datasets/$DATASET_ID/data/$DOCUMENT_ID/grants/user/$USER_ID"
+```
+
+Для группы создайте `POST /api/v1/document-groups` с `tenant_id` и `name`,
+замените состав через `PUT /api/v1/document-groups/{groupId}/members` с
+текущими `revision` и `members`, затем используйте `principal_kind:"group"`
+и ID группы в том же grant-запросе. API принимает известные tenant-scoped ID;
+списка групп и поиска пользователей организации в этом интерфейсе пока нет.
+Устаревшая revision возвращает 409, principal другого tenant — 403/400 без
+изменения policy. Аудит различает успешные, отклонённые и неуспешные
+register/mode/hold/grant/revoke/group mutations, сохраняет проверенные
+actor/tenant и bounded document/principal IDs без содержимого документа.
 
 ## Оригинал и извлечённый текст
 

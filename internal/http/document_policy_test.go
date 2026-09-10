@@ -19,16 +19,18 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
 	accesspkg "github.com/stek0v/levara/pkg/access"
+	"github.com/stek0v/levara/pkg/audit"
 )
 
 type documentHTTPFixture struct {
-	t     *testing.T
-	db    *sql.DB
-	app   *fiber.App
-	cfg   APIConfig
-	p     accesspkg.SQLPolicy
-	r     accesspkg.DocumentResource
-	owner accesspkg.Actor
+	t           *testing.T
+	db          *sql.DB
+	app         *fiber.App
+	cfg         APIConfig
+	p           accesspkg.SQLPolicy
+	r           accesspkg.DocumentResource
+	owner       accesspkg.Actor
+	auditEvents *[]audit.Event
 }
 
 func documentHTTPDialects(t *testing.T, run func(*testing.T, *documentHTTPFixture)) {
@@ -79,7 +81,9 @@ func documentHTTPDialects(t *testing.T, run func(*testing.T, *documentHTTPFixtur
 			if err := accesspkg.EnsureBrowserSessionSchema(context.Background(), db, Q); err != nil {
 				t.Fatal(err)
 			}
-			f := &documentHTTPFixture{t: t, db: db, cfg: APIConfig{DB: db, StoragePath: t.TempDir()}, p: accesspkg.SQLPolicy{DB: db, Q: Q, QA: QArgs}, owner: accesspkg.Actor{UserID: "owner", TenantID: "a"}}
+			events := []audit.Event{}
+			f := &documentHTTPFixture{t: t, db: db, cfg: APIConfig{DB: db, StoragePath: t.TempDir()}, p: accesspkg.SQLPolicy{DB: db, Q: Q, QA: QArgs}, owner: accesspkg.Actor{UserID: "owner", TenantID: "a"}, auditEvents: &events}
+			f.cfg.WorkspaceAuditSink = audit.EventSinkFunc(func(event audit.Event) { events = append(events, event) })
 			for _, id := range []string{"owner", "viewer", "peer", "foreign", "root", "inactive"} {
 				f.exec("INSERT INTO principals(id,type) VALUES($1,'user')", id)
 				f.exec("INSERT INTO users(id,email,hashed_password,is_active,is_superuser) VALUES($1,$2,'locked',$3,$4)", id, id+"@test.invalid", id != "inactive", id == "root")
@@ -376,6 +380,29 @@ func TestDocumentHTTPManagementAndGroups(t *testing.T) {
 		f.expect("root", "PATCH", base, "renamed", 403, "If-Match", documentETag(f.current()))
 		f.exec("UPDATE users SET is_active=FALSE WHERE id='owner'")
 		f.expect("owner", "GET", base+"/policy", "", 403)
+
+		seen := map[string]bool{}
+		seenDenied := false
+		for _, event := range *f.auditEvents {
+			if event.Source != "document.rest" || (event.Outcome != "success" && event.Outcome != "denied" && event.Outcome != "failure") || event.ActorID != event.VerifiedScope.ActorID {
+				t.Fatalf("invalid document audit event: %+v", event)
+			}
+			if event.Outcome == "success" {
+				if !event.VerifiedScope.Verified {
+					t.Fatalf("successful document audit lacks verified scope: %+v", event)
+				}
+				seen[event.Type] = true
+			}
+			seenDenied = seenDenied || event.Outcome == "denied"
+		}
+		for _, eventType := range []string{"grant", "revoke", "group_create", "group_members_replace", "set_mode", "set_hold"} {
+			if !seen[eventType] {
+				t.Errorf("missing %s audit event: %+v", eventType, *f.auditEvents)
+			}
+		}
+		if !seenDenied {
+			t.Errorf("missing denied document audit event: %+v", *f.auditEvents)
+		}
 	})
 }
 
@@ -511,7 +538,7 @@ func TestDocumentHTTPLegacyLinkCannotRenameRegisteredBlob(t *testing.T) {
 	})
 }
 
-func TestDocumentHTTPManagementRoutesRemainGated(t *testing.T) {
+func TestDocumentHTTPManagementRoutesAreRegistered(t *testing.T) {
 	app := fiber.New()
 	RegisterAPI(app.Group("/api/v1"), APIConfig{StoragePath: t.TempDir(), WorkspacePath: t.TempDir()})
 	for _, path := range []string{"/api/v1/document-groups", "/api/v1/datasets/a/data/b/policy"} {
@@ -520,8 +547,154 @@ func TestDocumentHTTPManagementRoutesRemainGated(t *testing.T) {
 			t.Fatal(err)
 		}
 		resp.Body.Close()
-		if resp.StatusCode != 404 {
-			t.Fatalf("management exposed before rollout: %s status=%d", path, resp.StatusCode)
+		if resp.StatusCode == 404 {
+			t.Fatalf("management route not dispatched: %s status=%d", path, resp.StatusCode)
 		}
 	}
+}
+
+type documentPolicyState struct {
+	resources, grants, groups, members, principals int
+	aclRevision, groupRevision                     int64
+	mode                                           string
+	hold                                           bool
+}
+
+func snapshotDocumentPolicyState(t *testing.T, f *documentHTTPFixture, groupID string) documentPolicyState {
+	t.Helper()
+	var state documentPolicyState
+	for query, target := range map[string]*int{
+		"SELECT COUNT(*) FROM document_resources":   &state.resources,
+		"SELECT COUNT(*) FROM document_grants":      &state.grants,
+		"SELECT COUNT(*) FROM access_groups":        &state.groups,
+		"SELECT COUNT(*) FROM access_group_members": &state.members,
+		"SELECT COUNT(*) FROM principals":           &state.principals,
+	} {
+		if err := f.db.QueryRow(query).Scan(target); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.db.QueryRow(Q("SELECT acl_revision,mode,hold FROM document_resources WHERE dataset_id=$1 AND data_id=$2"), "alpha", "blob").Scan(&state.aclRevision, &state.mode, &state.hold); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.QueryRow(Q("SELECT revision FROM access_groups WHERE id=$1"), groupID).Scan(&state.groupRevision); err != nil {
+		t.Fatal(err)
+	}
+	return state
+}
+
+func TestDocumentHTTPRevokedCredentialCannotMutatePolicy(t *testing.T) {
+	documentHTTPDialects(t, func(t *testing.T, f *documentHTTPFixture) {
+		ctx := context.Background()
+		group, err := f.p.CreateGroup(ctx, f.owner, "a", "Revocation fence")
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.r, err = f.p.GrantDocument(ctx, f.owner, f.r.DocumentRef, f.r.ACLRevision, accesspkg.DocumentPrincipal{Kind: accesspkg.DocumentUser, ID: "peer"}, accesspkg.RoleViewer)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		for _, credential := range []string{"api_key", "jwt_session"} {
+			t.Run(credential, func(t *testing.T) {
+				keyID := "revocation-" + credential
+				expires := time.Now().Add(time.Hour).Unix()
+				var sessionID string
+				if credential == "api_key" {
+					f.exec("INSERT INTO api_keys(id,key_hash,user_id,permissions) VALUES($1,$2,'owner','write')", keyID, "hash-"+keyID)
+				} else {
+					sessionID, err = accesspkg.CreateBrowserSession(ctx, f.db, Q, "owner", expires)
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+
+				mutations := []struct {
+					name, method, path, body, eventType string
+				}{
+					{"register", "POST", "/datasets/alpha/data/visible/policy", `{"tenant_id":"a","mode":"restricted"}`, "register"},
+					{"grant", "POST", "/datasets/alpha/data/blob/grants", fmt.Sprintf(`{"acl_revision":%d,"principal_kind":"user","principal_id":"viewer","role":"viewer"}`, f.r.ACLRevision), "grant"},
+					{"revoke", "DELETE", "/datasets/alpha/data/blob/grants/user/peer", fmt.Sprintf(`{"acl_revision":%d}`, f.r.ACLRevision), "revoke"},
+					{"mode", "PATCH", "/datasets/alpha/data/blob/policy", fmt.Sprintf(`{"acl_revision":%d,"mode":"inherit"}`, f.r.ACLRevision), "set_mode"},
+					{"hold", "PATCH", "/datasets/alpha/data/blob/policy", fmt.Sprintf(`{"acl_revision":%d,"hold":true}`, f.r.ACLRevision), "set_hold"},
+					{"group_create", "POST", "/document-groups", `{"tenant_id":"a","name":"Denied group"}`, "group_create"},
+					{"group_members", "PUT", "/document-groups/" + group.ID + "/members", fmt.Sprintf(`{"revision":%d,"members":["peer"]}`, group.Revision), "group_members_replace"},
+				}
+
+				for i, mutation := range mutations {
+					t.Run(mutation.name, func(t *testing.T) {
+						verified := make(chan struct{})
+						proceed := make(chan struct{})
+						cfg := f.cfg
+						cfg.RequireAuth = true
+						app := fiber.New(fiber.Config{DisableStartupMessage: true})
+						app.Use(func(c *fiber.Ctx) error {
+							c.Locals("user_id", "owner")
+							c.Locals("tenant_id", "a")
+							if credential == "api_key" {
+								c.Locals("api_key_permissions", "write")
+								c.Locals("verified_api_key", accesspkg.APIKeyIdentity{KeyID: keyID, UserID: "owner", Permissions: "write"})
+							} else {
+								c.Locals("verified_jwt", jwtPayload{Sub: "owner", Exp: expires, SessionID: sessionID})
+							}
+							close(verified)
+							<-proceed
+							return c.Next()
+						})
+						RegisterDocumentPolicyAPI(app.Group("/api/v1"), cfg)
+
+						before := snapshotDocumentPolicyState(t, f, group.ID)
+						auditStart := len(*f.auditEvents)
+						req := httptest.NewRequest(mutation.method, "/api/v1"+mutation.path, strings.NewReader(mutation.body))
+						req.Header.Set("Content-Type", "application/json")
+						type result struct {
+							status int
+							body   []byte
+							err    error
+						}
+						done := make(chan result, 1)
+						go func() {
+							resp, err := app.Test(req, -1)
+							if err != nil {
+								done <- result{err: err}
+								return
+							}
+							defer resp.Body.Close()
+							body, readErr := io.ReadAll(resp.Body)
+							done <- result{status: resp.StatusCode, body: body, err: readErr}
+						}()
+						<-verified
+						if credential == "api_key" {
+							f.exec("UPDATE api_keys SET revoked=TRUE WHERE id=$1", keyID)
+						} else if err := accesspkg.RevokeBrowserSession(ctx, f.db, Q, "owner", sessionID); err != nil {
+							t.Fatal(err)
+						}
+						close(proceed)
+						got := <-done
+						if got.err != nil || got.status != fiber.StatusUnauthorized {
+							t.Fatalf("request after verified revocation: status=%d body=%s err=%v", got.status, got.body, got.err)
+						}
+						if after := snapshotDocumentPolicyState(t, f, group.ID); after != before {
+							t.Fatalf("revoked credential mutated policy: before=%+v after=%+v", before, after)
+						}
+						events := (*f.auditEvents)[auditStart:]
+						if len(events) != 1 || events[0].Type != mutation.eventType || events[0].Outcome != "denied" {
+							t.Fatalf("revoked mutation audit=%+v", events)
+						}
+
+						if i+1 < len(mutations) {
+							if credential == "api_key" {
+								f.exec("UPDATE api_keys SET revoked=FALSE WHERE id=$1", keyID)
+							} else {
+								sessionID, err = accesspkg.CreateBrowserSession(ctx, f.db, Q, "owner", expires)
+								if err != nil {
+									t.Fatal(err)
+								}
+							}
+						}
+					})
+				}
+			})
+		}
+	})
 }

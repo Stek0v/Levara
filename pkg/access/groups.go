@@ -113,11 +113,13 @@ func (p SQLPolicy) CreateGroup(ctx context.Context, actor Actor, tenantID, name 
 	if p.DB == nil || tenantID == "" || name == "" {
 		return AccessGroup{}, ErrGroupInvalid
 	}
-	tx, err := p.DB.BeginTx(ctx, nil)
+	tx, owned, err := p.documentMutationTransaction(ctx)
 	if err != nil {
 		return AccessGroup{}, err
 	}
-	defer tx.Rollback()
+	if owned {
+		defer tx.Rollback()
+	}
 	if err := p.groupManager(ctx, tx, actor, tenantID); err != nil {
 		return AccessGroup{}, err
 	}
@@ -147,7 +149,7 @@ func (p SQLPolicy) CreateGroup(ctx context.Context, actor Actor, tenantID, name 
 	if err != nil {
 		return AccessGroup{}, err
 	}
-	if err := tx.Commit(); err != nil {
+	if err := finishDocumentMutation(tx, owned); err != nil {
 		return AccessGroup{}, err
 	}
 	return g, nil
@@ -167,11 +169,13 @@ func (p SQLPolicy) ReplaceGroupMembers(ctx context.Context, actor Actor, groupID
 		}
 		members[id] = true
 	}
-	tx, err := p.DB.BeginTx(ctx, nil)
+	tx, owned, err := p.documentMutationTransaction(ctx)
 	if err != nil {
 		return AccessGroup{}, err
 	}
-	defer tx.Rollback()
+	if owned {
+		defer tx.Rollback()
+	}
 	g, err := p.accessGroup(ctx, tx, groupID)
 	if err != nil {
 		return AccessGroup{}, err
@@ -212,7 +216,7 @@ func (p SQLPolicy) ReplaceGroupMembers(ctx context.Context, actor Actor, groupID
 		}
 	}
 	g.Revision = expectedRevision + 1
-	if err := tx.Commit(); err != nil {
+	if err := finishDocumentMutation(tx, owned); err != nil {
 		return AccessGroup{}, err
 	}
 	return g, nil

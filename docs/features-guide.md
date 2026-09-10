@@ -164,9 +164,9 @@ Product profiles `personal`, `solo_pro`, `team`, `enterprise` задают тр�
 к конфигурации. Functional `-profile` и `LEVARA_MCP_TOOLSET` решают другие задачи.
 [Presets](profile-presets.md) связывают их с фактическим запуском.
 
-Индивидуальные viewer/editor/admin grants доступны на dataset. Document/group
-policy реализована локально, но её публичные handlers ещё не подключены к
-основному router. LDAP/LDAPS/StartTLS, browser OIDC и SCIM Users/Groups с
+Индивидуальные viewer/editor/admin grants доступны на dataset. Аутентифицированный
+REST API также управляет policy и user/group grants отдельного документа;
+WebUI пока показывает только grants набора. LDAP/LDAPS/StartTLS, browser OIDC и SCIM Users/Groups с
 identity bridge также реализованы локально; реальный AD/IdP и vendor
 provisioning требуют отдельной приёмки. Настройка и ограничения:
 [enterprise identity](enterprise-identity.md).

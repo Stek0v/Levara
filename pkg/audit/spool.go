@@ -28,7 +28,8 @@ type VerifiedScope struct {
 }
 
 // SpoolEnvelope is the entire export schema. Content, arguments, error text,
-// request headers, subjects and arbitrary metadata cannot enter the payload.
+// request headers and arbitrary metadata cannot enter the payload. Resource and
+// target are populated only for the closed document.rest operation vocabulary.
 type SpoolEnvelope struct {
 	Version       int    `json:"version"`
 	EventID       string `json:"event_id"`
@@ -39,10 +40,24 @@ type SpoolEnvelope struct {
 	ActorID       string `json:"actor_id,omitempty"`
 	TenantID      string `json:"tenant_id,omitempty"`
 	ScopeVerified bool   `json:"scope_verified"`
+	Resource      string `json:"resource,omitempty"`
+	Target        string `json:"target,omitempty"`
 	LatencyMS     int64  `json:"latency_ms"`
 	ResultCount   int64  `json:"result_count"`
 	RequestBytes  int64  `json:"request_bytes"`
 	ResponseBytes int64  `json:"response_bytes"`
+}
+
+func spoolResource(s string, max int) bool {
+	if s == "" || len(s) > max {
+		return false
+	}
+	for _, part := range strings.Split(s, "/") {
+		if part == "" || part == "." || part == ".." || !spoolIdentifier(part, 128) {
+			return false
+		}
+	}
+	return true
 }
 
 func spoolIdentifier(s string, max int) bool {
@@ -96,7 +111,24 @@ func EnvelopeFromEvent(e Event, scope VerifiedScope) SpoolEnvelope {
 		}
 		return 0
 	}
-	return envelopeFrom(e.TS, e.Source, e.Type, e.Outcome, scope, number("latency_ms"), number("result_count"), number("request_bytes"), number("response_bytes"))
+	envelope := envelopeFrom(e.TS, e.Source, e.Type, e.Outcome, scope, number("latency_ms"), number("result_count"), number("request_bytes"), number("response_bytes"))
+	if e.Source == "document.rest" {
+		switch e.Type {
+		case "register", "set_mode", "set_hold", "grant", "revoke", "group_create", "group_members_replace":
+			if spoolResource(e.Subject, 257) {
+				envelope.Resource = e.Subject
+			}
+		}
+		if e.Type == "grant" || e.Type == "revoke" {
+			kind, kindOK := e.Metadata["principal_kind"].(string)
+			id, idOK := e.Metadata["principal_id"].(string)
+			target := kind + "/" + id
+			if kindOK && idOK && (kind == "user" || kind == "group") && spoolResource(target, 257) {
+				envelope.Target = target
+			}
+		}
+	}
+	return envelope
 }
 
 func envelopeFrom(ts, source, operation, outcome string, scope VerifiedScope, latency, count, request, response int64) SpoolEnvelope {
@@ -110,7 +142,7 @@ func envelopeFrom(ts, source, operation, outcome string, scope VerifiedScope, la
 }
 
 func (e SpoolEnvelope) validate() error {
-	if e.Version != 1 || !spoolIdentifier(e.EventID, 128) || e.EventID == "" || !spoolIdentifier(e.Source, 64) || e.Source == "" || !spoolIdentifier(e.Operation, 128) || e.Operation == "" || !spoolIdentifier(e.ActorID, 128) || !spoolIdentifier(e.TenantID, 128) || (e.Outcome != "unknown" && spoolOutcome(e.Outcome) != e.Outcome) {
+	if e.Version != 1 || !spoolIdentifier(e.EventID, 128) || e.EventID == "" || !spoolIdentifier(e.Source, 64) || e.Source == "" || !spoolIdentifier(e.Operation, 128) || e.Operation == "" || !spoolIdentifier(e.ActorID, 128) || !spoolIdentifier(e.TenantID, 128) || (e.Resource != "" && !spoolResource(e.Resource, 257)) || (e.Target != "" && !spoolResource(e.Target, 257)) || (e.Outcome != "unknown" && spoolOutcome(e.Outcome) != e.Outcome) {
 		return ErrSpoolEvent
 	}
 	if len(e.TS) > 64 {

@@ -176,7 +176,8 @@ feature flags, а доступ к данным — от аутентификац
 OIDC bearer verification, browser OIDC/PKCE, SAML, прямой LDAP/LDAPS/StartTLS
 и SCIM Users/Groups имеют отдельные HTTP-поверхности. SQL identity bridge
 связывает доверенный issuer/subject с provisioned user. Document/group policy
-реализована, но её публичный router ещё не подключён. Настройки и проверяемые
+доступна через защищённый REST API по immutable user/group ID; WebUI selector
+и tenant-scoped recipient lookup ещё не реализованы. Настройки и проверяемые
 ограничения: [enterprise identity](enterprise-identity.md). Product preset сам
 по себе не доказывает работу реального каталога, входа и прав на документы.
 

@@ -670,11 +670,9 @@ func main() {
 	// API key management (requires auth)
 	vectorHttp.RegisterAPIKeyEndpoints(api, *authCfg)
 
-	// Protected routes: vector ops
-	api.Post("/insert", handler.Insert)
-	api.Post("/batch_insert", handler.BatchInsert)
-	api.Post("/search", handler.Search)
-	api.Post("/delete", handler.Delete)
+	// Raw-vector compatibility routes are global resources without document
+	// lineage. In authenticated deployments they are active-superuser only.
+	vectorHttp.RegisterLegacyVectorAPI(api, vectorHttp.APIConfig{DB: pgDB, RequireAuth: *requireAuth}, handler)
 	api.Get("/datasets/:id/graph", vectorHttp.DatasetGraph(vizCfg))
 
 	// Error tracker inspection (protected). Previously registered in

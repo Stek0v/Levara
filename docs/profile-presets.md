@@ -104,10 +104,11 @@ or `LEVARA_SAML_IDP_METADATA_FILE`, `LEVARA_SAML_KEY_FILE`,
 `LEVARA_SAML_CERT_FILE` — SP-initiated flows only), a SCIM 2.0 provisioning
 surface (`/scim/v2`; env: `LEVARA_SCIM_TOKEN`, `LEVARA_SCIM_ISSUER`, optional
 `LEVARA_SCIM_TENANT_ID`; Users and managed Groups), direct LDAP/LDAPS/StartTLS,
-browser OIDC with PKCE, SQL identity linking, document/group policy, S3 and AWS
-KMS/BYOK implementations, and an audit webhook spool. Public document ACL
-routing, end-to-end legal hold, real AD/IdP/vendor provisioning, external
-object storage/KMS and SIEM acceptance remain follow-up work.
+browser OIDC with PKCE, SQL identity linking, authenticated document/group REST
+policy, S3 and AWS KMS/BYOK implementations, and an audit webhook spool.
+Document ACL WebUI/CLI and recipient discovery, end-to-end legal hold, real
+AD/IdP/vendor provisioning, external object storage/KMS and SIEM acceptance
+remain follow-up work.
 
 Start from:
 

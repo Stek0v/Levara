@@ -26,11 +26,11 @@ import (
 
 // APIConfig holds configuration for Levara API endpoints.
 type APIConfig struct {
-	PostgresDSN   string
-	StoragePath   string
-	WorkspacePath string
-	JWTSecret     string
-	RequireAuth   bool
+	PostgresDSN       string
+	StoragePath       string
+	WorkspacePath     string
+	JWTSecret         string
+	RequireAuth       bool
 	AuthCookieOrigins []string
 	// Version is the build SHA (cmd/server.GitSHA) surfaced in the sync
 	// manifest so a pull/push can warn on instance version skew.
@@ -151,6 +151,7 @@ func RegisterAPI(app fiber.Router, cfg APIConfig) {
 	app.Get("/datasets/:id/data/:dataId/raw", datasetDataRawHandler(cfg))
 	app.Get("/datasets/:id/data/:dataId/raw/url", datasetDataRawURLHandler(cfg))
 	app.Get("/datasets/:id/data/:dataId/structured-artifacts/:artifactId", structuredArtifactHandler(cfg))
+	RegisterDocumentPolicyAPI(app, cfg)
 	app.Get("/datasets/status", datasetStatusHandler(cfg))
 
 	// U3: File upload (multipart)
@@ -179,14 +180,17 @@ func RegisterAPI(app fiber.Router, cfg APIConfig) {
 	app.Get("/settings", settingsGetHandler(cfg))
 	app.Put("/settings", settingsPutHandler(cfg))
 
-	// U11: Collections metadata
-	app.Get("/collections", collectionsListHandler(cfg))
-	app.Post("/collections", collectionCreateHandler(cfg))
-	app.Delete("/collections/:name", collectionDeleteHandler(cfg))
-	app.Delete("/collections/:name/records/:id", collectionRecordDeleteHandler(cfg))
-	app.Get("/collections/:name/meta", collectionMetaHandler(cfg))
-	app.Put("/collections/:name/meta", collectionMetaUpdateHandler(cfg))
-	app.Post("/collections/:name/rename", collectionRenameHandler(cfg))
+	// U11: Collections metadata. Collections are global resources and do not
+	// carry dataset/document ACLs, so authenticated deployments keep them on
+	// the administrator surface.
+	adminOnly := GlobalResourceAdminOnly(cfg)
+	app.Get("/collections", adminOnly, collectionsListHandler(cfg))
+	app.Post("/collections", adminOnly, collectionCreateHandler(cfg))
+	app.Delete("/collections/:name", adminOnly, collectionDeleteHandler(cfg))
+	app.Delete("/collections/:name/records/:id", adminOnly, collectionRecordDeleteHandler(cfg))
+	app.Get("/collections/:name/meta", adminOnly, collectionMetaHandler(cfg))
+	app.Put("/collections/:name/meta", adminOnly, collectionMetaUpdateHandler(cfg))
+	app.Post("/collections/:name/rename", adminOnly, collectionRenameHandler(cfg))
 
 	// Phase 2: rerank info surface (resolves design open question — clients
 	// need a cheap way to confirm which reranker variant is configured).
@@ -262,8 +266,6 @@ func RegisterAPI(app fiber.Router, cfg APIConfig) {
 
 	// U5: Levara search (separate from legacy vector /search)
 	app.Post("/search/text", searchHandler(cfg))
-	app.Post("/search/", searchHandler(cfg)) // Levara frontend compat alias
-	app.Post("/search", searchHandler(cfg))  // without trailing slash
 
 	// U6: Heartbeat event log (system activity history)
 	app.Get("/heartbeats", heartbeatsHandler(cfg))

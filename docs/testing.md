@@ -5,6 +5,28 @@
 само по себе не подтверждает качество поиска, изоляцию пользователей или
 работу реального внешнего сервиса.
 
+## Document ACL REST и global-resource gate — 2026-09-10
+
+На текущем рабочем дереве подключены document policy/user/group routes и
+проверен административный барьер для глобальных raw-vector, collection,
+dual-search, reembed и embedding-migration endpoints в required-auth режиме.
+
+| Проверка | Наблюдаемый результат | Граница доказательства |
+|---|---|---|
+| `LEVARA_TEST_POSTGRES_DSN=... go test -race ./pkg/access ./pkg/audit ./internal/http -count=1` | PASS: access 20.876s, audit 4.829s, HTTP 300.082s | Полные suites; SQLite + PostgreSQL там, где сценарии объявлены для обеих БД. В том числе 28 сочетаний API key/JWT session × 7 ACL/group mutations × 2 SQL |
+| `make contract-check && go test ./docs` | PASS | Generated REST contract содержит 9 document/group routes; документация не утверждает готовность WebUI/CLI |
+| `make test-commit` | PASS: S0–S4; HTTP 46.638s, server 3.345s | Docs, access/profile/audit/workspace/MCP, core engine, полный HTTP package и server bootstrap |
+
+Обычный пользователь и неактивный superuser получают 403 до вызова глобального
+handler; активный superuser проходит. Локальный no-auth профиль сохраняет
+legacy compatibility. Document audit различает `success`, `denied` и `failure`;
+SQL spool/webhook получает только проверенные actor/tenant и ограниченные
+`resource`/`target`, без содержимого, credentials и произвольной metadata.
+Отзыв API key или browser session после проверки middleware, но до ACL handler,
+возвращает 401, не меняет policy/group rows и пишет только `denied` audit.
+`POST /search` однозначно остаётся legacy raw-vector endpoint, а text search
+доступен только через `POST /search/text`.
+
 ## Публикация и статусы документов — 2026-09-10
 
 На текущем рабочем дереве выполнены race-прогоны с SQLite и изолированным
@@ -14,7 +36,7 @@ PostgreSQL 16:
 |---|---|---|
 | `go test -race -p 1 ./pkg/mcp ./pkg/orchestrator ./pkg/access -count=1` | PASS: MCP 12.477s, orchestrator 1.565s, access 10.235s | Полные suites этих трёх пакетов |
 | 21 профильный `internal/http` сценарий с `-race` | PASS: 33.399s | Inline HTTP/MCP legacy/latest, atomic attempt/publication, batch claim rollback, partial batch failure, exact counters/status/lineage, source replacement, activity ACL, graph и session provenance на обеих SQL |
-| `LEVARA_TEST_POSTGRES_DSN=... go test -race ./internal/http -count=1` | PASS: 1189 тестов/подтестов, 0 FAIL; 185 PostgreSQL pass-событий | Весь HTTP package; пропущен только opt-in load-baseline `TestDCDVSALoadBaseline` |
+| `LEVARA_TEST_POSTGRES_DSN=... go test -race ./internal/http -count=1` | PASS: полный пакет за 300.082s | Весь HTTP package; opt-in внешние/load проверки не считаются пройденными без их окружения |
 | `make contract && make contract-check` | PASS | Generated MCP/API contract соответствует descriptors и schema |
 | `go test ./docs -count=1` | PASS | Ссылки и заявленные capability markers; не внешний provider test |
 

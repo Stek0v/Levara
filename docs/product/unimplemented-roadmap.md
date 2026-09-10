@@ -16,7 +16,7 @@
 | Область | Реализовано локально | Главный остаток |
 |---|---|---|
 | Identity | LDAP/LDAPS/StartTLS, browser OIDC/SAML, SCIM Groups/EnterpriseUser subset | Реальные AD/IdP, сквозной отзыв, общий integration gate |
-| Документы | Модель ACL, source versioning, авторизованная загрузка, structured preflight/source CAS и artifact lifecycle, inline HTTP/MCP cognify и publication-aware `query_entity` | **API ACL не подключён**; остальные raw/vector/collection mutation paths |
+| Документы | Модель ACL и защищённый REST API, source versioning, авторизованная загрузка, structured preflight/source CAS и artifact lifecycle, inline HTTP/MCP cognify, publication-aware `query_entity`; глобальные REST vector/collection/reembed/migration routes ограничены active superuser при required auth | WebUI/CLI и recipient discovery; составные gRPC/sync/workspace mutation paths и сквозной legal hold |
 | Task Runtime / memory | Реальный workspace executor и проверка receipt/артефактов | Совмещённая приёмка recovery/authority, контракт, три релиза |
 | Хранение / аудит | S3 SDK/multipart, AWS KMS/BYOK, SQL-spool/webhook и CLI | Внешние сервисы и сквозной legal hold |
 | Onboarding / backup | Team CLI и проверяемый offline standalone/local backup | Интеграция, ограничения restore, эксплуатация расписания |
@@ -128,9 +128,11 @@ issuer/subject без склейки по email. Добавлены SCIM Groups,
 provisioning audit, деактивация и отзыв ключей. Это выбранный subset, не полный SCIM.
 
 Для документов написаны ACL пользователей/групп, наследование, tenant boundary,
-CAS, tombstones/hold и проверки происхождения результатов. **Публичный API
-управления документными правами ещё не подключён.** Имеющиеся helpers не
-закрывают пользовательский сценарий sharing до интеграции всех путей.
+CAS, tombstones/hold и проверки происхождения результатов. Защищённый REST API
+подключает policy, grant/revoke и управление составом групп; отзыв API key и
+browser session повторно проверяется под SQL fence до commit. WebUI/CLI,
+tenant-scoped recipient discovery и оставшиеся transport/mutation пути ещё не
+закрывают полный пользовательский сценарий sharing.
 
 Оставшаяся сквозная и внешняя приёмка (часть негативных сценариев уже проверена
 локально):
@@ -238,14 +240,15 @@ grant/revoke и graph egress на обеих SQL. Следующий поряд�
   реального endpoint, составной gRPC batch, cancellation/rollback и поздний
   worker. Текущий inline MCP тест покрывает legacy/latest MCP, но не заменяет
   полный upload matrix.
-- P1/P2: закрыть raw/vector/collection mutations и составные gRPC writes,
-  sync graph/collection import, reembed/migration/dualwrite/backfill,
-  workspace write/revert/GC. Legacy delete/rename должны повторять авторизацию
+- P1/P2: закрыть составные gRPC writes, sync graph/collection import,
+  dualwrite/backfill и workspace write/revert/GC. Глобальные REST
+  raw-vector/collection/reembed/migration endpoints уже ограничены active
+  superuser при required auth. Legacy dataset delete/rename должны повторять авторизацию
   внутри транзакции изменения, закрывая окно конкурентного отзыва.
 - P1/P2: распространить legal hold на все эти пути. Coordinator и атомарный
   hold-aware prune уже защищены; это не доказывает защиту остальных операций.
-  После сквозной проверки подключить API ACL и сценарий выдачи/отзыва прав
-  через Web/API/консоль, включая прямые URL, group membership и tenant boundary.
+  REST API ACL, прямые URL, group membership и tenant boundary проверены;
+  добавить тот же сценарий выдачи/отзыва через WebUI/CLI и recipient discovery.
 
 Оставшиеся критерии качества и жизненного цикла:
 

@@ -52,6 +52,7 @@ func TestRESTRouteInventoryClassifiesLegacyVectorCompatibility(t *testing.T) {
 	for _, want := range []string{
 		routeKey("POST", "/insert"),
 		routeKey("POST", "/batch_insert"),
+		routeKey("POST", "/search"),
 		routeKey("POST", "/delete"),
 	} {
 		found := false

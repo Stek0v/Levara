@@ -8,14 +8,15 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	accesspkg "github.com/stek0v/levara/pkg/access"
+	"github.com/stek0v/levara/pkg/audit"
 )
 
-// RegisterDocumentPolicyAPI must be mounted behind authentication and tenant
-// middleware only after every search/model egress path enforces source policy.
-// RegisterAPI deliberately does not call this rollout gate yet.
+// RegisterDocumentPolicyAPI is mounted by RegisterAPI behind the server's
+// authentication and tenant middleware.
 func RegisterDocumentPolicyAPI(app fiber.Router, cfg APIConfig) {
 	app.Get("/datasets/:id/data/:dataId", documentGetHandler(cfg))
 	app.Post("/datasets/:id/data/:dataId/policy", documentRegisterHandler(cfg))
@@ -28,9 +29,53 @@ func RegisterDocumentPolicyAPI(app fiber.Router, cfg APIConfig) {
 	app.Put("/document-groups/:groupId/members", documentGroupMembersHandler(cfg))
 }
 
+func documentMutationAuditOutcome(c *fiber.Ctx, cfg APIConfig, eventType, subject, outcome string, metadata map[string]any) {
+	if cfg.WorkspaceAuditSink == nil {
+		return
+	}
+	ctx := searchEgressContext(c, cfg, c.UserContext())
+	scope := verifiedAuditScope(ctx)
+	cfg.WorkspaceAuditSink.LogEvent(audit.Event{
+		VerifiedScope: scope,
+		TS:            time.Now().UTC().Format(time.RFC3339Nano),
+		Source:        "document.rest",
+		Type:          eventType,
+		Subject:       subject,
+		ActorID:       scope.ActorID,
+		Outcome:       outcome,
+		Metadata:      metadata,
+	})
+}
+
+func documentMutationAudit(c *fiber.Ctx, cfg APIConfig, eventType, subject string, metadata map[string]any) {
+	documentMutationAuditOutcome(c, cfg, eventType, subject, "success", metadata)
+}
+
+func documentMutationAuditError(c *fiber.Ctx, cfg APIConfig, eventType, subject string, metadata map[string]any, err error) {
+	outcome := "failure"
+	if errors.Is(err, accesspkg.ErrRevokedCredential) || errors.Is(err, accesspkg.ErrDocumentForbidden) || errors.Is(err, accesspkg.ErrGroupForbidden) {
+		outcome = "denied"
+	}
+	documentMutationAuditOutcome(c, cfg, eventType, subject, outcome, metadata)
+}
+
+func documentAuditSubject(ref accesspkg.DocumentRef) string {
+	return ref.DatasetID + "/" + ref.DataID
+}
+
 func documentSQLPolicy(cfg APIConfig) accesspkg.SQLPolicy {
 	return accesspkg.SQLPolicy{DB: cfg.DB, Q: Q, QA: QArgs}
 }
+
+func withDocumentMutation(c *fiber.Ctx, cfg APIConfig, mutate func(context.Context, accesspkg.SQLPolicy, accesspkg.Actor) error) error {
+	ctx, cancel := apiRequestContext(c)
+	defer cancel()
+	metadataActor := uploadMetadataActor(c, cfg, ctx)
+	return documentSQLPolicy(cfg).WithMetadataWrite(ctx, metadataActor, GetDBProvider() == DBSQLite, func(locked accesspkg.SQLPolicy) error {
+		return mutate(ctx, locked, metadataActor.Actor)
+	})
+}
+
 func documentRefFromFiber(c *fiber.Ctx) accesspkg.DocumentRef {
 	return accesspkg.DocumentRef{DatasetID: c.Params("id"), DataID: c.Params("dataId")}
 }
@@ -123,10 +168,18 @@ func documentRegisterHandler(cfg APIConfig) fiber.Handler {
 		if err := c.BodyParser(&req); err != nil {
 			return fiber.NewError(400, "invalid document registration")
 		}
-		r, err := documentSQLPolicy(cfg).RegisterDocument(c.UserContext(), workspaceActorFromFiber(c), documentRefFromFiber(c), req.TenantID, req.Mode)
+		ref := documentRefFromFiber(c)
+		var r accesspkg.DocumentResource
+		err := withDocumentMutation(c, cfg, func(ctx context.Context, p accesspkg.SQLPolicy, actor accesspkg.Actor) error {
+			var err error
+			r, err = p.RegisterDocument(ctx, actor, ref, req.TenantID, req.Mode)
+			return err
+		})
 		if err != nil {
+			documentMutationAuditError(c, cfg, "register", documentAuditSubject(ref), map[string]any{"mode": req.Mode}, err)
 			return documentHTTPError(err)
 		}
+		documentMutationAudit(c, cfg, "register", documentAuditSubject(ref), map[string]any{"mode": r.Mode, "acl_revision": r.ACLRevision})
 		return sendDocumentResource(c, r)
 	}
 }
@@ -156,16 +209,25 @@ func documentPolicyUpdateHandler(cfg APIConfig) fiber.Handler {
 			return fiber.NewError(400, "exactly one of mode or hold is required")
 		}
 		var r accesspkg.DocumentResource
-		var err error
-		p := documentSQLPolicy(cfg)
+		eventType := "set_hold"
 		if req.Mode != nil {
-			r, err = p.SetDocumentMode(c.UserContext(), workspaceActorFromFiber(c), documentRefFromFiber(c), req.ACLRevision, *req.Mode)
-		} else {
-			r, err = p.SetDocumentHold(c.UserContext(), workspaceActorFromFiber(c), documentRefFromFiber(c), req.ACLRevision, *req.Hold)
+			eventType = "set_mode"
 		}
+		ref := documentRefFromFiber(c)
+		err := withDocumentMutation(c, cfg, func(ctx context.Context, p accesspkg.SQLPolicy, actor accesspkg.Actor) error {
+			var err error
+			if req.Mode != nil {
+				r, err = p.SetDocumentMode(ctx, actor, ref, req.ACLRevision, *req.Mode)
+			} else {
+				r, err = p.SetDocumentHold(ctx, actor, ref, req.ACLRevision, *req.Hold)
+			}
+			return err
+		})
 		if err != nil {
+			documentMutationAuditError(c, cfg, eventType, documentAuditSubject(ref), nil, err)
 			return documentHTTPError(err)
 		}
+		documentMutationAudit(c, cfg, eventType, documentAuditSubject(ref), map[string]any{"acl_revision": r.ACLRevision})
 		return sendDocumentResource(c, r)
 	}
 }
@@ -182,16 +244,32 @@ func documentGrantHandler(cfg APIConfig, revoke bool) fiber.Handler {
 			return fiber.NewError(400, "invalid grant request")
 		}
 		var r accesspkg.DocumentResource
-		var err error
-		p := documentSQLPolicy(cfg)
-		if revoke {
-			r, err = p.RevokeDocument(c.UserContext(), workspaceActorFromFiber(c), documentRefFromFiber(c), req.ACLRevision, accesspkg.DocumentPrincipal{Kind: c.Params("kind"), ID: c.Params("principalId")})
-		} else {
-			r, err = p.GrantDocument(c.UserContext(), workspaceActorFromFiber(c), documentRefFromFiber(c), req.ACLRevision, accesspkg.DocumentPrincipal{Kind: req.PrincipalKind, ID: req.PrincipalID}, req.Role)
-		}
+		ref := documentRefFromFiber(c)
+		err := withDocumentMutation(c, cfg, func(ctx context.Context, p accesspkg.SQLPolicy, actor accesspkg.Actor) error {
+			var err error
+			if revoke {
+				r, err = p.RevokeDocument(ctx, actor, ref, req.ACLRevision, accesspkg.DocumentPrincipal{Kind: c.Params("kind"), ID: c.Params("principalId")})
+			} else {
+				r, err = p.GrantDocument(ctx, actor, ref, req.ACLRevision, accesspkg.DocumentPrincipal{Kind: req.PrincipalKind, ID: req.PrincipalID}, req.Role)
+			}
+			return err
+		})
 		if err != nil {
+			kind, principalID, eventType := req.PrincipalKind, req.PrincipalID, "grant"
+			if revoke {
+				kind, principalID, eventType = c.Params("kind"), c.Params("principalId"), "revoke"
+			}
+			documentMutationAuditError(c, cfg, eventType, documentAuditSubject(ref), map[string]any{"principal_kind": kind, "principal_id": principalID}, err)
 			return documentHTTPError(err)
 		}
+		kind, principalID, eventType := req.PrincipalKind, req.PrincipalID, "grant"
+		metadata := map[string]any{"acl_revision": r.ACLRevision, "role": req.Role}
+		if revoke {
+			kind, principalID, eventType = c.Params("kind"), c.Params("principalId"), "revoke"
+			delete(metadata, "role")
+		}
+		metadata["principal_kind"], metadata["principal_id"] = kind, principalID
+		documentMutationAudit(c, cfg, eventType, documentAuditSubject(ref), metadata)
 		return sendDocumentResource(c, r)
 	}
 }
@@ -208,10 +286,17 @@ func documentGroupCreateHandler(cfg APIConfig) fiber.Handler {
 		if err := c.BodyParser(&req); err != nil {
 			return fiber.NewError(400, "invalid group request")
 		}
-		g, err := documentSQLPolicy(cfg).CreateGroup(c.UserContext(), workspaceActorFromFiber(c), req.TenantID, req.Name)
+		var g accesspkg.AccessGroup
+		err := withDocumentMutation(c, cfg, func(ctx context.Context, p accesspkg.SQLPolicy, actor accesspkg.Actor) error {
+			var err error
+			g, err = p.CreateGroup(ctx, actor, req.TenantID, req.Name)
+			return err
+		})
 		if err != nil {
+			documentMutationAuditError(c, cfg, "group_create", "group", map[string]any{"tenant_id": req.TenantID}, err)
 			return documentHTTPError(err)
 		}
+		documentMutationAudit(c, cfg, "group_create", "group/"+g.ID, map[string]any{"tenant_id": g.TenantID, "revision": g.Revision})
 		return c.JSON(documentGroupJSON(g))
 	}
 }
@@ -233,10 +318,17 @@ func documentGroupMembersHandler(cfg APIConfig) fiber.Handler {
 		if err := c.BodyParser(&req); err != nil || req.Members == nil {
 			return fiber.NewError(400, "members array required")
 		}
-		g, err := documentSQLPolicy(cfg).ReplaceGroupMembers(c.UserContext(), workspaceActorFromFiber(c), c.Params("groupId"), req.Revision, *req.Members)
+		var g accesspkg.AccessGroup
+		err := withDocumentMutation(c, cfg, func(ctx context.Context, p accesspkg.SQLPolicy, actor accesspkg.Actor) error {
+			var err error
+			g, err = p.ReplaceGroupMembers(ctx, actor, c.Params("groupId"), req.Revision, *req.Members)
+			return err
+		})
 		if err != nil {
+			documentMutationAuditError(c, cfg, "group_members_replace", "group/"+c.Params("groupId"), map[string]any{"member_count": len(*req.Members)}, err)
 			return documentHTTPError(err)
 		}
+		documentMutationAudit(c, cfg, "group_members_replace", "group/"+g.ID, map[string]any{"revision": g.Revision, "member_count": len(g.Members)})
 		return c.JSON(documentGroupJSON(g))
 	}
 }

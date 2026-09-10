@@ -69,10 +69,12 @@ validity. It does not infer a historical fact missing from your source material.
 ## 4. Manage and share the document
 
 Use the WebUI dataset page to inspect extracted text, download the original,
-and grant an individual user viewer/editor/admin access. For a single document,
-use a separate dataset; native document ACLs and effective group grants are not
-available. Shared editors should target the existing dataset ID through WebUI/API;
-CLI `add --dataset` currently resolves a dataset name for the caller.
+and grant an individual user viewer/editor/admin access to the whole dataset.
+For one document or an organization group, use the authenticated document ACL
+REST flow in [document management](../document-management.md); the WebUI panel
+and CLI commands are still pending. Shared editors should target the existing
+dataset ID through WebUI/API; CLI `add --dataset` currently resolves a dataset
+name for the caller.
 
 Deletion is not the inverse of every ingestion path. MCP `delete` takes
 `dataset_id`, not `data_id`, and does not promise complete physical erasure of

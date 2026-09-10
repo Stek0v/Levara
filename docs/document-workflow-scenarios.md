@@ -72,7 +72,7 @@
 | A08 | Повтор grant возвращает сохранённый ID и обновляет роль | PASS: SQLite + PostgreSQL |
 | A09 | viewer не пишет; editor пишет и может удалить набор; read-only API key не повышается share | PASS: scoped ACL regressions |
 | A10 | Удаление связи в A сохраняет SQL/raw/index copy документа в B | PASS: source association control; это не полная очистка A |
-| A11 | Per-document и group permissions, запрет grant вне организации | PASS policy/group tests; GAP: публичный API ещё не подключён к основному router |
+| A11 | Per-document и group permissions, запрет grant вне организации | PASS: REST routes, user/group grant/revoke, tenant/principal checks, CAS и audit; SQLite + PostgreSQL. GAP: WebUI/CLI и recipient discovery |
 | A12 | Удалённый файл исчезает из всех vector/BM25/graph/community/VSA/RAG источников и MCP | GAP: SQL-only delete не гарантирует этого |
 | A13 | Удаление/изменение во время cognify не допускает публикации старых derivatives | PASS для cognify source revision/revoke/publication; GAP для остальных mutation/sync/reindex путей |
 | A14 | Старые chunks без document_id, SQL/Neo4j граф и aggregates имеют проверяемый источник | GAP: нужна миграция/перестройка и полная provenance |

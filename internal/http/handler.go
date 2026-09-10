@@ -28,6 +28,16 @@ func (h *Handler) SetCollections(cm *store.CollectionManager) {
 	h.collections = cm
 }
 
+// RegisterLegacyVectorAPI mounts the raw-vector compatibility surface. The
+// caller-provided collection names and metadata have no document ACL lineage,
+// so authenticated deployments restrict these routes to active superusers.
+func RegisterLegacyVectorAPI(app fiber.Router, cfg APIConfig, h *Handler) {
+	app.Post("/insert", GlobalResourceAdminOnly(cfg), h.Insert)
+	app.Post("/batch_insert", GlobalResourceAdminOnly(cfg), h.BatchInsert)
+	app.Post("/search", GlobalResourceAdminOnly(cfg), h.Search)
+	app.Post("/delete", GlobalResourceAdminOnly(cfg), h.Delete)
+}
+
 func (h *Handler) Info(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{
 		"dimension": h.dim,

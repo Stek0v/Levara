@@ -29,7 +29,7 @@ type dualSearchResult struct {
 }
 
 func RegisterDualSearchAPI(app fiber.Router, cfg APIConfig) {
-	app.Post("/search/dual", dualSearchHandler(cfg))
+	app.Post("/search/dual", GlobalResourceAdminOnly(cfg), dualSearchHandler(cfg))
 }
 
 func dualSearchHandler(cfg APIConfig) fiber.Handler {

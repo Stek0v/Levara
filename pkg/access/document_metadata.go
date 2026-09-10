@@ -18,6 +18,29 @@ type MetadataActor struct {
 	TrustedLocal bool // explicit configured no-auth mode; never inferred from missing proof
 }
 
+// WithMetadataWrite keeps verified credential authority live through the SQL
+// commit and lets document/group mutation methods reuse the fenced transaction.
+func (p SQLPolicy) WithMetadataWrite(ctx context.Context, actor MetadataActor, sqlite bool, mutate func(SQLPolicy) error) error {
+	if mutate == nil {
+		return ErrDocumentInvalid
+	}
+	tx, locked, err := p.BeginMetadataWrite(ctx, actor, sqlite)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := mutate(locked); err != nil {
+		return err
+	}
+	if !actor.TrustedLocal {
+		c := actor.Credential
+		if err := locked.RecheckCredential(ctx, actor.UserID, c.Kind, c.KeyID, actor.APIKeyPermissions, c.SessionID, c.Epoch, c.IssuedAt, c.ExpiresAt); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 // BeginMetadataWrite stabilizes authorization and every data alias during a
 // bounded publication. The caller owns commit/rollback. Extraction and provider
 // calls finish before acquiring this fence. Authorized ingest may hold it across
