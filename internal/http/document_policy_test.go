@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http/httptest"
@@ -333,7 +334,11 @@ func TestDocumentHTTPManagementAndGroups(t *testing.T) {
 	documentHTTPDialects(t, func(t *testing.T, f *documentHTTPFixture) {
 		const base = "/datasets/alpha/data/blob"
 		for _, user := range []string{"viewer", "peer", "foreign", "inactive", ""} {
-			f.expect(user, "GET", base+"/policy", "", 403)
+			want := 403
+			if user == "inactive" {
+				want = 401
+			}
+			f.expect(user, "GET", base+"/policy", "", want)
 		}
 		f.expect("owner", "GET", base+"/policy", "", 200, "X-Test-Key", "read")
 		f.expect("owner", "POST", "/datasets/alpha/data/visible/policy", `{"tenant_id":"b","mode":"restricted"}`, 403)
@@ -379,7 +384,7 @@ func TestDocumentHTTPManagementAndGroups(t *testing.T) {
 		f.expect("owner", "PATCH", base+"/policy", fmt.Sprintf(`{"acl_revision":%d,"hold":true}`, r.ACLRevision), 200)
 		f.expect("root", "PATCH", base, "renamed", 403, "If-Match", documentETag(f.current()))
 		f.exec("UPDATE users SET is_active=FALSE WHERE id='owner'")
-		f.expect("owner", "GET", base+"/policy", "", 403)
+		f.expect("owner", "GET", base+"/policy", "", 401)
 
 		seen := map[string]bool{}
 		seenDenied := false
@@ -404,6 +409,280 @@ func TestDocumentHTTPManagementAndGroups(t *testing.T) {
 			t.Errorf("missing denied document audit event: %+v", *f.auditEvents)
 		}
 	})
+}
+
+func TestDocumentHTTPRecipientAndSharedDiscovery(t *testing.T) {
+	documentHTTPDialects(t, func(t *testing.T, f *documentHTTPFixture) {
+		group, err := f.p.CreateGroup(context.Background(), f.owner, "a", "Reviewers")
+		if err != nil {
+			t.Fatal(err)
+		}
+		group, err = f.p.ReplaceGroupMembers(context.Background(), f.owner, group.ID, group.Revision, []string{"viewer"})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		body := f.expect("owner", "GET", "/datasets/alpha/data/blob/recipients", "", 200)
+		var recipients accesspkg.DocumentRecipients
+		if err := json.Unmarshal(body, &recipients); err != nil {
+			t.Fatal(err)
+		}
+		if recipients.TenantID != "a" || len(recipients.Users) != 3 || len(recipients.Groups) != 1 || recipients.Groups[0].ID != group.ID || recipients.Groups[0].MemberCount != 1 {
+			t.Fatalf("recipients=%+v", recipients)
+		}
+		if strings.Contains(string(body), "foreign@test.invalid") || strings.Contains(string(body), "inactive@test.invalid") {
+			t.Fatalf("foreign or inactive recipient leaked: %s", body)
+		}
+		f.expect("owner", "GET", "/datasets/alpha/data/blob/recipients", "", 403, "X-Test-Key", "read")
+		f.expect("viewer", "GET", "/datasets/alpha/data/blob/recipients", "", 403)
+
+		f.r, err = f.p.GrantDocument(context.Background(), f.owner, f.r.DocumentRef, f.r.ACLRevision, accesspkg.DocumentPrincipal{Kind: accesspkg.DocumentGroup, ID: group.ID}, accesspkg.RoleViewer)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body = f.expect("viewer", "GET", "/documents/shared", "", 200)
+		var shared struct {
+			Documents []accesspkg.SharedDocument `json:"documents"`
+			Limit     int                        `json:"limit"`
+		}
+		if err := json.Unmarshal(body, &shared); err != nil {
+			t.Fatal(err)
+		}
+		if shared.Limit != 50 || len(shared.Documents) != 1 || shared.Documents[0].DatasetID != "alpha" || shared.Documents[0].DataID != "blob" || shared.Documents[0].Role != accesspkg.RoleViewer {
+			t.Fatalf("shared documents=%+v", shared)
+		}
+		f.expect("foreign", "GET", "/documents/shared", "", 200)
+		f.expect("inactive", "GET", "/documents/shared", "", 401)
+		f.expect("viewer", "GET", "/documents/shared?limit=0", "", 400)
+
+		f.r, err = f.p.GrantDocument(context.Background(), f.owner, f.r.DocumentRef, f.r.ACLRevision, accesspkg.DocumentPrincipal{Kind: accesspkg.DocumentUser, ID: "peer"}, accesspkg.RoleAdmin)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.expect("peer", "GET", "/datasets/alpha/data/blob/recipients", "", 200)
+		group, err = f.p.ReplaceGroupMembers(context.Background(), f.owner, group.ID, group.Revision, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body = f.expect("viewer", "GET", "/documents/shared", "", 200)
+		if strings.Contains(string(body), `"data_id":"blob"`) {
+			t.Fatalf("removed group member retained shared discovery: %s", body)
+		}
+		f.r, err = f.p.RevokeDocument(context.Background(), f.owner, f.r.DocumentRef, f.r.ACLRevision, accesspkg.DocumentPrincipal{Kind: accesspkg.DocumentUser, ID: "peer"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.expect("peer", "GET", "/datasets/alpha/data/blob/recipients", "", 403)
+		body = f.expect("peer", "GET", "/documents/shared", "", 200)
+		if strings.Contains(string(body), `"data_id":"blob"`) {
+			t.Fatalf("revoked user retained shared discovery: %s", body)
+		}
+
+		body = f.expect("owner", "POST", "/datasets/alpha/data/visible/policy", `{"mode":"restricted"}`, 200)
+		if !strings.Contains(string(body), `"tenant_id":"a"`) {
+			t.Fatalf("active tenant was not used for registration: %s", body)
+		}
+	})
+}
+
+func TestDocumentHTTPDiscoveryRechecksRevokedCredential(t *testing.T) {
+	documentHTTPDialects(t, func(t *testing.T, f *documentHTTPFixture) {
+		group, err := f.p.CreateGroup(context.Background(), f.owner, "a", "Credential fence")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, endpoint := range []struct {
+			name, user, path string
+		}{
+			{"policy", "owner", "/datasets/alpha/data/blob/policy"},
+			{"recipients", "owner", "/datasets/alpha/data/blob/recipients"},
+			{"group", "owner", "/document-groups/" + group.ID},
+			{"shared", "viewer", "/documents/shared"},
+		} {
+			for _, credential := range []string{"api_key", "browser_session"} {
+				t.Run(endpoint.name+"/"+credential, func(t *testing.T) {
+					verified := make(chan struct{})
+					proceed := make(chan struct{})
+					cfg := f.cfg
+					cfg.RequireAuth = true
+					keyID := endpoint.name + "-" + credential
+					expires := time.Now().Add(time.Hour).Unix()
+					var sessionID string
+					if credential == "api_key" {
+						f.exec("INSERT INTO api_keys(id,key_hash,user_id,permissions) VALUES($1,$2,$3,'write')", keyID, "hash-"+keyID, endpoint.user)
+					} else {
+						var err error
+						sessionID, err = accesspkg.CreateBrowserSession(context.Background(), f.db, Q, endpoint.user, expires)
+						if err != nil {
+							t.Fatal(err)
+						}
+					}
+
+					app := fiber.New(fiber.Config{DisableStartupMessage: true})
+					app.Use(func(c *fiber.Ctx) error {
+						c.Locals("user_id", endpoint.user)
+						c.Locals("tenant_id", "a")
+						if credential == "api_key" {
+							c.Locals("api_key_permissions", "write")
+							c.Locals("verified_api_key", accesspkg.APIKeyIdentity{KeyID: keyID, UserID: endpoint.user, Permissions: "write"})
+						} else {
+							c.Locals("verified_jwt", jwtPayload{Sub: endpoint.user, Exp: expires, SessionID: sessionID})
+						}
+						close(verified)
+						<-proceed
+						return c.Next()
+					})
+					RegisterDocumentPolicyAPI(app.Group("/api/v1"), cfg)
+					type result struct {
+						status int
+						body   []byte
+						err    error
+					}
+					done := make(chan result, 1)
+					go func() {
+						resp, err := app.Test(httptest.NewRequest("GET", "/api/v1"+endpoint.path, nil), -1)
+						if err != nil {
+							done <- result{err: err}
+							return
+						}
+						defer resp.Body.Close()
+						body, readErr := io.ReadAll(resp.Body)
+						done <- result{status: resp.StatusCode, body: body, err: readErr}
+					}()
+					<-verified
+					if credential == "api_key" {
+						f.exec("UPDATE api_keys SET revoked=TRUE WHERE id=$1", keyID)
+					} else if err := accesspkg.RevokeBrowserSession(context.Background(), f.db, Q, endpoint.user, sessionID); err != nil {
+						t.Fatal(err)
+					}
+					close(proceed)
+					got := <-done
+					if got.err != nil || got.status != fiber.StatusUnauthorized || bytes.Contains(got.body, []byte("blob")) || bytes.Contains(got.body, []byte("@test.invalid")) {
+						t.Fatalf("revoked discovery status=%d body=%s err=%v", got.status, got.body, got.err)
+					}
+				})
+			}
+		}
+	})
+}
+
+func TestDocumentSharedDiscoveryFenceBlocksAuthorityChangeUntilDrain(t *testing.T) {
+	for _, change := range []string{"grant_revoke", "group_member_removal", "user_deactivate"} {
+		t.Run(change, func(t *testing.T) {
+			documentHTTPDialects(t, func(t *testing.T, f *documentHTTPFixture) {
+				ctx := context.Background()
+				var revoke func(context.Context) error
+				switch change {
+				case "group_member_removal":
+					group, err := f.p.CreateGroup(ctx, f.owner, "a", "Fence group")
+					if err != nil {
+						t.Fatal(err)
+					}
+					group, err = f.p.ReplaceGroupMembers(ctx, f.owner, group.ID, group.Revision, []string{"viewer"})
+					if err != nil {
+						t.Fatal(err)
+					}
+					f.r, err = f.p.GrantDocument(ctx, f.owner, f.r.DocumentRef, f.r.ACLRevision, accesspkg.DocumentPrincipal{Kind: accesspkg.DocumentGroup, ID: group.ID}, accesspkg.RoleViewer)
+					if err != nil {
+						t.Fatal(err)
+					}
+					revoke = func(ctx context.Context) error {
+						_, err := f.p.ReplaceGroupMembers(ctx, f.owner, group.ID, group.Revision, nil)
+						return err
+					}
+				default:
+					var err error
+					f.r, err = f.p.GrantDocument(ctx, f.owner, f.r.DocumentRef, f.r.ACLRevision, accesspkg.DocumentPrincipal{Kind: accesspkg.DocumentUser, ID: "viewer"}, accesspkg.RoleViewer)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if change == "grant_revoke" {
+						revoke = func(ctx context.Context) error {
+							_, err := f.p.RevokeDocument(ctx, f.owner, f.r.DocumentRef, f.r.ACLRevision, accesspkg.DocumentPrincipal{Kind: accesspkg.DocumentUser, ID: "viewer"})
+							return err
+						}
+					} else {
+						revoke = func(ctx context.Context) error {
+							_, err := f.db.ExecContext(ctx, Q("UPDATE users SET is_active=FALSE WHERE id=$1"), "viewer")
+							return err
+						}
+					}
+				}
+
+				cfg := f.cfg
+				cfg.RequireAuth = true
+				discovered := make(chan struct{})
+				allowDrain := make(chan struct{})
+				app := fiber.New(fiber.Config{DisableStartupMessage: true})
+				app.Use(func(c *fiber.Ctx) error {
+					c.Locals("user_id", "viewer")
+					c.Locals("tenant_id", "a")
+					c.Locals("verified_jwt", jwtPayload{Sub: "viewer", Exp: time.Now().Add(time.Hour).Unix()})
+					return c.Next()
+				})
+				app.Get("/probe", func(c *fiber.Ctx) error {
+					requestCtx, cancel := apiRequestContext(c)
+					defer cancel()
+					return withProtectedPolicyResponse(c, cfg, requestCtx, func(ctx context.Context, p accesspkg.SQLPolicy) error {
+						documents, err := p.ListSharedDocuments(ctx, workspaceActorFromFiber(c), 50)
+						if err != nil {
+							return documentHTTPError(err)
+						}
+						close(discovered)
+						<-allowDrain
+						return c.JSON(fiber.Map{"documents": documents})
+					})
+				})
+				type responseResult struct {
+					status int
+					body   []byte
+					err    error
+				}
+				responseDone := make(chan responseResult, 1)
+				go func() {
+					resp, err := app.Test(httptest.NewRequest("GET", "/probe", nil), -1)
+					if err != nil {
+						responseDone <- responseResult{err: err}
+						return
+					}
+					defer resp.Body.Close()
+					body, readErr := io.ReadAll(resp.Body)
+					responseDone <- responseResult{status: resp.StatusCode, body: body, err: readErr}
+				}()
+				<-discovered
+				revokerStarted := make(chan struct{})
+				revoked := make(chan error, 1)
+				go func() {
+					close(revokerStarted)
+					revokeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+					defer cancel()
+					revoked <- revoke(revokeCtx)
+				}()
+				<-revokerStarted
+				select {
+				case err := <-revoked:
+					t.Fatalf("authority change escaped discovery fence: %v", err)
+				case <-time.After(100 * time.Millisecond):
+				}
+				close(allowDrain)
+				got := <-responseDone
+				if got.err != nil || got.status != fiber.StatusOK || !bytes.Contains(got.body, []byte(`"data_id":"blob"`)) {
+					t.Fatalf("fenced response status=%d body=%s err=%v", got.status, got.body, got.err)
+				}
+				if err := <-revoked; err != nil {
+					t.Fatal(err)
+				}
+				documents, err := f.p.ListSharedDocuments(context.Background(), accesspkg.Actor{UserID: "viewer", TenantID: "a"}, 50)
+				if change == "user_deactivate" {
+					if !errors.Is(err, accesspkg.ErrDocumentForbidden) {
+						t.Fatalf("deactivated user discovery err=%v", err)
+					}
+				} else if err != nil || len(documents) != 0 {
+					t.Fatalf("revoked authority retained discovery: documents=%+v err=%v", documents, err)
+				}
+			})
+		})
+	}
 }
 
 type documentPresignStorage struct {

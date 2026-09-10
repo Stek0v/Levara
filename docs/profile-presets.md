@@ -106,9 +106,9 @@ surface (`/scim/v2`; env: `LEVARA_SCIM_TOKEN`, `LEVARA_SCIM_ISSUER`, optional
 `LEVARA_SCIM_TENANT_ID`; Users and managed Groups), direct LDAP/LDAPS/StartTLS,
 browser OIDC with PKCE, SQL identity linking, authenticated document/group REST
 policy, S3 and AWS KMS/BYOK implementations, and an audit webhook spool.
-Document ACL WebUI/CLI and recipient discovery, end-to-end legal hold, real
-AD/IdP/vendor provisioning, external object storage/KMS and SIEM acceptance
-remain follow-up work.
+Document ACL REST/CLI/WebUI and document-scoped recipient discovery are present.
+End-to-end legal hold, real AD/IdP/vendor provisioning, external object
+storage/KMS and SIEM acceptance remain follow-up work.
 
 Start from:
 

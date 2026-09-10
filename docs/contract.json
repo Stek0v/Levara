@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-09-10T16:57:00+03:00",
-  "git_rev": "170a74374eacdff64596c22243550242aef11eef",
+  "generated_at": "2026-09-10T18:13:33+03:00",
+  "git_rev": "8400ff9fe958da22ea189a0611a542f7917619f7",
   "rest": [
     {
       "method": "POST",
@@ -226,6 +226,12 @@
     },
     {
       "method": "GET",
+      "path": "/datasets/:id/data/:dataId/recipients",
+      "status": "canonical",
+      "group": "documents"
+    },
+    {
+      "method": "GET",
       "path": "/datasets/:id/data/:dataId/structured-artifacts/:artifactId",
       "status": "canonical",
       "group": "datasets"
@@ -275,6 +281,12 @@
     {
       "method": "PUT",
       "path": "/document-groups/:groupId/members",
+      "status": "canonical",
+      "group": "documents"
+    },
+    {
+      "method": "GET",
+      "path": "/documents/shared",
       "status": "canonical",
       "group": "documents"
     },

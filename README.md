@@ -156,9 +156,10 @@ then verify an answer against its source. Use [document management](docs/documen
 for the complete workflow and [acceptance scenarios](docs/document-workflow-scenarios.md)
 for partial failures, retries and access checks.
 
-To share one document today, use a separate dataset and grant an individual
-viewer/editor/admin role. Group grants and independent document ACLs are not
-available. For AD, LDAP and SSO deployment choices, start with
+To share one document, open its Access panel or use `levara documents` to grant
+a tenant user or group a viewer/editor/admin role. The recipient sees direct
+grants under “Documents shared directly with you”; the rest of the dataset stays
+closed. For AD, LDAP and SSO deployment choices, start with
 [enterprise identity](docs/enterprise-identity.md).
 
 ## How it works
@@ -289,11 +290,11 @@ JWT/API keys, individual dataset grants, workspace access checks, tenant
 membership checks, strict startup validation and audit export are available.
 `room` and `hall` organize memory; they do not grant or restrict access.
 
-Enterprise identity includes OIDC bearer verification, a SAML service-provider
-HTTP flow and a limited SCIM Users API. Native LDAP/LDAPS, browser OIDC login,
-SCIM-to-SSO identity linking and effective group/document grants are not
-implemented. An AD deployment therefore needs a federation design and an
-explicit acceptance test; an Enterprise preset alone does not establish it.
+Enterprise identity includes LDAP/LDAPS/StartTLS, browser and bearer OIDC,
+SAML SP flows, SCIM Users/Groups and stable SSO identity linking. Document
+user/group grants are available through REST, CLI and WebUI. A real AD/IdP
+deployment still needs an explicit acceptance test; an Enterprise preset alone
+does not establish it.
 See [enterprise identity](docs/enterprise-identity.md) for supported operations,
 route prefixes and lifecycle limits, and [document management](docs/document-management.md)
 for individual sharing and its current boundaries.

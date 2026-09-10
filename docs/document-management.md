@@ -7,16 +7,16 @@
 
 ## Можно ли поделиться отдельным документом
 
-REST API может выдать пользователю или группе организации доступ к одной
-связке `dataset_id + data_id`. Document ACL проверяет tenant boundary,
+REST API, CLI и WebUI могут выдать пользователю или группе организации доступ
+к одной связке `dataset_id + data_id`. Document ACL проверяет tenant boundary,
 активность principal, роль, CAS revision, revoke и вложенное членство групп.
-WebUI пока управляет только grants всего набора; для отдельного документа
-используйте REST-сценарий ниже.
+Список получателей строится только из активных пользователей и групп tenant
+точно зарегистрированного документа и доступен только его менеджеру.
 
 | Получатель / действие | Текущее поведение |
 |---|---|
-| Существующий пользователь | Набор — по email через WebUI/REST; документ — по неизменяемому user ID через REST |
-| Группа организации / AD | REST принимает group ID; состав группы задаётся document-group API или provisioned SCIM membership |
+| Существующий пользователь | Набор — по email через WebUI/REST; документ — через tenant-scoped selector в WebUI или immutable user ID в CLI/REST |
+| Группа организации / AD | WebUI/CLI/REST принимают group ID из tenant документа; состав задаётся document-group API/CLI или provisioned SCIM membership |
 | Только один файл в общем наборе | Grant/revoke через document REST API не открывает остальные файлы набора |
 | Запрет передачи вне организации | Document policy отклоняет user/group principal другого tenant; legacy dataset grant остаётся отдельным контрактом |
 | Анонимная внешняя ссылка | Не является сценарием внутренней ACL |
@@ -65,9 +65,10 @@ WebUI запускается отдельным Next.js сервисом; пар
    коллекции; скачайте оригинал кнопкой Download original. Запрос проходит
    через API с текущими credentials. Legacy-загрузка могла не сохранить
    исходные байты — проверьте формат скачанного файла.
-5. В панели доступа задайте email уже существующего пользователя и роль для
-   всего набора. Для одного файла или группы используйте document REST API:
-   отдельной панели разрешений файла в WebUI пока нет.
+5. В общей панели доступа задайте email и роль для всего набора. Для одного
+   файла нажмите «Доступ» в его строке, при необходимости включите отдельную
+   restricted-policy, выберите пользователя или группу tenant и роль. При
+   concurrent изменении панель обновит ACL revision и попросит повторить действие.
 6. Проверьте доступ в отдельной сессии получателя: список, скачивание и
    поисковый факт. Отзовите grant и повторите те же запросы. Проверка должна
    включать lifecycle ограничения A12–A14 и проверки graph/MCP прав A15/A17.
@@ -162,6 +163,9 @@ curl --fail-with-body -sS -H "Authorization: Bearer $LEVARA_TOKEN" \
 levara --url="$LEVARA_URL/api/v1" add --file=./report.pdf --dataset=finance-pilot-document-001
 levara --url="$LEVARA_URL/api/v1" add 'Отчёт: выручка 123.' --dataset=finance-pilot-document-001
 levara --url="$LEVARA_URL/api/v1" cognify --dataset=finance-pilot-document-001 --collection=finance-pilot --wait
+levara --url="$LEVARA_URL/api/v1" documents recipients "$DATASET_ID" "$DOCUMENT_ID"
+levara --url="$LEVARA_URL/api/v1" documents grant "$DATASET_ID" "$DOCUMENT_ID" user "$USER_ID" viewer
+levara --url="$LEVARA_URL/api/v1" documents shared
 ```
 
 В отличие от curl-примеров выше CLI ожидает base URL уже с `/api/v1`;
@@ -170,9 +174,10 @@ levara --url="$LEVARA_URL/api/v1" cognify --dataset=finance-pilot-document-001 -
 ID через список доступных наборов. Если аргумент означает путь, применяйте
 `--file=`: для совместимости несуществующий позиционный путь остаётся
 обычным текстом. Ошибка HTTP, некорректный JSON или отсутствие обязательных
-полей ответа завершают команду с ненулевым кодом. Для dataset и document
-grants используйте приведённые REST-команды. Встроенных CLI-команд для
-document/group ACL пока нет.
+полей ответа завершают команду с ненулевым кодом. Подкоманды `documents`
+поддерживают `policy`, `register`, `recipients`, `shared`, `grant`, `revoke`,
+`group-create` и `group-members`; grant/revoke и замена состава группы сначала
+читают текущую revision, а server CAS по-прежнему может вернуть конфликт.
 
 MCP `cognify` с inline `data` и HTTP `cognify` с `texts[]` сначала атомарно
 создают серверный dataset/document source, source revision и SHA-256, затем
@@ -240,8 +245,10 @@ curl --fail-with-body -sS -X DELETE \
 Для группы создайте `POST /api/v1/document-groups` с `tenant_id` и `name`,
 замените состав через `PUT /api/v1/document-groups/{groupId}/members` с
 текущими `revision` и `members`, затем используйте `principal_kind:"group"`
-и ID группы в том же grant-запросе. API принимает известные tenant-scoped ID;
-списка групп и поиска пользователей организации в этом интерфейсе пока нет.
+и ID группы в том же grant-запросе. `GET .../recipients` возвращает только
+активных пользователей и группы tenant этого документа; это document-scoped
+список для менеджера, а не глобальный поиск каталога. `GET /documents/shared`
+возвращает получателю его прямые и групповые document grants в active tenant.
 Устаревшая revision возвращает 409, principal другого tenant — 403/400 без
 изменения policy. Аудит различает успешные, отклонённые и неуспешные
 register/mode/hold/grant/revoke/group mutations, сохраняет проверенные

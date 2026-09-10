@@ -18,6 +18,7 @@ import { useT, formatBytes, formatDate, formatCount } from '@/lib/i18n'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { ProjectContextItem, ProjectActivityItem, GitCommit } from '@/lib/api'
 import { useSettings } from '@/hooks/use-levara'
+import { DocumentAccessPanel } from '@/components/document-access-panel'
 
 function formatSize(bytes?: number): string {
   if (!bytes) return ''
@@ -65,6 +66,7 @@ export default function DatasetDetailPage() {
   const [cognifyError, setCognifyError] = useState('')
   const [downloadError, setDownloadError] = useState('')
   const [downloading, setDownloading] = useState<string | null>(null)
+  const [accessRecord, setAccessRecord] = useState<DataRecord | null>(null)
   const cognifyProgress = useQuery({
     queryKey: ['cognify-status', activeCognifyRunId],
     queryFn: () => levara.cognifyStatus(activeCognifyRunId!),
@@ -260,6 +262,7 @@ export default function DatasetDetailPage() {
 
       {cognifyError && <p role="alert" className="mb-4 text-sm text-red-600">{cognifyError}</p>}
       {downloadError && <p role="alert" className="mb-4 text-sm text-red-600">{downloadError}</p>}
+      {accessRecord && <DocumentAccessPanel datasetId={datasetId} document={{ id: accessRecord.id, name: accessRecord.name || accessRecord.id }} open onClose={() => setAccessRecord(null)} />}
 
       {/* Repo binding (block ④) */}
       <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-4 mb-4">
@@ -403,7 +406,7 @@ export default function DatasetDetailPage() {
                   <th className="text-left px-3 py-2 font-medium text-gray-500">{t('project.type')}</th>
                   <th className="text-left px-3 py-2 font-medium text-gray-500">{t('projects.size')}</th>
                   <th className="text-left px-3 py-2 font-medium text-gray-500">{t('common.status')}</th>
-                  <th className="w-20 px-3 py-2"></th>
+                  <th className="w-28 px-3 py-2"></th>
                 </tr>
               </thead>
               <tbody>
@@ -429,6 +432,9 @@ export default function DatasetDetailPage() {
                       </Badge>
                     </td>
                     <td className="px-3 py-2">
+                      <Button variant="ghost" size="sm" aria-label={`${t('document.access.title')}: ${r.name || r.id}`} title={t('document.access.title')} onClick={() => setAccessRecord(r)}>
+                        {t('document.access.button')}
+                      </Button>
                       <Button variant="ghost" size="sm" aria-label="Download original" title="Download original"
                         disabled={downloading !== null} loading={downloading === r.id} onClick={() => handleDownload(r)}>
                         <Download className="h-3.5 w-3.5" />

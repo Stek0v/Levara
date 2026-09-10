@@ -70,9 +70,9 @@ validity. It does not infer a historical fact missing from your source material.
 
 Use the WebUI dataset page to inspect extracted text, download the original,
 and grant an individual user viewer/editor/admin access to the whole dataset.
-For one document or an organization group, use the authenticated document ACL
-REST flow in [document management](../document-management.md); the WebUI panel
-and CLI commands are still pending. Shared editors should target the existing
+For one document or an organization group, use its WebUI Access panel, the
+`levara documents` CLI, or the authenticated REST flow in
+[document management](../document-management.md). Shared editors should target the existing
 dataset ID through WebUI/API; CLI `add --dataset` currently resolves a dataset
 name for the caller.
 

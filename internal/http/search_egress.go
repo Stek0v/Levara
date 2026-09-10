@@ -72,13 +72,51 @@ func sendProtectedResponseWithFence(c *fiber.Ctx, ctx context.Context) error {
 		cancel()
 		return err
 	}
+	return sendFencedResponse(c, streamCtx, func() { release(); cancel() })
+}
+
+func sendFencedResponse(c *fiber.Ctx, ctx context.Context, release func()) error {
+	if c.Response().IsBodyStream() {
+		release()
+		return fiber.NewError(500, "unexpected protected response stream")
+	}
+	if err := ctx.Err(); err != nil {
+		release()
+		return fiber.NewError(504, "search deadline exceeded")
+	}
 	body := append([]byte(nil), c.Response().Body()...)
-	reader := &fencedResponse{reader: bytes.NewReader(body), ctx: streamCtx, release: func() { release(); cancel() }}
+	reader := &fencedResponse{reader: bytes.NewReader(body), ctx: ctx, release: release}
 	if err := c.SendStream(io.ReadCloser(reader), len(body)); err != nil {
 		_ = reader.Close()
 		return err
 	}
 	return nil
+}
+
+// withProtectedPolicyResponse keeps one SQL snapshot from policy discovery
+// through Fiber's asynchronous response drain.
+func withProtectedPolicyResponse(c *fiber.Ctx, cfg APIConfig, ctx context.Context, build func(context.Context, accesspkg.SQLPolicy) error) error {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return fiber.NewError(500, "request deadline missing")
+	}
+	streamCtx, cancel := context.WithDeadline(context.WithoutCancel(ctx), deadline)
+	streamCtx = searchEgressContext(c, cfg, streamCtx)
+	fenced, release, err := beginSearchReadFence(streamCtx)
+	if err != nil {
+		cancel()
+		return err
+	}
+	locked, ok := fenced.Value(searchReadPolicyKey{}).(accesspkg.SQLPolicy)
+	if !ok {
+		locked = accesspkg.SQLPolicy{DB: cfg.DB, Q: Q, QA: QArgs}
+	}
+	closeFence := func() { release(); cancel() }
+	if err := build(fenced, locked); err != nil {
+		closeFence()
+		return err
+	}
+	return sendFencedResponse(c, fenced, closeFence)
 }
 
 func searchEgressContext(c *fiber.Ctx, cfg APIConfig, ctx context.Context) context.Context {

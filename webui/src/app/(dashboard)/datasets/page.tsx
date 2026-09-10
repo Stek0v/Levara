@@ -32,6 +32,8 @@ export default function DatasetsPage() {
   const { data: datasetsRes, isLoading, isError, error, failureReason } = useDatasets()
   const datasets = datasetsRes?.data || []
   const loadError = error || failureReason
+  const { data: shared } = useQuery({ queryKey: ['shared-documents'], queryFn: () => levara.sharedDocuments(), retry: false })
+  const sharedDocuments = Array.isArray(shared?.documents) ? shared.documents : []
 
   const createMutation = useCreateDataset()
   const deleteMutation = useDeleteDataset()
@@ -257,6 +259,19 @@ export default function DatasetsPage() {
       )}
 
       {/* Dataset list */}
+      {sharedDocuments.length > 0 && (
+        <section className="mb-6" aria-labelledby="shared-documents-title">
+          <h2 id="shared-documents-title" className="mb-2 text-sm font-medium text-gray-500">{t('documents.shared.title')}</h2>
+          <div className="space-y-2">
+            {sharedDocuments.map((document) => (
+              <button key={`${document.dataset_id}:${document.data_id}`} onClick={() => { window.location.href = `/datasets/${document.dataset_id}` }} className="flex w-full items-center justify-between rounded-lg border border-gray-200 bg-white p-3 text-left text-sm hover:border-blue-300 dark:border-gray-800 dark:bg-gray-900 dark:hover:border-blue-700">
+                <span><strong>{document.name || document.data_id}</strong> · {document.dataset_name}</span>
+                <Badge variant="default">{t(`project.shares.role.${document.role}`)}</Badge>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
       {datasets.length === 0 && uploadedFiles.length === 0 ? (
         <EmptyState icon={Database} title={t('projects.empty')} description={t('projects.subtitle')}
           action={{ label: t('projects.create'), onClick: () => setShowCreate(true) }} />

@@ -71,7 +71,8 @@ func (p SQLPolicy) GetGroup(ctx context.Context, actor Actor, groupID string) (A
 	if p.DB == nil {
 		return AccessGroup{}, ErrGroupNotFound
 	}
-	g, err := p.accessGroup(ctx, p.DB, groupID)
+	q := p.reader()
+	g, err := p.accessGroup(ctx, q, groupID)
 	if err != nil {
 		return AccessGroup{}, err
 	}
@@ -81,10 +82,10 @@ func (p SQLPolicy) GetGroup(ctx context.Context, actor Actor, groupID string) (A
 	}
 	manager := actor
 	manager.APIKeyPermissions = ""
-	if err := p.groupManager(ctx, p.DB, manager, g.TenantID); err != nil {
+	if err := p.groupManager(ctx, q, manager, g.TenantID); err != nil {
 		return AccessGroup{}, err
 	}
-	return p.groupMembers(ctx, p.DB, g)
+	return p.groupMembers(ctx, q, g)
 }
 
 func (p SQLPolicy) groupMembers(ctx context.Context, q documentQuerier, g AccessGroup) (AccessGroup, error) {

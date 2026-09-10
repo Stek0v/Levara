@@ -107,8 +107,9 @@ and `docs/profile-presets.md`.
 - State that AWS S3/KMS implementations pass local contract tests; do not claim
   production SIEM, Azure/GCS controls, external KMS acceptance or end-to-end
   legal hold without provider evidence.
-- Document/group authorization is exposed by the authenticated REST API; keep
-  the missing per-document WebUI/CLI and recipient discovery explicit.
+- Document/group authorization is exposed by authenticated REST, CLI and
+  WebUI; state that recipient discovery is scoped to one registered document's
+  tenant and does not provide global directory search.
 - Use [testing evidence](../testing.md) for verified results and known
   limitations. Historical multi-user JSON does not prove authenticated owner
   isolation, successful fresh workspace writes or independent-node sync.

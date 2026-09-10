@@ -14,7 +14,7 @@ dual-search, reembed и embedding-migration endpoints в required-auth режи�
 | Проверка | Наблюдаемый результат | Граница доказательства |
 |---|---|---|
 | `LEVARA_TEST_POSTGRES_DSN=... go test -race ./pkg/access ./pkg/audit ./internal/http -count=1` | PASS: access 20.876s, audit 4.829s, HTTP 300.082s | Полные suites; SQLite + PostgreSQL там, где сценарии объявлены для обеих БД. В том числе 28 сочетаний API key/JWT session × 7 ACL/group mutations × 2 SQL |
-| `make contract-check && go test ./docs` | PASS | Generated REST contract содержит 9 document/group routes; документация не утверждает готовность WebUI/CLI |
+| `make contract-check && go test ./docs` | PASS | Generated REST contract содержит 11 document/group routes, включая scoped recipients и shared documents |
 | `make test-commit` | PASS: S0–S4; HTTP 46.638s, server 3.345s | Docs, access/profile/audit/workspace/MCP, core engine, полный HTTP package и server bootstrap |
 
 Обычный пользователь и неактивный superuser получают 403 до вызова глобального
@@ -26,6 +26,14 @@ SQL spool/webhook получает только проверенные actor/ten
 возвращает 401, не меняет policy/group rows и пишет только `denied` audit.
 `POST /search` однозначно остаётся legacy raw-vector endpoint, а text search
 доступен только через `POST /search/text`.
+
+## Document sharing API, CLI и WebUI — 2026-09-10
+
+| Проверка | Наблюдаемый результат | Граница доказательства |
+|---|---|---|
+| `LEVARA_TEST_POSTGRES_DSN=... go test -race ./pkg/access ./cmd/cli ./internal/http -count=1` | PASS: access 23.698s, CLI 51.741s, HTTP 309.990s | Полные affected suites. Discovery повторно проверяет API key/browser session после middleware; grant revoke, group removal и user deactivation не обгоняют отправку защищённого ответа на SQLite/PostgreSQL |
+| `npm run lint && npm run build` | PASS | ESLint, TypeScript и production Next build |
+| `npm run test:e2e` | 59 PASS за 37.4s | Весь curated Chromium gate; три document-sharing flow с API mock проверяют user/group grant, stale CAS refresh, revoke, registration и shared list; это не реальный AD/IdP/backend e2e |
 
 ## Публикация и статусы документов — 2026-09-10
 

@@ -25,8 +25,9 @@ profiles or adapters.
 Use [document management](document-management.md) to upload, check processing,
 verify search against a source and grant an individual dataset role. The
 authenticated REST API also manages one document and organization group by
-immutable IDs; the WebUI still exposes only dataset grants. Tenant membership,
-dataset permissions and document policy remain distinct checks.
+immutable IDs; the WebUI exposes document recipients, grants and documents
+shared directly with the active user. Tenant membership, dataset permissions
+and document policy remain distinct checks.
 
 [Enterprise identity](enterprise-identity.md) covers native LDAP/AD,
 OIDC/SAML federation, browser OIDC and SCIM Users/Groups. Local implementation
@@ -39,7 +40,7 @@ does not imply a completed real IdP/directory lifecycle.
 | Personal / Local | One developer using Codex, Claude, Cursor, or similar agents | SQLite, local filesystem, local MCP, auth optional | MCP tools, memory palace, workspace context/search/read/write, local BM25/vector search, local manifests and jobs, permissive `personal` profile, preset env, config-check | Clearer local backup runbook | None required |
 | Solo Pro | One power user with several machines or a Mac/Pi setup | SQLite or Postgres, local or S3-compatible storage, sync enabled | Cross-instance sync, backups, API keys, Prometheus metrics, optional S3 backend, `solo_pro` sync-token validation, preset env | Sync conflict guidance, personal ops dashboard | Managed backup target, hosted edge relay |
 | Team | Small team with humans and AI agents sharing project workspaces | Postgres, required auth, per-agent tokens, shared workspace root | JWT/API keys, dataset/project shares, shared `pkg/access` policy facade, workspace ACL preflight, workspace audit, async indexing jobs, strict-profile fail-fast, preset env | Admin/operator UI | Centralized log sink, team admin UI |
-| Enterprise | Corporate teams with compliance and central governance | Postgres or managed SQL, object storage, required auth or SSO bridge, enforced tenants | Tenant checks, LDAP/LDAPS/StartTLS, OIDC bearer verification/browser OIDC, SAML SP, SCIM Users/Groups, SCIM-to-SSO identity linking, document/group REST policy, storage/KMS contract shapes with S3/AWS KMS implementations, audit spool | Document ACL WebUI/CLI and recipient discovery; real AD/IdP/storage/KMS/SIEM acceptance; end-to-end legal hold | Additional directory/providers and managed operations |
+| Enterprise | Corporate teams with compliance and central governance | Postgres or managed SQL, object storage, required auth or SSO bridge, enforced tenants | Tenant checks, LDAP/LDAPS/StartTLS, OIDC bearer verification/browser OIDC, SAML SP, SCIM Users/Groups, SCIM-to-SSO identity linking, document/group REST/CLI/WebUI policy and scoped recipients, storage/KMS contract shapes with S3/AWS KMS implementations, audit spool | Real AD/IdP/storage/KMS/SIEM acceptance; end-to-end legal hold | Additional directory/providers and managed operations |
 
 ## Capability Placement
 

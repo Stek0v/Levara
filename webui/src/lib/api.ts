@@ -341,6 +341,24 @@ export const levara = {
   downloadDatasetOriginal: downloadOriginal,
   deleteDatasetRecord: (datasetId: string, recordId: string) =>
     api<void>(`/api/v1/datasets/${datasetId}/data/${recordId}`, { method: 'DELETE' }),
+  getDocumentPolicy: (datasetId: string, recordId: string) =>
+    api<DocumentPolicy>(documentPath(datasetId, recordId) + '/policy'),
+  registerDocumentPolicy: (datasetId: string, recordId: string) =>
+    api<DocumentPolicy>(documentPath(datasetId, recordId) + '/policy', {
+      method: 'POST', body: JSON.stringify({ mode: 'restricted' }),
+    }),
+  getDocumentRecipients: (datasetId: string, recordId: string) =>
+    api<DocumentRecipients>(documentPath(datasetId, recordId) + '/recipients'),
+  grantDocument: (datasetId: string, recordId: string, aclRevision: number, principalKind: 'user' | 'group', principalId: string, role: DocumentRole) =>
+    api<DocumentPolicy>(documentPath(datasetId, recordId) + '/grants', {
+      method: 'POST', body: JSON.stringify({ acl_revision: aclRevision, principal_kind: principalKind, principal_id: principalId, role }),
+    }),
+  revokeDocument: (datasetId: string, recordId: string, aclRevision: number, principalKind: 'user' | 'group', principalId: string) =>
+    api<DocumentPolicy>(documentPath(datasetId, recordId) + `/grants/${principalKind}/${encodeURIComponent(principalId)}`, {
+      method: 'DELETE', body: JSON.stringify({ acl_revision: aclRevision }),
+    }),
+  sharedDocuments: (limit = 50) =>
+    api<SharedDocumentsResponse>(`/api/v1/documents/shared?limit=${limit}`),
   getDatasetGraph: (id: string) =>
     api<DatasetGraph>(`/api/v1/datasets/${id}/graph`),
   // Project context (collection memories) + activity feed (block ③)
@@ -542,6 +560,10 @@ export const levara = {
   mcpSessions: (limit = 20) => api<MCPSessionsResponse>(`/api/v1/admin/mcp/sessions?limit=${limit}`),
 }
 
+function documentPath(datasetId: string, recordId: string) {
+  return `/api/v1/datasets/${encodeURIComponent(datasetId)}/data/${encodeURIComponent(recordId)}`
+}
+
 function workspaceScopeParams(params: WorkspaceScope) {
   const q = new URLSearchParams()
   if (params.project_id) q.set('project_id', params.project_id)
@@ -669,6 +691,49 @@ export interface DatasetShare {
   role: string
   granted_by?: string
   created_at?: string
+}
+
+export type DocumentRole = 'viewer' | 'editor' | 'admin'
+
+export interface DocumentGrant {
+  principal_kind: 'user' | 'group'
+  principal_id: string
+  role: DocumentRole
+}
+
+export interface DocumentPolicy {
+  dataset_id: string
+  data_id: string
+  tenant_id: string
+  mode: 'inherit' | 'restricted'
+  acl_revision: number
+  content_revision: number
+  hold: boolean
+  grants: DocumentGrant[]
+}
+
+export interface DocumentRecipients {
+  tenant_id: string
+  users: Array<{ id: string; email: string }>
+  groups: Array<{ id: string; name: string; revision: number; member_count: number; externally_managed: boolean }>
+}
+
+export interface SharedDocument {
+  dataset_id: string
+  dataset_name: string
+  data_id: string
+  name: string
+  tenant_id: string
+  mode: 'inherit' | 'restricted'
+  role: DocumentRole
+  acl_revision: number
+  content_revision: number
+  hold: boolean
+}
+
+export interface SharedDocumentsResponse {
+  documents: SharedDocument[]
+  limit: number
 }
 
 export interface GitCommit {

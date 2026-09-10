@@ -94,6 +94,8 @@ func main() {
 		cmdSearch(args)
 	case "datasets":
 		cmdDatasets(args)
+	case "documents":
+		cmdDocuments(args)
 	case "team":
 		cmdTeam(args)
 	case "cache":
@@ -1559,6 +1561,7 @@ Commands:
   cognify  [--dataset=name-or-id] [--collection=name] [--wait]  Run cognify pipeline
   search   <query> [--type=CHUNKS] [--top-k=10] [--collection=name]
   datasets [list|create <name>|delete <id>]  Manage datasets
+  documents [policy|register|recipients|shared|grant|revoke|group-create|group-members]
   team apply --plan=<json> [--dry-run] [--state=<private-json>]  Local-password team setup
   cache    stats                             LLM cache statistics
   git      analyze [--repo=.] [--since=...] [--limit=100]  Analyze git commits

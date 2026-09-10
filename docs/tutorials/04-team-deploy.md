@@ -94,8 +94,8 @@ hashing, set `LEVARA_API_KEY_PEPPER` too.
 
 `LEVARA_TENANT_ENFORCED=1` requires tenant context on guarded operations.
 Dataset sharing is individual, with viewer/editor/admin roles. Document/group
-policy exists locally but is not yet exposed by the main router; until it is,
-share one document through a separate dataset and verify both allowed and denied operations in
+policy is exposed through the authenticated router, WebUI and CLI. Use the
+file Access panel or `levara documents` and verify both allowed and denied operations in
 [document management](../document-management.md).
 
 For LDAP/AD and SSO, follow [enterprise identity](../enterprise-identity.md).

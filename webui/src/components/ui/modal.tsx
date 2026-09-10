@@ -41,6 +41,7 @@ export function Modal({ open, onClose, title, description, children, footer, siz
   return (
     <dialog
       ref={dialogRef}
+      aria-label={title}
       className="fixed inset-0 z-50 bg-transparent p-0 m-0 max-w-none max-h-none w-full h-full"
       onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
     >

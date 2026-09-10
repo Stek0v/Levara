@@ -32,6 +32,10 @@ func TestCLICommandProcess(t *testing.T) {
 }
 
 func runCLICommand(t *testing.T, server string, args ...string) (string, error) {
+	return runCLICommandWithToken(t, server, "isolated-cli-token", args...)
+}
+
+func runCLICommandWithToken(t *testing.T, server, authToken string, args ...string) (string, error) {
 	t.Helper()
 	exe, err := os.Executable()
 	if err != nil {
@@ -44,7 +48,7 @@ func runCLICommand(t *testing.T, server string, args ...string) (string, error) 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, exe, "-test.run=^TestCLICommandProcess$")
-	cmd.Env = append(os.Environ(), "LEVARA_CLI_TEST_PROCESS=1", "LEVARA_CLI_TEST_ARGS="+string(encoded), "LEVARA_URL="+server+"/api/v1", "LEVARA_TOKEN=isolated-cli-token")
+	cmd.Env = append(os.Environ(), "LEVARA_CLI_TEST_PROCESS=1", "LEVARA_CLI_TEST_ARGS="+string(encoded), "LEVARA_URL="+server+"/api/v1", "LEVARA_TOKEN="+authToken)
 	out, err := cmd.CombinedOutput()
 	if ctx.Err() != nil {
 		t.Fatalf("CLI did not terminate: %v\n%s", ctx.Err(), out)

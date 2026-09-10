@@ -12,7 +12,7 @@
 удалять, актуальные материалы обновлять по проверенному поведению.
 
 - Ветка: `codex/complete-roadmap`.
-- Базовый HEAD: `170a743` (`feat: complete enterprise roadmap foundations`).
+- Базовый HEAD: `8400ff9` (`feat: expose document ACL management`).
 - Реализация этого блока собрана в текущей ветке; развёртывание не выполнялось.
 - Четыре регрессии последних коммитов и семь красных семейств широкого HTTP-прогона исправлены; targeted SQLite/PostgreSQL/race проверки зелёные, полный `internal/http -race` проходит.
 - Inline HTTP/MCP cognify, атомарные server attempts, точные document/source
@@ -20,9 +20,11 @@
   `git_search` и document-filtered activity реализованы; полные `pkg/mcp`,
   `pkg/orchestrator`, `pkg/access` и профильный HTTP/MCP SQLite/PostgreSQL
   `-race` gate проходят.
-- В текущем рабочем дереве подключён защищённый REST API document policy,
-  user/group grant/revoke и управления составом групп. Credential recheck и
-  SQL fence действуют до commit для API key и browser session; WebUI/CLI ещё не добавлены.
+- В текущем рабочем дереве к защищённому REST API document policy добавлены
+  document-scoped active recipients, список прямых/group grants получателя,
+  CLI и WebUI для регистрации policy, user/group grant/revoke и управления
+  составом групп. Credential recheck и SQL fence действуют до commit для API
+  key и browser session; WebUI восстанавливает актуальную revision после 409.
 - Реальные AD/IdP, AWS/KMS, SIEM и приёмка на нескольких релизах не пройдены.
 - Изменения не развёрнуты. Шаблоны backup service/timer не активированы.
 
@@ -32,7 +34,7 @@
 |---|---|---|
 | Identity | LDAP/LDAPS/StartTLS, безопасные bind/search, стабильные ID, bounded nested groups; browser OIDC/SAML, sessions/logout; SCIM Groups/EnterpriseUser subset, provisioning audit, деактивация и отзыв ключей | SQL/provider fixtures и browser checks; нет живого корпоративного стенда и непрерывного потока изменений LDAP |
 | Загрузка | Общий авторизованный coordinator для REST/Web, MCP add и gRPC; multipart preflight до sidecar; явный source revision/hash CAS; structured artifact inventory/read/retention; inline HTTP/MCP cognify сохраняет серверный источник до run | Полный CLI/gRPC transport matrix ещё требует интеграции; automatic recovery ограничен standalone/local SQLite под исключительным владением записью |
-| Документы | ACL пользователей/групп, защищённый REST policy/grant/revoke/group API, tenant boundary, CAS, tombstones/hold; отзыв API key/browser session блокирует mutation после middleware и до SQL commit; source versioning; проверки поиска, raw, артефактов и происхождения результатов | WebUI/CLI и recipient discovery не готовы; полный жизненный цикл и все составные mutation paths не закрыты |
+| Документы | ACL пользователей/групп, защищённый REST/CLI/WebUI policy/grant/revoke, document-scoped recipients и shared-document discovery, tenant boundary, CAS, tombstones/hold; отзыв API key/browser session блокирует mutation после middleware и до SQL commit; source versioning; проверки поиска, raw, артефактов и происхождения результатов | Полный жизненный цикл, составные mutation paths и внешняя AD/IdP group acceptance не закрыты |
 | Runtime / memory | Реальный workspace_read/workspace_write executor с authority/deadline/budgets/retry/concurrency/kill-switch; проверка task/receipt/артефакта при memory commit | Не универсальный shell/network sandbox; receipt-validated не означает истинности содержимого |
 | Аналитика / sync | Owner/tenant-фильтрация до агрегации/экспорта; происхождение сессий/запусков; исправлены errors/counts/ACK sync | Остальные каналы отзыва и двухнодовый интерфейс ещё требуют проверки |
 | Хранение / аудит | S3 SDK, multipart resume/abort, AWS KMS/BYOK, rotation/cache/метрики; SQL-spool webhook-аудита, retry/dead-letter и операторский CLI | Локальные контракты; внешние сервисы не прошли приёмку |
@@ -70,6 +72,7 @@ product-ladder и маркетинг ещё нужно согласовать с
 | Inline/legacy publication, exact status и graph egress, race | PASS: 21 профильный сценарий за 33.399s, SQLite + PostgreSQL | Текущий запуск 2026-09-10; atomic attempt/publication, batch rollback, partial failure, per-source counters/lineage, alias/source replacement, MCP legacy/latest, activity ACL, graph/session provenance |
 | Полные package suites, race | PASS: `pkg/mcp` 12.477s, `pkg/orchestrator` 1.565s, `pkg/access` 10.235s | Текущий совмещённый diff публикационного блока |
 | Полный повторный race/commit gate | PASS: `pkg/access` 20.876s, `pkg/audit` 4.829s, `internal/http` 300.082s; `make test-commit` S0–S4 | SQLite/PostgreSQL credential-revocation matrix, REST ACL/group API, audit, active-superuser global routes и прежние HTTP-регрессии; `/search` закреплён за raw-vector, `/search/text` за text search |
+| Document sharing API/CLI/WebUI | PASS: `pkg/access` 23.698s, CLI 51.741s, `internal/http` 309.990s с `-race`; WebUI lint/build; curated browser gate 59/59 за 37.4s | Active exact-tenant recipients, user/group grant, revoke, empty group, tenant default, 409 refresh, redirect rejection и direct/group shared list; API key/browser session перепроверяются после middleware, а grant/group/user revoke удерживается до drain ответа на обеих SQL |
 
 Прежний сбой `TestDocumentACLCognifyInvalidSourcesDoNotStart/missing-file`
 оказался ошибкой fixture: отсутствовал корректный исходный hash. Fixture теперь
@@ -82,17 +85,20 @@ memory commit и hold-aware prune. Их manifests фиксируют отдел�
 
 ## С чего продолжить
 
-1. **Оставшаяся transport matrix.** CLI как клиент реального endpoint,
-   составной gRPC batch, cancellation/rollback и поздний worker; inline
-   legacy/latest MCP уже закрыт, но не доказывает эти пути.
+1. **Оставшаяся transport matrix.** Document CLI уже проверен как клиент
+   реального endpoint на обеих SQL; остаются upload CLI, составной gRPC batch,
+   cancellation/rollback и поздний worker. Inline legacy/latest MCP уже закрыт,
+   но не доказывает эти пути.
 2. **Mutation/hold paths.** Глобальные REST raw-vector/collection/reembed/migration
    endpoints уже active-superuser only при required auth; новый REST ACL API
    повторно проверяет API key/browser session под SQL fence до commit. Защитить составные
    gRPC writes, sync graph/collection import, dualwrite/backfill и workspace
    write/revert/GC до эффектов. В legacy dataset
    delete и rename повторить авторизацию внутри транзакции изменения.
-3. **Жизненный цикл документов.** Добавить WebUI/CLI и tenant-scoped recipient
-   discovery поверх подключённого REST ACL; повторить сквозной сценарий в браузере.
+3. **Жизненный цикл документов.** REST/CLI/WebUI sharing и tenant-scoped
+   recipients закрыты локально. Остаются A12–A14: все производные, concurrent
+   revoke во время обработки, миграция legacy provenance и реальный браузерный
+   прогон с AD/IdP/SCIM группой.
 4. **Точечные интеграционные пробелы.** Реальный MCP memory commit через HTTP
    artifact verifier при SQL pool=1; backup/restore с непустым ingest journal.
    Для backup рассмотреть отказ до offline recovery в исходном storage
@@ -136,6 +142,15 @@ P0–P2 не осталось. Task Runtime завершён на версии 2
 `b5496391-475c-4795-859f-605c765e267a`,
 `67884549-56de-4e2c-98fd-bb63679f809f`,
 `0e7fcba3-6ccb-48ee-9e61-7712bebc012a`.
+
+Текущий блок sharing ведётся задачей
+`e0ae2e80-d1c4-404d-8ba3-6581566c8470`, collection `levara`, room `mcp`, actor
+`codex-document-sharing-ux`. REST и CLI проверки на SQLite/PostgreSQL, WebUI
+lint/build, полный affected race gate, generated contracts и curated gate 59/59
+пройдены. Независимое ревью точного scoped diff не нашло P0–P2; задача завершена
+на версии 28. Финальные receipts: `f197fdd2-c835-436c-a33b-db67910d9745`,
+`67e14f04-7077-4923-aea7-a2e3073eda65`,
+`54aaa35d-f657-4a17-8457-086feac77989`.
 
 SQL-тесты использовали изолированный PostgreSQL 16 на loopback, порт 63509,
 данные `/tmp/levara-fixes-pg.ztlHh1/data`. Доступность проверить заново;

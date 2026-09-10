@@ -232,10 +232,12 @@ repeat the real AD/IdP flow described in
 [enterprise identity](enterprise-identity.md) before a pilot.
 
 The dataset detail page can grant an individual viewer/editor/admin for the
-whole dataset. Per-document user/group grants are available through the
-authenticated REST API, while the WebUI panel and recipient selector remain
-pending. Follow [document management](document-management.md) and test
-grant/revoke across download, retrieval and chat with separate users.
+whole dataset. Each file row also opens a document Access panel. A manager can
+enable a restricted policy, select an active user or group from that document's
+tenant, grant/revoke roles, and recover from a stale ACL revision by refreshing
+before retry. Direct and group document grants appear on the Projects page.
+Follow [document management](document-management.md) and test grant/revoke
+across download, retrieval and chat with separate users.
 
 ### WebUI deployment options
 

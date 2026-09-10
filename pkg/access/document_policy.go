@@ -513,6 +513,38 @@ type DocumentGrant struct {
 	Role          string `json:"role"`
 }
 
+type DocumentRecipientUser struct {
+	ID    string `json:"id"`
+	Email string `json:"email"`
+}
+
+type DocumentRecipientGroup struct {
+	ID                string `json:"id"`
+	Name              string `json:"name"`
+	Revision          int64  `json:"revision"`
+	MemberCount       int64  `json:"member_count"`
+	ExternallyManaged bool   `json:"externally_managed"`
+}
+
+type DocumentRecipients struct {
+	TenantID string                   `json:"tenant_id"`
+	Users    []DocumentRecipientUser  `json:"users"`
+	Groups   []DocumentRecipientGroup `json:"groups"`
+}
+
+type SharedDocument struct {
+	DatasetID       string `json:"dataset_id"`
+	DatasetName     string `json:"dataset_name"`
+	DataID          string `json:"data_id"`
+	Name            string `json:"name"`
+	TenantID        string `json:"tenant_id"`
+	Mode            string `json:"mode"`
+	Role            string `json:"role"`
+	ACLRevision     int64  `json:"acl_revision"`
+	ContentRevision int64  `json:"content_revision"`
+	Hold            bool   `json:"hold"`
+}
+
 // ReadDocumentPolicy exposes grants only to document managers. A read-only API
 // key may inspect administration metadata but cannot mutate it.
 func (p SQLPolicy) ReadDocumentPolicy(ctx context.Context, actor Actor, ref DocumentRef) (DocumentResource, []DocumentGrant, error) {
@@ -522,11 +554,13 @@ func (p SQLPolicy) ReadDocumentPolicy(ctx context.Context, actor Actor, ref Docu
 	if !APIKeyAllows(actor.APIKeyPermissions, ActionRead) {
 		return DocumentResource{}, nil, ErrDocumentForbidden
 	}
-	tx, err := p.DB.BeginTx(ctx, nil)
+	tx, owned, err := p.documentMutationTransaction(ctx)
 	if err != nil {
 		return DocumentResource{}, nil, err
 	}
-	defer tx.Rollback()
+	if owned {
+		defer tx.Rollback()
+	}
 	r, err := p.documentResource(ctx, tx, ref)
 	if err != nil {
 		return DocumentResource{}, nil, err
@@ -557,10 +591,152 @@ func (p SQLPolicy) ReadDocumentPolicy(ctx context.Context, actor Actor, ref Docu
 	if err != nil {
 		return DocumentResource{}, nil, err
 	}
-	if err := tx.Commit(); err != nil {
+	if err := finishDocumentMutation(tx, owned); err != nil {
 		return DocumentResource{}, nil, err
 	}
 	return r, grants, nil
+}
+
+// ListDocumentRecipients exposes only active members and groups from the
+// exact registered document tenant, and only to a caller who may share it.
+func (p SQLPolicy) ListDocumentRecipients(ctx context.Context, actor Actor, ref DocumentRef) (DocumentRecipients, error) {
+	if p.DB == nil || !APIKeyAllows(actor.APIKeyPermissions, ActionShare) {
+		return DocumentRecipients{}, ErrDocumentForbidden
+	}
+	tx, owned, err := p.documentMutationTransaction(ctx)
+	if err != nil {
+		return DocumentRecipients{}, err
+	}
+	if owned {
+		defer tx.Rollback()
+	}
+	r, err := p.documentResource(ctx, tx, ref)
+	if err != nil {
+		return DocumentRecipients{}, err
+	}
+	actor.APIKeyPermissions = ""
+	d, err := p.authorizeRegisteredDocument(ctx, tx, actor, r, ActionShare)
+	if err != nil {
+		return DocumentRecipients{}, err
+	}
+	if !d.Allowed {
+		return DocumentRecipients{}, ErrDocumentForbidden
+	}
+	out := DocumentRecipients{TenantID: r.TenantID, Users: []DocumentRecipientUser{}, Groups: []DocumentRecipientGroup{}}
+	rows, err := tx.QueryContext(ctx, p.rewrite(`SELECT u.id,u.email FROM users u
+		JOIN user_tenant ut ON ut.user_id=u.id
+		WHERE ut.tenant_id=$1 AND u.is_active=TRUE ORDER BY LOWER(u.email),u.id`), r.TenantID)
+	if err != nil {
+		return DocumentRecipients{}, err
+	}
+	for rows.Next() {
+		var user DocumentRecipientUser
+		if err := rows.Scan(&user.ID, &user.Email); err != nil {
+			rows.Close()
+			return DocumentRecipients{}, err
+		}
+		out.Users = append(out.Users, user)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return DocumentRecipients{}, err
+	}
+	rows, err = tx.QueryContext(ctx, p.rewrite(`SELECT g.id,g.name,g.revision,
+		(SELECT COUNT(*) FROM access_group_members m WHERE m.group_id=g.id),
+		CASE WHEN EXISTS(SELECT 1 FROM scim_groups s WHERE s.group_id=g.id) THEN TRUE ELSE FALSE END
+		FROM access_groups g WHERE g.tenant_id=$1 ORDER BY LOWER(g.name),g.id`), r.TenantID)
+	if err != nil {
+		return DocumentRecipients{}, err
+	}
+	for rows.Next() {
+		var group DocumentRecipientGroup
+		if err := rows.Scan(&group.ID, &group.Name, &group.Revision, &group.MemberCount, &group.ExternallyManaged); err != nil {
+			rows.Close()
+			return DocumentRecipients{}, err
+		}
+		out.Groups = append(out.Groups, group)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return DocumentRecipients{}, err
+	}
+	if err := finishDocumentMutation(tx, owned); err != nil {
+		return DocumentRecipients{}, err
+	}
+	return out, nil
+}
+
+// ListSharedDocuments returns explicit direct/group grants in the actor's
+// active tenant. Dataset-inherited documents stay on the dataset listing.
+func (p SQLPolicy) ListSharedDocuments(ctx context.Context, actor Actor, limit int) ([]SharedDocument, error) {
+	if p.DB == nil || actor.UserID == "" || actor.TenantID == "" || limit < 1 || limit > 100 || !APIKeyAllows(actor.APIKeyPermissions, ActionRead) {
+		return nil, ErrDocumentForbidden
+	}
+	tx, owned, err := p.documentMutationTransaction(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if owned {
+		defer tx.Rollback()
+	}
+	active, _, err := p.documentIdentity(ctx, tx, actor.UserID)
+	if err != nil {
+		return nil, err
+	}
+	member, err := p.documentMember(ctx, tx, actor.UserID, actor.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	if !active || !member {
+		return nil, ErrDocumentForbidden
+	}
+	rows, err := tx.QueryContext(ctx, p.rewrite(`SELECT DISTINCT r.dataset_id,r.data_id,ds.name,d.name,
+		r.tenant_id,r.mode,r.acl_revision,r.content_revision,r.hold
+		FROM document_resources r
+		JOIN datasets ds ON ds.id=r.dataset_id
+		JOIN dataset_data dd ON dd.dataset_id=r.dataset_id AND dd.data_id=r.data_id
+		JOIN data d ON d.id=r.data_id
+		JOIN document_grants dg ON dg.dataset_id=r.dataset_id AND dg.data_id=r.data_id
+		LEFT JOIN access_group_members gm ON dg.principal_kind='group' AND gm.group_id=dg.principal_id AND gm.tenant_id=r.tenant_id
+		WHERE r.tenant_id=$1 AND r.tombstoned=FALSE AND
+		((dg.principal_kind='user' AND dg.principal_id=$2) OR
+		 (dg.principal_kind='group' AND gm.user_id=$3))
+		ORDER BY ds.name,d.name,r.dataset_id,r.data_id LIMIT $4`), actor.TenantID, actor.UserID, actor.UserID, limit)
+	if err != nil {
+		return nil, err
+	}
+	items := []SharedDocument{}
+	for rows.Next() {
+		var item SharedDocument
+		if err := rows.Scan(&item.DatasetID, &item.DataID, &item.DatasetName, &item.Name, &item.TenantID, &item.Mode, &item.ACLRevision, &item.ContentRevision, &item.Hold); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	visible := items[:0]
+	for _, item := range items {
+		r := DocumentResource{DocumentRef: DocumentRef{DatasetID: item.DatasetID, DataID: item.DataID}, TenantID: item.TenantID, Mode: item.Mode, ACLRevision: item.ACLRevision, ContentRevision: item.ContentRevision, Hold: item.Hold}
+		decision, err := p.authorizeRegisteredDocument(ctx, tx, actor, r, ActionRead)
+		if err != nil {
+			return nil, err
+		}
+		if decision.Allowed {
+			item.Role = decision.Role
+			visible = append(visible, item)
+		}
+	}
+	if err := finishDocumentMutation(tx, owned); err != nil {
+		return nil, err
+	}
+	return visible, nil
 }
 
 // Registration and dataset deletion acquire this row before reading document

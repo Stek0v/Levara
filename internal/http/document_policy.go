@@ -21,12 +21,14 @@ func RegisterDocumentPolicyAPI(app fiber.Router, cfg APIConfig) {
 	app.Get("/datasets/:id/data/:dataId", documentGetHandler(cfg))
 	app.Post("/datasets/:id/data/:dataId/policy", documentRegisterHandler(cfg))
 	app.Get("/datasets/:id/data/:dataId/policy", documentPolicyGetHandler(cfg))
+	app.Get("/datasets/:id/data/:dataId/recipients", documentRecipientsHandler(cfg))
 	app.Patch("/datasets/:id/data/:dataId/policy", documentPolicyUpdateHandler(cfg))
 	app.Post("/datasets/:id/data/:dataId/grants", documentGrantHandler(cfg, false))
 	app.Delete("/datasets/:id/data/:dataId/grants/:kind/:principalId", documentGrantHandler(cfg, true))
 	app.Post("/document-groups", documentGroupCreateHandler(cfg))
 	app.Get("/document-groups/:groupId", documentGroupGetHandler(cfg))
 	app.Put("/document-groups/:groupId/members", documentGroupMembersHandler(cfg))
+	app.Get("/documents/shared", sharedDocumentsHandler(cfg))
 }
 
 func documentMutationAuditOutcome(c *fiber.Ctx, cfg APIConfig, eventType, subject, outcome string, metadata map[string]any) {
@@ -168,6 +170,9 @@ func documentRegisterHandler(cfg APIConfig) fiber.Handler {
 		if err := c.BodyParser(&req); err != nil {
 			return fiber.NewError(400, "invalid document registration")
 		}
+		if req.TenantID == "" {
+			req.TenantID = ResolveTenantID(c)
+		}
 		ref := documentRefFromFiber(c)
 		var r accesspkg.DocumentResource
 		err := withDocumentMutation(c, cfg, func(ctx context.Context, p accesspkg.SQLPolicy, actor accesspkg.Actor) error {
@@ -186,15 +191,57 @@ func documentRegisterHandler(cfg APIConfig) fiber.Handler {
 
 func documentPolicyGetHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		r, grants, err := documentSQLPolicy(cfg).ReadDocumentPolicy(c.UserContext(), workspaceActorFromFiber(c), documentRefFromFiber(c))
-		if err != nil {
-			return documentHTTPError(err)
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
+		return withProtectedPolicyResponse(c, cfg, ctx, func(ctx context.Context, p accesspkg.SQLPolicy) error {
+			r, grants, err := p.ReadDocumentPolicy(ctx, workspaceActorFromFiber(c), documentRefFromFiber(c))
+			if err != nil {
+				return documentHTTPError(err)
+			}
+			out := documentResourceJSON(r)
+			out["grants"] = grants
+			c.Set("ETag", documentETag(r))
+			c.Set("Cache-Control", "private, no-store")
+			return c.JSON(out)
+		})
+	}
+}
+
+func documentRecipientsHandler(cfg APIConfig) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
+		return withProtectedPolicyResponse(c, cfg, ctx, func(ctx context.Context, p accesspkg.SQLPolicy) error {
+			recipients, err := p.ListDocumentRecipients(ctx, workspaceActorFromFiber(c), documentRefFromFiber(c))
+			if err != nil {
+				return documentHTTPError(err)
+			}
+			c.Set("Cache-Control", "private, no-store")
+			return c.JSON(recipients)
+		})
+	}
+}
+
+func sharedDocumentsHandler(cfg APIConfig) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		limit := 50
+		if raw := c.Query("limit"); raw != "" {
+			var err error
+			limit, err = strconv.Atoi(raw)
+			if err != nil || limit < 1 || limit > 100 {
+				return fiber.NewError(400, "limit must be between 1 and 100")
+			}
 		}
-		out := documentResourceJSON(r)
-		out["grants"] = grants
-		c.Set("ETag", documentETag(r))
-		c.Set("Cache-Control", "private, no-store")
-		return c.JSON(out)
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
+		return withProtectedPolicyResponse(c, cfg, ctx, func(ctx context.Context, p accesspkg.SQLPolicy) error {
+			documents, err := p.ListSharedDocuments(ctx, workspaceActorFromFiber(c), limit)
+			if err != nil {
+				return documentHTTPError(err)
+			}
+			c.Set("Cache-Control", "private, no-store")
+			return c.JSON(fiber.Map{"documents": documents, "limit": limit})
+		})
 	}
 }
 
@@ -286,6 +333,9 @@ func documentGroupCreateHandler(cfg APIConfig) fiber.Handler {
 		if err := c.BodyParser(&req); err != nil {
 			return fiber.NewError(400, "invalid group request")
 		}
+		if req.TenantID == "" {
+			req.TenantID = ResolveTenantID(c)
+		}
 		var g accesspkg.AccessGroup
 		err := withDocumentMutation(c, cfg, func(ctx context.Context, p accesspkg.SQLPolicy, actor accesspkg.Actor) error {
 			var err error
@@ -302,11 +352,16 @@ func documentGroupCreateHandler(cfg APIConfig) fiber.Handler {
 }
 func documentGroupGetHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		g, err := documentSQLPolicy(cfg).GetGroup(c.UserContext(), workspaceActorFromFiber(c), c.Params("groupId"))
-		if err != nil {
-			return documentHTTPError(err)
-		}
-		return c.JSON(documentGroupJSON(g))
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
+		return withProtectedPolicyResponse(c, cfg, ctx, func(ctx context.Context, p accesspkg.SQLPolicy) error {
+			g, err := p.GetGroup(ctx, workspaceActorFromFiber(c), c.Params("groupId"))
+			if err != nil {
+				return documentHTTPError(err)
+			}
+			c.Set("Cache-Control", "private, no-store")
+			return c.JSON(documentGroupJSON(g))
+		})
 	}
 }
 func documentGroupMembersHandler(cfg APIConfig) fiber.Handler {

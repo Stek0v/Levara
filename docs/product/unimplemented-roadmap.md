@@ -16,7 +16,7 @@
 | Область | Реализовано локально | Главный остаток |
 |---|---|---|
 | Identity | LDAP/LDAPS/StartTLS, browser OIDC/SAML, SCIM Groups/EnterpriseUser subset | Реальные AD/IdP, сквозной отзыв, общий integration gate |
-| Документы | Модель ACL и защищённый REST API, source versioning, авторизованная загрузка, structured preflight/source CAS и artifact lifecycle, inline HTTP/MCP cognify, publication-aware `query_entity`; глобальные REST vector/collection/reembed/migration routes ограничены active superuser при required auth | WebUI/CLI и recipient discovery; составные gRPC/sync/workspace mutation paths и сквозной legal hold |
+| Документы | Модель ACL и защищённые REST/CLI/WebUI user/group grants, document-scoped recipients/shared discovery, source versioning, авторизованная загрузка, structured preflight/source CAS и artifact lifecycle, inline HTTP/MCP cognify, publication-aware `query_entity`; глобальные REST vector/collection/reembed/migration routes ограничены active superuser при required auth | Составные gRPC/sync/workspace mutation paths, legacy provenance migration, сквозной legal hold и внешний AD/IdP group flow |
 | Task Runtime / memory | Реальный workspace executor и проверка receipt/артефактов | Совмещённая приёмка recovery/authority, контракт, три релиза |
 | Хранение / аудит | S3 SDK/multipart, AWS KMS/BYOK, SQL-spool/webhook и CLI | Внешние сервисы и сквозной legal hold |
 | Onboarding / backup | Team CLI и проверяемый offline standalone/local backup | Интеграция, ограничения restore, эксплуатация расписания |
@@ -128,11 +128,13 @@ issuer/subject без склейки по email. Добавлены SCIM Groups,
 provisioning audit, деактивация и отзыв ключей. Это выбранный subset, не полный SCIM.
 
 Для документов написаны ACL пользователей/групп, наследование, tenant boundary,
-CAS, tombstones/hold и проверки происхождения результатов. Защищённый REST API
-подключает policy, grant/revoke и управление составом групп; отзыв API key и
-browser session повторно проверяется под SQL fence до commit. WebUI/CLI,
-tenant-scoped recipient discovery и оставшиеся transport/mutation пути ещё не
-закрывают полный пользовательский сценарий sharing.
+CAS, tombstones/hold и проверки происхождения результатов. Защищённые REST,
+CLI и WebUI подключают policy, grant/revoke и управление составом групп;
+recipient discovery ограничен exact tenant зарегистрированного документа, а
+получатель видит прямые/group grants отдельно. Отзыв API key и browser session
+повторно проверяется под SQL fence до commit для изменений и до drain ответа для
+policy/group/recipient/shared discovery. Оставшиеся transport/mutation и legacy
+provenance пути ещё не закрывают полный lifecycle во всех каналах.
 
 Оставшаяся сквозная и внешняя приёмка (часть негативных сценариев уже проверена
 локально):
@@ -149,8 +151,10 @@ tenant-scoped recipient discovery и оставшиеся transport/mutation п�
   Проверить rename, повторный create, конкуренцию, email conflict, deactivate,
   re-provision и уже выданные JWT/API-ключи. Отзыв должен действовать на всех
   поверхностях, включая активные сессии и фоновые операции.
-- Завершить доступ к документу пользователю/группе внутри организации: назначение
-  и отзыв роли, понятное наследование, аудит, tenant boundary. Смена групп и
+- Провести внешнюю приёмку доступа к документу пользователю/группе внутри
+  организации через реальный AD/IdP/SCIM: назначение и отзыв роли, понятное
+  наследование, аудит, tenant boundary. Локальные REST/CLI/WebUI сценарии
+  назначения, 409 refresh, group membership и revoke уже проходят. Смена групп и
   отзыв доступа должны применяться до поиска, rerank, graph expansion,
   чтения raw/artifacts и отправки контекста в LLM. Проверить прямой URL,
   чужой ID, кэши, выгрузки и concurrent revoke.
@@ -247,8 +251,9 @@ grant/revoke и graph egress на обеих SQL. Следующий поряд�
   внутри транзакции изменения, закрывая окно конкурентного отзыва.
 - P1/P2: распространить legal hold на все эти пути. Coordinator и атомарный
   hold-aware prune уже защищены; это не доказывает защиту остальных операций.
-  REST API ACL, прямые URL, group membership и tenant boundary проверены;
-  добавить тот же сценарий выдачи/отзыва через WebUI/CLI и recipient discovery.
+  REST/CLI/WebUI ACL, document-scoped recipient discovery, прямые URL, group
+  membership и tenant boundary проверены; остаётся распространить legal hold и
+  concurrent revoke на все производные и составные mutation paths.
 
 Оставшиеся критерии качества и жизненного цикла:
 

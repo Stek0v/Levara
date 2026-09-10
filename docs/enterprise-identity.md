@@ -15,7 +15,7 @@ LDAP/AD и вход через корпоративный IdP рассматри
 | SAML SP | login, ACS, metadata | ACS возвращает JSON с JWT; автоматический вход в WebUI, SLO и IdP-initiated login не заявлены |
 | SCIM Users/Groups | Users и Groups CRUD/PATCH, пагинация, мягкая деактивация | Управляемый subset; нет Bulk и полной vendor certification |
 | SCIM → SSO/LDAP-учётная запись | SQL bridge по доверенному issuer и неизменяемому subject | Требует заранее согласованных `LEVARA_SCIM_ISSUER` и tenant; live provisioning job не проверен |
-| AD-группа → права на документ | Защищённый document ACL REST API принимает provisioned group ID | Нет WebUI selector/list endpoint; реальную SCIM/AD синхронизацию и отзыв нужно проверить на стенде |
+| AD-группа → права на документ | Document ACL REST/CLI/WebUI принимает provisioned group ID; selector ограничен tenant документа | Реальную SCIM/AD синхронизацию и сквозной отзыв нужно проверить на стенде |
 
 Наличие корректного JWT подтверждает личность, но не создаёт автоматически
 локального пользователя, его членство в организации или доступ к данным.
