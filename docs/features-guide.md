@@ -193,7 +193,7 @@ WebUI — отдельный Next.js процесс. Datasets позволяют
 |---|---|
 | MCP `/mcp` | Agent tools с session context; [подключение](tutorials/02-agent-integration.md) |
 | REST `/api/v1` | Документы, поиск, управление и workspace; [API guide](api-reference.md) |
-| gRPC | Raw-storage API; при auth нужен активный global superuser |
+| gRPC | `IngestData` — tenant-scoped authorized upload; остальные raw/global RPC при auth требуют active global superuser |
 | `levara` CLI | `help`, `add`, `cognify`, `search`, datasets/git/workspace |
 
 CLI global flags ставятся перед командой и принимают `--key=value`.

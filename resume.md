@@ -12,7 +12,7 @@
 удалять, актуальные материалы обновлять по проверенному поведению.
 
 - Ветка: `codex/complete-roadmap`.
-- Базовый HEAD: `8400ff9` (`feat: expose document ACL management`).
+- Текущий HEAD: `0fbebf1` (`feat: add tenant-scoped document sharing UX`).
 - Реализация этого блока собрана в текущей ветке; развёртывание не выполнялось.
 - Четыре регрессии последних коммитов и семь красных семейств широкого HTTP-прогона исправлены; targeted SQLite/PostgreSQL/race проверки зелёные, полный `internal/http -race` проходит.
 - Inline HTTP/MCP cognify, атомарные server attempts, точные document/source
@@ -20,11 +20,22 @@
   `git_search` и document-filtered activity реализованы; полные `pkg/mcp`,
   `pkg/orchestrator`, `pkg/access` и профильный HTTP/MCP SQLite/PostgreSQL
   `-race` gate проходят.
-- В текущем рабочем дереве к защищённому REST API document policy добавлены
+- В коммите `0fbebf1` к защищённому REST API document policy добавлены
   document-scoped active recipients, список прямых/group grants получателя,
   CLI и WebUI для регистрации policy, user/group grant/revoke и управления
   составом групп. Credential recheck и SQL fence действуют до commit для API
-  key и browser session; WebUI восстанавливает актуальную revision после 409.
+  key и browser session и до drain read-ответа; WebUI восстанавливает актуальную
+  revision после 409.
+- В текущем проходе построена карта upload transports и добавлен
+  реальный CLI→authenticated `/add` сценарий. SQLite/PostgreSQL PASS: новый
+  dataset создаётся один раз, повторный upload выбирает его по имени, исходный
+  файл сохраняется побайтово и CLI сообщает именно об ingest. `IngestData`
+  теперь принимает existing dataset только по ID, отклоняет mixed dataset,
+  invalid item N и dual payload до Save, различает transport statuses и в
+  authenticated metadata-backed режиме очищает partial/late backend attempt без
+  SQL/publication. Trusted-local режим без metadata DB остаётся прямым
+  compatibility path без journal и гарантии batch rollback. Полные affected
+  race suites проходят на SQLite/PostgreSQL.
 - Реальные AD/IdP, AWS/KMS, SIEM и приёмка на нескольких релизах не пройдены.
 - Изменения не развёрнуты. Шаблоны backup service/timer не активированы.
 
@@ -33,7 +44,7 @@
 | Блок | Сделано | Граница подтверждения |
 |---|---|---|
 | Identity | LDAP/LDAPS/StartTLS, безопасные bind/search, стабильные ID, bounded nested groups; browser OIDC/SAML, sessions/logout; SCIM Groups/EnterpriseUser subset, provisioning audit, деактивация и отзыв ключей | SQL/provider fixtures и browser checks; нет живого корпоративного стенда и непрерывного потока изменений LDAP |
-| Загрузка | Общий авторизованный coordinator для REST/Web, MCP add и gRPC; multipart preflight до sidecar; явный source revision/hash CAS; structured artifact inventory/read/retention; inline HTTP/MCP cognify сохраняет серверный источник до run | Полный CLI/gRPC transport matrix ещё требует интеграции; automatic recovery ограничен standalone/local SQLite под исключительным владением записью |
+| Загрузка | Общий авторизованный coordinator для REST/Web, MCP add и metadata-backed gRPC; multipart preflight до sidecar; явный source revision/hash CAS; structured artifact inventory/read/retention; inline HTTP/MCP cognify сохраняет серверный источник до run; CLI→real REST и authenticated gRPC batch/cancel/late-worker проверены на обеих SQL | Document-scoped gRPC cognify отсутствует; trusted-local gRPC без metadata DB не гарантирует batch rollback; automatic recovery ограничен standalone/local SQLite под исключительным владением записью |
 | Документы | ACL пользователей/групп, защищённый REST/CLI/WebUI policy/grant/revoke, document-scoped recipients и shared-document discovery, tenant boundary, CAS, tombstones/hold; отзыв API key/browser session блокирует mutation после middleware и до SQL commit; source versioning; проверки поиска, raw, артефактов и происхождения результатов | Полный жизненный цикл, составные mutation paths и внешняя AD/IdP group acceptance не закрыты |
 | Runtime / memory | Реальный workspace_read/workspace_write executor с authority/deadline/budgets/retry/concurrency/kill-switch; проверка task/receipt/артефакта при memory commit | Не универсальный shell/network sandbox; receipt-validated не означает истинности содержимого |
 | Аналитика / sync | Owner/tenant-фильтрация до агрегации/экспорта; происхождение сессий/запусков; исправлены errors/counts/ACK sync | Остальные каналы отзыва и двухнодовый интерфейс ещё требуют проверки |
@@ -73,6 +84,8 @@ product-ladder и маркетинг ещё нужно согласовать с
 | Полные package suites, race | PASS: `pkg/mcp` 12.477s, `pkg/orchestrator` 1.565s, `pkg/access` 10.235s | Текущий совмещённый diff публикационного блока |
 | Полный повторный race/commit gate | PASS: `pkg/access` 20.876s, `pkg/audit` 4.829s, `internal/http` 300.082s; `make test-commit` S0–S4 | SQLite/PostgreSQL credential-revocation matrix, REST ACL/group API, audit, active-superuser global routes и прежние HTTP-регрессии; `/search` закреплён за raw-vector, `/search/text` за text search |
 | Document sharing API/CLI/WebUI | PASS: `pkg/access` 23.698s, CLI 51.741s, `internal/http` 309.990s с `-race`; WebUI lint/build; curated browser gate 59/59 за 37.4s | Active exact-tenant recipients, user/group grant, revoke, empty group, tenant default, 409 refresh, redirect rejection и direct/group shared list; API key/browser session перепроверяются после middleware, а grant/group/user revoke удерживается до drain ответа на обеих SQL |
+| CLI upload → настоящий REST API | PASS: SQLite + PostgreSQL | Authenticated `/add`, exact original bytes, text upload, создание dataset и повторный выбор того же dataset; fixture использует изолированный storage root |
+| gRPC `IngestData` batch | PASS: gRPC 2.129s, ingest 48.147s, HTTP 306.656s с `-race`; SQLite + PostgreSQL | Authenticated metadata-backed path: ID-only dataset, one payload/dataset, invalid item N до Save, duplicate, partial Save cleanup, foreign tenant/revoke, cancel и late non-cooperative backend без publication; response не раскрывает storage path. Trusted-local no-DB rollback не входит в этот gate |
 
 Прежний сбой `TestDocumentACLCognifyInvalidSourcesDoNotStart/missing-file`
 оказался ошибкой fixture: отсутствовал корректный исходный hash. Fixture теперь
@@ -85,10 +98,12 @@ memory commit и hold-aware prune. Их manifests фиксируют отдел�
 
 ## С чего продолжить
 
-1. **Оставшаяся transport matrix.** Document CLI уже проверен как клиент
-   реального endpoint на обеих SQL; остаются upload CLI, составной gRPC batch,
-   cancellation/rollback и поздний worker. Inline legacy/latest MCP уже закрыт,
-   но не доказывает эти пути.
+1. **Следующий transport contract.** Обычная authenticated загрузка через
+   REST/MCP/CLI и metadata-backed gRPC `IngestData` закрыта локально на обеих
+   SQL. Для trusted-local no-DB нужно выбрать batch cleanup или single-item
+   ограничение. `PipelineCognify` — отдельный
+   global-admin raw pipeline, поэтому для document-scoped gRPC cognify нужен
+   новый контракт с dataset/document/source revision/publication identity.
 2. **Mutation/hold paths.** Глобальные REST raw-vector/collection/reembed/migration
    endpoints уже active-superuser only при required auth; новый REST ACL API
    повторно проверяет API key/browser session под SQL fence до commit. Защитить составные
@@ -152,7 +167,16 @@ lint/build, полный affected race gate, generated contracts и curated gate
 `67e14f04-7077-4923-aea7-a2e3073eda65`,
 `54aaa35d-f657-4a17-8457-086feac77989`.
 
-SQL-тесты использовали изолированный PostgreSQL 16 на loopback, порт 63509,
-данные `/tmp/levara-fixes-pg.ztlHh1/data`. Доступность проверить заново;
+Upload transport block ведётся задачей
+`89cd190b-5d56-4df4-b9d3-ea1bd3388cd5`, collection `levara`, room `mcp`, actor
+`codex-upload-transport-matrix`. Карта transport paths, CLI→real REST на
+SQLite/PostgreSQL, metadata-backed gRPC `IngestData` failure matrix, contracts и
+документация прошли проверку. Независимое ревью не нашло P0–P2 в коде и выявило
+одно завышенное обещание rollback для trusted-local no-DB; граница режима теперь
+явно отражена в contract, roadmap и руководстве. Точные receipts и состояние
+финализации сохраняются в Task Runtime по этому ID.
+
+Текущий проход использует изолированный PostgreSQL 16 на loopback, порт 56202,
+данные `/tmp/levara-structured-pg-review`. Доступность проверить заново;
 использовать отдельные тестовые схемы, не данные приложения. Production deploy,
 live migration и restart в рамках сохранения этого состояния не выполнялись.

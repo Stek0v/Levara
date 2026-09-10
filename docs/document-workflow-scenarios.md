@@ -47,7 +47,7 @@
 | U11 | XLSX: строки, кириллица, числовые ячейки | PASS: synthetic fixture parser |
 | U12 | HTML, Markdown и CSV дают контрольный факт без HTML контейнера | PASS: synthetic parser tests |
 | U13 | Все документы завершены именно для выбранной коллекции | PASS: `TestPipelineStatusRequiresEveryDocumentInCollection` |
-| U14 | CLI file/text/URL, Unicode dataset, HTTP/JSON/read failures, redirects | PASS: subprocess + isolated HTTP tests |
+| U14 | CLI file/text/URL, Unicode dataset, HTTP/JSON/read failures, redirects | PASS: subprocess + isolated HTTP tests; file/text против реального authenticated `/add`, exact bytes и повторный dataset — SQLite/PostgreSQL |
 | U15 | CLI cognify принимает точное имя/ID; неизвестное/неоднозначное отвергает | PASS: `TestCLICognify` |
 | U16 | PDF таблица → schema → structured JSON/projection; неверный второй файл не вызывает sidecar; partial failure/timeout не публикуют batch, retry проходит | PASS локального preflight/failure matrix с fake extractor; DB-backed artifact публикуется одним ingest attempt и не раскрывает storage location; не качество реальной модели |
 | U17 | OCR скана/изображения: CER/WER, поворот, шум, мелкий шрифт, язык | MANUAL: размеченный корпус и реальный OCR backend |
@@ -57,6 +57,7 @@
 | U21 | Upload/inline → cognify → BM25/vector с точным источником и вторым dataset | PASS: HTTP inline, MCP legacy/latest и `TestDocumentACLCognify*`, fake embedding + реальные индексы, обе SQL |
 | U22 | Явная замена source использует revision/hash CAS; stale/concurrent writer не заменяет winner, storage failure очищает attempt | PASS: HTTP SQLite и `ReplaceAuthorized` race на SQLite/PostgreSQL; A→B→A создаёт новые revisions/artifact IDs, старый artifact сразу недоступен и cleanup retry сохраняется при отказе storage; shared physical source получает 409. Crash после внешнего sidecar остаётся GAP |
 | U23 | Повтор cognify возвращает already_processed без polling; изменённый source сбрасывает старую готовность | SOURCE/PASS отдельных status/source-version tests; активный HTTP cognify всегда создаёт run, поэтому общий product contract ещё не закрыт |
+| U24 | gRPC batch: ID-only dataset, mixed item names, dual/empty payload, invalid item N, duplicate, partial Save, cancel и поздний backend | PASS: real bufconn + auth interceptor + coordinator, SQLite/PostgreSQL; ноль partial SQL/object/journal publication. `PipelineCognify` остаётся отдельным global-admin raw pipeline и не считается document cognify |
 
 ## Права и жизненный цикл
 

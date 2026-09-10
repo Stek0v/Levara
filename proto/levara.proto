@@ -707,15 +707,16 @@ message MultiQueryResult {
   string metadata_json = 5;
 }
 
-// Fast data ingestion
+// Fast data ingestion. Authenticated servers use metadata-backed batch
+// coordination and cleanup. Trusted-local compatibility without metadata
+// writes directly and does not guarantee batch rollback.
 message IngestDataReq {
   repeated IngestItem items = 1;
-  string storage_path = 2;  // base directory for file storage
-  // Optional: PostgreSQL for metadata persistence
-  string postgres_dsn = 3;  // e.g. "postgres://levara:levara@localhost:5433/levara_db"
-  string owner_id = 4;      // user UUID
+  string storage_path = 2;  // compatibility field; authenticated servers use configured storage
+  string postgres_dsn = 3;  // compatibility field; non-empty values are rejected
+  string owner_id = 4;      // compatibility field; verified actor identity always wins
   string dataset_id = 5;    // dataset UUID
-  string dataset_name = 6;
+  string dataset_name = 6;  // optional with an existing dataset_id
 }
 
 message IngestItem {
@@ -723,20 +724,20 @@ message IngestItem {
   string text = 2;            // text content (for string input)
   bytes file_data = 3;        // binary file content (for file upload)
   string filename = 4;        // original filename
-  string dataset_name = 5;
+  string dataset_name = 5;  // optional; all non-empty item values must match the request dataset
 }
 
 message IngestDataResp {
   repeated IngestResult results = 1;
   int64 total_ms = 2;
-  int32 db_rows_written = 3;  // metadata rows written to PostgreSQL
+  int32 db_rows_written = 3;  // metadata items processed, including exact repeats
   string dataset_id = 4;      // resolved dataset UUID
 }
 
 message IngestResult {
-  string id = 1;              // generated UUID5(hash + dataset)
+  string id = 1;              // generated UUID5(hash + verified owner)
   string content_hash = 2;    // SHA256 of content
-  string file_path = 3;       // file:// URI where stored
+  string file_path = 3;       // trusted local mode only; empty for authenticated requests
   string mime_type = 4;
   string extension = 5;
   int64 file_size = 6;

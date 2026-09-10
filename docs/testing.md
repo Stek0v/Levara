@@ -35,6 +35,24 @@ SQL spool/webhook получает только проверенные actor/ten
 | `npm run lint && npm run build` | PASS | ESLint, TypeScript и production Next build |
 | `npm run test:e2e` | 59 PASS за 37.4s | Весь curated Chromium gate; три document-sharing flow с API mock проверяют user/group grant, stale CAS refresh, revoke, registration и shared list; это не реальный AD/IdP/backend e2e |
 
+## CLI и gRPC upload transports — 2026-09-10
+
+| Проверка | Наблюдаемый результат | Граница доказательства |
+|---|---|---|
+| `go test -race ./cmd/cli -count=1` | PASS: 54.273s, SQLite + PostgreSQL | CLI subprocess вызывает настоящий authenticated `/add`; exact original bytes, text upload, создание и повторный выбор dataset. Mock tests отдельно проверяют redirect/non-2xx/JSON/read failures |
+| `go test -race ./internal/grpc -count=1` | PASS: 2.129s | Полный gRPC package и точное преобразование ingest errors в transport statuses |
+| `go test -race ./pkg/ingest -count=1` | PASS: 48.147s, SQLite + PostgreSQL | Coordinator: hold/tombstone, preflight, duplicate, partial Save, revoke, concurrent repeat, cancellation, non-cooperative backend и offline recovery |
+| `go test -race ./internal/http -count=1` | PASS: 306.656s, SQLite + PostgreSQL | Полный HTTP package, включая real bufconn `IngestData`: ID/name selectors, multi-item/duplicate batch, invalid item N до Save, partial cleanup, tenant/credential revoke, cancel, late backend и отсутствие internal storage path в authenticated response |
+
+Граница trusted-local режима без metadata DB подтверждена отдельно:
+`go test -race ./pkg/ingest -run 'TestIngestStoredPartialFailureLeavesCompletedObject|TestIngestStoredNeverStagesRemotePlaintext' -count=1`
+— PASS за 1.704s. При ошибке второго `Save` первый объект остаётся; этот
+compatibility path не заявляет journal или rollback всего batch.
+
+`IngestData` — upload-only RPC. Этот gate не объявляет document-scoped gRPC
+cognify: `PipelineCognify` остаётся отдельным active-superuser raw pipeline без
+document/source/publication identity.
+
 ## Публикация и статусы документов — 2026-09-10
 
 На текущем рабочем дереве выполнены race-прогоны с SQLite и изолированным

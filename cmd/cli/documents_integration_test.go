@@ -6,12 +6,62 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	httpapi "github.com/stek0v/levara/internal/http"
 	"github.com/stek0v/levara/pkg/access"
 )
+
+func TestCLIAddRealAPI(t *testing.T) {
+	t.Setenv("LEVARA_TENANT_ENFORCED", "0")
+	for _, dialect := range []string{"sqlite", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			server, db, _ := teamIntegrationServer(t, dialect)
+			documentCLIExec(t, db, "INSERT INTO principals(id,type) VALUES('owner','user')")
+			documentCLIExec(t, db, "INSERT INTO users(id,email,hashed_password,is_active) VALUES('owner','owner@test.invalid','locked',TRUE)")
+			documentCLIExec(t, db, "INSERT INTO tenants(id,name,owner_id) VALUES('a','A','owner')")
+			documentCLIExec(t, db, "INSERT INTO user_tenant(user_id,tenant_id) VALUES('owner','a')")
+			token, err := httpapi.IssueSessionJWT(context.Background(), db, "owner", "owner@test.invalid", "isolated-team-cli-session-secret")
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			const dataset = "CLI real upload"
+			fileBytes := []byte("# Exact upload\n\nПривет из CLI.\n")
+			file := filepath.Join(t.TempDir(), "exact upload.md")
+			if err := os.WriteFile(file, fileBytes, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			for _, args := range [][]string{{"add", "--file=" + file, "--dataset=" + dataset}, {"add", "second exact text", "--dataset=" + dataset}} {
+				out, err := runCLICommandWithToken(t, server.URL, token, args...)
+				if err != nil || !strings.Contains(out, "OK") || !strings.Contains(out, "ingested") {
+					t.Fatalf("real add %v: %v\n%s", args, err, out)
+				}
+			}
+
+			var datasetID string
+			if err := db.QueryRow(httpapi.Q("SELECT id FROM datasets WHERE name=$1 AND owner_id='owner'"), dataset).Scan(&datasetID); err != nil {
+				t.Fatal(err)
+			}
+			var location string
+			if err := db.QueryRow(httpapi.Q(`SELECT d.original_data_location FROM data d JOIN dataset_data dd ON dd.data_id=d.id
+				WHERE dd.dataset_id=$1 AND d.name=$2`), datasetID, filepath.Base(file)).Scan(&location); err != nil {
+				t.Fatal(err)
+			}
+			got, err := os.ReadFile(strings.TrimPrefix(location, "file://"))
+			if err != nil || string(got) != string(fileBytes) {
+				t.Fatalf("stored bytes=%q err=%v location=%q", got, err, location)
+			}
+			var rows int
+			if err := db.QueryRow(httpapi.Q("SELECT COUNT(*) FROM dataset_data WHERE dataset_id=$1"), datasetID).Scan(&rows); err != nil || rows != 2 {
+				t.Fatalf("dataset rows=%d err=%v", rows, err)
+			}
+		})
+	}
+}
 
 func documentCLIExec(t *testing.T, db *sql.DB, query string, args ...any) {
 	t.Helper()

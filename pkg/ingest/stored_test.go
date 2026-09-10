@@ -15,12 +15,15 @@ import (
 
 type storedReceiver struct {
 	storage.Storage
-	objects map[string]string
-	fail    bool
+	objects   map[string]string
+	fail      bool
+	saves     int
+	failAfter int
 }
 
 func (s *storedReceiver) Save(ctx context.Context, key string, reader io.Reader) error {
-	if s.fail {
+	s.saves++
+	if s.fail || s.failAfter > 0 && s.saves > s.failAfter {
 		return errors.New("backend unavailable")
 	}
 	data, err := io.ReadAll(reader)
@@ -30,6 +33,15 @@ func (s *storedReceiver) Save(ctx context.Context, key string, reader io.Reader)
 	s.objects[key] = string(data)
 	return nil
 }
+
+func TestIngestStoredPartialFailureLeavesCompletedObject(t *testing.T) {
+	receiver := &storedReceiver{objects: map[string]string{}, failAfter: 1}
+	_, err := IngestStored(context.Background(), []Item{{Text: "first"}, {Text: "second"}}, t.TempDir(), receiver)
+	if err == nil || len(receiver.objects) != 1 {
+		t.Fatalf("documented trusted-local no-DB behavior changed: err=%v objects=%d", err, len(receiver.objects))
+	}
+}
+
 func TestIngestStoredNeverStagesRemotePlaintext(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "must-not-exist")
 	receiver := &storedReceiver{objects: map[string]string{}}

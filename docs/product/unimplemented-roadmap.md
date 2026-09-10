@@ -23,6 +23,37 @@
 | Качество / интерфейсы | Базовые parsers/adapters/sync UI уже существуют | Corpus/OCR, model presets, две ноды sync, SLO и эксперименты |
 | Выпуск | Добавлены отдельные руководства | Остальные docs/маркетинг, generated contracts, общий gate, ревью, коммиты |
 
+## Актуальная очередь выполнения
+
+- [x] Inline HTTP/MCP publication и provenance: атомарные source attempts,
+  revision/hash CAS, точные terminal statuses и защищённый graph egress.
+- [x] Доступ к отдельным документам: REST/CLI/WebUI policy, user/group
+  grant/revoke, recipients/shared discovery и credential fence до commit/drain.
+  Результат сохранён коммитом `0fbebf1`.
+- [x] Карта обычной загрузки: REST/Web, CLI и MCP add сходятся в общий authorized
+  coordinator; `IngestData` — единственный tenant-scoped gRPC RPC.
+- [x] CLI upload как клиент настоящего authenticated `/add`: создание и повторный
+  выбор dataset, exact file bytes и текст проверены на SQLite/PostgreSQL.
+- [x] Authenticated metadata-backed контракт `IngestData` для batch: dataset ID без
+  имени, конфликт request/item dataset, ровно один payload на item, корректные
+  gRPC statuses, invalid item N до первого Save, partial backend failure,
+  cancellation, late completion, duplicate/retry и обе SQL.
+- [ ] **P2:** решить судьбу trusted-local `IngestData` без metadata DB: сохранить
+  compatibility и добавить journal/batch cleanup либо ограничить режим одним
+  item. Сейчас прямые записи этого режима не гарантируют rollback всего batch.
+- [ ] **P1:** спроектировать отдельный document-scoped gRPC cognify contract.
+  Существующий `PipelineCognify` остаётся global-admin raw-collection pipeline и
+  не имеет document/source revision/publication identity.
+- [ ] **P1/P2:** закрыть остальные составные mutation paths: gRPC writes, sync
+  graph/collection import, dualwrite/backfill, workspace write/revert/GC и
+  legacy dataset rename/delete с повторной авторизацией внутри транзакции.
+- [ ] **P1/P2:** распространить hold и concurrent revoke на все производные и
+  составные операции; затем выполнить внешний AD/IdP/SCIM group flow.
+- [ ] **P2:** прогнать размеченный PDF/Office/HTML/OCR corpus, storage/KMS/SIEM,
+  двухнодовый sync, backup schedule/restore и эксплуатационные SLO.
+- [ ] **Release gate:** generated contracts, SQLite/PostgreSQL/race, WebUI,
+  `make test-commit`, независимое ревью, актуальные docs/маркетинг и scoped commit.
+
 ### Закрытые регрессии 2026-09-09
 
 В текущем рабочем дереве закрыты четыре подтверждённых дефекта: изменение общей строки загрузки после revoke через другую legacy-привязку; широкое удаление одноимённых memories; потеря пропущенных полей при partial PUT настроек; превышение SQL bind limit при большом graph ACL. Targeted SQLite/PostgreSQL/race и browser-проверки проходят, generated contracts синхронизированы, повторное независимое ревью блокеров не нашло. Evidence и оставшиеся release-wide задачи: [отчёт](../../outputs/commit-regressions-2026-09-09/report.md) и [план](../../outputs/commit-regressions-2026-09-09/tasks.md).
@@ -229,8 +260,9 @@ GCS/Azure/Vault добавлять при подтверждённой потр�
 ## Документы, поиск и модели — P2/P3
 
 **Реализовано локально:** общий authorized ingest coordinator подключён к
-REST/Web, MCP add и gRPC. Права проверяются до Save; точные повторы не создают
-новый Save; неизменяемые объекты попытки и журнал защищают от partial failure.
+REST/Web, MCP add и authenticated metadata-backed gRPC. Права проверяются до
+Save; точные повторы не создают новый Save; неизменяемые объекты попытки и журнал
+защищают от partial failure.
 Автоматический offline recovery ограничен standalone/local SQLite с
 исключительным владением записью. Source versioning в обеих SQL исключает
 устаревшие публикации после A→B→A и удаления/повторного создания источника.
@@ -238,12 +270,20 @@ REST/Web, MCP add и gRPC. Права проверяются до Save; точн
 
 Текущий проход закрыл inline HTTP/MCP, legacy/registered publication,
 missing-file/malformed-hash fixtures, partial/stale worker, direct document
-grant/revoke и graph egress на обеих SQL. Следующий порядок интеграции:
+grant/revoke и graph egress на обеих SQL. CLI upload теперь также проверен против
+настоящего authenticated `/add` на SQLite/PostgreSQL: файл сохраняется побайтово,
+а повторный текст попадает в тот же dataset. Metadata-backed `IngestData`
+проверяет весь batch до Save, принимает существующий dataset только по ID,
+различает transport errors и очищает partial/late storage attempt;
+SQLite/PostgreSQL `-race` проходят. Trusted-local режим без metadata DB остаётся
+прямым compatibility path без journal и гарантии batch rollback.
+Следующий порядок интеграции:
 
-- P1/P2: завершить оставшуюся transport matrix обычной загрузки: CLI как клиент
-  реального endpoint, составной gRPC batch, cancellation/rollback и поздний
-  worker. Текущий inline MCP тест покрывает legacy/latest MCP, но не заменяет
-  полный upload matrix.
+- P1/P2: обычная authenticated upload transport matrix закрыта для REST/MCP/CLI
+  и metadata-backed gRPC `IngestData`. Спроектировать отдельный document-scoped
+  gRPC cognify; текущий
+  `PipelineCognify` остаётся global-admin raw pipeline и не связан с source
+  revision/publication.
 - P1/P2: закрыть составные gRPC writes, sync graph/collection import,
   dualwrite/backfill и workspace write/revert/GC. Глобальные REST
   raw-vector/collection/reembed/migration endpoints уже ограничены active

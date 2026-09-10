@@ -13,15 +13,36 @@ package grpc
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/stek0v/levara/pkg/access"
 	pb "github.com/stek0v/levara/proto/pb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+func TestIngestRPCErrorCodes(t *testing.T) {
+	if _, err := NewService(nil, nil, 2).IngestData(context.Background(), nil); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("nil request status=%s", status.Code(err))
+	}
+	for name, tc := range map[string]struct {
+		err  error
+		code codes.Code
+	}{
+		"canceled": {context.Canceled, codes.Canceled}, "deadline": {context.DeadlineExceeded, codes.DeadlineExceeded},
+		"invalid": {access.ErrDocumentInvalid, codes.InvalidArgument}, "forbidden": {access.ErrDocumentForbidden, codes.PermissionDenied},
+		"missing": {access.ErrDocumentNotFound, codes.NotFound}, "conflict": {access.ErrDocumentVersionConflict, codes.FailedPrecondition},
+		"backend": {errors.New("backend failed"), codes.Unavailable},
+	} {
+		if got := status.Code(ingestRPCError(tc.err)); got != tc.code {
+			t.Errorf("%s: got %s, want %s", name, got, tc.code)
+		}
+	}
+}
 
 // ── ChunkText ──
 

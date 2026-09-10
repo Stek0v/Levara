@@ -21,6 +21,7 @@ import (
 	_ "github.com/ncruces/go-sqlite3/driver"
 	httpapi "github.com/stek0v/levara/internal/http"
 	"github.com/stek0v/levara/pkg/access"
+	"github.com/stek0v/levara/pkg/ingest"
 )
 
 func teamIntegrationServer(t *testing.T, dialect string) (*httptest.Server, *sql.DB, *atomic.Bool) {
@@ -31,6 +32,8 @@ func teamIntegrationServer(t *testing.T, dialect string) (*httptest.Server, *sql
 	var schema string
 	if dialect == "sqlite" {
 		httpapi.SetDBProvider(httpapi.DBSQLite)
+		ingest.SetSQLiteMode(true)
+		t.Cleanup(func() { ingest.SetSQLiteMode(false) })
 		var err error
 		db, err = sql.Open("sqlite3", "file:"+filepath.Join(t.TempDir(), "team.db")+"?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)")
 		if err != nil {
@@ -74,7 +77,7 @@ func teamIntegrationServer(t *testing.T, dialect string) (*httptest.Server, *sql
 	api.Use(func(c *fiber.Ctx) error { c.Locals("auth_db", &httpapi.DBRef{DB: db}); return c.Next() })
 	api.Use(httpapi.JWTMiddleware(cfg.JWTSecret, true), httpapi.APIKeyPermissionMiddleware(), httpapi.TenantMiddleware(httpapi.AccessConfig{DB: db}))
 	httpapi.RegisterAPIKeyEndpoints(api, cfg)
-	httpapi.RegisterAPI(api, httpapi.APIConfig{DB: db, RequireAuth: true})
+	httpapi.RegisterAPI(api, httpapi.APIConfig{DB: db, RequireAuth: true, StoragePath: filepath.Join(t.TempDir(), "uploads")})
 	var breakGrants atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.Header.Get("Authorization"), "isolated-cli-token") {

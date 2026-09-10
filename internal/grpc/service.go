@@ -1745,6 +1745,9 @@ func (s *Service) IngestData(ctx context.Context, req *pb.IngestDataReq) (*pb.In
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "ingest request required")
+	}
 	if req.PostgresDsn != "" {
 		return nil, status.Error(codes.InvalidArgument, "database overrides are disabled; configure server metadata storage")
 	}
@@ -1762,7 +1765,28 @@ func (s *Service) IngestData(ctx context.Context, req *pb.IngestDataReq) (*pb.In
 		return nil, status.Error(codes.Unavailable, "metadata storage unavailable")
 	}
 	datasetName, datasetID := req.DatasetName, req.DatasetId
-	if datasetName == "" {
+	if strings.TrimSpace(datasetName) == "" {
+		datasetName = ""
+	}
+	ownerID := actor.UserID
+	items := make([]ingest.Item, len(req.Items))
+	for i, it := range req.Items {
+		if it == nil {
+			return nil, status.Error(codes.InvalidArgument, "empty item")
+		}
+		if (it.Text == "") == (len(it.FileData) == 0) {
+			return nil, status.Error(codes.InvalidArgument, "each item requires exactly one of text or file_data")
+		}
+		if strings.TrimSpace(it.DatasetName) != "" {
+			if datasetName == "" {
+				datasetName = it.DatasetName
+			} else if it.DatasetName != datasetName {
+				return nil, status.Error(codes.InvalidArgument, "all items must target the request dataset")
+			}
+		}
+		items[i] = ingest.Item{ID: it.Id, OwnerID: ownerID, Text: it.Text, FileData: it.FileData, Filename: it.Filename, DatasetName: datasetName}
+	}
+	if datasetID == "" && datasetName == "" {
 		datasetName = "default"
 	}
 	if s.ingestDB != nil && datasetID == "" {
@@ -1771,10 +1795,10 @@ func (s *Service) IngestData(ctx context.Context, req *pb.IngestDataReq) (*pb.In
 			query = s.ingestQ(query)
 		}
 		err := s.ingestDB.QueryRowContext(ctx, query, datasetName).Scan(&datasetID)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return nil, status.Error(codes.Unavailable, "metadata lookup failed")
-		}
-		if datasetID == "" {
+		if err != nil {
+			if !errors.Is(err, sql.ErrNoRows) {
+				return nil, ingestRPCError(err)
+			}
 			datasetID = uuid.NewString()
 		}
 	}
@@ -1787,20 +1811,8 @@ func (s *Service) IngestData(ctx context.Context, req *pb.IngestDataReq) (*pb.In
 		storagePath = "data/ingested"
 	}
 
-	ownerID := actor.UserID
-	items := make([]ingest.Item, len(req.Items))
-	for i, it := range req.Items {
-		if it == nil {
-			return nil, status.Error(codes.InvalidArgument, "empty item")
-		}
-		items[i] = ingest.Item{
-			ID:          it.Id,
-			OwnerID:     ownerID,
-			Text:        it.Text,
-			FileData:    it.FileData,
-			Filename:    it.Filename,
-			DatasetName: it.DatasetName,
-		}
+	for i := range items {
+		items[i].DatasetName = datasetName
 	}
 
 	var results []ingest.Result
@@ -1816,15 +1828,19 @@ func (s *Service) IngestData(ctx context.Context, req *pb.IngestDataReq) (*pb.In
 		results, err = ingest.IngestStored(ctx, items, storagePath, s.fileStorage)
 	}
 	if err != nil {
-		return nil, status.Error(codes.FailedPrecondition, "ingestion denied or unavailable")
+		return nil, ingestRPCError(err)
 	}
 
 	pbResults := make([]*pb.IngestResult, len(results))
 	for i, r := range results {
+		filePath := r.FilePath
+		if !actor.TrustedLocal {
+			filePath = ""
+		}
 		pbResults[i] = &pb.IngestResult{
 			Id:            r.ID,
 			ContentHash:   r.ContentHash,
-			FilePath:      r.FilePath,
+			FilePath:      filePath,
 			MimeType:      r.MimeType,
 			Extension:     r.Extension,
 			FileSize:      r.FileSize,
@@ -1844,6 +1860,25 @@ func (s *Service) IngestData(ctx context.Context, req *pb.IngestDataReq) (*pb.In
 
 	resp.TotalMs = time.Since(start).Milliseconds()
 	return resp, nil
+}
+
+func ingestRPCError(err error) error {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return status.Error(codes.Canceled, "ingestion canceled")
+	case errors.Is(err, context.DeadlineExceeded):
+		return status.Error(codes.DeadlineExceeded, "ingestion deadline exceeded")
+	case errors.Is(err, access.ErrDocumentInvalid):
+		return status.Error(codes.InvalidArgument, "invalid ingestion request")
+	case errors.Is(err, access.ErrDocumentForbidden):
+		return status.Error(codes.PermissionDenied, "ingestion denied")
+	case errors.Is(err, access.ErrDocumentNotFound):
+		return status.Error(codes.NotFound, "ingestion target not found")
+	case errors.Is(err, access.ErrDocumentVersionConflict), errors.Is(err, access.ErrDocumentSharedMetadata):
+		return status.Error(codes.FailedPrecondition, "ingestion target changed")
+	default:
+		return status.Error(codes.Unavailable, "ingestion unavailable")
+	}
 }
 
 // ExtractText extracts text from PDF/DOCX/TXT files in pure Go.

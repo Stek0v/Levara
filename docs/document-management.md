@@ -179,6 +179,34 @@ ID через список доступных наборов. Если аргу�
 `group-create` и `group-members`; grant/revoke и замена состава группы сначала
 читают текущую revision, а server CAS по-прежнему может вернуть конфликт.
 
+## Загрузка через gRPC
+
+`IngestData` принимает от 1 до 100 элементов и загружает их в один dataset.
+Укажите `dataset_id`, `dataset_name` либо одно согласованное `dataset_name` в
+элементах. Для существующего dataset достаточно ID: coordinator проверяет его
+вместе с правами и не подставляет имя `default`. Каждый элемент обязан содержать
+ровно одно из `text` и `file_data`;
+смешанные имена dataset, пустой элемент и двойной payload отклоняются до первого
+Save. `owner_id` и `storage_path` оставлены только для wire compatibility:
+в authenticated режиме owner берётся из проверенной identity, а storage — из
+конфигурации сервера. Непустой `postgres_dsn` отклоняется.
+
+В authenticated режиме с metadata DB batch использует тот же authorized ingest
+coordinator, что REST/MCP. Ошибка любого Save не публикует SQL metadata и
+очищает приватные объекты попытки; отмена запроса также не позволяет поздно
+завершившемуся backend опубликовать результат. Trusted-local compatibility без
+metadata DB записывает объекты напрямую: journal и batch cleanup в этом режиме
+не гарантируются. `InvalidArgument`, `PermissionDenied`, `NotFound`,
+`FailedPrecondition`, `Canceled`, `DeadlineExceeded` и `Unavailable` различают
+класс отказа без возврата внутренней ошибки.
+Authenticated response не возвращает внутренний `file://` или object key;
+чтение опубликованного документа выполняется через document API с его ACL.
+
+`PipelineCognify` не продолжает этот document workflow: это отдельный
+global-superuser raw-collection pipeline без dataset/document/source revision и
+publication identity. Для document-scoped gRPC cognify нужен отдельный контракт;
+последовательный вызов `IngestData` и `PipelineCognify` его не заменяет.
+
 MCP `cognify` с inline `data` и HTTP `cognify` с `texts[]` сначала атомарно
 создают серверный dataset/document source, source revision и SHA-256, затем
 публикуют run. Переданный клиентом `document_id` не используется и удалён из
