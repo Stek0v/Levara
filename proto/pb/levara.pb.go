@@ -6881,6 +6881,303 @@ func (x *SearchResultGroup) GetResults() []*SearchResult {
 	return nil
 }
 
+// Exact source proof; the server checks it against current SQL metadata.
+type DocumentCognifySource struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	DatasetId       string                 `protobuf:"bytes,1,opt,name=dataset_id,json=datasetId,proto3" json:"dataset_id,omitempty"`
+	DocumentId      string                 `protobuf:"bytes,2,opt,name=document_id,json=documentId,proto3" json:"document_id,omitempty"`
+	SourceRevision  int64                  `protobuf:"varint,3,opt,name=source_revision,json=sourceRevision,proto3" json:"source_revision,omitempty"`    // required, positive
+	RawContentHash  string                 `protobuf:"bytes,4,opt,name=raw_content_hash,json=rawContentHash,proto3" json:"raw_content_hash,omitempty"`   // required, SHA256 hex
+	ContentRevision int64                  `protobuf:"varint,5,opt,name=content_revision,json=contentRevision,proto3" json:"content_revision,omitempty"` // request: 0 unspecified, >0 expected; output: server-resolved
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *DocumentCognifySource) Reset() {
+	*x = DocumentCognifySource{}
+	mi := &file_levara_proto_msgTypes[97]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DocumentCognifySource) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DocumentCognifySource) ProtoMessage() {}
+
+func (x *DocumentCognifySource) ProtoReflect() protoreflect.Message {
+	mi := &file_levara_proto_msgTypes[97]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DocumentCognifySource.ProtoReflect.Descriptor instead.
+func (*DocumentCognifySource) Descriptor() ([]byte, []int) {
+	return file_levara_proto_rawDescGZIP(), []int{97}
+}
+
+func (x *DocumentCognifySource) GetDatasetId() string {
+	if x != nil {
+		return x.DatasetId
+	}
+	return ""
+}
+
+func (x *DocumentCognifySource) GetDocumentId() string {
+	if x != nil {
+		return x.DocumentId
+	}
+	return ""
+}
+
+func (x *DocumentCognifySource) GetSourceRevision() int64 {
+	if x != nil {
+		return x.SourceRevision
+	}
+	return 0
+}
+
+func (x *DocumentCognifySource) GetRawContentHash() string {
+	if x != nil {
+		return x.RawContentHash
+	}
+	return ""
+}
+
+func (x *DocumentCognifySource) GetContentRevision() int64 {
+	if x != nil {
+		return x.ContentRevision
+	}
+	return 0
+}
+
+type DocumentCognifyReq struct {
+	state         protoimpl.MessageState   `protogen:"open.v1"`
+	Documents     []*DocumentCognifySource `protobuf:"bytes,1,rep,name=documents,proto3" json:"documents,omitempty"`   // 1..100, exact duplicates collapse
+	Collection    string                   `protobuf:"bytes,2,opt,name=collection,proto3" json:"collection,omitempty"` // required, single path component
+	Mode          string                   `protobuf:"bytes,3,opt,name=mode,proto3" json:"mode,omitempty"`             // empty defaults to "rag"; "rag" or "graph"
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DocumentCognifyReq) Reset() {
+	*x = DocumentCognifyReq{}
+	mi := &file_levara_proto_msgTypes[98]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DocumentCognifyReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DocumentCognifyReq) ProtoMessage() {}
+
+func (x *DocumentCognifyReq) ProtoReflect() protoreflect.Message {
+	mi := &file_levara_proto_msgTypes[98]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DocumentCognifyReq.ProtoReflect.Descriptor instead.
+func (*DocumentCognifyReq) Descriptor() ([]byte, []int) {
+	return file_levara_proto_rawDescGZIP(), []int{98}
+}
+
+func (x *DocumentCognifyReq) GetDocuments() []*DocumentCognifySource {
+	if x != nil {
+		return x.Documents
+	}
+	return nil
+}
+
+func (x *DocumentCognifyReq) GetCollection() string {
+	if x != nil {
+		return x.Collection
+	}
+	return ""
+}
+
+func (x *DocumentCognifyReq) GetMode() string {
+	if x != nil {
+		return x.Mode
+	}
+	return ""
+}
+
+type DocumentCognifyStatusReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	PipelineRunId string                 `protobuf:"bytes,1,opt,name=pipeline_run_id,json=pipelineRunId,proto3" json:"pipeline_run_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DocumentCognifyStatusReq) Reset() {
+	*x = DocumentCognifyStatusReq{}
+	mi := &file_levara_proto_msgTypes[99]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DocumentCognifyStatusReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DocumentCognifyStatusReq) ProtoMessage() {}
+
+func (x *DocumentCognifyStatusReq) ProtoReflect() protoreflect.Message {
+	mi := &file_levara_proto_msgTypes[99]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DocumentCognifyStatusReq.ProtoReflect.Descriptor instead.
+func (*DocumentCognifyStatusReq) Descriptor() ([]byte, []int) {
+	return file_levara_proto_rawDescGZIP(), []int{99}
+}
+
+func (x *DocumentCognifyStatusReq) GetPipelineRunId() string {
+	if x != nil {
+		return x.PipelineRunId
+	}
+	return ""
+}
+
+type DocumentCognifyStatus struct {
+	state             protoimpl.MessageState   `protogen:"open.v1"`
+	PipelineRunId     string                   `protobuf:"bytes,1,opt,name=pipeline_run_id,json=pipelineRunId,proto3" json:"pipeline_run_id,omitempty"`
+	Status            string                   `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`
+	Stage             string                   `protobuf:"bytes,3,opt,name=stage,proto3" json:"stage,omitempty"`
+	Message           string                   `protobuf:"bytes,4,opt,name=message,proto3" json:"message,omitempty"`
+	ChunksCreated     int32                    `protobuf:"varint,5,opt,name=chunks_created,json=chunksCreated,proto3" json:"chunks_created,omitempty"`
+	EntitiesExtracted int32                    `protobuf:"varint,6,opt,name=entities_extracted,json=entitiesExtracted,proto3" json:"entities_extracted,omitempty"`
+	EdgesExtracted    int32                    `protobuf:"varint,7,opt,name=edges_extracted,json=edgesExtracted,proto3" json:"edges_extracted,omitempty"`
+	ElapsedMs         int64                    `protobuf:"varint,8,opt,name=elapsed_ms,json=elapsedMs,proto3" json:"elapsed_ms,omitempty"`
+	Sources           []*DocumentCognifySource `protobuf:"bytes,9,rep,name=sources,proto3" json:"sources,omitempty"`
+	StartedAtUnixMs   int64                    `protobuf:"varint,10,opt,name=started_at_unix_ms,json=startedAtUnixMs,proto3" json:"started_at_unix_ms,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *DocumentCognifyStatus) Reset() {
+	*x = DocumentCognifyStatus{}
+	mi := &file_levara_proto_msgTypes[100]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DocumentCognifyStatus) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DocumentCognifyStatus) ProtoMessage() {}
+
+func (x *DocumentCognifyStatus) ProtoReflect() protoreflect.Message {
+	mi := &file_levara_proto_msgTypes[100]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DocumentCognifyStatus.ProtoReflect.Descriptor instead.
+func (*DocumentCognifyStatus) Descriptor() ([]byte, []int) {
+	return file_levara_proto_rawDescGZIP(), []int{100}
+}
+
+func (x *DocumentCognifyStatus) GetPipelineRunId() string {
+	if x != nil {
+		return x.PipelineRunId
+	}
+	return ""
+}
+
+func (x *DocumentCognifyStatus) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *DocumentCognifyStatus) GetStage() string {
+	if x != nil {
+		return x.Stage
+	}
+	return ""
+}
+
+func (x *DocumentCognifyStatus) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *DocumentCognifyStatus) GetChunksCreated() int32 {
+	if x != nil {
+		return x.ChunksCreated
+	}
+	return 0
+}
+
+func (x *DocumentCognifyStatus) GetEntitiesExtracted() int32 {
+	if x != nil {
+		return x.EntitiesExtracted
+	}
+	return 0
+}
+
+func (x *DocumentCognifyStatus) GetEdgesExtracted() int32 {
+	if x != nil {
+		return x.EdgesExtracted
+	}
+	return 0
+}
+
+func (x *DocumentCognifyStatus) GetElapsedMs() int64 {
+	if x != nil {
+		return x.ElapsedMs
+	}
+	return 0
+}
+
+func (x *DocumentCognifyStatus) GetSources() []*DocumentCognifySource {
+	if x != nil {
+		return x.Sources
+	}
+	return nil
+}
+
+func (x *DocumentCognifyStatus) GetStartedAtUnixMs() int64 {
+	if x != nil {
+		return x.StartedAtUnixMs
+	}
+	return 0
+}
+
 var File_levara_proto protoreflect.FileDescriptor
 
 const file_levara_proto_rawDesc = "" +
@@ -7498,7 +7795,36 @@ const file_levara_proto_rawDesc = "" +
 	"\rmetadata_json\x18\a \x01(\tR\fmetadataJson\"\\\n" +
 	"\x11SearchResultGroup\x12\x14\n" +
 	"\x05query\x18\x01 \x01(\tR\x05query\x121\n" +
-	"\aresults\x18\x02 \x03(\v2\x17.levara.v1.SearchResultR\aresults2\xf3\x14\n" +
+	"\aresults\x18\x02 \x03(\v2\x17.levara.v1.SearchResultR\aresults\"\xd5\x01\n" +
+	"\x15DocumentCognifySource\x12\x1d\n" +
+	"\n" +
+	"dataset_id\x18\x01 \x01(\tR\tdatasetId\x12\x1f\n" +
+	"\vdocument_id\x18\x02 \x01(\tR\n" +
+	"documentId\x12'\n" +
+	"\x0fsource_revision\x18\x03 \x01(\x03R\x0esourceRevision\x12(\n" +
+	"\x10raw_content_hash\x18\x04 \x01(\tR\x0erawContentHash\x12)\n" +
+	"\x10content_revision\x18\x05 \x01(\x03R\x0fcontentRevision\"\x88\x01\n" +
+	"\x12DocumentCognifyReq\x12>\n" +
+	"\tdocuments\x18\x01 \x03(\v2 .levara.v1.DocumentCognifySourceR\tdocuments\x12\x1e\n" +
+	"\n" +
+	"collection\x18\x02 \x01(\tR\n" +
+	"collection\x12\x12\n" +
+	"\x04mode\x18\x03 \x01(\tR\x04mode\"B\n" +
+	"\x18DocumentCognifyStatusReq\x12&\n" +
+	"\x0fpipeline_run_id\x18\x01 \x01(\tR\rpipelineRunId\"\x8e\x03\n" +
+	"\x15DocumentCognifyStatus\x12&\n" +
+	"\x0fpipeline_run_id\x18\x01 \x01(\tR\rpipelineRunId\x12\x16\n" +
+	"\x06status\x18\x02 \x01(\tR\x06status\x12\x14\n" +
+	"\x05stage\x18\x03 \x01(\tR\x05stage\x12\x18\n" +
+	"\amessage\x18\x04 \x01(\tR\amessage\x12%\n" +
+	"\x0echunks_created\x18\x05 \x01(\x05R\rchunksCreated\x12-\n" +
+	"\x12entities_extracted\x18\x06 \x01(\x05R\x11entitiesExtracted\x12'\n" +
+	"\x0fedges_extracted\x18\a \x01(\x05R\x0eedgesExtracted\x12\x1d\n" +
+	"\n" +
+	"elapsed_ms\x18\b \x01(\x03R\telapsedMs\x12:\n" +
+	"\asources\x18\t \x03(\v2 .levara.v1.DocumentCognifySourceR\asources\x12+\n" +
+	"\x12started_at_unix_ms\x18\n" +
+	" \x01(\x03R\x0fstartedAtUnixMs2\xad\x16\n" +
 	"\rLevaraService\x12I\n" +
 	"\x10CreateCollection\x12\x1e.levara.v1.CreateCollectionReq\x1a\x15.levara.v1.StatusResp\x12E\n" +
 	"\x0eDropCollection\x12\x1c.levara.v1.DropCollectionReq\x1a\x15.levara.v1.StatusResp\x12C\n" +
@@ -7538,7 +7864,9 @@ const file_levara_proto_rawDesc = "" +
 	"\n" +
 	"BM25Search\x12\x18.levara.v1.BM25SearchReq\x1a\x19.levara.v1.BM25SearchResp\x12G\n" +
 	"\fHybridSearch\x12\x1a.levara.v1.HybridSearchReq\x1a\x1b.levara.v1.HybridSearchResp\x123\n" +
-	"\aCompact\x12\x10.levara.v1.Empty\x1a\x16.levara.v1.CompactRespB#Z!github.com/stek0v/levara/proto/pbb\x06proto3"
+	"\aCompact\x12\x10.levara.v1.Empty\x1a\x16.levara.v1.CompactResp\x12U\n" +
+	"\x10CognifyDocuments\x12\x1d.levara.v1.DocumentCognifyReq\x1a .levara.v1.DocumentCognifyStatus0\x01\x12a\n" +
+	"\x16CognifyDocumentsStatus\x12#.levara.v1.DocumentCognifyStatusReq\x1a .levara.v1.DocumentCognifyStatus0\x01B#Z!github.com/stek0v/levara/proto/pbb\x06proto3"
 
 var (
 	file_levara_proto_rawDescOnce sync.Once
@@ -7553,7 +7881,7 @@ func file_levara_proto_rawDescGZIP() []byte {
 }
 
 var file_levara_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_levara_proto_msgTypes = make([]protoimpl.MessageInfo, 97)
+var file_levara_proto_msgTypes = make([]protoimpl.MessageInfo, 101)
 var file_levara_proto_goTypes = []any{
 	(GraphReadReq_Mode)(0),            // 0: levara.v1.GraphReadReq.Mode
 	(*Empty)(nil),                     // 1: levara.v1.Empty
@@ -7653,129 +7981,139 @@ var file_levara_proto_goTypes = []any{
 	(*HybridSearchResp)(nil),          // 95: levara.v1.HybridSearchResp
 	(*HybridResult)(nil),              // 96: levara.v1.HybridResult
 	(*SearchResultGroup)(nil),         // 97: levara.v1.SearchResultGroup
+	(*DocumentCognifySource)(nil),     // 98: levara.v1.DocumentCognifySource
+	(*DocumentCognifyReq)(nil),        // 99: levara.v1.DocumentCognifyReq
+	(*DocumentCognifyStatusReq)(nil),  // 100: levara.v1.DocumentCognifyStatusReq
+	(*DocumentCognifyStatus)(nil),     // 101: levara.v1.DocumentCognifyStatus
 }
 var file_levara_proto_depIdxs = []int32{
-	10, // 0: levara.v1.BatchInsertReq.records:type_name -> levara.v1.InsertRecord
-	16, // 1: levara.v1.SearchResp.results:type_name -> levara.v1.SearchResult
-	19, // 2: levara.v1.GetByIDResp.records:type_name -> levara.v1.RecordEntry
-	22, // 3: levara.v1.ChunkTextResp.chunks:type_name -> levara.v1.TextChunk
-	25, // 4: levara.v1.ProcessTripletsReq.nodes:type_name -> levara.v1.GraphNode
-	26, // 5: levara.v1.ProcessTripletsReq.edges:type_name -> levara.v1.GraphEdge
-	27, // 6: levara.v1.ProcessTripletsResp.triplets:type_name -> levara.v1.TripletResult
-	30, // 7: levara.v1.HashFilesResp.results:type_name -> levara.v1.FileHash
-	36, // 8: levara.v1.AggregateSearchReq.edges:type_name -> levara.v1.ScoredEdge
-	38, // 9: levara.v1.AggregateSearchResp.ranked_edges:type_name -> levara.v1.RankedEdge
-	40, // 10: levara.v1.SearchTripletsReq.nodes:type_name -> levara.v1.TripletNode
-	41, // 11: levara.v1.SearchTripletsReq.edges:type_name -> levara.v1.TripletEdge
-	42, // 12: levara.v1.SearchTripletsReq.node_distances:type_name -> levara.v1.CollectionDistances
-	43, // 13: levara.v1.SearchTripletsReq.edge_distances:type_name -> levara.v1.DistanceEntry
-	43, // 14: levara.v1.CollectionDistances.entries:type_name -> levara.v1.DistanceEntry
-	45, // 15: levara.v1.SearchTripletsResp.triplets:type_name -> levara.v1.ScoredTriplet
-	47, // 16: levara.v1.DeduplicateGraphReq.nodes:type_name -> levara.v1.DedupNodeMsg
-	48, // 17: levara.v1.DeduplicateGraphReq.edges:type_name -> levara.v1.DedupEdgeMsg
-	47, // 18: levara.v1.DeduplicateGraphResp.nodes:type_name -> levara.v1.DedupNodeMsg
-	48, // 19: levara.v1.DeduplicateGraphResp.edges:type_name -> levara.v1.DedupEdgeMsg
-	27, // 20: levara.v1.DeduplicateGraphResp.triplets:type_name -> levara.v1.TripletResult
-	51, // 21: levara.v1.BatchEmbedAndIndexReq.groups:type_name -> levara.v1.IndexGroup
-	52, // 22: levara.v1.IndexGroup.items:type_name -> levara.v1.IndexItem
-	55, // 23: levara.v1.BatchWriteGraphReq.nodes:type_name -> levara.v1.GraphNodeWrite
-	56, // 24: levara.v1.BatchWriteGraphReq.edges:type_name -> levara.v1.GraphEdgeWrite
-	47, // 25: levara.v1.ParallelWriteReq.nodes:type_name -> levara.v1.DedupNodeMsg
-	48, // 26: levara.v1.ParallelWriteReq.edges:type_name -> levara.v1.DedupEdgeMsg
-	51, // 27: levara.v1.ParallelWriteReq.index_groups:type_name -> levara.v1.IndexGroup
-	97, // 28: levara.v1.BatchSearchByTextResp.results:type_name -> levara.v1.SearchResultGroup
-	0,  // 29: levara.v1.GraphReadReq.mode:type_name -> levara.v1.GraphReadReq.Mode
-	65, // 30: levara.v1.GraphReadResp.nodes:type_name -> levara.v1.GraphReadNode
-	66, // 31: levara.v1.GraphReadResp.edges:type_name -> levara.v1.GraphReadEdge
-	45, // 32: levara.v1.GraphCompletionSearchResp.triplets:type_name -> levara.v1.ScoredTriplet
-	74, // 33: levara.v1.SemanticDedupReq.vectors:type_name -> levara.v1.VectorEntry
-	78, // 34: levara.v1.MultiQuerySearchResp.results:type_name -> levara.v1.MultiQueryResult
-	80, // 35: levara.v1.IngestDataReq.items:type_name -> levara.v1.IngestItem
-	82, // 36: levara.v1.IngestDataResp.results:type_name -> levara.v1.IngestResult
-	87, // 37: levara.v1.TemporalSearchResp.events:type_name -> levara.v1.TemporalEvent
-	52, // 38: levara.v1.BM25IndexReq.items:type_name -> levara.v1.IndexItem
-	93, // 39: levara.v1.BM25SearchResp.results:type_name -> levara.v1.BM25Result
-	96, // 40: levara.v1.HybridSearchResp.results:type_name -> levara.v1.HybridResult
-	16, // 41: levara.v1.SearchResultGroup.results:type_name -> levara.v1.SearchResult
-	3,  // 42: levara.v1.LevaraService.CreateCollection:input_type -> levara.v1.CreateCollectionReq
-	4,  // 43: levara.v1.LevaraService.DropCollection:input_type -> levara.v1.DropCollectionReq
-	1,  // 44: levara.v1.LevaraService.ListCollections:input_type -> levara.v1.Empty
-	6,  // 45: levara.v1.LevaraService.HasCollection:input_type -> levara.v1.HasCollectionReq
-	8,  // 46: levara.v1.LevaraService.Insert:input_type -> levara.v1.InsertReq
-	9,  // 47: levara.v1.LevaraService.BatchInsert:input_type -> levara.v1.BatchInsertReq
-	12, // 48: levara.v1.LevaraService.Delete:input_type -> levara.v1.DeleteReq
-	14, // 49: levara.v1.LevaraService.Search:input_type -> levara.v1.SearchReq
-	20, // 50: levara.v1.LevaraService.ChunkText:input_type -> levara.v1.ChunkTextReq
-	1,  // 51: levara.v1.LevaraService.Info:input_type -> levara.v1.Empty
-	17, // 52: levara.v1.LevaraService.GetByID:input_type -> levara.v1.GetByIDReq
-	24, // 53: levara.v1.LevaraService.ProcessTriplets:input_type -> levara.v1.ProcessTripletsReq
-	29, // 54: levara.v1.LevaraService.HashFiles:input_type -> levara.v1.HashFilesReq
-	32, // 55: levara.v1.LevaraService.ListDirectory:input_type -> levara.v1.ListDirectoryReq
-	35, // 56: levara.v1.LevaraService.AggregateSearch:input_type -> levara.v1.AggregateSearchReq
-	39, // 57: levara.v1.LevaraService.SearchTriplets:input_type -> levara.v1.SearchTripletsReq
-	46, // 58: levara.v1.LevaraService.DeduplicateGraph:input_type -> levara.v1.DeduplicateGraphReq
-	50, // 59: levara.v1.LevaraService.BatchEmbedAndIndex:input_type -> levara.v1.BatchEmbedAndIndexReq
-	54, // 60: levara.v1.LevaraService.BatchWriteGraph:input_type -> levara.v1.BatchWriteGraphReq
-	58, // 61: levara.v1.LevaraService.ParallelWriteDataPoints:input_type -> levara.v1.ParallelWriteReq
-	60, // 62: levara.v1.LevaraService.SearchByText:input_type -> levara.v1.SearchByTextReq
-	61, // 63: levara.v1.LevaraService.BatchSearchByText:input_type -> levara.v1.BatchSearchByTextReq
-	63, // 64: levara.v1.LevaraService.GraphRead:input_type -> levara.v1.GraphReadReq
-	67, // 65: levara.v1.LevaraService.GraphCompletionSearch:input_type -> levara.v1.GraphCompletionSearchReq
-	71, // 66: levara.v1.LevaraService.PipelineCognify:input_type -> levara.v1.PipelineCognifyReq
-	69, // 67: levara.v1.LevaraService.LLMCacheGet:input_type -> levara.v1.LLMCacheGetReq
-	88, // 68: levara.v1.LevaraService.LLMCachePut:input_type -> levara.v1.LLMCachePutReq
-	1,  // 69: levara.v1.LevaraService.LLMCacheStats:input_type -> levara.v1.Empty
-	73, // 70: levara.v1.LevaraService.SemanticDedup:input_type -> levara.v1.SemanticDedupReq
-	76, // 71: levara.v1.LevaraService.MultiQuerySearch:input_type -> levara.v1.MultiQuerySearchReq
-	79, // 72: levara.v1.LevaraService.IngestData:input_type -> levara.v1.IngestDataReq
-	83, // 73: levara.v1.LevaraService.ExtractText:input_type -> levara.v1.ExtractTextReq
-	85, // 74: levara.v1.LevaraService.TemporalSearch:input_type -> levara.v1.TemporalSearchReq
-	90, // 75: levara.v1.LevaraService.BM25Index:input_type -> levara.v1.BM25IndexReq
-	91, // 76: levara.v1.LevaraService.BM25Search:input_type -> levara.v1.BM25SearchReq
-	94, // 77: levara.v1.LevaraService.HybridSearch:input_type -> levara.v1.HybridSearchReq
-	1,  // 78: levara.v1.LevaraService.Compact:input_type -> levara.v1.Empty
-	2,  // 79: levara.v1.LevaraService.CreateCollection:output_type -> levara.v1.StatusResp
-	2,  // 80: levara.v1.LevaraService.DropCollection:output_type -> levara.v1.StatusResp
-	5,  // 81: levara.v1.LevaraService.ListCollections:output_type -> levara.v1.ListCollectionsResp
-	7,  // 82: levara.v1.LevaraService.HasCollection:output_type -> levara.v1.HasCollectionResp
-	2,  // 83: levara.v1.LevaraService.Insert:output_type -> levara.v1.StatusResp
-	11, // 84: levara.v1.LevaraService.BatchInsert:output_type -> levara.v1.BatchInsertResp
-	13, // 85: levara.v1.LevaraService.Delete:output_type -> levara.v1.DeleteResp
-	15, // 86: levara.v1.LevaraService.Search:output_type -> levara.v1.SearchResp
-	21, // 87: levara.v1.LevaraService.ChunkText:output_type -> levara.v1.ChunkTextResp
-	23, // 88: levara.v1.LevaraService.Info:output_type -> levara.v1.InfoResp
-	18, // 89: levara.v1.LevaraService.GetByID:output_type -> levara.v1.GetByIDResp
-	28, // 90: levara.v1.LevaraService.ProcessTriplets:output_type -> levara.v1.ProcessTripletsResp
-	31, // 91: levara.v1.LevaraService.HashFiles:output_type -> levara.v1.HashFilesResp
-	33, // 92: levara.v1.LevaraService.ListDirectory:output_type -> levara.v1.ListDirectoryResp
-	37, // 93: levara.v1.LevaraService.AggregateSearch:output_type -> levara.v1.AggregateSearchResp
-	44, // 94: levara.v1.LevaraService.SearchTriplets:output_type -> levara.v1.SearchTripletsResp
-	49, // 95: levara.v1.LevaraService.DeduplicateGraph:output_type -> levara.v1.DeduplicateGraphResp
-	53, // 96: levara.v1.LevaraService.BatchEmbedAndIndex:output_type -> levara.v1.BatchEmbedAndIndexResp
-	57, // 97: levara.v1.LevaraService.BatchWriteGraph:output_type -> levara.v1.BatchWriteGraphResp
-	59, // 98: levara.v1.LevaraService.ParallelWriteDataPoints:output_type -> levara.v1.ParallelWriteResp
-	15, // 99: levara.v1.LevaraService.SearchByText:output_type -> levara.v1.SearchResp
-	62, // 100: levara.v1.LevaraService.BatchSearchByText:output_type -> levara.v1.BatchSearchByTextResp
-	64, // 101: levara.v1.LevaraService.GraphRead:output_type -> levara.v1.GraphReadResp
-	68, // 102: levara.v1.LevaraService.GraphCompletionSearch:output_type -> levara.v1.GraphCompletionSearchResp
-	72, // 103: levara.v1.LevaraService.PipelineCognify:output_type -> levara.v1.PipelineCognifyProgress
-	70, // 104: levara.v1.LevaraService.LLMCacheGet:output_type -> levara.v1.LLMCacheGetResp
-	2,  // 105: levara.v1.LevaraService.LLMCachePut:output_type -> levara.v1.StatusResp
-	89, // 106: levara.v1.LevaraService.LLMCacheStats:output_type -> levara.v1.LLMCacheStatsResp
-	75, // 107: levara.v1.LevaraService.SemanticDedup:output_type -> levara.v1.SemanticDedupResp
-	77, // 108: levara.v1.LevaraService.MultiQuerySearch:output_type -> levara.v1.MultiQuerySearchResp
-	81, // 109: levara.v1.LevaraService.IngestData:output_type -> levara.v1.IngestDataResp
-	84, // 110: levara.v1.LevaraService.ExtractText:output_type -> levara.v1.ExtractTextResp
-	86, // 111: levara.v1.LevaraService.TemporalSearch:output_type -> levara.v1.TemporalSearchResp
-	2,  // 112: levara.v1.LevaraService.BM25Index:output_type -> levara.v1.StatusResp
-	92, // 113: levara.v1.LevaraService.BM25Search:output_type -> levara.v1.BM25SearchResp
-	95, // 114: levara.v1.LevaraService.HybridSearch:output_type -> levara.v1.HybridSearchResp
-	34, // 115: levara.v1.LevaraService.Compact:output_type -> levara.v1.CompactResp
-	79, // [79:116] is the sub-list for method output_type
-	42, // [42:79] is the sub-list for method input_type
-	42, // [42:42] is the sub-list for extension type_name
-	42, // [42:42] is the sub-list for extension extendee
-	0,  // [0:42] is the sub-list for field type_name
+	10,  // 0: levara.v1.BatchInsertReq.records:type_name -> levara.v1.InsertRecord
+	16,  // 1: levara.v1.SearchResp.results:type_name -> levara.v1.SearchResult
+	19,  // 2: levara.v1.GetByIDResp.records:type_name -> levara.v1.RecordEntry
+	22,  // 3: levara.v1.ChunkTextResp.chunks:type_name -> levara.v1.TextChunk
+	25,  // 4: levara.v1.ProcessTripletsReq.nodes:type_name -> levara.v1.GraphNode
+	26,  // 5: levara.v1.ProcessTripletsReq.edges:type_name -> levara.v1.GraphEdge
+	27,  // 6: levara.v1.ProcessTripletsResp.triplets:type_name -> levara.v1.TripletResult
+	30,  // 7: levara.v1.HashFilesResp.results:type_name -> levara.v1.FileHash
+	36,  // 8: levara.v1.AggregateSearchReq.edges:type_name -> levara.v1.ScoredEdge
+	38,  // 9: levara.v1.AggregateSearchResp.ranked_edges:type_name -> levara.v1.RankedEdge
+	40,  // 10: levara.v1.SearchTripletsReq.nodes:type_name -> levara.v1.TripletNode
+	41,  // 11: levara.v1.SearchTripletsReq.edges:type_name -> levara.v1.TripletEdge
+	42,  // 12: levara.v1.SearchTripletsReq.node_distances:type_name -> levara.v1.CollectionDistances
+	43,  // 13: levara.v1.SearchTripletsReq.edge_distances:type_name -> levara.v1.DistanceEntry
+	43,  // 14: levara.v1.CollectionDistances.entries:type_name -> levara.v1.DistanceEntry
+	45,  // 15: levara.v1.SearchTripletsResp.triplets:type_name -> levara.v1.ScoredTriplet
+	47,  // 16: levara.v1.DeduplicateGraphReq.nodes:type_name -> levara.v1.DedupNodeMsg
+	48,  // 17: levara.v1.DeduplicateGraphReq.edges:type_name -> levara.v1.DedupEdgeMsg
+	47,  // 18: levara.v1.DeduplicateGraphResp.nodes:type_name -> levara.v1.DedupNodeMsg
+	48,  // 19: levara.v1.DeduplicateGraphResp.edges:type_name -> levara.v1.DedupEdgeMsg
+	27,  // 20: levara.v1.DeduplicateGraphResp.triplets:type_name -> levara.v1.TripletResult
+	51,  // 21: levara.v1.BatchEmbedAndIndexReq.groups:type_name -> levara.v1.IndexGroup
+	52,  // 22: levara.v1.IndexGroup.items:type_name -> levara.v1.IndexItem
+	55,  // 23: levara.v1.BatchWriteGraphReq.nodes:type_name -> levara.v1.GraphNodeWrite
+	56,  // 24: levara.v1.BatchWriteGraphReq.edges:type_name -> levara.v1.GraphEdgeWrite
+	47,  // 25: levara.v1.ParallelWriteReq.nodes:type_name -> levara.v1.DedupNodeMsg
+	48,  // 26: levara.v1.ParallelWriteReq.edges:type_name -> levara.v1.DedupEdgeMsg
+	51,  // 27: levara.v1.ParallelWriteReq.index_groups:type_name -> levara.v1.IndexGroup
+	97,  // 28: levara.v1.BatchSearchByTextResp.results:type_name -> levara.v1.SearchResultGroup
+	0,   // 29: levara.v1.GraphReadReq.mode:type_name -> levara.v1.GraphReadReq.Mode
+	65,  // 30: levara.v1.GraphReadResp.nodes:type_name -> levara.v1.GraphReadNode
+	66,  // 31: levara.v1.GraphReadResp.edges:type_name -> levara.v1.GraphReadEdge
+	45,  // 32: levara.v1.GraphCompletionSearchResp.triplets:type_name -> levara.v1.ScoredTriplet
+	74,  // 33: levara.v1.SemanticDedupReq.vectors:type_name -> levara.v1.VectorEntry
+	78,  // 34: levara.v1.MultiQuerySearchResp.results:type_name -> levara.v1.MultiQueryResult
+	80,  // 35: levara.v1.IngestDataReq.items:type_name -> levara.v1.IngestItem
+	82,  // 36: levara.v1.IngestDataResp.results:type_name -> levara.v1.IngestResult
+	87,  // 37: levara.v1.TemporalSearchResp.events:type_name -> levara.v1.TemporalEvent
+	52,  // 38: levara.v1.BM25IndexReq.items:type_name -> levara.v1.IndexItem
+	93,  // 39: levara.v1.BM25SearchResp.results:type_name -> levara.v1.BM25Result
+	96,  // 40: levara.v1.HybridSearchResp.results:type_name -> levara.v1.HybridResult
+	16,  // 41: levara.v1.SearchResultGroup.results:type_name -> levara.v1.SearchResult
+	98,  // 42: levara.v1.DocumentCognifyReq.documents:type_name -> levara.v1.DocumentCognifySource
+	98,  // 43: levara.v1.DocumentCognifyStatus.sources:type_name -> levara.v1.DocumentCognifySource
+	3,   // 44: levara.v1.LevaraService.CreateCollection:input_type -> levara.v1.CreateCollectionReq
+	4,   // 45: levara.v1.LevaraService.DropCollection:input_type -> levara.v1.DropCollectionReq
+	1,   // 46: levara.v1.LevaraService.ListCollections:input_type -> levara.v1.Empty
+	6,   // 47: levara.v1.LevaraService.HasCollection:input_type -> levara.v1.HasCollectionReq
+	8,   // 48: levara.v1.LevaraService.Insert:input_type -> levara.v1.InsertReq
+	9,   // 49: levara.v1.LevaraService.BatchInsert:input_type -> levara.v1.BatchInsertReq
+	12,  // 50: levara.v1.LevaraService.Delete:input_type -> levara.v1.DeleteReq
+	14,  // 51: levara.v1.LevaraService.Search:input_type -> levara.v1.SearchReq
+	20,  // 52: levara.v1.LevaraService.ChunkText:input_type -> levara.v1.ChunkTextReq
+	1,   // 53: levara.v1.LevaraService.Info:input_type -> levara.v1.Empty
+	17,  // 54: levara.v1.LevaraService.GetByID:input_type -> levara.v1.GetByIDReq
+	24,  // 55: levara.v1.LevaraService.ProcessTriplets:input_type -> levara.v1.ProcessTripletsReq
+	29,  // 56: levara.v1.LevaraService.HashFiles:input_type -> levara.v1.HashFilesReq
+	32,  // 57: levara.v1.LevaraService.ListDirectory:input_type -> levara.v1.ListDirectoryReq
+	35,  // 58: levara.v1.LevaraService.AggregateSearch:input_type -> levara.v1.AggregateSearchReq
+	39,  // 59: levara.v1.LevaraService.SearchTriplets:input_type -> levara.v1.SearchTripletsReq
+	46,  // 60: levara.v1.LevaraService.DeduplicateGraph:input_type -> levara.v1.DeduplicateGraphReq
+	50,  // 61: levara.v1.LevaraService.BatchEmbedAndIndex:input_type -> levara.v1.BatchEmbedAndIndexReq
+	54,  // 62: levara.v1.LevaraService.BatchWriteGraph:input_type -> levara.v1.BatchWriteGraphReq
+	58,  // 63: levara.v1.LevaraService.ParallelWriteDataPoints:input_type -> levara.v1.ParallelWriteReq
+	60,  // 64: levara.v1.LevaraService.SearchByText:input_type -> levara.v1.SearchByTextReq
+	61,  // 65: levara.v1.LevaraService.BatchSearchByText:input_type -> levara.v1.BatchSearchByTextReq
+	63,  // 66: levara.v1.LevaraService.GraphRead:input_type -> levara.v1.GraphReadReq
+	67,  // 67: levara.v1.LevaraService.GraphCompletionSearch:input_type -> levara.v1.GraphCompletionSearchReq
+	71,  // 68: levara.v1.LevaraService.PipelineCognify:input_type -> levara.v1.PipelineCognifyReq
+	69,  // 69: levara.v1.LevaraService.LLMCacheGet:input_type -> levara.v1.LLMCacheGetReq
+	88,  // 70: levara.v1.LevaraService.LLMCachePut:input_type -> levara.v1.LLMCachePutReq
+	1,   // 71: levara.v1.LevaraService.LLMCacheStats:input_type -> levara.v1.Empty
+	73,  // 72: levara.v1.LevaraService.SemanticDedup:input_type -> levara.v1.SemanticDedupReq
+	76,  // 73: levara.v1.LevaraService.MultiQuerySearch:input_type -> levara.v1.MultiQuerySearchReq
+	79,  // 74: levara.v1.LevaraService.IngestData:input_type -> levara.v1.IngestDataReq
+	83,  // 75: levara.v1.LevaraService.ExtractText:input_type -> levara.v1.ExtractTextReq
+	85,  // 76: levara.v1.LevaraService.TemporalSearch:input_type -> levara.v1.TemporalSearchReq
+	90,  // 77: levara.v1.LevaraService.BM25Index:input_type -> levara.v1.BM25IndexReq
+	91,  // 78: levara.v1.LevaraService.BM25Search:input_type -> levara.v1.BM25SearchReq
+	94,  // 79: levara.v1.LevaraService.HybridSearch:input_type -> levara.v1.HybridSearchReq
+	1,   // 80: levara.v1.LevaraService.Compact:input_type -> levara.v1.Empty
+	99,  // 81: levara.v1.LevaraService.CognifyDocuments:input_type -> levara.v1.DocumentCognifyReq
+	100, // 82: levara.v1.LevaraService.CognifyDocumentsStatus:input_type -> levara.v1.DocumentCognifyStatusReq
+	2,   // 83: levara.v1.LevaraService.CreateCollection:output_type -> levara.v1.StatusResp
+	2,   // 84: levara.v1.LevaraService.DropCollection:output_type -> levara.v1.StatusResp
+	5,   // 85: levara.v1.LevaraService.ListCollections:output_type -> levara.v1.ListCollectionsResp
+	7,   // 86: levara.v1.LevaraService.HasCollection:output_type -> levara.v1.HasCollectionResp
+	2,   // 87: levara.v1.LevaraService.Insert:output_type -> levara.v1.StatusResp
+	11,  // 88: levara.v1.LevaraService.BatchInsert:output_type -> levara.v1.BatchInsertResp
+	13,  // 89: levara.v1.LevaraService.Delete:output_type -> levara.v1.DeleteResp
+	15,  // 90: levara.v1.LevaraService.Search:output_type -> levara.v1.SearchResp
+	21,  // 91: levara.v1.LevaraService.ChunkText:output_type -> levara.v1.ChunkTextResp
+	23,  // 92: levara.v1.LevaraService.Info:output_type -> levara.v1.InfoResp
+	18,  // 93: levara.v1.LevaraService.GetByID:output_type -> levara.v1.GetByIDResp
+	28,  // 94: levara.v1.LevaraService.ProcessTriplets:output_type -> levara.v1.ProcessTripletsResp
+	31,  // 95: levara.v1.LevaraService.HashFiles:output_type -> levara.v1.HashFilesResp
+	33,  // 96: levara.v1.LevaraService.ListDirectory:output_type -> levara.v1.ListDirectoryResp
+	37,  // 97: levara.v1.LevaraService.AggregateSearch:output_type -> levara.v1.AggregateSearchResp
+	44,  // 98: levara.v1.LevaraService.SearchTriplets:output_type -> levara.v1.SearchTripletsResp
+	49,  // 99: levara.v1.LevaraService.DeduplicateGraph:output_type -> levara.v1.DeduplicateGraphResp
+	53,  // 100: levara.v1.LevaraService.BatchEmbedAndIndex:output_type -> levara.v1.BatchEmbedAndIndexResp
+	57,  // 101: levara.v1.LevaraService.BatchWriteGraph:output_type -> levara.v1.BatchWriteGraphResp
+	59,  // 102: levara.v1.LevaraService.ParallelWriteDataPoints:output_type -> levara.v1.ParallelWriteResp
+	15,  // 103: levara.v1.LevaraService.SearchByText:output_type -> levara.v1.SearchResp
+	62,  // 104: levara.v1.LevaraService.BatchSearchByText:output_type -> levara.v1.BatchSearchByTextResp
+	64,  // 105: levara.v1.LevaraService.GraphRead:output_type -> levara.v1.GraphReadResp
+	68,  // 106: levara.v1.LevaraService.GraphCompletionSearch:output_type -> levara.v1.GraphCompletionSearchResp
+	72,  // 107: levara.v1.LevaraService.PipelineCognify:output_type -> levara.v1.PipelineCognifyProgress
+	70,  // 108: levara.v1.LevaraService.LLMCacheGet:output_type -> levara.v1.LLMCacheGetResp
+	2,   // 109: levara.v1.LevaraService.LLMCachePut:output_type -> levara.v1.StatusResp
+	89,  // 110: levara.v1.LevaraService.LLMCacheStats:output_type -> levara.v1.LLMCacheStatsResp
+	75,  // 111: levara.v1.LevaraService.SemanticDedup:output_type -> levara.v1.SemanticDedupResp
+	77,  // 112: levara.v1.LevaraService.MultiQuerySearch:output_type -> levara.v1.MultiQuerySearchResp
+	81,  // 113: levara.v1.LevaraService.IngestData:output_type -> levara.v1.IngestDataResp
+	84,  // 114: levara.v1.LevaraService.ExtractText:output_type -> levara.v1.ExtractTextResp
+	86,  // 115: levara.v1.LevaraService.TemporalSearch:output_type -> levara.v1.TemporalSearchResp
+	2,   // 116: levara.v1.LevaraService.BM25Index:output_type -> levara.v1.StatusResp
+	92,  // 117: levara.v1.LevaraService.BM25Search:output_type -> levara.v1.BM25SearchResp
+	95,  // 118: levara.v1.LevaraService.HybridSearch:output_type -> levara.v1.HybridSearchResp
+	34,  // 119: levara.v1.LevaraService.Compact:output_type -> levara.v1.CompactResp
+	101, // 120: levara.v1.LevaraService.CognifyDocuments:output_type -> levara.v1.DocumentCognifyStatus
+	101, // 121: levara.v1.LevaraService.CognifyDocumentsStatus:output_type -> levara.v1.DocumentCognifyStatus
+	83,  // [83:122] is the sub-list for method output_type
+	44,  // [44:83] is the sub-list for method input_type
+	44,  // [44:44] is the sub-list for extension type_name
+	44,  // [44:44] is the sub-list for extension extendee
+	0,   // [0:44] is the sub-list for field type_name
 }
 
 func init() { file_levara_proto_init() }
@@ -7789,7 +8127,7 @@ func file_levara_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_levara_proto_rawDesc), len(file_levara_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   97,
+			NumMessages:   101,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

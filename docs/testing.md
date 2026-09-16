@@ -1,9 +1,41 @@
 # Проверки и результаты тестирования
 
-Обновлено 2026-09-10. Результат теста относится к указанным исходникам,
+Обновлено 2026-09-14. Результат теста относится к указанным исходникам,
 зависимостям и сценарию. Наличие теста или зелёный статус benchmark-скрипта
 само по себе не подтверждает качество поиска, изоляцию пользователей или
 работу реального внешнего сервиса.
+
+## Document-scoped gRPC cognify — 2026-09-14
+
+| Проверка | Наблюдаемый результат | Граница доказательства |
+|---|---|---|
+| `LEVARA_TEST_POSTGRES_DSN=... go test -race ./internal/http -run TestGRPCDocumentCognify -count=1` | PASS: 9.730s | Real bufconn/JWT, SQLite/PostgreSQL, pool=1, rag/graph и реальные vector/graph публикации с embedding/LLM fixtures; дубликаты/alias, stale content/source/hash, missing raw, viewer/foreign/inactive/revoked credential и tenant; tenant после detach/fresh evidence, anonymous selected tenant и отсутствующий vector store/endpoint дают отказ без Load/claim |
+| Независимый combined targeted `internal/grpc`, `internal/http`, `pkg/vsamemory` race | PASS: финальный gRPC 1.988s, HTTP 9.967s; отдельный VSA 1.376s | Второй SQL INSERT trigger откатывает весь claim; valid first + denied second даёт ноль Load/claim; completed sibling сохраняется при backend failure; group removal закрывает start/status; отдельная SQL connection не отзывает authority до Send drain после observer cancel |
+| Actor buffer reuse + inherited session + gRPC/MCP cognify, `-race` | RED на обеих SQL до clone; PASS после clone 12.601s; независимый 11.418s | Forced header mutation сохраняет user/key/tenant в owned actor; full race ранее поймал чтение recycled buffer при detached session recording. Fixture заимствовал строки, production JWT/API-key decoding owns strings |
+| `make test-commit` | PASS до actor snapshot fix: S0–S4; HTTP 152.811s | Предыдущая проверенная ревизия: docs/contracts, metadata/access/MCP, core engine, HTTP и server bootstrap |
+| Полный `internal/grpc -race` | PASS: 138 tests/subtests; один прежний bind skip; 2.399s | Все 97 прежних v1 messages и 37 RPC descriptors совместимы; v2 untouched; protoc regeneration совпадает |
+
+Один промежуточный overlapping full run получил отказ best-effort heartbeat
+INSERT в старом `TestMCPInlineCognifyTransportsPersistServerSource/sqlite/legacy`.
+Отдельный `-race -count=5` прошёл (13.105s), затем все четыре SQL/transport
+варианта прошли последовательно. Точная SQL-ошибка скрыта generic log;
+исправление причины этой флуктуации не заявляется. Другой full run обнаружил
+настоящий actor-buffer race, закрытый отдельным RED→GREEN reproducer выше.
+Прерванные/red промежуточные прогоны не считаются финальным green gate.
+
+Raw `PipelineCognify` сохраняет admin boundary. Серверный observer timeout
+завершает handler и underlying Send; SQL fence переживает отмену наблюдателя
+до возврата Send. Blocked Send проверен callback-моделью, без исчерпания
+настоящего HTTP/2 flow-control; зависший driver BEGIN не воспроизводился.
+Overlapping attempts покрыты общей publication CAS проверкой, без двух
+параллельных gRPC requests. Общего raw-byte budget batch пока нет.
+Registry в памяти/restart/TTL, потерянный первый ACK и отсутствие job cancel
+описаны в [дизайне](product/grpc-document-cognify.md).
+
+Сопутствующие graph regressions подтвердили устранение SQLite pool=1 deadlock
+при dialect probe внутри транзакции и PostgreSQL timestamp/empty comparison
+в VSA rebuild и predicate synonyms. Это transport/SQL проверка, не оценка
+качества реального LLM/OCR или внешней AD/IdP интеграции.
 
 ## Document ACL REST и global-resource gate — 2026-09-10
 
@@ -49,8 +81,9 @@ SQL spool/webhook получает только проверенные actor/ten
 — PASS за 1.704s. При ошибке второго `Save` первый объект остаётся; этот
 compatibility path не заявляет journal или rollback всего batch.
 
-`IngestData` — upload-only RPC. Этот gate не объявляет document-scoped gRPC
-cognify: `PipelineCognify` остаётся отдельным active-superuser raw pipeline без
+`IngestData` — upload-only RPC. Этот исторический gate описывает только upload;
+новый document-scoped contract проверен в разделе 2026-09-14.
+`PipelineCognify` остаётся отдельным active-superuser raw pipeline без
 document/source/publication identity.
 
 ## Публикация и статусы документов — 2026-09-10

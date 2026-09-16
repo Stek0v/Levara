@@ -15,6 +15,8 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	grpclib "google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -55,11 +57,14 @@ func UnaryAuthInterceptor(secret string, requireAuth bool, policy access.SQLPoli
 		if publicMethods[info.FullMethod] {
 			return handler(context.WithValue(ctx, ctxPrivateInfoKey{}, requireAuth), req)
 		}
-		scopedIngest := info.FullMethod == "/levara.v1.LevaraService/IngestData"
-		if scopedIngest {
-			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
+		if info.FullMethod == "/levara.v1.LevaraService/IngestData" {
+			ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			defer cancel()
+			ctx, err := authenticateScopedRPC(ctx, secret, requireAuth, policy)
+			if err != nil {
+				return nil, err
+			}
+			return handler(ctx, req)
 		}
 		payload, ok := authFromMetadata(ctx, secret)
 		if !ok {
@@ -70,12 +75,7 @@ func UnaryAuthInterceptor(secret string, requireAuth bool, policy access.SQLPoli
 			return handler(ctx, req)
 		}
 		if requireAuth {
-			if scopedIngest {
-				active, err := policy.IsActive(ctx, payload.Sub)
-				if err != nil || !active {
-					return nil, status.Error(codes.PermissionDenied, "active identity required")
-				}
-			} else if err := authorizeGlobalStorage(ctx, payload.Sub, policy); err != nil {
+			if err := authorizeGlobalStorage(ctx, payload.Sub, policy); err != nil {
 				return nil, err
 			}
 		}
@@ -84,27 +84,7 @@ func UnaryAuthInterceptor(secret string, requireAuth bool, policy access.SQLPoli
 		}
 		ctx = context.WithValue(ctx, ctxUserIDKey{}, payload.Sub)
 		actor := access.Actor{UserID: payload.Sub}
-		if scopedIngest {
-			md, _ := metadata.FromIncomingContext(ctx)
-			values := md.Get("x-tenant-id")
-			if len(values) > 1 || (len(values) == 1 && len(values[0]) > 256) {
-				return nil, status.Error(codes.InvalidArgument, "invalid tenant selector")
-			}
-			if len(values) == 1 {
-				actor.TenantID = values[0]
-			}
-			if requireAuth && actor.TenantID == "" {
-				var err error
-				actor.TenantID, err = policy.DefaultTenantForUser(ctx, payload.Sub)
-				if err != nil {
-					return nil, status.Error(codes.Unavailable, "tenant resolution unavailable")
-				}
-			}
 
-			if requireAuth && actor.TenantID == "" && (strings.EqualFold(strings.TrimSpace(os.Getenv("LEVARA_TENANT_ENFORCED")), "true") || os.Getenv("LEVARA_TENANT_ENFORCED") == "1") {
-				return nil, status.Error(codes.PermissionDenied, "tenant membership required")
-			}
-		}
 		ctx = context.WithValue(ctx, ctxMetadataActorKey{}, access.MetadataActor{Actor: actor, Credential: access.MetadataCredential{Kind: "jwt", SessionID: payload.SessionID, Epoch: payload.CredentialEpoch, IssuedAt: payload.Iat, ExpiresAt: payload.Exp}})
 		return handler(ctx, req)
 	}
@@ -117,6 +97,15 @@ func StreamAuthInterceptor(secret string, requireAuth bool, policy access.SQLPol
 	return func(srv any, ss grpclib.ServerStream, info *grpclib.StreamServerInfo, handler grpclib.StreamHandler) error {
 		if publicMethods[info.FullMethod] {
 			return handler(srv, ss)
+		}
+		if info.FullMethod == "/levara.v1.LevaraService/CognifyDocuments" || info.FullMethod == "/levara.v1.LevaraService/CognifyDocumentsStatus" {
+			ctx, cancel := context.WithTimeout(ss.Context(), 30*time.Minute)
+			defer cancel()
+			ctx, err := authenticateScopedRPC(ctx, secret, requireAuth, policy)
+			if err != nil {
+				return err
+			}
+			return handler(srv, &authedStream{ServerStream: ss, ctx: ctx})
 		}
 		payload, ok := authFromMetadata(ss.Context(), secret)
 		if !ok {
@@ -135,6 +124,71 @@ func StreamAuthInterceptor(secret string, requireAuth bool, policy access.SQLPol
 		}
 		return handler(srv, &authedStream{ServerStream: ss, ctx: context.WithValue(ss.Context(), ctxUserIDKey{}, payload.Sub)})
 	}
+}
+
+// authenticateScopedRPC verifies identity only. The document runner or ingestion
+// coordinator owns object-level authorization and rechecks these facts under its
+// SQL fence. Keep the short SQL deadline separate from the observer lifetime.
+func authenticateScopedRPC(ctx context.Context, secret string, requireAuth bool, policy access.SQLPolicy) (context.Context, error) {
+	payload, ok := authFromMetadata(ctx, secret)
+	if !ok && requireAuth {
+		return nil, status.Error(codes.Unauthenticated, "missing or invalid authorization token")
+	}
+	actor := access.MetadataActor{TrustedLocal: !requireAuth}
+	if ok {
+		actor.Actor = access.Actor{UserID: payload.Sub, AuthMethod: "jwt"}
+		actor.Credential = access.MetadataCredential{Kind: "jwt", SessionID: payload.SessionID, Epoch: payload.CredentialEpoch, IssuedAt: payload.Iat, ExpiresAt: payload.Exp}
+	}
+	md, _ := metadata.FromIncomingContext(ctx)
+	values := md.Get("x-tenant-id")
+	if len(values) > 1 || (len(values) == 1 && (values[0] == "" || len(values[0]) > 256 || !utf8.ValidString(values[0]) || strings.TrimSpace(values[0]) != values[0] || strings.IndexFunc(values[0], unicode.IsControl) >= 0)) {
+		return nil, status.Error(codes.InvalidArgument, "invalid tenant selector")
+	}
+	if len(values) == 1 {
+		actor.TenantID = values[0]
+	}
+	if requireAuth {
+		if policy.DB == nil {
+			return nil, status.Error(codes.Unavailable, "metadata storage unavailable")
+		}
+		lookupCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		active, err := policy.IsActive(lookupCtx, actor.UserID)
+		if err != nil {
+			if lookupCtx.Err() != nil {
+				return nil, status.FromContextError(lookupCtx.Err()).Err()
+			}
+			return nil, status.Error(codes.Unavailable, "identity lookup unavailable")
+		}
+		if !active {
+			return nil, status.Error(codes.PermissionDenied, "active identity required")
+		}
+		if access.ValidateCredential(lookupCtx, policy.DB, policy.Q, actor.UserID, payload.CredentialEpoch) != nil || access.ValidateBrowserSession(lookupCtx, policy.DB, policy.Q, actor.UserID, payload.SessionID) != nil {
+			if lookupCtx.Err() != nil {
+				return nil, status.FromContextError(lookupCtx.Err()).Err()
+			}
+			return nil, status.Error(codes.Unauthenticated, "revoked credential")
+		}
+		if actor.TenantID == "" {
+			actor.TenantID, err = policy.DefaultTenantForUser(lookupCtx, actor.UserID)
+			if err != nil {
+				return nil, status.Error(codes.Unavailable, "tenant resolution unavailable")
+			}
+		}
+		if actor.TenantID != "" {
+			member, err := policy.IsTenantMember(lookupCtx, actor.UserID, actor.TenantID)
+			if err != nil {
+				return nil, status.Error(codes.Unavailable, "tenant resolution unavailable")
+			}
+			if !member {
+				return nil, status.Error(codes.PermissionDenied, "tenant membership required")
+			}
+		} else if strings.EqualFold(strings.TrimSpace(os.Getenv("LEVARA_TENANT_ENFORCED")), "true") || os.Getenv("LEVARA_TENANT_ENFORCED") == "1" {
+			return nil, status.Error(codes.PermissionDenied, "tenant membership required")
+		}
+	}
+	ctx = context.WithValue(ctx, ctxUserIDKey{}, actor.UserID)
+	return context.WithValue(ctx, ctxMetadataActorKey{}, actor), nil
 }
 
 func authorizeGlobalStorage(ctx context.Context, uid string, policy access.SQLPolicy) error {

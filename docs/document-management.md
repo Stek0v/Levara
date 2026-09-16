@@ -1,6 +1,6 @@
 # Документы: загрузка, обработка, скачивание и права
 
-Состояние на 2026-09-10. Документ хранится как запись `data`; набор данных
+Состояние на 2026-09-14. Документ хранится как запись `data`; набор данных
 (dataset, в WebUI также «проект») связывает документы и определяет выдачу
 прав. Векторная коллекция содержит результаты обработки. Имя коллекции,
 имя файла и теги сами по себе не дают разрешения на чтение.
@@ -202,10 +202,63 @@ metadata DB записывает объекты напрямую: journal и bat
 Authenticated response не возвращает внутренний `file://` или object key;
 чтение опубликованного документа выполняется через document API с его ACL.
 
-`PipelineCognify` не продолжает этот document workflow: это отдельный
-global-superuser raw-collection pipeline без dataset/document/source revision и
-publication identity. Для document-scoped gRPC cognify нужен отдельный контракт;
-последовательный вызов `IngestData` и `PipelineCognify` его не заменяет.
+`CognifyDocuments` обрабатывает сохранённые документы через общий HTTP/MCP
+runner. Передайте `dataset_id`, `document_id`, текущие `source_revision` и
+`raw_content_hash` из document API. Batch содержит 1–100 источников; точные
+дубликаты сворачиваются, разные proof одной пары отклоняются. Нужны JWT и
+writer/editor права на каждый источник; metadata DB, непустой embedding endpoint
+и vector collection store обязательны. Созданный embed client без endpoint
+не заменяет настройку: RPC вернёт `Unavailable` до Load/claim. `mode` по умолчанию `rag`; `graph` требует настроенного серверного
+LLM. Endpoint, storage и provider credentials клиент не задаёт.
+
+Локальный пример из корня репозитория с установленными `grpcurl` и `jq`:
+
+```sh
+# Документ уже загружен; значения SOURCE_REVISION и RAW_HASH взяты из
+# GET /api/v1/datasets/$DATASET_ID/data для выбранного DOCUMENT_ID.
+jq -n --arg ds "$DATASET_ID" --arg doc "$DOCUMENT_ID" \
+  --argjson rev "$SOURCE_REVISION" --arg hash "$RAW_HASH" \
+  '{documents:[{dataset_id:$ds,document_id:$doc,source_revision:$rev,raw_content_hash:$hash}],collection:"finance-pilot",mode:"rag"}' |
+grpcurl -plaintext -import-path proto -proto levara.proto \
+  -H "authorization: Bearer $LEVARA_TOKEN" -H "x-tenant-id: $TENANT_ID" \
+  -d @ 127.0.0.1:50051 levara.v1.LevaraService/CognifyDocuments
+```
+
+Сохраните `pipeline_run_id` первого полученного кадра. Наблюдение можно
+возобновить отдельным stream:
+
+```sh
+jq -n --arg id "$RUN_ID" '{pipeline_run_id:$id}' |
+grpcurl -plaintext -import-path proto -proto levara.proto \
+  -H "authorization: Bearer $LEVARA_TOKEN" -H "x-tenant-id: $TENANT_ID" \
+  -d @ 127.0.0.1:50051 levara.v1.LevaraService/CognifyDocumentsStatus
+```
+
+Кадр содержит состояние, stage, counters и server-resolved source proof.
+Неизвестный/чужой run и потеря доступа к любому источнику дают `NotFound`.
+При сбое batch успешно завершённые документы сохраняют публикации; run получает
+`FAILED`, остальные документы — точный terminal status. Внутренние backend
+errors в status stream не возвращаются.
+
+Настройка: включите listener `-grpc-host=127.0.0.1 -grpc-port=50051`, metadata
+SQLite/PostgreSQL и `-require-auth`; embedding dimension должна совпадать с
+`-dim`. Для выбранного tenant укажите ровно один `x-tenant-id`; без selector
+используется первый tenant пользователя. Даже superuser обязан состоять в
+выбранном tenant. Контекст подготовки ограничен 30 секундами, observer — 30 минутами;
+принятый job использует `BACKGROUND_TASK_TIMEOUT_MS` (default 30 минут).
+
+Отключение или deadline stream прекращает наблюдение; принятый job продолжает
+работу с повторными проверками credential/source/ACL. Команды отмены job пока
+нет. Потеря первого ответа может скрыть принятый run ID: startup не обещает
+exactly-once. Registry хранится в памяти процесса и исчезает после restart/TTL;
+publication/status документов сохраняются в SQL. Batch не задаёт общего лимита
+raw bytes; большие файлы требуют отдельного ресурсного прогона.
+
+`PipelineCognify` сохраняет прежний raw-collection контракт и при required auth
+требует active global superuser. Новые документные RPC доступны в v1; v2 не
+изменён. Дизайн, последовательность и corner cases — в
+[контракте обработки](product/grpc-document-cognify.md), результаты — в
+[testing](testing.md).
 
 MCP `cognify` с inline `data` и HTTP `cognify` с `texts[]` сначала атомарно
 создают серверный dataset/document source, source revision и SHA-256, затем

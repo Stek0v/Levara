@@ -88,6 +88,7 @@ import (
 	"github.com/stek0v/levara/pkg/profile"
 	"github.com/stek0v/levara/pkg/router"
 	"github.com/stek0v/levara/pkg/runreg"
+	pb "github.com/stek0v/levara/proto/pb"
 
 	"github.com/gofiber/fiber/v2"
 
@@ -868,6 +869,13 @@ func main() {
 	}
 
 	// Protected routes: Levara API (datasets, upload, cognify, search)
+	grpcSvc.SetDocumentCognify(
+		func(ctx context.Context, actor accesspkg.MetadataActor, req *pb.DocumentCognifyReq) (string, error) {
+			return vectorHttp.StartGRPCDocumentCognify(ctx, apiCfg, actor, req)
+		},
+		func(ctx context.Context, actor accesspkg.MetadataActor, runID string, send func(*pb.DocumentCognifyStatus) error) error {
+			return vectorHttp.WatchGRPCDocumentCognify(ctx, apiCfg, actor, runID, send)
+		})
 	vectorHttp.RegisterAPI(api, apiCfg)
 
 	mcpCfg := vectorHttp.APIConfig{

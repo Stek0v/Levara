@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-09-10T19:29:10+03:00",
-  "git_rev": "0fbebf192a8882ae0e792a8f42573b68f11cae5b",
+  "generated_at": "2026-09-10T20:35:20+03:00",
+  "git_rev": "14bd7228c102c39a2ae363bb7f79c9200d32ecbd",
   "rest": [
     {
       "method": "POST",
@@ -1002,6 +1002,16 @@
     {
       "service": "levara.v1.LevaraService",
       "method": "ChunkText",
+      "status": "canonical"
+    },
+    {
+      "service": "levara.v1.LevaraService",
+      "method": "CognifyDocuments",
+      "status": "canonical"
+    },
+    {
+      "service": "levara.v1.LevaraService",
+      "method": "CognifyDocumentsStatus",
       "status": "canonical"
     },
     {

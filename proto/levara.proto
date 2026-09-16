@@ -89,6 +89,11 @@ service LevaraService {
 
   // Maintenance
   rpc Compact(Empty) returns (CompactResp);
+
+  // Document-scoped processing with server-owned model configuration.
+  // Canceling either stream stops observation, not an already accepted job.
+  rpc CognifyDocuments(DocumentCognifyReq) returns (stream DocumentCognifyStatus);
+  rpc CognifyDocumentsStatus(DocumentCognifyStatusReq) returns (stream DocumentCognifyStatus);
 }
 
 // Common
@@ -859,4 +864,36 @@ message HybridResult {
 message SearchResultGroup {
   string query = 1;
   repeated SearchResult results = 2;
+}
+
+// Exact source proof; the server checks it against current SQL metadata.
+message DocumentCognifySource {
+  string dataset_id = 1;
+  string document_id = 2;
+  int64 source_revision = 3;     // required, positive
+  string raw_content_hash = 4;  // required, SHA256 hex
+  int64 content_revision = 5;   // request: 0 unspecified, >0 expected; output: server-resolved
+}
+
+message DocumentCognifyReq {
+  repeated DocumentCognifySource documents = 1; // 1..100, exact duplicates collapse
+  string collection = 2; // required, single path component
+  string mode = 3;       // empty defaults to "rag"; "rag" or "graph"
+}
+
+message DocumentCognifyStatusReq {
+  string pipeline_run_id = 1;
+}
+
+message DocumentCognifyStatus {
+  string pipeline_run_id = 1;
+  string status = 2;
+  string stage = 3;
+  string message = 4;
+  int32 chunks_created = 5;
+  int32 entities_extracted = 6;
+  int32 edges_extracted = 7;
+  int64 elapsed_ms = 8;
+  repeated DocumentCognifySource sources = 9;
+  int64 started_at_unix_ms = 10;
 }

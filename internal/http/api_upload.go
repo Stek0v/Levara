@@ -594,6 +594,13 @@ func claimPipelineAttempts(ctx context.Context, db *sql.DB, sources []pipelineAt
 		return err
 	}
 	defer tx.Rollback()
+	if err := claimPipelineAttemptsTx(ctx, tx, sources, collection, attemptID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func claimPipelineAttemptsTx(ctx context.Context, tx *sql.Tx, sources []pipelineAttemptSource, collection, attemptID string) error {
 	statusJSON := pipelineStatusJSON("RUNNING", 0, 0, 0, 0)
 	for _, source := range sources {
 		if source.datasetID == "" || source.dataID == "" || source.sourceRevision <= 0 || len(source.rawContentHash) != 64 {
@@ -623,7 +630,7 @@ func claimPipelineAttempts(ctx context.Context, db *sql.DB, sources []pipelineAt
 			return accesspkg.ErrDocumentVersionConflict
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 func pipelineStatusJSON(status string, chunks, entities, edges int, elapsedMs int64) string {

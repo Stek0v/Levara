@@ -74,6 +74,7 @@ func refreshPredicateSynonyms(ctx context.Context, db *sql.DB, datasetID string)
 	if err != nil {
 		return err
 	}
+	sqlite := looksLikeSQLite(db)
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -82,7 +83,6 @@ func refreshPredicateSynonyms(ctx context.Context, db *sql.DB, datasetID string)
 	if _, err := tx.ExecContext(ctx, Q(`DELETE FROM graph_predicate_synonyms WHERE dataset_id = $1 AND source = $2`), datasetID, predicateSynonymSourceGenerated); err != nil {
 		return err
 	}
-	sqlite := looksLikeSQLite(db)
 	for _, predicate := range predicates {
 		for _, synonym := range generatedPredicateSynonyms(predicate) {
 			if err := upsertGraphPredicateSynonymWithDialect(ctx, tx, sqlite, datasetID, predicate, synonym, predicateSynonymSourceGenerated, predicateSynonymWeightGenerated); err != nil {
@@ -104,7 +104,7 @@ func graphPredicatesForDataset(ctx context.Context, db *sql.DB, datasetID string
 		FROM graph_edges
 		WHERE ($1 = '' OR dataset_id = $2)
 		  AND relationship_name <> ''
-		  AND (valid_until IS NULL OR valid_until = '')
+		  AND (valid_until IS NULL OR CAST(valid_until AS TEXT) = '')
 		UNION
 		SELECT DISTINCT predicate
 		FROM vsa_fact_shards

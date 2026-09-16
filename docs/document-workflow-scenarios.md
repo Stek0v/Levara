@@ -1,6 +1,6 @@
 # Матрица приёмки документов и корпоративного доступа
 
-Аудит 2026-09-10 продолжает проверку исходных материалов и текущего рабочего дерева: активные руководства,
+Аудит 2026-09-14 продолжает проверку исходных материалов и текущего рабочего дерева: активные руководства,
 контракты, инструкции агентов, примеры, локальные маркетинговые страницы и
 исторические заметки. Материалы отделены от исходников и генераторов;
 числа ниже описывают конкретные проверки, а не «полное покрытие продукта».
@@ -58,6 +58,7 @@
 | U22 | Явная замена source использует revision/hash CAS; stale/concurrent writer не заменяет winner, storage failure очищает attempt | PASS: HTTP SQLite и `ReplaceAuthorized` race на SQLite/PostgreSQL; A→B→A создаёт новые revisions/artifact IDs, старый artifact сразу недоступен и cleanup retry сохраняется при отказе storage; shared physical source получает 409. Crash после внешнего sidecar остаётся GAP |
 | U23 | Повтор cognify возвращает already_processed без polling; изменённый source сбрасывает старую готовность | SOURCE/PASS отдельных status/source-version tests; активный HTTP cognify всегда создаёт run, поэтому общий product contract ещё не закрыт |
 | U24 | gRPC batch: ID-only dataset, mixed item names, dual/empty payload, invalid item N, duplicate, partial Save, cancel и поздний backend | PASS: real bufconn + auth interceptor + coordinator, SQLite/PostgreSQL; ноль partial SQL/object/journal publication. `PipelineCognify` остаётся отдельным global-admin raw pipeline и не считается document cognify |
+| U25 | gRPC document cognify rag/graph: exact sources, duplicate/alias, all-source writer preflight, SQL claim rollback, detached observer, status owner/tenant/group revoke и Send fence | PASS: `TestGRPCDocumentCognify*`, реальный JWT/bufconn, embedding/LLM fixtures и SQL/vector/graph publication; SQLite/PostgreSQL с race и pool=1. Blocked Send моделируется callback; реальный HTTP/2 flow-control load остаётся отдельным прогоном |
 
 ## Права и жизненный цикл
 

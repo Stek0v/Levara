@@ -39,6 +39,9 @@ import (
 
 // Service implements the LevaraService gRPC server.
 type Service struct {
+	documentCognifyStart func(context.Context, access.MetadataActor, *pb.DocumentCognifyReq) (string, error)
+	documentCognifyWatch func(context.Context, access.MetadataActor, string, func(*pb.DocumentCognifyStatus) error) error
+
 	fileStorage       storage.Storage
 	ingestPath        string
 	ingestDB          *sql.DB

@@ -645,7 +645,8 @@ func workspaceActorFromFiber(c *fiber.Ctx) accesspkg.Actor {
 	userID, _ := c.Locals("user_id").(string)
 	perms, _ := c.Locals("api_key_permissions").(string)
 	tenantID, _ := c.Locals("tenant_id").(string)
-	return accesspkg.Actor{UserID: userID, APIKeyPermissions: perms, TenantID: tenantID}
+	// Actor snapshots may outlive Fiber's pooled request buffers.
+	return accesspkg.Actor{UserID: strings.Clone(userID), APIKeyPermissions: strings.Clone(perms), TenantID: strings.Clone(tenantID)}
 }
 
 // workspaceActorFromMCP builds the access.Actor from MCP call context.

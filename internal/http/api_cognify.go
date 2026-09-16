@@ -108,6 +108,7 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 		}
 		runID := uuid.New().String()
 		userID, _ := c.Locals("user_id").(string)
+		userID = strings.Clone(userID)
 
 		// Check every source before loading any bytes. Cognify also writes derived
 		// records for each dataset, so read-only shares cannot start this mutation.
@@ -247,38 +248,10 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 		rawProofs, _ := json.Marshal(proofs)
 		runStatus := &runreg.Status{RequiresAdmin: searchEvidenceRequiresAdmin(reqCtx), OwnerID: actor.UserID, TenantID: actor.TenantID, SourcesJSON: string(rawProofs), RunID: runID, Status: "RUNNING", Stage: "starting", StartedAt: time.Now()}
 
-		// Build orchestrator config from server config + request overrides
-		pipeCfg := orchestrator.Config{
-			ChunkStrategy:  "merged",
-			MinChunkChars:  50,
-			MaxChunkChars:  2000,
-			LLMEndpoint:    os.Getenv("LLM_ENDPOINT"),
-			LLMModel:       os.Getenv("LLM_MODEL"),
-			LLMConcurrency: 1,
-			// M8: opt-in chunk batching. LEVARA_LLM_EXTRACT_BATCH_SIZE=4
-			// coalesces 4 chunks per extraction call — fewer LLM requests
-			// for large cognify runs. Default 1 keeps legacy behavior.
-			LLMBatchSize:        batchSizeFromEnv(),
-			EmbedEndpoint:       cfg.EmbedEndpoint,
-			EmbedModel:          cfg.EmbedModel,
-			EmbedClient:         cfg.EmbedClient, // T3 follow-up: reuse shared TCP pool through the pipeline
-			Neo4jURL:            cfg.Neo4jCfg.Neo4jURL,
-			Neo4jUser:           cfg.Neo4jCfg.Neo4jUser,
-			Neo4jPassword:       cfg.Neo4jCfg.Neo4jPassword,
-			Neo4jDatabase:       cfg.Neo4jCfg.Neo4jDatabase,
-			Collection:          collection,
-			Collections:         cfg.Collections,
-			BM25Indexes:         cfg.BM25Indexes,
-			BM25Store:           cfg.BM25Store,
-			GenerateTriplets:    !req.SkipGraph,
-			SkipGraph:           req.SkipGraph,
-			SystemPrompt:        sessionContext,
-			DatasetID:           sources[0].datasetID,
-			DB:                  cfg.DB,
-			LLMCache:            cfg.LLMCache,
-			LLMProvider:         cfg.LLMProvider,
-			UseStructuredOutput: func() *bool { b := true; return &b }(),
-		}
+		pipeCfg := baseCognifyConfig(cfg)
+		pipeCfg.Collection = collection
+		pipeCfg.GenerateTriplets, pipeCfg.SkipGraph = !req.SkipGraph, req.SkipGraph
+		pipeCfg.SystemPrompt, pipeCfg.DatasetID = sessionContext, sources[0].datasetID
 		if req.LLMModel != "" {
 			pipeCfg.LLMModel = req.LLMModel
 		}
@@ -292,111 +265,142 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 				return documentHTTPError(err)
 			}
 		}
-		cfg.Runs.Store(runID, runStatus)
-
-		// Capture for background goroutine
-		sessionID := req.SessionID
-
-		// Run pipeline in background. Both goroutines guard against panic (T15):
-		// a panic in orchestrator.Run (inner) is forwarded to errCh via
-		// runWithPanicGuard so the outer goroutine can mark the run FAILED and
-		// persist state — otherwise the run stays in RUNNING forever. The outer
-		// goroutine also recovers against panics in the progress loop or
-		// persistence path.
-		//
-		// stageSnapshot carries the most-recent stage value across the
-		// goroutine boundary so panic-recover can read it without racing with
-		// the progress loop that updates runStatus.Stage (C2 from the 2d15b38
-		// review). The progress loop stores to both the snapshot AND the
-		// runStatus field; readers receive immutable registry snapshots.
-		var stageSnapshot atomic.Pointer[string]
-		start := "starting"
-		stageSnapshot.Store(&start)
-		readStage := func() string {
-			if p := stageSnapshot.Load(); p != nil {
-				return *p
-			}
-			return ""
-		}
-
-		go func() {
-			// Bound the detached pipeline so a stuck downstream (Neo4j, LLM,
-			// embed) cannot keep the goroutine alive forever. Tunable via
-			// BACKGROUND_TASK_TIMEOUT_MS; default 30 minutes.
-			bgCtx, bgCancel := context.WithTimeout(context.WithoutCancel(reqCtx), timeoutFromEnvMs("BACKGROUND_TASK_TIMEOUT_MS", defaultBackgroundTaskTimeout))
-			defer bgCancel()
-
-			progressCh := make(chan orchestrator.Progress, 100)
-			errCh := make(chan error, 1)
-
-			defer func() {
-				if r := recover(); r != nil {
-					stage := readStage()
-					metrics.CognifyPanics.WithLabelValues(stage).Inc()
-					stack := debug.Stack()
-					log.Printf("cognify outer goroutine panic run_id=%s stage=%s panic=%v\n%s",
-						runID, stage, r, stack)
-					runStatus.Status = "FAILED"
-					runStatus.Message = fmt.Sprintf("panic: %v", r)
-					runStatus.ElapsedMs = time.Since(runStatus.StartedAt).Milliseconds()
-					publishCognifyFailure(cfg.DB, cfg.Runs, sources, collection, runID, runStatus)
-				}
-			}()
-
-			go func() {
-				// Inner panic recover reads stage via the atomic snapshot so
-				// the closure is safe to invoke from a panic unwinding while
-				// the outer goroutine may still be mutating runStatus.Stage.
-				errCh <- runWithPanicGuard(runID, readStage, func() error {
-					return runCognifySources(bgCtx, sources, cfg, pipeCfg, progressCh)
-				})
-			}()
-
-			for p := range progressCh {
-				stage := p.Stage
-				stageSnapshot.Store(&stage)
-				runStatus.Stage = p.Stage
-				runStatus.Message = p.Message
-				runStatus.Chunks = p.ChunksCreated
-				runStatus.Entities = p.EntitiesExtracted
-				runStatus.Edges = p.EdgesExtracted
-				runStatus.ElapsedMs = p.ElapsedMs
-				cfg.Runs.Store(runID, runStatus)
-			}
-
-			if err := <-errCh; err != nil {
-				runStatus.Status = "FAILED"
-				runStatus.Message = err.Error()
-			} else {
-				runStatus.Status = "COMPLETED"
-			}
-			runStatus.ElapsedMs = time.Since(runStatus.StartedAt).Milliseconds()
-			if runStatus.Status != "COMPLETED" {
-				if !publishCognifyFailure(cfg.DB, cfg.Runs, sources, collection, runID, runStatus) {
-					return
-				}
-			} else {
-				cfg.Runs.Store(runID, runStatus)
-			}
-
-			// VSA remains dataset-scoped.
-			rebuilt := map[string]bool{}
-			for _, source := range sources {
-				if runStatus.Status == "COMPLETED" && !pipeCfg.SkipGraph && !rebuilt[source.datasetID] {
-					rebuilt[source.datasetID] = true
-					rebuildVSAMemory(bgCtx, cfg, source.datasetID, "cognify")
-				}
-			}
-
-			recordInteraction(bgCtx, cfg, sessionID, userID, strings.Join(texts, " "),
-				fmt.Sprintf("%d entities extracted", runStatus.Entities), "cognify")
-		}()
+		startCognifyRun(reqCtx, cfg, runStatus, pipeCfg, sources, texts, req.SessionID, userID)
 
 		return c.JSON(fiber.Map{
 			"status":          "PipelineRunStarted",
 			"pipeline_run_id": runID,
 		})
 	}
+}
+
+func baseCognifyConfig(cfg APIConfig) orchestrator.Config {
+	return orchestrator.Config{
+		ChunkStrategy:  "merged",
+		MinChunkChars:  50,
+		MaxChunkChars:  2000,
+		LLMEndpoint:    os.Getenv("LLM_ENDPOINT"),
+		LLMModel:       os.Getenv("LLM_MODEL"),
+		LLMConcurrency: 1,
+		// M8: opt-in chunk batching. LEVARA_LLM_EXTRACT_BATCH_SIZE=4
+		// coalesces 4 chunks per extraction call — fewer LLM requests
+		// for large cognify runs. Default 1 keeps legacy behavior.
+		LLMBatchSize:        batchSizeFromEnv(),
+		EmbedEndpoint:       cfg.EmbedEndpoint,
+		EmbedModel:          cfg.EmbedModel,
+		EmbedClient:         cfg.EmbedClient, // T3 follow-up: reuse shared TCP pool through the pipeline
+		Neo4jURL:            cfg.Neo4jCfg.Neo4jURL,
+		Neo4jUser:           cfg.Neo4jCfg.Neo4jUser,
+		Neo4jPassword:       cfg.Neo4jCfg.Neo4jPassword,
+		Neo4jDatabase:       cfg.Neo4jCfg.Neo4jDatabase,
+		Collections:         cfg.Collections,
+		BM25Indexes:         cfg.BM25Indexes,
+		BM25Store:           cfg.BM25Store,
+		DB:                  cfg.DB,
+		LLMCache:            cfg.LLMCache,
+		LLMProvider:         cfg.LLMProvider,
+		UseStructuredOutput: func() *bool { b := true; return &b }(),
+	}
+}
+
+func startCognifyRun(reqCtx context.Context, cfg APIConfig, runStatus *runreg.Status, pipeCfg orchestrator.Config, sources []cognifySource, texts []string, sessionID, userID string) {
+	runID, collection := runStatus.RunID, pipeCfg.Collection
+	cfg.Runs.Store(runID, runStatus)
+
+	// Run pipeline in background. Both goroutines guard against panic (T15):
+	// a panic in orchestrator.Run (inner) is forwarded to errCh via
+	// runWithPanicGuard so the outer goroutine can mark the run FAILED and
+	// persist state — otherwise the run stays in RUNNING forever. The outer
+	// goroutine also recovers against panics in the progress loop or
+	// persistence path.
+	//
+	// stageSnapshot carries the most-recent stage value across the
+	// goroutine boundary so panic-recover can read it without racing with
+	// the progress loop that updates runStatus.Stage (C2 from the 2d15b38
+	// review). The progress loop stores to both the snapshot AND the
+	// runStatus field; readers receive immutable registry snapshots.
+	var stageSnapshot atomic.Pointer[string]
+	start := "starting"
+	stageSnapshot.Store(&start)
+	readStage := func() string {
+		if p := stageSnapshot.Load(); p != nil {
+			return *p
+		}
+		return ""
+	}
+
+	go func() {
+		// Bound the detached pipeline so a stuck downstream (Neo4j, LLM,
+		// embed) cannot keep the goroutine alive forever. Tunable via
+		// BACKGROUND_TASK_TIMEOUT_MS; default 30 minutes.
+		bgCtx, bgCancel := context.WithTimeout(context.WithoutCancel(reqCtx), timeoutFromEnvMs("BACKGROUND_TASK_TIMEOUT_MS", defaultBackgroundTaskTimeout))
+		defer bgCancel()
+
+		progressCh := make(chan orchestrator.Progress, 100)
+		errCh := make(chan error, 1)
+
+		defer func() {
+			if r := recover(); r != nil {
+				stage := readStage()
+				metrics.CognifyPanics.WithLabelValues(stage).Inc()
+				stack := debug.Stack()
+				log.Printf("cognify outer goroutine panic run_id=%s stage=%s panic=%v\n%s",
+					runID, stage, r, stack)
+				runStatus.Status = "FAILED"
+				runStatus.Message = fmt.Sprintf("panic: %v", r)
+				runStatus.ElapsedMs = time.Since(runStatus.StartedAt).Milliseconds()
+				publishCognifyFailure(cfg.DB, cfg.Runs, sources, collection, runID, runStatus)
+			}
+		}()
+
+		go func() {
+			// Inner panic recover reads stage via the atomic snapshot so
+			// the closure is safe to invoke from a panic unwinding while
+			// the outer goroutine may still be mutating runStatus.Stage.
+			errCh <- runWithPanicGuard(runID, readStage, func() error {
+				return runCognifySources(bgCtx, sources, cfg, pipeCfg, progressCh)
+			})
+		}()
+
+		for p := range progressCh {
+			stage := p.Stage
+			stageSnapshot.Store(&stage)
+			runStatus.Stage = p.Stage
+			runStatus.Message = p.Message
+			runStatus.Chunks = p.ChunksCreated
+			runStatus.Entities = p.EntitiesExtracted
+			runStatus.Edges = p.EdgesExtracted
+			runStatus.ElapsedMs = p.ElapsedMs
+			cfg.Runs.Store(runID, runStatus)
+		}
+
+		if err := <-errCh; err != nil {
+			runStatus.Status = "FAILED"
+			runStatus.Message = err.Error()
+		} else {
+			runStatus.Status = "COMPLETED"
+		}
+		runStatus.ElapsedMs = time.Since(runStatus.StartedAt).Milliseconds()
+		if runStatus.Status != "COMPLETED" {
+			if !publishCognifyFailure(cfg.DB, cfg.Runs, sources, collection, runID, runStatus) {
+				return
+			}
+		} else {
+			cfg.Runs.Store(runID, runStatus)
+		}
+
+		// VSA remains dataset-scoped.
+		rebuilt := map[string]bool{}
+		for _, source := range sources {
+			if runStatus.Status == "COMPLETED" && !pipeCfg.SkipGraph && !rebuilt[source.datasetID] {
+				rebuilt[source.datasetID] = true
+				rebuildVSAMemory(bgCtx, cfg, source.datasetID, "cognify")
+			}
+		}
+
+		recordInteraction(bgCtx, cfg, sessionID, userID, strings.Join(texts, " "),
+			fmt.Sprintf("%d entities extracted", runStatus.Entities), "cognify")
+	}()
 }
 
 func publishCognifyFailure(db *sql.DB, runs *runreg.Registry, sources []cognifySource, collection, runID string, status *runreg.Status) bool {

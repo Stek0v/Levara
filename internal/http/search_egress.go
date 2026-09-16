@@ -132,12 +132,25 @@ func searchEgressContext(c *fiber.Ctx, cfg APIConfig, ctx context.Context) conte
 }
 
 func beginSearchReadFence(ctx context.Context) (context.Context, func(), error) {
+	return beginSearchFence(ctx, false)
+}
+
+func beginSearchTransferFence(ctx context.Context) (context.Context, func(), error) {
+	return beginSearchFence(ctx, true)
+}
+
+func beginSearchFence(ctx context.Context, transfer bool) (context.Context, func(), error) {
 	e, present := ctx.Value(searchEgressKey{}).(searchEgress)
-	if !present || (!e.cfg.RequireAuth && (e.actor.UserID == "" || e.cfg.DB == nil)) {
+	documentScope := ctx.Value(grpcDocumentScopeKey{}) == true
+	if !present || (!documentScope && !e.cfg.RequireAuth && (e.actor.UserID == "" || e.cfg.DB == nil)) {
 		return ctx, func() {}, nil
 	}
 	policy := accesspkg.SQLPolicy{DB: e.cfg.DB, Q: Q, QA: QArgs}
-	locked, release, err := policy.BeginReadFence(ctx, GetDBProvider() == DBSQLite)
+	begin := policy.BeginReadFence
+	if transfer {
+		begin = policy.BeginTransferFence
+	}
+	locked, release, err := begin(ctx, GetDBProvider() == DBSQLite)
 	if err != nil {
 		return ctx, nil, fiber.NewError(503, "document transfer authorization unavailable")
 	}
@@ -146,6 +159,15 @@ func beginSearchReadFence(ctx context.Context) (context.Context, func(), error) 
 		if err := locked.RecheckCredential(ctx, e.actor.UserID, e.kind, e.keyID, e.actor.APIKeyPermissions, e.sessionID, e.epoch, e.issuedAt, e.expiresAt); err != nil {
 			release()
 			return ctx, nil, fiber.NewError(401, "credential revoked")
+		}
+	}
+	// Document gRPC carries the verified selected tenant into detached jobs.
+	// Legacy document policy and global superuser grants do not prove membership.
+	if documentScope && e.actor.TenantID != "" {
+		member, err := locked.IsTenantMember(ctx, e.actor.UserID, e.actor.TenantID)
+		if err != nil || !member {
+			release()
+			return ctx, nil, fiber.NewError(403, "tenant access revoked")
 		}
 	}
 	if e.global || searchEvidenceRequiresAdmin(ctx) {

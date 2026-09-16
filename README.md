@@ -252,7 +252,7 @@ opening listeners. It does not validate IdP connectivity or the entire deploymen
 | MCP Streamable HTTP (latest) | `/mcp/2026-07-28` | stateless, per-request metadata | Hermes and current MCP clients |
 | MCP Streamable HTTP (legacy) | `/mcp` | session-based compatibility | Existing AI agents and IDE integrations |
 | REST | `:8080` | [Generated route inventory](docs/api-contract.md) | WebUI, applications and operations |
-| gRPC v1/v2 | `:50051` | Privileged raw-storage API | Operator SDKs; active superuser when auth is enabled |
+| gRPC v1/v2 | `:50051` | v1 document upload/cognify/status; privileged raw storage | Scoped v1 document RPCs use JWT and live tenant/document permissions; raw RPCs require active superuser with auth |
 | CLI | local binaries | server, client, backup, contract and host tooling | Operators and automation |
 | WebUI | `:3000` in development | Next.js application | Users, operators and reviewers |
 

@@ -155,9 +155,10 @@ streaming and authentication headers through the proxy; configure WebUI
 separately using [its README](../webui/README.md). Health/version availability
 is not proof that protected routes accept the intended user.
 
-Use separate credentials for each person or agent. Authenticated raw-storage
-gRPC requires an active global superuser; ordinary document workflows use
-REST/MCP. A collection name or MCP toolset is not an ACL. Dataset sharing is
+Use separate credentials for each person or agent. Raw gRPC methods require an active global superuser. The v1 `IngestData`,
+`CognifyDocuments` and `CognifyDocumentsStatus` methods use JWT, live tenant
+membership and document permissions with metadata SQL. Document workflows
+also use REST/MCP; see [document management](document-management.md). A collection name or MCP toolset is not an ACL. Dataset sharing is
 individual in the public UI. Document/group policy is available through
 REST/CLI/WebUI, and native LDAP/LDAPS/StartTLS is implemented locally; real
 directory acceptance remains open. See [enterprise identity](enterprise-identity.md).

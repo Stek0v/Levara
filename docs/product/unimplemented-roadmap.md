@@ -1,6 +1,6 @@
 # Roadmap: состояние реализации и оставшаяся приёмка
 
-Обновлено **2026-09-10** по рабочему дереву и сохранённым проверкам. Существенная
+Обновлено **2026-09-14** по рабочему дереву и сохранённым проверкам. Существенная
 часть механизмов реализована локально, но весь список **не закрыт**. Реализация
 этого блока собрана в текущей ветке, но не развёрнута. Совмещённый `internal/http -race`
 зелёный; полный release gate репозитория и внешняя приёмка остаются открыты.
@@ -16,7 +16,7 @@
 | Область | Реализовано локально | Главный остаток |
 |---|---|---|
 | Identity | LDAP/LDAPS/StartTLS, browser OIDC/SAML, SCIM Groups/EnterpriseUser subset | Реальные AD/IdP, сквозной отзыв, общий integration gate |
-| Документы | Модель ACL и защищённые REST/CLI/WebUI user/group grants, document-scoped recipients/shared discovery, source versioning, авторизованная загрузка, structured preflight/source CAS и artifact lifecycle, inline HTTP/MCP cognify, publication-aware `query_entity`; глобальные REST vector/collection/reembed/migration routes ограничены active superuser при required auth | Составные gRPC/sync/workspace mutation paths, legacy provenance migration, сквозной legal hold и внешний AD/IdP group flow |
+| Документы | Модель ACL и защищённые REST/CLI/WebUI user/group grants, document-scoped recipients/shared discovery, source versioning, авторизованная загрузка, structured preflight/source CAS и artifact lifecycle, inline HTTP/MCP и document-scoped gRPC cognify/status, publication-aware `query_entity`; глобальные REST vector/collection/reembed/migration routes ограничены active superuser при required auth | Составные gRPC/sync/workspace mutation paths, legacy provenance migration, сквозной legal hold и внешний AD/IdP group flow |
 | Task Runtime / memory | Реальный workspace executor и проверка receipt/артефактов | Совмещённая приёмка recovery/authority, контракт, три релиза |
 | Хранение / аудит | S3 SDK/multipart, AWS KMS/BYOK, SQL-spool/webhook и CLI | Внешние сервисы и сквозной legal hold |
 | Onboarding / backup | Team CLI и проверяемый offline standalone/local backup | Интеграция, ограничения restore, эксплуатация расписания |
@@ -31,7 +31,7 @@
   grant/revoke, recipients/shared discovery и credential fence до commit/drain.
   Результат сохранён коммитом `0fbebf1`.
 - [x] Карта обычной загрузки: REST/Web, CLI и MCP add сходятся в общий authorized
-  coordinator; `IngestData` — единственный tenant-scoped gRPC RPC.
+  coordinator; gRPC v1 также имеет document-scoped cognify/status.
 - [x] CLI upload как клиент настоящего authenticated `/add`: создание и повторный
   выбор dataset, exact file bytes и текст проверены на SQLite/PostgreSQL.
 - [x] Authenticated metadata-backed контракт `IngestData` для batch: dataset ID без
@@ -42,18 +42,54 @@
 - [ ] **P2:** решить судьбу trusted-local `IngestData` без metadata DB: сохранить
   compatibility и добавить journal/batch cleanup либо ограничить режим одним
   item. Сейчас прямые записи этого режима не гарантируют rollback всего batch.
-- [ ] **P1:** спроектировать отдельный document-scoped gRPC cognify contract.
-  Существующий `PipelineCognify` остаётся global-admin raw-collection pipeline и
-  не имеет document/source revision/publication identity.
+- [x] **P1:** document-scoped gRPC v1 `CognifyDocuments` и
+  `CognifyDocumentsStatus`: exact source revision/hash, scoped JWT/tenant,
+  all-source writer preflight, атомарный attempt claim, общий runner и per-source
+  publication/status, detached observer и Send fence. Targeted независимый
+  SQLite/PostgreSQL/race gate пройден. Raw `PipelineCognify` сохраняет admin
+  контракт. [Дизайн, DoD и corner cases](grpc-document-cognify.md).
+- [ ] **P1:** первым воспроизвести `BatchEmbedAndIndex`: отзыв JWT/session,
+  deactivate/demotion после interceptor во время заблокированного embedding.
+  Проверить live admin/credential перед provider transfer и каждым storage
+  effect; сохранить raw-admin контракт и отсутствие deadlock при SQL pool=1.
+  Сейчас это подтверждённый по коду кандидат, без запуска reproducer.
 - [ ] **P1/P2:** закрыть остальные составные mutation paths: gRPC writes, sync
   graph/collection import, dualwrite/backfill, workspace write/revert/GC и
   legacy dataset rename/delete с повторной авторизацией внутри транзакции.
 - [ ] **P1/P2:** распространить hold и concurrent revoke на все производные и
   составные операции; затем выполнить внешний AD/IdP/SCIM group flow.
+- [ ] **P2:** выяснить intermittent MCP heartbeat INSERT failure в старом
+  inline transport test: сохранить безопасный SQL error kind, отделить
+  terminal publication от optional telemetry и подтвердить teardown/нагрузку.
+  `-race -count=5` и последовательные четыре варианта проходят; причина
+  промежуточного overlapping failure пока не доказана.
 - [ ] **P2:** прогнать размеченный PDF/Office/HTML/OCR corpus, storage/KMS/SIEM,
   двухнодовый sync, backup schedule/restore и эксплуатационные SLO.
 - [ ] **Release gate:** generated contracts, SQLite/PostgreSQL/race, WebUI,
   `make test-commit`, независимое ревью, актуальные docs/маркетинг и scoped commit.
+
+### Document-scoped gRPC и сопутствующие regressions — 2026-09-14
+
+Новый v1 transport использует сохранённые exact dataset/document sources и
+серверные providers, проверяет весь batch до Load, повторяет credential/tenant/
+writer/source CAS под metadata transaction и запускает общий HTTP runner.
+Каждый Send удерживает живые source/credential/tenant facts до фактического
+возврата, даже при observer cancel; серверный deadline завершает handler.
+Подтверждены rag/graph, duplicate/alias, missing raw, stale proof, denied second,
+SQL second-claim rollback, partial batch и group/tenant revoke после detach.
+Missing vector store/endpoint (даже с embed client) даёт Unavailable до Load/
+claim, исключая false COMPLETED при пропущенной vector stage. Graph fixture
+также воспроизвёл и закрыл SQLite pool=1 deadlock при dialect probe внутри
+транзакции и PostgreSQL timestamp/empty error в VSA postprocessing.
+Полный race также выявил borrowed actor strings в HTTP fixture: snapshot
+HTTP actor/run owner теперь клонирует строки; forced buffer mutation показал
+RED до исправления на обеих SQL и targeted PASS после него. Production
+JWT/API key decoder owns strings; production tenant defect не заявляется.
+
+Приёмка этого блока локальная: embedding/LLM fixtures и настоящие SQL/индексы;
+blocked Send — callback-модель. Реальный flow-control load, зависший BEGIN,
+два перекрывающихся RPC, durable registry, потерянный первый run ID и job cancel
+не объявляются закрытыми. Результаты — в [testing](../testing.md).
 
 ### Закрытые регрессии 2026-09-09
 
@@ -280,11 +316,11 @@ SQLite/PostgreSQL `-race` проходят. Trusted-local режим без meta
 прямым compatibility path без journal и гарантии batch rollback.
 Следующий порядок интеграции:
 
-- P1/P2: обычная authenticated upload transport matrix закрыта для REST/MCP/CLI
-  и metadata-backed gRPC `IngestData`. Спроектировать отдельный document-scoped
-  gRPC cognify; текущий
-  `PipelineCognify` остаётся global-admin raw pipeline и не связан с source
-  revision/publication.
+- P1/P2: обычная authenticated upload transport matrix и document-scoped
+  gRPC cognify/status закрыты локально. Следующий шаг — составные mutations.
+  Trusted-local no-DB batch rollback остаётся открытым; отдельные решения нужны
+  для job cancel, durable run registry и общего raw-byte budget. `PipelineCognify`
+  сохраняет global-admin raw contract.
 - P1/P2: закрыть составные gRPC writes, sync graph/collection import,
   dualwrite/backfill и workspace write/revert/GC. Глобальные REST
   raw-vector/collection/reembed/migration endpoints уже ограничены active

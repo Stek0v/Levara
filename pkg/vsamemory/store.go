@@ -123,7 +123,7 @@ func (s *Store) RebuildFromGraph(ctx context.Context, datasetID string) error {
 		  AND relationship_name <> ''
 		  AND source_id <> ''
 		  AND target_id <> ''
-		  AND (valid_until IS NULL OR valid_until = '')
+		  AND (valid_until IS NULL OR CAST(valid_until AS TEXT) = '')
 		ORDER BY relationship_name, source_id, target_id, id`), datasetID, datasetID)
 	if err != nil {
 		return err

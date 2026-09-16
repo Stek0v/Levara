@@ -50,8 +50,10 @@ backend access. Match `-dim` and provider settings before creating collections.
 With `-require-auth`, `/health` stays public for load balancers, but
 protected resource calls require credentials. Registration/login, enabled
 identity handshakes and transport discovery have their own access rules.
-gRPC raw-storage methods require an active global superuser with auth enabled;
-use REST/MCP for ordinary users or disable gRPC with `-grpc-port=0`.
+Raw gRPC methods require an active global superuser with auth enabled.
+The v1 document upload/cognify/status methods use JWT and live tenant/document
+permissions with metadata SQL. See [document management](../document-management.md)
+or use REST/MCP; `-grpc-port=0` disables the gRPC listener.
 
 Protected MCP operations require a valid credential; use
 `Authorization: Bearer <token>` on your host connection — see

@@ -267,7 +267,7 @@ func TestRunIncludesInheritedSessionSources(t *testing.T) {
 	})
 }
 
-func TestDetachedTenantDoesNotAliasHTTPBuffer(t *testing.T) {
+func TestDetachedActorDoesNotAliasHTTPBuffer(t *testing.T) {
 	documentHTTPDialects(t, func(t *testing.T, f *documentHTTPFixture) {
 		var httpActor, mcpActor accesspkg.Actor
 		h := &mcpHandler{cfg: f.cfg}
@@ -283,10 +283,12 @@ func TestDetachedTenantDoesNotAliasHTTPBuffer(t *testing.T) {
 				t.Fatal("test requires one-byte tenant header")
 			}
 			header[0] = 'b' // model Fiber's documented buffer reuse after the handler
+			copy(c.Context().Request.Header.Peek("X-Test-User"), "evil")
+			copy(c.Context().Request.Header.Peek("X-Test-Key"), "xxxx")
 			return c.SendStatus(200)
 		})
-		code, _, _ := f.request("peer", "GET", "/capture-tenant", "", "X-Tenant-Id", "a")
-		if code != 200 || httpActor.TenantID != "a" || mcpActor.TenantID != "a" {
+		code, _, _ := f.request("peer", "GET", "/capture-tenant", "", "X-Tenant-Id", "a", "X-Test-Key", "read")
+		if code != 200 || httpActor.TenantID != "a" || mcpActor.TenantID != "a" || httpActor.UserID != "peer" || httpActor.APIKeyPermissions != "read" {
 			t.Fatalf("authority aliases mutable request: %d HTTP=%+v MCP=%+v", code, httpActor, mcpActor)
 		}
 	})

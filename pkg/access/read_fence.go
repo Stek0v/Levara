@@ -90,6 +90,54 @@ func (p SQLPolicy) BeginReadFence(ctx context.Context, sqlite bool) (SQLPolicy, 
 	if err != nil {
 		return p, nil, err
 	}
+	if err := lockReadFence(ctx, tx, sqlite); err != nil {
+		_ = tx.Rollback()
+		return p, nil, err
+	}
+	p.readTx = tx
+	return p, func() { _ = tx.Rollback() }, nil
+}
+
+// BeginTransferFence keeps authorization stable until the transfer actually
+// drains, even if its observer context expires. The transport must interrupt
+// blocked transfers on cancellation, and the caller must then release.
+func (p SQLPolicy) BeginTransferFence(ctx context.Context, sqlite bool) (SQLPolicy, func(), error) {
+	if p.DB == nil {
+		return p, nil, errors.New("access: transfer fence requires database")
+	}
+	if _, ok := ctx.Deadline(); !ok {
+		return p, nil, errors.New("access: transfer fence requires deadline")
+	}
+	conn, err := p.DB.Conn(ctx)
+	if err != nil {
+		return p, nil, err
+	}
+	// Cancel BEGIN/acquisition with the observer; after handoff, lifetime follows
+	// actual transfer drain rather than the observer deadline.
+	txCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	stop := context.AfterFunc(ctx, cancel)
+	tx, err := conn.BeginTx(txCtx, nil)
+	if err != nil {
+		stop()
+		cancel()
+		_ = conn.Close()
+		return p, nil, err
+	}
+	release := func() { stop(); _ = tx.Rollback(); cancel(); _ = conn.Close() }
+	if err := lockReadFence(ctx, tx, sqlite); err != nil {
+		release()
+		return p, nil, err
+	}
+	if !stop() || ctx.Err() != nil {
+		release()
+		return p, nil, ctx.Err()
+	}
+	p.readTx = tx
+	return p, release, nil
+}
+
+func lockReadFence(ctx context.Context, tx *sql.Tx, sqlite bool) error {
+	var err error
 	// ponytail: global SQL write exclusion during bounded egress; replace with
 	// resource locks only when measurements justify the added revoker protocol.
 	if sqlite {
@@ -105,12 +153,7 @@ func (p SQLPolicy) BeginReadFence(ctx context.Context, sqlite bool) (SQLPolicy, 
 			_, err = tx.ExecContext(ctx, "LOCK TABLE document_index_publications, document_pipeline_statuses IN SHARE ROW EXCLUSIVE MODE")
 		}
 	}
-	if err != nil {
-		_ = tx.Rollback()
-		return p, nil, err
-	}
-	p.readTx = tx
-	return p, func() { _ = tx.Rollback() }, nil
+	return err
 }
 
 func (p SQLPolicy) HasRegisteredDocuments(ctx context.Context, datasetID string) (bool, error) {

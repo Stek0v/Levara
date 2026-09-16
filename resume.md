@@ -1,6 +1,6 @@
 # Возобновление работы над roadmap
 
-Снимок состояния: **2026-09-10**. Это контекст незавершённой работы, а не отчёт
+Снимок состояния: **2026-09-14**. Это контекст незавершённой работы, а не отчёт
 о выпуске. Критерии приёмки — в [roadmap](docs/product/unimplemented-roadmap.md).
 
 ## Цель и текущее состояние
@@ -37,6 +37,20 @@
   SQL/publication. Trusted-local режим без metadata DB остаётся прямым
   compatibility path без journal и гарантии batch rollback. Полные affected
   race suites проходят на SQLite/PostgreSQL.
+- Добавлены gRPC v1 `CognifyDocuments`/`CognifyDocumentsStatus` с exact source
+  proof, scoped JWT/tenant, all-source writer preflight, атомарным claim и
+  per-document publication/status. Observer отделён от принятого job; Send
+  удерживает live SQL authority до фактического возврата. Rag/graph, duplicate/
+  alias, wrong/stale/missing source, partial failure, group/tenant/credential
+  revoke (в том числе tenant после detach) и rollback второго INSERT проходят targeted race на SQLite/PostgreSQL.
+  Startup отвергает отсутствующий vector store/endpoint до Load, включая
+  client-only конфигурацию, чтобы не опубликовать ложный COMPLETED.
+  Graph fixture выявил и закрыл SQLite pool=1 deadlock в predicate-synonym
+  refresh и PostgreSQL timestamp/empty comparison в VSA postprocessing.
+  Full race выявил borrowed HTTP actor strings в fixture; actor/run owner
+  теперь владеет строками. Forced buffer reuse воспроизведён RED на обеих SQL;
+  combined actor/session/gRPC/MCP race после clone — PASS 12.601s,
+  независимый actor/session/gRPC gate — PASS 11.418s.
 - Реальные AD/IdP, AWS/KMS, SIEM и приёмка на нескольких релизах не пройдены.
 - Изменения не развёрнуты. Шаблоны backup service/timer не активированы.
 
@@ -45,7 +59,7 @@
 | Блок | Сделано | Граница подтверждения |
 |---|---|---|
 | Identity | LDAP/LDAPS/StartTLS, безопасные bind/search, стабильные ID, bounded nested groups; browser OIDC/SAML, sessions/logout; SCIM Groups/EnterpriseUser subset, provisioning audit, деактивация и отзыв ключей | SQL/provider fixtures и browser checks; нет живого корпоративного стенда и непрерывного потока изменений LDAP |
-| Загрузка | Общий авторизованный coordinator для REST/Web, MCP add и metadata-backed gRPC; multipart preflight до sidecar; явный source revision/hash CAS; structured artifact inventory/read/retention; inline HTTP/MCP cognify сохраняет серверный источник до run; CLI→real REST и authenticated gRPC batch/cancel/late-worker проверены на обеих SQL | Document-scoped gRPC cognify отсутствует; trusted-local gRPC без metadata DB не гарантирует batch rollback; automatic recovery ограничен standalone/local SQLite под исключительным владением записью |
+| Загрузка | Общий авторизованный coordinator для REST/Web, MCP add и metadata-backed gRPC; multipart preflight до sidecar; явный source revision/hash CAS; structured artifact inventory/read/retention; inline HTTP/MCP cognify сохраняет серверный источник до run; gRPC document cognify/status использует общий runner; CLI→real REST и authenticated gRPC batch/cancel/late-worker проверены на обеих SQL | Document-scoped gRPC v1 cognify/status реализован и targeted SQLite/PostgreSQL/race проверен; trusted-local gRPC без metadata DB не гарантирует batch rollback; automatic recovery ограничен standalone/local SQLite под исключительным владением записью |
 | Документы | ACL пользователей/групп, защищённый REST/CLI/WebUI policy/grant/revoke, document-scoped recipients и shared-document discovery, tenant boundary, CAS, tombstones/hold; отзыв API key/browser session блокирует mutation после middleware и до SQL commit; source versioning; проверки поиска, raw, артефактов и происхождения результатов | Полный жизненный цикл, составные mutation paths и внешняя AD/IdP group acceptance не закрыты |
 | Runtime / memory | Реальный workspace_read/workspace_write executor с authority/deadline/budgets/retry/concurrency/kill-switch; проверка task/receipt/артефакта при memory commit | Не универсальный shell/network sandbox; receipt-validated не означает истинности содержимого |
 | Аналитика / sync | Owner/tenant-фильтрация до агрегации/экспорта; происхождение сессий/запусков; исправлены errors/counts/ACK sync | Остальные каналы отзыва и двухнодовый интерфейс ещё требуют проверки |
@@ -99,12 +113,15 @@ memory commit и hold-aware prune. Их manifests фиксируют отдел�
 
 ## С чего продолжить
 
-1. **Следующий transport contract.** Обычная authenticated загрузка через
-   REST/MCP/CLI и metadata-backed gRPC `IngestData` закрыта локально на обеих
-   SQL. Для trusted-local no-DB нужно выбрать batch cleanup или single-item
-   ограничение. `PipelineCognify` — отдельный
-   global-admin raw pipeline, поэтому для document-scoped gRPC cognify нужен
-   новый контракт с dataset/document/source revision/publication identity.
+1. **Следующий блок — составные mutations.** Authenticated upload и gRPC
+   document cognify/status реализованы локально. Первый reproducer —
+   `BatchEmbedAndIndex`: pause embedding, revoke JWT/session либо demote/
+   deactivate actor после interceptor, затем release и проверка отсутствия
+   provider/storage effects. Кандидат пока подтверждён чтением кода.
+   Для trusted-local no-DB
+   `IngestData` нужно выбрать batch cleanup или single-item ограничение.
+   Для документных job отдельно остаются cancel, durable registry и raw-byte
+   budget; raw `PipelineCognify` сохраняет прежний global-admin контракт.
 2. **Mutation/hold paths.** Глобальные REST raw-vector/collection/reembed/migration
    endpoints уже active-superuser only при required auth; новый REST ACL API
    повторно проверяет API key/browser session под SQL fence до commit. Защитить составные
@@ -136,11 +153,11 @@ memory commit и hold-aware prune. Их manifests фиксируют отдел�
 benchmark results и весь `outputs/` автоматически не добавлять. Перед правками
 перечитать diff; не использовать `git add .`.
 
-Последние назначения: `batch_grpc` — MCP inline source до очереди;
-`backup_hardening` — global raw mutation guards; `security_audit` — завершённая
-read-only карта пробелов документации. Первые два агента прерваны; финальных
-подтверждений последних назначений нет. Проверить реальный статус и diff перед
-повторной выдачей владения файлами.
+Назначения текущего блока: `batch_grpc` завершил proto/transport/auth и unit
+проверки; `four_fixes_review` завершил независимый targeted SQLite/PostgreSQL
+race review без оставшихся P0–P2. Основной агент владеет интеграцией,
+generated contract, docs и финальными gates. Старые назначения других агентов
+не являются текущими receipts.
 
 Task Runtime: `28112cc1-7f67-4ebb-9e87-47da2620665a`, collection `levara`,
 room `deploy`, actor `codex-roadmap-implementation`. Перед продолжением получить
@@ -178,7 +195,27 @@ SQLite/PostgreSQL, metadata-backed gRPC `IngestData` failure matrix, contracts �
 финализации сохраняются в Task Runtime по этому ID. Задача завершена на версии
 22; финальный reviewer receipt — `139f54fb-0e98-457a-8bfa-c97e4398b3b6`.
 
-Текущий проход использует изолированный PostgreSQL 16 на loopback, порт 56202,
-данные `/tmp/levara-structured-pg-review`. Доступность проверить заново;
-использовать отдельные тестовые схемы, не данные приложения. Production deploy,
-live migration и restart в рамках сохранения этого состояния не выполнялись.
+Document-scoped gRPC блок ведётся задачей
+`a531248a-e6d3-46a3-af60-c540af13d3d1`, collection `levara`, room `mcp`, actor
+`codex-grpc-document-cognify`. Дизайн и реализация описаны в
+[плане](docs/product/grpc-document-cognify.md). Targeted bridge race 9.730s и
+независимый финальный race (gRPC 1.988s, HTTP 9.967s; отдельный VSA 1.376s) пройдены на
+SQLite/PostgreSQL; полная grpc suite 138 PASS, один прежний bind skip.
+Рабочие evidence — `outputs/grpc-document-cognify-2026-09-14/` и grpc-document
+файлы в прежнем каталоге evidence. Task Runtime остаётся источником текущей
+версии, steps, receipts и финализации; перед возобновлением нужен bootstrap.
+
+Один overlapping full run старого MCP inline transport test не записал
+best-effort heartbeat; отдельный count5 PASS13.105s и последующие четыре
+SQL/transport варианта PASS. Причина SQL INSERT error не доказана, есть P2
+в roadmap; red/прерванные evidence сохранены и не считаются green gate.
+
+Ограничения: accepted job нельзя отменить отдельной RPC; run registry в памяти,
+первый ACK может потеряться; общий raw-byte batch budget отсутствует. Настоящий
+HTTP/2 flow-control load и зависший driver BEGIN отдельным стендом не проверены.
+Перекрывающиеся attempts проверены общим CAS, без двух параллельных RPC.
+
+Для прохода 2026-09-14 создан изолированный PostgreSQL 16 на loopback: порт
+56202, данные `/tmp/levara-grpc-cognify-pg-20260914`. Доступность проверять
+заново; использовать отдельные схемы, не данные приложения. Старый test PG
+каталог был недоступен и не использовался.
