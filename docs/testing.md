@@ -1,9 +1,58 @@
 # Проверки и результаты тестирования
 
-Обновлено 2026-09-14. Результат теста относится к указанным исходникам,
+Обновлено 2026-09-16. Результат теста относится к указанным исходникам,
 зависимостям и сценарию. Наличие теста или зелёный статус benchmark-скрипта
 само по себе не подтверждает качество поиска, изоляцию пользователей или
 работу реального внешнего сервиса.
+
+## Marketing evidence campaign, фаза A — 2026-09-16
+
+Ревизия `4efbfa6` (E1, E2); E3 — то же дерево + фикс F1 (no-auth публикация).
+Изолированные одноразовые инстансы на loopback,
+embedding sidecar potion-code-16M (dim 256), латентность с клиента.
+Сырые JSON: `benchmark/results/marketing_e1_sqlite_latest.json`,
+`marketing_e2_docs_latest.json` и `marketing_e3_noauth_docs_latest.json`.
+Замеры соответствуют
+[проекту кампании](marketing/test-campaign-design.md) (local-only).
+
+| Замер | Наблюдаемый результат | Граница доказательства |
+|---|---|---|
+| save_memory ×300 (SQLite, standalone, no auth) | p50 0.7 / p95 1.8 / p99 9.6 мс, 0 ошибок | Один пользователь, warm кэш; индексация асинхронная (outbox дренировался 1.4 с) |
+| recall_memory ×300 warm (та же конфигурация) | p50 4.2 / p95 6.2 / p99 8.5 мс, 300/300 с попаданием | Один пользователь; cold после рестарта не измерялся в этой фазе |
+| search CHUNKS vs CHUNKS_LEXICAL ×50 (no-DB инстанс, 100 inline chunks) | векторный p50 7.1 / p95 9.1 мс; lexical p50 0.5 / p95 1.4 мс; 50/50 найдено обоими | Маленький корпус (100 chunks); разница — стоимость embedding-прохода запроса |
+| Документная матрица: 33 цикла upload→cognify→поиск (SQLite + auth по API-ключу; md/html/csv/pdf/docx × 10KB/100KB ×3, md/pdf 1MB, md 5MB) | Все 33 COMPLETED; provenance валидно 33/33; загрузка 10–34 мс (pdf 100KB ~216 мс, pdf 1MB ~1.7 с); cognify ≤1.1 с до 100KB, 2–3 с на 1MB, 45.3 с на 5MB md; контрольный факт находится через то же время | Шаг опроса 1 с — времена обработки верхние; качество извлечения не оценивалось; burst-режим упирается в штатный user rate limit |
+| Та же матрица в no-auth (personal preset, после фикса F1; E3, пейсинг клиента 75 req/мин) | Все 33 COMPLETED; provenance валидно 33/33; загрузка малых файлов 12–55 мс по форматам; cognify ≤1 с до 100KB, md 1MB 5.0 с, pdf 1MB 3.0 с, md 5MB 22.1 с; контрольный факт найден 33/33 (у md 1MB/5MB векторный top-3 не содержал код-токен — найден lexical-поиском мгновенно) | Те же границы, что у auth-скобки; latex-free PDF (cupsfilter) и pandoc-docx как генераторы; различие стратегий поиска — свойство, не дефект |
+
+Две находки этой фазы (воспроизведены по 3 раза каждая, код-ссылки на
+`4efbfa6`):
+
+- **F1 — no-auth публикация документов (исправлено 2026-09-16, поверх
+  `4efbfa6`).** В режиме `-require-auth=false` с настроенной metadata-БД
+  cognify по datasets[] извлекал чанки, но публикация возвращала 503
+  «document publication authorization unavailable»: `beginSearchFence` в
+  no-auth возвращает no-op без `searchReadPolicyKey`
+  (`internal/http/search_egress.go:146-148`), а блок публикации требовал
+  политику жёстко (`internal/http/api_cognify.go:604-612`), в отличие от
+  поиска, у которого есть fallback (`search_egress.go:110-113`). Фикс: при
+  no-op fence публикация открывает собственную read-fence транзакцию и
+  коммитит через неё — `CommitDocumentIndexVersioned` перепроверяет
+  авторизацию (dataset dev-mode для анонимного актёра) и привязку версии
+  источника внутри этой же транзакции. Регрессионный тест
+  `TestDocumentPublicationNoAuthPersonalMode` (SQLite + PostgreSQL,
+  `internal/http/document_publication_test.go`); полный пакет
+  `internal/http` зелёный. Повторное live-тестирование: изолированный
+  инстанс `-profile standalone-embed` (SQLite, no auth, sidecar
+  potion-code-16M) — smoke 2/2 цикла и полная матрица E3 (33 цикла,
+  `marketing_e3_noauth_docs_latest.json`): все COMPLETED,
+  `document_index_publications` с `lineage_verified=1`, контрольный факт
+  находится поиском с полным provenance. С включённой
+  авторизацией полный цикл проходил и до фикса (см. матрицу выше). Без
+  metadata-БД cognify по-прежнему работает только для inline texts.
+- **F2 — штатный rate limit на burst-загрузку.** User bucket 100 req/мин
+  (`internal/http/ratelimit.go`, дефолт `cmd/server/main.go:647`) исчерпывается
+  примерно на 20-м цикле upload+cognify+поиск (~5 запросов на документ);
+  остальные циклы прошли с клиентским пейсингом 80 req/мин. Это security-дефолт,
+  не дефект; для массового ingest нужен пейсинг или настройка лимита.
 
 ## Document-scoped gRPC cognify — 2026-09-14
 
