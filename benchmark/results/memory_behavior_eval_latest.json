@@ -1,0 +1,158 @@
+{
+  "command": "python3 benchmark/memory_behavior_eval/run_memory_behavior_eval.py --fake --label memory-commit-baseline-2026-08-25",
+  "gates": {
+    "behavior_score_min": 60.0,
+    "passed": true
+  },
+  "generated_at": "2026-08-25T15:32:41.009410+00:00",
+  "label": "memory-commit-baseline-2026-08-25",
+  "metrics": {
+    "behavior_score": 75.0,
+    "blind_saves": 3,
+    "context_bytes": 16150,
+    "context_bytes_per_trajectory": 3230.0,
+    "memory_ops": 9,
+    "memory_ops_per_trajectory": 1.8,
+    "recall_before_save_rate": 0.25,
+    "repeat_save_rate": 0.25,
+    "repeat_saves": 1,
+    "unknown_hall_error_count": 1,
+    "zero_result_recovery_rate": 1.0
+  },
+  "mode": "fake",
+  "passed": true,
+  "scenarios": [
+    {
+      "events": [
+        {
+          "error_message": "",
+          "key": "",
+          "outcome": "ok",
+          "request_bytes": 80,
+          "response_bytes": 400,
+          "result_count": 1,
+          "tool": "recall_memory",
+          "zero_result": false
+        },
+        {
+          "error_message": "",
+          "key": "decision_arch",
+          "outcome": "ok",
+          "request_bytes": 260,
+          "response_bytes": 180,
+          "result_count": 0,
+          "tool": "save_memory",
+          "zero_result": false
+        }
+      ],
+      "expected": {
+        "blind_saves": 0,
+        "repeat_saves": 0
+      },
+      "name": "good_recall_then_save_new_decision"
+    },
+    {
+      "events": [
+        {
+          "error_message": "",
+          "key": "dup_key",
+          "outcome": "ok",
+          "request_bytes": 220,
+          "response_bytes": 200,
+          "result_count": 0,
+          "tool": "save_memory",
+          "zero_result": false
+        },
+        {
+          "error_message": "",
+          "key": "dup_key",
+          "outcome": "ok",
+          "request_bytes": 230,
+          "response_bytes": 220,
+          "result_count": 0,
+          "tool": "save_memory",
+          "zero_result": false
+        }
+      ],
+      "expected": {
+        "blind_saves": 2,
+        "repeat_saves": 1
+      },
+      "name": "bad_repeated_save_without_recall"
+    },
+    {
+      "events": [
+        {
+          "error_message": "",
+          "key": "",
+          "outcome": "ok",
+          "request_bytes": 120,
+          "response_bytes": 120,
+          "result_count": 0,
+          "tool": "recall_memory",
+          "zero_result": true
+        },
+        {
+          "error_message": "",
+          "key": "",
+          "outcome": "ok",
+          "request_bytes": 140,
+          "response_bytes": 520,
+          "result_count": 2,
+          "tool": "search",
+          "zero_result": false
+        }
+      ],
+      "expected": {
+        "zero_result_recovered": true
+      },
+      "name": "zero_result_reformulation_success"
+    },
+    {
+      "events": [
+        {
+          "error_message": "invalid hall 'todo'",
+          "key": "bad_hall",
+          "outcome": "client_error",
+          "request_bytes": 220,
+          "response_bytes": 160,
+          "result_count": 0,
+          "tool": "save_memory",
+          "zero_result": false
+        }
+      ],
+      "expected": {
+        "unknown_hall_error": true
+      },
+      "name": "wrong_hall_rejected"
+    },
+    {
+      "events": [
+        {
+          "error_message": "",
+          "key": "",
+          "outcome": "ok",
+          "request_bytes": 80,
+          "response_bytes": 12000,
+          "result_count": 20,
+          "tool": "wake_up",
+          "zero_result": false
+        },
+        {
+          "error_message": "",
+          "key": "",
+          "outcome": "ok",
+          "request_bytes": 100,
+          "response_bytes": 900,
+          "result_count": 1,
+          "tool": "recall_memory",
+          "zero_result": false
+        }
+      ],
+      "expected": {
+        "context_bytes_high": true
+      },
+      "name": "noisy_context_many_wakeup_hits"
+    }
+  ]
+}

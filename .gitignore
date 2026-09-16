@@ -123,3 +123,13 @@ docs/internal/
 docs/levara_as_memory.md
 docs/ru_levara_as_memory.md
 docs/levara-codex-user-admin-guide.html
+
+# Local agent/tool working dirs (not part of the published repository)
+.bb/
+.codex-flow/
+.hermes/
+.zcode/
+outputs/
+
+# Local binary backups
+levara-server.bak-*
