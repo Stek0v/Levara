@@ -67,6 +67,87 @@ func TestDocumentPublicationAttemptCASIsAtomic(t *testing.T) {
 	})
 }
 
+// The personal preset runs a metadata DB with -require-auth=false, so search
+// fences stay no-ops for the anonymous actor. Dataset cognify must still
+// publish: extraction is authorized through dataset dev-mode grants and the
+// publication opens its own snapshot fence for the versioned commit.
+func TestDocumentPublicationNoAuthPersonalMode(t *testing.T) {
+	documentHTTPDialects(t, func(t *testing.T, f *documentHTTPFixture) {
+		f.cfg.RequireAuth = false
+		cm, err := store.NewCollectionManager(2, t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer cm.Close()
+		index := bm25.NewIndexRegistry()
+		endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				Input []string `json:"input"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Error(err)
+				http.Error(w, "invalid", 400)
+				return
+			}
+			rows := []any{}
+			for i := range req.Input {
+				rows = append(rows, map[string]any{"index": i, "embedding": []float32{1, 0}})
+			}
+			json.NewEncoder(w).Encode(map[string]any{"data": rows})
+		}))
+		defer endpoint.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		anonymous := accesspkg.Actor{}
+		ctx = context.WithValue(ctx, searchActorKey{}, anonymous)
+		ctx = context.WithValue(ctx, searchEgressKey{}, searchEgress{cfg: f.cfg, actor: anonymous})
+		// 'visible' keeps its unregistered dataset association: no document_resources row.
+		body := "Anonymous personal mode must still publish dataset documents through a dedicated snapshot fence."
+		var location string
+		if err := f.db.QueryRow("SELECT raw_data_location FROM data WHERE id='visible'").Scan(&location); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(strings.TrimPrefix(location, "file://"), []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+		f.exec("UPDATE data SET raw_content_hash=$1 WHERE id='visible'", fmt.Sprintf("%x", sha256.Sum256([]byte(body))))
+		ref := accesspkg.DocumentRef{DatasetID: "alpha", DataID: "visible"}
+		revision, hash, err := f.p.SourceVersion(ctx, ref)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if revision <= 0 || !strings.EqualFold(hash, fmt.Sprintf("%x", sha256.Sum256([]byte(body)))) {
+			t.Fatalf("unexpected source version: revision=%d hash=%s", revision, hash)
+		}
+		source := cognifySource{datasetID: "alpha", documentID: "visible", sourceRevision: revision, rawContentHash: hash, texts: []string{body}}
+		if err := claimPipelineAttempts(ctx, f.db, []pipelineAttemptSource{{datasetID: "alpha", dataID: "visible", sourceRevision: revision, rawContentHash: hash}}, "docs", "run-noauth"); err != nil {
+			t.Fatal(err)
+		}
+		cfg := orchestrator.Config{Collection: "docs", Collections: cm, BM25Indexes: index, EmbedEndpoint: endpoint.URL, DB: f.db, SkipGraph: true, MinChunkChars: 1, AttemptID: "run-noauth"}
+		if err := runCognifySources(ctx, []cognifySource{source}, f.cfg, cfg, make(chan orchestrator.Progress, 100)); err != nil {
+			t.Fatalf("no-auth publication failed: %v", err)
+		}
+		var generation string
+		var verified int
+		var contentRevision int64
+		if err := f.db.QueryRow(Q(`SELECT generation,lineage_verified,content_revision FROM document_index_publications
+			WHERE dataset_id='alpha' AND data_id='visible' AND collection_name='docs'`)).Scan(&generation, &verified, &contentRevision); err != nil {
+			t.Fatalf("publication row missing: %v", err)
+		}
+		if generation == "" || verified != 1 || contentRevision != 0 {
+			t.Fatalf("publication row: generation=%q verified=%d revision=%d", generation, verified, contentRevision)
+		}
+		var state string
+		if err := f.db.QueryRow(Q(`SELECT pipeline_state FROM document_pipeline_statuses
+			WHERE dataset_id='alpha' AND data_id='visible' AND collection_name='docs' AND attempt_id='run-noauth'`)).Scan(&state); err != nil || state != "COMPLETED" {
+			t.Fatalf("pipeline state=%q err=%v", state, err)
+		}
+		if hits := index.Get("docs").Search("snapshot", 10); len(hits) != 1 {
+			t.Fatalf("hits=%+v", hits)
+		}
+	})
+}
+
 func TestDocumentPublicationRequiresCompleteLiveSource(t *testing.T) {
 	documentHTTPDialects(t, func(t *testing.T, f *documentHTTPFixture) {
 		f.cfg.RequireAuth = true
