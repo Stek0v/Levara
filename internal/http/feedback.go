@@ -132,7 +132,11 @@ func feedbackListHandler(cfg APIConfig) fiber.Handler {
 			limit = 20
 		}
 
-		var rows interface{ Next() bool; Scan(...any) error; Close() error }
+		var rows interface {
+			Next() bool
+			Scan(...any) error
+			Close() error
+		}
 		var err error
 		if collection != "" {
 			rows, err = cfg.DB.QueryContext(context.Background(),

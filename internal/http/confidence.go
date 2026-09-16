@@ -33,8 +33,9 @@ func ragAbstainThreshold() float64 {
 // falls back to global LEVARA_RAG_ABSTAIN_THRESHOLD otherwise.
 //
 // Example keys:
-//   LEVARA_RAG_ABSTAIN_THRESHOLD_RAG_COMPLETION
-//   LEVARA_RAG_ABSTAIN_THRESHOLD_GRAPH_COMPLETION
+//
+//	LEVARA_RAG_ABSTAIN_THRESHOLD_RAG_COMPLETION
+//	LEVARA_RAG_ABSTAIN_THRESHOLD_GRAPH_COMPLETION
 func ragAbstainThresholdFor(searchType string) float64 {
 	st := strings.ToUpper(strings.TrimSpace(searchType))
 	if st != "" {

@@ -22,4 +22,3 @@ func extractEvidenceChunkIDs(chunks []fiber.Map, limit int) []string {
 	}
 	return out
 }
-
