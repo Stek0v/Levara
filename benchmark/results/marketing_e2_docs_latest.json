@@ -1,0 +1,705 @@
+{
+ "meta": {
+  "phase": "A/T2 (documents, authenticated)",
+  "revision": "4efbfa6",
+  "date": "2026-09-16T15:04:28+0300",
+  "config": {
+   "db": "SQLite (DB_PROVIDER=sqlite)",
+   "auth": "required, API key (alice)",
+   "embed": "potion-code-16M dim=256 sidecar :9101",
+   "transport": "loopback HTTP, client-observed latency",
+   "note": "auth-enabled bracket of finding F1; document matrix T2.1-T2.3"
+  },
+  "matrix": "10KB/100KB x md/html/csv/pdf/docx x3 + 1MB x md/pdf + 5MB x md"
+ },
+ "t2_matrix": [
+  {
+   "kind": "md",
+   "size_target": 10000,
+   "file_bytes": 10167,
+   "paragraphs": 24,
+   "upload_ms": 30.0,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.0,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perft2-5602ee85",
+    "id": "99350981-458d-5284-8130-9a97e3506308",
+    "metadata": "{\"collection\":\"perft2-5602ee85\",\"content_revision\":0,\"dataset_id\":\"9f5e7fb3-44c3"
+   }
+  },
+  {
+   "kind": "md",
+   "size_target": 10000,
+   "file_bytes": 10167,
+   "paragraphs": 24,
+   "upload_ms": 8.7,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.0,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perft2-85985655",
+    "id": "5c7c323b-3534-5707-ae95-aaf2cfa33168",
+    "metadata": "{\"collection\":\"perft2-85985655\",\"content_revision\":0,\"dataset_id\":\"37379e61-f792"
+   }
+  },
+  {
+   "kind": "md",
+   "size_target": 10000,
+   "file_bytes": 10167,
+   "paragraphs": 24,
+   "upload_ms": 8.7,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.0,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perft2-b213c9a8",
+    "id": "e39b2a2f-fe96-5877-85df-410eae285504",
+    "metadata": "{\"collection\":\"perft2-b213c9a8\",\"content_revision\":0,\"dataset_id\":\"4f0daa3a-706e"
+   }
+  },
+  {
+   "kind": "html",
+   "size_target": 10000,
+   "file_bytes": 10315,
+   "paragraphs": 24,
+   "upload_ms": 75.7,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.1,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perft2-135a3658",
+    "id": "c226a3d8-adf6-506c-a0c4-440489c495f2",
+    "metadata": "{\"collection\":\"perft2-135a3658\",\"content_revision\":0,\"dataset_id\":\"bf12c2df-2a99"
+   }
+  },
+  {
+   "kind": "html",
+   "size_target": 10000,
+   "file_bytes": 10315,
+   "paragraphs": 24,
+   "upload_ms": 14.1,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.0,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perft2-6e83b726",
+    "id": "336634d7-e41a-5018-8f94-a192b6cb3d23",
+    "metadata": "{\"collection\":\"perft2-6e83b726\",\"content_revision\":0,\"dataset_id\":\"d7c9f872-b705"
+   }
+  },
+  {
+   "kind": "html",
+   "size_target": 10000,
+   "file_bytes": 10315,
+   "paragraphs": 24,
+   "upload_ms": 11.4,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.0,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perft2-f1881ff0",
+    "id": "47e53961-84ac-54ca-be58-92c365182abe",
+    "metadata": "{\"collection\":\"perft2-f1881ff0\",\"content_revision\":0,\"dataset_id\":\"60060346-127c"
+   }
+  },
+  {
+   "kind": "csv",
+   "size_target": 10000,
+   "file_bytes": 5474,
+   "paragraphs": 24,
+   "upload_ms": 11.9,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.0,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perft2-b9e021bd",
+    "id": "976928f9-cb54-5af9-b6a4-8b13a56ed3f0",
+    "metadata": "{\"collection\":\"perft2-b9e021bd\",\"content_revision\":0,\"dataset_id\":\"0bfa9e8a-3b0b"
+   }
+  },
+  {
+   "kind": "csv",
+   "size_target": 10000,
+   "file_bytes": 5474,
+   "paragraphs": 24,
+   "upload_ms": 11.7,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.0,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perft2-d7b6dbd7",
+    "id": "641e2615-ac4e-5d80-8ca7-34cea3eb31c3",
+    "metadata": "{\"collection\":\"perft2-d7b6dbd7\",\"content_revision\":0,\"dataset_id\":\"26ab8d02-45b2"
+   }
+  },
+  {
+   "kind": "csv",
+   "size_target": 10000,
+   "file_bytes": 5474,
+   "paragraphs": 24,
+   "upload_ms": 10.9,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.0,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perft2-377826db",
+    "id": "fc8c43b8-8a81-59fc-b49a-71d1d42d8aab",
+    "metadata": "{\"collection\":\"perft2-377826db\",\"content_revision\":0,\"dataset_id\":\"a6f9ddf8-3afd"
+   }
+  },
+  {
+   "kind": "pdf",
+   "size_target": 10000,
+   "file_bytes": 32563,
+   "paragraphs": 24,
+   "upload_ms": 40.4,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.0,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perft2-c37d2a43",
+    "id": "ed8b035b-0e5c-5a20-89c0-c506d25e4b5b",
+    "metadata": "{\"collection\":\"perft2-c37d2a43\",\"content_revision\":0,\"dataset_id\":\"132314c0-eeb1"
+   }
+  },
+  {
+   "kind": "pdf",
+   "size_target": 10000,
+   "file_bytes": 32497,
+   "paragraphs": 24,
+   "upload_ms": 32.3,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.0,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perft2-864af0c6",
+    "id": "a9bb9d80-b8d4-5fd5-9451-21d06acf2044",
+    "metadata": "{\"collection\":\"perft2-864af0c6\",\"content_revision\":0,\"dataset_id\":\"25b5841c-1226"
+   }
+  },
+  {
+   "kind": "pdf",
+   "size_target": 10000,
+   "file_bytes": 32039,
+   "paragraphs": 24,
+   "upload_ms": 30.1,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.0,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perft2-579e3339",
+    "id": "6b485009-4a0f-5dbb-8455-2dd9b803745a",
+    "metadata": "{\"collection\":\"perft2-579e3339\",\"content_revision\":0,\"dataset_id\":\"6758dfde-d1c1"
+   }
+  },
+  {
+   "kind": "docx",
+   "size_target": 10000,
+   "file_bytes": 4647,
+   "paragraphs": 24,
+   "upload_ms": 29.6,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.0,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perft2-f76e054b",
+    "id": "a484e1c3-c517-5785-94fd-f191151fbb0b",
+    "metadata": "{\"collection\":\"perft2-f76e054b\",\"content_revision\":0,\"dataset_id\":\"e34a4735-6555"
+   }
+  },
+  {
+   "kind": "docx",
+   "size_target": 10000,
+   "file_bytes": 4647,
+   "paragraphs": 24,
+   "upload_ms": 17.5,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.0,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perft2-dfbdfedb",
+    "id": "b877f5ac-d0d2-5c35-9b5e-9160eff2c00b",
+    "metadata": "{\"collection\":\"perft2-dfbdfedb\",\"content_revision\":0,\"dataset_id\":\"954b606f-75a2"
+   }
+  },
+  {
+   "kind": "docx",
+   "size_target": 10000,
+   "file_bytes": 4647,
+   "paragraphs": 24,
+   "upload_ms": 18.0,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.0,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perft2-c4b4fa66",
+    "id": "61202823-ac69-5703-8a0b-0bca4da80169",
+    "metadata": "{\"collection\":\"perft2-c4b4fa66\",\"content_revision\":0,\"dataset_id\":\"49c9ed11-ec0a"
+   }
+  },
+  {
+   "kind": "md",
+   "size_target": 100000,
+   "file_bytes": 100737,
+   "paragraphs": 238,
+   "upload_ms": 9.2,
+   "upload_status": 200,
+   "cognify_s": 1.1,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.1,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perft2-5511c4e1",
+    "id": "c3f8a54e-5ae6-537e-847b-08b155fa7c99",
+    "metadata": "{\"collection\":\"perft2-5511c4e1\",\"content_revision\":0,\"dataset_id\":\"51b479f7-fe10"
+   }
+  },
+  {
+   "kind": "md",
+   "size_target": 100000,
+   "file_bytes": 100737,
+   "paragraphs": 238,
+   "upload_ms": 8.1,
+   "upload_status": 200,
+   "cognify_s": 1.1,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.1,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perft2-bdb77bba",
+    "id": "24f4767e-0bfd-5441-9ba0-cef31bab8a23",
+    "metadata": "{\"collection\":\"perft2-bdb77bba\",\"content_revision\":0,\"dataset_id\":\"912da687-acba"
+   }
+  },
+  {
+   "kind": "md",
+   "size_target": 100000,
+   "file_bytes": 100737,
+   "paragraphs": 238,
+   "upload_ms": 13.0,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.1,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perft2-5e43d6c2",
+    "id": "bee389bc-5431-50bf-a010-6b1dc7756062",
+    "metadata": "{\"collection\":\"perft2-5e43d6c2\",\"content_revision\":0,\"dataset_id\":\"cde3c7b2-2993"
+   }
+  },
+  {
+   "kind": "html",
+   "size_target": 100000,
+   "file_bytes": 101955,
+   "paragraphs": 238,
+   "upload_ms": 13.6,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.1,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perft2-4c6388ed",
+    "id": "9f8cf91d-a370-5192-9061-32fe1626de6e",
+    "metadata": "{\"collection\":\"perft2-4c6388ed\",\"content_revision\":0,\"dataset_id\":\"76355414-f866"
+   }
+  },
+  {
+   "kind": "html",
+   "size_target": 100000,
+   "file_bytes": 101955,
+   "paragraphs": 238,
+   "upload_ms": 12.9,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.1,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perft2-14129f5a",
+    "id": "dd1fb4a9-3685-594c-9db2-10a42be24449",
+    "metadata": "{\"collection\":\"perft2-14129f5a\",\"content_revision\":0,\"dataset_id\":\"8e665b78-0e98"
+   }
+  },
+  {
+   "kind": "html",
+   "size_target": 100000,
+   "file_bytes": 101955,
+   "paragraphs": 238,
+   "upload_ms": 11.5,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.1,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perft2-f020c185",
+    "id": "b8ce3bce-af8f-5ac4-acf7-da5aafb87b30",
+    "metadata": "{\"collection\":\"perft2-f020c185\",\"content_revision\":0,\"dataset_id\":\"e625f645-fbfa"
+   }
+  },
+  {
+   "kind": "csv",
+   "size_target": 100000,
+   "file_bytes": 54412,
+   "paragraphs": 238,
+   "upload_ms": 12.7,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.0,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perft2-c3b74bbf",
+    "id": "cdab548f-bde8-523f-86c2-e9b4fcf58638",
+    "metadata": "{\"collection\":\"perft2-c3b74bbf\",\"content_revision\":0,\"dataset_id\":\"b5189719-0a03"
+   }
+  },
+  {
+   "kind": "csv",
+   "size_target": 100000,
+   "file_bytes": 54412,
+   "paragraphs": 238,
+   "upload_ms": 13.6,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.0,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perft2-5be653a3",
+    "id": "f1b4f39d-e1c3-5be2-b502-1989539181cb",
+    "metadata": "{\"collection\":\"perft2-5be653a3\",\"content_revision\":0,\"dataset_id\":\"29cf0ceb-4ddd"
+   }
+  },
+  {
+   "kind": "csv",
+   "size_target": 100000,
+   "file_bytes": 54412,
+   "paragraphs": 238,
+   "upload_ms": 13.6,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.0,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perft2-ba5eafa6",
+    "id": "af3d690c-4324-571b-bd2a-3458d77158e9",
+    "metadata": "{\"collection\":\"perft2-ba5eafa6\",\"content_revision\":0,\"dataset_id\":\"febf4f1e-5e08"
+   }
+  },
+  {
+   "kind": "pdf",
+   "size_target": 100000,
+   "file_bytes": 80725,
+   "paragraphs": 238,
+   "upload_ms": 0.8,
+   "upload_status": 429,
+   "cognify_s": null,
+   "cognify_status": "SKIPPED",
+   "fact_found_after_s": null,
+   "provenance_ok": false,
+   "provenance_fields": {},
+   "upload_error": "{\"error\":\"rate limit exceeded\",\"retry_after\":60}"
+  },
+  {
+   "kind": "pdf",
+   "size_target": 100000,
+   "file_bytes": 80459,
+   "paragraphs": 238,
+   "upload_ms": 0.8,
+   "upload_status": 429,
+   "cognify_s": null,
+   "cognify_status": "SKIPPED",
+   "fact_found_after_s": null,
+   "provenance_ok": false,
+   "provenance_fields": {},
+   "upload_error": "{\"error\":\"rate limit exceeded\",\"retry_after\":60}"
+  },
+  {
+   "kind": "pdf",
+   "size_target": 100000,
+   "file_bytes": 80603,
+   "paragraphs": 238,
+   "upload_ms": 0.8,
+   "upload_status": 429,
+   "cognify_s": null,
+   "cognify_status": "SKIPPED",
+   "fact_found_after_s": null,
+   "provenance_ok": false,
+   "provenance_fields": {},
+   "upload_error": "{\"error\":\"rate limit exceeded\",\"retry_after\":60}"
+  },
+  {
+   "kind": "docx",
+   "size_target": 100000,
+   "file_bytes": 7403,
+   "paragraphs": 238,
+   "upload_ms": 0.8,
+   "upload_status": 429,
+   "cognify_s": null,
+   "cognify_status": "SKIPPED",
+   "fact_found_after_s": null,
+   "provenance_ok": false,
+   "provenance_fields": {},
+   "upload_error": "{\"error\":\"rate limit exceeded\",\"retry_after\":60}"
+  },
+  {
+   "kind": "docx",
+   "size_target": 100000,
+   "file_bytes": 7404,
+   "paragraphs": 238,
+   "upload_ms": 0.9,
+   "upload_status": 429,
+   "cognify_s": null,
+   "cognify_status": "SKIPPED",
+   "fact_found_after_s": null,
+   "provenance_ok": false,
+   "provenance_fields": {},
+   "upload_error": "{\"error\":\"rate limit exceeded\",\"retry_after\":60}"
+  },
+  {
+   "kind": "docx",
+   "size_target": 100000,
+   "file_bytes": 7404,
+   "paragraphs": 238,
+   "upload_ms": 0.9,
+   "upload_status": 429,
+   "cognify_s": null,
+   "cognify_status": "SKIPPED",
+   "fact_found_after_s": null,
+   "provenance_ok": false,
+   "provenance_fields": {},
+   "upload_error": "{\"error\":\"rate limit exceeded\",\"retry_after\":60}"
+  },
+  {
+   "kind": "md",
+   "size_target": 1000000,
+   "file_bytes": 1004990,
+   "paragraphs": 2369,
+   "upload_ms": 1.4,
+   "upload_status": 429,
+   "cognify_s": null,
+   "cognify_status": "SKIPPED",
+   "fact_found_after_s": null,
+   "provenance_ok": false,
+   "provenance_fields": {},
+   "upload_error": "{\"error\":\"rate limit exceeded\",\"retry_after\":60}"
+  },
+  {
+   "kind": "pdf",
+   "size_target": 1000000,
+   "file_bytes": 567115,
+   "paragraphs": 2369,
+   "upload_ms": 1.0,
+   "upload_status": 429,
+   "cognify_s": null,
+   "cognify_status": "SKIPPED",
+   "fact_found_after_s": null,
+   "provenance_ok": false,
+   "provenance_fields": {},
+   "upload_error": "{\"error\":\"rate limit exceeded\",\"retry_after\":60}"
+  },
+  {
+   "kind": "md",
+   "size_target": 5000000,
+   "file_bytes": 5024045,
+   "paragraphs": 11828,
+   "upload_ms": 2.5,
+   "upload_status": 429,
+   "cognify_s": null,
+   "cognify_status": "SKIPPED",
+   "fact_found_after_s": null,
+   "provenance_ok": false,
+   "provenance_fields": {},
+   "upload_error": "{\"error\":\"rate limit exceeded\",\"retry_after\":60}"
+  },
+  {
+   "kind": "pdf",
+   "size_target": 100000,
+   "file_bytes": 80898,
+   "paragraphs": 238,
+   "upload_ms": 291.8,
+   "upload_status": 200,
+   "cognify_s": 1.1,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.1,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perft2-d6c0e98f",
+    "id": "4539dd5c-995c-52e7-b9d6-5e4d0979be43",
+    "metadata": "{\"collection\":\"perft2-d6c0e98f\",\"content_revision\":0,\"dataset_id\":\"fe0503fc-6f19"
+   }
+  },
+  {
+   "kind": "pdf",
+   "size_target": 100000,
+   "file_bytes": 80799,
+   "paragraphs": 238,
+   "upload_ms": 176.5,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.1,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perft2-b8d34d60",
+    "id": "a6a09503-c142-5b2c-a246-88ec2044d132",
+    "metadata": "{\"collection\":\"perft2-b8d34d60\",\"content_revision\":0,\"dataset_id\":\"b09e9f54-6930"
+   }
+  },
+  {
+   "kind": "pdf",
+   "size_target": 100000,
+   "file_bytes": 80884,
+   "paragraphs": 238,
+   "upload_ms": 181.0,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.1,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perft2-f4327db3",
+    "id": "e18d2fd3-7223-5c46-967f-32b18ab74b78",
+    "metadata": "{\"collection\":\"perft2-f4327db3\",\"content_revision\":0,\"dataset_id\":\"5d983224-0059"
+   }
+  },
+  {
+   "kind": "docx",
+   "size_target": 100000,
+   "file_bytes": 7402,
+   "paragraphs": 238,
+   "upload_ms": 127.4,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.1,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perft2-f4d566ed",
+    "id": "b03d259d-f2c6-566f-b35b-0295148eb704",
+    "metadata": "{\"collection\":\"perft2-f4d566ed\",\"content_revision\":0,\"dataset_id\":\"558bbf26-9229"
+   }
+  },
+  {
+   "kind": "docx",
+   "size_target": 100000,
+   "file_bytes": 7404,
+   "paragraphs": 238,
+   "upload_ms": 31.8,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.1,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perft2-f1f262bd",
+    "id": "48c27348-fd37-50eb-b5f5-29224e2c6e4c",
+    "metadata": "{\"collection\":\"perft2-f1f262bd\",\"content_revision\":0,\"dataset_id\":\"7ed57770-7429"
+   }
+  },
+  {
+   "kind": "docx",
+   "size_target": 100000,
+   "file_bytes": 7403,
+   "paragraphs": 238,
+   "upload_ms": 37.6,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.1,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perft2-00a3e099",
+    "id": "8ab205c5-595e-5088-84df-6791c037551f",
+    "metadata": "{\"collection\":\"perft2-00a3e099\",\"content_revision\":0,\"dataset_id\":\"cb03020e-09ba"
+   }
+  },
+  {
+   "kind": "md",
+   "size_target": 1000000,
+   "file_bytes": 1004990,
+   "paragraphs": 2369,
+   "upload_ms": 19.8,
+   "upload_status": 200,
+   "cognify_s": 3.1,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 3.1,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perft2-7a1790cb",
+    "id": "b4a2ff7e-3926-53bd-8dfd-d493f95d4c5c",
+    "metadata": "{\"collection\":\"perft2-7a1790cb\",\"content_revision\":0,\"dataset_id\":\"eed3b988-bae7"
+   }
+  },
+  {
+   "kind": "pdf",
+   "size_target": 1000000,
+   "file_bytes": 566831,
+   "paragraphs": 2369,
+   "upload_ms": 1660.2,
+   "upload_status": 200,
+   "cognify_s": 2.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 2.1,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perft2-78f7c240",
+    "id": "63902750-660f-5bce-8401-313014955fbb",
+    "metadata": "{\"collection\":\"perft2-78f7c240\",\"content_revision\":0,\"dataset_id\":\"5c980fcf-f209"
+   }
+  },
+  {
+   "kind": "md",
+   "size_target": 5000000,
+   "file_bytes": 5024045,
+   "paragraphs": 11828,
+   "upload_ms": 35.8,
+   "upload_status": 200,
+   "cognify_s": 45.3,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 45.4,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perft2-bc11b0c5",
+    "id": "162fa23e-bbde-53b7-9855-3183a714e9b7",
+    "metadata": "{\"collection\":\"perft2-bc11b0c5\",\"content_revision\":0,\"dataset_id\":\"c1c88cbf-e346"
+   }
+  }
+ ],
+ "f2_note": "first burst hit the shipped user rate limit (100 req/min) after 24 cycles; remaining cycles rerun with an 80 req/min client pacer"
+}

@@ -1,0 +1,79 @@
+{
+ "meta": {
+  "phase": "A (E1 Personal)",
+  "revision": "4efbfa6",
+  "date": "2026-09-16T15:00:40+0300",
+  "shapes": {
+   "memory": "http://127.0.0.1:18081 — DB_PROVIDER=sqlite, standalone, no auth",
+   "chunks": "http://127.0.0.1:18082 — no metadata DB (legacy), standalone, no auth"
+  },
+  "embed": "potion-code-16M dim=256 sidecar :9101",
+  "transport": "loopback HTTP, client-observed latency"
+ },
+ "t1_1_save_memory": {
+  "save_memory_ms": {
+   "n": 300,
+   "p50": 0.7,
+   "p95": 1.8,
+   "p99": 9.6,
+   "min": 0.5,
+   "max": 28.4,
+   "median": 0.7
+  },
+  "errors": 0
+ },
+ "index_drain_s": 1.4,
+ "t1_2_recall_warm": {
+  "recall_memory_ms": {
+   "n": 300,
+   "p50": 4.2,
+   "p95": 6.2,
+   "p99": 8.5,
+   "min": 2.3,
+   "max": 10.6,
+   "median": 4.2
+  },
+  "with_hits": 300,
+  "errors": 0
+ },
+ "t1_3_seed": {
+  "cognify_ms": 1007.3,
+  "status": {
+   "pipeline_run_id": "30bf336c-df96-41a0-82c0-a9552ad3bc56",
+   "status": "COMPLETED",
+   "stage": "complete",
+   "message": "pipeline complete",
+   "chunks_created": 100,
+   "entities_extracted": 0,
+   "edges_extracted": 0,
+   "elapsed_ms": 937,
+   "started_at": "2026-09-16T15:00:43.936178+03:00"
+  }
+ },
+ "t1_3_search": {
+  "CHUNKS": {
+   "latency_ms": {
+    "n": 50,
+    "p50": 7.1,
+    "p95": 9.1,
+    "p99": 9.4,
+    "min": 5.1,
+    "max": 9.4,
+    "median": 7.1
+   },
+   "with_hits": 50
+  },
+  "CHUNKS_LEXICAL": {
+   "latency_ms": {
+    "n": 50,
+    "p50": 0.5,
+    "p95": 1.4,
+    "p99": 1.8,
+    "min": 0.4,
+    "max": 1.8,
+    "median": 0.5
+   },
+   "with_hits": 50
+  }
+ }
+}

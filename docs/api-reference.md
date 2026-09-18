@@ -25,6 +25,13 @@ in [getting started](getting-started.md). The versioned `/mcp/2026-07-28` endpoi
 is stateless: each request supplies its own metadata and collection. It uses
 `server/discover` instead of `initialize`; `set_context` is unavailable there.
 
+`/mcp-light` is a variant of the legacy session transport pinned to the
+`memory` tool profile for token-sensitive clients: `initialize` reports
+`toolset.name=memory`, `tools/list` returns only memory-profile tools, and
+`tools/call` rejects everything outside that profile with a toolset error —
+regardless of `LEVARA_MCP_TOOLSET`. Sessions are shared with `/mcp`, so a
+session created on either endpoint works on both.
+
 For the versioned endpoint, send `Content-Type: application/json`,
 `Accept: application/json, text/event-stream`, and:
 

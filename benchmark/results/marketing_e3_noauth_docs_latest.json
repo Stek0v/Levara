@@ -1,0 +1,685 @@
+{
+ "meta": {
+  "phase": "A/E3 (documents, no-auth personal preset)",
+  "date": "2026-09-16T16:11:24+0300",
+  "config": {
+   "db": "SQLite (DB_PROVIDER=sqlite)",
+   "auth": "disabled (-require-auth=false, anonymous per-IP bucket)",
+   "embed": "potion-code-16M dim=256 sidecar :9101",
+   "transport": "loopback HTTP, client-observed latency",
+   "note": "no-auth bracket of finding F1 after fix; document matrix T2.1-T2.3 methodology; client pacing 75 req/min"
+  },
+  "matrix": "10KB/100KB x md/html/csv/pdf/docx x3 + 1MB x md/pdf + 5MB x md"
+ },
+ "t3_matrix": [
+  {
+   "kind": "md",
+   "size_target": 10000,
+   "file_bytes": 10277,
+   "paragraphs": 28,
+   "upload_ms": 11.7,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.0,
+   "fact_found": true,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perfe3-1e147f7d",
+    "dataset_id": "18f03d64-2d50-4b40-92b1-53e0330751bb",
+    "document_id": "ead9207a-c767-5fc5-8b4f-4de9749aff6b",
+    "generation": "4b7e8c3e-d9cf-45a9-8eb2-c8f63b077d16",
+    "content_revision": 0
+   }
+  },
+  {
+   "kind": "md",
+   "size_target": 10000,
+   "file_bytes": 10243,
+   "paragraphs": 27,
+   "upload_ms": 10.9,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.0,
+   "fact_found": true,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perfe3-8572e719",
+    "dataset_id": "0aa0255d-6ecc-45cf-9e42-559df5dd7ad9",
+    "document_id": "71017e3b-ccfc-5370-9725-70db8beb14b2",
+    "generation": "bb866e22-c7dc-4e71-ae59-d1a283fe9a54",
+    "content_revision": 0
+   }
+  },
+  {
+   "kind": "md",
+   "size_target": 10000,
+   "file_bytes": 10272,
+   "paragraphs": 28,
+   "upload_ms": 14.3,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.0,
+   "fact_found": true,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perfe3-aa32dc5e",
+    "dataset_id": "e1bbafe8-17eb-41e8-819a-7c8ba4dcf1bc",
+    "document_id": "6e18de68-e7cf-5b38-9d89-818cffab2251",
+    "generation": "721ddffb-202a-4c19-b0bc-a8220f77a57f",
+    "content_revision": 0
+   }
+  },
+  {
+   "kind": "md",
+   "size_target": 100000,
+   "file_bytes": 100440,
+   "paragraphs": 276,
+   "upload_ms": 8.5,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.0,
+   "fact_found": true,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perfe3-30078b9c",
+    "dataset_id": "fda69957-66f6-40eb-8a60-4b50c80248d4",
+    "document_id": "347272f6-d374-59ec-a5a2-14a269c4292d",
+    "generation": "cf5a7244-95a1-460b-8e68-eb4da61ca2fc",
+    "content_revision": 0
+   }
+  },
+  {
+   "kind": "md",
+   "size_target": 100000,
+   "file_bytes": 100114,
+   "paragraphs": 266,
+   "upload_ms": 12.7,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.0,
+   "fact_found": true,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perfe3-53ab2e37",
+    "dataset_id": "07e7bf61-b399-44d7-8a18-61fbf5920ab2",
+    "document_id": "7e44029a-1797-5332-8cde-87041b47bf36",
+    "generation": "c9aa6d1e-2de0-4c8a-9e59-0a51ac8aef0f",
+    "content_revision": 0
+   }
+  },
+  {
+   "kind": "md",
+   "size_target": 100000,
+   "file_bytes": 100158,
+   "paragraphs": 270,
+   "upload_ms": 13.4,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.0,
+   "fact_found": true,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perfe3-0fe6cbb8",
+    "dataset_id": "12f8e624-4715-47cf-9460-d3dcf47eb32d",
+    "document_id": "3a8213ee-6378-5011-ae57-045cc343e825",
+    "generation": "d4cb9ef0-6537-49a8-a9ae-ab79766e94d6",
+    "content_revision": 0
+   }
+  },
+  {
+   "kind": "html",
+   "size_target": 10000,
+   "file_bytes": 10346,
+   "paragraphs": 27,
+   "upload_ms": 20.6,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.0,
+   "fact_found": true,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perfe3-19b2fe6a",
+    "dataset_id": "0ea9944b-b912-465c-a7a8-d9fc2aad4295",
+    "document_id": "07806a56-5141-50d8-8352-4232c3b88078",
+    "generation": "2d4d4fd5-287c-47b0-beec-8a487d1f02ec",
+    "content_revision": 0
+   }
+  },
+  {
+   "kind": "html",
+   "size_target": 10000,
+   "file_bytes": 10645,
+   "paragraphs": 28,
+   "upload_ms": 12.2,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.0,
+   "fact_found": true,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perfe3-5da3319d",
+    "dataset_id": "37eb3b75-545e-4a56-812a-36913cb83899",
+    "document_id": "85a62fdc-5dd8-5489-bb51-65837ae1d28b",
+    "generation": "b29da4ba-d7a9-41e2-b6c1-ab09da2194ba",
+    "content_revision": 0
+   }
+  },
+  {
+   "kind": "html",
+   "size_target": 10000,
+   "file_bytes": 10591,
+   "paragraphs": 28,
+   "upload_ms": 19.0,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.0,
+   "fact_found": true,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perfe3-89999475",
+    "dataset_id": "1bc57c5c-6f3b-4f54-903e-1ac3e65d2820",
+    "document_id": "e402448d-9e05-5636-ac8a-e20f8f1b8dec",
+    "generation": "249b0f83-2dd7-48fe-99cc-6b92b91ca48b",
+    "content_revision": 0
+   }
+  },
+  {
+   "kind": "html",
+   "size_target": 100000,
+   "file_bytes": 101709,
+   "paragraphs": 267,
+   "upload_ms": 20.4,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.0,
+   "fact_found": true,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perfe3-744fe9dd",
+    "dataset_id": "33ac39b5-8561-4a8d-8147-8183fe01b0bb",
+    "document_id": "4261e238-7ef8-540d-9941-9dd1df0ee604",
+    "generation": "58842c70-081a-484a-904e-ee3a8d831ec8",
+    "content_revision": 0
+   }
+  },
+  {
+   "kind": "html",
+   "size_target": 100000,
+   "file_bytes": 101951,
+   "paragraphs": 275,
+   "upload_ms": 17.5,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.0,
+   "fact_found": true,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perfe3-1363e3dd",
+    "dataset_id": "0e5e7b33-144a-4680-8dbc-aeddef9a2ed2",
+    "document_id": "70b96b0a-4050-59c5-8e9b-48d57fb0b7f8",
+    "generation": "4ac4502d-717a-4bac-a5af-00a2ece71d60",
+    "content_revision": 0
+   }
+  },
+  {
+   "kind": "html",
+   "size_target": 100000,
+   "file_bytes": 101935,
+   "paragraphs": 276,
+   "upload_ms": 37.9,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.1,
+   "fact_found": true,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perfe3-a00947e0",
+    "dataset_id": "fa431f3b-a6cf-4501-a4b5-47ac12ee39fc",
+    "document_id": "8597cf55-bafe-54a7-9535-868c63110719",
+    "generation": "1c718915-92ad-4f76-8733-9cc903d3c054",
+    "content_revision": 0
+   }
+  },
+  {
+   "kind": "csv",
+   "size_target": 10000,
+   "file_bytes": 10081,
+   "paragraphs": 48,
+   "upload_ms": 29.2,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.0,
+   "fact_found": true,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perfe3-7ef6a81c",
+    "dataset_id": "d0aa4950-4144-4534-83a1-f9a101aefdfe",
+    "document_id": "1c7c6cac-afd5-5de3-af70-a8716e120bce",
+    "generation": "2ad0bf92-4764-44d6-b69e-9f9f02326219",
+    "content_revision": 0
+   }
+  },
+  {
+   "kind": "csv",
+   "size_target": 10000,
+   "file_bytes": 10119,
+   "paragraphs": 48,
+   "upload_ms": 48.4,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.1,
+   "fact_found": true,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perfe3-2679394b",
+    "dataset_id": "1dfd6e13-fe27-452b-a2a0-ccc8e8e80568",
+    "document_id": "5cab6846-13d3-51d1-8d0c-65d2f8d9c076",
+    "generation": "1d54701b-8bfa-4812-9fb4-4a6ac2b2e0da",
+    "content_revision": 0
+   }
+  },
+  {
+   "kind": "csv",
+   "size_target": 10000,
+   "file_bytes": 10126,
+   "paragraphs": 48,
+   "upload_ms": 20.5,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 45.5,
+   "fact_found": true,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perfe3-ef041ccf",
+    "dataset_id": "c1c944a3-08ce-445a-a10a-f67afa0c2cb6",
+    "document_id": "6bb4457e-cc5b-5bb5-ad14-490cba1ff2e6",
+    "generation": "1449cbbf-c07e-49d6-a289-1a7a839d7226",
+    "content_revision": 0
+   }
+  },
+  {
+   "kind": "csv",
+   "size_target": 100000,
+   "file_bytes": 100593,
+   "paragraphs": 477,
+   "upload_ms": 13.9,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.0,
+   "fact_found": true,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perfe3-8b1138fc",
+    "dataset_id": "f05a73c9-361d-4d2f-959c-c84c19a3aa1d",
+    "document_id": "43517276-b2d1-5872-845f-32a427c8a80b",
+    "generation": "507c74f8-c807-4f56-ac19-74505576d527",
+    "content_revision": 0
+   }
+  },
+  {
+   "kind": "csv",
+   "size_target": 100000,
+   "file_bytes": 100656,
+   "paragraphs": 478,
+   "upload_ms": 8.6,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.0,
+   "fact_found": true,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perfe3-00b2d420",
+    "dataset_id": "b11d495b-ea22-4457-b843-dc8468790d40",
+    "document_id": "a0d8d1aa-b3d8-5bab-9cda-aad17d5ae616",
+    "generation": "14e3b166-ad61-4557-9126-c3a254b1e1f5",
+    "content_revision": 0
+   }
+  },
+  {
+   "kind": "csv",
+   "size_target": 100000,
+   "file_bytes": 100614,
+   "paragraphs": 478,
+   "upload_ms": 14.4,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.0,
+   "fact_found": true,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perfe3-5993ddc9",
+    "dataset_id": "fa9facba-3fe7-4401-a239-8b7103b1a5ed",
+    "document_id": "c3299b51-b892-52bb-9072-e2ebc16156f5",
+    "generation": "02887434-cc99-4aa1-b39b-a13941ef20cd",
+    "content_revision": 0
+   }
+  },
+  {
+   "kind": "pdf",
+   "size_target": 10000,
+   "file_bytes": 22755,
+   "paragraphs": 25,
+   "upload_ms": 22.1,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.0,
+   "fact_found": true,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perfe3-79c37f27",
+    "dataset_id": "8df33de8-29ab-457f-83de-388b5ee5a3ad",
+    "document_id": "9e0d1c6e-2f21-54f1-b308-bc84390ffe6b",
+    "generation": "265f7e6c-4862-4353-a0b9-d2227ac9a87a",
+    "content_revision": 0
+   }
+  },
+  {
+   "kind": "pdf",
+   "size_target": 10000,
+   "file_bytes": 22469,
+   "paragraphs": 25,
+   "upload_ms": 22.3,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.0,
+   "fact_found": true,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perfe3-bfe00924",
+    "dataset_id": "2ad2ed60-9c37-4ac9-bce1-0f64b77e2564",
+    "document_id": "5ed0f073-87c5-5b8f-a940-51d64dbcd85e",
+    "generation": "c74c2cb6-e9ae-46b0-b410-aaae4de0e080",
+    "content_revision": 0
+   }
+  },
+  {
+   "kind": "pdf",
+   "size_target": 10000,
+   "file_bytes": 22295,
+   "paragraphs": 27,
+   "upload_ms": 24.4,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.0,
+   "fact_found": true,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perfe3-de325a95",
+    "dataset_id": "94f61234-abdb-4cf6-8bdc-f02fbdfe91da",
+    "document_id": "7bf8087a-d331-551e-b021-0815393e3de7",
+    "generation": "2fff0c9e-465d-4404-b13f-404577b20356",
+    "content_revision": 0
+   }
+  },
+  {
+   "kind": "pdf",
+   "size_target": 100000,
+   "file_bytes": 60904,
+   "paragraphs": 245,
+   "upload_ms": 86.1,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.1,
+   "fact_found": true,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perfe3-c41a97c5",
+    "dataset_id": "13f21754-7aa6-41b5-b0a5-a2f2912314dd",
+    "document_id": "29e4cc25-8127-531c-b9f3-f24379f48de9",
+    "generation": "11c3a2ef-895b-41bc-a457-e9661eae906a",
+    "content_revision": 0
+   }
+  },
+  {
+   "kind": "pdf",
+   "size_target": 100000,
+   "file_bytes": 61427,
+   "paragraphs": 250,
+   "upload_ms": 86.9,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.1,
+   "fact_found": true,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perfe3-e2a04e81",
+    "dataset_id": "b2216938-c644-4370-8033-b2f8dea5bba9",
+    "document_id": "5900a7dc-e291-5572-b835-d6cc6d8cced8",
+    "generation": "9feb37c2-31dd-48b4-b023-ecff9494e4ec",
+    "content_revision": 0
+   }
+  },
+  {
+   "kind": "pdf",
+   "size_target": 100000,
+   "file_bytes": 61764,
+   "paragraphs": 253,
+   "upload_ms": 88.1,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.1,
+   "fact_found": true,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perfe3-e01afb08",
+    "dataset_id": "10788d01-240b-42af-b130-f4e965efd19d",
+    "document_id": "c7c06db0-0c36-51c5-a72e-ab410dc0958d",
+    "generation": "4ec7d0a5-11d9-4195-a7dd-7856bd97900d",
+    "content_revision": 0
+   }
+  },
+  {
+   "kind": "docx",
+   "size_target": 10000,
+   "file_bytes": 11375,
+   "paragraphs": 27,
+   "upload_ms": 16.2,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.0,
+   "fact_found": true,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perfe3-d6a8568a",
+    "dataset_id": "133617a0-c4e0-4950-af93-5730ffce76f2",
+    "document_id": "a38992fe-e3d7-56b3-a128-8b69e754f82c",
+    "generation": "6067d283-2944-4067-95fc-9376d48142d3",
+    "content_revision": 0
+   }
+  },
+  {
+   "kind": "docx",
+   "size_target": 10000,
+   "file_bytes": 11373,
+   "paragraphs": 26,
+   "upload_ms": 13.9,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.0,
+   "fact_found": true,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perfe3-f121e028",
+    "dataset_id": "042955a5-6e33-4040-80ba-1755f6e3250b",
+    "document_id": "70f51cd5-71eb-51f9-904a-faf7bde8fa2d",
+    "generation": "3351b439-a3c5-4ad1-a50e-59a26a27fe76",
+    "content_revision": 0
+   }
+  },
+  {
+   "kind": "docx",
+   "size_target": 10000,
+   "file_bytes": 11360,
+   "paragraphs": 25,
+   "upload_ms": 15.2,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.0,
+   "fact_found": true,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perfe3-f78d01e5",
+    "dataset_id": "ea3ad90c-a66a-4522-ae4b-bdde2e308ee9",
+    "document_id": "c13a9fe0-5849-59fb-bea6-df85b10ecad1",
+    "generation": "b767130f-f27f-4266-ac9c-059452070d46",
+    "content_revision": 0
+   }
+  },
+  {
+   "kind": "docx",
+   "size_target": 100000,
+   "file_bytes": 13778,
+   "paragraphs": 250,
+   "upload_ms": 22.9,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.0,
+   "fact_found": true,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perfe3-a5255157",
+    "dataset_id": "bbeb5dac-e604-4407-8aae-13cadf9a0cb9",
+    "document_id": "4215f91b-f835-55a1-afe7-248346471f15",
+    "generation": "1658790d-c3ca-4f75-b108-74c5adf37850",
+    "content_revision": 0
+   }
+  },
+  {
+   "kind": "docx",
+   "size_target": 100000,
+   "file_bytes": 13781,
+   "paragraphs": 249,
+   "upload_ms": 24.7,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 1.0,
+   "fact_found": true,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perfe3-8f54bbaa",
+    "dataset_id": "5dbf46c6-1f2c-4f80-ac49-faebe31a48a2",
+    "document_id": "213dab91-92a4-5b02-9dcb-f5f56d627f6c",
+    "generation": "3308ac5d-0a45-4b7a-9c43-809ff24f0841",
+    "content_revision": 0
+   }
+  },
+  {
+   "kind": "docx",
+   "size_target": 100000,
+   "file_bytes": 13760,
+   "paragraphs": 247,
+   "upload_ms": 21.3,
+   "upload_status": 200,
+   "cognify_s": 1.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 43.3,
+   "fact_found": true,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perfe3-6b0dc02c",
+    "dataset_id": "070ba51a-0e5d-43aa-8273-7c31fa8ba7e3",
+    "document_id": "03f73a5e-8203-59df-b733-b11fb4b4e4ee",
+    "generation": "cd8f4221-6e4f-4ed0-b9b0-7957a7435df7",
+    "content_revision": 0
+   }
+  },
+  {
+   "kind": "md",
+   "size_target": 1000000,
+   "file_bytes": 1000053,
+   "paragraphs": 2683,
+   "upload_ms": 16.6,
+   "upload_status": 200,
+   "cognify_s": 5.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 9.1,
+   "fact_found": false,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perfe3-5f22c0ff",
+    "dataset_id": "0ea64920-cd5e-4df3-887a-072aebb8ba52",
+    "document_id": "3f699b2e-100e-5352-b651-2d22ff5d80cc",
+    "generation": "25ff6553-dcc0-4cd0-ac4b-0a7993fac3c9",
+    "content_revision": 0
+   },
+   "fact_found_vector_top3": false,
+   "fact_found_lexical": true,
+   "note": "уникальный код-токен не попал в векторный top-3 среди сотен чанков; lexical-поиск находит мгновенно"
+  },
+  {
+   "kind": "pdf",
+   "size_target": 1000000,
+   "file_bytes": 448562,
+   "paragraphs": 2469,
+   "upload_ms": 740.3,
+   "upload_status": 200,
+   "cognify_s": 3.0,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 7.8,
+   "fact_found": false,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perfe3-06001033",
+    "dataset_id": "9cf3085e-dc3f-48e7-b210-c2ecbf5c1252",
+    "document_id": "68acb91a-ef66-50e2-bfa4-a2b263703555",
+    "generation": "57f4b0ab-9550-4d0f-ad20-e9f61caab1da",
+    "content_revision": 0
+   },
+   "fact_found_vector_top3": false,
+   "fact_found_lexical": true,
+   "note": "уникальный код-токен не попал в векторный top-3 среди сотен чанков; lexical-поиск находит мгновенно"
+  },
+  {
+   "kind": "md",
+   "size_target": 5000000,
+   "file_bytes": 5000038,
+   "paragraphs": 13440,
+   "upload_ms": 39.6,
+   "upload_status": 200,
+   "cognify_s": 22.1,
+   "cognify_status": "COMPLETED",
+   "fact_found_after_s": 26.2,
+   "fact_found": false,
+   "provenance_ok": true,
+   "provenance_fields": {
+    "collection": "perfe3-3d1c2bda",
+    "dataset_id": "7a02feb7-4094-49bf-844f-c5b63b645479",
+    "document_id": "924cb10e-634c-5fc8-acd3-990e6e79c26d",
+    "generation": "c6e06b94-73bb-442b-9812-8c6bc6263b40",
+    "content_revision": 0
+   },
+   "fact_found_vector_top3": false,
+   "fact_found_lexical": true,
+   "note": "уникальный код-токен не попал в векторный top-3 среди сотен чанков; lexical-поиск находит мгновенно"
+  }
+ ]
+}

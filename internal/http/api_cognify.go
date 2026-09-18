@@ -608,8 +608,15 @@ func runCognifySources(ctx context.Context, sources []cognifySource, apiCfg APIC
 			}
 			p, ok := fenced.Value(searchReadPolicyKey{}).(accesspkg.SQLPolicy)
 			if !ok {
+				// Anonymous personal mode keeps search fences as no-ops, yet the
+				// versioned commit still requires one snapshot transaction. Open
+				// a dedicated fence; CommitDocumentIndexVersioned re-authorizes
+				// the source and rebinds its version inside that transaction.
 				release()
-				return fiber.NewError(503, "document publication authorization unavailable")
+				p, release, err = documentSQLPolicy(apiCfg).BeginReadFence(fenced, GetDBProvider() == DBSQLite)
+				if err != nil {
+					return fiber.NewError(503, "document publication authorization unavailable")
+				}
 			}
 			actor, _ := fenced.Value(searchActorKey{}).(accesspkg.Actor)
 			lineage, marshalErr := json.Marshal(searchSources(fenced))
