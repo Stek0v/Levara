@@ -4,9 +4,10 @@ package mcp
 //
 // Every tool returns a ToolResult envelope (Content + IsError). The MCP
 // "outputSchema" field on Tool describes the structured payload that
-// lives *inside* Content[0].Text — most of our tools marshal JSON into
-// that text so MCP clients can parse it. Plain-text tools don't need an
-// outputSchema; we document the absence with a small helper.
+// lives in ToolResult.StructuredContent. Most tools also mirror that JSON
+// into Content[0].Text for backward-compatible text clients. Plain-text
+// tools don't need an outputSchema; we document the absence with a small
+// helper.
 //
 // Keeping the schemas here rather than inline in tools.go lets us share
 // common shapes (search result, status, count) and change them in one
