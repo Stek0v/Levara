@@ -890,11 +890,11 @@ func (h *mcpHandler) handleRPC(c *fiber.Ctx) error {
 					"name":    "levara",
 					"version": "1.0.0",
 				},
-			"toolset": map[string]any{
-				"name":              mcp.ToolsetName(h.toolset()),
-				"tool_count":        len(h.toolDescriptors()),
-				"contract_revision": mcp.AgentContractVersion,
-			},
+				"toolset": map[string]any{
+					"name":              mcp.ToolsetName(h.toolset()),
+					"tool_count":        len(h.toolDescriptors()),
+					"contract_revision": mcp.AgentContractVersion,
+				},
 				"instructions": "Call the `levara_instructions` tool for the versioned agent contract (memory model, when-to-save rules, observability toolkit, anti-patterns). Contract revision: " + mcp.AgentContractVersion + ".",
 			},
 		})
@@ -1101,7 +1101,7 @@ func (h *mcpHandler) recordMCPAudit(ctx context.Context, sess *mcpSession, name 
 		Outcome:       outcome,
 		ResultSize:    resultSize,
 		ResponseBytes: resultSize,
-		Toolset:       mcp.ToolsetName(os.Getenv("LEVARA_MCP_TOOLSET")),
+		Toolset:       mcp.ToolsetName(h.toolset()),
 	}
 	scope := verifiedAuditScope(ctx)
 	entry.TenantID, entry.ScopeVerified = scope.TenantID, scope.Verified

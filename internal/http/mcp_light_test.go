@@ -270,6 +270,61 @@ func TestMCPLight_SharedSessionStoreAcrossEndpoints(t *testing.T) {
 	}
 }
 
+// The pinned profile must survive an explicit env override: even with
+// LEVARA_MCP_TOOLSET=full, /mcp-light reports and enforces memory.
+func TestMCPLight_PinnedProfileWinsOverEnv(t *testing.T) {
+	t.Setenv("LEVARA_MCP_TOOLSET", "full")
+	app, _, _ := mcpLightApp(t, APIConfig{})
+
+	_, body, sid := postRPCPath(t, app, "/mcp-light", `{"jsonrpc":"2.0","id":1,"method":"initialize"}`, nil)
+	if sid == "" {
+		t.Fatalf("no session id; body=%s", body)
+	}
+	var init struct {
+		Result struct {
+			Toolset struct {
+				Name string `json:"name"`
+			} `json:"toolset"`
+		} `json:"result"`
+	}
+	decodeRPCInto(t, body, &init)
+	if init.Result.Toolset.Name != "memory" {
+		t.Errorf("toolset.name = %q with LEVARA_MCP_TOOLSET=full, want memory (pinned)", init.Result.Toolset.Name)
+	}
+
+	status, body, _ := postRPCPath(t, app, "/mcp-light",
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"runtime_stats","arguments":{}}}`,
+		map[string]string{"Mcp-Session-Id": sid})
+	if status != fiber.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", status, body)
+	}
+	if result := toolCallResult(t, body); !result.IsError {
+		t.Fatal("runtime_stats must stay rejected on /mcp-light even with LEVARA_MCP_TOOLSET=full")
+	}
+}
+
+// Enforcement follows the endpoint, not the session origin: a session
+// born on /mcp (full toolset) is still subject to the memory profile
+// when its calls go through /mcp-light.
+func TestMCPLight_EnforcesProfileForForeignSession(t *testing.T) {
+	t.Setenv("LEVARA_MCP_TOOLSET", "")
+	app, _, _ := mcpLightApp(t, APIConfig{})
+
+	_, body, sid := postRPCPath(t, app, "/mcp", `{"jsonrpc":"2.0","id":1,"method":"initialize"}`, nil)
+	if sid == "" {
+		t.Fatalf("no session id; body=%s", body)
+	}
+	status, body, _ := postRPCPath(t, app, "/mcp-light",
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"runtime_stats","arguments":{}}}`,
+		map[string]string{"Mcp-Session-Id": sid})
+	if status != fiber.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", status, body)
+	}
+	if result := toolCallResult(t, body); !result.IsError || !strings.Contains(result.Text, "not found in active MCP toolset") {
+		t.Fatalf("runtime_stats via /mcp-light with /mcp-born session must hit the toolset gate, got: %+v", result)
+	}
+}
+
 // RegisterMCPAPILight wires the full route set: initialize creates a
 // session, DELETE terminates it (204 then 404).
 func TestMCPLight_RoutesRegisteredAndSessionDeleted(t *testing.T) {
@@ -317,8 +372,8 @@ func toolCallResult(t *testing.T, body string) toolCallOutcome {
 	t.Helper()
 	reply := decodeRPC(t, body)
 	var result struct {
-		IsError  bool `json:"isError"`
-		Content  []struct {
+		IsError bool `json:"isError"`
+		Content []struct {
 			Text string `json:"text"`
 		} `json:"content"`
 	}
