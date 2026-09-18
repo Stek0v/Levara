@@ -162,6 +162,9 @@ fallback и метрики различаются — см. [search guide](searc
 ## 9. MCP (Model Context Protocol)
 
 Подключайте клиент к `/mcp`; REST base `/api/v1` не является MCP URL.
+Для token-чувствительных агентов доступен `/mcp-light` — тот же session
+транспорт, но закреплённый профиль `memory`, который не перекрывается
+`LEVARA_MCP_TOOLSET` (см. [API guide](api-reference.md)).
 Строгий stateless transport `/mcp/2026-07-28` требует дополнительных headers/meta,
 перечисленных в [API guide](api-reference.md). Реестр инструментов и схемы:
 [API contract](api-contract.md). Видимость зависит от `LEVARA_MCP_TOOLSET` и

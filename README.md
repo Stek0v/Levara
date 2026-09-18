@@ -125,6 +125,20 @@ Connect an MCP client:
 }
 ```
 
+Token-sensitive agents (for example Hermes) can point at `/mcp-light`
+instead: same session transport, but the server always advertises and
+enforces the `memory` profile (~3x fewer tool schemas per call):
+
+```json
+{
+  "mcpServers": {
+    "levara-light": {
+      "url": "http://127.0.0.1:8080/mcp-light"
+    }
+  }
+}
+```
+
 Then ask the agent to create its first durable record:
 
 ```text
@@ -213,7 +227,11 @@ agent needs:
 | `long-horizon` | Scoped memory plus tasks, receipts, validation and completion |
 | `full` | Backward-compatible canonical catalogue |
 
-`light` remains a legacy alias for `memory`. Tool profiles are not authorization
+`light` remains a legacy alias for `memory`. The `/mcp-light` endpoint pins that
+profile at the endpoint level: one process can serve full-toolset clients on
+`/mcp` and memory-only clients on `/mcp-light` simultaneously, sessions are
+shared across both endpoints, and the pinned profile is not overridable by
+`LEVARA_MCP_TOOLSET`. Tool profiles are not authorization
 boundaries; JWT/API-key and workspace policy checks still apply independently.
 
 Task Runtime is opt-in with `LEVARA_LONG_HORIZON_RUNTIME=1` and the
@@ -250,6 +268,7 @@ opening listeners. It does not validate IdP connectivity or the entire deploymen
 | Surface | Default | Current contract | Best for |
 |---|---:|---:|---|
 | MCP Streamable HTTP (latest) | `/mcp/2026-07-28` | stateless, per-request metadata | Hermes and current MCP clients |
+| MCP Streamable HTTP (light) | `/mcp-light` | session-based, pinned `memory` profile | Token-sensitive agents; ~3x fewer tool schemas |
 | MCP Streamable HTTP (legacy) | `/mcp` | session-based compatibility | Existing AI agents and IDE integrations |
 | REST | `:8080` | [Generated route inventory](docs/api-contract.md) | WebUI, applications and operations |
 | gRPC v1/v2 | `:50051` | v1 document upload/cognify/status; privileged raw storage | Scoped v1 document RPCs use JWT and live tenant/document permissions; raw RPCs require active superuser with auth |
