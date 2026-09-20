@@ -89,7 +89,7 @@ func validSHA256(v string) bool {
 	return err == nil && len(raw) == 32 && strings.ToLower(v) == v
 }
 func validConditions(c WriteConditions) bool {
-	return !(c.IfMatch != "" && c.IfNoneMatch != "") && (c.IfNoneMatch == "" || c.IfNoneMatch == "*") && len(c.IfMatch) <= 1024 && !strings.ContainsAny(c.IfMatch, "\r\n")
+	return (c.IfMatch == "" || c.IfNoneMatch == "") && (c.IfNoneMatch == "" || c.IfNoneMatch == "*") && len(c.IfMatch) <= 1024 && !strings.ContainsAny(c.IfMatch, "\r\n")
 }
 func (s *S3Storage) validateCheckpoint(key string, c MultipartCheckpoint) error {
 	if validS3Key(key) != nil || c.Version != 1 || len(c.Signature) != 64 || c.Key != key || c.Bucket != s.bucket || c.EndpointDigest != s.endpointDigest() || c.UploadID == "" || len(c.UploadID) > 2048 || strings.ContainsAny(c.UploadID, "\r\n") || len(c.Marker) != 32 || !validSHA256(c.SourceSHA256) || c.Size <= 0 || c.Size > s.cfg.MaxObjectBytes || c.PartSize < 5<<20 || c.PartSize > 64<<20 || c.PartSize > s.cfg.PartSize || len(c.Parts) < 1 || len(c.Parts) > maxMultipartParts || int64(len(c.Parts)) != (c.Size+c.PartSize-1)/c.PartSize || !validConditions(c.Conditions) || c.Conditions == (WriteConditions{}) {

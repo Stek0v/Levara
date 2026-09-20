@@ -116,7 +116,7 @@ func NewOIDCVerifier(cfg OIDCVerifierConfig) (*OIDCVerifier, error) {
 	// Compare the parsed host, never a URL prefix; localhost.example and
 	// localhost@example are remote hosts. Plain HTTP is for loopback tests only.
 	loopback := strings.EqualFold(u.Hostname(), "localhost") || net.ParseIP(u.Hostname()).IsLoopback()
-	if u.Scheme != "https" && !(u.Scheme == "http" && loopback) {
+	if u.Scheme != "https" && (u.Scheme != "http" || !loopback) {
 		return nil, errors.New("oidc: JWKSURL must use https (except loopback)")
 	}
 	if len(cfg.Issuers) == 0 || len(cfg.Audiences) == 0 {

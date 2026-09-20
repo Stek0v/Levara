@@ -248,7 +248,7 @@ func addHandler(cfg APIConfig) fiber.Handler {
 			}
 			analysis := docdetect.AnalyzePDFForStructuredExtraction(data, file.Filename, extractedText, schemaProvided)
 			analyses = append(analyses, analysis)
-			if strings.TrimSpace(extractedText) == "" && !(analysis.StructuredReady && structuredEndpoint(cfg) != "") {
+			if strings.TrimSpace(extractedText) == "" && (!analysis.StructuredReady || structuredEndpoint(cfg) == "") {
 				detail := "no usable text extracted"
 				if err != nil {
 					detail = err.Error()

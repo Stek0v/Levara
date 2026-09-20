@@ -24,8 +24,8 @@ type mockS3 struct {
 	bucket  string
 	objects map[string][]byte
 	lastReq struct {
-		method string
-		auth   string
+		method  string
+		auth    string
 		amzDate string
 		sha256  string
 	}

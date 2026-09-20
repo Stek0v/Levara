@@ -85,8 +85,8 @@ func TestIngestDedup(t *testing.T) {
 func TestIngestBinaryFile(t *testing.T) {
 	dir := t.TempDir()
 	items := []Item{{
-		FileData: []byte("binary content here"),
-		Filename: "test.bin",
+		FileData:    []byte("binary content here"),
+		Filename:    "test.bin",
 		DatasetName: "ds",
 	}}
 

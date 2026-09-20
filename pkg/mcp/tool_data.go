@@ -51,7 +51,7 @@ func ToolDelete(ctx context.Context, deps Deps, args map[string]any) ToolResult 
 			return toolError("dataset access denied")
 		}
 	}
-	if err := policy.DeleteDatasetWithDocuments(ctx, actor.Actor, dsID); err != nil && !(actor.TrustedLocal && errors.Is(err, access.ErrDocumentNotFound)) {
+	if err := policy.DeleteDatasetWithDocuments(ctx, actor.Actor, dsID); err != nil && (!actor.TrustedLocal || !errors.Is(err, access.ErrDocumentNotFound)) {
 		return toolError("dataset delete denied or unavailable")
 	}
 	message := fmt.Sprintf("Dataset %s deleted.", dsID)

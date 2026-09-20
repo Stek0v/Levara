@@ -192,7 +192,7 @@ func TestStructuredArtifactReplacementNeverReusesLineage(t *testing.T) {
 			}
 			b := publish("B", `{"value":"B"}`, &ingest.SourceCAS{Revision: a.SourceRevision, RawContentHash: a.ContentHash})
 			a2 := publish("A", `{"value":"A"}`, &ingest.SourceCAS{Revision: b.SourceRevision, RawContentHash: b.ContentHash})
-			if !(a.SourceRevision < b.SourceRevision && b.SourceRevision < a2.SourceRevision) || a.StructuredArtifactID == b.StructuredArtifactID || a.StructuredArtifactID == a2.StructuredArtifactID || b.StructuredArtifactID == a2.StructuredArtifactID {
+			if a.SourceRevision >= b.SourceRevision || b.SourceRevision >= a2.SourceRevision || a.StructuredArtifactID == b.StructuredArtifactID || a.StructuredArtifactID == a2.StructuredArtifactID || b.StructuredArtifactID == a2.StructuredArtifactID {
 				t.Fatalf("lineage reused: A=%+v B=%+v A2=%+v", a, b, a2)
 			}
 			rows, err := f.db.Query("SELECT id,state FROM document_structured_artifacts ORDER BY source_revision")

@@ -203,8 +203,8 @@ func (f *ldapWire) serve(raw net.Conn) {
 				f.plaintextBinds++
 			}
 			f.mu.Unlock()
-		dn := op.Children[1].Data.String()
-		password := op.Children[2].Data.String()
+			dn := op.Children[1].Data.String()
+			password := op.Children[2].Data.String()
 			code := 49
 			if secure && ((dn == f.config.BindDN && password == f.config.BindPassword) || (dn == f.userDN && password == "user-secret")) {
 				code = 0

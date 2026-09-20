@@ -360,7 +360,7 @@ func TestGRPCDocumentCognifyPartialFailureAndDetachedObserver(t *testing.T) {
 			}
 			for _, text := range req.Input {
 				if strings.Contains(text, "fail-second") {
-					http.Error(w, "backend private details must not escape", 503)
+					http.Error(w, "backend private details must not escape", http.StatusServiceUnavailable)
 					return
 				}
 			}
