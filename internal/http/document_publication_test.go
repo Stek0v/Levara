@@ -162,7 +162,7 @@ func TestDocumentPublicationRequiresCompleteLiveSource(t *testing.T) {
 		endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			calls.Add(1)
 			if failed.Load() {
-				http.Error(w, "unavailable", 503)
+				http.Error(w, "unavailable", http.StatusServiceUnavailable)
 				return
 			}
 			var req struct {

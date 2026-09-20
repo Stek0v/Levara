@@ -27,6 +27,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
@@ -166,11 +167,11 @@ func TestGRPCDocumentCognifySourcesAndStatus(t *testing.T) {
 				t.Fatalf("unavailable claims=%d err=%v", claims, err)
 			}
 		}
-		badHash := *blob
+		badHash := proto.Clone(blob).(*pb.DocumentCognifySource)
 		badHash.RawContentHash = strings.Repeat("0", 64)
-		stale := *blob
+		stale := proto.Clone(blob).(*pb.DocumentCognifySource)
 		stale.SourceRevision++
-		staleContent := *blob
+		staleContent := proto.Clone(blob).(*pb.DocumentCognifySource)
 		staleContent.ContentRevision = f.r.ContentRevision + 1
 		cases := []struct {
 			name, user string
@@ -180,9 +181,9 @@ func TestGRPCDocumentCognifySourcesAndStatus(t *testing.T) {
 			{"viewer", "viewer", []*pb.DocumentCognifySource{blob}, codes.PermissionDenied},
 			{"foreign", "foreign", []*pb.DocumentCognifySource{blob}, codes.PermissionDenied},
 			{"inactive", "inactive", []*pb.DocumentCognifySource{blob}, codes.PermissionDenied},
-			{"bad hash later", "owner", []*pb.DocumentCognifySource{visible, &badHash}, codes.FailedPrecondition},
-			{"stale source", "owner", []*pb.DocumentCognifySource{&stale}, codes.FailedPrecondition},
-			{"stale content", "owner", []*pb.DocumentCognifySource{&staleContent}, codes.FailedPrecondition},
+			{"bad hash later", "owner", []*pb.DocumentCognifySource{visible, badHash}, codes.FailedPrecondition},
+			{"stale source", "owner", []*pb.DocumentCognifySource{stale}, codes.FailedPrecondition},
+			{"stale content", "owner", []*pb.DocumentCognifySource{staleContent}, codes.FailedPrecondition},
 			{"missing later", "owner", []*pb.DocumentCognifySource{visible, {DatasetId: "alpha", DocumentId: "missing", SourceRevision: 1, RawContentHash: blob.RawContentHash}}, codes.NotFound},
 			{"revoked after interceptor", "peer", []*pb.DocumentCognifySource{blob}, codes.Unauthenticated},
 		}
@@ -223,9 +224,9 @@ func TestGRPCDocumentCognifySourcesAndStatus(t *testing.T) {
 		}
 		f.exec("UPDATE data SET raw_data_location='storage://blob' WHERE id='blob'")
 		backend.loads.Store(0)
-		alias := *blob
+		alias := proto.Clone(blob).(*pb.DocumentCognifySource)
 		alias.DatasetId = "beta"
-		stream, err := client.CognifyDocuments(grpcCognifyActor(t, "owner"), &pb.DocumentCognifyReq{Documents: []*pb.DocumentCognifySource{blob, blob, &alias, visible}, Collection: "docs"})
+		stream, err := client.CognifyDocuments(grpcCognifyActor(t, "owner"), &pb.DocumentCognifyReq{Documents: []*pb.DocumentCognifySource{blob, blob, alias, visible}, Collection: "docs"})
 		if err != nil {
 			t.Fatal(err)
 		}

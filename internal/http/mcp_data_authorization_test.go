@@ -210,12 +210,13 @@ func checkDocumentACLListingCollision(t *testing.T, result mcp.ToolResult) {
 	}
 	seenDataset, seenCollection := false, false
 	for _, item := range listing.Datasets {
-		if item.Type == "dataset" {
+		switch item.Type {
+		case "dataset":
 			if item.ID != "a" {
 				t.Errorf("name alias exposed foreign dataset: %+v", item)
 			}
 			seenDataset = true
-		} else if item.Type == "vector_collection" {
+		case "vector_collection":
 			if item.Collection != "b" {
 				t.Errorf("ID alias exposed foreign collection: %+v", item)
 			}

@@ -260,7 +260,6 @@ func queryEntityEdges(ctx context.Context, db *sql.DB, rewrite func(string) stri
 	if datasetID != "" {
 		datasetClause = fmt.Sprintf(" AND graph_edges.dataset_id = $%d", pos)
 		qargs = append(qargs, datasetID)
-		pos++
 	}
 
 	accessClause := graphDatasetPredicate("graph_edges.dataset_id", allowed, &qargs)

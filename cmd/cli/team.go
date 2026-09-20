@@ -105,6 +105,13 @@ func cmdTeam(args []string) {
 	}
 }
 
+// isLoopbackHost reports whether host is exactly "localhost" or a loopback IP
+// literal. Truth table: "localhost" -> true; any parseable loopback IP -> true;
+// every other value (including non-IP hostnames and non-loopback IPs) -> false.
+func isLoopbackHost(host string) bool {
+	return host == "localhost" || net.ParseIP(host) != nil && net.ParseIP(host).IsLoopback()
+}
+
 func runTeamCommand(base string, args []string) (teamReport, error) {
 	report := teamReport{Status: "failed", Steps: []teamStep{}}
 	fail := func(err error) (teamReport, error) {
@@ -124,7 +131,7 @@ func runTeamCommand(base string, args []string) (teamReport, error) {
 		return fail(teamError("invalid_flags"))
 	}
 	u, err := url.Parse(base)
-	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.RawPath != "" || strings.TrimSuffix(u.Path, "/") != "/api/v1" || (u.Scheme != "https" && !(u.Scheme == "http" && (u.Hostname() == "localhost" || net.ParseIP(u.Hostname()) != nil && net.ParseIP(u.Hostname()).IsLoopback()))) {
+	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.RawPath != "" || strings.TrimSuffix(u.Path, "/") != "/api/v1" || (u.Scheme != "https" && (u.Scheme != "http" || !isLoopbackHost(u.Hostname()))) {
 		return fail(teamError("invalid_api_url"))
 	}
 	base = strings.TrimSuffix(u.String(), "/")
@@ -245,7 +252,7 @@ func teamIdentifier(s string) bool {
 		return false
 	}
 	for _, r := range s {
-		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '-') {
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '_' && r != '-' {
 			return false
 		}
 	}
@@ -466,9 +473,10 @@ func (r *teamRunner) user(u teamUser) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		if status == 201 {
+		switch status {
+		case 201:
 			created = true
-		} else if status == 409 {
+		case 409:
 			// A racing registration is only reconciled by successful exact login.
 			status, body, err = r.request("POST", "/auth/login", "", "", payload)
 			if err != nil {

@@ -498,7 +498,7 @@ func TestStructuredUploadPartialFailurePublishesNothing(t *testing.T) {
 }
 
 func TestStructuredUploadFailureWithLocalTextPublishesNothing(t *testing.T) {
-	app, cfg := documentWorkflowApp(t)
+	_, cfg := documentWorkflowApp(t)
 	pdf, err := os.ReadFile(filepath.Join("..", "..", "pkg", "extract", "testdata", "report.pdf"))
 	if err != nil {
 		t.Fatal(err)
@@ -506,7 +506,7 @@ func TestStructuredUploadFailureWithLocalTextPublishesNothing(t *testing.T) {
 	sidecar := httptest.NewServer(stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, _ *stdhttp.Request) { w.WriteHeader(500) }))
 	defer sidecar.Close()
 	cfg.StructuredExtractEndpoint = sidecar.URL
-	app = fiber.New()
+	app := fiber.New()
 	app.Use(func(c *fiber.Ctx) error { c.Locals("user_id", "alice"); return c.Next() })
 	RegisterAPI(app, cfg)
 	status, raw := structuredFileRequest(t, app, map[string]string{"datasetName": "structured"}, pdf)
@@ -638,7 +638,7 @@ func TestStructuredUploadDatasetIdentityConflictsAreRejectedBeforeSidecar(t *tes
 }
 
 func TestStructuredArtifactIsInventoriedAndPathSafe(t *testing.T) {
-	app, cfg := documentWorkflowApp(t)
+	_, cfg := documentWorkflowApp(t)
 	pdf, err := os.ReadFile(filepath.Join("..", "..", "pkg", "extract", "testdata", "report.pdf"))
 	if err != nil {
 		t.Fatal(err)
@@ -649,7 +649,7 @@ func TestStructuredArtifactIsInventoriedAndPathSafe(t *testing.T) {
 	}))
 	defer sidecar.Close()
 	cfg.StructuredExtractEndpoint = sidecar.URL
-	app = fiber.New()
+	app := fiber.New()
 	app.Use(func(c *fiber.Ctx) error { c.Locals("user_id", "alice"); return c.Next() })
 	RegisterAPI(app, cfg)
 	status, raw := structuredFileRequest(t, app, map[string]string{"datasetName": "structured"}, pdf)
@@ -973,7 +973,7 @@ func TestStructuredArtifactRemoteCleanupCanRetry(t *testing.T) {
 	var calls atomic.Int32
 	sidecar := httptest.NewServer(stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, _ *stdhttp.Request) {
 		value := calls.Add(1)
-		_, _ = w.Write([]byte(fmt.Sprintf(`{"extraction":{"version":%d}}`, value)))
+		_, _ = fmt.Fprintf(w, `{"extraction":{"version":%d}}`, value)
 	}))
 	defer sidecar.Close()
 	cfg.StructuredExtractEndpoint = sidecar.URL

@@ -275,35 +275,6 @@ func (h *mcpHandler) VerifyArtifact(ctx context.Context, evidenceURI, expectedDi
 	return nil
 }
 
-func pathWithinAnyRoot(path string, roots ...string) bool {
-	absPath, err := filepath.Abs(filepath.Clean(path))
-	if err != nil {
-		return false
-	}
-	resolvedPath, err := filepath.EvalSymlinks(absPath)
-	if err != nil {
-		return false
-	}
-	for _, root := range roots {
-		if strings.TrimSpace(root) == "" {
-			continue
-		}
-		absRoot, err := filepath.Abs(filepath.Clean(root))
-		if err != nil {
-			continue
-		}
-		resolvedRoot, err := filepath.EvalSymlinks(absRoot)
-		if err != nil {
-			continue
-		}
-		rel, err := filepath.Rel(resolvedRoot, resolvedPath)
-		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			return true
-		}
-	}
-	return false
-}
-
 // CollectionExists implements mcp.Deps: true iff a collection with
 // the given name is registered in the CollectionManager. Always false
 // when no manager is configured.
@@ -1588,12 +1559,6 @@ func (h *mcpHandler) toolSearchChats(ctx context.Context, args map[string]any) m
 	}
 	return mcpJSONResult(map[string]any{"results": results})
 }
-
-// truncate cuts a string to maxLen and adds "..." if truncated.
-// truncate is a shim over mcp.Truncate kept so the surviving in-http
-// tool bodies (analyzeCommits, saveMemory, crossSearch, ...) don't need
-// to be edited in this wave. Removed once those tools migrate too.
-func truncate(s string, maxLen int) string { return mcp.Truncate(s, maxLen) }
 
 // ── MCP Resources API ──────────────────────────────────────────────────────
 

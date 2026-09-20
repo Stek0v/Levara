@@ -80,7 +80,7 @@ func newOIDCBrowserFixture(t *testing.T, dialect string) *oidcBrowserFixture {
 		defer f.mu.Unlock()
 		f.hits++
 		if f.tokenRedirect != "" {
-			http.Redirect(w, r, f.tokenRedirect, 302)
+			http.Redirect(w, r, f.tokenRedirect, http.StatusFound)
 			return
 		}
 		if f.tokenStatus != 0 {
@@ -100,7 +100,7 @@ func newOIDCBrowserFixture(t *testing.T, dialect string) *oidcBrowserFixture {
 		}
 		client, secret, ok := r.BasicAuth()
 		if !ok || client != "browser-client" || secret != "client-secret" {
-			http.Error(w, "invalid client", 401)
+			http.Error(w, "invalid client", http.StatusUnauthorized)
 			return
 		}
 		header, _ := json.Marshal(map[string]string{"alg": "RS256", "kid": "test"})
