@@ -89,10 +89,10 @@ type fakeStarter struct {
 	noProgress bool
 }
 
-func (f *fakeStarter) Start(ctx context.Context, datasetID, collection string) error {
+func (f *fakeStarter) Start(ctx context.Context, datasetID, collection string) (CognifyRunSummary, error) {
 	f.calls.Add(1)
 	if f.noProgress {
-		return nil
+		return CognifyRunSummary{}, nil
 	}
 	_, err := f.db.ExecContext(ctx, `UPDATE document_pipeline_statuses
 		SET pipeline_state='COMPLETED'
@@ -101,7 +101,7 @@ func (f *fakeStarter) Start(ctx context.Context, datasetID, collection string) e
 		                 WHERE dataset_id=? AND collection_name=?
 		                   AND pipeline_state IN ('RUNNING','FAILED')
 		                 LIMIT 1)`, datasetID, collection, datasetID, collection)
-	return err
+	return CognifyRunSummary{Chunks: 1}, err
 }
 
 func TestResumeUnfinishedCognifyDrains(t *testing.T) {
@@ -155,15 +155,19 @@ func TestLoopbackCognifyStarter(t *testing.T) {
 			if polls.Load() >= 2 {
 				status = "COMPLETED"
 			}
-			fmt.Fprintf(w, `{"status":%q}`, status)
+			fmt.Fprintf(w, `{"status":%q,"chunks_created":5,"elapsed_ms":9000}`, status)
 		default:
 			http.NotFound(w, r)
 		}
 	}))
 	defer srv.Close()
 	starter := LoopbackCognifyStarter{BaseURL: srv.URL, Client: srv.Client()}
-	if err := starter.Start(context.Background(), "ds1", "chat-imports"); err != nil {
+	summary, err := starter.Start(context.Background(), "ds1", "chat-imports")
+	if err != nil {
 		t.Fatal(err)
+	}
+	if summary.Elapsed <= 0 {
+		t.Fatalf("summary should carry run stats: %+v", summary)
 	}
 }
 
