@@ -13,7 +13,7 @@ func TestScanSecrets(t *testing.T) {
 		{"github", "token ghp_0123456789abcdefghijkl in text", "GitHub token"},
 		{"aws", "aws_access_key_id = " + "AKIA" + "IOSFODNN7EXAMPLE", "AWS access key"},
 		{"slack", "xoxb-123456789012345", "Slack token"},
-		{"google", "key: AIzaSyA1234567890abcdefghijklmnopq", "Google API key"},
+		{"google", "key: AIzaSyA1234567890abcdefghijklmnopqq", "Google API key"},
 		{"jwt", "Authorization: eyJhbGciOiJI.eyJzdWIiOiIx.SflKxwRJSM", "JWT"},
 		{"pem", "-----BEGIN RSA PRIVATE KEY-----\nMIIB\n-----END RSA PRIVATE KEY-----", "private key block"},
 		{"bearer", "curl -H 'Authorization: Bearer abcdef1234567890abcdef12' url", "bearer token"},
