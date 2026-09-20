@@ -1565,7 +1565,7 @@ Commands:
   datasets [list|create <name>|delete <id>]  Manage datasets
   documents [policy|register|recipients|shared|grant|revoke|group-create|group-members]
   team apply --plan=<json> [--dry-run] [--state=<private-json>]  Local-password team setup
-  chats    import --platform=codex --path=<file|dir> [--no-reasoning] [--dry-run]
+  chats    import --platform=<codex|claude-code> --path=<file|dir> [--no-reasoning] [--dry-run]
            runs [--platform=...]                Import runs ledger
            session <platform> <session-id> [--kind=...] [--full]  Read imported session
   git      analyze [--repo=.] [--since=...] [--limit=100]  Analyze git commits

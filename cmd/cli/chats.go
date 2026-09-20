@@ -51,8 +51,10 @@ func chatsFlag(args []string, name string) (string, bool) {
 func cmdChatsImport(args []string) {
 	platform, _ := chatsFlag(args, "--platform")
 	path, _ := chatsFlag(args, "--path")
-	if platform != "codex" {
-		fatalf("--platform=codex is the only supported source (claude-code lands in E2c)")
+	switch chatimport.Platform(platform) {
+	case chatimport.PlatformCodex, chatimport.PlatformClaudeCode:
+	default:
+		fatalf("--platform=codex|claude-code required (cursor lands later, experimental)")
 	}
 	if path == "" {
 		fatalf("--path=<file-or-dir> required")
@@ -81,7 +83,14 @@ func cmdChatsImport(args []string) {
 			failures++
 			continue
 		}
-		conv, stats, err := chatimport.ParseCodexRollout(bytes.NewReader(raw), opts)
+		var conv *chatimport.Conversation
+		var stats chatimport.ParseStats
+		switch chatimport.Platform(platform) {
+		case chatimport.PlatformCodex:
+			conv, stats, err = chatimport.ParseCodexRollout(bytes.NewReader(raw), opts)
+		case chatimport.PlatformClaudeCode:
+			conv, stats, err = chatimport.ParseClaudeCodeTranscript(bytes.NewReader(raw), opts)
+		}
 		if err != nil {
 			fmt.Printf("%sFAIL%s   %s %v\n", colorRed, colorReset, filepath.Base(f), err)
 			failures++
@@ -98,7 +107,7 @@ func cmdChatsImport(args []string) {
 
 		sum := sha256.Sum256(raw)
 		payload := map[string]any{
-			"run_id":        uuid.NewSHA1(uuid.NameSpaceURL, []byte("codex/"+hex.EncodeToString(sum[:]))).String(),
+			"run_id":        uuid.NewSHA1(uuid.NameSpaceURL, []byte(platform+"/"+hex.EncodeToString(sum[:]))).String(),
 			"source_path":   f,
 			"source_sha256": hex.EncodeToString(sum[:]),
 			"skipped":       stats.Skipped,
