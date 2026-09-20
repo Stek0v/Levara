@@ -66,6 +66,7 @@ func cmdChatsImport(args []string) {
 	}
 	noReasoning := hasFlag(args, "--no-reasoning")
 	dryRun := hasFlag(args, "--dry-run")
+	forceRag := hasFlag(args, "--force-rag")
 	dataset, _ := chatsFlag(args, "--dataset")
 	wantCognify := hasFlag(args, "--cognify")
 	if wantCognify && dataset == "" {
@@ -148,8 +149,10 @@ func cmdChatsImport(args []string) {
 		}
 		// RAG sink piggybacks on raw-layer idempotency: only conversations
 		// that actually inserted rows produce a data item, so re-runs never
-		// duplicate searchable documents.
-		if dataset != "" && !dryRun && resp.Inserted > 0 {
+		// duplicate searchable documents. --force-rag bypasses the check as
+		// a repair tool (e.g. a raw import whose rag push failed on old
+		// binaries).
+		if dataset != "" && !dryRun && (resp.Inserted > 0 || forceRag) {
 			chatsAddRenderedConversation(conv, dataset)
 			for _, art := range chatimport.ExtractArtifacts(conv, opts) {
 				chatsAddArtifact(art, conv, dataset)
@@ -162,7 +165,7 @@ func cmdChatsImport(args []string) {
 		os.Exit(1)
 	}
 	if wantCognify && !dryRun && totalInserted > 0 {
-		chatsTriggerCognify(dataset, hasFlag(args, "--wait"))
+		chatsTriggerCognify(dataset, chatsFlagOr(args, "--collection", ""), hasFlag(args, "--wait"))
 	}
 }
 
@@ -176,6 +179,7 @@ func cmdChatsImportCursor(args []string, path string) {
 	}
 	noReasoning := hasFlag(args, "--no-reasoning")
 	dryRun := hasFlag(args, "--dry-run")
+	forceRag := hasFlag(args, "--force-rag")
 	dataset, _ := chatsFlag(args, "--dataset")
 	wantCognify := hasFlag(args, "--cognify")
 	if wantCognify && dataset == "" {
@@ -242,7 +246,7 @@ func cmdChatsImportCursor(args []string, path string) {
 			for _, w := range resp.Warnings {
 				fmt.Printf("        %s⚠%s %s\n", colorYellow, colorReset, w)
 			}
-			if dataset != "" && resp.Inserted > 0 {
+			if dataset != "" && (resp.Inserted > 0 || forceRag) {
 				chatsAddRenderedConversation(conv, dataset)
 				for _, art := range chatimport.ExtractArtifacts(conv, opts) {
 					chatsAddArtifact(art, conv, dataset)
@@ -256,7 +260,7 @@ func cmdChatsImportCursor(args []string, path string) {
 		os.Exit(1)
 	}
 	if wantCognify && !dryRun && totalInserted > 0 {
-		chatsTriggerCognify(dataset, hasFlag(args, "--wait"))
+		chatsTriggerCognify(dataset, chatsFlagOr(args, "--collection", ""), hasFlag(args, "--wait"))
 	}
 }
 
@@ -341,11 +345,21 @@ func sanitizeFileName(name string) string {
 	return b.String()
 }
 
+func chatsFlagOr(args []string, name, def string) string {
+	if v, ok := chatsFlag(args, name); ok {
+		return v
+	}
+	return def
+}
+
 // chatsTriggerCognify starts a cognify run over the dataset (rag mode keeps
 // it chunk+embed only) and optionally waits for completion.
-func chatsTriggerCognify(dataset string, wait bool) {
+func chatsTriggerCognify(dataset, collection string, wait bool) {
 	datasetID := cognifyDatasetID(dataset)
 	payload := map[string]any{"datasets": []string{datasetID}}
+	if collection != "" {
+		payload["collection"] = collection
+	}
 	data, err := json.Marshal(payload)
 	if err != nil {
 		fatalf("encode cognify request: %v", err)

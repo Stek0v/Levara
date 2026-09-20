@@ -14,6 +14,11 @@ func RenderConversationMarkdown(conv *Conversation) string {
 	if conv == nil {
 		return ""
 	}
+	// The server's /add extractor rejects NUL bytes and invalid UTF-8
+	// (binary exec outputs carry both); neutralize before rendering.
+	sanitize := func(s string) string {
+		return strings.ToValidUTF8(strings.ReplaceAll(s, "\x00", "\uFFFD"), "\uFFFD")
+	}
 	var b strings.Builder
 	title := conv.Title
 	if title == "" {
@@ -37,10 +42,11 @@ func RenderConversationMarkdown(conv *Conversation) string {
 	b.WriteString("\n")
 
 	for _, m := range conv.Messages {
+		m.Content = strings.ToValidUTF8(m.Content, "\uFFFD")
 		if m.Kind == KindSystem {
 			// Harness boilerplate adds search noise; keep it visible but
 			// compact.
-			fmt.Fprintf(&b, "## [%d] system\n\n<details>\n\n%s\n\n</details>\n\n", m.Ordinal, m.Content)
+			fmt.Fprintf(&b, "## [%d] system\n\n<details>\n\n%s\n\n</details>\n\n", m.Ordinal, sanitize(m.Content))
 			continue
 		}
 		label := string(m.Kind)
@@ -50,7 +56,7 @@ func RenderConversationMarkdown(conv *Conversation) string {
 		fmt.Fprintf(&b, "## [%d] %s · %s\n\n", m.Ordinal, m.Role, label)
 		switch m.Kind {
 		case KindReasoning:
-			for _, line := range strings.Split(m.Content, "\n") {
+			for _, line := range strings.Split(sanitize(m.Content), "\n") {
 				b.WriteString("> " + line + "\n")
 			}
 			b.WriteString("\n")
@@ -59,9 +65,9 @@ func RenderConversationMarkdown(conv *Conversation) string {
 			if m.Kind == KindToolCall {
 				lang = "json"
 			}
-			fmt.Fprintf(&b, "```%s\n%s\n```\n\n", lang, m.Content)
+			fmt.Fprintf(&b, "```%s\n%s\n```\n\n", lang, sanitize(m.Content))
 		default:
-			b.WriteString(m.Content)
+			b.WriteString(sanitize(m.Content))
 			b.WriteString("\n\n")
 		}
 	}

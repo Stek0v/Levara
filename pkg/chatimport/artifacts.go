@@ -146,7 +146,7 @@ func RenderArtifactMarkdown(a Artifact, conv *Conversation) string {
 		fmt.Fprintf(&b, "- created: %s\n", conv.CreatedAt)
 	}
 	b.WriteString("\n")
-	b.WriteString(a.Content)
+	b.WriteString(strings.ToValidUTF8(strings.ReplaceAll(a.Content, "\x00", "\uFFFD"), "\uFFFD"))
 	b.WriteString("\n")
 	return b.String()
 }

@@ -169,6 +169,10 @@ func InsertConversation(ctx context.Context, db *sql.DB, q Q, runID string, conv
 	importedAt := now.UTC().Format(time.RFC3339)
 	inserted := 0
 	for _, m := range conv.Messages {
+		// PostgreSQL TEXT rejects NUL bytes; tool outputs occasionally carry
+		// raw binary. Replace with U+FFFD so the row survives on both
+		// dialects (SQLite stores NULs fine and would mask this in tests).
+		m.Content = strings.ToValidUTF8(strings.ReplaceAll(m.Content, "\x00", " "), "\uFFFD")
 		meta := "{}"
 		if len(m.Metadata) > 0 {
 			raw, err := json.Marshal(m.Metadata)

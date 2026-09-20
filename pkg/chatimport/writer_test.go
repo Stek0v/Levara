@@ -169,3 +169,29 @@ func TestFinishRunDoesNotRewriteClosedRun(t *testing.T) {
 		t.Fatal("expected error for missing run")
 	}
 }
+
+// PostgreSQL TEXT rejects NUL bytes; the writer must neutralize them (found
+// live: binary exec outputs in 11 of 614 codex rollouts).
+func TestInsertConversationNULSanitized(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	conv := &Conversation{Platform: PlatformCodex, SessionID: "s-nul", Messages: []Message{
+		{ExternalID: "m1", Ordinal: 0, Role: "tool", Kind: KindToolResult, Content: "binary\x00output\x00here"},
+	}}
+	if err := StartRun(ctx, db, SQLiteQ, RunInfo{ID: "run-nul", Platform: PlatformCodex, StartedAt: "2026-09-20T13:00:00Z"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := InsertConversation(ctx, db, SQLiteQ, "run-nul", conv, &[]string{}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	var content string
+	if err := db.QueryRow(`SELECT content FROM chat_import_messages WHERE external_id='m1'`).Scan(&content); err != nil {
+		t.Fatal(err)
+	}
+	if strings.ContainsRune(content, 0) {
+		t.Fatalf("NUL survived: %q", content)
+	}
+	if !strings.Contains(content, "binary") || !strings.Contains(content, "output") {
+		t.Fatalf("content mangled beyond NUL replacement: %q", content)
+	}
+}
