@@ -11,10 +11,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stek0v/levara/pkg/chatimport"
@@ -61,6 +63,11 @@ func cmdChatsImport(args []string) {
 	}
 	noReasoning := hasFlag(args, "--no-reasoning")
 	dryRun := hasFlag(args, "--dry-run")
+	dataset, _ := chatsFlag(args, "--dataset")
+	wantCognify := hasFlag(args, "--cognify")
+	if wantCognify && dataset == "" {
+		fatalf("--cognify requires an explicit --dataset=<name> (search derivatives never land in an implicit dataset)")
+	}
 
 	files, err := collectTranscriptFiles(path)
 	if err != nil {
@@ -136,12 +143,103 @@ func cmdChatsImport(args []string) {
 		for _, w := range resp.Warnings {
 			fmt.Printf("        %s⚠%s %s\n", colorYellow, colorReset, w)
 		}
+		// RAG sink piggybacks on raw-layer idempotency: only conversations
+		// that actually inserted rows produce a data item, so re-runs never
+		// duplicate searchable documents.
+		if dataset != "" && !dryRun && resp.Inserted > 0 {
+			chatsAddRenderedConversation(conv, dataset)
+		}
 	}
 	fmt.Printf("\nfiles=%d inserted=%d messages=%d skipped=%d failures=%d\n",
 		len(files), totalInserted, totalMessages, totalSkipped, failures)
 	if failures > 0 {
 		os.Exit(1)
 	}
+	if wantCognify && !dryRun && totalInserted > 0 {
+		chatsTriggerCognify(dataset, hasFlag(args, "--wait"))
+	}
+}
+
+// chatsAddRenderedConversation pushes the rendered markdown document into
+// the dataset via the standard /add JSON contract.
+func chatsAddRenderedConversation(conv *chatimport.Conversation, dataset string) {
+	payload := map[string]string{
+		"data":         chatimport.RenderConversationMarkdown(conv),
+		"dataset_name": dataset,
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		fatalf("render payload: %v", err)
+	}
+	body, status := postRaw(baseURL+"/add", "application/json", data)
+	if status != 201 && status != 200 {
+		fmt.Printf("        %sFAIL%s rag sink HTTP %d %s\n", colorRed, colorReset, status, truncateFor(string(body), 120))
+		os.Exit(1)
+	}
+	fmt.Printf("        %s→%s rag item → dataset %q\n", colorCyan, colorReset, dataset)
+}
+
+// chatsTriggerCognify starts a cognify run over the dataset (rag mode keeps
+// it chunk+embed only) and optionally waits for completion.
+func chatsTriggerCognify(dataset string, wait bool) {
+	datasetID := cognifyDatasetID(dataset)
+	payload := map[string]any{"datasets": []string{datasetID}}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		fatalf("encode cognify request: %v", err)
+	}
+	body, status := postRaw(baseURL+"/cognify", "application/json", data)
+	if status != 200 {
+		fatalf("cognify HTTP %d: %s", status, truncateFor(string(body), 200))
+	}
+	var resp struct {
+		RunID  string `json:"pipeline_run_id"`
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil || resp.RunID == "" {
+		fatalf("invalid cognify response: %s", truncateFor(string(body), 200))
+	}
+	fmt.Printf("%s→%s cognify run %s started on dataset %q\n", colorCyan, colorReset, resp.RunID, dataset)
+	if !wait {
+		return
+	}
+	for i := 0; ; i++ {
+		statusBody, code := doGet(fmt.Sprintf("%s/cognify/%s/status", baseURL, url.PathEscape(resp.RunID)))
+		if code != 200 {
+			fatalf("cognify status HTTP %d", code)
+		}
+		var run map[string]any
+		if err := json.Unmarshal(statusBody, &run); err != nil {
+			fatalf("invalid cognify status: %v", err)
+		}
+		st, _ := run["status"].(string)
+		if st == "COMPLETED" {
+			chunks, _ := run["chunks_created"].(float64)
+			fmt.Printf("%s✓%s cognify completed — %d chunks\n", colorGreen, colorReset, int(chunks))
+			return
+		}
+		if st == "FAILED" {
+			msg, _ := run["message"].(string)
+			fatalf("cognify failed: %s", msg)
+		}
+		if i%5 == 0 {
+			fmt.Print(".")
+		}
+		time.Sleep(2 * time.Second)
+	}
+}
+
+func postRaw(endpoint, contentType string, data []byte) ([]byte, int) {
+	req, _ := http.NewRequest("POST", endpoint, bytes.NewReader(data))
+	req.Header.Set("Content-Type", contentType)
+	applyAuth(req)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		fatalf("connection failed: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	return body, resp.StatusCode
 }
 
 func cmdChatsRuns(args []string) {
