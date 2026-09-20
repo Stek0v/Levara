@@ -1046,6 +1046,10 @@ func main() {
 	vectorHttp.ResumeUnfinishedCognify(context.Background(), pgDB,
 		vectorHttp.LoopbackCognifyStarter{BaseURL: "http://" + addr, Token: os.Getenv("LEVARA_COGNIFY_RESUME_TOKEN")})
 
+	// P2 transcript sources: opt-in local transcript ingest daemon
+	// (LEVARA_CHAT_SOURCES=code|claude-code|cursor[,…]).
+	vectorHttp.StartChatSourcesDaemon(context.Background(), pgDB, "http://"+addr)
+
 	if err := app.Listen(addr); err != nil {
 		log.Printf("HTTP server stopped with error: %v", err)
 		return
