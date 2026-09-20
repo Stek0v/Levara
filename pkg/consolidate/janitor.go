@@ -2,6 +2,7 @@ package consolidate
 
 import (
 	"context"
+	"sync"
 	"time"
 )
 
@@ -28,5 +29,8 @@ func StartJanitor(ctx context.Context, r Runner, interval time.Duration) (stop f
 			}
 		}
 	}()
-	return func() { close(done) }
+	// Idempotent stop: a deferred call plus an explicit shutdown call must
+	// not race into a double close (same failure mode as runreg.StartJanitor).
+	var once sync.Once
+	return func() { once.Do(func() { close(done) }) }
 }

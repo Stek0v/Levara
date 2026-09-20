@@ -3,6 +3,9 @@
 # Regenerate OpenAPI spec from swaggo annotations (T13).
 # Requires `go install github.com/swaggo/swag/cmd/swag@latest` once.
 # Output: docs/docs.go, docs/swagger.json, docs/swagger.yaml.
+lint:
+	golangci-lint run --timeout=10m ./...
+
 swag:
 	@echo "Regenerating OpenAPI spec from swaggo annotations..."
 	@$$(go env GOPATH)/bin/swag init -g cmd/server/main.go -d ./ -o docs/

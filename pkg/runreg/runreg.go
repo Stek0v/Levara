@@ -167,7 +167,10 @@ func (r *Registry) Snapshot() []*Status {
 
 // StartJanitor launches a goroutine that periodically calls
 // PruneTerminalOlderThan(age). Returns a stop function that cancels the
-// janitor and waits for the in-flight tick to finish.
+// janitor and waits for the in-flight tick to finish. The stop function is
+// idempotent: main() both calls it in the shutdown sequence and defers it,
+// and a second close of the done channel panicked the process on every
+// SIGTERM (observed on prod, then SIGKILLed by launchd).
 //
 // Defaults suggested by the 20.04 review M3: age=1h, interval=10m. Prior
 // to this the registry grew unbounded for the lifetime of the process, so
@@ -191,8 +194,9 @@ func (r *Registry) StartJanitor(interval, age time.Duration) (stop func()) {
 			}
 		}
 	}()
+	var once sync.Once
 	return func() {
-		close(done)
+		once.Do(func() { close(done) })
 		<-stopped
 	}
 }

@@ -31,3 +31,14 @@ func TestJanitor_TicksThenStops(t *testing.T) {
 		t.Fatalf("janitor ticked %d times in 35ms@10ms, want >= 2", n)
 	}
 }
+
+// Regression: double stop must be a no-op (mirror of the runreg SIGTERM panic).
+func TestStartJanitorStopIdempotent(t *testing.T) {
+	stop := StartJanitor(context.Background(), noopRunner{}, time.Minute)
+	stop()
+	stop()
+}
+
+type noopRunner struct{}
+
+func (noopRunner) RunOnce(context.Context) error { return nil }

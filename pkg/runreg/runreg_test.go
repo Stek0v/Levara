@@ -257,3 +257,14 @@ func TestStatus_EventsOmittedWhenEmpty(t *testing.T) {
 		t.Errorf("empty Events should be omitted via omitempty; got %s", out)
 	}
 }
+
+// Regression: stop is called both explicitly in the shutdown sequence and
+// via defer in main() — the second call must be a no-op, not a panic
+// (prod crashed on every SIGTERM before the sync.Once fix).
+func TestStartJanitorStopIdempotent(t *testing.T) {
+	r := New()
+	stop := r.StartJanitor(time.Minute, time.Hour)
+	stop()
+	stop() // must not panic
+	stop()
+}
