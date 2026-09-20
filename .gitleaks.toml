@@ -1,0 +1,17 @@
+# Gitleaks configuration: default ruleset + narrow allowlist for synthetic
+# token shapes that exist to be token-shaped (scanner fixtures, benchmark
+# artifacts, test constants, docs examples).
+title = "levara gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+  description = "Synthetic security-scanner and benchmark fixtures"
+  paths = [
+    '''pkg/chatimport/secrets_test\.go''',
+    '''pkg/chatimport/testdata/.*''',
+    '''benchmark/.*''',
+    '''internal/http/sync_authflow_integration_test\.go''',
+    '''docs/long-horizon-runtime(\.ru)?\.md''',
+  ]
