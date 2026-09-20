@@ -148,6 +148,9 @@ func cmdChatsImport(args []string) {
 		// duplicate searchable documents.
 		if dataset != "" && !dryRun && resp.Inserted > 0 {
 			chatsAddRenderedConversation(conv, dataset)
+			for _, art := range chatimport.ExtractArtifacts(conv, opts) {
+				chatsAddArtifact(art, conv, dataset)
+			}
 		}
 	}
 	fmt.Printf("\nfiles=%d inserted=%d messages=%d skipped=%d failures=%d\n",
@@ -177,6 +180,44 @@ func chatsAddRenderedConversation(conv *chatimport.Conversation, dataset string)
 		os.Exit(1)
 	}
 	fmt.Printf("        %s→%s rag item → dataset %q\n", colorCyan, colorReset, dataset)
+}
+
+// chatsAddArtifact uploads one extracted document as its own data item via
+// the multipart /add path, so the item keeps a real filename and .md
+// extension server-side.
+func chatsAddArtifact(art chatimport.Artifact, conv *chatimport.Conversation, dataset string) {
+	doc := chatimport.RenderArtifactMarkdown(art, conv)
+	prefix := conv.SessionID
+	if len(prefix) > 12 {
+		prefix = prefix[:12]
+	}
+	tmp, err := os.CreateTemp("", prefix+"-*-"+sanitizeFileName(art.FileName))
+	if err != nil {
+		fmt.Printf("        %sFAIL%s artifact %s: %v\n", colorRed, colorReset, art.FileName, err)
+		os.Exit(1)
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.WriteString(doc); err != nil {
+		tmp.Close()
+		fmt.Printf("        %sFAIL%s artifact %s: %v\n", colorRed, colorReset, art.FileName, err)
+		os.Exit(1)
+	}
+	tmp.Close()
+	addFile(tmp.Name(), dataset)
+	fmt.Printf("        %s→%s artifact %s (%s)\n", colorCyan, colorReset, art.FileName, art.Title)
+}
+
+func sanitizeFileName(name string) string {
+	var b strings.Builder
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '-', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('-')
+		}
+	}
+	return b.String()
 }
 
 // chatsTriggerCognify starts a cognify run over the dataset (rag mode keeps
