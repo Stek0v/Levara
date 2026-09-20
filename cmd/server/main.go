@@ -1033,6 +1033,13 @@ func main() {
 	// Embed model keep-alive ticker (Ollama eviction defence).
 	startEmbedKeepAlive(embedEndpoint, embedModel, keepaliveDur)
 
+	// P1 durable cognify: drain unfinished pipeline documents from previous
+	// runs through the production HTTP path. Started before Listen so the
+	// goroutine is registered even if listen fails; loopback calls retry
+	// until the listener answers.
+	vectorHttp.ResumeUnfinishedCognify(context.Background(), pgDB,
+		vectorHttp.LoopbackCognifyStarter{BaseURL: "http://" + addr, Token: os.Getenv("LEVARA_COGNIFY_RESUME_TOKEN")})
+
 	if err := app.Listen(addr); err != nil {
 		log.Printf("HTTP server stopped with error: %v", err)
 		return
