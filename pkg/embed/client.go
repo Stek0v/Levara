@@ -23,6 +23,8 @@ type Client struct {
 	httpClient  *http.Client
 	cache       *Cache // optional embedding cache
 	guard       func(context.Context) (func(), error)
+	gate        *PriorityGate
+	background  bool
 }
 
 // WithGuard returns a per-operation copy; shared client configuration stays
@@ -72,6 +74,17 @@ func (c *Client) Model() string {
 	return c.model
 }
 
+// WithConcurrency returns a copy with a different batch-concurrency limit
+// (background lanes use this to stay under the admission gate's budget).
+func (c *Client) WithConcurrency(n int) *Client {
+	if n < 1 {
+		n = 1
+	}
+	cp := *c
+	cp.concurrency = n
+	return &cp
+}
+
 // WithTimeout overrides the per-request HTTP timeout (default 30s). Bulk
 // re-embedding of large document chunks on modest hardware can take far longer
 // than embedding short memory texts, so that path opts into a larger timeout.
@@ -108,6 +121,11 @@ func (c *Client) EmbedTexts(ctx context.Context, texts []string) ([][]float32, e
 	if len(texts) == 0 {
 		return nil, nil
 	}
+	release, err := c.acquireGate(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 
 	allVecs := make([][]float32, len(texts))
 

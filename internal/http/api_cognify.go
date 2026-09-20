@@ -29,6 +29,7 @@ import (
 
 	"github.com/stek0v/levara/internal/metrics"
 	accesspkg "github.com/stek0v/levara/pkg/access"
+	"github.com/stek0v/levara/pkg/embed"
 	"github.com/stek0v/levara/pkg/ingest"
 	"github.com/stek0v/levara/pkg/orchestrator"
 	"github.com/stek0v/levara/pkg/runreg"
@@ -274,6 +275,15 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 	}
 }
 
+// cognifyEmbedClient picks the background lane when configured: corpus
+// batches must not starve query embedding (P4).
+func cognifyEmbedClient(cfg APIConfig) *embed.Client {
+	if cfg.EmbedClientBackground != nil {
+		return cfg.EmbedClientBackground
+	}
+	return cfg.EmbedClient
+}
+
 func baseCognifyConfig(cfg APIConfig) orchestrator.Config {
 	return orchestrator.Config{
 		ChunkStrategy:  "merged",
@@ -288,7 +298,7 @@ func baseCognifyConfig(cfg APIConfig) orchestrator.Config {
 		LLMBatchSize:        batchSizeFromEnv(),
 		EmbedEndpoint:       cfg.EmbedEndpoint,
 		EmbedModel:          cfg.EmbedModel,
-		EmbedClient:         cfg.EmbedClient, // T3 follow-up: reuse shared TCP pool through the pipeline
+		EmbedClient:         cognifyEmbedClient(cfg), // T3 follow-up: reuse shared TCP pool through the pipeline
 		Neo4jURL:            cfg.Neo4jCfg.Neo4jURL,
 		Neo4jUser:           cfg.Neo4jCfg.Neo4jUser,
 		Neo4jPassword:       cfg.Neo4jCfg.Neo4jPassword,

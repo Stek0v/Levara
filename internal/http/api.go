@@ -55,9 +55,13 @@ type APIConfig struct {
 	// e.g. reembed migration, dual-search per-collection models, gRPC request-
 	// driven params) continue to construct their own client.
 	EmbedClient *embed.Client
-	Collections *store.CollectionManager
-	Neo4jCfg    GraphVisualizationConfig
-	DB          *sql.DB // shared connection pool (nil if no PostgresDSN)
+	// EmbedClientBackground is the corpus-embedding lane: same upstream,
+	// background priority under the shared admission gate (P4). Falls back
+	// to EmbedClient when nil.
+	EmbedClientBackground *embed.Client
+	Collections           *store.CollectionManager
+	Neo4jCfg              GraphVisualizationConfig
+	DB                    *sql.DB // shared connection pool (nil if no PostgresDSN)
 	// OIDCBearer, when non-nil, lets MCP requests authenticate with bearer
 	// tokens issued by the external OIDC provider (backlog A1). Consulted as
 	// a fallback after the Levara-JWT check fails, mirroring
