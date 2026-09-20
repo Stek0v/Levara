@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"fmt"
 	accesspkg "github.com/stek0v/levara/pkg/access"
+	"github.com/stek0v/levara/pkg/chatimport"
 	"github.com/stek0v/levara/pkg/ingest"
 	"log"
 	"strings"
@@ -29,6 +30,9 @@ func MigrateSchema(db *sql.DB) error {
 	if activeDBProvider == DBSQLite {
 		stmts = schemaSQLiteStatements
 	}
+	// Chat-import tables are dialect-neutral and live in their package as
+	// the single DDL source (also used by standalone EnsureSchema).
+	stmts = append(stmts, chatimport.SchemaStatements...)
 
 	for _, stmt := range stmts {
 		if _, err := db.ExecContext(ctx, stmt); err != nil {
@@ -1012,6 +1016,40 @@ var schemaSQLiteStatements = []string{
 	)`,
 	`CREATE UNIQUE INDEX IF NOT EXISTS idx_interaction_provenance_session ON interaction_provenance(session_id) WHERE kind = 'session'`,
 	`CREATE INDEX IF NOT EXISTS idx_interaction_provenance_owner ON interaction_provenance(owner_id, tenant_id, created_at)`,
+
+	`CREATE TABLE IF NOT EXISTS chat_import_runs (
+		id TEXT PRIMARY KEY,
+		platform TEXT NOT NULL,
+		source_path TEXT NOT NULL DEFAULT '',
+		source_sha256 TEXT NOT NULL DEFAULT '',
+		status TEXT NOT NULL DEFAULT 'running',
+		imported_count INTEGER NOT NULL DEFAULT 0,
+		skipped_count INTEGER NOT NULL DEFAULT 0,
+		warned_count INTEGER NOT NULL DEFAULT 0,
+		warnings TEXT NOT NULL DEFAULT '[]',
+		started_at TEXT NOT NULL,
+		finished_at TEXT NOT NULL DEFAULT ''
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_chat_import_runs_platform ON chat_import_runs(platform, started_at)`,
+
+	`CREATE TABLE IF NOT EXISTS chat_import_messages (
+		id TEXT PRIMARY KEY,
+		run_id TEXT NOT NULL REFERENCES chat_import_runs(id) ON DELETE CASCADE,
+		platform TEXT NOT NULL,
+		session_id TEXT NOT NULL,
+		session_title TEXT NOT NULL DEFAULT '',
+		external_id TEXT NOT NULL,
+		ordinal INTEGER NOT NULL,
+		role TEXT NOT NULL,
+		kind TEXT NOT NULL,
+		model TEXT NOT NULL DEFAULT '',
+		content TEXT NOT NULL DEFAULT '',
+		source_created_at TEXT NOT NULL DEFAULT '',
+		metadata TEXT NOT NULL DEFAULT '{}',
+		imported_at TEXT NOT NULL,
+		UNIQUE(external_id, session_id, platform)
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_chat_import_messages_session ON chat_import_messages(platform, session_id, ordinal)`,
 
 	`CREATE TABLE IF NOT EXISTS ontologies (
 		id TEXT PRIMARY KEY,

@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-09-10T20:35:20+03:00",
-  "git_rev": "14bd7228c102c39a2ae363bb7f79c9200d32ecbd",
+  "generated_at": "2026-09-20T14:14:07+03:00",
+  "git_rev": "1fdef9ea7fca2c10e11de287aa77dcf6bdffde5a",
   "rest": [
     {
       "method": "POST",
@@ -55,6 +55,30 @@
       "path": "/batch_insert",
       "status": "legacy_compat",
       "group": "vector"
+    },
+    {
+      "method": "POST",
+      "path": "/chats/import",
+      "status": "canonical",
+      "group": "chats"
+    },
+    {
+      "method": "GET",
+      "path": "/chats/import/runs",
+      "status": "canonical",
+      "group": "chats"
+    },
+    {
+      "method": "GET",
+      "path": "/chats/import/sessions",
+      "status": "canonical",
+      "group": "chats"
+    },
+    {
+      "method": "GET",
+      "path": "/chats/import/sessions/:platform/:sessionId",
+      "status": "canonical",
+      "group": "chats"
     },
     {
       "method": "POST",
@@ -1214,6 +1238,11 @@
     {
       "name": "analyze_commits",
       "group": "git",
+      "status": "canonical"
+    },
+    {
+      "name": "chat_distill",
+      "group": "chat",
       "status": "canonical"
     },
     {
@@ -2586,6 +2615,16 @@
     {
       "provider": "sqlite",
       "kind": "index",
+      "name": "idx_chat_import_messages_session"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_chat_import_runs_platform"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
       "name": "idx_communities_level"
     },
     {
@@ -2847,6 +2886,16 @@
       "provider": "sqlite",
       "kind": "table",
       "name": "api_keys"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "chat_import_messages"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "chat_import_runs"
     },
     {
       "provider": "sqlite",

@@ -13,8 +13,8 @@ import (
 // setupCrossSearchDB returns a fakeDeps whose DB has a populated
 // memories table with a mix of ordinary and sensitive-key rows.
 // Collection "alpha" has 2 public + 1 sensitive row; "beta" has 1
-// public row. Cross-collection rows (collection_name='') are added
-// so tests can cover the collection_name='' OR-branch.
+// public row. Cross-collection rows (collection_name=”) are added
+// so tests can cover the collection_name=” OR-branch.
 func setupCrossSearchDB(t *testing.T) *fakeDeps {
 	t.Helper()
 	deps := setupDepsTestDB(t)

@@ -17,9 +17,9 @@ func TestTaskOpenReopenWithoutDefinitionOfDone(t *testing.T) {
 	ctx := context.Background()
 
 	openArgs := map[string]any{
-		"collection":     "levara",
-		"room":           "task-runtime",
-		"objective":      "reopen compatibility",
+		"collection":      "levara",
+		"room":            "task-runtime",
+		"objective":       "reopen compatibility",
 		"idempotency_key": "reopen-m1",
 		"definition_of_done": []any{
 			map[string]any{"criterion_id": "done", "description": "all good"},

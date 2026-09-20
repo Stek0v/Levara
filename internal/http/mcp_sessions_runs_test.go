@@ -212,7 +212,9 @@ func TestRunIncludesInheritedSessionSources(t *testing.T) {
 		if _, err := RecordSessionInteraction(sessionHistoryContext(actor, source), f.cfg, "inherited-session", "history question", "inherited sensitive context", "rag"); err != nil {
 			t.Fatal(err)
 		}
-		endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Error(w, "test unavailable", 503) }))
+		endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "test unavailable", http.StatusServiceUnavailable)
+		}))
 		defer endpoint.Close()
 		f.cfg.EmbedEndpoint = endpoint.URL
 		f.cfg.Collections, err = store.NewCollectionManager(2, t.TempDir())

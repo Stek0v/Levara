@@ -116,7 +116,7 @@ func NewOIDCVerifier(cfg OIDCVerifierConfig) (*OIDCVerifier, error) {
 	// Compare the parsed host, never a URL prefix; localhost.example and
 	// localhost@example are remote hosts. Plain HTTP is for loopback tests only.
 	loopback := strings.EqualFold(u.Hostname(), "localhost") || net.ParseIP(u.Hostname()).IsLoopback()
-	if u.Scheme != "https" && !(u.Scheme == "http" && loopback) {
+	if u.Scheme != "https" && (u.Scheme != "http" || !loopback) {
 		return nil, errors.New("oidc: JWKSURL must use https (except loopback)")
 	}
 	if len(cfg.Issuers) == 0 || len(cfg.Audiences) == 0 {
@@ -288,7 +288,16 @@ func verifySignature(alg string, key jsonWebKey, signingInput, sig []byte) error
 		if len(sig) != 64 {
 			return errors.New("oidc: ES256 signature must be 64-byte raw r||s")
 		}
-		pub := &ecdsa.PublicKey{Curve: key.Crv, X: key.X, Y: key.Y}
+		// Build the key via the SEC 1 uncompressed-point constructor instead of
+		// the deprecated PublicKey{Curve, X, Y} literal (SA1019, Go 1.26+).
+		point := make([]byte, 65)
+		point[0] = 0x04
+		key.X.FillBytes(point[1:33])
+		key.Y.FillBytes(point[33:65])
+		pub, err := ecdsa.ParseUncompressedPublicKey(elliptic.P256(), point)
+		if err != nil {
+			return fmt.Errorf("oidc: invalid ES256 point: %w", err)
+		}
 		r := new(big.Int).SetBytes(sig[:32])
 		s := new(big.Int).SetBytes(sig[32:])
 		if !ecdsa.Verify(pub, digest[:], r, s) {

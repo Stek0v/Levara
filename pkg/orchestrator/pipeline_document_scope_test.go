@@ -39,7 +39,9 @@ func TestDocumentPipelineGuardRejectsBeforeExternalEffect(t *testing.T) {
 }
 
 func TestDocumentEmbeddingFailureIsNotCompleted(t *testing.T) {
-	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Error(w, "unavailable", 503) }))
+	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "unavailable", http.StatusServiceUnavailable)
+	}))
 	defer endpoint.Close()
 	cm, err := store.NewCollectionManager(2, t.TempDir())
 	if err != nil {

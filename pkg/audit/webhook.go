@@ -65,10 +65,17 @@ func (cfg WebhookConfig) normalized(spool SpoolConfig) (WebhookConfig, error) {
 		cfg.PollInterval = time.Second
 	}
 	u, err := url.Parse(cfg.URL)
-	if err != nil || u.Host == "" || u.User != nil || u.Fragment != "" || u.RawQuery != "" || (u.Scheme != "https" && !(u.Scheme == "http" && (u.Hostname() == "localhost" || net.ParseIP(u.Hostname()).IsLoopback()))) || strings.ContainsAny(cfg.Token, "\r\n") || len(cfg.Token) > 8192 || cfg.BatchCount < 1 || cfg.BatchCount > 1000 || cfg.BatchBytes < spool.MaxEventBytes+len(`{"events":[]}`) || cfg.BatchBytes > 4<<20 || cfg.Timeout <= 0 || cfg.Timeout >= spool.LeaseDuration || cfg.PollInterval <= 0 || cfg.PollInterval > time.Minute {
+	if err != nil || u.Host == "" || u.User != nil || u.Fragment != "" || u.RawQuery != "" || (u.Scheme != "https" && (u.Scheme != "http" || !isLoopbackHost(u.Hostname()))) || strings.ContainsAny(cfg.Token, "\r\n") || len(cfg.Token) > 8192 || cfg.BatchCount < 1 || cfg.BatchCount > 1000 || cfg.BatchBytes < spool.MaxEventBytes+len(`{"events":[]}`) || cfg.BatchBytes > 4<<20 || cfg.Timeout <= 0 || cfg.Timeout >= spool.LeaseDuration || cfg.PollInterval <= 0 || cfg.PollInterval > time.Minute {
 		return cfg, errors.New("invalid audit webhook configuration")
 	}
 	return cfg, nil
+}
+
+// isLoopbackHost reports whether host is exactly "localhost" or a loopback IP
+// literal. Truth table: "localhost" -> true; any parseable loopback IP -> true;
+// every other value (including non-IP hostnames and non-loopback IPs) -> false.
+func isLoopbackHost(host string) bool {
+	return host == "localhost" || net.ParseIP(host) != nil && net.ParseIP(host).IsLoopback()
 }
 
 // DeliverOnce leases a bounded batch, releases SQL locks, then sends it. Any

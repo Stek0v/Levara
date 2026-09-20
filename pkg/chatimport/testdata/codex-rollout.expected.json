@@ -1,0 +1,85 @@
+{
+  "platform": "codex",
+  "session_id": "11111111-2222-3333-4444-555555555555",
+  "title": "Как устроен WAL в SQLite?",
+  "model": "gpt-5.2-codex",
+  "created_at": "2026-09-15T10:00:00.090Z",
+  "cwd": "/Users/demo/src/project",
+  "metadata": {
+    "cli_version": "0.50.0",
+    "originator": "codex_cli_rs",
+    "source": "terminal"
+  },
+  "messages": [
+    {
+      "external_id": "msg_dev_1",
+      "ordinal": 0,
+      "role": "developer",
+      "kind": "system",
+      "model": "gpt-5.2-codex",
+      "content": "<app-context>\nYou are running inside Codex.\n</app-context>",
+      "created_at": "2026-09-15T10:00:00.300Z"
+    },
+    {
+      "external_id": "msg_user_1",
+      "ordinal": 1,
+      "role": "user",
+      "kind": "text",
+      "model": "gpt-5.2-codex",
+      "content": "Как устроен WAL в SQLite?\n\nИнтересует, как он влияет на параллельные читатели.",
+      "created_at": "2026-09-15T10:00:05.000Z"
+    },
+    {
+      "external_id": "rs_plain_1",
+      "ordinal": 2,
+      "role": "assistant",
+      "kind": "reasoning",
+      "model": "gpt-5.2-codex",
+      "content": "Пользователь спрашивает про WAL. Сначала объясню -journal режим, затем WAL и снапшот-изоляцию читателей.",
+      "created_at": "2026-09-15T10:00:07.000Z"
+    },
+    {
+      "external_id": "msg_asst_1",
+      "ordinal": 3,
+      "role": "assistant",
+      "kind": "text",
+      "model": "gpt-5.2-codex",
+      "content": "WAL (write-ahead log) меняет модель конкуренции: писатели append в файл WAL, читатели работают по снапшоту из -wal.",
+      "created_at": "2026-09-15T10:00:12.000Z"
+    },
+    {
+      "external_id": "ctc_exec_1",
+      "ordinal": 4,
+      "role": "assistant",
+      "kind": "tool_call",
+      "model": "gpt-5.2-codex",
+      "content": "exec\nconst r = await tools.exec_command({cmd:\"sqlite3 demo.db 'PRAGMA journal_mode;'\"}); text(r);",
+      "created_at": "2026-09-15T10:00:13.000Z",
+      "metadata": {
+        "call_id": "call_exec_1",
+        "tool_name": "exec"
+      }
+    },
+    {
+      "external_id": "ctco_exec_1",
+      "ordinal": 5,
+      "role": "tool",
+      "kind": "tool_result",
+      "model": "gpt-5.2-codex",
+      "content": "Script completed\nOutput:\nwal",
+      "created_at": "2026-09-15T10:00:14.000Z",
+      "metadata": {
+        "call_id": "call_exec_1"
+      }
+    },
+    {
+      "external_id": "msg_user_2",
+      "ordinal": 6,
+      "role": "user",
+      "kind": "text",
+      "model": "gpt-5.2-codex",
+      "content": "Спасибо, ясно. А как проверить ghp_0123456789abcdefghijkl не утёк ли токен в логи?",
+      "created_at": "2026-09-15T10:00:20.000Z"
+    }
+  ]
+}

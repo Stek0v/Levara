@@ -51,7 +51,7 @@ func (cfg AWSKMSConfig) Validate() error {
 		if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
 			return errors.New("kms: invalid endpoint")
 		}
-		if u.Scheme != "https" && !(cfg.AllowLocalHTTP && u.Scheme == "http" && (u.Hostname() == "127.0.0.1" || u.Hostname() == "::1" || u.Hostname() == "localhost")) {
+		if u.Scheme != "https" && (!cfg.AllowLocalHTTP || u.Scheme != "http" || (u.Hostname() != "127.0.0.1" && u.Hostname() != "::1" && u.Hostname() != "localhost")) {
 			return errors.New("kms: endpoint requires HTTPS")
 		}
 	}

@@ -12,12 +12,12 @@ import (
 // machine. Concurrent mutation is the caller's responsibility; SessionStore
 // below handles concurrent map access.
 type Session struct {
-	ID        string
-	UserID    string // from Authorization header (JWT); empty for anonymous
-	CreatedAt time.Time
-	SSECh     chan []byte // buffered channel for server-initiated SSE messages
-	ClientName    string // initialize.params.clientInfo.name
-	ClientVersion string // initialize.params.clientInfo.version
+	ID            string
+	UserID        string // from Authorization header (JWT); empty for anonymous
+	CreatedAt     time.Time
+	SSECh         chan []byte // buffered channel for server-initiated SSE messages
+	ClientName    string      // initialize.params.clientInfo.name
+	ClientVersion string      // initialize.params.clientInfo.version
 
 	// mu guards the mutable session fields below. A single legacy session
 	// can serve concurrent tool calls, so direct field writes raced (M2,

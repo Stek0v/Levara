@@ -46,7 +46,7 @@ func trustedProviderURL(raw string) (*url.URL, error) {
 		return nil, errors.New("SSO URL has an empty port")
 	}
 	loopback := strings.EqualFold(u.Hostname(), "localhost") || net.ParseIP(u.Hostname()).IsLoopback()
-	if u.Scheme != "https" && !(u.Scheme == "http" && loopback) {
+	if u.Scheme != "https" && (u.Scheme != "http" || !loopback) {
 		return nil, errors.New("SSO URL requires HTTPS except loopback")
 	}
 	return u, nil

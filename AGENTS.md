@@ -287,6 +287,7 @@ summary to the main thread.
 | add | data | canonical |
 | add_feedback | feedback | canonical |
 | analyze_commits | git | canonical |
+| chat_distill | chat | canonical |
 | check_drift | data | canonical |
 | codify | cognify | canonical |
 | cognify | cognify | canonical |

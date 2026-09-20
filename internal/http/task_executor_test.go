@@ -261,9 +261,10 @@ func TestTaskExecutorRetryAndRestartAfterUnreceiptedWrite(t *testing.T) {
 			for _, kind := range []string{"retry", "restart", "restart-create", "restart-update", "restart-conflict"} {
 				t.Run(kind, func(t *testing.T) {
 					action := executorAction("workspace_write", "docs/retry.md", "once")
-					if kind == "restart-create" || kind == "restart-conflict" {
+					switch kind {
+					case "restart-create", "restart-conflict":
 						action["arguments"].(map[string]any)["expected_file_digest"] = ""
-					} else if kind == "restart-update" {
+					case "restart-update":
 						action["arguments"].(map[string]any)["expected_file_digest"] = digestBytes([]byte("before"))
 					}
 					cfg, _, id := executorFixture(t, db, []map[string]any{action})

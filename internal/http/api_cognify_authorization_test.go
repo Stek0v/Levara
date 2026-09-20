@@ -462,7 +462,7 @@ func TestHTTPBatchCognifyKeepsPerSourceTerminalTruth(t *testing.T) {
 				}
 				for _, input := range req.Input {
 					if strings.Contains(input, "fail-second") {
-						http.Error(w, "forced second-source failure", 503)
+						http.Error(w, "forced second-source failure", http.StatusServiceUnavailable)
 						return
 					}
 				}

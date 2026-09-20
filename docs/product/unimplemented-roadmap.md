@@ -93,7 +93,7 @@ blocked Send — callback-модель. Реальный flow-control load, за
 
 ### Закрытые регрессии 2026-09-09
 
-В текущем рабочем дереве закрыты четыре подтверждённых дефекта: изменение общей строки загрузки после revoke через другую legacy-привязку; широкое удаление одноимённых memories; потеря пропущенных полей при partial PUT настроек; превышение SQL bind limit при большом graph ACL. Targeted SQLite/PostgreSQL/race и browser-проверки проходят, generated contracts синхронизированы, повторное независимое ревью блокеров не нашло. Evidence и оставшиеся release-wide задачи: [отчёт](../../outputs/commit-regressions-2026-09-09/report.md) и [план](../../outputs/commit-regressions-2026-09-09/tasks.md).
+В текущем рабочем дереве закрыты четыре подтверждённых дефекта: изменение общей строки загрузки после revoke через другую legacy-привязку; широкое удаление одноимённых memories; потеря пропущенных полей при partial PUT настроек; превышение SQL bind limit при большом graph ACL. Targeted SQLite/PostgreSQL/race и browser-проверки проходят, generated contracts синхронизированы, повторное независимое ревью блокеров не нашло. Evidence и оставшиеся release-wide задачи: отчёт и план в outputs/commit-regressions-2026-09-09/ (local-only, вне git).
 
 ### Закрытый блок публикации 2026-09-10
 

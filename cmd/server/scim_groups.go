@@ -108,8 +108,7 @@ func scimGroupPatch(body []byte) ([]access.SCIMGroupOperation, error) {
 		return nil, err
 	}
 	out := []access.SCIMGroupOperation{}
-	var appendField func(string, string, json.RawMessage) error
-	appendField = func(op, path string, value json.RawMessage) error {
+	appendField := func(op, path string, value json.RawMessage) error {
 		switch strings.ToLower(path) {
 		case "displayname":
 			var name string

@@ -13,7 +13,7 @@ embedding sidecar potion-code-16M (dim 256), латентность с клие�
 Сырые JSON: `benchmark/results/marketing_e1_sqlite_latest.json`,
 `marketing_e2_docs_latest.json` и `marketing_e3_noauth_docs_latest.json`.
 Замеры соответствуют
-[проекту кампании](marketing/test-campaign-design.md) (local-only).
+проекту кампании (local-only, docs/marketing/ вне git).
 
 | Замер | Наблюдаемый результат | Граница доказательства |
 |---|---|---|

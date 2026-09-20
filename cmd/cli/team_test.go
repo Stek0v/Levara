@@ -260,7 +260,7 @@ func TestTeamRedirectAndURLSecretsNeverLeaveClient(t *testing.T) {
 			w.WriteHeader(401)
 			return
 		}
-		http.Redirect(w, r, sink.URL, 307)
+		http.Redirect(w, r, sink.URL, http.StatusTemporaryRedirect)
 	}))
 	defer source.Close()
 	plan := writeTeamPlan(t, teamTestPlan())

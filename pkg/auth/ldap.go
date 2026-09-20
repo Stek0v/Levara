@@ -115,7 +115,7 @@ func NewLDAPVerifier(cfg LDAPConfig) (*LDAPVerifier, error) {
 	var required *ldap.DN
 	if cfg.RequiredGroupDN != "" {
 		required, err = ldap.ParseDN(cfg.RequiredGroupDN)
-		if err != nil || len(required.RDNs) == 0 || !(groupBase.Equal(required) || groupBase.AncestorOf(required)) {
+		if err != nil || len(required.RDNs) == 0 || (!groupBase.Equal(required) && !groupBase.AncestorOf(required)) {
 			return nil, errors.New("required LDAP group must be within group base DN")
 		}
 	}
@@ -198,7 +198,7 @@ func (v *LDAPVerifier) Authenticate(parent context.Context, username, password s
 	}
 	entry := result.Entries[0]
 	dn, err := ldap.ParseDN(entry.DN)
-	if err != nil || !(v.base.Equal(dn) || v.base.AncestorOf(dn)) {
+	if err != nil || (!v.base.Equal(dn) && !v.base.AncestorOf(dn)) {
 		return LDAPIdentity{}, ErrDirectoryCredentials
 	}
 	subject, err := v.subject(entry)
@@ -322,7 +322,7 @@ func (v *LDAPVerifier) inRequiredGroup(service *ldap.Conn, userDN string) (bool,
 			}
 			for _, entry := range result.Entries {
 				dn, err := ldap.ParseDN(entry.DN)
-				if err != nil || !(v.groupBase.Equal(dn) || v.groupBase.AncestorOf(dn)) {
+				if err != nil || (!v.groupBase.Equal(dn) && !v.groupBase.AncestorOf(dn)) {
 					return false, ErrDirectoryCredentials
 				}
 				if dn.Equal(v.requiredGroup) {

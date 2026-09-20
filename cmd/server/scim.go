@@ -332,13 +332,6 @@ func scimPagination(c *fiber.Ctx) (start, count int) {
 	return start, count
 }
 
-func newEmailOr(new, old string) string {
-	if new != "" {
-		return new
-	}
-	return old
-}
-
 func scimAuditLine(action, issuer, _ string, userID string) string {
 	// Mirror only stable IDs. JSON escaping prevents log-line injection and
 	// externalId may be a legacy email, so it is not copied to the log sink.

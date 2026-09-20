@@ -211,10 +211,6 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-// Kept open until OS process exit, including detached background writers.
-// An offline snapshot must never acquire the root while a writer is alive.
-var processWriterLease *backup.Lease
-
 func main() {
 	if len(os.Args) >= 2 && os.Args[1] == "mcp" {
 		if err := runMCPStdio(os.Args[2:]); err != nil {
@@ -378,9 +374,10 @@ func main() {
 	if *configCheck {
 		os.Exit(runConfigCheck(os.Stdout, *requireAuth, *mcpAuditPath, truthyEnv("LEVARA_PROFILE_STRICT")))
 	}
-	var leaseErr error
-	processWriterLease, leaseErr = backup.AcquireWriterLease(*dataDir)
-	if leaseErr != nil {
+	// The writer lease is held until process exit: the flock on the lock file
+	// stays active for the lifetime of the process, so an offline snapshot can
+	// never acquire the data root while this writer is alive.
+	if _, leaseErr := backup.AcquireWriterLease(*dataDir); leaseErr != nil {
 		log.Fatalf("data root writer lock: %v", leaseErr)
 	}
 

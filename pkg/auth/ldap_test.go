@@ -181,7 +181,7 @@ func (f *ldapWire) serve(raw net.Conn) {
 				_ = ldapReply(c, id, ldapResult(24, 53))
 				return
 			}
-			if len(op.Children) != 1 || string(op.Children[0].Data.Bytes()) != "1.3.6.1.4.1.1466.20037" {
+			if len(op.Children) != 1 || op.Children[0].Data.String() != "1.3.6.1.4.1.1466.20037" {
 				return
 			}
 			if ldapReply(c, id, ldapResult(24, 0)) != nil {
@@ -203,8 +203,8 @@ func (f *ldapWire) serve(raw net.Conn) {
 				f.plaintextBinds++
 			}
 			f.mu.Unlock()
-			dn := string(op.Children[1].Data.Bytes())
-			password := string(op.Children[2].Data.Bytes())
+			dn := op.Children[1].Data.String()
+			password := op.Children[2].Data.String()
 			code := 49
 			if secure && ((dn == f.config.BindDN && password == f.config.BindPassword) || (dn == f.userDN && password == "user-secret")) {
 				code = 0

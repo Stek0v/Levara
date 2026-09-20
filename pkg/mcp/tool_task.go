@@ -1282,11 +1282,3 @@ func syncTaskMemoryIndex(ctx context.Context, deps Deps, taskID string) {
 		}
 	}
 }
-
-func toAnyStrings(values []string) []any {
-	out := make([]any, len(values))
-	for i, v := range values {
-		out[i] = v
-	}
-	return out
-}

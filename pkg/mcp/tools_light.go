@@ -31,6 +31,7 @@ var toolProfiles = map[string][]string{
 	"long-horizon": {
 		"levara_instructions", "set_context", "get_project_context", "wake_up",
 		"save_memory", "recall_memory", "list_memories", "pin_memory", "unpin_memory", "supersede_memory",
+		"chat_distill",
 		"search", "doctor", "runtime_stats", "recent_errors",
 		"task_open", "task_bootstrap", "task_plan", "task_step", "task_checkpoint", "task_receipt", "task_validate", "task_complete",
 	},

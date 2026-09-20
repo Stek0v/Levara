@@ -162,7 +162,7 @@ func decodeMultipartStateKey(value string) ([]byte, error) {
 }
 func validS3Identifier(v string) bool {
 	return v != "" && strings.IndexFunc(v, func(r rune) bool {
-		return !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || strings.ContainsRune("._-", r))
+		return (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && !strings.ContainsRune("._-", r)
 	}) == -1
 }
 func validS3Key(k string) error {
@@ -262,7 +262,7 @@ func validateS3XML(body []byte, want string, allowError bool) error {
 		switch v := tok.(type) {
 		case xml.StartElement:
 			if depth == 0 {
-				if seen || v.Name.Local != want && !(allowError && v.Name.Local == "Error") {
+				if seen || v.Name.Local != want && (!allowError || v.Name.Local != "Error") {
 					return errors.New("storage/s3: unexpected XML response")
 				}
 				seen = true

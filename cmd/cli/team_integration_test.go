@@ -84,7 +84,7 @@ func teamIntegrationServer(t *testing.T, dialect string) (*httptest.Server, *sql
 			t.Error("global admin token reached real API")
 		}
 		if breakGrants.Load() && strings.HasSuffix(r.URL.Path, "/shares") && r.Method == "POST" {
-			http.Error(w, "do not echo fixture-secret-token", 503)
+			http.Error(w, "do not echo fixture-secret-token", http.StatusServiceUnavailable)
 			return
 		}
 		resp, err := app.Test(r, -1)
