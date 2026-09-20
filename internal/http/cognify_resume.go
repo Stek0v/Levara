@@ -110,6 +110,13 @@ func ResumeUnfinishedCognify(ctx context.Context, db *sql.DB, starter CognifySta
 					summary, err := starter.Start(ctx, g.DatasetID, g.Collection)
 					if err != nil {
 						log.Printf("[cognify-resume] run failed: %v", err)
+						// The resume starts before Listen: connection errors
+						// during the startup window are expected and must
+						// not consume the drain budget or stop the loop.
+						if isConnectRefused(err) && attempt < cognifyResumeMaxAttempts {
+							time.Sleep(cognifyResumeCooldown)
+							continue
+						}
 						time.Sleep(cognifyResumeCooldown)
 						break
 					}
@@ -145,6 +152,16 @@ func ResumeUnfinishedCognify(ctx context.Context, db *sql.DB, starter CognifySta
 			}
 		}
 	}()
+}
+
+// isConnectRefused matches the startup window when the loopback listener
+// is not answering yet (Go's http client wraps the refusal).
+func isConnectRefused(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "connection refused") || strings.Contains(msg, "Client.Timeout") || strings.Contains(msg, "context deadline exceeded")
 }
 
 // PendingCognifyCount counts non-terminal pipeline rows for one dataset
