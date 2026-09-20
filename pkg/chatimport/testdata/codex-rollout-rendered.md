@@ -9,16 +9,6 @@
 - originator: codex_cli_rs
 - source: terminal
 
-## [0] system
-
-<details>
-
-<app-context>
-You are running inside Codex.
-</app-context>
-
-</details>
-
 ## [1] user · text
 
 Как устроен WAL в SQLite?

@@ -44,9 +44,10 @@ func RenderConversationMarkdown(conv *Conversation) string {
 	for _, m := range conv.Messages {
 		m.Content = strings.ToValidUTF8(m.Content, "\uFFFD")
 		if m.Kind == KindSystem {
-			// Harness boilerplate adds search noise; keep it visible but
-			// compact.
-			fmt.Fprintf(&b, "## [%d] system\n\n<details>\n\n%s\n\n</details>\n\n", m.Ordinal, sanitize(m.Content))
+			// Harness boilerplate (permissions, app-context, skills) is pure
+			// search noise — measured live: it outranked real content in the
+			// chat-imports collection. The raw layer keeps every message;
+			// the RAG document simply omits the boilerplate.
 			continue
 		}
 		label := string(m.Kind)
