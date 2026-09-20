@@ -54,9 +54,12 @@ func cmdChatsImport(args []string) {
 	platform, _ := chatsFlag(args, "--platform")
 	path, _ := chatsFlag(args, "--path")
 	switch chatimport.Platform(platform) {
+	case chatimport.PlatformCursor:
+		cmdChatsImportCursor(args, path)
+		return
 	case chatimport.PlatformCodex, chatimport.PlatformClaudeCode:
 	default:
-		fatalf("--platform=codex|claude-code required (cursor lands later, experimental)")
+		fatalf("--platform=codex|claude-code|cursor required")
 	}
 	if path == "" {
 		fatalf("--path=<file-or-dir> required")
@@ -161,6 +164,124 @@ func cmdChatsImport(args []string) {
 	if wantCognify && !dryRun && totalInserted > 0 {
 		chatsTriggerCognify(dataset, hasFlag(args, "--wait"))
 	}
+}
+
+// cmdChatsImportCursor handles the cursor platform: one state.vscdb expands
+// to many conversations, imported one POST per conversation with a
+// session-stable run id (uuid5 of platform+session), so grown conversations
+// import only their new bubbles.
+func cmdChatsImportCursor(args []string, path string) {
+	if path == "" {
+		fatalf("--path=<state.vscdb|Cursor User dir> required for cursor")
+	}
+	noReasoning := hasFlag(args, "--no-reasoning")
+	dryRun := hasFlag(args, "--dry-run")
+	dataset, _ := chatsFlag(args, "--dataset")
+	wantCognify := hasFlag(args, "--cognify")
+	if wantCognify && dataset == "" {
+		fatalf("--cognify requires an explicit --dataset=<name>")
+	}
+
+	dbs, err := cursorStateDBs(path)
+	if err != nil {
+		fatalf("%v", err)
+	}
+	if len(dbs) == 0 {
+		fatalf("no state.vscdb under %s (point at Cursor's User dir or a vscdb file)", path)
+	}
+
+	opts := chatimport.DefaultParseOptions()
+	opts.IncludeReasoning = !noReasoning
+
+	totalInserted, totalMessages, totalSkipped := 0, 0, 0
+	failures := 0
+	convSeen := 0
+	for _, db := range dbs {
+		convs, stats, err := chatimport.ParseCursorChats(db, opts)
+		if err != nil {
+			fmt.Printf("%sFAIL%s   %s %v\n", colorRed, colorReset, db, err)
+			failures++
+			continue
+		}
+		totalSkipped += stats.Skipped
+		for i := range convs {
+			conv := &convs[i]
+			convSeen++
+			totalMessages += len(conv.Messages)
+			if dryRun {
+				fmt.Printf("%sDRY%s    session=%s title=%q messages=%d\n", colorCyan, colorReset, shortID(conv.SessionID), truncateFor(conv.Title, 40), len(conv.Messages))
+				continue
+			}
+			runID := uuid.NewSHA1(uuid.NameSpaceURL, []byte("cursor/"+conv.SessionID)).String()
+			payload := map[string]any{
+				"run_id":       runID,
+				"source_path":  db,
+				"skipped":      0,
+				"finish":       true,
+				"conversation": conv,
+			}
+			body, status := postJSON(baseURL+"/chats/import", payload)
+			if status != http.StatusCreated {
+				fmt.Printf("%sFAIL%s   session=%s HTTP %d %s\n", colorRed, colorReset, shortID(conv.SessionID), status, truncateFor(string(body), 120))
+				failures++
+				continue
+			}
+			var resp struct {
+				Inserted    int      `json:"inserted"`
+				WarnedCount int      `json:"warned_count"`
+				Warnings    []string `json:"warnings"`
+			}
+			_ = json.Unmarshal(body, &resp)
+			totalInserted += resp.Inserted
+			marker := colorGreen + "OK  " + colorReset
+			if resp.Inserted == 0 {
+				marker = colorDim + "SKIP" + colorReset
+			}
+			fmt.Printf("%s%s session=%s title=%q inserted=%d warnings=%d\n",
+				marker, filepath.Base(filepath.Dir(db)), shortID(conv.SessionID), truncateFor(conv.Title, 40), resp.Inserted, resp.WarnedCount)
+			for _, w := range resp.Warnings {
+				fmt.Printf("        %s⚠%s %s\n", colorYellow, colorReset, w)
+			}
+			if dataset != "" && resp.Inserted > 0 {
+				chatsAddRenderedConversation(conv, dataset)
+				for _, art := range chatimport.ExtractArtifacts(conv, opts) {
+					chatsAddArtifact(art, conv, dataset)
+				}
+			}
+		}
+	}
+	fmt.Printf("\ndbs=%d conversations=%d inserted=%d messages=%d skipped=%d failures=%d\n",
+		len(dbs), convSeen, totalInserted, totalMessages, totalSkipped, failures)
+	if failures > 0 {
+		os.Exit(1)
+	}
+	if wantCognify && !dryRun && totalInserted > 0 {
+		chatsTriggerCognify(dataset, hasFlag(args, "--wait"))
+	}
+}
+
+// cursorStateDBs resolves --path into state.vscdb files: a direct file, or a
+// Cursor User directory containing globalStorage and workspaceStorage.
+func cursorStateDBs(path string) ([]string, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return []string{path}, nil
+	}
+	var dbs []string
+	candidates := []string{
+		filepath.Join(path, "globalStorage", "state.vscdb"),
+	}
+	wsMatches, _ := filepath.Glob(filepath.Join(path, "workspaceStorage", "*", "state.vscdb"))
+	candidates = append(candidates, wsMatches...)
+	for _, c := range candidates {
+		if fi, err := os.Stat(c); err == nil && !fi.IsDir() {
+			dbs = append(dbs, c)
+		}
+	}
+	return dbs, nil
 }
 
 // chatsAddRenderedConversation pushes the rendered markdown document into
@@ -270,8 +391,50 @@ func chatsTriggerCognify(dataset string, wait bool) {
 	}
 }
 
+// postJSON is doPost for typed payloads (the shared helper only takes maps).
+// postRaw posts pre-marshalled bodies. Both go through postWithRetry: the
+// server user-bucket rate limit is 100 req/min and bulk imports exceed it,
+// so 429s switch the process into slow mode and retry.
+var chatsSlowMode bool
+
+func postJSON(endpoint string, payload any) ([]byte, int) {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		fatalf("marshal payload: %v", err)
+	}
+	return postWithRetry("POST", endpoint, "application/json", data)
+}
+
 func postRaw(endpoint, contentType string, data []byte) ([]byte, int) {
-	req, _ := http.NewRequest("POST", endpoint, bytes.NewReader(data))
+	return postWithRetry("POST", endpoint, contentType, data)
+}
+
+// postWithRetry retries once on the server rate limiter, honouring
+// retry_after, and then paces every subsequent request so a bulk import
+// stays under the bucket instead of failing per conversation.
+func postWithRetry(method, endpoint, contentType string, data []byte) ([]byte, int) {
+	body, status := doRequest(method, endpoint, contentType, data)
+	if status != http.StatusTooManyRequests {
+		if chatsSlowMode {
+			time.Sleep(650 * time.Millisecond)
+		}
+		return body, status
+	}
+	var rl struct {
+		RetryAfter int `json:"retry_after"`
+	}
+	_ = json.Unmarshal(body, &rl)
+	if rl.RetryAfter <= 0 {
+		rl.RetryAfter = 5
+	}
+	fmt.Printf("        %s⋯%s rate-limited, waiting %ds (slow mode on)\n", colorYellow, colorReset, rl.RetryAfter)
+	time.Sleep(time.Duration(rl.RetryAfter) * time.Second)
+	chatsSlowMode = true
+	return doRequest(method, endpoint, contentType, data)
+}
+
+func doRequest(method, endpoint, contentType string, data []byte) ([]byte, int) {
+	req, _ := http.NewRequest(method, endpoint, bytes.NewReader(data))
 	req.Header.Set("Content-Type", contentType)
 	applyAuth(req)
 	resp, err := http.DefaultClient.Do(req)
@@ -374,24 +537,6 @@ func collectTranscriptFiles(path string) ([]string, error) {
 		return nil
 	})
 	return files, err
-}
-
-// postJSON is doPost for typed payloads (the shared helper only takes maps).
-func postJSON(endpoint string, payload any) ([]byte, int) {
-	data, err := json.Marshal(payload)
-	if err != nil {
-		fatalf("marshal payload: %v", err)
-	}
-	req, _ := http.NewRequest("POST", endpoint, bytes.NewReader(data))
-	req.Header.Set("Content-Type", "application/json")
-	applyAuth(req)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		fatalf("connection failed: %v", err)
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	return body, resp.StatusCode
 }
 
 func shortID(id string) string {
