@@ -277,30 +277,62 @@ func printAddResult(body []byte, label, dataset string) {
 
 // ingestRequest keeps add/cognify failures observable without changing other commands.
 func ingestRequest(method, endpoint, contentType string, body io.Reader) []byte {
-	req, err := http.NewRequest(method, endpoint, body)
-	if err != nil {
-		fatalf("create request: %v", err)
+	var payload []byte
+	if body != nil {
+		var err error
+		payload, err = io.ReadAll(body)
+		if err != nil {
+			fatalf("read request body: %v", err)
+		}
 	}
-	if contentType != "" {
-		req.Header.Set("Content-Type", contentType)
+	// The server user-bucket rate limit (100 req/min) rejects bulk flows;
+	// retry once honouring retry_after, then pace subsequent requests.
+	for attempt := 0; ; attempt++ {
+		var reader io.Reader
+		if payload != nil {
+			reader = bytes.NewReader(payload)
+		}
+		req, err := http.NewRequest(method, endpoint, reader)
+		if err != nil {
+			fatalf("create request: %v", err)
+		}
+		if contentType != "" {
+			req.Header.Set("Content-Type", contentType)
+		}
+		applyAuth(req)
+		client := *http.DefaultClient
+		// A redirect must not turn an upload into a login page or replay it elsewhere.
+		client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
+		resp, err := client.Do(req)
+		if err != nil {
+			fatalf("request failed: %v", err)
+		}
+		response, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if err != nil {
+			fatalf("read response: %v", err)
+		}
+		if resp.StatusCode == http.StatusTooManyRequests && attempt == 0 {
+			var rl struct {
+				RetryAfter int `json:"retry_after"`
+			}
+			_ = json.Unmarshal(response, &rl)
+			if rl.RetryAfter <= 0 {
+				rl.RetryAfter = 5
+			}
+			fmt.Printf("rate-limited, waiting %ds (slow mode on)\n", rl.RetryAfter)
+			time.Sleep(time.Duration(rl.RetryAfter) * time.Second)
+			chatsSlowMode = true
+			continue
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			fatalf("server error %d: %s", resp.StatusCode, response)
+		}
+		if chatsSlowMode {
+			time.Sleep(650 * time.Millisecond)
+		}
+		return response
 	}
-	applyAuth(req)
-	client := *http.DefaultClient
-	// A redirect must not turn an upload into a login page or replay it elsewhere.
-	client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
-	resp, err := client.Do(req)
-	if err != nil {
-		fatalf("request failed: %v", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	response, err := io.ReadAll(resp.Body)
-	if err != nil {
-		fatalf("read response: %v", err)
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		fatalf("server error %d: %s", resp.StatusCode, response)
-	}
-	return response
 }
 
 func cognifyDatasetID(value string) string {

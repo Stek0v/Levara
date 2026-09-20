@@ -50,7 +50,7 @@ func ParseCursorChats(dbPath string, opts ParseOptions) ([]Conversation, ParseSt
 	byComposer := map[string]*Conversation{}
 	var order []string
 
-	headerRows, err := db.Query(`SELECT value FROM cursorDiskKV WHERE key LIKE 'composerData:%'`)
+	headerRows, err := db.Query(`SELECT value FROM cursorDiskKV WHERE key LIKE 'composerData:%' ORDER BY rowid`)
 	if err != nil {
 		return nil, stats, fmt.Errorf("cursor: query composers: %w", err)
 	}
@@ -83,7 +83,7 @@ func ParseCursorChats(dbPath string, opts ParseOptions) ([]Conversation, ParseSt
 	}
 
 	ordinals := map[string]int{}
-	bubbleRows, err := db.Query(`SELECT key, value FROM cursorDiskKV WHERE key LIKE 'bubbleId:%'`)
+	bubbleRows, err := db.Query(`SELECT key, value FROM cursorDiskKV WHERE key LIKE 'bubbleId:%' ORDER BY rowid`)
 	if err != nil {
 		return nil, stats, fmt.Errorf("cursor: query bubbles: %w", err)
 	}
@@ -131,11 +131,13 @@ func ParseCursorChats(dbPath string, opts ParseOptions) ([]Conversation, ParseSt
 			conv.Messages = append(conv.Messages, base)
 			ordinals[conv.SessionID]++
 		}
-		// Thinking blocks carry their own text when present.
+		// Thinking blocks carry their own text when present. Each block gets
+		// an indexed suffix — they share the bubble's id otherwise and the
+		// uniqueness constraint would silently drop all but the first.
 		if opts.IncludeReasoning {
-			for _, th := range decodeThinkingBlocks(b.Thinking, opts) {
+			for ti, th := range decodeThinkingBlocks(b.Thinking, opts) {
 				m := Message{
-					ExternalID: externalID + "#t",
+					ExternalID: fmt.Sprintf("%s#t%d", externalID, ti),
 					Role:       "assistant", Kind: KindReasoning,
 					Content: th, CreatedAt: conv.CreatedAt,
 					Ordinal: ordinals[conv.SessionID],
