@@ -99,7 +99,8 @@ type RunInfo struct {
 	StartedAt    string
 }
 
-// StartRun inserts a ledger row with status 'running'.
+// StartRun inserts a ledger row with status 'running'. Idempotent on the
+// run id so a retried POST recreates nothing.
 func StartRun(ctx context.Context, db *sql.DB, q Q, run RunInfo) error {
 	if run.ID == "" {
 		run.ID = uuid.NewString()
@@ -107,6 +108,7 @@ func StartRun(ctx context.Context, db *sql.DB, q Q, run RunInfo) error {
 	_, err := db.ExecContext(ctx, q(`
 		INSERT INTO chat_import_runs (id, platform, source_path, source_sha256, status, started_at)
 		VALUES ($1, $2, $3, $4, 'running', $5)
+		ON CONFLICT(id) DO NOTHING
 	`), run.ID, string(run.Platform), run.SourcePath, run.SourceSHA256, run.StartedAt)
 	if err != nil {
 		return fmt.Errorf("chatimport start run: %w", err)
@@ -114,8 +116,10 @@ func StartRun(ctx context.Context, db *sql.DB, q Q, run RunInfo) error {
 	return nil
 }
 
-// FinishRun closes a ledger row with final counters. Warnings are capped to
-// keep the row small; the count stays exact.
+// FinishRun closes a ledger row with final counters. Only a 'running' row is
+// closable: a retried POST over an already-finished run must not rewrite the
+// ledger history. Warnings are capped to keep the row small; the count stays
+// exact.
 func FinishRun(ctx context.Context, db *sql.DB, q Q, runID, status string, imported, skipped, warned int, warnings []string, finishedAt string) error {
 	const maxWarnings = 50
 	if len(warnings) > maxWarnings {
@@ -129,13 +133,21 @@ func FinishRun(ctx context.Context, db *sql.DB, q Q, runID, status string, impor
 	res, err := db.ExecContext(ctx, q(`
 		UPDATE chat_import_runs
 		SET status = $1, imported_count = $2, skipped_count = $3, warned_count = $4, warnings = $5, finished_at = $6
-		WHERE id = $7
+		WHERE id = $7 AND status = 'running'
 	`), status, imported, skipped, warned, string(raw), finishedAt, runID)
 	if err != nil {
 		return fmt.Errorf("chatimport finish run: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		return fmt.Errorf("chatimport finish run: run %s not found", runID)
+		var exists string
+		err := db.QueryRowContext(ctx, q(`SELECT status FROM chat_import_runs WHERE id = $1`), runID).Scan(&exists)
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("chatimport finish run: run %s not found", runID)
+		}
+		if err != nil {
+			return fmt.Errorf("chatimport finish run: %w", err)
+		}
+		// Already finished by a retried request — keep the original counters.
 	}
 	return nil
 }

@@ -142,3 +142,30 @@ func TestMessageIDDeterministic(t *testing.T) {
 		t.Fatal("different platforms must give different ids")
 	}
 }
+
+// A retried finish over an already-closed run must not rewrite the ledger.
+func TestFinishRunDoesNotRewriteClosedRun(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	if err := StartRun(ctx, db, SQLiteQ, RunInfo{ID: "run-c", Platform: PlatformCodex, StartedAt: "2026-09-20T12:00:00Z"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := FinishRun(ctx, db, SQLiteQ, "run-c", "ok", 7, 5, 0, nil, "2026-09-20T12:00:01Z"); err != nil {
+		t.Fatal(err)
+	}
+	// Retry path (e.g. duplicated POST): different counters, must be ignored.
+	if err := FinishRun(ctx, db, SQLiteQ, "run-c", "failed", 0, 0, 0, nil, "2026-09-20T13:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	var status string
+	var imported int
+	if err := db.QueryRow(`SELECT status, imported_count FROM chat_import_runs WHERE id='run-c'`).Scan(&status, &imported); err != nil {
+		t.Fatal(err)
+	}
+	if status != "ok" || imported != 7 {
+		t.Fatalf("closed run rewritten: %s/%d, want ok/7", status, imported)
+	}
+	if err := FinishRun(ctx, db, SQLiteQ, "run-missing", "ok", 0, 0, 0, nil, "t"); err == nil {
+		t.Fatal("expected error for missing run")
+	}
+}

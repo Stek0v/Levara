@@ -216,6 +216,9 @@ func RegisterAPI(app fiber.Router, cfg APIConfig) {
 	// U17: Session/interaction tracking
 	RegisterSessionAPI(app, cfg)
 
+	// Imported chat transcripts (codex / claude-code / cursor)
+	RegisterChatImportAPI(app, cfg)
+
 	// U19: Project memory store
 	RegisterMemoryAPI(app, cfg)
 

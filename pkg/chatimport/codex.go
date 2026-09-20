@@ -23,7 +23,7 @@ func DefaultParseOptions() ParseOptions {
 
 const (
 	defaultTitleLen = 80
-	systemPrefixes  = "<app-context>,<user-instructions>,<environment_context>,<ENVIRONMENT_CONTEXT>"
+	systemPrefixes  = "<app-context>,<user-instructions>,<environment_context>,<ENVIRONMENT_CONTEXT>,<turn_aborted>,<multi_agent_role>,<multi_agent_mode>"
 )
 
 // ParseCodexRollout parses one Codex rollout JSONL transcript
