@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"unicode/utf8"
 )
 
 // ParseOptions tunes adapter behaviour. Defaults match the project decision
@@ -246,7 +247,7 @@ func codexTitle(messages []Message) string {
 		if m.Role == "user" && m.Kind == KindText && m.Content != "" {
 			line := strings.TrimSpace(strings.SplitN(m.Content, "\n", 2)[0])
 			if len(line) > defaultTitleLen {
-				line = line[:defaultTitleLen]
+				line = truncateRunesSafe(line, defaultTitleLen)
 			}
 			return line
 		}
@@ -254,11 +255,27 @@ func codexTitle(messages []Message) string {
 	return ""
 }
 
+// truncateRunesSafe cuts at a rune boundary: a plain byte slice can split
+// a multibyte character and PostgreSQL rejects the resulting string.
+func truncateRunesSafe(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	for len(s) > max {
+		r, size := utf8.DecodeLastRuneInString(s[:max])
+		if r != utf8.RuneError || size > 1 {
+			return s[:max]
+		}
+		max-- // back off the split rune
+	}
+	return s[:max]
+}
+
 func truncateContent(s string, max int) string {
 	if max <= 0 || len(s) <= max {
 		return s
 	}
-	return s[:max] + fmt.Sprintf("\n…[truncated %d bytes]", len(s)-max)
+	return truncateRunesSafe(s, max) + fmt.Sprintf("\n…[truncated %d bytes]", len(s)-max)
 }
 
 func firstNonEmpty(values ...string) string {

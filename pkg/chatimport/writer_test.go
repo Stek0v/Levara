@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	_ "github.com/ncruces/go-sqlite3/driver"
 )
@@ -193,5 +194,24 @@ func TestInsertConversationNULSanitized(t *testing.T) {
 	}
 	if !strings.Contains(content, "binary") || !strings.Contains(content, "output") {
 		t.Fatalf("content mangled beyond NUL replacement: %q", content)
+	}
+}
+
+// Byte-boundary truncation must never split a rune: PostgreSQL rejects the
+// resulting string even when the source file is valid UTF-8 (live case:
+// 64KB cap landed mid-Cyrillic).
+func TestTruncateContentRuneSafe(t *testing.T) {
+	long := strings.Repeat("п", 40_000) // 2 bytes per rune
+	for _, cap := range []int{64 * 1024, 801, 4097} {
+		got := truncateContent(long, cap)
+		if !utf8.ValidString(got) {
+			t.Fatalf("cap=%d produced invalid UTF-8", cap)
+		}
+	}
+	if got := truncateRunesSafe("abcХdef", 5); got != "abcХ" {
+		t.Fatalf("full-rune cut = %q", got)
+	}
+	if got := truncateRunesSafe("abcХdef", 4); got != "abc" {
+		t.Fatalf("rune-safe cut = %q", got)
 	}
 }
