@@ -1,9 +1,9 @@
 // local.go — Local embedding interface for future ONNX/WASM runtime.
 //
 // Strategy: provide a LocalEmbedder interface that can be backed by:
-//   1. HTTP client (current: embed-server, OpenAI-compatible) ✅
-//   2. ONNX Runtime Go bindings (future: github.com/yalue/onnxruntime_go)
-//   3. WASM runtime (future: wazero + ONNX→WASM compiled model)
+//  1. HTTP client (current: embed-server, OpenAI-compatible) ✅
+//  2. ONNX Runtime Go bindings (future: github.com/yalue/onnxruntime_go)
+//  3. WASM runtime (future: wazero + ONNX→WASM compiled model)
 //
 // This file provides the interface and a fallback that uses the HTTP client.
 // When ONNX support is added, it will implement the same interface.

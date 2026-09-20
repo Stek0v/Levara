@@ -746,7 +746,12 @@ func main() {
 	// reembed migration, per-collection dual-search, gRPC request-driven params)
 	// still construct their own client.
 	sharedEmbed := embed.NewClient(embedEndpoint, embedModel, 16, 3)
-	grpcSvc.SetEmbedDefaults(sharedEmbed, embedEndpoint, embedModel)
+	// P4 embedder QoS: one admission gate, foreground (search/recall) keeps
+	// queue priority; the cognify pipeline embeds through a background lane
+	// capped by LEVARA_EMBED_BG_CONCURRENCY (default 2) so corpus batches
+	// cannot starve query embedding against a single-worker upstream.
+	embedGate := embed.NewPriorityGate(embedderGateCapacity())
+	grpcSvc.SetEmbedDefaults(sharedEmbed.WithPriorityGate(embedGate), embedEndpoint, embedModel)
 
 	// Shared search-strategy registry (T5) — owned by main so tests can
 	// substitute strategies without touching NewDefaultStrategyRegistry.
@@ -839,7 +844,8 @@ func main() {
 		WorkspaceWatcher:           workspaceWatcher,
 		EmbedEndpoint:              embedEndpoint,
 		EmbedModel:                 embedModel,
-		EmbedClient:                sharedEmbed,
+		EmbedClient:                sharedEmbed.WithPriorityGate(embedGate),
+		EmbedClientBackground:      sharedEmbed.WithPriorityGate(embedGate).WithBackground().WithConcurrency(embedderBackgroundConcurrency()),
 		Collections:                colManager,
 		Neo4jCfg:                   vizCfg,
 		DB:                         pgDB,
@@ -1058,6 +1064,37 @@ func main() {
 	stopBM25Autosave()
 	runsJanitorStop()
 	<-shutdownDone
+}
+
+// embedderGateCapacity bounds total in-flight embed requests through the
+// shared gate. Default 4 keeps headroom above the foreground lane so query
+// embedding never waits for the gate itself.
+func embedderGateCapacity() int {
+	if n := envInt("LEVARA_EMBED_GATE_CAPACITY"); n > 0 {
+		return n
+	}
+	return 4
+}
+
+// embedderBackgroundConcurrency caps the corpus lane. Default 2: against a
+// single-worker upstream a query then queues behind at most two batches.
+func embedderBackgroundConcurrency() int {
+	if n := envInt("LEVARA_EMBED_BG_CONCURRENCY"); n > 0 {
+		return n
+	}
+	return 2
+}
+
+func envInt(key string) int {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return 0
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 // oidcBearerAuth binds the raw OIDC verifier (pkg/auth) to the identity

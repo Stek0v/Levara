@@ -64,8 +64,8 @@ func TestCacheGetMulti(t *testing.T) {
 func TestCacheStats(t *testing.T) {
 	c := NewCache(100)
 	c.Put("x", []float32{1})
-	c.Get("x")     // hit
-	c.Get("y")     // miss
+	c.Get("x") // hit
+	c.Get("y") // miss
 
 	size, hits, misses := c.Stats()
 	if size != 1 || hits != 1 || misses != 1 {
