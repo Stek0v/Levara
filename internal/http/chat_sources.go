@@ -481,14 +481,18 @@ func (d *chatSourcesDaemon) resolveDatasetID(ctx context.Context) (string, error
 
 func (d *chatSourcesDaemon) persistState(ctx context.Context, state ChatSourceState) {
 	now := time.Now().UTC().Format(time.RFC3339)
+	enabled := 0
+	if state.Enabled {
+		enabled = 1
+	}
 	_, err := d.db.ExecContext(ctx, Q(`
 		INSERT INTO chat_import_sources (platform, root_path, enabled, last_scan_at, last_error, scans, files_imported, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		ON CONFLICT(platform) DO UPDATE SET
 			root_path = $9, enabled = $10, last_scan_at = $11, last_error = $12,
 			scans = chat_import_sources.scans + 1, files_imported = chat_import_sources.files_imported + $13, updated_at = $14
-	`), state.Platform, state.RootPath, state.Enabled, now, state.LastError, state.Scans, state.FilesImported, now,
-		state.RootPath, state.Enabled, now, state.LastError, state.FilesImported, now)
+	`), state.Platform, state.RootPath, enabled, now, state.LastError, state.Scans, state.FilesImported, now,
+		state.RootPath, enabled, now, state.LastError, state.FilesImported, now)
 	if err != nil {
 		log.Printf("[chat-sources] state persist failed: %v", err)
 	}
