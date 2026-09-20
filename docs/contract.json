@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-09-20T11:57:47+03:00",
-  "git_rev": "71bfd9681ba4b129edc94310fa3b296acaaea8ca",
+  "generated_at": "2026-09-20T14:14:07+03:00",
+  "git_rev": "1fdef9ea7fca2c10e11de287aa77dcf6bdffde5a",
   "rest": [
     {
       "method": "POST",
@@ -1238,6 +1238,11 @@
     {
       "name": "analyze_commits",
       "group": "git",
+      "status": "canonical"
+    },
+    {
+      "name": "chat_distill",
+      "group": "chat",
       "status": "canonical"
     },
     {

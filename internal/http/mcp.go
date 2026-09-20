@@ -1196,6 +1196,8 @@ func (h *mcpHandler) executeToolInner(ctx context.Context, sess *mcpSession, nam
 		return h.toolRecallChat(ctx, args)
 	case "search_chats":
 		return h.toolSearchChats(ctx, args)
+	case "chat_distill":
+		return mcp.ToolChatDistill(ctx, h, args)
 	case "get_project_context":
 		return h.toolGetProjectContext(ctx, args)
 	case "set_context":

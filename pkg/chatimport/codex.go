@@ -23,8 +23,15 @@ func DefaultParseOptions() ParseOptions {
 
 const (
 	defaultTitleLen = 80
-	systemPrefixes  = "<app-context>,<user-instructions>,<environment_context>,<ENVIRONMENT_CONTEXT>,<turn_aborted>,<multi_agent_role>,<multi_agent_mode>"
+	systemPrefixes  = "<app-context>,<user-instructions>,<environment_context>,<ENVIRONMENT_CONTEXT>,<turn_aborted>,<multi_agent_role>,<multi_agent_mode>,<permissions,<skills_instructions>,<recommended_plugins>"
 )
+
+// IsSystemBoilerplate reports whether content starts with a known harness
+// boilerplate tag (permissions blocks, app context, skill instructions…).
+// Shared with the distill loader so LLM transcripts skip the same noise.
+func IsSystemBoilerplate(content string) bool {
+	return hasSystemPrefix(content)
+}
 
 // ParseCodexRollout parses one Codex rollout JSONL transcript
 // (~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl) into a Conversation.

@@ -1238,7 +1238,35 @@ func ToolDescriptors() []Tool {
 				},
 				"required": []string{"query"},
 			},
+		}, {
+			Name:        "chat_distill",
+			Description: "Distill an imported chat session into durable memories via LLM: extracts a few hall-tagged records (decision/discovery/advice/fact/event) with provenance. Raw transcripts are not memory; this tool condenses them.",
+			OutputSchema: objectSchema(map[string]any{
+				"session_id": stringProp("Echo of the request."),
+				"platform":   stringProp("Echo of the request."),
+				"hall":       stringProp("Memory genre extracted."),
+				"saved":      integerProp("Records upserted (0 in dry_run)."),
+				"dry_run":    booleanProp("True when candidates were not saved."),
+				"candidates": arrayOfObjectsProp(objectSchema(map[string]any{
+					"key":   stringProp("Kebab-case memory key."),
+					"value": stringProp("Distilled statement with provenance."),
+				}), "LLM-extracted memory candidates."),
+			}),
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"platform":     map[string]any{"type": "string", "description": "codex | claude-code | cursor"},
+					"session_id":   map[string]any{"type": "string", "description": "Imported session to distill"},
+					"hall":         map[string]any{"type": "string", "description": "Memory genre to extract (default: decision)"},
+					"max_memories": map[string]any{"type": "integer", "description": "Cap on extracted records, 1-20 (default: 5)"},
+					"dry_run":      map[string]any{"type": "boolean", "description": "Return candidates without saving"},
+					"collection":   map[string]any{"type": "string", "description": "Target collection (session default applies)."},
+					"room":         map[string]any{"type": "string", "description": "Room for saved memories (default: chat-import)."},
+				},
+				"required": []string{"platform", "session_id"},
+			},
 		},
+
 		{
 			Name:        "get_project_context",
 			Description: "Get full project context: memories, collection stats, key entities, recent interactions. Call at session start for maximum context awareness.",

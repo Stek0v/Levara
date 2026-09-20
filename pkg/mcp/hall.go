@@ -8,12 +8,13 @@ import "encoding/json"
 // without updating those consumers leaks unfiltered memories into UI.
 //
 // Vocabulary semantics:
-//   fact       — objective characteristic (version, dimension, IP, path)
-//   event      — something happened at a moment (deploy, merge, incident)
-//   decision   — architectural/project choice with justification
-//   preference — user preference about style, tools, workflow
-//   advice     — reusable rule of thumb ("before X, do Y")
-//   discovery  — non-obvious insight worth recalling months later
+//
+//	fact       — objective characteristic (version, dimension, IP, path)
+//	event      — something happened at a moment (deploy, merge, incident)
+//	decision   — architectural/project choice with justification
+//	preference — user preference about style, tools, workflow
+//	advice     — reusable rule of thumb ("before X, do Y")
+//	discovery  — non-obvious insight worth recalling months later
 var hallVocab = []string{
 	"fact",
 	"event",

@@ -72,6 +72,7 @@ var groupByName = map[string]string{
 	"save_chat":              "chat",
 	"recall_chat":            "chat",
 	"search_chats":           "chat",
+	"chat_distill":           "chat",
 	"add":                    "data",
 	"list_data":              "data",
 	"delete":                 "data",
