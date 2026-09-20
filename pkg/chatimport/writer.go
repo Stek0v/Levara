@@ -90,6 +90,12 @@ func EnsureSchema(ctx context.Context, db *sql.DB, q Q) error {
 	return nil
 }
 
+// sanitizePGText neutralizes NUL bytes and invalid UTF-8 sequences —
+// PostgreSQL TEXT rejects both.
+func sanitizePGText(s string) string {
+	return strings.ToValidUTF8(strings.ReplaceAll(s, "\x00", " "), "\uFFFD")
+}
+
 // RunInfo identifies one importer invocation recorded in the ledger.
 type RunInfo struct {
 	ID           string
@@ -167,12 +173,17 @@ func InsertConversation(ctx context.Context, db *sql.DB, q Q, runID string, conv
 		return 0, fmt.Errorf("chatimport: conversation without session_id")
 	}
 	importedAt := now.UTC().Format(time.RFC3339)
+	title := sanitizePGText(conv.Title)
 	inserted := 0
 	for _, m := range conv.Messages {
-		// PostgreSQL TEXT rejects NUL bytes; tool outputs occasionally carry
-		// raw binary. Replace with U+FFFD so the row survives on both
-		// dialects (SQLite stores NULs fine and would mask this in tests).
-		m.Content = strings.ToValidUTF8(strings.ReplaceAll(m.Content, "\x00", " "), "\uFFFD")
+		// PostgreSQL TEXT rejects NUL bytes and invalid UTF-8; tool outputs
+		// occasionally carry raw binary, and byte-boundary truncation in
+		// helpers can split runes. Sanitize every text column so the row
+		// survives on both dialects (SQLite masks all of this in tests).
+		m.Content = sanitizePGText(m.Content)
+		for k, v := range m.Metadata {
+			m.Metadata[k] = sanitizePGText(v)
+		}
 		meta := "{}"
 		if len(m.Metadata) > 0 {
 			raw, err := json.Marshal(m.Metadata)
@@ -191,7 +202,7 @@ func InsertConversation(ctx context.Context, db *sql.DB, q Q, runID string, conv
 			ON CONFLICT(external_id, session_id, platform) DO NOTHING
 		`),
 			messageID(conv.Platform, conv.SessionID, m.ExternalID), runID, string(conv.Platform),
-			conv.SessionID, conv.Title, m.ExternalID, m.Ordinal, m.Role, string(m.Kind),
+			conv.SessionID, title, m.ExternalID, m.Ordinal, m.Role, string(m.Kind),
 			m.Model, m.Content, m.CreatedAt, meta, importedAt)
 		if err != nil {
 			return inserted, fmt.Errorf("chatimport insert message %s: %w", m.ExternalID, err)
