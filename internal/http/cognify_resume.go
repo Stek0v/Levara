@@ -73,10 +73,16 @@ func cognifyResumeEnabled() bool {
 	return true
 }
 
+// CognifyRunSummary reports what one cognify pass accomplished.
+type CognifyRunSummary struct {
+	Chunks  int           // chunks the run wrote before reaching a terminal state
+	Elapsed time.Duration // wall time the run consumed
+}
+
 // CognifyStarter abstracts "run one cognify pass over the dataset and wait
 // for the run to reach a terminal state" so the resume loop is testable.
 type CognifyStarter interface {
-	Start(ctx context.Context, datasetID, collection string) error
+	Start(ctx context.Context, datasetID, collection string) (CognifyRunSummary, error)
 }
 
 // ResumeUnfinishedCognify drains the unfinished-pipeline backlog. Never
@@ -101,7 +107,8 @@ func ResumeUnfinishedCognify(ctx context.Context, db *sql.DB, starter CognifySta
 				for attempt := 1; attempt <= cognifyResumeMaxAttempts; attempt++ {
 					log.Printf("[cognify-resume] round %d: dataset %s collection %s, %d pending (attempt %d)",
 						round, g.DatasetID, g.Collection, g.Pending, attempt)
-					if err := starter.Start(ctx, g.DatasetID, g.Collection); err != nil {
+					summary, err := starter.Start(ctx, g.DatasetID, g.Collection)
+					if err != nil {
 						log.Printf("[cognify-resume] run failed: %v", err)
 						time.Sleep(cognifyResumeCooldown)
 						break
@@ -120,9 +127,15 @@ func ResumeUnfinishedCognify(ctx context.Context, db *sql.DB, starter CognifySta
 						g.Pending = fresh
 						continue
 					}
-					// A full attempt without progress — the run budget may
-					// have been consumed by oversized documents. Keep going
-					// while rounds make progress; stop hot-spinning here.
+					// Pending unchanged, but the run may still have been
+					// working: oversized documents consume the whole run
+					// budget mid-document without completing it. Chunks
+					// written are real progress — keep draining; only a
+					// full-budget attempt with zero chunks is a stuck cause.
+					if summary.Chunks > 0 {
+						progressed = true
+						continue
+					}
 					break
 				}
 			}
@@ -164,7 +177,7 @@ type LoopbackCognifyStarter struct {
 	Client  *http.Client
 }
 
-func (s LoopbackCognifyStarter) Start(ctx context.Context, datasetID, collection string) error {
+func (s LoopbackCognifyStarter) Start(ctx context.Context, datasetID, collection string) (CognifyRunSummary, error) {
 	client := s.Client
 	if client == nil {
 		client = &http.Client{Timeout: cognifyResumeHTTPTimeout}
@@ -175,13 +188,14 @@ func (s LoopbackCognifyStarter) Start(ctx context.Context, datasetID, collection
 		"skip_graph": true,
 	})
 	if err != nil {
-		return err
+		return CognifyRunSummary{}, err
 	}
+	var summary CognifyRunSummary
 	runCtx, cancel := context.WithTimeout(ctx, cognifyResumeHTTPTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(runCtx, http.MethodPost, s.BaseURL+"/api/v1/cognify", bytes.NewReader(payload))
 	if err != nil {
-		return err
+		return summary, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if s.Token != "" {
@@ -189,7 +203,7 @@ func (s LoopbackCognifyStarter) Start(ctx context.Context, datasetID, collection
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return summary, err
 	}
 	var started struct {
 		RunID string `json:"pipeline_run_id"`
@@ -197,14 +211,14 @@ func (s LoopbackCognifyStarter) Start(ctx context.Context, datasetID, collection
 	_ = json.NewDecoder(resp.Body).Decode(&started)
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK || started.RunID == "" {
-		return fmt.Errorf("cognify start: HTTP %d", resp.StatusCode)
+		return summary, fmt.Errorf("cognify start: HTTP %d", resp.StatusCode)
 	}
 
 	// Poll until terminal; the POST returns before the run finishes.
 	for {
 		select {
 		case <-runCtx.Done():
-			return runCtx.Err()
+			return summary, runCtx.Err()
 		case <-time.After(5 * time.Second):
 		}
 		stReq, _ := http.NewRequestWithContext(runCtx, http.MethodGet, s.BaseURL+"/api/v1/cognify/"+started.RunID+"/status", nil)
@@ -213,16 +227,20 @@ func (s LoopbackCognifyStarter) Start(ctx context.Context, datasetID, collection
 		}
 		stResp, err := client.Do(stReq)
 		if err != nil {
-			return err
+			return summary, err
 		}
 		var run struct {
-			Status string `json:"status"`
+			Status  string `json:"status"`
+			Chunks  int    `json:"chunks_created"`
+			Elapsed int64  `json:"elapsed_ms"`
 		}
 		_ = json.NewDecoder(stResp.Body).Decode(&run)
 		stResp.Body.Close()
 		switch run.Status {
 		case "COMPLETED", "FAILED":
-			return nil
+			summary.Chunks = run.Chunks
+			summary.Elapsed = time.Duration(run.Elapsed) * time.Millisecond
+			return summary, nil
 		}
 	}
 }
