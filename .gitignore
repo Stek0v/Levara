@@ -133,3 +133,6 @@ outputs/
 
 # Local binary backups
 levara-server.bak-*
+
+# Agent-transcript fixtures for pkg/chatimport tests
+!pkg/chatimport/testdata/*.jsonl
