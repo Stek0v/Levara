@@ -15,12 +15,14 @@
 package http
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -157,6 +159,9 @@ func StartChatSourcesDaemon(ctx context.Context, db *sql.DB, loopbackBase string
 		log.Printf("[chat-sources] schema init failed, daemon disabled: %v", err)
 		return
 	}
+	if err := chatimport.EnsureRagSchema(ctx, db, Q); err != nil {
+		log.Printf("[chat-sources] rag schema init failed: %v", err)
+	}
 	d := &chatSourcesDaemon{
 		db:       db,
 		loopback: loopbackBase,
@@ -189,12 +194,78 @@ func (d *chatSourcesDaemon) loop(ctx context.Context, defs []chatSourceDefinitio
 	// First scan immediately at boot, then on the interval.
 	for {
 		d.scanOnce(ctx, defs)
+		d.refreshStaleRenders(ctx)
 		select {
 		case <-ctx.Done():
 			return
 		case <-time.After(d.interval):
 		}
 	}
+}
+
+// refreshStaleRenders is the P3 derivative-migration janitor: sessions
+// rendered with an older RenderVersion get re-rendered from the raw layer
+// on a budget, so renderer upgrades roll out incrementally instead of via
+// overnight rebuild scripts.
+func (d *chatSourcesDaemon) refreshStaleRenders(ctx context.Context) {
+	if !d.ragEnabled() {
+		return
+	}
+	budget := ragRebuildBudget()
+	stale, err := chatimport.StaleRagSessions(ctx, d.db, Q, chatimport.RenderVersion, budget)
+	if err != nil {
+		log.Printf("[chat-sources] rag stale query failed: %v", err)
+		return
+	}
+	if len(stale) == 0 {
+		return
+	}
+	refreshed := 0
+	for _, ref := range stale {
+		conv, err := chatimport.LoadConversation(ctx, d.db, Q, ref.Platform, ref.SessionID)
+		if err != nil {
+			continue
+		}
+		// Best-effort removal of the stale item; the re-add below uses the
+		// same deterministic name either way.
+		d.deleteRagItemByName(ctx, ragItemName(ref))
+		d.pushRagDocument(ctx, conv)
+		if err := chatimport.RecordRagVersion(ctx, d.db, Q, ref.Platform, ref.SessionID, chatimport.RenderVersion, ""); err == nil {
+			refreshed++
+		}
+	}
+	if refreshed > 0 {
+		log.Printf("[chat-sources] rag janitor: refreshed %d/%d stale renders (budget %d)", refreshed, len(stale), budget)
+		d.triggerCognify(ctx)
+	}
+}
+
+// ragItemName is the deterministic document name for a session render.
+func ragItemName(ref chatimport.RagRef) string {
+	return fmt.Sprintf("chatimport-%s-%s.md", ref.Platform, ref.SessionID)
+}
+
+// ragRebuildBudget caps per-tick refreshes. Default 10 keeps the embedder
+// background lane light; the full corpus rolls over in hours, not one burst.
+func ragRebuildBudget() int {
+	if n := envIntLocal(os.Getenv("LEVARA_RAG_REBUILD_BUDGET")); n > 0 {
+		return n
+	}
+	return 10
+}
+
+func envIntLocal(raw string) int {
+	n := 0
+	for _, c := range raw {
+		if c < '0' || c > '9' {
+			return 0
+		}
+		n = n*10 + int(c-'0')
+		if n > 1000 {
+			return 1000
+		}
+	}
+	return n
 }
 
 // scanOnce walks every source root, imports new/changed transcript files
@@ -299,6 +370,12 @@ func (d *chatSourcesDaemon) importFiles(ctx context.Context, def chatSourceDefin
 			if convs[i].Messages == nil {
 				continue
 			}
+			// P3 version gate: an up-to-date render is never re-pushed —
+			// grown conversations refresh only when their render version
+			// is stale, not on every new message.
+			if chatimport.RagVersion(ctx, d.db, Q, convs[i].Platform, convs[i].SessionID) >= chatimport.RenderVersion {
+				continue
+			}
 			d.pushRagDocument(ctx, &convs[i])
 			ragDocs++
 		}
@@ -395,21 +472,24 @@ func parseClaudeFile(path string, opts chatimport.ParseOptions) (*chatimport.Con
 	return chatimport.ParseClaudeCodeTranscript(f, opts)
 }
 
-// pushRagDocument renders one conversation and POSTs it to the server's
-// own /add. Paced: bulk first-scans must not trip the user rate bucket.
+// pushRagDocument renders one conversation and uploads it through the
+// server's own multipart /add with a deterministic filename — the janitor
+// resolves and replaces items by that name. Paced: bulk first-scans must
+// not trip the user rate bucket. Records the render version on success.
 func (d *chatSourcesDaemon) pushRagDocument(ctx context.Context, conv *chatimport.Conversation) {
-	payload, err := json.Marshal(map[string]string{
-		"data":         chatimport.RenderConversationMarkdown(conv),
-		"dataset_name": d.dataset,
-	})
+	name := ragItemName(chatimport.RagRef{Platform: conv.Platform, SessionID: conv.SessionID})
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	fw, _ := w.CreateFormFile("data", name)
+	fw.Write([]byte(chatimport.RenderConversationMarkdown(conv)))
+	w.WriteField("dataset_name", d.dataset)
+	w.Close()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, d.loopback+"/api/v1/add", &buf)
 	if err != nil {
 		return
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, d.loopback+"/api/v1/add", strings.NewReader(string(payload)))
-	if err != nil {
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", w.FormDataContentType())
 	resp, err := d.client.Do(req)
 	if err != nil {
 		log.Printf("[chat-sources] rag push failed: %v", err)
@@ -421,8 +501,46 @@ func (d *chatSourcesDaemon) pushRagDocument(ctx context.Context, conv *chatimpor
 		// One cooldown per burst, not per doc: the scan resumes next tick.
 		log.Printf("[chat-sources] rag push rate-limited; remaining docs deferred to next scan")
 		time.Sleep(5 * time.Second)
+		return
+	}
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		_ = chatimport.RecordRagVersion(ctx, d.db, Q, conv.Platform, conv.SessionID, chatimport.RenderVersion, "")
 	}
 	time.Sleep(chatSourcesAddPace)
+}
+
+// deleteRagItemByName resolves the dataset item with the given name and
+// deletes it (best effort — a miss is a no-op). Returns true when deleted.
+func (d *chatSourcesDaemon) deleteRagItemByName(ctx context.Context, name string) bool {
+	datasetID, err := d.resolveDatasetID(ctx)
+	if err != nil || datasetID == "" {
+		return false
+	}
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, d.loopback+"/api/v1/datasets/"+datasetID+"/data", nil)
+	resp, err := d.client.Do(req)
+	if err != nil {
+		return false
+	}
+	var items []struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&items)
+	resp.Body.Close()
+	for _, item := range items {
+		if item.Name != name {
+			continue
+		}
+		del, _ := http.NewRequestWithContext(ctx, http.MethodDelete, d.loopback+"/api/v1/datasets/"+datasetID+"/data/"+item.ID, nil)
+		dresp, err := d.client.Do(del)
+		if err != nil {
+			return false
+		}
+		io.Copy(io.Discard, dresp.Body)
+		dresp.Body.Close()
+		return dresp.StatusCode >= 200 && dresp.StatusCode < 300
+	}
+	return false
 }
 
 // triggerCognify starts a rag-mode cognify over the configured dataset
