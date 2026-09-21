@@ -491,11 +491,32 @@ func parseClaudeFile(path string, opts chatimport.ParseOptions) (*chatimport.Con
 // resolves and replaces items by that name. Paced: bulk first-scans must
 // not trip the user rate bucket. Records the render version on success.
 func (d *chatSourcesDaemon) pushRagDocument(ctx context.Context, conv *chatimport.Conversation) {
-	name := ragItemName(chatimport.RagRef{Platform: conv.Platform, SessionID: conv.SessionID})
+	baseName := ragItemName(chatimport.RagRef{Platform: conv.Platform, SessionID: conv.SessionID})
+
+	// A4 quality fix: large conversations are segmented into independently
+	// cognifiable pieces. A 50 MB session as one document exceeds the
+	// cognify budget and gets stuck; as segments, every piece is findable.
+	segments := chatimport.RenderConversationSegments(conv, ragSegmentMaxBytes)
+	for _, seg := range segments {
+		name := baseName
+		if seg.Index > 1 || len(segments) > 1 {
+			// Multi-segment: use part suffix for all segments
+			name = strings.TrimSuffix(baseName, ".md") + seg.Name + ".md"
+		}
+		d.pushOneRagItem(ctx, conv, name, seg.Content)
+	}
+	_ = chatimport.RecordRagVersion(ctx, d.db, Q, conv.Platform, conv.SessionID, chatimport.RenderVersion, "")
+}
+
+// ragSegmentMaxBytes caps each RAG segment. 200KB keeps every piece
+// cognifiable within the run budget while preserving full content.
+const ragSegmentMaxBytes = 200 * 1024
+
+func (d *chatSourcesDaemon) pushOneRagItem(ctx context.Context, conv *chatimport.Conversation, name, content string) {
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
 	fw, _ := w.CreateFormFile("data", name)
-	fw.Write([]byte(chatimport.RenderConversationMarkdown(conv)))
+	fw.Write([]byte(content))
 	w.WriteField("dataset_name", d.dataset)
 	w.Close()
 
@@ -512,13 +533,9 @@ func (d *chatSourcesDaemon) pushRagDocument(ctx context.Context, conv *chatimpor
 	io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
 	if resp.StatusCode == http.StatusTooManyRequests {
-		// One cooldown per burst, not per doc: the scan resumes next tick.
 		log.Printf("[chat-sources] rag push rate-limited; remaining docs deferred to next scan")
 		time.Sleep(5 * time.Second)
 		return
-	}
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		_ = chatimport.RecordRagVersion(ctx, d.db, Q, conv.Platform, conv.SessionID, chatimport.RenderVersion, "")
 	}
 	time.Sleep(chatSourcesAddPace)
 }
