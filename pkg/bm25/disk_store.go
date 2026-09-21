@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -63,11 +64,36 @@ func (s *SnapshotStore) SaveAll(indexes map[string]*Index) error {
 		if collection == "" || idx == nil {
 			continue
 		}
+		// Memory guard: a full snapshot materializes every document and
+		// JSON-marshals each one. For a 393k-chunk corpus this allocates
+		// gigabytes on every autosave tick and starves the Go GC
+		// (observed: 22.7 GB RSS on a 16 GB Mac, 20.8 GB swapped). Large
+		// collections skip periodic snapshots — their append-only change
+		// log (Attach) provides durability between restarts, and vector
+		// search is the primary retrieval path at that scale anyway.
+		if idx.Len() > bm25SnapshotMaxDocs {
+			log.Printf("[bm25] skip snapshot %s: %d docs > %d threshold (memory guard)",
+				collection, idx.Len(), bm25SnapshotMaxDocs)
+			continue
+		}
 		if err := SaveSnapshot(s.pathFor(collection), idx); err != nil {
 			return fmt.Errorf("save %s: %w", collection, err)
 		}
 	}
 	return nil
+}
+
+// bm25SnapshotMaxDocs caps which collections get periodic full snapshots.
+// Env-tunable for deployments with more headroom.
+var bm25SnapshotMaxDocs = snapshotMaxDocsFromEnv()
+
+func snapshotMaxDocsFromEnv() int {
+	if v := strings.TrimSpace(os.Getenv("LEVARA_BM25_SNAPSHOT_MAX_DOCS")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 100_000
 }
 
 // Attach enables immediate append-log persistence for subsequent mutations.

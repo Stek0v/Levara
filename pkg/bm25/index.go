@@ -247,6 +247,13 @@ func (idx *Index) Size() int {
 }
 
 // Documents returns a stable snapshot of indexed documents.
+// Len returns the number of indexed documents (for memory-guard checks).
+func (idx *Index) Len() int {
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+	return len(idx.docs)
+}
+
 func (idx *Index) Documents() []Document {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
