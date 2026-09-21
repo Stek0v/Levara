@@ -36,6 +36,11 @@ import (
 )
 
 const (
+	distillDefaultBudget = 2
+	distillMinMessages   = 6
+)
+
+const (
 	chatSourcesDefaultInterval = 5 * time.Minute
 	chatSourcesAddPace         = 700 * time.Millisecond
 )
@@ -162,6 +167,14 @@ func StartChatSourcesDaemon(ctx context.Context, db *sql.DB, loopbackBase string
 	if err := chatimport.EnsureRagSchema(ctx, db, Q); err != nil {
 		log.Printf("[chat-sources] rag schema init failed: %v", err)
 	}
+	if autoDistillEnabled() {
+		if err := chatimport.EnsureDistillSchema(ctx, db, Q); err != nil {
+			log.Printf("[chat-sources] distill schema init failed: %v", err)
+		} else {
+			log.Printf("[chat-sources] auto-distill enabled (budget=%d/tick, halls=%s)",
+				distillBudget(), distillHallsLabel())
+		}
+	}
 	d := &chatSourcesDaemon{
 		db:       db,
 		loopback: loopbackBase,
@@ -195,6 +208,7 @@ func (d *chatSourcesDaemon) loop(ctx context.Context, defs []chatSourceDefinitio
 	for {
 		d.scanOnce(ctx, defs)
 		d.refreshStaleRenders(ctx)
+		d.distillNewSessions(ctx)
 		select {
 		case <-ctx.Done():
 			return
@@ -614,4 +628,152 @@ func (d *chatSourcesDaemon) persistState(ctx context.Context, state ChatSourceSt
 	if err != nil {
 		log.Printf("[chat-sources] state persist failed: %v", err)
 	}
+}
+
+// autoDistillEnabled: LEVARA_AUTO_DISTILL=1 (opt-in; LLM calls cost money).
+func autoDistillEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("LEVARA_AUTO_DISTILL"))) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
+
+func distillBudget() int {
+	if n := envIntLocal(strings.TrimSpace(os.Getenv("LEVARA_DISTILL_BUDGET"))); n > 0 && n <= 10 {
+		return n
+	}
+	return distillDefaultBudget
+}
+
+func distillHalls() []string {
+	raw := strings.TrimSpace(os.Getenv("LEVARA_DISTILL_HALLS"))
+	if raw == "" {
+		return []string{"decision"}
+	}
+	var halls []string
+	for _, h := range strings.Split(raw, ",") {
+		h = strings.TrimSpace(strings.ToLower(h))
+		switch h {
+		case "decision", "discovery", "advice", "fact", "event":
+			halls = append(halls, h)
+		}
+	}
+	if len(halls) == 0 {
+		return []string{"decision"}
+	}
+	return halls
+}
+
+func distillHallsLabel() string {
+	return strings.Join(distillHalls(), ",")
+}
+
+// distillNewSessions is the P5 janitor: sessions with >= distillMinMessages
+// messages and >= 2 user turns that have no recorded distillation get
+// processed via the server's own MCP chat_distill — the exact production
+// path (LLM, provenance, vector sidecar) — on a budget.
+func (d *chatSourcesDaemon) distillNewSessions(ctx context.Context) {
+	if !autoDistillEnabled() || d.loopback == "" {
+		return
+	}
+	for _, hall := range distillHalls() {
+		candidates, err := chatimport.DistillCandidates(ctx, d.db, Q, hall, distillMinMessages, distillBudget())
+		if err != nil {
+			log.Printf("[chat-sources] distill candidates failed: %v", err)
+			continue
+		}
+		for _, c := range candidates {
+			log.Printf("[chat-sources] distilling %s %s (hall=%s, %d msgs, %q)",
+				c.Platform, shortIDLocal(c.SessionID), hall, c.Messages, truncateLocal(c.Title, 50))
+			keys, err := d.callChatDistill(ctx, c.Platform, c.SessionID, hall)
+			status := "ok"
+			msg := ""
+			if err != nil {
+				status = "failed"
+				msg = err.Error()
+			}
+			if rerr := chatimport.RecordDistillOutcome(ctx, d.db, Q, c.Platform, c.SessionID, hall, status, keys, msg); rerr != nil {
+				log.Printf("[chat-sources] distill record failed: %v", rerr)
+			}
+			if err != nil {
+				log.Printf("[chat-sources] distill %s failed: %v", shortIDLocal(c.SessionID), err)
+			} else {
+				log.Printf("[chat-sources] distilled %s → %d memories (hall=%s)", shortIDLocal(c.SessionID), len(keys), hall)
+			}
+		}
+	}
+}
+
+// callChatDistill invokes the MCP tool through the server's own /mcp
+// endpoint and returns the saved memory keys.
+func (d *chatSourcesDaemon) callChatDistill(ctx context.Context, platform chatimport.Platform, sessionID, hall string) ([]string, error) {
+	opCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+	payload, _ := json.Marshal(map[string]any{
+		"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+		"params": map[string]any{
+			"name": "chat_distill",
+			"arguments": map[string]any{
+				"platform":     string(platform),
+				"session_id":   sessionID,
+				"hall":         hall,
+				"max_memories": 4,
+			},
+		},
+	})
+	req, err := http.NewRequestWithContext(opCtx, http.MethodPost, d.loopback+"/mcp", bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	distillClient := &http.Client{Timeout: 5 * time.Minute}
+	resp, err := distillClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var rpc struct {
+		Result struct {
+			Content []struct {
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"result"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&rpc); err != nil {
+		return nil, err
+	}
+	if len(rpc.Result.Content) == 0 {
+		return nil, fmt.Errorf("empty mcp response")
+	}
+	var parsed struct {
+		Saved      int `json:"saved"`
+		Candidates []struct {
+			Key string `json:"key"`
+		} `json:"candidates"`
+	}
+	if err := json.Unmarshal([]byte(rpc.Result.Content[0].Text), &parsed); err != nil {
+		return nil, fmt.Errorf("bad distill response: %.100s", rpc.Result.Content[0].Text)
+	}
+	keys := make([]string, 0, len(parsed.Candidates))
+	for _, c := range parsed.Candidates {
+		if c.Key != "" {
+			keys = append(keys, c.Key)
+		}
+	}
+	return keys, nil
+}
+
+func shortIDLocal(id string) string {
+	if len(id) > 13 {
+		return id[:13] + "…"
+	}
+	return id
+}
+
+func truncateLocal(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
 }
