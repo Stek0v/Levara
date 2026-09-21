@@ -100,6 +100,11 @@ func main() {
 		cmdTeam(args)
 	case "chats":
 		cmdChats(args)
+	case "status":
+		if hasFlag(args, "--watch") {
+			watchInterrupt()
+		}
+		cmdStatus(args)
 	case "cache":
 		cmdCache(args)
 	case "git":
@@ -1590,6 +1595,7 @@ func printUsage() {
 
 Commands:
   health   [--details]                       Server health check
+  status   [--watch]                        Operational status (memory, corpus, jobs)
   add      <file|url|text> [--dataset=name]  Ingest data
   add      --file=path [--dataset=name]       Require an existing local file
   cognify  [--dataset=name-or-id] [--collection=name] [--wait]  Run cognify pipeline

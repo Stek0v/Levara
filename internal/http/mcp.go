@@ -116,6 +116,16 @@ func (h *mcpHandler) HasCollections() bool { return h.cfg.Collections != nil }
 
 // ListCollections implements mcp.Deps: returns the registered
 // collection names, or nil if no manager is configured.
+// FetchStatus implements mcp.Deps: returns the /status payload as JSON.
+func (h *mcpHandler) FetchStatus(ctx context.Context) string {
+	status := buildStatus(ctx, h.cfg)
+	raw, err := json.Marshal(status)
+	if err != nil {
+		return ""
+	}
+	return string(raw)
+}
+
 func (h *mcpHandler) ListCollections() []string {
 	if h.cfg.Collections == nil {
 		return nil
@@ -1198,6 +1208,8 @@ func (h *mcpHandler) executeToolInner(ctx context.Context, sess *mcpSession, nam
 		return h.toolSearchChats(ctx, args)
 	case "chat_distill":
 		return mcp.ToolChatDistill(ctx, h, args)
+	case "levara_status":
+		return mcp.ToolLeveraStatus(ctx, h, args)
 	case "get_project_context":
 		return h.toolGetProjectContext(ctx, args)
 	case "set_context":

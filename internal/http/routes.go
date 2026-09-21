@@ -97,6 +97,7 @@ func RESTRouteInventory() []RouteSpec {
 		{Method: "GET", Path: "/chats/import/runs", Status: APICanonical, Group: "chats"},
 		{Method: "GET", Path: "/chats/import/sessions", Status: APICanonical, Group: "chats"},
 		{Method: "GET", Path: "/chats/import/sessions/:platform/:sessionId", Status: APICanonical, Group: "chats"},
+		{Method: "GET", Path: "/status", Status: APICanonical, Group: "ops"},
 		{Method: "POST", Path: "/memories", Status: APICanonical, Group: "memory"},
 		{Method: "GET", Path: "/memories", Status: APICanonical, Group: "memory"},
 		{Method: "GET", Path: "/memories/stream", Status: APICanonical, Group: "memory"},
