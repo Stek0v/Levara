@@ -105,6 +105,11 @@ func StaleRagSessions(ctx context.Context, db *sql.DB, q Q, currentVersion, limi
 
 // LoadConversation reconstructs a Conversation from the raw layer in
 // storage order — the janitor's render source when source files are gone.
+//
+// A5 note: for conversations with >10k messages, this materializes all
+// content in memory. The rag janitor mitigates by rendering segments
+// (A4), but distill and future callers should be aware: prefer
+// LoadConversationRange for incremental processing of huge sessions.
 func LoadConversation(ctx context.Context, db *sql.DB, q Q, platform Platform, sessionID string) (*Conversation, error) {
 	rows, err := db.QueryContext(ctx, q(`
 		SELECT external_id, ordinal, role, kind, model, content, source_created_at, metadata, session_title

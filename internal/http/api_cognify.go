@@ -214,7 +214,16 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 					return fiber.NewError(409, "source version unavailable; reimport the document")
 				}
 			}
-			for _, item := range pending {
+			// A5 streaming audit: loading all documents at once is O(N) in
+			// memory. Cap the batch; cognify-resume picks up the rest on
+			// subsequent runs. Default 50 segments × 200KB = 10MB peak.
+			maxBatch := cognifyBatchSize()
+			for i, item := range pending {
+				if i >= maxBatch {
+					log.Printf("[cognify] batch limit %d: %d/%d documents deferred to next run",
+						maxBatch, len(pending)-maxBatch, len(pending))
+					break
+				}
 				raw, err := loadRawDataByLocation(reqCtx, cfg, item.location)
 				if err != nil {
 					return fiber.NewError(422, "unable to read document "+item.source.documentID)
@@ -884,6 +893,28 @@ func batchSizeFromEnv() int {
 	n, err := strconv.Atoi(strings.TrimSpace(os.Getenv("LEVARA_LLM_EXTRACT_BATCH_SIZE")))
 	if err != nil || n < 1 {
 		return 1
+	}
+	return n
+}
+
+// cognifyBatchSize caps how many documents one cognify run loads into
+// memory. The P1 resume loop re-triggers for the remainder.
+// LEVARA_COGNIFY_BATCH_SIZE env-tunable; default 50.
+func cognifyBatchSize() int {
+	if n := osIntEnv("LEVARA_COGNIFY_BATCH_SIZE"); n > 0 && n <= 500 {
+		return n
+	}
+	return 50
+}
+
+func osIntEnv(key string) int {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return 0
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return 0
 	}
 	return n
 }
