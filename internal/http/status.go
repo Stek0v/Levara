@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/stek0v/levara/pkg/governor"
 )
 
 // StatusResponse is the complete operational snapshot.
@@ -95,15 +96,19 @@ func buildStatus(ctx context.Context, cfg APIConfig) StatusResponse {
 		Warnings: []string{},
 	}
 
-	// Memory
+	// Memory: real OS-reported resident set (MemStats.Sys over-states by
+	// reserved-but-untouched arenas — see governor.ProcessRSS).
+	rss := governor.ProcessRSS()
+	budget := governor.EnvBudgetBytes()
 	var ms runtime.MemStats
 	runtime.ReadMemStats(&ms)
 	resp.Memory = MemoryStatus{
-		RSSBytes:    ms.Sys,
+		RSSBytes:    rss,
 		HeapAlloc:   ms.HeapAlloc,
 		HeapObjects: ms.HeapObjects,
 		NumGC:       ms.NumGC,
-		Pressure:    memoryPressure(ms.Sys),
+		BudgetBytes: budget,
+		Pressure:    memoryPressure(rss, budget),
 	}
 
 	// Corpus
@@ -133,7 +138,22 @@ func buildStatus(ctx context.Context, cfg APIConfig) StatusResponse {
 	return resp
 }
 
-func memoryPressure(rss uint64) string {
+// memoryPressure classifies RSS. With a budget (GOMEMLIMIT) the bands are
+// relative to it, mirroring the governor's 0.5/0.8/0.9 thresholds; without
+// one, absolute bands for a 16 GB host.
+func memoryPressure(rss, budget uint64) string {
+	if budget > 0 {
+		switch {
+		case rss > budget*90/100:
+			return "critical"
+		case rss > budget*80/100:
+			return "elevated"
+		case rss > budget*50/100:
+			return "normal"
+		default:
+			return "low"
+		}
+	}
 	const MiB = 1024 * 1024
 	switch {
 	case rss > 12*1024*MiB:

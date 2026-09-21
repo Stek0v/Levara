@@ -97,7 +97,9 @@ Levara работает на персональных машинах (Mac 16 Г�
 
 **DoR:** Единая точка правды о ресурсах; все даймоны регистрируются.
 **DoD:**
-- `pkg/governor.Governor`: знает RSS (runtime.MemStats), budget (GOMEMLIMIT or auto-detect)
+- `pkg/governor.Governor`: знает реальный RSS процесса (`governor.ProcessRSS`:
+  Linux → `/proc/self/statm`, macOS → `/bin/ps`, иначе fallback на
+  `MemStats.Sys` как over-approximation), budget (GOMEMLIMIT)
 - `ShouldPause(jobName) bool`: true при RSS > 80% budget
 - `ShouldResume(jobName) bool`: true при RSS < 60% budget (hysteresis)
 - Все 4 даймона вызывают ShouldPause перед каждой единицей работы
@@ -106,6 +108,9 @@ Levara работает на персональных машинах (Mac 16 Г�
 **Corner cases:**
 - GOMEMLIMIT не задан → auto-detect: totalRAM * 0.5 (консервативно)
 - RSS колеблется у границы → hysteresis (pause > 80%, resume < 60%)
+- RSS берётся у ОС, а не из `MemStats.Sys`: Sys считает и зарезервированные
+  арены (вектора, BM25) — на проде показывал 14.9 GB при реальных 4.2 GB RSS,
+  из-за чего губернатор держал фоновые задачи на постоянной паузе
 - Governor сам не может быть источником утечки (лёгкий, только counters)
 
 **Тесты:**

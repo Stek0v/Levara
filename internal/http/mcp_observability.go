@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/stek0v/levara/internal/metrics"
+	"github.com/stek0v/levara/pkg/governor"
 	"github.com/stek0v/levara/pkg/mcp"
 )
 
@@ -80,6 +81,7 @@ func (h *mcpHandler) toolRuntimeStats(ctx context.Context, args map[string]any) 
 		"rerank_model":      h.cfg.RerankModel,
 		"neo4j_enabled":     h.cfg.Neo4jCfg.Neo4jURL != "",
 		"goroutines":        runtime.NumGoroutine(),
+		"rss_bytes":         governor.ProcessRSS(),
 		"heap_alloc_bytes":  ms.HeapAlloc,
 		"heap_sys_bytes":    ms.HeapSys,
 		"num_gc":            ms.NumGC,
