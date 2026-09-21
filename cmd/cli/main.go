@@ -112,7 +112,11 @@ func main() {
 	case "workspace":
 		cmdWorkspace(args)
 	case "help", "--help", "-h":
-		printUsage()
+		if len(args) > 0 && args[0] == "tuning" {
+			printTuningHelp()
+		} else {
+			printUsage()
+		}
 	default:
 		fatalf("unknown command: %s\nRun 'levara help' for usage.", cmd)
 	}
@@ -1634,5 +1638,81 @@ Global flags:
 Search types:
   CHUNKS, GRAPH_COMPLETION, RAG_COMPLETION, SUMMARIES,
   CHUNKS_LEXICAL, HYBRID, TEMPORAL, NATURAL_LANGUAGE, CYPHER
+`)
+}
+
+func printTuningHelp() {
+	fmt.Print(`
+LEVARA: РЕСУРСЫ И ПРОИЗВОДИТЕЛЬНОСТЬ
+
+ПРИНЦИП: качество данных всегда первично. Любой лимит настраивается
+так, чтобы не потерять ни одного сообщения, ни одного решения.
+
+ПАМЯТЬ
+  GOMEMLIMIT=8GiB          Максимум heap Go (байт с суффиксом).
+                            Меньше → GC агрессивнее, меньше RAM.
+                            Больше → меньше GC-пауз, риск давления на хост.
+                            Рекомендация: 50% RAM (Mac 16GB → 8GiB).
+
+  LEVARA_BM25_SNAPSHOT_MAX_DOCS=100000
+                            Коллекции > этого пропускают BM25-снапшот.
+                            BM25 = lexical search. Если выключен →
+                            поиск только по векторам (semantic).
+                            100k для 16GB, off для Pi.
+
+ИНДЕКСАЦИЯ
+  LEVARA_EMBED_BG_CONCURRENCY=2
+                            Фоновых embedding-запросов одновременно.
+                            Меньше → медленнее корпус, быстрее поиск.
+                            Больше → быстрее корпус, поиск деградирует.
+                            2 для 1-worker embedder, 4 для multi.
+
+  LEVARA_EMBED_GATE_CAPACITY=4
+                            Общий потолок embedding-запросов.
+                            Должен быть > BG_CONCURRENCY.
+
+  LEVARA_RAG_REBUILD_BUDGET=10
+                            Сессий пере-рендерится за тик (5 мин).
+                            Влияет на скорость миграции производных.
+
+ИНТЕЛЛЕКТ
+  LEVARA_DISTILL_BUDGET=2   Сессий дистиллируется за тик (5 мин).
+                            2 = ~100 сессий/час на локальной LLM.
+  LEVARA_DISTILL_HALLS=decision
+                            Типы знаний: decision,discovery,advice,fact
+
+ИСТОЧНИКИ
+  LEVARA_CHAT_SOURCES=codex,claude-code,cursor
+                            Авто-импорт транскриптов. Пусто = off.
+  LEVARA_CHAT_SOURCES_INTERVAL=5m
+                            Интервал сканирования (минимум 30s).
+  LEVARA_CHAT_SOURCES_DATASET=chat-imports
+                            RAG dataset для поисковых документов.
+
+УПРАВЛЕНИЕ
+  LEVARA_COGNIFY_RESUME=1  Авто-догонка недокогнифицированных доков.
+  LEVARA_AUTO_DISTILL=1    Авто-дистилляция новых сессий.
+
+РЕКОМЕНДАЦИИ ПО ПРОФИЛЯМ
+
+  ┌─────────────┬─────────┬─────────┬─────────┬────────┐
+  │ Параметр    │ Mac 16GB│ Mac 32GB│ Pi 4GB  │ Server │
+  ├─────────────┼─────────┼─────────┼─────────┼────────┤
+  │ GOMEMLIMIT  │ 8GiB    │ 16GiB   │ 2GiB    │ 32GiB+ │
+  │ BM25_MAX    │ 100k    │ 500k    │ off     │ 1M+    │
+  │ EMBED_BG    │ 2       │ 4       │ 1       │ 8+     │
+  │ DISTILL/тик │ 2       │ 5       │ 1       │ 10+    │
+  └─────────────┴─────────┴─────────┴─────────┴────────┘
+
+  ПРАВИЛО: при нехватке памяти — сначала отключайте BM25,
+  потом graph, потом снижайте EMBED_BG.
+  НИКОГДА не отключайте vectors — это основа поиска.
+  НИКОГДА не скипайте документы — сегментируйте.
+
+МОНИТОРИНГ
+  levara status             Текущее состояние
+  levara status --watch     Обновление каждые 5с
+  GET /api/v1/status        JSON для автоматизации
+
 `)
 }

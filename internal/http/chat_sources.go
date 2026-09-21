@@ -153,6 +153,7 @@ type chatSourcesDaemon struct {
 	client       *http.Client
 	logEveryScan bool
 	scheduler    *governor.Scheduler
+	governor     *governor.Governor
 }
 
 // StartChatSourcesDaemon boots the opt-in transcript ingest daemon. It
@@ -185,6 +186,9 @@ func StartChatSourcesDaemon(ctx context.Context, db *sql.DB, loopbackBase string
 		interval: chatSourcesInterval(),
 		client:   &http.Client{Timeout: 60 * time.Second},
 	}
+	// A3 resource governor: pause jobs when memory is tight
+	d.governor = governor.NewGovernorFromEnv()
+
 	// A2 job scheduler: distill yields to cognify, rag yields to both.
 	sched := buildChatSourcesScheduler(ctx, db, d)
 	d.scheduler = sched
@@ -207,20 +211,6 @@ func formatSources(defs []chatSourceDefinition) string {
 		parts = append(parts, fmt.Sprintf("%s=%s", def.Platform, def.Root))
 	}
 	return strings.Join(parts, ", ")
-}
-
-func (d *chatSourcesDaemon) loop(ctx context.Context, defs []chatSourceDefinition) {
-	// First scan immediately at boot, then on the interval.
-	for {
-		d.scanOnce(ctx, defs)
-		d.refreshStaleRenders(ctx)
-		d.distillNewSessions(ctx)
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(d.interval):
-		}
-	}
 }
 
 // refreshStaleRenders is the P3 derivative-migration janitor: sessions
@@ -826,6 +816,9 @@ func buildChatSourcesScheduler(ctx context.Context, db *sql.DB, d *chatSourcesDa
 			Priority: governor.PrioritySourceIngest,
 			Busy:     func() bool { return true }, // always poll sources
 			Run: func(ctx context.Context) {
+				if d.governor != nil && !d.governor.CanWork("source-ingest") {
+					return // memory pressure: skip this tick
+				}
 				d.scanOnce(ctx, defs)
 			},
 			Interval: interval,
@@ -845,6 +838,9 @@ func buildChatSourcesScheduler(ctx context.Context, db *sql.DB, d *chatSourcesDa
 			Priority: governor.PriorityRagJanitor,
 			Busy:     ragBusy,
 			Run: func(ctx context.Context) {
+				if d.governor != nil && !d.governor.CanWork("rag-janitor") {
+					return
+				}
 				d.refreshStaleRenders(ctx)
 			},
 			Interval: interval,
@@ -859,6 +855,9 @@ func buildChatSourcesScheduler(ctx context.Context, db *sql.DB, d *chatSourcesDa
 				return err == nil && len(candidates) > 0
 			},
 			Run: func(ctx context.Context) {
+				if d.governor != nil && !d.governor.CanWork("distill") {
+					return
+				}
 				d.distillNewSessions(ctx)
 			},
 			Interval: interval,
