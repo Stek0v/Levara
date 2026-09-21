@@ -33,6 +33,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stek0v/levara/pkg/chatimport"
+	"github.com/stek0v/levara/pkg/governor"
 )
 
 const (
@@ -151,6 +152,7 @@ type chatSourcesDaemon struct {
 	interval     time.Duration
 	client       *http.Client
 	logEveryScan bool
+	scheduler    *governor.Scheduler
 }
 
 // StartChatSourcesDaemon boots the opt-in transcript ingest daemon. It
@@ -183,9 +185,13 @@ func StartChatSourcesDaemon(ctx context.Context, db *sql.DB, loopbackBase string
 		interval: chatSourcesInterval(),
 		client:   &http.Client{Timeout: 60 * time.Second},
 	}
-	log.Printf("[chat-sources] daemon enabled: %s (interval=%s, rag=%q)",
-		formatSources(defs), d.interval, datasetLabel(d.dataset))
-	go d.loop(ctx, defs)
+	// A2 job scheduler: distill yields to cognify, rag yields to both.
+	sched := buildChatSourcesScheduler(ctx, db, d)
+	d.scheduler = sched
+	sched.Start(ctx)
+
+	log.Printf("[chat-sources] daemon enabled: %s (interval=%s, rag=%q, scheduler=%d jobs)",
+		formatSources(defs), d.interval, datasetLabel(d.dataset), len(sched.Status()))
 }
 
 func datasetLabel(d string) string {
@@ -793,4 +799,70 @@ func truncateLocal(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+// buildChatSourcesScheduler wires the three daemon jobs into the A2
+// scheduler with priorities: source-ingest > cognify > rag > distill.
+func buildChatSourcesScheduler(ctx context.Context, db *sql.DB, d *chatSourcesDaemon) *governor.Scheduler {
+	defs, _ := chatSourcesFromEnv()
+	interval := chatSourcesInterval()
+
+	cognifyBusy := func() bool {
+		var n int
+		_ = db.QueryRowContext(ctx, Q(`
+			SELECT COUNT(*) FROM document_pipeline_statuses
+			WHERE pipeline_state IN ('RUNNING','FAILED')
+		`)).Scan(&n)
+		return n > 0
+	}
+	ragBusy := func() bool {
+		stale, err := chatimport.StaleRagSessions(ctx, db, Q, chatimport.RenderVersion, 1)
+		return err == nil && len(stale) > 0
+	}
+
+	jobs := []*governor.Job{
+		{
+			Name:     "source-ingest",
+			Priority: governor.PrioritySourceIngest,
+			Busy:     func() bool { return true }, // always poll sources
+			Run: func(ctx context.Context) {
+				d.scanOnce(ctx, defs)
+			},
+			Interval: interval,
+		},
+		{
+			Name:     "cognify-drain",
+			Priority: governor.PriorityCognify,
+			Busy:     cognifyBusy,
+			Run: func(ctx context.Context) {
+				// cognify-resume handles this via its own loop; this job
+				// signals the scheduler that cognify work exists
+			},
+			Interval: interval,
+		},
+		{
+			Name:     "rag-janitor",
+			Priority: governor.PriorityRagJanitor,
+			Busy:     ragBusy,
+			Run: func(ctx context.Context) {
+				d.refreshStaleRenders(ctx)
+			},
+			Interval: interval,
+		},
+	}
+	if autoDistillEnabled() {
+		jobs = append(jobs, &governor.Job{
+			Name:     "distill-janitor",
+			Priority: governor.PriorityDistill,
+			Busy: func() bool {
+				candidates, err := chatimport.DistillCandidates(ctx, db, Q, "decision", distillMinMessages, 1)
+				return err == nil && len(candidates) > 0
+			},
+			Run: func(ctx context.Context) {
+				d.distillNewSessions(ctx)
+			},
+			Interval: interval,
+		})
+	}
+	return governor.NewScheduler(jobs...)
 }
