@@ -1372,3 +1372,7 @@ func TestToolSetContext_UnknownCollectionIsAllowed(t *testing.T) {
 		t.Errorf("content = %q, want 'not yet created' warning", got.Content[0].Text)
 	}
 }
+
+func (f *fakeDeps) FetchStatus(_ context.Context) string { return "{}" }
+
+func (d nilDBDeps) FetchStatus(_ context.Context) string { return "" }

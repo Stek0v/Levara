@@ -223,6 +223,9 @@ func RegisterAPI(app fiber.Router, cfg APIConfig) {
 	// Imported chat transcripts (codex / claude-code / cursor)
 	RegisterChatImportAPI(app, cfg)
 
+	// A1: unified operational status
+	RegisterStatusAPI(app, cfg)
+
 	// U19: Project memory store
 	RegisterMemoryAPI(app, cfg)
 

@@ -102,6 +102,8 @@ type SyncDeps interface {
 // ObservabilityDeps is the heartbeat/ops event surface.
 type ObservabilityDeps interface {
 	LogHeartbeat(eventType string, payload any)
+	// FetchStatus retrieves the unified /status payload (A1).
+	FetchStatus(ctx context.Context) string
 }
 
 // GraphAssertionAuthorizer is an optional production policy seam for graph

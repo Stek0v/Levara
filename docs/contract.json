@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-09-20T14:14:07+03:00",
-  "git_rev": "1fdef9ea7fca2c10e11de287aa77dcf6bdffde5a",
+  "generated_at": "2026-09-21T11:45:01+03:00",
+  "git_rev": "297fcf8c5d2341524d13d783c9bbafab4f48d482",
   "rest": [
     {
       "method": "POST",
@@ -685,6 +685,12 @@
       "path": "/settings",
       "status": "canonical",
       "group": "settings"
+    },
+    {
+      "method": "GET",
+      "path": "/status",
+      "status": "canonical",
+      "group": "ops"
     },
     {
       "method": "GET",
