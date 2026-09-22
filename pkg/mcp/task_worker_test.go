@@ -118,8 +118,14 @@ func TestTaskWorkerExecutesThreeStepChain(t *testing.T) {
 			t.Fatalf("step %s = %s", s, got)
 		}
 	}
+	// The step_executed event is recorded after the status transition, as a
+	// separate statement — poll for the full count instead of asserting
+	// immediately after s-3 flips to passed (read-after-write flake).
 	var events int
-	db.QueryRow(`SELECT COUNT(*) FROM task_events WHERE task_id='t-1' AND event_type='step_executed'`).Scan(&events)
+	waitFor(t, 5*time.Second, func() bool {
+		db.QueryRow(`SELECT COUNT(*) FROM task_events WHERE task_id='t-1' AND event_type='step_executed'`).Scan(&events)
+		return events == 3
+	}, "expected 3 step_executed events")
 	if events != 3 {
 		t.Fatalf("expected 3 execution events, got %d", events)
 	}

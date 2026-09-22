@@ -273,3 +273,40 @@ func TestBatchDelete(t *testing.T) {
 		}
 	}
 }
+
+// TestInsertImmediatelySearchable guards the indexer handoff window: the
+// background HNSW indexer used to nil pendingVecs for a whole batch BEFORE
+// calling hnsw.Add, so a Search landing in that gap saw a record in neither
+// list — a record whose Insert had already returned was unfindable for a
+// moment (the TestCollectionIsolation CI flake). Quality first: a record
+// must be searchable from the moment Insert returns, with no sleep and no
+// retry. 200 back-to-back iterations make the old interleaving near-certain
+// to fire if it ever comes back.
+func TestInsertImmediatelySearchable(t *testing.T) {
+	dir, _ := os.MkdirTemp("", "levara-immediate-search-*")
+	defer os.RemoveAll(dir)
+
+	db, err := NewLevara(64, dir+"/meta.bin")
+	if err != nil {
+		t.Fatalf("NewLevara: %v", err)
+	}
+	defer db.Close()
+
+	for i := 0; i < 200; i++ {
+		id := fmt.Sprintf("rec-%03d", i)
+		vec := randVecForTest(64)
+		if err := db.Insert(id, vec, map[string]any{"text": id}); err != nil {
+			t.Fatalf("insert %s: %v", id, err)
+		}
+		found := false
+		for _, r := range db.Search(vec, 10) {
+			if r.ID == id {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("iteration %d: %s not searchable immediately after Insert returned", i, id)
+		}
+	}
+}

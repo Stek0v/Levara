@@ -178,16 +178,24 @@ func NewLevara(dim int, storagePath string, cfg ...HNSWConfig) (*Levara, error) 
 	return db, nil
 }
 
-// indexerLoop drains pendingVecs into hnsw.Add in the background.
+// indexerLoop drains pendingVecs into hnsw.Add in the background, one item
+// at a time: publish into HNSW FIRST, unlink from pending SECOND.
+//
+// The earlier nil-everything-then-Add drain left a window where a record
+// was in neither list — a Search landing there returned empty results for
+// a record whose Insert had already returned (the TestCollectionIsolation
+// CI flake). With publish-then-unlink a record is always visible in at
+// least one of the two; Search snapshots both under a common lock hold and
+// dedups by ID, so it is never seen zero or twice.
 //
 // Locking: reading db.hnsw without a lock is a data race with Clear() which
 // atomically-but-not-really swaps db.hnsw and db.arena (see fsm.Restore caller).
-// We snapshot the current hnsw pointer under db.mu.RLock() per batch, then
+// We snapshot the current hnsw pointer under db.mu.RLock() per item, then
 // release the lock before calling hnsw.Add. If Clear runs concurrently and
-// swaps the pointer, the old hnsw captured here will absorb the batch — those
-// entries become orphaned but not corrupted (old arena + old hnsw stay alive
-// via our local reference until the batch drains). Consistency is preserved
-// because each hnsw owns its own arena reference.
+// swaps the pointer, the old hnsw captured here will absorb the item — it
+// becomes orphaned but not corrupted (old arena + old hnsw stay alive via
+// our local reference). Consistency is preserved because each hnsw owns
+// its own arena reference.
 func (db *Levara) indexerLoop() {
 	for range db.indexSignal {
 		for {
@@ -198,18 +206,30 @@ func (db *Levara) indexerLoop() {
 				db.mu.RUnlock()
 				break
 			}
-			batch := db.pendingVecs
-			db.pendingVecs = nil
+			p := db.pendingVecs[0]
 			db.pendingMu.Unlock()
 
 			hnsw := db.hnsw
 			db.mu.RUnlock()
 
-			for _, p := range batch {
-				hnsw.Add(p.vector, p.id, p.idx)
-			}
+			hnsw.Add(p.vector, p.id, p.idx)
+
+			db.pendingMu.Lock()
+			db.pendingVecs = removePendingItem(db.pendingVecs, p)
+			db.pendingMu.Unlock()
 		}
 	}
+}
+
+// removePendingItem drops the first item matching p by (id, idx) — identity,
+// not just id, so a re-inserted record's fresher pending entry survives.
+func removePendingItem(items []pendingItem, p pendingItem) []pendingItem {
+	for i := range items {
+		if items[i].id == p.id && items[i].idx == p.idx {
+			return append(items[:i], items[i+1:]...)
+		}
+	}
+	return items
 }
 
 // signalIndexer wakes up the background HNSW indexer (non-blocking).
@@ -455,18 +475,31 @@ func (db *Levara) Search(query []float32, topK int) []VectroRecord {
 
 	normQ := normalizeVec(query)
 
-	// HNSW search (indexed records).
+	// Coherent snapshot: HNSW and pending are read under both locks in one
+	// hold, so a record handed off between them by the indexer
+	// (publish-into-HNSW, then unlink-from-pending) is seen exactly once —
+	// never zero (lost visibility) and never twice (duplicate result).
 	db.mu.RLock()
+	db.pendingMu.RLock()
 	records := db.hnsw.Search(normQ, topK)
+	var pending []pendingItem
+	if n := len(db.pendingVecs); n > 0 {
+		pending = make([]pendingItem, n)
+		copy(pending, db.pendingVecs)
+	}
+	db.pendingMu.RUnlock()
 	db.mu.RUnlock()
 
-	// Brute-force scan of pending records not yet in HNSW.
-	db.pendingMu.RLock()
-	pending := db.pendingVecs
-	db.pendingMu.RUnlock()
-
 	if len(pending) > 0 {
+		seen := make(map[string]struct{}, len(records))
+		for _, r := range records {
+			seen[r.ID] = struct{}{}
+		}
 		for _, p := range pending {
+			if _, dup := seen[p.id]; dup {
+				continue
+			}
+			seen[p.id] = struct{}{}
 			d := dist(normQ, p.vector)
 			records = append(records, VectroRecord{
 				ID:    p.id,

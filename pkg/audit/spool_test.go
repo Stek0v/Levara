@@ -26,7 +26,7 @@ func spoolDialects(t *testing.T, run func(*testing.T, *sql.DB, string)) {
 			var err error
 			schema := ""
 			if dialect == "sqlite" {
-				db, err = sql.Open("sqlite3", "file:"+filepath.Join(t.TempDir(), "spool.db")+"?_pragma=busy_timeout(2000)")
+				db, err = sql.Open("sqlite3", "file:"+filepath.Join(t.TempDir(), "spool.db")+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_txlock=immediate")
 			} else {
 				dsn := os.Getenv("LEVARA_TEST_POSTGRES_DSN")
 				if dsn == "" {
