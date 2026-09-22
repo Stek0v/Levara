@@ -11,6 +11,7 @@ package bm25
 
 import (
 	"container/heap"
+	"log"
 	"math"
 	"sort"
 	"strings"
@@ -72,6 +73,8 @@ type Index struct {
 	k1          float64
 	b           float64
 	onChange    func(Change)
+	maxDocs     int  // 0 = unlimited; new documents beyond this are dropped (vectors-only tier)
+	capped      bool // warned once that the cap is hit (guarded by changeMu)
 }
 
 // NewIndex creates an empty BM25 index with default parameters (k1=1.2, b=0.75).
@@ -95,13 +98,43 @@ func NewIndexWithParams(k1, b float64) *Index {
 		docLen:   make(map[string]int),
 		k1:       k1,
 		b:        b,
+		maxDocs:  bm25IndexMaxDocs(),
 	}
 }
 
-// Add indexes a document. If ID exists, it replaces it.
+// bm25IndexMaxDocs mirrors the snapshot threshold
+// (LEVARA_BM25_SNAPSHOT_MAX_DOCS, default 100k): collections past the
+// threshold are vectors-only tier. Keeping the chat-imports index resident
+// cost 12.2 GB of heap on prod (3.6 GB snapshot → 12.2 GB of tokens,
+// posting lists and strings), so index growth is capped at the same line.
+func bm25IndexMaxDocs() int { return bm25SnapshotMaxDocs }
+
+// SetMaxDocs overrides the in-memory document cap (0 = unlimited).
+func (idx *Index) SetMaxDocs(max int) {
+	idx.changeMu.Lock()
+	idx.maxDocs = max
+	idx.changeMu.Unlock()
+}
+
+// Add indexes a document. If ID exists, it replaces it. New documents are
+// dropped once the index holds maxDocs documents (replacements of existing
+// IDs always pass — derivative re-renders update in place).
 func (idx *Index) Add(id, text, metadata string) {
 	idx.changeMu.Lock()
 	defer idx.changeMu.Unlock()
+	if idx.maxDocs > 0 {
+		idx.mu.RLock()
+		_, exists := idx.docs[id]
+		over := len(idx.docs) >= idx.maxDocs
+		idx.mu.RUnlock()
+		if over && !exists {
+			if !idx.capped {
+				idx.capped = true
+				log.Printf("[bm25] index capped at %d docs — new documents dropped, replacements still accepted", idx.maxDocs)
+			}
+			return
+		}
+	}
 	tokens := tokenize(text)
 
 	idx.mu.Lock()

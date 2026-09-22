@@ -64,13 +64,18 @@ type Job struct {
 type Scheduler struct {
 	mu      sync.Mutex
 	jobs    []*Job
+	running map[*Job]bool // jobs currently executing their Run
 	stop    chan struct{}
 	stopped sync.Once
 }
 
 // NewScheduler creates a coordinator for the given jobs.
 func NewScheduler(jobs ...*Job) *Scheduler {
-	return &Scheduler{jobs: jobs, stop: make(chan struct{})}
+	return &Scheduler{
+		jobs:    jobs,
+		running: make(map[*Job]bool, len(jobs)),
+		stop:    make(chan struct{}),
+	}
 }
 
 // Start launches all jobs under coordination. Each job runs in its own
@@ -101,21 +106,32 @@ func (s *Scheduler) runJob(ctx context.Context, job *Job) {
 				continue // nothing to do, don't block others
 			}
 			if !s.CanRun(job) {
-				continue // higher priority is busy — wait next tick
+				continue // a higher-priority job is mid-Run — wait next tick
 			}
+			s.setRunning(job, true)
 			job.Run(ctx)
+			s.setRunning(job, false)
 		}
 	}
 }
 
-// CanRun reports whether the job may start a work unit now: true when
-// no higher-priority job is currently busy. Job-level coordination —
-// resource-level gates (embedder, LLM) are separate.
+func (s *Scheduler) setRunning(job *Job, on bool) {
+	s.mu.Lock()
+	s.running[job] = on
+	s.mu.Unlock()
+}
+
+// CanRun reports whether the job may start a work unit now: true when no
+// higher-priority job is currently EXECUTING its Run. Busy() signals that
+// work EXISTS — it must not gate other jobs: source-ingest reports busy
+// unconditionally ("always poll sources"), and gating on it starved
+// rag-janitor and distill-janitor permanently (observed 2026-09-22: rag
+// frozen at 50/504 for a day while a long import ran its course).
 func (s *Scheduler) CanRun(job *Job) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, other := range s.jobs {
-		if other.Priority < job.Priority && other.Busy != nil && other.Busy() {
+		if other.Priority < job.Priority && s.running[other] {
 			return false
 		}
 	}
@@ -126,7 +142,8 @@ func (s *Scheduler) CanRun(job *Job) bool {
 type JobStatus struct {
 	Name     string `json:"name"`
 	Priority string `json:"priority"`
-	Busy     bool   `json:"busy"`
+	Busy     bool   `json:"busy"`    // has work queued (its own gate to run)
+	Running  bool   `json:"running"` // currently executing its Run
 }
 
 func (s *Scheduler) Status() []JobStatus {
@@ -138,7 +155,7 @@ func (s *Scheduler) Status() []JobStatus {
 		if j.Busy != nil {
 			busy = j.Busy()
 		}
-		out = append(out, JobStatus{Name: j.Name, Priority: j.Priority.String(), Busy: busy})
+		out = append(out, JobStatus{Name: j.Name, Priority: j.Priority.String(), Busy: busy, Running: s.running[j]})
 	}
 	return out
 }
