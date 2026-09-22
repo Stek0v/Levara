@@ -720,6 +720,27 @@ func main() {
 	stopBM25Autosave := bm25Store.StartAutosave(context.Background(), grpcSvc.BM25Indexes(), 5*time.Minute)
 	defer stopBM25Autosave()
 
+	// Standalone deployments never had a WAL compaction trigger (Checkpoint
+	// was gRPC/Raft-only) — compact oversized collection WALs right after
+	// boot, then periodically. Keeps boot replay bounded and disk usage
+	// proportional to live data instead of to append history.
+	go func() {
+		check := func() {
+			n, err := colManager.CheckpointIfWALExceeds(512 << 20)
+			if err != nil {
+				log.Printf("[checkpoint] %v", err)
+				return
+			}
+			if n > 0 {
+				log.Printf("[checkpoint] compacted %d oversized collection WAL(s)", n)
+			}
+		}
+		check()
+		for range time.Tick(15 * time.Minute) {
+			check()
+		}
+	}()
+
 	// LLM response cache — eliminates redundant LLM calls for identical inputs
 	// PersistentCache: survives restarts via append-only JSONL file
 	cachePath := *dataDir + "/llm_cache.jsonl"

@@ -226,3 +226,47 @@ func TestCheckpoint_ContinuedWritesAfter(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckpointIfWALExceedsCompactsOversizedCollections(t *testing.T) {
+	dir := t.TempDir()
+	cm, err := NewCollectionManager(16, dir)
+	if err != nil {
+		t.Fatalf("NewCollectionManager: %v", err)
+	}
+	defer func() { _ = cm.Close() }()
+	if err := cm.Create("big"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := cm.Create("small"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	for i := 0; i < 40; i++ {
+		if err := cm.Insert("big", fmt.Sprintf("rec-%d", i), randomVec(16), map[string]any{"i": i}); err != nil {
+			t.Fatalf("insert: %v", err)
+		}
+	}
+
+	// threshold 0: everything qualifies; only "big" has a WAL past it after
+	// inserts, but a fresh "small" WAL is empty — both stat fine, only
+	// non-empty oversized ones get compacted.
+	n, err := cm.CheckpointIfWALExceeds(0)
+	if err != nil {
+		t.Fatalf("CheckpointIfWALExceeds: %v", err)
+	}
+	if n == 0 {
+		t.Fatal("no collections compacted")
+	}
+	// A huge threshold must compact nothing the second time around is not
+	// guaranteed (WAL still non-empty), but an impossible threshold must.
+	if n, err := cm.CheckpointIfWALExceeds(int64(1) << 62); err != nil || n != 0 {
+		t.Fatalf("impossible threshold compacted %d collections (err=%v)", n, err)
+	}
+	// Live data survives compaction.
+	db, err := cm.Get("big")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(db.AllRecords()); got != 40 {
+		t.Fatalf("live records after checkpoint = %d, want 40", got)
+	}
+}
