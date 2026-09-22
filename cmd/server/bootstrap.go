@@ -277,7 +277,7 @@ func initSQLiteRuntime(dataDir string) sqlRuntime {
 	}
 	_ = os.MkdirAll(filepath.Dir(dbPath), 0755)
 
-	dsn := "file:" + dbPath + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
+	dsn := "file:" + dbPath + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_txlock=immediate"
 	db, err := sql.Open("sqlite3", dsn)
 	log.Printf("SQLite DSN: %s", dsn)
 	if err != nil {
