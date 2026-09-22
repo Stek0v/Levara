@@ -1469,6 +1469,7 @@ func ToolDescriptors() []Tool {
 				"rerank_model":     stringProp("Reranker model name."),
 				"neo4j_enabled":    map[string]any{"type": "boolean", "description": "Whether Neo4j graph backend is configured."},
 				"goroutines":       integerProp("Live goroutine count."),
+				"rss_bytes":        integerProp("Real process resident set size reported by the OS (not MemStats.Sys)."),
 				"heap_alloc_bytes": integerProp("Currently allocated heap bytes."),
 				"heap_sys_bytes":   integerProp("Heap memory obtained from OS."),
 				"num_gc":           integerProp("Completed GC cycles since start."),

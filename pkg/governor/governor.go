@@ -7,12 +7,11 @@
 // Design principles:
 //  1. Quality first: with no budget configured, nothing is ever paused.
 //  2. Hysteresis: pause at >80%, resume at <60% — no oscillation.
-//  3. The governor itself must be cheap: counters and one MemStats read.
+//  3. The governor itself must be cheap: counters and one RSS read.
 package governor
 
 import (
 	"os"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -40,11 +39,17 @@ func NewGovernor(budgetBytes uint64) *Governor {
 // NewGovernorFromEnv reads GOMEMLIMIT (e.g. "8GiB") or returns
 // a no-budget governor if unset/invalid.
 func NewGovernorFromEnv() *Governor {
+	return NewGovernor(EnvBudgetBytes())
+}
+
+// EnvBudgetBytes returns the memory budget derived from GOMEMLIMIT
+// (e.g. "8GiB") in bytes; 0 when unset or unparseable (no budget).
+func EnvBudgetBytes() uint64 {
 	v := strings.TrimSpace(os.Getenv("GOMEMLIMIT"))
 	if v == "" {
-		return NewGovernor(0)
+		return 0
 	}
-	return NewGovernor(parseSizeBytes(v))
+	return parseSizeBytes(v)
 }
 
 // CanWork is the combined check: pause if over threshold, resume if
@@ -131,12 +136,10 @@ func (g *Governor) PausedJobs() []string {
 	return names
 }
 
-// currentRSS reads the process memory from Go's MemStats.
-// Sys is an approximation of RSS; adequate for pressure detection.
+// currentRSS reads the real resident set size from the OS
+// (see rss.go — MemStats.Sys over-reports by reserved arenas).
 func (g *Governor) currentRSS() uint64 {
-	var ms runtime.MemStats
-	runtime.ReadMemStats(&ms)
-	return ms.Sys
+	return ProcessRSS()
 }
 
 // parseSizeBytes parses "8GiB", "512MiB", "1073741824" into bytes.
