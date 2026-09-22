@@ -3,8 +3,11 @@ package http
 import (
 	"context"
 	"database/sql"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -51,6 +54,60 @@ func countMessages(t *testing.T, db *sql.DB, platform, session string) int {
 		t.Fatal(err)
 	}
 	return n
+}
+
+func TestPushRagItemSendsDatasetNameField(t *testing.T) {
+	var gotDatasetName, gotLegacySnake string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/add" {
+			if err := r.ParseMultipartForm(1 << 20); err == nil {
+				gotDatasetName = r.FormValue("datasetName")
+				gotLegacySnake = r.FormValue("dataset_name")
+			}
+			_, _ = w.Write([]byte(`{"dataset_name":"chat-imports"}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	d := &chatSourcesDaemon{loopback: srv.URL, dataset: "chat-imports", client: srv.Client()}
+	d.pushOneRagItem(context.Background(), &chatimport.Conversation{}, "chatimport-codex-s.md", "x")
+	if gotDatasetName != "chat-imports" {
+		t.Fatalf("datasetName field = %q, want chat-imports (API contract is camelCase)", gotDatasetName)
+	}
+	if gotLegacySnake != "" {
+		t.Fatalf("legacy dataset_name field still sent: %q — it silently routes to the default dataset", gotLegacySnake)
+	}
+}
+
+func TestSweepSupersededMonoliths(t *testing.T) {
+	deleted := map[string]bool{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/v1/datasets" && r.Method == "GET":
+			_, _ = w.Write([]byte(`[{"id":"ds1","name":"chat-imports"}]`))
+		case r.URL.Path == "/api/v1/datasets/ds1/data" && r.Method == "GET":
+			_, _ = w.Write([]byte(`[
+				{"id":"m1","name":"chatimport-codex-s1.md"},
+				{"id":"p1","name":"chatimport-codex-s1-part001.md"},
+				{"id":"p2","name":"chatimport-codex-s1-part002.md"},
+				{"id":"m2","name":"chatimport-codex-solo.md"}]`))
+		case r.Method == "DELETE" && strings.HasPrefix(r.URL.Path, "/api/v1/datasets/ds1/data/"):
+			deleted[strings.TrimPrefix(r.URL.Path, "/api/v1/datasets/ds1/data/")] = true
+			_, _ = w.Write([]byte(`{"deleted":true}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	d := &chatSourcesDaemon{loopback: srv.URL, dataset: "chat-imports", client: srv.Client()}
+	d.sweepSupersededMonoliths(context.Background())
+	if !deleted["m1"] {
+		t.Fatalf("superseded monolith not deleted: %v", deleted)
+	}
+	if deleted["m2"] || deleted["p1"] || deleted["p2"] {
+		t.Fatalf("over-deletion: %v", deleted)
+	}
 }
 
 func TestChatSourcesDaemonScansIdempotently(t *testing.T) {

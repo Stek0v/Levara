@@ -180,6 +180,10 @@ func TestParseDistillCandidates(t *testing.T) {
 	if err != nil || len(got) != 1 || got[0].Key != "a-b" {
 		t.Fatalf("fenced parse: %v %v", got, err)
 	}
+	got, err = parseDistillCandidates("```json\n{\"key\":\"Solo Choice\",\"value\":\"v\"}\n```", 5)
+	if err != nil || len(got) != 1 || got[0].Key != "solo-choice" {
+		t.Fatalf("single-object fallback: %v %v", got, err)
+	}
 	got, err = parseDistillCandidates(`[{"key":"a","value":"1"},{"key":"b","value":"2"},{"key":"c","value":"3"}]`, 2)
 	if err != nil || len(got) != 2 {
 		t.Fatalf("max cap: %v %v", got, err)
