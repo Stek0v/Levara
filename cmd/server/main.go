@@ -266,6 +266,16 @@ func main() {
 
 	flag.Parse()
 
+	// Profiling first: the heavy boot work below (WAL replay, BM25 build,
+	// collection load) is exactly what needs to be profileable.
+	if pprofAddr := pprofAddrFromEnv(); pprofAddr != "" {
+		if bound, err := startPprofServer(pprofAddr); err != nil {
+			log.Printf("[pprof] disabled: %v", err)
+		} else {
+			log.Printf("[pprof] listening on http://%s/debug/pprof/", bound)
+		}
+	}
+
 	// Build a set of explicitly-provided flags so profile doesn't overwrite them.
 	provided := make(map[string]bool)
 	flag.Visit(func(f *flag.Flag) { provided[f.Name] = true })
