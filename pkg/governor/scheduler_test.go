@@ -41,7 +41,14 @@ func TestSchedulerDefersWhileHigherPriorityRuns(t *testing.T) {
 			Name:     "distill",
 			Priority: PriorityDistill,
 			Busy:     func() bool { return true },
-			Run:      func(ctx context.Context) { distillRan.Add(1) },
+			// Runs before cognify ever started are legal (nothing was
+			// in flight); only executions overlapping cognify's Run
+			// count for the assertion below.
+			Run: func(ctx context.Context) {
+				if cognifyStarted.Load() {
+					distillRan.Add(1)
+				}
+			},
 			Interval: 5 * time.Millisecond,
 		},
 	)
