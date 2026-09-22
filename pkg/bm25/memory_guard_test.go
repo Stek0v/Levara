@@ -88,3 +88,38 @@ func writeSnapshotFile(t *testing.T, dir, collection string, docs int) {
 		}
 	}
 }
+
+// TestSnapshotGuardsTreatCapAsOversize — a capped index sits at exactly the
+// threshold; both the save and load guards must refuse it (> would let a
+// ~GB snapshot be rewritten every autosave tick and reloaded at boot).
+func TestSnapshotGuardsTreatCapAsOversize(t *testing.T) {
+	dir := t.TempDir()
+	old := bm25SnapshotMaxDocs
+	bm25SnapshotMaxDocs = 3
+	defer func() { bm25SnapshotMaxDocs = old }()
+
+	idx := NewIndex()
+	idx.SetMaxDocs(3)
+	for i := 0; i < 5; i++ {
+		idx.Add(fmt.Sprintf("doc-%d", i), fmt.Sprintf("capped text %d alpha", i), "")
+	}
+	if idx.Len() != 3 {
+		t.Fatalf("Len = %d, want 3", idx.Len())
+	}
+	store := NewSnapshotStore(dir)
+	if err := store.SaveAll(map[string]*Index{"capped": idx}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, encodeCollectionName("capped")+snapshotExt)); !os.IsNotExist(err) {
+		t.Fatal("snapshot written for an index sitting exactly at the cap")
+	}
+
+	writeSnapshotFile(t, dir, "at-cap", bm25SnapshotMaxDocs)
+	loaded, err := store.LoadAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := loaded["at-cap"]; ok {
+		t.Fatal("snapshot with exactly threshold lines was loaded")
+	}
+}

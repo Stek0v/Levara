@@ -53,7 +53,9 @@ func (s *SnapshotStore) LoadAll() (map[string]*Index, error) {
 		// Counting lines is a raw byte scan — seconds, not minutes —
 		// and the collection stays vectors-only until its snapshot
 		// shrinks back under the threshold.
-		if docs, cerr := countSnapshotDocs(path); cerr == nil && docs > bm25SnapshotMaxDocs {
+		// >=, not >: a capped index snapshots at exactly the threshold, and
+		// loading it back would materialize the same gigabytes the cap prevents.
+		if docs, cerr := countSnapshotDocs(path); cerr == nil && docs >= bm25SnapshotMaxDocs {
 			log.Printf("[bm25] skip load snapshot %s: %d docs > %d threshold (memory guard)",
 				collection, docs, bm25SnapshotMaxDocs)
 			continue
@@ -121,7 +123,11 @@ func (s *SnapshotStore) SaveAll(indexes map[string]*Index) error {
 		// collections skip periodic snapshots — their append-only change
 		// log (Attach) provides durability between restarts, and vector
 		// search is the primary retrieval path at that scale anyway.
-		if idx.Len() > bm25SnapshotMaxDocs {
+		// >=, not >: Index.Add caps at exactly maxDocs, so a huge collection's
+		// index sits ON the threshold and would otherwise snapshot ~GB every
+		// autosave tick (observed: 710 MB chat-imports snapshot rewritten
+		// every 5 minutes).
+		if idx.Len() >= bm25SnapshotMaxDocs {
 			log.Printf("[bm25] skip snapshot %s: %d docs > %d threshold (memory guard)",
 				collection, idx.Len(), bm25SnapshotMaxDocs)
 			continue
