@@ -11,6 +11,7 @@
 package http
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -222,6 +223,41 @@ type DataDTO struct {
 	SourceRevision  int64  `json:"source_revision"`
 	RawContentHash  string `json:"raw_content_hash"`
 	CreatedAt       string `json:"created_at"`
+}
+
+// cognifyDocumentRow is one dataset document pending cognification.
+type cognifyDocumentRow struct {
+	documentID string
+	title      string
+	location   string
+}
+
+// pendingDatasetDocuments returns the dataset's documents that have no
+// published index for it yet. The batch window in the cognify caller takes
+// the first N by id; without this filter every run re-picks already-published
+// documents, duplicating embeddings and starving the backlog forever.
+func pendingDatasetDocuments(ctx context.Context, db *sql.DB, datasetID string) ([]cognifyDocumentRow, error) {
+	rows, err := db.QueryContext(ctx, Q(`SELECT d.id, d.name, d.raw_data_location FROM data d
+		JOIN dataset_data dd ON d.id = dd.data_id
+		WHERE dd.dataset_id = $1
+		  AND NOT EXISTS (
+			SELECT 1 FROM document_index_publications p
+			WHERE p.dataset_id = $2 AND p.data_id = d.id
+		  )
+		ORDER BY d.id`), datasetID, datasetID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []cognifyDocumentRow
+	for rows.Next() {
+		var r cognifyDocumentRow
+		if err := rows.Scan(&r.documentID, &r.title, &r.location); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 func datasetDataHandler(cfg APIConfig) fiber.Handler {

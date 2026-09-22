@@ -159,22 +159,15 @@ func cognifyHandler(cfg APIConfig) fiber.Handler {
 			}
 			var pending []locationSource
 			for _, datasetID := range allDatasetIDs {
-				rows, err := cfg.DB.QueryContext(reqCtx, Q(`SELECT d.id, d.name, d.raw_data_location FROM data d
-                    JOIN dataset_data dd ON d.id=dd.data_id WHERE dd.dataset_id=$1 ORDER BY d.id`), datasetID)
+				docs, err := pendingDatasetDocuments(reqCtx, cfg.DB, datasetID)
 				if err != nil {
 					return fiber.NewError(503, "dataset source lookup failed")
 				}
-				for rows.Next() {
-					item := locationSource{source: cognifySource{datasetID: datasetID}}
-					if err := rows.Scan(&item.source.documentID, &item.source.title, &item.location); err != nil {
-						rows.Close()
-						return fiber.NewError(503, "dataset source lookup failed")
-					}
-					pending = append(pending, item)
-				}
-				readErr, closeErr := rows.Err(), rows.Close()
-				if readErr != nil || closeErr != nil {
-					return fiber.NewError(503, "dataset source lookup failed")
+				for _, doc := range docs {
+					pending = append(pending, locationSource{
+						source:   cognifySource{datasetID: datasetID, documentID: doc.documentID, title: doc.title},
+						location: doc.location,
+					})
 				}
 			}
 			for _, doc := range req.Documents {
