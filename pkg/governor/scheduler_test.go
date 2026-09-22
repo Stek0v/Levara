@@ -88,6 +88,33 @@ func TestSchedulerBusyFlagDoesNotStarve(t *testing.T) {
 	}
 }
 
+// TestSchedulerStaggeredTicksGiveLowerJobsTheirOwnPhase — regression for
+// the 2026-09-22 eclipse: all jobs shared one interval and start moment,
+// so a higher-priority Run spanning the shared tick instant (a ~10s scan
+// in a 5m interval) deferred the lower job on every single tick. With
+// staggered phases the lower job's tick lands mid-interval, outside the
+// higher job's Run.
+func TestSchedulerStaggeredTicksGiveLowerJobsTheirOwnPhase(t *testing.T) {
+	var lowRan atomic.Int32
+	sched := NewScheduler(
+		&Job{Name: "source-ingest", Priority: PrioritySourceIngest, Busy: func() bool { return true },
+			// Run covers the un-staggered shared tick instant (10% of
+			// the interval), like the real cursor scan.
+			Run:      func(ctx context.Context) { time.Sleep(20 * time.Millisecond) },
+			Interval: 200 * time.Millisecond},
+		&Job{Name: "rag-janitor", Priority: PriorityRagJanitor, Busy: func() bool { return true },
+			Run:      func(ctx context.Context) { lowRan.Add(1) },
+			Interval: 200 * time.Millisecond},
+	)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sched.Start(ctx)
+	time.Sleep(700 * time.Millisecond)
+	if lowRan.Load() == 0 {
+		t.Fatal("rag-janitor never ran: its tick phase is still eclipsed by the higher-priority Run")
+	}
+}
+
 func TestSchedulerStatus(t *testing.T) {
 	release := make(chan struct{})
 	sched := NewScheduler(

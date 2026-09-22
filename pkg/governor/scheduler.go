@@ -78,11 +78,22 @@ func NewScheduler(jobs ...*Job) *Scheduler {
 	}
 }
 
-// Start launches all jobs under coordination. Each job runs in its own
-// goroutine but checks CanRun before each work unit.
+// Start launches all jobs under coordination, staggered so their ticks do
+// not coincide. Every job sharing one interval and one start moment meant
+// a higher-priority Run (source-ingest's ~10s cursor scan, or its
+// post-boot full import) eclipsed the lower jobs' CanRun check on EVERY
+// tick — rag-janitor never got a tick of its own (2026-09-22: rag frozen
+// at 50/504 while scans ran fine). Offsetting each job by its share of the
+// interval gives lower-priority ticks their own phase.
 func (s *Scheduler) Start(ctx context.Context) {
-	for _, job := range s.jobs {
-		go s.runJob(ctx, job)
+	n := len(s.jobs)
+	for i, job := range s.jobs {
+		go func(i int, job *Job) {
+			if i > 0 && n > 1 && job.Interval > 0 {
+				time.Sleep(time.Duration(i) * job.Interval / time.Duration(n))
+			}
+			s.runJob(ctx, job)
+		}(i, job)
 	}
 }
 
