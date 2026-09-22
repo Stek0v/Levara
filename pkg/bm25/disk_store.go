@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -44,7 +45,20 @@ func (s *SnapshotStore) LoadAll() (map[string]*Index, error) {
 		if !ok {
 			continue
 		}
-		idx, err := LoadSnapshot(filepath.Join(s.dir, entry.Name()))
+		path := filepath.Join(s.dir, entry.Name())
+		// Memory guard, mirroring SaveAll: a snapshot past the doc
+		// threshold would materialize gigabytes of index at boot
+		// (observed: the pre-guard chat-imports snapshot, 3.6 GB on
+		// disk → 12.2 GB heap → GC death spiral under GOMEMLIMIT).
+		// Counting lines is a raw byte scan — seconds, not minutes —
+		// and the collection stays vectors-only until its snapshot
+		// shrinks back under the threshold.
+		if docs, cerr := countSnapshotDocs(path); cerr == nil && docs > bm25SnapshotMaxDocs {
+			log.Printf("[bm25] skip load snapshot %s: %d docs > %d threshold (memory guard)",
+				collection, docs, bm25SnapshotMaxDocs)
+			continue
+		}
+		idx, err := LoadSnapshot(path)
 		if err != nil {
 			log.Printf("[bm25] load snapshot %q: %v", entry.Name(), err)
 			continue
@@ -53,6 +67,42 @@ func (s *SnapshotStore) LoadAll() (map[string]*Index, error) {
 		indexes[collection] = idx
 	}
 	return indexes, nil
+}
+
+// countSnapshotDocs streams the JSONL snapshot counting document lines —
+// one line per diskDoc in writeSnapshotDocuments. A pure byte scan, so it
+// never allocates line contents (lines can be hundreds of KB for chat
+// segments).
+func countSnapshotDocs(path string) (int, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+	buf := make([]byte, 256<<10)
+	docs := 0
+	lastByte := byte('\n')
+	for {
+		n, rerr := f.Read(buf)
+		for i := 0; i < n; i++ {
+			if buf[i] == '\n' {
+				docs++
+			}
+		}
+		if n > 0 {
+			lastByte = buf[n-1]
+		}
+		if rerr == io.EOF {
+			break
+		}
+		if rerr != nil {
+			return 0, rerr
+		}
+	}
+	if lastByte != '\n' {
+		docs++ // final line without trailing newline
+	}
+	return docs, nil
 }
 
 // SaveAll atomically saves all indexes in the supplied map.
