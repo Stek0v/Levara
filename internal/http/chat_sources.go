@@ -155,6 +155,7 @@ type chatSourcesDaemon struct {
 	logEveryScan    bool
 	scheduler       *governor.Scheduler
 	governor        *governor.Governor
+	monolithSweep   sync.Once
 }
 
 // StartChatSourcesDaemon boots the opt-in transcript ingest daemon. It
@@ -225,6 +226,7 @@ func (d *chatSourcesDaemon) refreshStaleRenders(ctx context.Context) {
 		d.logRagNoop("rag sink disabled (loopback=%q dataset=%q)", d.loopback, d.dataset)
 		return
 	}
+	d.monolithSweep.Do(func() { d.sweepSupersededMonoliths(ctx) })
 	budget := ragRebuildBudget()
 	stale, err := chatimport.StaleRagSessions(ctx, d.db, Q, chatimport.RenderVersion, budget)
 	if err != nil {
@@ -533,7 +535,7 @@ func (d *chatSourcesDaemon) pushOneRagItem(ctx context.Context, conv *chatimport
 	w := multipart.NewWriter(&buf)
 	fw, _ := w.CreateFormFile("data", name)
 	fw.Write([]byte(content))
-	w.WriteField("dataset_name", d.dataset)
+	w.WriteField("datasetName", d.dataset)
 	w.Close()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, d.loopback+"/api/v1/add", &buf)
@@ -546,14 +548,60 @@ func (d *chatSourcesDaemon) pushOneRagItem(ctx context.Context, conv *chatimport
 		log.Printf("[chat-sources] rag push failed: %v", err)
 		return
 	}
-	io.Copy(io.Discard, resp.Body)
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 	resp.Body.Close()
+	// 2026-09-22: a field-name drift (dataset_name vs the API's datasetName)
+	// silently routed every render into the fallback "default" dataset for
+	// 36h because the response body was discarded. Guard the echo instead.
+	var addResp struct {
+		DatasetName string `json:"dataset_name"`
+	}
+	_ = json.Unmarshal(body, &addResp)
+	if addResp.DatasetName != "" && addResp.DatasetName != d.dataset {
+		log.Printf("[chat-sources] rag push landed in dataset %q, want %q (status %d)", addResp.DatasetName, d.dataset, resp.StatusCode)
+	}
 	if resp.StatusCode == http.StatusTooManyRequests {
 		log.Printf("[chat-sources] rag push rate-limited; remaining docs deferred to next scan")
 		time.Sleep(5 * time.Second)
 		return
 	}
 	time.Sleep(chatSourcesAddPace)
+}
+
+// listDatasetItems returns the rag dataset's current items as name → id.
+func (d *chatSourcesDaemon) listDatasetItems(ctx context.Context) map[string]string {
+	out := map[string]string{}
+	datasetID, err := d.resolveDatasetID(ctx)
+	if err != nil || datasetID == "" {
+		return out
+	}
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, d.loopback+"/api/v1/datasets/"+datasetID+"/data", nil)
+	resp, err := d.client.Do(req)
+	if err != nil {
+		return out
+	}
+	var items []struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&items)
+	resp.Body.Close()
+	for _, item := range items {
+		out[item.Name] = item.ID
+	}
+	return out
+}
+
+// deleteRagItemByID deletes one dataset item (best effort, HTTP 2xx = true).
+func (d *chatSourcesDaemon) deleteRagItemByID(ctx context.Context, datasetID, id string) bool {
+	del, _ := http.NewRequestWithContext(ctx, http.MethodDelete, d.loopback+"/api/v1/datasets/"+datasetID+"/data/"+id, nil)
+	dresp, err := d.client.Do(del)
+	if err != nil {
+		return false
+	}
+	io.Copy(io.Discard, dresp.Body)
+	dresp.Body.Close()
+	return dresp.StatusCode >= 200 && dresp.StatusCode < 300
 }
 
 // deleteRagItemByName resolves the dataset item with the given name and
@@ -563,31 +611,37 @@ func (d *chatSourcesDaemon) deleteRagItemByName(ctx context.Context, name string
 	if err != nil || datasetID == "" {
 		return false
 	}
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, d.loopback+"/api/v1/datasets/"+datasetID+"/data", nil)
-	resp, err := d.client.Do(req)
-	if err != nil {
-		return false
-	}
-	var items []struct {
-		ID   string `json:"id"`
-		Name string `json:"name"`
-	}
-	_ = json.NewDecoder(resp.Body).Decode(&items)
-	resp.Body.Close()
-	for _, item := range items {
-		if item.Name != name {
-			continue
-		}
-		del, _ := http.NewRequestWithContext(ctx, http.MethodDelete, d.loopback+"/api/v1/datasets/"+datasetID+"/data/"+item.ID, nil)
-		dresp, err := d.client.Do(del)
-		if err != nil {
-			return false
-		}
-		io.Copy(io.Discard, dresp.Body)
-		dresp.Body.Close()
-		return dresp.StatusCode >= 200 && dresp.StatusCode < 300
+	if id, ok := d.listDatasetItems(ctx)[name]; ok {
+		return d.deleteRagItemByID(ctx, datasetID, id)
 	}
 	return false
+}
+
+// sweepSupersededMonoliths deletes whole-file renders whose session also
+// has segmented parts: pre-segmentation monoliths otherwise stay searchable
+// forever as stale duplicates of re-rendered conversations.
+func (d *chatSourcesDaemon) sweepSupersededMonoliths(ctx context.Context) {
+	items := d.listDatasetItems(ctx)
+	if len(items) == 0 {
+		return
+	}
+	datasetID, err := d.resolveDatasetID(ctx)
+	if err != nil || datasetID == "" {
+		return
+	}
+	removed := 0
+	for name := range items {
+		if !strings.HasSuffix(name, "-part001.md") {
+			continue
+		}
+		base := strings.TrimSuffix(name, "-part001.md") + ".md"
+		if baseID, ok := items[base]; ok && d.deleteRagItemByID(ctx, datasetID, baseID) {
+			removed++
+		}
+	}
+	if removed > 0 {
+		log.Printf("[chat-sources] rag janitor: removed %d superseded monolithic renders", removed)
+	}
 }
 
 // triggerCognify starts a rag-mode cognify over the configured dataset

@@ -10,6 +10,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"time"
 )
 
 // DistillSchemaStatements creates the distillation registry (dialect-neutral).
@@ -36,6 +37,11 @@ func EnsureDistillSchema(ctx context.Context, db *sql.DB, q Q) error {
 	return nil
 }
 
+// DistillFailureBackoff spares a session that just failed distillation
+// from being re-picked: permanently-failing sessions otherwise occupy the
+// whole budget every tick and starve every other candidate forever.
+const DistillFailureBackoff = 24 * time.Hour
+
 // DistillCandidate identifies a session ready for distillation.
 type DistillCandidate struct {
 	Platform  Platform
@@ -45,23 +51,26 @@ type DistillCandidate struct {
 }
 
 // DistillCandidates returns up to limit sessions from the raw layer with
-// at least minMessages messages that have no recorded distillation for the
-// given hall. Ordered oldest-first so early sessions distill first.
+// at least minMessages messages that have no ok distillation for the given
+// hall. Sessions that failed within DistillFailureBackoff are skipped so a
+// hard-to-distill session cannot crowd out fresh candidates. Ordered
+// oldest-first so early sessions distill first.
 func DistillCandidates(ctx context.Context, db *sql.DB, q Q, hall string, minMessages, limit int) ([]DistillCandidate, error) {
+	cutoff := time.Now().UTC().Add(-DistillFailureBackoff).Format(time.RFC3339)
 	rows, err := db.QueryContext(ctx, q(`
 		SELECT m.platform, m.session_id, MAX(m.session_title), COUNT(*) AS msgs
 		FROM chat_import_messages m
 		WHERE NOT EXISTS (
 			SELECT 1 FROM chat_import_distill d
 			WHERE d.platform = m.platform AND d.session_id = m.session_id AND d.hall = $1
-			  AND d.status = 'ok'
+			  AND (d.status = 'ok' OR (d.status = 'failed' AND d.distilled_at > $2))
 		)
 		GROUP BY m.platform, m.session_id
-		HAVING COUNT(*) >= $2
+		HAVING COUNT(*) >= $3
 		   AND SUM(CASE WHEN m.role = 'user' THEN 1 ELSE 0 END) >= 2
 		ORDER BY MIN(m.source_created_at)
-		LIMIT $3
-	`), hall, minMessages, limit)
+		LIMIT $4
+	`), hall, cutoff, minMessages, limit)
 	if err != nil {
 		return nil, err
 	}

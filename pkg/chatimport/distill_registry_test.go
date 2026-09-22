@@ -70,11 +70,19 @@ func TestDistillCandidatesAndOutcome(t *testing.T) {
 		t.Fatalf("still candidate after ok: %+v", cands)
 	}
 
-	// failure stays a candidate for retry
+	// fresh failure backs off (a hard-to-distill session must not crowd out
+	// other candidates every tick); an aged failure retries.
 	_ = RecordDistillOutcome(ctx, db, SQLiteQ, PlatformCodex, "rich", "discovery", "failed", nil, "llm timeout")
 	cands, _ = DistillCandidates(ctx, db, SQLiteQ, "discovery", 6, 10)
+	if len(cands) != 0 {
+		t.Fatalf("recent failure must back off: %+v", cands)
+	}
+	if _, err := db.Exec(`UPDATE chat_import_distill SET distilled_at = '2020-01-01T00:00:00Z' WHERE hall = 'discovery'`); err != nil {
+		t.Fatal(err)
+	}
+	cands, _ = DistillCandidates(ctx, db, SQLiteQ, "discovery", 6, 10)
 	if len(cands) != 1 {
-		t.Fatalf("failed outcome should retry: %+v", cands)
+		t.Fatalf("aged failure should retry: %+v", cands)
 	}
 
 	stats, _ := DistillStatsFor(ctx, db, SQLiteQ, "decision")

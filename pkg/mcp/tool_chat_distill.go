@@ -254,6 +254,28 @@ func distillOnce(ctx context.Context, deps Deps, prov llm.Provider, prompt strin
 	return parseDistillCandidates(resp.Content, maxMemories)
 }
 
+// parseDistillObject accepts a top-level single-pair {"key":"value"}
+// object as a one-memory answer.
+func parseDistillObject(body string) ([]DistillCandidate, bool) {
+	s := strings.Index(body, "{")
+	e := strings.LastIndex(body, "}")
+	if s < 0 || e <= s {
+		return nil, false
+	}
+	var pair struct {
+		Key   string `json:"key"`
+		Value string `json:"value"`
+	}
+	if err := json.Unmarshal([]byte(body[s:e+1]), &pair); err != nil || (pair.Key == "" && pair.Value == "") {
+		return nil, false
+	}
+	c := DistillCandidate{Key: slugifyDistillKey(pair.Key), Value: strings.TrimSpace(pair.Value)}
+	if c.Key == "" || c.Value == "" {
+		return nil, false
+	}
+	return []DistillCandidate{c}, true
+}
+
 func parseDistillCandidates(raw string, maxMemories int) ([]DistillCandidate, error) {
 	body := strings.TrimSpace(raw)
 	body = strings.TrimPrefix(body, "```json")
@@ -262,6 +284,11 @@ func parseDistillCandidates(raw string, maxMemories int) ([]DistillCandidate, er
 	start := strings.Index(body, "[")
 	end := strings.LastIndex(body, "]")
 	if start < 0 || end <= start {
+		// Some models answer with a single {"key": "value"} object instead
+		// of the requested array — accept that shape before giving up.
+		if c, ok := parseDistillObject(body); ok {
+			return c, nil
+		}
 		return nil, fmt.Errorf("no JSON array in model output: %.200s", raw)
 	}
 	// Models don't always respect the field names: a common drift is a
