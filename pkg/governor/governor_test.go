@@ -82,7 +82,7 @@ func TestGovernorParseSizeBytes(t *testing.T) {
 // TestGovernorPressureLevels — correct classification.
 func TestGovernorPressureLevels(t *testing.T) {
 	// This test uses a synthetic budget that we can reason about.
-	// In production, currentRSS() reads actual MemStats.
+	// In production, currentRSS() reads the real process RSS (rss.go).
 	// Here we verify the classification thresholds are correct
 	// by testing the ratio math directly.
 	g := NewGovernor(1000) // 1000 bytes budget
