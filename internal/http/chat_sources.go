@@ -144,16 +144,17 @@ type fileFingerprint struct {
 }
 
 type chatSourcesDaemon struct {
-	db           *sql.DB
-	loopback     string // base URL for /add and /cognify, "" disables rag sink
-	dataset      string // rag dataset name, "" disables rag sink
-	seen         map[string]fileFingerprint
-	mu           sync.Mutex
-	interval     time.Duration
-	client       *http.Client
-	logEveryScan bool
-	scheduler    *governor.Scheduler
-	governor     *governor.Governor
+	db              *sql.DB
+	loopback        string    // base URL for /add and /cognify, "" disables rag sink
+	ragNoopLoggedAt time.Time // throttle for the disabled-sink notice
+	dataset         string    // rag dataset name, "" disables rag sink
+	seen            map[string]fileFingerprint
+	mu              sync.Mutex
+	interval        time.Duration
+	client          *http.Client
+	logEveryScan    bool
+	scheduler       *governor.Scheduler
+	governor        *governor.Governor
 }
 
 // StartChatSourcesDaemon boots the opt-in transcript ingest daemon. It
@@ -219,6 +220,9 @@ func formatSources(defs []chatSourceDefinition) string {
 // overnight rebuild scripts.
 func (d *chatSourcesDaemon) refreshStaleRenders(ctx context.Context) {
 	if !d.ragEnabled() {
+		// Silent no-ops here cost hours of debugging once (2026-09-22):
+		// state the gate, throttled.
+		d.logRagNoop("rag sink disabled (loopback=%q dataset=%q)", d.loopback, d.dataset)
 		return
 	}
 	budget := ragRebuildBudget()
@@ -231,9 +235,11 @@ func (d *chatSourcesDaemon) refreshStaleRenders(ctx context.Context) {
 		return
 	}
 	refreshed := 0
+	loadFailures := 0
 	for _, ref := range stale {
 		conv, err := chatimport.LoadConversation(ctx, d.db, Q, ref.Platform, ref.SessionID)
 		if err != nil {
+			loadFailures++
 			continue
 		}
 		// Best-effort removal of the stale item; the re-add below uses the
@@ -247,7 +253,21 @@ func (d *chatSourcesDaemon) refreshStaleRenders(ctx context.Context) {
 	if refreshed > 0 {
 		log.Printf("[chat-sources] rag janitor: refreshed %d/%d stale renders (budget %d)", refreshed, len(stale), budget)
 		d.triggerCognify(ctx)
+	} else {
+		// A tick that found stale work but refreshed nothing used to be
+		// indistinguishable from a dead janitor. Say why.
+		log.Printf("[chat-sources] rag janitor: 0/%d stale renders refreshed (load failures: %d)", len(stale), loadFailures)
 	}
+}
+
+// logRagNoop reports a disabled rag sink at most once an hour — enough to
+// see it in the log tail, not enough to spam it.
+func (d *chatSourcesDaemon) logRagNoop(format string, args ...any) {
+	if time.Since(d.ragNoopLoggedAt) < time.Hour {
+		return
+	}
+	d.ragNoopLoggedAt = time.Now()
+	log.Printf("[chat-sources] "+format, args...)
 }
 
 // ragItemName is the deterministic document name for a session render.
@@ -839,6 +859,8 @@ func buildChatSourcesScheduler(ctx context.Context, db *sql.DB, d *chatSourcesDa
 			Busy:     ragBusy,
 			Run: func(ctx context.Context) {
 				if d.governor != nil && !d.governor.CanWork("rag-janitor") {
+					level, ratio := d.governor.Pressure()
+					log.Printf("[chat-sources] rag-janitor paused by governor: %s (ratio=%.2f)", level, ratio)
 					return
 				}
 				d.refreshStaleRenders(ctx)
