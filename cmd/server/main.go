@@ -219,6 +219,9 @@ func main() {
 		}
 		return
 	}
+	rebuildCollection := flag.String("rebuild-collection", "", "Offline maintenance: rebuild a collection by removing orphaned/superseded vector records (dry-run unless -rebuild-apply)")
+	rebuildApply := flag.Bool("rebuild-apply", false, "Execute the -rebuild-collection plan (default is dry-run)")
+	rebuildManifest := flag.String("rebuild-manifest", "", "Path for the removal manifest JSON (default: <data-dir>/rebuild-snapshots/)")
 	bootstrap := flag.Bool("bootstrap", false, "Bootstrap the Raft cluster (Leader only)")
 	standalone := flag.Bool("standalone", true, "Standalone mode: WAL-only, no Raft consensus (fastest)")
 	dim := flag.Int("dim", 128, "Vector dimension size (must match embedding model output)")
@@ -417,6 +420,13 @@ func main() {
 		} else {
 			nodeID = "node1"
 		}
+	}
+
+	if *rebuildCollection != "" {
+		if err := runCollectionRebuild(*rebuildCollection, *pgURL, *dataDir, nodeID, *dim, *rebuildApply, *rebuildManifest); err != nil {
+			log.Fatalf("rebuild: %v", err)
+		}
+		return
 	}
 	basePort := *raftPortBase
 	numShards := *numShardsFlag

@@ -846,3 +846,15 @@ func (db *Levara) Checkpoint() error {
 	fmt.Printf("Checkpoint complete: %d live records written to compacted WAL\n", count)
 	return nil
 }
+
+// WALPath returns the collection's WAL file path (maintenance tooling).
+func (db *Levara) WALPath() string { return db.wal.Path() }
+
+// DiskPath returns the collection's metadata store file path (maintenance
+// tooling): the open file's name.
+func (db *Levara) DiskPath() string {
+	if db.disk == nil || db.disk.file == nil {
+		return ""
+	}
+	return db.disk.file.Name()
+}
