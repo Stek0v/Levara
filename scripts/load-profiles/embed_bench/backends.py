@@ -33,6 +33,14 @@ class TransformersBackend:
             recipe.repo, trust_remote_code=recipe.trust_remote_code
         )
         self.model.train(False)
+        # Apple Silicon: MPS is several times faster than CPU for these
+        # encoder sizes; harmless no-op elsewhere.
+        try:
+            import torch as _t
+            if _t.backends.mps.is_available():
+                self.model = self.model.to("mps")
+        except Exception:
+            pass
         # Some mirror repos (e.g. unsloth/embeddinggemma-300m) ship
         # add_bos_token=False; Gemma-style encoders silently produce
         # garbage embeddings without BOS. Force it on.
