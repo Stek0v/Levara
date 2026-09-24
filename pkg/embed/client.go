@@ -25,6 +25,9 @@ type Client struct {
 	guard       func(context.Context) (func(), error)
 	gate        *PriorityGate
 	background  bool
+	// breaker is shared across With*-copies so every lane (foreground,
+	// background, gated) trips and probes the same endpoint state.
+	breaker *Breaker
 }
 
 // WithGuard returns a per-operation copy; shared client configuration stays
@@ -50,6 +53,7 @@ func NewClient(url, model string, batchSize, concurrency int) *Client {
 		model:       model,
 		batchSize:   batchSize,
 		concurrency: concurrency,
+		breaker:     NewBreaker(3, 30*time.Second),
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 			Transport: &http.Transport{
@@ -121,6 +125,11 @@ func (c *Client) EmbedTexts(ctx context.Context, texts []string) ([][]float32, e
 	if len(texts) == 0 {
 		return nil, nil
 	}
+	if c.breaker != nil {
+		if err := c.breaker.Allow(); err != nil {
+			return nil, err
+		}
+	}
 	release, err := c.acquireGate(ctx)
 	if err != nil {
 		return nil, err
@@ -177,7 +186,13 @@ func (c *Client) EmbedTexts(ctx context.Context, texts []string) ([][]float32, e
 	}
 
 	if err := g.Wait(); err != nil {
+		if c.breaker != nil {
+			c.breaker.RecordFailure()
+		}
 		return nil, err
+	}
+	if c.breaker != nil {
+		c.breaker.RecordSuccess()
 	}
 
 	// Place miss results back and cache them
