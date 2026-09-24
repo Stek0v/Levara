@@ -75,6 +75,8 @@ class TransformersBackend:
             inputs = self.tokenizer(
                 texts, padding=True, truncation=True, max_length=512, return_tensors="pt"
             )
+            device = next(self.model.parameters()).device
+            inputs = {k: v.to(device) for k, v in inputs.items()}
             out = self.model(**inputs)
             pooled = self._mean_pool(out.last_hidden_state, inputs["attention_mask"])
             normed = self._torch.nn.functional.normalize(pooled, p=2, dim=1)
