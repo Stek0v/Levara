@@ -111,6 +111,7 @@ for acceptance checks.
 | Server health/version | `http://127.0.0.1:8080/health`, `/version` |
 | REST and CLI base | `http://127.0.0.1:8080/api/v1` |
 | MCP client endpoint | `http://127.0.0.1:8080/mcp` |
+| Lightweight MCP (memory profile) | `/mcp-light`; same session transport, pinned `memory` toolset for token-sensitive agents |
 | Strict stateless MCP | `/mcp/2026-07-28`; use the required protocol headers in the [API guide](api-reference.md) |
 | WebUI | Separate Next.js service, normally `http://127.0.0.1:3000` in development |
 

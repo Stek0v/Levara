@@ -960,6 +960,9 @@ func main() {
 
 	// MCP (Model Context Protocol) server — JSON-RPC 2.0 for AI agent integration
 	vectorHttp.RegisterMCPAPI(app, mcpCfg)
+	// Lightweight MCP endpoint for token-sensitive clients (Hermes Agent):
+	// memory profile (~26 tools vs full set), ~14K tokens saved per LLM call.
+	vectorHttp.RegisterMCPAPILight(app, mcpCfg)
 	vectorHttp.StartConsolidationRecovery(mcpCfg)
 	stopMemoryIndexWorker := vectorHttp.StartMemoryIndexWorker(mcpCfg, memoryIndexWorkerInterval())
 	defer stopMemoryIndexWorker()

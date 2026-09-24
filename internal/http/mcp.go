@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -59,19 +60,35 @@ func configuredMCPToolDescriptors() []mcp.Tool {
 	return mcp.ToolDescriptorsForMode(os.Getenv("LEVARA_MCP_TOOLSET"))
 }
 
+// sharedMCPSessions lazily creates the single process-wide MCP session store
+// shared by every MCP transport endpoint (/mcp and /mcp-light). One store
+// means MCPSessionsActive is written by exactly one OnCountChange callback
+// (no last-writer-wins collision between endpoints) and reports the total
+// across endpoints.
+var (
+	sharedMCPSessionsOnce sync.Once
+	sharedMCPSessions     *mcp.SessionStore
+)
+
+func sharedMCPSessionStore() *mcp.SessionStore {
+	sharedMCPSessionsOnce.Do(func() {
+		sharedMCPSessions = mcp.NewSessionStore()
+		sharedMCPSessions.OnCountChange = func(n int) {
+			metrics.MCPSessionsActive.Set(float64(n))
+		}
+	})
+	return sharedMCPSessions
+}
+
 // RegisterMCPAPI registers both MCP transport eras.
 // POST /mcp — JSON-RPC requests + notifications
-// GET  /mcp — SSE stream for server-initiated messages
+// GET /mcp — SSE stream for server-initiated messages
 // DELETE /mcp — terminate session
 // POST /mcp/2026-07-28 — stateless current Streamable HTTP transport
 func RegisterMCPAPI(app fiber.Router, cfg APIConfig) {
-	store := mcp.NewSessionStore()
-	store.OnCountChange = func(n int) {
-		metrics.MCPSessionsActive.Set(float64(n))
-	}
 	handler := &mcpHandler{
 		cfg:      cfg,
-		sessions: store,
+		sessions: sharedMCPSessionStore(),
 	}
 	app.Post("/mcp", handler.handleRPC)
 	app.Get("/mcp", handler.handleSSEStream)
@@ -79,6 +96,26 @@ func RegisterMCPAPI(app fiber.Router, cfg APIConfig) {
 	app.Post(latestMCPPath, handler.handleLatestRPC)
 	app.Get(latestMCPPath, methodNotAllowed)
 	app.Delete(latestMCPPath, methodNotAllowed)
+	go handler.sessionCleanupLoop()
+}
+
+// RegisterMCPAPILight registers a lightweight MCP endpoint at /mcp-light
+// pinned to the "memory" toolset profile for token-sensitive clients
+// (e.g. Hermes Agent): ~26 tools instead of the full set, saving roughly
+// 14K tokens per LLM call. Sessions live in the same shared store as /mcp,
+// so a session created on either endpoint is valid on both. The pinned
+// profile is an endpoint contract and is NOT overridable via
+// LEVARA_MCP_TOOLSET; tools/list, initialize metadata and tools/call
+// enforcement all follow the endpoint profile.
+func RegisterMCPAPILight(app fiber.Router, cfg APIConfig) {
+	handler := &mcpHandler{
+		cfg:         cfg,
+		sessions:    sharedMCPSessionStore(),
+		toolsetMode: "memory",
+	}
+	app.Post("/mcp-light", handler.handleRPC)
+	app.Get("/mcp-light", handler.handleSSEStream)
+	app.Delete("/mcp-light", handler.handleDeleteSession)
 	go handler.sessionCleanupLoop()
 }
 
@@ -98,6 +135,26 @@ type mcpSession = mcp.Session
 type mcpHandler struct {
 	cfg      APIConfig
 	sessions *mcp.SessionStore
+
+	// toolsetMode pins this handler to a fixed toolset profile (e.g.
+	// "memory" for /mcp-light). Empty means env-configured via
+	// LEVARA_MCP_TOOLSET — the /mcp contract.
+	toolsetMode string
+}
+
+// toolset returns the effective toolset mode for this handler. A pinned
+// mode always wins; empty resolves to the environment configuration.
+func (h *mcpHandler) toolset() string {
+	if h.toolsetMode != "" {
+		return h.toolsetMode
+	}
+	return os.Getenv("LEVARA_MCP_TOOLSET")
+}
+
+// toolDescriptors returns the tool descriptors visible on this handler's
+// endpoints, honoring the effective toolset mode.
+func (h *mcpHandler) toolDescriptors() []mcp.Tool {
+	return mcp.ToolDescriptorsForMode(h.toolset())
 }
 
 // DB implements mcp.Deps: exposes the shared *sql.DB to tool functions
@@ -815,8 +872,8 @@ func (h *mcpHandler) handleRPC(c *fiber.Ctx) error {
 					"version": "1.0.0",
 				},
 				"toolset": map[string]any{
-					"name":              mcp.ToolsetName(os.Getenv("LEVARA_MCP_TOOLSET")),
-					"tool_count":        len(configuredMCPToolDescriptors()),
+					"name":              mcp.ToolsetName(h.toolset()),
+					"tool_count":        len(h.toolDescriptors()),
 					"contract_revision": mcp.AgentContractVersion,
 				},
 				"instructions": "Call the `levara_instructions` tool for the versioned agent contract (memory model, when-to-save rules, observability toolkit, anti-patterns). Contract revision: " + mcp.AgentContractVersion + ".",
@@ -831,7 +888,7 @@ func (h *mcpHandler) handleRPC(c *fiber.Ctx) error {
 			JSONRPC: "2.0",
 			ID:      req.ID,
 			Result: map[string]any{
-				"tools": withToolGroups(configuredMCPToolDescriptors()),
+				"tools": withToolGroups(h.toolDescriptors()),
 			},
 		})
 
@@ -946,7 +1003,7 @@ func (h *mcpHandler) executeTool(ctx context.Context, sess *mcpSession, name str
 	toolStart := time.Now()
 	var result mcpToolResult
 	actor := workspaceActorFromMCP(ctx)
-	if !mcp.ToolAllowedForMode(os.Getenv("LEVARA_MCP_TOOLSET"), name) {
+	if !mcp.ToolAllowedForMode(h.toolset(), name) {
 		result = mcpToolResult{Content: []mcpContent{{Type: "text", Text: "method not found in active MCP toolset"}}, IsError: true}
 	} else if !accesspkg.APIKeyAllows(actor.APIKeyPermissions, mcpToolAction(name)) {
 		result = mcpToolResult{Content: []mcpContent{{Type: "text", Text: "API key permissions denied"}}, IsError: true}
@@ -1025,7 +1082,7 @@ func (h *mcpHandler) recordMCPAudit(ctx context.Context, sess *mcpSession, name 
 		Outcome:       outcome,
 		ResultSize:    resultSize,
 		ResponseBytes: resultSize,
-		Toolset:       mcp.ToolsetName(os.Getenv("LEVARA_MCP_TOOLSET")),
+		Toolset:       mcp.ToolsetName(h.toolset()),
 	}
 	scope := verifiedAuditScope(ctx)
 	entry.TenantID, entry.ScopeVerified = scope.TenantID, scope.Verified
