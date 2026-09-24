@@ -671,7 +671,15 @@ func (d *chatSourcesDaemon) triggerCognify(ctx context.Context) {
 	resp.Body.Close()
 }
 
-const chatImportsCollectionName = "chat-imports"
+// chatImportsCollectionName selects the vector collection for chat RAG
+// chunks. Env-overridable so an embedding-space migration can build a
+// fresh collection (e.g. chat-imports-v2) and cut over without code.
+var chatImportsCollectionName = func() string {
+	if v := os.Getenv("LEVARA_CHAT_SOURCES_COLLECTION"); v != "" {
+		return v
+	}
+	return "chat-imports"
+}()
 
 func (d *chatSourcesDaemon) resolveDatasetID(ctx context.Context) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, d.loopback+"/api/v1/datasets", nil)
