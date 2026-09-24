@@ -27,6 +27,13 @@ RECIPES: dict[str, Recipe] = {
         dim=256,
         openai_name="potion-code-16M",
     ),
+    "gemma": Recipe(
+        short="gemma",
+        repo="unsloth/embeddinggemma-300m",
+        backend="transformers",
+        dim=768,
+        openai_name="embeddinggemma-300m",
+    ),
     "granite": Recipe(
         short="granite",
         repo="ibm-granite/granite-embedding-97m-multilingual-r2",

@@ -69,7 +69,8 @@ def build_app() -> FastAPI:
         texts = [req.input] if isinstance(req.input, str) else req.input
         if not texts:
             raise HTTPException(status_code=400, detail="input must not be empty")
-        vectors = backend.embed(texts)
+        kind = "query" if (req.model or "").endswith(":query") else "document"
+        vectors = backend.embed(texts, kind=kind)
         return {
             "model": openai_name,
             "data": [{"embedding": v, "index": i} for i, v in enumerate(vectors)],

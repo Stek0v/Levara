@@ -33,6 +33,11 @@ class TransformersBackend:
             recipe.repo, trust_remote_code=recipe.trust_remote_code
         )
         self.model.train(False)
+        # Some mirror repos (e.g. unsloth/embeddinggemma-300m) ship
+        # add_bos_token=False; Gemma-style encoders silently produce
+        # garbage embeddings without BOS. Force it on.
+        if getattr(self.tokenizer, "add_bos_token", None) is False:
+            self.tokenizer.add_bos_token = True
         with torch.no_grad():
             inputs = self.tokenizer(["dim probe"], padding=True, truncation=True, return_tensors="pt")
             out = self.model(**inputs)
@@ -43,6 +48,13 @@ class TransformersBackend:
                 f"recipe dim mismatch: {recipe.repo} produced {self.dim}-d, "
                 f"recipe said {recipe.dim}"
             )
+
+    def embed(self, texts: list[str], kind: str = "document") -> list[list[float]]:
+        if kind == "query":
+            texts = ["task: search result | query: " + t for t in texts]
+        else:
+            texts = ["title: none | text: " + t for t in texts]
+        return self._embed_raw(texts)
 
     def _mean_pool(self, last_hidden_state, attention_mask):
         mask = attention_mask.unsqueeze(-1).float()
