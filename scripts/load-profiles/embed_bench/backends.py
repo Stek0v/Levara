@@ -62,7 +62,7 @@ class TransformersBackend:
         counts = mask.sum(dim=1).clamp(min=1e-9)
         return summed / counts
 
-    def embed(self, texts: list[str]) -> list[list[float]]:
+    def _embed_raw(self, texts: list[str]) -> list[list[float]]:
         with self._torch.no_grad():
             inputs = self.tokenizer(
                 texts, padding=True, truncation=True, max_length=512, return_tensors="pt"
