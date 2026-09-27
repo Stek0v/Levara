@@ -63,3 +63,20 @@ groups:
         annotations:
           summary: "Levara WAL recovery failed at startup"
           description: "Investigate /version + recent restart logs; data may be inconsistent."
+
+      - alert: GRPCRawMethodUsage
+        # Р4 freeze (owner decision 2026-09-27): the raw/global-admin v1
+        # methods stay in the contract as an admin-only surface but must stay
+        # unused. The sanctioned gRPC surface is Info plus the document-scoped
+        # trio (IngestData, CognifyDocuments, CognifyDocumentsStatus) on v1/v2.
+        # Any other method seeing traffic means an external client relies on
+        # the frozen raw API — visible here before it matters elsewhere.
+        expr: |
+          sum by (method) (
+            increase(levara_grpc_requests_total{method!~"/levara\\.v[12]\\.LevaraService(V2)?/(Info|IngestData|CognifyDocuments|CognifyDocumentsStatus)"}[15m])
+          ) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "Frozen raw gRPC surface saw traffic: {{ $labels.method }}"
+          description: "The raw/global-admin v1 methods are frozen (admin-only) per the 2026-09-27 decision. Traffic on {{ $labels.method }} means an external client depends on the frozen surface — identify the caller in server logs before any future surface change."

@@ -9,6 +9,7 @@ var toolProfiles = map[string][]string{
 	"core": {
 		"levara_instructions", "set_context", "get_project_context", "wake_up",
 		"save_memory", "recall_memory", "list_memories", "pin_memory", "unpin_memory",
+		"delete_memory", "supersede_memory",
 		"search", "doctor",
 	},
 	"memory": {

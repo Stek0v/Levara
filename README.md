@@ -32,17 +32,68 @@ workspaces need explicit access, audit, and recovery semantics.
 
 Levara gives agents a context control plane:
 
-- **Remember deliberately** — facts, decisions, events, preferences, advice,
-  and discoveries are stored under a project-specific `room × hall` taxonomy.
-- **Recover only what matters** — wake-up briefings, filtered recall, hybrid
-  search, temporal graph queries, and bounded task bootstraps keep context small.
-- **Keep work inspectable** — Markdown remains the workspace source of truth;
-  indexes are disposable derivatives that can be reconciled or rebuilt.
-- **Prove long-running work** — Task Runtime connects Definition of
-  Done criteria to steps, leases, immutable receipts, checkpoints, and
-  deterministic validation.
-- **Scale the operating model** — the same engine supports a local developer,
-  a multi-device setup, a shared team, or enterprise adapter boundaries.
+- **Deliberate memory** — facts, decisions, preferences, advice and discoveries
+  are stored under a project-specific `room × hall` taxonomy and survive
+  across sessions, agents and machines.
+- **Small, correct recall** — wake-up briefings and filtered recall return the
+  knowledge that matters, with provenance-preserving supersession instead of
+  silently stale vectors.
+- **One engine, four scales** — the same core serves a local developer, a
+  multi-device setup, a team and enterprise governance boundaries as opt-in
+  layers.
+
+## Quick start
+
+Three commands to the first agent wake-up — no PostgreSQL, no LLM, no
+embeddings required:
+
+```bash
+git clone https://github.com/Stek0v/Levara.git && cd Levara
+make build && cp deploy/profiles/personal.local.env.example .env && set -a && source .env && set +a
+./levara-server -profile=standalone -port=8080 -grpc-port=0
+```
+
+Connect an MCP client:
+
+```json
+{
+  "mcpServers": {
+    "levara": {
+      "url": "http://127.0.0.1:8080/mcp"
+    }
+  }
+}
+```
+
+Then ask the agent to wake up and remember:
+
+```text
+Wake up on this project, then save the decision that we use PostgreSQL for
+shared state. Put it in the auth room and recall existing auth decisions first.
+```
+
+`wake_up`, `save_memory` and `recall_memory` work without an embedding
+endpoint (SQL-backed recall). Vector semantic recall, document search and
+cognify activate once you configure `EMBEDDING_ENDPOINT` (any
+OpenAI-compatible service or the local embed server). With
+`LEVARA_PROFILE=personal` the server advertises the 13-tool `core` set;
+the full surface is listed in [docs/capability-map.md](docs/capability-map.md).
+Host-specific configs for Codex, Claude Code, Cursor and Cline live in
+[examples/agent-hosts](examples/agent-hosts).
+
+> [!IMPORTANT]
+> Personal mode does not require auth by default. Keep the listener on a
+> loopback address or enable authentication before exposing it to other machines.
+
+### Docker
+
+Choose loopback port publishing or authenticated network access before starting
+Compose. The base compose file publishes host ports on all interfaces and leaves
+auth disabled by default. Follow the [Docker recipe](docs/deployment.md#docker)
+with explicit settings.
+
+See [docs/profile-presets.md](docs/profile-presets.md) for production-shaped
+Personal, Solo Pro, Team, and Enterprise configuration examples.
 
 ## Verification and quality
 
@@ -59,95 +110,10 @@ a result belongs to a particular run.
 
 ## Capability map
 
-| Area | Implemented capabilities |
-|---|---|
-| **Agent memory** | `save_memory`, filtered recall, wake-up briefings, pins, room × hall routing, per-agent diaries, chat recall, deletion, consolidation and revert, provenance-preserving supersession |
-| **Search and knowledge** | WAL-backed HNSW, BM25, hybrid RRF, rerank routing, RAG and graph search, temporal validity, path queries, communities, structured filters, Git-aware analysis |
-| **Ingestion** | Add/list/prune data, Cognify and Codify pipelines, status tracking, deduplication, embeddings, graph extraction, drift checks |
-| **Verifiable workspace** | Markdown context and artifacts, search/read/write/commit/revert/delete, manifests, conflicts, access checks, audit log, watch mode, indexing and reindexing jobs, retries, reconciliation and GC |
-| **Long-Horizon Task Runtime** | Scoped tasks, Definition of Done, versioned plans, dependent steps, atomic leases, immutable receipts, checkpoints, blockers, crash recovery, risk-based reviewer policy, deterministic completion and verified-memory promotion |
-| **Operations** | Doctor checks, runtime and ingestion snapshots, recent errors, heartbeat, memory-index health/retry, SQL↔vector reconciliation, workspace job/watch health, Prometheus metrics |
-| **Sync and storage** | Mac/Pi and peer sync, scoped manifests and status, backup/restore tooling, SQLite or PostgreSQL metadata, local or S3-compatible raw-object storage |
-| **Identity and governance** | JWT and API keys, individual dataset sharing, workspace access checks, tenant membership checks, audit export, OIDC bearer verification, SAML SP, limited SCIM Users API, storage/KMS contracts |
-| **Product surfaces** | MCP Streamable HTTP, REST, gRPC v1/v2, CLI tools, Next.js WebUI, notebooks, feedback and memory-behavior analytics |
-
-The [generated API inventory](docs/api-contract.md) lists MCP tools and registered
-REST/gRPC entries, including aliases and operational routes. Bootstrap identity
-endpoints are described in the [API reader guide](docs/api-reference.md).
-
-<details>
-<summary><strong>MCP tool groups</strong></summary>
-
-| Group | Tools | Responsibility |
-|---|---:|---|
-| Workspace | 25 | Context, artifacts, authoring, revisions, indexing, jobs and audit |
-| Memory | 14 | Lifecycle, recall, consolidation, supersession and wake-up |
-| Operations | 9 | Health, errors, reconciliation, indexing and runtime state |
-| Task | 8 | Long-Horizon Task Runtime |
-| Data | 5 | Add, list, drift, delete and prune |
-| Search | 4 | Hybrid/graph search, entities and communities |
-| Cognify | 3 | Cognify, Codify and run status |
-| Chat | 3 | Save, recall and search chat records |
-| Git | 3 | Commit analysis, Git search and graph pruning |
-| Context | 2 | Project context selection and retrieval |
-| Diary | 2 | Per-agent isolated notes |
-| Feedback | 2 | Retrieval feedback and statistics |
-| Sync | 2 | Cross-instance synchronization and status |
-
-</details>
-
-## Quick start
-
-The Personal profile runs with SQLite and local files. PostgreSQL, Neo4j, an
-LLM, and a reranker are not required for the first successful run.
-
-```bash
-git clone https://github.com/Stek0v/Levara.git
-cd Levara
-
-make build
-cp deploy/profiles/personal.local.env.example .env
-set -a && source .env && set +a
-
-./levara-server -config-check
-./levara-server -profile=standalone -port=8080 -grpc-port=0
-```
-
-Connect an MCP client:
-
-```json
-{
-  "mcpServers": {
-    "levara": {
-      "url": "http://127.0.0.1:8080/mcp"
-    }
-  }
-}
-```
-
-Then ask the agent to create its first durable record:
-
-```text
-Save the decision that this project uses PostgreSQL for shared state.
-Record why, place it in the auth room, and recall existing auth decisions first.
-```
-
-Host-specific examples for Codex, Claude Code, Cursor, Cline, and other clients
-live in [examples/agent-hosts](examples/agent-hosts).
-
-> [!IMPORTANT]
-> Personal mode does not require auth by default. Keep the listener on a
-> loopback address or enable authentication before exposing it to other machines.
-
-### Docker
-
-Choose loopback port publishing or authenticated network access before starting
-Compose. The base compose file publishes host ports on all interfaces and leaves
-auth disabled by default. Follow the [Docker recipe](docs/deployment.md#docker)
-with explicit settings.
-
-See [docs/profile-presets.md](docs/profile-presets.md) for production-shaped
-Personal, Solo Pro, Team, and Enterprise configuration examples.
+The full capability, product-surface and MCP tool-group inventory lives in
+[docs/capability-map.md](docs/capability-map.md). The generated API inventory
+is [docs/api-contract.md](docs/api-contract.md); bootstrap identity endpoints
+are described in the [API reader guide](docs/api-reference.md).
 
 ## Work with documents and colleagues
 
@@ -213,8 +179,11 @@ agent needs:
 | `long-horizon` | Scoped memory plus tasks, receipts, validation and completion |
 | `full` | Backward-compatible canonical catalogue |
 
-`light` remains a legacy alias for `memory`. Tool profiles are not authorization
-boundaries; JWT/API-key and workspace policy checks still apply independently.
+With `LEVARA_PROFILE=personal` and no explicit `LEVARA_MCP_TOOLSET`, the
+server advertises `core`; the effective name and source are visible in
+`/admin/mcp/summary` and the startup log. `light` remains a legacy alias for
+`memory`. Tool profiles are not authorization boundaries; JWT/API-key and
+workspace policy checks still apply independently.
 
 Task Runtime is opt-in with `LEVARA_LONG_HORIZON_RUNTIME=1` and the
 `long-horizon` tool profile. It manages steps and evidence; the WebUI provides

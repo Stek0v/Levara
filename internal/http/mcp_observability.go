@@ -69,26 +69,28 @@ func (h *mcpHandler) toolRuntimeStats(ctx context.Context, args map[string]any) 
 		taskRuntime["active_tasks"], taskRuntime["blocked_tasks"], taskRuntime["stuck_leases"] = active, blocked, stuck
 	}
 
+	toolsetName, toolsetSource := EffectiveMCPToolsetName()
 	out := map[string]any{
-		"collections":       collections,
-		"collection_count":  len(collections),
-		"total_records":     totalRecords,
-		"embed_endpoint":    h.cfg.EmbedEndpoint,
-		"embed_model":       h.cfg.EmbedModel,
-		"llm_provider":      llmProvider,
-		"llm_model":         llmModel,
-		"rerank_enabled":    h.cfg.RerankEndpoint != "",
-		"rerank_model":      h.cfg.RerankModel,
-		"neo4j_enabled":     h.cfg.Neo4jCfg.Neo4jURL != "",
-		"goroutines":        runtime.NumGoroutine(),
-		"rss_bytes":         governor.ProcessRSS(),
-		"heap_alloc_bytes":  ms.HeapAlloc,
-		"heap_sys_bytes":    ms.HeapSys,
-		"num_gc":            ms.NumGC,
-		"snapshot_taken_at": time.Now().UTC().Format(time.RFC3339),
-		"mcp_toolset":       mcp.ToolsetName(os.Getenv("LEVARA_MCP_TOOLSET")),
-		"mcp_tool_count":    len(mcp.ToolDescriptorsForMode(os.Getenv("LEVARA_MCP_TOOLSET"))),
-		"task_runtime":      taskRuntime,
+		"collections":        collections,
+		"collection_count":   len(collections),
+		"total_records":      totalRecords,
+		"embed_endpoint":     h.cfg.EmbedEndpoint,
+		"embed_model":        h.cfg.EmbedModel,
+		"llm_provider":       llmProvider,
+		"llm_model":          llmModel,
+		"rerank_enabled":     h.cfg.RerankEndpoint != "",
+		"rerank_model":       h.cfg.RerankModel,
+		"neo4j_enabled":      h.cfg.Neo4jCfg.Neo4jURL != "",
+		"goroutines":         runtime.NumGoroutine(),
+		"rss_bytes":          governor.ProcessRSS(),
+		"heap_alloc_bytes":   ms.HeapAlloc,
+		"heap_sys_bytes":     ms.HeapSys,
+		"num_gc":             ms.NumGC,
+		"snapshot_taken_at":  time.Now().UTC().Format(time.RFC3339),
+		"mcp_toolset":        toolsetName,
+		"mcp_toolset_source": toolsetSource,
+		"mcp_tool_count":     len(mcp.ToolDescriptorsForMode(toolsetName)),
+		"task_runtime":       taskRuntime,
 	}
 
 	return mcpJSONResult(out)

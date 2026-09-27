@@ -129,6 +129,22 @@ The preset validates declared configuration; it does not test your identity
 provider, establish group permissions, or make directory users interchangeable
 with existing local accounts. Verify these boundaries before adding documents.
 
+## MCP toolset binding (2026-09-27)
+
+Since the 2026-09-27 functional-audit decision Р1, `LEVARA_PROFILE=personal`
+binds the advertised MCP toolset to `core` (13 tools: the room×hall memory
+surface including `supersede_memory` and `delete_memory`) when
+`LEVARA_MCP_TOOLSET` is unset. Priority: explicit `LEVARA_MCP_TOOLSET` >
+`personal` profile > historical `full` default. Other profiles and unknown
+profile values keep `full`, so deployments that set nothing change nothing.
+The effective name and its source (`env` / `profile:personal` / `default`)
+are visible in `/admin/mcp/summary` (`toolset`, `toolset_source`) and the
+server startup log.
+
+`LEVARA_NOTEBOOKS` (default `off`) re-enables the notebooks REST surface that
+was cut from the product on 2026-09-27; it exists only until the code is
+removed in Ф2. An unrecognized value logs a warning and stays off.
+
 ## Validation
 
 Recommended checks before committing profile or deployment changes:

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -483,3 +484,20 @@ func runCodeCell(ctx context.Context, cfg APIConfig, source string) (string, err
 
 // serverStartTime tracks when the server was initialized (used by info command).
 var serverStartTime = time.Now()
+
+// notebooksEnabled reports whether the notebooks REST surface should be
+// registered. Р2 (2026-09-27): notebooks are cut from the product; the flag
+// exists only so existing deployments can re-enable the routes until the
+// code removal in Ф2. Default is off; an unrecognized value is a warning
+// plus off, never a failed startup.
+func notebooksEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("LEVARA_NOTEBOOKS"))) {
+	case "1", "true", "yes", "on", "enabled":
+		return true
+	case "", "0", "false", "no", "off", "disabled":
+		return false
+	default:
+		log.Printf("LEVARA_NOTEBOOKS=%q is not a recognized value; notebooks stay disabled", os.Getenv("LEVARA_NOTEBOOKS"))
+		return false
+	}
+}

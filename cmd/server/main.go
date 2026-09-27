@@ -1022,8 +1022,9 @@ func main() {
 	api.Get("/cache/stats", func(c *fiber.Ctx) error {
 		return c.JSON(llmCache.Stats())
 	})
-	log.Printf("MCP server registered at POST /mcp (%d tools, mode=%s)",
-		len(mcp.ToolDescriptorsForMode(os.Getenv("LEVARA_MCP_TOOLSET"))), firstNonEmpty(os.Getenv("LEVARA_MCP_TOOLSET"), "full"))
+	toolsetName, toolsetSource := vectorHttp.EffectiveMCPToolsetName()
+	log.Printf("MCP server registered at POST /mcp (%d tools, mode=%s, source=%s)",
+		len(mcp.ToolDescriptorsForMode(toolsetName)), toolsetName, toolsetSource)
 
 	// Detailed /health/details with per-dependency probes lives in
 	// bootstrap.go.

@@ -102,6 +102,11 @@ code:
   `APIConfig` compatibility wrapper.
 - MCP tool bodies already use capability interfaces in `pkg/mcp`; this is the
   pattern used for the access/audit adapter boundaries.
+- Research cluster (VSA fact vectors, DCD routing, behavior analytics) is
+  promoted to feature development by the 2026-09-27 decision: it stays
+  env-gated (`LEVARA_DCD_ROUTER`, VSA config) until retrieval-quality gates
+  pass, and the `knowledge_*` taxonomy writer is the open epic. It remains in
+  the common release gate by that same decision.
 
 Remaining debt:
 

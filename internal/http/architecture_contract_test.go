@@ -9,6 +9,9 @@ import (
 )
 
 func TestRESTRouteInventoryMatchesRegisterAPI(t *testing.T) {
+	// The inventory describes the canonical surface. The notebooks cut gates
+	// registration at runtime (Р2), so the canonical-shape check opts in.
+	t.Setenv("LEVARA_NOTEBOOKS", "1")
 	app := fiber.New()
 	RegisterAPI(app, APIConfig{})
 

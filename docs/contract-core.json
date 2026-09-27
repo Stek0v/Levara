@@ -1,0 +1,2787 @@
+{
+  "generated_at": "2026-09-27T19:14:08+03:00",
+  "git_rev": "c4aec33096460e3ba2291f53a4e3017a54cc2602",
+  "rest": [
+    {
+      "method": "POST",
+      "path": "/acl",
+      "status": "canonical",
+      "group": "rbac"
+    },
+    {
+      "method": "GET",
+      "path": "/acl/check",
+      "status": "canonical",
+      "group": "rbac"
+    },
+    {
+      "method": "POST",
+      "path": "/add",
+      "status": "canonical",
+      "group": "ingest"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/mcp/sessions",
+      "status": "canonical",
+      "group": "admin"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/mcp/summary",
+      "status": "canonical",
+      "group": "admin"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/mcp/tools",
+      "status": "canonical",
+      "group": "admin"
+    },
+    {
+      "method": "GET",
+      "path": "/agent-trajectories",
+      "status": "canonical",
+      "group": "mcp"
+    },
+    {
+      "method": "GET",
+      "path": "/agent-trajectories/:id",
+      "status": "canonical",
+      "group": "mcp"
+    },
+    {
+      "method": "POST",
+      "path": "/batch_insert",
+      "status": "legacy_compat",
+      "group": "vector"
+    },
+    {
+      "method": "POST",
+      "path": "/chats/import",
+      "status": "canonical",
+      "group": "chats"
+    },
+    {
+      "method": "GET",
+      "path": "/chats/import/runs",
+      "status": "canonical",
+      "group": "chats"
+    },
+    {
+      "method": "GET",
+      "path": "/chats/import/sessions",
+      "status": "canonical",
+      "group": "chats"
+    },
+    {
+      "method": "GET",
+      "path": "/chats/import/sessions/:platform/:sessionId",
+      "status": "canonical",
+      "group": "chats"
+    },
+    {
+      "method": "POST",
+      "path": "/cognify",
+      "status": "canonical",
+      "group": "cognify"
+    },
+    {
+      "method": "GET",
+      "path": "/cognify/:runId/status",
+      "status": "canonical",
+      "group": "cognify"
+    },
+    {
+      "method": "GET",
+      "path": "/cognify/:runId/stream",
+      "status": "canonical",
+      "group": "cognify"
+    },
+    {
+      "method": "GET",
+      "path": "/collections",
+      "status": "canonical",
+      "group": "collections"
+    },
+    {
+      "method": "POST",
+      "path": "/collections",
+      "status": "canonical",
+      "group": "collections"
+    },
+    {
+      "method": "DELETE",
+      "path": "/collections/:name",
+      "status": "canonical",
+      "group": "collections"
+    },
+    {
+      "method": "GET",
+      "path": "/collections/:name/meta",
+      "status": "canonical",
+      "group": "collections"
+    },
+    {
+      "method": "PUT",
+      "path": "/collections/:name/meta",
+      "status": "canonical",
+      "group": "collections"
+    },
+    {
+      "method": "DELETE",
+      "path": "/collections/:name/records/:id",
+      "status": "canonical",
+      "group": "collections"
+    },
+    {
+      "method": "POST",
+      "path": "/collections/:name/rename",
+      "status": "canonical",
+      "group": "collections"
+    },
+    {
+      "method": "GET",
+      "path": "/datasets",
+      "status": "canonical",
+      "group": "datasets"
+    },
+    {
+      "method": "POST",
+      "path": "/datasets",
+      "status": "canonical",
+      "group": "datasets"
+    },
+    {
+      "method": "DELETE",
+      "path": "/datasets/:id",
+      "status": "canonical",
+      "group": "datasets"
+    },
+    {
+      "method": "PATCH",
+      "path": "/datasets/:id",
+      "status": "canonical",
+      "group": "datasets"
+    },
+    {
+      "method": "GET",
+      "path": "/datasets/:id/activity",
+      "status": "canonical",
+      "group": "datasets"
+    },
+    {
+      "method": "GET",
+      "path": "/datasets/:id/commits",
+      "status": "canonical",
+      "group": "datasets"
+    },
+    {
+      "method": "GET",
+      "path": "/datasets/:id/context",
+      "status": "canonical",
+      "group": "datasets"
+    },
+    {
+      "method": "GET",
+      "path": "/datasets/:id/data",
+      "status": "canonical",
+      "group": "datasets"
+    },
+    {
+      "method": "DELETE",
+      "path": "/datasets/:id/data/:dataId",
+      "status": "canonical",
+      "group": "datasets"
+    },
+    {
+      "method": "GET",
+      "path": "/datasets/:id/data/:dataId",
+      "status": "canonical",
+      "group": "documents"
+    },
+    {
+      "method": "PATCH",
+      "path": "/datasets/:id/data/:dataId",
+      "status": "canonical",
+      "group": "datasets"
+    },
+    {
+      "method": "POST",
+      "path": "/datasets/:id/data/:dataId/grants",
+      "status": "canonical",
+      "group": "documents"
+    },
+    {
+      "method": "DELETE",
+      "path": "/datasets/:id/data/:dataId/grants/:kind/:principalId",
+      "status": "canonical",
+      "group": "documents"
+    },
+    {
+      "method": "GET",
+      "path": "/datasets/:id/data/:dataId/policy",
+      "status": "canonical",
+      "group": "documents"
+    },
+    {
+      "method": "PATCH",
+      "path": "/datasets/:id/data/:dataId/policy",
+      "status": "canonical",
+      "group": "documents"
+    },
+    {
+      "method": "POST",
+      "path": "/datasets/:id/data/:dataId/policy",
+      "status": "canonical",
+      "group": "documents"
+    },
+    {
+      "method": "GET",
+      "path": "/datasets/:id/data/:dataId/raw",
+      "status": "canonical",
+      "group": "datasets"
+    },
+    {
+      "method": "GET",
+      "path": "/datasets/:id/data/:dataId/raw/url",
+      "status": "canonical",
+      "group": "datasets"
+    },
+    {
+      "method": "GET",
+      "path": "/datasets/:id/data/:dataId/recipients",
+      "status": "canonical",
+      "group": "documents"
+    },
+    {
+      "method": "GET",
+      "path": "/datasets/:id/data/:dataId/structured-artifacts/:artifactId",
+      "status": "canonical",
+      "group": "datasets"
+    },
+    {
+      "method": "GET",
+      "path": "/datasets/:id/shares",
+      "status": "canonical",
+      "group": "rbac"
+    },
+    {
+      "method": "POST",
+      "path": "/datasets/:id/shares",
+      "status": "canonical",
+      "group": "rbac"
+    },
+    {
+      "method": "DELETE",
+      "path": "/datasets/:id/shares/:shareId",
+      "status": "canonical",
+      "group": "rbac"
+    },
+    {
+      "method": "GET",
+      "path": "/datasets/status",
+      "status": "canonical",
+      "group": "datasets"
+    },
+    {
+      "method": "POST",
+      "path": "/delete",
+      "status": "legacy_compat",
+      "group": "vector"
+    },
+    {
+      "method": "POST",
+      "path": "/document-groups",
+      "status": "canonical",
+      "group": "documents"
+    },
+    {
+      "method": "GET",
+      "path": "/document-groups/:groupId",
+      "status": "canonical",
+      "group": "documents"
+    },
+    {
+      "method": "PUT",
+      "path": "/document-groups/:groupId/members",
+      "status": "canonical",
+      "group": "documents"
+    },
+    {
+      "method": "GET",
+      "path": "/documents/shared",
+      "status": "canonical",
+      "group": "documents"
+    },
+    {
+      "method": "POST",
+      "path": "/embedding-migrations",
+      "status": "canonical",
+      "group": "collections"
+    },
+    {
+      "method": "POST",
+      "path": "/embedding-migrations/:runId/cutover",
+      "status": "canonical",
+      "group": "collections"
+    },
+    {
+      "method": "POST",
+      "path": "/embedding-migrations/:runId/retry",
+      "status": "canonical",
+      "group": "collections"
+    },
+    {
+      "method": "GET",
+      "path": "/embedding-migrations/:runId/status",
+      "status": "canonical",
+      "group": "collections"
+    },
+    {
+      "method": "GET",
+      "path": "/embedding-migrations/dual-write",
+      "status": "canonical",
+      "group": "collections"
+    },
+    {
+      "method": "DELETE",
+      "path": "/embedding-migrations/dual-write/:source",
+      "status": "canonical",
+      "group": "collections"
+    },
+    {
+      "method": "POST",
+      "path": "/embedding-migrations/shadow-read",
+      "status": "canonical",
+      "group": "collections"
+    },
+    {
+      "method": "GET",
+      "path": "/feedback",
+      "status": "canonical",
+      "group": "feedback"
+    },
+    {
+      "method": "POST",
+      "path": "/feedback",
+      "status": "canonical",
+      "group": "feedback"
+    },
+    {
+      "method": "GET",
+      "path": "/feedback/implicit",
+      "status": "canonical",
+      "group": "feedback"
+    },
+    {
+      "method": "GET",
+      "path": "/feedback/stats",
+      "status": "canonical",
+      "group": "feedback"
+    },
+    {
+      "method": "GET",
+      "path": "/graph/path",
+      "status": "canonical",
+      "group": "graph"
+    },
+    {
+      "method": "GET",
+      "path": "/heartbeats",
+      "status": "ops",
+      "group": "ops"
+    },
+    {
+      "method": "POST",
+      "path": "/insert",
+      "status": "legacy_compat",
+      "group": "vector"
+    },
+    {
+      "method": "GET",
+      "path": "/interactions",
+      "status": "canonical",
+      "group": "sessions"
+    },
+    {
+      "method": "POST",
+      "path": "/interactions",
+      "status": "canonical",
+      "group": "sessions"
+    },
+    {
+      "method": "GET",
+      "path": "/interactions/:sessionId",
+      "status": "canonical",
+      "group": "sessions"
+    },
+    {
+      "method": "GET",
+      "path": "/mcp-analytics",
+      "status": "canonical",
+      "group": "mcp"
+    },
+    {
+      "method": "GET",
+      "path": "/mcp-analytics/events",
+      "status": "canonical",
+      "group": "mcp"
+    },
+    {
+      "method": "POST",
+      "path": "/memify",
+      "status": "canonical",
+      "group": "memify"
+    },
+    {
+      "method": "GET",
+      "path": "/memify/:runId/status",
+      "status": "canonical",
+      "group": "memify"
+    },
+    {
+      "method": "GET",
+      "path": "/memify/:runId/stream",
+      "status": "canonical",
+      "group": "memify"
+    },
+    {
+      "method": "GET",
+      "path": "/memories",
+      "status": "canonical",
+      "group": "memory"
+    },
+    {
+      "method": "POST",
+      "path": "/memories",
+      "status": "canonical",
+      "group": "memory"
+    },
+    {
+      "method": "DELETE",
+      "path": "/memories/:key",
+      "status": "canonical",
+      "group": "memory"
+    },
+    {
+      "method": "GET",
+      "path": "/memories/:key",
+      "status": "canonical",
+      "group": "memory"
+    },
+    {
+      "method": "DELETE",
+      "path": "/memories/by-id/:id",
+      "status": "canonical",
+      "group": "memory"
+    },
+    {
+      "method": "GET",
+      "path": "/memories/stream",
+      "status": "canonical",
+      "group": "memory"
+    },
+    {
+      "method": "GET",
+      "path": "/memory-behavior",
+      "status": "canonical",
+      "group": "mcp"
+    },
+    {
+      "method": "GET",
+      "path": "/memory-index/status",
+      "status": "ops",
+      "group": "memory"
+    },
+    {
+      "method": "GET",
+      "path": "/memory-reviews",
+      "status": "ops",
+      "group": "mcp"
+    },
+    {
+      "method": "GET",
+      "path": "/memory-reviews/:id",
+      "status": "ops",
+      "group": "mcp"
+    },
+    {
+      "method": "POST",
+      "path": "/memory-reviews/run",
+      "status": "ops",
+      "group": "mcp"
+    },
+    {
+      "method": "GET",
+      "path": "/memory-scaffold/proposals",
+      "status": "ops",
+      "group": "mcp"
+    },
+    {
+      "method": "GET",
+      "path": "/memory-scaffold/proposals/:id",
+      "status": "ops",
+      "group": "mcp"
+    },
+    {
+      "method": "POST",
+      "path": "/memory-scaffold/proposals/:id/decision",
+      "status": "ops",
+      "group": "mcp"
+    },
+    {
+      "method": "GET",
+      "path": "/memory-traces/export",
+      "status": "ops",
+      "group": "mcp"
+    },
+    {
+      "method": "GET",
+      "path": "/models/rerank",
+      "status": "canonical",
+      "group": "models"
+    },
+    {
+      "method": "GET",
+      "path": "/notebooks",
+      "status": "canonical",
+      "group": "notebooks"
+    },
+    {
+      "method": "POST",
+      "path": "/notebooks",
+      "status": "canonical",
+      "group": "notebooks"
+    },
+    {
+      "method": "DELETE",
+      "path": "/notebooks/:id",
+      "status": "canonical",
+      "group": "notebooks"
+    },
+    {
+      "method": "GET",
+      "path": "/notebooks/:id",
+      "status": "canonical",
+      "group": "notebooks"
+    },
+    {
+      "method": "PUT",
+      "path": "/notebooks/:id",
+      "status": "canonical",
+      "group": "notebooks"
+    },
+    {
+      "method": "POST",
+      "path": "/notebooks/:id/:cellId/run",
+      "status": "alias",
+      "group": "notebooks"
+    },
+    {
+      "method": "POST",
+      "path": "/notebooks/:id/cells",
+      "status": "canonical",
+      "group": "notebooks"
+    },
+    {
+      "method": "DELETE",
+      "path": "/notebooks/:id/cells/:cellId",
+      "status": "canonical",
+      "group": "notebooks"
+    },
+    {
+      "method": "PUT",
+      "path": "/notebooks/:id/cells/:cellId",
+      "status": "canonical",
+      "group": "notebooks"
+    },
+    {
+      "method": "POST",
+      "path": "/notebooks/:id/cells/:cellId/run",
+      "status": "canonical",
+      "group": "notebooks"
+    },
+    {
+      "method": "POST",
+      "path": "/ocr",
+      "status": "canonical",
+      "group": "ingest"
+    },
+    {
+      "method": "GET",
+      "path": "/ontologies",
+      "status": "canonical",
+      "group": "ontology"
+    },
+    {
+      "method": "POST",
+      "path": "/ontologies",
+      "status": "canonical",
+      "group": "ontology"
+    },
+    {
+      "method": "DELETE",
+      "path": "/ontologies/:id",
+      "status": "canonical",
+      "group": "ontology"
+    },
+    {
+      "method": "GET",
+      "path": "/permissions/me",
+      "status": "canonical",
+      "group": "rbac"
+    },
+    {
+      "method": "POST",
+      "path": "/prune/data",
+      "status": "ops",
+      "group": "admin"
+    },
+    {
+      "method": "POST",
+      "path": "/prune/system",
+      "status": "ops",
+      "group": "admin"
+    },
+    {
+      "method": "POST",
+      "path": "/reembed",
+      "status": "canonical",
+      "group": "collections"
+    },
+    {
+      "method": "GET",
+      "path": "/reembed/:runId/status",
+      "status": "canonical",
+      "group": "collections"
+    },
+    {
+      "method": "POST",
+      "path": "/search",
+      "status": "legacy_compat",
+      "group": "vector"
+    },
+    {
+      "method": "POST",
+      "path": "/search/dual",
+      "status": "canonical",
+      "group": "search"
+    },
+    {
+      "method": "POST",
+      "path": "/search/text",
+      "status": "canonical",
+      "group": "search"
+    },
+    {
+      "method": "GET",
+      "path": "/settings",
+      "status": "canonical",
+      "group": "settings"
+    },
+    {
+      "method": "PUT",
+      "path": "/settings",
+      "status": "canonical",
+      "group": "settings"
+    },
+    {
+      "method": "GET",
+      "path": "/status",
+      "status": "canonical",
+      "group": "ops"
+    },
+    {
+      "method": "GET",
+      "path": "/sync/export/collection/:name",
+      "status": "canonical",
+      "group": "sync"
+    },
+    {
+      "method": "GET",
+      "path": "/sync/export/graph",
+      "status": "canonical",
+      "group": "sync"
+    },
+    {
+      "method": "GET",
+      "path": "/sync/export/interactions",
+      "status": "canonical",
+      "group": "sync"
+    },
+    {
+      "method": "GET",
+      "path": "/sync/export/memories",
+      "status": "canonical",
+      "group": "sync"
+    },
+    {
+      "method": "POST",
+      "path": "/sync/import/collection",
+      "status": "canonical",
+      "group": "sync"
+    },
+    {
+      "method": "GET",
+      "path": "/sync/import/collection/:runId/status",
+      "status": "canonical",
+      "group": "sync"
+    },
+    {
+      "method": "POST",
+      "path": "/sync/import/graph",
+      "status": "canonical",
+      "group": "sync"
+    },
+    {
+      "method": "POST",
+      "path": "/sync/import/interactions",
+      "status": "canonical",
+      "group": "sync"
+    },
+    {
+      "method": "POST",
+      "path": "/sync/import/memories",
+      "status": "canonical",
+      "group": "sync"
+    },
+    {
+      "method": "GET",
+      "path": "/sync/manifest",
+      "status": "canonical",
+      "group": "sync"
+    },
+    {
+      "method": "POST",
+      "path": "/sync/run",
+      "status": "canonical",
+      "group": "sync"
+    },
+    {
+      "method": "GET",
+      "path": "/sync/status",
+      "status": "canonical",
+      "group": "sync"
+    },
+    {
+      "method": "GET",
+      "path": "/tenants",
+      "status": "canonical",
+      "group": "tenants"
+    },
+    {
+      "method": "POST",
+      "path": "/tenants",
+      "status": "canonical",
+      "group": "tenants"
+    },
+    {
+      "method": "POST",
+      "path": "/tenants/:id/users",
+      "status": "canonical",
+      "group": "tenants"
+    },
+    {
+      "method": "DELETE",
+      "path": "/tenants/:id/users/:uid",
+      "status": "canonical",
+      "group": "tenants"
+    },
+    {
+      "method": "GET",
+      "path": "/tenants/mine",
+      "status": "canonical",
+      "group": "tenants"
+    },
+    {
+      "method": "POST",
+      "path": "/tenants/select",
+      "status": "canonical",
+      "group": "tenants"
+    },
+    {
+      "method": "GET",
+      "path": "/users",
+      "status": "canonical",
+      "group": "users"
+    },
+    {
+      "method": "GET",
+      "path": "/users/me",
+      "status": "canonical",
+      "group": "users"
+    },
+    {
+      "method": "PUT",
+      "path": "/users/me",
+      "status": "canonical",
+      "group": "users"
+    },
+    {
+      "method": "PUT",
+      "path": "/users/me/password",
+      "status": "canonical",
+      "group": "users"
+    },
+    {
+      "method": "GET",
+      "path": "/vsa/query",
+      "status": "canonical",
+      "group": "vsa"
+    },
+    {
+      "method": "POST",
+      "path": "/vsa/rebuild",
+      "status": "canonical",
+      "group": "vsa"
+    },
+    {
+      "method": "GET",
+      "path": "/vsa/status",
+      "status": "canonical",
+      "group": "vsa"
+    },
+    {
+      "method": "POST",
+      "path": "/workspace/access/check",
+      "status": "canonical",
+      "group": "workspace"
+    },
+    {
+      "method": "GET",
+      "path": "/workspace/audit",
+      "status": "canonical",
+      "group": "workspace"
+    },
+    {
+      "method": "POST",
+      "path": "/workspace/commit",
+      "status": "canonical",
+      "group": "workspace"
+    },
+    {
+      "method": "GET",
+      "path": "/workspace/conflicts",
+      "status": "canonical",
+      "group": "workspace"
+    },
+    {
+      "method": "GET",
+      "path": "/workspace/context",
+      "status": "canonical",
+      "group": "workspace"
+    },
+    {
+      "method": "GET",
+      "path": "/workspace/context/artifacts",
+      "status": "canonical",
+      "group": "workspace"
+    },
+    {
+      "method": "POST",
+      "path": "/workspace/context/artifacts/reindex",
+      "status": "canonical",
+      "group": "workspace"
+    },
+    {
+      "method": "POST",
+      "path": "/workspace/delete",
+      "status": "canonical",
+      "group": "workspace"
+    },
+    {
+      "method": "POST",
+      "path": "/workspace/gc",
+      "status": "canonical",
+      "group": "workspace"
+    },
+    {
+      "method": "POST",
+      "path": "/workspace/index",
+      "status": "canonical",
+      "group": "workspace"
+    },
+    {
+      "method": "GET",
+      "path": "/workspace/jobs",
+      "status": "canonical",
+      "group": "workspace"
+    },
+    {
+      "method": "POST",
+      "path": "/workspace/jobs/enqueue",
+      "status": "canonical",
+      "group": "workspace"
+    },
+    {
+      "method": "POST",
+      "path": "/workspace/jobs/retry",
+      "status": "canonical",
+      "group": "workspace"
+    },
+    {
+      "method": "GET",
+      "path": "/workspace/log",
+      "status": "canonical",
+      "group": "workspace"
+    },
+    {
+      "method": "GET",
+      "path": "/workspace/manifest",
+      "status": "canonical",
+      "group": "workspace"
+    },
+    {
+      "method": "GET",
+      "path": "/workspace/ops/status",
+      "status": "canonical",
+      "group": "workspace"
+    },
+    {
+      "method": "GET",
+      "path": "/workspace/read",
+      "status": "canonical",
+      "group": "workspace"
+    },
+    {
+      "method": "POST",
+      "path": "/workspace/reconcile",
+      "status": "canonical",
+      "group": "workspace"
+    },
+    {
+      "method": "POST",
+      "path": "/workspace/reindex",
+      "status": "canonical",
+      "group": "workspace"
+    },
+    {
+      "method": "POST",
+      "path": "/workspace/revert",
+      "status": "canonical",
+      "group": "workspace"
+    },
+    {
+      "method": "GET",
+      "path": "/workspace/runs/get",
+      "status": "canonical",
+      "group": "workspace"
+    },
+    {
+      "method": "POST",
+      "path": "/workspace/runs/start",
+      "status": "canonical",
+      "group": "workspace"
+    },
+    {
+      "method": "POST",
+      "path": "/workspace/search",
+      "status": "canonical",
+      "group": "workspace"
+    },
+    {
+      "method": "GET",
+      "path": "/workspace/watch/status",
+      "status": "canonical",
+      "group": "workspace"
+    },
+    {
+      "method": "POST",
+      "path": "/workspace/write",
+      "status": "canonical",
+      "group": "workspace"
+    }
+  ],
+  "grpc": [
+    {
+      "service": "levara.v1.LevaraService",
+      "method": "AggregateSearch",
+      "status": "canonical"
+    },
+    {
+      "service": "levara.v1.LevaraService",
+      "method": "BM25Index",
+      "status": "canonical"
+    },
+    {
+      "service": "levara.v1.LevaraService",
+      "method": "BM25Search",
+      "status": "canonical"
+    },
+    {
+      "service": "levara.v1.LevaraService",
+      "method": "BatchEmbedAndIndex",
+      "status": "canonical"
+    },
+    {
+      "service": "levara.v1.LevaraService",
+      "method": "BatchInsert",
+      "status": "canonical"
+    },
+    {
+      "service": "levara.v1.LevaraService",
+      "method": "BatchSearchByText",
+      "status": "canonical"
+    },
+    {
+      "service": "levara.v1.LevaraService",
+      "method": "BatchWriteGraph",
+      "status": "canonical"
+    },
+    {
+      "service": "levara.v1.LevaraService",
+      "method": "ChunkText",
+      "status": "canonical"
+    },
+    {
+      "service": "levara.v1.LevaraService",
+      "method": "CognifyDocuments",
+      "status": "canonical"
+    },
+    {
+      "service": "levara.v1.LevaraService",
+      "method": "CognifyDocumentsStatus",
+      "status": "canonical"
+    },
+    {
+      "service": "levara.v1.LevaraService",
+      "method": "Compact",
+      "status": "canonical"
+    },
+    {
+      "service": "levara.v1.LevaraService",
+      "method": "CreateCollection",
+      "status": "canonical"
+    },
+    {
+      "service": "levara.v1.LevaraService",
+      "method": "DeduplicateGraph",
+      "status": "canonical"
+    },
+    {
+      "service": "levara.v1.LevaraService",
+      "method": "Delete",
+      "status": "canonical"
+    },
+    {
+      "service": "levara.v1.LevaraService",
+      "method": "DropCollection",
+      "status": "canonical"
+    },
+    {
+      "service": "levara.v1.LevaraService",
+      "method": "ExtractText",
+      "status": "canonical"
+    },
+    {
+      "service": "levara.v1.LevaraService",
+      "method": "GetByID",
+      "status": "canonical"
+    },
+    {
+      "service": "levara.v1.LevaraService",
+      "method": "GraphCompletionSearch",
+      "status": "canonical"
+    },
+    {
+      "service": "levara.v1.LevaraService",
+      "method": "GraphRead",
+      "status": "canonical"
+    },
+    {
+      "service": "levara.v1.LevaraService",
+      "method": "HasCollection",
+      "status": "canonical"
+    },
+    {
+      "service": "levara.v1.LevaraService",
+      "method": "HashFiles",
+      "status": "canonical"
+    },
+    {
+      "service": "levara.v1.LevaraService",
+      "method": "HybridSearch",
+      "status": "canonical"
+    },
+    {
+      "service": "levara.v1.LevaraService",
+      "method": "Info",
+      "status": "canonical"
+    },
+    {
+      "service": "levara.v1.LevaraService",
+      "method": "IngestData",
+      "status": "canonical"
+    },
+    {
+      "service": "levara.v1.LevaraService",
+      "method": "Insert",
+      "status": "canonical"
+    },
+    {
+      "service": "levara.v1.LevaraService",
+      "method": "LLMCacheGet",
+      "status": "canonical"
+    },
+    {
+      "service": "levara.v1.LevaraService",
+      "method": "LLMCachePut",
+      "status": "canonical"
+    },
+    {
+      "service": "levara.v1.LevaraService",
+      "method": "LLMCacheStats",
+      "status": "canonical"
+    },
+    {
+      "service": "levara.v1.LevaraService",
+      "method": "ListCollections",
+      "status": "canonical"
+    },
+    {
+      "service": "levara.v1.LevaraService",
+      "method": "ListDirectory",
+      "status": "canonical"
+    },
+    {
+      "service": "levara.v1.LevaraService",
+      "method": "MultiQuerySearch",
+      "status": "canonical"
+    },
+    {
+      "service": "levara.v1.LevaraService",
+      "method": "ParallelWriteDataPoints",
+      "status": "canonical"
+    },
+    {
+      "service": "levara.v1.LevaraService",
+      "method": "PipelineCognify",
+      "status": "canonical"
+    },
+    {
+      "service": "levara.v1.LevaraService",
+      "method": "ProcessTriplets",
+      "status": "canonical"
+    },
+    {
+      "service": "levara.v1.LevaraService",
+      "method": "Search",
+      "status": "canonical"
+    },
+    {
+      "service": "levara.v1.LevaraService",
+      "method": "SearchByText",
+      "status": "canonical"
+    },
+    {
+      "service": "levara.v1.LevaraService",
+      "method": "SearchTriplets",
+      "status": "canonical"
+    },
+    {
+      "service": "levara.v1.LevaraService",
+      "method": "SemanticDedup",
+      "status": "canonical"
+    },
+    {
+      "service": "levara.v1.LevaraService",
+      "method": "TemporalSearch",
+      "status": "canonical"
+    },
+    {
+      "service": "levara.v2.LevaraServiceV2",
+      "method": "Add",
+      "status": "alias"
+    },
+    {
+      "service": "levara.v2.LevaraServiceV2",
+      "method": "BatchInsert",
+      "status": "canonical"
+    },
+    {
+      "service": "levara.v2.LevaraServiceV2",
+      "method": "Create",
+      "status": "alias"
+    },
+    {
+      "service": "levara.v2.LevaraServiceV2",
+      "method": "Delete",
+      "status": "canonical"
+    },
+    {
+      "service": "levara.v2.LevaraServiceV2",
+      "method": "Info",
+      "status": "canonical"
+    },
+    {
+      "service": "levara.v2.LevaraServiceV2",
+      "method": "Insert",
+      "status": "canonical"
+    },
+    {
+      "service": "levara.v2.LevaraServiceV2",
+      "method": "Save",
+      "status": "alias"
+    },
+    {
+      "service": "levara.v2.LevaraServiceV2",
+      "method": "Search",
+      "status": "canonical"
+    }
+  ],
+  "mcp": [
+    {
+      "name": "delete_memory",
+      "group": "memory",
+      "status": "canonical"
+    },
+    {
+      "name": "doctor",
+      "group": "ops",
+      "status": "canonical"
+    },
+    {
+      "name": "get_project_context",
+      "group": "context",
+      "status": "canonical"
+    },
+    {
+      "name": "levara_instructions",
+      "group": "ops",
+      "status": "canonical"
+    },
+    {
+      "name": "list_memories",
+      "group": "memory",
+      "status": "canonical"
+    },
+    {
+      "name": "pin_memory",
+      "group": "memory",
+      "status": "canonical"
+    },
+    {
+      "name": "recall_memory",
+      "group": "memory",
+      "status": "canonical"
+    },
+    {
+      "name": "save_memory",
+      "group": "memory",
+      "status": "canonical"
+    },
+    {
+      "name": "search",
+      "group": "search",
+      "status": "canonical"
+    },
+    {
+      "name": "set_context",
+      "group": "context",
+      "status": "canonical"
+    },
+    {
+      "name": "supersede_memory",
+      "group": "memory",
+      "status": "canonical"
+    },
+    {
+      "name": "unpin_memory",
+      "group": "memory",
+      "status": "canonical"
+    },
+    {
+      "name": "wake_up",
+      "group": "memory",
+      "status": "canonical"
+    }
+  ],
+  "schema": [
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "data"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "data"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "data"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "datasets"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "document_pipeline_statuses"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "graph_edges"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "graph_edges"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "graph_edges"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "graph_edges"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "graph_edges"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "graph_edges"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "graph_edges"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "graph_edges"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "graph_edges"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "graph_nodes"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "graph_nodes"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "graph_nodes"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "graph_nodes"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "graph_nodes"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "graph_nodes"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "graph_nodes"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "graph_nodes"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "memories"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "memories"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "memories"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "memories"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "memories"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "memories"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "memories"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "memories"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "memories"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "memories"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "memories"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "memories"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "memories"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "memories"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "ontologies"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "ontologies"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "task_criteria"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "task_criteria"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "task_leases"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "task_leases"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "task_leases"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "task_leases"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "task_leases"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "task_steps"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "task_steps"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "task_steps"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_access_group_members_user"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_acl_dataset"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_acl_principal"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_api_keys_hash"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_api_keys_user"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_communities_level"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_communities_member_count"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_communities_parent"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_community_members_node"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_data_content_hash"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_dataset_data_dataset"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_datasets_name"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_datasets_owner"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_document_grants_principal"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_document_index_publications_data"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_document_resources_data"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_document_resources_tenant"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_document_structured_artifacts_source"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_feedback_collection"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_graph_edges_dataset"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_graph_edges_rel"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_graph_edges_route"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_graph_edges_source"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_graph_edges_target"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_graph_edges_validity"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_graph_nodes_dataset"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_graph_nodes_name"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_graph_nodes_route"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_graph_nodes_type"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_graph_predicate_synonyms_lookup"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_heartbeats_type_time"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_interaction_provenance_owner"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_interactions_session"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_knowledge_collections_name"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_knowledge_collections_scope"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_knowledge_documents_scope"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_knowledge_documents_title"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_knowledge_domains_name"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_knowledge_domains_scope"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_memories_hall"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_memories_pinned"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_memories_room"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_memories_source_task"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_notebook_cells_notebook"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_notebooks_owner"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_task_blockers_active"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_task_events_task"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_task_receipts_task"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_task_steps_task_status"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_tasks_scope_status"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_user_tenant_user"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_users_email"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_vsa_members_lookup"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_vsa_shards_predicate"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "access_group_members"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "access_groups"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "acl"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "api_keys"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "community_members"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "data"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "dataset_data"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "dataset_shares"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "datasets"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "document_grants"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "document_index_publications"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "document_pipeline_statuses"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "document_resources"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "document_structured_artifacts"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "graph_communities"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "graph_edges"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "graph_nodes"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "graph_predicate_synonyms"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "heartbeats"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "interaction_provenance"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "interactions"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "knowledge_collections"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "knowledge_documents"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "knowledge_domains"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "memories"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "memory_commits"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "notebook_cells"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "notebooks"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "ontologies"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "principals"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "roles"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "routing_weights"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "search_feedback"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "task_blockers"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "task_checkpoints"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "task_criteria"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "task_events"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "task_leases"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "task_memory_candidates"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "task_memory_links"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "task_receipts"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "task_steps"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "tasks"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "tenants"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "user_role"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "user_settings"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "user_tenant"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "users"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "vsa_fact_members"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "vsa_fact_shards"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "data"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "data"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "data"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "datasets"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "document_pipeline_statuses"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "graph_edges"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "graph_edges"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "graph_edges"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "graph_edges"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "graph_edges"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "graph_edges"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "graph_edges"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "graph_edges"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "graph_edges"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "graph_nodes"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "graph_nodes"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "graph_nodes"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "graph_nodes"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "graph_nodes"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "graph_nodes"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "graph_nodes"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "graph_nodes"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "memories"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "memories"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "memories"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "memories"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "memories"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "memories"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "memories"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "memories"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "memories"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "memories"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "memories"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "memories"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "memories"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "memories"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "task_steps"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_access_group_members_user"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_acl_dataset"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_acl_principal"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_api_keys_hash"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_api_keys_user"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_chat_import_messages_session"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_chat_import_runs_platform"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_communities_level"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_communities_member_count"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_communities_parent"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_community_members_node"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_data_content_hash"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_dataset_data_dataset"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_datasets_name"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_datasets_owner"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_document_grants_principal"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_document_index_publications_data"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_document_resources_data"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_document_resources_tenant"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_document_structured_artifacts_source"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_feedback_collection"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_graph_edges_dataset"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_graph_edges_rel"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_graph_edges_route"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_graph_edges_source"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_graph_edges_target"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_graph_edges_validity"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_graph_nodes_dataset"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_graph_nodes_name"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_graph_nodes_route"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_graph_nodes_type"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_graph_predicate_synonyms_lookup"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_heartbeats_type_time"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_interaction_provenance_owner"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_interactions_session"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_knowledge_collections_name"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_knowledge_collections_scope"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_knowledge_documents_scope"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_knowledge_documents_title"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_knowledge_domains_name"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_knowledge_domains_scope"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_memories_hall"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_memories_pinned"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_memories_room"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_memories_source_task"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_notebook_cells_notebook"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_notebooks_owner"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_task_blockers_active"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_task_events_task"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_task_receipts_task"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_task_steps_task_status"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_tasks_scope_status"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_user_tenant_user"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_users_email"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_vsa_members_lookup"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_vsa_shards_predicate"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "access_group_members"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "access_groups"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "acl"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "api_keys"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "chat_import_messages"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "chat_import_runs"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "community_members"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "data"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "dataset_data"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "dataset_shares"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "datasets"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "document_grants"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "document_index_publications"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "document_pipeline_statuses"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "document_resources"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "document_structured_artifacts"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "graph_communities"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "graph_edges"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "graph_nodes"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "graph_predicate_synonyms"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "heartbeats"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "interaction_provenance"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "interactions"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "knowledge_collections"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "knowledge_documents"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "knowledge_domains"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "memories"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "memory_commits"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "notebook_cells"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "notebooks"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "ontologies"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "principals"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "roles"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "routing_weights"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "search_feedback"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "task_blockers"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "task_checkpoints"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "task_criteria"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "task_events"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "task_leases"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "task_memory_candidates"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "task_memory_links"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "task_receipts"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "task_steps"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "tasks"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "tenants"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "user_role"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "user_settings"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "user_tenant"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "users"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "vsa_fact_members"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "vsa_fact_shards"
+    }
+  ]
+}
