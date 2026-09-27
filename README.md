@@ -42,6 +42,9 @@ Levara gives agents a context control plane:
   multi-device setup, a team and enterprise governance boundaries as opt-in
   layers.
 
+One SQLite file. One MCP URL. 13 tools out of the box — durable project
+memory your agents share across sessions, agents, and machines.
+
 ## Quick start
 
 Three commands to the first agent wake-up — no PostgreSQL, no LLM, no
@@ -78,6 +81,13 @@ cognify activate once you configure `EMBEDDING_ENDPOINT` (any
 OpenAI-compatible service or the local embed server). With
 `LEVARA_PROFILE=personal` the server advertises the 13-tool `core` set;
 the full surface is listed in [docs/capability-map.md](docs/capability-map.md).
+Check what your server advertises:
+
+```bash
+curl -s http://127.0.0.1:8080/admin/mcp/summary | jq '{toolset, advertised_tools}'
+# {"toolset":"core","advertised_tools":13}
+```
+
 Host-specific configs for Codex, Claude Code, Cursor and Cline live in
 [examples/agent-hosts](examples/agent-hosts).
 
@@ -298,6 +308,7 @@ Useful references:
 | [docs/testing.md](docs/testing.md) | Results, reproduction commands and coverage limits |
 | [docs/profile-presets.md](docs/profile-presets.md) | Runnable product-profile examples |
 | [docs/product-ladder.md](docs/product-ladder.md) | Capability and enterprise boundary source of truth |
+| [docs/product/unimplemented-roadmap.md](docs/product/unimplemented-roadmap.md) | Open acceptance items and decisions, with statuses |
 | [docs/webui-operations.md](docs/webui-operations.md) | WebUI setup, monitoring and workflows |
 | [docs/memory-workflow-skill.md](docs/memory-workflow-skill.md) | Install and operate the automatic Levara memory workflow skill |
 | [docs/long-horizon-runtime.md](docs/long-horizon-runtime.md) | Task Runtime setup, lifecycle, evidence and recovery guide |
