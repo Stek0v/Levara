@@ -50,16 +50,36 @@ def http_raw(url, payload, headers):
     req.add_header("Accept", "application/json, text/event-stream")
     for k, v in headers.items():
         req.add_header(k, v)
-    with urllib.request.urlopen(req, timeout=120) as resp:
-        raw = resp.read().decode()
-        if not raw.strip():
-            # JSON-RPC notifications answer 202 with an empty body.
-            return {}, dict(resp.headers)
-        s = raw.strip()
-        if s.startswith("{"):
-            return json.loads(s), dict(resp.headers)
-        data = [line[5:].strip() for line in s.splitlines() if line.startswith("data:")]
-        return (json.loads(data[-1]) if data else {}), dict(resp.headers)
+    import time as _time
+    last = None
+    raw = ""
+    for attempt in range(4):
+        try:
+            with urllib.request.urlopen(req, timeout=180) as resp:
+                raw = resp.read().decode()
+            break
+        except urllib.error.HTTPError as e:
+            last = e
+            if e.code in (429, 500, 502, 503, 504) and attempt < 3:
+                _time.sleep(3 * (attempt + 1))
+                continue
+            raise
+        except (TimeoutError, OSError) as e:
+            last = e
+            if attempt < 3:
+                _time.sleep(3 * (attempt + 1))
+                continue
+            raise
+    else:
+        raise last
+    if not raw.strip():
+        # JSON-RPC notifications answer 202 with an empty body.
+        return {}, {}
+    s = raw.strip()
+    if s.startswith("{"):
+        return json.loads(s), {}
+    data = [line[5:].strip() for line in s.splitlines() if line.startswith("data:")]
+    return (json.loads(data[-1]) if data else {}), {}
 
 
 def mcp_rpc(base, session, payload):
