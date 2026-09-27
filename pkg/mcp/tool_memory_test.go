@@ -362,7 +362,11 @@ func TestToolDeleteMemory_DescriptorSupportsExactIDAndLegacyKey(t *testing.T) {
 	if output["ok"] == nil || output["message"] == nil {
 		t.Fatalf("delete_memory output schema changed: %+v", descriptor.OutputSchema)
 	}
-	if !ToolAllowedForMode("memory", "delete_memory") || !ToolAllowedForMode("full", "delete_memory") || ToolAllowedForMode("core", "delete_memory") {
+	// Р1 (2026-09-27, A+): core includes the record-hygiene pair
+	// supersede_memory + delete_memory; the data-delete boundary (vector
+	// `delete`, workspace_delete, sync, consolidate) is still asserted
+	// forbidden in TestToolProfilesAreExplicitAndBackwardCompatible.
+	if !ToolAllowedForMode("memory", "delete_memory") || !ToolAllowedForMode("full", "delete_memory") || !ToolAllowedForMode("core", "delete_memory") {
 		t.Fatal("delete_memory profile visibility changed")
 	}
 }
