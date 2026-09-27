@@ -182,8 +182,11 @@ WebUI — отдельный Next.js процесс. Datasets позволяют
 ## MCP toolset профили
 
 `LEVARA_MCP_TOOLSET` сокращает объявляемую поверхность (`core`, `memory`,
-`workspace`, `ops`, `long-horizon`, `full`). Feature flags дополнительно влияют
-на доступность. Проверяйте `tools/list` своего подключения и
+`workspace`, `ops`, `long-horizon`, `full`). Профиль `personal` по умолчанию
+поднимает `core` (13 инструментов room×hall-памяти, включая `supersede_memory`
+и `delete_memory`); явный `LEVARA_MCP_TOOLSET` приоритетнее, без профиля —
+`full`. Feature flags дополнительно влияют на доступность. Проверяйте
+`tools/list` своего подключения и
 [генерируемый каталог](api-contract.md), а не фиксированное число инструментов
 из старого руководства. Toolset не является разрешением на данные.
 
