@@ -18,8 +18,8 @@ func validate(c contract.Contract, outDir, repoRoot string) error {
 	// file would flap on every PR. Drift detection compares structural
 	// content only.
 	cmp := c
-	cmp.GitRev = readContractField(outDir, "git_rev", c.GitRev)
-	cmp.GeneratedAt = readContractField(outDir, "generated_at", c.GeneratedAt)
+	cmp.GitRev = readContractField(outDir, "contract.json", "git_rev", c.GitRev)
+	cmp.GeneratedAt = readContractField(outDir, "contract.json", "generated_at", c.GeneratedAt)
 
 	if err := compareFile(cmp, outDir, "contract.json", renderJSONBytes); err != nil {
 		return err
@@ -30,8 +30,8 @@ func validate(c contract.Contract, outDir, repoRoot string) error {
 	return nil
 }
 
-func readContractField(outDir, field, fallback string) string {
-	raw, err := os.ReadFile(filepath.Join(outDir, "contract.json"))
+func readContractField(outDir, name, field, fallback string) string {
+	raw, err := os.ReadFile(filepath.Join(outDir, name))
 	if err != nil {
 		return fallback
 	}

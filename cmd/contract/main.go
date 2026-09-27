@@ -12,7 +12,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fail("usage: contract <generate|validate> [flags]")
+		fail("usage: contract <generate|generate-core|validate|validate-core> [flags]")
 	}
 	cmd := os.Args[1]
 	fs := flag.NewFlagSet(cmd, flag.ExitOnError)
@@ -33,6 +33,14 @@ func main() {
 		}
 	case "validate":
 		if err := validate(c, *outDir, *repoRoot); err != nil {
+			fail(err.Error())
+		}
+	case "generate-core":
+		if err := writeCore(c, *outDir); err != nil {
+			fail(err.Error())
+		}
+	case "validate-core":
+		if err := validateCore(c, *outDir); err != nil {
 			fail(err.Error())
 		}
 	default:

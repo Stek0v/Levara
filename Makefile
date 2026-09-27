@@ -189,7 +189,19 @@ clean:
 contract:
 	@go run ./cmd/contract generate -out docs -repo .
 
+# Personal (toolset `core`) contract variant; validated together with the
+# full contract so the two never drift apart.
+contract-core:
+	@go run ./cmd/contract generate-core -out docs -repo .
+
 # CI gate: fail when committed contract artefacts drift from current
 # inventories.
 contract-check:
 	@go run ./cmd/contract validate -out docs -repo .
+	@go run ./cmd/contract validate-core -out docs -repo .
+
+# User-facing release artifact: product binaries only. The binary list is
+# provisional until the owner confirms it (Ф1 T7): dev tooling (contract,
+# audit, loadtest, benchmark, qwen3rerank, agent-hosts) stays out.
+release-artifact:
+	@bash scripts/build_release_artifact.sh
