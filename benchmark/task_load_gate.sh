@@ -6,6 +6,7 @@
 set -euo pipefail
 
 DIR=$(mktemp -d /tmp/levara-taskload.XXXXXX)
+export DIR
 PORT=18094
 DSN="${LEVARA_TASK_LOAD_DSN:?LEVARA_TASK_LOAD_DSN required}"
 PGUSER="${LEVARA_TASK_LOAD_PGUSER:-$(whoami)}"
@@ -16,7 +17,17 @@ if [ -z "${PGPASSWORD:-}" ]; then
 fi
 
 cleanup() {
-  kill "${SRV:-0}" 2>/dev/null || true
+  # Both load-gate servers — the primary and the S3 dual-process child that
+  # multi_user.py spawns from the same $DIR binary — must be dead BEFORE
+  # rm runs: a dying server keeps writing logs/WAL into $DIR, and rm -rf
+  # loses that race with "Directory not empty" (the 2026-09-27 CI flake
+  # where the gate itself passed but the job failed on cleanup).
+  pkill -f "$DIR/levara-server" 2>/dev/null || true
+  for _ in $(seq 1 50); do
+    pgrep -f "$DIR/levara-server" >/dev/null 2>&1 || break
+    sleep 0.1
+  done
+  pkill -9 -f "$DIR/levara-server" 2>/dev/null || true
   rm -rf "$DIR"
 }
 trap cleanup EXIT
@@ -32,7 +43,6 @@ LEVARA_LONG_HORIZON_RUNTIME=1 /"$DIR"/levara-server \
   -profile=standalone-embed -port=$PORT -grpc-port=0 \
   -data-dir="$DIR/data" -node-id=taskload -dim=256 \
   -pg-url="$DSN" > "$DIR/server.log" 2>&1 &
-SRV=$!
 for i in $(seq 1 60); do
   curl -sf "http://127.0.0.1:$PORT/health" >/dev/null 2>&1 && break
   sleep 1
@@ -59,8 +69,9 @@ for p in sys.argv[1:]:
         print(f"{name}: pass={s.get('pass')} {s.get('error','')[:200]}")
         ok = ok and s.get("pass", False)
 if not ok:
+    import os
     import pathlib
-    log = pathlib.Path("${DIR:-/tmp}/server.log")
+    log = pathlib.Path(os.environ.get("DIR", "/tmp")) / "server.log"
     print("--- server.log tail ---")
     print(log.read_text(errors="replace")[-1500:])
 sys.exit(0 if ok else 1)
