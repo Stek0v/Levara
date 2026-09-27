@@ -44,6 +44,9 @@ Levara даёт агентам плоскость управления конт�
   разработчика, несколько устройств, команду и enterprise-границы как
   подключаемые слои.
 
+Один файл SQLite. Один MCP URL. 13 инструментов из коробки — долговременная
+память проекта, которую агенты разделяют между сессиями, агентами и машинами.
+
 ## Быстрый старт
 
 Три команды до первого wake_up агента — без PostgreSQL, LLM и embeddings:
@@ -80,6 +83,13 @@ cognify включаются после настройки `EMBEDDING_ENDPOINT` 
 объявляет набор `core` из 13 инструментов; полная поверхность — в
 [docs/capability-map.md](docs/capability-map.md). Примеры для Codex, Claude
 Code, Cursor и Cline — в [examples/agent-hosts](examples/agent-hosts).
+
+Проверьте, что объявляет ваш сервер:
+
+```bash
+curl -s http://127.0.0.1:8080/admin/mcp/summary | jq '{toolset, advertised_tools}'
+# {"toolset":"core","advertised_tools":13}
+```
 
 > [!IMPORTANT]
 > В режиме Personal аутентификация по умолчанию не требуется. Оставляйте
