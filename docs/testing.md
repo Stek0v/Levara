@@ -373,3 +373,36 @@ ACL, конкурентного редактирования или незави
 
 Перед публикацией результата укажите отдельно: прошедшие проверки,
 пропуски, ошибки, использованные моки, ручные сценарии и отсутствующие функции.
+
+## Personal install smoke — 2026-09-27 (Ф1, T4)
+
+Первый прогон smoke «чистой установки» после Ф1-упаковки (Р1=A+, Р2=cut).
+Скрипт: `scripts/smoke_personal.py` — настоящий MCP-handshake по legacy `/mcp`
+(initialize → `Mcp-Session-Id` → initialized → `tools/list` → `tools/call`),
+без embed-эндпоинта, SQLite в каталоге temp. Проверяемая ревизия — рабочее
+дерево 2026-09-27 с несмерженными локальными изменениями (см. git status);
+это локальное свидетельство, не release-приёмка.
+
+Замеры компонентов (macOS, локальная машина):
+
+- `go build ./cmd/server` — 9 с.
+- Старт сервера до готовности `/health` — ≤ 2 с (поллинг 0,5 с).
+- Полный MCP-handshake + все вызовы — 0,02–0,03 с суммарно.
+
+Результат: **17/17 PASS**. Подтверждено:
+
+- `LEVARA_PROFILE=personal` без `LEVARA_MCP_TOOLSET` объявляет ровно 13
+  инструментов (`core`): `wake_up`, `save_memory`, `recall_memory`,
+  `supersede_memory`, `delete_memory`, `pin_memory`, `search`, `doctor` и др.;
+  `consolidate`/`workspace_search`/`task_plan`/`chat_distill` отсутствуют.
+- `wake_up` возвращает брифинг на свежей БД (`scope_status: empty` — ожидаемо).
+- `save_memory` и `recall_memory` работают без embedder (SQL-путь);
+  recall находит сохранённую запись.
+- Audit-лог MCP-вызовов помечает события эффективным toolset (`core`), а не
+  сырым значением env — расхождение найдено этим smoke и исправлено
+  (`mcp_toolset.go::effectiveMCPToolsetName`).
+
+Не покрывает: TLS/auth-режимы, WebUI, embed-путь, повторный запуск на
+существующей БД, Windows/Linux, ARM64. Метрика Р5 «10 минут / 3 команды» для
+владельца складывается из: build 9 с + старт ≤2 с + ручные шаги (clone, .env,
+MCP-конфиг клиента) — скрипт меряет только серверную часть.
