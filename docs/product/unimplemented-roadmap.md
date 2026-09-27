@@ -353,9 +353,15 @@ SQLite/PostgreSQL `-race` проходят. Trusted-local режим без meta
   promote/keep-flag/remove на основании quality/performance gates. DCD filtering
   ещё не равнозначен реализованным observe/boost; его подробные ограничения
   ведутся в локальном DCD architecture roadmap.
-- P3: отдельный план compatibility/sunset legacy vector API с измерением
-  использования, сроком миграции, обновлением собственных клиентов и минимум
-  двумя релизами наблюдения. Существующие endpoints остаются действующими.
+- P3 [решено владельцем 2026-09-27 — freeze, не sunset]: план compatibility/sunset
+  legacy vector API отменён решением Р4
+  ([functional audit](product/functional-audit-2026-09-27.md)): raw/global-admin
+  gRPC v1 остаётся задокументированной admin-only поверхностью; deprecation и
+  удаление не планируются. Использование наблюдается per-method счётчиками
+  `levara_grpc_requests_total{method,status}` и alert-правилом
+  `GRPCRawMethodUsage` (prometheus-verify.rules.yml). Открытые P1/P2 пункты по
+  составным raw-путям остаются в этой очереди без изменений — это осознанная
+  цена freeze. Существующие endpoints остаются действующими.
 
 ## Эксплуатация и интерфейсы — P2/P3
 
