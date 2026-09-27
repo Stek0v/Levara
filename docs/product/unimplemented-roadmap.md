@@ -355,7 +355,7 @@ SQLite/PostgreSQL `-race` проходят. Trusted-local режим без meta
   ведутся в локальном DCD architecture roadmap.
 - P3 [решено владельцем 2026-09-27 — freeze, не sunset]: план compatibility/sunset
   legacy vector API отменён решением Р4
-  ([functional audit](product/functional-audit-2026-09-27.md)): raw/global-admin
+  ([functional audit](functional-audit-2026-09-27.md)): raw/global-admin
   gRPC v1 остаётся задокументированной admin-only поверхностью; deprecation и
   удаление не планируются. Использование наблюдается per-method счётчиками
   `levara_grpc_requests_total{method,status}` и alert-правилом
