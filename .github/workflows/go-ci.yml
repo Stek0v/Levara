@@ -152,6 +152,17 @@ jobs:
           cache-dependency-path: go.sum
       - run: make contract-check
 
+  release-artifact:
+    name: release artifact shape
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - run: make release-artifact
+
   vulnerabilities:
     name: reachable vulnerabilities
     runs-on: ubuntu-latest
