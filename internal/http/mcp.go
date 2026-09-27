@@ -55,9 +55,8 @@ const mcpUserIDKey = mcp.UserIDKey
 const mcpAPIKeyPermissionsKey mcp.ContextKey = "mcp_api_key_permissions"
 const mcpTraceIDKey mcp.ContextKey = "mcp_trace_id"
 
-func configuredMCPToolDescriptors() []mcp.Tool {
-	return mcp.ToolDescriptorsForMode(os.Getenv("LEVARA_MCP_TOOLSET"))
-}
+// configuredMCPToolDescriptors lives in mcp_toolset.go: it applies the
+// effective-toolset resolution (explicit env > personal profile > full).
 
 // RegisterMCPAPI registers both MCP transport eras.
 // POST /mcp — JSON-RPC requests + notifications
@@ -1025,7 +1024,7 @@ func (h *mcpHandler) recordMCPAudit(ctx context.Context, sess *mcpSession, name 
 		Outcome:       outcome,
 		ResultSize:    resultSize,
 		ResponseBytes: resultSize,
-		Toolset:       mcp.ToolsetName(os.Getenv("LEVARA_MCP_TOOLSET")),
+		Toolset:       effectiveMCPToolsetName(),
 	}
 	scope := verifiedAuditScope(ctx)
 	entry.TenantID, entry.ScopeVerified = scope.TenantID, scope.Verified
