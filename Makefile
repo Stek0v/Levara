@@ -200,8 +200,9 @@ contract-check:
 	@go run ./cmd/contract validate -out docs -repo .
 	@go run ./cmd/contract validate-core -out docs -repo .
 
-# User-facing release artifact: product binaries only. The binary list is
-# provisional until the owner confirms it (Ф1 T7): dev tooling (contract,
-# audit, loadtest, benchmark, qwen3rerank, agent-hosts) stays out.
+# User-facing release artifact: product binaries only. Binary list
+# owner-confirmed 2026-09-27 (ОВ2): server, cli, backup, reconcile, audit,
+# agent-hosts; dev tooling (contract, loadtest, benchmark, qwen3rerank)
+# stays out.
 release-artifact:
 	@bash scripts/build_release_artifact.sh

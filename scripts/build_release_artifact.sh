@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Builds the user-facing release artifact: product binaries only.
-# Dev tooling (contract, audit, loadtest, benchmark, qwen3rerank,
-# agent-hosts) and source trees (scripts/, benchmark/, webui/) stay out.
-# The product-binary list is provisional until the owner confirms it (Ф1 T7).
+# Owner-confirmed list (ОВ2, 2026-09-27): server, cli, backup, reconcile,
+# audit (operator CLI), agent-hosts (S1 onboarding). Dev tooling (contract,
+# loadtest, benchmark, qwen3rerank) and source trees (scripts/, benchmark/,
+# webui/) stay out.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -14,6 +15,8 @@ go build -o "$DIST/levara-server" ./cmd/server/
 go build -o "$DIST/levara" ./cmd/cli/
 go build -o "$DIST/levara-backup" ./cmd/backup/
 go build -o "$DIST/levara-reconcile" ./cmd/reconcile/
+go build -o "$DIST/levara-audit" ./cmd/audit/
+go build -o "$DIST/levara-agent-hosts" ./cmd/agent-hosts/
 
 # Runnable profile presets ship with the artifact.
 mkdir -p "$DIST/profiles"
@@ -24,7 +27,7 @@ ARTIFACT="$PWD/levara-release.tar.gz"
 tar czf "$ARTIFACT" -C "$DIST" .
 
 # Assert the artifact carries nothing it must not carry.
-bad=$(tar tzf "$ARTIFACT" | grep -E '(^|/)(scripts|benchmark|webui|\.github)/|loadtest|qwen3rerank|agent-hosts|(^|/)levara-contract$|(^|/)levara-audit$' || true)
+bad=$(tar tzf "$ARTIFACT" | grep -E '(^|/)(scripts|benchmark|webui|\.github)/|loadtest|qwen3rerank|(^|/)levara-contract$' || true)
 if [ -n "$bad" ]; then
   echo "release artifact contains forbidden entries:" >&2
   echo "$bad" >&2
