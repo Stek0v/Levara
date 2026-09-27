@@ -909,7 +909,7 @@ func ToolDescriptors() []Tool {
 		},
 		{
 			Name:        "recall_memory",
-			Description: "Search memories by query, optionally filtered by room/hall for higher precision.",
+			Description: "Read-only search over past memories by query, optionally filtered by room/hall for precision. Use to recall knowledge before answering or saving; this never modifies records — to change or remove a record use supersede_memory, delete_memory, pin_memory or unpin_memory.",
 			OutputSchema: objectSchema(map[string]any{
 				"results": arrayOfObjectsProp(objectSchema(map[string]any{
 					"id":                   stringProp("Memory row ID."),
@@ -1039,7 +1039,7 @@ func ToolDescriptors() []Tool {
 		},
 		{
 			Name:        "wake_up",
-			Description: "Load critical context at session start: pinned memories (priority-ordered) + top entities from knowledge graph (active edges only). Token budget enforced (~200 by default). Cheap alternative to get_project_context.",
+			Description: "Session-start briefing. Call this FIRST at the beginning of a session or whenever the user asks for a status summary, wake-up, or what happened earlier in the project. Returns pinned memories (priority-ordered) plus top knowledge-graph entities within a token budget (~200 by default).",
 			OutputSchema: objectSchema(map[string]any{
 				"collection":   stringProp("Collection the snapshot was drawn from."),
 				"max_tokens":   integerProp("Requested token budget."),
@@ -1072,7 +1072,7 @@ func ToolDescriptors() []Tool {
 		},
 		{
 			Name:         "unpin_memory",
-			Description:  "Remove a memory from the pinned set (it stays in storage).",
+			Description:  "State change: remove a memory from the pinned briefing set when the user asks to unpin or deprioritize it. The record stays in storage. To read or search memories use recall_memory or list_memories instead.",
 			OutputSchema: statusMessageSchema(),
 			InputSchema: map[string]any{
 				"type": "object",
@@ -1269,7 +1269,7 @@ func ToolDescriptors() []Tool {
 
 		{
 			Name:        "get_project_context",
-			Description: "Get full project context: memories, collection stats, key entities, recent interactions. Call at session start for maximum context awareness.",
+			Description: "Look up the project context record previously selected with set_context (which project/collection is currently active). This is a narrow record read, not a session briefing — for the session-start summary call wake_up.",
 			OutputSchema: objectSchema(map[string]any{
 				"collection": stringProp("Project collection name."),
 				"text":       stringProp("Markdown project context summary."),
