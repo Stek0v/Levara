@@ -124,7 +124,6 @@ func ApplyRerankToScored(
 	}
 	switch {
 	case err == nil && len(scored) > 0:
-		metrics.RerankInvocations.WithLabelValues("ok").Inc()
 		placed := make(map[int]bool, len(scored))
 		out := make([]ScoredResult, 0, len(in))
 		for _, s := range scored {
@@ -138,6 +137,11 @@ func ApplyRerankToScored(
 			placed[orig] = true
 			out = append(out, in[orig])
 		}
+		if len(out) == 0 {
+			metrics.RerankInvocations.WithLabelValues("error").Inc()
+			return false, trim(in)
+		}
+		metrics.RerankInvocations.WithLabelValues("ok").Inc()
 		for i, r := range in {
 			if !placed[i] {
 				out = append(out, r)

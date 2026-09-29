@@ -3,12 +3,17 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
 
 	"github.com/stek0v/levara/pipeline"
 	"github.com/stek0v/levara/pkg/llm"
+	"github.com/stek0v/levara/pkg/rerank"
 	"github.com/stek0v/levara/pkg/router"
 )
 
@@ -298,6 +303,218 @@ func TestToolSearch_HybridBranchFusesVectorAndLexical(t *testing.T) {
 		if !seen[id] {
 			t.Errorf("hybrid result %q missing from fused results: %v", id, results)
 		}
+	}
+}
+
+func TestToolSearch_HybridRerank(t *testing.T) {
+	for _, searchType := range []string{"HYBRID", "WEIGHTED_HYBRID"} {
+		for _, tc := range []struct {
+			name     string
+			rerank   any
+			enabled  bool
+			fallback bool
+		}{
+			{"requested", true, true, false},
+			{"default", nil, true, false},
+			{"opt-out", false, true, false},
+			{"disabled", true, false, false},
+			{"fallback", true, true, true},
+		} {
+			t.Run(searchType+"/"+tc.name, func(t *testing.T) {
+				calls := 0
+				pipe := &fakeSearchPipeline{
+					rerankEnabled: tc.enabled,
+					byText: func(_ context.Context, _, _ string, topK int) ([]pipeline.ScoredResult, error) {
+						return []pipeline.ScoredResult{scoredRes("both", .9), scoredRes("vector-only", .8)}, nil
+					},
+					applyRerank: func(_ context.Context, query string, in []pipeline.ScoredResult, topK int) (bool, []pipeline.ScoredResult) {
+						calls++
+						if query != "q" || topK != 2 || len(in) != 3 {
+							t.Fatalf("rerank query=%q topK=%d candidates=%+v, want 3 authorized fused candidates", query, topK, in)
+						}
+						byID := map[string]pipeline.ScoredResult{}
+						for _, r := range in {
+							byID[r.ID] = r
+						}
+						for _, id := range []string{"both", "vector-only", "lexical-only"} {
+							if byID[id].ID != id {
+								t.Fatalf("missing fused candidate %q: %+v", id, in)
+							}
+						}
+						if tc.fallback {
+							return false, in[:topK]
+						}
+						return true, []pipeline.ScoredResult{byID["lexical-only"], byID["vector-only"]}
+					},
+				}
+				deps := &fakeDeps{
+					collections: []string{"kb"}, hasColls: true, allowedDatasetIDs: []string{"allowed"},
+					searchPipelineFn: func(bool) SearchPipeline { return pipe },
+					lexicalFn: func(_, _ string, _ int) ([]LexicalResult, error) {
+						return []LexicalResult{
+							{ID: "both", Score: 7, Metadata: []byte(`{"text":"both"}`)},
+							{ID: "lexical-only", Score: 6, Metadata: []byte(`{"text":"lexical"}`)},
+							{ID: "denied", Score: 5, Metadata: []byte(`{"text":"secret","dataset_id":"denied"}`)},
+						}, nil
+					},
+				}
+				args := map[string]any{"search_query": "q", "search_type": searchType, "top_k": 2, "dedup": false, "vector_weight": 2.0}
+				if tc.rerank != nil {
+					args["rerank"] = tc.rerank
+				}
+				result := ToolSearch(context.Background(), deps, args)
+				if result.IsError {
+					t.Fatalf("search error: %+v", result)
+				}
+				resp := decodeSearchResp(t, result)
+				wantCalls := 0
+				if tc.rerank == true && tc.enabled {
+					wantCalls = 1
+				}
+				if calls != wantCalls || resp["reranked"] != (wantCalls == 1 && !tc.fallback) {
+					t.Fatalf("calls=%d reranked=%v, want calls=%d fallback=%v", calls, resp["reranked"], wantCalls, tc.fallback)
+				}
+				rows := resp["results"].([]any)
+				if len(rows) != 2 {
+					t.Fatalf("got %d results, want top_k=2", len(rows))
+				}
+				wantID, wantScore := "both", float32(3.0/61)
+				if wantCalls == 1 && !tc.fallback {
+					wantID, wantScore = "lexical-only", float32(1.0/62)
+				}
+				first := rows[0].(map[string]any)
+				if first["id"] != wantID || float32(first["score"].(float64)) != wantScore {
+					t.Fatalf("first=%v, want %s with original fused score %v", first, wantID, wantScore)
+				}
+			})
+		}
+	}
+}
+
+func TestToolSearch_HybridRerankFallbackUsesOriginalCandidates(t *testing.T) {
+	for _, searchType := range []string{"HYBRID", "WEIGHTED_HYBRID"} {
+		for _, outcome := range []string{"http-error", "gap-skip", "denied-first", "vector-filtered", "fence-denied"} {
+			t.Run(searchType+"/"+outcome, func(t *testing.T) {
+				var modelCalls atomic.Int32
+				sidecar := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					modelCalls.Add(1)
+					http.Error(w, "unavailable", http.StatusServiceUnavailable)
+				}))
+				defer sidecar.Close()
+				client := rerank.NewClient(sidecar.URL, "test", 0, 1000)
+				var vectorBudgets, lexicalBudgets []int
+				pipe := &fakeSearchPipeline{rerankEnabled: true,
+					byText: func(_ context.Context, _, _ string, topK int) ([]pipeline.ScoredResult, error) {
+						vectorBudgets = append(vectorBudgets, topK)
+						rows := []pipeline.ScoredResult{scoredRes("A", .9), scoredRes("B", .8), scoredRes("X", .7)}
+						if outcome == "vector-filtered" {
+							// Production applies its document policy after the raw search cap.
+							rows = []pipeline.ScoredResult{scoredRes("denied", 1), scoredRes("A", .9), scoredRes("X", .7)}
+							return rows[1:min(topK, len(rows))], nil
+						}
+						if outcome == "denied-first" {
+							rows[0].Metadata = []byte(`{"text":"secret","dataset_id":"denied"}`)
+						}
+						return rows[:min(topK, len(rows))], nil
+					},
+					applyRerank: func(ctx context.Context, query string, in []pipeline.ScoredResult, topK int) (bool, []pipeline.ScoredResult) {
+						if outcome == "fence-denied" {
+							return false, nil
+						}
+						cfg := pipeline.ApplyRerankConfig{}
+						if outcome == "gap-skip" {
+							cfg.ScoreGapThreshold = .00001
+						}
+						return pipeline.ApplyRerankToScored(ctx, cfg, client, query, in, topK)
+					},
+				}
+				deps := &fakeDeps{collections: []string{"kb"},
+					searchPipelineFn: func(bool) SearchPipeline { return pipe },
+					lexicalFn: func(_, _ string, topK int) ([]LexicalResult, error) {
+						lexicalBudgets = append(lexicalBudgets, topK)
+						rows := []LexicalResult{
+							{ID: "C", Score: 7, Metadata: []byte(`{"text":"C"}`)},
+							{ID: "D", Score: 6, Metadata: []byte(`{"text":"D"}`)},
+							{ID: "X", Score: 5, Metadata: []byte(`{"text":"X"}`)},
+						}
+						if outcome == "denied-first" {
+							rows[0] = LexicalResult{ID: "A", Score: 7, Metadata: []byte(`{"text":"secret","dataset_id":"denied"}`)}
+						}
+						return rows[:min(topK, len(rows))], nil
+					},
+				}
+				if outcome == "denied-first" {
+					deps.allowedDatasetIDs = []string{"allowed"}
+				}
+				args := map[string]any{"search_query": "q", "search_type": searchType, "top_k": 1, "dedup": false, "rerank": false}
+				baseline := decodeSearchResp(t, ToolSearch(context.Background(), deps, args))
+				args["rerank"] = true
+				got := decodeSearchResp(t, ToolSearch(context.Background(), deps, args))
+				if got["reranked"] != false || !reflect.DeepEqual(vectorBudgets, []int{2, 2}) || !reflect.DeepEqual(lexicalBudgets, []int{2, 2}) {
+					t.Fatalf("reranked=%v vector budgets=%v lexical budgets=%v, want false and unchanged retrieval budgets", got["reranked"], vectorBudgets, lexicalBudgets)
+				}
+				wantCalls := int32(0)
+				if outcome == "http-error" || outcome == "denied-first" || outcome == "vector-filtered" {
+					wantCalls = 1
+				}
+				if modelCalls.Load() != wantCalls {
+					t.Fatalf("model calls=%d, want %d", modelCalls.Load(), wantCalls)
+				}
+				if outcome == "fence-denied" {
+					if len(got["results"].([]any)) != 0 {
+						t.Fatalf("authorization fence failure must stay empty: %v", got["results"])
+					}
+				} else if !reflect.DeepEqual(got["results"], baseline["results"]) {
+					t.Fatalf("fallback=%v, want unchanged baseline=%v", got["results"], baseline["results"])
+				}
+			})
+		}
+	}
+}
+
+func TestToolSearch_HybridDocumentPolicyBeforeRerank(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		t.Run(map[bool]string{false: "filtered", true: "unavailable"}[fail], func(t *testing.T) {
+			calls := 0
+			pipe := &fakeSearchPipeline{rerankEnabled: true,
+				byText: func(context.Context, string, string, int) ([]pipeline.ScoredResult, error) {
+					return []pipeline.ScoredResult{scoredRes("allowed", .9)}, nil
+				},
+				applyRerank: func(_ context.Context, _ string, in []pipeline.ScoredResult, _ int) (bool, []pipeline.ScoredResult) {
+					calls++
+					if len(in) != 1 || in[0].ID != "allowed" {
+						t.Fatalf("document policy leaked to reranker: %+v", in)
+					}
+					return true, in
+				},
+			}
+			deps := &fakeDeps{collections: []string{"kb"}, allowedDatasetIDs: []string{},
+				searchPipelineFn: func(bool) SearchPipeline { return pipe },
+				lexicalFn: func(string, string, int) ([]LexicalResult, error) {
+					return []LexicalResult{{ID: "denied", Score: 7, Metadata: []byte(`{"text":"secret"}`)}}, nil
+				},
+			}
+			ctx := WithSearchAccess(context.Background(), SearchAccess{Filter: func(_ context.Context, in []pipeline.ScoredResult) ([]pipeline.ScoredResult, error) {
+				if fail {
+					return nil, errors.New("policy unavailable")
+				}
+				var out []pipeline.ScoredResult
+				for _, r := range in {
+					if r.ID == "allowed" {
+						out = append(out, r)
+					}
+				}
+				return out, nil
+			}})
+			res := ToolSearch(ctx, deps, map[string]any{"search_query": "q", "search_type": "HYBRID", "rerank": true})
+			if fail {
+				if !res.IsError || calls != 0 || res.Content[0].Text != "Error: search authorization unavailable" {
+					t.Fatalf("authorization failure: result=%+v rerank calls=%d", res, calls)
+				}
+			} else if res.IsError || calls != 1 || strings.Contains(res.Content[0].Text, "denied") {
+				t.Fatalf("result=%+v rerank calls=%d", res, calls)
+			}
+		})
 	}
 }
 

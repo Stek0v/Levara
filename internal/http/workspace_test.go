@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	"github.com/stek0v/levara/internal/store"
 	accesspkg "github.com/stek0v/levara/pkg/access"
 	"github.com/stek0v/levara/pkg/bm25"
+	"github.com/stek0v/levara/pkg/embed"
 	mcppkg "github.com/stek0v/levara/pkg/mcp"
 	"github.com/stek0v/levara/pkg/workspace"
 )
@@ -2842,6 +2844,140 @@ func TestWorkspaceMCPAccessCheckAndAuditLog(t *testing.T) {
 	}
 	if !workspaceAuditHasEvent(logResp.Events, "read", "denied") {
 		t.Fatalf("MCP audit missing denied read: %+v", logResp.Events)
+	}
+}
+
+func TestWorkspaceMCPSearchHybridRerank(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			_, db := documentACLHTTPFixture(t, dialect)
+			if _, err := db.Exec(`DELETE FROM dataset_shares WHERE id='share-b'`); err != nil {
+				t.Fatal(err)
+			}
+			cfg, closeFn := newWorkspaceTestConfig(t)
+			defer closeFn()
+			cfg.DB = db
+			cfg.EmbedClient = embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 1)
+			h := &mcpHandler{cfg: cfg}
+			ctx := context.WithValue(context.Background(), mcpUserIDKey, "alice")
+			for _, doc := range []struct{ name, text string }{
+				{"alpha", "anchor anchor alpha"},
+				{"beta", "anchor beta additional details"},
+				{"gamma", "anchor gamma more additional document details"},
+			} {
+				res := h.executeToolInner(ctx, nil, "workspace_write", map[string]any{
+					"project_id": "a", "branch": "main", "generation": "gen-active", "collection": "rerank_kb",
+					"path": "docs/" + doc.name + ".md", "text": doc.text,
+					"chunk_strategy": "paragraph", "min_chunk_chars": 1, "activate_generation": true,
+				})
+				if res.IsError {
+					t.Fatalf("workspace_write: %+v", res.Content)
+				}
+			}
+			// Lexical-only rows bypass the vector pipeline's document filter.
+			idx := cfg.BM25Indexes.Get("rerank_kb")
+			idx.Add("denied", "anchor secret", `{"text":"anchor secret","dataset_id":"b"}`)
+			idx.Add("stale", "anchor stale filler", `{"text":"anchor stale","project_id":"a","branch":"main","generation":"gen-active","chunk_id":"missing"}`)
+			lexicalCandidates := map[string]bool{}
+			for _, hit := range idx.Search("anchor", 4) {
+				lexicalCandidates[hit.ID] = true
+			}
+			if !lexicalCandidates["denied"] || !lexicalCandidates["stale"] {
+				t.Fatal("both forbidden and stale rows must enter the actual lexical candidate window")
+			}
+			search := func(rerank any, topK int) map[string]any {
+				t.Helper()
+				args := map[string]any{"project_id": "a", "branch": "main", "search_query": "anchor", "top_k": topK, "dedup": false}
+				if rerank != nil {
+					args["rerank"] = rerank
+				}
+				res := h.executeTool(ctx, nil, "workspace_search", args)
+				if res.IsError {
+					t.Fatalf("workspace_search: %+v", res.Content)
+				}
+				var body map[string]any
+				if err := json.Unmarshal([]byte(res.Content[0].Text), &body); err != nil {
+					t.Fatal(err)
+				}
+				if body["generic_search_status"] != "ok" || body["search_type"] != "HYBRID" {
+					t.Fatalf("default hybrid search failed: %v", body)
+				}
+				return body
+			}
+			baseline := search(false, 5)["results"].([]any)
+			if len(baseline) != 3 {
+				t.Fatalf("baseline has %d results, want 3 authorized documents: %+v", len(baseline), baseline)
+			}
+			first, preferred := baseline[0].(map[string]any), baseline[2].(map[string]any)
+			if preferred["path"] != "docs/gamma.md" || lexicalCandidates[preferred["id"].(string)] {
+				t.Fatalf("expected gamma beyond lexical window: %v", preferred)
+			}
+			// With top_k=2, gamma is the third vector hit only; its RRF
+			// score must not become the model's relevance score after promotion.
+			preferred["score"] = float64(float32(1.0 / 63))
+			var calls atomic.Int32
+			var fail atomic.Bool
+			sidecar := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				var req struct {
+					Documents []string `json:"documents"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					t.Error(err)
+					http.Error(w, "bad request", http.StatusBadRequest)
+					return
+				}
+				if len(req.Documents) != 3 || strings.Contains(strings.Join(req.Documents, " "), "secret") || strings.Contains(strings.Join(req.Documents, " "), "stale") {
+					t.Errorf("reranker must receive all 3 authorized current documents: %q", req.Documents)
+				}
+				if fail.Load() {
+					http.Error(w, "unavailable", http.StatusServiceUnavailable)
+					return
+				}
+				var scores []map[string]any
+				for i, text := range req.Documents {
+					score := .1
+					if text == preferred["text"] {
+						score = .9
+					}
+					scores = append(scores, map[string]any{"index": i, "relevance_score": score})
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"results": scores})
+			}))
+			defer sidecar.Close()
+			h.cfg.RerankEndpoint = sidecar.URL
+			h.cfg.RerankModel = "test-rerank"
+			h.cfg.RerankTimeoutMs = 1000
+			for _, tc := range []struct {
+				name     string
+				request  any
+				want     map[string]any
+				calls    int32
+				reranked bool
+			}{
+				{"default", nil, first, 0, false},
+				{"opt-out", false, first, 0, false},
+				{"requested", true, preferred, 1, true},
+				{"failure", true, first, 2, false},
+				{"disabled", true, first, 2, false},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					fail.Store(tc.name == "failure")
+					if tc.name == "disabled" {
+						h.cfg.RerankEndpoint = ""
+					}
+					body := search(tc.request, 2)
+					rows := body["results"].([]any)
+					if len(rows) != 2 || body["reranked"] != tc.reranked || calls.Load() != tc.calls {
+						t.Fatalf("reranked=%v calls=%d rows=%v; want reranked=%v calls=%d top_k=2", body["reranked"], calls.Load(), rows, tc.reranked, tc.calls)
+					}
+					got := rows[0].(map[string]any)
+					if got["id"] != tc.want["id"] || float32(got["score"].(float64)) != float32(tc.want["score"].(float64)) || got["path"] != tc.want["path"] {
+						t.Fatalf("got=%v, want original score and citation for %v", got, tc.want)
+					}
+				})
+			}
+		})
 	}
 }
 

@@ -497,7 +497,7 @@ func searchMetadataDatasetID(metadata json.RawMessage) string {
 
 // runSearchStrategy dispatches to one of the five search branches
 // based on the flag combination. Returns the results and whether a
-// rerank actually ran (only the WithRerank branch may set this true).
+// rerank actually ran (HYBRID or the explicit rerank branch).
 // Errors from the pipeline are swallowed per branch — the caller
 // continues to the next collection, matching pre-refactor behavior.
 func runSearchStrategy(ctx context.Context, deps Deps, sp SearchPipeline, coll, query string, fetchK int, a searchArgs, allowedDatasetIDs []string) (results []pipeline.ScoredResult, reranked bool, authErr error) {
@@ -505,7 +505,23 @@ func runSearchStrategy(ctx context.Context, deps Deps, sp SearchPipeline, coll, 
 	case isLexicalSearchType(a.searchType):
 		return runLexicalSearch(deps, coll, query, fetchK), false, nil
 	case isHybridSearchType(a.searchType):
-		return runHybridSearch(ctx, deps, sp, coll, query, fetchK, a), false, nil
+		candidates := runHybridSearch(ctx, deps, sp, coll, query, fetchK, a)
+		if !a.doRerank || !sp.RerankEnabled() {
+			return candidates, false, nil
+		}
+		// Preserve the legacy cap-before-ACL result even when filtering
+		// compacts candidates in place or reranking is skipped/fails.
+		fallback := append([]pipeline.ScoredResult(nil), candidates[:min(fetchK, len(candidates))]...)
+		filtered, err := filterSearchAccess(ctx, candidates, allowedDatasetIDs)
+		if err != nil {
+			return nil, false, err
+		}
+		rr, ordered := sp.ApplyRerank(ctx, query, filtered, fetchK)
+		// Empty output may signal a rejected authorization fence; keep it empty.
+		if !rr && len(ordered) > 0 {
+			return fallback, false, nil
+		}
+		return ordered, rr, nil
 	case a.doParentChild:
 		res, err := sp.SearchByTextParentChild(ctx, coll, query, fetchK)
 		if err != nil {
@@ -616,7 +632,12 @@ func runHybridSearch(ctx context.Context, deps Deps, sp SearchPipeline, coll, qu
 		})
 	}
 
-	hybrid := bm25.HybridSearch(vr, br, fetchK, a.vectorWeight, a.bm25Weight)
+	fuseK := fetchK
+	if a.doRerank && sp.RerankEnabled() {
+		// Retain the union for reranking without changing retrieval budgets.
+		fuseK = len(vr) + len(br)
+	}
+	hybrid := bm25.HybridSearch(vr, br, fuseK, a.vectorWeight, a.bm25Weight)
 	out := make([]pipeline.ScoredResult, 0, len(hybrid))
 	for _, r := range hybrid {
 		out = append(out, pipeline.ScoredResult{
