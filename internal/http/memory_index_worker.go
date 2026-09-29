@@ -11,6 +11,7 @@ import (
 
 	"sync"
 
+	"github.com/stek0v/levara/pkg/embed"
 	"github.com/stek0v/levara/pkg/memoryindex"
 )
 
@@ -111,6 +112,11 @@ func runMemoryIndexJob(ctx context.Context, cfg APIConfig) bool {
 		return false
 	}
 	err = executeMemoryIndexJob(ctx, cfg, job)
+	var blocked *embed.BreakerOpenError
+	if errors.As(err, &blocked) {
+		_ = cfg.MemoryIndexOutbox.Defer(context.Background(), job, blocked.RetryAt)
+		return true
+	}
 	_ = cfg.MemoryIndexOutbox.Finish(context.Background(), job, err, 5, time.Second)
 	return true
 }

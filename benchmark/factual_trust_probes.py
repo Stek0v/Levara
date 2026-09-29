@@ -140,6 +140,28 @@ def self_check():
     assert promotion_outcome({"ok": False, "validation": {"valid": False}}, None, False)[0] == "error"
     assert promotion_outcome({"ok": False, "validation": {"valid": False, "failed_receipts": ["command"], "active_blockers": ["other"]}}, None, False)[0] == "error"
     assert promotion_outcome({"ok": False}, None, True)[0] == "error"
+    assert Suite.evidence_rejection(ToolRejected("Error: source evidence is missing, inaccessible, failed, or stale"))
+    for message in ("database is closed", "connection refused", "context deadline exceeded"):
+        assert not Suite.evidence_rejection(ToolRejected(message))
+    async def check_rejected_write():
+        for persisted, control, expected in (
+            ({"key": "forged-source-marker"}, unverified, "rejected_write_persisted"),
+            (None, {**unverified, "value": "wrong"}, "rejection_positive_control_failed"),
+            (None, {**unverified, "value": "Synthetic evidence-free positive control.", "verification_status": "verified"}, "rejection_positive_control_failed"),
+            (None, {**unverified, "value": "Synthetic evidence-free positive control."}, "invalid_evidence_rejected"),
+        ):
+            suite = object.__new__(Suite)
+            suite.run_id = "self-check"
+            async def save(*args, **kwargs):
+                if "source_task_id" in kwargs:
+                    raise ToolRejected("Error: source evidence is missing, inaccessible, failed, or stale")
+            async def row(*args, required=True):
+                return control if required else persisted
+            suite.save, suite.row = save, row
+            status, reason, _ = await suite.forged()
+            assert reason == expected
+            assert status == ("pass" if expected == "invalid_evidence_rejected" else "fail")
+    asyncio.run(check_rejected_write())
     for envelope in [{"error": {"message": "failure"}}, {"result": {"isError": True}}]:
         try:
             decode_result(envelope)
@@ -236,7 +258,7 @@ class Suite:
     @staticmethod
     def evidence_rejection(exc):
         message = str(exc).lower()
-        return any(word in message for word in ("invalid evidence", "verification status", "verification_status", "source receipt", "source_receipt", "exit_code", "exit code"))
+        return any(word in message for word in ("invalid evidence", "verification status", "verification_status", "source receipt", "source_receipt", "exit_code", "exit code", "source evidence is missing, inaccessible, failed, or stale"))
 
     async def forged(self):
         collection, key = self.collection("forged"), "forged-source-marker"
@@ -245,7 +267,14 @@ class Suite:
                             source_task_id=str(uuid.uuid4()), source_receipt_ids=[str(uuid.uuid4())], verification_status="receipt-validated")
         except ToolRejected as exc:
             if self.evidence_rejection(exc):
-                return "pass", "invalid_evidence_rejected", {"rejection": str(exc)}
+                if await self.row(collection, key, "list_memories", required=False) is not None:
+                    return "fail", "rejected_write_persisted", {"rejection": str(exc)}
+                # A healthy write on the same scope must still work after rejection.
+                await self.save(collection, key, "Synthetic evidence-free positive control.")
+                control = await self.row(collection, key, "list_memories")
+                if provenance_outcome(control)[0] != "pass" or control.get("value") != "Synthetic evidence-free positive control.":
+                    return "fail", "rejection_positive_control_failed", {"memory": control}
+                return "pass", "invalid_evidence_rejected", {"rejection": str(exc), "absent_after_rejection": True, "positive_control": control}
             raise
         row = await self.row(collection, key)
         return *trust_outcome(row), {"memory": row}

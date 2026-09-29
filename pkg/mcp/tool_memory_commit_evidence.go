@@ -91,6 +91,28 @@ func memoryCommitCanMutateShared(ctx context.Context, policy access.SQLPolicy, a
 	ok, err := policy.IsSuperuser(ctx, actor.UserID)
 	return err == nil && ok
 }
+
+// Parse evidence without silently discarding malformed IDs. Caller-provided
+// verification labels never authorize a durable verification status.
+func memorySourceEvidence(args map[string]any) (memoryCommitCandidate, error) {
+	var c memoryCommitCandidate
+	if raw, exists := args["source_task_id"]; exists {
+		var ok bool
+		c.SourceTaskID, ok = raw.(string)
+		if !ok {
+			return c, errors.New("source_task_id must be a string")
+		}
+	}
+	if raw, exists := args["source_receipt_ids"]; exists {
+		var ok bool
+		c.SourceReceiptIDs, ok = memoryCommitSourceReceipts(raw)
+		if !ok || raw == nil {
+			return c, errors.New("source_receipt_ids must be an array of receipt IDs")
+		}
+	}
+	return c, nil
+}
+
 func memoryCommitValidateEvidence(ctx context.Context, tx *sql.Tx, deps Deps, owner, collection string, c memoryCommitCandidate) (string, error) {
 	if c.SourceTaskID == "" && len(c.SourceReceiptIDs) == 0 {
 		return "unverified", nil

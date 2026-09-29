@@ -175,6 +175,12 @@ func (c *Client) EmbedTexts(ctx context.Context, texts []string) ([][]float32, e
 		return nil, err
 	}
 	defer release()
+	// The endpoint may have failed while this call waited for admission.
+	if c.breaker != nil {
+		if err := c.breaker.Allow(); err != nil {
+			return nil, err
+		}
+	}
 
 	allVecs := make([][]float32, len(texts))
 

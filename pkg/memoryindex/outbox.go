@@ -136,9 +136,9 @@ func (s *Store) Claim(ctx context.Context) (Job, bool, error) {
 	if err := rows.Err(); err != nil {
 		return Job{}, false, err
 	}
-	updQ := s.bind(`UPDATE memory_index_jobs SET status='running',attempts=attempts+1,updated_at=? WHERE id=? AND status IN ('pending','failed')`)
+	updQ := s.bind(`UPDATE memory_index_jobs SET status='running',attempts=attempts+1,updated_at=? WHERE id=? AND status IN ('pending','failed') AND (next_run_at='' OR next_run_at<=?)`)
 	for _, id := range candidates {
-		res, err := s.db.ExecContext(ctx, updQ, now, id)
+		res, err := s.db.ExecContext(ctx, updQ, now, id, now)
 		if err != nil {
 			return Job{}, false, err
 		}
@@ -161,6 +161,15 @@ func (s *Store) Claim(ctx context.Context) (Job, bool, error) {
 	return Job{}, false, nil
 }
 
+// Defer refunds a claim that never reached the provider. Keep the previous
+// failure for diagnosis; next_run_at records the admission cooldown.
+func (s *Store) Defer(ctx context.Context, j Job, until time.Time) error {
+	_, err := s.db.ExecContext(ctx, s.bind(`UPDATE memory_index_jobs SET status='pending',attempts=attempts-1,next_run_at=?,updated_at=?
+		WHERE id=? AND status='running' AND attempts=? AND attempts>0 AND next_run_at=?`),
+		until.UTC().Format(time.RFC3339Nano), time.Now().UTC().Format(time.RFC3339Nano), j.ID, j.Attempts, j.NextRunAt)
+	return err
+}
+
 func (s *Store) Finish(ctx context.Context, j Job, runErr error, maxAttempts int, backoff time.Duration) error {
 	status := Completed
 	last := ""
@@ -176,7 +185,7 @@ func (s *Store) Finish(ctx context.Context, j Job, runErr error, maxAttempts int
 	}
 	// Status predicate: a stale worker whose job was reclaimed after lease
 	// loss must not clobber the new owner's state.
-	_, err := s.db.ExecContext(ctx, s.bind(`UPDATE memory_index_jobs SET status=?,last_error=?,next_run_at=?,updated_at=? WHERE id=? AND status='running'`), string(status), last, next, time.Now().UTC().Format(time.RFC3339Nano), j.ID)
+	_, err := s.db.ExecContext(ctx, s.bind(`UPDATE memory_index_jobs SET status=?,last_error=?,next_run_at=?,updated_at=? WHERE id=? AND status='running' AND attempts=? AND next_run_at=?`), string(status), last, next, time.Now().UTC().Format(time.RFC3339Nano), j.ID, j.Attempts, j.NextRunAt)
 	return err
 }
 

@@ -38,7 +38,8 @@ func setupMemoryTestDB(t *testing.T) *fakeDeps {
 			collection_name TEXT, room TEXT, hall TEXT,
 			is_pinned INTEGER DEFAULT 0, pin_priority INTEGER DEFAULT 0,
 			created_at TEXT, updated_at TEXT,
-			superseded_by TEXT DEFAULT ''
+			superseded_by TEXT DEFAULT '', verification_status TEXT DEFAULT '',
+			source_task_id TEXT DEFAULT '', source_receipt_ids TEXT DEFAULT '[]'
 		)`,
 	}
 	for _, s := range stmts {

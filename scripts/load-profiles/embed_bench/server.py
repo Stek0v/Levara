@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import resource
+from threading import Lock
 from typing import Union
 
 from fastapi import FastAPI, HTTPException
@@ -54,6 +55,9 @@ def build_app() -> FastAPI:
         backend_name = recipe.backend
 
     app = FastAPI(title="embed-bench", version="1")
+    # One shared model: concurrent MPS inference has crashed the native backend.
+    # Keep health checks independent of inference admission.
+    inference_lock = Lock()
 
     @app.get("/health")
     def health() -> dict:
@@ -74,7 +78,8 @@ def build_app() -> FastAPI:
         if not texts:
             raise HTTPException(status_code=400, detail="input must not be empty")
         kind = "query" if (req.model or "").endswith(":query") else "document"
-        vectors = backend.embed(texts, kind=kind)
+        with inference_lock:
+            vectors = backend.embed(texts, kind=kind)
         return {
             "model": openai_name,
             "data": [{"embedding": v, "index": i} for i, v in enumerate(vectors)],

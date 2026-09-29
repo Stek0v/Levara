@@ -970,7 +970,9 @@ func main() {
 	// MCP (Model Context Protocol) server — JSON-RPC 2.0 for AI agent integration
 	vectorHttp.RegisterMCPAPI(app, mcpCfg)
 	vectorHttp.StartConsolidationRecovery(mcpCfg)
-	stopMemoryIndexWorker := vectorHttp.StartMemoryIndexWorker(mcpCfg, memoryIndexWorkerInterval())
+	memoryWorkerCfg := mcpCfg
+	memoryWorkerCfg.EmbedClient = sharedEmbed.WithPriorityGate(embedGate).WithBackground().WithConcurrency(embedderBackgroundConcurrency())
+	stopMemoryIndexWorker := vectorHttp.StartMemoryIndexWorker(memoryWorkerCfg, memoryIndexWorkerInterval())
 	defer stopMemoryIndexWorker()
 
 	// Opt-in background memory-consolidation janitor. Off unless

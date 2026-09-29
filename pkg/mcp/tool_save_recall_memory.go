@@ -101,9 +101,28 @@ func ToolSaveMemory(ctx context.Context, deps Deps, args map[string]any) ToolRes
 	id := uuid.New().String()
 	now := time.Now().UTC().Format(time.RFC3339)
 	ownerID := extractOwnerID(ctx)
-	sourceTaskID, _ := args["source_task_id"].(string)
-	sourceReceiptIDs := memoryReceiptJSON(stringSliceArg(args, "source_receipt_ids"))
-	verificationStatus, _ := args["verification_status"].(string)
+	evidence, err := memorySourceEvidence(args)
+	if err != nil {
+		return toolError(err.Error())
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return toolError(err.Error())
+	}
+	defer tx.Rollback()
+	// Take the eventual INSERT lock before proof/task row locks, matching
+	// prepared memory commits and avoiding a PostgreSQL lock-order cycle.
+	if !memoryCommitSQLite(deps) {
+		if _, err := tx.ExecContext(ctx, "LOCK TABLE memories IN ROW EXCLUSIVE MODE"); err != nil {
+			return toolError(err.Error())
+		}
+	}
+	verificationStatus, err := memoryCommitValidateEvidence(ctx, tx, deps, ownerID, collectionName, evidence)
+	if err != nil {
+		return toolError(err.Error())
+	}
+	sourceTaskID := evidence.SourceTaskID
+	sourceReceiptIDs := memoryReceiptJSON(evidence.SourceReceiptIDs)
 	supersedesMemoryID, _ := args["supersedes_memory_id"].(string)
 
 	// Reused-value columns (value/type/collection_name/room/hall/
@@ -130,24 +149,15 @@ func ToolSaveMemory(ctx context.Context, deps Deps, args map[string]any) ToolRes
 		value, memType, room, hall, pin, pinPriority, sourceTaskID, sourceReceiptIDs,
 		verificationStatus, supersedesMemoryID, now}
 	var indexJob memoryindex.Job
-	var err error
-	if provider, ok := deps.(interface{ MemoryIndexOutbox() *memoryindex.Store }); ok && provider.MemoryIndexOutbox() != nil && deps.EmbedAvailable() {
-		tx, beginErr := db.BeginTx(ctx, nil)
-		if beginErr != nil {
-			err = beginErr
-		} else {
-			defer tx.Rollback()
-			err = tx.QueryRowContext(ctx, upsertQuery, queryArgs...).Scan(&canonicalID)
-			if err == nil {
-				digest := fmt.Sprintf("%x", sha256.Sum256([]byte(key+"\x00"+value)))
-				indexJob, err = provider.MemoryIndexOutbox().EnqueueTx(ctx, tx, memoryindex.Job{MemoryID: canonicalID, Operation: "upsert_vector", Collection: collectionName, OwnerID: ownerID, Digest: digest, Model: deps.EmbedModel()})
-			}
-			if err == nil {
-				err = tx.Commit()
-			}
+	err = tx.QueryRowContext(ctx, upsertQuery, queryArgs...).Scan(&canonicalID)
+	if err == nil {
+		if provider, ok := deps.(interface{ MemoryIndexOutbox() *memoryindex.Store }); ok && provider.MemoryIndexOutbox() != nil && deps.EmbedAvailable() {
+			digest := fmt.Sprintf("%x", sha256.Sum256([]byte(key+"\x00"+value)))
+			indexJob, err = provider.MemoryIndexOutbox().EnqueueTx(ctx, tx, memoryindex.Job{MemoryID: canonicalID, Operation: "upsert_vector", Collection: collectionName, OwnerID: ownerID, Digest: digest, Model: deps.EmbedModel()})
 		}
-	} else {
-		err = db.QueryRowContext(ctx, upsertQuery, queryArgs...).Scan(&canonicalID)
+	}
+	if err == nil {
+		err = tx.Commit()
 	}
 	if err != nil {
 		reportMemoryPersistFailure(deps, key, ownerID, collectionName, err.Error())
@@ -309,6 +319,9 @@ func ToolRecallMemory(ctx context.Context, deps Deps, args map[string]any) ToolR
 	if provider, ok := deps.(interface{ MemoryIndexOutbox() *memoryindex.Store }); ok && provider.MemoryIndexOutbox() != nil {
 		provider.MemoryIndexOutbox().WaitReady(ctx, collectionName, ownerID, 200*time.Millisecond)
 	}
+	if includeSuperseded {
+		return recallWithHistory(ctx, deps, db, query, collectionName, room, hall, ownerID)
+	}
 
 	// Strategy 1: vector semantic search, always hydrated through SQL so the
 	// owner scope (and any optional room/hall filter) is enforced
@@ -365,12 +378,12 @@ func appendMemoryFilters(conds []string, qargs []any, pos int, collectionName, r
 
 // scanMemoryRows decodes rows from a memoryRowColumns SELECT into the JSON
 // shape both recall SQL paths return.
-func scanMemoryRows(rows *sql.Rows) []map[string]any {
+func scanMemoryRows(rows *sql.Rows) ([]map[string]any, error) {
 	var results []map[string]any
 	for rows.Next() {
 		var id, key, value, typ, oid, rm, hl, ca, ua, verification, taskID, receiptJSON, supersedes, supersededBy, reason, supersededAt string
 		if err := rows.Scan(&id, &key, &value, &typ, &oid, &rm, &hl, &ca, &ua, &verification, &taskID, &receiptJSON, &supersedes, &supersededBy, &reason, &supersededAt); err != nil {
-			continue
+			return nil, err
 		}
 		var receipts []string
 		_ = json.Unmarshal([]byte(receiptJSON), &receipts)
@@ -390,7 +403,7 @@ func scanMemoryRows(rows *sql.Rows) []map[string]any {
 			"superseded_at": supersededAt, "supersession_reason": reason,
 		})
 	}
-	return results
+	return results, rows.Err()
 }
 
 // recallViaVectorFiltered runs semantic recall under a room/hall filter.
@@ -444,10 +457,19 @@ func recallViaVectorFiltered(ctx context.Context, deps Deps, db *sql.DB, rewrite
 
 	rows, err := db.QueryContext(ctx, rewrite(sqlStr), qargs...)
 	if err != nil {
+		if includeSuperseded {
+			return toolError(err.Error()), true
+		}
 		return ToolResult{}, false
 	}
 	defer rows.Close()
-	out := scanMemoryRows(rows)
+	out, err := scanMemoryRows(rows)
+	if err != nil {
+		if includeSuperseded {
+			return toolError(err.Error()), true
+		}
+		return ToolResult{}, false
+	}
 	if len(out) == 0 {
 		return ToolResult{}, false
 	}
@@ -482,7 +504,10 @@ func recallViaSQLLike(ctx context.Context, db *sql.DB, rewrite func(string) stri
 	}
 	defer rows.Close()
 
-	results := scanMemoryRows(rows)
+	results, err := scanMemoryRows(rows)
+	if err != nil {
+		return toolError(err.Error())
+	}
 	if len(results) == 0 {
 		return jsonResult(map[string]any{
 			"results": []any{},
