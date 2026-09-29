@@ -190,13 +190,17 @@ async def wait_index(client, job_ids, timeout):
         await asyncio.sleep(0.5)
 
 
-async def seed(client, facts, collection, timeout):
-    jobs = []
+async def seed(client, facts, collection, timeout, serial=False):
+    jobs, completed = [], []
     for fact in facts:
         result, _, _ = await client.call("save_memory", collection=collection, **fact)
         if result.get("ok") is not True:
             raise InfrastructureError("save_memory did not confirm persistence")
         jobs.append(result.get("index_job_id"))
+        if serial:
+            completed.extend(await wait_index(client, jobs[-1:], timeout))
+    if serial:
+        return completed
     return await wait_index(client, jobs, timeout)
 
 
@@ -262,13 +266,13 @@ async def run(args, fixture, report):
         if alice.test_owner == bob.test_owner:
             raise InfrastructureError("Alice and Bob resolved to the same owner")
         report["runtime_before"] = await call(alice, "runtime_stats")
-        report["index_jobs"] = await seed(alice, fixture["facts"], collection, args.index_timeout)
+        report["index_jobs"] = await seed(alice, fixture["facts"], collection, args.index_timeout, args.serial_seed)
         gold = await read_gold(alice, fixture["facts"], collection, alice.test_owner)
         write_json(args.output_dir / "gold.json", gold)
         bob_fact = {"key": "f001", "value": "Секрет владельца Боб: пароль вымышленного шлюза — гранатовый туман.", "room": "private", "hall": "fact"}
         other_fact = {"key": "f001", "value": "В соседней коллекции паром Лира отправляется в 22:44.", "room": "transport", "hall": "fact"}
-        await seed(bob, [bob_fact], collection, args.index_timeout)
-        await seed(alice, [other_fact], other_collection, args.index_timeout)
+        await seed(bob, [bob_fact], collection, args.index_timeout, args.serial_seed)
+        await seed(alice, [other_fact], other_collection, args.index_timeout, args.serial_seed)
         bob_gold = await read_gold(bob, [bob_fact], collection, bob.test_owner)
         other_gold = await read_gold(alice, [other_fact], other_collection, alice.test_owner)
         report["runtime_indexed"] = await call(alice, "runtime_stats")
@@ -310,13 +314,13 @@ async def run(args, fixture, report):
         await probe("reconnect", reconnect)
 
         lifecycle = {"key": "lifecycle", "value": "Текущий комендант вымышленной крепости Нерис — Илья.", "room": "lifecycle", "hall": "fact"}
-        await seed(alice, [lifecycle], collection, args.index_timeout)
+        await seed(alice, [lifecycle], collection, args.index_timeout, args.serial_seed)
         life_gold = await read_gold(alice, [lifecycle], collection, alice.test_owner)
         old_id = life_gold["lifecycle"]["id"]
 
         async def upsert():
             lifecycle["value"] = "Текущий комендант вымышленной крепости Нерис — Ольга."
-            await seed(alice, [lifecycle], collection, args.index_timeout)
+            await seed(alice, [lifecycle], collection, args.index_timeout, args.serial_seed)
             updated = await read_gold(alice, [lifecycle], collection, alice.test_owner)
             assert updated["lifecycle"]["id"] == old_id, "upsert changed canonical ID"
             life_gold.update(updated)
@@ -424,6 +428,23 @@ def self_check():
     summarize(denominator_report, {"cases": [denominator_case, denominator_case]})
     assert denominator_report["metrics"]["macro_recall"]["1"] == 0.5
     assert denominator_report["metrics"]["all_gold_at_5"] == 0.5
+    class SeedClient:
+        def __init__(self):
+            self.calls, self.jobs = [], []
+
+        async def call(self, name, **arguments):
+            self.calls.append(name)
+            if name == "save_memory":
+                job = {"id": str(len(self.jobs)), "status": "completed"}
+                self.jobs.append(job)
+                return {"ok": True, "index_job_id": job["id"]}, {}, 0
+            return {"jobs": self.jobs}, {}, 0
+
+    for serial, expected in ((False, ["save_memory", "save_memory", "memory_index_status"]),
+                             (True, ["save_memory", "memory_index_status"] * 2)):
+        client = SeedClient()
+        indexed = asyncio.run(seed(client, fixture["facts"][:2], "isolated", 1, serial))
+        assert client.calls == expected and len(indexed) == 2
     for response in ({"jsonrpc": "2.0", "error": {"code": -32000, "message": "HTTP 200 still failed"}}, {}):
         try:
             rpc_result(response)
@@ -445,7 +466,7 @@ def self_check():
         else:
             raise AssertionError("unsafe URL accepted")
     assert validate_url("http://127.0.0.1:18124")
-    print(json.dumps({"self_check": "pass", "negative_controls": list(controls) + ["malformed_results", "errored_query_denominator", "JSONRPC200error", "MCPisError", "unsafe_url"], "facts": len(fixture["facts"]), "cases": len(fixture["cases"])}))
+    print(json.dumps({"self_check": "pass", "negative_controls": list(controls) + ["malformed_results", "errored_query_denominator", "JSONRPC200error", "MCPisError", "unsafe_url"], "seed_modes_checked": ["bulk", "serial"], "facts": len(fixture["facts"]), "cases": len(fixture["cases"])}))
 
 
 def main():
@@ -456,6 +477,7 @@ def main():
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--fixture", type=Path, default=FIXTURE)
     parser.add_argument("--index-timeout", type=float, default=120)
+    parser.add_argument("--serial-seed", action="store_true", help="Diagnostic preload: await each indexing job before saving the next fact")
     args = parser.parse_args()
     if args.self_check:
         self_check()
@@ -474,7 +496,7 @@ def main():
         "git_revision": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
         "git_status": subprocess.check_output(["git", "status", "--short"], cwd=ROOT, text=True),
         "harness_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
-        "config": {"method": "recall_memory", "top_k": "server fixed; score at 1/3/5/10", "index_timeout_seconds": args.index_timeout},
+        "config": {"method": "recall_memory", "top_k": "server fixed; score at 1/3/5/10", "index_timeout_seconds": args.index_timeout, "seed_mode": "serial" if args.serial_seed else "bulk"},
         "limitations": ["Synthetic developer-authored fixture; no real-world factual truth claim or held-out population estimate.",
             "No answer generation or citation grading in this harness; nonempty unknown retrieval is diagnostic only.",
             "Precision@k divides by k, including absent slots; retrieval metrics exclude unknown cases.",
