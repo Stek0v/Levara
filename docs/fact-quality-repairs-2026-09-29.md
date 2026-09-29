@@ -100,3 +100,20 @@ PostgreSQL instance were stopped after validation.
   budget; serialization trades model throughput for safe shared inference.
 - Document ranking/reranking was not changed; the prior document benchmark's
   limitations remain. No new ranking layer was added.
+
+## Amendment 2026-09-29 evening: deferral budget (fixlist F1)
+
+The deferral described above refunded the non-provider attempt, which let a
+permanently unavailable provider park a job forever: load-gate S3 drained
+never (`drained=false`, 435 pending). Deferrals no longer refund the claim's
+attempt; once attempts reaches the same maxAttempts budget the job transitions
+to `dead_letter` with the preceding failure retained (`memory_index_retry`
+requeues it after recovery). Unit tests cover both SQL dialects.
+
+The load gate itself was also made honest: S3 asserts "every job completes
+exactly once", but its servers could never embed (primary had no embed
+endpoint; the secondary requested a model the local backend does not serve),
+so the assertion passed only vacuously in CI — failed jobs hid from the drain
+check behind future retry times. Both servers now embed through a
+deterministic stdlib stub (`--embed-endpoint/--embed-model`), so S3 verifies
+1000/1000 completions with zero dead letters and zero duplicate claims.
