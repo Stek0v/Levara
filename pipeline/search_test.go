@@ -1,9 +1,13 @@
 package pipeline
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/rand"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 	"time"
@@ -140,6 +144,72 @@ func TestSearchByTextRejectsQueryEmbeddingContractMismatch(t *testing.T) {
 	err := p.validateQueryContract("docs", dim)
 	if !errors.Is(err, store.ErrEmbeddingContractMismatch) {
 		t.Fatalf("validateQueryContract error=%v, want ErrEmbeddingContractMismatch", err)
+	}
+}
+
+func TestSearchPipelineUsesQueryAliasWithCanonicalContract(t *testing.T) {
+	models := make(chan string, 8)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Model string   `json:"model"`
+			Input []string `json:"input"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		models <- req.Model
+		vectors := make([][]float32, len(req.Input))
+		for i := range vectors {
+			vectors[i] = []float32{1, 0, 0}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"embeddings": vectors})
+	}))
+	defer srv.Close()
+	cm, err := store.NewCollectionManager(3, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cm.Close()
+	cm.SetDefaultEmbeddingContract(embcontract.FromEnv("encoder", 3, "cosine"))
+	if err := cm.CreateWithDim("docs", 3, "encoder", "cosine"); err != nil {
+		t.Fatal(err)
+	}
+	if err := cm.Insert("docs", "answer", []float32{1, 0, 0}, map[string]any{"text": "answer"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, enabled := range []bool{false, true} {
+		documentClient := embed.NewClient(srv.URL, "encoder", 16, 1)
+		wantModel := "encoder"
+		if enabled {
+			documentClient = documentClient.WithQueryAlias()
+			wantModel += ":query"
+		}
+		p := NewSearchPipeline(documentClient, cm, nil)
+		results, err := p.SearchByText(context.Background(), "docs", "question", 1)
+		if err != nil || len(results) != 1 || results[0].ID != "answer" {
+			t.Fatalf("single search alias=%v: results=%v error=%v", enabled, results, err)
+		}
+		batch, err := p.BatchSearchByText(context.Background(), "docs", []string{"q1", "q2"}, 1)
+		if err != nil || len(batch) != 2 || len(batch[0]) != 1 || len(batch[1]) != 1 {
+			t.Fatalf("batch search alias=%v: results=%v error=%v", enabled, batch, err)
+		}
+		for i := 0; i < 2; i++ {
+			if got := <-models; got != wantModel {
+				t.Fatalf("alias=%v: sent %q, want %q", enabled, got, wantModel)
+			}
+		}
+		if _, err := documentClient.EmbedSingle(context.Background(), "document"); err != nil {
+			t.Fatal(err)
+		}
+		if got := <-models; got != "encoder" || documentClient.Model() != "encoder" {
+			t.Fatalf("document client changed: sent %q, canonical %q", got, documentClient.Model())
+		}
+	}
+	wrongEncoder := embed.NewClient(srv.URL, "different-encoder", 16, 1).WithQueryAlias()
+	p := NewSearchPipeline(wrongEncoder, cm, nil)
+	if err := p.validateQueryContract("docs", 3); !errors.Is(err, store.ErrEmbeddingContractMismatch) {
+		t.Fatalf("different encoder bypassed contract validation: %v", err)
 	}
 }
 
