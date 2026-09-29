@@ -16,7 +16,7 @@ import (
 	"github.com/stek0v/levara/pkg/memoryindex"
 )
 
-func TestMemoryIndexBreakerDefersWithoutLosingAttemptOrCause(t *testing.T) {
+func TestMemoryIndexBreakerDeferSpendsAttemptAndRetainsCause(t *testing.T) {
 	db := newMCPMemoryBehaviorDB(t)
 	cfg, cleanup := newWorkspaceTestConfig(t)
 	defer cleanup()
@@ -76,8 +76,8 @@ func TestMemoryIndexBreakerDefersWithoutLosingAttemptOrCause(t *testing.T) {
 	}
 	job := jobs[0]
 	next, parseErr := time.Parse(time.RFC3339Nano, job.NextRunAt)
-	if job.Attempts != 3 || job.Status != memoryindex.Pending || job.LastError != original || parseErr != nil || time.Until(next) < 25*time.Second || hits.Load() != 3 {
-		t.Fatalf("breaker must defer without HTTP, spending attempts or replacing cause: job=%+v hits=%d", job, hits.Load())
+	if job.Attempts != 4 || job.Status != memoryindex.Pending || job.LastError != original || parseErr != nil || time.Until(next) < 25*time.Second || hits.Load() != 3 {
+		t.Fatalf("breaker must defer without HTTP, keep the spent attempt and the cause: job=%+v hits=%d", job, hits.Load())
 	}
 	if runMemoryIndexJob(ctx, cfg) || cfg.MemoryIndexOutbox.WaitReady(ctx, "test", "owner", 0) {
 		t.Fatal("deferred job must remain pending and unclaimable until cooldown")
@@ -91,7 +91,7 @@ func TestMemoryIndexBreakerDefersWithoutLosingAttemptOrCause(t *testing.T) {
 		t.Fatal("recovered job was not run")
 	}
 	jobs, err = cfg.MemoryIndexOutbox.List(ctx, "owner", 10)
-	if err != nil || len(jobs) != 1 || jobs[0].Status != memoryindex.Completed || jobs[0].Attempts != 4 || jobs[0].LastError != "" || jobs[0].NextRunAt != "" || hits.Load() != 4 || !cfg.Collections.HasRecord("_memories_test", "recover") {
+	if err != nil || len(jobs) != 1 || jobs[0].Status != memoryindex.Completed || jobs[0].Attempts != 5 || jobs[0].LastError != "" || jobs[0].NextRunAt != "" || hits.Load() != 4 || !cfg.Collections.HasRecord("_memories_test", "recover") {
 		t.Fatalf("recovery must complete with original attempts retained: jobs=%v hits=%d err=%v", jobs, hits.Load(), err)
 	}
 }

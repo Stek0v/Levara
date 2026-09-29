@@ -161,12 +161,23 @@ func (s *Store) Claim(ctx context.Context) (Job, bool, error) {
 	return Job{}, false, nil
 }
 
-// Defer refunds a claim that never reached the provider. Keep the previous
-// failure for diagnosis; next_run_at records the admission cooldown.
-func (s *Store) Defer(ctx context.Context, j Job, until time.Time) error {
-	_, err := s.db.ExecContext(ctx, s.bind(`UPDATE memory_index_jobs SET status='pending',attempts=attempts-1,next_run_at=?,updated_at=?
-		WHERE id=? AND status='running' AND attempts=? AND attempts>0 AND next_run_at=?`),
-		until.UTC().Format(time.RFC3339Nano), time.Now().UTC().Format(time.RFC3339Nano), j.ID, j.Attempts, j.NextRunAt)
+// Defer parks a claim that never reached the provider until the breaker's
+// retry time. The claim's attempt stays spent: refunding it would let a
+// permanently unavailable provider park a job forever (load-gate S3 drain,
+// 2026-09-29), so once attempts reaches maxAttempts the job goes to
+// dead_letter — the preceding failure is retained for diagnosis, and
+// memory_index_retry can requeue it after recovery.
+func (s *Store) Defer(ctx context.Context, j Job, until time.Time, maxAttempts int) error {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if maxAttempts > 0 && j.Attempts >= maxAttempts {
+		_, err := s.db.ExecContext(ctx, s.bind(`UPDATE memory_index_jobs SET status='dead_letter',last_error=CASE WHEN last_error='' THEN 'defer budget exhausted: embedding service unavailable' ELSE last_error END,next_run_at='',updated_at=?
+			WHERE id=? AND status='running' AND attempts=? AND next_run_at=?`),
+			now, j.ID, j.Attempts, j.NextRunAt)
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, s.bind(`UPDATE memory_index_jobs SET status='pending',next_run_at=?,updated_at=?
+		WHERE id=? AND status='running' AND attempts=? AND next_run_at=?`),
+		until.UTC().Format(time.RFC3339Nano), now, j.ID, j.Attempts, j.NextRunAt)
 	return err
 }
 
