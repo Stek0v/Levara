@@ -121,6 +121,11 @@ func workspaceWatchEnabled() bool {
 	return v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes")
 }
 
+func embeddingQueryAliasEnabled() bool {
+	v := strings.TrimSpace(os.Getenv("EMBEDDING_QUERY_ALIAS"))
+	return v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes")
+}
+
 func workspaceIndexWorkerEnabled() bool {
 	v := strings.TrimSpace(os.Getenv("LEVARA_WORKSPACE_INDEX_WORKER"))
 	return v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes")
@@ -257,6 +262,7 @@ func main() {
 	embedKeepalive := flag.String("embed-keepalive-interval", "10m", "Embed keep-alive ping interval (0 or negative to disable, e.g. 5m, 30m). Default 10m — prevents Ollama/vLLM eviction")
 	embedEndpointF := flag.String("embed-endpoint", os.Getenv("EMBEDDING_ENDPOINT"), "Embedding API endpoint URL (falls back to $EMBEDDING_ENDPOINT)")
 	embedModelF := flag.String("embed-model", firstNonEmpty(os.Getenv("EMBEDDING_MODEL"), "text-embedding-3-small"), "Embedding model name (falls back to $EMBEDDING_MODEL)")
+	embedQueryAlias := flag.Bool("embed-query-alias", embeddingQueryAliasEnabled(), "Use the same encoder's <model>:query alias for search-pipeline queries (falls back to $EMBEDDING_QUERY_ALIAS)")
 	embedRequire := flag.Bool("embed-require", false, "Fail startup if embedding endpoint is unreachable")
 	pgURL := flag.String("pg-url", os.Getenv("DATABASE_URL"), "PostgreSQL connection URL (falls back to $DATABASE_URL)")
 	structuredExtractEndpoint := flag.String("structured-extract-endpoint", firstNonEmpty(os.Getenv("STRUCTURED_EXTRACT_ENDPOINT"), os.Getenv("LIFT_ENDPOINT")), "Schema-driven document extraction sidecar endpoint (falls back to $STRUCTURED_EXTRACT_ENDPOINT or $LIFT_ENDPOINT)")
@@ -787,6 +793,9 @@ func main() {
 	// reembed migration, per-collection dual-search, gRPC request-driven params)
 	// still construct their own client.
 	sharedEmbed := embed.NewClient(embedEndpoint, embedModel, 16, 3)
+	if *embedQueryAlias {
+		sharedEmbed = sharedEmbed.WithQueryAlias()
+	}
 	// P4 embedder QoS: one admission gate, foreground (search/recall) keeps
 	// queue priority; the cognify pipeline embeds through a background lane
 	// capped by LEVARA_EMBED_BG_CONCURRENCY (default 2) so corpus batches
@@ -961,7 +970,9 @@ func main() {
 	// MCP (Model Context Protocol) server — JSON-RPC 2.0 for AI agent integration
 	vectorHttp.RegisterMCPAPI(app, mcpCfg)
 	vectorHttp.StartConsolidationRecovery(mcpCfg)
-	stopMemoryIndexWorker := vectorHttp.StartMemoryIndexWorker(mcpCfg, memoryIndexWorkerInterval())
+	memoryWorkerCfg := mcpCfg
+	memoryWorkerCfg.EmbedClient = sharedEmbed.WithPriorityGate(embedGate).WithBackground().WithConcurrency(embedderBackgroundConcurrency())
+	stopMemoryIndexWorker := vectorHttp.StartMemoryIndexWorker(memoryWorkerCfg, memoryIndexWorkerInterval())
 	defer stopMemoryIndexWorker()
 
 	// Opt-in background memory-consolidation janitor. Off unless

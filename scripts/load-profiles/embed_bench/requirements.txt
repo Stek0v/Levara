@@ -1,5 +1,6 @@
 fastapi==0.115.0
 uvicorn[standard]==0.32.0
+# Legacy recipes only; gemma-full needs a separate runtime (docs/embed-ops-runbook.md).
 transformers==4.49.0
 pillow==12.2.0
 torch==2.4.1

@@ -638,8 +638,9 @@ func TestToolRecallMemory_VectorPathHydratesFromSQL(t *testing.T) {
 }
 
 func TestToolRecallMemoryHydratesProvenanceForSQLAndVector(t *testing.T) {
-	deps := setupSaveRecallMemoryDB(t)
-	ctx := context.WithValue(context.Background(), UserIDKey, "owner-a")
+	fixture, ctx := memoryCommitEvidenceFixture(t, false)
+	deps := fixture.Deps.(*fakeDeps)
+	taskID, receiptID := memoryCommitOwnedTaskReceipt(t, deps, ctx)
 	if got := ToolSaveMemory(ctx, deps, map[string]any{
 		"key": "runtime-choice", "value": "old", "collection": "levara", "room": "memory", "hall": "decision",
 	}); got.IsError {
@@ -651,7 +652,7 @@ func TestToolRecallMemoryHydratesProvenanceForSQLAndVector(t *testing.T) {
 	}
 	if got := ToolSupersedeMemory(ctx, deps, map[string]any{
 		"old_memory_id": oldID, "new_value": "new", "reason": "validated replacement",
-		"source_task_id": "task-1", "source_receipt_ids": []any{"receipt-1"}, "verification_status": "verified",
+		"source_task_id": taskID, "source_receipt_ids": []any{receiptID}, "verification_status": "verified",
 	}); got.IsError {
 		t.Fatal(got.Content[0].Text)
 	}
@@ -665,13 +666,13 @@ func TestToolRecallMemoryHydratesProvenanceForSQLAndVector(t *testing.T) {
 			t.Fatalf("recall=%+v", items)
 		}
 		item := items[0]
-		if item["verification_status"] != "verified" || item["source_task_id"] != "task-1" ||
+		if item["verification_status"] != "receipt-validated" || item["source_task_id"] != taskID ||
 			item["supersedes_memory_id"] != oldID || item["supersession_state"] != "active" ||
 			item["supersession_reason"] != "validated replacement" || item["superseded_at"] == "" {
 			t.Fatalf("provenance=%+v", item)
 		}
 		receipts, ok := item["source_receipt_ids"].([]any)
-		if !ok || len(receipts) != 1 || receipts[0] != "receipt-1" {
+		if !ok || len(receipts) != 1 || receipts[0] != receiptID {
 			t.Fatalf("receipt provenance=%+v", item["source_receipt_ids"])
 		}
 	}

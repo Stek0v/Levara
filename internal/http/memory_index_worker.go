@@ -11,6 +11,7 @@ import (
 
 	"sync"
 
+	"github.com/stek0v/levara/pkg/embed"
 	"github.com/stek0v/levara/pkg/memoryindex"
 )
 
@@ -105,13 +106,24 @@ func enqueueMissingMemoryVectors(cfg APIConfig) {
 	}
 }
 
+// memoryIndexMaxAttempts bounds both real-failure retries and breaker
+// deferrals: a deferral no longer refunds the attempt, so a job facing a
+// permanently unavailable embedding service terminates in dead_letter
+// (recoverable via memory_index_retry) instead of parking forever.
+const memoryIndexMaxAttempts = 5
+
 func runMemoryIndexJob(ctx context.Context, cfg APIConfig) bool {
 	job, ok, err := cfg.MemoryIndexOutbox.Claim(ctx)
 	if err != nil || !ok {
 		return false
 	}
 	err = executeMemoryIndexJob(ctx, cfg, job)
-	_ = cfg.MemoryIndexOutbox.Finish(context.Background(), job, err, 5, time.Second)
+	var blocked *embed.BreakerOpenError
+	if errors.As(err, &blocked) {
+		_ = cfg.MemoryIndexOutbox.Defer(context.Background(), job, blocked.RetryAt, memoryIndexMaxAttempts)
+		return true
+	}
+	_ = cfg.MemoryIndexOutbox.Finish(context.Background(), job, err, memoryIndexMaxAttempts, time.Second)
 	return true
 }
 

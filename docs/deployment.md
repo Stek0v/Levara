@@ -45,6 +45,7 @@ listeners or connecting to a database/provider; it is not a connectivity test.
 | `-data-dir` / `LEVARA_DATA_DIR` | Vector state and default local workspace/upload roots |
 | `EMBEDDING_ENDPOINT` | Full embeddings URL, including `/v1/embeddings` |
 | `EMBEDDING_MODEL`, `-dim` | Must match the provider output and collection contract |
+| `EMBEDDING_QUERY_ALIAS` / `-embed-query-alias` | Opt-in paired query alias for the search pipeline; disabled by default |
 | `LLM_PROVIDER`, `LLM_ENDPOINT`, `LLM_MODEL`, `LLM_API_KEY` | Optional language-model provider; no `-llm-model` flag |
 | `-host` / `LEVARA_HTTP_HOST` | HTTP bind address; default loopback |
 | `-grpc-host` / `LEVARA_GRPC_HOST`, `-grpc-port` | Separate gRPC listener; port `0` disables it |
@@ -54,6 +55,21 @@ listeners or connecting to a database/provider; it is not a connectivity test.
 Local upload storage defaults to `<data-dir>/uploads`; `STORAGE_PATH` is not a
 server override for that path. Configuring a remote model or extractor sends
 relevant content to that provider. See [integrations](integrations.md).
+
+Enable `-embed-query-alias` (or `EMBEDDING_QUERY_ALIAS=true`) only if the provider
+supports `<EMBEDDING_MODEL>:query` as the query-prompt alias of the **same encoder**
+used for documents. The configured model stays canonical in collection contracts;
+only search-pipeline single and batch queries send the alias. Document embedding
+keeps the base model. This does not permit a different query encoder or waive
+contract checks. Providers without this alias should keep the default disabled;
+an unsupported alias fails the embedding request rather than falling back.
+The flag overrides the environment; `-embed-query-alias=false` disables it.
+
+Query and document cache entries are isolated by role, endpoint, canonical model
+and effective wire model; existing text-only cache entries become misses. Direct
+embedding calls outside the search pipeline (including memory recall, migration
+dual-search and direct gRPC calls) retain their existing behavior. Validate those
+paths separately before assuming deployment-wide query prompting.
 
 ## Linux/systemd
 

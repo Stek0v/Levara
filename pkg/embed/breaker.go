@@ -13,6 +13,15 @@ import (
 // opaque TaskGroup timeouts).
 var ErrBreakerOpen = errors.New("embedding service circuit breaker open — failing fast, will retry shortly")
 
+// BreakerOpenError reports a rejected request, not a failed provider attempt.
+// RetryAt lets durable callers defer work until the existing cooldown expires.
+type BreakerOpenError struct {
+	RetryAt time.Time
+}
+
+func (e *BreakerOpenError) Error() string { return ErrBreakerOpen.Error() }
+func (e *BreakerOpenError) Unwrap() error { return ErrBreakerOpen }
+
 // Breaker is a consecutive-failure circuit breaker with a half-open
 // probe: after `threshold` consecutive failures it opens for `cooldown`,
 // then lets a single probe through; a successful probe closes it again.
@@ -42,7 +51,7 @@ func (b *Breaker) Allow() error {
 	if time.Now().After(b.openUntil) {
 		return nil
 	}
-	return ErrBreakerOpen
+	return &BreakerOpenError{RetryAt: b.openUntil}
 }
 
 func (b *Breaker) RecordSuccess() {

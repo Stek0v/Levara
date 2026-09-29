@@ -336,8 +336,8 @@ async def scenario_s3(args, http):
         args.server_binary,
         "-profile=standalone-embed", "-port=18082", "-grpc-port=0",
         f"-data-dir={args.data_dir_b}", "-node-id=loadtest2", "-dim=256",
-        "-embed-endpoint=http://127.0.0.1:9101/v1/embeddings",
-        "-embed-model=potion-code-16M", f"-pg-url={args.pg_dsn}",
+        f"-embed-endpoint={args.embed_endpoint}", f"-embed-model={args.embed_model}",
+        f"-pg-url={args.pg_dsn}",
         env={**os.environ, "LEVARA_LONG_HORIZON_RUNTIME": "1"},
         stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
     )
@@ -396,8 +396,8 @@ async def scenario_s6(args, http):
         args.server_binary,
         "-profile=standalone-embed", "-port=18082", "-grpc-port=0",
         f"-data-dir={args.data_dir_b}", "-node-id=loadtest2", "-dim=256",
-        "-embed-endpoint=http://127.0.0.1:9101/v1/embeddings",
-        "-embed-model=potion-code-16M", f"-pg-url={args.pg_dsn}",
+        f"-embed-endpoint={args.embed_endpoint}", f"-embed-model={args.embed_model}",
+        f"-pg-url={args.pg_dsn}",
         env={**os.environ, "LEVARA_LONG_HORIZON_RUNTIME": "1"},
         stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
     )
@@ -459,6 +459,10 @@ async def main():
     ap.add_argument("--data-dir-b", default="/tmp/levara-load2/data-b")
     ap.add_argument("--pg-dsn", default="postgres://stek0v@localhost:5432/levara_load2?sslmode=disable")
     ap.add_argument("--s3-saves", type=int, default=1000)
+    ap.add_argument("--embed-endpoint", default="http://127.0.0.1:9101/v1/embeddings",
+                    help="Embedding endpoint for spawned dual-process servers")
+    ap.add_argument("--embed-model", default="potion-code-16M",
+                    help="Embedding model announced to spawned dual-process servers")
     args = ap.parse_args()
 
     results = []

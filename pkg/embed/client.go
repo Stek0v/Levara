@@ -18,6 +18,8 @@ import (
 type Client struct {
 	url         string
 	model       string
+	queryAlias  bool
+	query       bool
 	batchSize   int
 	concurrency int
 	httpClient  *http.Client
@@ -78,6 +80,44 @@ func (c *Client) Model() string {
 	return c.model
 }
 
+// WithQueryAlias enables the provider's fixed <model>:query alias on a copy.
+// The alias must select the query prompt of the same encoder, not another model.
+// Document requests and the canonical embedding contract remain unchanged.
+func (c *Client) WithQueryAlias() *Client {
+	cp := *c
+	cp.queryAlias = true
+	return &cp
+}
+
+// AsQuery returns a query-role copy, preserving shared transport, guard and QoS.
+// Without WithQueryAlias, the wire model remains unchanged for compatibility.
+func (c *Client) AsQuery() *Client {
+	if c == nil {
+		return nil
+	}
+	cp := *c
+	cp.query = true
+	return &cp
+}
+
+func (c *Client) wireModel() string {
+	if c.query && c.queryAlias {
+		return c.model + ":query"
+	}
+	return c.model
+}
+
+func (c *Client) cacheKey(text string) string {
+	role := "document"
+	if c.query {
+		role = "query"
+	}
+	// JSON framing keeps arbitrary text/model separators unambiguous. The
+	// versioned namespace also leaves legacy text-only cache entries unused.
+	key, _ := json.Marshal([6]string{"embed-v2", c.url, c.model, c.wireModel(), role, text})
+	return string(key)
+}
+
 // WithConcurrency returns a copy with a different batch-concurrency limit
 // (background lanes use this to stay under the admission gate's budget).
 func (c *Client) WithConcurrency(n int) *Client {
@@ -135,6 +175,12 @@ func (c *Client) EmbedTexts(ctx context.Context, texts []string) ([][]float32, e
 		return nil, err
 	}
 	defer release()
+	// The endpoint may have failed while this call waited for admission.
+	if c.breaker != nil {
+		if err := c.breaker.Allow(); err != nil {
+			return nil, err
+		}
+	}
 
 	allVecs := make([][]float32, len(texts))
 
@@ -143,7 +189,7 @@ func (c *Client) EmbedTexts(ctx context.Context, texts []string) ([][]float32, e
 	var missIndices []int
 	if c.cache != nil {
 		for i, t := range texts {
-			if vec, ok := c.cache.Get(t); ok {
+			if vec, ok := c.cache.Get(c.cacheKey(t)); ok {
 				allVecs[i] = vec
 			} else {
 				missTexts = append(missTexts, t)
@@ -202,7 +248,7 @@ func (c *Client) EmbedTexts(ctx context.Context, texts []string) ([][]float32, e
 	if c.cache != nil {
 		for i, t := range missTexts {
 			if missVecs[i] != nil {
-				c.cache.Put(t, missVecs[i])
+				c.cache.Put(c.cacheKey(t), missVecs[i])
 			}
 		}
 	}
@@ -234,7 +280,7 @@ func (c *Client) embedBatch(ctx context.Context, texts []string) (vecs [][]float
 	}
 	reqBody, err := json.Marshal(embeddingRequest{
 		Input: texts,
-		Model: c.model,
+		Model: c.wireModel(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)

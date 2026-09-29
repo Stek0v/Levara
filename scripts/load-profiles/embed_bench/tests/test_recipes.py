@@ -3,8 +3,8 @@ import pytest
 from embed_bench.recipes import RECIPES, get_recipe
 
 
-def test_three_recipes_present():
-    assert set(RECIPES.keys()) == {"potion", "granite", "jina"}
+def test_recipes_present():
+    assert set(RECIPES.keys()) == {"potion", "gemma", "gemma-full", "granite", "nomic", "jina"}
 
 
 def test_potion_recipe_shape():
@@ -25,11 +25,21 @@ def test_granite_recipe_shape():
 
 def test_jina_recipe_shape():
     r = get_recipe("jina")
-    assert r.repo == "jinaai/jina-embeddings-v5-omni-nano"
+    assert r.repo == "jinaai/jina-embeddings-v2-small-en"
     assert r.backend == "transformers"
     assert r.dim == 512
-    assert r.openai_name == "jina-omni-nano"
+    assert r.openai_name == "jina-v2-small-en"
     assert r.trust_remote_code is True
+
+
+def test_full_gemma_is_pinned_and_has_a_distinct_identity():
+    legacy, full = get_recipe("gemma"), get_recipe("gemma-full")
+    assert legacy.openai_name == "embeddinggemma-300m"
+    assert legacy.revision is None
+    assert full.openai_name == "embeddinggemma-300m-full-v1"
+    assert full.revision == "bfa3c846ac738e62aa61806ef9112d34acb1dc5a"
+    assert full.repo == legacy.repo
+    assert full.dim == legacy.dim == 768
 
 
 def test_unknown_recipe_raises():

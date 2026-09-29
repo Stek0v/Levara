@@ -103,16 +103,17 @@ LEVARA_INTEGRATION=1 pytest deploy/rerank/test_chaos_integration.py -v
 
 ## Qwen3 reranker adapter
 
-`cmd/qwen3rerank` translates `/rerank` requests into one upstream chat-completion
+`cmd/qwen3rerank` translates `/rerank` requests into one upstream raw completion
 request per query/document pair and sorts the resulting scores. It requires
-an upstream that supports the model's yes/no log probabilities through
-`/v1/chat/completions`. The native Cohere-compatible sidecar above does not
+an upstream compatible with llama-server's `/completion` endpoint and
+`completion_probabilities`. The adapter supplies the model's exact prompt
+template. The native Cohere-compatible sidecar above does not
 need this extra adapter.
 
 | Variable | Default | Meaning |
 |----------|---------|---------|
-| `QWEN3_UPSTREAM` | required | upstream origin; adapter appends `/v1/chat/completions` |
-| `QWEN3_MODEL` | `qwen3-reranker-0.6b` | model identifier sent upstream |
+| `QWEN3_UPSTREAM` | required | upstream origin or full `/completion` URL |
+| `QWEN3_MODEL` | `qwen3-reranker-0.6b` | reported model label; the upstream selects its loaded model |
 | `QWEN3_TIMEOUT_MS` | `5000` | per-pair request timeout |
 | `QWEN3_CONCURRENCY` | `4` | maximum simultaneous pairs |
 | `PORT` | `9003` | adapter listen port |
@@ -139,3 +140,7 @@ pointing a test Levara process at its URL through `RERANK_ENDPOINT`.
 Compare reranked ordering against labelled queries; scores from different
 models are not comparable quality measurements. This setup does not require
 renaming SQL collections, restarting a working instance or migrating its data.
+
+The current adapter scores raw `P(yes)` and falls back to a binary text match
+when probabilities are absent. It does not normalize over the `yes`/`no` pair.
+Record this scoring protocol when comparing it with another Qwen implementation.

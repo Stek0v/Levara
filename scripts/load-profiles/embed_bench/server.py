@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import resource
+from threading import Lock
 from typing import Union
 
 from fastapi import FastAPI, HTTPException
@@ -34,7 +35,7 @@ class _FakeBackend:
     def __init__(self, dim: int):
         self.dim = dim
 
-    def embed(self, texts: list[str]) -> list[list[float]]:
+    def embed(self, texts: list[str], kind: str = "document") -> list[list[float]]:
         return [[float((hash(t) + i) % 7) / 7.0 for i in range(self.dim)] for t in texts]
 
 
@@ -54,6 +55,9 @@ def build_app() -> FastAPI:
         backend_name = recipe.backend
 
     app = FastAPI(title="embed-bench", version="1")
+    # One shared model: concurrent MPS inference has crashed the native backend.
+    # Keep health checks independent of inference admission.
+    inference_lock = Lock()
 
     @app.get("/health")
     def health() -> dict:
@@ -66,11 +70,16 @@ def build_app() -> FastAPI:
 
     @app.post("/v1/embeddings")
     def embeddings(req: EmbedRequest) -> dict:
+        if model_short == "gemma-full" and req.model not in {
+            openai_name, f"{openai_name}:query", f"{openai_name}:document"
+        }:
+            raise HTTPException(status_code=400, detail=f"model must identify {openai_name}")
         texts = [req.input] if isinstance(req.input, str) else req.input
         if not texts:
             raise HTTPException(status_code=400, detail="input must not be empty")
         kind = "query" if (req.model or "").endswith(":query") else "document"
-        vectors = backend.embed(texts, kind=kind)
+        with inference_lock:
+            vectors = backend.embed(texts, kind=kind)
         return {
             "model": openai_name,
             "data": [{"embedding": v, "index": i} for i, v in enumerate(vectors)],

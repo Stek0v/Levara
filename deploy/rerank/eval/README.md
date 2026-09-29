@@ -56,6 +56,17 @@ before measuring rerank. Never use a live collection as the fixture target.
 
 ## Reading results
 
+Run the quality-metric checks without a model or HTTP service:
+
+```bash
+python3 -m pytest deploy/rerank/test_quality.py -q -k 'not test_ndcg10_regression'
+```
+
+The live `test_ndcg10_regression` needs the cached corpus and an explicitly
+selected `RERANK_URL`. It deterministically permutes candidates with their
+labels and compares NDCG against that same input order, as well as the existing
+quality floor. An identity reranker must not pass as a quality improvement.
+
 Compare baseline and rerank using the same corpus/query digests, top-K and
 relevance mapping. Report quality metrics separately from latency, failed
 requests and skipped queries. An importable fixture or a successful chaos test

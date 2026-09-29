@@ -497,6 +497,25 @@ func ToolTaskReceipt(ctx context.Context, deps Deps, args map[string]any) ToolRe
 	if receiptType == "artifact" && (stringArg(args, "evidence_uri") == "" || stringArg(args, "artifact_digest") == "") {
 		return toolError("artifact receipts require evidence_uri and artifact_digest")
 	}
+	var exitCode any
+	if raw, exists := args["exit_code"]; exists {
+		// Keep both dialects within PostgreSQL's INTEGER range. Never coerce null,
+		// strings, fractions, or out-of-range values into a successful zero.
+		switch value := raw.(type) {
+		case int:
+			if int64(value) < -2147483648 || int64(value) > 2147483647 {
+				return toolError("exit_code must be a signed 32-bit integer")
+			}
+			exitCode = value
+		case float64:
+			if value < -2147483648 || value > 2147483647 || value != float64(int32(value)) {
+				return toolError("exit_code must be a signed 32-bit integer")
+			}
+			exitCode = int32(value)
+		default:
+			return toolError("exit_code must be a signed 32-bit integer")
+		}
+	}
 	db := deps.DB()
 	if db == nil {
 		return toolError("database not configured")
@@ -558,10 +577,6 @@ func ToolTaskReceipt(ctx context.Context, deps Deps, args map[string]any) ToolRe
 	}
 	now, receiptID := time.Now().UTC().Format(time.RFC3339Nano), uuid.NewString()
 	criteriaJSON, _ := json.Marshal(criteria)
-	var exitCode any
-	if _, ok := args["exit_code"]; ok {
-		exitCode = intArg(args, "exit_code", 0)
-	}
 	insertResult, err := tx.ExecContext(ctx, deps.Q(`INSERT INTO task_receipts
 		(id,task_id,idempotency_key,owner_id,receipt_type,status,criterion_ids_json,observation,exit_code,
 		 evidence_uri,artifact_digest,workspace_revision,metadata_json,created_at)
@@ -776,7 +791,7 @@ func validateTask(ctx context.Context, deps Deps, taskID, owner, mode string) (t
 			if !containsString(ids, criterionID) {
 				continue
 			}
-			if r.status != "pass" || (r.typ == "command" && r.exit.Valid && r.exit.Int64 != 0) {
+			if r.status != "pass" || (r.typ == "command" && (!r.exit.Valid || r.exit.Int64 != 0)) {
 				failed = true
 				continue
 			}
@@ -1118,6 +1133,13 @@ func ToolTaskComplete(ctx context.Context, deps Deps, args map[string]any) ToolR
 		return toolError(err.Error())
 	}
 	defer tx.Rollback()
+	// Promotion writes memories. Acquire that table lock before updating the
+	// task row, in the same order as prepared memory commits and supersession.
+	if !memoryCommitSQLite(deps) {
+		if _, err := tx.ExecContext(ctx, "LOCK TABLE memories IN ROW EXCLUSIVE MODE"); err != nil {
+			return toolError(err.Error())
+		}
+	}
 	res, err := tx.ExecContext(ctx, deps.Q(`UPDATE tasks SET status='completed',version=version+1,updated_at=$1,completed_at=$2 WHERE id=$3 AND version=$4 AND status<>'completed'`), now, now, taskID, expected)
 	if err != nil {
 		return toolError(err.Error())
@@ -1141,8 +1163,8 @@ func ToolTaskComplete(ctx context.Context, deps Deps, args map[string]any) ToolR
 }
 
 func promoteTaskMemories(ctx context.Context, deps Deps, tx *sql.Tx, taskID string) (int, int, error) {
-	var collection, revision string
-	if err := tx.QueryRowContext(ctx, deps.Q(`SELECT collection_name,current_workspace_revision FROM tasks WHERE id=$1`), taskID).Scan(&collection, &revision); err != nil {
+	var collection string
+	if err := tx.QueryRowContext(ctx, deps.Q(`SELECT collection_name FROM tasks WHERE id=$1`), taskID).Scan(&collection); err != nil {
 		return 0, 0, err
 	}
 	rows, err := tx.QueryContext(ctx, deps.Q(`SELECT id,memory_key,value,room,hall,evidence_receipt_ids FROM task_memory_candidates WHERE task_id=$1 AND status='pending' ORDER BY memory_key`), taskID)
@@ -1172,15 +1194,12 @@ func promoteTaskMemories(ctx context.Context, deps Deps, tx *sql.Tx, taskID stri
 		if c.hall == "event" && !absoluteDateRE.MatchString(c.value) {
 			valid = false
 		}
-		for _, rid := range evidence {
-			var status, receiptRevision string
-			err := tx.QueryRowContext(ctx, deps.Q(`SELECT status,workspace_revision FROM task_receipts WHERE id=$1 AND task_id=$2`), rid, taskID).Scan(&status, &receiptRevision)
-			if err != nil && !errors.Is(err, sql.ErrNoRows) {
-				return 0, 0, err
+		verification, evidenceErr := memoryCommitValidateEvidence(ctx, tx, deps, taskOwner(ctx), collection, memoryCommitCandidate{SourceTaskID: taskID, SourceReceiptIDs: evidence})
+		if evidenceErr != nil {
+			if ctx.Err() != nil {
+				return 0, 0, ctx.Err()
 			}
-			if err != nil || status != "pass" || (revision != "" && receiptRevision != revision) {
-				valid = false
-			}
+			valid = false
 		}
 		if !valid {
 			if _, err := tx.ExecContext(ctx, deps.Q(`UPDATE task_memory_candidates SET status='rejected' WHERE id=$1`), c.id); err != nil {
@@ -1190,7 +1209,9 @@ func promoteTaskMemories(ctx context.Context, deps Deps, tx *sql.Tx, taskID stri
 			continue
 		}
 		var memoryID, existingValue, memType, ownerID string
-		err := tx.QueryRowContext(ctx, deps.Q(`SELECT id,value,type,owner_id FROM memories WHERE key=$1 AND collection_name=$2 AND (owner_id=$3 OR owner_id='') AND superseded_by='' ORDER BY owner_id DESC LIMIT 1`), c.key, collection, taskOwner(ctx)).Scan(&memoryID, &existingValue, &memType, &ownerID)
+		// A task publishes into its own namespace. A shared fact with the
+		// same key must not become an implicit globally writable target.
+		err := tx.QueryRowContext(ctx, deps.Q(`SELECT id,value,type,owner_id FROM memories WHERE key=$1 AND collection_name=$2 AND owner_id=$3 AND superseded_by=''`), c.key, collection, taskOwner(ctx)).Scan(&memoryID, &existingValue, &memType, &ownerID)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return 0, 0, err
 		}
@@ -1210,7 +1231,7 @@ func promoteTaskMemories(ctx context.Context, deps Deps, tx *sql.Tx, taskID stri
 			memoryID, ownerID, memType = uuid.NewString(), taskOwner(ctx), "project"
 		}
 		if changed {
-			value := memoryCommitCandidate{Key: c.key, Value: c.value, Room: c.room, Hall: c.hall, SourceTaskID: taskID, SourceReceiptIDs: evidence, VerificationStatus: "verified"}
+			value := memoryCommitCandidate{Key: c.key, Value: c.value, Room: c.room, Hall: c.hall, SourceTaskID: taskID, SourceReceiptIDs: evidence, VerificationStatus: verification}
 			if err := memoryCommitInsert(ctx, tx, deps, memoryID, value, ownerID, collection, memType, oldID); err != nil {
 				return 0, 0, err
 			}
@@ -1227,7 +1248,7 @@ func promoteTaskMemories(ctx context.Context, deps Deps, tx *sql.Tx, taskID stri
 				}
 			}
 		}
-		res, err := tx.ExecContext(ctx, deps.Q(`UPDATE memories SET source_task_id=$1,source_receipt_ids=$2,verification_status='verified' WHERE id=$3 AND superseded_by='' AND value=$4`), taskID, c.evidence, memoryID, c.value)
+		res, err := tx.ExecContext(ctx, deps.Q(`UPDATE memories SET source_task_id=$1,source_receipt_ids=$2,verification_status=$3 WHERE id=$4 AND superseded_by='' AND value=$5`), taskID, c.evidence, verification, memoryID, c.value)
 		if err != nil {
 			return 0, 0, err
 		}

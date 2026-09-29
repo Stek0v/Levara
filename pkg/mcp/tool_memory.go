@@ -66,7 +66,8 @@ func ToolListMemories(ctx context.Context, deps Deps, args map[string]any) ToolR
 
 	conds = append(conds, "superseded_by = ''")
 
-	sqlStr := `SELECT id, key, value, type, owner_id, room, hall, is_pinned, pin_priority, created_at, updated_at FROM memories`
+	sqlStr := `SELECT id, key, value, type, owner_id, room, hall, is_pinned, pin_priority, created_at, updated_at,
+		COALESCE(NULLIF(verification_status,''),'unverified'), COALESCE(source_task_id,''), COALESCE(source_receipt_ids,'[]') FROM memories`
 	sqlStr += " WHERE " + strings.Join(conds, " AND ")
 	sqlStr += fmt.Sprintf(" ORDER BY updated_at DESC LIMIT %d", listMemoriesCap)
 
@@ -79,16 +80,23 @@ func ToolListMemories(ctx context.Context, deps Deps, args map[string]any) ToolR
 	var results []map[string]any
 	for rows.Next() {
 		var id, key, value, typ, ownerID, rm, hl, ca, ua string
+		var verification, taskID, receiptJSON string
 		var pinned bool
 		var prio int
-		if err := rows.Scan(&id, &key, &value, &typ, &ownerID, &rm, &hl, &pinned, &prio, &ca, &ua); err != nil {
+		if err := rows.Scan(&id, &key, &value, &typ, &ownerID, &rm, &hl, &pinned, &prio, &ca, &ua, &verification, &taskID, &receiptJSON); err != nil {
 			return toolError(err.Error())
+		}
+		var receipts []string
+		_ = json.Unmarshal([]byte(receiptJSON), &receipts)
+		if receipts == nil {
+			receipts = []string{}
 		}
 		results = append(results, map[string]any{
 			"id": id, "key": key, "value": value, "type": typ,
 			"owner_id": ownerID, "room": rm, "hall": hl,
 			"is_pinned": pinned, "pin_priority": prio,
 			"created_at": ca, "updated_at": ua,
+			"verification_status": verification, "source_task_id": taskID, "source_receipt_ids": receipts,
 		})
 	}
 
@@ -271,7 +279,8 @@ func ToolWakeUp(ctx context.Context, deps Deps, args map[string]any) ToolResult 
 // wakeUpPinned loads pinned memories owned by ownerID (or the empty
 // shared owner) in priority-desc order.
 func wakeUpPinned(ctx context.Context, db *sql.DB, rewrite func(string) string, ownerID, collectionName string) []map[string]any {
-	sqlStr := fmt.Sprintf(`SELECT key, value, hall, room, pin_priority FROM memories
+	sqlStr := fmt.Sprintf(`SELECT key, value, hall, room, pin_priority,
+		COALESCE(NULLIF(verification_status,''),'unverified'), COALESCE(source_task_id,''), COALESCE(source_receipt_ids,'[]') FROM memories
 		WHERE %s AND (owner_id = $1 OR owner_id = '') AND superseded_by = ''`, sqlcompat.BoolTrue("is_pinned"))
 	qargs := []any{ownerID}
 	if collectionName != "" {
@@ -289,12 +298,19 @@ func wakeUpPinned(ctx context.Context, db *sql.DB, rewrite func(string) string, 
 	var out []map[string]any
 	for rows.Next() {
 		var k, v, hl, rm string
+		var verification, taskID, receiptJSON string
 		var prio int
-		if err := rows.Scan(&k, &v, &hl, &rm, &prio); err != nil {
+		if err := rows.Scan(&k, &v, &hl, &rm, &prio, &verification, &taskID, &receiptJSON); err != nil {
 			continue
+		}
+		var receipts []string
+		_ = json.Unmarshal([]byte(receiptJSON), &receipts)
+		if receipts == nil {
+			receipts = []string{}
 		}
 		out = append(out, map[string]any{
 			"key": k, "value": v, "hall": hl, "room": rm, "priority": prio,
+			"verification_status": verification, "source_task_id": taskID, "source_receipt_ids": receipts,
 		})
 	}
 	return out

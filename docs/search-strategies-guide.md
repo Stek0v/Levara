@@ -59,7 +59,7 @@ search(search_query="who maintains payments", collection="demo",
 ```
 
 `top_k`, а не `limit`, ограничивает число результатов `search`.
-`recall_memory` имеет другую схему и собственный `limit`. Room/tags помогают
+`recall_memory` имеет другую схему без параметров `top_k` и `rerank`. Room/tags помогают
 сузить предметную область. `dedup` по умолчанию включён; специальные параметры
 `multi_query`, `parent_child`, `graph_rerank` требуют подходящих данных и
 зависимостей. Проверяйте текущую [схему](api-contract.md) перед их использованием.
@@ -81,6 +81,14 @@ Reranker — отдельный provider, [настройка sidecar](../deploy
 boolean с default `false`, поэтому REST default-on нельзя переносить на MCP.
 Явное `true` не отменяет timeout, ошибки провайдера или отсутствие текста.
 
+В MCP `rerank:true` поддерживается для `CHUNKS`, `HYBRID` и
+`WEIGHTED_HYBRID`; lexical-only поиск остаётся без cross-encoder прохода.
+`workspace_search` по умолчанию выбирает HYBRID, но rerank нужно запросить
+явно. Сначала объединяются кандидаты, затем проверяется доступ, выполняется
+rerank и применяется лимит. MCP возвращает общий флаг `reranked`, REST —
+флаг в каждом результате. `recall_memory` и `task_bootstrap` этим проходом
+не пользуются. В MCP явное `true` не обходит настроенный score-gap gate.
+
 `RERANK_BUDGET_MS` ограничивает rerank budget (default 1500 ms);
 `RERANK_TIMEOUT_MS` задаёт client timeout. При budget/error/no_text сохраняется
 предыдущий порядок: vector order для CHUNKS, fused order для HYBRID. HTTP-успех
@@ -93,7 +101,9 @@ boolean с default `false`, поэтому REST default-on нельзя пере
 шкала vector similarity, в HYBRID — значительно иная шкала RRF fusion.
 Один числовой порог нельзя трактовать одинаково для двух стратегий или моделей.
 
-`levara_rerank_score_spread{axis}` различает эти шкалы (`vector`, `rrf`).
+В REST `levara_rerank_score_spread{axis}` различает эти шкалы (`vector`, `rrf`).
+Общий MCP helper пока пишет `axis="vector"` и для HYBRID: не смешивайте это
+наблюдение с vector similarity при калибровке.
 Сначала соберите распределение на своём query set и сравните качество с
 `rerank:true`; затем выбирайте threshold. Большой score gap — эвристика, а не
 доказательство правильного top-1. Смена модели требует новой калибровки.
@@ -121,6 +131,13 @@ baseline. MCP `multi_query=true` также нельзя считать тем �
 нулевую выдачу, верные источники, нерелевантные кандидаты и отказ по известному
 чужому dataset ID. Качество нельзя доказать только успешным `/health` или
 наличием любого hit.
+
+При сравнении реранкеров сохраняйте также одинаковые списки кандидатов с
+исходным порядком и query-specific relevance labels. Отдельно измеряйте
+полноту первого этапа: rerank не найдёт документ вне списка. Не располагайте
+все положительные примеры первыми — сохранение такого порядка даст идеальный
+NDCG даже без модели. Проверка должна сравнивать качество с исходным порядком
+и подтверждать фактический проход реранкера.
 
 [Document scenarios](document-workflow-scenarios.md) связывает UI/API с источниками;
 [testing](testing.md) разделяет mock tests, package tests и реальные provider

@@ -17,6 +17,7 @@ class Recipe:
     openai_name: str
     trust_remote_code: bool = False
     onnx_file_name: str = "model.onnx"
+    revision: str | None = None
 
 
 RECIPES: dict[str, Recipe] = {
@@ -33,6 +34,14 @@ RECIPES: dict[str, Recipe] = {
         backend="transformers",
         dim=768,
         openai_name="embeddinggemma-300m",
+    ),
+    "gemma-full": Recipe(
+        short="gemma-full",
+        repo="unsloth/embeddinggemma-300m",
+        backend="transformers",
+        dim=768,
+        openai_name="embeddinggemma-300m-full-v1",
+        revision="bfa3c846ac738e62aa61806ef9112d34acb1dc5a",
     ),
     "granite": Recipe(
         short="granite",

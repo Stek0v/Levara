@@ -1,0 +1,595 @@
+{
+  "name": "Levara documentation retrieval holdout 59 v2",
+  "expected_cases": 59,
+  "top_k": 3,
+  "strategies": [
+    "CHUNKS_LEXICAL",
+    "CHUNKS",
+    "HYBRID"
+  ],
+  "primary_strategy": "HYBRID",
+  "documents": [
+    "docs/search-strategies-guide.md",
+    "docs/profile-presets.md",
+    "docs/markdown-native-workspace.md",
+    "docs/long-horizon-runtime.ru.md",
+    "docs/enterprise-identity.md",
+    "docs/document-management.md",
+    "docs/integrations.md",
+    "docs/recipes/git-commits-to-brain.md",
+    "docs/cron-profiles.md",
+    "docs/memory-commit.md",
+    "docs/deployment.md",
+    "docs/memory-workflow-skill.ru.md",
+    "docs/project-ingest.md",
+    "docs/enterprise-storage-audit.md",
+    "docs/authority-manifests.md",
+    "docs/webui-operations.md",
+    "docs/team-onboarding.md",
+    "docs/document-workflow-scenarios.md",
+    "docs/markdown-workspace-user-scenarios.md",
+    "docs/markdown-workspace-deployment-recipes.md"
+  ],
+  "cases": [
+    {
+      "id": "holdout-rerank-spread",
+      "kind": "exact",
+      "doc": 0,
+      "query": "Как называется метрика, разделяющая разброс score для vector и RRF?",
+      "answer_all": [
+        "levara_rerank_score_spread{axis}",
+        "vector",
+        "rrf"
+      ]
+    },
+    {
+      "id": "holdout-score-scales",
+      "kind": "semantic",
+      "doc": 0,
+      "query": "Можно ли один и тот же числовой порог уверенности применять к обычному векторному и гибридному поиску?",
+      "answer_all": [
+        "Один числовой порог нельзя трактовать одинаково для двух стратегий или моделей"
+      ]
+    },
+    {
+      "id": "holdout-rerank-data-approval",
+      "kind": "operational",
+      "doc": 0,
+      "query": "Если ACL уже отфильтровал кандидатов, можно ли автоматически отправлять их текст внешнему reranker?",
+      "answer_all": [
+        "ACL pre-filter",
+        "не означает",
+        "внешний провайдер одобрен для ваших данных автоматически"
+      ]
+    },
+    {
+      "id": "holdout-saml-metadata-file",
+      "kind": "exact",
+      "doc": 1,
+      "query": "Какая переменная Enterprise-конфигурации указывает локальный файл метаданных SAML IdP?",
+      "answer_all": [
+        "LEVARA_SAML_IDP_METADATA_FILE"
+      ]
+    },
+    {
+      "id": "holdout-preset-secrets",
+      "kind": "semantic",
+      "doc": 1,
+      "query": "Содержат ли готовые конфигурационные пресеты настоящие секреты для моего развёртывания?",
+      "answer_all": [
+        "examples, not secrets",
+        "replace placeholder values"
+      ]
+    },
+    {
+      "id": "holdout-pilot-existing-accounts",
+      "kind": "operational",
+      "doc": 1,
+      "query": "Можно ли после включения корпоративного preset считать пользователей каталога взаимозаменяемыми с прежними локальными аккаунтами?",
+      "answer_all": [
+        "does not",
+        "make directory users interchangeable with existing local accounts"
+      ]
+    },
+    {
+      "id": "holdout-selective-reindex",
+      "kind": "exact",
+      "doc": 2,
+      "query": "Какой workspace-инструмент обновляет поисковый индекс только выбранных путей?",
+      "answer_all": [
+        "workspace_reindex_paths обновляет выбранные пути"
+      ]
+    },
+    {
+      "id": "holdout-workspace-labels-permissions",
+      "kind": "semantic",
+      "doc": 2,
+      "query": "Получит ли агент доступ к файлам, если знает название коллекции, ветки и теги проекта?",
+      "answer_all": [
+        "Название collection, branch, room и tags не создаёт права"
+      ]
+    },
+    {
+      "id": "holdout-client-index-truth",
+      "kind": "operational",
+      "doc": 2,
+      "query": "Я проиндексировал текст с диска клиента. Нужно ли отдельно убедиться, что файл появился в исходном дереве workspace сервера?",
+      "answer_all": [
+        "Индексация текста с клиентского диска не означает",
+        "файл появился в truth tree сервера"
+      ]
+    },
+    {
+      "id": "holdout-bootstrap-budget",
+      "kind": "exact",
+      "doc": 3,
+      "query": "Каков диапазон бюджета контекста для task_bootstrap?",
+      "answer_all": [
+        "Бюджет — 100–4000 приблизительных токенов"
+      ]
+    },
+    {
+      "id": "holdout-expired-step-owner",
+      "kind": "semantic",
+      "doc": 3,
+      "query": "Может ли другой агент продолжить шаг, если срок его захвата предыдущим исполнителем закончился?",
+      "answer_all": [
+        "Истёкший lease может перехватить другой actor"
+      ]
+    },
+    {
+      "id": "holdout-plan-after-start",
+      "kind": "operational",
+      "doc": 3,
+      "query": "Можно ли полностью заменить план задачи после запуска первого шага?",
+      "answer_all": [
+        "После запуска любого шага заменить план нельзя"
+      ]
+    },
+    {
+      "id": "holdout-saml-pending-limits",
+      "kind": "exact",
+      "doc": 4,
+      "query": "Каковы предел числа ожидающих SAML-запросов и срок их хранения?",
+      "answer_all": [
+        "до 100 запросов, TTL 15 минут"
+      ]
+    },
+    {
+      "id": "holdout-scim-stable-id",
+      "kind": "semantic",
+      "doc": 4,
+      "query": "Как сохранить связь пользователя с каталогом при смене его email?",
+      "answer_all": [
+        "Передавайте неизменяемый externalId",
+        "смена email тогда нарушает устойчивую связь с каталогом"
+      ]
+    },
+    {
+      "id": "holdout-jwks-unreachable",
+      "kind": "operational",
+      "doc": 4,
+      "query": "Что случится при старте с включённым OIDC, если сервер не может получить JWKS?",
+      "answer_all": [
+        "недоступный JWKS останавливает запуск"
+      ]
+    },
+    {
+      "id": "holdout-raw-url-expiry",
+      "kind": "exact",
+      "doc": 5,
+      "query": "Каковы стандартный и максимальный сроки действия временной ссылки /raw/url?",
+      "answer_all": [
+        "по умолчанию 900 секунд",
+        "максимум семь дней"
+      ]
+    },
+    {
+      "id": "holdout-cleanup-pending-meaning",
+      "kind": "semantic",
+      "doc": 5,
+      "query": "Почему после удаления последней связи structured artifact может оставаться в хранилище, но уже не открываться?",
+      "answer_all": [
+        "становится недоступным в SQL",
+        "artifact_cleanup_pending: true"
+      ]
+    },
+    {
+      "id": "holdout-legacy-status-unknown",
+      "kind": "operational",
+      "doc": 5,
+      "query": "После обновления старые документы показывают неизвестный статус обработки. Как получить точный статус с dataset provenance?",
+      "answer_all": [
+        "Legacy-значения",
+        "Такие документы нужно повторно обработать"
+      ]
+    },
+    {
+      "id": "holdout-langfuse-default-sampling",
+      "kind": "exact",
+      "doc": 6,
+      "query": "Какова доля семплирования успешных вызовов LANGFUSE_SAMPLE_RATE по умолчанию?",
+      "answer_all": [
+        "LANGFUSE_SAMPLE_RATE, по умолчанию 0.1"
+      ]
+    },
+    {
+      "id": "holdout-llm-rate-direction",
+      "kind": "semantic",
+      "doc": 6,
+      "query": "Ограничивают ли настройки частоты обращений к языковой модели входящий HTTP-трафик пользователей?",
+      "answer_all": [
+        "ограничение исходящих LLM-запросов",
+        "отдельное от входящих HTTP rate limits"
+      ]
+    },
+    {
+      "id": "holdout-sql-existing-upgrade",
+      "kind": "operational",
+      "doc": 6,
+      "query": "Что нужно сделать с существующим SQL-окружением до запуска обновлённого сервера с инициализацией схемы?",
+      "answer_all": [
+        "сначала сделайте резервную копию и проверьте совместимость"
+      ]
+    },
+    {
+      "id": "holdout-commits-access",
+      "kind": "exact",
+      "doc": 7,
+      "query": "Какая административная роль требуется для analyze_commits?",
+      "answer_all": [
+        "доступен только активному instance administrator"
+      ]
+    },
+    {
+      "id": "holdout-git-without-embeddings",
+      "kind": "semantic",
+      "doc": 7,
+      "query": "Что получит пользователь анализа коммитов, если embedding-сервис вообще не подключён?",
+      "answer_all": [
+        "Без embeddings инструмент возвращает текстовый preview"
+      ]
+    },
+    {
+      "id": "holdout-git-limit-history",
+      "kind": "operational",
+      "doc": 7,
+      "query": "Какими параметрами следует ограничить первую обработку истории репозитория?",
+      "answer_all": [
+        "Ограничивайте since и limit",
+        "прежде чем обрабатывать всю историю"
+      ]
+    },
+    {
+      "id": "holdout-doctor-frequency",
+      "kind": "exact",
+      "doc": 8,
+      "query": "Какую начальную частоту рекомендует таблица расписания для Health и doctor?",
+      "answer_all": [
+        "Health и doctor",
+        "5–15 минут"
+      ]
+    },
+    {
+      "id": "holdout-consolidation-v-prune",
+      "kind": "semantic",
+      "doc": 8,
+      "query": "Эквивалентна ли консолидация памяти обычной процедуре prune?",
+      "answer_all": [
+        "имеет собственные guard и revert",
+        "не эквивалентна prune"
+      ]
+    },
+    {
+      "id": "holdout-heartbeat-shell-url",
+      "kind": "operational",
+      "doc": 8,
+      "query": "Как безопасно передать в shell URL истории heartbeat с несколькими query-параметрами?",
+      "answer_all": [
+        "заключайте URL с & в кавычки",
+        "передавайте credentials"
+      ]
+    },
+    {
+      "id": "holdout-commit-operation-deadline",
+      "kind": "exact",
+      "doc": 9,
+      "query": "Каким временем ограничена операция подготовленного сохранения памяти?",
+      "answer_all": [
+        "ограничена 30 секундами"
+      ]
+    },
+    {
+      "id": "holdout-receipt-command-reexecution",
+      "kind": "semantic",
+      "doc": 9,
+      "query": "Означает ли метка receipt-validated, что сервер заново исполнил команду из приложенного доказательства?",
+      "answer_all": [
+        "не означает, что сервер заново выполнил команду из caller-supplied receipt"
+      ]
+    },
+    {
+      "id": "holdout-expired-preview-key",
+      "kind": "operational",
+      "doc": 9,
+      "query": "Что делать с ключом идемпотентности, если подготовленный план памяти истёк?",
+      "answer_all": [
+        "Истёкший план требует нового ключа"
+      ]
+    },
+    {
+      "id": "holdout-http-bind-default",
+      "kind": "exact",
+      "doc": 10,
+      "query": "На каком адресе HTTP listener слушает по умолчанию, если не задан -host?",
+      "answer_all": [
+        "HTTP bind address; default loopback"
+      ]
+    },
+    {
+      "id": "holdout-wal-replay-coverage",
+      "kind": "semantic",
+      "doc": 10,
+      "query": "Можно ли успешное воспроизведение WAL считать полноценным тестом резервной копии?",
+      "answer_all": [
+        "A successful WAL replay is not a full backup test"
+      ]
+    },
+    {
+      "id": "holdout-cutover-query-config",
+      "kind": "operational",
+      "doc": 10,
+      "query": "Что нужно обновить у поисковых запросов сразу после переключения embedding-коллекции?",
+      "answer_all": [
+        "Update query embedding configuration to the new contract and verify again"
+      ]
+    },
+    {
+      "id": "holdout-memory-minimum-tools",
+      "kind": "exact",
+      "doc": 11,
+      "query": "Какие пять MCP-инструментов сервер должен предоставить как минимум для memory workflow?",
+      "answer_all": [
+        "levara_instructions, set_context, wake_up, recall_memory и save_memory"
+      ]
+    },
+    {
+      "id": "holdout-memory-client-portability",
+      "kind": "semantic",
+      "doc": 11,
+      "query": "Зависит ли сам рабочий процесс памяти от API Codex, или его можно применять в других клиентах?",
+      "answer_all": [
+        "стандартные MCP-вызовы",
+        "не зависит от API Codex"
+      ]
+    },
+    {
+      "id": "holdout-project-skill-discovery",
+      "kind": "operational",
+      "doc": 11,
+      "query": "Нужна ли персональная копия skill, если клиент умеет обнаруживать его прямо в .agents/skills репозитория?",
+      "answer_all": [
+        "project-skill discovery",
+        "без персональной копии"
+      ]
+    },
+    {
+      "id": "holdout-nightly-report-location",
+      "kind": "exact",
+      "doc": 12,
+      "query": "В каком каталоге nightly enrichment сохраняет JSON-отчёты отдельных проектов?",
+      "answer_all": [
+        "~/Library/Logs/levara/nightly-full-enrich/reports/"
+      ]
+    },
+    {
+      "id": "holdout-nightly-repository-scope",
+      "kind": "semantic",
+      "doc": 12,
+      "query": "Какие каталоги домашнего дерева src выбирает ночной импорт проектов?",
+      "answer_all": [
+        "scans first-level directories under ~/src/*",
+        "skips hidden directories"
+      ]
+    },
+    {
+      "id": "holdout-scaffold-proposals-review",
+      "kind": "operational",
+      "doc": 12,
+      "query": "На какой странице после meta-review можно одобрить или отклонить предложения об улучшении AGENTS.md?",
+      "answer_all": [
+        "/memory-scaffold after running a meta-review to approve/reject proposed AGENTS.md"
+      ]
+    },
+    {
+      "id": "holdout-s3-multipart-threshold",
+      "kind": "exact",
+      "doc": 13,
+      "query": "С какого размера S3 Save переходит на multipart?",
+      "answer_all": [
+        "S3 Save переключается на multipart с 32 MiB"
+      ]
+    },
+    {
+      "id": "holdout-encryption-workspace-scope",
+      "kind": "semantic",
+      "doc": 13,
+      "query": "Покрывает ли шифрование object storage также SQL, Markdown-файлы workspace и поисковые индексы?",
+      "answer_all": [
+        "SQL, Markdown workspace, граф и поисковые индексы требуют защиты своих дисков и сервисов"
+      ]
+    },
+    {
+      "id": "holdout-audit-capacity-change",
+      "kind": "operational",
+      "doc": 13,
+      "query": "Почему сервер может не запуститься после изменения лимитов ёмкости существующей очереди аудита?",
+      "answer_all": [
+        "Параметры ёмкости сохраняются вместе с destination",
+        "Их несовпадение при новом старте вызывает ошибку"
+      ]
+    },
+    {
+      "id": "holdout-authority-manifest-size",
+      "kind": "exact",
+      "doc": 14,
+      "query": "Каков максимальный размер файла authority manifest?",
+      "answer_all": [
+        "The size limit is 64 KiB"
+      ]
+    },
+    {
+      "id": "holdout-manifest-permission-scope",
+      "kind": "semantic",
+      "doc": 14,
+      "query": "Выдаёт ли allowlist в YAML-манифесте самостоятельное разрешение на deployment или публикацию?",
+      "answer_all": [
+        "They do not grant",
+        "deployment or publication permission by themselves"
+      ]
+    },
+    {
+      "id": "holdout-authority-integration-negative",
+      "kind": "operational",
+      "doc": 14,
+      "query": "Как при проверке реального executor убедиться, что запрет действия по manifest действительно безопасен?",
+      "answer_all": [
+        "Confirm denied actions produce no side effect",
+        "an allowed action still works"
+      ]
+    },
+    {
+      "id": "holdout-scaffold-approval-application",
+      "kind": "semantic",
+      "doc": 15,
+      "query": "Применяет ли WebUI одобренное предложение к memory policy автоматически?",
+      "answer_all": [
+        "The UI does not apply proposals automatically",
+        "should be applied intentionally"
+      ]
+    },
+    {
+      "id": "holdout-team-random-logout",
+      "kind": "operational",
+      "doc": 15,
+      "query": "Что исправить, если пользователи командного WebUI неожиданно теряют сессии после перезапусков?",
+      "answer_all": [
+        "Team users randomly log out",
+        "unstable JWT_SECRET",
+        "Set a stable secret"
+      ]
+    },
+    {
+      "id": "holdout-onboarding-plan-bounds",
+      "kind": "exact",
+      "doc": 16,
+      "query": "Какие лимиты на пользователей, datasets и индивидуальные grants имеет план team apply?",
+      "answer_all": [
+        "2–8 users, up to 16 datasets and 32 individual grants"
+      ]
+    },
+    {
+      "id": "holdout-journal-confidentiality",
+      "kind": "semantic",
+      "doc": 16,
+      "query": "Почему файл состояния повторяемого onboarding нужно защищать как файл credentials?",
+      "answer_all": [
+        "The journal contains API-key secrets",
+        "mode 0600"
+      ]
+    },
+    {
+      "id": "holdout-onboarding-429",
+      "kind": "operational",
+      "doc": 16,
+      "query": "Как возобновлять team apply после ответа 429 от сервера?",
+      "answer_all": [
+        "A 429 response stops the apply with an error report",
+        "respect the server's auth limits before resuming"
+      ]
+    },
+    {
+      "id": "holdout-ocr-quality-metrics",
+      "kind": "exact",
+      "doc": 17,
+      "query": "Какие метрики точности перечислены в сценарии U17 для OCR скана или изображения?",
+      "answer_all": [
+        "OCR скана/изображения: CER/WER"
+      ]
+    },
+    {
+      "id": "holdout-mock-evidence-limit",
+      "kind": "semantic",
+      "doc": 17,
+      "query": "Подтверждает ли успешный мок-тест работу настоящих AD, OCR или S3?",
+      "answer_all": [
+        "PASS моков не означает успешной работы реального AD, S3, OCR или LLM"
+      ]
+    },
+    {
+      "id": "holdout-postgres-skip-detection",
+      "kind": "operational",
+      "doc": 17,
+      "query": "Как отличить реальное выполнение PostgreSQL-проверок от успешного запуска с пропущенными подтестами?",
+      "answer_all": [
+        "Логи должны показывать PostgreSQL subtest и PASS",
+        "не только общий exit 0"
+      ]
+    },
+    {
+      "id": "holdout-persisted-watcher-state",
+      "kind": "exact",
+      "doc": 18,
+      "query": "В какой файл watcher сохраняет состояние для восстановления после перезапуска?",
+      "answer_all": [
+        ".kb/watch-status.json"
+      ]
+    },
+    {
+      "id": "holdout-duplicate-job-pressure",
+      "kind": "semantic",
+      "doc": 18,
+      "query": "Как очередь индексирования защищается от одинаковых запросов reconcile, отправленных сразу несколькими агентами?",
+      "answer_all": [
+        "дубликаты коалесцируются, queue pressure контролируется"
+      ]
+    },
+    {
+      "id": "holdout-ambiguous-workspace-binding",
+      "kind": "operational",
+      "doc": 18,
+      "query": "Как действовать, если рабочая ветка имеет несколько подходящих коллекций и привязка поиска неоднозначна?",
+      "answer_all": [
+        "ambiguous binding требует явного выбора"
+      ]
+    },
+    {
+      "id": "holdout-sync-invocation-surface",
+      "kind": "exact",
+      "doc": 19,
+      "query": "Доступна ли синхронизация через команду levara sync или вызывается через другой интерфейс?",
+      "answer_all": [
+        "Sync is an MCP/REST operation, not a levara sync CLI command"
+      ]
+    },
+    {
+      "id": "holdout-audit-external-edits",
+      "kind": "semantic",
+      "doc": 19,
+      "query": "Достаточно ли workspace_audit_log, чтобы доказать учёт каждого изменения файлов сторонними программами?",
+      "answer_all": [
+        "not proof that every external filesystem edit is fully audited"
+      ]
+    },
+    {
+      "id": "holdout-vector-sync-contract",
+      "kind": "operational",
+      "doc": 19,
+      "query": "Что требуется перед включением синхронизации vector collections между машинами?",
+      "answer_all": [
+        "collection sync is explicit",
+        "requires a compatible embedding contract"
+      ]
+    }
+  ]
+}

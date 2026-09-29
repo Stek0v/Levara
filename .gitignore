@@ -52,6 +52,9 @@ node_modules/
 # Binaries (root-level only, not cmd/ directories)
 /levara
 /levara-server
+/levara-server.fix*
+/levera-server
+/levera-server.fix*
 /levara-server-arm64
 /levara-arm64
 /levara-cli-arm64
@@ -129,6 +132,7 @@ docs/levara-codex-user-admin-guide.html
 .codex-flow/
 .hermes/
 .zcode/
+.zcodeignore
 outputs/
 
 # Local binary backups

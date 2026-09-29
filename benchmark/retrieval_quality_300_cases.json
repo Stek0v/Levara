@@ -1,0 +1,2893 @@
+{
+  "name": "Levara documentation retrieval quality 300 v1",
+  "top_k": 3,
+  "strategies": [
+    "CHUNKS_LEXICAL",
+    "CHUNKS",
+    "HYBRID"
+  ],
+  "primary_strategy": "HYBRID",
+  "documents": [
+    "docs/search-strategies-guide.md",
+    "docs/profile-presets.md",
+    "docs/markdown-native-workspace.md",
+    "docs/long-horizon-runtime.ru.md",
+    "docs/enterprise-identity.md",
+    "docs/document-management.md",
+    "docs/integrations.md",
+    "docs/recipes/git-commits-to-brain.md",
+    "docs/cron-profiles.md",
+    "docs/memory-commit.md",
+    "docs/deployment.md",
+    "docs/memory-workflow-skill.ru.md",
+    "docs/project-ingest.md",
+    "docs/enterprise-storage-audit.md",
+    "docs/authority-manifests.md",
+    "docs/webui-operations.md",
+    "docs/team-onboarding.md",
+    "docs/document-workflow-scenarios.md",
+    "docs/markdown-workspace-user-scenarios.md",
+    "docs/markdown-workspace-deployment-recipes.md"
+  ],
+  "cases": [
+    {
+      "id": "search-identifier",
+      "kind": "semantic",
+      "doc": 0,
+      "query": "Как найти артикул или уникальный код в загруженных материалах?",
+      "answer_all": [
+        "CHUNKS_LEXICAL",
+        "BM25"
+      ]
+    },
+    {
+      "id": "search-budget",
+      "kind": "exact",
+      "doc": 0,
+      "query": "Какой default у RERANK_BUDGET_MS?",
+      "answer_all": [
+        "RERANK_BUDGET_MS",
+        "1500"
+      ]
+    },
+    {
+      "id": "search-rerank-proof",
+      "kind": "operational",
+      "doc": 0,
+      "query": "Как проверить, что дополнительное переранжирование действительно сработало, если HTTP-запрос успешен?",
+      "answer_all": [
+        "reranked",
+        "outcomes"
+      ]
+    },
+    {
+      "id": "profile-team",
+      "kind": "semantic",
+      "doc": 1,
+      "query": "Какие обязательные настройки нужны для общего сервера команды?",
+      "answer_all": [
+        "Postgres",
+        "JWT_SECRET",
+        "require-auth"
+      ]
+    },
+    {
+      "id": "profile-strict",
+      "kind": "exact",
+      "doc": 1,
+      "query": "What does LEVARA_PROFILE_STRICT=1 enable for Team?",
+      "answer_all": [
+        "LEVARA_PROFILE_STRICT",
+        "fail-fast"
+      ]
+    },
+    {
+      "id": "profile-local-sql",
+      "kind": "operational",
+      "doc": 1,
+      "query": "Does standalone by itself enable a SQL database for local memory?",
+      "answer_all": [
+        "standalone",
+        "does not itself enable SQL"
+      ]
+    },
+    {
+      "id": "workspace-conflict",
+      "kind": "semantic",
+      "doc": 2,
+      "query": "Что делать, если другой участник изменил файл после моего чтения, до сохранения правки?",
+      "answer_all": [
+        "digest conflict",
+        "перечитать"
+      ]
+    },
+    {
+      "id": "workspace-digest",
+      "kind": "exact",
+      "doc": 2,
+      "query": "Какой параметр workspace_write защищает от конкурентного изменения файла?",
+      "answer_all": [
+        "expected_file_digest"
+      ]
+    },
+    {
+      "id": "workspace-revert",
+      "kind": "operational",
+      "doc": 2,
+      "query": "После отката файлов нужно ли заново собирать поисковый индекс?",
+      "answer_all": [
+        "Revert восстанавливает файлы",
+        "reconcile"
+      ]
+    },
+    {
+      "id": "task-resume",
+      "kind": "semantic",
+      "doc": 3,
+      "query": "Как агент должен восстановить рабочее состояние после потери контекста или перезапуска?",
+      "answer_all": [
+        "task_bootstrap",
+        "restart",
+        "compaction"
+      ]
+    },
+    {
+      "id": "task-lease",
+      "kind": "exact",
+      "doc": 3,
+      "query": "Какой допустимый диапазон lease_seconds у шага задачи?",
+      "answer_all": [
+        "30–3600"
+      ]
+    },
+    {
+      "id": "task-review",
+      "kind": "operational",
+      "doc": 3,
+      "query": "Какая проверка обязательна перед завершением задачи высокого риска?",
+      "answer_all": [
+        "high-risk",
+        "reviewer",
+        "receipt"
+      ]
+    },
+    {
+      "id": "identity-directory",
+      "kind": "semantic",
+      "doc": 4,
+      "query": "Можно ли подключить корпоративный каталог с незашифрованным соединением?",
+      "answer_all": [
+        "StartTLS",
+        "plaintext bind"
+      ]
+    },
+    {
+      "id": "identity-bulk",
+      "kind": "exact",
+      "doc": 4,
+      "query": "Поддерживает ли SCIM Bulk и полную vendor certification?",
+      "answer_all": [
+        "SCIM",
+        "нет Bulk"
+      ]
+    },
+    {
+      "id": "identity-browser",
+      "kind": "operational",
+      "doc": 4,
+      "query": "Как защищён браузерный вход через OIDC?",
+      "answer_all": [
+        "PKCE",
+        "state",
+        "nonce"
+      ]
+    },
+    {
+      "id": "document-roles",
+      "kind": "semantic",
+      "doc": 5,
+      "query": "Какую роль дать коллеге, чтобы он мог читать документы, но не удалять набор?",
+      "answer_all": [
+        "выдавайте viewer"
+      ]
+    },
+    {
+      "id": "document-api-key",
+      "kind": "exact",
+      "doc": 5,
+      "query": "Может ли grant повысить read-only API-ключ до write?",
+      "answer_all": [
+        "Grant не повышает read-only ключ до write"
+      ]
+    },
+    {
+      "id": "document-ready",
+      "kind": "operational",
+      "doc": 5,
+      "query": "Достаточно ли HTTP 200 и полученного номера запуска, чтобы считать документы готовыми к поиску?",
+      "answer_all": [
+        "HTTP 200",
+        "готовности поиска"
+      ]
+    },
+    {
+      "id": "integration-llm",
+      "kind": "semantic",
+      "doc": 6,
+      "query": "Нужна ли генеративная модель, чтобы хранить память в SQL или делать лексический поиск?",
+      "answer_all": [
+        "LLM нужен",
+        "но не для SQL-памяти"
+      ]
+    },
+    {
+      "id": "integration-dim",
+      "kind": "exact",
+      "doc": 6,
+      "query": "Levara dimension по умолчанию 128 или определяется по первому embedding?",
+      "answer_all": [
+        "128",
+        "не выводит"
+      ]
+    },
+    {
+      "id": "integration-audio",
+      "kind": "operational",
+      "doc": 6,
+      "query": "Что произойдёт при обработке аудио, если сервис транскрипции не настроен?",
+      "answer_all": [
+        "Без",
+        "WHISPER_ENDPOINT",
+        "ошибкой"
+      ]
+    },
+    {
+      "id": "git-location",
+      "kind": "semantic",
+      "doc": 7,
+      "query": "На какой машине должен находиться репозиторий для анализа истории изменений?",
+      "answer_all": [
+        "файловой системе",
+        "сервера"
+      ]
+    },
+    {
+      "id": "git-collection",
+      "kind": "exact",
+      "doc": 7,
+      "query": "Меняет ли set_context целевую коллекцию analyze_commits?",
+      "answer_all": [
+        "git_commits",
+        "set_context",
+        "не меняет"
+      ]
+    },
+    {
+      "id": "git-run-id",
+      "kind": "operational",
+      "doc": 7,
+      "query": "Где взять идентификатор асинхронной обработки коммитов для проверки её состояния?",
+      "answer_all": [
+        "run ID",
+        "summary"
+      ]
+    },
+    {
+      "id": "cron-scheduler",
+      "kind": "semantic",
+      "doc": 8,
+      "query": "Сервис сам устанавливает расписание фоновых проверок или нужен внешний планировщик?",
+      "answer_all": [
+        "cron",
+        "launchd",
+        "systemd",
+        "не устанавливает"
+      ]
+    },
+    {
+      "id": "cron-status",
+      "kind": "exact",
+      "doc": 8,
+      "query": "Можно ли считать любой HTTP 200 здоровым результатом doctor?",
+      "answer_all": [
+        "Нельзя считать любой HTTP 200 здоровым"
+      ]
+    },
+    {
+      "id": "cron-sync",
+      "kind": "operational",
+      "doc": 8,
+      "query": "Отправляется ли токен синхронизации на перенаправленный адрес?",
+      "answer_all": [
+        "точный URL",
+        "перенаправления не"
+      ]
+    },
+    {
+      "id": "commit-expiry",
+      "kind": "semantic",
+      "doc": 9,
+      "query": "Как долго живёт подготовленный план сохранения памяти до применения?",
+      "answer_all": [
+        "30 минут"
+      ]
+    },
+    {
+      "id": "commit-empty",
+      "kind": "exact",
+      "doc": 9,
+      "query": "Что делает accepted_candidate_ids с явно пустым массивом?",
+      "answer_all": [
+        "пустой массив",
+        "ни один кандидат"
+      ]
+    },
+    {
+      "id": "commit-truth",
+      "kind": "operational",
+      "doc": 9,
+      "query": "Доказывает ли проверка связи памяти с evidence истинность её текста?",
+      "answer_all": [
+        "не подтверждает истинность текста памяти"
+      ]
+    },
+    {
+      "id": "qa-search-rest-field",
+      "kind": "exact",
+      "doc": 0,
+      "query": "Какое поле задаёт стратегию в REST POST /api/v1/search/text?",
+      "answer_all": [
+        "POST /api/v1/search/text",
+        "query_type"
+      ]
+    },
+    {
+      "id": "qa-search-result-count",
+      "kind": "exact",
+      "doc": 0,
+      "query": "Чем ограничивается количество результатов MCP search: top_k или limit?",
+      "answer_all": [
+        "top_k, а не limit",
+        "ограничивает число результатов"
+      ]
+    },
+    {
+      "id": "qa-search-fanout-metric",
+      "kind": "exact",
+      "doc": 0,
+      "query": "Какая метрика считает итерации subquery × collection на запрос?",
+      "answer_all": [
+        "levara_search_chunks_subquery_fanout",
+        "subquery × collection"
+      ]
+    },
+    {
+      "id": "qa-search-mcp-rerank-default",
+      "kind": "exact",
+      "doc": 0,
+      "query": "Каково значение rerank по умолчанию в MCP schema?",
+      "answer_all": [
+        "MCP schema",
+        "default false"
+      ]
+    },
+    {
+      "id": "qa-search-graph-backend",
+      "kind": "semantic",
+      "doc": 0,
+      "query": "Какое хранилище требуется, чтобы задавать графу вопросы с переводом обычного языка в запросы?",
+      "answer_all": [
+        "CYPHER",
+        "NL→Cypher",
+        "Neo4j"
+      ]
+    },
+    {
+      "id": "qa-search-summaries",
+      "kind": "semantic",
+      "doc": 0,
+      "query": "Как искать по кратким изложениям документов, а не обычным фрагментам?",
+      "answer_all": [
+        "SUMMARIES",
+        "Проиндексированные summaries"
+      ]
+    },
+    {
+      "id": "qa-search-topic-scope",
+      "kind": "semantic",
+      "doc": 0,
+      "query": "Какие метаданные помогают сузить поиск до нужной предметной области?",
+      "answer_all": [
+        "Room/tags",
+        "сузить предметную область"
+      ]
+    },
+    {
+      "id": "qa-search-history-absence",
+      "kind": "semantic",
+      "doc": 0,
+      "query": "Можно ли получить прошлое состояние, просто добавив дату в вопрос, если исторических данных нет?",
+      "answer_all": [
+        "Дата в запросе не создаёт отсутствующую историческую информацию"
+      ]
+    },
+    {
+      "id": "qa-search-explicit-router",
+      "kind": "operational",
+      "doc": 0,
+      "query": "Как настроить стратегию поиска, чтобы сравнение запросов было воспроизводимым при наличии AUTO?",
+      "answer_all": [
+        "Для воспроизводимого сравнения укажите тип явно"
+      ]
+    },
+    {
+      "id": "qa-search-rerank-fallback",
+      "kind": "operational",
+      "doc": 0,
+      "query": "В каком порядке останутся результаты HYBRID, если переранжирование исчерпало бюджет или вернуло ошибку?",
+      "answer_all": [
+        "При budget/error/no_text сохраняется",
+        "fused order для HYBRID"
+      ]
+    },
+    {
+      "id": "qa-search-gap-calibration",
+      "kind": "operational",
+      "doc": 0,
+      "query": "Как выбирать порог score-gap после смены embedding-модели?",
+      "answer_all": [
+        "Смена модели требует новой калибровки"
+      ]
+    },
+    {
+      "id": "qa-search-negative-access",
+      "kind": "operational",
+      "doc": 0,
+      "query": "Какую отрицательную проверку доступа нужно включить в оценку качества поиска?",
+      "answer_all": [
+        "отказ по известному чужому dataset ID"
+      ]
+    },
+    {
+      "id": "qa-profile-product-functional",
+      "kind": "exact",
+      "doc": 1,
+      "query": "What is the difference between LEVARA_PROFILE and the -profile flag?",
+      "answer_all": [
+        "LEVARA_PROFILE sets product requirements",
+        "-profile flag selects functional bootstrap behavior"
+      ]
+    },
+    {
+      "id": "qa-profile-sync-token-target",
+      "kind": "exact",
+      "doc": 1,
+      "query": "На какой адрес сервер пересылает настроенный токен синхронизации Solo Pro?",
+      "answer_all": [
+        "only to the exact LEVARA_SYNC_REMOTE_URL",
+        "does not",
+        "follow redirects"
+      ]
+    },
+    {
+      "id": "qa-profile-saml-flow",
+      "kind": "exact",
+      "doc": 1,
+      "query": "Какие SAML-потоки поддерживаются: SP-initiated или IdP-initiated?",
+      "answer_all": [
+        "SAML 2.0",
+        "SP-initiated flows only"
+      ]
+    },
+    {
+      "id": "qa-profile-check-no-network",
+      "kind": "exact",
+      "doc": 1,
+      "query": "Does make profile-config-check open listeners or connect to a database?",
+      "answer_all": [
+        "make profile-config-check",
+        "without opening listeners, a database, or any network connection"
+      ]
+    },
+    {
+      "id": "qa-profile-personal-audience",
+      "kind": "semantic",
+      "doc": 1,
+      "query": "Какой вариант установки подходит одному разработчику с локальными AI-агентами?",
+      "answer_all": [
+        "Use Personal for a single developer running local AI agents through MCP"
+      ]
+    },
+    {
+      "id": "qa-profile-multiple-nodes",
+      "kind": "semantic",
+      "doc": 1,
+      "query": "Что отличает вариант для одного пользователя с несколькими узлами от простого локального варианта?",
+      "answer_all": [
+        "Solo Pro",
+        "The key difference from Personal is stable sync identity"
+      ]
+    },
+    {
+      "id": "qa-profile-external-acceptance",
+      "kind": "semantic",
+      "doc": 1,
+      "query": "Доказывают ли локальные контрактные тесты, что корпоративное облачное хранилище готово к эксплуатации?",
+      "answer_all": [
+        "Concrete AWS adapters exist and pass local contract tests",
+        "target services and recovery procedures still need deployment acceptance"
+      ]
+    },
+    {
+      "id": "qa-profile-without-dense",
+      "kind": "semantic",
+      "doc": 1,
+      "query": "Остаётся ли полезный поиск по рабочему пространству, когда семантическая модель не настроена?",
+      "answer_all": [
+        "lexical workspace search remains useful when dense embeddings are not configured"
+      ]
+    },
+    {
+      "id": "qa-profile-load-env",
+      "kind": "operational",
+      "doc": 1,
+      "query": "Нужно ли экспортировать отредактированный .env перед проверкой конфигурации и запуском?",
+      "answer_all": [
+        "does not load .env automatically",
+        "Export the edited file"
+      ]
+    },
+    {
+      "id": "qa-profile-auth-sync-user",
+      "kind": "operational",
+      "doc": 1,
+      "query": "Какая учётная запись требуется для синхронизации Solo Pro с включённой аутентификацией?",
+      "answer_all": [
+        "In authenticated mode sync requires an active global superuser"
+      ]
+    },
+    {
+      "id": "qa-profile-release-manual",
+      "kind": "operational",
+      "doc": 1,
+      "query": "Какие ручные проверки остаются после успешного make test-release-candidate?",
+      "answer_all": [
+        "does not replace manual Pi and multi-node sync smoke tests"
+      ]
+    },
+    {
+      "id": "qa-profile-idp-boundary",
+      "kind": "operational",
+      "doc": 1,
+      "query": "Можно ли после проверки Enterprise preset считать, что права групп уже настроены?",
+      "answer_all": [
+        "does not test your identity provider",
+        "establish group permissions"
+      ]
+    },
+    {
+      "id": "qa-workspace-manifest-fields",
+      "kind": "exact",
+      "doc": 2,
+      "query": "Какие идентификаторы и данные файла связывает Manifest?",
+      "answer_all": [
+        "Manifest связывает project, branch, generation, path, file digest и IDs chunks/vectors"
+      ]
+    },
+    {
+      "id": "qa-workspace-project-dataset",
+      "kind": "exact",
+      "doc": 2,
+      "query": "Чему должен соответствовать project_id в режиме с аутентификацией?",
+      "answer_all": [
+        "project_id соответствует ID dataset",
+        "не произвольному имени проекта"
+      ]
+    },
+    {
+      "id": "qa-workspace-default-root",
+      "kind": "exact",
+      "doc": 2,
+      "query": "Где находится workspace по умолчанию относительно data-dir?",
+      "answer_all": [
+        "По умолчанию workspace находится в <data-dir>/workspace"
+      ]
+    },
+    {
+      "id": "qa-workspace-watch-queue",
+      "kind": "exact",
+      "doc": 2,
+      "query": "Какая настройка переводит watcher на очередь фоновой индексации?",
+      "answer_all": [
+        "LEVARA_WORKSPACE_WATCH_ASYNC_INDEX=1",
+        "переводит watcher на очередь"
+      ]
+    },
+    {
+      "id": "qa-workspace-document-purpose",
+      "kind": "semantic",
+      "doc": 2,
+      "query": "Какое хранилище подходит для архитектурных решений, инструкций эксплуатации и проектных заметок в Markdown?",
+      "answer_all": [
+        "Workspace подходит для ADR, runbooks, проектных заметок"
+      ]
+    },
+    {
+      "id": "qa-workspace-write-v-index",
+      "kind": "semantic",
+      "doc": 2,
+      "query": "Чем отличается создание поисковых производных от сохранения исходного текста?",
+      "answer_all": [
+        "workspace_index создаёт поисковые производные",
+        "workspace_write пишет truth"
+      ]
+    },
+    {
+      "id": "qa-workspace-delete-index-risk",
+      "kind": "semantic",
+      "doc": 2,
+      "query": "Почему при пересборке индекса нельзя удалить всё рабочее пространство?",
+      "answer_all": [
+        "Файлы проекта и сохранённые снимки — исходные данные",
+        "Не удаляйте весь workspace"
+      ]
+    },
+    {
+      "id": "qa-workspace-snapshots-git",
+      "kind": "semantic",
+      "doc": 2,
+      "query": "Могут ли снимки рабочего пространства заменить Git для исходного кода?",
+      "answer_all": [
+        "Снимки workspace сохраняют ревизии truth",
+        "не замена Git-репозитория кода"
+      ]
+    },
+    {
+      "id": "qa-workspace-no-generation",
+      "kind": "operational",
+      "doc": 2,
+      "query": "Что делать, если рабочее пространство не имеет активного поколения индекса?",
+      "answer_all": [
+        "Нет active generation",
+        "Reconcile файлов в новое поколение"
+      ]
+    },
+    {
+      "id": "qa-workspace-only-lexical",
+      "kind": "operational",
+      "doc": 2,
+      "query": "Что проверить, если лексический поиск работает, а семантический не работает?",
+      "answer_all": [
+        "Lexical работает, dense нет",
+        "endpoint, модель, dimension и coverage"
+      ]
+    },
+    {
+      "id": "qa-workspace-deadletter",
+      "kind": "operational",
+      "doc": 2,
+      "query": "Как восстановить обработку задания индексации, оказавшегося в dead_letter?",
+      "answer_all": [
+        "Job dead_letter",
+        "Исправить причину; retry или новая generation"
+      ]
+    },
+    {
+      "id": "qa-workspace-artifact-secrets",
+      "kind": "operational",
+      "doc": 2,
+      "query": "Когда нужно проверять проектные OpenAPI и SQL artifacts на секреты?",
+      "answer_all": [
+        "Текст artifact может содержать секреты",
+        "review происходит до публикации в индекс/провайдер"
+      ]
+    },
+    {
+      "id": "qa-deploy-embedding-url",
+      "kind": "exact",
+      "doc": 10,
+      "query": "Должен ли EMBEDDING_ENDPOINT содержать путь /v1/embeddings?",
+      "answer_all": [
+        "EMBEDDING_ENDPOINT",
+        "Full embeddings URL, including /v1/embeddings"
+      ]
+    },
+    {
+      "id": "qa-deploy-grpc-disable",
+      "kind": "exact",
+      "doc": 10,
+      "query": "Какое значение -grpc-port отключает gRPC listener?",
+      "answer_all": [
+        "-grpc-port",
+        "port 0 disables it"
+      ]
+    },
+    {
+      "id": "qa-deploy-upload-path",
+      "kind": "exact",
+      "doc": 10,
+      "query": "Можно ли изменить каталог локальных uploads через STORAGE_PATH?",
+      "answer_all": [
+        "Local upload storage defaults to <data-dir>/uploads",
+        "STORAGE_PATH is not a server override"
+      ]
+    },
+    {
+      "id": "qa-deploy-llm-flag",
+      "kind": "exact",
+      "doc": 10,
+      "query": "Существует ли у сервера флаг -llm-model?",
+      "answer_all": [
+        "LLM_PROVIDER",
+        "no -llm-model flag"
+      ]
+    },
+    {
+      "id": "qa-deploy-migration-retry",
+      "kind": "exact",
+      "doc": 10,
+      "query": "Какой endpoint повторяет обработку неудачных записей embedding migration?",
+      "answer_all": [
+        "POST .../{run_id}/retry",
+        "retries failed records within the attempt cap"
+      ]
+    },
+    {
+      "id": "qa-deploy-standalone-meaning",
+      "kind": "semantic",
+      "doc": 10,
+      "query": "Выбирает ли standalone режим журналирования или автоматически настраивает все сервисы?",
+      "answer_all": [
+        "-standalone controls WAL versus Raft"
+      ]
+    },
+    {
+      "id": "qa-deploy-live-sqlite-copy",
+      "kind": "semantic",
+      "doc": 10,
+      "query": "Достаточно ли скопировать только файл активно работающей SQLite базы для надёжной резервной копии?",
+      "answer_all": [
+        "including any WAL state",
+        "copying only an actively written .db is insufficient"
+      ]
+    },
+    {
+      "id": "qa-deploy-health-v-quality",
+      "kind": "semantic",
+      "doc": 10,
+      "query": "Подтверждает ли здоровый embedding-провайдер качество поиска по документам?",
+      "answer_all": [
+        "A provider health response does not demonstrate retrieval quality",
+        "representative queries"
+      ]
+    },
+    {
+      "id": "qa-deploy-provider-data",
+      "kind": "semantic",
+      "doc": 10,
+      "query": "Что происходит с содержимым документов при настройке удалённой модели или extractor?",
+      "answer_all": [
+        "Configuring a remote model or extractor sends relevant content to that provider"
+      ]
+    },
+    {
+      "id": "qa-deploy-cutover-atomicity",
+      "kind": "semantic",
+      "doc": 10,
+      "query": "Является ли переключение embedding-коллекций одной атомарной транзакцией?",
+      "answer_all": [
+        "several renames with best-effort rollback",
+        "not an atomic multi-collection transaction"
+      ]
+    },
+    {
+      "id": "qa-deploy-binary-update",
+      "kind": "operational",
+      "doc": 10,
+      "query": "Как правильно применить обновление бинарника к установленному systemd-сервису?",
+      "answer_all": [
+        "Updating the binary requires an intentional restart of this unit"
+      ]
+    },
+    {
+      "id": "qa-deploy-launchd-env",
+      "kind": "operational",
+      "doc": 10,
+      "query": "Как передать переменные окружения серверу, запущенному через launchd?",
+      "answer_all": [
+        "EnvironmentVariables dictionary",
+        "explicit wrapper that exports an environment file"
+      ]
+    },
+    {
+      "id": "qa-deploy-docker-override",
+      "kind": "operational",
+      "doc": 10,
+      "query": "Что нужно включить в переопределённую команду запуска Docker-образа Levara?",
+      "answer_all": [
+        "The image uses CMD, not ENTRYPOINT",
+        "command override must include ./levara-server"
+      ]
+    },
+    {
+      "id": "qa-deploy-restore-watchers",
+      "kind": "operational",
+      "doc": 10,
+      "query": "В каком состоянии должны находиться workspace watchers при первом запуске после восстановления?",
+      "answer_all": [
+        "Restore SQL and file/object state",
+        "start with workspace watchers disabled"
+      ]
+    },
+    {
+      "id": "qa-deploy-shadow-criteria",
+      "kind": "operational",
+      "doc": 10,
+      "query": "Какие показатели нужно проверить при сравнении исходной и теневой embedding-коллекций перед переключением?",
+      "answer_all": [
+        "top-1 stability, empty-result rate, latency",
+        "supplement overlap with labeled relevance and permission checks"
+      ]
+    },
+    {
+      "id": "qa-memory-history-toolsets",
+      "kind": "exact",
+      "doc": 11,
+      "query": "Какие MCP-профили открывают supersede_memory с сохранением истории?",
+      "answer_all": [
+        "History-preserving supersession требует memory, full или long-horizon"
+      ]
+    },
+    {
+      "id": "qa-memory-token-var",
+      "kind": "exact",
+      "doc": 11,
+      "query": "В какой переменной окружения хранится bearer token в примере MCP-подключения?",
+      "answer_all": [
+        "bearer_token_env_var = \"LEVARA_TOKEN\""
+      ]
+    },
+    {
+      "id": "qa-memory-mcp-url",
+      "kind": "exact",
+      "doc": 11,
+      "query": "Какой путь MCP endpoint указан в локальном примере конфигурации Codex?",
+      "answer_all": [
+        "url = \"http://127.0.0.1:8080/mcp\""
+      ]
+    },
+    {
+      "id": "qa-memory-explicit-skill",
+      "kind": "exact",
+      "doc": 11,
+      "query": "Как явно вызвать skill памяти в клиенте без автоматического выбора?",
+      "answer_all": [
+        "$levara-memory-workflow"
+      ]
+    },
+    {
+      "id": "qa-memory-save-supersedes",
+      "kind": "exact",
+      "doc": 11,
+      "query": "Убирает ли save_memory(supersedes_memory_id=...) старую запись из recall?",
+      "answer_all": [
+        "сохраняет только provenance на новой строке",
+        "не убирает старую память из recall"
+      ]
+    },
+    {
+      "id": "qa-memory-what-save",
+      "kind": "semantic",
+      "doc": 11,
+      "query": "Какие результаты агент должен сохранять, чтобы память приносила пользу в будущих сессиях?",
+      "answer_all": [
+        "сохраняет только проверенные результаты",
+        "пригодятся в будущих сессиях"
+      ]
+    },
+    {
+      "id": "qa-memory-duplicate-control",
+      "kind": "semantic",
+      "doc": 11,
+      "query": "Как workflow предотвращает накопление одинаковых устойчивых выводов?",
+      "answer_all": [
+        "искать похожие записи до сохранения",
+        "пропускать дубликаты"
+      ]
+    },
+    {
+      "id": "qa-memory-staleness",
+      "kind": "semantic",
+      "doc": 11,
+      "query": "Можно ли без проверки считать восстановленные сведения актуальными?",
+      "answer_all": [
+        "Считайте восстановленную память потенциально устаревшей до проверки"
+      ]
+    },
+    {
+      "id": "qa-memory-task-location",
+      "kind": "semantic",
+      "doc": 11,
+      "query": "Где должно храниться временное состояние выполняемой работы?",
+      "answer_all": [
+        "Храните временную работу в task tracker или runtime агента"
+      ]
+    },
+    {
+      "id": "qa-memory-uninstall-data",
+      "kind": "semantic",
+      "doc": 11,
+      "query": "Исчезнут ли накопленные записи, если удалить skill из клиента?",
+      "answer_all": [
+        "Удаление skill не удаляет существующую память Levara"
+      ]
+    },
+    {
+      "id": "qa-memory-install-restart",
+      "kind": "operational",
+      "doc": 11,
+      "query": "Что нужно сделать с Codex после копирования каталога skill?",
+      "answer_all": [
+        "После копирования перезапустите Codex"
+      ]
+    },
+    {
+      "id": "qa-memory-install-check",
+      "kind": "operational",
+      "doc": 11,
+      "query": "Нужно ли создавать фиктивную запись памяти только для проверки установки?",
+      "answer_all": [
+        "Не следует создавать тестовую память только ради проверки записи"
+      ]
+    },
+    {
+      "id": "qa-memory-shared-credentials",
+      "kind": "operational",
+      "doc": 11,
+      "query": "Можно ли убрать credentials у общего удалённого MCP endpoint?",
+      "answer_all": [
+        "Не опускайте credentials для shared, remote или persistent deployments",
+        "используйте HTTPS"
+      ]
+    },
+    {
+      "id": "qa-memory-core-replacement",
+      "kind": "operational",
+      "doc": 11,
+      "query": "Как поступать с заменой записи на профиле core, где нет полноценного supersession?",
+      "answer_all": [
+        "На core / workspace либо перезаписывайте тот же key",
+        "либо оставляйте обе записи активными"
+      ]
+    },
+    {
+      "id": "qa-memory-team-rollout",
+      "kind": "operational",
+      "doc": 11,
+      "query": "Что нужно проверить перед распространением memory workflow на команду?",
+      "answer_all": [
+        "Перед командным rollout проверьте memory behavior и долю дубликатов"
+      ]
+    },
+    {
+      "id": "qa-ingest-default-url",
+      "kind": "exact",
+      "doc": 12,
+      "query": "Каков URL по умолчанию у скрипта levara_project_ingest.py?",
+      "answer_all": [
+        "The default URL is http://127.0.0.1:8081/api/v1"
+      ]
+    },
+    {
+      "id": "qa-ingest-full-mode",
+      "kind": "exact",
+      "doc": 12,
+      "query": "Какой режим включает тяжёлое извлечение сущностей и связей графа?",
+      "answer_all": [
+        "Use --mode full only when entity/relationship graph extraction is required"
+      ]
+    },
+    {
+      "id": "qa-ingest-workspace-pipeline",
+      "kind": "exact",
+      "doc": 12,
+      "query": "Какой параметр выбирает только workspace pipeline при импорте проекта?",
+      "answer_all": [
+        "--pipeline workspace"
+      ]
+    },
+    {
+      "id": "qa-ingest-no-agents",
+      "kind": "exact",
+      "doc": 12,
+      "query": "Какой флаг в smoke-команде позволяет не менять проектный AGENTS.md?",
+      "answer_all": [
+        "--no-agents",
+        "without touching the project AGENTS.md"
+      ]
+    },
+    {
+      "id": "qa-ingest-nightly-agent-toggle",
+      "kind": "exact",
+      "doc": 12,
+      "query": "Какая настройка разрешает nightly-скрипту записывать проектный AGENTS.md?",
+      "answer_all": [
+        "WRITE_AGENTS=1 enables it"
+      ]
+    },
+    {
+      "id": "qa-ingest-gitignore",
+      "kind": "semantic",
+      "doc": 12,
+      "query": "Защищает ли .gitignore конфигурационные файлы от попадания в импорт проекта?",
+      "answer_all": [
+        "does not honor .gitignore",
+        "Inspect ignored JSON/YAML/config files for secrets"
+      ]
+    },
+    {
+      "id": "qa-ingest-rag-rationale",
+      "kind": "semantic",
+      "doc": 12,
+      "query": "Почему для быстрого поиска по проекту выбран режим RAG по умолчанию?",
+      "answer_all": [
+        "indexes all selected code/docs without waiting for slow LLM graph extraction"
+      ]
+    },
+    {
+      "id": "qa-ingest-truth-availability",
+      "kind": "semantic",
+      "doc": 12,
+      "query": "Доказывает ли наличие поискового фрагмента, что точный файл уже доступен в workspace?",
+      "answer_all": [
+        "confirm the corresponding truth files are available to workspace_read",
+        "before treating an indexed hit as an exact source"
+      ]
+    },
+    {
+      "id": "qa-ingest-fake-limit",
+      "kind": "semantic",
+      "doc": 12,
+      "query": "Почему правки AGENTS.md не должны менять результат fake evaluator?",
+      "answer_all": [
+        "does not read your project or AGENTS.md",
+        "fixed-fixture results"
+      ]
+    },
+    {
+      "id": "qa-ingest-analytics-scope",
+      "kind": "semantic",
+      "doc": 12,
+      "query": "Могут ли селекторы collection и client в аналитике служить разграничением доступа по tenant?",
+      "answer_all": [
+        "Collection/client analytics selectors are not owner/tenant access controls"
+      ]
+    },
+    {
+      "id": "qa-ingest-dry-inspect",
+      "kind": "operational",
+      "doc": 12,
+      "query": "Что проверить в dry run до изменения Levara и записи AGENTS.md?",
+      "answer_all": [
+        "inspect file count, bytes, excluded folders and the first sample files"
+      ]
+    },
+    {
+      "id": "qa-ingest-authorized-project",
+      "kind": "operational",
+      "doc": 12,
+      "query": "Что передать в --project-id при импорте в workspace с аутентификацией?",
+      "answer_all": [
+        "--project-id DATASET_ID",
+        "existing accessible dataset ID"
+      ]
+    },
+    {
+      "id": "qa-ingest-skip-nightly",
+      "kind": "operational",
+      "doc": 12,
+      "query": "Как исключить отдельный репозиторий из ночного полного обогащения?",
+      "answer_all": [
+        "skips any project containing .levara-no-nightly"
+      ]
+    },
+    {
+      "id": "qa-ingest-nightly-stop",
+      "kind": "operational",
+      "doc": 12,
+      "query": "Что делает nightly batch при ошибке или таймауте classic full enrichment по умолчанию?",
+      "answer_all": [
+        "stops on classic full enrichment error/timeout by default",
+        "avoid stacking slow LLM/graph jobs"
+      ]
+    },
+    {
+      "id": "qa-ingest-real-comparison",
+      "kind": "operational",
+      "doc": 12,
+      "query": "Как сравнить изменения memory contract до и после на реальных агентах?",
+      "answer_all": [
+        "run the same real agent tasks with the same model/corpus",
+        "audit events, behavior score, context bytes and answer correctness"
+      ]
+    },
+    {
+      "id": "qb-task-flags",
+      "kind": "exact",
+      "doc": 3,
+      "query": "Какие две переменные включают task-инструменты в MCP?",
+      "answer_all": [
+        "LEVARA_LONG_HORIZON_RUNTIME=1",
+        "LEVARA_MCP_TOOLSET=long-horizon"
+      ]
+    },
+    {
+      "id": "qb-task-bootstrap-budget",
+      "kind": "exact",
+      "doc": 3,
+      "query": "Каков допустимый бюджет max_tokens при восстановлении задачи через task_bootstrap?",
+      "answer_all": [
+        "100–4000 приблизительных токенов"
+      ]
+    },
+    {
+      "id": "qb-task-artifact-digest",
+      "kind": "exact",
+      "doc": 3,
+      "query": "Какой digest требуется в artifact receipt?",
+      "answer_all": [
+        "Artifact receipt требует evidence_uri и полный SHA-256 digest"
+      ]
+    },
+    {
+      "id": "qb-task-wal",
+      "kind": "exact",
+      "doc": 3,
+      "query": "Работает ли Task Runtime в WAL-only конфигурации без SQL?",
+      "answer_all": [
+        "Task Runtime не работает в WAL-only конфигурации с отключённой SQL-базой"
+      ]
+    },
+    {
+      "id": "qb-task-runner",
+      "kind": "semantic",
+      "doc": 3,
+      "query": "Кто непосредственно выполняет длительную работу, если включён журнал задач?",
+      "answer_all": [
+        "Работу выполняет агент или host"
+      ]
+    },
+    {
+      "id": "qb-task-plan-freeze",
+      "kind": "semantic",
+      "doc": 3,
+      "query": "Можно ли перестроить зависимости плана после начала исполнения первого шага?",
+      "answer_all": [
+        "После запуска любого шага заменить план нельзя"
+      ]
+    },
+    {
+      "id": "qb-task-stale-evidence",
+      "kind": "semantic",
+      "doc": 3,
+      "query": "Почему успешно пройденная проверка может перестать подтверждать готовность после изменения рабочей версии?",
+      "answer_all": [
+        "После изменения revision старое evidence отмечается как stale"
+      ]
+    },
+    {
+      "id": "qb-task-scope",
+      "kind": "semantic",
+      "doc": 3,
+      "query": "Чем ограничена область принадлежности одной долгой задачи?",
+      "answer_all": [
+        "Scope задачи включает владельца, collection и room"
+      ]
+    },
+    {
+      "id": "qb-task-expired-claim",
+      "kind": "operational",
+      "doc": 3,
+      "query": "Исполнитель пропал, а срок его захвата шага истёк. Может ли другой агент забрать этот шаг?",
+      "answer_all": [
+        "Истёкший lease может перехватить другой actor"
+      ]
+    },
+    {
+      "id": "qb-task-unblock-authority",
+      "kind": "operational",
+      "doc": 3,
+      "query": "После снятия blocker автоматически расширяются разрешённые действия задачи?",
+      "answer_all": [
+        "Разрешение blocker сохраняет его историю",
+        "не расширяет сохранённые полномочия задачи"
+      ]
+    },
+    {
+      "id": "qb-task-worker-evidence",
+      "kind": "operational",
+      "doc": 3,
+      "query": "Включили встроенный worker и получили запись об исполнении. Можно ли считать её доказательством реального изменения файла?",
+      "answer_all": [
+        "NewLoggingStepExecutor",
+        "возвращает синтетическое наблюдение",
+        "не выполняя полезную задачу"
+      ]
+    },
+    {
+      "id": "qb-task-promote",
+      "kind": "operational",
+      "doc": 3,
+      "query": "При завершении задачи какие предложенные воспоминания не попадут в постоянную память?",
+      "answer_all": [
+        "неподдерживаемые или недостаточно доказанные кандидаты отклоняются"
+      ]
+    },
+    {
+      "id": "qb-identity-scim-base",
+      "kind": "exact",
+      "doc": 4,
+      "query": "Какой базовый URL у SCIM: с префиксом /api/v1 или без него?",
+      "answer_all": [
+        "Базовый URL — /scim/v2, без /api/v1"
+      ]
+    },
+    {
+      "id": "qb-identity-clock-skew",
+      "kind": "exact",
+      "doc": 4,
+      "query": "Какой допуск расхождения часов по умолчанию применяется при OIDC bearer-проверке?",
+      "answer_all": [
+        "допуск расхождения часов по умолчанию — пять минут"
+      ]
+    },
+    {
+      "id": "qb-identity-ad-attributes",
+      "kind": "exact",
+      "doc": 4,
+      "query": "Какие username и immutable subject атрибуты используются по умолчанию для LDAP_DIRECTORY_KIND=ad?",
+      "answer_all": [
+        "sAMAccountName",
+        "objectGUID"
+      ]
+    },
+    {
+      "id": "qb-identity-saml-state",
+      "kind": "exact",
+      "doc": 4,
+      "query": "Каковы лимит количества pending SAML-запросов и срок их хранения?",
+      "answer_all": [
+        "до 100 запросов, TTL 15 минут"
+      ]
+    },
+    {
+      "id": "qb-identity-jwt-access",
+      "kind": "semantic",
+      "doc": 4,
+      "query": "Достаточно ли валидного токена корпоративного входа, чтобы автоматически получить доступ к материалам организации?",
+      "answer_all": [
+        "не создаёт автоматически локального пользователя, его членство в организации или доступ к данным"
+      ]
+    },
+    {
+      "id": "qb-identity-bind-secret",
+      "kind": "semantic",
+      "doc": 4,
+      "query": "Откуда встроенный коннектор каталога читает пароль служебной учётной записи?",
+      "answer_all": [
+        "Service password читается только из файла"
+      ]
+    },
+    {
+      "id": "qb-identity-directory-failover",
+      "kind": "semantic",
+      "doc": 4,
+      "query": "Умеет ли встроенный коннектор сам переключаться между контроллерами домена и синхронизировать каталог в фоне?",
+      "answer_all": [
+        "Connector не выполняет background sync и не имеет списка DC для failover"
+      ]
+    },
+    {
+      "id": "qb-identity-delete-history",
+      "kind": "semantic",
+      "doc": 4,
+      "query": "Что происходит с документами и историей человека при удалении его SCIM-записи?",
+      "answer_all": [
+        "DELETE деактивирует пользователя, не удаляя его документы и историю"
+      ]
+    },
+    {
+      "id": "qb-identity-jwks-start",
+      "kind": "operational",
+      "doc": 4,
+      "query": "После настройки корпоративного OIDC сервис перестал стартовать: что происходит, если адрес ключей недоступен?",
+      "answer_all": [
+        "недоступный JWKS останавливает запуск"
+      ]
+    },
+    {
+      "id": "qb-identity-oidc-multinode",
+      "kind": "operational",
+      "doc": 4,
+      "query": "Браузерный вход распределили по нескольким узлам. Что нужно для сохранения состояния авторизации между запросами?",
+      "answer_all": [
+        "multi-node deployment требует affinity либо общего хранилища состояния"
+      ]
+    },
+    {
+      "id": "qb-identity-issuer-change",
+      "kind": "operational",
+      "doc": 4,
+      "query": "Если переименовать LEVARA_SCIM_ISSUER, перенесутся ли существующие связи пользователей автоматически?",
+      "answer_all": [
+        "смена этого значения не мигрирует старые identity mappings"
+      ]
+    },
+    {
+      "id": "qb-identity-rename-conflict",
+      "kind": "operational",
+      "doc": 4,
+      "query": "После переименования SCIM-пользователя получили 409. Следует ли вручную объединить записи по email?",
+      "answer_all": [
+        "Email принадлежит другой identity; не выполнять ручное объединение по email"
+      ]
+    },
+    {
+      "id": "qb-document-grpc-batch",
+      "kind": "exact",
+      "doc": 5,
+      "query": "Сколько элементов может содержать один запрос gRPC IngestData?",
+      "answer_all": [
+        "IngestData принимает от 1 до 100 элементов"
+      ]
+    },
+    {
+      "id": "qb-document-presign-expiry",
+      "kind": "exact",
+      "doc": 5,
+      "query": "Каковы стандартный и максимальный сроки действия временного /raw/url?",
+      "answer_all": [
+        "по умолчанию 900 секунд",
+        "максимум семь дней"
+      ]
+    },
+    {
+      "id": "qb-document-artifact-size",
+      "kind": "exact",
+      "doc": 5,
+      "query": "Какие размер и проверки целостности применяются при скачивании structured artifact?",
+      "answer_all": [
+        "ограничивает ответ 16 MiB",
+        "проверяет размер, SHA-256 и JSON"
+      ]
+    },
+    {
+      "id": "qb-document-source-conflict",
+      "kind": "exact",
+      "doc": 5,
+      "query": "Какой HTTP-статус получает устаревшая CAS-пара source_revision и raw_content_hash при замене источника?",
+      "answer_all": [
+        "Устаревшая пара получает 409 и не меняет текущие байты"
+      ]
+    },
+    {
+      "id": "qb-document-file-identity",
+      "kind": "semantic",
+      "doc": 5,
+      "query": "Могут ли одинаковые имена загруженных файлов заставить разные документы ссылаться на чужие байты?",
+      "answer_all": [
+        "физическое хранилище использует owner/content identity",
+        "Разные документы с одинаковым именем не должны ссылаться на чужие байты"
+      ]
+    },
+    {
+      "id": "qb-document-browser-close",
+      "kind": "semantic",
+      "doc": 5,
+      "query": "Останавливается ли обработка загруженных документов, когда пользователь закрывает браузер?",
+      "answer_all": [
+        "При смене вкладки/закрытии браузера фоновой обработкой продолжает управлять сервер"
+      ]
+    },
+    {
+      "id": "qb-document-delete-erasure",
+      "kind": "semantic",
+      "doc": 5,
+      "query": "Гарантирует ли удаление документа физическое стирание старых индексов и резервных копий?",
+      "answer_all": [
+        "не обещание физического стирания всех производных",
+        "raw blobs, старые индексы, граф и резервные копии требуют отдельной процедуры"
+      ]
+    },
+    {
+      "id": "qb-document-single-share",
+      "kind": "semantic",
+      "doc": 5,
+      "query": "Откроются ли соседние файлы в наборе, если выдать доступ только к одному документу?",
+      "answer_all": [
+        "Grant/revoke через document REST API не открывает остальные файлы набора"
+      ]
+    },
+    {
+      "id": "qb-document-failed-reprocessing",
+      "kind": "operational",
+      "doc": 5,
+      "query": "Повторная обработка уже проиндексированного документа упала. Останется ли доступной предыдущая успешная публикация?",
+      "answer_all": [
+        "Если повторный запуск падает, последняя успешная publication остаётся доступной"
+      ]
+    },
+    {
+      "id": "qb-document-ownerless",
+      "kind": "operational",
+      "doc": 5,
+      "query": "Выбираем набор для конфиденциальных материалов. Можно ли считать приватным старый dataset с пустым owner?",
+      "answer_all": [
+        "Legacy-наборы с пустым owner считаются публичными"
+      ]
+    },
+    {
+      "id": "qb-document-acl-control",
+      "kind": "operational",
+      "doc": 5,
+      "query": "Чужой пользователь ничего не нашёл поиском. Как проверить, что это действительно сработал запрет доступа?",
+      "answer_all": [
+        "сначала положительный контроль владельцем должен действительно найти документ"
+      ]
+    },
+    {
+      "id": "qb-document-scan-empty",
+      "kind": "operational",
+      "doc": 5,
+      "query": "Загрузили PDF-скан и получили пустое извлечение. Есть ли автоматическая гарантия OCR, и какой ответ ожидается?",
+      "answer_all": [
+        "Нет гарантированного OCR fallback в обычном Extract",
+        "Пустой результат — 422"
+      ]
+    },
+    {
+      "id": "qb-storage-multipart-threshold",
+      "kind": "exact",
+      "doc": 13,
+      "query": "С какого размера S3 Save переключается на multipart?",
+      "answer_all": [
+        "S3 Save переключается на multipart с 32 MiB"
+      ]
+    },
+    {
+      "id": "qb-storage-object-limit",
+      "kind": "exact",
+      "doc": 13,
+      "query": "Каков стандартный максимальный размер объекта в encrypted storage backend?",
+      "answer_all": [
+        "По умолчанию объект ограничен 64 MiB"
+      ]
+    },
+    {
+      "id": "qb-storage-cache-ttl",
+      "kind": "exact",
+      "doc": 13,
+      "query": "Каковы стандартный и максимальный TTL кэша ключей KMS?",
+      "answer_all": [
+        "TTL кэша ключей по умолчанию нулевой; максимум — пять минут"
+      ]
+    },
+    {
+      "id": "qb-storage-token-file",
+      "kind": "exact",
+      "doc": 13,
+      "query": "Каковы ограничения размера и прав доступа для файла AUDIT_WEBHOOK_TOKEN_FILE?",
+      "answer_all": [
+        "Файл токена — обычный приватный файл до 8192 bytes",
+        "без доступа группы и остальных пользователей"
+      ]
+    },
+    {
+      "id": "qb-storage-inflight-defaults",
+      "kind": "exact",
+      "doc": 13,
+      "query": "Какие значения MAX_IN_FLIGHT и MAX_WAITERS приведены в конфигурации шифрования?",
+      "answer_all": [
+        "STORAGE_ENCRYPTION_MAX_IN_FLIGHT=4",
+        "STORAGE_ENCRYPTION_MAX_WAITERS=16"
+      ]
+    },
+    {
+      "id": "qb-storage-encryption-scope",
+      "kind": "semantic",
+      "doc": 13,
+      "query": "Защищает ли включение шифрования объектов также SQL-базу, граф и поисковые индексы?",
+      "answer_all": [
+        "SQL, Markdown workspace, граф и поисковые индексы требуют защиты своих дисков и сервисов"
+      ]
+    },
+    {
+      "id": "qb-storage-bucket-provision",
+      "kind": "semantic",
+      "doc": 13,
+      "query": "Создаёт ли Levara bucket и его правила жизненного цикла при настройке S3?",
+      "answer_all": [
+        "Levara не создаёт bucket, региональные политики или lifecycle rules"
+      ]
+    },
+    {
+      "id": "qb-storage-dead-letter-budget",
+      "kind": "semantic",
+      "doc": 13,
+      "query": "Освобождается ли место в очереди аудита после исчерпания попыток доставки события?",
+      "answer_all": [
+        "событие остаётся в dead-letter queue и продолжает занимать её бюджет"
+      ]
+    },
+    {
+      "id": "qb-storage-audit-privacy",
+      "kind": "semantic",
+      "doc": 13,
+      "query": "Попадают ли в экспорт аудита тексты документов, аргументы инструментов и токены?",
+      "answer_all": [
+        "Тексты документов, аргументы инструментов, токены и сообщения ошибок не экспортируются"
+      ]
+    },
+    {
+      "id": "qb-storage-encryption-integrity",
+      "kind": "semantic",
+      "doc": 13,
+      "query": "Как защищается привязка зашифрованного содержимого к имени объекта?",
+      "answer_all": [
+        "AES-GCM защищает содержимое и привязку к object key"
+      ]
+    },
+    {
+      "id": "qb-storage-key-rotation",
+      "kind": "operational",
+      "doc": 13,
+      "query": "Нужно сменить ключ записи и сохранить чтение старых объектов. Как настроить ключи?",
+      "answer_all": [
+        "задайте новый KMS_KEY_ARN, сохранив старые ключи в KMS_READ_KEY_ARNS"
+      ]
+    },
+    {
+      "id": "qb-storage-audit-dedup",
+      "kind": "operational",
+      "doc": 13,
+      "query": "Приёмник аудита получил один пакет дважды после сетевого сбоя. По какому полю нужно убрать дубликаты?",
+      "answer_all": [
+        "Приёмник должен устранять дубликаты по event_id"
+      ]
+    },
+    {
+      "id": "qb-storage-destination-change",
+      "kind": "operational",
+      "doc": 13,
+      "query": "Меняем AUDIT_DESTINATION_ID. Что произойдёт с прежней очередью?",
+      "answer_all": [
+        "Смена AUDIT_DESTINATION_ID создаёт другую очередь; прежнюю нужно отдельно довести до доставки или разобрать"
+      ]
+    },
+    {
+      "id": "qb-storage-sql-down-metrics",
+      "kind": "operational",
+      "doc": 13,
+      "query": "У аудита метрика up стала нулём и пропали размеры очереди. Можно ли считать очередь пустой?",
+      "answer_all": [
+        "При недоступной SQL up=0",
+        "это не нулевая очередь"
+      ]
+    },
+    {
+      "id": "qb-storage-config-check-network",
+      "kind": "operational",
+      "doc": 13,
+      "query": "Успешный config-check доказывает доступ к настоящему AWS KMS и SIEM?",
+      "answer_all": [
+        "без сетевых вызовов",
+        "Доступ к региону, ключу, bucket, сертификатам и реальному приёмнику подтверждается отдельным тестом"
+      ]
+    },
+    {
+      "id": "qb-authority-public-field",
+      "kind": "exact",
+      "doc": 14,
+      "query": "Как называется публичный аргумент task_open с полномочиями: authority или authority_json?",
+      "answer_all": [
+        "The public task_open argument is authority"
+      ]
+    },
+    {
+      "id": "qb-authority-size-limit",
+      "kind": "exact",
+      "doc": 14,
+      "query": "Каков предельный размер файла authority-манифеста?",
+      "answer_all": [
+        "The size limit is 64 KiB"
+      ]
+    },
+    {
+      "id": "qb-authority-digest-key",
+      "kind": "exact",
+      "doc": 14,
+      "query": "В каком поле при открытии задачи передаётся SHA-256 привязанного манифеста?",
+      "answer_all": [
+        "manifest_sha256",
+        "REPLACE_WITH_SHA256_OF_EXACT_FILE_BYTES"
+      ]
+    },
+    {
+      "id": "qb-authority-format",
+      "kind": "exact",
+      "doc": 14,
+      "query": "В каком формате ParseAuthorityManifest читает и проверяет манифест полномочий?",
+      "answer_all": [
+        "ParseAuthorityManifest",
+        "Parses and validates YAML"
+      ]
+    },
+    {
+      "id": "qb-authority-network-key",
+      "kind": "exact",
+      "doc": 14,
+      "query": "Как называется поле манифеста со списком разрешённых сетевых хостов?",
+      "answer_all": [
+        "allowed_networks:",
+        "api.example.com"
+      ]
+    },
+    {
+      "id": "qb-authority-claim-binding",
+      "kind": "semantic",
+      "doc": 14,
+      "query": "На каком этапе HTTP-пути реально проверяется привязка задачи к содержимому манифеста?",
+      "answer_all": [
+        "current HTTP claim path verifies that binding before a bound task step is claimed"
+      ]
+    },
+    {
+      "id": "qb-authority-relative-path",
+      "kind": "semantic",
+      "doc": 14,
+      "query": "Можно ли привязать к задаче манифест абсолютным путём вне рабочей области?",
+      "answer_all": [
+        "The manifest path must be workspace-relative",
+        "loader rejects absolute paths"
+      ]
+    },
+    {
+      "id": "qb-authority-tool-helper",
+      "kind": "semantic",
+      "doc": 14,
+      "query": "Всегда ли неуказанный в манифесте инструмент будет запрещён, или это зависит от вызова проверки исполнителем?",
+      "answer_all": [
+        "CheckToolAccess",
+        "Helper rejects an unlisted tool when the executor calls it"
+      ]
+    },
+    {
+      "id": "qb-authority-path-helper",
+      "kind": "semantic",
+      "doc": 14,
+      "query": "Проверяет ли helper разрешённых путей выход через символическую ссылку?",
+      "answer_all": [
+        "CheckPathAccess",
+        "allowed roots and symlink containment"
+      ]
+    },
+    {
+      "id": "qb-authority-permission-grant",
+      "kind": "semantic",
+      "doc": 14,
+      "query": "Даёт ли перечисление хостов и путей в манифесте само по себе права на деплой и публикацию?",
+      "answer_all": [
+        "They do not grant filesystem, credentials, network, deployment or publication permission by themselves"
+      ]
+    },
+    {
+      "id": "qb-authority-edit-bound",
+      "kind": "operational",
+      "doc": 14,
+      "query": "Изменили файл полномочий после привязки к задаче. Почему следующий захват шага отклоняется и что нужно обновить?",
+      "answer_all": [
+        "A content change after binding causes a digest mismatch at step claim",
+        "update the binding intentionally"
+      ]
+    },
+    {
+      "id": "qb-authority-executor-validation",
+      "kind": "operational",
+      "doc": 14,
+      "query": "Достаточно ли тестировать отдельно allowlist helpers, прежде чем доверять ограничениям собственного executor?",
+      "answer_all": [
+        "through the actual executor, not just the helper functions"
+      ]
+    },
+    {
+      "id": "qb-authority-denial-side-effects",
+      "kind": "operational",
+      "doc": 14,
+      "query": "Что нужно проверить в действиях исполнителя при отказе по authority-манифесту и при разрешении?",
+      "answer_all": [
+        "denied actions produce no side effect",
+        "an allowed action still works"
+      ]
+    },
+    {
+      "id": "qb-authority-worker-sandbox",
+      "kind": "operational",
+      "doc": 14,
+      "query": "Включили штатный task worker с манифестом. Получили ли мы полноценную среду исполнения, ограниченную этим манифестом?",
+      "answer_all": [
+        "optional server task worker currently uses a logging executor",
+        "does not implement a full manifest-enforced execution environment"
+      ]
+    },
+    {
+      "id": "qb-authority-host-gates",
+      "kind": "operational",
+      "doc": 14,
+      "query": "Можно ли убрать внешние проверки разрешений и review gates после привязки манифеста к задаче?",
+      "answer_all": [
+        "Keep host permissions and review gates in force even when a task has a manifest"
+      ]
+    },
+    {
+      "id": "qb-webui-rewrite-default",
+      "kind": "exact",
+      "doc": 15,
+      "query": "На какой адрес по умолчанию направлены Next.js rewrites WebUI?",
+      "answer_all": [
+        "Next.js rewrites default to http://127.0.0.1:8081"
+      ]
+    },
+    {
+      "id": "qb-webui-playwright-port",
+      "kind": "exact",
+      "doc": 15,
+      "query": "Какой порт по умолчанию использует Playwright и чем он переопределяется?",
+      "answer_all": [
+        "Playwright uses port 3011 unless PLAYWRIGHT_PORT overrides it"
+      ]
+    },
+    {
+      "id": "qb-webui-auth-methods",
+      "kind": "exact",
+      "doc": 15,
+      "query": "Через какой endpoint WebUI узнаёт доступные способы входа?",
+      "answer_all": [
+        "configured login methods from /api/v1/auth/methods"
+      ]
+    },
+    {
+      "id": "qb-webui-poll-interval",
+      "kind": "exact",
+      "doc": 15,
+      "query": "Как часто страница dataset опрашивает статус Cognify до завершения?",
+      "answer_all": [
+        "polls /api/v1/cognify/<runId>/status once per second until terminal status"
+      ]
+    },
+    {
+      "id": "qb-webui-prometheus-endpoint",
+      "kind": "exact",
+      "doc": 15,
+      "query": "По какому пути backend публикует Prometheus metrics?",
+      "answer_all": [
+        "http://<backend-host>:<backend-port>/metrics"
+      ]
+    },
+    {
+      "id": "qb-webui-data-owner",
+      "kind": "semantic",
+      "doc": 15,
+      "query": "Хранит ли Next.js интерфейс данные сам или обращается к backend?",
+      "answer_all": [
+        "It does not own data storage",
+        "It talks to the backend over REST"
+      ]
+    },
+    {
+      "id": "qb-webui-curated-e2e",
+      "kind": "semantic",
+      "doc": 15,
+      "query": "На чём основаны curated e2e-проверки WebUI: на реальном backend или подставных ответах API?",
+      "answer_all": [
+        "curated suite uses mocked API responses and a real Chromium browser"
+      ]
+    },
+    {
+      "id": "qb-webui-scaffold-approval",
+      "kind": "semantic",
+      "doc": 15,
+      "query": "Применяет ли интерфейс автоматически одобренные предложения по правилам памяти?",
+      "answer_all": [
+        "The UI does not apply proposals automatically",
+        "should be applied intentionally"
+      ]
+    },
+    {
+      "id": "qb-webui-build-rewrite",
+      "kind": "semantic",
+      "doc": 15,
+      "query": "Почему одинаковый backend URL нужно задавать и при сборке, и при запуске WebUI?",
+      "answer_all": [
+        "Next.js records rewrites in the build output"
+      ]
+    },
+    {
+      "id": "qb-webui-process-logs",
+      "kind": "semantic",
+      "doc": 15,
+      "query": "Откуда брать эксплуатационные логи frontend в командном развёртывании?",
+      "answer_all": [
+        "Next.js process logs",
+        "capture stdout/stderr from the Node process"
+      ]
+    },
+    {
+      "id": "qb-webui-session-reset",
+      "kind": "operational",
+      "doc": 15,
+      "query": "Пользователей команды случайно выбрасывает из WebUI после перезапусков. Что проверить?",
+      "answer_all": [
+        "Team users randomly log out",
+        "unstable JWT_SECRET across restarts",
+        "Set a stable secret and redeploy"
+      ]
+    },
+    {
+      "id": "qb-webui-sse-proxy",
+      "kind": "operational",
+      "doc": 15,
+      "query": "Прокси задерживает поток прогресса Cognify. Какое поведение буферизации необходимо отключить?",
+      "answer_all": [
+        "proxy must not buffer SSE responses",
+        "disable response buffering for stream paths"
+      ]
+    },
+    {
+      "id": "qb-webui-empty-workspace",
+      "kind": "operational",
+      "doc": 15,
+      "query": "Страница workspace пуста. Какие настройки и действие рекомендует руководство?",
+      "answer_all": [
+        "Set project/branch, enable LEVARA_WORKSPACE_INDEX_WORKER=1, run index"
+      ]
+    },
+    {
+      "id": "qb-webui-auth-rate-limit",
+      "kind": "operational",
+      "doc": 15,
+      "query": "Тестовый вход начал возвращать HTTP 429. Как корректно повторить проверку?",
+      "answer_all": [
+        "Wait for the window and reuse fixture credentials",
+        "rerun on an isolated test server with recorded rate policy"
+      ]
+    },
+    {
+      "id": "qb-webui-context-growth",
+      "kind": "operational",
+      "doc": 15,
+      "query": "В метриках поведения памяти растёт объём передаваемого контекста. На какую причину это указывает?",
+      "answer_all": [
+        "rising context bytes points to noisy wake-up/pinned memory context"
+      ]
+    },
+    {
+      "id": "qc-llm-rate-window",
+      "kind": "exact",
+      "doc": 6,
+      "query": "В каких единицах задаётся LLM_RATE_LIMIT_INTERVAL и какие запросы ограничивает этот лимитер?",
+      "answer_all": [
+        "LLM_RATE_LIMIT_INTERVAL (секунды)",
+        "ограничение исходящих LLM-запросов"
+      ]
+    },
+    {
+      "id": "qc-neo4j-bootstrap",
+      "kind": "exact",
+      "doc": 6,
+      "query": "Что отключает NEO4J_BOOTSTRAP_SCHEMA=false при старте сервера?",
+      "answer_all": [
+        "NEO4J_BOOTSTRAP_SCHEMA=false отключает создание индексов/constraints при старте"
+      ]
+    },
+    {
+      "id": "qc-langfuse-sample",
+      "kind": "exact",
+      "doc": 6,
+      "query": "Какое значение LANGFUSE_SAMPLE_RATE используется по умолчанию?",
+      "answer_all": [
+        "LANGFUSE_SAMPLE_RATE, по умолчанию 0.1"
+      ]
+    },
+    {
+      "id": "qc-mcp-stateless",
+      "kind": "exact",
+      "doc": 6,
+      "query": "Какой URL у строгого stateless MCP transport, требующего дополнительных headers/meta?",
+      "answer_all": [
+        "Строгий stateless transport /mcp/2026-07-28 требует дополнительных headers/meta"
+      ]
+    },
+    {
+      "id": "qc-sql-graph",
+      "kind": "semantic",
+      "doc": 6,
+      "query": "Можно ли долговечно хранить граф знаний без отдельного сервера Neo4j?",
+      "answer_all": [
+        "SQL-база также может хранить граф в graph_nodes и graph_edges",
+        "отсутствие Neo4j не означает отсутствие SQL-графа"
+      ]
+    },
+    {
+      "id": "qc-s3-capabilities",
+      "kind": "semantic",
+      "doc": 6,
+      "query": "Обеспечивает ли подключение объектного хранилища управление корпоративными ключами шифрования и юридическую блокировку удаления?",
+      "answer_all": [
+        "Наличие S3-адаптера не означает готовые KMS/BYOK, legal hold"
+      ]
+    },
+    {
+      "id": "qc-local-processing",
+      "kind": "semantic",
+      "doc": 6,
+      "query": "Достаточно ли запустить Levara на своём компьютере, чтобы обрабатываемые данные гарантированно оставались на нём?",
+      "answer_all": [
+        "Полностью локальная обработка требует локальных моделей, extractors, storage и tracing",
+        "один локальный процесс Levara не гарантирует"
+      ]
+    },
+    {
+      "id": "qc-recipient-visibility",
+      "kind": "semantic",
+      "doc": 6,
+      "query": "При каком условии веб-интерфейс получает список активных получателей доступа к документу?",
+      "answer_all": [
+        "WebUI получает document-scoped active recipients только после проверки share-права"
+      ]
+    },
+    {
+      "id": "qc-embedding-migration",
+      "kind": "operational",
+      "doc": 6,
+      "query": "Заменили embedding-модель на другую с тем же числом измерений. Что нужно сделать с индексом?",
+      "answer_all": [
+        "Смена модели требует повторной индексации, даже если размерность совпала"
+      ]
+    },
+    {
+      "id": "qc-prometheus-container",
+      "kind": "operational",
+      "doc": 6,
+      "query": "Prometheus работает в контейнере: куда должен указывать адрес scrape target для метрик Levara?",
+      "answer_all": [
+        "В контейнере адрес должен указывать на сервис Levara, а не loopback Prometheus"
+      ]
+    },
+    {
+      "id": "qc-standalone-external",
+      "kind": "operational",
+      "doc": 6,
+      "query": "В окружении уже заданы внешние сервисы, но запуск с standalone их не подхватил. Как включить нужные интеграции?",
+      "answer_all": [
+        "используйте -profile=full или явно передайте нужные флаги",
+        "standalone подавляет неявно унаследованные внешние настройки"
+      ]
+    },
+    {
+      "id": "qc-trace-delivery",
+      "kind": "operational",
+      "doc": 6,
+      "query": "Ключи Langfuse настроены. Как убедиться, что trace действительно доставляется?",
+      "answer_all": [
+        "Не считайте наличие ключей проверкой доставки trace",
+        "выполните и найдите конкретный тестовый вызов"
+      ]
+    },
+    {
+      "id": "qc-git-admin",
+      "kind": "exact",
+      "doc": 7,
+      "query": "Кому доступен инструмент analyze_commits?",
+      "answer_all": [
+        "analyze_commits доступен только активному instance administrator"
+      ]
+    },
+    {
+      "id": "qc-git-bounds",
+      "kind": "exact",
+      "doc": 7,
+      "query": "Какими аргументами analyze_commits ограничивают дату начала и число коммитов в примере ограниченного анализа?",
+      "answer_all": [
+        "since=\"2026-01-01\", limit=20"
+      ]
+    },
+    {
+      "id": "qc-git-preview",
+      "kind": "exact",
+      "doc": 7,
+      "query": "Что возвращает analyze_commits без embeddings?",
+      "answer_all": [
+        "Без embeddings инструмент возвращает текстовый preview"
+      ]
+    },
+    {
+      "id": "qc-git-graph-relations",
+      "kind": "exact",
+      "doc": 7,
+      "query": "Гарантирует ли анализ коммитов наличие graph edges AUTHORED и MODIFIED в каждом запуске?",
+      "answer_all": [
+        "Graph entities и имена relations зависят от LLM",
+        "не обещайте AUTHORED/MODIFIED edges для каждого запуска"
+      ]
+    },
+    {
+      "id": "qc-git-model-transfer",
+      "kind": "semantic",
+      "doc": 7,
+      "query": "Могут ли сообщения и изменения выбранных коммитов отправляться подключённым моделям?",
+      "answer_all": [
+        "Содержимое выбранных коммитов может передаваться настроенным моделям"
+      ]
+    },
+    {
+      "id": "qc-git-publication-order",
+      "kind": "semantic",
+      "doc": 7,
+      "query": "Как сервер закрепляет источник анализа истории до запуска фонового обработчика?",
+      "answer_all": [
+        "создаёт или повторно использует внутренний dataset и точный document source",
+        "фиксирует revision/hash и только затем показывает run"
+      ]
+    },
+    {
+      "id": "qc-git-legacy-results",
+      "kind": "semantic",
+      "doc": 7,
+      "query": "Может ли административный поиск истории вернуть старые записи, ещё не связанные с публикацией документа?",
+      "answer_all": [
+        "git_search — административный поиск напрямую по фиксированной collection",
+        "старые записи git_commits, у которых ещё нет document publication lineage"
+      ]
+    },
+    {
+      "id": "qc-git-exactly-once",
+      "kind": "semantic",
+      "doc": 7,
+      "query": "Гарантирует ли повторное чтение того же диапазона истории обработку каждого изменения ровно один раз?",
+      "answer_all": [
+        "Повторное чтение того же диапазона не является доказанной exactly-once incremental ingestion"
+      ]
+    },
+    {
+      "id": "qc-git-verify-text",
+      "kind": "operational",
+      "doc": 7,
+      "query": "Индексирование истории завершилось. С чем нужно сопоставить найденный текст, чтобы проверить результат?",
+      "answer_all": [
+        "Сопоставьте найденный текст с исходным commit"
+      ]
+    },
+    {
+      "id": "qc-git-first-run",
+      "kind": "operational",
+      "doc": 7,
+      "query": "В каком окружении рекомендуется впервые обрабатывать историю репозитория?",
+      "answer_all": [
+        "Используйте отдельное тестовое окружение для первой обработки"
+      ]
+    },
+    {
+      "id": "qc-git-rollback",
+      "kind": "operational",
+      "doc": 7,
+      "query": "После эксперимента с analyze_commits можно ли документированно откатить загрузку через delete с dataset_id из результата?",
+      "answer_all": [
+        "его ID не является частью публичного результата analyze_commits",
+        "симметричный rollback через delete(dataset_id=...) не документирован"
+      ]
+    },
+    {
+      "id": "qc-git-prune",
+      "kind": "operational",
+      "doc": 7,
+      "query": "Можно ли отменить анализ одного репозитория глобальным prune?",
+      "answer_all": [
+        "Не используйте глобальный prune для отмены анализа одного репозитория"
+      ]
+    },
+    {
+      "id": "qc-cron-health-frequency",
+      "kind": "exact",
+      "doc": 8,
+      "query": "Какую начальную частоту предлагает таблица расписания для Health и doctor?",
+      "answer_all": [
+        "Health и doctor | 5–15 минут"
+      ]
+    },
+    {
+      "id": "qc-cron-drift-frequency",
+      "kind": "exact",
+      "doc": 8,
+      "query": "Когда рекомендуется запускать check_drift по cron-профилю?",
+      "answer_all": [
+        "check_drift | Раз в неделю или после смены модели"
+      ]
+    },
+    {
+      "id": "qc-cron-heartbeat-endpoint",
+      "kind": "exact",
+      "doc": 8,
+      "query": "Какой REST-запрос показывает пять последних доступных heartbeat-событий типа doctor?",
+      "answer_all": [
+        "GET /api/v1/heartbeats?type=doctor&limit=5"
+      ]
+    },
+    {
+      "id": "qc-cron-sync-cli",
+      "kind": "exact",
+      "doc": 8,
+      "query": "Есть ли в поставляемом CLI команда sync?",
+      "answer_all": [
+        "У CLI нет команды sync"
+      ]
+    },
+    {
+      "id": "qc-cron-retention",
+      "kind": "semantic",
+      "doc": 8,
+      "query": "При каких предварительных условиях можно планировать консолидацию или удаление данных?",
+      "answer_all": [
+        "Консолидация/удаление | Сначала ручной dry-run | Отдельно одобрены scope и retention"
+      ]
+    },
+    {
+      "id": "qc-cron-backup-policy",
+      "kind": "semantic",
+      "doc": 8,
+      "query": "От чего выбирать периодичность резервного копирования и что регулярно проверять?",
+      "answer_all": [
+        "Backup | По допустимой потере данных | Регулярно проверяется восстановление"
+      ]
+    },
+    {
+      "id": "qc-cron-sync-actor",
+      "kind": "semantic",
+      "doc": 8,
+      "query": "Почему консолидацию памяти и очистку графа нельзя считать одной операцией?",
+      "answer_all": [
+        "имеет собственные guard и revert; она не эквивалентна prune"
+      ]
+    },
+    {
+      "id": "qc-cron-wrapper-dependencies",
+      "kind": "semantic",
+      "doc": 8,
+      "query": "Какие системные программы нужны для предложенного скрипта проверки диагностики?",
+      "answer_all": [
+        "Этот wrapper требует Bash, curl и jq"
+      ]
+    },
+    {
+      "id": "qc-cron-token-handling",
+      "kind": "operational",
+      "doc": 8,
+      "query": "Как обращаться с токеном в логах и общедоступном crontab при настройке диагностики?",
+      "answer_all": [
+        "Не выводите token в лог и не помещайте его непосредственно в общедоступный crontab"
+      ]
+    },
+    {
+      "id": "qc-cron-rollout",
+      "kind": "operational",
+      "doc": 8,
+      "query": "Что проверить перед тем, как устанавливать периодичность фонового диагностического задания?",
+      "answer_all": [
+        "Сначала проверьте один вызов на выбранном окружении",
+        "затем настройте частоту, timeout и ротацию логов"
+      ]
+    },
+    {
+      "id": "qc-cron-doctor-warnings",
+      "kind": "operational",
+      "doc": 8,
+      "query": "Скрипт не обнаружил transport/tool error. Как поступить с предупреждениями внутри ответа doctor?",
+      "answer_all": [
+        "диагностические предупреждения внутри содержимого doctor требуют отдельного анализа"
+      ]
+    },
+    {
+      "id": "qc-cron-shell-url",
+      "kind": "operational",
+      "doc": 8,
+      "query": "Как передавать URL истории heartbeat с символом & из shell?",
+      "answer_all": [
+        "В shell заключайте URL с & в кавычки и передавайте credentials"
+      ]
+    },
+    {
+      "id": "qc-team-plan-limits",
+      "kind": "exact",
+      "doc": 16,
+      "query": "Какие лимиты числа users, datasets и individual grants действуют в onboarding-плане?",
+      "answer_all": [
+        "2–8 users, up to 16 datasets and 32 individual grants"
+      ]
+    },
+    {
+      "id": "qc-team-password-env",
+      "kind": "exact",
+      "doc": 16,
+      "query": "Что означает поле password_env в JSON-плане team apply?",
+      "answer_all": [
+        "password_env names an environment variable, not a password"
+      ]
+    },
+    {
+      "id": "qc-team-timeout",
+      "kind": "exact",
+      "doc": 16,
+      "query": "Какой общий deadline у team apply по умолчанию и какой его максимальный размер?",
+      "answer_all": [
+        "default total deadline is two minutes",
+        "up to ten minutes"
+      ]
+    },
+    {
+      "id": "qc-team-journal-mode",
+      "kind": "exact",
+      "doc": 16,
+      "query": "С каким режимом доступа к файлу записывается журнал team apply, содержащий API-key secrets?",
+      "answer_all": [
+        "journal contains API-key secrets",
+        "written atomically with mode 0600"
+      ]
+    },
+    {
+      "id": "qc-team-existing-users",
+      "kind": "exact",
+      "doc": 16,
+      "query": "Какой параметр плана запрещает регистрацию новых пользователей на tenant-enforced сервере?",
+      "answer_all": [
+        "Set \"existing_users_only\": true in the plan to prohibit registration"
+      ]
+    },
+    {
+      "id": "qc-team-account-type",
+      "kind": "semantic",
+      "doc": 16,
+      "query": "Создаёт ли командный onboarding учётные записи корпоративного каталога и членство в группах?",
+      "answer_all": [
+        "ordinary local-password accounts",
+        "does not provision LDAP/SSO identities, administrators, tenants or group membership"
+      ]
+    },
+    {
+      "id": "qc-team-auth-source",
+      "kind": "semantic",
+      "doc": 16,
+      "query": "Используется ли общий токен CLI для входа участников при командном развёртывании?",
+      "answer_all": [
+        "does not use the global CLI token",
+        "each account authenticates with its own password from an environment variable"
+      ]
+    },
+    {
+      "id": "qc-team-collection-side-effects",
+      "kind": "semantic",
+      "doc": 16,
+      "query": "Начнёт ли создание векторной коллекции автоматически запуск модели и индексирование документов?",
+      "answer_all": [
+        "Collection creation does not start an embedding model or index documents"
+      ]
+    },
+    {
+      "id": "qc-team-tenant-prerequisites",
+      "kind": "semantic",
+      "doc": 16,
+      "query": "Что должно быть подготовлено для всех участников перед запуском onboarding на сервере с обязательными арендаторами?",
+      "answer_all": [
+        "all accounts must already exist and be enrolled in the intended tenant",
+        "Tenant creation/enrollment and selection are prerequisites"
+      ]
+    },
+    {
+      "id": "qc-team-grant-credentials",
+      "kind": "semantic",
+      "doc": 16,
+      "query": "С какими двумя типами учётных данных проверяется доступ участников после выдачи grants?",
+      "answer_all": [
+        "After grants are applied, access is checked against the plan with both JWTs and API keys"
+      ]
+    },
+    {
+      "id": "qc-team-rate-limit",
+      "kind": "operational",
+      "doc": 16,
+      "query": "Сервер вернул 429 во время team apply. Каков результат запуска и что учитывать перед возобновлением?",
+      "answer_all": [
+        "A 429 response stops the apply with an error report",
+        "respect the server's auth limits before resuming"
+      ]
+    },
+    {
+      "id": "qc-team-lost-key-response",
+      "kind": "operational",
+      "doc": 16,
+      "query": "Ответ на создание API-ключа потерялся. Создаст ли повторный apply ещё один ключ, если последующий список пуст?",
+      "answer_all": [
+        "If key creation loses its response, its journal entry stays unknown",
+        "will not create another key, even when a subsequent list appears empty"
+      ]
+    },
+    {
+      "id": "qc-team-resume-inputs",
+      "kind": "operational",
+      "doc": 16,
+      "query": "С какими исходными параметрами надо повторять team apply, чтобы продолжить без дубликатов?",
+      "answer_all": [
+        "Repeat the same command with the same plan, URL and journal"
+      ]
+    },
+    {
+      "id": "qc-team-stale-lock",
+      "kind": "operational",
+      "doc": 16,
+      "query": "Когда разрешается вручную удалить оставшийся файл .lock от командного onboarding?",
+      "answer_all": [
+        "remove a stale .lock only after confirming no apply is still running"
+      ]
+    },
+    {
+      "id": "qc-team-viewer-mutation",
+      "kind": "operational",
+      "doc": 16,
+      "query": "Проверка viewer неожиданно смогла изменить grant. Что сообщит team apply и что следует проверить?",
+      "answer_all": [
+        "If a broken server accepts it, the command reports failure",
+        "inspect that grant before using the deployment"
+      ]
+    },
+    {
+      "id": "qc-audit-status-pass",
+      "kind": "exact",
+      "doc": 17,
+      "query": "Что означает статус PASS в матрице приёмки документов?",
+      "answer_all": [
+        "PASS — выполненная локальная проверка"
+      ]
+    },
+    {
+      "id": "qc-audit-invalid-batch",
+      "kind": "exact",
+      "doc": 17,
+      "query": "Какой HTTP-результат и состояние SQL ожидаются в U06 для смешанного batch с повреждённым PDF или аудио без backend?",
+      "answer_all": [
+        "422, ни одной SQL записи batch"
+      ]
+    },
+    {
+      "id": "qc-audit-saml-replay",
+      "kind": "exact",
+      "doc": 17,
+      "query": "Каков результат проверки I06 с восемью одновременными повторами SAML assertion?",
+      "answer_all": [
+        "Повтор assertion и восемь одновременных повторов",
+        "один успех; остальные отказ"
+      ]
+    },
+    {
+      "id": "qc-audit-delete-gap",
+      "kind": "exact",
+      "doc": 17,
+      "query": "Какой статус у A12, проверяющего исчезновение удалённого файла из всех поисковых источников и MCP?",
+      "answer_all": [
+        "GAP: SQL-only delete не гарантирует этого"
+      ]
+    },
+    {
+      "id": "qc-audit-shared-source",
+      "kind": "exact",
+      "doc": 17,
+      "query": "Какой код получает попытка замены shared physical source в сценарии U22?",
+      "answer_all": [
+        "shared physical source получает 409"
+      ]
+    },
+    {
+      "id": "qc-audit-original-text",
+      "kind": "semantic",
+      "doc": 17,
+      "query": "Проверяется ли, что оригинальный HTML и извлечённый текст остаются разными скачиваемыми представлениями?",
+      "answer_all": [
+        "Оригинал HTML отличается от текста; оба скачиваются без подмены"
+      ]
+    },
+    {
+      "id": "qc-audit-filename-isolation",
+      "kind": "semantic",
+      "doc": 17,
+      "query": "Какая проверка защищает документы разных владельцев с одинаковым именем от связывания с чужими байтами?",
+      "answer_all": [
+        "Одинаковое имя, разное содержимое/владельцы не связывают чужие байты",
+        "TestIngestFilenameDoesNotAliasAnotherDocument"
+      ]
+    },
+    {
+      "id": "qc-audit-readonly-key",
+      "kind": "semantic",
+      "doc": 17,
+      "query": "Что гарантирует приёмка загрузки одинакового содержимого под разными именами и владельцами в отношении исходных байтов?",
+      "answer_all": [
+        "Одинаковые байты под разными именами/owners всегда имеют существующий blob",
+        "TestIngestDuplicatesAlwaysReferenceExistingContent"
+      ]
+    },
+    {
+      "id": "qc-audit-all-documents",
+      "kind": "semantic",
+      "doc": 17,
+      "query": "Как матрица проверяет полноту обработки документов в выбранной коллекции?",
+      "answer_all": [
+        "Все документы завершены именно для выбранной коллекции",
+        "TestPipelineStatusRequiresEveryDocumentInCollection"
+      ]
+    },
+    {
+      "id": "qc-audit-s3-mocks",
+      "kind": "semantic",
+      "doc": 17,
+      "query": "Доказывают ли испытания хранилища в памяти работу реального S3-провайдера?",
+      "answer_all": [
+        "in-memory storage проверяет кодовую границу, не провайдера"
+      ]
+    },
+    {
+      "id": "qc-audit-ocr-acceptance",
+      "kind": "operational",
+      "doc": 17,
+      "query": "Что нужно для приёмки распознавания сканов с оценкой CER/WER, поворота, шума и мелкого шрифта?",
+      "answer_all": [
+        "OCR скана/изображения: CER/WER",
+        "размеченный корпус и реальный OCR backend"
+      ]
+    },
+    {
+      "id": "qc-audit-postgres-skips",
+      "kind": "operational",
+      "doc": 17,
+      "query": "Общий go test завершился с exit 0. Как подтвердить, что PostgreSQL-подтесты действительно выполнялись?",
+      "answer_all": [
+        "Логи должны показывать PostgreSQL subtest и PASS, а не только общий exit 0"
+      ]
+    },
+    {
+      "id": "qc-audit-browser-assertions",
+      "kind": "operational",
+      "doc": 17,
+      "query": "Какие конкретные свойства должна проверять браузерная приёмка загрузки вместо проверки, что страница не упала?",
+      "answer_all": [
+        "конкретный dataset ID и байты multipart",
+        "ответ ошибки, retry того же файла, terminal status обработки"
+      ]
+    },
+    {
+      "id": "qc-audit-presigned-revoke",
+      "kind": "operational",
+      "doc": 17,
+      "query": "После отзыва grant можно ли закрыть ранее выданный presigned URL или скачанную копию? Как обслуживать новые запросы?",
+      "answer_all": [
+        "Не поддерживается по природе этих копий; использовать authenticated proxy для новых запросов"
+      ]
+    },
+    {
+      "id": "qc-audit-performance-publish",
+      "kind": "operational",
+      "doc": 17,
+      "query": "Что нужно сохранить перед публикацией заявления об ускорении поиска?",
+      "answer_all": [
+        "Не публиковать ускорение без сохранённого benchmark и неизменной точности/изоляции"
+      ]
+    },
+    {
+      "id": "qc-workspace-watch-state",
+      "kind": "exact",
+      "doc": 18,
+      "query": "В каком файле watcher сохраняет operational state для восстановления после рестарта?",
+      "answer_all": [
+        "watcher пишет .kb/watch-status.json",
+        "enabled/scan/reconcile counters и branch status"
+      ]
+    },
+    {
+      "id": "qc-workspace-run-artifacts",
+      "kind": "exact",
+      "doc": 18,
+      "query": "Какие три Markdown-файла создаёт workspace_run_start для артефактов запуска?",
+      "answer_all": [
+        "workspace_run_start создаёт /runs/<id>/prompt.md, stdout.md, result.md"
+      ]
+    },
+    {
+      "id": "qc-workspace-artifact-registry",
+      "kind": "exact",
+      "doc": 18,
+      "query": "Какой файл редактируется в S10 для регистрации OpenAPI, DDL, ADR и runbooks?",
+      "answer_all": [
+        "правится .kb/context-artifacts.json",
+        "workspace_context_artifacts"
+      ]
+    },
+    {
+      "id": "qc-workspace-ops-command",
+      "kind": "exact",
+      "doc": 18,
+      "query": "Какой CLI-вызов показывает jobs, watcher lag, audit summary и metrics rollup?",
+      "answer_all": [
+        "levara workspace ops-status",
+        "jobs, watcher lag, audit summary, metrics rollup"
+      ]
+    },
+    {
+      "id": "qc-workspace-quality-modes",
+      "kind": "exact",
+      "doc": 18,
+      "query": "Какие три поисковые стратегии должны удерживать минимальные пороги retrieval quality в S13?",
+      "answer_all": [
+        "CHUNKS, CHUNKS_LEXICAL, HYBRID держат минимальные пороги качества"
+      ]
+    },
+    {
+      "id": "qc-workspace-corrupt-bootstrap",
+      "kind": "semantic",
+      "doc": 18,
+      "query": "Как должен вести себя первый запуск контекста для пустого проекта или повреждённого manifest?",
+      "answer_all": [
+        "пустой проект не падает, corrupt manifest отражается как статус, а не как panic"
+      ]
+    },
+    {
+      "id": "qc-workspace-current-content",
+      "kind": "semantic",
+      "doc": 18,
+      "query": "Что становится источником истины после записи Markdown и что должен возвращать поиск?",
+      "answer_all": [
+        "filesystem truth становится source of truth, search возвращает ровно текущий контент"
+      ]
+    },
+    {
+      "id": "qc-workspace-viewer",
+      "kind": "semantic",
+      "doc": 18,
+      "query": "Какие операции разрешены участнику с ролью viewer в workspace?",
+      "answer_all": [
+        "read/search разрешены, write запрещён без утечки чувствительных деталей"
+      ]
+    },
+    {
+      "id": "qc-workspace-job-coalescing",
+      "kind": "semantic",
+      "doc": 18,
+      "query": "Что происходит с одинаковыми запросами индексирования, одновременно поступающими от нескольких агентов?",
+      "answer_all": [
+        "дубликаты коалесцируются, queue pressure контролируется"
+      ]
+    },
+    {
+      "id": "qc-workspace-retry",
+      "kind": "semantic",
+      "doc": 18,
+      "query": "Что происходит с задачей индексирования после исчерпания ограниченного числа повторных попыток?",
+      "answer_all": [
+        "dead-letter после лимита",
+        "dead-letter виден в ops status и может быть повторно запущен"
+      ]
+    },
+    {
+      "id": "qc-workspace-access-preflight",
+      "kind": "operational",
+      "doc": 18,
+      "query": "Как агенту заранее проверить допустимые действия перед тяжёлым поиском, записью или commit?",
+      "answer_all": [
+        "workspace_access_check вызывается перед workspace_search, workspace_write, workspace_commit",
+        "deterministic role/capability map"
+      ]
+    },
+    {
+      "id": "qc-workspace-denied-details",
+      "kind": "operational",
+      "doc": 18,
+      "query": "Пользователь без прав пытается читать workspace. Какие сведения не должны утекать через отказ?",
+      "answer_all": [
+        "denied response не раскрывает path existence, active generation и содержимое файлов"
+      ]
+    },
+    {
+      "id": "qc-workspace-gc-plan",
+      "kind": "operational",
+      "doc": 18,
+      "query": "Как безопасно проверить, что будет удалено при очистке старых поколений индекса?",
+      "answer_all": [
+        "workspace_gc в dry-run режиме -> проверка плана -> реальный GC",
+        "dry-run показывает collections/BM25 manifests к удалению"
+      ]
+    },
+    {
+      "id": "qc-workspace-source-read",
+      "kind": "operational",
+      "doc": 18,
+      "query": "Агент получил результат workspace_search. Как подтвердить точный источник перед ответом пользователю?",
+      "answer_all": [
+        "workspace_read по path/heading",
+        "read подтверждает exact source"
+      ]
+    },
+    {
+      "id": "qc-workspace-host-update",
+      "kind": "operational",
+      "doc": 18,
+      "query": "Что должно сохраниться при массовом обновлении host-конфигов команды и как заменяется секция Levara?",
+      "answer_all": [
+        "сторонние MCP servers и unrelated sections сохраняются, Levara block заменяется атомарно"
+      ]
+    },
+    {
+      "id": "qr-candidate-limit",
+      "kind": "exact",
+      "doc": 9,
+      "query": "Сколько candidates допускает один memory_commit_preview?",
+      "answer_all": [
+        "от 1 до 20",
+        "candidates"
+      ]
+    },
+    {
+      "id": "qr-value-size",
+      "kind": "exact",
+      "doc": 9,
+      "query": "Каков предел размера value у кандидата подготовленного сохранения памяти?",
+      "answer_all": [
+        "Значение ограничено 64 КиБ"
+      ]
+    },
+    {
+      "id": "qr-receipts-limit",
+      "kind": "exact",
+      "doc": 9,
+      "query": "Сколько receipt ID допускает список источников кандидата memory commit?",
+      "answer_all": [
+        "список источников — 64 receipt ID"
+      ]
+    },
+    {
+      "id": "qr-key-size",
+      "kind": "exact",
+      "doc": 9,
+      "query": "Каким размером ограничены collection и idempotency_key в memory commit?",
+      "answer_all": [
+        "256 байтами"
+      ]
+    },
+    {
+      "id": "qr-preview-effect",
+      "kind": "semantic",
+      "doc": 9,
+      "query": "Изменяет ли предварительный просмотр сохранения уже существующие воспоминания?",
+      "answer_all": [
+        "строки памяти меняет только apply"
+      ]
+    },
+    {
+      "id": "qr-without-evidence",
+      "kind": "semantic",
+      "doc": 9,
+      "query": "Как помечается новое воспоминание, если доказательства к нему не приложены?",
+      "answer_all": [
+        "Без источников",
+        "unverified"
+      ]
+    },
+    {
+      "id": "qr-caller-status",
+      "kind": "semantic",
+      "doc": 9,
+      "query": "Можно ли самостоятельно повысить доверие к памяти, указав статус проверки в запросе?",
+      "answer_all": [
+        "Входное поле",
+        "не повышает статус"
+      ]
+    },
+    {
+      "id": "qr-shared-owner",
+      "kind": "semantic",
+      "doc": 9,
+      "query": "Кто может заменить общий факт памяти и что произойдёт с его владельцем?",
+      "answer_all": [
+        "администратор",
+        "доверенный локальный вызов",
+        "общий владелец при замене сохраняется"
+      ]
+    },
+    {
+      "id": "qr-idempotency-conflict",
+      "kind": "operational",
+      "doc": 9,
+      "query": "Как поступит preview, если отправить изменённый запрос с ранее использованным ключом идемпотентности?",
+      "answer_all": [
+        "Другой запрос с тем же ключом отклоняется"
+      ]
+    },
+    {
+      "id": "qr-repeat-apply",
+      "kind": "operational",
+      "doc": 9,
+      "query": "Можно ли повторным apply расширить ранее выбранный набор кандидатов завершённого плана?",
+      "answer_all": [
+        "не расширяет первоначальный выбор"
+      ]
+    },
+    {
+      "id": "qr-transaction-rollback",
+      "kind": "operational",
+      "doc": 9,
+      "query": "Что произойдёт с памятью и заданиями индексации, если перед apply отозваны полномочия?",
+      "answer_all": [
+        "вся транзакция откатывается",
+        "задания индексации"
+      ]
+    },
+    {
+      "id": "qr-artifact-validation",
+      "kind": "operational",
+      "doc": 9,
+      "query": "Какие доказательства нужно приложить к artifact receipt для проверки подготовленного сохранения памяти?",
+      "answer_all": [
+        "URI и полный SHA-256",
+        "ArtifactVerifier"
+      ]
+    },
+    {
+      "id": "qr-async-flag",
+      "kind": "exact",
+      "doc": 19,
+      "query": "Какой флаг в рецепте Single-Node Development включает асинхронную индексацию watcher?",
+      "answer_all": [
+        "LEVARA_WORKSPACE_WATCH_ASYNC_INDEX=1"
+      ]
+    },
+    {
+      "id": "qr-rest-prefix",
+      "kind": "exact",
+      "doc": 19,
+      "query": "Под каким URL-префиксом размещены все REST-маршруты workspace в deployment recipes?",
+      "answer_all": [
+        "/api/v1/workspace"
+      ]
+    },
+    {
+      "id": "qr-artifact-rules-path",
+      "kind": "exact",
+      "doc": 19,
+      "query": "Где в workspace лежит файл правил включения структурированных context artifacts?",
+      "answer_all": [
+        "<workspace-root>/.kb/context-artifacts.json"
+      ]
+    },
+    {
+      "id": "qr-watch-strategy",
+      "kind": "exact",
+      "doc": 19,
+      "query": "Какое значение LEVARA_WORKSPACE_WATCH_CHUNK_STRATEGY показано в рецепте локального запуска?",
+      "answer_all": [
+        "LEVARA_WORKSPACE_WATCH_CHUNK_STRATEGY=merged"
+      ]
+    },
+    {
+      "id": "qr-context-version",
+      "kind": "exact",
+      "doc": 19,
+      "query": "Какую version использует пример правил context artifacts в deployment recipes?",
+      "answer_all": [
+        "\"version\": 1",
+        "\"includes\""
+      ]
+    },
+    {
+      "id": "qr-backup-inventory",
+      "kind": "semantic",
+      "doc": 19,
+      "query": "Ограничивается ли резервная копия workspace исходными Markdown-файлами?",
+      "answer_all": [
+        "SQL, vectors, truth files, manifests, jobs, audit, original uploads and derived artifacts"
+      ]
+    },
+    {
+      "id": "qr-group-grants",
+      "kind": "semantic",
+      "doc": 19,
+      "query": "Достаточно ли выдать отдельному человеку роль в workspace, чтобы настроить права его организации?",
+      "answer_all": [
+        "does not establish group or organization permissions automatically"
+      ]
+    },
+    {
+      "id": "qr-alert-thresholds",
+      "kind": "semantic",
+      "doc": 19,
+      "query": "Можно ли считать пороги из готовых операторских fixtures обещанным уровнем сервиса?",
+      "answer_all": [
+        "fixture thresholds are examples",
+        "not a service-level objective"
+      ]
+    },
+    {
+      "id": "qr-sync-truth-files",
+      "kind": "semantic",
+      "doc": 19,
+      "query": "Переносятся ли исходные Markdown-файлы рабочего пространства вместе с обычной синхронизацией памяти?",
+      "answer_all": [
+        "Do not assume this also synchronizes workspace truth files",
+        "backup/file workflow"
+      ]
+    },
+    {
+      "id": "qr-rules-secrets",
+      "kind": "semantic",
+      "doc": 19,
+      "query": "Защищает ли правило включения артефактов от случайной индексации секретов?",
+      "answer_all": [
+        "include rules are not a secret scanner"
+      ]
+    },
+    {
+      "id": "qr-restore-order",
+      "kind": "operational",
+      "doc": 19,
+      "query": "Что нужно проверить после восстановления workspace перед включением watcher и index worker?",
+      "answer_all": [
+        "Inspect project access and exact reads",
+        "reconcile stale generations"
+      ]
+    },
+    {
+      "id": "qr-optimistic-cli",
+      "kind": "operational",
+      "doc": 19,
+      "query": "Как безопасно записать файл workspace при конкурирующих правках, если CLI не умеет передавать digest?",
+      "answer_all": [
+        "Inspect workspace_conflicts",
+        "MCP/REST expected_file_digest",
+        "CLI currently does not expose"
+      ]
+    },
+    {
+      "id": "qr-sync-auth-role",
+      "kind": "operational",
+      "doc": 19,
+      "query": "Можно ли считать, что workspace_audit_log покрывает каждую внешнюю правку файла?",
+      "answer_all": [
+        "not proof that every external filesystem edit is fully audited"
+      ]
+    },
+    {
+      "id": "qr-artifact-reindex",
+      "kind": "operational",
+      "doc": 19,
+      "query": "Как проверить правила context artifacts и переиндексировать их после изменения?",
+      "answer_all": [
+        "workspace_context_artifacts",
+        "workspace_reindex_artifacts",
+        "fresh generation"
+      ]
+    },
+    {
+      "id": "qr-host-config-merge",
+      "kind": "operational",
+      "doc": 19,
+      "query": "Как применить выбранный шаблон конфигурации агентского хоста в существующей установке?",
+      "answer_all": [
+        "Merge the selected template into the installed host's actual config"
+      ]
+    }
+  ],
+  "expected_cases": 300
+}

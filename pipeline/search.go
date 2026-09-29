@@ -34,7 +34,7 @@ func (p *SearchPipeline) WithResultFilter(filter func(context.Context, []ScoredR
 // reranker is optional (nil = disabled).
 func NewSearchPipeline(embedClient *embed.Client, collections *store.CollectionManager, reranker *rerank.Client) *SearchPipeline {
 	return &SearchPipeline{
-		embedClient: embedClient,
+		embedClient: embedClient.AsQuery(),
 		collections: collections,
 		reranker:    reranker,
 	}
