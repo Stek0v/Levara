@@ -34,7 +34,7 @@ class _FakeBackend:
     def __init__(self, dim: int):
         self.dim = dim
 
-    def embed(self, texts: list[str]) -> list[list[float]]:
+    def embed(self, texts: list[str], kind: str = "document") -> list[list[float]]:
         return [[float((hash(t) + i) % 7) / 7.0 for i in range(self.dim)] for t in texts]
 
 
@@ -66,6 +66,10 @@ def build_app() -> FastAPI:
 
     @app.post("/v1/embeddings")
     def embeddings(req: EmbedRequest) -> dict:
+        if model_short == "gemma-full" and req.model not in {
+            openai_name, f"{openai_name}:query", f"{openai_name}:document"
+        }:
+            raise HTTPException(status_code=400, detail=f"model must identify {openai_name}")
         texts = [req.input] if isinstance(req.input, str) else req.input
         if not texts:
             raise HTTPException(status_code=400, detail="input must not be empty")
