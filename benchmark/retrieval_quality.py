@@ -9,6 +9,7 @@ local embedding service. It creates one dataset, snapshots the corpus and all
 responses, and never changes queries, scoring or ranking after seeing results.
 """
 import argparse
+from collections import Counter
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -116,6 +117,38 @@ def grade(response, case, documents, dataset_id, collection, top_k):
             'provenance_ok': bool(items) and all(provenance) and len(items) <= top_k}
 
 
+def rerank_status(response, strategy):
+    body = response['body']
+    items = body.get('items') or [] if isinstance(body, dict) else body or []
+    if not isinstance(items, list):
+        items = []
+    applied = sum(hit.get('reranked') is True for hit in items)
+    reported = sum(type(hit.get('reranked')) is bool for hit in items)
+    if strategy == 'CHUNKS_LEXICAL':
+        outcome = 'not_applicable'
+    elif response['status'] != 200:
+        outcome = 'http_error'
+    elif not items:
+        outcome = 'empty'
+    elif applied == len(items):
+        outcome = 'applied'
+    elif applied:
+        outcome = 'partial'
+    else:
+        outcome = 'not_applied' if reported == len(items) else 'unknown'
+    return {'outcome': outcome, 'applied_items': applied, 'reported_items': reported,
+            'decisions': sorted({hit['rerank_decision'] for hit in items if hit.get('rerank_decision')}),
+            'reasons': sorted({hit['rerank_reason'] for hit in items if hit.get('rerank_reason')})}
+
+
+def summarize_rerank(rows, strategy, requested):
+    outcomes = Counter(row['rerank']['outcome'] for row in rows)
+    return {'requested': requested, 'outcomes': dict(outcomes),
+            'applied_items': sum(row['rerank']['applied_items'] for row in rows),
+            'requirement_met': not requested or strategy == 'CHUNKS_LEXICAL'
+            or bool(rows) and outcomes['applied'] == len(rows)}
+
+
 def self_check():
     assert supports('A `first`\nsecond fact', ['first second'])
     assert not supports('unrelated answer', ['first second'])
@@ -140,6 +173,28 @@ def self_check():
     failed = grade({**response, 'status': 503}, case, docs, 's', 'c', 3)
     assert not failed['pass'] and failed['rank'] is None
     assert percentile([1, 2, 3, 4, 5], .95) == 5
+    for strategy in ('CHUNKS', 'HYBRID'):
+        applied = {'status': 200, 'body': {'items': [{'reranked': True, 'rerank_decision': 'forced'}]}}
+        fallback = {'status': 200, 'body': {'items': [{'reranked': False, 'rerank_reason': 'fallback'}]}}
+        assert rerank_status(applied, strategy)['outcome'] == 'applied'
+        assert rerank_status(fallback, strategy)['outcome'] == 'not_applied'
+        assert rerank_status(response, strategy)['outcome'] == 'unknown'
+        assert rerank_status({'status': 200, 'body': {'items': []}}, strategy)['outcome'] == 'empty'
+        assert rerank_status({**applied, 'status': 503}, strategy)['outcome'] == 'http_error'
+        mixed = {'status': 200, 'body': {'items': applied['body']['items'] + fallback['body']['items']}}
+        status = rerank_status(mixed, strategy)
+        assert status['outcome'] == 'partial' and status['applied_items'] == 1
+        assert status['decisions'] == ['forced'] and status['reasons'] == ['fallback']
+        rows = [{'rerank': rerank_status(r, strategy)} for r in (applied, fallback, mixed, response)]
+        summary = summarize_rerank(rows, strategy, requested=True)
+        assert summary['applied_items'] == 2 and summary['outcomes']['applied'] == 1
+        assert not summary['requirement_met']
+        assert summarize_rerank(rows, strategy, requested=False)['requirement_met']
+        assert summarize_rerank(rows[:1], strategy, requested=True)['requirement_met']
+        assert not summarize_rerank([], strategy, requested=True)['requirement_met']
+    lexical = [{'rerank': rerank_status(response, 'CHUNKS_LEXICAL')}]
+    assert lexical[0]['rerank']['outcome'] == 'not_applicable'
+    assert summarize_rerank(lexical, 'CHUNKS_LEXICAL', requested=True)['requirement_met']
     with tempfile.TemporaryDirectory() as temporary:
         snapshot = Path(temporary)
         (snapshot / 'corpus').mkdir()
@@ -154,7 +209,7 @@ def self_check():
             pass
         else:
             raise AssertionError('Modified snapshot was accepted')
-    print('PASS: scorer rejects empty, failed, foreign and stale evidence; checks answer text.')
+    print('PASS: scorer checks source/answer evidence; rerank gate rejects missing, partial and fallback application.')
 
 
 def main():
@@ -164,7 +219,7 @@ def main():
     parser.add_argument('--output-dir', type=Path)
     parser.add_argument('--cases', type=Path, default=FIXTURE, help='Fixed question fixture; the original30 remain the default')
     parser.add_argument('--snapshot-run', type=Path, help='Replay a previous run\'s hash-verified frozen corpus')
-    parser.add_argument('--rerank', action='store_true', help='Request the configured real reranker')
+    parser.add_argument('--rerank', action='store_true', help='Require confirmed reranking for CHUNKS/HYBRID; lexical is exempt')
     parser.add_argument('--sqlite-db', type=Path, help='Dedicated test server DB, read-only publication verification')
     parser.add_argument('--self-check', action='store_true')
     args = parser.parse_args()
@@ -212,6 +267,8 @@ def main():
                            'rerank': args.rerank, 'graph': False, 'concurrency': 1, 'rate_limit_per_minute': 1000,
                            'snapshot_run': str(args.snapshot_run) if args.snapshot_run else None},
                 'limitations': ['Small developer-authored smoke, not held-out statistical evaluation',
+                                'Corpus is frozen; candidate sets are not frozen across strategies or runs',
+                                'Rerank application is based on returned-hit flags, not every candidate or model quality',
                                 'Retrieval of cited passages, not generated answer correctness',
                                 'No ACL, PostgreSQL, load, SLA or enterprise readiness claim',
                                 'REST CHUNKS can internally decompose a query; strategies use their real API behavior',
@@ -288,7 +345,8 @@ def main():
                 'query_type': strategy, 'collection': collection, 'top_k': fixture['top_k'], 'rerank': args.rerank, 'include_debug': True})
             items = require_ok(response).get('items') or []
             assert items and any('LEVARA_WORKSPACE_WATCH_ASYNC_INDEX' in (i.get('metadata', {}).get('text') or '') for i in items), (strategy, response)
-            evidence['readiness'].append({'strategy': strategy, 'response': response})
+            evidence['readiness'].append({'strategy': strategy, 'response': response,
+                                          'rerank': rerank_status(response, strategy)})
         # Round-robin strategy order avoids giving one strategy all first/cached requests.
         for index, case in enumerate(fixture['cases']):
             strategies = fixture['strategies'][index % 3:] + fixture['strategies'][:index % 3]
@@ -297,7 +355,7 @@ def main():
                     'collection': collection, 'top_k': fixture['top_k'], 'rerank': args.rerank, 'include_debug': True})
                 result = grade(response, case, documents, dataset_id, collection, fixture['top_k'])
                 evidence['queries'].append({'id': case['id'], 'kind': case['kind'], 'query': case['query'],
-                    'strategy': strategy, **result, 'response': response})
+                    'strategy': strategy, **result, 'rerank': rerank_status(response, strategy), 'response': response})
             save()
             print(f"[{index+1:03}/{len(fixture['cases'])}] {case['id']}: " + ', '.join(f"{r['strategy']}={'PASS' if r['pass'] else 'MISS'}" for r in evidence['queries'][-3:]), flush=True)
         evidence['summary'] = {}
@@ -311,13 +369,16 @@ def main():
                 'valid_sources': sum(r['valid_provenance'] for r in rows),
                 'all_provenance_valid': all(r['provenance_ok'] for r in rows),
                 'http_errors': sum(r['response']['status'] != 200 for r in rows),
+                'rerank': summarize_rerank(rows, strategy, args.rerank),
                 'p50_ms': percentile(latency, .5), 'p95_ms': percentile(latency, .95),
                 'misses': [r['id'] for r in rows if not r['pass']]}
         evidence['total_elapsed_s'] = round(time.perf_counter() - started, 3)
+        evidence['rerank_requirement_met'] = all(s['rerank']['requirement_met'] for s in evidence['summary'].values())
         save()
         print(json.dumps(evidence['summary'], ensure_ascii=False, indent=2))
         primary = evidence['summary'][fixture['primary_strategy']]
-        return 0 if primary['passed'] == primary['queries'] and primary['all_provenance_valid'] else 2
+        return 0 if (primary['passed'] == primary['queries'] and primary['all_provenance_valid']
+                     and evidence['rerank_requirement_met']) else 2
     except Exception as error:
         evidence['error'] = f'{type(error).__name__}: {error}'
         evidence['total_elapsed_s'] = round(time.perf_counter() - started, 3)

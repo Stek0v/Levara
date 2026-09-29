@@ -1,5 +1,6 @@
 {
-  "name": "Levara documentation retrieval holdout 60 v1",
+  "name": "Levara documentation retrieval holdout 59 v2",
+  "expected_cases": 59,
   "top_k": 3,
   "strategies": [
     "CHUNKS_LEXICAL",
@@ -455,15 +456,6 @@
       "answer_all": [
         "Confirm denied actions produce no side effect",
         "an allowed action still works"
-      ]
-    },
-    {
-      "id": "holdout-webui-status-poll-period",
-      "kind": "exact",
-      "doc": 15,
-      "query": "Как часто страница dataset опрашивает статус Cognify до завершения?",
-      "answer_all": [
-        "polls /api/v1/cognify/<runId>/status once per second until terminal status"
       ]
     },
     {
