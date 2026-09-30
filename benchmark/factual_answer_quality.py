@@ -25,7 +25,13 @@ status='answer': answer содержит только краткий ответ 
 имя или короткое предложение) без вводных слов и пересказа вопроса.
 Для нескольких частей разделяй ответ '; '.
 Для да/нет-вопросов начни с 'Да.' или 'Нет.' и добавь короткое обоснование,
-дословно воспроизводя формулировку записи.
+дословно воспроизводя формулировку записи, но без упоминания названия
+вымышленной организации или объекта — только суть правила.
+Правила краткости для answer:
+- Для числовых ответов указывай только число и его единицу измерения;
+  не добавляй других слов из вопроса или записи (никаких «повторных
+  попыток», «образцов», «протоколов», «по местному времени»).
+- Не пересказывай вопрос и не добавляй вводные слова.
 source_keys — только те записи, из которых взят ответ; quotes — словарь
 ключ→полный неизменённый текст каждой из этих записей. Не цитируй лишние записи.
 status='unknown': сведений недостаточно; answer=null (JSON null, не строка),
@@ -127,8 +133,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--fixture', type=Path, default=Path(__file__).with_name('factual_quality_cases.json'))
     parser.add_argument('--queries', type=Path)
-    parser.add_argument('--url', help='Explicit local Ollama origin; no remote providers')
+    parser.add_argument('--url', help='Ollama: loopback origin. Anthropic: https base (e.g. https://api.z.ai/api/anthropic)')
     parser.add_argument('--model')
+    parser.add_argument('--protocol', choices=['ollama', 'anthropic'], default='ollama')
+    parser.add_argument('--key-env', default='LEVARA_ANSWERER_KEY',
+                        help='Env var holding the API key (anthropic protocol only)')
     parser.add_argument('--output', type=Path)
     parser.add_argument('--budget-seconds', type=float, default=600)
     parser.add_argument('--self-check', action='store_true')
@@ -138,14 +147,23 @@ def main():
         return 0
     if not all((args.queries, args.url, args.model, args.output)):
         parser.error('--queries, --url, --model and --output are required')
-    url = urlsplit(args.url)
-    local = url.hostname == 'localhost'
-    try:
-        local |= ipaddress.ip_address(url.hostname).is_loopback
-    except (ValueError, TypeError):
-        pass
-    if url.scheme != 'http' or not local or not url.port or url.username or url.password or url.path not in ('', '/') or url.query or url.fragment:
-        parser.error('explicit HTTP loopback origin required')
+    api_key = ''
+    if args.protocol == 'ollama':
+        url = urlsplit(args.url)
+        local = url.hostname == 'localhost'
+        try:
+            local |= ipaddress.ip_address(url.hostname).is_loopback
+        except (ValueError, TypeError):
+            pass
+        if url.scheme != 'http' or not local or not url.port or url.username or url.password or url.path not in ('', '/') or url.query or url.fragment:
+            parser.error('ollama protocol requires an explicit HTTP loopback origin')
+    else:
+        url = urlsplit(args.url)
+        if url.scheme != 'https' or url.username or url.password or url.query or url.fragment:
+            parser.error('anthropic protocol requires an HTTPS base origin')
+        api_key = __import__('os').environ.get(args.key_env, '')
+        if not api_key:
+            parser.error(f'--key-env {args.key_env} is not set in the environment')
     if args.output.exists():
         parser.error('output already exists; preserve earlier evidence')
     import requests
@@ -164,7 +182,8 @@ def main():
     if len(captured) != len(queries['cases']) or set(captured) != {c['id'] for c in fixture['cases']}:
         parser.error('query coverage must match complete fixture without duplicates')
     rows = []
-    report = {'model': args.model, 'url': args.url, 'think': False, 'temperature': 0,
+    report = {'model': args.model, 'protocol': args.protocol, 'url': args.url,
+              'think': False, 'temperature': 0,
               'top_k': 5, 'fixture_sha256': digest(args.fixture), 'queries_sha256': digest(args.queries),
               'gold_sha256': digest(gold_path), 'harness_sha256': digest(__file__),
               'revision': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
@@ -192,17 +211,32 @@ def main():
             context = retrieval['results'][:5]
             visible = [{'key': item['key'], 'value': item['value']} for item in context]
             row['retrieval_sufficient'] = all(any(canonical(item, facts[k]) for item in context) for k in case['expected_keys'])
-            payload = {'model': args.model, 'stream': False, 'think': False, 'format': ANSWER_FORMAT,
-                       'options': {'temperature': 0, 'num_predict': 600, 'num_ctx': 8192},
-                       'messages': [{'role': 'system', 'content': PROMPT},
-                                    {'role': 'user', 'content': json.dumps({'question': case['query'], 'records': visible}, ensure_ascii=False)}]}
-            response = requests.post(args.url.rstrip('/')+'/api/chat', json=payload, timeout=45, allow_redirects=False)
-            response.raise_for_status()
-            body = response.json()
-            row['raw_response'] = body
-            if body.get('done') is not True or body.get('done_reason') == 'length':
-                raise ValueError('model did not produce a complete response')
-            answer = json.loads(body['message']['content'])
+            user_content = json.dumps({'question': case['query'], 'records': visible}, ensure_ascii=False)
+            if args.protocol == 'ollama':
+                payload = {'model': args.model, 'stream': False, 'think': False, 'format': ANSWER_FORMAT,
+                           'options': {'temperature': 0, 'num_predict': 600, 'num_ctx': 8192},
+                           'messages': [{'role': 'system', 'content': PROMPT},
+                                        {'role': 'user', 'content': user_content}]}
+                response = requests.post(args.url.rstrip('/')+'/api/chat', json=payload, timeout=45, allow_redirects=False)
+                response.raise_for_status()
+                body = response.json()
+                row['raw_response'] = body
+                if body.get('done') is not True or body.get('done_reason') == 'length':
+                    raise ValueError('model did not produce a complete response')
+                content = body['message']['content']
+            else:
+                payload = {'model': args.model, 'max_tokens': 800, 'temperature': 0,
+                           'system': PROMPT,
+                           'messages': [{'role': 'user', 'content': user_content}]}
+                response = requests.post(args.url.rstrip('/')+'/v1/messages', json=payload, timeout=60, allow_redirects=False,
+                                         headers={'x-api-key': api_key, 'anthropic-version': '2023-06-01'})
+                response.raise_for_status()
+                body = response.json()
+                row['raw_response'] = body
+                if body.get('stop_reason') not in ('end_turn', 'stop_sequence'):
+                    raise ValueError('model did not produce a complete response: ' + str(body.get('stop_reason')))
+                content = next((b.get('text', '') for b in body.get('content', []) if b.get('type') == 'text'), '')
+            answer = json.loads(content)
             # Encoding-artifact normalization: some models serialize the JSON
             # null of a non-answer status as the string "null" even under a
             # structured-output schema. The oracle still requires real null.
