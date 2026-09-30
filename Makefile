@@ -1,4 +1,9 @@
-.PHONY: all build run test test-ocr test-ocr-gosseract test-cross-ocr test-commit test-release-candidate profile-config-check profile-smoke profile-enterprise-e2e benchmark clean docker arm64 proto proto-go proto-python swag contract contract-check
+.PHONY: all build run test test-ocr test-ocr-gosseract test-cross-ocr test-commit test-release-candidate profile-config-check profile-smoke profile-enterprise-e2e benchmark clean docker arm64 proto proto-go proto-python swag contract contract-check ci-local
+
+# Full local CI-equivalent (go-ci PR gate + promtool + gitleaks) with pinned
+# tool versions; see scripts/ci_local.sh header for the version manifest.
+ci-local:
+	bash scripts/ci_local.sh
 
 # Regenerate OpenAPI spec from swaggo annotations (T13).
 # Requires `go install github.com/swaggo/swag/cmd/swag@latest` once.
