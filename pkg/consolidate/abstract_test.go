@@ -3,6 +3,7 @@ package consolidate
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -29,13 +30,24 @@ func TestAbstractValue_AcceptsFaithfulSummary(t *testing.T) {
 	}
 }
 
-func TestAbstractValue_RejectsDroppedNumber(t *testing.T) {
+// A draft that drops source numbers no longer hard-fails: the deterministic
+// ledger ladder appends the missing units verbatim, so the record is lossless.
+func TestAbstractValue_RepairsDroppedNumbersViaLedger(t *testing.T) {
 	sources := []string{"Pi runs potion sidecar on 9101", "potion model is 256-dim"}
 	s := fakeSummarizer{out: "Pi runs the potion sidecar."} // drops 9101 and 256
 
-	_, err := AbstractValue(context.Background(), s, sources)
-	if err == nil {
-		t.Fatal("err = nil, want coverage failure (dropped numbers)")
+	got, err := AbstractValue(context.Background(), s, sources)
+	if err != nil {
+		t.Fatalf("err = %v, want ledger-repaired summary", err)
+	}
+	if !strings.Contains(got, "9101") || !strings.Contains(got, "256") {
+		t.Fatalf("repaired summary %q misses ledger numbers", got)
+	}
+	if !strings.Contains(got, LedgerMarker) {
+		t.Fatalf("repaired summary %q lacks ledger marker", got)
+	}
+	if !strings.HasPrefix(got, "Pi runs the potion sidecar.") {
+		t.Fatalf("repaired summary %q lost the original prose", got)
 	}
 }
 

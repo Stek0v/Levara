@@ -241,11 +241,13 @@ func TestRun_LLMBudgetIgnoresMerges(t *testing.T) {
 }
 
 // The budget counts LLM attempts, not successes: an abstraction the coverage
-// guard rejects still made the DeepSeek call, so it must consume budget.
+// guard rejects still made the DeepSeek call, so it must consume budget. The
+// draft invents a number — the deterministic ladder (feedback retries need a
+// FeedbackSummarizer, the ledger only appends source units) cannot repair that.
 func TestRun_LLMBudgetCountsRejectedAttempts(t *testing.T) {
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	recs := []MemoryRecord{
-		{ID: "a", Value: "value 111", CreatedAt: t0}, // numbers → guard rejects a dropping summary
+		{ID: "a", Value: "value 111", CreatedAt: t0},
 		{ID: "b", Value: "value 222", CreatedAt: t0.Add(time.Hour)},
 		{ID: "c", Value: "value 333", CreatedAt: t0.Add(2 * time.Hour)},
 		{ID: "d", Value: "value 444", CreatedAt: t0.Add(3 * time.Hour)},
@@ -253,7 +255,7 @@ func TestRun_LLMBudgetCountsRejectedAttempts(t *testing.T) {
 	edges := []SimEdge{{A: "a", B: "b", Score: 0.92}, {A: "c", B: "d", Score: 0.92}}
 	cfg := DefaultConfig()
 	cfg.MaxLLMCalls = 1
-	spy := &spySummarizer{out: "lossy"} // drops every source number → guard rejects
+	spy := &spySummarizer{out: "lossy 9999"} // 9999 invented → guard rejects
 	res, err := Run(context.Background(), Params{
 		Store: &fakeStore{recs: recs}, Neighbors: fakeNeighbors{edges: edges}, Summarizer: spy,
 		Cfg: cfg, RunID: "run", DryRun: true,
@@ -331,9 +333,9 @@ func TestRun_ReportsCharDensities(t *testing.T) {
 	}
 }
 
-// When the coverage guard rejects an abstraction, the run records the concrete
-// reason instead of silently bumping a counter (findings P2.5).
-func TestRun_RecordsGuardSkipReason(t *testing.T) {
+// A draft that only drops numbers is ledger-repaired into a valid abstraction:
+// the run records an action, not a skip, and the value carries the missing units.
+func TestRun_LedgerRepairsDroppedNumbers(t *testing.T) {
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	store := &fakeStore{recs: []MemoryRecord{
 		{ID: "a", Value: "potion is 256 dim", CreatedAt: t0},
@@ -347,11 +349,40 @@ func TestRun_RecordsGuardSkipReason(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
+	if res.Skipped != 0 || len(res.Skips) != 0 {
+		t.Fatalf("Skipped=%d, want 0 (ledger repairs dropped numbers)", res.Skipped)
+	}
+	if len(res.Actions) != 1 {
+		t.Fatalf("actions = %d, want 1", len(res.Actions))
+	}
+	av := res.Actions[0].NewValue
+	if !strings.Contains(av, "256") || !strings.Contains(av, "9101") {
+		t.Errorf("abstract %q misses ledger numbers", av)
+	}
+}
+
+// When the coverage guard rejects an abstraction for something the deterministic
+// ladder cannot repair (an invented number), the run records the concrete
+// reason instead of silently bumping a counter (findings P2.5).
+func TestRun_RecordsGuardSkipReason(t *testing.T) {
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	store := &fakeStore{recs: []MemoryRecord{
+		{ID: "a", Value: "potion is 256 dim", CreatedAt: t0},
+		{ID: "b", Value: "potion runs on 9101", CreatedAt: t0.Add(time.Hour)},
+	}}
+	neigh := fakeNeighbors{edges: []SimEdge{{A: "a", B: "b", Score: 0.92}}}
+	res, err := Run(context.Background(), Params{
+		Store: store, Neighbors: neigh, Summarizer: fakeSummarizer{out: "potion thing 9999"}, // 9999 invented
+		Cfg: DefaultConfig(), RunID: "run", DryRun: true,
+	})
+	if err != nil {
+		t.Fatalf("err = %v", err)
+	}
 	if res.Skipped != 1 || len(res.Skips) != 1 {
 		t.Fatalf("Skipped=%d, want 1", res.Skipped)
 	}
 	if res.Skips[0].Reason == "" {
-		t.Error("skip reason empty, want the guard detail (dropped number)")
+		t.Error("skip reason empty, want the guard detail (invented number)")
 	}
 	if len(res.Actions) != 0 {
 		t.Errorf("actions = %d, want 0", len(res.Actions))

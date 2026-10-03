@@ -201,10 +201,34 @@ type llmSummarizer struct {
 }
 
 func (l *llmSummarizer) Summarize(ctx context.Context, sources []string) (string, error) {
+	return l.complete(ctx, sources, "")
+}
+
+// SummarizeWithFeedback re-requests the abstraction after a coverage violation,
+// naming the exact facts the draft lost so the model repairs its own text
+// (implements consolidate.FeedbackSummarizer).
+func (l *llmSummarizer) SummarizeWithFeedback(ctx context.Context, sources []string, violations string) (string, error) {
+	return l.complete(ctx, sources, violations)
+}
+
+func (l *llmSummarizer) complete(ctx context.Context, sources []string, violations string) (string, error) {
 	prov := l.deps.LLMProvider()
 	if prov == nil {
 		return "", fmt.Errorf("consolidate: llm not configured")
 	}
+	resp, err := prov.ChatCompletion(ctx, llm.CompletionRequest{
+		Model:       l.deps.LLMModel(),
+		Messages:    []llm.Message{{Role: "user", Content: summaryPrompt(sources, violations)}},
+		Temperature: 0,
+		MaxTokens:   summaryMaxTokens(sources),
+	})
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(resp.Content), nil
+}
+
+func summaryPrompt(sources []string, violations string) string {
 	var b strings.Builder
 	b.WriteString("Combine the following memory notes into ONE concise statement. ")
 	b.WriteString("Preserve every fact, number, name, and port exactly. ")
@@ -214,16 +238,13 @@ func (l *llmSummarizer) Summarize(ctx context.Context, sources []string) (string
 		b.WriteString(s)
 		b.WriteString("\n")
 	}
-	resp, err := prov.ChatCompletion(ctx, llm.CompletionRequest{
-		Model:       l.deps.LLMModel(),
-		Messages:    []llm.Message{{Role: "user", Content: b.String()}},
-		Temperature: 0,
-		MaxTokens:   summaryMaxTokens(sources),
-	})
-	if err != nil {
-		return "", err
+	if violations != "" {
+		b.WriteString("\nYour previous draft was rejected by the coverage guard:\n")
+		b.WriteString(violations)
+		b.WriteString("\nRewrite the statement so every listed fact appears verbatim. ")
+		b.WriteString("Output only the corrected statement.\n")
 	}
-	return strings.TrimSpace(resp.Content), nil
+	return b.String()
 }
 
 // summaryMaxTokens scales the completion budget to the combined source length
