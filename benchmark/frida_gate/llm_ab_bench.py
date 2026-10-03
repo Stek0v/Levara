@@ -17,7 +17,7 @@ BASE = "http://127.0.0.1:11434"
 PROMPT_HEAD = ("Combine the following memory notes into ONE concise statement. "
                "Preserve every fact, number, name, and port exactly. "
                "Do NOT add any information not present below. Notes:\n")
-MODELS = ["gemma4:e2b", "glm4:9b"]
+MODELS = ["gemma4:e2b", "glm4:9b", "ornith-1.5:9b"]
 
 CLUSTERS = {
     "ub-main-1": ["6675cfb3-30e6-4e63-acd9-a1bc44ed7ddd", "80cf736d-4066-48d3-a4d5-03e8baf68b3b"],
@@ -95,6 +95,23 @@ def unload(model):
         pass
 
 
+def ollama_ps(model):
+    """Honest residency: /api/ps size/size_vram (ps RSS is meaningless for
+    Metal-mmapped weights)."""
+    body = json.dumps({"model": model}).encode()
+    req = urllib.request.Request(BASE + "/api/ps", data=body,
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            for m in json.loads(r.read()).get("models", []):
+                if m["name"] == model:
+                    return {"size_gb": round(m["size"] / 1e9, 2),
+                            "size_vram_gb": round(m.get("size_vram", 0) / 1e9, 2)}
+    except Exception:
+        pass
+    return None
+
+
 def ollama_rss_mb():
     import subprocess
     out = subprocess.run(["ps", "-o", "rss=", "-o", "comm=", "-p",
@@ -168,11 +185,13 @@ def main():
             rows.append({"cluster": name, "verdict": "PASS" if ok else "FAIL", "why": why,
                          "ms": round(ms), "out": out[:140]})
             print(f"  [{model}] {name}: {'PASS' if ok else 'FAIL'} ({why}) {ms:.0f}ms", flush=True)
+        ps = ollama_ps(model)  # honest residency, must be sampled BEFORE unload
         unload(model)  # sequential testing: no two models in RAM at once
         stop.set(); th.join()
         time.sleep(3)
         passed = sum(1 for r in rows if r["verdict"] == "PASS")
         results[model] = {"rows": rows, "passed": passed, "total": len(rows),
+                          "ps": ps,
                           "rss_peak_mb": max(bucket) if bucket else None,
                           "rss_after_unload_mb": ollama_rss_mb()}
         print(f"== {model}: {passed}/{len(rows)} passed, rss peak {results[model]['rss_peak_mb']}MB "
