@@ -17,7 +17,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -212,20 +214,55 @@ func (l *llmSummarizer) SummarizeWithFeedback(ctx context.Context, sources []str
 }
 
 func (l *llmSummarizer) complete(ctx context.Context, sources []string, violations string) (string, error) {
-	prov := l.deps.LLMProvider()
+	prov, model := consolidationLLM(l.deps)
 	if prov == nil {
 		return "", fmt.Errorf("consolidate: llm not configured")
 	}
 	resp, err := prov.ChatCompletion(ctx, llm.CompletionRequest{
-		Model:       l.deps.LLMModel(),
+		Model:       model,
 		Messages:    []llm.Message{{Role: "user", Content: summaryPrompt(sources, violations)}},
 		Temperature: 0,
 		MaxTokens:   summaryMaxTokens(sources),
+		Think:       llm.BoolPtr(false), // no-think: thinking-default models burn the budget in reasoning (F10/A/B findings)
 	})
 	if err != nil {
 		return "", err
 	}
 	return strings.TrimSpace(resp.Content), nil
+}
+
+var consolidationLLMCached struct {
+	once  sync.Once
+	prov  llm.Provider
+	model string
+}
+
+// consolidationLLM resolves the summarizer's provider and model. The global
+// deps provider (gemma4:e2b via OpenAI-compatible endpoint) serves everything
+// else — distill, answers — so the summarizer slot is switched surgically via
+// CONSOLIDATION_LLM_PROVIDER / _BASE_URL / _MODEL without touching the rest.
+// Only the env override is cached (building an HTTP client per call would be
+// wasteful); the deps fallback stays live so tests with per-test deps work.
+// A misconfigured override falls back to the global slot.
+func consolidationLLM(deps Deps) (llm.Provider, string) {
+	if name := os.Getenv("CONSOLIDATION_LLM_PROVIDER"); name != "" {
+		consolidationLLMCached.once.Do(func() {
+			p, err := llm.NewProvider(name, os.Getenv("CONSOLIDATION_LLM_BASE_URL"), os.Getenv("CONSOLIDATION_LLM_API_KEY"))
+			if err != nil {
+				return
+			}
+			consolidationLLMCached.prov = p
+			consolidationLLMCached.model = os.Getenv("CONSOLIDATION_LLM_MODEL")
+		})
+		if consolidationLLMCached.prov != nil {
+			model := consolidationLLMCached.model
+			if model == "" {
+				model = deps.LLMModel()
+			}
+			return consolidationLLMCached.prov, model
+		}
+	}
+	return deps.LLMProvider(), deps.LLMModel()
 }
 
 func summaryPrompt(sources []string, violations string) string {

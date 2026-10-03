@@ -151,3 +151,54 @@ func TestAbstractValue_LedgerPreservesInventedCheck(t *testing.T) {
 		t.Fatal("err = nil, want invented-number failure")
 	}
 }
+
+// Credential-blob fragments (live labirint-1 evidence): the username
+// IM-ADM-VMW@vsphere.local shatters into IM/ADM/VMW, the password
+// npPciJah!G3B2npPciJah!G3B2 into G3B2/G3B2npPciJah. A summary that keeps the
+// meaningful parts (host, manager product) and rewords/drops the credentials
+// must pass — propagating password pieces into consolidated records is a
+// secret-hygiene violation, not a coverage failure.
+func TestCoverageViolations_CredentialFragments(t *testing.T) {
+	src := []string{"vCenter 10.121.102.100: govc, вход IM-ADM-VMW@vsphere.local. " +
+		"AD password INVALID. CE6810 пароль npPciJah!G3B2npPciJah!G3B2 (Passwork 'huawei')."}
+	out := "vCenter 10.121.102.100 управляется через govc (вход VMW@vsphere.local); " +
+		"оборудование CE6810 в Passwork, AD-пароль сброшен."
+	if v := CoverageViolations(src, out); v != "" {
+		t.Fatalf("credential-aware summary rejected: %v", v)
+	}
+}
+
+// A two-fragment compound counts as one fact: keeping any fragment covers the
+// whole. Dropping every fragment still fails.
+func TestCoverageViolations_CompoundCoverage(t *testing.T) {
+	src := []string{"gateway HNSW-IndexCluster serves traffic"}
+	if v := CoverageViolations(src, "the IndexCluster gateway serves traffic"); v != "" {
+		t.Fatalf("compound partially covered must pass: %v", v)
+	}
+	if v := CoverageViolations(src, "the gateway serves traffic"); v == "" {
+		t.Fatal("fully dropped compound must be reported")
+	}
+}
+
+// Rewording away the common nouns Port/INVALID/ID must not count as entity
+// loss (live cascade-probe evidence from labirint-1 / ub-main-1).
+func TestIsEntityToken_CommonTechWordsAndSecrets(t *testing.T) {
+	for _, tok := range []string{"Port", "INVALID", "ID"} {
+		if isEntityToken(tok) {
+			t.Errorf("%q should be a stopword-class token, got entity", tok)
+		}
+	}
+	for _, tok := range []string{"G3B2npPciJah", "Xk29fQq77Bz"} {
+		if isEntityToken(tok) {
+			t.Errorf("%q is secret-shaped, got entity", tok)
+		}
+	}
+	for _, tok := range []string{"RSA", "Passwork", "HNSW"} {
+		if !isEntityToken(tok) {
+			t.Errorf("%q should stay a real entity", tok)
+		}
+	}
+	if !isEntityToken("Redis7") {
+		t.Error("digit-bearing product name must stay an entity")
+	}
+}

@@ -75,6 +75,9 @@ var nonEntityStopwords = map[string]bool{
 	"add": true, "added": true, "set": true, "get": true, "got": true,
 	"run": true, "runs": true, "note": true, "see": true, "here": true,
 	"yes": true, "are": true, "was": true, "were": true,
+	// common tech-narrative words a faithful summary routinely rewords
+	// (labirint-1/ub-main-1 cascade-probe rejects were tripped by Port/INVALID/ID)
+	"id": true, "port": true, "invalid": true,
 	// code / SQL keywords
 	"repl": true, "null": true, "nil": true, "true": true, "false": true,
 	"void": true, "select": true, "insert": true, "update": true, "delete": true,
@@ -83,12 +86,37 @@ var nonEntityStopwords = map[string]bool{
 	"const": true, "let": true, "var": true, "todo": true, "fixme": true,
 }
 
+// secretShaped reports whether a token looks like a credential or hash
+// fragment rather than a name: digits + mixed case + 8+ chars (G3B2npPciJah).
+func secretShaped(tok string) bool {
+	if len(tok) < 8 {
+		return false
+	}
+	hasDigit, hasLower, hasUpper := false, false, false
+	for _, r := range tok {
+		switch {
+		case unicode.IsDigit(r):
+			hasDigit = true
+		case unicode.IsUpper(r):
+			hasUpper = true
+		case unicode.IsLower(r):
+			hasLower = true
+		}
+	}
+	return hasDigit && hasLower && hasUpper
+}
+
 // isEntityToken decides whether a capitalized token entityRe matched is a
 // meaning-bearing entity (Levara, DeepSeek, HNSW) versus stopword noise
 // (Real, REPL, The). Digit-bearing or genuinely mixed-case identifiers are
 // always entities — dictionary words never look like that — so the stopword
-// gate only applies to plain-capitalized and all-caps tokens.
+// gate only applies to plain-capitalized and all-caps tokens. Exception:
+// secret-shaped tokens are not entities — a consolidation must not be
+// REQUIRED to propagate credential fragments into the merged record.
 func isEntityToken(tok string) bool {
+	if secretShaped(tok) {
+		return false
+	}
 	hasDigit, allUpper, hasInnerUpper := false, true, false
 	for i, r := range tok {
 		switch {
@@ -262,6 +290,9 @@ func CoverageViolations(sources []string, out string) string {
 	outFrags := tokenSet(numberRe, out)
 	srcCompGroups := compositeDigitGroups(srcUnits)
 	outCompGroups := compositeDigitGroups(outUnits)
+	tokCompound, compoundFrags, exemptEnts, runs := entityCompounds(sources...)
+	filterCompoundNumberUnits(srcUnits, runs)
+	filterCompoundNumberUnits(outUnits, runs)
 
 	var dropped []string
 	for u := range srcUnits {
@@ -289,9 +320,22 @@ func CoverageViolations(sources []string, out string) string {
 	outEnts := entitySet(out)
 	var droppedEnts []string
 	for e := range srcEnts {
-		if !outEnts[e] {
-			droppedEnts = append(droppedEnts, e)
+		if exemptEnts[e] || outEnts[e] {
+			continue
 		}
+		if cid, ok := tokCompound[e]; ok {
+			covered := false
+			for _, sib := range compoundFrags[cid] {
+				if outEnts[sib] {
+					covered = true
+					break
+				}
+			}
+			if covered {
+				continue
+			}
+		}
+		droppedEnts = append(droppedEnts, e)
 	}
 	if n := len(srcEnts); n > 0 {
 		if frac := float64(len(droppedEnts)) / float64(n); frac > MaxEntityDropFraction {
@@ -308,8 +352,11 @@ func droppedNumberUnits(sources []string, out string) []string {
 	outUnits := numberUnits(out)
 	outFrags := tokenSet(numberRe, out)
 	outCompGroups := compositeDigitGroups(outUnits)
+	_, _, _, runs := entityCompounds(sources...)
+	srcUnits := numberUnits(sources...)
+	filterCompoundNumberUnits(srcUnits, runs)
 	var missing []string
-	for u := range numberUnits(sources...) {
+	for u := range srcUnits {
 		if !unitCovered(u, outUnits, outCompGroups, outFrags) {
 			missing = append(missing, u)
 		}
@@ -338,4 +385,73 @@ func entitySet(texts ...string) map[string]bool {
 		}
 	}
 	return set
+}
+
+// entityCompoundRe matches glue-joined runs that can carry several entity
+// fragments of one fact: usernames (IM-ADM-VMW@vsphere.local) and credential
+// blobs (npPciJah!G3B2npPciJah!G3B2) shatter into independent "entities"
+// under plain entityRe, so a summary keeping one fragment was vetoed for the
+// others — the live labirint-1 cluster failed with 5 of 9 dropped "entities"
+// being fragments of two credentials.
+var entityCompoundRe = regexp.MustCompile(`[A-Za-z0-9][A-Za-z0-9@!_./-]*`)
+
+// entityCompounds groups meaning-bearing entity tokens by their glue-joined
+// compound run. A run holding 2+ distinct fragments becomes one fact — covered
+// when ANY fragment survives. A run containing a secret-shaped fragment is a
+// credential blob: NONE of its fragments is required (a consolidation must not
+// propagate password pieces), so they are returned as exempt.
+func entityCompounds(texts ...string) (tokCompound map[string]string, compoundFrags map[string][]string, exempt map[string]bool, runs []string) {
+	tokCompound = map[string]string{}
+	compoundFrags = map[string][]string{}
+	exempt = map[string]bool{}
+	for _, t := range texts {
+		for _, run := range entityCompoundRe.FindAllString(t, -1) {
+			var frags []string
+			secret := false
+			seen := map[string]bool{}
+			for _, m := range entityRe.FindAllString(run, -1) {
+				if seen[m] {
+					continue
+				}
+				if isEntityToken(m) {
+					seen[m] = true
+					frags = append(frags, m)
+				} else if secretShaped(m) {
+					seen[m] = true
+					frags = append(frags, m)
+					secret = true
+				}
+			}
+			switch {
+			case secret:
+				for _, f := range frags {
+					exempt[f] = true
+				}
+				runs = append(runs, run)
+			case len(frags) >= 2:
+				for _, f := range frags {
+					if _, exists := tokCompound[f]; !exists {
+						tokCompound[f] = run
+					}
+				}
+				compoundFrags[run] = frags
+				runs = append(runs, run)
+			}
+		}
+	}
+	return tokCompound, compoundFrags, exempt, runs
+}
+
+// filterCompoundNumberUnits drops number units that live inside compound runs
+// (usernames, credential blobs): a digit inside "IM-ADM-VMW@vsphere.local" or
+// "G3B2npPciJah" is part of a name, not a quantity, and must not be required.
+func filterCompoundNumberUnits(units map[string]bool, runs []string) {
+	for u := range units {
+		for _, run := range runs {
+			if strings.Contains(run, u) {
+				delete(units, u)
+				break
+			}
+		}
+	}
 }

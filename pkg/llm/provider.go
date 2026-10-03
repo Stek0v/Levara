@@ -3,6 +3,8 @@
 // Supported providers:
 //   - "openai" / "ollama" / "" — OpenAI-compatible API (POST /chat/completions)
 //   - "anthropic" / "claude"  — Anthropic Messages API (POST /v1/messages)
+//   - "ollama-native"         — Ollama /api/chat (only way to toggle thinking
+//     per request; the OpenAI-compatible endpoint ignores the think flag)
 //
 // Usage:
 //
@@ -41,6 +43,10 @@ type CompletionRequest struct {
 	Temperature    float32
 	MaxTokens      int
 	ResponseFormat map[string]any // optional JSON Schema (OpenAI json_schema mode)
+	// Think controls thinking-mode for providers that support the request-level
+	// toggle (OllamaNativeProvider). Nil = model default; OpenAI-compatible and
+	// Anthropic providers ignore it.
+	Think *bool
 }
 
 // CompletionResponse is a provider-agnostic chat completion response.
@@ -52,6 +58,9 @@ type CompletionResponse struct {
 		CompletionTokens int
 	}
 }
+
+// BoolPtr is a helper for the request-level Think toggle.
+func BoolPtr(b bool) *bool { return &b }
 
 // Provider is the LLM provider interface.
 type Provider interface {
@@ -71,6 +80,8 @@ func NewProvider(providerName, endpoint, apiKey string) (Provider, error) {
 			return nil, fmt.Errorf("anthropic provider requires API key")
 		}
 		return NewAnthropicProvider(apiKey), nil
+	case "ollama-native":
+		return NewOllamaNativeProvider(endpoint, apiKey), nil
 	case "openai", "ollama", "":
 		return NewOpenAIProvider(endpoint, apiKey), nil
 	default:
