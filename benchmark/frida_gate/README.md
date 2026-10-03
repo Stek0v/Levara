@@ -48,6 +48,31 @@ The same gate re-run through the real deployment path — FastAPI sidecar on
 
 Sidecar test artifacts: `sidecar_results_{parity,full,load}.json`.
 
+## Pi 5 deployment (2026-10-03, live)
+
+The gate shipped behind `-decisions-endpoint` (commit
+`feat/frida-decisions-gate`) and was deployed to the Pi (berry8gb, 4×A76,
+8 GB, levara.service on :8090):
+
+- sidecar: `levara-decisions.service` (systemd), model at
+  `~/models/frida-decisions` (ONNX int8 1.26 GB), `DECISIONS_THREADS=4`,
+  RSS ≈ 1.8 GB;
+- **noul latency on Pi: p50 ≈ 940 ms** (785–1050 ms) — matches the model
+  card's ~0.9 s CPU figure; verdicts sane (commit-update pair 0.85, RU
+  paraphrase 0.55, RU/EN 0.21, distinct fact 0.06 — note how close the
+  distinct-fact margin sits to the 0.05 threshold: calibration matters);
+- server flag wired via drop-in env `DECISIONS_ENDPOINT` (10-decisions.conf);
+  Pi embed enabled for clustering via `90-embed.conf`
+  (`-embed-endpoint=http://127.0.0.1:9101/v1/embeddings -embed-model=potion`);
+- **end-to-end**: `consolidate {collection, dry_run}` over MCP →
+  `decision gate: checked=1 rejected=0 errors=0`, sidecar journal shows the
+  matching `POST /judge`. Background janitor sweeps now consult the gate on
+  every collection with clusters.
+
+Revert on Pi: `sudo rm /etc/systemd/system/levara.service.d/{10-decisions,90-embed}.conf
+&& sudo systemctl disable --now levara-decisions && sudo systemctl daemon-reload
+&& sudo systemctl restart levara`.
+
 ## Verdict
 
 Adopt (behind a flag, CPU int8 sidecar per `deploy/rerank/app.py` pattern):
