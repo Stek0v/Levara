@@ -34,6 +34,9 @@ var toolProfiles = map[string][]string{
 		"save_memory", "recall_memory", "list_memories", "pin_memory", "unpin_memory", "supersede_memory",
 		"chat_distill",
 		"search", "doctor", "runtime_stats", "recent_errors",
+		// consolidation: manual, dry_run defaults true — the FRIDA-Decisions
+		// fact gate (benchmark/frida_gate) vetoes unsafe merges/syntheses.
+		"consolidate", "consolidation_status", "consolidation_revert",
 		"task_open", "task_bootstrap", "task_plan", "task_step", "task_checkpoint", "task_receipt", "task_validate", "task_complete",
 	},
 }
