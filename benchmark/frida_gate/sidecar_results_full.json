@@ -1,0 +1,88 @@
+{
+ "part": "full",
+ "base": "http://127.0.0.1:9200",
+ "started": "2026-10-03 06:52:43",
+ "full_sets": {
+  "relevance_full40": {
+   "n": 40,
+   "frida": {
+    "pos_at_1": 0.925,
+    "mrr": 0.956,
+    "sec": 214.6,
+    "ms_per_query": 5364.9
+   },
+   "cosine_baseline": {
+    "pos_at_1": 1.0,
+    "mrr": 1.0
+   }
+  },
+  "grounding": {
+   "n": 80,
+   "acc": 0.975,
+   "precision": 0.975,
+   "recall": 0.975,
+   "f1": 0.975,
+   "tp": 39,
+   "fp": 1,
+   "fn": 1,
+   "tn": 39,
+   "auc": 0.999,
+   "best_f1": {
+    "f1": 0.988,
+    "thr": 0.25
+   },
+   "mean_p_pos": 0.904,
+   "mean_p_neg": 0.054,
+   "sec": 43.9,
+   "per_item_ms": 548.2
+  },
+  "hall_full237": {
+   "n": 237,
+   "acc": 0.565,
+   "per_class": {
+    "advice": {
+     "n": 9,
+     "prec": 0.333,
+     "rec": 0.667
+    },
+    "decision": {
+     "n": 30,
+     "prec": 0.5,
+     "rec": 0.133
+    },
+    "discovery": {
+     "n": 146,
+     "prec": 0.871,
+     "rec": 0.74
+    },
+    "event": {
+     "n": 48,
+     "prec": 0.812,
+     "rec": 0.271
+    },
+    "fact": {
+     "n": 2,
+     "prec": 0.031,
+     "rec": 1.0
+    },
+    "preference": {
+     "n": 2,
+     "prec": 0.143,
+     "rec": 0.5
+    }
+   },
+   "coverage_by_confidence": {
+    "0.5": {
+     "coverage": 0.308,
+     "acc": 0.74
+    },
+    "0.7": {
+     "coverage": 0.16,
+     "acc": 0.816
+    }
+   },
+   "sec": 181.0,
+   "per_item_ms": 763.6
+  }
+ }
+}

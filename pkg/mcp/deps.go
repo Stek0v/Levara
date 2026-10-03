@@ -12,6 +12,7 @@ import (
 
 	"github.com/stek0v/levara/pipeline"
 	"github.com/stek0v/levara/pkg/access"
+	"github.com/stek0v/levara/pkg/consolidate"
 	"github.com/stek0v/levara/pkg/llm"
 	"github.com/stek0v/levara/pkg/orchestrator"
 	"github.com/stek0v/levara/pkg/router"
@@ -125,6 +126,15 @@ type GraphAssertion struct {
 // completion criterion.
 type ArtifactVerifier interface {
 	VerifyArtifact(ctx context.Context, evidenceURI, expectedDigest string) error
+}
+
+// DecisionDeps is the optional semantic fact-gate capability: a small
+// decision model (the FRIDA-Decisions sidecar, benchmark/frida_gate) consulted
+// before consolidation actions are accepted. Deps implementations without the
+// capability leave the gate off; the engine fails open when the gate errors.
+// A returned threshold <= 0 selects the engine's calibrated default.
+type DecisionDeps interface {
+	ConsolidationGate() (consolidate.FactGate, float64)
 }
 
 // Deps is the full application-state surface that the current MCP tool set

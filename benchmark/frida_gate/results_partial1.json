@@ -1,0 +1,70 @@
+{
+ "backend": "onnx",
+ "model": "ai-forever/FRIDA-Decisions",
+ "started": "2026-10-03 03:28:51",
+ "trim": {
+  "dup_semantic": 60,
+  "hall": 120,
+  "relevance": 24
+ },
+ "supersession": {
+  "n": 148,
+  "acc": 0.588,
+  "precision": 1.0,
+  "recall": 0.176,
+  "f1": 0.299,
+  "tp": 13,
+  "fp": 0,
+  "fn": 61,
+  "tn": 74,
+  "auc": 0.929,
+  "best_f1": {
+   "f1": 0.844,
+   "thr": 0.05
+  },
+  "mean_p_pos": 0.277,
+  "mean_p_neg": 0.027,
+  "sec": 146.5,
+  "per_item_ms": 990.1
+ },
+ "dup_jaccard": {
+  "n": 57,
+  "acc": 0.93,
+  "precision": 1.0,
+  "recall": 0.429,
+  "f1": 0.6,
+  "tp": 3,
+  "fp": 0,
+  "fn": 4,
+  "tn": 50,
+  "auc": 0.977,
+  "best_f1": {
+   "f1": 0.833,
+   "thr": 0.125
+  },
+  "mean_p_pos": 0.415,
+  "mean_p_neg": 0.017,
+  "sec": 52.7,
+  "per_item_ms": 923.8
+ },
+ "dup_semantic": {
+  "n": 60,
+  "acc": 0.667,
+  "precision": 1.0,
+  "recall": 0.333,
+  "f1": 0.5,
+  "tp": 10,
+  "fp": 0,
+  "fn": 20,
+  "tn": 30,
+  "auc": 0.99,
+  "best_f1": {
+   "f1": 0.966,
+   "thr": 0.075
+  },
+  "mean_p_pos": 0.392,
+  "mean_p_neg": 0.021,
+  "sec": 57.0,
+  "per_item_ms": 950.1
+ }
+}

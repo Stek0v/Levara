@@ -1,0 +1,388 @@
+{
+ "backend": "onnx",
+ "model": "ai-forever/FRIDA-Decisions",
+ "started": "2026-10-03 03:39:44",
+ "trim": {
+  "dup_semantic": 60,
+  "hall": 120,
+  "relevance": 24,
+  "hall_actual": 113
+ },
+ "supersession": {
+  "n": 148,
+  "acc": 0.588,
+  "precision": 1.0,
+  "recall": 0.176,
+  "f1": 0.299,
+  "tp": 13,
+  "fp": 0,
+  "fn": 61,
+  "tn": 74,
+  "auc": 0.929,
+  "best_f1": {
+   "f1": 0.844,
+   "thr": 0.05
+  },
+  "mean_p_pos": 0.277,
+  "mean_p_neg": 0.027,
+  "sec": 118.1,
+  "per_item_ms": 798.0
+ },
+ "dup_jaccard": {
+  "n": 57,
+  "acc": 0.93,
+  "precision": 1.0,
+  "recall": 0.429,
+  "f1": 0.6,
+  "tp": 3,
+  "fp": 0,
+  "fn": 4,
+  "tn": 50,
+  "auc": 0.977,
+  "best_f1": {
+   "f1": 0.833,
+   "thr": 0.125
+  },
+  "mean_p_pos": 0.415,
+  "mean_p_neg": 0.017,
+  "sec": 40.0,
+  "per_item_ms": 701.7
+ },
+ "dup_semantic": {
+  "n": 60,
+  "acc": 0.667,
+  "precision": 1.0,
+  "recall": 0.333,
+  "f1": 0.5,
+  "tp": 10,
+  "fp": 0,
+  "fn": 20,
+  "tn": 30,
+  "auc": 0.99,
+  "best_f1": {
+   "f1": 0.966,
+   "thr": 0.075
+  },
+  "mean_p_pos": 0.392,
+  "mean_p_neg": 0.021,
+  "sec": 46.1,
+  "per_item_ms": 768.6
+ },
+ "hall": {
+  "n": 113,
+  "acc": 0.46,
+  "majority_acc": 0.354,
+  "majority_class": "discovery",
+  "macro_f1": 0.378,
+  "per_class": {
+   "advice": {
+    "n": 9,
+    "prec": 0.429,
+    "rec": 0.667
+   },
+   "decision": {
+    "n": 30,
+    "prec": 0.667,
+    "rec": 0.133
+   },
+   "discovery": {
+    "n": 40,
+    "prec": 0.659,
+    "rec": 0.725
+   },
+   "event": {
+    "n": 30,
+    "prec": 0.909,
+    "rec": 0.333
+   },
+   "fact": {
+    "n": 2,
+    "prec": 0.065,
+    "rec": 1.0
+   },
+   "preference": {
+    "n": 2,
+    "prec": 0.143,
+    "rec": 0.5
+   }
+  },
+  "coverage_by_confidence": {
+   "0.5": {
+    "coverage": 0.265,
+    "acc": 0.667
+   },
+   "0.7": {
+    "coverage": 0.115,
+    "acc": 0.769
+   }
+  },
+  "sec": 75.4,
+  "per_item_ms": 667.6
+ },
+ "relevance": {
+  "n": 24,
+  "frida": {
+   "pos_at_1": 0.958,
+   "mrr": 0.979,
+   "sec": 104.6,
+   "ms_per_query": 4356.3
+  },
+  "cosine_baseline": {
+   "pos_at_1": 1.0,
+   "mrr": 1.0,
+   "embed_ms": 8.8
+  }
+ },
+ "grounding": {
+  "n": 48,
+  "acc": 1.0,
+  "precision": 1.0,
+  "recall": 1.0,
+  "f1": 1.0,
+  "tp": 24,
+  "fp": 0,
+  "fn": 0,
+  "tn": 24,
+  "auc": 1.0,
+  "best_f1": {
+   "f1": 1.0,
+   "thr": 0.2
+  },
+  "mean_p_pos": 0.908,
+  "mean_p_neg": 0.034,
+  "sec": 29.6,
+  "per_item_ms": 616.0
+ },
+ "routing_frida": {
+  "n": 24,
+  "acc": 0.5,
+  "confusion_gold_to_pred": {
+   "bm25": {
+    "bm25": 1,
+    "vector": 1,
+    "filtered": 1,
+    "hybrid": 2
+   },
+   "vector": {
+    "hybrid": 4
+   },
+   "hybrid": {
+    "hybrid": 5
+   },
+   "graph": {
+    "graph": 3,
+    "hybrid": 2
+   },
+   "filtered": {
+    "hybrid": 2,
+    "filtered": 3
+   }
+  },
+  "batch24_ms": 7271.06
+ },
+ "routing_go_heuristic": {
+  "n": 24,
+  "acc": 0.0,
+  "rows": [
+   {
+    "confidence": 0.6,
+    "label": "bm25",
+    "query": "найди точную строку plist-surgery в документах",
+    "reason": "default best-effort",
+    "route": "HYBRID"
+   },
+   {
+    "confidence": 0.6,
+    "label": "bm25",
+    "query": "цитата дословно: close of closed channel",
+    "reason": "default best-effort",
+    "route": "HYBRID"
+   },
+   {
+    "confidence": 0.6,
+    "label": "bm25",
+    "query": "покажи все записи со словом WAL replay",
+    "reason": "default best-effort",
+    "route": "HYBRID"
+   },
+   {
+    "confidence": 0.7,
+    "label": "vector",
+    "query": "как называется тот механизм, который спасал пул соединений",
+    "reason": "query is a question",
+    "route": "RAG_COMPLETION"
+   },
+   {
+    "confidence": 0.6,
+    "label": "vector",
+    "query": "что-то было про зависание эмбеддингов при индексации",
+    "reason": "default best-effort",
+    "route": "HYBRID"
+   },
+   {
+    "confidence": 0.6,
+    "label": "vector",
+    "query": "примерно такая проблема: база растёт, диск кончается",
+    "reason": "default best-effort",
+    "route": "HYBRID"
+   },
+   {
+    "confidence": 0.7,
+    "label": "hybrid",
+    "query": "что мы решили про выбор модели эмбеддингов",
+    "reason": "query is a question",
+    "route": "RAG_COMPLETION"
+   },
+   {
+    "confidence": 0.7,
+    "label": "hybrid",
+    "query": "как устроена синхронизация Mac и Pi",
+    "reason": "query is a question",
+    "route": "RAG_COMPLETION"
+   },
+   {
+    "confidence": 0.6,
+    "label": "hybrid",
+    "query": "расскажи про холодный старт сервера",
+    "reason": "default best-effort",
+    "route": "HYBRID"
+   },
+   {
+    "confidence": 0.7,
+    "label": "hybrid",
+    "query": "какие есть решения насчёт legacy-800",
+    "reason": "query is a question",
+    "route": "RAG_COMPLETION"
+   },
+   {
+    "confidence": 0.7,
+    "label": "graph",
+    "query": "кто кому назначен в ownership сущности gateway",
+    "reason": "query is a question",
+    "route": "RAG_COMPLETION"
+   },
+   {
+    "confidence": 0.7,
+    "label": "graph",
+    "query": "какие сущности связаны с HNSW индексом",
+    "reason": "query is a question",
+    "route": "RAG_COMPLETION"
+   },
+   {
+    "confidence": 0.6,
+    "label": "graph",
+    "query": "покажи связи между repos в мультирепо",
+    "reason": "default best-effort",
+    "route": "HYBRID"
+   },
+   {
+    "confidence": 0.7,
+    "label": "graph",
+    "query": "что упоминалось вместе с watchdog",
+    "reason": "query is a question",
+    "route": "RAG_COMPLETION"
+   },
+   {
+    "confidence": 0.6,
+    "label": "filtered",
+    "query": "в комнате deploy покажи все факты про порты",
+    "reason": "default best-effort",
+    "route": "HYBRID"
+   },
+   {
+    "confidence": 0.6,
+    "label": "filtered",
+    "query": "найди решения в комнате memory про консолидацию",
+    "reason": "default best-effort",
+    "route": "HYBRID"
+   },
+   {
+    "confidence": 0.94,
+    "label": "filtered",
+    "query": "покажи события по комнате observability за сентябрь",
+    "reason": "query contains date: сентябрь",
+    "route": "TEMPORAL"
+   },
+   {
+    "confidence": 0.6,
+    "label": "filtered",
+    "query": "есть ли предпочтения пользователя в комнате mcp",
+    "reason": "default best-effort",
+    "route": "HYBRID"
+   },
+   {
+    "confidence": 0.92,
+    "label": "bm25",
+    "query": "EXACT_TOKEN_2026 ZARGS",
+    "reason": "query contains date: 2026",
+    "route": "TEMPORAL"
+   },
+   {
+    "confidence": 0.6,
+    "label": "vector",
+    "query": "что-то похожее на гоча с быстрым файствором",
+    "reason": "default best-effort",
+    "route": "HYBRID"
+   },
+   {
+    "confidence": 0.88,
+    "label": "hybrid",
+    "query": "итоги аудита качества и что подтянули",
+    "reason": "overview query with community summaries available",
+    "route": "COMMUNITY_GLOBAL"
+   },
+   {
+    "confidence": 0.7,
+    "label": "graph",
+    "query": "какой сейчас владелец сервиса синхронизации",
+    "reason": "query is a question",
+    "route": "RAG_COMPLETION"
+   },
+   {
+    "confidence": 0.6,
+    "label": "filtered",
+    "query": "список advice про миграции базы",
+    "reason": "default best-effort",
+    "route": "HYBRID"
+   },
+   {
+    "confidence": 0.6,
+    "label": "bm25",
+    "query": "найди упоминание строки embed-model в plist",
+    "reason": "default best-effort",
+    "route": "HYBRID"
+   }
+  ]
+ },
+ "latency_onnx": {
+  "noul_single_ms": 293.4,
+  "noul_batch20_ms": 5531.0,
+  "choice6_single_ms": 469.4
+ },
+ "frida_routing_preds": [
+  "bm25",
+  "vector",
+  "filtered",
+  "hybrid",
+  "hybrid",
+  "hybrid",
+  "hybrid",
+  "hybrid",
+  "hybrid",
+  "hybrid",
+  "graph",
+  "graph",
+  "graph",
+  "hybrid",
+  "hybrid",
+  "filtered",
+  "filtered",
+  "filtered",
+  "hybrid",
+  "hybrid",
+  "hybrid",
+  "hybrid",
+  "hybrid",
+  "hybrid"
+ ]
+}

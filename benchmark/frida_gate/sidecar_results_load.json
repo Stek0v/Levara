@@ -1,0 +1,39 @@
+{
+ "part": "load",
+ "base": "http://127.0.0.1:9200",
+ "started": "2026-10-03 07:01:49",
+ "load": [
+  {
+   "conc": 1,
+   "n": 24,
+   "p50_ms": 735,
+   "p95_ms": 1010,
+   "throughput_rps": 0.72,
+   "sidecar_cpu_pct_mean": 696.7
+  },
+  {
+   "conc": 2,
+   "n": 24,
+   "p50_ms": 1469,
+   "p95_ms": 1985,
+   "throughput_rps": 0.65,
+   "sidecar_cpu_pct_mean": 678.8
+  },
+  {
+   "conc": 4,
+   "n": 24,
+   "p50_ms": 2545,
+   "p95_ms": 3260,
+   "throughput_rps": 0.7,
+   "sidecar_cpu_pct_mean": 680.6
+  },
+  {
+   "conc": 8,
+   "n": 24,
+   "p50_ms": 4798,
+   "p95_ms": 6476,
+   "throughput_rps": 0.74,
+   "sidecar_cpu_pct_mean": 676.2
+  }
+ ]
+}

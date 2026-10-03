@@ -270,6 +270,7 @@ func ToolConsolidate(ctx context.Context, deps Deps, args map[string]any) ToolRe
 	runID := uuid.New().String()
 
 	nbr := &collectionNeighbors{deps: deps, collection: memoryCollectionName(sqlCollection)}
+	gate, gateThreshold := consolidationGate(deps)
 	res, err := consolidate.Run(ctx, consolidate.Params{
 		Store:      &sqlStore{deps: deps, collection: sqlCollection},
 		Neighbors:  nbr,
@@ -277,6 +278,7 @@ func ToolConsolidate(ctx context.Context, deps Deps, args map[string]any) ToolRe
 		Cfg:        consolidate.DefaultConfig(),
 		Collection: sqlCollection, Room: room, Hall: hall,
 		RunID: runID, DryRun: dryRun,
+		Gate: gate, GateThreshold: gateThreshold,
 	})
 	if err != nil {
 		metrics.ConsolidationRuns.WithLabelValues("error").Inc()
@@ -296,6 +298,10 @@ func ToolConsolidate(ctx context.Context, deps Deps, args map[string]any) ToolRe
 	text := fmt.Sprintf(
 		"consolidate %s: run=%s candidates=%d clusters=%d actions=%d skipped=%d",
 		mode, runID, res.Candidates, res.Clusters, len(res.Actions), res.Skipped)
+	if res.GateChecked > 0 {
+		text += fmt.Sprintf("\n  decision gate: checked=%d rejected=%d errors=%d",
+			res.GateChecked, res.GateRejected, res.GateErrors)
+	}
 	if nbr.dimMismatch {
 		metrics.ConsolidationRuns.WithLabelValues("dim_incompatible").Inc()
 		text += fmt.Sprintf(
@@ -320,6 +326,8 @@ func consolidationSkipCategory(reason string) string {
 		return "oversized"
 	case strings.Contains(reason, "budget"):
 		return "llm_budget"
+	case strings.Contains(reason, "decision gate"):
+		return "decision_gate"
 	case strings.Contains(reason, "summary dropped"),
 		strings.Contains(reason, "summary invented"),
 		strings.Contains(reason, "empty summary"),
@@ -328,6 +336,16 @@ func consolidationSkipCategory(reason string) string {
 	default:
 		return "other"
 	}
+}
+
+// consolidationGate resolves the optional semantic fact gate (DecisionDeps,
+// backed by the FRIDA-Decisions sidecar) from deps. Deps without the
+// capability — including every test stub — leave the gate off.
+func consolidationGate(deps Deps) (consolidate.FactGate, float64) {
+	if dd, ok := deps.(DecisionDeps); ok {
+		return dd.ConsolidationGate()
+	}
+	return nil, 0
 }
 
 // consolidationRunner is the consolidate.Runner used by the background
@@ -381,6 +399,7 @@ func (r *consolidationRunner) RunOnce(ctx context.Context) error {
 			}
 		}
 		runID := uuid.New().String()
+		gate, gateThreshold := consolidationGate(r.deps)
 		res, err := consolidate.Run(ctx, consolidate.Params{
 			Store:      &sqlStore{deps: r.deps, collection: c},
 			Neighbors:  &collectionNeighbors{deps: r.deps, collection: memoryCollectionName(c)},
@@ -389,6 +408,7 @@ func (r *consolidationRunner) RunOnce(ctx context.Context) error {
 			Collection: c,
 			RunID:      runID,
 			DryRun:     false,
+			Gate:       gate, GateThreshold: gateThreshold,
 		})
 		if err != nil {
 			metrics.ConsolidationRuns.WithLabelValues("error").Inc()

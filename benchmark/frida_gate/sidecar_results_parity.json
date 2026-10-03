@@ -1,0 +1,161 @@
+{
+ "part": "parity",
+ "base": "http://127.0.0.1:9200",
+ "started": "2026-10-03 06:48:38",
+ "parity": {
+  "supersession.auc": [
+   0.929,
+   0.929
+  ],
+  "supersession.acc": [
+   0.588,
+   0.588
+  ],
+  "supersession.n": [
+   148,
+   148
+  ],
+  "dup_jaccard.auc": [
+   0.977,
+   0.977
+  ],
+  "dup_jaccard.acc": [
+   0.93,
+   0.93
+  ],
+  "dup_jaccard.n": [
+   57,
+   57
+  ],
+  "dup_semantic.auc": [
+   0.99,
+   0.99
+  ],
+  "dup_semantic.acc": [
+   0.667,
+   0.667
+  ],
+  "dup_semantic.n": [
+   60,
+   60
+  ],
+  "hall.acc": [
+   0.46,
+   0.46
+  ],
+  "hall.n": [
+   113,
+   113
+  ]
+ },
+ "parity_sets": {
+  "supersession": {
+   "n": 148,
+   "acc": 0.588,
+   "precision": 1.0,
+   "recall": 0.176,
+   "f1": 0.299,
+   "tp": 13,
+   "fp": 0,
+   "fn": 61,
+   "tn": 74,
+   "auc": 0.929,
+   "best_f1": {
+    "f1": 0.844,
+    "thr": 0.05
+   },
+   "mean_p_pos": 0.277,
+   "mean_p_neg": 0.027,
+   "sec": 86.7,
+   "per_item_ms": 585.6
+  },
+  "dup_jaccard": {
+   "n": 57,
+   "acc": 0.93,
+   "precision": 1.0,
+   "recall": 0.429,
+   "f1": 0.6,
+   "tp": 3,
+   "fp": 0,
+   "fn": 4,
+   "tn": 50,
+   "auc": 0.977,
+   "best_f1": {
+    "f1": 0.833,
+    "thr": 0.125
+   },
+   "mean_p_pos": 0.415,
+   "mean_p_neg": 0.017,
+   "sec": 31.2,
+   "per_item_ms": 547.8
+  },
+  "dup_semantic": {
+   "n": 60,
+   "acc": 0.667,
+   "precision": 1.0,
+   "recall": 0.333,
+   "f1": 0.5,
+   "tp": 10,
+   "fp": 0,
+   "fn": 20,
+   "tn": 30,
+   "auc": 0.99,
+   "best_f1": {
+    "f1": 0.966,
+    "thr": 0.075
+   },
+   "mean_p_pos": 0.392,
+   "mean_p_neg": 0.021,
+   "sec": 35.5,
+   "per_item_ms": 592.5
+  },
+  "hall": {
+   "n": 113,
+   "acc": 0.46,
+   "per_class": {
+    "advice": {
+     "n": 9,
+     "prec": 0.429,
+     "rec": 0.667
+    },
+    "decision": {
+     "n": 30,
+     "prec": 0.667,
+     "rec": 0.133
+    },
+    "discovery": {
+     "n": 40,
+     "prec": 0.659,
+     "rec": 0.725
+    },
+    "event": {
+     "n": 30,
+     "prec": 0.909,
+     "rec": 0.333
+    },
+    "fact": {
+     "n": 2,
+     "prec": 0.065,
+     "rec": 1.0
+    },
+    "preference": {
+     "n": 2,
+     "prec": 0.143,
+     "rec": 0.5
+    }
+   },
+   "coverage_by_confidence": {
+    "0.5": {
+     "coverage": 0.265,
+     "acc": 0.667
+    },
+    "0.7": {
+     "coverage": 0.115,
+     "acc": 0.769
+    }
+   },
+   "sec": 73.5,
+   "per_item_ms": 650.4
+  }
+ }
+}

@@ -81,6 +81,13 @@ type APIConfig struct {
 	RerankEndpoint  string // e.g., "http://localhost:9100/rerank"
 	RerankModel     string // e.g., "mmini-L12-int8"
 	RerankTimeoutMs int    // HTTP timeout in ms, 0 = default 5000ms
+	// DecisionsEndpoint enables the optional semantic fact gate for
+	// consolidation — the FRIDA-Decisions sidecar (deploy/decisions/app.py,
+	// e.g. "http://127.0.0.1:9200"). Empty = gate off (default). CPU-only by
+	// policy: never point it at an MPS-hosted service while the embed server
+	// runs (see benchmark/frida_gate/README.md).
+	DecisionsEndpoint  string
+	DecisionsTimeoutMs int // HTTP timeout in ms, 0 = default 15000ms
 	// RerankBudgetMs caps total time spent on the rerank pass; on overshoot
 	// the search falls back to the un-reranked ranking. 0 = no budget.
 	RerankBudgetMs int

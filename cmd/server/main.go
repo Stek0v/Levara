@@ -267,6 +267,8 @@ func main() {
 	pgURL := flag.String("pg-url", os.Getenv("DATABASE_URL"), "PostgreSQL connection URL (falls back to $DATABASE_URL)")
 	structuredExtractEndpoint := flag.String("structured-extract-endpoint", firstNonEmpty(os.Getenv("STRUCTURED_EXTRACT_ENDPOINT"), os.Getenv("LIFT_ENDPOINT")), "Schema-driven document extraction sidecar endpoint (falls back to $STRUCTURED_EXTRACT_ENDPOINT or $LIFT_ENDPOINT)")
 	structuredExtractTimeoutMs := flag.Int("structured-extract-timeout-ms", intEnv("STRUCTURED_EXTRACT_TIMEOUT_MS", 0), "Structured extraction sidecar timeout in milliseconds (0 = handler default)")
+	decisionsEndpointF := flag.String("decisions-endpoint", os.Getenv("DECISIONS_ENDPOINT"), "FRIDA-Decisions fact-gate sidecar base URL, e.g. http://127.0.0.1:9200 (falls back to $DECISIONS_ENDPOINT; empty = gate off)")
+	decisionsTimeoutMs := flag.Int("decisions-timeout-ms", intEnv("DECISIONS_TIMEOUT_MS", 0), "Decisions sidecar HTTP timeout in milliseconds (0 = default 15000ms)")
 	profileName := flag.String("profile", "", "Functional profile: standalone, standalone-embed, or full (default)")
 	// pgSuppressed records that a functional profile disabled PostgreSQL
 	// without an explicit --pg-url; the DB_HOST env path in initSQLRuntime
@@ -893,6 +895,8 @@ func main() {
 		SyncRemoteURL:              os.Getenv("LEVARA_SYNC_REMOTE_URL"),
 		WorkspaceWatcher:           workspaceWatcher,
 		EmbedEndpoint:              embedEndpoint,
+		DecisionsEndpoint:          *decisionsEndpointF,
+		DecisionsTimeoutMs:         *decisionsTimeoutMs,
 		EmbedModel:                 embedModel,
 		EmbedClient:                sharedEmbed.WithPriorityGate(embedGate),
 		EmbedClientBackground:      sharedEmbed.WithPriorityGate(embedGate).WithBackground().WithConcurrency(embedderBackgroundConcurrency()),
@@ -935,6 +939,8 @@ func main() {
 		StoragePath:                *dataDir + "/uploads",
 		FileStorage:                fileStore,
 		EmbedEndpoint:              embedEndpoint,
+		DecisionsEndpoint:          *decisionsEndpointF,
+		DecisionsTimeoutMs:         *decisionsTimeoutMs,
 		EmbedModel:                 embedModel,
 		EmbedClient:                sharedEmbed,
 		WorkspacePath:              *dataDir + "/workspace",

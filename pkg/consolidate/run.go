@@ -27,7 +27,30 @@ type Params struct {
 	Hall       string
 	RunID      string
 	DryRun     bool
+	// Gate is the optional semantic fact gate (e.g. the FRIDA-Decisions
+	// sidecar). Nil = gate off (plain cosine/threshold behaviour).
+	Gate FactGate
+	// GateThreshold is the minimum Supersedes probability for an action to
+	// stand. <= 0 selects DefaultGateThreshold.
+	GateThreshold float64
 }
+
+// FactGate is an optional semantic duplicate-checker consulted before a
+// planned action is accepted: a mechanical merge must semantically supersede
+// each of its sources, and an LLM abstraction's synthesis must supersede each
+// source it would retire. Implementations (pkg/decisions sidecar) fail open
+// at the call site — a gate outage must never stall consolidation.
+type FactGate interface {
+	// Supersedes reports P(newRec is an updated version of oldRec): the same
+	// fact with newer details, not a different fact.
+	Supersedes(ctx context.Context, oldRec, newRec MemoryRecord) (float64, error)
+}
+
+// DefaultGateThreshold is the calibrated merge/supersession threshold from
+// benchmark/frida_gate (supersession set: precision 1.0, best-F1 0.844 at
+// 0.05; the model's noul mass sits low for this phrasing, so the naive 0.5
+// would reject most true pairs).
+const DefaultGateThreshold = 0.05
 
 // Skip records a cluster that was found but not acted on, with the reason
 // (coverage-guard rejection or oversized cluster) for operator visibility.
@@ -45,6 +68,12 @@ type Result struct {
 	Skipped    int       // == len(Skips); kept for backward-compatible summaries
 	Skips      []Skip    // per-cluster skip reasons
 	LLMCalls   int       // Summarizer (LLM) calls attempted this run; lets a multi-collection sweep enforce a budget across runs
+	// Fact-gate counters (all zero when Params.Gate is nil). GateErrors
+	// counts fail-open consultations: the action stood because the gate was
+	// unreachable or errored.
+	GateChecked  int
+	GateRejected int
+	GateErrors   int
 }
 
 // actionCharDensity is survivor chars / total source chars for one action — the
@@ -140,6 +169,27 @@ func Run(ctx context.Context, p Params) (Result, error) {
 			}
 			a.NewValue = val
 		}
+		// Semantic fact gate: placed after NewValue is filled (the
+		// abstraction check scores the synthesis against its sources) and
+		// before the action is accepted. A merge must supersede every
+		// source; an abstraction's synthesis must supersede every source it
+		// would retire. Rejections skip the whole cluster — sources stay
+		// intact and the cluster is re-examined on the next sweep. A gate
+		// error fails open: the action stands, the error is counted (the
+		// gate is additive protection, not an availability dependency).
+		// An abstraction rejection still counts its LLM call (spent above).
+		if p.Gate != nil {
+			res.GateChecked++
+			ok, reason, gerr := gateAction(ctx, p.Gate, p.GateThreshold, a, byID)
+			switch {
+			case gerr != nil:
+				res.GateErrors++
+			case !ok:
+				res.GateRejected++
+				res.Skips = append(res.Skips, Skip{SourceIDs: a.SourceIDs, Reason: reason})
+				continue
+			}
+		}
 		final = append(final, a)
 		res.Densities = append(res.Densities, actionCharDensity(a, byID))
 	}
@@ -153,4 +203,41 @@ func Run(ctx context.Context, p Params) (Result, error) {
 		}
 	}
 	return res, nil
+}
+
+// gateAction consults the fact gate for one planned action and reports
+// whether it may proceed. The worst (lowest) pairwise probability decides:
+// merge pairs each source against the survivor, abstraction pairs each
+// source against the synthesized value.
+func gateAction(ctx context.Context, g FactGate, threshold float64, a Action, byID map[string]MemoryRecord) (bool, string, error) {
+	if threshold <= 0 {
+		threshold = DefaultGateThreshold
+	}
+	newVal := byID[a.SurvivorID]
+	if a.Kind == ActionAbstract {
+		newVal = MemoryRecord{Value: a.NewValue}
+	}
+	worst := 1.0
+	worstOld := ""
+	for _, src := range a.SourceIDs {
+		p, err := g.Supersedes(ctx, byID[src], newVal)
+		if err != nil {
+			return false, "", err
+		}
+		if p < worst {
+			worst, worstOld = p, src
+		}
+	}
+	if worst < threshold {
+		return false, fmt.Sprintf("decision gate: %s does not supersede %s (p=%.2f < %.2f)",
+			labelNew(a), worstOld, worst, threshold), nil
+	}
+	return true, "", nil
+}
+
+func labelNew(a Action) string {
+	if a.Kind == ActionMerge {
+		return "survivor"
+	}
+	return "synthesis"
 }
