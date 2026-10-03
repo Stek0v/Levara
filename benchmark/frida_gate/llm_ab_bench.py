@@ -8,16 +8,18 @@ replicating pkg/consolidate coverage-guard semantics in Python:
   - empty output -> fail.
 """
 import json
+import os
 import re
 import sys
 import time
+import urllib.parse
 import urllib.request
 
 BASE = "http://127.0.0.1:11434"
 PROMPT_HEAD = ("Combine the following memory notes into ONE concise statement. "
                "Preserve every fact, number, name, and port exactly. "
                "Do NOT add any information not present below. Notes:\n")
-MODELS = ["gemma4:e2b", "glm4:9b", "ornith-1.5:9b"]
+MODELS = ["gemma4:e2b", "glm4:9b", "ornith-1.5:9b"]  # override: argv model names
 
 CLUSTERS = {
     "ub-main-1": ["6675cfb3-30e6-4e63-acd9-a1bc44ed7ddd", "80cf736d-4066-48d3-a4d5-03e8baf68b3b"],
@@ -69,6 +71,21 @@ def load_sources():
 
 
 def chat(model, prompt, max_tokens, timeout=300):
+    if os.environ.get("THINK") == "0":
+        # native /api/chat with thinking disabled — models the wireable prod
+        # fix path (request-level option, no nothink tag exists for granite4.2)
+        body = json.dumps({"model": model,
+                           "messages": [{"role": "user", "content": prompt}],
+                           "stream": False, "think": False,
+                           "options": {"temperature": 0, "num_predict": max_tokens}}).encode()
+        req = urllib.request.Request(BASE + "/api/chat", data=body,
+                                     headers={"Content-Type": "application/json"})
+        t0 = time.perf_counter()
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            d = json.loads(r.read())
+        ms = (time.perf_counter() - t0) * 1000
+        msg = d.get("message", {})
+        return (msg.get("content") or "").strip(), ms, msg.get("thinking")
     body = json.dumps({"model": model,
                        "messages": [{"role": "user", "content": prompt}],
                        "temperature": 0, "max_tokens": max_tokens}).encode()
@@ -97,12 +114,10 @@ def unload(model):
 
 def ollama_ps(model):
     """Honest residency: /api/ps size/size_vram (ps RSS is meaningless for
-    Metal-mmapped weights)."""
-    body = json.dumps({"model": model}).encode()
-    req = urllib.request.Request(BASE + "/api/ps", data=body,
-                                 headers={"Content-Type": "application/json"})
+    Metal-mmapped weights). GET with query param — POST returns 405."""
+    url = f"{BASE}/api/ps?model={urllib.parse.quote(model)}"
     try:
-        with urllib.request.urlopen(req, timeout=10) as r:
+        with urllib.request.urlopen(url, timeout=10) as r:
             for m in json.loads(r.read()).get("models", []):
                 if m["name"] == model:
                     return {"size_gb": round(m["size"] / 1e9, 2),
@@ -160,10 +175,11 @@ def guard(sources, out):
 
 
 def main():
+    models = sys.argv[1:] or MODELS
     src = load_sources()
     print(f"loaded {len(src)} source records", flush=True)
     results = {}
-    for model in MODELS:
+    for model in models:
         import threading
         stop = threading.Event()
         bucket = []
