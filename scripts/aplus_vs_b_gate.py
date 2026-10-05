@@ -4,11 +4,17 @@
 For each toolset the harness advertises that server's real tools/list to a
 live LLM, gives it a task, and scores which tool the model chooses
 (right / wrong / no-call), executes recall calls to measure zero-results,
-and records input-token cost. Protocol: anthropic (Z.ai coding plan) or
-openai (Ollama /v1). Exit code 0 always — the JSON verdict is the product.
+and records input-token cost plus p50/p95 provider latency. Protocol:
+anthropic (Z.ai coding plan) or openai (Ollama /v1). Exit code 0 always —
+the JSON verdict is the product.
+
+Run the local request/response checks without services:
+    python3 -m doctest scripts/aplus_vs_b_gate.py
 """
 import argparse
 import json
+import statistics
+import time
 import urllib.request
 
 # task, expected tool per toolset ("none" = must answer without a tool),
@@ -93,6 +99,29 @@ def mcp_call(base, session, name, args):
                                    "params": {"name": name, "arguments": args}})
 
 
+def tool_input_schema(tool):
+    """Return the real MCP schema while tolerating old captured fixtures.
+
+    >>> tool_input_schema({"inputSchema": {"type": "object"}})["type"]
+    'object'
+    >>> tool_input_schema({"input_schema": {"type": "array"}})["type"]
+    'array'
+    """
+    return tool.get("inputSchema") or tool.get("input_schema") or {"type": "object"}
+
+
+def summary_keys():
+    """Summary keys recorded for every provider profile.
+
+    >>> summary_keys() == ["calls", "right_pct", "wrong_pct", "none_ok",
+    ...                    "avg_input_tokens", "p50_ms", "p95_ms",
+    ...                    "zero_result", "recall_exec"]
+    True
+    """
+    return ["calls", "right_pct", "wrong_pct", "none_ok", "avg_input_tokens",
+            "p50_ms", "p95_ms", "zero_result", "recall_exec"]
+
+
 def llm_call(cfg, tools, task):
     if cfg["protocol"] == "anthropic":
         payload = {
@@ -100,7 +129,7 @@ def llm_call(cfg, tools, task):
             "system": SYSTEM,
             "messages": [{"role": "user", "content": task}],
             "tools": [{"name": t["name"], "description": t.get("description", ""),
-                       "input_schema": t.get("input_schema", {"type": "object"})} for t in tools],
+                       "input_schema": tool_input_schema(t)} for t in tools],
         }
         r = http_json(cfg["base"].rstrip("/") + "/v1/messages", payload,
                       {"x-api-key": cfg["key"], "anthropic-version": "2023-06-01"})
@@ -111,7 +140,7 @@ def llm_call(cfg, tools, task):
         "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": task}],
         "tools": [{"type": "function", "function": {"name": t["name"],
                     "description": t.get("description", ""),
-                    "parameters": t.get("input_schema", {"type": "object"})}} for t in tools],
+                    "parameters": tool_input_schema(t)}} for t in tools],
     }
     r = http_json(cfg["base"].rstrip("/") + "/v1/chat/completions", payload,
                   {"Authorization": "Bearer " + cfg["key"]} if cfg["key"] else {})
@@ -154,12 +183,14 @@ def main():
     for label, url in (("A+ core", args.url_a), ("B memory", args.url_b)):
         tools, session = tools_for(url)
         stats = {"right": 0, "wrong": 0, "none_ok": 0, "zero_result": 0, "recall_exec": 0,
-                 "input_tokens": 0, "calls": 0, "per_scenario": {}}
+                 "input_tokens": 0, "calls": 0, "latency_ms": [], "per_scenario": {}}
         for sc in SCENARIOS:
             expected = sc["core" if "core" in label else "memory"]
             calls_seen = []
             for _ in range(args.repeats):
+                started = time.perf_counter()
                 name, in_tokens = llm_call(cfg, tools, sc["task"])
+                stats["latency_ms"].append((time.perf_counter() - started) * 1000)
                 calls_seen.append(name)
                 stats["calls"] += 1
                 stats["input_tokens"] += in_tokens
@@ -181,14 +212,16 @@ def main():
         stats["right_pct"] = round(100 * stats["right"] / n, 1)
         stats["wrong_pct"] = round(100 * stats["wrong"] / n, 1)
         stats["avg_input_tokens"] = round(stats["input_tokens"] / n)
+        stats["p50_ms"] = round(statistics.median(stats["latency_ms"]), 1)
+        stats["p95_ms"] = round(
+            statistics.quantiles(stats["latency_ms"], n=20, method="inclusive")[18], 1)
         results[label] = stats
 
+    keys = summary_keys()
     print(json.dumps({
         "model": args.model, "protocol": args.protocol, "repeats": args.repeats,
-        "A+_core_13": {k: results["A+ core"][k] for k in
-                       ("calls", "right_pct", "wrong_pct", "none_ok", "avg_input_tokens", "zero_result", "recall_exec")},
-        "B_memory_23": {k: results["B memory"][k] for k in
-                        ("calls", "right_pct", "wrong_pct", "none_ok", "avg_input_tokens", "zero_result", "recall_exec")},
+        "A+_core_13": {k: results["A+ core"][k] for k in keys},
+        "B_memory_23": {k: results["B memory"][k] for k in keys},
         "per_scenario": {label: results[label]["per_scenario"] for label in results},
     }, ensure_ascii=False, indent=2))
 
