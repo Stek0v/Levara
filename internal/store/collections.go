@@ -1012,32 +1012,28 @@ func (cm *CollectionManager) Count() int {
 }
 
 // Checkpoint compacts WAL for all collections.
-// CheckpointIfWALExceeds compacts every collection whose WAL has grown past
-// threshold bytes. Standalone deployments have no gRPC/Raft snapshot
+// CheckpointIfWALExceeds compacts every collection whose WAL has grown by more
+// than threshold bytes since startup or its last successful checkpoint.
+// Standalone deployments have no gRPC/Raft snapshot
 // trigger, so without this the append-only WAL grows forever (observed:
 // a 3.8 GB chat-imports WAL after a day of churn, and a 13-minute boot
 // replaying it). Returns the number of collections compacted.
 func (cm *CollectionManager) CheckpointIfWALExceeds(threshold int64) (int, error) {
 	cm.mu.RLock()
-	var names []string
-	for name, db := range cm.collections {
-		if fi, err := os.Stat(db.wal.Path()); err == nil && fi.Size() > threshold {
-			names = append(names, name)
-		}
-	}
-	cm.mu.RUnlock()
+	defer cm.mu.RUnlock()
 	compacted := 0
-	for _, name := range names {
-		db, err := cm.Get(name)
+	var errs []error
+	for name, db := range cm.collections {
+		didCheckpoint, err := db.checkpointIfWALGrewBy(threshold)
 		if err != nil {
+			errs = append(errs, fmt.Errorf("checkpoint %q: %w", name, err))
 			continue
 		}
-		if err := db.Checkpoint(); err != nil {
-			return compacted, fmt.Errorf("checkpoint %q: %w", name, err)
+		if didCheckpoint {
+			compacted++
 		}
-		compacted++
 	}
-	return compacted, nil
+	return compacted, errors.Join(errs...)
 }
 
 func (cm *CollectionManager) Checkpoint() error {

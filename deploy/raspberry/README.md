@@ -28,6 +28,70 @@ The generated unit selects dimension/shards according to its model branch;
 inspect `systemctl cat levara` rather than assuming the separate checked-in
 [levara.service](levara.service) was copied verbatim.
 
+## Persistent rerank on the current Pi host
+
+The checked-in [levara-rerank.service](levara-rerank.service) matches the
+existing `stek0v` installation. It reads the application and model from:
+
+```text
+/home/stek0v/rerank-bench/sidecar/app.py
+/home/stek0v/rerank-bench/onnx/mmini-L12-int8/model_quantized.onnx
+```
+
+Verify those files and Python dependencies before installing the unit:
+
+```sh
+test -r /home/stek0v/rerank-bench/sidecar/app.py
+test -r /home/stek0v/rerank-bench/onnx/mmini-L12-int8/model_quantized.onnx
+/usr/bin/python3 -c 'from optimum.onnxruntime import ORTModelForSequenceClassification; import fastapi, uvicorn'
+```
+
+Install with a timestamped rollback copy, then start the loopback-only sidecar:
+
+```sh
+stamp=$(date -u +%Y%m%dT%H%M%SZ)
+if test -f /etc/systemd/system/levara-rerank.service; then
+  sudo cp -a /etc/systemd/system/levara-rerank.service \
+    "/etc/systemd/system/levara-rerank.service.bak.$stamp"
+fi
+sudo install -m 0644 deploy/raspberry/levara-rerank.service \
+  /etc/systemd/system/levara-rerank.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now levara-rerank.service
+curl -fsS http://127.0.0.1:9100/health | jq -e '.ok == true'
+```
+
+Only after that health gate succeeds, connect Levara to the sidecar:
+
+```sh
+sudo install -d -m 0755 /etc/systemd/system/levara.service.d
+sudo tee /etc/systemd/system/levara.service.d/rerank.conf >/dev/null <<'EOF'
+[Service]
+Environment=RERANK_ENDPOINT=http://127.0.0.1:9100/rerank
+Environment=RERANK_MODEL=mmarco-mMiniLMv2-L12-H384-v1-int8
+EOF
+sudo systemctl daemon-reload
+sudo systemctl restart levara.service
+curl -fsS http://127.0.0.1:8090/health/details | jq -e '.services.rerank.status == "connected"'
+```
+
+Rollback removes the Levara endpoint first, then disables the sidecar. Restore
+the timestamped unit when one was created; otherwise remove the installed unit:
+
+```sh
+stamp=20261008T000000Z # replace with the timestamp printed during installation
+sudo rm -f /etc/systemd/system/levara.service.d/rerank.conf
+sudo systemctl disable --now levara-rerank.service
+if test -f "/etc/systemd/system/levara-rerank.service.bak.$stamp"; then
+  sudo cp -a "/etc/systemd/system/levara-rerank.service.bak.$stamp" \
+    /etc/systemd/system/levara-rerank.service
+else
+  sudo rm -f /etc/systemd/system/levara-rerank.service
+fi
+sudo systemctl daemon-reload
+sudo systemctl restart levara.service
+```
+
 ## Network and credentials
 
 The server defaults to loopback. Prefer a trusted tunnel or a local TLS proxy;

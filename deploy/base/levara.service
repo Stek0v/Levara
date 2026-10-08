@@ -1,0 +1,19 @@
+[Unit]
+Description=Levara Vector DB (HNSW + BM25 + WAL + gRPC)
+After=network.target qwythos-levara.service qwen3-embed.service qwen3-rerank-front.service
+Wants=qwythos-levara.service qwen3-embed.service qwen3-rerank-front.service
+
+[Service]
+Type=simple
+User=stek0v
+WorkingDirectory=/home/stek0v/levara-qwen3
+EnvironmentFile=-/home/stek0v/levara-qwen3/levara.env
+ExecStart=/home/stek0v/levara-qwen3/start-levara.sh
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=120
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
