@@ -244,6 +244,10 @@ func TestDependencyProbeChecksBoundedStandardModelList(t *testing.T) {
 			body:       `{"data":[{"id":"other"},{"id":"configured-model"}]}`,
 			wantStatus: "connected",
 		},
+		"present as server path": {
+			body:       `{"data":[{"id":"/models/configured-model"}]}`,
+			wantStatus: "connected",
+		},
 		"absent": {
 			body:       `{"data":[{"id":"other"}]}`,
 			wantStatus: "unavailable",
@@ -292,11 +296,13 @@ func TestDependencyProbeVerifiesRerankHealthBody(t *testing.T) {
 		wantStatus string
 		wantReason string
 	}{
-		"ready":       {`{"ok":true}`, "connected", ""},
-		"not ready":   {`{"ok":false}`, "unavailable", "health_not_ready"},
-		"nonstandard": {`{"status":"ok"}`, "unverified", "health_response_unverified"},
-		"malformed":   {`{"ok":`, "unverified", "health_response_unverified"},
-		"oversized":   {`{"ok":true,"padding":"` + strings.Repeat("x", maxDependencyProbeBody) + `"}`, "unverified", "health_response_unverified"},
+		"ready":             {`{"ok":true}`, "connected", ""},
+		"adapter ready":     {`{"status":"ok"}`, "connected", ""},
+		"not ready":         {`{"ok":false}`, "unavailable", "health_not_ready"},
+		"adapter not ready": {`{"status":"starting"}`, "unavailable", "health_not_ready"},
+		"nonstandard":       {`{"healthy":true}`, "unverified", "health_response_unverified"},
+		"malformed":         {`{"ok":`, "unverified", "health_response_unverified"},
+		"oversized":         {`{"ok":true,"padding":"` + strings.Repeat("x", maxDependencyProbeBody) + `"}`, "unverified", "health_response_unverified"},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {

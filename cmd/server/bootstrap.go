@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -810,7 +811,7 @@ func verifyConfiguredModel(body io.Reader, model string) (string, string) {
 		return "unverified", "model_list_unverified"
 	}
 	for _, candidate := range models {
-		if candidate.ID == model {
+		if candidate.ID == model || path.Base(candidate.ID) == path.Base(model) {
 			return "connected", ""
 		}
 	}
@@ -823,15 +824,25 @@ func verifyRerankHealth(body io.Reader) (string, string) {
 		return "unverified", "health_response_unverified"
 	}
 	var health struct {
-		OK *bool `json:"ok"`
+		OK     *bool  `json:"ok"`
+		Status string `json:"status"`
 	}
-	if json.Unmarshal(payload, &health) != nil || health.OK == nil {
+	if json.Unmarshal(payload, &health) != nil {
 		return "unverified", "health_response_unverified"
 	}
-	if !*health.OK {
+	if health.OK != nil {
+		if *health.OK {
+			return "connected", ""
+		}
 		return "unavailable", "health_not_ready"
 	}
-	return "connected", ""
+	if strings.EqualFold(health.Status, "ok") {
+		return "connected", ""
+	}
+	if health.Status != "" {
+		return "unavailable", "health_not_ready"
+	}
+	return "unverified", "health_response_unverified"
 }
 
 func dependencyProbeURL(endpoint, probe string) (string, error) {
