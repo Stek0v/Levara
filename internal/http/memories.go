@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"net/url"
 	"strings"
 	"time"
@@ -72,6 +71,9 @@ func saveMemoryHandler(cfg APIConfig) fiber.Handler {
 		if !allowedTypes[req.Type] {
 			return c.Status(400).JSON(fiber.Map{"detail": "invalid memory type: " + req.Type})
 		}
+		if req.Hall != "" && !mcp.IsValidHall(req.Hall) {
+			return c.Status(400).JSON(fiber.Map{"detail": "invalid hall: " + req.Hall})
+		}
 		callerID, _ := c.Locals("user_id").(string)
 		if callerID != "" {
 			if req.OwnerID != "" && req.OwnerID != callerID {
@@ -88,26 +90,32 @@ func saveMemoryHandler(cfg APIConfig) fiber.Handler {
 
 		id := uuid.New().String()
 		now := time.Now().UTC().Format(time.RFC3339)
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
+		tx, err := cfg.DB.BeginTx(ctx, nil)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"detail": "save failed"})
+		}
+		defer tx.Rollback()
 
 		// Upsert: insert or update value+type+updated_at on conflict.
 		// RETURNING id yields the canonical row id (existing id on conflict)
 		// so the response no longer lies about which record was updated
 		// (finding H4, 2026-09-03 review).
-		upsertSQL := `INSERT INTO memories (id, key, value, type, owner_id, collection_name, room, hall, created_at, updated_at)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-			 ON CONFLICT(key, owner_id, collection_name) DO UPDATE SET value = $11, type = $12, room = $13, hall = $14, updated_at = $15
+		upsertSQL := `INSERT INTO memories (id, key, value, type, owner_id, collection_name, room, hall, created_at, updated_at, source_task_id, source_receipt_ids, verification_status)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, '', '[]', 'unverified')
+			 ON CONFLICT(key, owner_id, collection_name) DO UPDATE SET
+			 value = EXCLUDED.value, type = EXCLUDED.type, room = EXCLUDED.room, hall = EXCLUDED.hall,
+			 verification_status = CASE WHEN memories.value <> EXCLUDED.value OR memories.type <> EXCLUDED.type OR memories.room <> EXCLUDED.room OR memories.hall <> EXCLUDED.hall THEN 'unverified' ELSE memories.verification_status END,
+			 source_task_id = CASE WHEN memories.value <> EXCLUDED.value OR memories.type <> EXCLUDED.type OR memories.room <> EXCLUDED.room OR memories.hall <> EXCLUDED.hall THEN '' ELSE memories.source_task_id END,
+			 source_receipt_ids = CASE WHEN memories.value <> EXCLUDED.value OR memories.type <> EXCLUDED.type OR memories.room <> EXCLUDED.room OR memories.hall <> EXCLUDED.hall THEN '[]' ELSE memories.source_receipt_ids END,
+			 updated_at = EXCLUDED.updated_at
 			 RETURNING id`
 		q, qargs := QArgs(upsertSQL,
-			id, req.Key, req.Value, req.Type, req.OwnerID, req.CollectionName, req.Room, req.Hall, now, now,
-			req.Value, req.Type, req.Room, req.Hall, now)
+			id, req.Key, req.Value, req.Type, req.OwnerID, req.CollectionName, req.Room, req.Hall, now, now)
 		var canonicalID string
-		scanErr := cfg.DB.QueryRowContext(context.Background(), q, qargs...).Scan(&canonicalID)
-		if scanErr != nil {
-			// Fall back to Exec for engines without RETURNING support.
-			if _, err := cfg.DB.ExecContext(context.Background(), q, qargs...); err != nil {
-				return c.Status(500).JSON(fiber.Map{"detail": "save failed: " + scanErr.Error()})
-			}
-			canonicalID = id
+		if err := tx.QueryRowContext(ctx, q, qargs...).Scan(&canonicalID); err != nil {
+			return c.Status(500).JSON(fiber.Map{"detail": "save failed"})
 		}
 		id = canonicalID
 
@@ -115,12 +123,15 @@ func saveMemoryHandler(cfg APIConfig) fiber.Handler {
 		// embedded into the HNSW sidecar exactly like MCP saves (finding H4).
 		if cfg.MemoryIndexOutbox != nil && cfg.EmbedEndpoint != "" {
 			digest := fmt.Sprintf("%x", sha256.Sum256([]byte(req.Key+"\x00"+req.Value)))
-			if _, err := cfg.MemoryIndexOutbox.Enqueue(context.Background(), memoryindex.Job{
+			if _, err := cfg.MemoryIndexOutbox.EnqueueTx(ctx, tx, memoryindex.Job{
 				MemoryID: canonicalID, Operation: "upsert_vector", Collection: req.CollectionName,
-				OwnerID: req.OwnerID, Digest: digest,
+				OwnerID: req.OwnerID, Digest: digest, Model: cfg.EmbedModel,
 			}); err != nil {
-				log.Printf("[memories] outbox enqueue failed for %s: %v", req.Key, err)
+				return c.Status(500).JSON(fiber.Map{"detail": "save failed"})
 			}
+		}
+		if err := tx.Commit(); err != nil {
+			return c.Status(500).JSON(fiber.Map{"detail": "save failed"})
 		}
 
 		memoryEvents.Publish(MemoryEvent{
@@ -195,6 +206,7 @@ func listMemoriesHandler(cfg APIConfig) fiber.Handler {
 // @Produce     json
 // @Security    BearerAuth
 // @Param       key path string true "Memory key"
+// @Param       collection query string false "Collection scope; empty selects the default REST collection"
 // @Success     200 {object} map[string]any
 // @Failure     404 {object} map[string]any "key not found"
 // @Router      /memories/{key} [get]
@@ -205,19 +217,55 @@ func getMemoryHandler(cfg APIConfig) fiber.Handler {
 			return c.Status(404).JSON(fiber.Map{"detail": "not found"})
 		}
 		ownerID, _ := c.Locals("user_id").(string)
-
-		row := cfg.DB.QueryRowContext(context.Background(),
-			Q(`SELECT id, key, value, type, owner_id, room, hall, created_at, updated_at
-			 FROM memories WHERE key = $1 AND (owner_id = $2 OR owner_id = '') LIMIT 1`), key, ownerID)
-
-		var id, k, v, t, oid, room, hall, ca, ua string
-		if err := row.Scan(&id, &k, &v, &t, &oid, &room, &hall, &ca, &ua); err != nil {
+		collection := c.Query("collection", "")
+		query := `SELECT id, key, value, type, owner_id, room, hall, created_at, updated_at
+			 FROM memories WHERE key = $1 AND (owner_id = $2 OR owner_id = '')
+			 AND superseded_by = '' AND valid_until IS NULL`
+		queryArgs := []any{key, ownerID}
+		if collection != "" {
+			query += " AND collection_name = $3"
+			queryArgs = append(queryArgs, collection)
+		}
+		query += " ORDER BY CASE WHEN owner_id = $2 THEN 0 ELSE 1 END, collection_name LIMIT 3"
+		query, args := QArgs(query, queryArgs...)
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
+		rows, err := cfg.DB.QueryContext(ctx, query, args...)
+		if err != nil {
 			return c.Status(404).JSON(fiber.Map{"detail": "not found"})
 		}
+		defer rows.Close()
+		type memoryRow struct{ id, key, value, typ, owner, room, hall, created, updated string }
+		var own, shared []memoryRow
+		for rows.Next() {
+			var row memoryRow
+			if err := rows.Scan(&row.id, &row.key, &row.value, &row.typ, &row.owner, &row.room, &row.hall, &row.created, &row.updated); err != nil {
+				return c.Status(500).JSON(fiber.Map{"detail": "memory read failed"})
+			}
+			if row.owner == ownerID && ownerID != "" {
+				own = append(own, row)
+			} else {
+				shared = append(shared, row)
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return c.Status(500).JSON(fiber.Map{"detail": "memory read failed"})
+		}
+		candidates := shared
+		if len(own) > 0 {
+			candidates = own
+		}
+		if len(candidates) == 0 {
+			return c.Status(404).JSON(fiber.Map{"detail": "not found"})
+		}
+		if collection == "" && len(candidates) > 1 {
+			return c.Status(409).JSON(fiber.Map{"detail": "memory key is ambiguous; select collection"})
+		}
+		selected := candidates[0]
 		return c.JSON(fiber.Map{
-			"id": id, "key": k, "value": v, "type": t,
-			"owner_id": oid, "room": room, "hall": hall,
-			"created_at": ca, "updated_at": ua,
+			"id": selected.id, "key": selected.key, "value": selected.value, "type": selected.typ,
+			"owner_id": selected.owner, "room": selected.room, "hall": selected.hall,
+			"created_at": selected.created, "updated_at": selected.updated,
 		})
 	}
 }
@@ -319,6 +367,12 @@ func memoryEventsStreamHandler() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		callerID, _ := c.Locals("user_id").(string)
 		ownerFilter := c.Query("owner_id", callerID)
+		if callerID != "" {
+			if ownerFilter != "" && ownerFilter != callerID {
+				return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"detail": "memory owner must match authenticated caller"})
+			}
+			ownerFilter = callerID
+		}
 		typeFilter := c.Query("type", "")
 		keyPrefix := c.Query("key_prefix", "")
 

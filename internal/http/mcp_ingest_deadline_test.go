@@ -67,7 +67,7 @@ func TestMCPAddDeadlineIncludesAuthenticationAndFirstSQL(t *testing.T) {
 				if err != nil || elapsed > 400*time.Millisecond {
 					t.Fatalf("unbounded %s auth=%v elapsed=%v err=%v", path, authenticated, elapsed, err)
 				}
-				if authenticated && response.StatusCode != 404 {
+				if authenticated && response.StatusCode != fiber.StatusServiceUnavailable {
 					t.Fatalf("auth lookup failure %d %s", response.StatusCode, body)
 				}
 				if !authenticated && !strings.Contains(string(body), `"isError":true`) {

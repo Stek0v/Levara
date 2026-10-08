@@ -44,8 +44,18 @@ func TestDocumentGraphRequiresEveryAssertionSource(t *testing.T) {
 				t.Fatalf("query_entity published edge=%v want=%v result=%+v", got, want, result)
 			}
 		}
+		checkWakeUp := func(want bool) {
+			t.Helper()
+			queryCtx := context.WithValue(context.WithValue(ctx, mcp.UserIDKey, reader.UserID), mcp.TenantIDKey, reader.TenantID)
+			result := mcp.ToolWakeUp(queryCtx, NewMCPDeps(f.cfg), map[string]any{"collection": "alpha", "max_tokens": float64(1000)})
+			got := !result.IsError && len(result.Content) > 0 && strings.Contains(result.Content[0].Text, `"name": "source"`)
+			if got != want {
+				t.Fatalf("wake_up published node=%v want=%v result=%+v", got, want, result)
+			}
+		}
 		check(0) // Dataset viewer cannot read a restricted document.
 		checkMCP(false)
+		checkWakeUp(false)
 		r, err := f.p.GrantDocument(ctx, f.owner, f.r.DocumentRef, f.r.ACLRevision, accesspkg.DocumentPrincipal{Kind: accesspkg.DocumentUser, ID: "viewer"}, accesspkg.RoleViewer)
 		if err != nil {
 			t.Fatal(err)
@@ -57,6 +67,7 @@ func TestDocumentGraphRequiresEveryAssertionSource(t *testing.T) {
 		}
 		check(0) // Complete source proof still requires successful publication.
 		checkMCP(false)
+		checkWakeUp(false)
 		fenced, release, err := f.p.BeginReadFence(ctx, GetDBProvider() == DBSQLite)
 		if err != nil {
 			t.Fatal(err)
@@ -68,6 +79,7 @@ func TestDocumentGraphRequiresEveryAssertionSource(t *testing.T) {
 		release()
 		check(1) // Exact document grant works with no whole-dataset grant.
 		checkMCP(true)
+		checkWakeUp(true)
 		for _, table := range []string{"graph_nodes", "graph_edges"} {
 			suffix := ""
 			if table == "graph_edges" {
@@ -75,14 +87,23 @@ func TestDocumentGraphRequiresEveryAssertionSource(t *testing.T) {
 			}
 			f.exec("UPDATE " + table + " SET properties='{}'" + suffix)
 			check(0) // Every endpoint AND relationship must name its generation.
+			checkWakeUp(table == "graph_edges")
+			if table == "graph_edges" {
+				result := mcp.ToolWakeUp(context.WithValue(context.WithValue(ctx, mcp.UserIDKey, reader.UserID), mcp.TenantIDKey, reader.TenantID), NewMCPDeps(f.cfg), map[string]any{"collection": "alpha", "max_tokens": float64(1000)})
+				if !strings.Contains(result.Content[0].Text, `"edge_count": 0`) {
+					t.Fatalf("wake_up counted unproven edge: %+v", result)
+				}
+			}
 			f.exec("UPDATE "+table+" SET properties=$1"+suffix, string(meta))
 			check(1)
+			checkWakeUp(true)
 		}
 		if _, err := f.p.AdvanceDocumentContent(ctx, f.owner, r.DocumentRef, r.ACLRevision, r.ContentRevision); err != nil {
 			t.Fatal(err)
 		}
 		check(0)
 		checkMCP(false)
+		checkWakeUp(false)
 	})
 }
 

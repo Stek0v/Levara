@@ -102,6 +102,7 @@ message BatchInsertFailure {
   reserved 50 to 100;
   string id = 1;
   ErrorDetail error = 2;
+	int32 index = 3;
 }
 
 message DeleteReq {
@@ -115,6 +116,14 @@ message DeleteResp {
   int32 deleted = 1;
   int32 failed = 2;
   ErrorDetail error = 3;
+	repeated DeleteFailure failures = 4;
+}
+
+message DeleteFailure {
+	reserved 50 to 100;
+	string id = 1;
+	ErrorDetail error = 2;
+	int32 index = 3;
 }
 
 message SearchReq {

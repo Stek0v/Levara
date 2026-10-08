@@ -118,6 +118,8 @@ func RESTRouteInventory() []RouteSpec {
 		{Method: "GET", Path: "/sync/export/collection/:name", Status: APICanonical, Group: "sync"},
 		{Method: "POST", Path: "/sync/import/collection", Status: APICanonical, Group: "sync"},
 		{Method: "GET", Path: "/sync/import/collection/:runId/status", Status: APICanonical, Group: "sync"},
+		{Method: "GET", Path: "/tasks", Status: APICanonical, Group: "tasks"},
+		{Method: "GET", Path: "/tasks/:taskId", Status: APICanonical, Group: "tasks"},
 		{Method: "GET", Path: "/workspace/context", Status: APICanonical, Group: "workspace"},
 		{Method: "POST", Path: "/workspace/access/check", Status: APICanonical, Group: "workspace"},
 		{Method: "GET", Path: "/workspace/audit", Status: APICanonical, Group: "workspace"},

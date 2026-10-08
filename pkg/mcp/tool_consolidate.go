@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -114,6 +115,7 @@ func (n *collectionNeighbors) Edges(ctx context.Context, recs []consolidate.Memo
 type llmSummarizer struct {
 	deps  Deps
 	store *sqlStore
+	calls atomic.Int64
 }
 
 func (l *llmSummarizer) Summarize(ctx context.Context, sources []string) (string, error) {
@@ -140,6 +142,7 @@ func (l *llmSummarizer) Summarize(ctx context.Context, sources []string) (string
 	if err := consolidationProviderReady(ctx, l.deps); err != nil {
 		return "", err
 	}
+	l.calls.Add(1)
 	resp, err := prov.ChatCompletion(ctx, llm.CompletionRequest{
 		Model:       l.deps.LLMModel(),
 		Messages:    []llm.Message{{Role: "user", Content: b.String()}},
@@ -231,17 +234,18 @@ func ToolConsolidate(ctx context.Context, deps Deps, args map[string]any) ToolRe
 		}
 	}
 	nbr := &collectionNeighbors{deps: deps, collection: memoryCollectionName(sqlCollection), store: s}
+	summarizer := &llmSummarizer{deps: deps, store: s}
 	res, err := consolidate.Run(ctx, consolidate.Params{
 		Store:      s,
 		Neighbors:  nbr,
-		Summarizer: &llmSummarizer{deps: deps, store: s},
+		Summarizer: summarizer,
 		Cfg:        consolidate.DefaultConfig(),
 		Collection: sqlCollection, Room: room, Hall: hall,
 		RunID: runID, DryRun: dryRun,
 	})
 	if err != nil {
 		metrics.ConsolidationRuns.WithLabelValues("error").Inc()
-		return errResult("consolidate: " + err.Error())
+		return errResult(fmt.Sprintf("consolidate: %v llm_calls=%d", err, summarizer.calls.Load()))
 	}
 	metrics.ConsolidationRuns.WithLabelValues("ok").Inc()
 	metrics.ConsolidationClusters.Add(float64(res.Clusters))
@@ -255,8 +259,8 @@ func ToolConsolidate(ctx context.Context, deps Deps, args map[string]any) ToolRe
 		mode = "dry_run"
 	}
 	text := fmt.Sprintf(
-		"consolidate %s: run=%s candidates=%d clusters=%d actions=%d skipped=%d",
-		mode, runID, res.Candidates, res.Clusters, len(res.Actions), res.Skipped)
+		"consolidate %s: run=%s candidates=%d clusters=%d actions=%d skipped=%d llm_calls=%d",
+		mode, runID, res.Candidates, res.Clusters, len(res.Actions), res.Skipped, summarizer.calls.Load())
 	if nbr.dimMismatch {
 		metrics.ConsolidationRuns.WithLabelValues("dim_incompatible").Inc()
 		text += fmt.Sprintf(

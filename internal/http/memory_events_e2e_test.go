@@ -28,6 +28,10 @@ import (
 func newSSETestServer(t *testing.T) (addr string, cleanup func()) {
 	t.Helper()
 	app := fiber.New(fiber.Config{DisableStartupMessage: true})
+	app.Use(func(c *fiber.Ctx) error {
+		c.Locals("user_id", "u1")
+		return c.Next()
+	})
 	app.Get("/memories/stream", memoryEventsStreamHandler())
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -193,9 +197,9 @@ func TestSSE_FilterByOwnerID(t *testing.T) {
 	addr, stop := newSSETestServer(t)
 	defer stop()
 
-	// Caller subscribes as u1 — events for u2 must be filtered out, events
-	// with empty OwnerID must pass through (broadcast semantics).
-	br, cancel, closeBody := dialSSE(t, addr, "owner_id=u1")
+	// An explicit empty owner cannot disable the authenticated caller scope.
+	// Shared events remain visible to authenticated callers.
+	br, cancel, closeBody := dialSSE(t, addr, "owner_id=")
 	defer closeBody()
 	defer cancel()
 
@@ -206,6 +210,20 @@ func TestSSE_FilterByOwnerID(t *testing.T) {
 	gotKeys := readKeys(t, br, 2)
 	if want := []string{"broadcast", "keep"}; !equalStrings(gotKeys, want) {
 		t.Errorf("keys = %v, want %v", gotKeys, want)
+	}
+}
+
+func TestSSE_RejectsForeignOwnerFilter(t *testing.T) {
+	addr, stop := newSSETestServer(t)
+	defer stop()
+
+	resp, err := nethttp.Get("http://" + addr + "/memories/stream?owner_id=u2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != nethttp.StatusForbidden {
+		t.Fatalf("foreign owner status=%d want=%d", resp.StatusCode, nethttp.StatusForbidden)
 	}
 }
 

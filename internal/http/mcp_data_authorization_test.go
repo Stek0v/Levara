@@ -3,9 +3,8 @@ package http
 import (
 	"context"
 	"encoding/json"
-	accesspkg "github.com/stek0v/levara/pkg/access"
-	"github.com/stek0v/levara/pkg/community"
 	"io"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -13,6 +12,8 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/stek0v/levara/internal/store"
+	accesspkg "github.com/stek0v/levara/pkg/access"
+	"github.com/stek0v/levara/pkg/community"
 	"github.com/stek0v/levara/pkg/ingest"
 	"github.com/stek0v/levara/pkg/mcp"
 )
@@ -293,8 +294,9 @@ func TestGraphACLMCPTransports(t *testing.T) {
 						Result mcp.ToolResult `json:"result"`
 					}
 					if len(expectedStatus) > 0 {
-						if resp.StatusCode != expectedStatus[0] || string(raw) != "Not Found" {
-							t.Fatalf("tool=%s user=%s HTTP=%d body=%s, want generic 404", tool, user, resp.StatusCode, raw)
+						wantBody := http.StatusText(expectedStatus[0])
+						if resp.StatusCode != expectedStatus[0] || string(raw) != wantBody {
+							t.Fatalf("tool=%s user=%s HTTP=%d body=%s, want %d %s", tool, user, resp.StatusCode, raw, expectedStatus[0], wantBody)
 						}
 						return mcp.ToolResult{}
 					}
@@ -439,7 +441,7 @@ func TestGraphACLMCPTransports(t *testing.T) {
 					t.Fatal(err)
 				}
 				for _, tool := range []string{"query_entity", "list_communities", "prune_graph"} {
-					call("alice", tool, `{"name":"entity"}`, fiber.StatusNotFound)
+					call("alice", tool, `{"name":"entity"}`, fiber.StatusServiceUnavailable)
 				}
 			})
 		}

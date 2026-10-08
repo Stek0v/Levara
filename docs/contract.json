@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-10-05T17:33:51+03:00",
-  "git_rev": "2eb1dca16b0047918185760b41dcb22dee79090a",
+  "generated_at": "2026-10-08T03:07:59+03:00",
+  "git_rev": "9a87687087a2109a7bebf9bcf4acdff79e91d1ce",
   "rest": [
     {
       "method": "POST",
@@ -733,6 +733,18 @@
       "path": "/sync/status",
       "status": "canonical",
       "group": "sync"
+    },
+    {
+      "method": "GET",
+      "path": "/tasks",
+      "status": "canonical",
+      "group": "tasks"
+    },
+    {
+      "method": "GET",
+      "path": "/tasks/:taskId",
+      "status": "canonical",
+      "group": "tasks"
     },
     {
       "method": "GET",

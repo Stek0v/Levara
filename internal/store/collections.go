@@ -632,32 +632,67 @@ func (cm *CollectionManager) BatchInsert(collection string, records []BatchItem)
 	if m == nil && len(records) > 0 {
 		m = cm.defaultMetaForVectorLocked(collection, len(records[0].Vector))
 	}
-	for _, r := range records {
+	prepared := make([]BatchItem, 0, len(records))
+	originalIndexes := make([]int, 0, len(records))
+	var errs []error
+	for i, r := range records {
 		if m != nil && m.EmbeddingDim > 0 && len(r.Vector) != m.EmbeddingDim {
-			cm.mu.RUnlock()
-			return []error{fmt.Errorf("dimension mismatch: vector dim=%d, collection %q expects dim=%d (model=%s)",
-				len(r.Vector), collection, m.EmbeddingDim, m.EmbeddingModel)}
+			errs = append(errs, batchError(i, r.ID, fmt.Errorf("dimension mismatch: vector dim=%d, collection %q expects dim=%d (model=%s)", len(r.Vector), collection, m.EmbeddingDim, m.EmbeddingModel)))
+			continue
 		}
 		if err := validateEmbeddingContract(collection, m, r.Data); err != nil {
-			cm.mu.RUnlock()
-			return []error{err}
+			errs = append(errs, batchError(i, r.ID, err))
+			continue
 		}
-	}
-	for i := range records {
-		records[i].Data = stampEmbeddingMetadata(m, records[i].Data)
+		r.Data = stampEmbeddingMetadata(m, r.Data)
+		prepared = append(prepared, r)
+		originalIndexes = append(originalIndexes, i)
 	}
 	cm.mu.RUnlock()
+	if len(prepared) == 0 {
+		return errs
+	}
 
 	db, err := cm.getOrCreate(collection)
 	if err != nil {
-		return []error{err}
+		return batchErrorsForAll(records, err)
 	}
-	errs := db.BatchInsert(records)
+	for _, itemErr := range db.BatchInsert(prepared) {
+		var failure *BatchError
+		if errors.As(itemErr, &failure) && failure.Index >= 0 && failure.Index < len(originalIndexes) {
+			original := originalIndexes[failure.Index]
+			errs = append(errs, batchError(original, records[original].ID, failure.Err))
+		} else {
+			errs = append(errs, itemErr)
+		}
+	}
+	sort.SliceStable(errs, func(i, j int) bool {
+		var left, right *BatchError
+		if !errors.As(errs[i], &left) || !errors.As(errs[j], &right) {
+			return false
+		}
+		return left.Index < right.Index
+	})
 	cm.refreshRecordCount(collection, db)
-	if len(errs) == 0 {
-		for _, r := range records {
+	failed := make(map[int]struct{}, len(errs))
+	for _, itemErr := range errs {
+		var failure *BatchError
+		if errors.As(itemErr, &failure) {
+			failed[failure.Index] = struct{}{}
+		}
+	}
+	for i, r := range records {
+		if _, found := failed[i]; !found {
 			cm.afterInsert(collection, r.ID, r.Data)
 		}
+	}
+	return errs
+}
+
+func batchErrorsForAll(records []BatchItem, err error) []error {
+	errs := make([]error, len(records))
+	for i, record := range records {
+		errs[i] = batchError(i, record.ID, err)
 	}
 	return errs
 }
@@ -742,7 +777,11 @@ func (cm *CollectionManager) Delete(collection, id string) error {
 func (cm *CollectionManager) BatchDelete(collection string, ids []string) []error {
 	db, err := cm.Get(collection)
 	if err != nil {
-		return []error{err}
+		errs := make([]error, len(ids))
+		for i, id := range ids {
+			errs[i] = batchError(i, id, err)
+		}
+		return errs
 	}
 	errs := db.BatchDelete(ids)
 	cm.refreshRecordCount(collection, db)

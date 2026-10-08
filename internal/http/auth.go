@@ -378,8 +378,11 @@ func authMeHandler(cfg AuthConfig) fiber.Handler {
 			return c.Status(401).JSON(fiber.Map{"detail": "not authenticated"})
 		}
 		payload, valid := verifyJWT(token, cfg.JWTSecret)
-		if !valid || !validSession(c.UserContext(), cfg.DB, cfg.RequireAuth, payload) {
+		if !valid {
 			return c.Status(401).JSON(fiber.Map{"detail": "invalid token"})
+		}
+		if err := validateSession(c.UserContext(), cfg.DB, cfg.RequireAuth, payload); err != nil {
+			return c.Status(identityFailureStatus(err)).JSON(fiber.Map{"detail": identityFailureDetail(err)})
 		}
 
 		// If DB available, fetch full user record
@@ -397,6 +400,9 @@ func authMeHandler(cfg AuthConfig) fiber.Handler {
 					"is_superuser": isSuperuser,
 					"is_verified":  isVerified,
 				})
+			}
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return c.Status(503).JSON(fiber.Map{"detail": "identity service unavailable"})
 			}
 			return c.Status(401).JSON(fiber.Map{"detail": "invalid user"})
 		}
@@ -468,8 +474,11 @@ func JWTMiddleware(secret string, requireAuth bool, cookieOrigins ...string) fib
 		}
 
 		payload, valid := verifyJWT(token, secret)
-		if !valid || !validSession(c.UserContext(), extractAuthDB(c), requireAuth, payload) {
+		if !valid {
 			return c.Status(401).JSON(fiber.Map{"detail": "invalid token"})
+		}
+		if err := validateSession(c.UserContext(), extractAuthDB(c), requireAuth, payload); err != nil {
+			return c.Status(identityFailureStatus(err)).JSON(fiber.Map{"detail": identityFailureDetail(err)})
 		}
 
 		c.Locals("user_id", payload.Sub)
@@ -496,12 +505,16 @@ func JWTMiddlewareWithOIDC(secret string, requireAuth bool, oidc ExternalBearerA
 		if c.Get("X-API-Key") == "" && strings.HasPrefix(c.Get("Authorization"), "Bearer ") {
 			token := bearerToken(c.Get("Authorization"))
 			if _, valid := verifyJWT(token, secret); token != "" && !valid {
-				if principal, err := oidc.Authenticate(c.UserContext(), token); err == nil && activeExternalUser(c.UserContext(), extractAuthDB(c), principal) {
-					c.Locals("user_id", principal.UserID)
-					c.Locals("email", principal.Email)
-					c.Locals("principal", principal)
-					c.Locals("verified_external", principal)
-					return c.Next()
+				if principal, err := oidc.Authenticate(c.UserContext(), token); err == nil {
+					if err := validateExternalUser(c.UserContext(), extractAuthDB(c), principal); err == nil {
+						c.Locals("user_id", principal.UserID)
+						c.Locals("email", principal.Email)
+						c.Locals("principal", principal)
+						c.Locals("verified_external", principal)
+						return c.Next()
+					} else if identityFailureStatus(err) == fiber.StatusServiceUnavailable {
+						return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"detail": "identity service unavailable"})
+					}
 				}
 			}
 		}
@@ -510,18 +523,44 @@ func JWTMiddlewareWithOIDC(secret string, requireAuth bool, oidc ExternalBearerA
 }
 
 func validSession(ctx context.Context, db *sql.DB, requireAuth bool, payload *jwtPayload) bool {
-	if payload == nil || payload.Sub == "" {
-		return false
-	}
-	if db == nil {
-		return !requireAuth
-	}
-	return accesspkg.ValidateSessionCredential(ctx, db, Q, payload.Sub, payload.CredentialEpoch, payload.SessionID) == nil
+	return validateSession(ctx, db, requireAuth, payload) == nil
 }
 
+func validateSession(ctx context.Context, db *sql.DB, requireAuth bool, payload *jwtPayload) error {
+	if payload == nil || payload.Sub == "" {
+		return accesspkg.ErrInactiveIdentity
+	}
+	if db == nil {
+		if requireAuth {
+			return accesspkg.ErrProvisioningNoDB
+		}
+		return nil
+	}
+	return accesspkg.ValidateSessionCredential(ctx, db, Q, payload.Sub, payload.CredentialEpoch, payload.SessionID)
+}
+
+func identityFailureStatus(err error) int {
+	if errors.Is(err, accesspkg.ErrRevokedCredential) || errors.Is(err, accesspkg.ErrInactiveIdentity) {
+		return fiber.StatusUnauthorized
+	}
+	return fiber.StatusServiceUnavailable
+}
+
+func identityFailureDetail(err error) string {
+	if identityFailureStatus(err) == fiber.StatusUnauthorized {
+		return "invalid token"
+	}
+	return "identity service unavailable"
+}
+
+var errIdentityUnavailable = errors.New("identity service unavailable")
+
 func activeExternalUser(ctx context.Context, db *sql.DB, principal ExternalPrincipal) bool {
-	err := accesspkg.ValidateExternalCredential(ctx, db, Q, principal.UserID, principal.IssuedAt)
-	return err == nil
+	return validateExternalUser(ctx, db, principal) == nil
+}
+
+func validateExternalUser(ctx context.Context, db *sql.DB, principal ExternalPrincipal) error {
+	return accesspkg.ValidateExternalCredential(ctx, db, Q, principal.UserID, principal.IssuedAt)
 }
 
 // ExternalBearerAuth is the minimal seam the HTTP layer needs from an

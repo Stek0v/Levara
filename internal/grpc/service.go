@@ -183,6 +183,11 @@ func (s *Service) Insert(_ context.Context, req *pb.InsertReq) (*pb.StatusResp, 
 }
 
 func (s *Service) BatchInsert(_ context.Context, req *pb.BatchInsertReq) (*pb.BatchInsertResp, error) {
+	resp, _ := s.batchInsert(req)
+	return resp, nil
+}
+
+func (s *Service) batchInsert(req *pb.BatchInsertReq) (*pb.BatchInsertResp, []error) {
 	if req.Collection == "" || len(req.Records) == 0 {
 		return &pb.BatchInsertResp{Failed: int32(len(req.Records)), Errors: []string{"collection and records are required"}}, nil
 	}
@@ -201,10 +206,20 @@ func (s *Service) BatchInsert(_ context.Context, req *pb.BatchInsertReq) (*pb.Ba
 	}
 
 	errs := s.collections.BatchInsert(req.Collection, items)
+	failed := make(map[int]struct{}, len(errs))
+	for _, err := range errs {
+		var batchErr *store.BatchError
+		if errors.As(err, &batchErr) {
+			failed[batchErr.Index] = struct{}{}
+		}
+	}
 
 	// Auto dual-index: also add to BM25 for hybrid search
 	idx := s.getBM25Index(req.Collection)
-	for _, r := range req.Records {
+	for i, r := range req.Records {
+		if _, skip := failed[i]; skip {
+			continue
+		}
 		// Extract text from metadata for BM25
 		text := ""
 		if r.MetadataJson != "" {
@@ -229,10 +244,15 @@ func (s *Service) BatchInsert(_ context.Context, req *pb.BatchInsertReq) (*pb.Ba
 	for _, e := range errs {
 		resp.Errors = append(resp.Errors, e.Error())
 	}
-	return resp, nil
+	return resp, errs
 }
 
 func (s *Service) Delete(_ context.Context, req *pb.DeleteReq) (*pb.DeleteResp, error) {
+	resp, _ := s.batchDelete(req)
+	return resp, nil
+}
+
+func (s *Service) batchDelete(req *pb.DeleteReq) (*pb.DeleteResp, []error) {
 	if req.Collection == "" || len(req.Ids) == 0 {
 		return &pb.DeleteResp{Failed: int32(len(req.Ids)), Errors: []string{"collection and ids are required"}}, nil
 	}
@@ -246,7 +266,7 @@ func (s *Service) Delete(_ context.Context, req *pb.DeleteReq) (*pb.DeleteResp, 
 	for _, e := range errs {
 		resp.Errors = append(resp.Errors, e.Error())
 	}
-	return resp, nil
+	return resp, errs
 }
 
 func (s *Service) Search(_ context.Context, req *pb.SearchReq) (*pb.SearchResp, error) {

@@ -145,7 +145,7 @@ func TestSessionLoginMeAndMCPUseLiveIdentity(t *testing.T) {
 	h := &mcpHandler{cfg: APIConfig{DB: db, JWTSecret: secret, RequireAuth: true, OIDCBearer: &stubOIDCBearer{userID: uid, accept: func(token string) bool { return token == "external" }}}}
 	app.Get("/mcp-check", func(c *fiber.Ctx) error {
 		if _, err := h.authenticateMCPRequest(c); err != nil {
-			return c.SendStatus(401)
+			return c.SendStatus(mcpAuthFailureStatus(err, 401))
 		}
 		return c.SendStatus(200)
 	})
@@ -211,9 +211,9 @@ func TestSessionLoginMeAndMCPUseLiveIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, path := range []string{"/auth/me", "/mcp-check", "/rest-check"} {
-		check(path, fresh, 401)
+		check(path, fresh, 503)
 	}
-	check("/rest-check", "external", 401)
+	check("/rest-check", "external", 503)
 }
 
 func TestAuthenticatedModeRequiresSQLIdentityStore(t *testing.T) {
@@ -235,7 +235,7 @@ func TestAuthenticatedModeRequiresSQLIdentityStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != 401 {
+	if resp.StatusCode != 503 {
 		t.Errorf("me without DB=%d", resp.StatusCode)
 	}
 }

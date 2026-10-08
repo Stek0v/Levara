@@ -8,6 +8,7 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/stek0v/levara/pkg/embcontract"
@@ -27,6 +28,14 @@ func ToolGetProjectContext(ctx context.Context, deps Deps, args map[string]any) 
 	}
 	ownerID := extractOwnerID(ctx)
 	var sb strings.Builder
+	var aggregates *ProjectContextAggregates
+	if provider, ok := deps.(ProjectContextAggregateProvider); ok {
+		value, err := provider.ProjectContextAggregates(ctx, collection)
+		if err != nil {
+			return toolError("read project aggregates: " + err.Error())
+		}
+		aggregates = &value
+	}
 
 	writeMemories := func(name string, limit int, compact bool) error {
 		rows, err := db.QueryContext(ctx, deps.Q(`SELECT key, value, type FROM memories
@@ -59,13 +68,42 @@ func ToolGetProjectContext(ctx context.Context, deps Deps, args map[string]any) 
 		return nil
 	}
 
-	sb.WriteString("## Collection Stats\n- unavailable: vector statistics have no proven caller access scope\n\n")
+	sb.WriteString("## Collection Stats\n")
+	if aggregates == nil {
+		sb.WriteString("- unavailable: vector statistics have no proven caller access scope\n\n")
+	} else {
+		fmt.Fprintf(&sb, "- Accessible published documents: %d\n\n", aggregates.PublishedDocuments)
+	}
 	sb.WriteString("## Project Memories\n")
 	if err := writeMemories(collection, 20, false); err != nil {
 		return toolError("read project memories: " + err.Error())
 	}
-	sb.WriteString("## Key Entity Types\n- unavailable: graph sources have no proven project/access scope\n\n")
-	sb.WriteString("## Recent Interactions\n- unavailable: interactions have no project collection provenance\n")
+	sb.WriteString("## Key Entity Types\n")
+	if aggregates == nil {
+		sb.WriteString("- unavailable: graph sources have no proven project/access scope\n\n")
+	} else if len(aggregates.EntityTypes) == 0 {
+		sb.WriteString("- (none)\n\n")
+	} else {
+		types := make([]string, 0, len(aggregates.EntityTypes))
+		for typ := range aggregates.EntityTypes {
+			types = append(types, typ)
+		}
+		sort.Strings(types)
+		for _, typ := range types {
+			fmt.Fprintf(&sb, "- %s: %d\n", typ, aggregates.EntityTypes[typ])
+		}
+		sb.WriteString("\n")
+	}
+	sb.WriteString("## Recent Interactions\n")
+	if aggregates == nil {
+		sb.WriteString("- unavailable: interactions have no project collection provenance\n")
+	} else if len(aggregates.RecentInteractions) == 0 {
+		sb.WriteString("- (none)\n")
+	} else {
+		for _, interaction := range aggregates.RecentInteractions {
+			fmt.Fprintf(&sb, "- %s → %s\n", Truncate(interaction.Query, 100), Truncate(interaction.Response, 100))
+		}
+	}
 
 	if related, ok := args["include_related"].([]any); ok && len(related) > 0 {
 		sb.WriteString("\n## Related Projects\n")

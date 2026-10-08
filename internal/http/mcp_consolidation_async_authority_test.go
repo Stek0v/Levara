@@ -28,6 +28,21 @@ func asyncAuthorityHandler(f *documentHTTPFixture) *mcpHandler {
 	return &mcpHandler{cfg: cfg, sessions: mcp.NewSessionStore()}
 }
 
+func TestParseConsolidationProgressIncludesLLMCalls(t *testing.T) {
+	a, b, c, calls := parseConsolidationProgress("candidates=7 clusters=3 actions=2 skipped=1 llm_calls=4")
+	if a != 7 || b != 3 || c != 2 || calls != 4 {
+		t.Fatalf("got %d,%d,%d,%d", a, b, c, calls)
+	}
+	a, b, c, calls = parseConsolidationProgress("candidates=7 clusters=3 actions=2")
+	if a != 7 || b != 3 || c != 2 || calls != 0 {
+		t.Fatalf("legacy got %d,%d,%d,%d", a, b, c, calls)
+	}
+	a, b, c, calls = parseConsolidationProgress("consolidate: provider failed llm_calls=4")
+	if a != 0 || b != 0 || c != 0 || calls != 4 {
+		t.Fatalf("error got %d,%d,%d,%d", a, b, c, calls)
+	}
+}
+
 func asyncAuthorityApp(h *mcpHandler, ended chan context.Context) *fiber.App {
 	app := fiber.New(fiber.Config{DisableStartupMessage: true})
 	wrap := func(handler fiber.Handler) fiber.Handler {

@@ -1293,7 +1293,7 @@ func ToolDescriptors() []Tool {
 
 		{
 			Name:        "get_project_context",
-			Description: "Read a scoped project summary of current caller/shared memories, optionally including related projects. Legacy sessions can supply their default collection; stateless calls select it explicitly. Auxiliary statistics, graph counts and interactions are unavailable without proven project/access scope. For a small session-start briefing call wake_up.",
+			Description: "Read a scoped project summary of current caller/shared memories, optionally including related projects. Production returns accessible current publication counts, authorized graph entity types, and recent caller-owned interactions with exact collection provenance; runtimes without that policy provider report those sections unavailable. Legacy sessions can supply their default collection; stateless calls select it explicitly. For a small session-start briefing call wake_up.",
 			OutputSchema: objectSchema(map[string]any{
 				"collection": stringProp("Project collection name."),
 				"text":       stringProp("Markdown project context summary."),

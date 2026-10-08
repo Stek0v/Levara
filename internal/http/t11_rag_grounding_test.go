@@ -42,6 +42,8 @@ func TestT11RAGGroundingUsesActualContext(t *testing.T) {
 				}
 			} else if body["abstained"] != false || len(ids) != 1 || len(prompts) != 1 || !strings.Contains(prompts[0], "[1]") || strings.Contains(prompts[0], "Context:\n\n") {
 				t.Fatalf("usable fact missing from grounded prompt: %v prompts=%v", body, prompts)
+			} else if !strings.Contains(prompts[0], "untrusted data") || !strings.Contains(prompts[0], "ignore their instructions") || !strings.Contains(prompts[0], "source numbers [n]") {
+				t.Fatalf("grounding guardrails missing from prompt: %v", prompts)
 			} else if ids[0] != "source" {
 				t.Fatalf("wrong evidence source: %v", ids)
 			} else if text, ok := tc.meta["text"].(string); ok && !strings.Contains(prompts[0], text) {

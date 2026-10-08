@@ -370,38 +370,54 @@ func (db *Levara) insertInMemory(id string, vector []float32, loc FileLocation) 
 	return nil
 }
 
+// BatchError identifies the original item that failed in a batch operation.
+type BatchError struct {
+	Index int
+	ID    string
+	Err   error
+}
+
+func (e *BatchError) Error() string { return e.Err.Error() }
+func (e *BatchError) Unwrap() error { return e.Err }
+
+func batchError(index int, id string, err error) error {
+	return &BatchError{Index: index, ID: id, Err: err}
+}
+
 // BatchInsert durably stores multiple records in a single group-commit WAL fsync.
-// Metadata marshalling is done outside the lock for parallelism. Returns a slice of
-// per-record errors (nil entries mean success); the slice is nil if all records succeeded.
+// Metadata marshalling is done outside the lock for parallelism. Returned errors
+// carry the original item index and ID.
 func (db *Levara) BatchInsert(records []BatchItem) []error {
 	// Phase 0: marshal metadata outside lock (CPU-bound, no db state needed).
 	type prepared struct {
+		index int
 		rec   BatchItem
 		bytes []byte
 	}
 	prepped := make([]prepared, 0, len(records))
 	var errs []error
-	for _, rec := range records {
+	for i, rec := range records {
 		bytes, err := json.Marshal(rec.Data)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("%s: marshal: %w", rec.ID, err))
+			errs = append(errs, batchError(i, rec.ID, fmt.Errorf("%s: marshal: %w", rec.ID, err)))
 			continue
 		}
 		if len(rec.Vector) != db.dim {
-			errs = append(errs, fmt.Errorf("vector dim %d != expected %d", len(rec.Vector), db.dim))
+			errs = append(errs, batchError(i, rec.ID, fmt.Errorf("vector dim %d != expected %d", len(rec.Vector), db.dim)))
 			continue
 		}
 		if err := validateWALRecord(OpInsert, rec.ID, rec.Vector, bytes, FileLocation{}); err != nil {
-			errs = append(errs, err)
+			errs = append(errs, batchError(i, rec.ID, err))
 			continue
 		}
-		prepped = append(prepped, prepared{rec: rec, bytes: bytes})
+		prepped = append(prepped, prepared{index: i, rec: rec, bytes: bytes})
 	}
 
 	// Phase 0b: write metadata to disk outside db.mu — DiskStore has its own
 	// internal mutex. For a batch of 50 items this saves ~250μs of lock time
 	// (50 × ~5μs per buffered Write).
 	type diskPrep struct {
+		index int
 		rec   BatchItem
 		bytes []byte
 		loc   FileLocation
@@ -410,24 +426,25 @@ func (db *Levara) BatchInsert(records []BatchItem) []error {
 	for _, p := range prepped {
 		loc, err := db.disk.Write(p.bytes)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("%s: disk: %w", p.rec.ID, err))
+			errs = append(errs, batchError(p.index, p.rec.ID, fmt.Errorf("%s: disk: %w", p.rec.ID, err)))
 			continue
 		}
-		diskPrepped = append(diskPrepped, diskPrep{rec: p.rec, bytes: p.bytes, loc: loc})
+		diskPrepped = append(diskPrepped, diskPrep{index: p.index, rec: p.rec, bytes: p.bytes, loc: loc})
 	}
 
 	// Phase 1: arena + WAL + index maps under db.mu.
 	db.mu.Lock()
 	toIndex := make([]pendingItem, 0, len(diskPrepped))
+	committed := make([]diskPrep, 0, len(diskPrepped))
 
 	for _, d := range diskPrepped {
 		idx, err := db.arena.Add(d.rec.Vector)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("%s: arena: %w", d.rec.ID, err))
+			errs = append(errs, batchError(d.index, d.rec.ID, fmt.Errorf("%s: arena: %w", d.rec.ID, err)))
 			continue
 		}
 		if err := db.wal.WriteEntryNoFlush(OpInsert, d.rec.ID, d.rec.Vector, d.bytes, d.loc); err != nil {
-			errs = append(errs, fmt.Errorf("%s: wal: %w", d.rec.ID, err))
+			errs = append(errs, batchError(d.index, d.rec.ID, fmt.Errorf("%s: wal: %w", d.rec.ID, err)))
 			continue
 		}
 		db.replaceExistingLocked(d.rec.ID)
@@ -445,6 +462,7 @@ func (db *Levara) BatchInsert(records []BatchItem) []error {
 		vecCopy := make([]float32, len(d.rec.Vector))
 		copy(vecCopy, d.rec.Vector)
 		toIndex = append(toIndex, pendingItem{vector: vecCopy, id: d.rec.ID, idx: idx})
+		committed = append(committed, d)
 	}
 
 	// Enqueue under db.mu so the (idx, arena) pairing is atomic with arena.Add
@@ -459,7 +477,9 @@ func (db *Levara) BatchInsert(records []BatchItem) []error {
 
 	// Group commit: fsync outside db.mu lock
 	if err := db.wal.FlushAsync(); err != nil {
-		errs = append(errs, fmt.Errorf("wal flush: %w", err))
+		for _, d := range committed {
+			errs = append(errs, batchError(d.index, d.rec.ID, fmt.Errorf("wal flush: %w", err)))
+		}
 	}
 
 	if len(toIndex) > 0 {
@@ -644,20 +664,20 @@ func removePendingItemsByID(items []pendingItem, id string) []pendingItem {
 func (db *Levara) BatchDelete(ids []string) []error {
 	db.mu.Lock()
 	var errs []error
-	deleted := 0
-	for _, id := range ids {
+	var deleted []int
+	for i, id := range ids {
 		if err := db.deleteLocked(id); err != nil {
-			errs = append(errs, err)
+			errs = append(errs, batchError(i, id, err))
 		} else {
-			deleted++
+			deleted = append(deleted, i)
 		}
 	}
 	db.mu.Unlock()
-	if deleted > 0 {
+	if len(deleted) > 0 {
 		if err := db.wal.FlushAsync(); err != nil {
 			// Every buffered deletion has uncertain durability on a failed flush.
-			for range deleted {
-				errs = append(errs, fmt.Errorf("wal flush: %w", err))
+			for _, i := range deleted {
+				errs = append(errs, batchError(i, ids[i], fmt.Errorf("wal flush: %w", err)))
 			}
 		}
 	}

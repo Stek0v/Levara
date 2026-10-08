@@ -650,10 +650,10 @@ func setupWakeUpTestDB(t *testing.T) *fakeDeps {
 	deps := setupMemoryTestDB(t)
 
 	stmts := []string{
-		`CREATE TABLE graph_nodes (id TEXT PRIMARY KEY, name TEXT, type TEXT, dataset_id TEXT DEFAULT '', collection_id TEXT DEFAULT '', updated_at TEXT)`,
+		`CREATE TABLE graph_nodes (id TEXT PRIMARY KEY, name TEXT, type TEXT, dataset_id TEXT DEFAULT '', collection_id TEXT DEFAULT '', properties TEXT DEFAULT '{}', updated_at TEXT)`,
 		`CREATE TABLE graph_edges (
 			id TEXT PRIMARY KEY, source_id TEXT, target_id TEXT,
-			valid_until TEXT, updated_at TEXT
+			dataset_id TEXT DEFAULT '', properties TEXT DEFAULT '{}', valid_until TEXT, updated_at TEXT
 		)`,
 	}
 	for _, s := range stmts {

@@ -295,3 +295,31 @@ func TestGRPCBrowserSessionLifecycle(t *testing.T) {
 		})
 	}
 }
+
+func TestGRPCIdentityStoreFailureIsUnavailable(t *testing.T) {
+	for _, failure := range []string{"epoch", "session"} {
+		t.Run(failure, func(t *testing.T) {
+			p := newGRPCAuthPolicy(t)
+			payload := vectorAuth.Payload{Sub: "alice", Exp: time.Now().Add(time.Hour).Unix()}
+			table := "credential_epochs"
+			if failure == "session" {
+				payload.SessionID = "active"
+				table = "auth_sessions"
+			}
+			if _, err := p.DB.Exec("DROP TABLE " + table); err != nil {
+				t.Fatal(err)
+			}
+			ctx := ctxWithToken(signJWTPayload(t, payload, "secret"))
+			called := false
+			_, err := UnaryAuthInterceptor("secret", true, p)(ctx, nil, &grpclib.UnaryServerInfo{FullMethod: "/levara.v1.LevaraService/Search"}, func(context.Context, any) (any, error) { called = true; return nil, nil })
+			if status.Code(err) != codes.Unavailable || called {
+				t.Fatalf("unary err=%v called=%v", err, called)
+			}
+			called = false
+			err = StreamAuthInterceptor("secret", true, p)(nil, &authedStream{ctx: ctx}, &grpclib.StreamServerInfo{FullMethod: "/levara.v1.LevaraService/PipelineCognify"}, func(any, grpclib.ServerStream) error { called = true; return nil })
+			if status.Code(err) != codes.Unavailable || called {
+				t.Fatalf("stream err=%v called=%v", err, called)
+			}
+		})
+	}
+}

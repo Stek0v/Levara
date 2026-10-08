@@ -348,6 +348,9 @@ func TestToolConsolidate_DryRunDoesNotApply(t *testing.T) {
 	if !strings.Contains(got.Content[0].Text, "dry_run") {
 		t.Errorf("text = %q, want dry_run mode", got.Content[0].Text)
 	}
+	if !strings.Contains(got.Content[0].Text, "llm_calls=0") {
+		t.Errorf("text = %q, want no provider calls", got.Content[0].Text)
+	}
 
 	var n int
 	if err := deps.db.QueryRow(`SELECT COUNT(*) FROM memories WHERE superseded_by != ''`).Scan(&n); err != nil {
@@ -355,6 +358,27 @@ func TestToolConsolidate_DryRunDoesNotApply(t *testing.T) {
 	}
 	if n != 0 {
 		t.Fatalf("dry run superseded %d rows, want 0", n)
+	}
+}
+
+func TestToolConsolidate_ReportsProviderCalls(t *testing.T) {
+	deps := setupConsolidateDB(t)
+	seedDupInColl(t, deps, "a", "c", "alpha apple", "2026-01-01T00:00:00Z")
+	seedDupInColl(t, deps, "b", "c", "alpha apricot", "2026-01-02T00:00:00Z")
+	deps.embedAvailable = true
+	deps.embedFn = func(context.Context, string) ([]float32, error) { return []float32{1, 0, 0}, nil }
+	deps.searchFn = func(string, []float32, int) ([]SearchResult, error) {
+		return []SearchResult{{ID: "a", Score: 0.92}, {ID: "b", Score: 0.92}}, nil
+	}
+	provider := &countingProvider{}
+	deps.llmProvider = provider
+
+	got := ToolConsolidate(context.Background(), deps, map[string]any{"collection": "c", "dry_run": true})
+	if got.IsError {
+		t.Fatalf("consolidate: %s", got.Content[0].Text)
+	}
+	if provider.calls != 1 || !strings.Contains(got.Content[0].Text, "llm_calls=1") {
+		t.Fatalf("calls=%d result=%q", provider.calls, got.Content[0].Text)
 	}
 }
 

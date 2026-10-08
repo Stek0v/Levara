@@ -57,7 +57,7 @@ frozen oracle требует полный source quote и поэтому отм�
 Oracle не изменён после результатов; отдельный semantic score не выдуман.
 Raw answers: `/tmp/levara-t11-quality-zx17i6hb/answers-baseline.json`.
 
-## Исправления и проверки пока в работе
+## Выполненные исправления и проверки
 
 - Confidence/metadata: meaningful exact-source overlay RED — 4 failing leaves,
   7 controls. Current GREEN/race — 18 leaves каждый, 0fail/skip/race; root

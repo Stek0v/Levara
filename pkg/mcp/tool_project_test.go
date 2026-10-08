@@ -3,12 +3,23 @@ package mcp
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"strings"
 	"testing"
 
 	"github.com/stek0v/levara/pkg/orchestrator"
 )
+
+type projectAggregateDeps struct {
+	*fakeDeps
+	aggregates ProjectContextAggregates
+	err        error
+}
+
+func (d *projectAggregateDeps) ProjectContextAggregates(context.Context, string) (ProjectContextAggregates, error) {
+	return d.aggregates, d.err
+}
 
 // testBaseCfg returns an orchestrator.Config with just EmbedModel set
 // so ToolCheckDrift can compare models without a real LLM stack.
@@ -91,6 +102,24 @@ func TestToolGetProjectContext_NoVectors(t *testing.T) {
 	}
 	if !strings.Contains(text, "unavailable") || !strings.Contains(text, "no memories") {
 		t.Errorf("expected explicit unavailable and empty memory summary; got %q", text)
+	}
+}
+
+func TestToolGetProjectContext_ScopedAggregates(t *testing.T) {
+	base := setupProjectDB(t)
+	deps := &projectAggregateDeps{fakeDeps: base, aggregates: ProjectContextAggregates{
+		PublishedDocuments: 2,
+		EntityTypes:        map[string]int{"Service": 3},
+		RecentInteractions: []ProjectContextInteraction{{Query: "where", Response: "there"}},
+	}}
+	res := ToolGetProjectContext(context.Background(), deps, map[string]any{"collection": "project"})
+	if res.IsError || !strings.Contains(res.Content[0].Text, "Accessible published documents: 2") || !strings.Contains(res.Content[0].Text, "Service: 3") || !strings.Contains(res.Content[0].Text, "where → there") {
+		t.Fatalf("unexpected aggregate result: %+v", res)
+	}
+	deps.err = errors.New("aggregate unavailable")
+	res = ToolGetProjectContext(context.Background(), deps, map[string]any{"collection": "project"})
+	if !res.IsError || res.StructuredContent != nil {
+		t.Fatalf("aggregate error returned partial result: %+v", res)
 	}
 }
 

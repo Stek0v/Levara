@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"sync"
@@ -121,11 +122,34 @@ func runMemoryIndexJob(ctx context.Context, cfg APIConfig) bool {
 	err = executeMemoryIndexJob(ctx, cfg, job)
 	var blocked *embed.BreakerOpenError
 	if errors.As(err, &blocked) {
-		_ = cfg.MemoryIndexOutbox.Defer(context.Background(), job, blocked.RetryAt, memoryIndexMaxAttempts)
-		return true
+		return persistMemoryIndexTransition(ctx, func(ctx context.Context) error {
+			return cfg.MemoryIndexOutbox.Defer(ctx, job, blocked.RetryAt, memoryIndexMaxAttempts)
+		})
 	}
-	_ = cfg.MemoryIndexOutbox.Finish(context.Background(), job, err, memoryIndexMaxAttempts, time.Second)
-	return true
+	return persistMemoryIndexTransition(ctx, func(ctx context.Context) error {
+		return cfg.MemoryIndexOutbox.Finish(ctx, job, err, memoryIndexMaxAttempts, time.Second)
+	})
+}
+
+func persistMemoryIndexTransition(ctx context.Context, transition func(context.Context) error) bool {
+	backoff := 10 * time.Millisecond
+	for {
+		if err := transition(ctx); err == nil {
+			return true
+		} else {
+			log.Printf("[memory-index] terminal transition failed: %v", err)
+		}
+		timer := time.NewTimer(backoff)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return false
+		case <-timer.C:
+		}
+		if backoff < time.Second {
+			backoff *= 2
+		}
+	}
 }
 
 // ponytail: fixed stripes bound lock memory; split further only if contention is measured.

@@ -143,29 +143,33 @@ func (h *mcpHandler) runConsolidationJob(parent context.Context, id string, args
 		status = "failed"
 		last = text
 	}
-	candidates, clusters, actions := parseConsolidationProgress(text)
+	candidates, clusters, actions, llmCalls := parseConsolidationProgress(text)
 	// Final status must persist even when execution timed out; it cannot overwrite
 	// a recovery decision because only the current running state may transition.
 	finalCtx, finalCancel := context.WithTimeout(context.WithoutCancel(parent), 5*time.Second)
 	defer finalCancel()
-	_, err = h.cfg.DB.ExecContext(finalCtx, Q(`UPDATE consolidation_jobs SET status=$1,result_text=$2,last_error=$3,candidates=$4,clusters=$5,actions=$6,updated_at=$7 WHERE id=$8 AND owner_id=$9 AND status='running'`), status, text, last, candidates, clusters, actions, time.Now().UTC().Format(time.RFC3339Nano), id, actor.UserID)
+	_, err = h.cfg.DB.ExecContext(finalCtx, Q(`UPDATE consolidation_jobs SET status=$1,result_text=$2,last_error=$3,candidates=$4,clusters=$5,actions=$6,llm_calls=$7,updated_at=$8 WHERE id=$9 AND owner_id=$10 AND status='running'`), status, text, last, candidates, clusters, actions, llmCalls, time.Now().UTC().Format(time.RFC3339Nano), id, actor.UserID)
 	if err != nil {
 		log.Printf("consolidation final status %s: %v", id, err)
 	}
 }
 
 var consolidationProgressRE = regexp.MustCompile(`candidates=(\d+) clusters=(\d+) actions=(\d+)`)
+var consolidationLLMCallsRE = regexp.MustCompile(`llm_calls=(\d+)`)
 
-func parseConsolidationProgress(text string) (int, int, int) {
+func parseConsolidationProgress(text string) (int, int, int, int) {
+	var a, b, c, d int
+	if calls := consolidationLLMCallsRE.FindStringSubmatch(text); len(calls) == 2 {
+		_, _ = fmt.Sscanf(calls[1], "%d", &d)
+	}
 	m := consolidationProgressRE.FindStringSubmatch(text)
 	if len(m) != 4 {
-		return 0, 0, 0
+		return 0, 0, 0, d
 	}
-	var a, b, c int
 	_, _ = fmt.Sscanf(m[1], "%d", &a)
 	_, _ = fmt.Sscanf(m[2], "%d", &b)
 	_, _ = fmt.Sscanf(m[3], "%d", &c)
-	return a, b, c
+	return a, b, c, d
 }
 
 func (h *mcpHandler) toolConsolidationStatus(ctx context.Context, args map[string]any) mcpToolResult {

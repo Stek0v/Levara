@@ -1,18 +1,25 @@
 package http
 
 import (
+	"database/sql"
 	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/gofiber/fiber/v2"
+	_ "github.com/ncruces/go-sqlite3/driver"
 )
 
 func TestRESTRouteInventoryMatchesRegisterAPI(t *testing.T) {
 	// Retired notebook routes remain absent even with an old enabled setting.
 	t.Setenv("LEVARA_NOTEBOOKS", "1")
 	app := fiber.New()
-	RegisterAPI(app, APIConfig{})
+	db, err := sql.Open("sqlite3", t.TempDir()+"/routes.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	RegisterAPI(app, APIConfig{DB: db, StoragePath: t.TempDir(), WorkspacePath: t.TempDir()})
 
 	registered := map[string]bool{}
 	for _, routes := range app.Stack() {
@@ -23,7 +30,11 @@ func TestRESTRouteInventoryMatchesRegisterAPI(t *testing.T) {
 			if r.Path == "/workspace" || r.Path == "/sync" {
 				continue // app.Use middleware mounts are not endpoints.
 			}
-			registered[routeKey(r.Method, r.Path)] = true
+			key := routeKey(r.Method, r.Path)
+			if registered[key] {
+				t.Fatalf("runtime route registered twice: %s", key)
+			}
+			registered[key] = true
 		}
 	}
 
@@ -32,7 +43,11 @@ func TestRESTRouteInventoryMatchesRegisterAPI(t *testing.T) {
 		if r.Group == "vector" {
 			continue // legacy vector routes are registered in main.go.
 		}
-		inventory[routeKey(r.Method, r.Path)] = r
+		key := routeKey(r.Method, r.Path)
+		if _, exists := inventory[key]; exists {
+			t.Fatalf("RESTRouteInventory contains duplicate: %s", key)
+		}
+		inventory[key] = r
 	}
 
 	for key := range registered {

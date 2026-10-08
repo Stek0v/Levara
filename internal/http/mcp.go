@@ -785,7 +785,7 @@ func (h *mcpHandler) handleRPC(c *fiber.Ctx) error {
 	if req.Method != "initialize" && req.Method != "ping" {
 		actor, authErr := h.authenticateMCPRequest(c)
 		if authErr != nil {
-			return c.SendStatus(404) // can't establish an owner → client should re-initialize
+			return c.SendStatus(mcpAuthFailureStatus(authErr, fiber.StatusNotFound)) // can't establish an owner → client should re-initialize
 		}
 		if sessionID != "" {
 			sess := h.getOrValidateSession(sessionID)
@@ -806,7 +806,7 @@ func (h *mcpHandler) handleRPC(c *fiber.Ctx) error {
 	case "initialize":
 		actor, authErr := h.authenticateMCPRequest(c)
 		if authErr != nil {
-			return c.Status(fiber.StatusUnauthorized).JSON(jsonRPCResponse{
+			return c.Status(mcpAuthFailureStatus(authErr, fiber.StatusUnauthorized)).JSON(jsonRPCResponse{
 				JSONRPC: "2.0",
 				ID:      req.ID,
 				Error:   &rpcError{Code: -32001, Message: authErr.Error()},
@@ -911,7 +911,10 @@ func (h *mcpHandler) handleToolCallWithSession(c *fiber.Ctx, req jsonRPCRequest,
 		toolCtx = context.WithValue(toolCtx, mcpTraceIDKey, strings.Clone(traceID))
 	}
 	actor, authErr := h.authenticateMCPRequest(c)
-	if authErr != nil || (actor.UserID == "" && sess != nil && sess.GetUserID() != "") {
+	if authErr != nil {
+		return c.SendStatus(mcpAuthFailureStatus(authErr, fiber.StatusNotFound))
+	}
+	if actor.UserID == "" && sess != nil && sess.GetUserID() != "" {
 		return c.SendStatus(fiber.StatusNotFound)
 	}
 	actor, authErr = h.resolveMCPActorTenant(c, actor)
@@ -955,7 +958,7 @@ func (h *mcpHandler) handleToolCallWithSession(c *fiber.Ctx, req jsonRPCRequest,
 		}
 		return nil
 	}
-	if params.Name == "search" || params.Name == "workspace_search" || params.Name == "cross_search" || params.Name == "git_search" || params.Name == "query_entity" ||
+	if params.Name == "search" || params.Name == "workspace_search" || params.Name == "cross_search" || params.Name == "git_search" || params.Name == "query_entity" || params.Name == "wake_up" ||
 		params.Name == "list_communities" || params.Name == "codify" || params.Name == "cognify" || params.Name == "analyze_commits" || params.Name == "cognify_status" ||
 		params.Name == "ingestion_status" || params.Name == "recent_errors" || params.Name == "recall_chat" || params.Name == "search_chats" || params.Name == "save_chat" || params.Name == "list_data" || params.Name == "add" {
 		var cancel context.CancelFunc

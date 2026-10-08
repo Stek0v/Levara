@@ -8,6 +8,8 @@ import (
 
 	"github.com/stek0v/levara/internal/store"
 	pbv2 "github.com/stek0v/levara/proto/pb/v2"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // v2TestService spins up a real v1 Service (in-memory store + cluster)
@@ -31,6 +33,61 @@ func v2TestService(t *testing.T, dim int) (*ServiceV2, func()) {
 		cm.Close()
 		db.Close()
 		os.RemoveAll(dir)
+	}
+}
+
+func TestServiceV2_PreservesErrors(t *testing.T) {
+	svc, cleanup := v2TestService(t, 2)
+	defer cleanup()
+	ctx := context.Background()
+
+	for name, call := range map[string]func(context.Context, *pbv2.InsertReq) (*pbv2.InsertResp, error){
+		"insert": svc.Insert, "add": svc.Add, "save": svc.Save, "create": svc.Create,
+	} {
+		t.Run(name, func(t *testing.T) {
+			resp, err := call(ctx, &pbv2.InsertReq{})
+			if err != nil || resp.GetOk() || resp.GetError().GetMessage() == "" {
+				t.Fatalf("err=%v resp=%+v", err, resp)
+			}
+		})
+	}
+
+	if _, err := svc.Search(ctx, &pbv2.SearchReq{}); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("Search status = %v, want InvalidArgument", status.Code(err))
+	}
+}
+
+func TestServiceV2_BatchFailuresKeepOriginalIdentity(t *testing.T) {
+	svc, cleanup := v2TestService(t, 2)
+	defer cleanup()
+	ctx := context.Background()
+
+	inserted, err := svc.BatchInsert(ctx, &pbv2.BatchInsertReq{Collection: "c", Items: []*pbv2.InsertItem{
+		{Id: "a", Vector: []float32{1, 0}},
+		{Id: "bad", Vector: []float32{1}},
+		{Id: "c", Vector: []float32{0, 1}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inserted.GetInserted() != 2 || inserted.GetFailed() != 1 || len(inserted.GetFailures()) != 1 {
+		t.Fatalf("unexpected batch result: %+v", inserted)
+	}
+	failure := inserted.GetFailures()[0]
+	if failure.GetIndex() != 1 || failure.GetId() != "bad" || failure.GetError().GetMessage() == "" {
+		t.Fatalf("failure lost identity: %+v", failure)
+	}
+
+	deleted, err := svc.Delete(ctx, &pbv2.DeleteReq{Collection: "c", Ids: []string{"a", "missing", "c"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted.GetDeleted() != 2 || deleted.GetFailed() != 1 || len(deleted.GetFailures()) != 1 {
+		t.Fatalf("unexpected delete result: %+v", deleted)
+	}
+	deleteFailure := deleted.GetFailures()[0]
+	if deleteFailure.GetIndex() != 1 || deleteFailure.GetId() != "missing" || deleteFailure.GetError().GetMessage() == "" {
+		t.Fatalf("delete failure lost identity: %+v", deleteFailure)
 	}
 }
 

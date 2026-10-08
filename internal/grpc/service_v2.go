@@ -10,7 +10,10 @@ package grpc
 
 import (
 	"context"
+	"errors"
+	"sort"
 
+	"github.com/stek0v/levara/internal/store"
 	pbv1 "github.com/stek0v/levara/proto/pb"
 	pbv2 "github.com/stek0v/levara/proto/pb/v2"
 )
@@ -40,7 +43,10 @@ func (s *ServiceV2) Insert(ctx context.Context, req *pbv2.InsertReq) (*pbv2.Inse
 		Vector:       req.GetVector(),
 		MetadataJson: string(req.GetMetadataJson()),
 	})
-	return insertRespFromV1(v1Resp, err), nil
+	if err != nil {
+		return nil, err
+	}
+	return insertRespFromV1(v1Resp), nil
 }
 
 // Add / Save / Create — deprecated aliases for Insert. They exist so
@@ -72,34 +78,37 @@ func (s *ServiceV2) BatchInsert(ctx context.Context, req *pbv2.BatchInsertReq) (
 			MetadataJson: string(it.GetMetadataJson()),
 		})
 	}
-	v1Resp, err := s.v1.BatchInsert(ctx, &pbv1.BatchInsertReq{
+	v1Req := &pbv1.BatchInsertReq{
 		Collection: req.GetCollection(),
 		Records:    records,
-	})
-	if err != nil {
-		return &pbv2.BatchInsertResp{Error: errFromV1(err)}, nil
 	}
-	return &pbv2.BatchInsertResp{
-		Inserted: v1Resp.GetInserted(),
-		Failed:   v1Resp.GetFailed(),
-		// v1 batch response doesn't carry per-item errors in this build;
-		// failures array is best-effort empty on success path. A future
-		// v1 upgrade could populate it and the v2 mapping follows.
-	}, nil
+	v1Resp, errs := s.v1.batchInsert(v1Req)
+	resp := &pbv2.BatchInsertResp{Inserted: v1Resp.GetInserted(), Failed: v1Resp.GetFailed()}
+	if len(errs) == 0 && len(v1Resp.GetErrors()) > 0 {
+		resp.Error = errorDetail(v1Resp.GetErrors()[0])
+		return resp, nil
+	}
+	for _, failure := range orderedBatchErrors(errs) {
+		resp.Failures = append(resp.Failures, &pbv2.BatchInsertFailure{Id: failure.ID, Index: int32(failure.Index), Error: errorDetail(failure.Err.Error())})
+	}
+	return resp, nil
 }
 
 func (s *ServiceV2) Delete(ctx context.Context, req *pbv2.DeleteReq) (*pbv2.DeleteResp, error) {
-	v1Resp, err := s.v1.Delete(ctx, &pbv1.DeleteReq{
+	v1Req := &pbv1.DeleteReq{
 		Collection: req.GetCollection(),
 		Ids:        req.GetIds(),
-	})
-	if err != nil {
-		return &pbv2.DeleteResp{Error: errFromV1(err)}, nil
 	}
-	return &pbv2.DeleteResp{
-		Deleted: v1Resp.GetDeleted(),
-		Failed:  v1Resp.GetFailed(),
-	}, nil
+	v1Resp, errs := s.v1.batchDelete(v1Req)
+	resp := &pbv2.DeleteResp{Deleted: v1Resp.GetDeleted(), Failed: v1Resp.GetFailed()}
+	if len(errs) == 0 && len(v1Resp.GetErrors()) > 0 {
+		resp.Error = errorDetail(v1Resp.GetErrors()[0])
+		return resp, nil
+	}
+	for _, failure := range orderedBatchErrors(errs) {
+		resp.Failures = append(resp.Failures, &pbv2.DeleteFailure{Id: failure.ID, Index: int32(failure.Index), Error: errorDetail(failure.Err.Error())})
+	}
+	return resp, nil
 }
 
 func (s *ServiceV2) Search(ctx context.Context, req *pbv2.SearchReq) (*pbv2.SearchResp, error) {
@@ -109,7 +118,7 @@ func (s *ServiceV2) Search(ctx context.Context, req *pbv2.SearchReq) (*pbv2.Sear
 		TopK:       req.GetTopK(),
 	})
 	if err != nil {
-		return &pbv2.SearchResp{Error: errFromV1(err)}, nil
+		return nil, err
 	}
 	results := make([]*pbv2.SearchResult, 0, len(v1Resp.GetResults()))
 	for _, r := range v1Resp.GetResults() {
@@ -136,11 +145,11 @@ func (s *ServiceV2) Info(ctx context.Context, _ *pbv2.InfoReq) (*pbv2.InfoResp, 
 
 // insertRespFromV1 maps v1's (StatusResp, error) shape into v2's
 // (InsertResp with typed error) shape.
-func insertRespFromV1(v1 *pbv1.StatusResp, err error) *pbv2.InsertResp {
-	if err != nil {
-		return &pbv2.InsertResp{Ok: false, Error: errFromV1(err)}
+func insertRespFromV1(v1 *pbv1.StatusResp) *pbv2.InsertResp {
+	if v1.GetError() != "" {
+		return &pbv2.InsertResp{Ok: false, Error: errorDetail(v1.GetError())}
 	}
-	return &pbv2.InsertResp{Ok: v1.GetOk(), Error: nil}
+	return &pbv2.InsertResp{Ok: v1.GetOk()}
 }
 
 // errFromV1 wraps a Go error into ErrorDetail. gRPC status codes live
@@ -150,8 +159,21 @@ func errFromV1(err error) *pbv2.ErrorDetail {
 	if err == nil {
 		return nil
 	}
-	return &pbv2.ErrorDetail{
-		Code:    1,
-		Message: err.Error(),
+	return errorDetail(err.Error())
+}
+
+func errorDetail(message string) *pbv2.ErrorDetail {
+	return &pbv2.ErrorDetail{Code: 1, Message: message}
+}
+
+func orderedBatchErrors(errs []error) []*store.BatchError {
+	failures := make([]*store.BatchError, 0, len(errs))
+	for _, err := range errs {
+		var failure *store.BatchError
+		if errors.As(err, &failure) {
+			failures = append(failures, failure)
+		}
 	}
+	sort.SliceStable(failures, func(i, j int) bool { return failures[i].Index < failures[j].Index })
+	return failures
 }
