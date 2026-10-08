@@ -12,16 +12,28 @@ import (
 // HNSWConfig holds tunable parameters for the HNSW graph construction and search.
 // See [DefaultHNSWConfig] for recommended starting values.
 type HNSWConfig struct {
-	M            int     // max neighbors per node (default 16)
-	M0           int     // max neighbors at layer 0 (default 2*M)
-	EfSearchMult int     // efSearch = k * EfSearchMult (default 6)
-	EfSearchMin  int     // minimum efSearch (default 48)
-	LevelMult    float64 // level distribution parameter (default 1/ln(2))
+	M              int     // max neighbors per node (default 16)
+	M0             int     // max neighbors at layer 0 (default 2*M)
+	EfConstruction int     // construction beam width; 0 preserves the legacy M/M0 breadth
+	EfSearchMult   int     // efSearch = k * EfSearchMult (default 6)
+	EfSearchMin    int     // minimum efSearch (default 48)
+	LevelMult      float64 // level distribution parameter (default 1/ln(2))
+}
+
+// constructionBreadth normalizes the opt-in construction beam per layer. A
+// zero value preserves the historical behavior, and a smaller explicit value
+// never reduces the candidate set below the layer's neighbor capacity.
+func (h *HNSWIndex) constructionBreadth(maxConn int) int {
+	if h.cfg.EfConstruction <= maxConn {
+		return maxConn
+	}
+	return h.cfg.EfConstruction
 }
 
 // DefaultHNSWConfig returns production-ready HNSW parameters: M=16, M0=32,
-// efSearchMult=6, efSearchMin=48. These values preserve recall@10 >= 0.90
-// while keeping mixed search/write latency within the production SLO.
+// legacy construction breadth, efSearchMult=6, and efSearchMin=48. These
+// values preserve recall@10 >= 0.90 while keeping mixed search/write latency
+// within the production SLO.
 func DefaultHNSWConfig() HNSWConfig {
 	return HNSWConfig{
 		M:            16,
@@ -315,7 +327,10 @@ func (h *HNSWIndex) Add(vector []float32, id string, idx uint32) {
 			if l == 0 {
 				maxConn = h.cfg.M0
 			}
-			neighbors := h.searchLayerTopK(vector, curr, l, maxConn, getVec)
+			neighbors := h.searchLayerTopK(vector, curr, l, h.constructionBreadth(maxConn), getVec)
+			if len(neighbors) > maxConn {
+				neighbors = neighbors[:maxConn]
+			}
 			for _, sr := range neighbors {
 				if sr.node == nil || l >= len(sr.node.Connections) {
 					continue

@@ -1,0 +1,272 @@
+{
+  "schema_version": 1,
+  "synthetic": true,
+  "description": "Hand-authored identifiers only; no production chat content.",
+  "cases": [
+    {
+      "id": "exact-error-id",
+      "query": "Where was ERR_CONN_421 recorded?",
+      "kind": "known",
+      "required_fact_ids": [
+        "fact-error-421"
+      ],
+      "relevant_message_ids": [
+        "msg-error-current"
+      ],
+      "relevant_session_ids": [
+        "session-errors"
+      ],
+      "allowed_provenance": [
+        {
+          "source_kind": "message",
+          "source_id": "msg-error-current",
+          "session_id": "session-errors",
+          "owner_id": "owner-a",
+          "tenant_id": "tenant-a",
+          "project_id": "project-private-a"
+        },
+        {
+          "source_kind": "message",
+          "source_id": "msg-error-stale",
+          "session_id": "session-errors",
+          "owner_id": "owner-a",
+          "tenant_id": "tenant-a",
+          "project_id": "project-private-a"
+        },
+        {
+          "source_kind": "part",
+          "source_id": "part-errors-1",
+          "session_id": "session-errors",
+          "owner_id": "owner-a",
+          "tenant_id": "tenant-a",
+          "project_id": "project-private-a"
+        }
+      ]
+    },
+    {
+      "id": "code-symbol",
+      "query": "Which session mentions ParseLedgerFrame?",
+      "kind": "known",
+      "required_fact_ids": [
+        "fact-code-symbol"
+      ],
+      "relevant_message_ids": [
+        "msg-code"
+      ],
+      "relevant_session_ids": [
+        "session-code"
+      ],
+      "allowed_provenance": [
+        {
+          "source_kind": "message",
+          "source_id": "msg-code",
+          "session_id": "session-code",
+          "owner_id": "owner-a",
+          "tenant_id": "tenant-a",
+          "project_id": "project-shared"
+        },
+        {
+          "source_kind": "part",
+          "source_id": "part-code-1",
+          "session_id": "session-code",
+          "owner_id": "owner-a",
+          "tenant_id": "tenant-a",
+          "project_id": "project-shared"
+        }
+      ]
+    },
+    {
+      "id": "mixed-ru-en",
+      "query": "Где решили retry budget для worker pool?",
+      "kind": "known",
+      "required_fact_ids": [
+        "fact-retry-count",
+        "fact-retry-delay"
+      ],
+      "relevant_message_ids": [
+        "msg-retry-a",
+        "msg-retry-b"
+      ],
+      "relevant_session_ids": [
+        "session-bilingual"
+      ],
+      "allowed_provenance": [
+        {
+          "source_kind": "message",
+          "source_id": "msg-retry-a",
+          "session_id": "session-bilingual",
+          "owner_id": "owner-a",
+          "tenant_id": "tenant-a",
+          "project_id": "project-shared"
+        },
+        {
+          "source_kind": "message",
+          "source_id": "msg-retry-b",
+          "session_id": "session-bilingual",
+          "owner_id": "owner-a",
+          "tenant_id": "tenant-a",
+          "project_id": "project-shared"
+        },
+        {
+          "source_kind": "part",
+          "source_id": "part-bilingual-1",
+          "session_id": "session-bilingual",
+          "owner_id": "owner-a",
+          "tenant_id": "tenant-a",
+          "project_id": "project-shared"
+        },
+        {
+          "source_kind": "part",
+          "source_id": "part-bilingual-2",
+          "session_id": "session-bilingual",
+          "owner_id": "owner-a",
+          "tenant_id": "tenant-a",
+          "project_id": "project-shared"
+        }
+      ]
+    },
+    {
+      "id": "session-provenance-only",
+      "query": "Summarize the synthetic migration decision",
+      "kind": "known",
+      "required_fact_ids": [
+        "fact-migration-decision"
+      ],
+      "relevant_message_ids": [],
+      "relevant_session_ids": [
+        "session-migration"
+      ],
+      "allowed_provenance": [
+        {
+          "source_kind": "part",
+          "source_id": "part-migration-summary",
+          "session_id": "session-migration",
+          "owner_id": "owner-a",
+          "tenant_id": "tenant-a",
+          "project_id": "project-shared"
+        }
+      ]
+    },
+    {
+      "id": "duplicate-detection",
+      "query": "Find the canonical synthetic deployment note",
+      "kind": "known",
+      "required_fact_ids": [
+        "fact-deploy"
+      ],
+      "relevant_message_ids": [
+        "msg-deploy"
+      ],
+      "relevant_session_ids": [
+        "session-deploy"
+      ],
+      "allowed_provenance": [
+        {
+          "source_kind": "message",
+          "source_id": "msg-deploy",
+          "session_id": "session-deploy",
+          "owner_id": "owner-a",
+          "tenant_id": "tenant-a",
+          "project_id": "project-shared"
+        },
+        {
+          "source_kind": "part",
+          "source_id": "part-deploy",
+          "session_id": "session-deploy",
+          "owner_id": "owner-a",
+          "tenant_id": "tenant-a",
+          "project_id": "project-shared"
+        }
+      ]
+    },
+    {
+      "id": "authorization-collision",
+      "query": "Find identical text in the authorized project",
+      "kind": "known",
+      "required_fact_ids": [
+        "fact-authorized-copy"
+      ],
+      "relevant_message_ids": [
+        "msg-authorized"
+      ],
+      "relevant_session_ids": [
+        "session-authorized"
+      ],
+      "allowed_provenance": [
+        {
+          "source_kind": "message",
+          "source_id": "msg-authorized",
+          "session_id": "session-authorized",
+          "owner_id": "owner-a",
+          "tenant_id": "tenant-a",
+          "project_id": "project-shared"
+        },
+        {
+          "source_kind": "part",
+          "source_id": "part-authorized",
+          "session_id": "session-authorized",
+          "owner_id": "owner-a",
+          "tenant_id": "tenant-a",
+          "project_id": "project-shared"
+        },
+        {
+          "source_kind": "message",
+          "source_id": "msg-second-allowed",
+          "session_id": "session-second-allowed",
+          "owner_id": "owner-b",
+          "tenant_id": "tenant-b",
+          "project_id": "project-private-b"
+        }
+      ]
+    },
+    {
+      "id": "stale-correction",
+      "query": "What is the corrected synthetic version?",
+      "kind": "known",
+      "required_fact_ids": [
+        "fact-version-current"
+      ],
+      "relevant_message_ids": [
+        "msg-version-current"
+      ],
+      "relevant_session_ids": [
+        "session-version"
+      ],
+      "allowed_provenance": [
+        {
+          "source_kind": "message",
+          "source_id": "msg-version-current",
+          "session_id": "session-version",
+          "owner_id": "owner-a",
+          "tenant_id": "tenant-a",
+          "project_id": "project-shared"
+        },
+        {
+          "source_kind": "message",
+          "source_id": "msg-version-stale",
+          "session_id": "session-version",
+          "owner_id": "owner-a",
+          "tenant_id": "tenant-a",
+          "project_id": "project-shared"
+        },
+        {
+          "source_kind": "part",
+          "source_id": "part-version",
+          "session_id": "session-version",
+          "owner_id": "owner-a",
+          "tenant_id": "tenant-a",
+          "project_id": "project-shared"
+        }
+      ]
+    },
+    {
+      "id": "unknown-abstain",
+      "query": "What is the launch code for nonexistent synthetic project Zeta?",
+      "kind": "unknown",
+      "required_fact_ids": [],
+      "relevant_message_ids": [],
+      "relevant_session_ids": [],
+      "allowed_provenance": []
+    }
+  ]
+}

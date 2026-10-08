@@ -131,12 +131,13 @@ func saveCollectionMeta(colDir string, meta *CollectionMeta) error {
 // CollectionManager manages multiple Levara instances, one per collection.
 // Each collection has its own HNSW index, WAL, Arena, and DiskStore.
 type CollectionManager struct {
-	mu          sync.RWMutex
-	collections map[string]*Levara
-	metas       map[string]*CollectionMeta
-	dim         int
-	basePath    string
-	hnswCfg     HNSWConfig
+	mu            sync.RWMutex
+	collections   map[string]*Levara
+	metas         map[string]*CollectionMeta
+	dim           int
+	basePath      string
+	hnswCfg       HNSWConfig
+	hnswSnapshots bool
 	// defaultModel is stamped onto collections auto-created via the lazy
 	// Insert -> getOrCreate path so they don't end up with an empty
 	// embedding_model (findings P2.1). Set from the server's EMBEDDING_MODEL.
@@ -146,10 +147,23 @@ type CollectionManager struct {
 	searchGroup     singleflight.Group
 }
 
+// CollectionManagerOptions controls optional storage accelerators. HNSW
+// snapshots are disabled by default so existing callers retain WAL rebuild
+// behavior until they explicitly opt in.
+type CollectionManagerOptions struct {
+	HNSWSnapshots bool
+}
+
 // NewCollectionManager creates a manager for named collections.
 // Existing collections are loaded from disk on startup.
 // An optional HNSWConfig can be provided; DefaultHNSWConfig() is used otherwise.
 func NewCollectionManager(dim int, basePath string, cfg ...HNSWConfig) (*CollectionManager, error) {
+	return NewCollectionManagerWithOptions(dim, basePath, CollectionManagerOptions{}, cfg...)
+}
+
+// NewCollectionManagerWithOptions creates a collection manager with explicit
+// opt-in storage behavior.
+func NewCollectionManagerWithOptions(dim int, basePath string, options CollectionManagerOptions, cfg ...HNSWConfig) (*CollectionManager, error) {
 	hnswCfg := DefaultHNSWConfig()
 	if len(cfg) > 0 {
 		hnswCfg = cfg[0]
@@ -161,11 +175,12 @@ func NewCollectionManager(dim int, basePath string, cfg ...HNSWConfig) (*Collect
 	}
 
 	cm := &CollectionManager{
-		collections: make(map[string]*Levara),
-		metas:       make(map[string]*CollectionMeta),
-		dim:         dim,
-		basePath:    collectionsDir,
-		hnswCfg:     hnswCfg,
+		collections:   make(map[string]*Levara),
+		metas:         make(map[string]*CollectionMeta),
+		dim:           dim,
+		basePath:      collectionsDir,
+		hnswCfg:       hnswCfg,
+		hnswSnapshots: options.HNSWSnapshots,
 	}
 
 	// Load existing collections from disk
@@ -186,7 +201,7 @@ func NewCollectionManager(dim int, basePath string, cfg ...HNSWConfig) (*Collect
 			}
 
 			dbPath := filepath.Join(colDir, "meta.bin")
-			db, err := NewLevara(colDim, dbPath, hnswCfg)
+			db, err := cm.openCollection(colDim, dbPath)
 			if err != nil {
 				fmt.Printf("WARNING: failed to load collection %q (dim=%d): %v\n", name, colDim, err)
 				continue
@@ -246,6 +261,47 @@ func NewCollectionManager(dim int, basePath string, cfg ...HNSWConfig) (*Collect
 	}
 
 	return cm, nil
+}
+
+const hnswSnapshotFilename = "hnsw.snapshot"
+
+func (cm *CollectionManager) openCollection(dim int, dbPath string) (*Levara, error) {
+	if !cm.hnswSnapshots {
+		return NewLevara(dim, dbPath, cm.hnswCfg)
+	}
+	snapshotPath := filepath.Join(filepath.Dir(dbPath), hnswSnapshotFilename)
+	if _, err := os.Lstat(snapshotPath); errors.Is(err, os.ErrNotExist) {
+		return cm.rebuildAndPublishSnapshot(dim, dbPath, snapshotPath)
+	} else if err != nil {
+		return nil, err
+	}
+	db, used, err := openV3SnapshotOrRebuild(dim, dbPath, snapshotPath, true, cm.hnswCfg)
+	if err != nil {
+		return nil, err
+	}
+	if !used {
+		cm.publishSnapshotBestEffort(db, snapshotPath)
+	}
+	return db, nil
+}
+
+func (cm *CollectionManager) rebuildAndPublishSnapshot(dim int, dbPath, snapshotPath string) (*Levara, error) {
+	db, err := NewLevara(dim, dbPath, cm.hnswCfg)
+	if err != nil {
+		return nil, err
+	}
+	cm.publishSnapshotBestEffort(db, snapshotPath)
+	return db, nil
+}
+
+func (cm *CollectionManager) publishSnapshotBestEffort(db *Levara, snapshotPath string) {
+	walPrefix, err := os.ReadFile(db.wal.Path())
+	if err == nil {
+		_, err = writeV3HNSWSnapshot(db, snapshotPath, walPrefix)
+	}
+	if err != nil {
+		fmt.Printf("WARNING: failed to publish HNSW snapshot %q: %v\n", snapshotPath, err)
+	}
 }
 
 // SetDefaultModel sets the embedding model stamped onto collections created
@@ -322,7 +378,7 @@ func (cm *CollectionManager) CreateWithDim(name string, dim int, embeddingModel,
 	}
 
 	dbPath := filepath.Join(colDir, "meta.bin")
-	db, err := NewLevara(dim, dbPath, cm.hnswCfg)
+	db, err := cm.openCollection(dim, dbPath)
 	if err != nil {
 		return fmt.Errorf("create collection %q: %w", name, err)
 	}
@@ -440,14 +496,14 @@ func (cm *CollectionManager) Rename(oldName, newName string) error {
 		// left with a dangling entry. If this fails too, the caller has a
 		// real on-disk problem and needs to restart.
 		dbPath := filepath.Join(oldDir, "meta.bin")
-		if reopened, rErr := NewLevara(db.dim, dbPath, cm.hnswCfg); rErr == nil {
+		if reopened, rErr := cm.openCollection(db.dim, dbPath); rErr == nil {
 			cm.collections[oldName] = reopened
 		}
 		return fmt.Errorf("rename %q→%q on disk: %w", oldName, newName, err)
 	}
 
 	newDbPath := filepath.Join(newDir, "meta.bin")
-	reopened, err := NewLevara(db.dim, newDbPath, cm.hnswCfg)
+	reopened, err := cm.openCollection(db.dim, newDbPath)
 	if err != nil {
 		// Roll back the directory rename. If THAT fails, the collection is
 		// stranded under the new on-disk name but absent from the map —

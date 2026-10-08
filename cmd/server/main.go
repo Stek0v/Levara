@@ -250,6 +250,7 @@ func main() {
 	hnswM := flag.Int("hnsw-m", 16, "HNSW M parameter: max neighbors per node")
 	hnswEfMult := flag.Int("hnsw-ef-mult", 8, "HNSW efSearch multiplier: efSearch = k * this value")
 	hnswEfMin := flag.Int("hnsw-ef-min", 64, "HNSW minimum efSearch value")
+	hnswSnapshots := flag.Bool("hnsw-snapshots", false, "Opt in to exact HNSW graph snapshots for faster collection startup")
 	llmProxyPort := flag.Int("llm-proxy-port", 0, "LLM proxy port (0 to disable)")
 	llmUpstream := flag.String("llm-upstream", "", "LLM upstream URL (e.g. http://localhost:11434/v1)")
 	llmCacheSize := flag.Int("llm-cache-size", 10000, "LLM response cache max entries")
@@ -498,7 +499,7 @@ func main() {
 
 	// Initialize CollectionManager for native collections (used by gRPC + the
 	// collection-aware HTTP write/search/delete paths).
-	colManager, err := store.NewCollectionManager(*dim, *dataDir+"/"+nodeID, hnswCfg)
+	colManager, err := store.NewCollectionManagerWithOptions(*dim, *dataDir+"/"+nodeID, store.CollectionManagerOptions{HNSWSnapshots: *hnswSnapshots}, hnswCfg)
 	if err != nil {
 		log.Fatalf("Failed to init CollectionManager: %v", err)
 	}
