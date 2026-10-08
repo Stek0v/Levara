@@ -124,6 +124,31 @@ func TestToolMemoryCommitApplyIsAtomicIdempotentAndQueuesIndexJobs(t *testing.T)
 	}
 }
 
+func TestToolMemoryCommitCreatesFreshRowAfterValidityRetirement(t *testing.T) {
+	deps := setupSaveRecallMemoryDB(t)
+	ctx := context.WithValue(context.Background(), UserIDKey, "owner-a")
+	if _, err := deps.db.Exec(`INSERT INTO memories(id,key,value,type,owner_id,collection_name,valid_until) VALUES('retired','runtime','old','project','owner-a','levara','2026-10-08')`); err != nil {
+		t.Fatal(err)
+	}
+	preview := ToolMemoryCommitPreview(ctx, deps, map[string]any{"collection": "levara", "idempotency_key": "retired-key", "candidates": []any{
+		map[string]any{"candidate_id": "fresh", "key": "runtime", "value": "fresh", "room": "memory", "hall": "decision"},
+	}})
+	commitID, digest := memoryCommitIDAndDigest(t, preview)
+	if applied := ToolMemoryCommitApply(ctx, deps, map[string]any{"commit_id": commitID, "plan_digest": digest}); applied.IsError {
+		t.Fatal(applied.Content[0].Text)
+	}
+	var activeID, value, retiredKey string
+	if err := deps.db.QueryRow(`SELECT id,value FROM memories WHERE key='runtime' AND valid_until IS NULL`).Scan(&activeID, &value); err != nil {
+		t.Fatal(err)
+	}
+	if err := deps.db.QueryRow(`SELECT key FROM memories WHERE id='retired'`).Scan(&retiredKey); err != nil {
+		t.Fatal(err)
+	}
+	if activeID == "retired" || value != "fresh" || retiredKey != "runtime#retired:retired" {
+		t.Fatalf("active=%q value=%q retired_key=%q", activeID, value, retiredKey)
+	}
+}
+
 func TestToolMemoryCommitApplyRollsBackWhenPlanBecomesStale(t *testing.T) {
 	deps := setupSaveRecallMemoryDB(t)
 	ctx := context.WithValue(context.Background(), UserIDKey, "owner-a")

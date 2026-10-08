@@ -523,7 +523,7 @@ func dualWriteMemoryVector(cfg APIConfig, source, id string, raw []byte, rule em
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	var key, value, typ, owner, collection string
-	err := cfg.DB.QueryRowContext(ctx, Q(`SELECT key,value,type,owner_id,collection_name FROM memories WHERE id=$1 AND superseded_by=''`), id).Scan(&key, &value, &typ, &owner, &collection)
+	err := cfg.DB.QueryRowContext(ctx, Q(`SELECT key,value,type,owner_id,collection_name FROM memories WHERE id=$1 AND superseded_by='' AND valid_until IS NULL`), id).Scan(&key, &value, &typ, &owner, &collection)
 	if err != nil {
 		fail(err)
 		return
@@ -549,7 +549,7 @@ func dualWriteMemoryVector(cfg APIConfig, source, id string, raw []byte, rule em
 		}
 		defer release()
 		var active bool
-		if err = tx.QueryRowContext(ctx, Q(`SELECT EXISTS(SELECT 1 FROM memories WHERE id=$1 AND key=$2 AND value=$3 AND type=$4 AND owner_id=$5 AND collection_name=$6 AND superseded_by='')`), id, key, value, typ, owner, collection).Scan(&active); err != nil || !active {
+		if err = tx.QueryRowContext(ctx, Q(`SELECT EXISTS(SELECT 1 FROM memories WHERE id=$1 AND key=$2 AND value=$3 AND type=$4 AND owner_id=$5 AND collection_name=$6 AND superseded_by='' AND valid_until IS NULL)`), id, key, value, typ, owner, collection).Scan(&active); err != nil || !active {
 			return nil, err
 		}
 		if err = ctx.Err(); err != nil {

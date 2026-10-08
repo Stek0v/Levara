@@ -639,6 +639,19 @@ var schemaStatements = []string{
 		task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, memory_id TEXT NOT NULL,
 		relation TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY(task_id, memory_id, relation)
 	)`,
+	`CREATE OR REPLACE FUNCTION task_memory_link_semantic_guard() RETURNS TRIGGER AS $$
+	BEGIN
+		IF OLD.value IS DISTINCT FROM NEW.value OR OLD.type IS DISTINCT FROM NEW.type
+			OR OLD.room IS DISTINCT FROM NEW.room OR OLD.hall IS DISTINCT FROM NEW.hall THEN
+			DELETE FROM task_memory_links WHERE memory_id=NEW.id AND relation='produced';
+		END IF;
+		RETURN NEW;
+	END;
+	$$ LANGUAGE plpgsql`,
+	`DO $$ BEGIN IF NOT EXISTS(
+		SELECT 1 FROM pg_trigger WHERE tgrelid='memories'::regclass AND tgname='task_memory_link_semantic_guard'
+	) THEN CREATE TRIGGER task_memory_link_semantic_guard AFTER UPDATE OF value,type,room,hall ON memories
+		FOR EACH ROW EXECUTE FUNCTION task_memory_link_semantic_guard(); END IF; END; $$`,
 	`CREATE INDEX IF NOT EXISTS idx_tasks_scope_status ON tasks(owner_id, collection_name, status)`,
 	`ALTER TABLE task_steps ADD COLUMN action_json TEXT NOT NULL DEFAULT '{}'`,
 	`CREATE INDEX IF NOT EXISTS idx_task_steps_task_status ON task_steps(task_id, status, position)`,
@@ -1366,6 +1379,13 @@ var schemaSQLiteStatements = []string{
 		relation TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		PRIMARY KEY(task_id, memory_id, relation)
 	)`,
+	`CREATE TRIGGER IF NOT EXISTS task_memory_link_semantic_guard
+	AFTER UPDATE OF value,type,room,hall ON memories
+	WHEN NOT (OLD.value IS NEW.value) OR NOT (OLD.type IS NEW.type)
+		OR NOT (OLD.room IS NEW.room) OR NOT (OLD.hall IS NEW.hall)
+	BEGIN
+		DELETE FROM task_memory_links WHERE memory_id=NEW.id AND relation='produced';
+	END`,
 	`CREATE INDEX IF NOT EXISTS idx_tasks_scope_status ON tasks(owner_id, collection_name, status)`,
 	`ALTER TABLE task_steps ADD COLUMN action_json TEXT NOT NULL DEFAULT '{}'`,
 	`CREATE INDEX IF NOT EXISTS idx_task_steps_task_status ON task_steps(task_id, status, position)`,

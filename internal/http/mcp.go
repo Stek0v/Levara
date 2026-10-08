@@ -1496,7 +1496,7 @@ func (h *mcpHandler) memoryKeyExists(ctx context.Context, args map[string]any) b
 	collection, _ := args["collection"].(string)
 	ownerID, _ := ctx.Value(mcpUserIDKey).(string)
 	var id string
-	err := h.cfg.DB.QueryRowContext(ctx, Q(`SELECT id FROM memories WHERE key=$1 AND owner_id=$2 AND collection_name=$3 LIMIT 1`), key, ownerID, collection).Scan(&id)
+	err := h.cfg.DB.QueryRowContext(ctx, Q(`SELECT id FROM memories WHERE key=$1 AND owner_id=$2 AND collection_name=$3 AND superseded_by='' AND valid_until IS NULL LIMIT 1`), key, ownerID, collection).Scan(&id)
 	if err != nil {
 		return false
 	}
@@ -1670,7 +1670,20 @@ func (h *mcpHandler) resourceCollectionDetail(name string) string {
 	return string(data)
 }
 
-func (h *mcpHandler) resourceMemories(ctx context.Context, memType, collName string) string {
+func verifiedMCPResourceOwner(c *fiber.Ctx) (string, bool) {
+	if identity, ok := c.Locals("verified_api_key").(accesspkg.APIKeyIdentity); ok && identity.UserID != "" {
+		return identity.UserID, true
+	}
+	if payload, ok := c.Locals("verified_jwt").(jwtPayload); ok && payload.Sub != "" {
+		return payload.Sub, true
+	}
+	if principal, ok := c.Locals("verified_external").(ExternalPrincipal); ok && principal.UserID != "" {
+		return principal.UserID, true
+	}
+	return "", false
+}
+
+func (h *mcpHandler) resourceMemories(ctx context.Context, ownerID, memType, collName string) string {
 	if h.cfg.DB == nil {
 		return "[]"
 	}
@@ -1679,12 +1692,14 @@ func (h *mcpHandler) resourceMemories(ctx context.Context, memType, collName str
 	if collName != "" {
 		rows, err = h.cfg.DB.QueryContext(ctx,
 			Q(`SELECT key, value, type, collection_name, updated_at FROM memories
-			 WHERE type = $1 AND collection_name = $2 ORDER BY updated_at DESC LIMIT 50`),
-			memType, collName)
+			 WHERE type = $1 AND collection_name = $2 AND (owner_id=$3 OR owner_id='')
+			 AND superseded_by='' AND valid_until IS NULL ORDER BY updated_at DESC LIMIT 50`),
+			memType, collName, ownerID)
 	} else {
 		rows, err = h.cfg.DB.QueryContext(ctx,
 			Q(`SELECT key, value, type, collection_name, updated_at FROM memories
-			 WHERE type = $1 ORDER BY updated_at DESC LIMIT 50`), memType)
+			 WHERE type = $1 AND (owner_id=$2 OR owner_id='') AND superseded_by='' AND valid_until IS NULL
+			 ORDER BY updated_at DESC LIMIT 50`), memType, ownerID)
 	}
 	if err != nil {
 		return "[]"
@@ -1803,7 +1818,11 @@ func (h *mcpHandler) handleSSEStream(c *fiber.Ctx) error {
 	if sess == nil {
 		return c.SendStatus(404)
 	}
-	if !h.requestOwnsMCPSession(c, sess) {
+	owned, err := h.requestOwnsMCPSession(c, sess)
+	if err != nil {
+		return c.SendStatus(mcpAuthFailureStatus(err, fiber.StatusNotFound))
+	}
+	if !owned {
 		return c.SendStatus(404)
 	}
 
@@ -1842,16 +1861,23 @@ func (h *mcpHandler) handleDeleteSession(c *fiber.Ctx) error {
 		return c.SendStatus(400)
 	}
 	sess := h.getOrValidateSession(sessionID)
-	if sess == nil || !h.requestOwnsMCPSession(c, sess) {
+	if sess == nil {
+		return c.SendStatus(404)
+	}
+	owned, err := h.requestOwnsMCPSession(c, sess)
+	if err != nil {
+		return c.SendStatus(mcpAuthFailureStatus(err, fiber.StatusNotFound))
+	}
+	if !owned {
 		return c.SendStatus(404)
 	}
 	h.deleteSession(sessionID)
 	return c.SendStatus(204)
 }
 
-func (h *mcpHandler) requestOwnsMCPSession(c *fiber.Ctx, sess *mcpSession) bool {
+func (h *mcpHandler) requestOwnsMCPSession(c *fiber.Ctx, sess *mcpSession) (bool, error) {
 	if sess == nil {
-		return false
+		return false, nil
 	}
 	previous := c.UserContext()
 	ctx, cancel := apiRequestContext(c)
@@ -1859,12 +1885,12 @@ func (h *mcpHandler) requestOwnsMCPSession(c *fiber.Ctx, sess *mcpSession) bool 
 	defer func() { c.SetUserContext(previous); cancel() }()
 	actor, err := h.authenticateMCPRequest(c)
 	if err != nil {
-		return false
+		return false, err
 	}
 	if sess.GetUserID() == "" {
-		return !h.cfg.RequireAuth || actor.UserID != ""
+		return !h.cfg.RequireAuth || actor.UserID != "", nil
 	}
-	return actor.UserID != "" && actor.UserID == sess.GetUserID()
+	return actor.UserID != "" && actor.UserID == sess.GetUserID(), nil
 }
 
 // MCPHealthHandler returns MCP-specific health info.

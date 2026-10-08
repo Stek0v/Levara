@@ -42,6 +42,7 @@ func distillTestDB(t *testing.T) *sql.DB {
 		`CREATE TABLE memories (id TEXT PRIMARY KEY, key TEXT, value TEXT, type TEXT, owner_id TEXT,
 			collection_name TEXT, room TEXT, hall TEXT, is_pinned INTEGER DEFAULT 0, pin_priority INTEGER DEFAULT 0,
 			verification_status TEXT NOT NULL DEFAULT '', source_task_id TEXT NOT NULL DEFAULT '', source_receipt_ids TEXT NOT NULL DEFAULT '[]',
+			superseded_by TEXT NOT NULL DEFAULT '', valid_until TEXT,
 			created_at TEXT, updated_at TEXT, UNIQUE(key, owner_id, collection_name))`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
@@ -139,6 +140,24 @@ func TestChatDistillEndToEnd(t *testing.T) {
 	}
 	if count != 2 {
 		t.Fatalf("memories = %d, want 2 (upsert not duplicate)", count)
+	}
+}
+
+func TestChatDistillCreatesFreshRowAfterValidityRetirement(t *testing.T) {
+	db := distillTestDB(t)
+	deps := &distillDeps{fakeDeps: &fakeDeps{db: db}, prov: &stubDistillProvider{content: `[{"key":"retired","value":"fresh"}]`}}
+	if _, err := db.Exec(`INSERT INTO memories(id,key,value,type,owner_id,collection_name,valid_until) VALUES('old','retired','old','project','','','2026-10-08')`); err != nil {
+		t.Fatal(err)
+	}
+	if got := ToolChatDistill(context.Background(), deps, map[string]any{"platform": "codex", "session_id": "sess-d1"}); got.IsError {
+		t.Fatal(got.Content[0].Text)
+	}
+	var activeID, value string
+	if err := db.QueryRow(`SELECT id,value FROM memories WHERE key='retired' AND valid_until IS NULL`).Scan(&activeID, &value); err != nil {
+		t.Fatal(err)
+	}
+	if activeID == "old" || !strings.Contains(value, "fresh") {
+		t.Fatalf("active=%q value=%q", activeID, value)
 	}
 }
 

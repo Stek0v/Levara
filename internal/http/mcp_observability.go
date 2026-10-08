@@ -406,13 +406,12 @@ func (h *mcpHandler) toolReconcileMemory(ctx context.Context, args map[string]an
 	apply, _ := args["apply"].(bool)
 	deleteOrphans, _ := args["delete_orphans"].(bool)
 
-	// 1. SQL truth: every memory row, grouped by its sidecar. Mirrors the
-	//    /sync/export/memories projection (owner-blind — consistency is a
-	//    per-id property, not a per-owner one).
+	// 1. SQL truth: every active memory row, grouped by its sidecar. Retired
+	//    rows must have no live vector and are therefore reported as orphans.
 	type memRow struct{ id, key, value, mtype string }
 	bySidecar := map[string][]memRow{}
 	rows, err := h.cfg.DB.QueryContext(ctx,
-		Q(`SELECT id, key, value, type, collection_name FROM memories`))
+		Q(`SELECT id, key, value, type, collection_name FROM memories WHERE superseded_by='' AND valid_until IS NULL`))
 	if err != nil {
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: `{"error":"memories query failed"}`}}, IsError: true}
 	}

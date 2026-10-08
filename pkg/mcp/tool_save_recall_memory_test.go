@@ -89,6 +89,68 @@ func TestToolSupersedeMemoryPreservesHistory(t *testing.T) {
 	}
 }
 
+func TestToolRecallMemoryTreatsValidUntilAsRetired(t *testing.T) {
+	deps := setupSaveRecallMemoryDB(t)
+	for _, key := range []string{"active", "expired"} {
+		if got := ToolSaveMemory(context.Background(), deps, map[string]any{
+			"key": key, "value": "shared topic", "collection": "levara", "room": "memory", "hall": "fact",
+		}); got.IsError {
+			t.Fatalf("save %s: %s", key, got.Content[0].Text)
+		}
+	}
+	if _, err := deps.db.Exec(`UPDATE memories SET valid_until='2026-10-08T00:00:00Z' WHERE key='expired'`); err != nil {
+		t.Fatal(err)
+	}
+
+	active := decodeRecallResults(t, ToolRecallMemory(context.Background(), deps, map[string]any{
+		"query": "shared topic", "collection": "levara",
+	}))
+	if len(active) != 1 || active[0]["key"] != "active" || active[0]["supersession_state"] != "active" {
+		t.Fatalf("active recall=%+v", active)
+	}
+	history := decodeRecallResults(t, ToolRecallMemory(context.Background(), deps, map[string]any{
+		"query": "shared topic", "collection": "levara", "include_superseded": true,
+	}))
+	if len(history) != 2 {
+		t.Fatalf("history=%+v", history)
+	}
+	states := map[string]any{}
+	for _, row := range history {
+		states[row["key"].(string)] = row["supersession_state"]
+	}
+	if states["active"] != "active" || states["expired"] != "superseded" {
+		t.Fatalf("states=%+v", states)
+	}
+}
+
+func TestToolSaveMemoryDoesNotResurrectValidityOnlyRetiredRow(t *testing.T) {
+	deps := setupSaveRecallMemoryDB(t)
+	if got := ToolSaveMemory(context.Background(), deps, map[string]any{"key": "k", "value": "old", "collection": "levara"}); got.IsError {
+		t.Fatal(got.Content[0].Text)
+	}
+	var oldID string
+	if err := deps.db.QueryRow(`SELECT id FROM memories WHERE key='k'`).Scan(&oldID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := deps.db.Exec(`UPDATE memories SET valid_until='2026-10-08T00:00:00Z' WHERE id=?`, oldID); err != nil {
+		t.Fatal(err)
+	}
+	if got := ToolSaveMemory(context.Background(), deps, map[string]any{"key": "k", "value": "new", "collection": "levara"}); got.IsError {
+		t.Fatal(got.Content[0].Text)
+	}
+	var activeID, value string
+	if err := deps.db.QueryRow(`SELECT id,value FROM memories WHERE key='k' AND valid_until IS NULL`).Scan(&activeID, &value); err != nil {
+		t.Fatal(err)
+	}
+	var retiredKey string
+	if err := deps.db.QueryRow(`SELECT key FROM memories WHERE id=?`, oldID).Scan(&retiredKey); err != nil {
+		t.Fatal(err)
+	}
+	if activeID == oldID || value != "new" || !strings.HasPrefix(retiredKey, "k#retired:") {
+		t.Fatalf("old=%s active=%s value=%q retired_key=%q", oldID, activeID, value, retiredKey)
+	}
+}
+
 func decodeRecallResults(t *testing.T, got ToolResult) []map[string]any {
 	t.Helper()
 	var out struct {

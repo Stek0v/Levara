@@ -53,6 +53,7 @@ func setupProjectDB(t *testing.T) *fakeDeps {
 			owner_id TEXT NOT NULL DEFAULT '',
 			collection_name TEXT NOT NULL DEFAULT '',
 			superseded_by TEXT NOT NULL DEFAULT '',
+			valid_until TEXT,
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 		);

@@ -403,7 +403,7 @@ func (db *Levara) BatchInsert(records []BatchItem) []error {
 			continue
 		}
 		if len(rec.Vector) != db.dim {
-			errs = append(errs, batchError(i, rec.ID, fmt.Errorf("vector dim %d != expected %d", len(rec.Vector), db.dim)))
+			errs = append(errs, batchError(i, rec.ID, classifyError(ErrDimMismatch, "vector dim %d != expected %d", len(rec.Vector), db.dim)))
 			continue
 		}
 		if err := validateWALRecord(OpInsert, rec.ID, rec.Vector, bytes, FileLocation{}); err != nil {
@@ -608,7 +608,7 @@ func (db *Levara) Delete(id string) error {
 func (db *Levara) deleteLocked(id string) error {
 	idx, ok := db.index[id]
 	if !ok {
-		return fmt.Errorf("record %q not found", id)
+		return classifyError(ErrRecordNotFound, "record %q not found", id)
 	}
 	if err := db.wal.WriteEntryNoFlush(OpDelete, id, nil, nil, FileLocation{}); err != nil {
 		return fmt.Errorf("wal delete: %w", err)

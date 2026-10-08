@@ -32,6 +32,7 @@ func TestMemoryIndexDelayedDeletePreservesRestoredMemory(t *testing.T) {
 		}{
 			{"restored", `UPDATE memories SET superseded_by='' WHERE id=$1`, true, false},
 			{"retired", "", false, false},
+			{"expired", "", false, false},
 			{"missing", `DELETE FROM memories WHERE id=$1`, false, false},
 			{"foreign_owner", "", true, false},
 			{"sibling_collection", "", true, false},
@@ -51,6 +52,9 @@ func TestMemoryIndexDelayedDeletePreservesRestoredMemory(t *testing.T) {
 				}
 				// A stale job carries its original scope; physical memory IDs never move scopes.
 				f.exec(`INSERT INTO memories(id,key,value,type,owner_id,collection_name,superseded_by) VALUES($1,$1,'value','user',$2,$3,'abstract')`, id, owner, collection)
+				if tc.name == "expired" {
+					f.exec(`UPDATE memories SET superseded_by='',valid_until='2026-10-08T00:00:00Z' WHERE id=$1`, id)
+				}
 				if tc.change != "" {
 					f.exec(tc.change, id)
 				}
@@ -102,6 +106,7 @@ func TestMemoryIndexChecksSourceAfterEmbed(t *testing.T) {
 			{"key", "UPDATE memories SET key='changed' WHERE id=$1", false},
 			{"value", "UPDATE memories SET value='changed' WHERE id=$1", false},
 			{"retired", "UPDATE memories SET superseded_by='abstract' WHERE id=$1", false},
+			{"expired", "UPDATE memories SET valid_until='2026-10-08T00:00:00Z' WHERE id=$1", false},
 			{"rollback", "", true},
 		} {
 			t.Run(tc.name, func(t *testing.T) {

@@ -148,6 +148,10 @@ func ToolChatDistill(ctx context.Context, deps Deps, args map[string]any) ToolRe
 			return errorResult(err.Error())
 		}
 		var canonicalID, canonicalKey, canonicalType string
+		if err := archiveRetiredMemoryKey(opCtx, saveTx, deps, c.Key, ownerID, collectionName, now); err != nil {
+			releaseSave()
+			return errorResult("archive retired candidate " + c.Key + ": " + err.Error())
+		}
 		if err := saveTx.QueryRowContext(opCtx, deps.Q(`
 			INSERT INTO memories (id, key, value, type, owner_id, collection_name, room, hall, is_pinned, pin_priority, verification_status, source_task_id, source_receipt_ids, created_at, updated_at)
 			VALUES ($1, $2, $3, 'project', $4, $5, $6, $7, false, 0, 'unverified', '', '[]', $8, $9)
@@ -181,7 +185,7 @@ func ToolChatDistill(ctx context.Context, deps Deps, args map[string]any) ToolRe
 					return nil, err
 				}
 				var currentKey, currentValue, currentType string
-				query := "SELECT key,value,type FROM memories WHERE id=$1 AND owner_id=$2 AND collection_name=$3 AND superseded_by=''"
+				query := "SELECT key,value,type FROM memories WHERE id=$1 AND owner_id=$2 AND collection_name=$3 AND superseded_by='' AND valid_until IS NULL"
 				if !memoryCommitSQLite(deps) {
 					query += " FOR SHARE"
 				}

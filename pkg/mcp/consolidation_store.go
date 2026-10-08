@@ -183,7 +183,7 @@ func (s *sqlStore) Candidates(ctx context.Context, collection, room, hall string
 	if err != nil {
 		return nil, err
 	}
-	conds := []string{"collection_name=$1", "owner_id=$2", "superseded_by=''", sqlcompat.BoolFalse("is_pinned"), "tier='raw'"}
+	conds := []string{"collection_name=$1", "owner_id=$2", "superseded_by=''", "valid_until IS NULL", sqlcompat.BoolFalse("is_pinned"), "tier='raw'"}
 	args := []any{collection, owner}
 	for _, f := range []struct{ key, value string }{{"room", room}, {"hall", hall}} {
 		if f.value != "" {
@@ -228,7 +228,7 @@ func (s *sqlStore) verifyCaptured(ctx context.Context, tx *sql.Tx, owner string,
 		if err != nil {
 			return err
 		}
-		if rowString(r, "owner_id") != owner || rowString(r, "collection_name") != s.collection || rowString(r, "superseded_by") != "" || rowString(r, "tier") != "raw" || rowString(r, "is_pinned") != "0" || consolidationHash(r) != consolidationHash(before) {
+		if rowString(r, "owner_id") != owner || rowString(r, "collection_name") != s.collection || rowString(r, "superseded_by") != "" || r["valid_until"] != nil || rowString(r, "tier") != "raw" || rowString(r, "is_pinned") != "0" || consolidationHash(r) != consolidationHash(before) {
 			return errors.New("consolidation memory changed since planning")
 		}
 	}

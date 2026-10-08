@@ -1,7 +1,6 @@
 package http
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -85,7 +84,11 @@ func (h *mcpHandler) handleResourcesRead(c *fiber.Ctx, req jsonRPCRequest) error
 		if len(segments) > 1 {
 			collName = segments[1]
 		}
-		content = h.resourceMemories(context.Background(), memType, collName)
+		ownerID, ok := verifiedMCPResourceOwner(c)
+		if !ok && h.cfg.RequireAuth {
+			return c.SendStatus(fiber.StatusNotFound)
+		}
+		content = h.resourceMemories(c.UserContext(), ownerID, memType, collName)
 
 	default:
 		return c.JSON(jsonRPCResponse{JSONRPC: "2.0", ID: req.ID,

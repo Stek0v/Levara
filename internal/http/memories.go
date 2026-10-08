@@ -97,6 +97,10 @@ func saveMemoryHandler(cfg APIConfig) fiber.Handler {
 			return c.Status(500).JSON(fiber.Map{"detail": "save failed"})
 		}
 		defer tx.Rollback()
+		if _, err := tx.ExecContext(ctx, Q(`UPDATE memories SET key=key || '#retired:' || id,updated_at=$1
+			WHERE key=$2 AND owner_id=$3 AND collection_name=$4 AND (superseded_by<>'' OR valid_until IS NOT NULL)`), now, req.Key, req.OwnerID, req.CollectionName); err != nil {
+			return c.Status(500).JSON(fiber.Map{"detail": "save failed"})
+		}
 
 		// Upsert: insert or update value+type+updated_at on conflict.
 		// RETURNING id yields the canonical row id (existing id on conflict)
@@ -170,7 +174,7 @@ func listMemoriesHandler(cfg APIConfig) fiber.Handler {
 
 		// Honour documented collection/room/hall query filters (finding M14,
 		// 2026-09-03 review): they were parsed in swagger but ignored here.
-		conds := []string{"(owner_id = $1 OR owner_id = '')", "superseded_by = ''"}
+		conds := []string{"(owner_id = $1 OR owner_id = '')", "superseded_by = ''", "valid_until IS NULL"}
 		args := []any{ownerID}
 		pos := 2
 		for _, f := range []struct{ name, col string }{

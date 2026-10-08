@@ -57,9 +57,12 @@ func validMCPSession(c *fiber.Ctx, db *sql.DB, requireAuth bool, payload *jwtPay
 func (h *mcpHandler) authenticateMCPRequest(c *fiber.Ctx) (accesspkg.Actor, error) {
 	if apiKey := firstNonEmpty(c.Get("X-API-Key"), c.Get("X-Api-Key")); apiKey != "" {
 		if h.cfg.DB == nil {
-			return accesspkg.Actor{}, fmt.Errorf("database required for API key auth")
+			return accesspkg.Actor{}, fmt.Errorf("%w: database required for API key auth", errIdentityUnavailable)
 		}
-		id := verifyAPIKey(c.UserContext(), h.cfg.DB, apiKey)
+		id, err := verifyAPIKey(c.UserContext(), h.cfg.DB, apiKey)
+		if err != nil {
+			return accesspkg.Actor{}, fmt.Errorf("%w: %v", errIdentityUnavailable, err)
+		}
 		if !id.Valid() {
 			return accesspkg.Actor{}, fmt.Errorf("invalid API key")
 		}

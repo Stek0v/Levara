@@ -326,7 +326,7 @@ func (r *consolidationRunner) RunOnce(ctx context.Context) error {
 	if !r.deps.MetadataActor(ctx).TrustedLocal {
 		return errors.New("consolidation maintenance requires verified trusted-local authority")
 	}
-	rows, err := r.deps.DB().QueryContext(ctx, `SELECT DISTINCT collection_name,owner_id FROM memories WHERE superseded_by='' AND tier='raw' ORDER BY collection_name,owner_id`)
+	rows, err := r.deps.DB().QueryContext(ctx, `SELECT DISTINCT collection_name,owner_id FROM memories WHERE superseded_by='' AND valid_until IS NULL AND tier='raw' ORDER BY collection_name,owner_id`)
 	if err != nil {
 		return err
 	}

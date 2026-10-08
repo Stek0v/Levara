@@ -10,13 +10,18 @@ package grpc
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sort"
 
 	"github.com/stek0v/levara/internal/store"
 	pbv1 "github.com/stek0v/levara/proto/pb"
 	pbv2 "github.com/stek0v/levara/proto/pb/v2"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
+
+var errV2InvalidArgument = errors.New("invalid argument")
 
 // ServiceV2 implements pbv2.LevaraServiceV2Server by delegating to an
 // embedded v1 Service. The v1 Service stays the source of truth for
@@ -34,17 +39,26 @@ func NewServiceV2(v1 *Service) *ServiceV2 {
 	return &ServiceV2{v1: v1}
 }
 
-// Insert — canonical v2 write. Delegates to the v1 handler and
-// translates the plain error string into ErrorDetail.
+// Insert — canonical v2 write. Delegates to the shared v1 implementation and
+// translates its typed failure into ErrorDetail.
 func (s *ServiceV2) Insert(ctx context.Context, req *pbv2.InsertReq) (*pbv2.InsertResp, error) {
-	v1Resp, err := s.v1.Insert(ctx, &pbv1.InsertReq{
+	if req.GetCollection() == "" || req.GetId() == "" || len(req.GetVector()) == 0 {
+		return &pbv2.InsertResp{Error: errorDetailWithCode(pbv2.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, "collection, id, and vector are required")}, nil
+	}
+	if len(req.GetMetadataJson()) > 0 {
+		var metadata map[string]any
+		if err := json.Unmarshal(req.GetMetadataJson(), &metadata); err != nil {
+			return &pbv2.InsertResp{Error: errorDetailWithCode(pbv2.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, "invalid metadata JSON")}, nil
+		}
+	}
+	v1Resp, cause := s.v1.insert(&pbv1.InsertReq{
 		Collection:   req.GetCollection(),
 		Id:           req.GetId(),
 		Vector:       req.GetVector(),
 		MetadataJson: string(req.GetMetadataJson()),
 	})
-	if err != nil {
-		return nil, err
+	if cause != nil {
+		return &pbv2.InsertResp{Error: errorDetailFromError(cause)}, nil
 	}
 	return insertRespFromV1(v1Resp), nil
 }
@@ -67,6 +81,9 @@ func (s *ServiceV2) Create(ctx context.Context, req *pbv2.InsertReq) (*pbv2.Inse
 // ErrorDetail entries so clients can programmatically recover from
 // partial failures.
 func (s *ServiceV2) BatchInsert(ctx context.Context, req *pbv2.BatchInsertReq) (*pbv2.BatchInsertResp, error) {
+	if req.GetCollection() == "" || len(req.GetItems()) == 0 {
+		return &pbv2.BatchInsertResp{Failed: int32(len(req.GetItems())), Error: errorDetailWithCode(pbv2.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, "collection and items are required")}, nil
+	}
 	// v1 calls the items "records" in its BatchInsertReq — the v2 proto
 	// renames to "items" for clarity (an Insert *is* an item, not a
 	// record). Translate at the boundary.
@@ -89,12 +106,15 @@ func (s *ServiceV2) BatchInsert(ctx context.Context, req *pbv2.BatchInsertReq) (
 		return resp, nil
 	}
 	for _, failure := range orderedBatchErrors(errs) {
-		resp.Failures = append(resp.Failures, &pbv2.BatchInsertFailure{Id: failure.ID, Index: int32(failure.Index), Error: errorDetail(failure.Err.Error())})
+		resp.Failures = append(resp.Failures, &pbv2.BatchInsertFailure{Id: failure.ID, Index: int32(failure.Index), Error: errorDetailFromError(failure.Err)})
 	}
 	return resp, nil
 }
 
 func (s *ServiceV2) Delete(ctx context.Context, req *pbv2.DeleteReq) (*pbv2.DeleteResp, error) {
+	if req.GetCollection() == "" || len(req.GetIds()) == 0 {
+		return &pbv2.DeleteResp{Failed: int32(len(req.GetIds())), Error: errorDetailWithCode(pbv2.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, "collection and ids are required")}, nil
+	}
 	v1Req := &pbv1.DeleteReq{
 		Collection: req.GetCollection(),
 		Ids:        req.GetIds(),
@@ -106,7 +126,7 @@ func (s *ServiceV2) Delete(ctx context.Context, req *pbv2.DeleteReq) (*pbv2.Dele
 		return resp, nil
 	}
 	for _, failure := range orderedBatchErrors(errs) {
-		resp.Failures = append(resp.Failures, &pbv2.DeleteFailure{Id: failure.ID, Index: int32(failure.Index), Error: errorDetail(failure.Err.Error())})
+		resp.Failures = append(resp.Failures, &pbv2.DeleteFailure{Id: failure.ID, Index: int32(failure.Index), Error: errorDetailFromError(failure.Err)})
 	}
 	return resp, nil
 }
@@ -159,11 +179,46 @@ func errFromV1(err error) *pbv2.ErrorDetail {
 	if err == nil {
 		return nil
 	}
-	return errorDetail(err.Error())
+	return errorDetailFromError(err)
 }
 
 func errorDetail(message string) *pbv2.ErrorDetail {
-	return &pbv2.ErrorDetail{Code: 1, Message: message}
+	return errorDetailWithCode(pbv2.ErrorCode_ERROR_CODE_LEGACY, message)
+}
+
+func errorDetailWithCode(code pbv2.ErrorCode, message string) *pbv2.ErrorDetail {
+	return &pbv2.ErrorDetail{Code: code, Message: message}
+}
+
+func errorDetailFromError(err error) *pbv2.ErrorDetail {
+	if err == nil {
+		return nil
+	}
+	code := pbv2.ErrorCode_ERROR_CODE_LEGACY
+	switch {
+	case errors.Is(err, errV2InvalidArgument), errors.Is(err, store.ErrDimMismatch):
+		code = pbv2.ErrorCode_ERROR_CODE_INVALID_ARGUMENT
+	case errors.Is(err, store.ErrCollectionNotFound), errors.Is(err, store.ErrRecordNotFound):
+		code = pbv2.ErrorCode_ERROR_CODE_NOT_FOUND
+	case errors.Is(err, store.ErrEmbeddingContractMismatch):
+		code = pbv2.ErrorCode_ERROR_CODE_FAILED_PRECONDITION
+	default:
+		if grpcStatus, ok := status.FromError(err); ok {
+			switch grpcStatus.Code() {
+			case codes.InvalidArgument:
+				code = pbv2.ErrorCode_ERROR_CODE_INVALID_ARGUMENT
+			case codes.NotFound:
+				code = pbv2.ErrorCode_ERROR_CODE_NOT_FOUND
+			case codes.FailedPrecondition:
+				code = pbv2.ErrorCode_ERROR_CODE_FAILED_PRECONDITION
+			case codes.Unavailable:
+				code = pbv2.ErrorCode_ERROR_CODE_UNAVAILABLE
+			case codes.Internal:
+				code = pbv2.ErrorCode_ERROR_CODE_INTERNAL
+			}
+		}
+	}
+	return errorDetailWithCode(code, err.Error())
 }
 
 func orderedBatchErrors(errs []error) []*store.BatchError {

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -165,19 +166,26 @@ func (s *Service) HasCollection(_ context.Context, req *pb.HasCollectionReq) (*p
 }
 
 func (s *Service) Insert(_ context.Context, req *pb.InsertReq) (*pb.StatusResp, error) {
+	resp, _ := s.insert(req)
+	return resp, nil
+}
+
+func (s *Service) insert(req *pb.InsertReq) (*pb.StatusResp, error) {
 	if req.Collection == "" || req.Id == "" || len(req.Vector) == 0 {
-		return &pb.StatusResp{Ok: false, Error: "collection, id, and vector are required"}, nil
+		err := fmt.Errorf("%w: collection, id, and vector are required", errV2InvalidArgument)
+		return &pb.StatusResp{Ok: false, Error: "collection, id, and vector are required"}, err
 	}
 
 	var meta map[string]any
 	if req.MetadataJson != "" {
 		if err := json.Unmarshal([]byte(req.MetadataJson), &meta); err != nil {
-			return &pb.StatusResp{Ok: false, Error: fmt.Sprintf("invalid metadata JSON: %v", err)}, nil
+			cause := fmt.Errorf("%w: invalid metadata JSON: %v", errV2InvalidArgument, err)
+			return &pb.StatusResp{Ok: false, Error: cause.Error()}, cause
 		}
 	}
 
 	if err := s.collections.Insert(req.Collection, req.Id, req.Vector, meta); err != nil {
-		return &pb.StatusResp{Ok: false, Error: err.Error()}, nil
+		return &pb.StatusResp{Ok: false, Error: err.Error()}, err
 	}
 	return &pb.StatusResp{Ok: true}, nil
 }
@@ -193,19 +201,37 @@ func (s *Service) batchInsert(req *pb.BatchInsertReq) (*pb.BatchInsertResp, []er
 	}
 
 	items := make([]store.BatchItem, 0, len(req.Records))
-	for _, r := range req.Records {
+	originalIndexes := make([]int, 0, len(req.Records))
+	var errs []error
+	for i, r := range req.Records {
 		var meta map[string]any
 		if r.MetadataJson != "" {
-			json.Unmarshal([]byte(r.MetadataJson), &meta)
+			if err := json.Unmarshal([]byte(r.MetadataJson), &meta); err != nil {
+				errs = append(errs, &store.BatchError{Index: i, ID: r.Id, Err: fmt.Errorf("%w: invalid metadata JSON: %v", errV2InvalidArgument, err)})
+				continue
+			}
 		}
 		items = append(items, store.BatchItem{
 			ID:     r.Id,
 			Vector: r.Vector,
 			Data:   meta,
 		})
+		originalIndexes = append(originalIndexes, i)
 	}
 
-	errs := s.collections.BatchInsert(req.Collection, items)
+	for _, itemErr := range s.collections.BatchInsert(req.Collection, items) {
+		var failure *store.BatchError
+		if errors.As(itemErr, &failure) && failure.Index >= 0 && failure.Index < len(originalIndexes) {
+			original := originalIndexes[failure.Index]
+			errs = append(errs, &store.BatchError{Index: original, ID: req.Records[original].Id, Err: failure.Err})
+		} else {
+			errs = append(errs, itemErr)
+		}
+	}
+	sort.SliceStable(errs, func(i, j int) bool {
+		var left, right *store.BatchError
+		return errors.As(errs[i], &left) && errors.As(errs[j], &right) && left.Index < right.Index
+	})
 	failed := make(map[int]struct{}, len(errs))
 	for _, err := range errs {
 		var batchErr *store.BatchError
@@ -238,7 +264,7 @@ func (s *Service) batchInsert(req *pb.BatchInsertReq) (*pb.BatchInsertResp, []er
 	}
 
 	resp := &pb.BatchInsertResp{
-		Inserted: int32(len(items) - len(errs)),
+		Inserted: int32(len(req.Records) - len(errs)),
 		Failed:   int32(len(errs)),
 	}
 	for _, e := range errs {

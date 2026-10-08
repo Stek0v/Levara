@@ -162,6 +162,29 @@ func TestMemoryOverwriteResetsChangedEvidenceOnly(t *testing.T) {
 	})
 }
 
+func TestMemorySaveCreatesFreshRowAfterValidityRetirement(t *testing.T) {
+	documentHTTPDialects(t, func(t *testing.T, f *documentHTTPFixture) {
+		app := memoryScopeTestApp(f)
+		f.exec(`INSERT INTO memories(id,key,value,type,owner_id,collection_name,valid_until)
+			VALUES('retired','same-key','old','project','alice','main','2026-10-08')`)
+		status, raw := memoryScopeRequest(t, app, http.MethodPost, "/memories", `{"key":"same-key","value":"new","type":"project","collection_name":"main"}`)
+		if status != http.StatusCreated {
+			t.Fatalf("status=%d body=%s", status, raw)
+		}
+		var activeID, value string
+		if err := f.db.QueryRow(`SELECT id,value FROM memories WHERE key='same-key' AND valid_until IS NULL`).Scan(&activeID, &value); err != nil {
+			t.Fatal(err)
+		}
+		var retiredKey string
+		if err := f.db.QueryRow(`SELECT key FROM memories WHERE id='retired'`).Scan(&retiredKey); err != nil {
+			t.Fatal(err)
+		}
+		if activeID == "retired" || value != "new" || !strings.HasPrefix(retiredKey, "same-key#retired:") {
+			t.Fatalf("active=%q value=%q retired_key=%q", activeID, value, retiredKey)
+		}
+	})
+}
+
 func TestMemorySaveRejectsUnknownHall(t *testing.T) {
 	documentHTTPDialects(t, func(t *testing.T, f *documentHTTPFixture) {
 		status, raw := memoryScopeRequest(t, memoryScopeTestApp(f), http.MethodPost, "/memories", `{"key":"hall","value":"value","hall":"bogus"}`)

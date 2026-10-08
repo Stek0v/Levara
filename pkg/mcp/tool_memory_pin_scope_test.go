@@ -21,6 +21,7 @@ func TestToolMemoryPinCollectionScope(t *testing.T) {
 					room TEXT, hall TEXT, is_pinned BOOLEAN NOT NULL DEFAULT FALSE,
 					pin_priority INTEGER NOT NULL DEFAULT 0,
 					created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL,
+					superseded_by TEXT NOT NULL DEFAULT '', valid_until TIMESTAMPTZ,
 					UNIQUE(key, owner_id, collection_name)
 				)`); err != nil {
 					t.Fatal(err)

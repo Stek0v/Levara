@@ -24,6 +24,24 @@ import (
 // and surface it instead of degrading to a silent empty result.
 var ErrDimMismatch = errors.New("query dimension mismatch")
 
+// ErrCollectionNotFound identifies operations against a missing collection.
+var ErrCollectionNotFound = errors.New("collection not found")
+
+// ErrRecordNotFound identifies operations against a missing record.
+var ErrRecordNotFound = errors.New("record not found")
+
+type classifiedError struct {
+	cause   error
+	message string
+}
+
+func (e classifiedError) Error() string { return e.message }
+func (e classifiedError) Unwrap() error { return e.cause }
+
+func classifyError(cause error, format string, args ...any) error {
+	return classifiedError{cause: cause, message: fmt.Sprintf(format, args...)}
+}
+
 // ErrEmbeddingContractMismatch is returned when a write carries an embedding
 // version that differs from the target collection's vector-space contract.
 var ErrEmbeddingContractMismatch = errors.New("embedding contract mismatch")
@@ -513,7 +531,7 @@ func (cm *CollectionManager) Get(name string) (*Levara, error) {
 
 	db, exists := cm.collections[name]
 	if !exists {
-		return nil, fmt.Errorf("collection %q not found", name)
+		return nil, classifyError(ErrCollectionNotFound, "collection %q not found", name)
 	}
 	return db, nil
 }
@@ -587,7 +605,7 @@ func (cm *CollectionManager) InsertDeferredHook(collection, id string, vec []flo
 	}
 	if m != nil && m.EmbeddingDim > 0 && len(vec) != m.EmbeddingDim {
 		cm.mu.RUnlock()
-		return nil, fmt.Errorf("dimension mismatch: vector dim=%d, collection %q expects dim=%d (model=%s)",
+		return nil, classifyError(ErrDimMismatch, "dimension mismatch: vector dim=%d, collection %q expects dim=%d (model=%s)",
 			len(vec), collection, m.EmbeddingDim, m.EmbeddingModel)
 	}
 	if err := validateEmbeddingContract(collection, m, meta); err != nil {
@@ -637,7 +655,7 @@ func (cm *CollectionManager) BatchInsert(collection string, records []BatchItem)
 	var errs []error
 	for i, r := range records {
 		if m != nil && m.EmbeddingDim > 0 && len(r.Vector) != m.EmbeddingDim {
-			errs = append(errs, batchError(i, r.ID, fmt.Errorf("dimension mismatch: vector dim=%d, collection %q expects dim=%d (model=%s)", len(r.Vector), collection, m.EmbeddingDim, m.EmbeddingModel)))
+			errs = append(errs, batchError(i, r.ID, classifyError(ErrDimMismatch, "dimension mismatch: vector dim=%d, collection %q expects dim=%d (model=%s)", len(r.Vector), collection, m.EmbeddingDim, m.EmbeddingModel)))
 			continue
 		}
 		if err := validateEmbeddingContract(collection, m, r.Data); err != nil {

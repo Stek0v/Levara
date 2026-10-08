@@ -71,8 +71,8 @@ func mcpAdminSummaryHandler(cfg APIConfig) fiber.Handler {
 		sessions, _ := listMCPAdminSessions(c.UserContext(), cfg, 5)
 		pinned, missingMetadata := 0, 0
 		if cfg.DB != nil {
-			_ = cfg.DB.QueryRowContext(c.UserContext(), Q(`SELECT COUNT(*) FROM memories WHERE is_pinned = TRUE`)).Scan(&pinned)
-			_ = cfg.DB.QueryRowContext(c.UserContext(), Q(`SELECT COUNT(*) FROM memories WHERE COALESCE(room, '') = '' OR COALESCE(hall, '') = ''`)).Scan(&missingMetadata)
+			_ = cfg.DB.QueryRowContext(c.UserContext(), Q(`SELECT COUNT(*) FROM memories WHERE is_pinned = TRUE AND superseded_by = '' AND valid_until IS NULL`)).Scan(&pinned)
+			_ = cfg.DB.QueryRowContext(c.UserContext(), Q(`SELECT COUNT(*) FROM memories WHERE superseded_by = '' AND valid_until IS NULL AND (COALESCE(room, '') = '' OR COALESCE(hall, '') = '')`)).Scan(&missingMetadata)
 		}
 		toolsetName, toolsetSource := EffectiveMCPToolsetName()
 		return c.JSON(fiber.Map{

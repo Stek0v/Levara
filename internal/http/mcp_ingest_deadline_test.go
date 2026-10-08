@@ -110,7 +110,7 @@ func TestMCPSessionLifecycleDeadlineIncludesAuthentication(t *testing.T) {
 				continue
 			}
 			response.Body.Close()
-			if elapsed > 400*time.Millisecond || response.StatusCode != 404 {
+			if elapsed > 400*time.Millisecond || response.StatusCode != fiber.StatusServiceUnavailable {
 				t.Errorf("%s elapsed=%v status=%d", method, elapsed, response.StatusCode)
 			}
 			if h.getOrValidateSession(session) == nil {

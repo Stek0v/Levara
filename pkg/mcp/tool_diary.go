@@ -80,7 +80,6 @@ func ToolDiaryWrite(ctx context.Context, deps Deps, args map[string]any) ToolRes
 		return errorResult(err.Error())
 	}
 	collectionName, _ := args["collection"].(string)
-	exec := db.ExecContext
 	var tx *sql.Tx
 	var policy access.SQLPolicy
 	if !legacy {
@@ -90,13 +89,21 @@ func ToolDiaryWrite(ctx context.Context, deps Deps, args map[string]any) ToolRes
 			return errorResult(err.Error())
 		}
 		defer tx.Rollback()
-		exec = tx.ExecContext
+	} else {
+		tx, err = db.BeginTx(ctx, nil)
+		if err != nil {
+			return errorResult(err.Error())
+		}
+		defer tx.Rollback()
 	}
 	id := uuid.New().String()
 	now := time.Now().UTC().Format(time.RFC3339)
+	if err := archiveRetiredMemoryKey(ctx, tx, deps, key, owner, collectionName, now); err != nil {
+		return errorResult(err.Error())
+	}
 
 	// Unique placeholders keep SQLite rewriting equivalent to PostgreSQL.
-	_, err = exec(ctx, deps.Q(`
+	_, err = tx.ExecContext(ctx, deps.Q(`
 		INSERT INTO memories (id, key, value, type, owner_id, collection_name, room, hall, is_pinned, pin_priority, created_at, updated_at)
 		VALUES ($1, $2, $3, 'diary', $4, $5, '', '', FALSE, 0, $6, $7)
 		ON CONFLICT(key, owner_id, collection_name) DO UPDATE SET value = $8, updated_at = $9
@@ -110,9 +117,9 @@ func ToolDiaryWrite(ctx context.Context, deps Deps, args map[string]any) ToolRes
 		if err := diaryRecheck(ctx, policy, actor); err != nil {
 			return errorResult(err.Error())
 		}
-		if err := tx.Commit(); err != nil {
-			return errorResult(err.Error())
-		}
+	}
+	if err := tx.Commit(); err != nil {
+		return errorResult(err.Error())
 	}
 	return statusResult(true, fmt.Sprintf("Diary[%s] wrote %s", agent, key))
 }
@@ -162,6 +169,7 @@ func ToolDiaryRead(ctx context.Context, deps Deps, args map[string]any) ToolResu
 	conds = append(conds, fmt.Sprintf("owner_id = $%d", pos))
 	qargs = append(qargs, owner)
 	pos++
+	conds = append(conds, "superseded_by = ''", "valid_until IS NULL")
 	if queryStr != "" {
 		pat := "%" + queryStr + "%"
 		conds = append(conds, fmt.Sprintf("(key LIKE $%d OR value LIKE $%d)", pos, pos+1))

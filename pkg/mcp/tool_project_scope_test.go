@@ -37,7 +37,7 @@ func TestProjectContextScope(t *testing.T) {
 					d = setupProjectDB(t)
 				} else {
 					db := openPostgresMemoryTestDB(t)
-					if _, err := db.Exec(`CREATE TABLE memories(id TEXT PRIMARY KEY,key TEXT,value TEXT,type TEXT DEFAULT 'fact',owner_id TEXT NOT NULL DEFAULT '',collection_name TEXT NOT NULL DEFAULT '',superseded_by TEXT NOT NULL DEFAULT '',updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()); CREATE TABLE graph_nodes(id TEXT PRIMARY KEY,name TEXT,type TEXT); CREATE TABLE interactions(id TEXT PRIMARY KEY,query TEXT,response TEXT,created_at TIMESTAMPTZ DEFAULT NOW())`); err != nil {
+					if _, err := db.Exec(`CREATE TABLE memories(id TEXT PRIMARY KEY,key TEXT,value TEXT,type TEXT DEFAULT 'fact',owner_id TEXT NOT NULL DEFAULT '',collection_name TEXT NOT NULL DEFAULT '',superseded_by TEXT NOT NULL DEFAULT '',valid_until TIMESTAMPTZ,updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()); CREATE TABLE graph_nodes(id TEXT PRIMARY KEY,name TEXT,type TEXT); CREATE TABLE interactions(id TEXT PRIMARY KEY,query TEXT,response TEXT,created_at TIMESTAMPTZ DEFAULT NOW())`); err != nil {
 						t.Fatal(err)
 					}
 					d = &postgresMemoryDeps{fakeDeps: &fakeDeps{db: db}}

@@ -65,7 +65,7 @@ Memory migration dual-write shadow сверяет SQL до и после сво�
 | Операция | Текущая граница |
 |---|---|
 | MCP save | Пишет в owner из request context; owner_id/actor_id аргументы не выбирают владельца. Повторный upsert затрагивает только ту же key/owner/collection identity |
-| MCP recall/list/pinned часть wake_up | `(owner_id=current OR owner_id='')`; по умолчанию active (`superseded_by=''`). Anonymous current='' получает shared rows |
+| MCP recall/list/pinned часть wake_up | `(owner_id=current OR owner_id='')`; active означает одновременно `superseded_by=''` и `valid_until IS NULL`. Anonymous current='' получает shared rows |
 | MCP pin/unpin | Сохраняет тот же own/shared predicate; own и shared с одним key в выбранной collection меняются вместе. Это существующее правило именно этих операций; переносить его на новый entity нельзя |
 | MCP delete_memory | Точная personal row по ID либо однозначному key/optional collection; ambiguous key — ошибка. Shared delete требует explicit ID и live administrator либо допустимый trusted-local context; это отдельная policy |
 | MCP supersede / Memory Commit | Shared mutation требует administrator/trusted-local permission и credential checks; обычная доступность shared для чтения такого права не выдаёт |
@@ -82,6 +82,8 @@ REST контракт сейчас расходится с MCP: POST /memories �
 Supersession атомарно архивирует старый key, устанавливает replacement ID/valid_until/reason и создаёт новую active запись; новый ряд по текущему handler не наследует pin (false/0). Обычный `save_memory(supersedes_memory_id=...)` задаёт link provenance, но сам не архивирует предшественника. Current recall исключает retired записи, `include_superseded=true` объединяет bounded literal/semantic/history paths. Для active replacement причина и timestamp фактического retirement предшественника наследуются только по reciprocal link в том же owner/collection. Provenance-only link не наследует metadata другого замещения. Literal historical match остаётся доступен без embedder и при отсутствии среди первых 10 semantic candidates; unlinked historical semantic полнота вне этого набора не гарантируется. Archived vectors намеренно не публикуются заново. [Historical recall](../../pkg/mcp/tool_memory_history.go).
 
 MCP save/supersede/commit derives `unverified` без evidence и `receipt-validated` после проверки source task и receipts. Receipts должны принадлежать тому же owner/task, иметь pass и current workspace revision; command evidence требует явно заданный exit_code=0; artifact evidence проверяется по URI/digest. Malformed, foreign, stale или failed evidence отвергается. Caller label `verified` сам по себе ничего не авторизует. Checkpoints, receipts и временный progress остаются Task ledger; promotion — отдельная проверенная граница.
+
+`task_memory_links(relation='produced')` подтверждает, что Task произвёл текущий семантический fingerprint строки: `value`, `type`, `room`, `hall`. Обе SQL-схемы атомарно удаляют только такую ссылку при изменении любого из этих полей. Exact retry и изменения pin/evidence/timestamps ссылку сохраняют; rollback восстанавливает её вместе с обновлением. Supersession оставляет историческую строку и её связь, а новая строка получает собственную связь через Task promotion.
 
 Есть два известных mismatch, которые не расширяют публичный vocabulary:
 

@@ -535,6 +535,7 @@ func (h *mcpHandler) checkMemoryStaleness(ctx context.Context) doctorCheck {
 	rows, err := h.cfg.DB.QueryContext(ctx, Q(`
 		SELECT COALESCE(room, 'unset') as room, MIN(updated_at) as oldest, COUNT(*) as cnt
 		FROM memories
+		WHERE superseded_by = '' AND valid_until IS NULL
 		GROUP BY room
 		ORDER BY oldest ASC
 		LIMIT 10

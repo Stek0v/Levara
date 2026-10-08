@@ -58,7 +58,7 @@ func DeleteMemory(ctx context.Context, deps Deps, req DeleteMemoryRequest) (Dele
 	}
 
 	result, err := tx.ExecContext(ctx, deps.Q(`DELETE FROM memories
-		WHERE id=$1 AND key=$2 AND owner_id=$3 AND collection_name=$4 AND superseded_by=''`),
+		WHERE id=$1 AND key=$2 AND owner_id=$3 AND collection_name=$4 AND superseded_by='' AND valid_until IS NULL`),
 		target.ID, target.Key, target.OwnerID, target.Collection)
 	if err != nil {
 		return DeletedMemory{}, err
@@ -122,7 +122,7 @@ func beginMemoryDelete(ctx context.Context, deps Deps) (*sql.Tx, access.Metadata
 func resolveMemoryDeleteTarget(ctx context.Context, tx *sql.Tx, deps Deps, actor access.MetadataActor, req DeleteMemoryRequest) (DeletedMemory, error) {
 	if req.MemoryID != "" {
 		row := tx.QueryRowContext(ctx, deps.Q(`SELECT id,key,collection_name,owner_id FROM memories
-			WHERE id=$1 AND (owner_id=$2 OR owner_id='') AND superseded_by=''`), req.MemoryID, actor.UserID)
+			WHERE id=$1 AND (owner_id=$2 OR owner_id='') AND superseded_by='' AND valid_until IS NULL`), req.MemoryID, actor.UserID)
 		var target DeletedMemory
 		if err := row.Scan(&target.ID, &target.Key, &target.Collection, &target.OwnerID); errors.Is(err, sql.ErrNoRows) {
 			return DeletedMemory{}, ErrMemoryDeleteNotFound
@@ -133,7 +133,7 @@ func resolveMemoryDeleteTarget(ctx context.Context, tx *sql.Tx, deps Deps, actor
 	}
 
 	query := `SELECT id,key,collection_name,owner_id FROM memories
-		WHERE key=$1 AND owner_id=$2 AND superseded_by=''`
+		WHERE key=$1 AND owner_id=$2 AND superseded_by='' AND valid_until IS NULL`
 	args := []any{req.Key, actor.UserID}
 	if req.Collection != "" {
 		query += ` AND collection_name=$3`

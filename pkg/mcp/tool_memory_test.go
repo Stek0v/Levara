@@ -38,7 +38,7 @@ func setupMemoryTestDB(t *testing.T) *fakeDeps {
 			collection_name TEXT, room TEXT, hall TEXT,
 			is_pinned INTEGER DEFAULT 0, pin_priority INTEGER DEFAULT 0,
 			created_at TEXT, updated_at TEXT,
-			superseded_by TEXT DEFAULT '', verification_status TEXT DEFAULT '',
+			superseded_by TEXT DEFAULT '', valid_until TEXT, verification_status TEXT DEFAULT '',
 			source_task_id TEXT DEFAULT '', source_receipt_ids TEXT DEFAULT '[]'
 		)`,
 	}
@@ -95,6 +95,19 @@ func TestToolListMemories_NoRowsReturnsEmpty(t *testing.T) {
 	items := decodeListMemories(t, got)
 	if len(items) != 0 {
 		t.Errorf("got %+v, want empty memories", items)
+	}
+}
+
+func TestToolListMemoriesExcludesValidityOnlyRetiredRows(t *testing.T) {
+	deps := setupMemoryTestDB(t)
+	seedMemory(t, deps.db, "active", "active", "value", "project", "", "levara", "memory", "fact", 0, 0)
+	seedMemory(t, deps.db, "expired", "expired", "value", "project", "", "levara", "memory", "fact", 0, 0)
+	if _, err := deps.db.Exec(`UPDATE memories SET valid_until='2026-10-08T00:00:00Z' WHERE id='expired'`); err != nil {
+		t.Fatal(err)
+	}
+	items := decodeListMemories(t, ToolListMemories(context.Background(), deps, map[string]any{"collection": "levara"}))
+	if len(items) != 1 || items[0]["id"] != "active" {
+		t.Fatalf("memories=%+v", items)
 	}
 }
 

@@ -65,7 +65,7 @@ func ToolListMemories(ctx context.Context, deps Deps, args map[string]any) ToolR
 		qargs = append(qargs, hall)
 	}
 
-	conds = append(conds, "superseded_by = ''")
+	conds = append(conds, "superseded_by = ''", "valid_until IS NULL")
 
 	sqlStr := `SELECT id, key, value, type, owner_id, room, hall, is_pinned, pin_priority, created_at, updated_at,
 		COALESCE(NULLIF(verification_status,''),'unverified'), COALESCE(source_task_id,''), COALESCE(source_receipt_ids,'[]') FROM memories`
@@ -155,7 +155,7 @@ func ToolPinMemory(ctx context.Context, deps Deps, args map[string]any) ToolResu
 	// Each placeholder is used once — Q (not QArgs) is sufficient.
 	sqlStr := `
 		UPDATE memories SET is_pinned = TRUE, pin_priority = $1, updated_at = $2
-		WHERE key = $3 AND (owner_id = $4 OR owner_id = '')
+		WHERE key = $3 AND (owner_id = $4 OR owner_id = '') AND superseded_by='' AND valid_until IS NULL
 	`
 	qargs := []any{priority, now, key, ownerID}
 	if collectionName != "" {
@@ -209,7 +209,7 @@ func ToolUnpinMemory(ctx context.Context, deps Deps, args map[string]any) ToolRe
 
 	sqlStr := `
 		UPDATE memories SET is_pinned = FALSE, pin_priority = 0, updated_at = $1
-		WHERE key = $2 AND (owner_id = $3 OR owner_id = '')
+		WHERE key = $2 AND (owner_id = $3 OR owner_id = '') AND superseded_by='' AND valid_until IS NULL
 	`
 	qargs := []any{now, key, ownerID}
 	if collectionName != "" {
@@ -304,7 +304,7 @@ func ToolWakeUp(ctx context.Context, deps Deps, args map[string]any) ToolResult 
 func wakeUpPinned(ctx context.Context, db *sql.DB, rewrite func(string) string, ownerID, collectionName string) []map[string]any {
 	sqlStr := fmt.Sprintf(`SELECT key, value, hall, room, pin_priority,
 		COALESCE(NULLIF(verification_status,''),'unverified'), COALESCE(source_task_id,''), COALESCE(source_receipt_ids,'[]') FROM memories
-		WHERE %s AND (owner_id = $1 OR owner_id = '') AND superseded_by = ''`, sqlcompat.BoolTrue("is_pinned"))
+		WHERE %s AND (owner_id = $1 OR owner_id = '') AND superseded_by = '' AND valid_until IS NULL`, sqlcompat.BoolTrue("is_pinned"))
 	qargs := []any{ownerID}
 	if collectionName != "" {
 		sqlStr += " AND collection_name = $2"

@@ -19,7 +19,7 @@ func TestMemoryProvenanceSurfaces(t *testing.T) {
 					id TEXT PRIMARY KEY, key TEXT, value TEXT, type TEXT DEFAULT 'project',
 					owner_id TEXT DEFAULT '', collection_name TEXT, room TEXT, hall TEXT,
 					is_pinned BOOLEAN DEFAULT FALSE, pin_priority INTEGER DEFAULT 0,
-					created_at TEXT DEFAULT '', updated_at TEXT DEFAULT '', superseded_by TEXT DEFAULT '',
+					created_at TEXT DEFAULT '', updated_at TEXT DEFAULT '', superseded_by TEXT DEFAULT '', valid_until TIMESTAMPTZ,
 					verification_status TEXT, source_task_id TEXT, source_receipt_ids TEXT)`)
 				if err != nil {
 					t.Fatal(err)

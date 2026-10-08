@@ -60,6 +60,8 @@ func TestToolMemoryPostgresPinUnpin(t *testing.T) {
 		owner_id TEXT NOT NULL DEFAULT '',
 		is_pinned BOOLEAN NOT NULL DEFAULT FALSE,
 		pin_priority INTEGER NOT NULL DEFAULT 0,
+		superseded_by TEXT NOT NULL DEFAULT '',
+		valid_until TIMESTAMPTZ,
 		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 	)`); err != nil {
 		t.Fatalf("create memories: %v", err)
@@ -111,7 +113,7 @@ func TestToolDeleteMemoryPostgresExactIDAndAmbiguousLegacy(t *testing.T) {
 		id TEXT PRIMARY KEY, key TEXT NOT NULL, value TEXT NOT NULL DEFAULT '', type TEXT NOT NULL DEFAULT '',
 		owner_id TEXT NOT NULL DEFAULT '', collection_name TEXT NOT NULL DEFAULT '', room TEXT NOT NULL DEFAULT '', hall TEXT NOT NULL DEFAULT '',
 		is_pinned BOOLEAN NOT NULL DEFAULT FALSE, pin_priority INTEGER NOT NULL DEFAULT 0,
-		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), superseded_by TEXT NOT NULL DEFAULT '',
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), superseded_by TEXT NOT NULL DEFAULT '', valid_until TIMESTAMPTZ,
 		UNIQUE(key,owner_id,collection_name)
 	)`); err != nil {
 		t.Fatal(err)

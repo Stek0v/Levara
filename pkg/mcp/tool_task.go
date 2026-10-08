@@ -1094,7 +1094,7 @@ func ToolTaskBootstrap(ctx context.Context, deps Deps, args map[string]any) Tool
 	}
 	blockers := queryMaps(ctx, db, deps.Q, `SELECT id,reason,required_decision,status,created_at FROM task_blockers WHERE task_id=$1 AND status='active' ORDER BY created_at`, taskID)
 	checkpoint := queryMaps(ctx, db, deps.Q, `SELECT id,step_id,summary,verified_json,failed_json,next_action,workspace_revision,created_at FROM task_checkpoints WHERE task_id=$1 ORDER BY created_at DESC LIMIT 1`, taskID)
-	memories := queryMaps(ctx, db, deps.Q, `SELECT id,key,value,hall,room,is_pinned,pin_priority FROM memories WHERE collection_name=$1 AND (owner_id=$2 OR owner_id='') AND superseded_by='' AND (room=$3 OR room='') AND hall IN ('decision','discovery','fact') ORDER BY is_pinned DESC,pin_priority DESC,updated_at DESC LIMIT 12`, collection, owner, room)
+	memories := queryMaps(ctx, db, deps.Q, `SELECT id,key,value,hall,room,is_pinned,pin_priority FROM memories WHERE collection_name=$1 AND (owner_id=$2 OR owner_id='') AND superseded_by='' AND valid_until IS NULL AND (room=$3 OR room='') AND hall IN ('decision','discovery','fact') ORDER BY is_pinned DESC,pin_priority DESC,updated_at DESC LIMIT 12`, collection, owner, room)
 	nextStep := map[string]any{}
 	passed := map[string]bool{}
 	for _, s := range steps {
@@ -1431,7 +1431,7 @@ func promoteTaskMemories(ctx context.Context, deps Deps, tx *sql.Tx, taskID stri
 		var memoryID, existingValue, memType, ownerID string
 		// A task publishes into its own namespace. A shared fact with the
 		// same key must not become an implicit globally writable target.
-		err := tx.QueryRowContext(ctx, deps.Q(`SELECT id,value,type,owner_id FROM memories WHERE key=$1 AND collection_name=$2 AND owner_id=$3 AND superseded_by=''`), c.key, collection, taskOwner(ctx)).Scan(&memoryID, &existingValue, &memType, &ownerID)
+		err := tx.QueryRowContext(ctx, deps.Q(`SELECT id,value,type,owner_id FROM memories WHERE key=$1 AND collection_name=$2 AND owner_id=$3 AND superseded_by='' AND valid_until IS NULL`), c.key, collection, taskOwner(ctx)).Scan(&memoryID, &existingValue, &memType, &ownerID)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return 0, 0, err
 		}
@@ -1440,7 +1440,7 @@ func promoteTaskMemories(ctx context.Context, deps Deps, tx *sql.Tx, taskID stri
 		if err == nil && changed {
 			oldID = memoryID
 			memoryID = uuid.NewString()
-			res, err := tx.ExecContext(ctx, deps.Q(`UPDATE memories SET key=$1,superseded_by=$2,supersession_reason=$3,valid_until=$4,updated_at=$5 WHERE id=$6 AND superseded_by='' AND value=$7`), c.key+"#superseded:"+oldID, memoryID, "verified long-horizon task outcome", now, now, oldID, existingValue)
+			res, err := tx.ExecContext(ctx, deps.Q(`UPDATE memories SET key=$1,superseded_by=$2,supersession_reason=$3,valid_until=$4,updated_at=$5 WHERE id=$6 AND superseded_by='' AND valid_until IS NULL AND value=$7`), c.key+"#superseded:"+oldID, memoryID, "verified long-horizon task outcome", now, now, oldID, existingValue)
 			if err != nil {
 				return 0, 0, err
 			}
@@ -1468,7 +1468,7 @@ func promoteTaskMemories(ctx context.Context, deps Deps, tx *sql.Tx, taskID stri
 				}
 			}
 		}
-		res, err := tx.ExecContext(ctx, deps.Q(`UPDATE memories SET source_task_id=$1,source_receipt_ids=$2,verification_status=$3 WHERE id=$4 AND superseded_by='' AND value=$5`), taskID, c.evidence, verification, memoryID, c.value)
+		res, err := tx.ExecContext(ctx, deps.Q(`UPDATE memories SET source_task_id=$1,source_receipt_ids=$2,verification_status=$3 WHERE id=$4 AND superseded_by='' AND valid_until IS NULL AND value=$5`), taskID, c.evidence, verification, memoryID, c.value)
 		if err != nil {
 			return 0, 0, err
 		}
@@ -1495,7 +1495,7 @@ func syncTaskMemoryIndex(ctx context.Context, deps Deps, taskID string) {
 	if !deps.EmbedAvailable() && !deps.HasCollections() {
 		return
 	}
-	rows, err := deps.DB().QueryContext(ctx, deps.Q(`SELECT m.id,m.key,m.value,m.type,m.collection_name,m.supersedes_memory_id FROM memories m JOIN task_memory_links l ON l.memory_id=m.id WHERE l.task_id=$1 AND m.superseded_by=''`), taskID)
+	rows, err := deps.DB().QueryContext(ctx, deps.Q(`SELECT m.id,m.key,m.value,m.type,m.collection_name,m.supersedes_memory_id FROM memories m JOIN task_memory_links l ON l.memory_id=m.id WHERE l.task_id=$1 AND m.superseded_by='' AND m.valid_until IS NULL`), taskID)
 	if err != nil {
 		return
 	}

@@ -124,6 +124,9 @@ func ToolSaveMemory(ctx context.Context, deps Deps, args map[string]any) ToolRes
 	sourceTaskID := evidence.SourceTaskID
 	sourceReceiptIDs := memoryReceiptJSON(evidence.SourceReceiptIDs)
 	supersedesMemoryID, _ := args["supersedes_memory_id"].(string)
+	if err := archiveRetiredMemoryKey(ctx, tx, deps, key, ownerID, collectionName, now); err != nil {
+		return toolError(err.Error())
+	}
 
 	// Reused-value columns (value/type/collection_name/room/hall/
 	// is_pinned/pin_priority/updated_at) get their own placeholders in
@@ -183,6 +186,16 @@ func memoryReceiptJSON(ids []string) string {
 	}
 	encoded, _ := json.Marshal(ids)
 	return string(encoded)
+}
+
+type memorySQLExecer interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
+func archiveRetiredMemoryKey(ctx context.Context, exec memorySQLExecer, deps Deps, key, ownerID, collection, now string) error {
+	_, err := exec.ExecContext(ctx, deps.Q(`UPDATE memories SET key=key || '#retired:' || id,updated_at=$1
+		WHERE key=$2 AND owner_id=$3 AND collection_name=$4 AND (superseded_by<>'' OR valid_until IS NOT NULL)`), now, key, ownerID, collection)
+	return err
 }
 
 // indexMemorySync vector-indexes the memory inline — before ToolSaveMemory
@@ -410,7 +423,8 @@ func ToolRecallMemory(ctx context.Context, deps Deps, args map[string]any) ToolR
 const memoryRowColumns = `id, key, value, type, owner_id, room, hall, created_at, updated_at,
 	verification_status, source_task_id, source_receipt_ids, supersedes_memory_id, superseded_by,
 	COALESCE(NULLIF(supersession_reason, ''), (SELECT supersession_reason FROM memories predecessor WHERE predecessor.id=memories.supersedes_memory_id AND predecessor.collection_name=memories.collection_name AND predecessor.owner_id=memories.owner_id AND predecessor.superseded_by=memories.id), '') AS supersession_reason,
-	COALESCE(CAST(valid_until AS TEXT), (SELECT CAST(valid_until AS TEXT) FROM memories predecessor WHERE predecessor.id=memories.supersedes_memory_id AND predecessor.collection_name=memories.collection_name AND predecessor.owner_id=memories.owner_id AND predecessor.superseded_by=memories.id), '') AS superseded_at`
+	COALESCE(CAST(valid_until AS TEXT), (SELECT CAST(valid_until AS TEXT) FROM memories predecessor WHERE predecessor.id=memories.supersedes_memory_id AND predecessor.collection_name=memories.collection_name AND predecessor.owner_id=memories.owner_id AND predecessor.superseded_by=memories.id), '') AS superseded_at,
+	CASE WHEN superseded_by='' AND valid_until IS NULL THEN 1 ELSE 0 END AS is_active`
 
 // appendMemoryFilters appends the structural filters shared by both SQL
 // recall paths — owner scope, then optional collection/room/hall, then
@@ -437,7 +451,7 @@ func appendMemoryFilters(conds []string, qargs []any, pos int, collectionName, r
 		pos++
 	}
 	if !includeSuperseded {
-		conds = append(conds, "superseded_by = ''")
+		conds = append(conds, "superseded_by = ''", "valid_until IS NULL")
 	}
 	return conds, qargs, pos
 }
@@ -448,7 +462,8 @@ func scanMemoryRows(rows *sql.Rows) ([]map[string]any, error) {
 	var results []map[string]any
 	for rows.Next() {
 		var id, key, value, typ, oid, rm, hl, ca, ua, verification, taskID, receiptJSON, supersedes, supersededBy, reason, supersededAt string
-		if err := rows.Scan(&id, &key, &value, &typ, &oid, &rm, &hl, &ca, &ua, &verification, &taskID, &receiptJSON, &supersedes, &supersededBy, &reason, &supersededAt); err != nil {
+		var active int
+		if err := rows.Scan(&id, &key, &value, &typ, &oid, &rm, &hl, &ca, &ua, &verification, &taskID, &receiptJSON, &supersedes, &supersededBy, &reason, &supersededAt, &active); err != nil {
 			return nil, err
 		}
 		var receipts []string
@@ -456,9 +471,9 @@ func scanMemoryRows(rows *sql.Rows) ([]map[string]any, error) {
 		if receipts == nil {
 			receipts = []string{}
 		}
-		state := "active"
-		if supersededBy != "" {
-			state = "superseded"
+		state := "superseded"
+		if active == 1 {
+			state = "active"
 		}
 		results = append(results, map[string]any{
 			"id": id, "key": key, "value": value, "type": typ,

@@ -436,14 +436,18 @@ func JWTMiddleware(secret string, requireAuth bool, cookieOrigins ...string) fib
 		if apiKey != "" {
 			// auth_db may be wrapped in a struct (to prevent fasthttp io.Closer auto-close)
 			authDB := extractAuthDB(c)
-			if authDB != nil {
-				id := verifyAPIKey(c.UserContext(), authDB, apiKey)
-				if id.Valid() {
-					c.Locals("verified_api_key", id)
-					c.Locals("user_id", id.UserID)
-					c.Locals("api_key_permissions", id.Permissions)
-					return c.Next()
-				}
+			if authDB == nil {
+				return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"detail": "identity service unavailable"})
+			}
+			id, err := verifyAPIKey(c.UserContext(), authDB, apiKey)
+			if err != nil {
+				return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"detail": "identity service unavailable"})
+			}
+			if id.Valid() {
+				c.Locals("verified_api_key", id)
+				c.Locals("user_id", id.UserID)
+				c.Locals("api_key_permissions", id.Permissions)
+				return c.Next()
 			}
 			return c.Status(401).JSON(fiber.Map{"detail": "invalid API key"})
 		}
@@ -604,24 +608,26 @@ func APIKeyPermissionMiddleware() fiber.Handler {
 
 // verifyAPIKey checks X-API-Key against api_keys table. Token hashing and the
 // key→user lookup stay here in the auth layer; the result is returned as the
-// transport-independent accesspkg.APIKeyIdentity (zero value when invalid).
-func verifyAPIKey(ctx context.Context, db *sql.DB, key string) accesspkg.APIKeyIdentity {
+// transport-independent accesspkg.APIKeyIdentity. A missing row is an invalid
+// credential; SQL and context failures remain distinguishable to transports.
+func verifyAPIKey(ctx context.Context, db *sql.DB, key string) (accesspkg.APIKeyIdentity, error) {
 	h := apikeyHash(key)
 	var keyID, userID, permissions string
 	err := db.QueryRowContext(ctx,
 		Q(`SELECT k.id, k.user_id, k.permissions FROM api_keys k JOIN users u ON u.id = k.user_id
 		WHERE k.key_hash = $1 AND k.revoked = FALSE AND u.is_active = true`), h,
 	).Scan(&keyID, &userID, &permissions)
-	if err != nil || keyID == "" {
-		return accesspkg.APIKeyIdentity{}
+	if errors.Is(err, sql.ErrNoRows) || err == nil && keyID == "" {
+		return accesspkg.APIKeyIdentity{}, nil
+	}
+	if err != nil {
+		return accesspkg.APIKeyIdentity{}, err
 	}
 	// Update last_used
-	db.ExecContext(ctx, Q(`UPDATE api_keys SET last_used = $1 WHERE key_hash = $2`),
-		time.Now().UTC().Format(time.RFC3339), h)
-	if ctx.Err() != nil {
-		return accesspkg.APIKeyIdentity{}
+	if _, err := db.ExecContext(ctx, Q(`UPDATE api_keys SET last_used = $1 WHERE key_hash = $2`), time.Now().UTC().Format(time.RFC3339), h); err != nil {
+		return accesspkg.APIKeyIdentity{}, err
 	}
-	return accesspkg.APIKeyIdentity{KeyID: keyID, UserID: userID, Permissions: permissions}
+	return accesspkg.APIKeyIdentity{KeyID: keyID, UserID: userID, Permissions: permissions}, nil
 }
 
 func sha256Hash(s string) string {

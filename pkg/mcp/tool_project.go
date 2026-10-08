@@ -40,7 +40,7 @@ func ToolGetProjectContext(ctx context.Context, deps Deps, args map[string]any) 
 	writeMemories := func(name string, limit int, compact bool) error {
 		rows, err := db.QueryContext(ctx, deps.Q(`SELECT key, value, type FROM memories
 			WHERE collection_name = $1 AND (owner_id = $2 OR owner_id = '')
-			AND superseded_by = '' ORDER BY updated_at DESC LIMIT $3`), name, ownerID, limit)
+			AND superseded_by = '' AND valid_until IS NULL ORDER BY updated_at DESC LIMIT $3`), name, ownerID, limit)
 		if err != nil {
 			return err
 		}

@@ -70,7 +70,7 @@ func enqueueMissingMemoryVectors(cfg APIConfig) {
 	if cfg.DB == nil || cfg.Collections == nil || cfg.MemoryIndexOutbox == nil {
 		return
 	}
-	rows, err := cfg.DB.Query(Q(`SELECT id,key,value,type,owner_id,collection_name FROM memories WHERE superseded_by=''`))
+	rows, err := cfg.DB.Query(Q(`SELECT id,key,value,type,owner_id,collection_name FROM memories WHERE superseded_by='' AND valid_until IS NULL`))
 	if err != nil {
 		return
 	}
@@ -227,11 +227,12 @@ func executeMemoryIndexJob(ctx context.Context, cfg APIConfig, job memoryindex.J
 		}
 		defer release()
 		var owner, collection, superseded string
-		err = tx.QueryRowContext(ctx, Q(`SELECT owner_id,collection_name,superseded_by FROM memories WHERE id=$1`), job.MemoryID).Scan(&owner, &collection, &superseded)
+		var validUntil sql.NullString
+		err = tx.QueryRowContext(ctx, Q(`SELECT owner_id,collection_name,superseded_by,CAST(valid_until AS TEXT) FROM memories WHERE id=$1`), job.MemoryID).Scan(&owner, &collection, &superseded, &validUntil)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		if err == nil && (owner != job.OwnerID || collection != job.Collection || superseded == "") {
+		if err == nil && (owner != job.OwnerID || collection != job.Collection || superseded == "" && !validUntil.Valid) {
 			return nil
 		}
 		if err := ctx.Err(); err != nil {
@@ -246,7 +247,7 @@ func executeMemoryIndexJob(ctx context.Context, cfg APIConfig, job memoryindex.J
 		return cfg.Collections.Delete(memoryCollectionNameHTTP(job.Collection), job.MemoryID)
 	}
 	var key, value, typ, owner, collection string
-	err := cfg.DB.QueryRowContext(ctx, Q(`SELECT key,value,type,owner_id,collection_name FROM memories WHERE id=$1 AND superseded_by=''`), job.MemoryID).Scan(&key, &value, &typ, &owner, &collection)
+	err := cfg.DB.QueryRowContext(ctx, Q(`SELECT key,value,type,owner_id,collection_name FROM memories WHERE id=$1 AND superseded_by='' AND valid_until IS NULL`), job.MemoryID).Scan(&key, &value, &typ, &owner, &collection)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -279,7 +280,7 @@ func executeMemoryIndexJob(ctx context.Context, cfg APIConfig, job memoryindex.J
 		defer release()
 		// The embedding input is key/value. A metadata-only type update can
 		// reuse the running digest job; publish its current SQL type.
-		err = tx.QueryRowContext(ctx, Q(`SELECT type FROM memories WHERE id=$1 AND key=$2 AND value=$3 AND owner_id=$4 AND collection_name=$5 AND superseded_by=''`), job.MemoryID, key, value, owner, collection).Scan(&typ)
+		err = tx.QueryRowContext(ctx, Q(`SELECT type FROM memories WHERE id=$1 AND key=$2 AND value=$3 AND owner_id=$4 AND collection_name=$5 AND superseded_by='' AND valid_until IS NULL`), job.MemoryID, key, value, owner, collection).Scan(&typ)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
