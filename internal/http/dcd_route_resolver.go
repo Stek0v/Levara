@@ -13,6 +13,7 @@ import (
 type dcdRouteScope struct {
 	OwnerID           string
 	TeamID            string
+	ExactTenant       bool
 	AllowedDatasetIDs []string
 }
 
@@ -23,13 +24,14 @@ type dcdRoutePolicy struct {
 }
 
 type dcdRouteCandidate struct {
-	DomainID     string  `json:"domain_id"`
-	CollectionID string  `json:"collection_id"`
-	DocumentID   string  `json:"document_id"`
-	DatasetID    string  `json:"dataset_id"`
-	Confidence   float64 `json:"confidence"`
-	Source       string  `json:"source"`
-	Reason       string  `json:"reason"`
+	DomainID         string  `json:"domain_id"`
+	CollectionID     string  `json:"collection_id"`
+	DocumentID       string  `json:"document_id"`
+	SourceDocumentID string  `json:"source_document_id,omitempty"`
+	DatasetID        string  `json:"dataset_id"`
+	Confidence       float64 `json:"confidence"`
+	Source           string  `json:"source"`
+	Reason           string  `json:"reason"`
 }
 
 type dcdRouteRow struct {
@@ -42,6 +44,7 @@ type dcdRouteRow struct {
 	CollectionDescription string
 	CollectionAliasesJSON string
 	DocumentID            string
+	SourceDocumentID      string
 	DocumentTitle         string
 	DocumentDescription   string
 	DocumentAliasesJSON   string
@@ -80,7 +83,7 @@ func loadDCDRouteRows(ctx context.Context, db *sql.DB, scope dcdRouteScope) ([]d
 		d.id, d.name, COALESCE(d.description, ''), COALESCE(d.aliases_json, '[]'),
 		COALESCE(c.id, ''), COALESCE(c.name, ''), COALESCE(c.description, ''), COALESCE(c.aliases_json, '[]'),
 		COALESCE(doc.id, ''), COALESCE(doc.title, ''), COALESCE(doc.description, ''), COALESCE(doc.aliases_json, '[]'),
-		COALESCE(d.dataset_id, '')
+		COALESCE(doc.source_document_id, ''), COALESCE(d.dataset_id, '')
 	FROM knowledge_domains d
 	LEFT JOIN knowledge_collections c
 		ON c.domain_id = d.id
@@ -99,7 +102,7 @@ func loadDCDRouteRows(ctx context.Context, db *sql.DB, scope dcdRouteScope) ([]d
 		args = append(args, scope.OwnerID)
 		where = append(where, "d.owner_id = $"+itoaDCDRoute(len(args)))
 	}
-	if scope.TeamID != "" {
+	if scope.ExactTenant || scope.TeamID != "" {
 		args = append(args, scope.TeamID)
 		where = append(where, "d.team_id = $"+itoaDCDRoute(len(args)))
 	}
@@ -127,7 +130,7 @@ func loadDCDRouteRows(ctx context.Context, db *sql.DB, scope dcdRouteScope) ([]d
 			&row.DomainID, &row.DomainName, &row.DomainDescription, &row.DomainAliasesJSON,
 			&row.CollectionID, &row.CollectionName, &row.CollectionDescription, &row.CollectionAliasesJSON,
 			&row.DocumentID, &row.DocumentTitle, &row.DocumentDescription, &row.DocumentAliasesJSON,
-			&row.DatasetID,
+			&row.SourceDocumentID, &row.DatasetID,
 		); err != nil {
 			return nil, err
 		}
@@ -160,13 +163,14 @@ func scoreDCDRouteRows(query string, rows []dcdRouteRow) []dcdRouteCandidate {
 		}
 		scoredRows = append(scoredRows, scored{
 			candidate: dcdRouteCandidate{
-				DomainID:     row.DomainID,
-				CollectionID: row.CollectionID,
-				DocumentID:   row.DocumentID,
-				DatasetID:    row.DatasetID,
-				Confidence:   confidence,
-				Source:       "deterministic",
-				Reason:       strings.Join(reasons, ","),
+				DomainID:         row.DomainID,
+				CollectionID:     row.CollectionID,
+				DocumentID:       row.DocumentID,
+				SourceDocumentID: row.SourceDocumentID,
+				DatasetID:        row.DatasetID,
+				Confidence:       confidence,
+				Source:           "deterministic",
+				Reason:           strings.Join(reasons, ","),
 			},
 			score: score,
 		})

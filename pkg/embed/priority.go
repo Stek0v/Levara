@@ -6,9 +6,8 @@
 // single-worker upstream the background flood queues ahead of
 // foreground requests and query embedding times out (observed live:
 // 20s timeouts while cognify ran). The gate gives foreground requests
-// queue priority and caps in-flight background requests, so a query
-// waits behind at most the already-sent batches, never the whole
-// backlog.
+// queue priority and bounds admitted EmbedTexts operations. A query waits
+// for already admitted operations, whose batches may run concurrently.
 package embed
 
 import (
@@ -16,7 +15,7 @@ import (
 	"sync"
 )
 
-// PriorityGate bounds in-flight embedding requests and lets foreground
+// PriorityGate bounds admitted EmbedTexts operations and lets foreground
 // requests jump past waiting background requests. It does not preempt
 // requests already sent to the upstream — those finish first by design.
 type PriorityGate struct {
@@ -29,7 +28,7 @@ type PriorityGate struct {
 	closed    bool
 }
 
-// NewPriorityGate allows at most max concurrent embed requests; background
+// NewPriorityGate allows at most max concurrent EmbedTexts operations; background
 // requests additionally pause whenever a foreground request is waiting.
 func NewPriorityGate(max int) *PriorityGate {
 	if max < 1 {
@@ -124,16 +123,16 @@ func (c *Client) WithPriorityGate(g *PriorityGate) *Client {
 	return &cp
 }
 
-// WithBackground returns a copy whose requests use the gate's background
-// lane: capped concurrency plus yielding to waiting foreground requests.
+// WithBackground returns a copy whose admission yields to waiting foreground
+// operations. Batch concurrency remains local to each EmbedTexts call.
 func (c *Client) WithBackground() *Client {
 	cp := *c
 	cp.background = true
 	return &cp
 }
 
-// BackgroundConcurrency reports the effective background lane size:
-// min(gate capacity, client concurrency). Zero when no gate is attached.
+// BackgroundConcurrency reports min(gate capacity, client batch concurrency),
+// or zero without a gate. It is not an aggregate background request limit.
 func (c *Client) BackgroundConcurrency() int {
 	if c == nil || c.gate == nil {
 		return 0

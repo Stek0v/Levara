@@ -2,6 +2,7 @@ package http
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"net/http"
@@ -31,15 +32,24 @@ func newSyncMemoryTestDB(t *testing.T) (*sql.DB, func()) {
 			hall TEXT NOT NULL DEFAULT '',
 			is_pinned BOOLEAN NOT NULL DEFAULT FALSE,
 			pin_priority INTEGER NOT NULL DEFAULT 0,
+			superseded_by TEXT NOT NULL DEFAULT '', valid_until TEXT,
+            supersedes_memory_id TEXT NOT NULL DEFAULT '', supersession_reason TEXT NOT NULL DEFAULT '',
+			source_task_id TEXT NOT NULL DEFAULT '', source_receipt_ids TEXT NOT NULL DEFAULT '[]',
+			verification_status TEXT NOT NULL DEFAULT 'unverified',
+ tier TEXT NOT NULL DEFAULT 'raw', consolidated_from TEXT NOT NULL DEFAULT '', consolidation_run_id TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL,
 			UNIQUE(key, owner_id, collection_name)
 		);
+        CREATE TABLE memory_sync_deletions(memory_id TEXT NOT NULL,key TEXT NOT NULL,owner_id TEXT NOT NULL,collection_name TEXT NOT NULL,deleted_at TEXT NOT NULL,PRIMARY KEY(memory_id,owner_id,collection_name));
 	`); err != nil {
 		_ = db.Close()
 		t.Fatal(err)
 	}
 	SetDBProvider(DBSQLite)
+	if err := migrateMemorySyncGenerations(context.Background(), db); err != nil {
+		t.Fatal(err)
+	}
 	return db, func() {
 		_ = db.Close()
 		SetDBProvider(DBPostgres)
@@ -69,8 +79,12 @@ func TestSyncExportMemoriesPreservesRoomHallPins(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	var memories []syncMemory
-	if err := json.NewDecoder(resp.Body).Decode(&memories); err != nil {
+	var batch syncMemoryBatch
+	if err := json.NewDecoder(resp.Body).Decode(&batch); err != nil {
+		t.Fatal(err)
+	}
+	memories := batch.Memories
+	if err := batch.validate(); err != nil {
 		t.Fatal(err)
 	}
 	if len(memories) != 1 {
@@ -88,7 +102,7 @@ func TestSyncImportMemoriesPreservesRoomHallPins(t *testing.T) {
 
 	app := fiber.New()
 	RegisterSyncAPI(app, APIConfig{DB: db})
-	payload, _ := json.Marshal([]syncMemory{{
+	payload, _ := json.Marshal(syncMemoryFixtureBatch([]syncMemory{{
 		ID:             "m1",
 		Key:            "style",
 		Value:          "terse russian",
@@ -101,7 +115,7 @@ func TestSyncImportMemoriesPreservesRoomHallPins(t *testing.T) {
 		PinPriority:    10,
 		CreatedAt:      "2026-05-10T00:00:00Z",
 		UpdatedAt:      "2026-05-10T01:00:00Z",
-	}})
+	}}))
 	req := httptest.NewRequest(http.MethodPost, "/sync/import/memories", bytes.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := app.Test(req)
@@ -125,4 +139,18 @@ func TestSyncImportMemoriesPreservesRoomHallPins(t *testing.T) {
 	if room != "agent" || hall != "preference" || !pinned || prio != 10 {
 		t.Fatalf("imported fields: room=%q hall=%q pinned=%v prio=%d", room, hall, pinned, prio)
 	}
+}
+
+// syncMemoryFixtureBatch describes independent first-generation test rows.
+func syncMemoryFixtureBatch(memories []syncMemory) syncMemoryBatch {
+	b := syncMemoryBatch{ProtocolVersion: syncMemoryProtocolVersion, Memories: memories, Deletions: []syncMemoryDeletion{}, Incarnations: []syncMemoryIncarnation{}, Aliases: []syncMemoryAlias{}}
+	for _, m := range memories {
+		state := "active"
+		if m.ValidUntil != "" || m.SupersededBy != "" {
+			state = "retired"
+		}
+		b.Incarnations = append(b.Incarnations, syncMemoryIncarnation{MemoryID: m.ID, OwnerID: m.OwnerID, CollectionName: m.CollectionName, LogicalKey: m.Key, OriginalKeyResolved: 1, State: state})
+		b.Aliases = append(b.Aliases, syncMemoryAlias{AliasID: m.ID, MemoryID: m.ID})
+	}
+	return b
 }

@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/stek0v/levara/internal/store"
@@ -28,6 +29,40 @@ func (p *SearchPipeline) WithResultFilter(filter func(context.Context, []ScoredR
 	copy := *p
 	copy.resultFilter = filter
 	return &copy
+}
+
+// ErrResultFilterRejected distinguishes a failed access/metadata filter from provider health.
+var ErrResultFilterRejected = errors.New("search result filter rejected")
+
+type searchResultFilterKey struct{}
+
+// WithSearchResultFilter scopes metadata filtering to one retrieval operation.
+// Collection identifies child retrieval separately from returned parent results.
+func WithSearchResultFilter(ctx context.Context, filter func(context.Context, string, []ScoredResult) ([]ScoredResult, error)) context.Context {
+	return context.WithValue(ctx, searchResultFilterKey{}, filter)
+}
+
+func (p *SearchPipeline) filterResults(ctx context.Context, collection string, results []ScoredResult) ([]ScoredResult, error) {
+	for i := range results {
+		if results[i].Collection == "" {
+			results[i].Collection = collection
+		}
+	}
+	if p.resultFilter != nil {
+		var err error
+		results, err = p.resultFilter(ctx, results)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrResultFilterRejected, err)
+		}
+	}
+	if filter, ok := ctx.Value(searchResultFilterKey{}).(func(context.Context, string, []ScoredResult) ([]ScoredResult, error)); ok {
+		filtered, err := filter(ctx, collection, results)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrResultFilterRejected, err)
+		}
+		return filtered, nil
+	}
+	return results, nil
 }
 
 // NewSearchPipeline creates a pipeline backed by CollectionManager + embed client.
@@ -60,10 +95,10 @@ func (p *SearchPipeline) SearchByText(ctx context.Context, collection, queryText
 
 	// Step 2: Vector search (IN-PROCESS — 0ms transport!)
 	results, err := p.SearchByVector(collection, vec, limit)
-	if err != nil || p.resultFilter == nil {
+	if err != nil {
 		return results, err
 	}
-	return p.resultFilter(ctx, results)
+	return p.filterResults(ctx, collection, results)
 }
 
 func (p *SearchPipeline) validateQueryContract(collection string, dim int) error {
@@ -91,9 +126,10 @@ func (p *SearchPipeline) SearchByVector(collection string, vector []float32, lim
 	scored := make([]ScoredResult, len(results))
 	for i, r := range results {
 		scored[i] = ScoredResult{
-			ID:       r.ID,
-			Score:    r.Score,
-			Metadata: r.Data,
+			Collection: collection,
+			ID:         r.ID,
+			Score:      r.Score,
+			Metadata:   r.Data,
 		}
 	}
 	return scored, nil
@@ -142,6 +178,10 @@ func (p *SearchPipeline) BatchSearchByText(ctx context.Context, collection strin
 		res, err := p.SearchByVector(collection, vec, limit)
 		if err != nil {
 			return nil, fmt.Errorf("search query %d: %w", i, err)
+		}
+		res, err = p.filterResults(ctx, collection, res)
+		if err != nil {
+			return nil, fmt.Errorf("filter query %d: %w", i, err)
 		}
 		results[i] = res
 	}

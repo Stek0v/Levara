@@ -10,13 +10,12 @@
 package cluster
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"log"
-	"math"
 	"net/http"
+	"net/url"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -35,10 +34,7 @@ type WALEntry struct {
 
 // ReplicationServer streams WAL entries to replicas.
 //
-// seq uses atomic.Uint64 rather than living under mu because Broadcast holds
-// only mu.RLock — concurrent Broadcasts would otherwise race on the sequence
-// increment and produce duplicate Seq values, breaking replicas' gap
-// detection. See TestReplicationServer_Broadcast_ConcurrentNoLostSeq.
+// Snapshot admission and DirectNode mutation/fanout share mu.
 type ReplicationServer struct {
 	mu          sync.RWMutex
 	wal         *store.WAL
@@ -91,15 +87,26 @@ func (rs *ReplicationServer) SetPrimaryAddr(addr string) {
 
 // Broadcast sends a WAL entry to all connected replicas.
 func (rs *ReplicationServer) Broadcast(entry WALEntry) {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	rs.broadcastLocked(entry)
+}
+func (rs *ReplicationServer) broadcastLocked(entry WALEntry) {
 	entry.Seq = rs.seq.Add(1)
-	rs.mu.RLock()
-	defer rs.mu.RUnlock()
 	for rid, ch := range rs.listeners {
 		select {
 		case ch <- entry:
 		default:
-			log.Printf("[replication] replica %s channel full, dropping entry seq=%d", rid, entry.Seq)
+			close(ch)
+			delete(rs.listeners, rid)
+			log.Printf("[replication] replica %s overflow; fresh snapshot required", rid)
 		}
+	}
+}
+func (rs *ReplicationServer) invalidateLocked() {
+	for rid, ch := range rs.listeners {
+		close(ch)
+		delete(rs.listeners, rid)
 	}
 }
 
@@ -107,7 +114,13 @@ func (rs *ReplicationServer) Broadcast(entry WALEntry) {
 func (rs *ReplicationServer) AddReplica(replicaID string) chan WALEntry {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
-	ch := make(chan WALEntry, 10000) // buffer 10K entries
+	return rs.addReplicaLocked(replicaID)
+}
+func (rs *ReplicationServer) addReplicaLocked(replicaID string) chan WALEntry {
+	if old, ok := rs.listeners[replicaID]; ok {
+		close(old)
+	}
+	ch := make(chan WALEntry, 10000) // ponytail: overflow reconnects from snapshot.
 	rs.listeners[replicaID] = ch
 	log.Printf("[replication] replica %s connected", replicaID)
 	return ch
@@ -147,8 +160,25 @@ func (rs *ReplicationServer) HandleStreamWAL(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	ch := rs.AddReplica(replicaID)
-	defer rs.RemoveReplica(replicaID)
+	// ponytail: one lock fences supported single-shard snapshot and writes.
+	rs.mu.Lock()
+	records, err := rs.db.AllRecordsChecked()
+	if err != nil {
+		rs.mu.Unlock()
+		http.Error(w, "snapshot source unavailable", http.StatusInternalServerError)
+		return
+	}
+	ch := rs.addReplicaLocked(replicaID)
+	snapshot := replicationSnapshot{Version: 1, Kind: "snapshot", Seq: rs.seq.Load(), Records: records}
+	rs.mu.Unlock()
+	defer func() {
+		rs.mu.Lock()
+		defer rs.mu.Unlock()
+		if rs.listeners[replicaID] == ch {
+			close(ch)
+			delete(rs.listeners, replicaID)
+		}
+	}()
 
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -157,7 +187,10 @@ func (rs *ReplicationServer) HandleStreamWAL(w http.ResponseWriter, r *http.Requ
 	flusher.Flush()
 
 	encoder := json.NewEncoder(w)
-
+	if err := encoder.Encode(snapshot); err != nil {
+		return
+	}
+	flusher.Flush()
 	for {
 		select {
 		case entry, ok := <-ch:
@@ -177,7 +210,13 @@ func (rs *ReplicationServer) HandleStreamWAL(w http.ResponseWriter, r *http.Requ
 // HandleSnapshot is an HTTP handler that sends full DB snapshot to a joining replica.
 // GET /cluster/snapshot
 func (rs *ReplicationServer) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
-	records := rs.db.AllRecords()
+	rs.mu.Lock()
+	records, err := rs.db.AllRecordsChecked()
+	rs.mu.Unlock()
+	if err != nil {
+		http.Error(w, "snapshot source unavailable", http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(records)
 }
@@ -211,6 +250,7 @@ type ReplicaClient struct {
 	db          *store.Levara
 	collections *store.CollectionManager
 	cancel      context.CancelFunc
+	done        chan struct{}
 }
 
 // NewReplicaClient creates a replica that connects to primary for WAL streaming.
@@ -223,137 +263,132 @@ func NewReplicaClient(primaryAddr, nodeID string, db *store.Levara, collections 
 	}
 }
 
-// Start begins replication: first fetches snapshot, then streams WAL.
-func (rc *ReplicaClient) Start(ctx context.Context) error {
-	ctx, rc.cancel = context.WithCancel(ctx)
-
-	// 1. Fetch initial snapshot from primary
-	log.Printf("[replica] fetching snapshot from %s...", rc.primaryAddr)
-	if err := rc.fetchSnapshot(ctx); err != nil {
-		return fmt.Errorf("snapshot fetch: %w", err)
-	}
-	log.Printf("[replica] snapshot loaded, starting WAL stream...")
-
-	// 2. Stream WAL entries
-	go rc.streamLoop(ctx)
-	return nil
+type replicationSnapshot struct {
+	Version int                    `json:"version"`
+	Kind    string                 `json:"kind"`
+	Seq     uint64                 `json:"seq"`
+	Records []store.SnapshotRecord `json:"records"`
 }
 
-// Stop stops the replica client.
+// Start returns after restoring the first snapshot on the live stream.
+func (rc *ReplicaClient) Start(ctx context.Context) error {
+	ctx, rc.cancel = context.WithCancel(ctx)
+	resp, decoder, seq, err := rc.openStream(ctx)
+	if err != nil {
+		rc.cancel()
+		return err
+	}
+	rc.done = make(chan struct{})
+	go func() {
+		defer close(rc.done)
+		rc.streamLoop(ctx, resp, decoder, seq)
+	}()
+	return nil
+}
 func (rc *ReplicaClient) Stop() {
 	if rc.cancel != nil {
 		rc.cancel()
 	}
+	if rc.done != nil {
+		<-rc.done
+	}
 }
-
-func (rc *ReplicaClient) fetchSnapshot(ctx context.Context) error {
-	url := fmt.Sprintf("http://%s/cluster/snapshot", rc.primaryAddr)
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+func (rc *ReplicaClient) openStream(ctx context.Context) (*http.Response, *json.Decoder, uint64, error) {
+	endpoint := fmt.Sprintf("http://%s/cluster/wal/stream?replica_id=%s", rc.primaryAddr, url.QueryEscape(rc.nodeID))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return err
+		return nil, nil, 0, err
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return err
+		return nil, nil, 0, err
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return fmt.Errorf("snapshot HTTP %d", resp.StatusCode)
+	fail := func(err error) (*http.Response, *json.Decoder, uint64, error) {
+		resp.Body.Close()
+		return nil, nil, 0, err
 	}
-
-	var records []store.SnapshotRecord
-	if err := json.NewDecoder(resp.Body).Decode(&records); err != nil {
-		return err
+	if resp.StatusCode != http.StatusOK {
+		return fail(fmt.Errorf("WAL stream HTTP %d", resp.StatusCode))
 	}
-
-	if err := rc.db.RestoreSnapshot(records); err != nil {
-		return fmt.Errorf("snapshot restore: %w", err)
+	decoder := json.NewDecoder(resp.Body)
+	var snapshot struct {
+		Version int
+		Kind    string
+		Seq     *uint64
+		Records []store.SnapshotRecord
 	}
-	log.Printf("[replica] snapshot restored: %d records", len(records))
-	return nil
+	if err := decoder.Decode(&snapshot); err != nil {
+		return fail(err)
+	}
+	if snapshot.Version != 1 || snapshot.Kind != "snapshot" || snapshot.Records == nil || snapshot.Seq == nil {
+		return fail(fmt.Errorf("unsupported replication snapshot"))
+	}
+	if err := ctx.Err(); err != nil {
+		return fail(err)
+	}
+	if err := rc.db.RestoreSnapshot(snapshot.Records); err != nil {
+		return fail(fmt.Errorf("snapshot restore: %w", err))
+	}
+	return resp, decoder, *snapshot.Seq, nil
 }
-
-func (rc *ReplicaClient) streamLoop(ctx context.Context) {
+func (rc *ReplicaClient) streamLoop(ctx context.Context, resp *http.Response, decoder *json.Decoder, seq uint64) {
 	backoff := time.Second
-	maxBackoff := 30 * time.Second
-
 	for {
+		if resp != nil {
+			err := rc.readStream(ctx, decoder, seq)
+			resp.Body.Close()
+			resp = nil
+			if ctx.Err() != nil {
+				return
+			}
+			log.Printf("[replica] stream interrupted: %v; restoring fresh snapshot", err)
+		}
 		select {
 		case <-ctx.Done():
 			return
-		default:
+		case <-time.After(backoff):
 		}
-
-		err := rc.streamOnce(ctx)
+		var err error
+		resp, decoder, seq, err = rc.openStream(ctx)
 		if err != nil {
-			log.Printf("[replica] WAL stream error: %v, reconnecting in %v", err, backoff)
-			select {
-			case <-time.After(backoff):
-			case <-ctx.Done():
-				return
+			log.Printf("[replica] reconnect: %v", err)
+			if backoff < 30*time.Second {
+				backoff *= 2
+				if backoff > 30*time.Second {
+					backoff = 30 * time.Second
+				}
 			}
-			backoff = time.Duration(math.Min(float64(backoff*2), float64(maxBackoff)))
 		} else {
 			backoff = time.Second
 		}
 	}
 }
-
-func (rc *ReplicaClient) streamOnce(ctx context.Context) error {
-	url := fmt.Sprintf("http://%s/cluster/wal/stream?replica_id=%s", rc.primaryAddr, rc.nodeID)
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return err
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return fmt.Errorf("WAL stream HTTP %d", resp.StatusCode)
-	}
-
-	scanner := bufio.NewScanner(resp.Body)
-	scanner.Buffer(make([]byte, 1<<20), 1<<20) // 1MB line buffer
-	applied := 0
-
-	for scanner.Scan() {
-		select {
-		case <-ctx.Done():
+func (rc *ReplicaClient) readStream(ctx context.Context, decoder *json.Decoder, seq uint64) error {
+	for {
+		if ctx.Err() != nil {
 			return ctx.Err()
-		default:
 		}
-
 		var entry WALEntry
-		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
-			log.Printf("[replica] WAL entry unmarshal error: %v", err)
-			continue
+		if err := decoder.Decode(&entry); err != nil {
+			return err
 		}
-
+		if seq == ^uint64(0) || entry.Seq != seq+1 || entry.ID == "" {
+			return fmt.Errorf("invalid replication sequence or identity")
+		}
+		var err error
 		switch entry.Op {
 		case store.OpInsert:
-			// Make a copy of vector to avoid unsafe pointer issues
-			vec := make([]float32, len(entry.Vector))
-			copy(vec, entry.Vector)
-			if err := rc.db.Insert(entry.ID, vec, entry.Metadata); err != nil {
-				log.Printf("[replica] insert %s: %v", entry.ID, err)
-			} else {
-				applied++
-			}
+			err = rc.db.Insert(entry.ID, entry.Vector, entry.Metadata)
 		case store.OpDelete:
-			rc.db.Delete(entry.ID)
-			applied++
+			err = rc.db.Delete(entry.ID)
+		default:
+			return fmt.Errorf("unsupported replication operation %d", entry.Op)
 		}
-
-		if applied > 0 && applied%1000 == 0 {
-			log.Printf("[replica] applied %d WAL entries", applied)
+		if err != nil {
+			return fmt.Errorf("replication apply %s: %w", entry.ID, err)
 		}
+		seq = entry.Seq
 	}
-
-	return scanner.Err()
 }
 
 // WALEntryFromInsert creates a WAL entry for an insert operation.
@@ -364,6 +399,13 @@ func WALEntryFromInsert(id string, vector []float32, metadata interface{}) WALEn
 		meta = v
 	case []byte:
 		meta = json.RawMessage(v)
+	case string:
+		if len(v) > 0 && (v[0] == '{' || v[0] == '[') {
+			meta = json.RawMessage(v)
+		} else {
+			data, _ := json.Marshal(v)
+			meta = json.RawMessage(data)
+		}
 	default:
 		data, _ := json.Marshal(metadata)
 		meta = json.RawMessage(data)
@@ -371,7 +413,7 @@ func WALEntryFromInsert(id string, vector []float32, metadata interface{}) WALEn
 	// Copy vector to avoid unsafe pointer issues
 	vecCopy := make([]float32, len(vector))
 	copy(vecCopy, vector)
-	return WALEntry{Op: store.OpInsert, ID: id, Vector: vecCopy, Metadata: meta}
+	return WALEntry{Op: store.OpInsert, ID: id, Vector: vecCopy, Metadata: append(json.RawMessage(nil), meta...)}
 }
 
 // WALEntryFromDelete creates a WAL entry for a delete operation.

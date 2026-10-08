@@ -23,13 +23,21 @@ own system when needed.
 - `key`: durable concept such as `idle-polling-root-cause`; avoid paths and
   symbol names.
 
+On legacy `/mcp`, `set_context` selects the collection for that session. Latest
+`/mcp/2026-07-28` hides and rejects `set_context`; pass `collection` explicitly
+to each collection-aware call, including `wake_up`, recall, and save.
+
 ## Supersession
 
 | Goal | Tool | Profiles |
 | --- | --- | --- |
-| Archive old memory and insert a replacement | `supersede_memory` | `memory`, `full`, `long-horizon` |
-| Upsert one key without retiring another row | `save_memory` | `core`, `memory`, `workspace`, `full`, ... |
+| Archive old memory and insert a replacement | `supersede_memory` | `core`, `memory`, `full`, `long-horizon` |
+| Delete one memory | `delete_memory` | `core`, `memory`, `full`; not `long-horizon` or `workspace` |
+| Upsert one key without retiring another row | `save_memory` | `core`, `memory`, `workspace`, `full`, `long-horizon` |
 | Store provenance only on the written row | `save_memory(supersedes_memory_id=...)` | any profile with `save_memory` |
+
+Inspect the active server's `tools/list` before relying on a toolset's advertised
+operations; tool visibility is not an authorization grant.
 
 `supersedes_memory_id` on `save_memory` does **not** set `superseded_by` or
 `valid_until` on the prior row. Recall still returns that prior row until

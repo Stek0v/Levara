@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"strings"
+	"unicode/utf8"
 
 	accesspkg "github.com/stek0v/levara/pkg/access"
 	"github.com/stek0v/levara/pkg/mcp"
@@ -89,34 +90,6 @@ func taskWorkspaceFence(ctx context.Context, cfg APIConfig, e *mcp.TaskExecution
 		if !mcp.ToolAllowedForMode(os.Getenv("LEVARA_MCP_TOOLSET"), e.Action.Name) || !mcp.ToolAllowedForMode(os.Getenv("LEVARA_MCP_TOOLSET"), "task_step") {
 			return errors.New("task tool disabled by active profile or feature flag")
 		}
-		// Workspace paths use a lossy SafeID mapping. Do not honor a grant
-		// when another registered project resolves to the same directory.
-		rows, err := tx.QueryContext(ctx, `SELECT id FROM datasets`)
-		if err != nil {
-			return err
-		}
-		collision := false
-		for rows.Next() {
-			var id string
-			if err := rows.Scan(&id); err != nil {
-				rows.Close()
-				return err
-			}
-			if id != projectID && workspace.SafeID(id) == workspace.SafeID(projectID) {
-				collision = true
-			}
-		}
-		err = rows.Err()
-		closeErr := rows.Close()
-		if err != nil {
-			return err
-		}
-		if closeErr != nil {
-			return closeErr
-		}
-		if collision {
-			return errors.New("task workspace project directory is ambiguous")
-		}
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -132,17 +105,30 @@ func taskReadWorkspaceMarkdown(ctx context.Context, cfg APIConfig, req workspace
 	}
 	var data []byte
 	err = taskWorkspaceFence(ctx, cfg, e, req.ProjectID, accesspkg.ActionRead, func() error {
-		var err error
+		release, err := workspace.LockProject(ctx, workspaceRoot(cfg), req.ProjectID)
+		if err != nil {
+			return err
+		}
+		defer release()
+		if err := recoverWorkspaceRestores(ctx, cfg, req.ProjectID); err != nil {
+			return err
+		}
 		data, err = taskWorkspaceFile(ctx, workspaceRoot(cfg), e, rel, nil, nil)
 		return err
 	})
 	if err != nil {
 		return workspaceReadResponse{}, err
 	}
-	return workspaceReadResponse{ProjectID: req.ProjectID, Branch: branch, Path: req.Path, Text: string(data), Citation: workspaceFileCitation(req.ProjectID, branch, req.Path)}, nil
+	if !utf8.Valid(data) {
+		return workspaceReadResponse{}, errors.New("workspace text must be valid UTF-8")
+	}
+	return workspaceReadResponse{ProjectID: req.ProjectID, Branch: branch, Path: req.Path, Text: string(data), FileDigest: digestBytes(data), Citation: workspaceFileCitation(req.ProjectID, branch, req.Path)}, nil
 }
 
 func taskWriteWorkspaceMarkdown(ctx context.Context, cfg APIConfig, req workspaceWriteRequest, e *mcp.TaskExecution) (workspaceWriteResponse, error) {
+	if !utf8.ValidString(req.Text) {
+		return workspaceWriteResponse{}, errors.New("workspace text must be valid UTF-8")
+	}
 	if req.Generation != "" || (req.Index != nil && *req.Index) {
 		return workspaceWriteResponse{}, errors.New("task workspace indexing is unsupported")
 	}
@@ -151,10 +137,18 @@ func taskWriteWorkspaceMarkdown(ctx context.Context, cfg APIConfig, req workspac
 	if err != nil {
 		return workspaceWriteResponse{}, err
 	}
-	unlock := workspaceManifestLocks.lock(req.ProjectID + "/" + branch)
+	unlock := workspaceManifestLocks.lock(workspaceBranchLockKey(req.ProjectID, branch))
 	defer unlock()
 	err = taskWorkspaceFence(ctx, cfg, e, req.ProjectID, accesspkg.ActionWrite, func() error {
-		_, err := taskWorkspaceFile(ctx, workspaceRoot(cfg), e, rel, []byte(req.Text), req.ExpectedFileDigest)
+		release, err := workspace.LockProject(ctx, workspaceRoot(cfg), req.ProjectID)
+		if err != nil {
+			return err
+		}
+		defer release()
+		if err := recoverWorkspaceRestores(ctx, cfg, req.ProjectID); err != nil {
+			return err
+		}
+		_, err = taskWorkspaceFile(ctx, workspaceRoot(cfg), e, rel, []byte(req.Text), req.ExpectedFileDigest)
 		return err
 	})
 	if err != nil {

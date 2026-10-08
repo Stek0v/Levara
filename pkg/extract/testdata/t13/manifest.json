@@ -1,0 +1,238 @@
+{
+  "schema_version": 1,
+  "authored_before_extraction": true,
+  "normalization": "Document equality: ordered Unicode letter/number tokens; punctuation and whitespace are layout separators. Unicode TXT also requires exact original bytes. OCR: whitespace-only normalization, case and punctuation retained.",
+  "criteria": {
+    "document_token_sequence": "exact equality (100% retention/order, no extra tokens)",
+    "paragraph_order": "all authored paragraphs in order",
+    "table_cells": "all authored cells in row-major order after the first paragraph",
+    "page_count": "exact where labeled",
+    "ocr_max_cer": 0.05,
+    "ocr_max_wer": 0.1,
+    "audio_quality": "unmeasured: no configured Whisper engine"
+  },
+  "cases": [
+    {
+      "file": "ledger.txt",
+      "mode": "text",
+      "text": "First paragraph. Copper count 17. Item Units Copper 17 Zinc 23 Второй абзац. Zinc count 23.",
+      "paragraphs": [
+        "First paragraph. Copper count 17.",
+        "Второй абзац. Zinc count 23."
+      ],
+      "cells": [
+        "Item",
+        "Units",
+        "Copper",
+        "17",
+        "Zinc",
+        "23"
+      ],
+      "sha256": "a1d18ecdac464d8abb8344cd6c973d07ee11d67adf6f7ee726a2713372bdc627"
+    },
+    {
+      "file": "ledger.pdf",
+      "mode": "text",
+      "text": "First paragraph. Copper count 17. Item Units Copper 17 Zinc 23 Второй абзац. Zinc count 23.",
+      "pages": 2,
+      "paragraphs": [
+        "First paragraph. Copper count 17.",
+        "Второй абзац. Zinc count 23."
+      ],
+      "cells": [
+        "Item",
+        "Units",
+        "Copper",
+        "17",
+        "Zinc",
+        "23"
+      ],
+      "sha256": "69f42185acb8c4bae2a5cae1ba0806fd76779425ccf92aa6521fe654cb2473ea"
+    },
+    {
+      "file": "ledger.docx",
+      "mode": "text",
+      "text": "First paragraph. Copper count 17. Item Units Copper 17 Zinc 23 Второй абзац. Zinc count 23.",
+      "paragraphs": [
+        "First paragraph. Copper count 17.",
+        "Второй абзац. Zinc count 23."
+      ],
+      "cells": [
+        "Item",
+        "Units",
+        "Copper",
+        "17",
+        "Zinc",
+        "23"
+      ],
+      "sha256": "1cc72a8a699b6150fc6d5f71b8b8f61ef2a542b31ff0caa045dd8409668805f0"
+    },
+    {
+      "file": "ledger.pptx",
+      "mode": "text",
+      "text": "First paragraph. Copper count 17. Item Units Copper 17 Zinc 23 Второй абзац. Zinc count 23.",
+      "pages": 2,
+      "paragraphs": [
+        "First paragraph. Copper count 17.",
+        "Второй абзац. Zinc count 23."
+      ],
+      "cells": [
+        "Item",
+        "Units",
+        "Copper",
+        "17",
+        "Zinc",
+        "23"
+      ],
+      "sha256": "572c9aec6d61ca494adb071cd95b83389d3e0ab8c67e8b23026eff2cbf01becb"
+    },
+    {
+      "file": "ledger.xlsx",
+      "mode": "text",
+      "text": "First paragraph. Copper count 17. Item Units Copper 17 Zinc 23 Второй абзац. Zinc count 23.",
+      "paragraphs": [
+        "First paragraph. Copper count 17.",
+        "Второй абзац. Zinc count 23."
+      ],
+      "cells": [
+        "Item",
+        "Units",
+        "Copper",
+        "17",
+        "Zinc",
+        "23"
+      ],
+      "sha256": "f50d148d9fc8cd5ec2750d2a052254c5c3a17508488930a3720830c0a7c7ec57"
+    },
+    {
+      "file": "ledger.html",
+      "mode": "text",
+      "text": "First paragraph. Copper count 17. Item Units Copper 17 Zinc 23 Второй абзац. Zinc count 23.",
+      "paragraphs": [
+        "First paragraph. Copper count 17.",
+        "Второй абзац. Zinc count 23."
+      ],
+      "cells": [
+        "Item",
+        "Units",
+        "Copper",
+        "17",
+        "Zinc",
+        "23"
+      ],
+      "sha256": "ea94e28b03180787adbd96d758cd58790a6eae54fe862d2f57c231fc62398ffe"
+    },
+    {
+      "file": "ledger.epub",
+      "mode": "text",
+      "text": "First paragraph. Copper count 17. Item Units Copper 17 Zinc 23 Второй абзац. Zinc count 23.",
+      "paragraphs": [
+        "First paragraph. Copper count 17.",
+        "Второй абзац. Zinc count 23."
+      ],
+      "cells": [
+        "Item",
+        "Units",
+        "Copper",
+        "17",
+        "Zinc",
+        "23"
+      ],
+      "sha256": "b3439e4c5025a2917857c302c6adb324608e7ff0343cdc271c50f2e13dc052b2"
+    },
+    {
+      "file": "ledger.odt",
+      "mode": "text",
+      "text": "First paragraph. Copper count 17. Item Units Copper 17 Zinc 23 Второй абзац. Zinc count 23.",
+      "paragraphs": [
+        "First paragraph. Copper count 17.",
+        "Второй абзац. Zinc count 23."
+      ],
+      "cells": [
+        "Item",
+        "Units",
+        "Copper",
+        "17",
+        "Zinc",
+        "23"
+      ],
+      "sha256": "90a489711fb0a4187b78d30409ff7e754af76a3ed8acdba929ad7bdf3805960c"
+    },
+    {
+      "file": "unicode.txt",
+      "mode": "text",
+      "text": "Привет, команда! 日本語 café 😀\nLine two.",
+      "pages": 1,
+      "sha256": "ebbd385a3f7105bfa1a4081893a4f131181e33d1f9a9258368c308b764611664"
+    },
+    {
+      "file": "empty.txt",
+      "mode": "empty",
+      "text": "",
+      "pages": 1,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "file": "corrupt.pdf",
+      "mode": "error",
+      "text": "",
+      "sha256": "3e484e719ec68a491b85d8e226e6d06570c26e902cc65c048b189212e4c1d416"
+    },
+    {
+      "file": "corrupt.docx",
+      "mode": "error",
+      "text": "",
+      "sha256": "d47a0e1d7474c8ae47fa79384d93fad6b0e66fc5b119ee66389b376db9382edd"
+    },
+    {
+      "file": "corrupt.epub",
+      "mode": "error",
+      "text": "",
+      "sha256": "d47a0e1d7474c8ae47fa79384d93fad6b0e66fc5b119ee66389b376db9382edd"
+    },
+    {
+      "file": "empty.pdf",
+      "mode": "error",
+      "text": "",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "file": "encrypted.pdf",
+      "mode": "error",
+      "text": "",
+      "sha256": "a9a2ca1cffe21df20b95a5b642532dc16a64d363a194d4e33677dfaed5ec6a48"
+    },
+    {
+      "file": "invalid-utf8.txt",
+      "mode": "error",
+      "text": "",
+      "sha256": "5f809d7f6fd2bc6798605b7217ff6cd10690120284885e0457038f0ac7ba3ae3"
+    },
+    {
+      "file": "nul.txt",
+      "mode": "error",
+      "text": "",
+      "sha256": "34d4bb18585719e3855e28bccea509a944cd54dd64fad8baae2fc53ceb506af9"
+    },
+    {
+      "file": "scanned.pdf",
+      "mode": "scan-boundary",
+      "text": "",
+      "pages": 1,
+      "sha256": "eef28f70633aa6f1583b0d58d89c5a88bb3c56f69c3246c3d839f942592114fd"
+    },
+    {
+      "file": "ocr.png",
+      "mode": "ocr",
+      "text": "Copper count 17. Zinc count 23. Total units 40.",
+      "pages": 1,
+      "sha256": "899001b7f1ba82df80f8b8e069be43f7c586d3b439611df7584f3f69f5475801"
+    },
+    {
+      "file": "narration.wav",
+      "mode": "audio-unavailable",
+      "text": "Copper count 17. Zinc count 23. Total units 40.",
+      "sha256": "3d035ef7d393efd53365d15b129835156dd3b500c6bbd0e0cbb42a702eeb8110"
+    }
+  ]
+}

@@ -15,7 +15,7 @@ import (
 	"github.com/stek0v/levara/pkg/memoryindex"
 )
 
-func StartMemoryIndexWorker(cfg APIConfig, interval time.Duration) func() {
+func StartMemoryIndexWorker(cfg APIConfig, interval time.Duration, workers int) func() {
 	ctx, cancel := context.WithCancel(context.Background())
 	if cfg.MemoryIndexOutbox == nil {
 		return cancel
@@ -23,13 +23,14 @@ func StartMemoryIndexWorker(cfg APIConfig, interval time.Duration) func() {
 	if interval <= 0 {
 		interval = 250 * time.Millisecond
 	}
+	if workers <= 0 {
+		workers = 2
+	}
 	_, _ = cfg.MemoryIndexOutbox.RecoverRunning(context.Background())
 	enqueueMissingMemoryVectors(cfg)
-	// Embedding is network-bound. A small fixed pool prevents bursts of saves
-	// from turning into one interval plus one embedding round trip per memory.
 	// Claim remains atomic in the durable store, so workers cannot execute the
-	// same job concurrently.
-	const workers = 8
+	// same job concurrently. Keep the pool bounded because each completed embed
+	// also performs a CPU-heavy HNSW insertion.
 	var wg sync.WaitGroup
 	for range workers {
 		wg.Add(1)
@@ -131,6 +132,62 @@ func runMemoryIndexJob(ctx context.Context, cfg APIConfig) bool {
 // Embedding stays outside these locks. Vector publication/deletion for an ID is ordered.
 var memoryVectorLocks [64]sync.Mutex
 
+// beginMemoryVectorEffect holds SQL truth until the synchronous vector effect returns.
+// Existing PostgreSQL sources need only a row fence; absent IDs retain the
+// table fence to prevent recreation during a native delete. SQLite reserves its writer.
+func beginMemoryVectorEffect(ctx context.Context, db *sql.DB, memoryID string) (*sql.Tx, func(), error) {
+	ctx, timeout := context.WithTimeout(ctx, 30*time.Second)
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		timeout()
+		return nil, nil, err
+	}
+	txCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	stop := context.AfterFunc(ctx, cancel)
+	tx, err := conn.BeginTx(txCtx, nil)
+	release := func() {
+		stop()
+		if tx != nil {
+			_ = tx.Rollback()
+		}
+		cancel()
+		_ = conn.Close()
+		timeout()
+	}
+	fail := func(err error) (*sql.Tx, func(), error) { release(); return nil, nil, err }
+	if err != nil {
+		return fail(err)
+	}
+	if GetDBProvider() == DBSQLite {
+		// A WAL read snapshot alone allows a concurrent writer to commit.
+		_, err = tx.ExecContext(ctx, "UPDATE memories SET id=id WHERE 1=0")
+	} else {
+		var lockedID string
+		err = tx.QueryRowContext(ctx, "SELECT id FROM memories WHERE id=$1 FOR UPDATE", memoryID).Scan(&lockedID)
+		if errors.Is(err, sql.ErrNoRows) {
+			// Row locks cannot protect absence. Recheck after acquiring the table
+			// fence: a concurrent insertion may have committed while we waited.
+			_, err = tx.ExecContext(ctx, "LOCK TABLE memories IN SHARE MODE")
+			if err == nil {
+				err = tx.QueryRowContext(ctx, "SELECT id FROM memories WHERE id=$1 FOR UPDATE", memoryID).Scan(&lockedID)
+				if errors.Is(err, sql.ErrNoRows) {
+					err = nil
+				}
+			}
+		}
+	}
+	if err != nil {
+		return fail(err)
+	}
+	if err = ctx.Err(); err != nil {
+		return fail(err)
+	}
+	if !stop() {
+		return fail(ctx.Err())
+	}
+	return tx, release, nil
+}
+
 func executeMemoryIndexJob(ctx context.Context, cfg APIConfig, job memoryindex.Job) error {
 	if cfg.Collections == nil || cfg.DB == nil {
 		return fmt.Errorf("index dependencies unavailable")
@@ -140,8 +197,27 @@ func executeMemoryIndexJob(ctx context.Context, cfg APIConfig, job memoryindex.J
 	if job.Operation == "delete_vector" {
 		lock.Lock()
 		defer lock.Unlock()
+		tx, release, err := beginMemoryVectorEffect(ctx, cfg.DB, job.MemoryID)
+		if err != nil {
+			return err
+		}
+		defer release()
+		var owner, collection, superseded string
+		err = tx.QueryRowContext(ctx, Q(`SELECT owner_id,collection_name,superseded_by FROM memories WHERE id=$1`), job.MemoryID).Scan(&owner, &collection, &superseded)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if err == nil && (owner != job.OwnerID || collection != job.Collection || superseded == "") {
+			return nil
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if !cfg.Collections.HasRecord(memoryCollectionNameHTTP(job.Collection), job.MemoryID) {
 			return nil
+		}
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 		return cfg.Collections.Delete(memoryCollectionNameHTTP(job.Collection), job.MemoryID)
 	}
@@ -169,27 +245,44 @@ func executeMemoryIndexJob(ctx context.Context, cfg APIConfig, job memoryindex.J
 	if job.Dimension > 0 && len(vec) != job.Dimension {
 		return fmt.Errorf("embedding dimension %d, want %d", len(vec), job.Dimension)
 	}
-	lock.Lock()
-	defer lock.Unlock()
-	current := func() (bool, error) {
-		var active bool
-		err := cfg.DB.QueryRowContext(ctx, Q(`SELECT EXISTS(SELECT 1 FROM memories WHERE id=$1 AND key=$2 AND value=$3 AND owner_id=$4 AND collection_name=$5 AND superseded_by='')`), job.MemoryID, key, value, owner, collection).Scan(&active)
-		return active, err
-	}
-	if active, err := current(); err != nil || !active {
+	hook, err := func() (func(), error) {
+		lock.Lock()
+		defer lock.Unlock()
+		tx, release, err := beginMemoryVectorEffect(ctx, cfg.DB, job.MemoryID)
+		if err != nil {
+			return nil, err
+		}
+		defer release()
+		// The embedding input is key/value. A metadata-only type update can
+		// reuse the running digest job; publish its current SQL type.
+		err = tx.QueryRowContext(ctx, Q(`SELECT type FROM memories WHERE id=$1 AND key=$2 AND value=$3 AND owner_id=$4 AND collection_name=$5 AND superseded_by=''`), job.MemoryID, key, value, owner, collection).Scan(&typ)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		if err = ctx.Err(); err != nil {
+			return nil, err
+		}
+		meta, _ := json.Marshal(map[string]string{"key": key, "value": value, "type": typ, "owner_id": owner, "collection": collection, "memory_id": job.MemoryID})
+		hook, err := cfg.Collections.InsertDeferredHook(memoryCollectionNameHTTP(collection), job.MemoryID, vec, meta)
+		if err != nil {
+			return nil, err
+		}
+		if !cfg.Collections.HasRecord(memoryCollectionNameHTTP(collection), job.MemoryID) {
+			return nil, fmt.Errorf("vector absent after insert")
+		}
+		return hook, nil
+	}()
+	if err != nil {
 		return err
 	}
-	meta, _ := json.Marshal(map[string]string{"key": key, "value": value, "type": typ, "collection": collection, "memory_id": job.MemoryID})
-	if err = cfg.Collections.Insert(memoryCollectionNameHTTP(collection), job.MemoryID, vec, meta); err != nil {
-		return err
-	}
-	if active, err := current(); err != nil {
-		return err
-	} else if !active {
-		return cfg.Collections.Delete(memoryCollectionNameHTTP(collection), job.MemoryID)
-	}
-	if !cfg.Collections.HasRecord(memoryCollectionNameHTTP(collection), job.MemoryID) {
-		return fmt.Errorf("vector absent after insert")
+	if hook != nil {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		hook()
 	}
 	return nil
 }

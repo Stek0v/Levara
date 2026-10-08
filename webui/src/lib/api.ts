@@ -189,7 +189,39 @@ async function downloadOriginal(datasetId: string, recordId: string): Promise<Bl
   return res.blob()
 }
 
+export interface ImportedChatIdentity {
+  chat_id: string
+  platform: string
+  session_id: string
+  project_id: string
+}
+export interface ImportedChatSession extends ImportedChatIdentity {
+  title: string
+  message_count: number
+}
+export interface ImportedChatDetail extends ImportedChatIdentity {
+  messages: Array<{ external_id: string; ordinal: number; role: string; content: string; created_at: string }>
+}
+function importedChatPath(chat: ImportedChatIdentity): string {
+  return `/api/v1/chats/import/sessions/${encodeURIComponent(chat.platform)}/${encodeURIComponent(chat.session_id)}`
+}
+function importedChatQuery(chat: ImportedChatIdentity): string {
+  return `?chat_id=${encodeURIComponent(chat.chat_id)}`
+}
+
 export const levara = {
+  // Imported chats: canonical identity is mandatory; authority comes from the server.
+  importedChats: (signal?: AbortSignal) =>
+    api<{ sessions?: ImportedChatSession[] | null }>('/api/v1/chats/import/sessions', { signal }),
+  importedChat: (chat: ImportedChatIdentity, signal?: AbortSignal) =>
+    api<ImportedChatDetail>(importedChatPath(chat) + importedChatQuery(chat), { signal }),
+  setImportedChatProject: (chat: ImportedChatIdentity, projectId: string, signal?: AbortSignal) =>
+    api<ImportedChatIdentity>(importedChatPath(chat) + '/project' + importedChatQuery(chat), {
+      method: projectId ? 'POST' : 'DELETE', signal,
+      ...(projectId ? { body: JSON.stringify({ project_id: projectId }) } : {}),
+    }),
+
+
   // Health
   health: () => api<{ status: string }>('/health'),
   healthDetails: () => api<HealthDetails>('/health/details'),
@@ -271,9 +303,9 @@ export const levara = {
   },
 
   // Search
-  search: async (params: SearchRequest) => {
+  search: async (params: SearchRequest, signal?: AbortSignal) => {
     const res = await api<SearchResult[] | Record<string, unknown> | null>('/api/v1/search/text', {
-      method: 'POST',
+      signal, method: 'POST',
       body: JSON.stringify(params),
     })
     if (res === null || res === undefined) return []
@@ -360,7 +392,8 @@ export const levara = {
   sharedDocuments: (limit = 50) =>
     api<SharedDocumentsResponse>(`/api/v1/documents/shared?limit=${limit}`),
   getDatasetGraph: (id: string) =>
-    api<DatasetGraph>(`/api/v1/datasets/${id}/graph`),
+    api<{ nodes: (Omit<GraphNode, 'name'> & { name?: string; label?: string })[]; edges: GraphEdge[] }>(`/api/v1/datasets/${id}/graph`)
+      .then(graph => ({ ...graph, nodes: graph.nodes.map(node => ({ ...node, name: node.name ?? node.label ?? node.id })) })),
   // Project context (collection memories) + activity feed (block ③)
   getDatasetContext: (id: string) =>
     api<ProjectContextItem[]>(`/api/v1/datasets/${id}/context`),
@@ -1087,6 +1120,7 @@ export interface WorkspaceSourceCitation {
 }
 
 export interface WorkspaceReadResponse {
+  file_digest: string
   project_id: string
   branch: string
   path: string

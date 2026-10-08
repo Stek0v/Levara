@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -28,6 +29,7 @@ type grpcIngestStorage struct {
 	saveCalls, failAt      int
 	blockAt                int
 	blocked, release, done chan struct{}
+	blockedCtx             context.Context
 }
 
 func (s *grpcIngestStorage) Save(ctx context.Context, key string, r io.Reader) error {
@@ -37,6 +39,7 @@ func (s *grpcIngestStorage) Save(ctx context.Context, key string, r io.Reader) e
 		return errors.New("injected storage failure")
 	}
 	if call == s.blockAt {
+		s.blockedCtx = ctx
 		close(s.blocked)
 		<-s.release // Simulate a backend that ignores request cancellation.
 	}
@@ -61,7 +64,16 @@ func TestGRPCIngestUsesServerStorageIdentityAndLiveMetadata(t *testing.T) {
 		svc := vectorgrpc.NewService(nil, nil, 2)
 		svc.SetIngestStorage(path, backend)
 		svc.SetIngestMetadata(f.db, true, Q)
-		server := grpc.NewServer(grpc.UnaryInterceptor(vectorgrpc.UnaryAuthInterceptor("grpc-ingest-test", true, f.p)))
+		lateHandlerDone := make(chan struct{})
+		server := grpc.NewServer(grpc.ChainUnaryInterceptor(
+			vectorgrpc.UnaryAuthInterceptor("grpc-ingest-test", true, f.p),
+			func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+				if request, ok := req.(*pb.IngestDataReq); ok && len(request.Items) == 1 && request.Items[0].GetText() == "late canceled worker" {
+					defer close(lateHandlerDone)
+				}
+				return handler(ctx, req)
+			},
+		))
 		pb.RegisterLevaraServiceServer(server, svc)
 		listener := bufconn.Listen(1 << 20)
 		go server.Serve(listener)
@@ -157,7 +169,11 @@ func TestGRPCIngestUsesServerStorageIdentityAndLiveMetadata(t *testing.T) {
 
 		backend.blockAt = backend.saveCalls + 1
 		backend.blocked, backend.release, backend.done = make(chan struct{}), make(chan struct{}), make(chan struct{})
+		var releaseOnce sync.Once
+		releaseBackend := func() { releaseOnce.Do(func() { close(backend.release) }) }
+		defer releaseBackend()
 		lateCtx, lateCancel := context.WithCancel(metadata.AppendToOutgoingContext(context.Background(), "authorization", "Bearer "+createJWT("owner", "owner@test.invalid", "grpc-ingest-test")))
+		defer lateCancel()
 		lateErr := make(chan error, 1)
 		go func() {
 			_, err := client.IngestData(lateCtx, &pb.IngestDataReq{DatasetId: response.DatasetId, Items: []*pb.IngestItem{{Text: "late canceled worker"}}})
@@ -169,18 +185,33 @@ func TestGRPCIngestUsesServerStorageIdentityAndLiveMetadata(t *testing.T) {
 			t.Fatal("late backend was not reached")
 		}
 		lateCancel()
-		if err := <-lateErr; status.Code(err) != codes.Canceled {
-			t.Fatalf("canceled client status=%s err=%v", status.Code(err), err)
+		select {
+		case err := <-lateErr:
+			if status.Code(err) != codes.Canceled {
+				t.Fatalf("canceled client status=%s err=%v", status.Code(err), err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("canceled client did not return")
 		}
-		close(backend.release)
+		// Client cancellation alone does not establish server cancellation.
+		// blocked was closed after the actual Save context was recorded.
+		select {
+		case <-backend.blockedCtx.Done():
+		case <-time.After(2 * time.Second):
+			t.Fatal("blocked Save server context was not canceled")
+		}
+		releaseBackend()
 		select {
 		case <-backend.done:
 		case <-time.After(2 * time.Second):
 			t.Fatal("late backend did not return")
 		}
-		deadline := time.Now().Add(2 * time.Second)
-		for rowCount("SELECT COUNT(*) FROM ingest_pending_uploads") != 0 && time.Now().Before(deadline) {
-			time.Sleep(10 * time.Millisecond)
+		// Save returning precedes publishAttempt and rollback cleanup. Observe
+		// the actual unary handler return before reading storage or SQL state.
+		select {
+		case <-lateHandlerDone:
+		case <-time.After(2 * time.Second):
+			t.Fatal("late canceled server handler did not finish")
 		}
 		if len(backend.objects) != objects || rowCount("SELECT COUNT(*) FROM data") != rows || rowCount("SELECT COUNT(*) FROM ingest_pending_uploads") != 0 {
 			t.Fatalf("late canceled worker published: objects=%d/%d rows=%d/%d pending=%d", len(backend.objects), objects, rowCount("SELECT COUNT(*) FROM data"), rows, rowCount("SELECT COUNT(*) FROM ingest_pending_uploads"))

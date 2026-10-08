@@ -8,7 +8,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
+	"time"
 
 	"github.com/stek0v/levara/pkg/access"
 	"github.com/stek0v/levara/pkg/sqlcompat"
@@ -28,10 +30,10 @@ const (
 // filtered by validity.
 //
 // Validity modes:
-//   - No "as_of": only currently-active edges (valid_until is NULL or
-//     in the future relative to CURRENT_TIMESTAMP).
-//   - "as_of" supplied: temporal snapshot — edges whose validity window
-//     (valid_from, valid_until) includes the given timestamp.
+//   - No "as_of": only currently-active edges (valid_from is NULL or
+//     at/before CURRENT_TIMESTAMP, and valid_until is NULL or in the future).
+//   - "as_of" supplied: temporal snapshot — edges whose half-open validity
+//     window [valid_from, valid_until) includes the given timestamp.
 //
 // Returns a not-found message (IsError=false) when the entity name
 // resolves to zero nodes — an unknown name is a reasonable query, not
@@ -51,7 +53,19 @@ func ToolQueryEntity(ctx context.Context, deps Deps, args map[string]any) ToolRe
 			IsError: true,
 		}
 	}
-	asOf, _ := args["as_of"].(string)
+	asOf := ""
+	if value, supplied := args["as_of"]; supplied {
+		var ok bool
+		asOf, ok = value.(string)
+		if !ok {
+			return toolError("as_of must be an RFC3339 timestamp string")
+		}
+		if asOf != "" {
+			if _, err := time.Parse(time.RFC3339Nano, asOf); err != nil {
+				return toolError("as_of must be an RFC3339 timestamp string")
+			}
+		}
+	}
 	datasetID, _ := args["dataset_id"].(string)
 	limit := queryEntityEdgeLimit
 	if l, ok := args["limit"].(float64); ok && l > 0 {
@@ -243,9 +257,23 @@ func queryEntityEdges(ctx context.Context, db *sql.DB, rewrite func(string) stri
 		pos++
 	}
 
+	sqlite := sqlcompat.CurrentProvider() == sqlcompat.SQLite
 	var validityClause string
-	if asOf == "" {
-		validityClause = " AND (graph_edges.valid_until IS NULL OR graph_edges.valid_until > CURRENT_TIMESTAMP)"
+	var snapshot time.Time
+	if sqlite {
+		// SQLite date functions lose sub-millisecond precision. Read candidates
+		// without a temporal SQL prefilter and apply one precise snapshot below.
+		snapshot = time.Now().UTC()
+		if asOf != "" {
+			var err error
+			snapshot, err = time.Parse(time.RFC3339Nano, asOf)
+			if err != nil {
+				return nil, err
+			}
+		}
+		snapshot = queryEntityTimestampMicroseconds(snapshot)
+	} else if asOf == "" {
+		validityClause = " AND (graph_edges.valid_from IS NULL OR graph_edges.valid_from <= CURRENT_TIMESTAMP) AND (graph_edges.valid_until IS NULL OR graph_edges.valid_until > CURRENT_TIMESTAMP)"
 	} else {
 		validityClause = fmt.Sprintf(
 			" AND (graph_edges.valid_from IS NULL OR graph_edges.valid_from <= $%d) AND (graph_edges.valid_until IS NULL OR graph_edges.valid_until > $%d)",
@@ -318,6 +346,9 @@ func queryEntityEdges(ctx context.Context, db *sql.DB, rewrite func(string) stri
 			return nil, err
 		}
 		for _, c := range candidates {
+			if sqlite && !queryEntitySQLiteEdgeValid(c.vf, c.vu, snapshot) {
+				continue
+			}
 			if c.edgeDataset == "" && c.srcDataset == c.dstDataset {
 				c.edgeDataset = c.srcDataset
 			}
@@ -355,4 +386,33 @@ func queryEntityEdges(ctx context.Context, db *sql.DB, rewrite func(string) stri
 		}
 	}
 	return edges, nil
+}
+
+// Match PostgreSQL TIMESTAMPTZ's supported microsecond precision while accepting
+// SQLite's RFC3339 and UTC SQL timestamp text. Malformed stored bounds are hidden.
+func queryEntitySQLiteEdgeValid(from, until sql.NullString, snapshot time.Time) bool {
+	boundValid := func(bound sql.NullString, lower bool) bool {
+		if !bound.Valid {
+			return true
+		}
+		for _, layout := range []string{time.RFC3339Nano, "2006-01-02 15:04:05Z07:00", "2006-01-02 15:04:05", "2006-01-02"} {
+			value, err := time.Parse(layout, bound.String)
+			if err != nil {
+				continue
+			}
+			value = queryEntityTimestampMicroseconds(value)
+			if lower {
+				return !snapshot.Before(value)
+			}
+			return snapshot.Before(value)
+		}
+		return false
+	}
+	return boundValid(from, true) && boundValid(until, false)
+}
+
+// PostgreSQL rounds parsed TIMESTAMPTZ fractional ties to the even microsecond.
+func queryEntityTimestampMicroseconds(value time.Time) time.Time {
+	micros := math.RoundToEven(float64(value.Nanosecond()) / 1000)
+	return value.Truncate(time.Second).Add(time.Duration(micros) * time.Microsecond)
 }

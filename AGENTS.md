@@ -140,7 +140,11 @@ Extending the exclusive list = code change in
 ## Per-agent diaries
 
 Specialized subagents (reviewer, architect, oncall, planner) can keep an
-isolated memory namespace under `owner_id="agent:<name>"`:
+isolated diary namespace. Authenticated callers are scoped by the verified
+caller, exact selected tenant and trimmed agent name; caller-supplied owner
+hints do not grant access. Historical `owner_id="agent:<name>"` diaries remain
+available only in explicitly trusted anonymous local mode and are never
+automatically assigned to an authenticated caller:
 
 ```
 diary_write(agent="reviewer", key="schema_pr_27",

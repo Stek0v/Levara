@@ -124,6 +124,7 @@ func extractOwnerID(ctx context.Context) string {
 // Ownership scope: the update only matches rows owned by the caller or
 // owned by the empty string (shared memories). Zero rows affected is
 // surfaced as IsError so the client knows the pin had no effect.
+// A nonempty collection narrows the update; omitted/empty keeps legacy scope.
 func ToolPinMemory(ctx context.Context, deps Deps, args map[string]any) ToolResult {
 	db := deps.DB()
 	if db == nil {
@@ -139,6 +140,10 @@ func ToolPinMemory(ctx context.Context, deps Deps, args map[string]any) ToolResu
 			IsError: true,
 		}
 	}
+	collectionName, ok := args["collection"].(string)
+	if _, present := args["collection"]; present && !ok {
+		return toolError("'collection' must be a string")
+	}
 	priority := 1
 	if p, ok := args["priority"].(float64); ok {
 		priority = int(p)
@@ -146,11 +151,17 @@ func ToolPinMemory(ctx context.Context, deps Deps, args map[string]any) ToolResu
 	ownerID := extractOwnerID(ctx)
 	now := time.Now().UTC().Format(time.RFC3339)
 
-	// Placeholders $1..$4 are each used once — Q (not QArgs) is sufficient.
-	res, err := db.ExecContext(ctx, deps.Q(`
+	// Each placeholder is used once — Q (not QArgs) is sufficient.
+	sqlStr := `
 		UPDATE memories SET is_pinned = TRUE, pin_priority = $1, updated_at = $2
 		WHERE key = $3 AND (owner_id = $4 OR owner_id = '')
-	`), priority, now, key, ownerID)
+	`
+	qargs := []any{priority, now, key, ownerID}
+	if collectionName != "" {
+		sqlStr += " AND collection_name = $5"
+		qargs = append(qargs, collectionName)
+	}
+	res, err := db.ExecContext(ctx, deps.Q(sqlStr), qargs...)
 	if err != nil {
 		return ToolResult{
 			Content: []Content{{Type: "text", Text: "Error: " + err.Error()}},
@@ -172,6 +183,7 @@ func ToolPinMemory(ctx context.Context, deps Deps, args map[string]any) ToolResu
 // Unlike Pin, a missing row is NOT reported as an error — the target
 // state (unpinned) is already satisfied, so the call is idempotent by
 // design. Matches pre-refactor behavior.
+// Collection selection follows the same rule as Pin.
 func ToolUnpinMemory(ctx context.Context, deps Deps, args map[string]any) ToolResult {
 	db := deps.DB()
 	if db == nil {
@@ -187,13 +199,23 @@ func ToolUnpinMemory(ctx context.Context, deps Deps, args map[string]any) ToolRe
 			IsError: true,
 		}
 	}
+	collectionName, ok := args["collection"].(string)
+	if _, present := args["collection"]; present && !ok {
+		return toolError("'collection' must be a string")
+	}
 	ownerID := extractOwnerID(ctx)
 	now := time.Now().UTC().Format(time.RFC3339)
 
-	if _, err := db.ExecContext(ctx, deps.Q(`
+	sqlStr := `
 		UPDATE memories SET is_pinned = FALSE, pin_priority = 0, updated_at = $1
 		WHERE key = $2 AND (owner_id = $3 OR owner_id = '')
-	`), now, key, ownerID); err != nil {
+	`
+	qargs := []any{now, key, ownerID}
+	if collectionName != "" {
+		sqlStr += " AND collection_name = $4"
+		qargs = append(qargs, collectionName)
+	}
+	if _, err := db.ExecContext(ctx, deps.Q(sqlStr), qargs...); err != nil {
 		return ToolResult{
 			Content: []Content{{Type: "text", Text: "Error: " + err.Error()}},
 			IsError: true,

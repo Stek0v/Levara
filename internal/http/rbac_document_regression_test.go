@@ -62,8 +62,16 @@ func documentACLHTTPFixture(t *testing.T, dialect ...string) (*fiber.App, *sql.D
 		}
 	}
 	app := fiber.New()
-	app.Use(func(c *fiber.Ctx) error { c.Locals("user_id", c.Get("X-Test-User")); return c.Next() })
-	RegisterRBACAPI(app, APIConfig{DB: db})
+	app.Use(func(c *fiber.Ctx) error {
+		c.Locals("auth_db", &DBRef{DB: db})
+		// Existing fixture clients request a principal; authenticate it with a real token.
+		if user := c.Get("X-Test-User"); user != "" && c.Get("Authorization") == "" {
+			c.Request().Header.Set("Authorization", "Bearer "+createJWT(user, user+"@example.test", "rbac-regression-secret"))
+		}
+		return c.Next()
+	})
+	app.Use(JWTMiddleware("rbac-regression-secret", true), APIKeyPermissionMiddleware())
+	RegisterRBACAPI(app, APIConfig{DB: db, RequireAuth: true})
 	return app, db
 }
 
@@ -75,7 +83,7 @@ func TestDocumentACLShareBindingAndUpsert(t *testing.T) {
 func checkDocumentACLShareBindingAndUpsert(t *testing.T, app *fiber.App, db *sql.DB) {
 	t.Helper()
 	req := httptest.NewRequest("DELETE", "/datasets/a/shares/share-b", nil)
-	req.Header.Set("X-Test-User", "alice")
+	req.Header.Set("Authorization", "Bearer "+createJWT("alice", "alice@example.test", "rbac-regression-secret"))
 	resp, err := app.Test(req)
 	if err != nil {
 		t.Fatal(err)
@@ -88,7 +96,7 @@ func checkDocumentACLShareBindingAndUpsert(t *testing.T, app *fiber.App, db *sql
 	var ids []string
 	for _, role := range []string{"viewer", "editor"} {
 		req = httptest.NewRequest("POST", "/datasets/a/shares", strings.NewReader(`{"user_id":"bob","role":"`+role+`"}`))
-		req.Header.Set("X-Test-User", "alice")
+		req.Header.Set("Authorization", "Bearer "+createJWT("alice", "alice@example.test", "rbac-regression-secret"))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err = app.Test(req)
 		if err != nil {
@@ -106,7 +114,7 @@ func checkDocumentACLShareBindingAndUpsert(t *testing.T, app *fiber.App, db *sql
 		t.Errorf("upsert returned invented share ID: %v", ids)
 	}
 	req = httptest.NewRequest("DELETE", "/datasets/a/shares/"+ids[1], nil)
-	req.Header.Set("X-Test-User", "alice")
+	req.Header.Set("Authorization", "Bearer "+createJWT("alice", "alice@example.test", "rbac-regression-secret"))
 	resp, err = app.Test(req)
 	if err != nil {
 		t.Fatal(err)

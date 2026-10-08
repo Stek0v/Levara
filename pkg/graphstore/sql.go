@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -204,13 +205,18 @@ func (s *SQLGraphStore) QueryNHop(ctx context.Context, entityNames []string, hop
 }
 
 // ReadFullGraph returns all graph rows in the existing graphdb DTO.
-func (s *SQLGraphStore) ReadFullGraph(ctx context.Context) (_ graphdb.GraphReadResult, err error) {
+func (s *SQLGraphStore) ReadFullGraph(ctx context.Context) (graphdb.GraphReadResult, error) {
+	return s.ReadFullGraphWithTransaction(ctx, nil)
+}
+
+// ReadFullGraphWithTransaction keeps graph reads inside the caller's authority fence.
+func (s *SQLGraphStore) ReadFullGraphWithTransaction(ctx context.Context, tx *sql.Tx) (_ graphdb.GraphReadResult, err error) {
 	if s == nil || s.db == nil {
 		return graphdb.GraphReadResult{}, nil
 	}
 	defer metrics.ObserveExternalCall("sql-graph", "read_full", time.Now(), &err)
 
-	graph, err := s.readGraphRows(ctx)
+	graph, err := s.readGraphRowsWithTransaction(ctx, tx)
 	if err != nil {
 		return graphdb.GraphReadResult{}, err
 	}
@@ -257,7 +263,25 @@ func (s *SQLGraphStore) ReadFullGraph(ctx context.Context) (_ graphdb.GraphReadR
 // PathBetween returns a flat union of shortest-path edges. It loads the bounded
 // SQL graph and performs BFS in-process, avoiding dialect-specific recursive CTE
 // differences while preserving the public API contract.
-func (s *SQLGraphStore) PathBetween(ctx context.Context, q graphdb.PathQuery) (_ graphdb.PathResult, err error) {
+func (s *SQLGraphStore) PathBetween(ctx context.Context, q graphdb.PathQuery) (graphdb.PathResult, error) {
+	return s.pathBetween(ctx, q, nil, nil)
+}
+
+var ErrInvalidPathCursor = errors.New("invalid path cursor")
+
+// PathBetweenAuthorized filters every assertion before BFS using the caller's
+// authority transaction. A denied shortcut cannot hide a longer permitted route.
+func (s *SQLGraphStore) PathBetweenAuthorized(ctx context.Context, q graphdb.PathQuery, tx *sql.Tx, allowed func(string, json.RawMessage) (bool, error)) (graphdb.PathResult, error) {
+	if tx == nil || allowed == nil {
+		return graphdb.PathResult{}, errors.New("graph path authorization required")
+	}
+	if _, err := decodePathCursor(q.Cursor); err != nil {
+		return graphdb.PathResult{}, fmt.Errorf("%w: %v", ErrInvalidPathCursor, err)
+	}
+	return s.pathBetween(ctx, q, tx, allowed)
+}
+
+func (s *SQLGraphStore) pathBetween(ctx context.Context, q graphdb.PathQuery, tx *sql.Tx, allowed func(string, json.RawMessage) (bool, error)) (_ graphdb.PathResult, err error) {
 	if s == nil || s.db == nil {
 		return graphdb.PathResult{AsOf: q.AsOf}, nil
 	}
@@ -285,9 +309,43 @@ func (s *SQLGraphStore) PathBetween(ctx context.Context, q graphdb.PathQuery) (_
 		return graphdb.PathResult{}, err
 	}
 
-	graph, err := s.readGraphRows(ctx)
+	graph, err := s.readGraphRowsWithTransaction(ctx, tx)
 	if err != nil {
 		return graphdb.PathResult{}, err
+	}
+	if allowed != nil {
+		for id, node := range graph.nodes {
+			ok, err := allowed(node.datasetID, node.assertion)
+			if err != nil {
+				return graphdb.PathResult{}, err
+			}
+			if !ok {
+				delete(graph.nodes, id)
+			}
+		}
+		graph.adj = map[string][]sqlEdge{}
+		for _, edge := range graph.edges {
+			source, sourceOK := graph.nodes[edge.sourceID]
+			target, targetOK := graph.nodes[edge.targetID]
+			if !sourceOK || !targetOK {
+				continue
+			}
+			dataset := edge.datasetID
+			if dataset == "" && source.datasetID == target.datasetID {
+				dataset = source.datasetID
+			}
+			ok, err := allowed(dataset, edge.assertion)
+			if err != nil {
+				return graphdb.PathResult{}, err
+			}
+			if !ok {
+				continue
+			}
+			graph.adj[edge.sourceID] = append(graph.adj[edge.sourceID], edge)
+			reverse := edge
+			reverse.sourceID, reverse.targetID = edge.targetID, edge.sourceID
+			graph.adj[reverse.sourceID] = append(graph.adj[reverse.sourceID], reverse)
+		}
 	}
 	if graph.nodes[q.From].id == "" || graph.nodes[q.To].id == "" {
 		return graphdb.PathResult{AsOf: q.AsOf}, nil
@@ -309,6 +367,7 @@ func (s *SQLGraphStore) PathBetween(ctx context.Context, q graphdb.PathQuery) (_
 }
 
 type sqlNode struct {
+	assertion   json.RawMessage
 	id          string
 	name        string
 	typ         string
@@ -318,6 +377,7 @@ type sqlNode struct {
 }
 
 type sqlEdge struct {
+	assertion    json.RawMessage
 	id           string
 	sourceID     string
 	targetID     string
@@ -335,9 +395,17 @@ type sqlGraph struct {
 }
 
 func (s *SQLGraphStore) readGraphRows(ctx context.Context) (sqlGraph, error) {
+	return s.readGraphRowsWithTransaction(ctx, nil)
+}
+
+func (s *SQLGraphStore) readGraphRowsWithTransaction(ctx context.Context, tx *sql.Tx) (sqlGraph, error) {
+	query := s.db.QueryContext
+	if tx != nil {
+		query = tx.QueryContext
+	}
 	g := sqlGraph{nodes: map[string]sqlNode{}, adj: map[string][]sqlEdge{}}
 
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, type, COALESCE(description,''), COALESCE(properties,'{}'), COALESCE(dataset_id,'') FROM graph_nodes`)
+	rows, err := query(ctx, `SELECT id, name, type, COALESCE(description,''), COALESCE(properties,'{}'), COALESCE(dataset_id,'') FROM graph_nodes`)
 	if err != nil {
 		return g, fmt.Errorf("read graph nodes: %w", err)
 	}
@@ -348,6 +416,7 @@ func (s *SQLGraphStore) readGraphRows(ctx context.Context) (sqlGraph, error) {
 		if err := rows.Scan(&n.id, &n.name, &n.typ, &n.description, &props, &n.datasetID); err != nil {
 			return g, fmt.Errorf("scan graph node: %w", err)
 		}
+		n.assertion = json.RawMessage(props)
 		n.properties = parseProperties(props)
 		g.nodes[n.id] = n
 	}
@@ -355,7 +424,11 @@ func (s *SQLGraphStore) readGraphRows(ctx context.Context) (sqlGraph, error) {
 		return g, fmt.Errorf("iterate graph nodes: %w", err)
 	}
 
-	erows, err := s.db.QueryContext(ctx, `SELECT id, source_id, target_id, relationship_name, COALESCE(properties,'{}'), valid_from, valid_until, COALESCE(dataset_id,'') FROM graph_edges`)
+	if err := rows.Close(); err != nil {
+		return g, err
+	}
+
+	erows, err := query(ctx, `SELECT id, source_id, target_id, relationship_name, COALESCE(properties,'{}'), valid_from, valid_until, COALESCE(dataset_id,'') FROM graph_edges`)
 	if err != nil {
 		return g, fmt.Errorf("read graph edges: %w", err)
 	}
@@ -367,6 +440,7 @@ func (s *SQLGraphStore) readGraphRows(ctx context.Context) (sqlGraph, error) {
 		if err := erows.Scan(&e.id, &e.sourceID, &e.targetID, &e.relationship, &props, &vf, &vu, &e.datasetID); err != nil {
 			return g, fmt.Errorf("scan graph edge: %w", err)
 		}
+		e.assertion = json.RawMessage(props)
 		e.properties = parseProperties(props)
 		e.validFrom = parseSQLTime(vf.String)
 		if vu.Valid {

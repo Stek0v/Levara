@@ -51,6 +51,8 @@ type IndexOptions struct {
 	OverlapChars       int
 	SnapToSentence     *bool
 	ActivateGeneration bool
+	AttemptID          string
+	DeferRetirement    bool
 }
 
 type MarkdownFile struct {
@@ -92,6 +94,9 @@ func (x *Indexer) IndexMarkdown(ctx context.Context, file MarkdownFile, opts Ind
 	if err := validateIndexInput(file, opts); err != nil {
 		return IndexResult{}, err
 	}
+	if err := ctx.Err(); err != nil {
+		return IndexResult{}, err
+	}
 	if file.DocumentID == "" {
 		file.DocumentID = file.Path
 	}
@@ -112,33 +117,34 @@ func (x *Indexer) IndexMarkdown(ctx context.Context, file MarkdownFile, opts Ind
 	}
 	// Re-indexing the same path in the same generation replaces old vector IDs,
 	// but only after the new vectors have been embedded and upserted.
+	oldRecords := x.Manifest.ListChunks(pathFilter)
 	oldVectorIDs := x.Manifest.VectorIDs(pathFilter)
 
 	chunks := chunkMarkdown(file, opts)
 	if len(chunks) == 0 {
-		x.Manifest.DeleteChunks(pathFilter)
-		if len(oldVectorIDs) > 0 {
+		if err := ctx.Err(); err != nil {
+			return IndexResult{}, err
+		}
+		result := IndexResult{DeletedVectorIDs: oldVectorIDs, Collection: opts.Collection, Generation: opts.Generation}
+		if !opts.DeferRetirement && len(oldVectorIDs) > 0 {
 			if errs := x.Store.DeleteMany(opts.Collection, oldVectorIDs); len(errs) > 0 {
-				return IndexResult{}, fmt.Errorf("delete old vectors: %v", errs)
+				return result, fmt.Errorf("delete old vectors: %v", errs)
 			}
 			x.removeLexical(oldVectorIDs)
 		}
-		return IndexResult{DeletedVectorIDs: oldVectorIDs, Collection: opts.Collection, Generation: opts.Generation}, nil
+		if opts.DeferRetirement {
+			for _, rec := range oldRecords {
+				x.Manifest.PendingRetirements[rec.VectorID] = rec
+			}
+		}
+		x.Manifest.DeleteChunks(pathFilter)
+		x.recordFile(opts.Generation, file.Path, file.FileDigest)
+		return result, nil
 	}
 
 	embedTexts := make([]string, len(chunks))
 	for i, ch := range chunks {
 		embedTexts[i] = buildWorkspaceEmbedText(ch.Text, file.Title, ch.HeadingPath)
-	}
-	vecs, err := x.Embedder.EmbedTexts(ctx, embedTexts)
-	if err != nil {
-		_ = x.Manifest.SetGeneration(opts.Generation, GenerationFailed, err.Error())
-		return IndexResult{}, err
-	}
-	if len(vecs) != len(chunks) {
-		err := fmt.Errorf("embedder returned %d vectors for %d chunks", len(vecs), len(chunks))
-		_ = x.Manifest.SetGeneration(opts.Generation, GenerationFailed, err.Error())
-		return IndexResult{}, err
 	}
 
 	records := make([]vectorstore.UpsertRecord, 0, len(chunks))
@@ -146,13 +152,16 @@ func (x *Indexer) IndexMarkdown(ctx context.Context, file MarkdownFile, opts Ind
 	manifestRecords := make([]ChunkRecord, 0, len(chunks))
 	indexedChunks := make([]IndexedChunk, 0, len(chunks))
 	now := x.now().UTC().Format(time.RFC3339)
-	for i, ch := range chunks {
+	for _, ch := range chunks {
 		chunkID := stableID("chk", opts.ProjectID, opts.Branch, file.Path, file.FileDigest, fmt.Sprint(ch.Index))
 		vectorID := stableID("vec", opts.ProjectID, opts.Branch, opts.Generation, file.Path, file.FileDigest, fmt.Sprint(ch.Index))
+		if opts.AttemptID != "" {
+			chunkID = stableID("chk", opts.ProjectID, opts.Branch, file.Path, file.FileDigest, fmt.Sprint(ch.Index), opts.AttemptID)
+			vectorID = stableID("vec", opts.ProjectID, opts.Branch, opts.Generation, file.Path, file.FileDigest, fmt.Sprint(ch.Index), opts.AttemptID)
+		}
 		meta := workspaceChunkMetadata(file, opts, ch, chunkID, now)
 		records = append(records, vectorstore.UpsertRecord{
 			ID:       vectorID,
-			Vector:   vecs[i],
 			Metadata: meta,
 		})
 		vectorIDs = append(vectorIDs, vectorID)
@@ -176,28 +185,67 @@ func (x *Indexer) IndexMarkdown(ctx context.Context, file MarkdownFile, opts Ind
 			Metadata: meta,
 		})
 	}
-	if errs := x.Store.BatchUpsert(opts.Collection, records); len(errs) > 0 {
-		_ = x.Manifest.SetGeneration(opts.Generation, GenerationFailed, fmt.Sprint(errs))
-		return IndexResult{}, fmt.Errorf("batch upsert: %v", errs)
+	prepared := IndexResult{ChunksCreated: len(chunks), VectorIDs: vectorIDs, Collection: opts.Collection, Generation: opts.Generation, Chunks: indexedChunks}
+	vecs, err := x.Embedder.EmbedTexts(ctx, embedTexts)
+	if err == nil {
+		err = ctx.Err()
+	}
+	if err != nil {
+		_ = x.Manifest.SetGeneration(opts.Generation, GenerationFailed, err.Error())
+		return prepared, err
+	}
+	if len(vecs) != len(chunks) {
+		err := fmt.Errorf("embedder returned %d vectors for %d chunks", len(vecs), len(chunks))
+		_ = x.Manifest.SetGeneration(opts.Generation, GenerationFailed, err.Error())
+		return prepared, err
 	}
 
+	for i := range records {
+		records[i].Vector = vecs[i]
+	}
+	if err := ctx.Err(); err != nil {
+		return prepared, err
+	}
+	if errs := x.Store.BatchUpsert(opts.Collection, records); len(errs) > 0 {
+		_ = x.Manifest.SetGeneration(opts.Generation, GenerationFailed, fmt.Sprint(errs))
+		return prepared, fmt.Errorf("batch upsert: %v", errs)
+	}
+
+	if err := ctx.Err(); err != nil {
+		return prepared, err
+	}
 	staleVectorIDs := subtractStrings(oldVectorIDs, vectorIDs)
-	if len(staleVectorIDs) > 0 {
+	if !opts.DeferRetirement && len(staleVectorIDs) > 0 {
 		if errs := x.Store.DeleteMany(opts.Collection, staleVectorIDs); len(errs) > 0 {
-			return IndexResult{}, fmt.Errorf("delete stale vectors: %v", errs)
+			return prepared, fmt.Errorf("delete stale vectors: %v", errs)
 		}
 		x.removeLexical(staleVectorIDs)
+	}
+	if err := ctx.Err(); err != nil {
+		return prepared, err
+	}
+	if opts.DeferRetirement {
+		staleSet := make(map[string]bool, len(staleVectorIDs))
+		for _, id := range staleVectorIDs {
+			staleSet[id] = true
+		}
+		for _, rec := range oldRecords {
+			if staleSet[rec.VectorID] {
+				x.Manifest.PendingRetirements[rec.VectorID] = rec
+			}
+		}
 	}
 	x.Manifest.DeleteChunks(pathFilter)
 	for _, rec := range manifestRecords {
 		if err := x.Manifest.UpsertChunk(rec); err != nil {
-			return IndexResult{}, err
+			return prepared, err
 		}
 	}
+	x.recordFile(opts.Generation, file.Path, file.FileDigest)
 	x.addLexical(indexedChunks)
 	if opts.ActivateGeneration {
 		if err := x.Manifest.ActivateGeneration(opts.Generation); err != nil {
-			return IndexResult{}, err
+			return prepared, err
 		}
 	}
 
@@ -226,16 +274,31 @@ func (x *Indexer) DeleteMarkdown(path string, opts IndexOptions) ([]string, erro
 		Path:       path,
 		Collection: opts.Collection,
 	}
+	x.Manifest.ensureMaps()
 	ids := x.Manifest.VectorIDs(filter)
-	if len(ids) == 0 {
-		return nil, nil
+	if opts.DeferRetirement {
+		for _, record := range x.Manifest.ListChunks(filter) {
+			x.Manifest.PendingRetirements[record.VectorID] = record
+		}
+	} else if len(ids) > 0 {
+		if errs := x.Store.DeleteMany(opts.Collection, ids); len(errs) > 0 {
+			return nil, fmt.Errorf("delete vectors: %v", errs)
+		}
+		x.removeLexical(ids)
 	}
-	if errs := x.Store.DeleteMany(opts.Collection, ids); len(errs) > 0 {
-		return nil, fmt.Errorf("delete vectors: %v", errs)
-	}
-	x.removeLexical(ids)
 	x.Manifest.DeleteChunks(filter)
+	if files, known := x.Manifest.Files[opts.Generation]; known && files != nil {
+		delete(files, path)
+	}
 	return ids, nil
+}
+
+func (x *Indexer) recordFile(generation, path, digest string) {
+	x.Manifest.ensureMaps()
+	if x.Manifest.Files[generation] == nil {
+		x.Manifest.Files[generation] = make(map[string]string)
+	}
+	x.Manifest.Files[generation][path] = digest
 }
 
 func (x *Indexer) now() time.Time {
@@ -450,6 +513,9 @@ func workspaceChunkMetadata(file MarkdownFile, opts IndexOptions, ch markdownChu
 		"room":           file.Room,
 		"tags":           file.Tags,
 		"updated_at":     updatedAt,
+	}
+	if opts.AttemptID != "" {
+		meta["attempt_id"] = opts.AttemptID
 	}
 	return meta
 }

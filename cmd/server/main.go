@@ -65,7 +65,6 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"       // pgx via database/sql (binary protocol, prepared stmts)
 	_ "github.com/ncruces/go-sqlite3/driver" // pure-Go SQLite driver (no CGO, ARM64 ready)
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/stek0v/levara/internal/cluster"
 	vectorGrpc "github.com/stek0v/levara/internal/grpc"
 	"github.com/stek0v/levara/internal/metrics"
 	"github.com/stek0v/levara/internal/store"
@@ -188,6 +187,13 @@ func durationEnv(key string, fallback time.Duration) time.Duration {
 		return time.Duration(n) * time.Second
 	}
 	return fallback
+}
+
+func memoryIndexWorkerCount() int {
+	if n := envInt("LEVARA_MEMORY_INDEX_WORKERS"); n > 0 {
+		return n
+	}
+	return 2
 }
 
 func memoryIndexWorkerInterval() time.Duration {
@@ -697,6 +703,7 @@ func main() {
 	// Raw-vector compatibility routes are global resources without document
 	// lineage. In authenticated deployments they are active-superuser only.
 	vectorHttp.RegisterLegacyVectorAPI(api, vectorHttp.APIConfig{DB: pgDB, RequireAuth: *requireAuth}, handler)
+	vizCfg.Authority = &vectorHttp.APIConfig{DB: pgDB, RequireAuth: *requireAuth}
 	api.Get("/datasets/:id/graph", vectorHttp.DatasetGraph(vizCfg))
 
 	// Error tracker inspection (protected). Previously registered in
@@ -797,9 +804,9 @@ func main() {
 		sharedEmbed = sharedEmbed.WithQueryAlias()
 	}
 	// P4 embedder QoS: one admission gate, foreground (search/recall) keeps
-	// queue priority; the cognify pipeline embeds through a background lane
-	// capped by LEVARA_EMBED_BG_CONCURRENCY (default 2) so corpus batches
-	// cannot starve query embedding against a single-worker upstream.
+	// queue priority. LEVARA_EMBED_BG_CONCURRENCY (default 2) limits batches
+	// within each background EmbedTexts call; the gate bounds admitted calls.
+	// Already admitted calls finish before waiting foreground can proceed.
 	embedGate := embed.NewPriorityGate(embedderGateCapacity())
 	grpcSvc.SetEmbedDefaults(sharedEmbed.WithPriorityGate(embedGate), embedEndpoint, embedModel)
 
@@ -835,31 +842,39 @@ func main() {
 		} else {
 			memoryIndexOutbox = store
 		}
-		if readModel, err := audit.NewReadModel(pgDB, 32768); err != nil {
-			srvLog.Warn("mcp_audit_read_model_init_failed", map[string]any{"err": err.Error()})
-		} else {
-			mcpAuditReadModel = readModel
-			if *mcpAuditPath != "" && *mcpAuditPath != "-" {
-				go func() {
-					if imported, importErr := readModel.ImportDir(context.Background(), *mcpAuditPath); importErr != nil {
-						srvLog.Warn("mcp_audit_import_failed", map[string]any{"err": importErr.Error()})
-					} else {
-						srvLog.Info("mcp_audit_import_complete", map[string]any{"events_scanned": imported})
-					}
-				}()
-			}
-			retentionDays := 90
-			if raw := os.Getenv("MCP_AUDIT_READ_MODEL_RETENTION_DAYS"); raw != "" {
-				if parsed, parseErr := strconv.Atoi(raw); parseErr == nil && parsed > 0 {
-					retentionDays = parsed
+		if mcpPrimaryAudit != nil {
+			if readModel, err := audit.NewReadModel(pgDB, 32768); err != nil {
+				srvLog.Warn("mcp_audit_read_model_init_failed", map[string]any{"err": err.Error()})
+			} else {
+				mcpAuditReadModel = readModel
+				if *mcpAuditPath != "" && *mcpAuditPath != "-" {
+					go func() {
+						if imported, importErr := readModel.ImportDir(context.Background(), *mcpAuditPath); importErr != nil {
+							srvLog.Warn("mcp_audit_import_failed", map[string]any{"err": importErr.Error()})
+						} else {
+							srvLog.Info("mcp_audit_import_complete", map[string]any{"events_scanned": imported})
+						}
+					}()
 				}
+				retentionDays := 90
+				if raw := os.Getenv("MCP_AUDIT_READ_MODEL_RETENTION_DAYS"); raw != "" {
+					if parsed, parseErr := strconv.Atoi(raw); parseErr == nil && parsed > 0 {
+						retentionDays = parsed
+					}
+				}
+				stopRetention := readModel.StartRetention(retentionDays)
+				defer stopRetention()
+				defer readModel.Close()
 			}
-			stopRetention := readModel.StartRetention(retentionDays)
-			defer stopRetention()
-			defer readModel.Close()
 		}
 	}
-	mcpAuditSink := audit.MultiSink{mcpPrimaryAudit, mcpAuditReadModel}
+	var mcpAuditSink audit.MultiSink
+	if mcpPrimaryAudit != nil {
+		mcpAuditSink = append(mcpAuditSink, mcpPrimaryAudit)
+	}
+	if mcpAuditReadModel != nil {
+		mcpAuditSink = append(mcpAuditSink, mcpAuditReadModel)
+	}
 	auditWebhookCfg, err := auditWebhookFromEnv(os.Getenv)
 	if err != nil {
 		log.Fatalf("audit webhook configuration: %v", err)
@@ -882,6 +897,10 @@ func main() {
 		})
 	}
 
+	var activeMCPAudit audit.Sink
+	if len(mcpAuditSink) > 0 {
+		activeMCPAudit = mcpAuditSink
+	}
 	apiCfg := vectorHttp.APIConfig{
 		PostgresDSN:                pgDSN,
 		StoragePath:                *dataDir + "/uploads",
@@ -917,6 +936,7 @@ func main() {
 		Runs:                       runs,
 		SearchStrategies:           searchStrategies,
 		WorkspaceAuditSink:         wsAuditSink,
+		MCPAudit:                   activeMCPAudit,
 		MCPAuditReadModel:          mcpAuditReadModel,
 		MemoryIndexOutbox:          memoryIndexOutbox,
 	}
@@ -936,7 +956,7 @@ func main() {
 		FileStorage:                fileStore,
 		EmbedEndpoint:              embedEndpoint,
 		EmbedModel:                 embedModel,
-		EmbedClient:                sharedEmbed,
+		EmbedClient:                sharedEmbed.WithPriorityGate(embedGate),
 		WorkspacePath:              *dataDir + "/workspace",
 		JWTSecret:                  authCfg.JWTSecret,
 		RequireAuth:                *requireAuth,
@@ -958,7 +978,7 @@ func main() {
 		StructuredExtractEndpoint:  *structuredExtractEndpoint,
 		StructuredExtractTimeoutMs: *structuredExtractTimeoutMs,
 		Runs:                       runs,
-		MCPAudit:                   mcpAuditSink,
+		MCPAudit:                   activeMCPAudit,
 		MCPAuditReadModel:          mcpAuditReadModel,
 		MemoryIndexOutbox:          memoryIndexOutbox,
 		MCPAgentBucket:             metrics.NewUserBucket(20, time.Minute),
@@ -972,7 +992,7 @@ func main() {
 	vectorHttp.StartConsolidationRecovery(mcpCfg)
 	memoryWorkerCfg := mcpCfg
 	memoryWorkerCfg.EmbedClient = sharedEmbed.WithPriorityGate(embedGate).WithBackground().WithConcurrency(embedderBackgroundConcurrency())
-	stopMemoryIndexWorker := vectorHttp.StartMemoryIndexWorker(memoryWorkerCfg, memoryIndexWorkerInterval())
+	stopMemoryIndexWorker := vectorHttp.StartMemoryIndexWorker(memoryWorkerCfg, memoryIndexWorkerInterval(), memoryIndexWorkerCount())
 	defer stopMemoryIndexWorker()
 
 	// Opt-in background memory-consolidation janitor. Off unless
@@ -1066,14 +1086,11 @@ func main() {
 	stopProxy := startLLMProxyIfConfigured(*llmProxyPort, *llmUpstream, *dataDir, nodeID, *llmCacheSize, *llmMaxInflight)
 	defer stopProxy()
 
-	// Start replica client if joining a primary
+	// Start replica client if joining a primary.
+	var stopReplica func()
 	if *joinAddr != "" && replServer != nil && replDB != nil {
-		replicaClient := cluster.NewReplicaClient(*joinAddr, nodeID, replDB, colManager)
-		go func() {
-			if err := replicaClient.Start(context.Background()); err != nil {
-				log.Printf("replica start error: %v", err)
-			}
-		}()
+		stopReplica = startReplicaClient(*joinAddr, nodeID, replDB, colManager)
+		defer stopReplica()
 	}
 
 	addr := net.JoinHostPort(*host, strconv.Itoa(*port))
@@ -1087,7 +1104,7 @@ func main() {
 	log.Printf("Levara listening on HTTP:%d gRPC:%d (dim=%d, shards=%d, mode=%s, node=%s)", *port, *grpcPort, *dim, numShards, mode, nodeID)
 
 	// Graceful shutdown — see bootstrap.go for the full close ordering.
-	shutdownDone := installGracefulShutdown(app, shards, colManager, pgDB, grpcServer, stopAuditWebhook)
+	shutdownDone := installGracefulShutdown(app, shards, colManager, pgDB, grpcServer, stopReplica, stopAuditWebhook)
 
 	// Embed model keep-alive ticker (Ollama eviction defence).
 	startEmbedKeepAlive(embedEndpoint, embedModel, keepaliveDur)
@@ -1101,7 +1118,7 @@ func main() {
 
 	// P2 transcript sources: opt-in local transcript ingest daemon
 	// (LEVARA_CHAT_SOURCES=code|claude-code|cursor[,…]).
-	vectorHttp.StartChatSourcesDaemon(context.Background(), pgDB, "http://"+addr)
+	vectorHttp.StartChatSourcesDaemon(context.Background(), pgDB, "http://"+addr, apiCfg.RequireAuth)
 
 	if err := app.Listen(addr); err != nil {
 		log.Printf("HTTP server stopped with error: %v", err)
@@ -1123,9 +1140,8 @@ func main() {
 	<-shutdownDone
 }
 
-// embedderGateCapacity bounds total in-flight embed requests through the
-// shared gate. Default 4 keeps headroom above the foreground lane so query
-// embedding never waits for the gate itself.
+// embedderGateCapacity bounds admitted foreground and background EmbedTexts
+// calls. Foreground has queue priority but may wait for admitted calls.
 func embedderGateCapacity() int {
 	if n := envInt("LEVARA_EMBED_GATE_CAPACITY"); n > 0 {
 		return n
@@ -1133,8 +1149,8 @@ func embedderGateCapacity() int {
 	return 4
 }
 
-// embedderBackgroundConcurrency caps the corpus lane. Default 2: against a
-// single-worker upstream a query then queues behind at most two batches.
+// embedderBackgroundConcurrency limits batches within each background call.
+// Concurrent calls have separate batch limits; the shared gate admits calls.
 func embedderBackgroundConcurrency() int {
 	if n := envInt("LEVARA_EMBED_BG_CONCURRENCY"); n > 0 {
 		return n

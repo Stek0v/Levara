@@ -1359,12 +1359,44 @@ func verifyStructuredArtifacts(ctx context.Context, stage string, m VerifiedMani
 		if wm.Version != workspace.ManifestVersion || wm.ProjectID == "" || wm.Branch == "" {
 			return nil, errors.New("backup: invalid workspace manifest")
 		}
+		canonical := filepath.ToSlash(workspace.ManifestPath("", wm.ProjectID, wm.Branch))
+		legacy := filepath.ToSlash(workspace.LegacyManifestPath("", wm.ProjectID, wm.Branch))
+		if f.Path != canonical && f.Path != legacy {
+			return nil, errors.New("backup: workspace manifest target mismatch")
+		}
+		if f.Path == legacy {
+			if _, ok := inventory["workspace/"+canonical]; ok {
+				continue
+			}
+		}
 		if wm.ActiveGeneration == "" {
 			continue
 		}
 		gen, ok := wm.Generations[wm.ActiveGeneration]
 		if !ok || gen.Status != workspace.GenerationActive {
 			return nil, errors.New("backup: invalid active workspace generation")
+		}
+		// A nil/absent inventory is legacy unknown; a nonnil empty map is a
+		// committed empty generation. Zero-chunk files still require byte proof.
+		files := wm.Files[wm.ActiveGeneration]
+		for name, digest := range files {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			count++
+			if count > o.MaxRows {
+				return nil, errors.New("backup: workspace file budget exceeded")
+			}
+			rel, err := safeArchiveName(name)
+			if err != nil || rel != name {
+				return nil, errors.New("backup: invalid workspace file inventory path")
+			}
+			project := workspace.ProjectRoot("", wm.ProjectID, wm.Branch)
+			key := "workspace/" + filepath.ToSlash(filepath.Join(project, filepath.FromSlash(rel)))
+			file, ok := inventory[key]
+			if !ok || strings.TrimPrefix(digest, "sha256:") != file.SHA256 {
+				return nil, errors.New("backup: active workspace inventory digest mismatch")
+			}
 		}
 		for _, chunk := range wm.Chunks {
 			if chunk.Generation != wm.ActiveGeneration {
@@ -1381,10 +1413,13 @@ func verifyStructuredArtifacts(ctx context.Context, stage string, m VerifiedMani
 			if err != nil || rel != chunk.Path {
 				return nil, errors.New("backup: invalid workspace chunk path")
 			}
+			if files != nil && strings.TrimPrefix(files[rel], "sha256:") != strings.TrimPrefix(chunk.FileDigest, "sha256:") {
+				return nil, errors.New("backup: active workspace chunk absent from file inventory")
+			}
 			project := workspace.ProjectRoot("", wm.ProjectID, wm.Branch)
 			key := "workspace/" + filepath.ToSlash(filepath.Join(project, filepath.FromSlash(rel)))
 			file, ok := inventory[key]
-			if !ok || chunk.FileDigest != "sha256:"+file.SHA256 {
+			if !ok || strings.TrimPrefix(chunk.FileDigest, "sha256:") != file.SHA256 {
 				return nil, errors.New("backup: active workspace file digest mismatch")
 			}
 			if filepath.Base(chunk.Collection) != chunk.Collection || strings.ContainsAny(chunk.Collection, "/\\") {

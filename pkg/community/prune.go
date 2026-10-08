@@ -68,6 +68,13 @@ func PruneGraph(ctx context.Context, db *sql.DB, cfg PruneConfig) (PruneResult, 
 			}
 		}
 	} else {
+		// ponytail: serialize global cleanup with graph writers; acquire nodes
+		// before edges so readers/upserts cannot form the reverse-order cycle.
+		if sqlcompat.CurrentProvider() != sqlcompat.SQLite {
+			if _, err := tx.ExecContext(ctx, "LOCK TABLE graph_nodes, graph_edges IN SHARE ROW EXCLUSIVE MODE"); err != nil {
+				return PruneResult{}, fmt.Errorf("lock prune graph: %w", err)
+			}
+		}
 		res, err := tx.ExecContext(ctx, "DELETE FROM graph_edges WHERE "+candidates, cutoff)
 		if err != nil {
 			return PruneResult{}, fmt.Errorf("delete superseded edges: %w", err)

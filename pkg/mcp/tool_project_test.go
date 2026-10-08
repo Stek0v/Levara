@@ -41,6 +41,7 @@ func setupProjectDB(t *testing.T) *fakeDeps {
 			type TEXT NOT NULL DEFAULT 'fact',
 			owner_id TEXT NOT NULL DEFAULT '',
 			collection_name TEXT NOT NULL DEFAULT '',
+			superseded_by TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 		);
@@ -88,8 +89,8 @@ func TestToolGetProjectContext_NoVectors(t *testing.T) {
 	if !strings.Contains(text, "Collection Stats") {
 		t.Error("missing Collection Stats section")
 	}
-	if !strings.Contains(text, "not found") {
-		t.Errorf("expected 'not found' msg for empty collection; got %q", text)
+	if !strings.Contains(text, "unavailable") || !strings.Contains(text, "no memories") {
+		t.Errorf("expected explicit unavailable and empty memory summary; got %q", text)
 	}
 }
 
@@ -105,8 +106,8 @@ func TestToolGetProjectContext_WithVectors(t *testing.T) {
 		t.Fatalf("unexpected IsError: %q", res.Content[0].Text)
 	}
 	text := res.Content[0].Text
-	if !strings.Contains(text, "Records: 42") {
-		t.Errorf("collection stats not shown; text=%q", text)
+	if !strings.Contains(text, "unavailable") || strings.Contains(text, "Records: 42") {
+		t.Errorf("unguarded vector statistics must be unavailable; text=%q", text)
 	}
 }
 
@@ -152,24 +153,19 @@ func TestToolGetProjectContext_EntitiesListed(t *testing.T) {
 	if !strings.Contains(text, "Key Entity Types") {
 		t.Error("missing Key Entity Types section")
 	}
-	if !strings.Contains(text, "module") {
-		t.Errorf("entity type not shown; text=%q", text)
+	if !strings.Contains(text, "unavailable") || strings.Contains(text, "module") {
+		t.Errorf("unscoped graph entities must be unavailable; text=%q", text)
 	}
 }
 
 func TestToolGetProjectContext_NilDB(t *testing.T) {
-	// With nil DB, the response should still contain section headers and
-	// not error — useful for vector-only deployments.
+	// Without SQL there is no authoritative scoped context to return.
 	deps := &fakeDeps{}
 	res := ToolGetProjectContext(context.Background(), deps, map[string]any{
 		"collection": "test",
 	})
-	if res.IsError {
-		t.Fatalf("unexpected IsError with nil DB: %q", res.Content[0].Text)
-	}
-	text := res.Content[0].Text
-	if !strings.Contains(text, "Collection Stats") {
-		t.Errorf("expected Collection Stats header; got %q", text)
+	if !res.IsError || res.StructuredContent != nil {
+		t.Fatalf("expected database error without partial success: %+v", res)
 	}
 }
 

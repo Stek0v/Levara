@@ -10,6 +10,7 @@ import (
 	accesspkg "github.com/stek0v/levara/pkg/access"
 	"github.com/stek0v/levara/pkg/chatimport"
 	"github.com/stek0v/levara/pkg/ingest"
+	"github.com/stek0v/levara/pkg/mcp"
 	"log"
 	"strings"
 )
@@ -33,6 +34,7 @@ func MigrateSchema(db *sql.DB) error {
 	// Chat-import tables are dialect-neutral and live in their package as
 	// the single DDL source (also used by standalone EnsureSchema).
 	stmts = append(stmts, chatimport.SchemaStatements...)
+	stmts = append(stmts, mcp.ConsolidationRunsDDL)
 
 	for _, stmt := range stmts {
 		if _, err := db.ExecContext(ctx, stmt); err != nil {
@@ -41,6 +43,30 @@ func MigrateSchema(db *sql.DB) error {
 				continue
 			}
 			return fmt.Errorf("migrate: %w\nSQL: %s", err, stmt[:min(len(stmt), 80)])
+		}
+	}
+
+	if err := migrateMemorySyncGenerations(ctx, db); err != nil {
+		return err
+	}
+
+	// Older ALTER statements tolerate duplicate columns; verify the required
+	// publication columns so an unrelated migration failure cannot go unnoticed.
+	rows, err := db.QueryContext(ctx, "SELECT generation, sources_json, lineage_verified FROM graph_communities LIMIT 0")
+	if err != nil {
+		return fmt.Errorf("migrate community publication: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close community publication migration check: %w", err)
+	}
+
+	for _, table := range []string{"task_receipts", "task_checkpoints"} {
+		rows, err := db.QueryContext(ctx, "SELECT request_digest FROM "+table+" LIMIT 0")
+		if err != nil {
+			return fmt.Errorf("migrate task request digest (%s): %w", table, err)
+		}
+		if err := rows.Close(); err != nil {
+			return fmt.Errorf("close task request digest migration check: %w", err)
 		}
 	}
 
@@ -234,6 +260,20 @@ var schemaStatements = []string{
 		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 	)`,
+	`CREATE TABLE IF NOT EXISTS knowledge_taxonomy_runs (
+		id TEXT PRIMARY KEY,
+		owner_id TEXT NOT NULL DEFAULT '',
+		team_id TEXT NOT NULL DEFAULT '',
+		dataset_id TEXT NOT NULL DEFAULT '',
+		request_id TEXT NOT NULL DEFAULT '',
+		action TEXT NOT NULL CHECK(action IN ('import','remove')),
+		request_sha256 TEXT NOT NULL DEFAULT '',
+		source_name TEXT NOT NULL DEFAULT '',
+		source_revision TEXT NOT NULL DEFAULT '',
+		report_json TEXT NOT NULL DEFAULT '{}',
+		created_at TEXT NOT NULL,
+		UNIQUE(owner_id, team_id, dataset_id, request_id)
+	)`,
 	`CREATE TABLE IF NOT EXISTS knowledge_documents (
 		id TEXT PRIMARY KEY,
 		collection_id TEXT NOT NULL DEFAULT '',
@@ -418,6 +458,36 @@ var schemaStatements = []string{
 		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 	)`,
+	// Retain exact physical-deletion identities without a cascading memory FK.
+	// deleted_at is display time only; it is never a sync conflict clock.
+	`CREATE TABLE IF NOT EXISTS memory_sync_deletions (
+		memory_id TEXT NOT NULL,
+		owner_id TEXT NOT NULL,
+		collection_name TEXT NOT NULL,
+		key TEXT NOT NULL,
+		deleted_at TEXT NOT NULL,
+		PRIMARY KEY (memory_id, owner_id, collection_name)
+	)`,
+	`CREATE OR REPLACE FUNCTION memory_sync_record_deletion() RETURNS TRIGGER AS $$
+	BEGIN
+		EXECUTE format('INSERT INTO %I.memory_sync_deletions
+			(memory_id, owner_id, collection_name, key, deleted_at)
+			VALUES ($1, $2, $3, $4, $5)
+			ON CONFLICT (memory_id, owner_id, collection_name) DO NOTHING', TG_TABLE_SCHEMA)
+		USING OLD.id, COALESCE(OLD.owner_id, ''), COALESCE(OLD.collection_name, ''), OLD.key,
+			to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"');
+		RETURN OLD;
+	END;
+	$$ LANGUAGE plpgsql`,
+	`DO $$
+	BEGIN
+		IF NOT EXISTS (SELECT 1 FROM pg_trigger
+			WHERE tgrelid = 'memories'::regclass AND tgname = 'memory_sync_after_delete') THEN
+			CREATE TRIGGER memory_sync_after_delete AFTER DELETE ON memories
+				FOR EACH ROW EXECUTE FUNCTION memory_sync_record_deletion();
+		END IF;
+	END;
+	$$`,
 	// Upsert identity is (key, owner_id, collection_name) so the same key
 	// can exist in different pinned contexts without clobbering (P1 isolation).
 	`CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_key_owner_coll ON memories(key, owner_id, collection_name)`,
@@ -536,15 +606,19 @@ var schemaStatements = []string{
 		status TEXT NOT NULL, criterion_ids_json TEXT NOT NULL DEFAULT '[]', observation TEXT NOT NULL DEFAULT '',
 		exit_code INTEGER, evidence_uri TEXT NOT NULL DEFAULT '', artifact_digest TEXT NOT NULL DEFAULT '',
 		workspace_revision TEXT NOT NULL DEFAULT '', metadata_json TEXT NOT NULL DEFAULT '{}',
+		request_digest TEXT NOT NULL DEFAULT '',
 		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), UNIQUE(task_id, idempotency_key)
 	)`,
+	`ALTER TABLE task_receipts ADD COLUMN IF NOT EXISTS request_digest TEXT NOT NULL DEFAULT ''`,
 	`CREATE TABLE IF NOT EXISTS task_checkpoints (
 		id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
 		idempotency_key TEXT NOT NULL, step_id TEXT NOT NULL DEFAULT '', summary TEXT NOT NULL,
 		verified_json TEXT NOT NULL DEFAULT '[]', failed_json TEXT NOT NULL DEFAULT '[]',
 		next_action TEXT NOT NULL DEFAULT '', workspace_revision TEXT NOT NULL DEFAULT '',
+		request_digest TEXT NOT NULL DEFAULT '',
 		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), UNIQUE(task_id, idempotency_key)
 	)`,
+	`ALTER TABLE task_checkpoints ADD COLUMN IF NOT EXISTS request_digest TEXT NOT NULL DEFAULT ''`,
 	`CREATE TABLE IF NOT EXISTS task_blockers (
 		id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
 		reason TEXT NOT NULL, required_decision TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active',
@@ -615,11 +689,17 @@ var schemaStatements = []string{
 		internal_weight REAL NOT NULL DEFAULT 0,
 		summary TEXT NOT NULL DEFAULT '',
 		summary_embedding_id TEXT NOT NULL DEFAULT '',
+		generation TEXT NOT NULL DEFAULT '',
+		sources_json TEXT NOT NULL DEFAULT '[]',
+		lineage_verified INTEGER NOT NULL DEFAULT 0 CHECK(lineage_verified IN (0,1)),
 		modularity REAL NOT NULL DEFAULT 0,
 		resolution REAL NOT NULL DEFAULT 1.0,
 		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 	)`,
+	`ALTER TABLE graph_communities ADD COLUMN IF NOT EXISTS generation TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE graph_communities ADD COLUMN IF NOT EXISTS sources_json TEXT NOT NULL DEFAULT '[]'`,
+	`ALTER TABLE graph_communities ADD COLUMN IF NOT EXISTS lineage_verified INTEGER NOT NULL DEFAULT 0 CHECK(lineage_verified IN (0,1))`,
 	`CREATE INDEX IF NOT EXISTS idx_communities_level ON graph_communities(level)`,
 	`CREATE INDEX IF NOT EXISTS idx_communities_parent ON graph_communities(parent_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_communities_member_count ON graph_communities(member_count DESC)`,
@@ -892,6 +972,20 @@ var schemaSQLiteStatements = []string{
 		created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 	)`,
+	`CREATE TABLE IF NOT EXISTS knowledge_taxonomy_runs (
+		id TEXT PRIMARY KEY,
+		owner_id TEXT NOT NULL DEFAULT '',
+		team_id TEXT NOT NULL DEFAULT '',
+		dataset_id TEXT NOT NULL DEFAULT '',
+		request_id TEXT NOT NULL DEFAULT '',
+		action TEXT NOT NULL CHECK(action IN ('import','remove')),
+		request_sha256 TEXT NOT NULL DEFAULT '',
+		source_name TEXT NOT NULL DEFAULT '',
+		source_revision TEXT NOT NULL DEFAULT '',
+		report_json TEXT NOT NULL DEFAULT '{}',
+		created_at TEXT NOT NULL,
+		UNIQUE(owner_id, team_id, dataset_id, request_id)
+	)`,
 	`CREATE TABLE IF NOT EXISTS knowledge_documents (
 		id TEXT PRIMARY KEY,
 		collection_id TEXT NOT NULL DEFAULT '',
@@ -1086,6 +1180,23 @@ var schemaSQLiteStatements = []string{
 		created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 	)`,
+	// Retain exact physical-deletion identities without a cascading memory FK.
+	// deleted_at is display time only; it is never a sync conflict clock.
+	`CREATE TABLE IF NOT EXISTS memory_sync_deletions (
+		memory_id TEXT NOT NULL,
+		owner_id TEXT NOT NULL,
+		collection_name TEXT NOT NULL,
+		key TEXT NOT NULL,
+		deleted_at TEXT NOT NULL,
+		PRIMARY KEY (memory_id, owner_id, collection_name)
+	)`,
+	`CREATE TRIGGER IF NOT EXISTS memory_sync_after_delete AFTER DELETE ON memories
+	BEGIN
+		INSERT INTO memory_sync_deletions (memory_id, owner_id, collection_name, key, deleted_at)
+		VALUES (OLD.id, COALESCE(OLD.owner_id, ''), COALESCE(OLD.collection_name, ''), OLD.key,
+			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+		ON CONFLICT (memory_id, owner_id, collection_name) DO NOTHING;
+	END`,
 	// Upsert identity is (key, owner_id, collection_name) so the same key
 	// can exist in different pinned contexts without clobbering (P1 isolation).
 	`CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_key_owner_coll ON memories(key, owner_id, collection_name)`,
@@ -1221,15 +1332,19 @@ var schemaSQLiteStatements = []string{
 		status TEXT NOT NULL, criterion_ids_json TEXT NOT NULL DEFAULT '[]', observation TEXT NOT NULL DEFAULT '',
 		exit_code INTEGER, evidence_uri TEXT NOT NULL DEFAULT '', artifact_digest TEXT NOT NULL DEFAULT '',
 		workspace_revision TEXT NOT NULL DEFAULT '', metadata_json TEXT NOT NULL DEFAULT '{}',
+		request_digest TEXT NOT NULL DEFAULT '',
 		created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(task_id, idempotency_key)
 	)`,
+	`ALTER TABLE task_receipts ADD COLUMN request_digest TEXT NOT NULL DEFAULT ''`,
 	`CREATE TABLE IF NOT EXISTS task_checkpoints (
 		id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
 		idempotency_key TEXT NOT NULL, step_id TEXT NOT NULL DEFAULT '', summary TEXT NOT NULL,
 		verified_json TEXT NOT NULL DEFAULT '[]', failed_json TEXT NOT NULL DEFAULT '[]',
 		next_action TEXT NOT NULL DEFAULT '', workspace_revision TEXT NOT NULL DEFAULT '',
+		request_digest TEXT NOT NULL DEFAULT '',
 		created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(task_id, idempotency_key)
 	)`,
+	`ALTER TABLE task_checkpoints ADD COLUMN request_digest TEXT NOT NULL DEFAULT ''`,
 	`CREATE TABLE IF NOT EXISTS task_blockers (
 		id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
 		reason TEXT NOT NULL, required_decision TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active',
@@ -1268,11 +1383,17 @@ var schemaSQLiteStatements = []string{
 		internal_weight REAL NOT NULL DEFAULT 0,
 		summary TEXT NOT NULL DEFAULT '',
 		summary_embedding_id TEXT NOT NULL DEFAULT '',
+		generation TEXT NOT NULL DEFAULT '',
+		sources_json TEXT NOT NULL DEFAULT '[]',
+		lineage_verified INTEGER NOT NULL DEFAULT 0 CHECK(lineage_verified IN (0,1)),
 		modularity REAL NOT NULL DEFAULT 0,
 		resolution REAL NOT NULL DEFAULT 1.0,
 		created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 	)`,
+	`ALTER TABLE graph_communities ADD COLUMN generation TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE graph_communities ADD COLUMN sources_json TEXT NOT NULL DEFAULT '[]'`,
+	`ALTER TABLE graph_communities ADD COLUMN lineage_verified INTEGER NOT NULL DEFAULT 0 CHECK(lineage_verified IN (0,1))`,
 	`CREATE INDEX IF NOT EXISTS idx_communities_level ON graph_communities(level)`,
 	`CREATE INDEX IF NOT EXISTS idx_communities_parent ON graph_communities(parent_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_communities_member_count ON graph_communities(member_count DESC)`,
@@ -1381,4 +1502,214 @@ var schemaSQLiteStatements = []string{
 		FOREIGN KEY (dataset_id, data_id) REFERENCES document_resources(dataset_id, data_id) ON DELETE CASCADE
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_document_grants_principal ON document_grants(principal_kind, principal_id, dataset_id, data_id)`,
+}
+
+func migrateMemorySyncGenerations(ctx context.Context, db *sql.DB) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if activeDBProvider != DBSQLite {
+		if _, err := tx.ExecContext(ctx, "LOCK TABLE memories IN SHARE ROW EXCLUSIVE MODE"); err != nil {
+			return fmt.Errorf("memory sync generation migration fence: %w", err)
+		}
+	}
+	statements := append([]string(nil), memorySyncGenerationStatements...)
+	if activeDBProvider == DBSQLite {
+		statements = append(statements, memorySyncGenerationSQLiteTriggers...)
+	} else {
+		statements = append(statements, memorySyncGenerationPostgresTriggers...)
+	}
+	for _, stmt := range statements {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("memory sync generation migration: %w", err)
+		}
+	}
+	for _, query := range []string{
+		"SELECT id,key,owner_id,collection_name,superseded_by,valid_until FROM memories LIMIT 0",
+		"SELECT owner_id,collection_name,logical_key,generation FROM memory_sync_heads LIMIT 0",
+		"SELECT memory_id,owner_id,collection_name,logical_key,original_key_resolved,generation,state_revision,state FROM memory_sync_incarnations LIMIT 0",
+		"SELECT alias_id,memory_id FROM memory_sync_aliases LIMIT 0",
+	} {
+		rows, err := tx.QueryContext(ctx, query)
+		if err != nil {
+			return fmt.Errorf("verify memory sync generation columns: %w", err)
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+	}
+	var incompatible int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM memory_sync_incarnations i JOIN memory_sync_aliases a ON a.alias_id=i.memory_id WHERE a.memory_id<>i.memory_id`).Scan(&incompatible); err != nil {
+		return err
+	}
+	if incompatible != 0 {
+		return fmt.Errorf("memory sync canonical alias conflict")
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM memory_sync_deletions d JOIN memory_sync_incarnations i ON i.memory_id=d.memory_id WHERE i.owner_id<>d.owner_id OR i.collection_name<>d.collection_name`).Scan(&incompatible); err != nil {
+		return err
+	}
+	if incompatible != 0 {
+		return fmt.Errorf("memory sync historical identity conflict")
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM memories m
+		WHERE EXISTS(SELECT 1 FROM memory_sync_deletions d WHERE d.memory_id=m.id)
+		OR EXISTS(SELECT 1 FROM memory_sync_incarnations i WHERE i.memory_id=m.id AND i.state='deleted')`).Scan(&incompatible); err != nil {
+		return err
+	}
+	if incompatible != 0 {
+		return fmt.Errorf("memory sync physical row coexists with terminal deletion")
+	}
+	return tx.Commit()
+}
+
+var memorySyncGenerationSQLiteTriggers = []string{
+	`CREATE TRIGGER IF NOT EXISTS memory_sync_generation_insert AFTER INSERT ON memories BEGIN
+ SELECT CASE WHEN EXISTS(SELECT 1 FROM memory_sync_aliases WHERE alias_id=NEW.id AND memory_id<>NEW.id)
+ THEN RAISE(ABORT,'memory sync immutable alias') END;
+ SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM memory_sync_incarnations WHERE memory_id=NEW.id)
+ AND EXISTS(SELECT 1 FROM memory_sync_incarnations WHERE owner_id=COALESCE(NEW.owner_id,'') AND collection_name=COALESCE(NEW.collection_name,'') AND original_key_resolved=0)
+ THEN RAISE(ABORT,'memory sync unresolved original key') END;
+ INSERT INTO memory_sync_heads(owner_id,collection_name,logical_key,generation)
+ SELECT COALESCE(NEW.owner_id,''),COALESCE(NEW.collection_name,''),NEW.key,0
+ WHERE NOT EXISTS(SELECT 1 FROM memory_sync_incarnations WHERE memory_id=NEW.id)
+ ON CONFLICT(owner_id,collection_name,logical_key) DO UPDATE SET generation=memory_sync_heads.generation+1;
+ INSERT INTO memory_sync_incarnations(memory_id,owner_id,collection_name,logical_key,original_key_resolved,generation,state_revision,state)
+ SELECT NEW.id,COALESCE(NEW.owner_id,''),COALESCE(NEW.collection_name,''),NEW.key,1,generation,0,
+ CASE WHEN COALESCE(NEW.superseded_by,'')='' AND NEW.valid_until IS NULL THEN 'active' ELSE 'retired' END
+ FROM memory_sync_heads WHERE owner_id=COALESCE(NEW.owner_id,'') AND collection_name=COALESCE(NEW.collection_name,'') AND logical_key=NEW.key
+ AND NOT EXISTS(SELECT 1 FROM memory_sync_incarnations WHERE memory_id=NEW.id);
+ SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM memory_sync_incarnations WHERE memory_id=NEW.id
+ AND owner_id=COALESCE(NEW.owner_id,'') AND collection_name=COALESCE(NEW.collection_name,'') AND original_key_resolved=1
+ AND state=CASE WHEN COALESCE(NEW.superseded_by,'')='' AND NEW.valid_until IS NULL THEN 'active' ELSE 'retired' END
+ AND (state<>'active' OR logical_key=NEW.key))
+ THEN RAISE(ABORT,'memory sync incompatible incarnation') END;
+ INSERT INTO memory_sync_heads(owner_id,collection_name,logical_key,generation)
+ SELECT owner_id,collection_name,logical_key,generation FROM memory_sync_incarnations WHERE memory_id=NEW.id
+ ON CONFLICT(owner_id,collection_name,logical_key) DO UPDATE SET generation=CASE WHEN memory_sync_heads.generation<excluded.generation THEN excluded.generation ELSE memory_sync_heads.generation END;
+ INSERT INTO memory_sync_aliases(alias_id,memory_id) VALUES(NEW.id,NEW.id) ON CONFLICT(alias_id) DO NOTHING;
+ END`,
+	`CREATE TRIGGER IF NOT EXISTS memory_sync_generation_update AFTER UPDATE ON memories BEGIN
+ SELECT CASE WHEN OLD.id<>NEW.id OR COALESCE(OLD.owner_id,'')<>COALESCE(NEW.owner_id,'') OR COALESCE(OLD.collection_name,'')<>COALESCE(NEW.collection_name,'')
+ THEN RAISE(ABORT,'memory sync immutable identity') END;
+ SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM memory_sync_incarnations WHERE memory_id=NEW.id
+ AND owner_id=COALESCE(NEW.owner_id,'') AND collection_name=COALESCE(NEW.collection_name,'') AND state<>'deleted')
+ THEN RAISE(ABORT,'memory sync incompatible incarnation') END;
+ UPDATE memory_sync_incarnations SET state_revision=state_revision+
+ CASE WHEN state<>CASE WHEN COALESCE(NEW.superseded_by,'')='' AND NEW.valid_until IS NULL THEN 'active' ELSE 'retired' END THEN 1 ELSE 0 END,
+ state=CASE WHEN COALESCE(NEW.superseded_by,'')='' AND NEW.valid_until IS NULL THEN 'active' ELSE 'retired' END WHERE memory_id=NEW.id;
+ END`,
+	`CREATE TRIGGER IF NOT EXISTS memory_sync_generation_delete AFTER DELETE ON memories BEGIN
+ SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM memory_sync_incarnations WHERE memory_id=OLD.id AND owner_id=COALESCE(OLD.owner_id,'') AND collection_name=COALESCE(OLD.collection_name,''))
+ THEN RAISE(ABORT,'memory sync incompatible deletion') END;
+ UPDATE memory_sync_incarnations SET state_revision=state_revision+CASE WHEN state='deleted' THEN 0 ELSE 1 END,state='deleted' WHERE memory_id=OLD.id;
+ END`,
+	`CREATE TRIGGER IF NOT EXISTS memory_sync_incarnation_immutable BEFORE UPDATE ON memory_sync_incarnations BEGIN
+ SELECT CASE WHEN OLD.memory_id<>NEW.memory_id OR OLD.owner_id<>NEW.owner_id OR OLD.collection_name<>NEW.collection_name OR OLD.generation<>NEW.generation
+ OR (OLD.original_key_resolved=1 AND (NEW.original_key_resolved<>1 OR OLD.logical_key<>NEW.logical_key))
+ OR NEW.state_revision<OLD.state_revision OR (OLD.state='retired' AND NEW.state='active' AND NEW.state_revision<=OLD.state_revision)
+ OR (OLD.state='deleted' AND NEW.state<>'deleted')
+ THEN RAISE(ABORT,'memory sync immutable incarnation') END; END`,
+	`CREATE TRIGGER IF NOT EXISTS memory_sync_incarnation_retained BEFORE DELETE ON memory_sync_incarnations BEGIN SELECT RAISE(ABORT,'memory sync incarnation retained'); END`,
+	`CREATE TRIGGER IF NOT EXISTS memory_sync_alias_immutable BEFORE UPDATE ON memory_sync_aliases BEGIN SELECT RAISE(ABORT,'memory sync alias immutable'); END`,
+	`CREATE TRIGGER IF NOT EXISTS memory_sync_alias_retained BEFORE DELETE ON memory_sync_aliases BEGIN SELECT RAISE(ABORT,'memory sync alias retained'); END`,
+}
+
+var memorySyncGenerationPostgresTriggers = []string{
+	`CREATE OR REPLACE FUNCTION memory_sync_generation_record() RETURNS TRIGGER AS $$
+DECLARE invalid BOOLEAN; current_row RECORD;
+BEGIN
+ IF TG_OP='DELETE' THEN current_row:=OLD; ELSE current_row:=NEW; END IF;
+ IF TG_OP='INSERT' THEN EXECUTE format('SELECT EXISTS(SELECT 1 FROM %I.memory_sync_aliases WHERE alias_id=$1 AND memory_id<>$1)
+',TG_TABLE_SCHEMA) INTO invalid USING current_row.id,current_row.owner_id,current_row.collection_name,current_row.key,current_row.superseded_by,current_row.valid_until; IF invalid THEN RAISE EXCEPTION 'memory sync immutable alias'; END IF;
+EXECUTE format('SELECT NOT EXISTS(SELECT 1 FROM %I.memory_sync_incarnations WHERE memory_id=$1)
+ AND EXISTS(SELECT 1 FROM %I.memory_sync_incarnations WHERE owner_id=COALESCE($2,'''') AND collection_name=COALESCE($3,'''') AND original_key_resolved=0)
+',TG_TABLE_SCHEMA,TG_TABLE_SCHEMA) INTO invalid USING current_row.id,current_row.owner_id,current_row.collection_name,current_row.key,current_row.superseded_by,current_row.valid_until; IF invalid THEN RAISE EXCEPTION 'memory sync unresolved original key'; END IF;
+EXECUTE format('INSERT INTO %I.memory_sync_heads(owner_id,collection_name,logical_key,generation)
+ SELECT COALESCE($2,''''),COALESCE($3,''''),$4,0
+ WHERE NOT EXISTS(SELECT 1 FROM %I.memory_sync_incarnations WHERE memory_id=$1)
+ ON CONFLICT(owner_id,collection_name,logical_key) DO UPDATE SET generation=memory_sync_heads.generation+1',TG_TABLE_SCHEMA,TG_TABLE_SCHEMA) USING current_row.id,current_row.owner_id,current_row.collection_name,current_row.key,current_row.superseded_by,current_row.valid_until;
+EXECUTE format('INSERT INTO %I.memory_sync_incarnations(memory_id,owner_id,collection_name,logical_key,original_key_resolved,generation,state_revision,state)
+ SELECT $1,COALESCE($2,''''),COALESCE($3,''''),$4,1,generation,0,
+ CASE WHEN COALESCE($5,'''')='''' AND $6 IS NULL THEN ''active'' ELSE ''retired'' END
+ FROM %I.memory_sync_heads WHERE owner_id=COALESCE($2,'''') AND collection_name=COALESCE($3,'''') AND logical_key=$4
+ AND NOT EXISTS(SELECT 1 FROM %I.memory_sync_incarnations WHERE memory_id=$1)',TG_TABLE_SCHEMA,TG_TABLE_SCHEMA,TG_TABLE_SCHEMA) USING current_row.id,current_row.owner_id,current_row.collection_name,current_row.key,current_row.superseded_by,current_row.valid_until;
+EXECUTE format('SELECT NOT EXISTS(SELECT 1 FROM %I.memory_sync_incarnations WHERE memory_id=$1
+ AND owner_id=COALESCE($2,'''') AND collection_name=COALESCE($3,'''') AND original_key_resolved=1
+ AND state=CASE WHEN COALESCE($5,'''')='''' AND $6 IS NULL THEN ''active'' ELSE ''retired'' END
+ AND (state<>''active'' OR logical_key=$4))
+',TG_TABLE_SCHEMA) INTO invalid USING current_row.id,current_row.owner_id,current_row.collection_name,current_row.key,current_row.superseded_by,current_row.valid_until; IF invalid THEN RAISE EXCEPTION 'memory sync incompatible incarnation'; END IF;
+EXECUTE format('INSERT INTO %I.memory_sync_heads(owner_id,collection_name,logical_key,generation)
+ SELECT owner_id,collection_name,logical_key,generation FROM %I.memory_sync_incarnations WHERE memory_id=$1
+ ON CONFLICT(owner_id,collection_name,logical_key) DO UPDATE SET generation=CASE WHEN memory_sync_heads.generation<excluded.generation THEN excluded.generation ELSE memory_sync_heads.generation END',TG_TABLE_SCHEMA,TG_TABLE_SCHEMA) USING current_row.id,current_row.owner_id,current_row.collection_name,current_row.key,current_row.superseded_by,current_row.valid_until;
+EXECUTE format('INSERT INTO %I.memory_sync_aliases(alias_id,memory_id) VALUES($1,$1) ON CONFLICT(alias_id) DO NOTHING',TG_TABLE_SCHEMA) USING current_row.id,current_row.owner_id,current_row.collection_name,current_row.key,current_row.superseded_by,current_row.valid_until;
+ ELSIF TG_OP='UPDATE' THEN
+ IF OLD.id<>NEW.id OR COALESCE(OLD.owner_id,'')<>COALESCE(NEW.owner_id,'') OR COALESCE(OLD.collection_name,'')<>COALESCE(NEW.collection_name,'') THEN
+ RAISE EXCEPTION 'memory sync immutable identity'; END IF;
+EXECUTE format('SELECT NOT EXISTS(SELECT 1 FROM %I.memory_sync_incarnations WHERE memory_id=$1
+ AND owner_id=COALESCE($2,'''') AND collection_name=COALESCE($3,'''') AND state<>''deleted'')
+',TG_TABLE_SCHEMA) INTO invalid USING current_row.id,current_row.owner_id,current_row.collection_name,current_row.key,current_row.superseded_by,current_row.valid_until; IF invalid THEN RAISE EXCEPTION 'memory sync incompatible incarnation'; END IF;
+EXECUTE format('UPDATE %I.memory_sync_incarnations SET state_revision=state_revision+
+ CASE WHEN state<>CASE WHEN COALESCE($5,'''')='''' AND $6 IS NULL THEN ''active'' ELSE ''retired'' END THEN 1 ELSE 0 END,
+ state=CASE WHEN COALESCE($5,'''')='''' AND $6 IS NULL THEN ''active'' ELSE ''retired'' END WHERE memory_id=$1',TG_TABLE_SCHEMA) USING current_row.id,current_row.owner_id,current_row.collection_name,current_row.key,current_row.superseded_by,current_row.valid_until;
+ ELSE EXECUTE format('SELECT NOT EXISTS(SELECT 1 FROM %I.memory_sync_incarnations WHERE memory_id=$1 AND owner_id=COALESCE($2,'''') AND collection_name=COALESCE($3,''''))
+',TG_TABLE_SCHEMA) INTO invalid USING current_row.id,current_row.owner_id,current_row.collection_name,current_row.key,current_row.superseded_by,current_row.valid_until; IF invalid THEN RAISE EXCEPTION 'memory sync incompatible deletion'; END IF;
+EXECUTE format('UPDATE %I.memory_sync_incarnations SET state_revision=state_revision+CASE WHEN state=''deleted'' THEN 0 ELSE 1 END,state=''deleted'' WHERE memory_id=$1',TG_TABLE_SCHEMA) USING current_row.id,current_row.owner_id,current_row.collection_name,current_row.key,current_row.superseded_by,current_row.valid_until;
+ END IF;
+ IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+ RETURN NEW;
+END; $$ LANGUAGE plpgsql`,
+	`CREATE OR REPLACE FUNCTION memory_sync_generation_guard() RETURNS TRIGGER AS $$
+BEGIN
+ IF TG_TABLE_NAME='memory_sync_aliases' OR TG_OP='DELETE' THEN
+  RAISE EXCEPTION 'memory sync identity history retained';
+ END IF;
+ IF OLD.memory_id<>NEW.memory_id OR OLD.owner_id<>NEW.owner_id OR OLD.collection_name<>NEW.collection_name OR OLD.generation<>NEW.generation
+ OR (OLD.original_key_resolved=1 AND (NEW.original_key_resolved<>1 OR OLD.logical_key<>NEW.logical_key))
+ OR NEW.state_revision<OLD.state_revision OR (OLD.state='retired' AND NEW.state='active' AND NEW.state_revision<=OLD.state_revision)
+ OR (OLD.state='deleted' AND NEW.state<>'deleted') THEN
+  RAISE EXCEPTION 'memory sync immutable incarnation';
+ END IF;
+ RETURN NEW;
+END; $$ LANGUAGE plpgsql`,
+	`DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid='memories'::regclass AND tgname='memory_sync_generation_insert') THEN CREATE TRIGGER memory_sync_generation_insert AFTER INSERT ON memories FOR EACH ROW EXECUTE FUNCTION memory_sync_generation_record(); END IF; END; $$`,
+	`DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid='memories'::regclass AND tgname='memory_sync_generation_update') THEN CREATE TRIGGER memory_sync_generation_update AFTER UPDATE ON memories FOR EACH ROW EXECUTE FUNCTION memory_sync_generation_record(); END IF; END; $$`,
+	`DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid='memories'::regclass AND tgname='memory_sync_generation_delete') THEN CREATE TRIGGER memory_sync_generation_delete AFTER DELETE ON memories FOR EACH ROW EXECUTE FUNCTION memory_sync_generation_record(); END IF; END; $$`,
+	`DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid='memory_sync_incarnations'::regclass AND tgname='memory_sync_incarnation_immutable') THEN CREATE TRIGGER memory_sync_incarnation_immutable BEFORE UPDATE OR DELETE ON memory_sync_incarnations FOR EACH ROW EXECUTE FUNCTION memory_sync_generation_guard(); END IF; END; $$`,
+	`DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid='memory_sync_aliases'::regclass AND tgname='memory_sync_alias_immutable') THEN CREATE TRIGGER memory_sync_alias_immutable BEFORE UPDATE OR DELETE ON memory_sync_aliases FOR EACH ROW EXECUTE FUNCTION memory_sync_generation_guard(); END IF; END; $$`,
+}
+
+var memorySyncGenerationStatements = []string{
+	// ponytail: external ledgers preserve consolidation's existing full-row hashes.
+	`CREATE TABLE IF NOT EXISTS memory_sync_heads (
+			owner_id TEXT NOT NULL, collection_name TEXT NOT NULL, logical_key TEXT NOT NULL,
+			generation BIGINT NOT NULL CHECK(generation>=0),
+			PRIMARY KEY(owner_id,collection_name,logical_key))`,
+	`CREATE TABLE IF NOT EXISTS memory_sync_incarnations (
+			memory_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, collection_name TEXT NOT NULL,
+			logical_key TEXT NOT NULL, original_key_resolved INTEGER NOT NULL CHECK(original_key_resolved IN (0,1)),
+			generation BIGINT NOT NULL CHECK(generation>=0), state_revision BIGINT NOT NULL CHECK(state_revision>=0),
+			state TEXT NOT NULL CHECK(state IN ('active','retired','deleted')))`,
+	`CREATE INDEX IF NOT EXISTS idx_memory_sync_incarnations_scope
+			ON memory_sync_incarnations(owner_id,collection_name,logical_key,generation)`,
+	`CREATE INDEX IF NOT EXISTS idx_memory_sync_incarnations_unresolved
+			ON memory_sync_incarnations(owner_id,collection_name) WHERE original_key_resolved=0`,
+	`CREATE TABLE IF NOT EXISTS memory_sync_aliases (
+			alias_id TEXT PRIMARY KEY, memory_id TEXT NOT NULL REFERENCES memory_sync_incarnations(memory_id))`,
+	`INSERT INTO memory_sync_incarnations(memory_id,owner_id,collection_name,logical_key,original_key_resolved,generation,state_revision,state)
+			SELECT id,COALESCE(owner_id,''),COALESCE(collection_name,''),key,
+				CASE WHEN COALESCE(superseded_by,'')='' AND valid_until IS NULL THEN 1 ELSE 0 END,0,0,
+				CASE WHEN COALESCE(superseded_by,'')='' AND valid_until IS NULL THEN 'active' ELSE 'retired' END
+			FROM memories WHERE true ON CONFLICT(memory_id) DO NOTHING`,
+	`INSERT INTO memory_sync_incarnations(memory_id,owner_id,collection_name,logical_key,original_key_resolved,generation,state_revision,state)
+			SELECT memory_id,owner_id,collection_name,key,0,0,0,'deleted'
+			FROM memory_sync_deletions WHERE true ON CONFLICT(memory_id) DO NOTHING`,
+	`INSERT INTO memory_sync_heads(owner_id,collection_name,logical_key,generation)
+			SELECT owner_id,collection_name,logical_key,MAX(generation) FROM memory_sync_incarnations
+			WHERE original_key_resolved=1 GROUP BY owner_id,collection_name,logical_key
+			ON CONFLICT(owner_id,collection_name,logical_key) DO UPDATE SET generation=
+				CASE WHEN memory_sync_heads.generation<excluded.generation THEN excluded.generation ELSE memory_sync_heads.generation END`,
+	`INSERT INTO memory_sync_aliases(alias_id,memory_id)
+			SELECT memory_id,memory_id FROM memory_sync_incarnations WHERE true ON CONFLICT(alias_id) DO NOTHING`,
 }

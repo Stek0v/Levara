@@ -17,6 +17,22 @@ import (
 	"github.com/stek0v/levara/pkg/mcp"
 )
 
+func TestAuthorizeSyncUsesOnlyExactVerifiedMCPRole(t *testing.T) {
+	cfg := APIConfig{RequireAuth: true}
+	exact := context.WithValue(context.WithValue(context.Background(), mcp.UserIDKey, "admin"), verifiedMCPSuperuserKey{}, verifiedMCPAuthorization{UserID: "admin", Superuser: true})
+	if err := authorizeSync(exact, cfg); err != nil {
+		t.Fatalf("exact superuser proof rejected: %v", err)
+	}
+	ordinary := context.WithValue(context.WithValue(context.Background(), mcp.UserIDKey, "ordinary"), verifiedMCPSuperuserKey{}, verifiedMCPAuthorization{UserID: "ordinary"})
+	if err := authorizeSync(ordinary, cfg); err == nil {
+		t.Fatal("exact ordinary-user proof accepted")
+	}
+	mismatch := context.WithValue(context.WithValue(context.Background(), mcp.UserIDKey, "ordinary"), verifiedMCPSuperuserKey{}, verifiedMCPAuthorization{UserID: "admin", Superuser: true})
+	if err := authorizeSync(mismatch, cfg); err == nil {
+		t.Fatal("mismatched superuser proof accepted")
+	}
+}
+
 func TestSyncRejectsOrdinaryAuthenticatedUser(t *testing.T) {
 	db := newMCPMemoryBehaviorDB(t)
 	if err := accesspkg.EnsureIdentitySchema(context.Background(), db, Q); err != nil {
@@ -69,7 +85,11 @@ func TestSyncDoesNotSendServerTokenToUntrustedDestination(t *testing.T) {
 	var calls atomic.Int32
 	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
-		io.WriteString(w, `{"version":"test"}`)
+		if r.URL.Path == "/api/v1/sync/export/memories" {
+			io.WriteString(w, `[]`)
+		} else {
+			io.WriteString(w, `{"version":"test"}`)
+		}
 	}))
 	defer remote.Close()
 	ctx := context.WithValue(context.Background(), mcp.UserIDKey, "ordinary")
@@ -133,10 +153,10 @@ func TestSyncTrustedDestinationAndRevocation(t *testing.T) {
 	if calls.Load() != 0 {
 		t.Fatal("denied operation contacted remote")
 	}
-	if _, _, err := (&mcpHandler{cfg: cfg}).DoSync(ctx, cfg.SyncRemoteURL, "pull", []string{"none"}, "", nil); err != nil {
+	if _, _, err := (&mcpHandler{cfg: cfg}).DoSync(ctx, cfg.SyncRemoteURL, "pull", []string{"memories"}, "", nil); err != nil {
 		t.Fatal(err)
 	}
-	if calls.Load() != 1 {
+	if calls.Load() != 2 {
 		t.Fatal("authorized control did not contact configured remote")
 	}
 	if _, err := db.Exec(`UPDATE users SET is_active=FALSE WHERE id='admin'`); err != nil {

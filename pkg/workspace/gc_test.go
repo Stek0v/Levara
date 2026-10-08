@@ -8,7 +8,7 @@ import (
 	"github.com/stek0v/levara/pkg/vectorstore"
 )
 
-func TestGCGenerationsDropsExclusiveCollections(t *testing.T) {
+func TestGCGenerationsPreservesCollectionsAndDeletesExactIDs(t *testing.T) {
 	m := NewManifest("payments", "main")
 	if err := m.UpsertChunk(ChunkRecord{Generation: "gen-1", Path: "docs/a.md", ChunkID: "a1", VectorID: "vec-a1", Collection: "kb_gen1"}); err != nil {
 		t.Fatal(err)
@@ -30,6 +30,9 @@ func TestGCGenerationsDropsExclusiveCollections(t *testing.T) {
 	if err := store.Create("kb_gen2"); err != nil {
 		t.Fatal(err)
 	}
+	if errs := store.BatchUpsert("kb_gen1", []vectorstore.UpsertRecord{{ID: "vec-a1"}, {ID: "another-project"}}); len(errs) > 0 {
+		t.Fatal(errs)
+	}
 	result, err := GCGenerations(m, store)
 	if err != nil {
 		t.Fatal(err)
@@ -38,11 +41,20 @@ func TestGCGenerationsDropsExclusiveCollections(t *testing.T) {
 	if !reflect.DeepEqual(result.Generations, []string{"gen-1"}) {
 		t.Fatalf("generations=%v, want [gen-1]", result.Generations)
 	}
-	if !reflect.DeepEqual(result.DroppedCollections, []string{"kb_gen1"}) {
-		t.Fatalf("dropped=%v, want [kb_gen1]", result.DroppedCollections)
+	if len(result.DroppedCollections) != 0 || len(store.dropped) != 0 {
+		t.Fatalf("collection dropped: %+v", result)
 	}
-	if store.Has("kb_gen1") {
-		t.Fatal("kb_gen1 should be dropped")
+	if !reflect.DeepEqual(result.DeletedVectorIDs, []string{"vec-a1"}) {
+		t.Fatalf("deleted=%v", result.DeletedVectorIDs)
+	}
+	if !store.Has("kb_gen1") {
+		t.Fatal("shared namespace must survive")
+	}
+	if _, ok := store.records["kb_gen1"]["vec-a1"]; ok {
+		t.Fatal("obsolete recorded ID survived")
+	}
+	if _, ok := store.records["kb_gen1"]["another-project"]; !ok {
+		t.Fatal("unrecorded project vector deleted")
 	}
 	if !store.Has("kb_gen2") {
 		t.Fatal("kb_gen2 should survive")

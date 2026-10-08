@@ -10,6 +10,7 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"strings"
 )
 
 // ToolSync orchestrates a bidirectional sync with a remote Levara instance.
@@ -17,8 +18,8 @@ import (
 // Args:
 //   - remote_url (required): e.g. "http://10.23.0.53:8080/api/v1"
 //   - direction: "pull" (default) or "push"
-//   - since: ISO-8601 timestamp — only sync records updated after this
-//   - types: ["memories", "graph", "collections"] — default all
+//   - since: ISO-8601 timestamp — sync records updated at or after this
+//   - types: memories/interactions/graph by default; collections is explicit opt-in
 //   - collections: collection names for the collections type
 //
 // Error branches: missing remote_url → IsError; nil DB → IsError;
@@ -40,22 +41,17 @@ func ToolSync(ctx context.Context, deps Deps, args map[string]any) ToolResult {
 	}
 	since, _ := args["since"].(string)
 
-	var types []string
-	if typesRaw, ok := args["types"].([]any); ok {
-		for _, t := range typesRaw {
-			if s, ok := t.(string); ok {
-				types = append(types, s)
-			}
-		}
+	types, err := syncStringList(args, "types")
+	if err != nil {
+		return toolError(err.Error())
 	}
-
-	var collectionNames []string
-	if collsRaw, ok := args["collections"].([]any); ok {
-		for _, c := range collsRaw {
-			if s, ok := c.(string); ok && s != "" {
-				collectionNames = append(collectionNames, s)
-			}
-		}
+	collectionNames, err := syncStringList(args, "collections")
+	if err != nil {
+		return toolError(err.Error())
+	}
+	types, collectionNames, err = ValidateSyncSelectors(types, collectionNames)
+	if err != nil {
+		return toolError(err.Error())
 	}
 
 	if deps.DB() == nil {
@@ -84,4 +80,61 @@ func ToolSync(ctx context.Context, deps Deps, args map[string]any) ToolResult {
 	})
 
 	return jsonResult(result)
+}
+
+// ValidateSyncSelectors validates before any remote I/O and removes duplicate
+// selectors without expanding an omitted/empty types list into collection sync.
+func ValidateSyncSelectors(types, collections []string) ([]string, []string, error) {
+	var selected, names []string
+	seenTypes, seenNames := make(map[string]bool), make(map[string]bool)
+	needsCollections := false
+	for _, kind := range types {
+		switch kind {
+		case "memories", "interactions", "graph":
+		case "collections":
+			needsCollections = true
+		default:
+			return nil, nil, fmt.Errorf("unsupported sync type %q", kind)
+		}
+		if !seenTypes[kind] {
+			selected = append(selected, kind)
+			seenTypes[kind] = true
+		}
+	}
+	for _, name := range collections {
+		if strings.TrimSpace(name) == "" {
+			return nil, nil, fmt.Errorf("collection names must not be blank")
+		}
+		if !seenNames[name] {
+			names = append(names, name)
+			seenNames[name] = true
+		}
+	}
+	if needsCollections && len(names) == 0 {
+		return nil, nil, fmt.Errorf("collections sync requires nonempty collection names")
+	}
+	return selected, names, nil
+}
+
+func syncStringList(args map[string]any, key string) ([]string, error) {
+	raw, present := args[key]
+	if !present {
+		return nil, nil
+	}
+	switch values := raw.(type) {
+	case []string:
+		return append([]string(nil), values...), nil
+	case []any:
+		var out []string
+		for _, value := range values {
+			text, ok := value.(string)
+			if !ok {
+				return nil, fmt.Errorf("%s must be an array of strings", key)
+			}
+			out = append(out, text)
+		}
+		return out, nil
+	default:
+		return nil, fmt.Errorf("%s must be an array of strings", key)
+	}
 }

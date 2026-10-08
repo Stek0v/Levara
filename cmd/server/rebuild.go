@@ -90,7 +90,10 @@ func runCollectionRebuild(collection, pgURL, dataDir, nodeID string, dim int, ap
 	fmt.Printf("[rebuild] dataset %q: %d live documents, %d published generations (loaded in %s)\n",
 		collection, len(currentDocs), len(currentGens), time.Since(start).Round(time.Second))
 
-	records := db.AllRecords()
+	records, err := db.AllRecordsChecked()
+	if err != nil {
+		return fmt.Errorf("rebuild source: %w", err)
+	}
 	keep, remove := store.ClassifyRebuildRecords(records, currentDocs, currentGens)
 	stats := map[string]int{}
 	for _, reason := range remove {
@@ -124,7 +127,10 @@ func runCollectionRebuild(collection, pgURL, dataDir, nodeID string, dim int, ap
 	if err := db.Checkpoint(); err != nil {
 		return fmt.Errorf("checkpoint: %w", err)
 	}
-	after := db.AllRecords()
+	after, err := db.AllRecordsChecked()
+	if err != nil {
+		return fmt.Errorf("rebuild verification: %w", err)
+	}
 	if len(after) != len(keep) {
 		return fmt.Errorf("post-verify failed: %d records remain, want %d — rollback via snapshot %s before booting", len(after), len(keep), snapDir)
 	}

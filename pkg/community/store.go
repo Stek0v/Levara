@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/stek0v/levara/internal/store"
 	"github.com/stek0v/levara/pkg/embed"
@@ -35,36 +37,59 @@ func BuildGraphFromSQL(ctx context.Context, db *sql.DB) (*Graph, error) {
 		return NewGraph(nil), nil
 	}
 
-	// Load node IDs
 	rows, err := db.QueryContext(ctx, "SELECT id FROM graph_nodes")
 	if err != nil {
 		return nil, fmt.Errorf("load nodes: %w", err)
 	}
-	defer rows.Close()
-
 	var nodeIDs []string
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
-			continue
+			_ = rows.Close()
+			return nil, fmt.Errorf("scan node: %w", err)
 		}
 		nodeIDs = append(nodeIDs, id)
 	}
+	rowErr := rows.Err()
+	closeErr := rows.Close()
+	if rowErr != nil {
+		return nil, fmt.Errorf("load nodes: %w", rowErr)
+	}
+	if closeErr != nil {
+		return nil, fmt.Errorf("close nodes: %w", closeErr)
+	}
 
 	g := NewGraph(nodeIDs)
-
-	// Load active edges
+	// Parse exact instants in Go: SQLite TEXT comparisons are lexical, and
+	// julianday loses subsecond precision. Both dialects use [from, until).
+	now := time.Now().UTC().Round(time.Microsecond)
 	edgeRows, err := db.QueryContext(ctx,
-		"SELECT source_id, target_id, confidence FROM graph_edges WHERE valid_until IS NULL OR valid_until > CURRENT_TIMESTAMP")
+		"SELECT source_id,target_id,confidence,CAST(valid_from AS TEXT),CAST(valid_until AS TEXT) FROM graph_edges")
 	if err != nil {
 		return nil, fmt.Errorf("load edges: %w", err)
 	}
 	defer edgeRows.Close()
-
 	for edgeRows.Next() {
 		var src, dst string
 		var conf float64
-		if err := edgeRows.Scan(&src, &dst, &conf); err != nil {
+		var from, until sql.NullString
+		if err := edgeRows.Scan(&src, &dst, &conf, &from, &until); err != nil {
+			return nil, fmt.Errorf("scan edge: %w", err)
+		}
+		active := true
+		for i, bound := range []sql.NullString{from, until} {
+			if !bound.Valid {
+				continue
+			}
+			stamp, err := communityTimestamp(bound.String)
+			if err != nil {
+				return nil, err
+			}
+			if i == 0 && now.Before(stamp) || i == 1 && !now.Before(stamp) {
+				active = false
+			}
+		}
+		if !active {
 			continue
 		}
 		if conf <= 0 {
@@ -72,8 +97,23 @@ func BuildGraphFromSQL(ctx context.Context, db *sql.DB) (*Graph, error) {
 		}
 		g.AddEdge(src, dst, conf)
 	}
-
+	if err := edgeRows.Err(); err != nil {
+		return nil, fmt.Errorf("load edges: %w", err)
+	}
+	if err := edgeRows.Close(); err != nil {
+		return nil, fmt.Errorf("close edges: %w", err)
+	}
 	return g, nil
+}
+
+func communityTimestamp(raw string) (time.Time, error) {
+	for _, layout := range []string{time.RFC3339Nano, "2006-01-02 15:04:05.999999999Z07:00", "2006-01-02 15:04:05.999999999-07", "2006-01-02 15:04:05.999999999", "2006-01-02"} {
+		if stamp, err := time.Parse(layout, raw); err == nil {
+			micros := math.RoundToEven(float64(stamp.Nanosecond()) / 1000)
+			return stamp.Truncate(time.Second).Add(time.Duration(micros) * time.Microsecond), nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("invalid community edge timestamp %q", raw)
 }
 
 // ReplaceCommunities deletes all existing communities and writes new ones.
@@ -90,8 +130,12 @@ func ReplaceCommunities(ctx context.Context, db *sql.DB, dendro Dendrogram) erro
 	defer tx.Rollback()
 
 	// Clear old data
-	tx.ExecContext(ctx, "DELETE FROM community_members")
-	tx.ExecContext(ctx, "DELETE FROM graph_communities")
+	if _, err := tx.ExecContext(ctx, "DELETE FROM community_members"); err != nil {
+		return fmt.Errorf("delete members: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM graph_communities"); err != nil {
+		return fmt.Errorf("delete communities: %w", err)
+	}
 
 	// Insert communities
 	for _, level := range dendro.Levels {
@@ -99,19 +143,20 @@ func ReplaceCommunities(ctx context.Context, db *sql.DB, dendro Dendrogram) erro
 			membersJSON, _ := json.Marshal(c.Members)
 			_, err := tx.ExecContext(ctx,
 				`INSERT INTO graph_communities (id, level, parent_id, member_node_ids, member_count, internal_weight, modularity, resolution, created_at, updated_at)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
 				c.ID, c.Level, c.ParentID, string(membersJSON), c.MemberCount, c.InternalWeight,
 				0.0, dendro.Resolution)
 			if err != nil {
-				log.Printf("[community] insert community %s: %v", c.ID[:8], err)
-				continue
+				return fmt.Errorf("insert community %s: %w", c.ID, err)
 			}
 
 			// Populate join table
 			for _, nodeID := range c.Members {
-				tx.ExecContext(ctx,
-					`INSERT OR IGNORE INTO community_members (community_id, node_id, level) VALUES (?, ?, ?)`,
-					c.ID, nodeID, c.Level)
+				if _, err := tx.ExecContext(ctx,
+					`INSERT INTO community_members (community_id, node_id, level) VALUES ($1, $2, $3) ON CONFLICT (community_id,node_id) DO NOTHING`,
+					c.ID, nodeID, c.Level); err != nil {
+					return fmt.Errorf("insert member %s/%s: %w", c.ID, nodeID, err)
+				}
 			}
 		}
 	}
@@ -149,6 +194,7 @@ func SummarizeHierarchy(ctx context.Context, dendro Dendrogram, g *Graph, cfg Su
 		sem := make(chan struct{}, cfg.Concurrency)
 		var mu sync.Mutex
 		var wg sync.WaitGroup
+		var firstErr error
 
 		for _, comm := range level {
 			if comm.MemberCount < cfg.MinMembers {
@@ -163,9 +209,10 @@ func SummarizeHierarchy(ctx context.Context, dendro Dendrogram, g *Graph, cfg Su
 				defer func() { <-sem }()
 
 				var summary string
+				var err error
 				if comm.Level == 0 {
 					// Level 0: summarize from entity names + graph edges
-					summary = summarizeFromEntities(ctx, cfg, comm, g)
+					summary, err = summarizeFromEntities(ctx, cfg, comm, g)
 				} else {
 					// Level N: summarize from child summaries
 					var childSummaries []string
@@ -183,6 +230,14 @@ func SummarizeHierarchy(ctx context.Context, dendro Dendrogram, g *Graph, cfg Su
 					}
 				}
 
+				if err != nil {
+					mu.Lock()
+					if firstErr == nil {
+						firstErr = err
+					}
+					mu.Unlock()
+					return
+				}
 				if summary != "" {
 					mu.Lock()
 					summaryByID[comm.ID] = summary
@@ -190,14 +245,24 @@ func SummarizeHierarchy(ctx context.Context, dendro Dendrogram, g *Graph, cfg Su
 
 					// Write summary to DB
 					if cfg.DB != nil {
-						cfg.DB.ExecContext(ctx,
-							"UPDATE graph_communities SET summary = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+						_, err := cfg.DB.ExecContext(ctx,
+							"UPDATE graph_communities SET summary = $1, generation = '', sources_json = '[]', lineage_verified = 0, updated_at = CURRENT_TIMESTAMP WHERE id = $2",
 							summary, comm.ID)
+						if err != nil {
+							mu.Lock()
+							if firstErr == nil {
+								firstErr = fmt.Errorf("write community summary: %w", err)
+							}
+							mu.Unlock()
+						}
 					}
 				}
 			}()
 		}
 		wg.Wait()
+		if firstErr != nil {
+			return firstErr
+		}
 	}
 
 	// Embed all summaries into _community_summaries collection
@@ -208,7 +273,7 @@ func SummarizeHierarchy(ctx context.Context, dendro Dendrogram, g *Graph, cfg Su
 	return nil
 }
 
-func summarizeFromEntities(ctx context.Context, cfg SummarizeConfig, comm Community, g *Graph) string {
+func summarizeFromEntities(ctx context.Context, cfg SummarizeConfig, comm Community, g *Graph) (string, error) {
 	// Load entity names from graph
 	members := comm.Members
 	if len(members) > cfg.MaxContext {
@@ -243,8 +308,11 @@ func summarizeFromEntities(ctx context.Context, cfg SummarizeConfig, comm Commun
 		for _, id := range members {
 			var name, typ, desc string
 			err := cfg.DB.QueryRowContext(ctx,
-				"SELECT name, type, description FROM graph_nodes WHERE id = ?", id).
+				"SELECT name, type, description FROM graph_nodes WHERE id = $1", id).
 				Scan(&name, &typ, &desc)
+			if err != nil && err != sql.ErrNoRows {
+				return "", fmt.Errorf("load summary entity: %w", err)
+			}
 			if err == nil && name != "" {
 				line := fmt.Sprintf("- %s (%s)", name, typ)
 				if desc != "" {
@@ -261,12 +329,12 @@ func summarizeFromEntities(ctx context.Context, cfg SummarizeConfig, comm Commun
 	for _, m := range members {
 		memberSet[m] = true
 	}
-	if cfg.DB != nil {
+	if cfg.DB != nil && len(members) > 0 {
 		// Build IN clause
 		placeholders := make([]string, len(members))
 		args := make([]any, len(members))
 		for i, m := range members {
-			placeholders[i] = "?"
+			placeholders[i] = fmt.Sprintf("$%d", i+1)
 			args[i] = m
 		}
 		inClause := strings.Join(placeholders, ",")
@@ -278,20 +346,30 @@ func summarizeFromEntities(ctx context.Context, cfg SummarizeConfig, comm Commun
 			 JOIN graph_nodes gn2 ON ge.target_id = gn2.id
 			 WHERE ge.source_id IN (%s) AND ge.target_id IN (%s)
 			 LIMIT 30`, inClause, inClause),
-			append(args, args...)...)
-		if err == nil {
-			defer rows.Close()
-			for rows.Next() {
-				var src, rel, tgt string
-				if rows.Scan(&src, &rel, &tgt) == nil {
-					edgeLines = append(edgeLines, fmt.Sprintf("- %s → %s → %s", src, rel, tgt))
-				}
+			args...)
+		if err != nil {
+			return "", fmt.Errorf("load summary edges: %w", err)
+		}
+		for rows.Next() {
+			var src, rel, tgt string
+			if err := rows.Scan(&src, &rel, &tgt); err != nil {
+				_ = rows.Close()
+				return "", fmt.Errorf("scan summary edge: %w", err)
 			}
+			edgeLines = append(edgeLines, fmt.Sprintf("- %s → %s → %s", src, rel, tgt))
+		}
+		rowErr := rows.Err()
+		closeErr := rows.Close()
+		if rowErr != nil {
+			return "", fmt.Errorf("load summary edges: %w", rowErr)
+		}
+		if closeErr != nil {
+			return "", fmt.Errorf("close summary edges: %w", closeErr)
 		}
 	}
 
 	if len(entityLines) == 0 {
-		return ""
+		return "", nil
 	}
 
 	prompt := "You are summarizing a cluster of related entities from a knowledge graph.\n\n"
@@ -312,9 +390,9 @@ func summarizeFromEntities(ctx context.Context, cfg SummarizeConfig, comm Commun
 	})
 	if err != nil {
 		log.Printf("[community] LLM summarize error: %v", err)
-		return ""
+		return "", nil
 	}
-	return strings.TrimSpace(resp.Content)
+	return strings.TrimSpace(resp.Content), nil
 }
 
 func summarizeFromChildren(ctx context.Context, cfg SummarizeConfig, comm Community, childSummaries []string) string {
@@ -394,7 +472,7 @@ func embedSummaries(ctx context.Context, cfg SummarizeConfig, summaryByID map[st
 	for i, vec := range vecs {
 		if i < len(ids) {
 			if err := cfg.Collections.Insert(collName, ids[i], vec, metas[i]); err != nil {
-				log.Printf("[community] insert summary %s: %v", ids[i][:8], err)
+				log.Printf("[community] insert summary %s: %v", ids[i], err)
 			} else {
 				inserted++
 			}
@@ -419,14 +497,14 @@ func LookupCommunities(ctx context.Context, db *sql.DB, nodeIDs []string, level 
 	placeholders := make([]string, len(nodeIDs))
 	args := make([]any, len(nodeIDs)+1)
 	for i, id := range nodeIDs {
-		placeholders[i] = "?"
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
 		args[i] = id
 	}
 	args[len(nodeIDs)] = level
 
 	query := fmt.Sprintf(
-		"SELECT DISTINCT community_id FROM community_members WHERE node_id IN (%s) AND level = ?",
-		strings.Join(placeholders, ","))
+		"SELECT DISTINCT community_id FROM community_members WHERE node_id IN (%s) AND level = $%d",
+		strings.Join(placeholders, ","), len(nodeIDs)+1)
 
 	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -437,9 +515,16 @@ func LookupCommunities(ctx context.Context, db *sql.DB, nodeIDs []string, level 
 	var commIDs []string
 	for rows.Next() {
 		var id string
-		if rows.Scan(&id) == nil {
-			commIDs = append(commIDs, id)
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan community lookup: %w", err)
 		}
+		commIDs = append(commIDs, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("lookup communities: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("close community lookup: %w", err)
 	}
 	return commIDs, nil
 }

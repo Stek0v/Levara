@@ -1,12 +1,15 @@
 package store
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/rand"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 )
 
 func randVecForTest(dim int) []float32 {
@@ -80,6 +83,54 @@ func TestLazyCreateStampsDefaultModel(t *testing.T) {
 	if meta.EmbeddingModel != "potion-code-16M" {
 		t.Errorf("EmbeddingModel = %q, want %q (lazy create must stamp the configured default)",
 			meta.EmbeddingModel, "potion-code-16M")
+	}
+}
+
+func TestConcurrentIdenticalCollectionSearchesReturnIndependentResults(t *testing.T) {
+	dir := t.TempDir()
+	cm, err := NewCollectionManager(64, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = cm.Close() }()
+	vec := randVecForTest(64)
+	if err := cm.Insert("shared", "record", vec, map[string]any{"text": "x"}); err != nil {
+		t.Fatal(err)
+	}
+	db, err := cm.Get("shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.hnsw.Lock()
+	const callers = 16
+	results := make([][]VectroRecord, callers)
+	errs := make([]error, callers)
+	var ready, done sync.WaitGroup
+	ready.Add(callers)
+	done.Add(callers)
+	start := make(chan struct{})
+	for i := range results {
+		go func(i int) {
+			defer done.Done()
+			ready.Done()
+			<-start
+			results[i], errs[i] = cm.Search("shared", vec, 1)
+		}(i)
+	}
+	ready.Wait()
+	close(start)
+	time.Sleep(20 * time.Millisecond)
+	db.hnsw.Unlock()
+	done.Wait()
+	for i := range results {
+		if errs[i] != nil || len(results[i]) != 1 || results[i][0].ID != "record" {
+			t.Fatalf("caller %d: results=%v err=%v", i, results[i], errs[i])
+		}
+	}
+	results[0][0].ID = "mutated"
+	results[0][0].Data[0] = '!'
+	if results[1][0].ID != "record" || !json.Valid(results[1][0].Data) {
+		t.Fatal("coalesced callers shared mutable results")
 	}
 }
 

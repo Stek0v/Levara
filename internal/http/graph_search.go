@@ -4,7 +4,9 @@ package http
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -14,7 +16,6 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/stek0v/levara/pipeline"
-	"github.com/stek0v/levara/pkg/community"
 	"github.com/stek0v/levara/pkg/graphdb"
 )
 
@@ -1341,6 +1342,10 @@ func communityLocalSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest)
 
 	ctx, cancel := searchRequestContext(c)
 	defer cancel()
+	if !globalSearchGraphAllowed(ctx, cfg) {
+		return fiber.NewError(403, "community access denied")
+	}
+	requireAdminSearchEvidence(ctx)
 	embedClient := cfg.EmbedClient
 	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections, nil)
 	colls := resolveCollections(cfg, req)
@@ -1377,22 +1382,53 @@ func communityLocalSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest)
 	var nodeIDs []string
 	for _, name := range entityNames {
 		var id string
-		err := cfg.DB.QueryRowContext(ctx, "SELECT id FROM graph_nodes WHERE name = ? LIMIT 1", name).Scan(&id)
+		err := cfg.DB.QueryRowContext(ctx, Q("SELECT id FROM graph_nodes WHERE name = $1 LIMIT 1"), name).Scan(&id)
 		if err == nil {
 			nodeIDs = append(nodeIDs, id)
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return fiber.NewError(503, "community access unavailable")
 		}
 	}
 
-	commIDs, err := community.LookupCommunities(ctx, cfg.DB, nodeIDs, 0)
-	if err != nil || len(commIDs) == 0 {
+	var commIDs []string
+	for _, nodeID := range nodeIDs {
+		rows, err := cfg.DB.QueryContext(ctx, Q("SELECT DISTINCT community_id FROM community_members WHERE node_id=$1 AND level=0"), nodeID)
+		if err != nil {
+			return fiber.NewError(503, "community access unavailable")
+		}
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return fiber.NewError(503, "community access unavailable")
+			}
+			commIDs = append(commIDs, id)
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return fiber.NewError(503, "community access unavailable")
+		}
+	}
+	commIDs = dedup(commIDs)
+	if len(commIDs) == 0 {
 		return graphCompletionSearch(c, cfg, req)
 	}
 
 	// Step 3: Load community context
 	var communityContexts []string
+	var acceptedIDs []string
+	actor := workspaceActorFromFiber(c)
 	for _, commID := range commIDs {
-		var summary string
-		cfg.DB.QueryRowContext(ctx, "SELECT summary FROM graph_communities WHERE id = ?", commID).Scan(&summary)
+		publication, allowed, err := loadCommunitySearchPublication(ctx, cfg, actor, commID, "")
+		if err != nil {
+			return err
+		}
+		if !allowed {
+			continue
+		}
+		summary := publication.Summary
+		acceptedIDs = append(acceptedIDs, commID)
 
 		// Load community members and edges for richer context
 		graphCtx := graphContextFromPostgres(ctx, cfg, entityNames, req.AllowedDatasetIDs)
@@ -1422,7 +1458,7 @@ func communityLocalSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest)
 
 	return c.JSON(fiber.Map{
 		"answer":           answer,
-		"communities_used": commIDs,
+		"communities_used": acceptedIDs,
 		"entity_names":     entityNames,
 		"search_type":      "COMMUNITY_LOCAL",
 	})
@@ -1446,6 +1482,10 @@ func communityGlobalSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest
 
 	ctx, cancel := searchRequestContext(c)
 	defer cancel()
+	if !globalSearchGraphAllowed(ctx, cfg) {
+		return fiber.NewError(403, "community access denied")
+	}
+	requireAdminSearchEvidence(ctx)
 	embedClient := cfg.EmbedClient
 	sp := pipeline.NewSearchPipeline(embedClient, cfg.Collections, nil)
 
@@ -1460,38 +1500,32 @@ func communityGlobalSearch(c *fiber.Ctx, cfg APIConfig, req UnifiedSearchRequest
 		return graphCompletionSearch(c, cfg, req)
 	}
 
-	// Extract community info
+	// Vector candidates nominate SQL-authoritative current publications.
 	type communityHit struct {
-		ID          string
-		Summary     string
-		MemberCount int
-		Level       int
+		ID, Summary        string
+		MemberCount, Level int
 	}
 	var hits []communityHit
+	actor := workspaceActorFromFiber(c)
 	for _, r := range summaryResults {
-		var meta map[string]any
-		if json.Unmarshal(r.Metadata, &meta) != nil {
+		metadata, isCommunity, allowed, err := communitySearchMetadata(ctx, cfg, actor, r.Metadata, r.Collection)
+		if err != nil {
+			return err
+		}
+		if !isCommunity || !allowed {
 			continue
 		}
-		hit := communityHit{
-			ID: fmt.Sprintf("%v", meta["community_id"]),
-		}
-		if text, ok := meta["text"].(string); ok {
-			hit.Summary = text
-		}
-		if mc, ok := meta["member_count"].(float64); ok {
-			hit.MemberCount = int(mc)
-		}
-		if lv, ok := meta["level"].(float64); ok {
-			hit.Level = int(lv)
-		}
-		if hit.Summary != "" {
-			hits = append(hits, hit)
+		id, _ := metadata["community_id"].(string)
+		summary, _ := metadata["text"].(string)
+		members, _ := metadata["member_count"].(int)
+		level, _ := metadata["level"].(int)
+		if summary != "" {
+			hits = append(hits, communityHit{ID: id, Summary: summary, MemberCount: members, Level: level})
 		}
 	}
 
 	if len(hits) == 0 {
-		return graphCompletionSearch(c, cfg, req)
+		return c.JSON(fiber.Map{"answer": "", "communities_used": []any{}, "total_communities_searched": 0, "search_type": "COMMUNITY_GLOBAL"})
 	}
 
 	// Step 2: Map — partial answers per community (concurrent)

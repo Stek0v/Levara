@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"sync"
@@ -9,22 +10,209 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/stek0v/levara/pipeline"
 	accesspkg "github.com/stek0v/levara/pkg/access"
+	"github.com/stek0v/levara/pkg/community"
+	"github.com/stek0v/levara/pkg/mcp"
 )
 
 type searchActorKey struct{}
 type searchEvidenceKey struct{}
 type searchReadPolicyKey struct{}
+type workspaceSearchScopeKey struct{}
 
 type searchEvidence struct {
-	requiresAdmin bool
-	mu            sync.Mutex
-	sources       map[searchDocumentSource]struct{}
+	requiresAdmin     bool
+	mu                sync.Mutex
+	sources           map[searchDocumentSource]struct{}
+	workspaceProjects map[string]struct{}
+	workspaceScopes   map[searchDocumentSource]workspaceSearchTarget
+	communities       map[mcp.CommunityEvidence]struct{}
+}
+
+func trackCommunityPublication(ctx context.Context, publication mcp.CommunityEvidence) {
+	if e, ok := ctx.Value(searchEvidenceKey{}).(*searchEvidence); ok {
+		e.mu.Lock()
+		if e.communities == nil {
+			e.communities = make(map[mcp.CommunityEvidence]struct{})
+		}
+		e.communities[publication] = struct{}{}
+		e.requiresAdmin = true
+		e.mu.Unlock()
+	}
+}
+func searchCommunityPublications(ctx context.Context) []mcp.CommunityEvidence {
+	e, ok := ctx.Value(searchEvidenceKey{}).(*searchEvidence)
+	if !ok {
+		return nil
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	out := make([]mcp.CommunityEvidence, 0, len(e.communities))
+	for p := range e.communities {
+		out = append(out, p)
+	}
+	return out
+}
+func communitySourceInvalid(err error) bool {
+	return errors.Is(err, accesspkg.ErrDocumentInvalid) || errors.Is(err, accesspkg.ErrDocumentNotFound) || errors.Is(err, accesspkg.ErrDocumentVersionConflict)
+}
+func checkCommunityPublicationSources(ctx context.Context, cfg APIConfig, actor accesspkg.Actor, evidence mcp.CommunityEvidence) (bool, error) {
+	if evidence.ID == "" || evidence.Generation == "" {
+		return false, nil
+	}
+	sources, err := community.ParseSources(evidence.SourcesJSON)
+	if err != nil {
+		return false, nil
+	}
+	policy := accesspkg.SQLPolicy{DB: cfg.DB, Q: Q, QA: QArgs}
+	if installed, ok := ctx.Value(searchReadPolicyKey{}).(accesspkg.SQLPolicy); ok {
+		policy = installed
+	}
+	if err := community.CheckSources(ctx, policy, sources); err != nil {
+		if communitySourceInvalid(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	var tracked []searchDocumentSource
+	for _, s := range sources {
+		source := searchDocumentSource{DatasetID: s.DatasetID, DocumentID: s.DocumentID, ContentRevision: s.ContentRevision, Derived: s.Derived, Collection: s.Collection, Generation: s.Generation, SourceRevision: s.SourceRevision, RawContentHash: s.RawContentHash}
+		allowed, err := searchDocumentAllowed(ctx, cfg, actor, source)
+		if err != nil {
+			if communitySourceInvalid(err) {
+				return false, nil
+			}
+			return false, err
+		}
+		if !allowed {
+			return false, nil
+		}
+		tracked = append(tracked, source)
+	}
+	for _, source := range tracked {
+		trackSearchSource(ctx, source)
+	}
+	trackCommunityPublication(ctx, evidence)
+	return true, nil
+}
+
+type communitySearchPublication struct {
+	ID, Summary, Generation, SourcesJSON string
+	MemberCount, Level                   int
+}
+
+// Community text is SQL-authoritative; vectors only nominate an ID/generation.
+func loadCommunitySearchPublication(ctx context.Context, cfg APIConfig, actor accesspkg.Actor, id, vectorGeneration string) (communitySearchPublication, bool, error) {
+	var publication communitySearchPublication
+	if id == "" {
+		return publication, false, nil
+	}
+	if cfg.DB == nil {
+		if cfg.RequireAuth || actor.UserID != "" {
+			return publication, false, fiber.NewError(503, "community access unavailable")
+		}
+		return publication, false, nil
+	}
+	if actor.UserID == "" {
+		if cfg.RequireAuth {
+			return publication, false, nil
+		}
+	} else {
+		if actor.TenantID != "" || !accesspkg.APIKeyAllows(actor.APIKeyPermissions, accesspkg.ActionRead) {
+			return publication, false, nil
+		}
+		policy := accesspkg.SQLPolicy{DB: cfg.DB, Q: Q, QA: QArgs}
+		active, activeErr := policy.IsActive(ctx, actor.UserID)
+		admin, adminErr := policy.IsSuperuser(ctx, actor.UserID)
+		if activeErr != nil || adminErr != nil {
+			return publication, false, fiber.NewError(503, "community access unavailable")
+		}
+		if !active || !admin {
+			return publication, false, nil
+		}
+	}
+	var verified int
+	err := cfg.DB.QueryRowContext(ctx, Q("SELECT id,summary,generation,sources_json,lineage_verified,member_count,level FROM graph_communities WHERE id=$1"), id).Scan(&publication.ID, &publication.Summary, &publication.Generation, &publication.SourcesJSON, &verified, &publication.MemberCount, &publication.Level)
+	if errors.Is(err, sql.ErrNoRows) {
+		return publication, false, nil
+	}
+	if err != nil {
+		return publication, false, fiber.NewError(503, "community access unavailable")
+	}
+	if actor.UserID == "" && !cfg.RequireAuth {
+		return publication, true, nil
+	}
+	if verified != 1 || publication.Generation == "" || vectorGeneration != "" && publication.Generation != vectorGeneration {
+		return publication, false, nil
+	}
+	allowed, err := checkCommunityPublicationSources(ctx, cfg, actor, mcp.CommunityEvidence{ID: publication.ID, Generation: publication.Generation, SourcesJSON: publication.SourcesJSON})
+	if err != nil {
+		return publication, false, fiber.NewError(503, "community access unavailable")
+	}
+	return publication, allowed, nil
+}
+
+func communitySearchMetadata(ctx context.Context, cfg APIConfig, actor accesspkg.Actor, raw any, collection string) (map[string]any, bool, bool, error) {
+	expectedCommunity := (actor.UserID != "" || cfg.RequireAuth) && (collection == "_community_summaries" || collection == "_community_summaries_child")
+	var metadata map[string]any
+	switch value := raw.(type) {
+	case map[string]any:
+		metadata = value
+	case fiber.Map:
+		metadata = map[string]any(value)
+	case json.RawMessage:
+		if json.Unmarshal(value, &metadata) != nil {
+			return nil, expectedCommunity, false, nil
+		}
+	case []byte:
+		if json.Unmarshal(value, &metadata) != nil {
+			return nil, expectedCommunity, false, nil
+		}
+	case string:
+		if json.Unmarshal([]byte(value), &metadata) != nil {
+			return nil, expectedCommunity, false, nil
+		}
+	default:
+		return nil, expectedCommunity, false, nil
+	}
+	rawID, present := metadata["community_id"]
+	if !present {
+		return nil, expectedCommunity, false, nil
+	}
+	id, _ := rawID.(string)
+	generation, _ := metadata["generation"].(string)
+	if actor.UserID != "" || cfg.RequireAuth {
+		if generation == "" {
+			return nil, true, false, nil
+		}
+	}
+	publication, allowed, err := loadCommunitySearchPublication(ctx, cfg, actor, id, generation)
+	if err != nil || !allowed {
+		return nil, true, false, err
+	}
+	return map[string]any{"community_id": publication.ID, "generation": publication.Generation, "text": publication.Summary, "member_count": publication.MemberCount, "level": publication.Level}, true, true, nil
+}
+
+func trackWorkspaceSearchProject(ctx context.Context, projectID string) {
+	if e, ok := ctx.Value(searchEvidenceKey{}).(*searchEvidence); ok {
+		e.mu.Lock()
+		if e.workspaceProjects == nil {
+			e.workspaceProjects = make(map[string]struct{})
+		}
+		e.workspaceProjects[projectID] = struct{}{}
+		e.mu.Unlock()
+	}
 }
 
 func trackSearchSource(ctx context.Context, source searchDocumentSource) {
 	if e, ok := ctx.Value(searchEvidenceKey{}).(*searchEvidence); ok {
 		e.mu.Lock()
 		e.sources[source] = struct{}{}
+		if scope, scoped := ctx.Value(workspaceSearchScopeKey{}).(workspaceSearchTarget); scoped {
+			if e.workspaceScopes == nil {
+				e.workspaceScopes = make(map[searchDocumentSource]workspaceSearchTarget)
+			}
+			e.workspaceScopes[source] = scope
+		}
 		e.mu.Unlock()
 	}
 }
@@ -122,6 +310,10 @@ type searchDocumentSource struct {
 	VectorID            string `json:"vector_id,omitempty"`
 }
 
+func workspaceSearchSource(source searchDocumentSource) bool {
+	return source.ProjectID != "" && (source.ChunkID != "" || source.Branch != "" && source.Generation != "" && source.Path != "")
+}
+
 func decodeSearchDocumentSource(value any) (searchDocumentSource, error) {
 	var raw []byte
 	switch v := value.(type) {
@@ -166,8 +358,43 @@ func searchDocumentAllowedWithLineage(ctx context.Context, cfg APIConfig, actor 
 	*remaining -= 1
 	path[source] = true
 	defer delete(path, source)
+	if scope, ok := ctx.Value(workspaceSearchScopeKey{}).(workspaceSearchTarget); ok {
+		if !workspaceSearchSource(source) || source.ProjectID != scope.Manifest.ProjectID || source.Branch != scope.Branch || source.Generation != scope.Generation || source.Collection != scope.Collection {
+			return false, nil
+		}
+	}
 	if cfg.RequireAuth && actor.UserID == "" {
 		return false, nil
+	}
+	// Workspace vectors are derived even in trusted-local mode. Pending records
+	// must never reach context merely because SQL authorization is disabled.
+	if workspaceSearchSource(source) {
+		if source.DatasetID != source.ProjectID || source.ChunkID == "" || source.Branch == "" || source.Path == "" || source.FileDigest == "" || source.DocumentID == "" || source.Generation == "" || source.VectorID == "" || source.Collection == "" {
+			return false, nil
+		}
+		if actor.UserID != "" || cfg.RequireAuth {
+			if cfg.DB == nil {
+				return false, fiber.NewError(503, "document authorization unavailable")
+			}
+			policy := accesspkg.SQLPolicy{DB: cfg.DB, Q: Q, QA: QArgs}
+			if locked, ok := ctx.Value(searchReadPolicyKey{}).(accesspkg.SQLPolicy); ok && locked.DB == cfg.DB {
+				policy = locked
+			}
+			decision, err := policy.AuthorizeDataset(ctx, actor, source.ProjectID, accesspkg.ActionRead)
+			if err != nil || !decision.Allowed {
+				return false, err
+			}
+		}
+		manifest, _, err := loadWorkspaceManifest(cfg, source.ProjectID, source.Branch)
+		if err != nil {
+			return false, err
+		}
+		generation := manifest.ActiveGeneration
+		if scope, scoped := ctx.Value(workspaceSearchScopeKey{}).(workspaceSearchTarget); scoped {
+			generation = scope.Generation
+		}
+		record, ok := manifest.Chunks[source.VectorID]
+		return ok && record.Collection == source.Collection && record.ChunkID == source.ChunkID && record.ProjectID == source.ProjectID && record.Branch == source.Branch && record.DocumentID == source.DocumentID && record.Generation == source.Generation && record.Generation == generation && record.Path == source.Path && record.FileDigest == source.FileDigest, nil
 	}
 	if cfg.DB == nil {
 		if cfg.RequireAuth {
@@ -186,18 +413,7 @@ func searchDocumentAllowedWithLineage(ctx context.Context, cfg APIConfig, actor 
 		decision, err := policy.AuthorizeDataset(ctx, actor, source.DatasetID, accesspkg.ActionRead)
 		return decision.Allowed, err
 	}
-	if source.ProjectID != "" && source.ProjectID == source.DatasetID && source.Generation != "" && source.ChunkID != "" {
-		decision, err := policy.AuthorizeDataset(ctx, actor, source.ProjectID, accesspkg.ActionRead)
-		if err != nil || !decision.Allowed {
-			return false, err
-		}
-		manifest, _, err := loadWorkspaceManifest(cfg, source.ProjectID, source.Branch)
-		if err != nil {
-			return false, err
-		}
-		record, ok := manifest.Chunks[source.VectorID]
-		return ok && record.ChunkID == source.ChunkID && record.ProjectID == source.ProjectID && record.Branch == source.Branch && record.DocumentID == source.DocumentID && record.Generation == source.Generation && record.Generation == manifest.ActiveGeneration && record.Path == source.Path && record.FileDigest == source.FileDigest, nil
-	}
+
 	if source.DocumentID != "" && source.DatasetID != "" {
 		ref := accesspkg.DocumentRef{DatasetID: source.DatasetID, DataID: source.DocumentID}
 		resource, err := policy.GetDocumentResource(ctx, ref)
@@ -282,14 +498,28 @@ func searchDocumentAllowedWithLineage(ctx context.Context, cfg APIConfig, actor 
 }
 
 func filterSearchDocuments(c *fiber.Ctx, cfg APIConfig, results []fiber.Map) ([]fiber.Map, error) {
-	if cfg.DB == nil && !cfg.RequireAuth {
-		return results, nil
-	}
 	out := make([]fiber.Map, 0, len(results))
 	actor := workspaceActorFromFiber(c)
 	for _, result := range results {
+		collection, _ := result["collection"].(string)
+		metadata, isCommunity, admitted, communityErr := communitySearchMetadata(c.UserContext(), cfg, actor, result["metadata"], collection)
+		if communityErr != nil {
+			return nil, communityErr
+		}
+		if isCommunity {
+			if admitted {
+				result["metadata"] = metadata
+				result["text"] = metadata["text"]
+				out = append(out, result)
+			}
+			continue
+		}
+
 		source, err := decodeSearchDocumentSource(result["metadata"])
 		source.VectorID, _ = result["id"].(string)
+		if workspaceSearchSource(source) {
+			source.Collection = collection
+		}
 		source.Derived = true
 		if err != nil {
 			continue
@@ -307,14 +537,26 @@ func filterSearchDocuments(c *fiber.Ctx, cfg APIConfig, results []fiber.Map) ([]
 }
 
 func filterScoredSearchDocuments(c *fiber.Ctx, cfg APIConfig, results []pipeline.ScoredResult) ([]pipeline.ScoredResult, error) {
-	if cfg.DB == nil && !cfg.RequireAuth {
-		return results, nil
-	}
 	out := make([]pipeline.ScoredResult, 0, len(results))
 	actor := workspaceActorFromFiber(c)
 	for _, result := range results {
+		metadata, isCommunity, admitted, communityErr := communitySearchMetadata(c.UserContext(), cfg, actor, result.Metadata, result.Collection)
+		if communityErr != nil {
+			return nil, communityErr
+		}
+		if isCommunity {
+			if admitted {
+				result.Metadata, _ = json.Marshal(metadata)
+				out = append(out, result)
+			}
+			continue
+		}
+
 		source, err := decodeSearchDocumentSource(result.Metadata)
 		source.VectorID = result.ID
+		if workspaceSearchSource(source) {
+			source.Collection = result.Collection
+		}
 		source.Derived = true
 		if err != nil {
 			continue
@@ -342,11 +584,26 @@ func filterMCPDocumentResults(ctx context.Context, cfg APIConfig, results []pipe
 	actor, _ := ctx.Value(searchActorKey{}).(accesspkg.Actor)
 	out := make([]pipeline.ScoredResult, 0, len(results))
 	for _, result := range results {
+		metadata, isCommunity, admitted, communityErr := communitySearchMetadata(ctx, cfg, actor, result.Metadata, result.Collection)
+		if communityErr != nil {
+			return nil, communityErr
+		}
+		if isCommunity {
+			if admitted {
+				result.Metadata, _ = json.Marshal(metadata)
+				out = append(out, result)
+			}
+			continue
+		}
+
 		source, err := decodeSearchDocumentSource(result.Metadata)
 		if err != nil {
 			continue
 		}
 		source.Derived, source.VectorID = true, result.ID
+		if workspaceSearchSource(source) {
+			source.Collection = result.Collection
+		}
 		allowed, err := searchDocumentAllowed(ctx, cfg, actor, source)
 		if err != nil {
 			return nil, err

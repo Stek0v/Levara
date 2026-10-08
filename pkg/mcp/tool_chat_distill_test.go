@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	_ "github.com/ncruces/go-sqlite3/driver"
+	"github.com/stek0v/levara/pkg/chatimport"
 	"github.com/stek0v/levara/pkg/llm"
 )
 
@@ -40,6 +41,7 @@ func distillTestDB(t *testing.T) *sql.DB {
 	for _, stmt := range []string{
 		`CREATE TABLE memories (id TEXT PRIMARY KEY, key TEXT, value TEXT, type TEXT, owner_id TEXT,
 			collection_name TEXT, room TEXT, hall TEXT, is_pinned INTEGER DEFAULT 0, pin_priority INTEGER DEFAULT 0,
+			verification_status TEXT NOT NULL DEFAULT '', source_task_id TEXT NOT NULL DEFAULT '', source_receipt_ids TEXT NOT NULL DEFAULT '[]',
 			created_at TEXT, updated_at TEXT, UNIQUE(key, owner_id, collection_name))`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
@@ -70,7 +72,7 @@ func distillTestDB(t *testing.T) *sql.DB {
 }
 
 func ensureChatImportTables(db *sql.DB) error {
-	for _, stmt := range chatimportTestSchema() {
+	for _, stmt := range append(chatimportTestSchema(), chatimport.SchemaStatements...) {
 		if _, err := db.Exec(stmt); err != nil {
 			return err
 		}

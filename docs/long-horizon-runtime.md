@@ -8,14 +8,14 @@ continuation. It stores the task objective, authority, Definition of Done,
 versioned plan, atomic step leases, immutable evidence, checkpoints, blockers,
 and completion state in SQL.
 
-Task Runtime does not execute work by itself and does not grant additional
-authority. An agent or host performs the work; Levara makes its state and proof
-recoverable and validates completion deterministically.
+Work is performed by an external agent/host or the optional bounded server
+worker described below. The ledger grants no additional authority; it makes
+state and proof recoverable and validates completion deterministically.
 
 ## Enable it
 
-Task tools are hidden unless the feature flag is enabled. Set both variables
-before starting the server:
+Task tools require a SQL database, `LEVARA_LONG_HORIZON_RUNTIME=1`, and the
+`long-horizon` or `full` toolset. Configure them before starting the server:
 
 ```bash
 export DB_PROVIDER=sqlite
@@ -39,6 +39,32 @@ Verify the runtime:
 - `runtime_stats` must report `task_runtime.enabled=true`;
 - `doctor` must report a reachable Task Runtime schema and no orphan records;
 - the MCP tool list must contain the eight `task_*` tools below.
+
+## Optional workspace worker
+
+With the SQL configuration above, enable server execution using:
+
+```bash
+export LEVARA_LONG_HORIZON_RUNTIME=1
+export LEVARA_TASK_WORKER=1
+export LEVARA_MCP_TOOLSET=full
+```
+
+The server wires [NewTaskExecutor](../internal/http/task_executor.go), which
+supports `workspace_read` and `workspace_write` only; writes require `index`
+absent or false. Shell, network, indexing, and unknown arguments are rejected.
+The `long-horizon` toolset has `task_step` but lacks the workspace action tools;
+`workspace` lacks `task_step`. The execution fence requires both, so use explicit
+`full` for this worker and inspect actual `tools/list`.
+
+Each executable step needs an `action` (`kind=mcp_tool`, tool name, arguments,
+and output assertions) and `criterion_ids`. Task authority must include
+`auto_run=true`, `allowed_tools`, and a digest-pinned [authority manifest](authority-manifests.md)
+that permits the tool and an existing canonical directory. Execution also
+requires the task's authenticated owner, a live lease, and a workspace grant.
+DevMode is denied. Descriptor-based filesystem confinement supports Linux and
+macOS; other platforms reject these file actions. Work outside this bounded
+surface remains the external host's responsibility under its authorization.
 
 ## Lifecycle
 
@@ -165,6 +191,10 @@ pass, or fail the step. An expired lease can be reclaimed by another actor.
 }
 ```
 
+Reusing a receipt or checkpoint idempotency key requires the same normalized request, including evidence, verified owner, effective actor and checkpoint side effects. An exact retry may use a stale base version and returns the original ID and current version. A changed payload returns an explicit idempotency conflict without changing the ledger. Object key order and ignored fields do not alter identity; applied array order does.
+
+Historical receipts/checkpoints without a stored request digest remain readable and usable as evidence, but replay returns an explicit unverifiable-payload error. The additive migration does not guess an original request or repeat checkpoint effects. Use a new key only for an intentionally new operation.
+
 Receipts are immutable and idempotent. Record what was actually observed; a
 summary or intention is not evidence. `command`, `artifact`, and `reviewer`
 receipts require a workspace revision. Evidence tied to an older revision is
@@ -174,6 +204,8 @@ Artifact receipts require `evidence_uri` and a full SHA-256 digest. Supported
 URIs are `file://` paths inside configured storage/workspace roots and
 `storage://` objects from the configured backend. Completion re-reads the
 artifact bytes and verifies the digest.
+
+Completion validates authoritative SQL inside its bounded write transaction. For workspace artifacts it retains the native project lock through commit or rollback, so cooperating workspace writers cannot replace verified bytes in that interval. Cancellation and credential expiry release guards without completing the task. Completed-task replay still requires live write authority. Arbitrary OS editors and object-backend overwrites do not participate in the workspace lock; no filesystem/SQL power-loss atomicity is claimed.
 
 ### 5. Checkpoint, block, and resume
 
@@ -240,21 +272,23 @@ provenance; unsupported or insufficiently evidenced candidates are rejected.
 ## Security and current limitations
 
 Task Runtime stores state and evidence in SQL. The read-only WebUI `/tasks`
-displays tasks, steps, leases, receipts, checkpoints and blockers. An external
-agent/host performs the actual work; the ledger grants no additional authority.
+displays tasks, steps, leases, receipts, checkpoints and blockers. Work is
+performed by an external agent/host or the bounded worker; the ledger grants
+no additional authority.
 
 - Tool profiles control visibility, not authorization.
 - Task access includes owner, collection and room scope.
 - Artifact verification checks supported sources and path containment;
   unsupported URI schemes are not automatically trusted.
-- `LEVARA_TASK_WORKER=1` enables the worker loop, but server bootstrap wires
-  `NewLoggingStepExecutor`: it logs and returns a synthetic observation without
-  performing useful task work. Do not treat it as evidence that a command ran,
-  a file changed or a quality check passed. Integrating a real executor is
-  separate work.
-- An [authority manifest](authority-manifests.md) can bind a task; its digest is
-  verified on HTTP claim. Tool/path/network helpers are not called by every
-  production action and do not provide a universal sandbox.
+- The bounded executor records an observation receipt from actual tool output
+  and checks the step's output assertions; a passing workspace action is not
+  evidence that a shell command or unrelated quality check ran.
+  `NewLoggingStepExecutor` is a compatibility fallback that fails closed,
+  not the server's execution adapter.
+- An [authority manifest](authority-manifests.md) binds a task; its digest is
+  verified on HTTP claim and rechecked by the bounded workspace executor.
+  The executor enforces its tool and directory grants for supported actions;
+  manifest helpers are not a universal sandbox for every production action.
 
 Canonical schemas are in [API contract](api-contract.md). See [testing](testing.md)
 for observed evidence and remaining integration limits, and the

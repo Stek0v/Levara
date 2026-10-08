@@ -60,7 +60,9 @@ func DistillCandidates(ctx context.Context, db *sql.DB, q Q, hall string, minMes
 	rows, err := db.QueryContext(ctx, q(`
 		SELECT m.platform, m.session_id, MAX(m.session_title), COUNT(*) AS msgs
 		FROM chat_import_messages m
-		WHERE NOT EXISTS (
+		WHERE NOT EXISTS (SELECT 1 FROM chat_import_sessions s WHERE s.id=m.session_id AND s.platform=m.platform
+		      AND (s.owner_id<>'' OR s.tenant_id<>'' OR s.trusted_local=FALSE))
+		  AND NOT EXISTS (
 			SELECT 1 FROM chat_import_distill d
 			WHERE d.platform = m.platform AND d.session_id = m.session_id AND d.hall = $1
 			  AND (d.status = 'ok' OR (d.status = 'failed' AND d.distilled_at > $2))
@@ -114,7 +116,9 @@ type DistillStats struct {
 // DistillStatsFor returns per-status counts for one hall.
 func DistillStatsFor(ctx context.Context, db *sql.DB, q Q, hall string) (DistillStats, error) {
 	var s DistillStats
-	rows, err := db.QueryContext(ctx, q(`SELECT status, COUNT(*) FROM chat_import_distill WHERE hall = $1 GROUP BY status`), hall)
+	rows, err := db.QueryContext(ctx, q(`SELECT d.status, COUNT(*) FROM chat_import_distill d WHERE d.hall = $1
+ AND NOT EXISTS (SELECT 1 FROM chat_import_sessions s WHERE s.id=d.session_id AND s.platform=d.platform
+ AND (s.owner_id<>'' OR s.tenant_id<>'' OR s.trusted_local=FALSE)) GROUP BY d.status`), hall)
 	if err != nil {
 		return s, err
 	}

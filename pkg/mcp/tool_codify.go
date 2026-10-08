@@ -1,109 +1,126 @@
 package mcp
 
-// Codify tool: static code analysis → graph + vector index.
-// Migrated in F-4 wave 3p. No new Deps methods:
-//   - DB() + Q() for graph_nodes / graph_edges upserts
-//   - BaseCognifyConfig() for embed endpoint/model
-//   - HasCollections() as a vector-engine gate
-//   - CollectionInsert() for the per-entity vector upsert
-//
-// The original QArgs call for parameter reuse in the ON CONFLICT clause
-// is replaced with excluded.* syntax (SQLite 3.24+ / PostgreSQL 9.5+),
-// which works on both engines without the QArgs machinery.
-
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/stek0v/levara/pkg/extract"
+	"github.com/stek0v/levara/pkg/graph"
+	"github.com/stek0v/levara/pkg/orchestrator"
 )
 
-// ToolCodify parses code with extract.AnalyzeCode, stores extracted
-// entities + relations as graph nodes/edges (when DB is configured), and
-// optionally embeds entity descriptions into a named collection (when an
-// embed service + collection manager are configured).
-//
-// Returns a JSON summary:
-//
-//	{"language": "...", "entities": N, "relations": M, "details": {...}}
-//
-// Error branch: missing code or filename → IsError.
-// Non-error branches: DB-nil / embed-nil produce partial results without
-// error — callers receive whatever was analysed.
+// ToolCodify performs checked static analysis and synchronously publishes through
+// the existing immutable-source pipeline. Without SQL it remains analysis-only.
 func ToolCodify(ctx context.Context, deps Deps, args map[string]any) ToolResult {
 	code, _ := args["code"].(string)
 	filename, _ := args["filename"].(string)
 	if code == "" || filename == "" {
-		return ToolResult{
-			Content: []Content{{Type: "text", Text: "Error: 'code' and 'filename' required"}},
-			IsError: true,
-		}
+		return toolError("Error: 'code' and 'filename' required")
 	}
-
-	analysis := extract.AnalyzeCode(code, filename)
-
-	db := deps.DB()
-	if db != nil {
-		// Upsert entities as graph nodes.
-		// excluded.* replaces the pre-refactor QArgs($2, $3, $5) pattern
-		// — identical semantics on SQLite 3.24+ and PostgreSQL 9.5+.
-		for _, e := range analysis.Entities {
-			props := fmt.Sprintf(`{"file":"%s","line":%d}`, e.File, e.Line)
-			if e.Parent != "" {
-				props = fmt.Sprintf(`{"file":"%s","line":%d,"parent":"%s"}`, e.File, e.Line, e.Parent)
-			}
-			nodeID := uuid.NewSHA1(uuid.NameSpaceOID, []byte(e.Name+e.Type+e.File)).String()
-			db.ExecContext(ctx, deps.Q(`
-				INSERT INTO graph_nodes (id, name, type, description, properties)
-				VALUES ($1, $2, $3, $4, $5)
-				ON CONFLICT(id) DO UPDATE SET
-					name = excluded.name,
-					type = excluded.type,
-					properties = excluded.properties`),
-				nodeID, e.Name, e.Type, filename, props)
-		}
-
-		// Upsert relations as graph edges (DO NOTHING — idempotent).
-		for _, r := range analysis.Relations {
-			srcID := uuid.NewSHA1(uuid.NameSpaceOID, []byte(r.Source)).String()
-			tgtID := uuid.NewSHA1(uuid.NameSpaceOID, []byte(r.Target)).String()
-			edgeID := uuid.NewSHA1(uuid.NameSpaceOID, []byte(r.Source+r.Relationship+r.Target)).String()
-			db.ExecContext(ctx, deps.Q(`
-				INSERT INTO graph_edges (id, source_id, target_id, relationship_name, properties)
-				VALUES ($1, $2, $3, $4, '{}')
-				ON CONFLICT(id) DO NOTHING`),
-				edgeID, srcID, tgtID, r.Relationship)
-		}
+	analysis, err := extract.AnalyzeCodeChecked(code, filename)
+	if err != nil {
+		return toolError(err.Error())
 	}
-
-	// Embed entity descriptions into collection when configured.
-	// T3.2: use Deps.EmbedBatch so we share the process-wide embed client's
-	// TCP pool instead of dialling fresh per codify invocation (the prior
-	// embed.NewClient(...) path defeated the T3 shared-pool win).
-	collection, _ := args["collection"].(string)
-	if collection != "" && deps.EmbedAvailable() {
-		var texts, ids []string
-		for _, e := range analysis.Entities {
-			texts = append(texts, e.Name+": "+e.Type+" in "+e.File)
-			ids = append(ids, uuid.NewSHA1(uuid.NameSpaceOID, []byte(e.Name+e.Type+e.File)).String())
+	if err := ctx.Err(); err != nil {
+		return toolError("code publication canceled")
+	}
+	if deps.DB() != nil {
+		cfg := deps.BaseCognifyConfig()
+		collection, _ := args["collection"].(string)
+		if strings.TrimSpace(collection) == "" {
+			collection = "code_knowledge"
 		}
-		if len(texts) > 0 {
-			if vecs, err := deps.EmbedBatch(ctx, texts); err == nil {
-				for i, vec := range vecs {
-					meta := fmt.Sprintf(`{"name":"%s","type":"%s","file":"%s"}`,
-						analysis.Entities[i].Name, analysis.Entities[i].Type, analysis.Entities[i].File)
-					deps.CollectionInsert(collection, ids[i], vec, meta)
-				}
+		cfg.Collection, cfg.DocumentTitle = collection, filename
+		cfg.DatasetID, cfg.DocumentID = uuid.NewString(), ""
+		cfg.StaticGraph = codifyStaticGraph(analysis, filename)
+		cfg.SkipGraph, cfg.GenerateTriplets, cfg.ParentChild = false, false, false
+		cfg.MinChunkChars = 1
+		cfg, err = deps.PrepareCognify(ctx, []string{code}, cfg)
+		if err != nil {
+			return toolError("code source unavailable")
+		}
+		cfg.AttemptID = uuid.NewString()
+		if err := deps.ClaimPipelineAttempt(ctx, cfg.DatasetID, cfg.DocumentID, cfg.Collection, cfg.AttemptID, cfg.SourceRevision, cfg.RawContentHash); err != nil {
+			return toolError("code publication unavailable")
+		}
+		updates := make(chan orchestrator.Progress, 16)
+		done := make(chan error, 1)
+		go func() { done <- deps.RunPipeline(ctx, []string{code}, cfg, updates) }()
+		var last orchestrator.Progress
+		for update := range updates {
+			last = update
+		}
+		runErr := <-done
+		if runErr == nil {
+			runErr = ctx.Err()
+		}
+		if runErr != nil {
+			_ = deps.PersistPipelineStatus(cfg.DatasetID, cfg.DocumentID, cfg.Collection, "FAILED", cfg.SourceRevision, cfg.RawContentHash,
+				last.ChunksCreated, last.EntitiesExtracted, last.EdgesExtracted, last.ElapsedMs, cfg.AttemptID)
+			return toolError("code publication failed")
+		}
+		if !deps.PipelineFinalizesStatus() {
+			if err := deps.PersistPipelineStatus(cfg.DatasetID, cfg.DocumentID, cfg.Collection, "COMPLETED", cfg.SourceRevision, cfg.RawContentHash,
+				last.ChunksCreated, last.EntitiesExtracted, last.EdgesExtracted, last.ElapsedMs, cfg.AttemptID); err != nil {
+				return toolError("code publication status unavailable")
 			}
 		}
 	}
-
 	return jsonResult(map[string]any{
-		"language":  analysis.Language,
-		"entities":  len(analysis.Entities),
+		"language": analysis.Language, "entities": len(analysis.Entities),
 		"relations": len(analysis.Relations),
 		"text":      fmt.Sprintf("%s: %d entities, %d relations", analysis.Language, len(analysis.Entities), len(analysis.Relations)),
 		"details":   analysis,
 	})
+}
+
+// IDs describe syntax within one file; the pipeline adds immutable source scope.
+// Unknown or ambiguous names become explicit references, never arbitrary joins.
+func codifyStaticGraph(analysis extract.CodeAnalysis, filename string) *orchestrator.ExtractedGraph {
+	result := &orchestrator.ExtractedGraph{}
+	ids := map[string]bool{}
+	names := map[string][]string{}
+	add := func(key, name, typ, description string) string {
+		encoded, _ := json.Marshal([]string{filename, key})
+		id := uuid.NewSHA1(uuid.NameSpaceOID, encoded).String()
+		if !ids[id] {
+			ids[id] = true
+			result.Nodes = append(result.Nodes, graph.DedupNode{ID: id, Name: name, Type: typ, Description: description})
+		}
+		return id
+	}
+	module := add("module", filename, "module", "Code file "+filename)
+	for _, e := range analysis.Entities {
+		qualified := e.Name
+		if e.Parent != "" {
+			qualified = e.Parent + "." + e.Name
+		}
+		key := fmt.Sprintf("declaration:%s:%s:%d", e.Type, qualified, e.Line)
+		id := add(key, filename+"::"+qualified, e.Type, fmt.Sprintf("%s in %s at line %d", qualified, filename, e.Line))
+		names[qualified] = append(names[qualified], id)
+		if qualified != e.Name {
+			names[e.Name] = append(names[e.Name], id)
+		}
+	}
+	endpoint := func(name string) string {
+		if name == filename {
+			return module
+		}
+		candidates := names[name]
+		if len(candidates) == 1 {
+			return candidates[0]
+		}
+		return add("reference:"+name, filename+"::reference:"+name, "reference", "Syntactic reference "+name+" in "+filename)
+	}
+	for _, r := range analysis.Relations {
+		result.Edges = append(result.Edges, graph.DedupEdge{
+			SourceID: endpoint(r.Source), TargetID: endpoint(r.Target),
+			RelationshipName: r.Relationship,
+			EdgeText:         r.Source + " " + r.Relationship + " " + r.Target,
+		})
+	}
+	return result
 }

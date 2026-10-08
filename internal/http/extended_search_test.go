@@ -408,11 +408,14 @@ func TestCommunityLocalSearch_UsesCommunityContext(t *testing.T) {
 	env.insertEdge("r1", "n1", "n2", "KNOWS")
 	env.insertCommunity("c-auth", 0, "Auth subsystem: users, roles, permissions", []string{"n1", "n2"})
 
-	_, body := env.postSearch(map[string]any{
+	status, body := env.postSearch(map[string]any{
 		"query_text": "who is alice",
 		"query_type": "COMMUNITY_LOCAL",
 		"collection": "entities",
 	})
+	if status != 200 || body == nil {
+		t.Fatalf("community local status=%d body=%v", status, body)
+	}
 	if body["search_type"] != "COMMUNITY_LOCAL" {
 		t.Errorf("search_type = %v, want COMMUNITY_LOCAL", body["search_type"])
 	}
@@ -536,10 +539,16 @@ func TestCommunityGlobalSearch_MapReduceSynthesises(t *testing.T) {
 		"community_id": "c-ingest", "text": "Ingest: pipelines", "member_count": float64(3), "level": float64(0),
 	})
 
-	_, body := env.postSearch(map[string]any{
+	// Vectors nominate matching SQL summaries; SQL text is authoritative.
+	env.insertCommunity("c-auth", 0, "Auth: users, roles", []string{"auth-a", "auth-b", "auth-c", "auth-d", "auth-e"})
+	env.insertCommunity("c-ingest", 0, "Ingest: pipelines", []string{"ingest-a", "ingest-b", "ingest-c"})
+	status, body := env.postSearch(map[string]any{
 		"query_text": "what subsystems exist",
 		"query_type": "COMMUNITY_GLOBAL",
 	})
+	if status != 200 || body == nil {
+		t.Fatalf("community global status=%d body=%v", status, body)
+	}
 	if body["search_type"] != "COMMUNITY_GLOBAL" {
 		t.Errorf("search_type = %v", body["search_type"])
 	}

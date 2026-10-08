@@ -664,58 +664,81 @@ func (s *Service) BatchEmbedAndIndex(ctx context.Context, req *pb.BatchEmbedAndI
 
 // BatchWriteGraph writes nodes and edges to Neo4j in batch via UNWIND+MERGE.
 // Creates a short-lived Neo4j connection per call (caller provides credentials).
+// parseGraphBatchProperties preserves the wire spelling of temporal numbers while
+// keeping ordinary properties on the existing float64 JSON decoding contract.
+func parseGraphBatchProperties(input string, preserveTemporal bool) (map[string]any, error) {
+	if input == "" {
+		return map[string]any{}, nil
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(input), &raw); err != nil {
+		return nil, err
+	}
+	if raw == nil {
+		return map[string]any{}, nil
+	}
+	bounds := map[string]json.Number{}
+	for _, key := range []string{"valid_from", "valid_until"} {
+		value := strings.TrimSpace(string(raw[key]))
+		if preserveTemporal && len(value) > 0 && (value[0] == '-' || (value[0] >= '0' && value[0] <= '9')) {
+			bounds[key] = json.Number(value)
+			delete(raw, key)
+		}
+	}
+	ordinary, err := json.Marshal(raw)
+	if err != nil {
+		return nil, err
+	}
+	var props map[string]any
+	if err := json.Unmarshal(ordinary, &props); err != nil {
+		return nil, err
+	}
+	for key, value := range bounds {
+		props[key] = value
+	}
+	return props, nil
+}
+
 func (s *Service) BatchWriteGraph(ctx context.Context, req *pb.BatchWriteGraphReq) (*pb.BatchWriteGraphResp, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "request required")
+	}
 	if err := validateNeo4jURL(req.Neo4JUrl); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+	// Validate the complete batch before connecting to the external database.
+	nodes := make([]graphdb.NodeRecord, len(req.Nodes))
+	for i, n := range req.Nodes {
+		if n == nil {
+			return nil, status.Errorf(codes.InvalidArgument, "node %d required", i)
+		}
+		props, err := parseGraphBatchProperties(n.PropertiesJson, false)
+		if err != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "node %d properties: %v", i, err)
+		}
+		nodes[i] = graphdb.NodeRecord{ID: n.Id, Label: n.Label, Properties: props}
+	}
+	edges := make([]graphdb.EdgeRecord, len(req.Edges))
+	for i, e := range req.Edges {
+		if e == nil {
+			return nil, status.Errorf(codes.InvalidArgument, "edge %d required", i)
+		}
+		props, err := parseGraphBatchProperties(e.PropertiesJson, true)
+		if err != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "edge %d properties: %v", i, err)
+		}
+		edges[i] = graphdb.EdgeRecord{SourceID: e.SourceId, TargetID: e.TargetId, RelationshipName: e.RelationshipName, Properties: props}
 	}
 	dbName := req.Neo4JDatabase
 	if dbName == "" {
 		dbName = "neo4j"
 	}
-
 	writer, err := graphdb.NewWriter(ctx, req.Neo4JUrl, req.Neo4JUser, req.Neo4JPassword, dbName)
 	if err != nil {
 		return nil, status.Errorf(codes.Unavailable, "neo4j connect: %v", err)
 	}
 	defer writer.Close(ctx)
-
-	// Convert proto nodes
-	nodes := make([]graphdb.NodeRecord, len(req.Nodes))
-	for i, n := range req.Nodes {
-		var props map[string]any
-		if n.PropertiesJson != "" {
-			json.Unmarshal([]byte(n.PropertiesJson), &props)
-		}
-		if props == nil {
-			props = map[string]any{}
-		}
-		nodes[i] = graphdb.NodeRecord{
-			ID:         n.Id,
-			Label:      n.Label,
-			Properties: props,
-		}
-	}
-
-	// Convert proto edges
-	edges := make([]graphdb.EdgeRecord, len(req.Edges))
-	for i, e := range req.Edges {
-		var props map[string]any
-		if e.PropertiesJson != "" {
-			json.Unmarshal([]byte(e.PropertiesJson), &props)
-		}
-		if props == nil {
-			props = map[string]any{}
-		}
-		edges[i] = graphdb.EdgeRecord{
-			SourceID:         e.SourceId,
-			TargetID:         e.TargetId,
-			RelationshipName: e.RelationshipName,
-			Properties:       props,
-		}
-	}
-
 	result := writer.BatchWrite(ctx, nodes, edges)
-
 	return &pb.BatchWriteGraphResp{
 		NodesWritten: int32(result.NodesWritten),
 		EdgesWritten: int32(result.EdgesWritten),

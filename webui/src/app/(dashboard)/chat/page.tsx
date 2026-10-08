@@ -1,11 +1,12 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
-import { levara, type SearchRequest } from '@/lib/api'
+import { useState, useRef, useEffect, useCallback } from 'react'
+import { levara, setAuthToken, type SearchRequest } from '@/lib/api'
 import { useSettings } from '@/hooks/use-levara'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Send, Bot, User, RotateCcw } from 'lucide-react'
+import { ImportedChats } from '@/components/imported-chats'
 
 interface Message {
   role: 'user' | 'assistant'
@@ -18,17 +19,40 @@ interface Message {
 export default function ChatPage() {
   const [userId, setUserId] = useState<string | null>(null)
   const [error, setError] = useState(false)
-  useEffect(() => {
-    let cancelled = false
-    levara.me().then((user) => {
-      if (cancelled) return
+  const accountEpoch = useRef(0)
+  const reloadAccount = useCallback(() => {
+    const version = ++accountEpoch.current
+    setUserId(null)
+    setError(false)
+    levara.me().then(user => {
+      if (version !== accountEpoch.current) return
       if (typeof user.id === 'string' && user.id) setUserId(user.id)
       else setError(true)
-    }).catch(() => { if (!cancelled) setError(true) })
-    return () => { cancelled = true }
+    }).catch(() => { if (version === accountEpoch.current) setError(true) })
   }, [])
+  useEffect(() => {
+    const version = ++accountEpoch.current
+    levara.me().then(user => {
+      if (version !== accountEpoch.current) return
+      if (typeof user.id === 'string' && user.id) setUserId(user.id)
+      else setError(true)
+    }).catch(() => { if (version === accountEpoch.current) setError(true) })
+    const credentialsChanged = (event: StorageEvent) => {
+      if (event.key === 'levara_token' || event.key === null) {
+        setAuthToken(event.key === null ? null : event.newValue)
+        reloadAccount()
+      }
+    }
+    window.addEventListener('focus', reloadAccount)
+    window.addEventListener('storage', credentialsChanged)
+    return () => {
+      ++accountEpoch.current
+      window.removeEventListener('focus', reloadAccount)
+      window.removeEventListener('storage', credentialsChanged)
+    }
+  }, [reloadAccount])
   if (!userId) return <p role="status">{error ? 'Unable to load your account. Reload to try again.' : 'Loading chat…'}</p>
-  return <AccountChat key={userId} userId={userId} />
+  return <div key={userId}><ImportedChats userId={userId} onAccountChanged={reloadAccount} /><AccountChat userId={userId} /></div>
 }
 
 function AccountChat({ userId }: { userId: string }) {
@@ -47,6 +71,8 @@ function AccountChat({ userId }: { userId: string }) {
   })
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
+  const requestController = useRef<AbortController | null>(null)
+  useEffect(() => () => { requestController.current?.abort() }, [])
   const [sessionId] = useState(() => {
     if (typeof window === 'undefined') return crypto.randomUUID()
     try {
@@ -106,7 +132,11 @@ function AccountChat({ userId }: { userId: string }) {
         session_id: sessionId,
         collection: collection || undefined,
       }
-      const data = await levara.search(params)
+      requestController.current?.abort()
+      const controller = new AbortController()
+      requestController.current = controller
+      const data = await levara.search(params, controller.signal)
+      if (controller.signal.aborted) return
 
       let answer = ''
       let sources: Message['sources'] = []
@@ -287,7 +317,7 @@ function AccountChat({ userId }: { userId: string }) {
             rows={1}
             className="flex-1 resize-none rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
           />
-          <Button onClick={handleSend} loading={loading} disabled={!input.trim()}>
+          <Button aria-label="Send" onClick={handleSend} loading={loading} disabled={!input.trim()}>
             <Send className="h-4 w-4" />
           </Button>
         </div>

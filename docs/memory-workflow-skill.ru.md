@@ -17,8 +17,11 @@ Skill находится в каталоге:
 Для программирования, отладки, архитектурных решений, ревью и операционных
 расследований skill предписывает агенту:
 
-1. определить стабильную collection проекта и вызвать `set_context`;
-2. вызвать `wake_up` с ограниченным бюджетом контекста;
+1. определить стабильную collection проекта; на legacy `/mcp` выбрать её
+   через `set_context` в той же сессии;
+2. вызвать `wake_up(collection="<project>", max_tokens=300)`; на stateless latest
+   `/mcp/2026-07-28` пропустить `set_context` и передавать `collection` явно
+   в каждом вызове, который принимает этот selector;
 3. восстановить релевантные решения и открытия до нового исследования;
 4. проверить восстановленные сведения по актуальным источникам;
 5. сохранять устойчивые решения, открытия, факты, предпочтения, советы и
@@ -38,14 +41,18 @@ playbook — [`AGENTS.md`](../AGENTS.md); skill не должен отменят
 
 - Работающий MCP endpoint Levara.
 - Профиль MCP-инструментов `core`, `memory`, `workspace`, `long-horizon` или
-  `full`. Для recall и `save_memory` достаточно `core`. History-preserving
-  supersession требует `memory`, `full` или `long-horizon`, потому что только
-  эти профили открывают `supersede_memory`.
+  `full`. `core` поддерживает recall, `save_memory`, `supersede_memory` и
+  `delete_memory`. Supersession также объявлен в `memory`, `full` и
+  `long-horizon`; delete — в `memory` и `full`. В `workspace` нет обоих
+  инструментов, в `long-horizon` нет `delete_memory`. Проверяйте фактический
+  `tools/list` сервера.
 - Агент с поддержкой Agent Skills или аналогичных переиспользуемых инструкций.
 
-Сервер должен предоставлять как минимум `levara_instructions`, `set_context`,
-`wake_up`, `recall_memory` и `save_memory`. Для замены с сохранением истории
-также нужен `supersede_memory`.
+Сервер должен предоставлять как минимум `levara_instructions`, `wake_up`,
+`recall_memory` и `save_memory`. Legacy bootstrap дополнительно использует
+`set_context`. Latest endpoint скрывает и отклоняет этот session-only инструмент:
+клиент должен передавать явную collection и обязательные protocol metadata
+в каждом запросе. Для замены с сохранением истории также нужен `supersede_memory`.
 
 ## Установка в Codex
 
@@ -96,11 +103,12 @@ bearer_token_env_var = "LEVARA_TOKEN"
 опускайте credentials для shared, remote или persistent deployments. Для
 подключения через недоверенную сеть используйте HTTPS.
 
-Настройте профиль инструментов. Для recall и простых save используйте `core`;
-для supersession с историей — `memory` (или `full`):
+Настройте профиль инструментов. `core` включает recall, save, supersession
+с сохранением истории и delete. Для дополнительных memory workflows выбирайте
+`memory` или `full`:
 
 ```bash
-export LEVARA_MCP_TOOLSET=memory
+export LEVARA_MCP_TOOLSET=core
 ```
 
 После изменения конфигурации перезапустите Levara и Codex.
@@ -111,8 +119,9 @@ export LEVARA_MCP_TOOLSET=memory
   его, когда новый исход заменяет живую память и инструмент доступен.
 - `save_memory(supersedes_memory_id=...)` сохраняет только provenance на новой
   строке и не убирает старую память из recall.
-- На `core` / `workspace` либо перезаписывайте тот же key, либо оставляйте обе
-  записи активными; не утверждайте history-preserving supersession.
+- Если `supersede_memory` недоступен (например, в `workspace`), перезаписывайте
+  тот же key либо оставляйте обе записи активными; не утверждайте
+  history-preserving supersession.
 
 ## Другие клиенты
 
@@ -133,9 +142,10 @@ Use $levara-memory-workflow to continue work on this project. Show which
 collection you selected and recall prior decisions about deployment.
 ```
 
-При корректной установке агент вызовет `levara_instructions`, `set_context`,
-`wake_up` и подходящий recall-инструмент. Не следует создавать тестовую память
-только ради проверки записи.
+На legacy агент вызовет `levara_instructions`, `set_context`, `wake_up` и
+подходящий recall-инструмент в той же сессии. На latest вызов `set_context`
+должен отсутствовать, а `wake_up` и recall должны явно передавать выбранную
+collection. Не создавайте тестовую память только ради проверки записи.
 
 После реального проверенного решения или расследования root cause агент должен
 сохранить краткую память и назвать collection и тип памяти в финальном ответе.

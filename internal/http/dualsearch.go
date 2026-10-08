@@ -3,13 +3,11 @@
 package http
 
 import (
-	"context"
 	"encoding/json"
 	"sort"
-	"sync"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/stek0v/levara/pkg/embed"
+	"github.com/stek0v/levara/pipeline"
 )
 
 type dualUnifiedSearchRequest struct {
@@ -44,7 +42,7 @@ func dualSearchHandler(cfg APIConfig) fiber.Handler {
 		if req.TopK <= 0 {
 			req.TopK = 10
 		}
-		if cfg.Collections == nil || cfg.EmbedEndpoint == "" {
+		if cfg.Collections == nil || cfg.EmbedEndpoint == "" || cfg.EmbedClient == nil {
 			return c.JSON([]dualSearchResult{})
 		}
 
@@ -54,89 +52,36 @@ func dualSearchHandler(cfg APIConfig) fiber.Handler {
 			collections = cfg.Collections.List()
 		}
 
-		// Group collections by dimension — need different embeddings per dim
-		type colGroup struct {
-			dim   int
-			model string
-			names []string
-		}
-		groups := make(map[int]*colGroup)
+		ctx, cancel := searchRequestContext(c)
+		defer cancel()
+		var allResults []dualSearchResult
 		for _, name := range collections {
+			if ctx.Err() != nil {
+				return c.JSON([]dualSearchResult{})
+			}
 			if !cfg.Collections.Has(name) {
 				continue
 			}
-			meta := cfg.Collections.GetMeta(name)
-			dim := cfg.Collections.Dim(name)
-			g, ok := groups[dim]
-			if !ok {
-				model := ""
-				if meta != nil {
-					model = meta.EmbeddingModel
-				}
-				g = &colGroup{dim: dim, model: model}
-				groups[dim] = g
+			model := cfg.EmbedModel
+			if meta := cfg.Collections.GetMeta(name); meta != nil && meta.EmbeddingModel != "" {
+				model = meta.EmbeddingModel
 			}
-			g.names = append(g.names, name)
+			// Equal dimensions do not imply equal encoder contracts.
+			sp := pipeline.NewSearchPipeline(cfg.EmbedClient.WithModel(model), cfg.Collections, nil)
+			results, err := sp.SearchByText(ctx, name, req.QueryText, req.TopK)
+			if err != nil {
+				continue
+			}
+			for _, r := range results {
+				allResults = append(allResults, dualSearchResult{
+					ID: r.ID, Score: r.Score, Collection: name, Model: model,
+					Dim: cfg.Collections.Dim(name), Metadata: r.Metadata,
+				})
+			}
 		}
-
-		// Search each dimension group in parallel
-		var allResults []dualSearchResult
-		var mu sync.Mutex
-		var wg sync.WaitGroup
-
-		ctx := context.Background()
-
-		for _, group := range groups {
-			wg.Add(1)
-			go func(g *colGroup) {
-				defer wg.Done()
-
-				// Embed query with appropriate model
-				model := g.model
-				if model == "" {
-					model = cfg.EmbedModel
-				}
-				client := embed.NewClient(cfg.EmbedEndpoint, model, 1, 1)
-				vecs, err := client.EmbedTexts(ctx, []string{req.QueryText})
-				if err != nil || len(vecs) == 0 {
-					return
-				}
-				queryVec := vecs[0]
-
-				// Check dimension match
-				if len(queryVec) != g.dim {
-					return // model output dim doesn't match collection dim
-				}
-
-				// Search each collection in this group
-				for _, name := range g.names {
-					results, err := cfg.Collections.Search(name, queryVec, req.TopK)
-					if err != nil {
-						continue
-					}
-					meta := cfg.Collections.GetMeta(name)
-					colModel := ""
-					if meta != nil {
-						colModel = meta.EmbeddingModel
-					}
-
-					mu.Lock()
-					for _, r := range results {
-						allResults = append(allResults, dualSearchResult{
-							ID:         r.ID,
-							Score:      r.Score,
-							Collection: name,
-							Model:      colModel,
-							Dim:        g.dim,
-							Metadata:   r.Data,
-						})
-					}
-					mu.Unlock()
-				}
-			}(group)
+		if ctx.Err() != nil {
+			return c.JSON([]dualSearchResult{})
 		}
-
-		wg.Wait()
 
 		// Rerank: sort by score descending (higher cosine similarity = better)
 		if req.Rerank && len(allResults) > 0 {

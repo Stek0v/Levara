@@ -119,6 +119,9 @@ type vectorRuntimeConfig struct {
 }
 
 func initVectorRuntime(cfg vectorRuntimeConfig) vectorRuntime {
+	if cfg.JoinAddr != "" && (!cfg.Standalone || cfg.NumShards != 1) {
+		log.Fatal("HTTP replica mode requires standalone=true and shards=1")
+	}
 	var shards []store.ShardHandler
 	for i := range cfg.NumShards {
 		dbPath := fmt.Sprintf("%s/%s/shard_%d/meta.bin", cfg.DataDir, cfg.NodeID, i)
@@ -157,6 +160,15 @@ func initVectorRuntime(cfg vectorRuntimeConfig) vectorRuntime {
 }
 
 func initReplicationServer(nodeID, joinAddr string, shards []store.ShardHandler) *cluster.ReplicationServer {
+	// HTTP replication snapshots one DirectNode; other modes expose no partial stream.
+	if len(shards) != 1 {
+		log.Printf("HTTP replication unavailable: requires one standalone shard")
+		return nil
+	}
+	if _, ok := shards[0].(*cluster.DirectNode); !ok {
+		log.Printf("HTTP replication unavailable for Raft shards")
+		return nil
+	}
 	replDB := replicationDB(shards)
 	if replDB == nil {
 		return nil
@@ -487,6 +499,24 @@ func startEmbedKeepAlive(embedEndpoint, embedModel string, interval time.Duratio
 		}
 	}()
 	log.Printf("Embed keep-alive started (ping every %v)", interval)
+}
+
+// startReplicaClient owns both startup and live apply until backing-store shutdown.
+func startReplicaClient(primaryAddr, nodeID string, db *store.Levara, collections *store.CollectionManager) func() {
+	ctx, cancel := context.WithCancel(context.Background())
+	client := cluster.NewReplicaClient(primaryAddr, nodeID, db, collections)
+	started := make(chan struct{})
+	go func() {
+		defer close(started)
+		if err := client.Start(ctx); err != nil && ctx.Err() == nil {
+			log.Printf("replica start error: %v", err)
+		}
+	}()
+	return func() {
+		cancel()
+		<-started
+		client.Stop()
+	}
 }
 
 // installGracefulShutdown stops accepting traffic first, then closes backing

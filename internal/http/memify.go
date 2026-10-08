@@ -103,6 +103,19 @@ func memifyStreamHandler() fiber.Handler {
 	}
 }
 
+func registerMemifyAPI(app fiber.Router, cfg APIConfig) {
+	localOnly := func(c *fiber.Ctx) error {
+		userID, _ := c.Locals("user_id").(string)
+		if cfg.RequireAuth || userID != "" {
+			return fiber.NewError(fiber.StatusServiceUnavailable, "memify requires source-aware authorization")
+		}
+		return c.Next()
+	}
+	app.Post("/memify", localOnly, memifyHandler(cfg))
+	app.Get("/memify/:runId/status", localOnly, memifyStatusHandler())
+	app.Get("/memify/:runId/stream", localOnly, memifyStreamHandler())
+}
+
 func memifyHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		var req memifyRequest
@@ -220,32 +233,11 @@ func memifyHandler(cfg APIConfig) fiber.Handler {
 				}
 			}
 
-			// Stage 3: Persist the filtered graph back through the active store.
+			// Enrichment helpers persist their own changes. Replaying the extracted
+			// graph would overwrite descriptions and temporal episode identities.
 			if graphStore != nil {
 				status.Stage = "persisting"
-				writeNodes := make([]graphstore.NodeRecord, len(nodes))
-				for i, n := range nodes {
-					name, _ := n.Properties["name"].(string)
-					desc, _ := n.Properties["description"].(string)
-					writeNodes[i] = graphstore.NodeRecord{
-						ID: n.ID, Name: name, Type: n.Label, Description: desc,
-						Properties: n.Properties,
-					}
-				}
-				writeEdges := make([]graphstore.EdgeRecord, len(graphResult.Edges))
-				for i, e := range graphResult.Edges {
-					writeEdges[i] = graphstore.EdgeRecord{
-						SourceID: e.SourceID, TargetID: e.TargetID,
-						RelationshipName: e.RelationshipType,
-						Properties:       e.Properties,
-					}
-				}
-				res := graphStore.WriteGraph(ctx, req.Dataset, writeNodes, writeEdges)
-				if len(res.Errors) > 0 {
-					log.Printf("[memify] graph persist errors: %v", res.Errors)
-				} else {
-					rebuildVSAMemory(ctx, cfg, req.Dataset, "memify")
-				}
+				rebuildVSAMemory(ctx, cfg, req.Dataset, "memify")
 			}
 
 			status.Status = "COMPLETED"
@@ -319,8 +311,16 @@ func entityConsolidation(ctx context.Context, cfg APIConfig, graphStore graphsto
 		// Update the first node with the merged description.
 		primary := group[0]
 		name, _ := primary.Properties["name"].(string)
-		props := map[string]any{"name": name, "type": primary.Label, "description": merged}
-		res := graphStore.WriteGraph(ctx, datasetID, []graphstore.NodeRecord{
+		props := make(map[string]any, len(primary.Properties)+1)
+		for key, value := range primary.Properties {
+			props[key] = value
+		}
+		props["name"], props["type"], props["description"] = name, primary.Label, merged
+		sourceDataset := datasetID
+		if source, ok := primary.Properties["dataset_id"].(string); ok && source != "" {
+			sourceDataset = source
+		}
+		res := graphStore.WriteGraph(ctx, sourceDataset, []graphstore.NodeRecord{
 			{ID: primary.ID, Name: name, Type: primary.Label, Description: merged, Properties: props},
 		}, nil)
 		if len(res.Errors) > 0 {

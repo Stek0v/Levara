@@ -1,9 +1,12 @@
 package store
 
 import (
+	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -12,6 +15,7 @@ import (
 	"time"
 
 	"github.com/stek0v/levara/pkg/embcontract"
+	"golang.org/x/sync/singleflight"
 )
 
 // ErrDimMismatch is returned by Search when the query vector's dimension
@@ -121,6 +125,7 @@ type CollectionManager struct {
 	defaultModel    string
 	defaultContract EmbeddingContract
 	afterInsertHook func(collection, id string, meta any)
+	searchGroup     singleflight.Group
 }
 
 // NewCollectionManager creates a manager for named collections.
@@ -309,11 +314,7 @@ func (cm *CollectionManager) CreateWithDim(name string, dim int, embeddingModel,
 	if distanceMetric == "" {
 		distanceMetric = "cosine"
 	}
-	contract := cm.defaultContract
-	if contract.Empty() || contract.Encoder != embeddingModel || contract.Dim != dim || contract.Metric != strings.ToLower(distanceMetric) {
-		contract = embcontract.FromEnv(embeddingModel, dim, distanceMetric)
-	}
-	contract = contract.Normalized()
+	contract := cm.resolveEmbeddingContractLocked(embeddingModel, dim, distanceMetric)
 	meta := &CollectionMeta{
 		Name:           name,
 		EmbeddingModel: embeddingModel,
@@ -329,6 +330,24 @@ func (cm *CollectionManager) CreateWithDim(name string, dim int, embeddingModel,
 	cm.metas[name] = meta
 
 	return nil
+}
+
+// ResolveEmbeddingContract uses the same configured contract as collection creation.
+func (cm *CollectionManager) ResolveEmbeddingContract(model string, dim int, metric string) EmbeddingContract {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+	return cm.resolveEmbeddingContractLocked(model, dim, metric)
+}
+
+func (cm *CollectionManager) resolveEmbeddingContractLocked(model string, dim int, metric string) EmbeddingContract {
+	if metric == "" {
+		metric = "cosine"
+	}
+	contract := cm.defaultContract
+	if contract.Empty() || contract.Encoder != model || contract.Dim != dim || contract.Metric != strings.ToLower(metric) {
+		contract = embcontract.FromEnv(model, dim, metric)
+	}
+	return contract.Normalized()
 }
 
 // Drop removes a collection and its data from disk.
@@ -549,6 +568,17 @@ func (cm *CollectionManager) DefaultDim() int {
 // Insert inserts a record into a collection (auto-creates if not exists).
 // Validates vector dimension against collection metadata before insert.
 func (cm *CollectionManager) Insert(collection, id string, vec []float32, meta interface{}) error {
+	hook, err := cm.InsertDeferredHook(collection, id, vec, meta)
+	if err != nil {
+		return err
+	}
+	hook()
+	return nil
+}
+
+// InsertDeferredHook writes the record and returns its best-effort after-insert callback.
+// Call it after releasing external locks; keep metadata unchanged until it returns.
+func (cm *CollectionManager) InsertDeferredHook(collection, id string, vec []float32, meta interface{}) (func(), error) {
 	// Pre-check dimension against collection metadata
 	cm.mu.RLock()
 	m := cm.metas[collection]
@@ -557,26 +587,42 @@ func (cm *CollectionManager) Insert(collection, id string, vec []float32, meta i
 	}
 	if m != nil && m.EmbeddingDim > 0 && len(vec) != m.EmbeddingDim {
 		cm.mu.RUnlock()
-		return fmt.Errorf("dimension mismatch: vector dim=%d, collection %q expects dim=%d (model=%s)",
+		return nil, fmt.Errorf("dimension mismatch: vector dim=%d, collection %q expects dim=%d (model=%s)",
 			len(vec), collection, m.EmbeddingDim, m.EmbeddingModel)
 	}
 	if err := validateEmbeddingContract(collection, m, meta); err != nil {
 		cm.mu.RUnlock()
-		return err
+		return nil, err
 	}
 	meta = stampEmbeddingMetadata(m, meta)
 	cm.mu.RUnlock()
 
 	db, err := cm.getOrCreate(collection)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if err := db.Insert(id, vec, meta); err != nil {
-		return err
+	// Keep collection identity and its contract stable through the actual write.
+	cm.mu.RLock()
+	if cm.collections[collection] != db {
+		cm.mu.RUnlock()
+		return nil, fmt.Errorf("collection %q changed before insert", collection)
+	}
+	current := cm.metas[collection]
+	if embcontract.VersionFromMetadata(meta) != "" && (current == nil || current.EmbeddingVersion == "") {
+		cm.mu.RUnlock()
+		return nil, fmt.Errorf("%w: collection %q has no embedding contract", ErrEmbeddingContractMismatch, collection)
+	}
+	if err := validateEmbeddingContract(collection, current, meta); err != nil {
+		cm.mu.RUnlock()
+		return nil, err
+	}
+	err = db.Insert(id, vec, meta)
+	cm.mu.RUnlock()
+	if err != nil {
+		return nil, err
 	}
 	cm.refreshRecordCount(collection, db)
-	cm.afterInsert(collection, id, meta)
-	return nil
+	return func() { cm.afterInsert(collection, id, meta) }, nil
 }
 
 // BatchInsert inserts records into a collection (auto-creates if not exists).
@@ -621,14 +667,15 @@ func (cm *CollectionManager) BatchInsert(collection string, records []BatchItem)
 // internally) instead of reading len(db.index) racily. Without this, GetMeta
 // returns stale counts after Delete/BatchInsert/BatchDelete.
 func (cm *CollectionManager) refreshRecordCount(collection string, db *Levara) {
-	cm.mu.RLock()
-	defer cm.mu.RUnlock()
-	if m, ok := cm.metas[collection]; ok {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	if m, ok := cm.metas[collection]; ok && cm.collections[collection] == db {
 		m.RecordCount = db.Count()
 	}
 }
 
-// Search searches within a specific collection.
+// Search searches within a specific collection. Concurrent identical searches
+// share only the in-flight graph traversal; each caller receives its own slice.
 func (cm *CollectionManager) Search(collection string, query []float32, topK int) ([]VectroRecord, error) {
 	db, err := cm.Get(collection)
 	if err != nil {
@@ -641,7 +688,26 @@ func (cm *CollectionManager) Search(collection string, query []float32, topK int
 	if len(query) != db.dim {
 		return nil, fmt.Errorf("%w: query dim %d != collection %q dim %d", ErrDimMismatch, len(query), collection, db.dim)
 	}
-	return db.Search(query, topK), nil
+	keyHash := sha256.New()
+	_, _ = keyHash.Write([]byte(collection))
+	var encoded [8]byte
+	binary.LittleEndian.PutUint64(encoded[:], uint64(topK))
+	_, _ = keyHash.Write(encoded[:])
+	for _, value := range query {
+		binary.LittleEndian.PutUint32(encoded[:4], math.Float32bits(value))
+		_, _ = keyHash.Write(encoded[:4])
+	}
+	value, err, _ := cm.searchGroup.Do(string(keyHash.Sum(nil)), func() (any, error) {
+		return db.Search(query, topK), nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	records := append([]VectroRecord(nil), value.([]VectroRecord)...)
+	for i := range records {
+		records[i].Data = append(json.RawMessage(nil), records[i].Data...)
+	}
+	return records, nil
 }
 
 // HasRecord reports whether a record with the given id exists in the
@@ -687,19 +753,28 @@ func (cm *CollectionManager) BatchDelete(collection string, ids []string) []erro
 func (cm *CollectionManager) GetMeta(name string) *CollectionMeta {
 	cm.mu.RLock()
 	defer cm.mu.RUnlock()
-	return cm.metas[name]
+	meta := cm.metas[name]
+	if meta == nil {
+		return nil
+	}
+	snapshot := *meta
+	if meta.EmbeddingContract != nil {
+		contract := *meta.EmbeddingContract
+		snapshot.EmbeddingContract = &contract
+	}
+	return &snapshot
 }
 
 // ListWithMeta returns all collections with their metadata.
 func (cm *CollectionManager) ListWithMeta() []CollectionMeta {
-	cm.mu.RLock()
-	defer cm.mu.RUnlock()
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
 
 	result := make([]CollectionMeta, 0, len(cm.metas))
 	for _, m := range cm.metas {
 		// Refresh record count
 		if db, ok := cm.collections[m.Name]; ok {
-			m.RecordCount = len(db.index)
+			m.RecordCount = db.Count()
 		}
 		result = append(result, *m)
 	}

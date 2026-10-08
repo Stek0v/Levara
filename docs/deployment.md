@@ -270,3 +270,20 @@ production names or endpoints while rehearsing this procedure.
 See [testing](testing.md) for checks that do not touch live services. Source
 contracts are in [API contract](api-contract.md); operational availability and
 model quality must be checked on the intended deployment separately.
+
+## Experimental native clustering
+
+HTTP primary/replica replication supports one standalone shard (`-standalone=true -shards=1`). Joining a primary additionally uses `-join-addr=host:port`; unsupported joining configurations fail before opening vector roots. Ordinary multi-shard or Raft deployments expose no partial HTTP replication stream. Collection stores and SQL/memory sync are separate replication paths.
+
+Every HTTP connection starts with a v1 snapshot and explicit sequence watermark on the same stream. Reconnect restores current primary state; malformed/gapped entries, apply failures and queue overflow force fresh snapshots. Peers must upgrade together; legacy snapshot-then-stream peers have no compatibility fallback. Supported DirectNode writes share snapshot admission and ordered publication. Writes directly to the underlying store do not acquire this fence. HTTP mode provides neither consensus quorum nor automatic failover.
+
+Native Raft uses its own TCP/Bolt/file-snapshot consensus path. Successful writes require quorum; timed-out writes have uncertain outcomes. Separate-process tests cover leader death, quorum loss, restart catch-up, file snapshots and persisted WAL reopening. These checks do not prove linearizable reads, snapshot installation/compaction, power-loss durability or production readiness. Clustering remains experimental pending the T23 acceptance gates.
+
+
+Native WAL startup validates the complete prefix before rebuilding metadata and repairs only a structurally feasible incomplete final write. It then establishes a synced append boundary so subsequent acknowledged writes survive another restart. IDs must be nonempty; IDs and serialized metadata are each limited to 1 MiB, and vectors must be finite and match the configured dimension. Historical empty-ID or oversized WAL records fail startup without automatic migration or file modification. Preserve the original files before deliberate remediation. The legacy WAL has no checksum and cannot detect every arbitrary corruption that resembles a valid interrupted write.
+
+
+Snapshot capture and native checkpoint fail when nonempty source metadata cannot be read; they preserve the recoverable WAL instead of substituting null or {}. Zero-length metadata remains valid. Production HTTP/Raft publishers and rebuild use checked inventory capture; the legacy no-error enumeration API is unsuitable for deciding whether a durable snapshot is complete.
+
+
+Batch metadata uses the same native JSON serialization whether a replica listener is present or absent. Active replication applies successful records individually; deterministic metadata marshal failures emit no entry and preserve healthy listeners.

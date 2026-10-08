@@ -104,7 +104,7 @@ func decodeOptionalMemoryBehavior(t *testing.T, result mcpToolResult) map[string
 
 func newMCPMemoryBehaviorDB(t *testing.T) *sql.DB {
 	t.Helper()
-	db, err := sql.Open("sqlite3", "file:"+filepath.Join(t.TempDir(), "levara.db")+"?_pragma=journal_mode(WAL)")
+	db, err := sql.Open("sqlite3", "file:"+filepath.Join(t.TempDir(), "levara.db")+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_txlock=immediate")
 	if err != nil {
 		t.Fatal(err)
 	}

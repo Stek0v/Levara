@@ -6,9 +6,11 @@ import (
 	"errors"
 	"io"
 	"sync"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	accesspkg "github.com/stek0v/levara/pkg/access"
+	"github.com/stek0v/levara/pkg/community"
 )
 
 type searchEgressKey struct{}
@@ -49,6 +51,9 @@ func (r *fencedResponse) Read(p []byte) (int, error) {
 	if err := r.ctx.Err(); err != nil {
 		return 0, err
 	}
+	if deadline, ok := r.ctx.Deadline(); ok && !time.Now().Before(deadline) {
+		return 0, context.DeadlineExceeded
+	}
 	return r.reader.Read(p)
 }
 func (r *fencedResponse) Close() error { r.once.Do(r.release); return nil }
@@ -64,15 +69,27 @@ func sendProtectedResponseWithFence(c *fiber.Ctx, ctx context.Context) error {
 	if !ok {
 		return fiber.NewError(500, "search deadline missing")
 	}
-	// Fiber sends the body after the handler returns. Transfer ownership of
-	// the bounded context and SQL fence to the response stream's Close.
-	streamCtx, cancel := context.WithDeadline(context.WithoutCancel(ctx), deadline)
-	streamCtx, release, err := beginSearchReadFence(streamCtx)
+	if e, present := ctx.Value(searchEgressKey{}).(searchEgress); present && e.expiresAt > 0 {
+		if expires := time.Unix(e.expiresAt, 0); expires.Before(deadline) {
+			deadline = expires
+		}
+	}
+	// Acquisition remains cancelable. The transfer transaction outlives the
+	// completed body's observer deadline and is released only by actual Close.
+	fenceCtx, fenceCancel := context.WithDeadline(ctx, deadline)
+	fenced, release, err := beginSearchTransferFence(fenceCtx)
 	if err != nil {
-		cancel()
+		fenceCancel()
 		return err
 	}
-	return sendFencedResponse(c, streamCtx, func() { release(); cancel() })
+	if err := fenced.Err(); err != nil {
+		release()
+		fenceCancel()
+		return fiber.NewError(504, "search deadline exceeded")
+	}
+	// Fiber sends the completed body after the handler returns.
+	streamCtx, streamCancel := context.WithDeadline(context.WithoutCancel(fenced), deadline)
+	return sendFencedResponse(c, streamCtx, func() { release(); streamCancel(); fenceCancel() })
 }
 
 func sendFencedResponse(c *fiber.Ctx, ctx context.Context, release func()) error {
@@ -100,23 +117,28 @@ func withProtectedPolicyResponse(c *fiber.Ctx, cfg APIConfig, ctx context.Contex
 	if !ok {
 		return fiber.NewError(500, "request deadline missing")
 	}
-	streamCtx, cancel := context.WithDeadline(context.WithoutCancel(ctx), deadline)
-	streamCtx = searchEgressContext(c, cfg, streamCtx)
-	fenced, release, err := beginSearchReadFence(streamCtx)
+	if _, present := ctx.Value(searchEgressKey{}).(searchEgress); !present {
+		ctx = searchEgressContext(c, cfg, ctx)
+	}
+	fenced, release, err := beginSearchTransferFence(ctx)
 	if err != nil {
-		cancel()
 		return err
 	}
 	locked, ok := fenced.Value(searchReadPolicyKey{}).(accesspkg.SQLPolicy)
 	if !ok {
 		locked = accesspkg.SQLPolicy{DB: cfg.DB, Q: Q, QA: QArgs}
 	}
-	closeFence := func() { release(); cancel() }
 	if err := build(fenced, locked); err != nil {
-		closeFence()
+		release()
 		return err
 	}
-	return sendFencedResponse(c, fenced, closeFence)
+	if err := fenced.Err(); err != nil {
+		release()
+		return fiber.NewError(504, "request canceled")
+	}
+	// Only the completed body outlives handler cancellation; construction stays cancelable.
+	streamCtx, cancel := context.WithDeadline(context.WithoutCancel(fenced), deadline)
+	return sendFencedResponse(c, streamCtx, func() { release(); cancel() })
 }
 
 func searchEgressContext(c *fiber.Ctx, cfg APIConfig, ctx context.Context) context.Context {
@@ -178,8 +200,57 @@ func beginSearchFence(ctx context.Context, transfer bool) (context.Context, func
 			return ctx, nil, fiber.NewError(403, "global search requires instance administrator")
 		}
 	}
+	for _, publication := range searchCommunityPublications(ctx) {
+		current, err := locked.CommunityPublicationCurrent(ctx, publication.ID, publication.Generation, publication.SourcesJSON)
+		if err != nil {
+			release()
+			return ctx, nil, fiber.NewError(503, "community access unavailable")
+		}
+		if !current {
+			release()
+			return ctx, nil, fiber.NewError(403, "community publication retired")
+		}
+		sources, err := community.ParseSources(publication.SourcesJSON)
+		if err == nil {
+			err = community.CheckSources(ctx, locked, sources)
+		}
+		if err != nil {
+			release()
+			if communitySourceInvalid(err) {
+				return ctx, nil, fiber.NewError(403, "community publication retired")
+			}
+			return ctx, nil, fiber.NewError(503, "community access unavailable")
+		}
+	}
+	if evidence, ok := ctx.Value(searchEvidenceKey{}).(*searchEvidence); ok {
+		evidence.mu.Lock()
+		projects := make([]string, 0, len(evidence.workspaceProjects))
+		for projectID := range evidence.workspaceProjects {
+			projects = append(projects, projectID)
+		}
+		evidence.mu.Unlock()
+		for _, projectID := range projects {
+			decision, err := locked.Authorize(ctx, e.actor, accesspkg.Resource{Kind: accesspkg.ResourceWorkspace, ID: projectID}, string(workspaceAccessRead))
+			if err != nil || !decision.Allowed {
+				release()
+				if err != nil {
+					return ctx, nil, fiber.NewError(503, "workspace transfer authorization unavailable")
+				}
+				return ctx, nil, fiber.NewError(403, "workspace access revoked")
+			}
+		}
+	}
 	for _, source := range searchSources(ctx) {
-		allowed, err := searchDocumentAllowed(ctx, e.cfg, e.actor, source)
+		sourceCtx := ctx
+		if evidence, ok := ctx.Value(searchEvidenceKey{}).(*searchEvidence); ok {
+			evidence.mu.Lock()
+			scope, scoped := evidence.workspaceScopes[source]
+			evidence.mu.Unlock()
+			if scoped {
+				sourceCtx = context.WithValue(ctx, workspaceSearchScopeKey{}, scope)
+			}
+		}
+		allowed, err := searchDocumentAllowed(sourceCtx, e.cfg, e.actor, source)
 		if err != nil {
 			release()
 			return ctx, nil, fiber.NewError(503, "document transfer authorization unavailable")

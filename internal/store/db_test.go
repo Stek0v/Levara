@@ -282,6 +282,30 @@ func TestBatchDelete(t *testing.T) {
 // must be searchable from the moment Insert returns, with no sleep and no
 // retry. 200 back-to-back iterations make the old interleaving near-certain
 // to fire if it ever comes back.
+func TestSearchPendingKeepsExactTopK(t *testing.T) {
+	arena := NewVectorArena(2)
+	db := &Levara{
+		dim:      2,
+		arena:    arena,
+		hnsw:     NewHNSWIndex(arena, DefaultHNSWConfig()),
+		index:    make(map[string]uint32),
+		metaLocs: make(map[uint32]FileLocation),
+		pendingVecs: []pendingItem{
+			{id: "far", vector: normalizeVec([]float32{0, 1})},
+			{id: "near", vector: normalizeVec([]float32{1, 0.1})},
+			{id: "mid", vector: normalizeVec([]float32{1, 1})},
+			{id: "best", vector: normalizeVec([]float32{1, 0})},
+		},
+	}
+	results := db.Search([]float32{1, 0}, 2)
+	if len(results) != 2 || results[0].ID != "best" || results[1].ID != "near" {
+		t.Fatalf("pending top-2=%+v", results)
+	}
+	if results := db.Search([]float32{1, 0}, 0); len(results) != 0 {
+		t.Fatalf("topK=0 returned %+v", results)
+	}
+}
+
 func TestInsertImmediatelySearchable(t *testing.T) {
 	dir, _ := os.MkdirTemp("", "levara-immediate-search-*")
 	defer os.RemoveAll(dir)

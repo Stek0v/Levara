@@ -37,6 +37,7 @@ import (
 	"github.com/stek0v/levara/pkg/graphdb"
 	"github.com/stek0v/levara/pkg/llm"
 	"github.com/stek0v/levara/pkg/llmcache"
+	"github.com/stek0v/levara/pkg/sqlcompat"
 	"github.com/stek0v/levara/pkg/temporal"
 )
 
@@ -97,6 +98,8 @@ type Config struct {
 	// Only chunking (Stage 1) and vector embedding (Stage 4b-chunks) execute.
 	// This is the "RAG mode" — fastest ingestion, no LLM calls needed.
 	SkipGraph bool
+	// StaticGraph supplies syntactic code assertions without model extraction.
+	StaticGraph *ExtractedGraph
 	// OverlapChars for sliding window chunking. Default: MaxChunkChars/5.
 	OverlapChars int
 	// SnapToSentence for sliding window: snap boundaries to sentence/word ends. Default: true.
@@ -205,6 +208,12 @@ func RunWithItems(ctx context.Context, items []TextItem, cfg Config, progressCh 
 func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Progress) error {
 	start := time.Now()
 	defer close(progressCh)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if cfg.StaticGraph != nil && cfg.EmbedEndpoint != "" && cfg.Collections == nil {
+		return fmt.Errorf("static graph embedding requires configured collections")
+	}
 	if cfg.CheckWrite != nil {
 		if err := cfg.CheckWrite(ctx); err != nil {
 			return err
@@ -368,7 +377,19 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 	// --- Stages 2-3: Graph extraction (skipped in RAG mode) ---
 	var dedupResult graph.DeduplicateResult
 
-	if cfg.SkipGraph {
+	if cfg.StaticGraph != nil {
+		cfg.SkipGraph = false
+		dedupResult = graph.Deduplicate(cfg.StaticGraph.Nodes, cfg.StaticGraph.Edges)
+		ids := make(map[string]bool, len(dedupResult.Nodes))
+		for _, node := range dedupResult.Nodes {
+			ids[node.ID] = true
+		}
+		for _, edge := range dedupResult.Edges {
+			if !ids[edge.SourceID] || !ids[edge.TargetID] {
+				return fmt.Errorf("static graph endpoint missing")
+			}
+		}
+	} else if cfg.SkipGraph {
 		progressCh <- Progress{
 			Stage: "embedding", ChunksCreated: len(allChunks),
 			Message:   "RAG mode: skipping entity extraction, proceeding to embedding",
@@ -722,6 +743,10 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 			if !cfg.Collections.Has(coll) {
 				if err := cfg.Collections.Create(coll); err != nil {
 					log.Printf("[pipeline] collection create %q: %v", coll, err)
+					if cfg.StaticGraph != nil {
+						writeErrors.Add(1)
+						return
+					}
 				}
 			}
 
@@ -948,72 +973,36 @@ func Run(ctx context.Context, texts []string, cfg Config, progressCh chan<- Prog
 	// Global community rebuilding has no per-source ACL. Dataset ingestion
 	// leaves it to the explicitly authorized global maintenance operation.
 	communitiesDetected := 0
-	if cfg.DatasetID == "" && cfg.DocumentID == "" && !cfg.SkipGraph && cfg.DB != nil && len(dedupResult.Nodes) >= 3 {
+	if cfg.StaticGraph == nil && cfg.DatasetID == "" && cfg.DocumentID == "" && !cfg.SkipGraph && cfg.DB != nil && len(dedupResult.Nodes) >= 3 {
 		progressCh <- Progress{Stage: "communities", Message: "detecting communities", ElapsedMs: ms(start)}
 
-		g, gErr := community.BuildGraphFromSQL(ctx, cfg.DB)
-		if gErr != nil {
-			log.Printf("[pipeline] community graph build: %v", gErr)
-		} else if g.NodeCount() >= 3 {
-			commCfg := community.DefaultConfig()
-			if cfg.CommunityResolution > 0 {
-				commCfg.Resolution = cfg.CommunityResolution
-			}
-			var dendro *community.Dendrogram
-
-			// Try incremental first, falls back to full compute internally
-			d, iErr := community.IncrementalUpdate(ctx, cfg.DB, g, commCfg)
-			if iErr != nil {
-				log.Printf("[pipeline] community detect: %v", iErr)
-			} else if d != nil {
-				dendro = d
-			}
-
-			if dendro != nil {
-				if len(dendro.Levels) > 0 {
-					log.Printf("[pipeline] communities: %d levels, %d leaf communities (Q=%.4f, %d iterations)",
-						dendro.MaxLevel+1, len(dendro.Levels[0]), dendro.Modularity[0], dendro.Iterations)
-				}
-
-				if err := community.ReplaceCommunities(ctx, cfg.DB, *dendro); err != nil {
-					log.Printf("[pipeline] community write: %v", err)
-				} else {
-					for _, level := range dendro.Levels {
-						communitiesDetected += len(level)
-					}
-				}
-
-				// Hierarchical summarization (optional, needs LLM + embed)
-				if cfg.LLMProvider != nil && cfg.EmbedEndpoint != "" {
-					progressCh <- Progress{
-						Stage:     "communities",
-						Message:   fmt.Sprintf("summarizing %d communities", communitiesDetected),
-						ElapsedMs: ms(start),
-					}
-					summarizeEmbed := cfg.EmbedClient
-					if summarizeEmbed == nil {
-						summarizeEmbed = embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 3)
-					}
-					sumCfg := community.SummarizeConfig{
-						LLMProvider: cfg.LLMProvider,
-						LLMModel:    cfg.LLMModel,
-						EmbedClient: summarizeEmbed,
-						Collections: cfg.Collections,
-						DB:          cfg.DB,
-						LLMCache:    cfg.LLMCache,
-						Concurrency: 3,
-						MinMembers:  3,
-						MaxContext:  50,
-					}
-					if err := community.SummarizeHierarchy(ctx, *dendro, g, sumCfg); err != nil {
-						log.Printf("[pipeline] community summarize: %v", err)
-					}
-				}
+		commCfg := community.DefaultConfig()
+		if cfg.CommunityResolution > 0 {
+			commCfg.Resolution = cfg.CommunityResolution
+		}
+		sumCfg := community.SummarizeConfig{
+			LLMProvider: cfg.LLMProvider, LLMModel: cfg.LLMModel,
+			EmbedClient: cfg.EmbedClient, Collections: cfg.Collections,
+			DB: cfg.DB, LLMCache: cfg.LLMCache, Concurrency: 3, MinMembers: 3, MaxContext: 50,
+		}
+		if sumCfg.EmbedClient == nil && cfg.EmbedEndpoint != "" {
+			sumCfg.EmbedClient = embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 3)
+		}
+		dendro, communityErr := community.RebuildPublished(ctx, commCfg, sumCfg, sqlcompat.CurrentProvider() == sqlcompat.SQLite)
+		if communityErr != nil {
+			log.Printf("[pipeline] community publication: %v", communityErr)
+			writeErrors.Add(1)
+		} else if dendro != nil {
+			for _, level := range dendro.Levels {
+				communitiesDetected += len(level)
 			}
 		}
 	}
 
 	// --- Done ---
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if n := writeErrors.Load(); n > 0 {
 		progressCh <- Progress{
 			Stage: "complete", ItemsTotal: len(texts), ItemsProcessed: len(texts),

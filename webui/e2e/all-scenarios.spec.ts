@@ -19,7 +19,7 @@ test.describe('A. Navigation', () => {
   })
 
   test('A2. All routes respond 200', async ({ page }) => {
-    for (const r of ['/', '/search', '/chat', '/datasets', '/collections', '/memories', '/graph', '/notebooks', '/analytics', '/settings', '/workspace', '/sync', '/admin', '/onboarding', '/login']) {
+    for (const r of ['/', '/search', '/chat', '/datasets', '/collections', '/memories', '/graph', '/analytics', '/settings', '/workspace', '/sync', '/admin', '/onboarding', '/login']) {
       const res = await page.goto(r)
       expect(res?.status(), `${r}`).toBe(200)
     }
@@ -221,18 +221,19 @@ test.describe('H. Memories', () => {
 
 // ═══════════ I. NOTEBOOKS ═══════════
 
-test.describe('I. Notebooks', () => {
-  test('I1. Default cells', async ({ page }) => {
-    await page.goto('/notebooks')
-    await expect(page.getByRole('heading', { name: 'Notebook' })).toBeVisible({ timeout: 10000 })
-    await expect(page.locator('textarea').first()).toBeVisible()
+test.describe('I. Notebooks retirement', () => {
+  test('I1. Retired URL responds 404', async ({ page }) => {
+    const response = await page.goto('/notebooks')
+    expect(response?.status()).toBe(404)
+    await expect(page.getByRole('heading', { name: '404', exact: true })).toBeVisible()
   })
 
-  test('I2. Cell badges', async ({ page }) => {
+  test('I2. No notebook navigation or execution controls', async ({ page }) => {
+    await page.goto('/')
+    await expect(page.locator('aside a[href="/notebooks"]')).toHaveCount(0)
     await page.goto('/notebooks')
-    const main = page.locator('main')
-    await expect(main.getByText('markdown', { exact: true }).first()).toBeVisible()
-    await expect(main.getByText('code', { exact: true }).first()).toBeVisible()
+    await expect(page.locator('textarea')).toHaveCount(0)
+    await expect(page.getByRole('button', { name: /run|execute|выполнить/i })).toHaveCount(0)
   })
 })
 

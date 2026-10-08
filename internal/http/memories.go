@@ -72,8 +72,14 @@ func saveMemoryHandler(cfg APIConfig) fiber.Handler {
 		if !allowedTypes[req.Type] {
 			return c.Status(400).JSON(fiber.Map{"detail": "invalid memory type: " + req.Type})
 		}
-		if req.OwnerID == "" {
-			req.OwnerID, _ = c.Locals("user_id").(string)
+		callerID, _ := c.Locals("user_id").(string)
+		if callerID != "" {
+			if req.OwnerID != "" && req.OwnerID != callerID {
+				return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"detail": "memory owner must match authenticated caller"})
+			}
+			req.OwnerID = callerID
+		} else if cfg.RequireAuth {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"detail": "authentication required"})
 		}
 
 		if cfg.DB == nil {

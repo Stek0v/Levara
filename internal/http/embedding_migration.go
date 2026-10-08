@@ -2,12 +2,14 @@ package http
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -465,6 +467,10 @@ func installEmbeddingMigrationDualWriteHook(cfg APIConfig) {
 			return
 		}
 		raw := rawEmbeddingMigrationMetadata(meta)
+		if collection == "_memories" || strings.HasPrefix(collection, "_memories_") {
+			dualWriteMemoryVector(cfg, collection, id, raw, rule)
+			return
+		}
 		text := textFromMigrationMetadata(raw)
 		if text == "" {
 			text = string(raw)
@@ -485,6 +491,87 @@ func installEmbeddingMigrationDualWriteHook(cfg APIConfig) {
 			log.Printf("[embedding-migrations] dual-write insert source=%s target=%s id=%s: %v", collection, rule.TargetCollection, id, err)
 		}
 	})
+}
+
+// Memory migration is derived from current SQL, not from unchecked vector metadata.
+func dualWriteMemoryVector(cfg APIConfig, source, id string, raw []byte, rule embeddingDualWriteRule) {
+	fail := func(err error) {
+		log.Printf("[embedding-migrations] memory dual-write source=%s target=%s id=%s: %v", source, rule.TargetCollection, id, err)
+	}
+	if cfg.DB == nil {
+		fail(fmt.Errorf("authoritative memory database unavailable"))
+		return
+	}
+	var meta struct {
+		ID         string          `json:"memory_id"`
+		Key        string          `json:"key"`
+		Value      string          `json:"value"`
+		Type       string          `json:"type"`
+		Owner      json.RawMessage `json:"owner_id"`
+		Collection string          `json:"collection"`
+	}
+	if err := json.Unmarshal(raw, &meta); err != nil || meta.ID != id || memoryCollectionNameHTTP(meta.Collection) != source {
+		fail(fmt.Errorf("invalid memory source metadata"))
+		return
+	}
+	var suppliedOwner string
+	ownerSpecified := len(meta.Owner) != 0
+	if ownerSpecified && (string(meta.Owner) == "null" || json.Unmarshal(meta.Owner, &suppliedOwner) != nil) {
+		fail(fmt.Errorf("invalid memory owner metadata"))
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	var key, value, typ, owner, collection string
+	err := cfg.DB.QueryRowContext(ctx, Q(`SELECT key,value,type,owner_id,collection_name FROM memories WHERE id=$1 AND superseded_by=''`), id).Scan(&key, &value, &typ, &owner, &collection)
+	if err != nil {
+		fail(err)
+		return
+	}
+	if key != meta.Key || value != meta.Value || typ != meta.Type || collection != meta.Collection || (ownerSpecified && owner != suppliedOwner) {
+		fail(fmt.Errorf("memory source metadata changed"))
+		return
+	}
+	client := embed.NewClient(rule.TargetEndpoint, rule.TargetModel, 1, 2)
+	vec, err := client.EmbedSingle(ctx, key+" "+value)
+	if err != nil {
+		fail(err)
+		return
+	}
+	hook, err := func() (func(), error) {
+		hash := sha256.Sum256([]byte(id))
+		lock := &memoryVectorLocks[int(hash[0])%len(memoryVectorLocks)]
+		lock.Lock()
+		defer lock.Unlock()
+		tx, release, err := beginMemoryVectorEffect(ctx, cfg.DB, id)
+		if err != nil {
+			return nil, err
+		}
+		defer release()
+		var active bool
+		if err = tx.QueryRowContext(ctx, Q(`SELECT EXISTS(SELECT 1 FROM memories WHERE id=$1 AND key=$2 AND value=$3 AND type=$4 AND owner_id=$5 AND collection_name=$6 AND superseded_by='')`), id, key, value, typ, owner, collection).Scan(&active); err != nil || !active {
+			return nil, err
+		}
+		if err = ctx.Err(); err != nil {
+			return nil, err
+		}
+		stamped := embcontract.StampMetadata(json.RawMessage(raw), rule.TargetContract)
+		hook, err := cfg.Collections.InsertDeferredHook(rule.TargetCollection, id, vec, stamped)
+		if err != nil {
+			return nil, err
+		}
+		if !cfg.Collections.HasRecord(rule.TargetCollection, id) {
+			return nil, fmt.Errorf("shadow vector absent after insert")
+		}
+		return hook, nil
+	}()
+	if err != nil {
+		fail(err)
+		return
+	}
+	if hook != nil && ctx.Err() == nil {
+		hook()
+	}
 }
 
 func persistEmbeddingDualWriteRule(cfg APIConfig, rule embeddingDualWriteRule) {

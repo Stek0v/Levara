@@ -7,12 +7,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -220,13 +222,14 @@ type workspaceGCResponse struct {
 }
 
 type workspaceReadResponse struct {
-	ProjectID string                    `json:"project_id"`
-	Branch    string                    `json:"branch"`
-	Path      string                    `json:"path"`
-	Text      string                    `json:"text"`
-	Citation  workspaceSourceCitation   `json:"citation"`
-	Citations []workspaceSourceCitation `json:"citations,omitempty"`
-	Chunks    []workspace.ChunkRecord   `json:"chunks,omitempty"`
+	ProjectID  string                    `json:"project_id"`
+	Branch     string                    `json:"branch"`
+	Path       string                    `json:"path"`
+	Text       string                    `json:"text"`
+	FileDigest string                    `json:"file_digest"`
+	Citation   workspaceSourceCitation   `json:"citation"`
+	Citations  []workspaceSourceCitation `json:"citations,omitempty"`
+	Chunks     []workspace.ChunkRecord   `json:"chunks,omitempty"`
 }
 
 type workspaceWriteResponse struct {
@@ -326,8 +329,14 @@ func workspaceIndexHandler(cfg APIConfig) fiber.Handler {
 		if err := authorizeWorkspaceFiber(c, cfg, req.ProjectID, workspaceAccessWrite); err != nil {
 			return err
 		}
-		resp, err := indexWorkspaceMarkdown(c.UserContext(), cfg, req)
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
+		resp, err := indexWorkspaceMarkdownAuthorized(ctx, cfg, req, uploadMetadataActor(c, cfg, ctx))
 		if err != nil {
+			var authorityError *fiber.Error
+			if errors.As(err, &authorityError) {
+				return authorityError
+			}
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
 		return c.JSON(resp)
@@ -343,8 +352,14 @@ func workspaceDeleteHandler(cfg APIConfig) fiber.Handler {
 		if err := authorizeWorkspaceFiber(c, cfg, req.ProjectID, workspaceAccessWrite); err != nil {
 			return err
 		}
-		resp, err := deleteWorkspaceMarkdown(cfg, req)
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
+		resp, err := deleteWorkspaceMarkdownAuthorized(ctx, cfg, req, uploadMetadataActor(c, cfg, ctx))
 		if err != nil {
+			var authorityErr *fiber.Error
+			if errors.As(err, &authorityErr) {
+				return authorityErr
+			}
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
 		return c.JSON(resp)
@@ -360,8 +375,14 @@ func workspaceGCHandler(cfg APIConfig) fiber.Handler {
 		if err := authorizeWorkspaceFiber(c, cfg, req.ProjectID, workspaceAccessWrite); err != nil {
 			return err
 		}
-		resp, err := gcWorkspaceGenerations(cfg, req)
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
+		resp, err := gcWorkspaceGenerationsAuthorized(ctx, cfg, req, uploadMetadataActor(c, cfg, ctx))
 		if err != nil {
+			var authorityErr *fiber.Error
+			if errors.As(err, &authorityErr) {
+				return authorityErr
+			}
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
 		return c.JSON(resp)
@@ -379,7 +400,7 @@ func workspaceManifestHandler(cfg APIConfig) fiber.Handler {
 		if err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
-		return c.JSON(fiber.Map{
+		if err := c.JSON(fiber.Map{
 			"project_id":          manifest.ProjectID,
 			"branch":              manifest.Branch,
 			"manifest_path":       path,
@@ -390,7 +411,10 @@ func workspaceManifestHandler(cfg APIConfig) fiber.Handler {
 			"workspace_manifest":  manifest,
 			"manifest_version":    manifest.Version,
 			"workspace_root_path": workspaceRoot(cfg),
-		})
+		}); err != nil {
+			return err
+		}
+		return sendWorkspaceProtectedResponse(c, cfg, c.UserContext(), uploadMetadataActor(c, cfg, c.UserContext()), projectID)
 	}
 }
 
@@ -404,16 +428,27 @@ func workspaceReadHandler(cfg APIConfig) fiber.Handler {
 		if err := authorizeWorkspaceFiber(c, cfg, req.ProjectID, workspaceAccessRead); err != nil {
 			return err
 		}
-		resp, err := readWorkspaceMarkdown(cfg, req)
+		resp, err := readWorkspaceMarkdownAuthorized(c.UserContext(), cfg, req, uploadMetadataActor(c, cfg, c.UserContext()))
 		if err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
-		return c.JSON(resp)
+		if err := c.JSON(resp); err != nil {
+			return err
+		}
+		return sendWorkspaceProtectedResponse(c, cfg, c.UserContext(), uploadMetadataActor(c, cfg, c.UserContext()), req.ProjectID)
 	}
 }
 
 func workspaceSearchHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		ctx, cancel := searchRequestContext(c)
+		defer cancel()
+		actor := workspaceActorFromFiber(c)
+		ctx = context.WithValue(ctx, mcpUserIDKey, actor.UserID)
+		ctx = context.WithValue(ctx, mcpAPIKeyPermissionsKey, actor.APIKeyPermissions)
+		ctx = context.WithValue(ctx, mcp.TenantIDKey, actor.TenantID)
+		ctx = searchEgressContext(c, cfg, ctx)
+		c.SetUserContext(ctx)
 		var req workspaceSearchRequest
 		if err := c.BodyParser(&req); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
@@ -429,12 +464,17 @@ func workspaceSearchHandler(cfg APIConfig) fiber.Handler {
 		if err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
-		inner := (&mcpHandler{cfg: cfg}).toolSearch(c.UserContext(), searchArgs)
+		trackWorkspaceSearchProject(ctx, req.ProjectID)
+		searchCtx := context.WithValue(c.UserContext(), workspaceSearchScopeKey{}, target)
+		inner := (&mcpHandler{cfg: cfg}).toolSearch(searchCtx, searchArgs)
 		resp := workspaceSearchResponse(req, target, workspaceSearchFreshnessFor(req, target, workspaceWatchStatus(cfg)), inner)
 		if inner.IsError {
-			return c.Status(fiber.StatusBadRequest).JSON(resp)
+			c.Status(fiber.StatusBadRequest)
 		}
-		return c.JSON(resp)
+		if err := c.JSON(resp); err != nil {
+			return err
+		}
+		return sendProtectedResponseWithFence(c, ctx)
 	}
 }
 
@@ -447,8 +487,14 @@ func workspaceWriteHandler(cfg APIConfig) fiber.Handler {
 		if err := authorizeWorkspaceFiber(c, cfg, req.ProjectID, workspaceAccessWrite); err != nil {
 			return err
 		}
-		resp, err := writeWorkspaceMarkdown(c.UserContext(), cfg, req)
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
+		resp, err := writeWorkspaceMarkdownAuthorized(ctx, cfg, req, uploadMetadataActor(c, cfg, ctx))
 		if err != nil {
+			var authorityErr *fiber.Error
+			if errors.As(err, &authorityErr) {
+				return authorityErr
+			}
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
 		return c.JSON(resp)
@@ -464,8 +510,14 @@ func workspaceReindexHandler(cfg APIConfig) fiber.Handler {
 		if err := authorizeWorkspaceFiber(c, cfg, req.ProjectID, workspaceAccessWrite); err != nil {
 			return err
 		}
-		resp, err := reindexWorkspaceMarkdown(c.UserContext(), cfg, req)
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
+		resp, err := reindexWorkspaceMarkdownAuthorized(ctx, cfg, req, uploadMetadataActor(c, cfg, ctx))
 		if err != nil {
+			var authorityErr *fiber.Error
+			if errors.As(err, &authorityErr) {
+				return authorityErr
+			}
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
 		return c.JSON(resp)
@@ -481,8 +533,14 @@ func workspaceReconcileHandler(cfg APIConfig) fiber.Handler {
 		if err := authorizeWorkspaceFiber(c, cfg, req.ProjectID, workspaceAccessWrite); err != nil {
 			return err
 		}
-		resp, err := reconcileWorkspaceMarkdown(c.UserContext(), cfg, req)
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
+		resp, err := reconcileWorkspaceMarkdownAuthorized(ctx, cfg, req, uploadMetadataActor(c, cfg, ctx))
 		if err != nil {
+			var authorityErr *fiber.Error
+			if errors.As(err, &authorityErr) {
+				return authorityErr
+			}
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
 		return c.JSON(resp)
@@ -503,13 +561,16 @@ func workspaceIndexJobsHandler(cfg APIConfig) fiber.Handler {
 		if err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
-		return c.JSON(fiber.Map{
+		if err := c.JSON(fiber.Map{
 			"project_id": req.ProjectID,
 			"branch":     defaultBranch(req.Branch),
 			"jobs":       jobs,
 			"total":      len(jobs),
 			"by_status":  workspaceJobStatusSummary(jobs),
-		})
+		}); err != nil {
+			return err
+		}
+		return sendWorkspaceProtectedResponse(c, cfg, c.UserContext(), uploadMetadataActor(c, cfg, c.UserContext()), req.ProjectID)
 	}
 }
 
@@ -522,8 +583,14 @@ func workspaceEnqueueIndexJobHandler(cfg APIConfig) fiber.Handler {
 		if err := authorizeWorkspaceFiber(c, cfg, payload.ProjectID, workspaceAccessWrite); err != nil {
 			return err
 		}
-		job, err := enqueueWorkspaceIndexJobFromPayload(cfg, payload)
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
+		job, err := enqueueWorkspaceIndexJobFromPayloadAuthorized(ctx, cfg, payload, uploadMetadataActor(c, cfg, ctx))
 		if err != nil {
+			var authorityErr *fiber.Error
+			if errors.As(err, &authorityErr) {
+				return authorityErr
+			}
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
 		return c.JSON(fiber.Map{"job": job})
@@ -539,8 +606,14 @@ func workspaceRetryIndexJobHandler(cfg APIConfig) fiber.Handler {
 		if err := authorizeWorkspaceFiber(c, cfg, req.ProjectID, workspaceAccessWrite); err != nil {
 			return err
 		}
-		resp, err := retryWorkspaceIndexJob(c.UserContext(), cfg, req)
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
+		resp, err := retryWorkspaceIndexJobAuthorized(ctx, cfg, req, uploadMetadataActor(c, cfg, ctx))
 		if err != nil {
+			var authorityErr *fiber.Error
+			if errors.As(err, &authorityErr) {
+				return authorityErr
+			}
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
 		return c.JSON(resp)
@@ -549,7 +622,18 @@ func workspaceRetryIndexJobHandler(cfg APIConfig) fiber.Handler {
 
 func workspaceWatchStatusHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		return c.JSON(workspaceWatchStatus(cfg))
+		projectID, branch := c.Query("project_id"), c.Query("branch")
+		if err := authorizeWorkspaceFiber(c, cfg, projectID, workspaceAccessRead); err != nil {
+			return err
+		}
+		watch := workspaceWatchStatus(cfg)
+		if projectID != "" {
+			watch = workspaceProjectWatchStatus(watch, projectID, branch)
+		}
+		if err := c.JSON(watch); err != nil {
+			return err
+		}
+		return sendWorkspaceProtectedResponse(c, cfg, c.UserContext(), uploadMetadataActor(c, cfg, c.UserContext()), projectID)
 	}
 }
 
@@ -562,8 +646,14 @@ func workspaceRunStartHandler(cfg APIConfig) fiber.Handler {
 		if err := authorizeWorkspaceFiber(c, cfg, req.ProjectID, workspaceAccessWrite); err != nil {
 			return err
 		}
-		resp, err := startWorkspaceRun(cfg, req)
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
+		resp, err := startWorkspaceRunAuthorized(ctx, cfg, req, uploadMetadataActor(c, cfg, ctx))
 		if err != nil {
+			var authorityErr *fiber.Error
+			if errors.As(err, &authorityErr) {
+				return authorityErr
+			}
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
 		return c.JSON(resp)
@@ -584,7 +674,10 @@ func workspaceRunGetHandler(cfg APIConfig) fiber.Handler {
 		if err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
-		return c.JSON(resp)
+		if err := c.JSON(resp); err != nil {
+			return err
+		}
+		return sendWorkspaceProtectedResponse(c, cfg, c.UserContext(), uploadMetadataActor(c, cfg, c.UserContext()), req.ProjectID)
 	}
 }
 
@@ -597,8 +690,14 @@ func workspaceCommitHandler(cfg APIConfig) fiber.Handler {
 		if err := authorizeWorkspaceFiber(c, cfg, req.ProjectID, workspaceAccessWrite); err != nil {
 			return err
 		}
-		resp, err := commitWorkspace(cfg, req)
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
+		resp, err := commitWorkspaceAuthorized(ctx, cfg, req, uploadMetadataActor(c, cfg, ctx))
 		if err != nil {
+			var authorityErr *fiber.Error
+			if errors.As(err, &authorityErr) {
+				return authorityErr
+			}
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
 		return c.JSON(resp)
@@ -618,7 +717,10 @@ func workspaceLogHandler(cfg APIConfig) fiber.Handler {
 		if err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
-		return c.JSON(resp)
+		if err := c.JSON(resp); err != nil {
+			return err
+		}
+		return sendWorkspaceProtectedResponse(c, cfg, c.UserContext(), uploadMetadataActor(c, cfg, c.UserContext()), req.ProjectID)
 	}
 }
 
@@ -631,8 +733,14 @@ func workspaceRevertHandler(cfg APIConfig) fiber.Handler {
 		if err := authorizeWorkspaceFiber(c, cfg, req.ProjectID, workspaceAccessWrite); err != nil {
 			return err
 		}
-		resp, err := revertWorkspace(c.UserContext(), cfg, req)
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
+		resp, err := revertWorkspaceAuthorized(ctx, cfg, req, uploadMetadataActor(c, cfg, ctx))
 		if err != nil {
+			var authorityErr *fiber.Error
+			if errors.As(err, &authorityErr) {
+				return authorityErr
+			}
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
 		return c.JSON(resp)
@@ -672,6 +780,9 @@ func authorizeWorkspace(ctx context.Context, db accessDB, actor accesspkg.Actor,
 
 func authorizeWorkspaceFiber(c *fiber.Ctx, cfg APIConfig, projectID string, level workspaceAccessLevel) error {
 	if projectID == "" {
+		if cfg.RequireAuth || workspaceActorFromFiber(c).UserID != "" {
+			return fiber.NewError(fiber.StatusBadRequest, workspace.ErrMissingProjectID.Error())
+		}
 		return nil
 	}
 	decision, err := authorizeWorkspace(c.UserContext(), cfg.DB, workspaceActorFromFiber(c), projectID, level)
@@ -686,6 +797,9 @@ func authorizeWorkspaceFiber(c *fiber.Ctx, cfg APIConfig, projectID string, leve
 
 func authorizeWorkspaceMCP(ctx context.Context, cfg APIConfig, projectID string, level workspaceAccessLevel) error {
 	if projectID == "" {
+		if cfg.RequireAuth || workspaceActorFromMCP(ctx).UserID != "" {
+			return workspace.ErrMissingProjectID
+		}
 		return nil
 	}
 	decision, err := authorizeWorkspace(ctx, cfg.DB, workspaceActorFromMCP(ctx), projectID, level)
@@ -698,117 +812,269 @@ func authorizeWorkspaceMCP(ctx context.Context, cfg APIConfig, projectID string,
 	return nil
 }
 
-func indexWorkspaceMarkdown(ctx context.Context, cfg APIConfig, req workspaceIndexRequest) (workspaceIndexResponse, error) {
-	unlock := workspaceManifestLocks.lock(req.ProjectID + "/" + defaultBranch(req.Branch))
+// Recheck authority after response construction and retain it through body drain.
+func sendWorkspaceProtectedResponse(c *fiber.Ctx, cfg APIConfig, ctx context.Context, actor accesspkg.MetadataActor, projectID string) error {
+	if err := ctx.Err(); err != nil {
+		return fiber.NewError(fiber.StatusGatewayTimeout, "workspace request canceled")
+	}
+	deadline := time.Now().Add(timeoutFromEnvMs("SEARCH_REQUEST_TIMEOUT_MS", defaultSearchRequestTimeout))
+	if incoming, ok := ctx.Deadline(); ok && incoming.Before(deadline) {
+		deadline = incoming
+	}
+	if actor.Credential.ExpiresAt > 0 {
+		expires := time.Unix(actor.Credential.ExpiresAt, 0)
+		if !time.Now().Before(expires) {
+			return fiber.NewError(fiber.StatusForbidden, "workspace credential expired")
+		}
+		if expires.Before(deadline) {
+			deadline = expires
+		}
+	}
+	fenceCtx, cancel := context.WithDeadline(ctx, deadline)
+	release, err := beginWorkspaceEffectFence(fenceCtx, cfg, actor, projectID, workspaceAccessRead)
+	if err != nil {
+		cancel()
+		return err
+	}
+	if err := fenceCtx.Err(); err != nil {
+		release()
+		cancel()
+		return fiber.NewError(fiber.StatusGatewayTimeout, "workspace request canceled")
+	}
+	streamCtx, streamCancel := context.WithDeadline(context.WithoutCancel(fenceCtx), deadline)
+	return sendFencedResponse(c, streamCtx, func() { release(); streamCancel(); cancel() })
+}
+
+func workspaceRequestContext(ctx context.Context, actor accesspkg.MetadataActor, timeout time.Duration) (context.Context, context.CancelFunc, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, fiber.NewError(fiber.StatusGatewayTimeout, "workspace request canceled")
+	}
+	deadline := time.Now().Add(timeout)
+	if actor.Credential.ExpiresAt > 0 {
+		expires := time.Unix(actor.Credential.ExpiresAt, 0)
+		if !time.Now().Before(expires) {
+			return nil, nil, fiber.NewError(fiber.StatusForbidden, "workspace credential expired")
+		}
+		if expires.Before(deadline) {
+			deadline = expires
+		}
+	}
+	bounded, cancel := context.WithDeadline(ctx, deadline)
+	return bounded, cancel, nil
+}
+
+// Keep workspace index authority stable until the bounded provider/effect drains.
+// Reads use the fence transaction, including with a single-connection SQL pool.
+func beginWorkspaceEffectFence(ctx context.Context, cfg APIConfig, actor accesspkg.MetadataActor, projectID string, level workspaceAccessLevel) (func(), error) {
+	if actor.TrustedLocal && actor.UserID == "" && actor.TenantID == "" && !cfg.RequireAuth {
+		// Global local diagnostics have no project file tree to lock.
+		if projectID == "" && level == workspaceAccessRead {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			return func() {}, nil
+		}
+		release, err := workspace.LockProject(ctx, workspaceRoot(cfg), projectID)
+		if err != nil {
+			return nil, err
+		}
+		if err := recoverWorkspaceRestores(ctx, cfg, projectID); err != nil {
+			release()
+			return nil, err
+		}
+		return release, nil
+	}
+	if actor.UserID == "" || (cfg.RequireAuth && actor.TrustedLocal) {
+		return nil, fiber.NewError(fiber.StatusForbidden, "workspace requires verified authority")
+	}
+	policy, release, err := (accesspkg.SQLPolicy{DB: cfg.DB, Q: Q, QA: QArgs}).BeginTransferFence(ctx, GetDBProvider() == DBSQLite)
+	if err != nil {
+		return nil, fiber.NewError(fiber.StatusServiceUnavailable, "workspace authorization unavailable")
+	}
+	if err := recheckDatasetShareActor(ctx, policy, actor); err != nil {
+		release()
+		return nil, fiber.NewError(fiber.StatusForbidden, "workspace access revoked")
+	}
+	decision, err := policy.AuthorizeWorkspace(ctx, accesspkg.WorkspaceRequest{
+		UserID: actor.UserID, TenantID: actor.TenantID, ProjectID: projectID, Action: string(level), APIKeyPermissions: actor.APIKeyPermissions,
+	})
+	if err != nil || !decision.Allowed {
+		release()
+		return nil, fiber.NewError(fiber.StatusForbidden, errWorkspaceAccessDenied.Error())
+	}
+	filesRelease, err := workspace.LockProject(ctx, workspaceRoot(cfg), projectID)
+	if err != nil {
+		release()
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		filesRelease()
+		release()
+		return nil, err
+	}
+	if err := recoverWorkspaceRestores(ctx, cfg, projectID); err != nil {
+		filesRelease()
+		release()
+		return nil, err
+	}
+	return func() { filesRelease(); release() }, nil
+}
+
+func validateWorkspaceCollection(collection string) error {
+	if collection == "_memories" || strings.HasPrefix(collection, "_memories_") {
+		return errors.New("reserved memory collection is not a workspace index destination")
+	}
+	return nil
+}
+
+func indexWorkspaceMarkdownAuthorized(ctx context.Context, cfg APIConfig, req workspaceIndexRequest, actor accesspkg.MetadataActor) (workspaceIndexResponse, error) {
+	ctx, cancel, err := workspaceRequestContext(ctx, actor, 30*time.Second)
+	if err != nil {
+		return workspaceIndexResponse{}, err
+	}
+	defer cancel()
+	// Match task writes: acquire the branch lock before the SQL authority fence.
+	unlock := workspaceManifestLocks.lock(workspaceBranchLockKey(req.ProjectID, req.Branch))
 	defer unlock()
+	release, err := beginWorkspaceEffectFence(ctx, cfg, actor, req.ProjectID, workspaceAccessWrite)
+	if err != nil {
+		return workspaceIndexResponse{}, err
+	}
+	defer release()
 	return indexWorkspaceMarkdownLocked(ctx, cfg, req)
 }
 
 // indexWorkspaceMarkdownLocked is the index core; caller must already hold
 // the branch manifest lock (reconcile holds it across the whole batch).
 func indexWorkspaceMarkdownLocked(ctx context.Context, cfg APIConfig, req workspaceIndexRequest) (workspaceIndexResponse, error) {
-	if strings.TrimSpace(req.Text) == "" {
-		return workspaceIndexResponse{}, errors.New("text required")
+	if req.Generation == "" {
+		return workspaceIndexResponse{}, workspace.ErrMissingGeneration
 	}
-	manifest, path, err := loadWorkspaceManifest(cfg, req.ProjectID, defaultBranch(req.Branch))
+	if !utf8.ValidString(req.Text) {
+		return workspaceIndexResponse{}, errors.New("workspace text must be valid UTF-8")
+	}
+	_, relative, err := workspaceFilePath(cfg, req.ProjectID, defaultBranch(req.Branch), req.Path)
 	if err != nil {
 		return workspaceIndexResponse{}, err
 	}
-	if req.FileDigest == "" {
-		req.FileDigest = digestText(req.Text)
-	}
-	if req.Collection == "" {
-		req.Collection = workspace.DefaultCollectionName(req.ProjectID, defaultBranch(req.Branch), req.Generation)
-	}
-	indexer, err := newWorkspaceIndexer(cfg, manifest, req.Collection)
+	result, err := publishWorkspaceMarkdownBatchLocked(ctx, cfg, workspaceReindexRequest{
+		ProjectID: req.ProjectID, Branch: defaultBranch(req.Branch), Generation: req.Generation, Collection: req.Collection,
+		CommitHash: req.CommitHash, ChunkStrategy: req.ChunkStrategy, MinChunkChars: req.MinChunkChars, MaxChunkChars: req.MaxChunkChars,
+		OverlapChars: req.OverlapChars, SnapToSentence: req.SnapToSentence, ActivateGeneration: req.ActivateGeneration,
+	}, []workspace.MarkdownFile{{Path: relative, Text: req.Text, FileDigest: digestText(req.Text), DocumentID: req.DocumentID, Title: req.Title, Room: req.Room, Tags: req.Tags}}, nil, false, false)
 	if err != nil {
 		return workspaceIndexResponse{}, err
 	}
-	result, indexErr := indexer.IndexMarkdown(ctx, workspace.MarkdownFile{
-		Path:       req.Path,
-		Text:       req.Text,
-		FileDigest: req.FileDigest,
-		DocumentID: req.DocumentID,
-		Title:      req.Title,
-		Room:       req.Room,
-		Tags:       req.Tags,
-	}, workspace.IndexOptions{
-		ProjectID:          req.ProjectID,
-		Branch:             defaultBranch(req.Branch),
-		Generation:         req.Generation,
-		Collection:         req.Collection,
-		CommitHash:         req.CommitHash,
-		ChunkStrategy:      req.ChunkStrategy,
-		MinChunkChars:      req.MinChunkChars,
-		MaxChunkChars:      req.MaxChunkChars,
-		OverlapChars:       req.OverlapChars,
-		SnapToSentence:     req.SnapToSentence,
-		ActivateGeneration: req.ActivateGeneration,
-	})
-	saveErr := manifest.Save(path)
-	if indexErr != nil {
-		if saveErr != nil {
-			return workspaceIndexResponse{}, fmt.Errorf("%w (also failed to save manifest: %v)", indexErr, saveErr)
-		}
-		return workspaceIndexResponse{}, indexErr
+	return workspaceIndexResponse{workspaceResponse: result.workspaceResponse, Result: result.Results[0]}, nil
+}
+func readWorkspaceMarkdown(cfg APIConfig, req workspaceReadRequest) (workspaceReadResponse, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	unlock := workspaceManifestLocks.lock(workspaceBranchLockKey(req.ProjectID, req.Branch))
+	defer unlock()
+	release, err := workspace.LockProject(ctx, workspaceRoot(cfg), req.ProjectID)
+	if err != nil {
+		return workspaceReadResponse{}, err
 	}
-	if saveErr != nil {
-		return workspaceIndexResponse{}, saveErr
+	defer release()
+	if err := recoverWorkspaceRestores(ctx, cfg, req.ProjectID); err != nil {
+		return workspaceReadResponse{}, err
 	}
-	return workspaceIndexResponse{
-		workspaceResponse: workspaceBaseResponse(manifest, path),
-		Result:            result,
-	}, nil
+	return readWorkspaceMarkdownLocked(cfg, req)
 }
 
-func readWorkspaceMarkdown(cfg APIConfig, req workspaceReadRequest) (workspaceReadResponse, error) {
+func readWorkspaceMarkdownAuthorized(ctx context.Context, cfg APIConfig, req workspaceReadRequest, actor accesspkg.MetadataActor) (workspaceReadResponse, error) {
+	ctx, cancel, err := workspaceRequestContext(ctx, actor, 30*time.Second)
+	if err != nil {
+		return workspaceReadResponse{}, err
+	}
+	defer cancel()
+	unlock := workspaceManifestLocks.lock(workspaceBranchLockKey(req.ProjectID, req.Branch))
+	defer unlock()
+	release, err := beginWorkspaceEffectFence(ctx, cfg, actor, req.ProjectID, workspaceAccessRead)
+	if err != nil {
+		return workspaceReadResponse{}, err
+	}
+	defer release()
+	return readWorkspaceMarkdownLocked(cfg, req)
+}
+
+func readWorkspaceMarkdownLocked(cfg APIConfig, req workspaceReadRequest) (workspaceReadResponse, error) {
 	branch := defaultBranch(req.Branch)
 	filePath, relPath, err := workspaceFilePath(cfg, req.ProjectID, branch, req.Path)
 	if err != nil {
 		return workspaceReadResponse{}, err
 	}
-	data, err := os.ReadFile(filePath)
+	data, err := readWorkspaceFile(cfg, filePath)
 	if err != nil {
 		return workspaceReadResponse{}, err
 	}
-	manifest, _, err := loadWorkspaceManifest(cfg, req.ProjectID, branch)
-	chunks := []workspace.ChunkRecord(nil)
-	if err == nil {
-		chunks = manifest.ListChunks(workspace.ChunkFilter{
-			ProjectID: req.ProjectID,
-			Branch:    branch,
-			Path:      relPath,
-		})
+	if !utf8.Valid(data) {
+		return workspaceReadResponse{}, errors.New("workspace text must be valid UTF-8")
 	}
-	return workspaceReadResponse{
-		ProjectID: req.ProjectID,
-		Branch:    branch,
-		Path:      relPath,
-		Text:      string(data),
-		Citation:  workspaceFileCitation(req.ProjectID, branch, relPath),
-		Citations: workspaceCitationsFromChunks(req.ProjectID, branch, relPath, chunks),
-		Chunks:    chunks,
-	}, nil
+	manifest, _, err := loadWorkspaceManifest(cfg, req.ProjectID, branch)
+	if err != nil {
+		return workspaceReadResponse{}, err
+	}
+	chunks := manifest.ListChunks(workspace.ChunkFilter{ProjectID: req.ProjectID, Branch: branch, Path: relPath})
+	return workspaceReadResponse{ProjectID: req.ProjectID, Branch: branch, Path: relPath, Text: string(data), FileDigest: digestBytes(data),
+		Citation: workspaceFileCitation(req.ProjectID, branch, relPath), Citations: workspaceCitationsFromChunks(req.ProjectID, branch, relPath, chunks), Chunks: chunks}, nil
 }
 
 func writeWorkspaceMarkdown(ctx context.Context, cfg APIConfig, req workspaceWriteRequest) (workspaceWriteResponse, error) {
 	if execution := mcp.TaskExecutionFromContext(ctx); execution != nil {
 		return taskWriteWorkspaceMarkdown(ctx, cfg, req, execution)
 	}
+	unlock := workspaceManifestLocks.lock(workspaceBranchLockKey(req.ProjectID, req.Branch))
+	defer unlock()
+	release, err := workspace.LockProject(ctx, workspaceRoot(cfg), req.ProjectID)
+	if err != nil {
+		return workspaceWriteResponse{}, err
+	}
+	defer release()
+	if err := recoverWorkspaceRestores(ctx, cfg, req.ProjectID); err != nil {
+		return workspaceWriteResponse{}, err
+	}
+	return writeWorkspaceMarkdownLocked(ctx, cfg, req)
+}
+
+func writeWorkspaceMarkdownAuthorized(ctx context.Context, cfg APIConfig, req workspaceWriteRequest, actor accesspkg.MetadataActor) (workspaceWriteResponse, error) {
+	if mcp.TaskExecutionFromContext(ctx) != nil {
+		return writeWorkspaceMarkdown(ctx, cfg, req)
+	}
+	ctx, cancel, err := workspaceRequestContext(ctx, actor, 30*time.Second)
+	if err != nil {
+		return workspaceWriteResponse{}, err
+	}
+	defer cancel()
+	unlock := workspaceManifestLocks.lock(workspaceBranchLockKey(req.ProjectID, req.Branch))
+	defer unlock()
+	release, err := beginWorkspaceEffectFence(ctx, cfg, actor, req.ProjectID, workspaceAccessWrite)
+	if err != nil {
+		return workspaceWriteResponse{}, err
+	}
+	defer release()
+	return writeWorkspaceMarkdownLocked(ctx, cfg, req)
+}
+
+func writeWorkspaceMarkdownLocked(ctx context.Context, cfg APIConfig, req workspaceWriteRequest) (workspaceWriteResponse, error) {
 	branch := defaultBranch(req.Branch)
 	filePath, relPath, err := workspaceFilePath(cfg, req.ProjectID, branch, req.Path)
 	if err != nil {
 		return workspaceWriteResponse{}, err
 	}
-	// Hold the branch manifest lock across digest-check → file write →
-	// index (finding M15, 2026-09-03 review): the check-then-write was a
-	// TOCTOU window where a concurrent writer could land between them.
-	// indexWorkspaceMarkdownLocked below relies on this lock being held.
-	unlock := workspaceManifestLocks.lock(req.ProjectID + "/" + branch)
-	defer unlock()
+	shouldIndex := req.Generation != ""
+	if req.Index != nil {
+		shouldIndex = *req.Index
+	}
+	if shouldIndex {
+		if err := validateWorkspaceCollection(req.Collection); err != nil {
+			return workspaceWriteResponse{}, err
+		}
+	}
 	if req.ExpectedFileDigest != nil {
 		currentDigest := ""
-		if current, err := os.ReadFile(filePath); err == nil {
+		if current, err := readWorkspaceFile(cfg, filePath); err == nil {
 			currentDigest = digestBytes(current)
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return workspaceWriteResponse{}, err
@@ -817,10 +1083,10 @@ func writeWorkspaceMarkdown(ctx context.Context, cfg APIConfig, req workspaceWri
 			return workspaceWriteResponse{}, fmt.Errorf("workspace write conflict: current file digest %q does not match expected_file_digest %q", currentDigest, *req.ExpectedFileDigest)
 		}
 	}
-	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
-		return workspaceWriteResponse{}, err
+	if !utf8.ValidString(req.Text) {
+		return workspaceWriteResponse{}, errors.New("workspace text must be valid UTF-8")
 	}
-	if err := os.WriteFile(filePath, []byte(req.Text), 0644); err != nil {
+	if err := writeWorkspaceFile(ctx, cfg, filePath, []byte(req.Text)); err != nil {
 		return workspaceWriteResponse{}, err
 	}
 	resp := workspaceWriteResponse{
@@ -828,10 +1094,6 @@ func writeWorkspaceMarkdown(ctx context.Context, cfg APIConfig, req workspaceWri
 		Branch:    branch,
 		Path:      relPath,
 		Bytes:     len([]byte(req.Text)),
-	}
-	shouldIndex := req.Generation != ""
-	if req.Index != nil {
-		shouldIndex = *req.Index
 	}
 	if shouldIndex {
 		// Lock already held (M15): use the locked variant.
@@ -863,31 +1125,25 @@ func writeWorkspaceMarkdown(ctx context.Context, cfg APIConfig, req workspaceWri
 	return resp, nil
 }
 
-func reindexWorkspaceMarkdown(ctx context.Context, cfg APIConfig, req workspaceReindexRequest) (workspaceReindexResponse, error) {
-	branch := defaultBranch(req.Branch)
-	req.Branch = branch
-	if req.ProjectID == "" {
-		return workspaceReindexResponse{}, workspace.ErrMissingProjectID
-	}
-	if req.Generation == "" {
-		return workspaceReindexResponse{}, workspace.ErrMissingGeneration
-	}
-	if len(req.Paths) == 0 {
-		return workspaceReindexResponse{}, errors.New("paths required")
-	}
-	job, err := beginWorkspaceIndexJob(cfg, workspaceIndexJobPayloadFromReindex("reindex", req, false))
+func reindexWorkspaceMarkdownAuthorized(ctx context.Context, cfg APIConfig, req workspaceReindexRequest, actor accesspkg.MetadataActor) (workspaceReindexResponse, error) {
+	ctx, cancel, err := workspaceRequestContext(ctx, actor, 30*time.Second)
 	if err != nil {
 		return workspaceReindexResponse{}, err
 	}
-	resp, runErr := reindexWorkspaceMarkdownDirect(ctx, cfg, req)
-	if _, finishErr := finishWorkspaceIndexJob(cfg, job, runErr); finishErr != nil {
-		return workspaceReindexResponse{}, finishErr
+	defer cancel()
+	unlock := workspaceManifestLocks.lock(workspaceBranchLockKey(req.ProjectID, req.Branch))
+	defer unlock()
+	release, err := beginWorkspaceEffectFence(ctx, cfg, actor, req.ProjectID, workspaceAccessWrite)
+	if err != nil {
+		return workspaceReindexResponse{}, err
 	}
-	return resp, nil
+	defer release()
+	return reindexWorkspaceMarkdownLocked(ctx, cfg, req, &workspaceIndexJobAuthority{Actor: &actor})
 }
 
-func reindexWorkspaceMarkdownDirect(ctx context.Context, cfg APIConfig, req workspaceReindexRequest) (workspaceReindexResponse, error) {
+func reindexWorkspaceMarkdownLocked(ctx context.Context, cfg APIConfig, req workspaceReindexRequest, authorities ...*workspaceIndexJobAuthority) (workspaceReindexResponse, error) {
 	branch := defaultBranch(req.Branch)
+	req.Branch = branch
 	if req.ProjectID == "" {
 		return workspaceReindexResponse{}, workspace.ErrMissingProjectID
 	}
@@ -897,147 +1153,270 @@ func reindexWorkspaceMarkdownDirect(ctx context.Context, cfg APIConfig, req work
 	if len(req.Paths) == 0 {
 		return workspaceReindexResponse{}, errors.New("paths required")
 	}
-	var results []workspace.IndexResult
-	var manifestPath string
-	var active string
-	for _, path := range req.Paths {
-		filePath, relPath, err := workspaceFilePath(cfg, req.ProjectID, branch, path)
-		if err != nil {
-			return workspaceReindexResponse{}, err
-		}
-		data, err := os.ReadFile(filePath)
-		if err != nil {
-			return workspaceReindexResponse{}, err
-		}
-		// Caller (reconcile) already holds the branch manifest lock (H6):
-		// use the locked variant to avoid re-lock deadlock.
-		indexResp, err := indexWorkspaceMarkdownLocked(ctx, cfg, workspaceIndexRequest{
-			ProjectID:          req.ProjectID,
-			Branch:             branch,
-			Generation:         req.Generation,
-			Collection:         req.Collection,
-			CommitHash:         req.CommitHash,
-			ChunkStrategy:      req.ChunkStrategy,
-			MinChunkChars:      req.MinChunkChars,
-			MaxChunkChars:      req.MaxChunkChars,
-			OverlapChars:       req.OverlapChars,
-			SnapToSentence:     req.SnapToSentence,
-			ActivateGeneration: req.ActivateGeneration,
-			Path:               relPath,
-			Text:               string(data),
-			Title:              filepath.Base(relPath),
-			Room:               req.Room,
-			Tags:               req.Tags,
-		})
-		if err != nil {
-			return workspaceReindexResponse{}, err
-		}
-		results = append(results, indexResp.Result)
-		manifestPath = indexResp.ManifestPath
-		active = indexResp.ActiveGeneration
+	if err := validateWorkspaceCollection(req.Collection); err != nil {
+		return workspaceReindexResponse{}, err
 	}
-	return workspaceReindexResponse{
-		workspaceResponse: workspaceResponse{
-			ProjectID:        req.ProjectID,
-			Branch:           branch,
-			ManifestPath:     manifestPath,
-			ActiveGeneration: active,
-		},
-		Results: results,
-	}, nil
-}
-
-func reconcileWorkspaceMarkdown(ctx context.Context, cfg APIConfig, req workspaceReconcileRequest) (workspaceReconcileResponse, error) {
-	branch := defaultBranch(req.Branch)
-	req.Branch = branch
-	if req.ProjectID == "" {
-		return workspaceReconcileResponse{}, workspace.ErrMissingProjectID
-	}
-	if req.Generation == "" {
-		return workspaceReconcileResponse{}, workspace.ErrMissingGeneration
-	}
-	payload := workspaceIndexJobPayloadFromReindex("reconcile", req.workspaceReindexRequest, req.DeleteMissing)
-	job, err := beginWorkspaceIndexJob(cfg, payload)
+	job, err := beginWorkspaceIndexJob(cfg, workspaceIndexJobPayloadFromReindex("reindex", req, false), authorities...)
 	if err != nil {
-		return workspaceReconcileResponse{}, err
+		return workspaceReindexResponse{}, err
 	}
-	resp, runErr := reconcileWorkspaceMarkdownDirect(ctx, cfg, req)
+	resp, runErr := reindexWorkspaceMarkdownDirectLocked(ctx, cfg, req)
 	if _, finishErr := finishWorkspaceIndexJob(cfg, job, runErr); finishErr != nil {
-		return workspaceReconcileResponse{}, finishErr
+		return workspaceReindexResponse{}, finishErr
+	}
+	if err := ctx.Err(); err != nil {
+		return resp, err
+	}
+	if errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded) {
+		return resp, runErr
 	}
 	return resp, nil
 }
 
-func reconcileWorkspaceMarkdownDirect(ctx context.Context, cfg APIConfig, req workspaceReconcileRequest) (workspaceReconcileResponse, error) {
+func reindexWorkspaceMarkdownDirectLocked(ctx context.Context, cfg APIConfig, req workspaceReindexRequest) (workspaceReindexResponse, error) {
+	if req.ProjectID == "" {
+		return workspaceReindexResponse{}, workspace.ErrMissingProjectID
+	}
+	if req.Generation == "" {
+		return workspaceReindexResponse{}, workspace.ErrMissingGeneration
+	}
+	if len(req.Paths) == 0 {
+		return workspaceReindexResponse{}, errors.New("paths required")
+	}
+	files := make([]workspace.MarkdownFile, 0, len(req.Paths))
+	seen := map[string]bool{}
+	for _, name := range req.Paths {
+		if err := ctx.Err(); err != nil {
+			return workspaceReindexResponse{}, err
+		}
+		file, err := workspaceMarkdownFile(cfg, req.ProjectID, defaultBranch(req.Branch), name)
+		if err != nil {
+			return workspaceReindexResponse{}, err
+		}
+		if seen[file.Path] {
+			continue
+		}
+		seen[file.Path] = true
+		file.Room, file.Tags = req.Room, req.Tags
+		files = append(files, file)
+	}
+	return publishWorkspaceMarkdownBatchLocked(ctx, cfg, req, files, nil, true, false)
+}
+func reconcileWorkspaceMarkdownAuthorized(ctx context.Context, cfg APIConfig, req workspaceReconcileRequest, actor accesspkg.MetadataActor) (workspaceReconcileResponse, error) {
+	ctx, cancel, err := workspaceRequestContext(ctx, actor, 30*time.Second)
+	if err != nil {
+		return workspaceReconcileResponse{}, err
+	}
+	defer cancel()
+	unlock := workspaceManifestLocks.lock(workspaceBranchLockKey(req.ProjectID, req.Branch))
+	defer unlock()
+	release, err := beginWorkspaceEffectFence(ctx, cfg, actor, req.ProjectID, workspaceAccessWrite)
+	if err != nil {
+		return workspaceReconcileResponse{}, err
+	}
+	defer release()
+	return reconcileWorkspaceMarkdownLocked(ctx, cfg, req, &workspaceIndexJobAuthority{Actor: &actor})
+}
+
+func reconcileWorkspaceMarkdownLocked(ctx context.Context, cfg APIConfig, req workspaceReconcileRequest, authorities ...*workspaceIndexJobAuthority) (workspaceReconcileResponse, error) {
 	branch := defaultBranch(req.Branch)
+	req.Branch = branch
 	if req.ProjectID == "" {
 		return workspaceReconcileResponse{}, workspace.ErrMissingProjectID
 	}
 	if req.Generation == "" {
 		return workspaceReconcileResponse{}, workspace.ErrMissingGeneration
 	}
-	// Serialize reconcile against index/delete/GC on the same branch (H6).
-	unlock := workspaceManifestLocks.lock(req.ProjectID + "/" + branch)
-	defer unlock()
-	paths := append([]string(nil), req.Paths...)
-	if len(paths) == 0 {
-		var err error
-		paths, err = listWorkspaceMarkdownPaths(workspaceProjectRoot(cfg, req.ProjectID, branch))
-		if err != nil {
-			return workspaceReconcileResponse{}, err
-		}
+	if err := validateWorkspaceCollection(req.Collection); err != nil {
+		return workspaceReconcileResponse{}, err
 	}
-	req.Branch = branch
-	req.Paths = paths
-	if len(paths) == 0 {
-		manifest, manifestPath, err := loadWorkspaceManifest(cfg, req.ProjectID, branch)
-		if err != nil {
-			return workspaceReconcileResponse{}, err
-		}
-		if req.ActivateGeneration {
-			if err := manifest.ActivateGeneration(req.Generation); err != nil {
-				return workspaceReconcileResponse{}, err
-			}
-			if err := manifest.Save(manifestPath); err != nil {
-				return workspaceReconcileResponse{}, err
-			}
-		}
-		return workspaceReconcileResponse{
-			workspaceResponse: workspaceBaseResponse(manifest, manifestPath),
-			Paths:             []string{},
-			Results:           []workspace.IndexResult{},
-		}, nil
-	}
-	reindexed, err := reindexWorkspaceMarkdownDirect(ctx, cfg, req.workspaceReindexRequest)
+	payload := workspaceIndexJobPayloadFromReindex("reconcile", req.workspaceReindexRequest, req.DeleteMissing)
+	job, err := beginWorkspaceIndexJob(cfg, payload, authorities...)
 	if err != nil {
 		return workspaceReconcileResponse{}, err
 	}
-	return workspaceReconcileResponse{
-		workspaceResponse: reindexed.workspaceResponse,
-		Paths:             paths,
-		Results:           reindexed.Results,
-	}, nil
+	resp, runErr := reconcileWorkspaceMarkdownDirectLocked(ctx, cfg, req)
+	if _, finishErr := finishWorkspaceIndexJob(cfg, job, runErr); finishErr != nil {
+		return workspaceReconcileResponse{}, finishErr
+	}
+	if err := ctx.Err(); err != nil {
+		return resp, err
+	}
+	if errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded) {
+		return resp, runErr
+	}
+	return resp, nil
 }
 
+func reconcileWorkspaceMarkdownService(ctx context.Context, cfg APIConfig, req workspaceReconcileRequest) (workspaceReconcileResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	unlock := workspaceManifestLocks.lock(workspaceBranchLockKey(req.ProjectID, req.Branch))
+	defer unlock()
+	target, release, err := beginWorkspaceServiceFence(ctx, cfg, workspaceWatchKey{ProjectID: req.ProjectID, Branch: req.Branch})
+	if err != nil {
+		return workspaceReconcileResponse{}, err
+	}
+	defer release()
+	req.ProjectID, req.Branch = target.ProjectID, target.Branch
+	return reconcileWorkspaceMarkdownLocked(ctx, cfg, req, &workspaceIndexJobAuthority{Service: true})
+}
+
+func reconcileWorkspaceMarkdownDirectLocked(ctx context.Context, cfg APIConfig, req workspaceReconcileRequest) (workspaceReconcileResponse, error) {
+	req.Branch = defaultBranch(req.Branch)
+	if req.ProjectID == "" {
+		return workspaceReconcileResponse{}, workspace.ErrMissingProjectID
+	}
+	if req.Generation == "" {
+		return workspaceReconcileResponse{}, workspace.ErrMissingGeneration
+	}
+	if err := validateWorkspaceCollection(req.Collection); err != nil {
+		return workspaceReconcileResponse{}, err
+	}
+	manifest, _, err := loadWorkspaceManifest(cfg, req.ProjectID, req.Branch)
+	if err != nil {
+		return workspaceReconcileResponse{}, err
+	}
+	full := len(req.Paths) == 0
+	paths := append([]string(nil), req.Paths...)
+	if full {
+		paths, err = listWorkspaceMarkdownPaths(cfg, workspaceProjectRoot(cfg, req.ProjectID, req.Branch))
+		if err != nil {
+			return workspaceReconcileResponse{}, err
+		}
+	}
+	removed := map[string]bool{}
+	files := make([]workspace.MarkdownFile, 0, len(paths))
+	seen := map[string]bool{}
+	selected := map[string]bool{}
+	for _, name := range paths {
+		if err := ctx.Err(); err != nil {
+			return workspaceReconcileResponse{}, err
+		}
+		_, relative, err := workspaceFilePath(cfg, req.ProjectID, req.Branch, name)
+		if err != nil {
+			return workspaceReconcileResponse{}, err
+		}
+		selected[relative] = true
+		if seen[relative] {
+			continue
+		}
+		seen[relative] = true
+		file, err := workspaceMarkdownFile(cfg, req.ProjectID, req.Branch, relative)
+		if errors.Is(err, os.ErrNotExist) && req.DeleteMissing {
+			removed[relative] = true
+			continue
+		}
+		if err != nil {
+			return workspaceReconcileResponse{}, err
+		}
+		file.Room, file.Tags = req.Room, req.Tags
+		files = append(files, file)
+	}
+	if full && req.DeleteMissing {
+		for _, record := range manifest.ListChunks(workspace.ChunkFilter{Generation: req.Generation}) {
+			if !seen[record.Path] {
+				removed[record.Path] = true
+			}
+		}
+		for name := range manifest.Files[req.Generation] {
+			if !seen[name] {
+				removed[name] = true
+			}
+		}
+	}
+	// A selected-path activation of a new generation retains the other committed
+	// paths by preparing their current bytes in that generation as well.
+	if !full && req.ActivateGeneration && manifest.ActiveGeneration != "" && manifest.ActiveGeneration != req.Generation {
+		keep := map[string]bool{}
+		if manifest.Files[manifest.ActiveGeneration] == nil {
+			all, err := listWorkspaceMarkdownPaths(cfg, workspaceProjectRoot(cfg, req.ProjectID, req.Branch))
+			if err != nil {
+				return workspaceReconcileResponse{}, err
+			}
+			for _, name := range all {
+				keep[name] = true
+			}
+		}
+		for name := range manifest.Files[manifest.ActiveGeneration] {
+			keep[name] = true
+		}
+		for _, record := range manifest.ListChunks(workspace.ChunkFilter{Generation: manifest.ActiveGeneration}) {
+			keep[record.Path] = true
+		}
+		names := make([]string, 0, len(keep))
+		for name := range keep {
+			if !selected[name] {
+				names = append(names, name)
+			}
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			file, err := workspaceMarkdownFile(cfg, req.ProjectID, req.Branch, name)
+			if err != nil {
+				return workspaceReconcileResponse{}, err
+			}
+			file.Room, file.Tags = req.Room, req.Tags
+			files = append(files, file)
+		}
+	}
+	result, err := publishWorkspaceMarkdownBatchLocked(ctx, cfg, req.workspaceReindexRequest, files, removed, true, full)
+	if err != nil {
+		return workspaceReconcileResponse{}, err
+	}
+	return workspaceReconcileResponse{workspaceResponse: result.workspaceResponse, Paths: paths, Results: result.Results}, nil
+}
 func startWorkspaceRun(cfg APIConfig, req workspaceRunStartRequest) (workspaceRunResponse, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	unlock := workspaceManifestLocks.lock(workspaceBranchLockKey(req.ProjectID, req.Branch))
+	defer unlock()
+	release, err := workspace.LockProject(ctx, workspaceRoot(cfg), req.ProjectID)
+	if err != nil {
+		return workspaceRunResponse{}, err
+	}
+	defer release()
+	if err := recoverWorkspaceRestores(ctx, cfg, req.ProjectID); err != nil {
+		return workspaceRunResponse{}, err
+	}
+	return startWorkspaceRunLocked(ctx, cfg, req)
+}
+
+func startWorkspaceRunAuthorized(ctx context.Context, cfg APIConfig, req workspaceRunStartRequest, actor accesspkg.MetadataActor) (workspaceRunResponse, error) {
+	ctx, cancel, err := workspaceRequestContext(ctx, actor, 30*time.Second)
+	if err != nil {
+		return workspaceRunResponse{}, err
+	}
+	defer cancel()
+	unlock := workspaceManifestLocks.lock(workspaceBranchLockKey(req.ProjectID, req.Branch))
+	defer unlock()
+	release, err := beginWorkspaceEffectFence(ctx, cfg, actor, req.ProjectID, workspaceAccessWrite)
+	if err != nil {
+		return workspaceRunResponse{}, err
+	}
+	defer release()
+	return startWorkspaceRunLocked(ctx, cfg, req)
+}
+
+func startWorkspaceRunLocked(ctx context.Context, cfg APIConfig, req workspaceRunStartRequest) (workspaceRunResponse, error) {
 	branch := defaultBranch(req.Branch)
 	if req.ProjectID == "" {
 		return workspaceRunResponse{}, workspace.ErrMissingProjectID
 	}
 	runID := req.RunID
 	if runID == "" {
-		runID = uuid.New().String()
+		runID = uuid.NewString()
 	}
 	runDir, err := workspaceRunDir(cfg, req.ProjectID, branch, runID)
 	if err != nil {
 		return workspaceRunResponse{}, err
 	}
-	if err := os.MkdirAll(runDir, 0755); err != nil {
+	root, err := openWorkspaceDirectory(cfg, runDir, true)
+	if err != nil {
 		return workspaceRunResponse{}, err
 	}
-	files := map[string]string{
-		"metadata.md": runMetadataMarkdown(req, runID),
-	}
+	defer root.Close()
+	files := map[string]string{"metadata.md": runMetadataMarkdown(req, runID)}
 	if req.Prompt != "" {
 		files["prompt.md"] = req.Prompt
 	}
@@ -1048,20 +1427,29 @@ func startWorkspaceRun(cfg APIConfig, req workspaceRunStartRequest) (workspaceRu
 		files["result.md"] = req.Result
 	}
 	for name, content := range files {
-		if err := os.WriteFile(filepath.Join(runDir, name), []byte(content), 0644); err != nil {
+		if !utf8.ValidString(content) {
+			return workspaceRunResponse{}, errors.New("workspace text must be valid UTF-8")
+		}
+		if err := workspace.WriteFile(ctx, root, name, []byte(content), 0644); err != nil {
 			return workspaceRunResponse{}, err
 		}
 	}
-	return workspaceRunResponse{
-		ProjectID: req.ProjectID,
-		Branch:    branch,
-		RunID:     runID,
-		Path:      runDir,
-		Files:     files,
-	}, nil
+	return workspaceRunResponse{ProjectID: req.ProjectID, Branch: branch, RunID: runID, Path: runDir, Files: files}, nil
 }
 
 func getWorkspaceRun(cfg APIConfig, req workspaceRunGetRequest) (workspaceRunResponse, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	unlock := workspaceManifestLocks.lock(workspaceBranchLockKey(req.ProjectID, req.Branch))
+	defer unlock()
+	release, err := workspace.LockProject(ctx, workspaceRoot(cfg), req.ProjectID)
+	if err != nil {
+		return workspaceRunResponse{}, err
+	}
+	defer release()
+	if err := recoverWorkspaceRestores(ctx, cfg, req.ProjectID); err != nil {
+		return workspaceRunResponse{}, err
+	}
 	branch := defaultBranch(req.Branch)
 	if req.ProjectID == "" {
 		return workspaceRunResponse{}, workspace.ErrMissingProjectID
@@ -1073,107 +1461,124 @@ func getWorkspaceRun(cfg APIConfig, req workspaceRunGetRequest) (workspaceRunRes
 	if err != nil {
 		return workspaceRunResponse{}, err
 	}
-	entries, err := os.ReadDir(runDir)
+	root, err := openWorkspaceDirectory(cfg, runDir, false)
 	if err != nil {
 		return workspaceRunResponse{}, err
 	}
-	files := make(map[string]string)
+	defer root.Close()
+	entries, err := fs.ReadDir(root.FS(), ".")
+	if err != nil {
+		return workspaceRunResponse{}, err
+	}
+	files := map[string]string{}
 	for _, entry := range entries {
 		if entry.IsDir() || filepath.Ext(entry.Name()) != ".md" {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(runDir, entry.Name()))
+		data, err := workspace.ReadFile(root, entry.Name())
 		if err != nil {
 			return workspaceRunResponse{}, err
 		}
+		if !utf8.Valid(data) {
+			return workspaceRunResponse{}, errors.New("workspace text must be valid UTF-8")
+		}
 		files[entry.Name()] = string(data)
 	}
-	return workspaceRunResponse{
-		ProjectID: req.ProjectID,
-		Branch:    branch,
-		RunID:     req.RunID,
-		Path:      runDir,
-		Files:     files,
-	}, nil
+	return workspaceRunResponse{ProjectID: req.ProjectID, Branch: branch, RunID: req.RunID, Path: runDir, Files: files}, nil
 }
 
 func commitWorkspace(cfg APIConfig, req workspaceCommitRequest) (workspaceCommitRecord, error) {
-	branch := defaultBranch(req.Branch)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	unlock := workspaceManifestLocks.lock(workspaceBranchLockKey(req.ProjectID, req.Branch))
+	defer unlock()
+	release, err := workspace.LockProject(ctx, workspaceRoot(cfg), req.ProjectID)
+	if err != nil {
+		return workspaceCommitRecord{}, err
+	}
+	defer release()
+	if err := recoverWorkspaceRestores(ctx, cfg, req.ProjectID); err != nil {
+		return workspaceCommitRecord{}, err
+	}
+	return commitWorkspaceLocked(ctx, cfg, req)
+}
+
+func commitWorkspaceAuthorized(ctx context.Context, cfg APIConfig, req workspaceCommitRequest, actor accesspkg.MetadataActor) (workspaceCommitRecord, error) {
+	ctx, cancel, err := workspaceRequestContext(ctx, actor, 30*time.Second)
+	if err != nil {
+		return workspaceCommitRecord{}, err
+	}
+	defer cancel()
+	unlock := workspaceManifestLocks.lock(workspaceBranchLockKey(req.ProjectID, req.Branch))
+	defer unlock()
+	release, err := beginWorkspaceEffectFence(ctx, cfg, actor, req.ProjectID, workspaceAccessWrite)
+	if err != nil {
+		return workspaceCommitRecord{}, err
+	}
+	defer release()
+	return commitWorkspaceLocked(ctx, cfg, req)
+}
+
+func commitWorkspaceLocked(ctx context.Context, cfg APIConfig, req workspaceCommitRequest) (workspaceCommitRecord, error) {
 	if req.ProjectID == "" {
 		return workspaceCommitRecord{}, workspace.ErrMissingProjectID
 	}
-	// Hold the branch lock across the whole snapshot walk (finding M16,
-	// 2026-09-03 review): without it a concurrent workspace_write could
-	// land mid-walk and the commit would capture a torn tree.
-	unlock := workspaceManifestLocks.lock(req.ProjectID + "/" + branch)
-	defer unlock()
-	commitID := uuid.New().String()
-	commitDir, err := workspaceCommitDir(cfg, req.ProjectID, branch, commitID)
-	if err != nil {
-		return workspaceCommitRecord{}, err
-	}
-	filesDir := filepath.Join(commitDir, "files")
-	if err := os.MkdirAll(filesDir, 0755); err != nil {
-		return workspaceCommitRecord{}, err
-	}
-	root := workspaceProjectRoot(cfg, req.ProjectID, branch)
-	files, err := snapshotWorkspaceFiles(root, filesDir)
-	if err != nil {
-		return workspaceCommitRecord{}, err
-	}
-	record := workspaceCommitRecord{
-		ProjectID: req.ProjectID,
-		Branch:    branch,
-		CommitID:  commitID,
-		Message:   req.Message,
-		Author:    req.Author,
-		// RFC3339Nano: two commits within the same second previously
-		// tied, and the UUID tie-break made "latest commit" random —
-		// breaking the H7 revert guard ordering.
-		CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
-		Path:      commitDir,
-		Files:     files,
-	}
-	if err := saveWorkspaceCommitRecord(commitDir, record); err != nil {
-		return workspaceCommitRecord{}, err
-	}
-	return record, nil
+	return prepareWorkspaceCommit(ctx, cfg, req, uuid.NewString())
 }
 
 func logWorkspaceCommits(cfg APIConfig, req workspaceCommitRequest) (workspaceLogResponse, error) {
-	branch := defaultBranch(req.Branch)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	unlock := workspaceManifestLocks.lock(workspaceBranchLockKey(req.ProjectID, req.Branch))
+	defer unlock()
+	release, err := workspace.LockProject(ctx, workspaceRoot(cfg), req.ProjectID)
+	if err != nil {
+		return workspaceLogResponse{}, err
+	}
+	defer release()
+	if err := recoverWorkspaceRestores(ctx, cfg, req.ProjectID); err != nil {
+		return workspaceLogResponse{}, err
+	}
+	return logWorkspaceCommitsLocked(cfg, req)
+}
+func logWorkspaceCommitsLocked(cfg APIConfig, req workspaceCommitRequest) (workspaceLogResponse, error) {
 	if req.ProjectID == "" {
 		return workspaceLogResponse{}, workspace.ErrMissingProjectID
 	}
-	dir := workspaceCommitsRoot(cfg, req.ProjectID, branch)
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return workspaceLogResponse{ProjectID: req.ProjectID, Branch: branch, Commits: []workspaceCommitRecord{}}, nil
-		}
-		return workspaceLogResponse{}, err
-	}
-	commits := make([]workspaceCommitRecord, 0, len(entries))
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		record, err := loadWorkspaceCommitRecord(filepath.Join(dir, entry.Name()))
-		if err != nil {
-			continue
-		}
-		commits = append(commits, record)
-	}
-	sort.Slice(commits, func(i, j int) bool {
-		if commits[i].CreatedAt == commits[j].CreatedAt {
-			return commits[i].CommitID > commits[j].CommitID
-		}
-		return commits[i].CreatedAt > commits[j].CreatedAt
-	})
-	return workspaceLogResponse{ProjectID: req.ProjectID, Branch: branch, Commits: commits}, nil
+	return listWorkspaceCommitRecordsConfined(cfg, req.ProjectID, defaultBranch(req.Branch))
 }
 
 func revertWorkspace(ctx context.Context, cfg APIConfig, req workspaceRevertRequest) (workspaceRevertResponse, error) {
+	unlock := workspaceManifestLocks.lock(workspaceBranchLockKey(req.ProjectID, req.Branch))
+	defer unlock()
+	release, err := workspace.LockProject(ctx, workspaceRoot(cfg), req.ProjectID)
+	if err != nil {
+		return workspaceRevertResponse{}, err
+	}
+	defer release()
+	if err := recoverWorkspaceRestores(ctx, cfg, req.ProjectID); err != nil {
+		return workspaceRevertResponse{}, err
+	}
+	return revertWorkspaceLocked(ctx, cfg, req)
+}
+
+func revertWorkspaceAuthorized(ctx context.Context, cfg APIConfig, req workspaceRevertRequest, actor accesspkg.MetadataActor) (workspaceRevertResponse, error) {
+	ctx, cancel, err := workspaceRequestContext(ctx, actor, 30*time.Second)
+	if err != nil {
+		return workspaceRevertResponse{}, err
+	}
+	defer cancel()
+	unlock := workspaceManifestLocks.lock(workspaceBranchLockKey(req.ProjectID, req.Branch))
+	defer unlock()
+	release, err := beginWorkspaceEffectFence(ctx, cfg, actor, req.ProjectID, workspaceAccessWrite)
+	if err != nil {
+		return workspaceRevertResponse{}, err
+	}
+	defer release()
+	return revertWorkspaceLocked(ctx, cfg, req, &workspaceIndexJobAuthority{Actor: &actor})
+}
+
+func revertWorkspaceLocked(ctx context.Context, cfg APIConfig, req workspaceRevertRequest, authorities ...*workspaceIndexJobAuthority) (workspaceRevertResponse, error) {
 	branch := defaultBranch(req.Branch)
 	if req.ProjectID == "" {
 		return workspaceRevertResponse{}, workspace.ErrMissingProjectID
@@ -1181,13 +1586,26 @@ func revertWorkspace(ctx context.Context, cfg APIConfig, req workspaceRevertRequ
 	if req.CommitID == "" {
 		return workspaceRevertResponse{}, errors.New("commit_id required")
 	}
+	if req.Reindex {
+		if err := validateWorkspaceCollection(req.Collection); err != nil {
+			return workspaceRevertResponse{}, err
+		}
+	}
 	commitDir, err := workspaceCommitDir(cfg, req.ProjectID, branch, req.CommitID)
 	if err != nil {
 		return workspaceRevertResponse{}, err
 	}
-	record, err := loadWorkspaceCommitRecord(commitDir)
+	record, err := loadWorkspaceCommitRecordConfined(cfg, commitDir)
 	if err != nil {
 		return workspaceRevertResponse{}, err
+	}
+	if record.ProjectID != req.ProjectID || defaultBranch(record.Branch) != branch || record.CommitID != req.CommitID {
+		return workspaceRevertResponse{}, errors.New("workspace commit target does not match request")
+	}
+	for _, file := range record.Files {
+		if _, _, err := workspaceFilePath(cfg, req.ProjectID, branch, file.Path); err != nil {
+			return workspaceRevertResponse{}, err
+		}
 	}
 	// Optimistic-concurrency guard (finding H7, 2026-09-03 review): revert
 	// replaces the whole branch tree, destroying any commits made after the
@@ -1195,10 +1613,11 @@ func revertWorkspace(ctx context.Context, cfg APIConfig, req workspaceRevertRequ
 	// match (or force), refuse instead of silently discarding newer work.
 	if !req.Force {
 		head := workspaceLogResponse{}
-		log, logErr := logWorkspaceCommits(cfg, workspaceCommitRequest{ProjectID: req.ProjectID, Branch: branch})
-		if logErr == nil {
-			head = log
+		log, logErr := logWorkspaceCommitsLocked(cfg, workspaceCommitRequest{ProjectID: req.ProjectID, Branch: branch})
+		if logErr != nil {
+			return workspaceRevertResponse{}, logErr
 		}
+		head = log
 		if len(head.Commits) > 0 && head.Commits[0].CommitID != req.CommitID {
 			if req.ExpectedCurrentCommitID == "" {
 				return workspaceRevertResponse{}, fmt.Errorf(
@@ -1211,19 +1630,8 @@ func revertWorkspace(ctx context.Context, cfg APIConfig, req workspaceRevertRequ
 			}
 		}
 	}
-	root := workspaceProjectRoot(cfg, req.ProjectID, branch)
-	if err := os.RemoveAll(root); err != nil {
+	if err := restoreWorkspaceSnapshot(ctx, cfg, req.ProjectID, branch, commitDir, record); err != nil {
 		return workspaceRevertResponse{}, err
-	}
-	if err := os.MkdirAll(root, 0755); err != nil {
-		return workspaceRevertResponse{}, err
-	}
-	for _, file := range record.Files {
-		src := filepath.Join(commitDir, "files", filepath.FromSlash(file.Path))
-		dst := filepath.Join(root, filepath.FromSlash(file.Path))
-		if err := copyWorkspaceFile(src, dst); err != nil {
-			return workspaceRevertResponse{}, err
-		}
 	}
 	resp := workspaceRevertResponse{
 		ProjectID: req.ProjectID,
@@ -1242,7 +1650,7 @@ func revertWorkspace(ctx context.Context, cfg APIConfig, req workspaceRevertRequ
 	if req.ActivateGeneration != nil {
 		activate = *req.ActivateGeneration
 	}
-	indexed, err := reconcileWorkspaceMarkdown(ctx, cfg, workspaceReconcileRequest{
+	indexed, err := reconcileWorkspaceMarkdownLocked(ctx, cfg, workspaceReconcileRequest{
 		workspaceReindexRequest: workspaceReindexRequest{
 			ProjectID:          req.ProjectID,
 			Branch:             branch,
@@ -1255,7 +1663,7 @@ func revertWorkspace(ctx context.Context, cfg APIConfig, req workspaceRevertRequ
 			SnapToSentence:     req.SnapToSentence,
 			ActivateGeneration: activate,
 		},
-	})
+	}, authorities...)
 	if err != nil {
 		return workspaceRevertResponse{}, err
 	}
@@ -1263,15 +1671,35 @@ func revertWorkspace(ctx context.Context, cfg APIConfig, req workspaceRevertRequ
 	return resp, nil
 }
 
-func deleteWorkspaceMarkdown(cfg APIConfig, req workspaceDeleteRequest) (workspaceDeleteResponse, error) {
-	unlock := workspaceManifestLocks.lock(req.ProjectID + "/" + defaultBranch(req.Branch))
+func deleteWorkspaceMarkdownAuthorized(ctx context.Context, cfg APIConfig, req workspaceDeleteRequest, actor accesspkg.MetadataActor) (workspaceDeleteResponse, error) {
+	ctx, cancel, err := workspaceRequestContext(ctx, actor, 30*time.Second)
+	if err != nil {
+		return workspaceDeleteResponse{}, err
+	}
+	defer cancel()
+	unlock := workspaceManifestLocks.lock(workspaceBranchLockKey(req.ProjectID, req.Branch))
 	defer unlock()
+	release, err := beginWorkspaceEffectFence(ctx, cfg, actor, req.ProjectID, workspaceAccessWrite)
+	if err != nil {
+		return workspaceDeleteResponse{}, err
+	}
+	defer release()
+	return deleteWorkspaceMarkdownLocked(ctx, cfg, req)
+}
+
+func deleteWorkspaceMarkdownLocked(ctx context.Context, cfg APIConfig, req workspaceDeleteRequest) (workspaceDeleteResponse, error) {
+	if err := ctx.Err(); err != nil {
+		return workspaceDeleteResponse{}, err
+	}
 	manifest, path, err := loadWorkspaceManifest(cfg, req.ProjectID, defaultBranch(req.Branch))
 	if err != nil {
 		return workspaceDeleteResponse{}, err
 	}
 	if req.Collection == "" {
 		req.Collection = workspace.DefaultCollectionName(req.ProjectID, defaultBranch(req.Branch), req.Generation)
+	}
+	if err := validateWorkspaceCollection(req.Collection); err != nil {
+		return workspaceDeleteResponse{}, err
 	}
 	store, err := workspaceVectorStore(cfg)
 	if err != nil {
@@ -1282,6 +1710,9 @@ func deleteWorkspaceMarkdown(cfg APIConfig, req workspaceDeleteRequest) (workspa
 		Manifest: manifest,
 		Lexical:  workspaceLexicalIndex(cfg, req.Collection),
 	}
+	if err := ctx.Err(); err != nil {
+		return workspaceDeleteResponse{}, err
+	}
 	ids, err := indexer.DeleteMarkdown(req.Path, workspace.IndexOptions{
 		ProjectID:  req.ProjectID,
 		Branch:     defaultBranch(req.Branch),
@@ -1291,7 +1722,7 @@ func deleteWorkspaceMarkdown(cfg APIConfig, req workspaceDeleteRequest) (workspa
 	if err != nil {
 		return workspaceDeleteResponse{}, err
 	}
-	if err := manifest.Save(path); err != nil {
+	if err := saveWorkspaceManifest(ctx, cfg, path, manifest); err != nil {
 		return workspaceDeleteResponse{}, err
 	}
 	return workspaceDeleteResponse{
@@ -1300,19 +1731,42 @@ func deleteWorkspaceMarkdown(cfg APIConfig, req workspaceDeleteRequest) (workspa
 	}, nil
 }
 
-func gcWorkspaceGenerations(cfg APIConfig, req workspaceGCRequest) (workspaceGCResponse, error) {
-	unlock := workspaceManifestLocks.lock(req.ProjectID + "/" + defaultBranch(req.Branch))
+func gcWorkspaceGenerationsAuthorized(ctx context.Context, cfg APIConfig, req workspaceGCRequest, actor accesspkg.MetadataActor) (workspaceGCResponse, error) {
+	ctx, cancel, err := workspaceRequestContext(ctx, actor, 30*time.Second)
+	if err != nil {
+		return workspaceGCResponse{}, err
+	}
+	defer cancel()
+	unlock := workspaceManifestLocks.lock(workspaceBranchLockKey(req.ProjectID, req.Branch))
 	defer unlock()
+	release, err := beginWorkspaceEffectFence(ctx, cfg, actor, req.ProjectID, workspaceAccessWrite)
+	if err != nil {
+		return workspaceGCResponse{}, err
+	}
+	defer release()
+	return gcWorkspaceGenerationsLocked(ctx, cfg, req)
+}
+
+func gcWorkspaceGenerationsLocked(ctx context.Context, cfg APIConfig, req workspaceGCRequest) (workspaceGCResponse, error) {
+	if err := ctx.Err(); err != nil {
+		return workspaceGCResponse{}, err
+	}
 	manifest, path, err := loadWorkspaceManifest(cfg, req.ProjectID, defaultBranch(req.Branch))
 	if err != nil {
 		return workspaceGCResponse{}, err
 	}
 	pendingChunks := pendingGCChunks(manifest)
-	if req.DryRun {
-		result, err := workspace.PlanGCGenerations(manifest)
-		if err != nil {
+	plan, err := workspace.PlanGCGenerations(manifest)
+	if err != nil {
+		return workspaceGCResponse{}, err
+	}
+	for _, collection := range append(plan.ExclusiveCollections, plan.SharedCollections...) {
+		if err := validateWorkspaceCollection(collection); err != nil {
 			return workspaceGCResponse{}, err
 		}
+	}
+	if req.DryRun {
+		result := plan
 		return workspaceGCResponse{
 			workspaceResponse: workspaceBaseResponse(manifest, path),
 			Result:            result,
@@ -1322,12 +1776,18 @@ func gcWorkspaceGenerations(cfg APIConfig, req workspaceGCRequest) (workspaceGCR
 	if err != nil {
 		return workspaceGCResponse{}, err
 	}
+	if err := ctx.Err(); err != nil {
+		return workspaceGCResponse{}, err
+	}
 	result, err := workspace.GCGenerations(manifest, store)
 	if err != nil {
+		if saveErr := saveWorkspaceManifest(ctx, cfg, path, manifest); saveErr != nil {
+			return workspaceGCResponse{}, fmt.Errorf("%w (save retirement state: %v)", err, saveErr)
+		}
 		return workspaceGCResponse{}, err
 	}
 	cleanupLexicalAfterGC(cfg, pendingChunks, result)
-	if err := manifest.Save(path); err != nil {
+	if err := saveWorkspaceManifest(ctx, cfg, path, manifest); err != nil {
 		return workspaceGCResponse{}, err
 	}
 	return workspaceGCResponse{
@@ -1386,21 +1846,48 @@ func workspaceLexicalIndex(cfg APIConfig, collection string) *bm25.Index {
 }
 
 func loadWorkspaceManifest(cfg APIConfig, projectID, branch string) (*workspace.Manifest, string, error) {
-	if projectID == "" {
-		return nil, "", workspace.ErrMissingProjectID
-	}
-	if branch == "" {
-		branch = "main"
-	}
-	path := workspaceManifestPath(cfg, projectID, branch)
-	manifest, err := workspace.LoadManifest(path)
-	if err == nil {
-		return manifest, path, nil
-	}
-	if !errors.Is(err, os.ErrNotExist) {
+	manifest, _, err := readWorkspaceManifest(cfg, projectID, branch)
+	if err != nil {
 		return nil, "", err
 	}
-	return workspace.NewManifest(projectID, branch), path, nil
+	return manifest, workspaceManifestPath(cfg, projectID, defaultBranch(branch)), nil
+}
+
+func readWorkspaceManifest(cfg APIConfig, projectID, branch string) (*workspace.Manifest, bool, error) {
+	if projectID == "" {
+		return nil, false, workspace.ErrMissingProjectID
+	}
+	branch = defaultBranch(branch)
+	paths := []string{
+		workspaceManifestPath(cfg, projectID, branch),
+		workspace.LegacyManifestPath(workspaceRoot(cfg), projectID, branch),
+	}
+	for i, path := range paths {
+		root, name, err := openWorkspaceFileParent(cfg, path, false)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, false, err
+		}
+		manifest, err := workspace.LoadManifestRoot(root, name)
+		root.Close()
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, false, err
+		}
+		if manifest.ProjectID != "" &&
+			workspace.SafeID(manifest.ProjectID) == workspace.SafeID(projectID) &&
+			workspace.SafeID(defaultBranch(manifest.Branch)) == workspace.SafeID(branch) {
+			return manifest, true, nil
+		}
+		if i == 0 {
+			return nil, false, errors.New("workspace manifest target mismatch")
+		}
+	}
+	return workspace.NewManifest(projectID, branch), false, nil
 }
 
 func workspaceManifestPath(cfg APIConfig, projectID, branch string) string {
@@ -1425,6 +1912,9 @@ func workspaceFilePath(cfg APIConfig, projectID, branch, path string) (string, s
 	if path == "" {
 		return "", "", workspace.ErrMissingPath
 	}
+	if strings.IndexByte(path, 0) >= 0 {
+		return "", "", errors.New("workspace path contains NUL")
+	}
 	if filepath.IsAbs(path) {
 		return "", "", errors.New("workspace path must be relative")
 	}
@@ -1436,33 +1926,33 @@ func workspaceFilePath(cfg APIConfig, projectID, branch, path string) (string, s
 	return filepath.Join(workspaceProjectRoot(cfg, projectID, branch), clean), rel, nil
 }
 
-func listWorkspaceMarkdownPaths(root string) ([]string, error) {
-	if _, err := os.Stat(root); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return []string{}, nil
-		}
+func listWorkspaceMarkdownPaths(cfg APIConfig, absolute string) ([]string, error) {
+	root, err := openWorkspaceDirectory(cfg, absolute, false)
+	if errors.Is(err, os.ErrNotExist) {
+		return []string{}, nil
+	}
+	if err != nil {
 		return nil, err
 	}
+	defer root.Close()
 	var paths []string
-	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+	err = fs.WalkDir(root.FS(), ".", func(name string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() {
+		if entry.IsDir() {
 			return nil
 		}
-		info, err := d.Info()
+		info, err := entry.Info()
 		if err != nil {
 			return err
 		}
-		if !info.Mode().IsRegular() || strings.ToLower(filepath.Ext(path)) != ".md" {
-			return nil
+		if !info.Mode().IsRegular() {
+			return errors.New("workspace contains unsafe nonregular file")
 		}
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
+		if strings.EqualFold(filepath.Ext(name), ".md") {
+			paths = append(paths, filepath.ToSlash(name))
 		}
-		paths = append(paths, filepath.ToSlash(rel))
 		return nil
 	})
 	if err != nil {
@@ -1494,92 +1984,6 @@ func workspaceCommitDir(cfg APIConfig, projectID, branch, commitID string) (stri
 		return "", errors.New("commit_id must be a simple identifier")
 	}
 	return filepath.Join(workspaceCommitsRoot(cfg, projectID, branch), safeWorkspaceID(commitID)), nil
-}
-
-func snapshotWorkspaceFiles(root, dstRoot string) ([]workspaceCommitFile, error) {
-	if _, err := os.Stat(root); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return []workspaceCommitFile{}, nil
-		}
-		return nil, err
-	}
-	var files []workspaceCommitFile
-	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			return nil
-		}
-		info, err := d.Info()
-		if err != nil {
-			return err
-		}
-		if !info.Mode().IsRegular() {
-			return nil
-		}
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-		rel = filepath.ToSlash(rel)
-		digest, err := copyWorkspaceFileWithDigest(path, filepath.Join(dstRoot, filepath.FromSlash(rel)))
-		if err != nil {
-			return err
-		}
-		files = append(files, workspaceCommitFile{Path: rel, Digest: digest, Size: info.Size()})
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
-	return files, nil
-}
-
-func saveWorkspaceCommitRecord(commitDir string, record workspaceCommitRecord) error {
-	data, err := json.MarshalIndent(record, "", "  ")
-	if err != nil {
-		return err
-	}
-	data = append(data, '\n')
-	return os.WriteFile(filepath.Join(commitDir, "commit.json"), data, 0644)
-}
-
-func loadWorkspaceCommitRecord(commitDir string) (workspaceCommitRecord, error) {
-	data, err := os.ReadFile(filepath.Join(commitDir, "commit.json"))
-	if err != nil {
-		return workspaceCommitRecord{}, err
-	}
-	var record workspaceCommitRecord
-	if err := json.Unmarshal(data, &record); err != nil {
-		return workspaceCommitRecord{}, err
-	}
-	record.Path = commitDir
-	if record.Files == nil {
-		record.Files = []workspaceCommitFile{}
-	}
-	return record, nil
-}
-
-func copyWorkspaceFile(src, dst string) error {
-	_, err := copyWorkspaceFileWithDigest(src, dst)
-	return err
-}
-
-func copyWorkspaceFileWithDigest(src, dst string) (string, error) {
-	data, err := os.ReadFile(src)
-	if err != nil {
-		return "", err
-	}
-	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
-		return "", err
-	}
-	if err := os.WriteFile(dst, data, 0644); err != nil {
-		return "", err
-	}
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:]), nil
 }
 
 func runMetadataMarkdown(req workspaceRunStartRequest, runID string) string {
@@ -1696,6 +2100,9 @@ func resolveWorkspaceSearchTarget(cfg APIConfig, req workspaceSearchRequest) (wo
 		if err != nil {
 			return workspaceSearchTarget{}, err
 		}
+	}
+	if err := refreshWorkspaceLexical(cfg, manifest, collection); err != nil {
+		return workspaceSearchTarget{}, err
 	}
 	return workspaceSearchTarget{
 		Manifest:     manifest,
@@ -1983,7 +2390,9 @@ func (h *mcpHandler) toolWorkspaceSearch(ctx context.Context, args map[string]an
 	if err != nil {
 		return workspaceMCPError(err)
 	}
-	inner := h.toolSearch(ctx, searchArgs)
+	trackWorkspaceSearchProject(ctx, req.ProjectID)
+	searchCtx := context.WithValue(ctx, workspaceSearchScopeKey{}, target)
+	inner := h.toolSearch(searchCtx, searchArgs)
 	resp := workspaceSearchResponse(req, target, workspaceSearchFreshnessFor(req, target, workspaceWatchStatus(h.cfg)), inner)
 	return workspaceMCPJSON(resp)
 }
@@ -1996,7 +2405,9 @@ func (h *mcpHandler) toolWorkspaceIndex(ctx context.Context, args map[string]any
 	if err := authorizeWorkspaceMCP(ctx, h.cfg, req.ProjectID, workspaceAccessWrite); err != nil {
 		return workspaceMCPError(err)
 	}
-	resp, err := indexWorkspaceMarkdown(ctx, h.cfg, req)
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	resp, err := indexWorkspaceMarkdownAuthorized(ctx, h.cfg, req, h.MetadataActor(ctx))
 	if err != nil {
 		return workspaceMCPError(err)
 	}
@@ -2016,7 +2427,7 @@ func (h *mcpHandler) toolWorkspaceRead(ctx context.Context, args map[string]any)
 	if execution := mcp.TaskExecutionFromContext(ctx); execution != nil {
 		resp, err = taskReadWorkspaceMarkdown(ctx, h.cfg, req, execution)
 	} else {
-		resp, err = readWorkspaceMarkdown(h.cfg, req)
+		resp, err = readWorkspaceMarkdownAuthorized(ctx, h.cfg, req, h.MetadataActor(ctx))
 	}
 	if err != nil {
 		return workspaceMCPError(err)
@@ -2032,7 +2443,7 @@ func (h *mcpHandler) toolWorkspaceWrite(ctx context.Context, args map[string]any
 	if err := authorizeWorkspaceMCP(ctx, h.cfg, req.ProjectID, workspaceAccessWrite); err != nil {
 		return workspaceMCPError(err)
 	}
-	resp, err := writeWorkspaceMarkdown(ctx, h.cfg, req)
+	resp, err := writeWorkspaceMarkdownAuthorized(ctx, h.cfg, req, h.MetadataActor(ctx))
 	if err != nil {
 		return workspaceMCPError(err)
 	}
@@ -2047,7 +2458,7 @@ func (h *mcpHandler) toolWorkspaceReindex(ctx context.Context, args map[string]a
 	if err := authorizeWorkspaceMCP(ctx, h.cfg, req.ProjectID, workspaceAccessWrite); err != nil {
 		return workspaceMCPError(err)
 	}
-	resp, err := reindexWorkspaceMarkdown(ctx, h.cfg, req)
+	resp, err := reindexWorkspaceMarkdownAuthorized(ctx, h.cfg, req, h.MetadataActor(ctx))
 	if err != nil {
 		return workspaceMCPError(err)
 	}
@@ -2062,7 +2473,7 @@ func (h *mcpHandler) toolWorkspaceReconcile(ctx context.Context, args map[string
 	if err := authorizeWorkspaceMCP(ctx, h.cfg, req.ProjectID, workspaceAccessWrite); err != nil {
 		return workspaceMCPError(err)
 	}
-	resp, err := reconcileWorkspaceMarkdown(ctx, h.cfg, req)
+	resp, err := reconcileWorkspaceMarkdownAuthorized(ctx, h.cfg, req, h.MetadataActor(ctx))
 	if err != nil {
 		return workspaceMCPError(err)
 	}
@@ -2098,7 +2509,7 @@ func (h *mcpHandler) toolWorkspaceEnqueueIndexJob(ctx context.Context, args map[
 	if err := authorizeWorkspaceMCP(ctx, h.cfg, payload.ProjectID, workspaceAccessWrite); err != nil {
 		return workspaceMCPError(err)
 	}
-	job, err := enqueueWorkspaceIndexJobFromPayload(h.cfg, payload)
+	job, err := enqueueWorkspaceIndexJobFromPayloadAuthorized(ctx, h.cfg, payload, h.MetadataActor(ctx))
 	if err != nil {
 		return workspaceMCPError(err)
 	}
@@ -2113,15 +2524,26 @@ func (h *mcpHandler) toolWorkspaceRetryIndexJob(ctx context.Context, args map[st
 	if err := authorizeWorkspaceMCP(ctx, h.cfg, req.ProjectID, workspaceAccessWrite); err != nil {
 		return workspaceMCPError(err)
 	}
-	resp, err := retryWorkspaceIndexJob(ctx, h.cfg, req)
+	resp, err := retryWorkspaceIndexJobAuthorized(ctx, h.cfg, req, h.MetadataActor(ctx))
 	if err != nil {
 		return workspaceMCPError(err)
 	}
 	return workspaceMCPJSON(resp)
 }
 
-func (h *mcpHandler) toolWorkspaceWatchStatus(_ context.Context, _ map[string]any) mcpToolResult {
-	return workspaceMCPJSON(workspaceWatchStatus(h.cfg))
+func (h *mcpHandler) toolWorkspaceWatchStatus(ctx context.Context, args map[string]any) mcpToolResult {
+	var req workspaceContextRequest
+	if err := decodeWorkspaceArgs(args, &req); err != nil {
+		return workspaceMCPError(err)
+	}
+	if err := authorizeWorkspaceMCP(ctx, h.cfg, req.ProjectID, workspaceAccessRead); err != nil {
+		return workspaceMCPError(err)
+	}
+	watch := workspaceWatchStatus(h.cfg)
+	if req.ProjectID != "" {
+		watch = workspaceProjectWatchStatus(watch, req.ProjectID, req.Branch)
+	}
+	return workspaceMCPJSON(watch)
 }
 
 func (h *mcpHandler) toolWorkspaceRunStart(ctx context.Context, args map[string]any) mcpToolResult {
@@ -2132,7 +2554,7 @@ func (h *mcpHandler) toolWorkspaceRunStart(ctx context.Context, args map[string]
 	if err := authorizeWorkspaceMCP(ctx, h.cfg, req.ProjectID, workspaceAccessWrite); err != nil {
 		return workspaceMCPError(err)
 	}
-	resp, err := startWorkspaceRun(h.cfg, req)
+	resp, err := startWorkspaceRunAuthorized(ctx, h.cfg, req, h.MetadataActor(ctx))
 	if err != nil {
 		return workspaceMCPError(err)
 	}
@@ -2162,7 +2584,7 @@ func (h *mcpHandler) toolWorkspaceCommit(ctx context.Context, args map[string]an
 	if err := authorizeWorkspaceMCP(ctx, h.cfg, req.ProjectID, workspaceAccessWrite); err != nil {
 		return workspaceMCPError(err)
 	}
-	resp, err := commitWorkspace(h.cfg, req)
+	resp, err := commitWorkspaceAuthorized(ctx, h.cfg, req, h.MetadataActor(ctx))
 	if err != nil {
 		return workspaceMCPError(err)
 	}
@@ -2192,7 +2614,7 @@ func (h *mcpHandler) toolWorkspaceRevert(ctx context.Context, args map[string]an
 	if err := authorizeWorkspaceMCP(ctx, h.cfg, req.ProjectID, workspaceAccessWrite); err != nil {
 		return workspaceMCPError(err)
 	}
-	resp, err := revertWorkspace(ctx, h.cfg, req)
+	resp, err := revertWorkspaceAuthorized(ctx, h.cfg, req, h.MetadataActor(ctx))
 	if err != nil {
 		return workspaceMCPError(err)
 	}
@@ -2207,7 +2629,7 @@ func (h *mcpHandler) toolWorkspaceDelete(ctx context.Context, args map[string]an
 	if err := authorizeWorkspaceMCP(ctx, h.cfg, req.ProjectID, workspaceAccessWrite); err != nil {
 		return workspaceMCPError(err)
 	}
-	resp, err := deleteWorkspaceMarkdown(h.cfg, req)
+	resp, err := deleteWorkspaceMarkdownAuthorized(ctx, h.cfg, req, h.MetadataActor(ctx))
 	if err != nil {
 		return workspaceMCPError(err)
 	}
@@ -2222,7 +2644,7 @@ func (h *mcpHandler) toolWorkspaceGC(ctx context.Context, args map[string]any) m
 	if err := authorizeWorkspaceMCP(ctx, h.cfg, req.ProjectID, workspaceAccessWrite); err != nil {
 		return workspaceMCPError(err)
 	}
-	resp, err := gcWorkspaceGenerations(h.cfg, req)
+	resp, err := gcWorkspaceGenerationsAuthorized(ctx, h.cfg, req, h.MetadataActor(ctx))
 	if err != nil {
 		return workspaceMCPError(err)
 	}
@@ -2262,4 +2684,44 @@ func workspaceMCPError(err error) mcpToolResult {
 		Content: []mcpContent{{Type: "text", Text: err.Error()}},
 		IsError: true,
 	}
+}
+
+func workspaceBranchLockKey(projectID, branch string) string {
+	return safeWorkspaceID(projectID) + "/" + safeWorkspaceID(defaultBranch(branch))
+}
+
+func openWorkspaceDirectory(cfg APIConfig, absolute string, create bool) (*os.Root, error) {
+	relative, err := filepath.Rel(workspaceRoot(cfg), absolute)
+	if err != nil {
+		return nil, err
+	}
+	return workspace.OpenRoot(workspaceRoot(cfg), filepath.ToSlash(relative), create)
+}
+func openWorkspaceFileParent(cfg APIConfig, absolute string, create bool) (*os.Root, string, error) {
+	root, err := openWorkspaceDirectory(cfg, filepath.Dir(absolute), create)
+	return root, filepath.Base(absolute), err
+}
+func readWorkspaceFile(cfg APIConfig, absolute string) ([]byte, error) {
+	root, name, err := openWorkspaceFileParent(cfg, absolute, false)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	return workspace.ReadFile(root, name)
+}
+func writeWorkspaceFile(ctx context.Context, cfg APIConfig, absolute string, data []byte) error {
+	root, name, err := openWorkspaceFileParent(cfg, absolute, true)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	return workspace.WriteFile(ctx, root, name, data, 0644)
+}
+func saveWorkspaceManifest(ctx context.Context, cfg APIConfig, absolute string, manifest *workspace.Manifest) error {
+	root, name, err := openWorkspaceFileParent(cfg, absolute, true)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	return manifest.SaveRoot(ctx, root, name)
 }

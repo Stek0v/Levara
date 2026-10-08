@@ -22,7 +22,15 @@ func newTestCluster(t testing.TB, count int) *Cluster {
 
 func TestClusterBatchDeleteRoutingAndRecovery(t *testing.T) {
 	c := newTestCluster(t, 4)
-	ids := []string{"", "юникод"}
+	if err := c.Insert("", []float32{1, 0}, nil); err == nil {
+		t.Fatal("empty ID accepted")
+	}
+	for _, shard := range c.shards {
+		if shard.(*Levara).Count() != 0 {
+			t.Fatal("rejected empty ID changed cluster")
+		}
+	}
+	ids := []string{"ascii", "юникод"}
 	for i := 0; i < 32; i++ {
 		ids = append(ids, fmt.Sprint(i))
 	}

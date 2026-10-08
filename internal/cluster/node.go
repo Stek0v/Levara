@@ -51,6 +51,7 @@ func NewRaftNode(shardID int, nodeID string, baseDir string, raftPort int, db *s
 	config := raft.DefaultConfig()
 	config.LocalID = raft.ServerID(fmt.Sprintf("%s-shard-%d", nodeID, shardID))
 	config.HeartbeatTimeout = 200 * time.Millisecond
+	config.LeaderLeaseTimeout = config.HeartbeatTimeout
 	config.ElectionTimeout = 300 * time.Millisecond
 	config.CommitTimeout = 10 * time.Millisecond
 	config.SnapshotThreshold = 65536

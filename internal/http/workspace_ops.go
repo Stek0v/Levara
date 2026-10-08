@@ -51,17 +51,18 @@ func workspaceOpsStatusHandler(cfg APIConfig) fiber.Handler {
 			ProjectID: c.Query("project_id"),
 			Branch:    c.Query("branch"),
 		}
-		if req.ProjectID != "" {
-			if err := authorizeWorkspaceFiber(c, cfg, req.ProjectID, workspaceAccessRead); err != nil {
-				return err
-			}
+		if err := authorizeWorkspaceFiber(c, cfg, req.ProjectID, workspaceAccessRead); err != nil {
+			return err
 		}
 		status, err := collectWorkspaceOpsStatus(cfg, req)
 		if err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
 		refreshWorkspaceOperationalMetrics(cfg)
-		return c.JSON(status)
+		if err := c.JSON(status); err != nil {
+			return err
+		}
+		return sendWorkspaceProtectedResponse(c, cfg, c.UserContext(), uploadMetadataActor(c, cfg, c.UserContext()), req.ProjectID)
 	}
 }
 
@@ -75,11 +76,15 @@ func collectWorkspaceOpsStatus(cfg APIConfig, req workspaceOpsStatusRequest) (wo
 	if err != nil {
 		return workspaceOpsStatus{}, err
 	}
+	watch := workspaceWatchStatus(cfg)
+	if req.ProjectID != "" {
+		watch = workspaceProjectWatchStatus(watch, req.ProjectID, req.Branch)
+	}
 	return workspaceOpsStatus{
 		GeneratedAt: now.Format(time.RFC3339Nano),
 		ProjectID:   req.ProjectID,
 		Branch:      req.Branch,
-		Watcher:     workspaceWatchStatus(cfg),
+		Watcher:     watch,
 		Jobs:        jobs,
 		Audit:       audit,
 	}, nil
@@ -299,10 +304,8 @@ func (h *mcpHandler) toolWorkspaceOpsStatus(ctx context.Context, args map[string
 	if err := decodeWorkspaceArgs(args, &req); err != nil {
 		return workspaceMCPError(err)
 	}
-	if req.ProjectID != "" {
-		if err := authorizeWorkspaceMCP(ctx, h.cfg, req.ProjectID, workspaceAccessRead); err != nil {
-			return workspaceMCPError(err)
-		}
+	if err := authorizeWorkspaceMCP(ctx, h.cfg, req.ProjectID, workspaceAccessRead); err != nil {
+		return workspaceMCPError(err)
 	}
 	status, err := collectWorkspaceOpsStatus(h.cfg, req)
 	if err != nil {
@@ -310,4 +313,36 @@ func (h *mcpHandler) toolWorkspaceOpsStatus(ctx context.Context, args map[string
 	}
 	refreshWorkspaceOperationalMetrics(h.cfg)
 	return workspaceMCPJSON(status)
+}
+
+func workspaceProjectWatchStatus(watch WorkspaceWatchStatus, projectID, branch string) WorkspaceWatchStatus {
+	out := WorkspaceWatchStatus{
+		Enabled: watch.Enabled, StartedAt: watch.StartedAt, StoppedAt: watch.StoppedAt,
+		IntervalMs: watch.IntervalMs, DebounceMs: watch.DebounceMs, GenerationPrefix: watch.GenerationPrefix,
+		Branches: map[string]WorkspaceBranchWatchStatus{},
+	}
+	for key, status := range watch.Branches {
+		if (projectID != "" && safeWorkspaceID(status.ProjectID) != safeWorkspaceID(projectID)) ||
+			(branch != "" && safeWorkspaceID(defaultBranch(status.Branch)) != safeWorkspaceID(defaultBranch(branch))) {
+			continue
+		}
+		out.Branches[key] = status
+		out.WatchedBranches++
+		if status.Pending {
+			out.PendingBranches++
+		}
+		out.ScanCount += status.ScanCount
+		out.ReconcileCount += status.ReconcileCount
+		out.ErrorCount += status.ErrorCount
+		out.LastScanAt = newerTimeString(out.LastScanAt, status.LastScanAt)
+		out.LastChangeAt = newerTimeString(out.LastChangeAt, status.LastChangeAt)
+		if status.LastReconcileAt != "" && newerTimeString(out.LastReconcileAt, status.LastReconcileAt) == status.LastReconcileAt {
+			out.LastReconcileAt, out.LastGeneration = status.LastReconcileAt, status.LastGeneration
+			out.LastProjectID, out.LastBranch = status.ProjectID, status.Branch
+		}
+		if status.LastError != "" && (out.LastError == "" || newerTimeString(out.LastErrorAt, status.LastErrorAt) == status.LastErrorAt) {
+			out.LastErrorAt, out.LastError = status.LastErrorAt, status.LastError
+		}
+	}
+	return out
 }

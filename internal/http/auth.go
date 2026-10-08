@@ -516,7 +516,7 @@ func validSession(ctx context.Context, db *sql.DB, requireAuth bool, payload *jw
 	if db == nil {
 		return !requireAuth
 	}
-	return accesspkg.ValidateCredential(ctx, db, Q, payload.Sub, payload.CredentialEpoch) == nil && accesspkg.ValidateBrowserSession(ctx, db, Q, payload.Sub, payload.SessionID) == nil
+	return accesspkg.ValidateSessionCredential(ctx, db, Q, payload.Sub, payload.CredentialEpoch, payload.SessionID) == nil
 }
 
 func activeExternalUser(ctx context.Context, db *sql.DB, principal ExternalPrincipal) bool {

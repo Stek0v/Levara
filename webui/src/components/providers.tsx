@@ -11,7 +11,8 @@ export function Providers({ children }: { children: React.ReactNode }) {
       queries: {
         staleTime: 30 * 1000,
         retry: (count, error) => {
-          if ((error as { status?: number })?.status === 401) return false
+          const status = (error as { status?: number })?.status
+          if (status === 401 || status === 403) return false
           return count < 3
         },
         refetchOnWindowFocus: true,

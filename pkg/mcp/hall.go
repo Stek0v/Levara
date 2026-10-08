@@ -1,43 +1,16 @@
 package mcp
 
-import "encoding/json"
+import (
+	"encoding/json"
 
-// hallVocab is the controlled vocabulary for the "hall" field on a memory
-// record. Extending this list is a deliberate code change so downstream
-// consumers (search filters, dashboards) stay in sync — adding a value here
-// without updating those consumers leaks unfiltered memories into UI.
-//
-// Vocabulary semantics:
-//
-//	fact       — objective characteristic (version, dimension, IP, path)
-//	event      — something happened at a moment (deploy, merge, incident)
-//	decision   — architectural/project choice with justification
-//	preference — user preference about style, tools, workflow
-//	advice     — reusable rule of thumb ("before X, do Y")
-//	discovery  — non-obvious insight worth recalling months later
-var hallVocab = []string{
-	"fact",
-	"event",
-	"decision",
-	"preference",
-	"advice",
-	"discovery",
-}
+	"github.com/stek0v/levara/pkg/memoryhall"
+)
 
-// ValidHalls returns the controlled hall vocabulary. Returned slice should
-// be treated as read-only by callers.
-func ValidHalls() []string { return hallVocab }
+// ValidHalls returns a defensive copy of the controlled vocabulary.
+func ValidHalls() []string { return memoryhall.ValidHalls() }
 
-// IsValidHall reports whether h is a member of the controlled vocabulary.
-// Empty string is invalid (callers must explicitly pick a hall).
-func IsValidHall(h string) bool {
-	for _, v := range hallVocab {
-		if v == h {
-			return true
-		}
-	}
-	return false
-}
+// IsValidHall reports exact membership; empty and unknown halls are invalid.
+func IsValidHall(h string) bool { return memoryhall.IsValidHall(h) }
 
 // ChunkMetaMatches returns true when the chunk metadata blob (JSON, as
 // written by the orchestrator pipeline) satisfies room and tag filters.

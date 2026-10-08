@@ -32,6 +32,7 @@ type QueryArgsRewriter func(string, ...any) (string, []any)
 
 type WorkspaceRequest struct {
 	UserID            string
+	TenantID          string
 	ProjectID         string
 	Action            string
 	APIKeyPermissions string
@@ -89,6 +90,34 @@ func (p SQLPolicy) AuthorizeWorkspace(ctx context.Context, req WorkspaceRequest)
 	} else if !active {
 		decision.Reason = "user_inactive"
 		return decision, nil
+	}
+
+	if unambiguous, err := p.WorkspaceProjectUnambiguous(ctx, req.ProjectID); err != nil {
+		return decision, err
+	} else if !unambiguous {
+		decision.Reason = "workspace_project_directory_ambiguous"
+		return decision, nil
+	}
+
+	if req.TenantID != "" {
+		member, err := p.IsTenantMember(ctx, req.UserID, req.TenantID)
+		if err != nil {
+			return decision, err
+		}
+		if !member {
+			decision.Reason = "tenant_scope_denied"
+			return decision, nil
+		}
+		filter, args := TenantOwnerFilterSQL(req.TenantID, 2, false)
+		query, args := p.rewriteArgs("SELECT COUNT(*) FROM datasets WHERE id = $1"+filter, append([]any{req.ProjectID}, args...)...)
+		var count int
+		if err := p.reader().QueryRowContext(ctx, query, args...).Scan(&count); err != nil {
+			return decision, err
+		}
+		if count == 0 {
+			decision.Reason = "tenant_scope_denied"
+			return decision, nil
+		}
 	}
 
 	q := p.rewrite

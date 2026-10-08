@@ -78,10 +78,16 @@ type Content struct {
 // ToolResult is what a tool returns. IsError=true signals that Content holds
 // an error message (e.g. validation failure) rather than data — distinct from
 // JSON-RPC level errors which use the RPCError envelope.
+// CommunityEvidence binds accepted DTOs to the exact SQL publication; it never crosses JSON.
+type CommunityEvidence struct {
+	ID, Generation, SourcesJSON string
+}
+
 type ToolResult struct {
-	Content           []Content `json:"content"`
-	StructuredContent any       `json:"structuredContent,omitempty"`
-	IsError           bool      `json:"isError,omitempty"`
+	CommunityEvidence []CommunityEvidence `json:"-"`
+	Content           []Content           `json:"content"`
+	StructuredContent any                 `json:"structuredContent,omitempty"`
+	IsError           bool                `json:"isError,omitempty"`
 }
 
 // ── Context keys ──

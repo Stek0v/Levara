@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { ApiError } from '@/lib/api'
 import { useTask, useTasks } from '@/hooks/use-levara'
 import { Badge } from '@/components/ui/badge'
 import { ListTodo, Clock, ShieldAlert, CircleCheck, CircleDashed, LoaderCircle } from 'lucide-react'
@@ -10,9 +11,9 @@ import { useT } from '@/lib/i18n'
 const statusVariant = (s: string) =>
   s === 'completed' || s === 'passed'
     ? 'success'
-    : s === 'failed' || s === 'blocked'
+    : s === 'failed' || s === 'fail' || s === 'blocked'
       ? 'error'
-      : s === 'in_progress' || s === 'claimed'
+      : s === 'running' || s === 'active' || s === 'in_progress' || s === 'claimed'
         ? 'warning'
         : 'default'
 
@@ -39,10 +40,14 @@ export default function TasksPage() {
   const t = useT()
   const [selected, setSelected] = useState<string | null>(null)
   const [statusFilter, setStatusFilter] = useState('')
-  const { data, isLoading } = useTasks({ status: statusFilter || undefined, limit: 100 })
+  const list = useTasks({ status: statusFilter || undefined, limit: 100 })
   const detail = useTask(selected)
 
-  const tasks = data?.tasks ?? []
+  const listDenied = list.error instanceof ApiError && (list.error.status === 401 || list.error.status === 403)
+  const detailDenied = detail.error instanceof ApiError && (detail.error.status === 401 || detail.error.status === 403)
+  const listData = listDenied ? undefined : list.data
+  const detailData = listDenied || detailDenied ? undefined : detail.data
+  const tasks = listData?.tasks ?? []
 
   return (
     <div>
@@ -58,7 +63,7 @@ export default function TasksPage() {
       </p>
 
       <div className="flex gap-2 mb-4">
-        {['', 'draft', 'in_progress', 'blocked', 'completed'].map((s) => (
+        {['', 'draft', 'planned', 'running', 'in_progress', 'blocked', 'completed'].map((s) => (
           <button
             key={s}
             onClick={() => setStatusFilter(s)}
@@ -73,8 +78,10 @@ export default function TasksPage() {
 
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="space-y-3">
-          {isLoading && <p className="text-sm text-muted-foreground">{t('tasks.loading')}</p>}
-          {!isLoading && tasks.length === 0 && (
+          {list.isError && <p role="alert" className="text-sm text-red-600">Tasks unavailable: {list.error instanceof Error ? list.error.message : 'Request failed'}{listData ? ' (showing stale data)' : ''}</p>}
+          <button onClick={() => { void list.refetch(); if (selected) void detail.refetch() }} className="text-sm text-blue-600" disabled={list.isFetching || detail.isFetching}>Refresh tasks</button>
+          {list.isPending && <p className="text-sm text-muted-foreground">{t('tasks.loading')}</p>}
+          {list.isSuccess && tasks.length === 0 && (
             <p className="text-sm text-muted-foreground">{t('tasks.nomatch')}</p>
           )}
           {tasks.map((t) => (
@@ -106,25 +113,47 @@ export default function TasksPage() {
         </div>
 
         <div>
+          {selected && detail.isPending && <p className="text-sm text-muted-foreground">Loading task detail...</p>}
+          {selected && detail.isError && <p role="alert" className="text-sm text-red-600">Task detail unavailable: {detail.error instanceof Error ? detail.error.message : 'Request failed'}{detailData ? ' (showing stale data)' : ''}</p>}
           {!selected && (
             <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
               Select a task to inspect its plan, receipts and checkpoints.
             </div>
           )}
-          {selected && detail.data && (
+          {selected && detailData && (
             <div className="space-y-4">
+              <section className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-5">
+                <h3 className="text-sm font-semibold mb-3">Criteria</h3>
+                {(detailData.criteria ?? []).length === 0 && (
+                  <p className="text-sm text-muted-foreground">No criteria.</p>
+                )}
+                <ul className="space-y-2 text-sm">
+                  {(detailData.criteria ?? []).map((criterion, i) => (
+                    <li key={String(criterion.id ?? i)}>
+                      <span>{String(criterion.description ?? '')}</span>
+                      <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                        <span>{String(criterion.id ?? '')}</span>
+                        <Badge variant={criterion.required ? 'warning' : 'default'}>
+                          {criterion.required ? 'Required' : 'Optional'}
+                        </Badge>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+
               <section className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-5">
                 <div className="flex items-center justify-between mb-3">
                   <h3 className="text-sm font-semibold">{t('tasks.plan')}</h3>
-                  <Badge variant={statusVariant(detail.data.status)}>{detail.data.status}</Badge>
+                  <Badge variant={statusVariant(detailData.status)}>{detailData.status}</Badge>
                 </div>
                 <ol className="space-y-2">
-                  {detail.data.steps.map((s) => (
+                  {detailData.steps.map((s) => (
                     <li key={s.id} className="flex items-start gap-2 text-sm">
                       <span className="mt-0.5">
                         {s.status === 'passed' ? (
                           <CircleCheck className="h-4 w-4 text-green-500" />
-                        ) : s.status === 'claimed' ? (
+                        ) : s.status === 'active' || s.status === 'claimed' ? (
                           <LoaderCircle className="h-4 w-4 text-amber-500" />
                         ) : s.status === 'failed' ? (
                           <span className="text-red-500">✕</span>
@@ -134,9 +163,11 @@ export default function TasksPage() {
                       </span>
                       <span>
                         {s.description}
+                        <Badge variant={statusVariant(s.status)}>{s.status}</Badge>
                         {s.leased_by && (
                           <span className="ml-2 text-xs text-amber-600">lease: {s.leased_by}</span>
                         )}
+                        {s.lease_expires_at && <span className="ml-2 text-xs text-amber-600">lease expires: {s.lease_expires_at}</span>}
                         {s.attempts > 1 && (
                           <span className="ml-2 text-xs text-muted-foreground">attempt {s.attempts}</span>
                         )}
@@ -146,11 +177,11 @@ export default function TasksPage() {
                 </ol>
               </section>
 
-              {detail.data.blockers.length > 0 && (
+              {detailData.blockers.length > 0 && (
                 <section className="bg-white dark:bg-gray-900 rounded-lg border border-red-300 dark:border-red-900 p-5">
                   <h3 className="text-sm font-semibold mb-3 text-red-500">{t('tasks.blockers')}</h3>
                   <ul className="space-y-1 text-sm">
-                    {detail.data.blockers.map((b, i) => (
+                    {detailData.blockers.map((b, i) => (
                       <li key={i}>
                         {String(b.reason)}
                         {b.required_decision ? (
@@ -166,11 +197,11 @@ export default function TasksPage() {
 
               <section className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-5">
                 <h3 className="text-sm font-semibold mb-3">{t('tasks.receipts')}</h3>
-                {detail.data.receipts.length === 0 && (
+                {detailData.receipts.length === 0 && (
                   <p className="text-sm text-muted-foreground">{t('tasks.noreceipts')}</p>
                 )}
                 <ul className="space-y-2 text-sm">
-                  {detail.data.receipts.slice(0, 5).map((r, i) => (
+                  {detailData.receipts.slice(0, 5).map((r, i) => (
                     <li key={i} className="flex items-center gap-2">
                       <Badge variant={statusVariant(String(r.status))}>{String(r.receipt_type)}</Badge>
                       <span className="line-clamp-1 text-muted-foreground">
@@ -185,11 +216,11 @@ export default function TasksPage() {
                 <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
                   <Clock className="h-4 w-4" /> Checkpoints
                 </h3>
-                {detail.data.checkpoints.length === 0 && (
+                {detailData.checkpoints.length === 0 && (
                   <p className="text-sm text-muted-foreground">{t('tasks.nockpoints')}</p>
                 )}
                 <ul className="space-y-1 text-sm">
-                  {detail.data.checkpoints.slice(0, 5).map((c, i) => (
+                  {detailData.checkpoints.slice(0, 5).map((c, i) => (
                     <li key={i}>{String(c.summary)}</li>
                   ))}
                 </ul>

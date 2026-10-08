@@ -3,10 +3,13 @@ package pipeline
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
+	"sort"
 	"strings"
 
+	"github.com/stek0v/levara/pkg/embed"
 	"github.com/stek0v/levara/pkg/llm"
 )
 
@@ -19,6 +22,9 @@ func (p *SearchPipeline) SearchByTextMultiQuery(
 	ctx context.Context, collection, queryText string, limit int,
 	llmProvider llm.Provider, llmModel string, maxVariants int,
 ) ([]ScoredResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if llmProvider == nil {
 		return p.SearchByText(ctx, collection, queryText, limit)
 	}
@@ -32,6 +38,9 @@ func (p *SearchPipeline) SearchByTextMultiQuery(
 
 	// Generate query variants via LLM
 	variants := generateQueryVariants(ctx, llmProvider, llmModel, queryText, maxVariants)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	// Always include original query
 	allQueries := append([]string{queryText}, variants...)
@@ -50,7 +59,16 @@ func (p *SearchPipeline) SearchByTextMultiQuery(
 	const k = 60.0 // RRF constant
 
 	for _, q := range allQueries {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		results, err := p.SearchByText(ctx, collection, q, perQueryLimit)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		if errors.Is(err, embed.ErrGuardRejected) || errors.Is(err, ErrResultFilterRejected) {
+			return nil, err
+		}
 		if err != nil {
 			continue
 		}
@@ -95,6 +113,9 @@ func (p *SearchPipeline) SearchByTextMultiQuery(
 		out = append(out, idResult[e.id])
 	}
 
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 
@@ -201,63 +222,55 @@ func (p *SearchPipeline) SearchByTextParentChild(
 		return p.SearchByText(ctx, collection, queryText, limit)
 	}
 
-	// Resolve parent IDs from child metadata
-	type parentHit struct {
-		parentID string
-		score    float32 // best child score for this parent
-	}
-
-	seen := make(map[string]bool)
-	var parentHits []parentHit
-
+	// Resolve all overfetched child hits before limiting: missing or denied
+	// parents must not consume the result budget.
+	parentScores := make(map[string]float32)
 	for _, child := range children {
-		parentID := extractParentID(child.Metadata)
-		if parentID == "" || seen[parentID] {
+		id := extractParentID(child.Metadata)
+		if id == "" {
 			continue
 		}
-		seen[parentID] = true
-		parentHits = append(parentHits, parentHit{parentID: parentID, score: child.Score})
-		if len(parentHits) >= limit {
-			break
+		if score, seen := parentScores[id]; !seen || child.Score > score {
+			parentScores[id] = child.Score
 		}
 	}
-
-	if len(parentHits) == 0 {
-		// Children have no parent_id — treat as regular search
+	if len(parentScores) == 0 {
+		children, err = p.filterResults(ctx, collection, children)
+		if err != nil {
+			return nil, err
+		}
 		if len(children) > limit {
 			children = children[:limit]
 		}
 		return children, nil
 	}
-
-	// Look up parent chunks from main collection by ID
-	// Since we can't search by ID in HNSW, we search main collection with same query
-	// and filter to known parent IDs. This is a pragmatic approach.
-	mainResults, err := p.SearchByText(ctx, collection, queryText, childLimit)
+	db, err := p.collections.Get(collection)
 	if err != nil {
-		return nil, fmt.Errorf("parent search: %w", err)
+		return nil, fmt.Errorf("parent collection: %w", err)
 	}
-
-	// Build parent result set, ordered by child match quality
-	parentScores := make(map[string]float32)
-	for _, ph := range parentHits {
-		parentScores[ph.parentID] = ph.score
-	}
-
-	// Collect parents that were found in main collection search
-	var parents []ScoredResult
-	foundParents := make(map[string]bool)
-	for _, r := range mainResults {
-		if _, isWanted := parentScores[r.ID]; isWanted && !foundParents[r.ID] {
-			parents = append(parents, r)
-			foundParents[r.ID] = true
+	parents := make([]ScoredResult, 0, len(parentScores))
+	for id, score := range parentScores {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		_, metadata, found := db.Get(id)
+		if found && len(metadata) > 0 {
+			parents = append(parents, ScoredResult{ID: id, Score: score, Metadata: metadata})
 		}
 	}
-
+	parents, err = p.filterResults(ctx, collection, parents)
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(parents, func(i, j int) bool {
+		if parents[i].Score == parents[j].Score {
+			return parents[i].ID < parents[j].ID
+		}
+		return parents[i].Score > parents[j].Score
+	})
 	if len(parents) > limit {
 		parents = parents[:limit]
 	}
-
 	return parents, nil
 }
 

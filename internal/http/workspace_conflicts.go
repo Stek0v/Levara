@@ -53,7 +53,10 @@ func workspaceConflictsHandler(cfg APIConfig) fiber.Handler {
 		if err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
-		return c.JSON(resp)
+		if err := c.JSON(resp); err != nil {
+			return err
+		}
+		return sendWorkspaceProtectedResponse(c, cfg, c.UserContext(), uploadMetadataActor(c, cfg, c.UserContext()), req.ProjectID)
 	}
 }
 
@@ -85,7 +88,7 @@ func workspaceConflicts(_ context.Context, cfg APIConfig, req workspaceConflictR
 	}
 
 	root := workspaceProjectRoot(cfg, req.ProjectID, branch)
-	paths, err := listWorkspaceMarkdownPaths(root)
+	paths, err := listWorkspaceMarkdownPaths(cfg, root)
 	if err != nil {
 		return workspaceConflictResponse{}, err
 	}
@@ -99,7 +102,7 @@ func workspaceConflicts(_ context.Context, cfg APIConfig, req workspaceConflictR
 	for _, rel := range paths {
 		seen[rel] = struct{}{}
 		filePath := filepath.Join(root, filepath.FromSlash(rel))
-		data, err := os.ReadFile(filePath)
+		data, err := readWorkspaceFile(cfg, filePath)
 		if err != nil {
 			return workspaceConflictResponse{}, err
 		}

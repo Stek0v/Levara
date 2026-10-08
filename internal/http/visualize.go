@@ -4,12 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	accesspkg "github.com/stek0v/levara/pkg/access"
 	"github.com/stek0v/levara/pkg/graphdb"
 	"github.com/stek0v/levara/pkg/graphstore"
 )
@@ -20,7 +22,8 @@ type GraphVisualizationConfig struct {
 	Neo4jUser     string
 	Neo4jPassword string
 	Neo4jDatabase string
-	DB            *sql.DB // PostgreSQL/SQLite fallback for graph visualization
+	DB            *sql.DB    // PostgreSQL/SQLite fallback for graph visualization
+	Authority     *APIConfig // Verified HTTP authority and SQL policy store
 }
 
 // GraphNodeDTO matches Levara's frontend expected format.
@@ -54,13 +57,84 @@ func DatasetGraph(cfg GraphVisualizationConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		datasetID := c.Params("id")
 
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := apiRequestContext(c)
 		defer cancel()
+		authority := APIConfig{DB: cfg.DB}
+		if cfg.Authority != nil {
+			authority = *cfg.Authority
+		}
+		if authority.DB == nil {
+			authority.DB = cfg.DB
+		}
+		actor := uploadMetadataActor(c, authority, ctx)
+		local := actor.TrustedLocal && actor.UserID == "" && actor.TenantID == "" && !authority.RequireAuth
+		var tx *sql.Tx
+		var release func()
+		allowed := func(properties map[string]any) (bool, error) { return true, nil }
+		handedOff := false
+		if !local {
+			if actor.UserID == "" || actor.Credential.Kind == "" {
+				return c.Status(403).JSON(fiber.Map{"detail": "read access to dataset required"})
+			}
+			if authority.DB == nil {
+				return c.Status(503).JSON(fiber.Map{"detail": "graph authorization unavailable"})
+			}
+			var boundedCancel context.CancelFunc
+			var err error
+			ctx, boundedCancel, err = workspaceRequestContext(ctx, actor, 10*time.Second)
+			if err != nil {
+				return c.Status(403).JSON(fiber.Map{"detail": "read access to dataset required"})
+			}
+			defer boundedCancel()
+			var policy accesspkg.SQLPolicy
+			tx, policy, release, err = (accesspkg.SQLPolicy{DB: authority.DB, Q: Q, QA: QArgs}).BeginTransferFenceTx(ctx, GetDBProvider() == DBSQLite)
+			if err != nil {
+				return c.Status(503).JSON(fiber.Map{"detail": "graph authorization unavailable"})
+			}
+			defer func() {
+				if !handedOff {
+					release()
+				}
+			}()
+			if err := recheckDatasetShareActor(ctx, policy, actor); err != nil {
+				if errors.Is(err, accesspkg.ErrRevokedCredential) || errors.Is(err, accesspkg.ErrDocumentForbidden) {
+					return c.Status(403).JSON(fiber.Map{"detail": "read access to dataset required"})
+				}
+				return c.Status(503).JSON(fiber.Map{"detail": "graph authorization unavailable"})
+			}
+			if actor.TenantID != "" {
+				filter, args := accesspkg.TenantOwnerFilterSQL(actor.TenantID, 2, false)
+				query, args := QArgs("SELECT COUNT(*) FROM datasets WHERE id = $1"+filter, append([]any{datasetID}, args...)...)
+				var count int
+				if err := tx.QueryRowContext(ctx, query, args...).Scan(&count); err != nil {
+					return c.Status(503).JSON(fiber.Map{"detail": "graph authorization unavailable"})
+				}
+				if count == 0 {
+					return c.Status(403).JSON(fiber.Map{"detail": "read access to dataset required"})
+				}
+			}
+			decision, err := policy.AuthorizeDataset(ctx, actor.Actor, datasetID, accesspkg.ActionRead)
+			if err != nil {
+				return c.Status(503).JSON(fiber.Map{"detail": "graph authorization unavailable"})
+			}
+			if !decision.Allowed {
+				return c.Status(403).JSON(fiber.Map{"detail": "read access to dataset required"})
+			}
+			ctx = context.WithValue(ctx, searchReadPolicyKey{}, policy)
+			allowed = func(properties map[string]any) (bool, error) {
+				source, err := decodeSearchDocumentSource(properties)
+				if err != nil {
+					return false, nil
+				}
+				source.DatasetID, source.Derived = datasetID, true
+				return searchDocumentAllowed(ctx, authority, actor.Actor, source)
+			}
+		}
 
 		var result graphdb.GraphReadResult
 		var err error
 		if cfg.DB != nil {
-			result, err = graphstore.NewSQLGraphStore(cfg.DB).ReadFullGraph(ctx)
+			result, err = graphstore.NewSQLGraphStore(cfg.DB).ReadFullGraphWithTransaction(ctx, tx)
 			if err != nil {
 				return c.Status(500).JSON(fiber.Map{"detail": fmt.Sprintf("read sql graph: %v", err)})
 			}
@@ -87,6 +161,13 @@ func DatasetGraph(cfg GraphVisualizationConfig) fiber.Handler {
 			// Strict filter: only include nodes that explicitly match this dataset_id
 			// Nodes without dataset_id are excluded (they are residue from old operations)
 			if dsID == datasetID && dsID != "" {
+				visible, err := allowed(n.Properties)
+				if err != nil {
+					return c.Status(503).JSON(fiber.Map{"detail": "graph authorization unavailable"})
+				}
+				if !visible {
+					continue
+				}
 				filteredNodes = append(filteredNodes, n)
 				nodeIDSet[n.ID] = true
 			}
@@ -97,6 +178,13 @@ func DatasetGraph(cfg GraphVisualizationConfig) fiber.Handler {
 		for _, e := range result.Edges {
 			dsID, _ := e.Properties["dataset_id"].(string)
 			if dsID == datasetID && dsID != "" && nodeIDSet[e.SourceID] && nodeIDSet[e.TargetID] {
+				visible, err := allowed(e.Properties)
+				if err != nil {
+					return c.Status(503).JSON(fiber.Map{"detail": "graph authorization unavailable"})
+				}
+				if !visible {
+					continue
+				}
 				filteredEdges = append(filteredEdges, e)
 			}
 		}
@@ -131,7 +219,19 @@ func DatasetGraph(cfg GraphVisualizationConfig) fiber.Handler {
 			}
 		}
 
-		return c.JSON(dto)
+		if err := c.JSON(dto); err != nil {
+			return err
+		}
+		if local {
+			return nil
+		}
+		if err := ctx.Err(); err != nil {
+			return c.Status(503).JSON(fiber.Map{"detail": "graph read unavailable"})
+		}
+		deadline, _ := ctx.Deadline()
+		streamCtx, streamCancel := context.WithDeadline(context.WithoutCancel(ctx), deadline)
+		handedOff = true
+		return sendFencedResponse(c, streamCtx, func() { release(); streamCancel() })
 	}
 }
 

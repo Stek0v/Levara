@@ -3,6 +3,7 @@
 package extract
 
 import (
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -13,7 +14,7 @@ import (
 // CodeEntity represents a code element (function, class, import, etc.)
 type CodeEntity struct {
 	Name   string `json:"name"`
-	Type   string `json:"type"`    // "function", "class", "method", "import", "module"
+	Type   string `json:"type"` // "function", "class", "method", "import", "module"
 	File   string `json:"file"`
 	Line   int    `json:"line"`
 	Parent string `json:"parent,omitempty"` // class name for methods
@@ -28,7 +29,7 @@ type CodeRelation struct {
 
 // CodeAnalysis holds extracted code entities and relations.
 type CodeAnalysis struct {
-	Entities  []CodeEntity  `json:"entities"`
+	Entities  []CodeEntity   `json:"entities"`
 	Relations []CodeRelation `json:"relations"`
 	Language  string         `json:"language"`
 }
@@ -43,6 +44,25 @@ func AnalyzeCode(source, filename string) CodeAnalysis {
 		return analyzePython(source, filename)
 	default:
 		return CodeAnalysis{Language: lang}
+	}
+}
+
+// AnalyzeCodeChecked supports Go syntax parsing and heuristic Python extraction.
+// Python results do not certify syntax validity or semantic call resolution.
+func AnalyzeCodeChecked(source, filename string) (CodeAnalysis, error) {
+	language := detectLanguage(filename)
+	switch language {
+	case "go":
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, filename, source, parser.AllErrors)
+		if err != nil {
+			return CodeAnalysis{Language: language}, fmt.Errorf("go syntax: %w", err)
+		}
+		return analyzeGoFile(file, fset, filename), nil
+	case "python":
+		return analyzePython(source, filename), nil
+	default:
+		return CodeAnalysis{Language: language}, fmt.Errorf("unsupported source language for %q: Go and heuristic Python only", filename)
 	}
 }
 
@@ -70,6 +90,11 @@ func analyzeGo(source, filename string) CodeAnalysis {
 		return a
 	}
 
+	return analyzeGoFile(f, fset, filename)
+}
+
+func analyzeGoFile(f *ast.File, fset *token.FileSet, filename string) CodeAnalysis {
+	a := CodeAnalysis{Language: "go"}
 	for _, decl := range f.Decls {
 		switch d := decl.(type) {
 		case *ast.FuncDecl:

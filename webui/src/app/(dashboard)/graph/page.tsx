@@ -9,7 +9,7 @@ import { EmptyState } from '@/components/ui/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Route, Search, Share2 } from 'lucide-react'
 import * as d3 from 'd3'
-import type { GraphNode, GraphEdge } from '@/lib/api'
+import { ApiError, type GraphNode, type GraphEdge } from '@/lib/api'
 import { useT } from '@/lib/i18n'
 
 // Local aliases keep d3 simulation types stable while referencing the
@@ -22,6 +22,10 @@ interface SimLink extends d3.SimulationLinkDatum<SimNode> { label: string }
 const COLORS: Record<string, string> = {
   Person: '#3b82f6', Organization: '#10b981', Location: '#f59e0b',
   Entity: '#8b5cf6', TemporalEvent: '#ef4444', default: '#6b7280',
+}
+
+function denied(error: unknown) {
+  return error instanceof ApiError && (error.status === 401 || error.status === 403)
 }
 
 function formatValidity(edge: GraphEdge): string {
@@ -42,13 +46,32 @@ export default function GraphPage() {
   const [pathTo, setPathTo] = useState('')
   const [pathMaxHops, setPathMaxHops] = useState('4')
   const [pathAsOf, setPathAsOf] = useState('')
+  const [denialStamp, setDenialStamp] = useState(0)
 
-  const { data: datasetsRes } = useDatasets()
-  const datasets = datasetsRes?.data ?? []
-  const { data: graph, isFetching: loading } = useDatasetGraph(dsId)
-  const { data: healthDetails } = useHealthDetails()
-  const { data: vsa } = useVSAStatus()
+  const datasetQuery = useDatasets()
+  const graphQuery = useDatasetGraph(dsId)
+  const healthQuery = useHealthDetails()
+  const vsaQuery = useVSAStatus()
   const graphPath = useGraphPath()
+  const graphDenied = denied(datasetQuery.error) || denied(graphQuery.error) || denied(graphPath.error)
+  const currentDenialStamp = Math.max(
+    denied(datasetQuery.error) ? datasetQuery.errorUpdatedAt : 0,
+    denied(graphQuery.error) ? graphQuery.errorUpdatedAt : 0,
+    denied(graphPath.error) ? graphPath.submittedAt : 0,
+  )
+  if (currentDenialStamp > denialStamp) {
+    setDenialStamp(currentDenialStamp)
+    setSelected(null)
+    setPathFrom('')
+    setPathTo('')
+  }
+  const datasets = denied(datasetQuery.error) ? [] : datasetQuery.data?.data ?? []
+  const graph = graphDenied ? undefined : graphQuery.data
+  const healthDetails = denied(healthQuery.error) ? undefined : healthQuery.data
+  const vsa = denied(vsaQuery.error) ? undefined : vsaQuery.data
+  const pathData = !graphDenied && graphPath.submittedAt > denialStamp ? graphPath.data : undefined
+  const visibleSelected = !graphDenied && selected ? graph?.nodes.find(node => node.id === selected.id) : undefined
+  const loading = graphQuery.isFetching
   const nodes = useMemo(() => graph?.nodes ?? [], [graph])
   const edges = useMemo(() => graph?.edges ?? [], [graph])
   const nodeLookupResults = useMemo(() => {
@@ -59,8 +82,8 @@ export default function GraphPage() {
       .slice(0, 8)
   }, [nodes, search])
   const pathEdgeKeys = useMemo(
-    () => new Set((graphPath.data?.edges ?? []).map((e) => `${e.source_id}\x00${e.target_id}\x00${e.type}`)),
-    [graphPath.data?.edges],
+    () => new Set((pathData?.edges ?? []).map((e) => `${e.source_id}\x00${e.target_id}\x00${e.type}`)),
+    [pathData?.edges],
   )
 
   const load = (id: string) => {
@@ -176,6 +199,13 @@ export default function GraphPage() {
         </div>
       </div>
 
+      <div className="mb-3">
+        <Button variant="secondary" onClick={() => { void datasetQuery.refetch(); if (dsId) void graphQuery.refetch(); void healthQuery.refetch(); void vsaQuery.refetch() }} disabled={datasetQuery.isFetching || graphQuery.isFetching}>Refresh graph</Button>
+        {datasetQuery.isPending && <p className="text-sm text-gray-500">Loading datasets...</p>}
+        {[datasetQuery, graphQuery, healthQuery, vsaQuery].map((query, i) => query.isError && <p key={i} role="alert" className="text-sm text-red-600">{['Datasets', 'Graph', 'Health details', 'VSA status'][i]} unavailable: {query.error instanceof Error ? query.error.message : 'Request failed'}{query.data && !denied(query.error) && !graphDenied ? ' (showing stale data)' : ''}</p>)}
+        {datasetQuery.isSuccess && datasets.length === 0 && <p className="text-sm text-gray-500">No datasets available.</p>}
+      </div>
+
       {types.length > 0 && (
         <div className="flex gap-2 mb-3 flex-wrap">
           {types.map((t) => (
@@ -194,11 +224,11 @@ export default function GraphPage() {
         <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-3">
           <div className="flex items-center gap-2 flex-wrap">
             <Badge variant="info">SQL graph</Badge>
-            <Badge variant={healthDetails?.services?.neo4j?.status === 'connected' ? 'success' : 'default'}>
-              Neo4j {String(healthDetails?.services?.neo4j?.status || 'optional')}
+            <Badge variant={healthQuery.isError ? 'error' : healthDetails?.services?.neo4j?.status === 'connected' ? 'success' : 'default'}>
+              Neo4j {healthQuery.isError ? 'unavailable' : healthQuery.isPending ? 'loading' : String(healthDetails?.services?.neo4j?.status || 'unknown')}
             </Badge>
-            <Badge variant={vsa?.available ? 'success' : 'default'}>
-              VSA {vsa?.available ? `${vsa.fact_count ?? 0} facts` : 'off'}
+            <Badge variant={vsaQuery.isError ? 'error' : vsa?.available ? 'success' : 'default'}>
+              VSA {vsaQuery.isError ? 'unavailable' : vsaQuery.isPending ? 'loading' : vsa?.available ? `${vsa.fact_count ?? 0} facts` : 'off'}
             </Badge>
           </div>
         </div>
@@ -208,7 +238,7 @@ export default function GraphPage() {
             <Input placeholder="to node id" value={pathTo} onChange={(e) => setPathTo(e.target.value)} aria-label="Path to node id" />
             <Input value={pathMaxHops} onChange={(e) => setPathMaxHops(e.target.value)} inputMode="numeric" aria-label="Path max hops" />
             <Input placeholder="as_of unix" value={pathAsOf} onChange={(e) => setPathAsOf(e.target.value)} inputMode="numeric" aria-label="Path as of unix seconds" />
-            <Button size="sm" onClick={() => runPathSearch()} loading={graphPath.isPending} disabled={!pathFrom.trim() || !pathTo.trim()}>
+            <Button size="sm" onClick={() => runPathSearch()} loading={graphPath.isPending} disabled={graphDenied || !pathFrom.trim() || !pathTo.trim()}>
               <Route className="h-4 w-4" />
               Path
             </Button>
@@ -232,12 +262,12 @@ export default function GraphPage() {
           {graphPath.isError && (
             <p className="mt-2 text-xs text-red-600">{graphPath.error instanceof Error ? graphPath.error.message : 'Path search failed'}</p>
           )}
-          {graphPath.data && (
+          {pathData && (
             <div className="mt-3 flex items-center gap-2 flex-wrap text-xs text-gray-500">
-              <Badge variant={(graphPath.data?.edges ?? []).length > 0 ? 'success' : 'default'}>{(graphPath.data?.edges ?? []).length} path edges</Badge>
-              {graphPath.data.as_of > 0 && <span>as_of={graphPath.data.as_of}</span>}
-              {graphPath.data.next_cursor && (
-                <Button variant="secondary" size="sm" onClick={() => runPathSearch(graphPath.data?.next_cursor)}>
+              <Badge variant={(pathData?.edges ?? []).length > 0 ? 'success' : 'default'}>{(pathData?.edges ?? []).length} path edges</Badge>
+              {pathData.as_of > 0 && <span>as_of={pathData.as_of}</span>}
+              {pathData.next_cursor && (
+                <Button variant="secondary" size="sm" onClick={() => runPathSearch(pathData?.next_cursor)}>
                   <Search className="h-4 w-4" />
                   More
                 </Button>
@@ -250,9 +280,9 @@ export default function GraphPage() {
       <div className="flex-1 flex gap-4">
         <div className="flex-1 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 relative overflow-hidden">
           {loading && <div className="absolute inset-0 flex items-center justify-center"><Skeleton className="w-32 h-32 rounded-full" /></div>}
-          {!loading && !dsId && <EmptyState icon={Share2} title={t('graph.emptyselect')} description={t('graph.emptyselect.desc')} className="h-full" />}
-          {!loading && dsId && fNodes.length === 0 && <EmptyState icon={Share2} title={t('graph.empty')} description={t('graph.empty.desc')} className="h-full" />}
-          <svg ref={svgRef} className="w-full h-full" />
+          {!loading && !dsId && datasetQuery.isSuccess && <EmptyState icon={Share2} title={t('graph.emptyselect')} description={t('graph.emptyselect.desc')} className="h-full" />}
+          {!loading && dsId && graphQuery.isSuccess && !graphDenied && fNodes.length === 0 && <EmptyState icon={Share2} title={t('graph.empty')} description={t('graph.empty.desc')} className="h-full" />}
+          <svg ref={svgRef} className={graphDenied ? 'hidden' : 'w-full h-full'} />
           {fNodes.length > 0 && (
             <div className="absolute bottom-3 left-3 flex gap-2">
               <Badge variant="info">{fNodes.length} nodes</Badge>
@@ -261,29 +291,29 @@ export default function GraphPage() {
           )}
         </div>
 
-        {selected && (
+        {visibleSelected && (
           <div className="w-72 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-4 overflow-y-auto">
             <div className="flex items-center justify-between mb-3">
-              <h3 className="font-medium truncate">{selected.name}</h3>
+              <h3 className="font-medium truncate">{visibleSelected.name}</h3>
               <button onClick={() => setSelected(null)} className="text-gray-400 hover:text-gray-600 text-lg">×</button>
             </div>
-            <Badge style={{ backgroundColor: (COLORS[selected.type]||COLORS.default)+'20', color: COLORS[selected.type]||COLORS.default }}>
-              {selected.type || 'Entity'}
+            <Badge style={{ backgroundColor: (COLORS[visibleSelected.type]||COLORS.default)+'20', color: COLORS[visibleSelected.type]||COLORS.default }}>
+              {visibleSelected.type || 'Entity'}
             </Badge>
             <div className="mt-3 space-y-2 text-sm">
-            <div><span className="text-gray-500">ID:</span> <code className="text-xs break-all">{selected.id}</code></div>
+            <div><span className="text-gray-500">ID:</span> <code className="text-xs break-all">{visibleSelected.id}</code></div>
               <div className="flex gap-2 pt-1">
-                <Button variant="secondary" size="sm" onClick={() => setPathFrom(selected.id)}>{t('graph.setfrom')}</Button>
-                <Button variant="secondary" size="sm" onClick={() => setPathTo(selected.id)}>{t('graph.setto')}</Button>
+                <Button variant="secondary" size="sm" onClick={() => setPathFrom(visibleSelected.id)}>{t('graph.setfrom')}</Button>
+                <Button variant="secondary" size="sm" onClick={() => setPathTo(visibleSelected.id)}>{t('graph.setto')}</Button>
               </div>
-              {selected.properties && Object.entries(selected.properties).map(([k, v]) => (
+              {visibleSelected.properties && Object.entries(visibleSelected.properties).map(([k, v]) => (
                 <div key={k}><span className="text-gray-500">{k}:</span> <span className="ml-1">{String(v)}</span></div>
               ))}
             </div>
             <h4 className="font-medium mt-4 mb-2 text-sm">{t('graph.connections')}</h4>
             <div className="space-y-1">
-              {fEdges.filter((e) => e.source === selected.id || e.target === selected.id).slice(0, 20).map((e, i) => {
-                const otherId = e.source === selected.id ? e.target : e.source
+              {fEdges.filter((e) => e.source === visibleSelected.id || e.target === visibleSelected.id).slice(0, 20).map((e, i) => {
+                const otherId = e.source === visibleSelected.id ? e.target : e.source
                 const other = fNodes.find((n) => n.id === otherId)
                 return (
                   <div key={i} className="text-xs text-gray-500">

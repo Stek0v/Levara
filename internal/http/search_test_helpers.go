@@ -147,6 +147,9 @@ CREATE TABLE graph_communities (
 	level INTEGER NOT NULL DEFAULT 0,
 	parent_id TEXT NOT NULL DEFAULT '',
 	member_count INTEGER NOT NULL DEFAULT 0,
+ generation TEXT NOT NULL DEFAULT '',
+ sources_json TEXT NOT NULL DEFAULT '[]',
+ lineage_verified INTEGER NOT NULL DEFAULT 0 CHECK(lineage_verified IN (0,1)),
 	summary TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE community_members (

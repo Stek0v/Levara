@@ -2,7 +2,8 @@
 package http
 
 import (
-	"context"
+	"database/sql"
+	"errors"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 )
@@ -29,6 +30,8 @@ func RegisterFeedbackAPI(app fiber.Router, cfg APIConfig) {
 // @Router      /feedback [post]
 func feedbackSubmitHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
 		var req struct {
 			Query      string `json:"query"`
 			ResultID   string `json:"result_id"`
@@ -53,10 +56,12 @@ func feedbackSubmitHandler(cfg APIConfig) fiber.Handler {
 		id := uuid.New().String()
 		userID, _ := c.Locals("user_id").(string)
 
-		cfg.DB.ExecContext(context.Background(),
+		if _, err := cfg.DB.ExecContext(ctx,
 			Q(`INSERT INTO search_feedback (id, query, result_id, collection, search_type, rating, comment, user_id)
 			   VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`),
-			id, req.Query, req.ResultID, req.Collection, req.SearchType, req.Rating, req.Comment, userID)
+			id, req.Query, req.ResultID, req.Collection, req.SearchType, req.Rating, req.Comment, userID); err != nil {
+			return c.Status(503).JSON(fiber.Map{"detail": "feedback storage unavailable"})
+		}
 
 		// Feed back to adaptive router weights
 		if cfg.AdaptiveWeights != nil && req.SearchType != "" {
@@ -79,26 +84,31 @@ func feedbackSubmitHandler(cfg APIConfig) fiber.Handler {
 // @Router      /feedback/stats [get]
 func feedbackStatsHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
 		if cfg.DB == nil {
 			return c.JSON(fiber.Map{"total": 0})
 		}
 		collection := c.Query("collection")
 
-		var total, avgRating int
+		var total int
+		var avgRating float64
 		var worstQuery string
 
+		where := ""
+		args := []any{}
 		if collection != "" {
-			cfg.DB.QueryRowContext(context.Background(),
-				Q(`SELECT COUNT(*), COALESCE(AVG(rating),0) FROM search_feedback WHERE collection = $1`),
-				collection).Scan(&total, &avgRating)
-			cfg.DB.QueryRowContext(context.Background(),
-				Q(`SELECT query FROM search_feedback WHERE collection = $1 ORDER BY rating ASC LIMIT 1`),
-				collection).Scan(&worstQuery)
-		} else {
-			cfg.DB.QueryRowContext(context.Background(),
-				Q(`SELECT COUNT(*), COALESCE(AVG(rating),0) FROM search_feedback`)).Scan(&total, &avgRating)
-			cfg.DB.QueryRowContext(context.Background(),
-				Q(`SELECT query FROM search_feedback ORDER BY rating ASC LIMIT 1`)).Scan(&worstQuery)
+			where = " WHERE collection = $1"
+			args = append(args, collection)
+		}
+		if err := cfg.DB.QueryRowContext(ctx, Q("SELECT COUNT(*), COALESCE(AVG(rating),0) FROM search_feedback"+where), args...).Scan(&total, &avgRating); err != nil {
+			return c.Status(503).JSON(fiber.Map{"detail": "feedback storage unavailable"})
+		}
+		if err := cfg.DB.QueryRowContext(ctx, Q("SELECT query FROM search_feedback"+where+" ORDER BY rating ASC LIMIT 1"), args...).Scan(&worstQuery); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return c.Status(503).JSON(fiber.Map{"detail": "feedback storage unavailable"})
+		}
+		if ctx.Err() != nil {
+			return c.Status(503).JSON(fiber.Map{"detail": "feedback storage unavailable"})
 		}
 
 		return c.JSON(fiber.Map{
@@ -121,6 +131,8 @@ func feedbackStatsHandler(cfg APIConfig) fiber.Handler {
 // @Router      /feedback [get]
 func feedbackListHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		ctx, cancel := apiRequestContext(c)
+		defer cancel()
 		if cfg.DB == nil {
 			return c.JSON([]any{})
 		}
@@ -132,24 +144,20 @@ func feedbackListHandler(cfg APIConfig) fiber.Handler {
 			limit = 20
 		}
 
-		var rows interface {
-			Next() bool
-			Scan(...any) error
-			Close() error
-		}
+		var rows *sql.Rows
 		var err error
 		if collection != "" {
-			rows, err = cfg.DB.QueryContext(context.Background(),
+			rows, err = cfg.DB.QueryContext(ctx,
 				Q(`SELECT id, query, result_id, collection, search_type, rating, comment, user_id, created_at
 				   FROM search_feedback WHERE collection = $1 ORDER BY created_at DESC LIMIT $2`),
 				collection, limit)
 		} else {
-			rows, err = cfg.DB.QueryContext(context.Background(),
+			rows, err = cfg.DB.QueryContext(ctx,
 				Q(`SELECT id, query, result_id, collection, search_type, rating, comment, user_id, created_at
 				   FROM search_feedback ORDER BY created_at DESC LIMIT $1`), limit)
 		}
 		if err != nil {
-			return c.JSON([]any{})
+			return c.Status(503).JSON(fiber.Map{"detail": "feedback storage unavailable"})
 		}
 		defer rows.Close()
 
@@ -157,12 +165,23 @@ func feedbackListHandler(cfg APIConfig) fiber.Handler {
 		for rows.Next() {
 			var id, query, resultID, coll, st, comment, uid, ca string
 			var rating int
-			rows.Scan(&id, &query, &resultID, &coll, &st, &rating, &comment, &uid, &ca)
+			if err := rows.Scan(&id, &query, &resultID, &coll, &st, &rating, &comment, &uid, &ca); err != nil {
+				return c.Status(503).JSON(fiber.Map{"detail": "feedback storage unavailable"})
+			}
 			feedback = append(feedback, fiber.Map{
 				"id": id, "query": query, "result_id": resultID, "collection": coll,
 				"search_type": st, "rating": rating, "comment": comment,
 				"user_id": uid, "created_at": ca,
 			})
+		}
+		if err := rows.Err(); err != nil {
+			return c.Status(503).JSON(fiber.Map{"detail": "feedback storage unavailable"})
+		}
+		if err := rows.Close(); err != nil {
+			return c.Status(503).JSON(fiber.Map{"detail": "feedback storage unavailable"})
+		}
+		if ctx.Err() != nil {
+			return c.Status(503).JSON(fiber.Map{"detail": "feedback storage unavailable"})
 		}
 		if feedback == nil {
 			feedback = []fiber.Map{}

@@ -184,6 +184,9 @@ func (wal *WAL) writeEntryLocked(op byte, id string, vector []float32, metadata 
 // writeWALEntryTo writes a single WAL entry to w. Used by both normal WAL writes
 // and checkpoint compaction. The caller is responsible for any locking or flushing.
 func writeWALEntryTo(w *bufio.Writer, op byte, id string, vector []float32, metadata []byte, loc FileLocation) error {
+	if err := validateWALRecord(op, id, vector, metadata, loc); err != nil {
+		return err
+	}
 	idBytes := []byte(id)
 	idLen := uint32(len(idBytes))
 	vectorLen := uint32(len(vector) * 4) // 4 bytes per float32

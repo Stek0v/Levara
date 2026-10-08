@@ -3,6 +3,7 @@ package community
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"log"
 )
 
@@ -17,7 +18,10 @@ func IncrementalUpdate(ctx context.Context, db *sql.DB, g *Graph, cfg Config) (*
 	}
 
 	// Load existing partition from community_members
-	existingPartition, existingNodeCount := loadPartition(ctx, db, g)
+	existingPartition, existingNodeCount, err := loadPartition(ctx, db, g)
+	if err != nil {
+		return nil, err
+	}
 
 	newNodes := g.NodeCount() - existingNodeCount
 
@@ -61,17 +65,17 @@ func IncrementalUpdate(ctx context.Context, db *sql.DB, g *Graph, cfg Config) (*
 
 // loadPartition loads the existing Level 0 partition from community_members table.
 // Returns partition array (indexed by graph node index) and count of nodes that had communities.
-func loadPartition(ctx context.Context, db *sql.DB, g *Graph) ([]int, int) {
+func loadPartition(ctx context.Context, db *sql.DB, g *Graph) ([]int, int, error) {
 	partition := initPartition(g.n) // default: each node in its own community
 
 	if db == nil {
-		return partition, 0
+		return partition, 0, nil
 	}
 
 	rows, err := db.QueryContext(ctx,
 		"SELECT node_id, community_id FROM community_members WHERE level = 0")
 	if err != nil {
-		return partition, 0
+		return nil, 0, fmt.Errorf("load community partition: %w", err)
 	}
 	defer rows.Close()
 
@@ -81,8 +85,8 @@ func loadPartition(ctx context.Context, db *sql.DB, g *Graph) ([]int, int) {
 
 	for rows.Next() {
 		var nodeID, commID string
-		if rows.Scan(&nodeID, &commID) != nil {
-			continue
+		if err := rows.Scan(&nodeID, &commID); err != nil {
+			return nil, 0, fmt.Errorf("scan community partition: %w", err)
 		}
 
 		graphIdx, ok := g.idxOf[nodeID]
@@ -99,5 +103,11 @@ func loadPartition(ctx context.Context, db *sql.DB, g *Graph) ([]int, int) {
 		existingCount++
 	}
 
-	return partition, existingCount
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("load community partition: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, 0, fmt.Errorf("close community partition: %w", err)
+	}
+	return partition, existingCount, nil
 }

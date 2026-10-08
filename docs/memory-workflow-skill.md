@@ -17,8 +17,11 @@ The skill is stored at:
 For coding, debugging, architecture, review, and operational investigations,
 the skill directs the agent to:
 
-1. derive a stable project collection and call `set_context`;
-2. call `wake_up` with a bounded context budget;
+1. derive a stable project collection; on legacy `/mcp` select it with
+   `set_context` in the same session;
+2. call `wake_up(collection="<project>", max_tokens=300)`; on stateless latest
+   `/mcp/2026-07-28`, omit `set_context` and pass `collection` explicitly on
+   every collection-aware call;
 3. recall relevant decisions or discoveries before new research;
 4. verify recalled claims against current authoritative sources;
 5. save durable decisions, discoveries, facts, preferences, advice, and dated
@@ -37,15 +40,18 @@ the skill must not override its immediate-save triggers.
 
 - A running Levara MCP endpoint.
 - The `core`, `memory`, `workspace`, `long-horizon`, or `full` MCP toolset.
-  `core` is enough for recall and `save_memory`. History-preserving
-  supersession requires `memory`, `full`, or `long-horizon` because only those
-  profiles expose `supersede_memory`.
+  `core` supports recall, `save_memory`, `supersede_memory`, and `delete_memory`.
+  Supersession is also advertised by `memory`, `full`, and `long-horizon`;
+  deletion by `memory` and `full`. `workspace` lacks both; `long-horizon`
+  lacks `delete_memory`. Inspect the active server's `tools/list`.
 - An agent client that supports Agent Skills or equivalent reusable
   instructions.
 
-At minimum, the server must expose `levara_instructions`, `set_context`,
-`wake_up`, `recall_memory`, and `save_memory`. For replacement with retained
-history, also expose `supersede_memory`.
+At minimum, the server must expose `levara_instructions`, `wake_up`,
+`recall_memory`, and `save_memory`. Legacy bootstrap also uses `set_context`.
+The latest endpoint hides and rejects this session-only tool, so the client
+must send explicit collection arguments and the required per-request protocol
+metadata. For replacement with retained history, also expose `supersede_memory`.
 
 ## Install for Codex
 
@@ -99,11 +105,12 @@ server itself has authentication intentionally disabled
 persistent deployments. Use HTTPS for endpoints accessed across an untrusted
 network.
 
-Configure the tool surface on the server. Use `core` for recall and simple
-saves; use `memory` (or `full`) when agents must supersede with history:
+Configure the tool surface on the server. `core` includes recall, saves,
+history-preserving supersession, and deletion. Use `memory` or `full` for
+additional memory workflows:
 
 ```bash
-export LEVARA_MCP_TOOLSET=memory
+export LEVARA_MCP_TOOLSET=core
 ```
 
 Restart both Levara and Codex after changing their configuration.
@@ -114,8 +121,9 @@ Restart both Levara and Codex after changing their configuration.
   it whenever an outcome replaces a live memory and the tool is available.
 - `save_memory(supersedes_memory_id=...)` stores provenance on the written row
   only. It does not retire the old memory from recall.
-- On `core` / `workspace`, either overwrite the same key or leave both rows
-  active; do not advertise history-preserving supersession.
+- When `supersede_memory` is unavailable (for example on `workspace`), either
+  overwrite the same key or leave both rows active; do not advertise
+  history-preserving supersession.
 
 ## Other clients
 
@@ -136,9 +144,10 @@ Use $levara-memory-workflow to continue work on this project. Show which
 collection you selected and recall prior decisions about deployment.
 ```
 
-A correct setup should call `levara_instructions`, `set_context`, `wake_up`,
-and an appropriate recall tool. It should not create a memory merely to prove
-that writes work.
+A correct legacy setup should call `levara_instructions`, `set_context`,
+`wake_up`, and an appropriate recall tool in the same session. On latest,
+`set_context` must be absent and `wake_up` and recall must carry the selected
+collection explicitly. Do not create a memory merely to prove that writes work.
 
 After a real, verified decision or root-cause investigation, the agent should
 save a concise memory and mention the collection and memory type in its final

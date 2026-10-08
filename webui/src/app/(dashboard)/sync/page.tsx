@@ -1,6 +1,7 @@
 'use client'
 
 import { useMemo, useState } from 'react'
+import { ApiError } from '@/lib/api'
 import { useRunSync, useSyncManifest, useSyncStatus } from '@/hooks/use-levara'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -28,8 +29,16 @@ export default function SyncPage() {
   const status = useSyncStatus(20)
   const syncMutation = useRunSync()
 
+  const statusDenied = status.error instanceof ApiError && (status.error.status === 401 || status.error.status === 403)
+  const manifestDenied = manifest.error instanceof ApiError && (manifest.error.status === 401 || manifest.error.status === 403)
+  const statusData = statusDenied ? undefined : status.data
+  const manifestData = manifestDenied ? undefined : manifest.data
+  const statusUnavailable = status.isError || Boolean(statusData?.error)
+  const runStatus = syncMutation.isPending ? 'running' : String(syncMutation.data?.status || (syncMutation.isSuccess ? 'unconfirmed' : '')).toLowerCase()
+  const runFailed = syncMutation.isError || runStatus === 'error' || runStatus === 'failed' || (runStatus !== 'partial' && Boolean(syncMutation.data?.error))
+
   const selectedCollections = useMemo(() => splitCSV(collections), [collections])
-  const canRun = remoteURL.trim() !== '' && types.length > 0
+  const canRun = remoteURL.trim() !== '' && types.length > 0 && (!types.includes('collections') || selectedCollections.length > 0)
 
   const run = () => {
     if (!canRun) return
@@ -46,9 +55,11 @@ export default function SyncPage() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold">Sync</h1>
-        <Badge variant={status.data?.error ? 'error' : 'success'}>{status.data?.error ? 'degraded' : 'ready'}</Badge>
+        <Badge variant={statusUnavailable ? 'error' : status.isPending ? 'default' : 'success'}>{statusUnavailable ? 'unavailable' : status.isPending ? 'loading' : 'ready'}</Badge>
       </div>
 
+      <Button variant="secondary" onClick={() => { void status.refetch(); void manifest.refetch() }} disabled={status.isFetching || manifest.isFetching}>Refresh sync status</Button>
+      {statusUnavailable && <p role="alert" className="mb-4 text-sm text-red-600">Sync status unavailable: {status.error instanceof Error ? status.error.message : statusData?.error}{statusData ? ' (showing stale data)' : ''}</p>}
       <div className="grid grid-cols-1 xl:grid-cols-[1.1fr_0.9fr] gap-6">
         <section className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-5">
           <h2 className="text-lg font-semibold mb-4 flex items-center gap-2"><RefreshCw className="h-5 w-5 text-blue-600" /> Run Sync</h2>
@@ -82,11 +93,13 @@ export default function SyncPage() {
             {types.includes('collections') && (
               <Input label="Collections" value={collections} onChange={(e) => setCollections(e.target.value)} placeholder="docs,levara,project_x" />
             )}
+            {types.includes('collections') && selectedCollections.length === 0 && <p className="text-xs text-amber-600">Select explicit collection names before syncing collections.</p>}
             <Button onClick={run} loading={syncMutation.isPending} disabled={!canRun}>
               <RefreshCw className="h-4 w-4" />
               Run {direction}
             </Button>
             {syncMutation.isError && <p className="text-xs text-red-600">{syncMutation.error instanceof Error ? syncMutation.error.message : 'Sync failed'}</p>}
+            {(runStatus || runFailed) && <p role="status" className={runFailed ? 'text-sm text-red-600' : runStatus === 'partial' ? 'text-sm text-amber-600' : 'text-sm'}>Sync {runFailed ? 'failed' : runStatus === 'partial' ? 'partially completed' : runStatus === 'unconfirmed' ? 'completion not confirmed' : runStatus === 'running' || runStatus === 'accepted' || runStatus === 'pending' || runStatus === 'started' ? 'running; completion not confirmed' : runStatus}</p>}
             {syncMutation.data && (
               <pre className="max-h-72 overflow-auto rounded-md bg-gray-50 dark:bg-gray-950 p-3 text-xs">{JSON.stringify(syncMutation.data, null, 2)}</pre>
             )}
@@ -95,26 +108,28 @@ export default function SyncPage() {
 
         <section className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-5">
           <h2 className="text-lg font-semibold mb-4 flex items-center gap-2"><Database className="h-5 w-5 text-green-600" /> Local Manifest</h2>
+          {manifest.isPending && <p className="text-sm text-gray-500">Loading manifest...</p>}
+          {manifest.isError && <p role="alert" className="text-sm text-red-600">Manifest unavailable: {manifest.error instanceof Error ? manifest.error.message : 'Request failed'}{manifestData ? ' (showing stale data)' : ''}</p>}
           <div className="space-y-3 text-sm">
-            <div className="flex justify-between"><span className="text-gray-500">Version</span><span className="truncate">{manifest.data?.version || '-'}</span></div>
-            <div className="flex justify-between"><span className="text-gray-500">Embed model</span><span className="truncate">{manifest.data?.embed_model || '-'}</span></div>
-            <div className="flex justify-between"><span className="text-gray-500">Embed dim</span><span>{manifest.data?.embed_dim || 0}</span></div>
+            <div className="flex justify-between"><span className="text-gray-500">Version</span><span className="truncate">{manifestData?.version || '-'}</span></div>
+            <div className="flex justify-between"><span className="text-gray-500">Embed model</span><span className="truncate">{manifestData?.embed_model || '-'}</span></div>
+            <div className="flex justify-between"><span className="text-gray-500">Embed dim</span><span>{manifestData?.embed_dim || 0}</span></div>
             <div className="grid grid-cols-2 gap-2 pt-2">
-              <Badge variant="info">memories {manifest.data?.memories?.count ?? 0}</Badge>
-              <Badge variant="info">interactions {manifest.data?.interactions?.count ?? 0}</Badge>
-              <Badge variant="info">nodes {manifest.data?.graph_nodes?.count ?? 0}</Badge>
-              <Badge variant="info">edges {manifest.data?.graph_edges?.count ?? 0}</Badge>
+              <Badge variant="info">memories {manifestData?.memories?.count ?? 0}</Badge>
+              <Badge variant="info">interactions {manifestData?.interactions?.count ?? 0}</Badge>
+              <Badge variant="info">nodes {manifestData?.graph_nodes?.count ?? 0}</Badge>
+              <Badge variant="info">edges {manifestData?.graph_edges?.count ?? 0}</Badge>
             </div>
             <div className="pt-3">
               <p className="text-xs font-medium text-gray-500 mb-2">Collections</p>
               <div className="space-y-2">
-                {(manifest.data?.collections ?? []).slice(0, 10).map((collection) => (
+                {(manifestData?.collections ?? []).slice(0, 10).map((collection) => (
                   <div key={collection.name} className="flex items-center justify-between gap-3 rounded-md border border-gray-100 dark:border-gray-800 px-3 py-2">
                     <span className="truncate">{collection.name}</span>
                     <span className="text-xs text-gray-500">{collection.records} rec / dim {collection.dim}</span>
                   </div>
                 ))}
-                {manifest.isSuccess && (manifest.data?.collections ?? []).length === 0 && <p className="text-sm text-gray-400">No collections.</p>}
+                {manifest.isSuccess && (manifestData?.collections ?? []).length === 0 && <p className="text-sm text-gray-400">No collections.</p>}
               </div>
             </div>
           </div>
@@ -124,7 +139,7 @@ export default function SyncPage() {
       <section className="mt-6 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-5">
         <h2 className="text-lg font-semibold mb-4">Recent Sync Events</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
-          {Object.entries(status.data?.by_direction ?? {}).map(([dir, item]) => (
+          {Object.entries(statusData?.by_direction ?? {}).map(([dir, item]) => (
             <div key={dir} className="rounded-md border border-gray-100 dark:border-gray-800 p-3">
               <div className="flex items-center justify-between">
                 <Badge variant={dir === 'pull' ? 'info' : 'success'}>{dir}</Badge>
@@ -146,7 +161,7 @@ export default function SyncPage() {
               </tr>
             </thead>
             <tbody>
-              {(status.data?.events ?? []).map((event) => (
+              {(statusData?.events ?? []).map((event) => (
                 <tr key={event.id} className="border-t border-gray-100 dark:border-gray-800">
                   <td className="py-2 pr-3"><Badge variant={event.direction === 'pull' ? 'info' : 'success'}>{event.direction}</Badge></td>
                   <td className="py-2 pr-3 truncate max-w-md">{event.remote}</td>
@@ -156,7 +171,7 @@ export default function SyncPage() {
               ))}
             </tbody>
           </table>
-          {status.isSuccess && (status.data?.events ?? []).length === 0 && <p className="text-sm text-gray-400">No sync events yet.</p>}
+          {status.isSuccess && (statusData?.events ?? []).length === 0 && <p className="text-sm text-gray-400">No sync events yet.</p>}
         </div>
       </section>
     </div>

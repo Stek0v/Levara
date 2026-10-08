@@ -317,9 +317,13 @@ func TestMemoryTrustPostgresPublicationLockOrder(t *testing.T) {
 					done <- ToolTaskComplete(ctx, d, map[string]any{"task_id": task, "expected_version": checkpoint["version"]})
 				}
 			}()
+			mode := "RowExclusiveLock"
+			if operation == "completion" {
+				mode = "ShareRowExclusiveLock"
+			}
 			for {
 				var waiting bool
-				if err := d.DB().QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM pg_locks WHERE relation='memories'::regclass AND mode='RowExclusiveLock' AND NOT granted)").Scan(&waiting); err != nil {
+				if err := d.DB().QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM pg_locks WHERE relation='memories'::regclass AND mode=$1 AND NOT granted)", mode).Scan(&waiting); err != nil {
 					t.Fatal(err)
 				}
 				if waiting {

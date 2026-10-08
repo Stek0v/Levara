@@ -1,6 +1,7 @@
 package http
 
 import (
+	"database/sql"
 	"fmt"
 	"strings"
 
@@ -28,6 +29,17 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func validMCPSession(c *fiber.Ctx, db *sql.DB, requireAuth bool, payload *jwtPayload) (verifiedMCPAuthorization, bool) {
+	if payload == nil || payload.Sub == "" {
+		return verifiedMCPAuthorization{}, false
+	}
+	if db == nil {
+		return verifiedMCPAuthorization{UserID: payload.Sub}, !requireAuth
+	}
+	tenant, superuser, err := accesspkg.ValidateSessionCredentialAuthorization(c.UserContext(), db, Q, payload.Sub, payload.CredentialEpoch, payload.SessionID)
+	return verifiedMCPAuthorization{UserID: payload.Sub, TenantID: tenant, Superuser: superuser}, err == nil
 }
 
 // authenticateMCPRequest verifies the caller's identity from API key or JWT.
@@ -72,9 +84,11 @@ func (h *mcpHandler) authenticateMCPRequest(c *fiber.Ctx) (accesspkg.Actor, erro
 		}
 		return accesspkg.Actor{}, fmt.Errorf("invalid token")
 	}
-	if !validSession(c.UserContext(), h.cfg.DB, h.cfg.RequireAuth, payload) {
+	authorization, valid := validMCPSession(c, h.cfg.DB, h.cfg.RequireAuth, payload)
+	if !valid {
 		return accesspkg.Actor{}, fmt.Errorf("invalid or revoked user credential")
 	}
 	c.Locals("verified_jwt", *payload)
+	c.Locals("verified_mcp_authorization", authorization)
 	return accesspkg.Actor{UserID: payload.Sub, AuthMethod: "jwt"}, nil
 }

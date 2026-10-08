@@ -5,12 +5,15 @@ package http
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
+	"math"
+	"math/big"
 	"net/http"
 	"net/url"
 	"strings"
@@ -20,7 +23,9 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/stek0v/levara/internal/metrics"
 	"github.com/stek0v/levara/pkg/access"
+	"github.com/stek0v/levara/pkg/embcontract"
 	"github.com/stek0v/levara/pkg/embed"
+	"github.com/stek0v/levara/pkg/memoryindex"
 )
 
 // RegisterSyncAPI registers sync export/import endpoints.
@@ -57,6 +62,12 @@ func authorizeSync(ctx context.Context, cfg APIConfig) error {
 	userID, _ := ctx.Value(mcpUserIDKey).(string)
 	if !cfg.RequireAuth && userID == "" {
 		return nil
+	}
+	if superuser, verified := verifiedMCPSuperuser(ctx, userID); verified {
+		if superuser {
+			return nil
+		}
+		return fmt.Errorf("sync requires an active superuser")
 	}
 	policy := access.SQLPolicy{DB: cfg.DB, Q: Q}
 	super, err := policy.IsSuperuser(ctx, userID)
@@ -150,14 +161,15 @@ func syncStatusHandler(cfg APIConfig) fiber.Handler {
 // ── Manifest ──
 
 type syncManifest struct {
-	Version      string               `json:"version"`
-	EmbedModel   string               `json:"embed_model"`
-	EmbedDim     int                  `json:"embed_dim"`
-	Memories     syncCount            `json:"memories"`
-	Interactions syncCount            `json:"interactions"`
-	GraphNodes   syncCount            `json:"graph_nodes"`
-	GraphEdges   syncCount            `json:"graph_edges"`
-	Collections  []syncCollectionInfo `json:"collections"`
+	Version               string               `json:"version"`
+	MemoryProtocolVersion int                  `json:"memory_protocol_version"`
+	EmbedModel            string               `json:"embed_model"`
+	EmbedDim              int                  `json:"embed_dim"`
+	Memories              syncCount            `json:"memories"`
+	Interactions          syncCount            `json:"interactions"`
+	GraphNodes            syncCount            `json:"graph_nodes"`
+	GraphEdges            syncCount            `json:"graph_edges"`
+	Collections           []syncCollectionInfo `json:"collections"`
 }
 
 type syncCount struct {
@@ -178,8 +190,9 @@ func syncManifestHandler(identityCfg IdentityConfig, accessCfg AccessConfig, sea
 		defer cancel()
 
 		m := syncManifest{
-			Version:    identityCfg.Version,
-			EmbedModel: searchCfg.EmbedModel,
+			Version:               identityCfg.Version,
+			MemoryProtocolVersion: syncMemoryProtocolVersion,
+			EmbedModel:            searchCfg.EmbedModel,
 		}
 		if searchCfg.Collections != nil {
 			for _, meta := range searchCfg.Collections.ListWithMeta() {
@@ -215,26 +228,60 @@ func syncManifestHandler(identityCfg IdentityConfig, accessCfg AccessConfig, sea
 
 // ── Memory Sync ──
 
-type syncMemory struct {
+const syncMemoryProtocolVersion = 3
+
+type syncMemoryDeletion struct {
 	ID             string `json:"id"`
 	Key            string `json:"key"`
-	Value          string `json:"value"`
-	Type           string `json:"type"`
 	OwnerID        string `json:"owner_id"`
 	CollectionName string `json:"collection_name"`
-	Room           string `json:"room"`
-	Hall           string `json:"hall"`
-	IsPinned       bool   `json:"is_pinned"`
-	PinPriority    int    `json:"pin_priority"`
-	CreatedAt      string `json:"created_at"`
-	UpdatedAt      string `json:"updated_at"`
+	DeletedAt      string `json:"deleted_at"`
+}
+
+// An object envelope is intentional: old peers must reject it rather than
+// decode an unknown deletion flag as an ordinary active memory.
+type syncMemoryBatch struct {
+	ProtocolVersion int                     `json:"protocol_version"`
+	Memories        []syncMemory            `json:"memories"`
+	Deletions       []syncMemoryDeletion    `json:"deletions"`
+	Incarnations    []syncMemoryIncarnation `json:"incarnations"`
+	Aliases         []syncMemoryAlias       `json:"aliases"`
+}
+
+func (batch syncMemoryBatch) validate() error {
+	if batch.ProtocolVersion != syncMemoryProtocolVersion || batch.Memories == nil || batch.Deletions == nil || batch.Incarnations == nil || batch.Aliases == nil {
+		return errors.New("memory sync protocol version 3 envelope required")
+	}
+	return nil
+}
+
+type syncMemory struct {
+	ID                 string `json:"id"`
+	Key                string `json:"key"`
+	Value              string `json:"value"`
+	Type               string `json:"type"`
+	OwnerID            string `json:"owner_id"`
+	CollectionName     string `json:"collection_name"`
+	Room               string `json:"room"`
+	Hall               string `json:"hall"`
+	IsPinned           bool   `json:"is_pinned"`
+	PinPriority        int    `json:"pin_priority"`
+	CreatedAt          string `json:"created_at"`
+	UpdatedAt          string `json:"updated_at"`
+	ValidUntil         string `json:"valid_until,omitempty"`
+	SupersededBy       string `json:"superseded_by,omitempty"`
+	SupersedesMemoryID string `json:"supersedes_memory_id,omitempty"`
+	SupersessionReason string `json:"supersession_reason,omitempty"`
+	Tier               string `json:"tier,omitempty"`
+	ConsolidatedFrom   string `json:"consolidated_from,omitempty"`
+	ConsolidationRunID string `json:"consolidation_run_id,omitempty"`
 }
 
 func syncExportMemoriesHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		ctx, cancel := syncRequestContext(c)
 		defer cancel()
-		result, err := exportSyncMemories(ctx, cfg, c.Query("since"))
+		result, err := exportSyncMemoryBatch(ctx, cfg, c.Query("since"))
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"detail": syncErrorText(err, cfg.SyncToken)})
 		}
@@ -242,25 +289,33 @@ func syncExportMemoriesHandler(cfg APIConfig) fiber.Handler {
 	}
 }
 
+// ponytail: send the full lifecycle snapshot until a durable revision cursor
+// exists. A wall-clock since filter can omit a referenced successor or deletion.
+func exportSyncMemoryBatch(ctx context.Context, cfg APIConfig, since string) (syncMemoryBatch, error) {
+	return exportSyncMemoryGenerationBatch(ctx, cfg, since)
+}
+
+func importSyncMemoryBatch(ctx context.Context, cfg APIConfig, batch syncMemoryBatch) (map[string]int, error) {
+	if err := batch.validate(); err != nil {
+		return nil, err
+	}
+	return importSyncMemoryGenerations(ctx, cfg, batch)
+}
+
 func exportSyncMemories(ctx context.Context, cfg APIConfig, since string) ([]syncMemory, error) {
 	if cfg.DB == nil {
 		return nil, fmt.Errorf("database not configured")
 	}
-	var rows *sql.Rows
-	var err error
-	if since != "" {
-		rows, err = cfg.DB.QueryContext(ctx,
-			Q(`SELECT id, key, value, type, owner_id, collection_name,
-					 COALESCE(room,''), COALESCE(hall,''), is_pinned, pin_priority,
-					 created_at, updated_at
-					 FROM memories WHERE updated_at > $1 ORDER BY updated_at LIMIT 10000`), since)
-	} else {
-		rows, err = cfg.DB.QueryContext(ctx,
-			Q(`SELECT id, key, value, type, owner_id, collection_name,
-					 COALESCE(room,''), COALESCE(hall,''), is_pinned, pin_priority,
-					 created_at, updated_at
-					 FROM memories ORDER BY updated_at LIMIT 10000`))
+	boundary, err := syncExportBoundary(since)
+	if err != nil {
+		return nil, err
 	}
+	// ponytail: scan under the request deadline; dialect timestamp text is not
+	// chronologically comparable. Add a normalized indexed revision for large corpora.
+	rows, err := cfg.DB.QueryContext(ctx,
+		Q(`SELECT id, key, value, type, owner_id, collection_name,
+			 COALESCE(room,''), COALESCE(hall,''), is_pinned, pin_priority,
+			 created_at, updated_at, COALESCE(CAST(valid_until AS TEXT),''),superseded_by,supersedes_memory_id,supersession_reason FROM memories ORDER BY updated_at,id`))
 	if err != nil {
 		return nil, err
 	}
@@ -269,10 +324,28 @@ func exportSyncMemories(ctx context.Context, cfg APIConfig, since string) ([]syn
 	for rows.Next() {
 		var m syncMemory
 		if err := rows.Scan(&m.ID, &m.Key, &m.Value, &m.Type, &m.OwnerID, &m.CollectionName,
-			&m.Room, &m.Hall, &m.IsPinned, &m.PinPriority, &m.CreatedAt, &m.UpdatedAt); err != nil {
+			&m.Room, &m.Hall, &m.IsPinned, &m.PinPriority, &m.CreatedAt, &m.UpdatedAt, &m.ValidUntil, &m.SupersededBy, &m.SupersedesMemoryID, &m.SupersessionReason); err != nil {
 			return nil, err
 		}
-		result = append(result, m)
+		m.CreatedAt, err = normalizeSyncTimestamp(m.CreatedAt, false)
+		if err != nil {
+			return nil, err
+		}
+		m.UpdatedAt, err = normalizeSyncTimestamp(m.UpdatedAt, false)
+		if err != nil {
+			return nil, err
+		}
+		m.ValidUntil, err = normalizeSyncTimestamp(m.ValidUntil, true)
+		if err != nil {
+			return nil, err
+		}
+		included, err := syncSinceIncludes(m.UpdatedAt, boundary)
+		if err != nil {
+			return nil, err
+		}
+		if included {
+			result = append(result, m)
+		}
 	}
 	if result == nil {
 		result = []syncMemory{}
@@ -291,63 +364,20 @@ func syncImportMemoriesHandler(cfg APIConfig) fiber.Handler {
 		if cfg.DB == nil {
 			return c.Status(503).JSON(fiber.Map{"detail": "database not configured"})
 		}
-		var memories []syncMemory
-		if err := c.BodyParser(&memories); err != nil {
-			return c.Status(400).JSON(fiber.Map{"detail": "invalid JSON array"})
+		var batch syncMemoryBatch
+		if err := c.BodyParser(&batch); err != nil {
+			return c.Status(400).JSON(fiber.Map{"detail": "memory sync protocol version 2 envelope required"})
 		}
-
-		counts, accepted, importErr := importSyncMemories(ctx, cfg, memories)
+		if err := batch.validate(); err != nil {
+			return c.Status(400).JSON(fiber.Map{"detail": err.Error()})
+		}
+		counts, importErr := importSyncMemoryBatch(ctx, cfg, batch)
 		imported := counts["imported"]
-
 		metrics.SyncOperations.WithLabelValues("import", "memories", "ok").Add(float64(imported))
-
-		// Auto re-embed imported memories into _memories vector collection.
-		// A.4 (20.04 review backlog): wrap fire-and-forget goroutine in
-		// recover so a single bad metadata blob can't take the goroutine
-		// down silently — the original "continue on error" loop covered
-		// embed failures but not panics from json.Marshal / Insert paths.
-		embedded := 0
-		if imported > 0 && cfg.EmbedEndpoint != "" && cfg.Collections != nil {
-			embedClient := cfg.EmbedClient
-			if embedClient == nil {
-				embedClient = embed.NewClient(cfg.EmbedEndpoint, cfg.EmbedModel, 16, 3)
-			}
-			memoriesSnapshot := accepted
-			go func() {
-				defer func() {
-					if r := recover(); r != nil {
-						log.Printf("[sync] auto re-embed panic recovered: %v", r)
-					}
-				}()
-				bgCtx, bgCancel := backgroundTaskContext()
-				defer bgCancel()
-
-				for _, m := range memoriesSnapshot {
-					text := m.Key + " " + m.Value
-					vec, err := embedClient.EmbedSingle(bgCtx, text)
-					if err != nil {
-						continue
-					}
-					memColl := "_memories"
-					if m.CollectionName != "" {
-						memColl = "_memories_" + m.CollectionName
-					}
-					meta, _ := json.Marshal(map[string]any{
-						"key": m.Key, "value": m.Value, "type": m.Type,
-						"collection": m.CollectionName, "memory_id": m.ID,
-						"room": m.Room, "hall": m.Hall,
-						"is_pinned": m.IsPinned, "pin_priority": m.PinPriority,
-					})
-					if err := cfg.Collections.Insert(memColl, m.ID, vec, meta); err == nil {
-						embedded++
-					}
-				}
-				log.Printf("[sync] auto re-embed: %d/%d memories embedded into vector index", embedded, len(memoriesSnapshot))
-			}()
-		}
-
 		result := syncCountsResult(counts, importErr, cfg.SyncToken)
-		result["embedding"] = imported > 0 && cfg.EmbedEndpoint != "" && cfg.Collections != nil
+		// This acknowledges durable queued index intent, not completed embedding.
+		result["embedding"] = imported > 0 && cfg.MemoryIndexOutbox != nil
+		result["protocol_version"] = syncMemoryProtocolVersion
 		return c.JSON(result)
 	}
 }
@@ -380,17 +410,13 @@ func exportSyncInteractions(ctx context.Context, cfg APIConfig, since string) ([
 	if cfg.DB == nil {
 		return nil, fmt.Errorf("database not configured")
 	}
-	var rows *sql.Rows
-	var err error
-	if since != "" {
-		rows, err = cfg.DB.QueryContext(ctx,
-			Q(`SELECT id, COALESCE(session_id,''), COALESCE(user_id,''), COALESCE(query,''), COALESCE(response,''), COALESCE(search_type,''), created_at
-					 FROM interactions WHERE created_at > $1 ORDER BY created_at LIMIT 10000`), since)
-	} else {
-		rows, err = cfg.DB.QueryContext(ctx,
-			Q(`SELECT id, COALESCE(session_id,''), COALESCE(user_id,''), COALESCE(query,''), COALESCE(response,''), COALESCE(search_type,''), created_at
-					 FROM interactions ORDER BY created_at LIMIT 10000`))
+	boundary, err := syncExportBoundary(since)
+	if err != nil {
+		return nil, err
 	}
+	rows, err := cfg.DB.QueryContext(ctx,
+		Q(`SELECT id, COALESCE(session_id,''), COALESCE(user_id,''), COALESCE(query,''), COALESCE(response,''), COALESCE(search_type,''), created_at
+			 FROM interactions ORDER BY created_at,id`))
 	if err != nil {
 		return nil, err
 	}
@@ -401,7 +427,17 @@ func exportSyncInteractions(ctx context.Context, cfg APIConfig, since string) ([
 		if err := rows.Scan(&i.ID, &i.SessionID, &i.UserID, &i.Query, &i.Response, &i.SearchType, &i.CreatedAt); err != nil {
 			return nil, err
 		}
-		result = append(result, i)
+		i.CreatedAt, err = normalizeSyncTimestamp(i.CreatedAt, false)
+		if err != nil {
+			return nil, err
+		}
+		included, err := syncSinceIncludes(i.CreatedAt, boundary)
+		if err != nil {
+			return nil, err
+		}
+		if included {
+			result = append(result, i)
+		}
 	}
 	if result == nil {
 		result = []syncInteraction{}
@@ -477,7 +513,7 @@ func exportSyncGraph(ctx context.Context, cfg APIConfig) (syncGraph, error) {
 	g := syncGraph{}
 
 	nodeRows, err := cfg.DB.QueryContext(ctx,
-		Q(`SELECT id, name, type, COALESCE(description,''), COALESCE(properties,'{}'), COALESCE(dataset_id,'') FROM graph_nodes LIMIT 50000`))
+		Q(`SELECT id, name, type, COALESCE(description,''), COALESCE(properties,'{}'), COALESCE(dataset_id,'') FROM graph_nodes ORDER BY id`))
 	if err != nil {
 		return syncGraph{}, err
 	}
@@ -485,6 +521,10 @@ func exportSyncGraph(ctx context.Context, cfg APIConfig) (syncGraph, error) {
 	for nodeRows.Next() {
 		var n syncGraphNode
 		if err := nodeRows.Scan(&n.ID, &n.Name, &n.Type, &n.Description, &n.Properties, &n.DatasetID); err != nil {
+			return syncGraph{}, err
+		}
+		n.Properties, err = syncJSONRank(n.Properties)
+		if err != nil {
 			return syncGraph{}, err
 		}
 		g.Nodes = append(g.Nodes, n)
@@ -500,7 +540,7 @@ func exportSyncGraph(ctx context.Context, cfg APIConfig) (syncGraph, error) {
 		Q(`SELECT id, source_id, target_id, relationship_name, COALESCE(properties,'{}'),
 				  COALESCE(CAST(valid_from AS TEXT),''), COALESCE(CAST(valid_until AS TEXT),''), COALESCE(superseded_by,''),
 				  COALESCE(confidence,1.0), COALESCE(dataset_id,'')
-			   FROM graph_edges LIMIT 50000`))
+			   FROM graph_edges ORDER BY id`))
 	if err != nil {
 		return syncGraph{}, err
 	}
@@ -509,6 +549,14 @@ func exportSyncGraph(ctx context.Context, cfg APIConfig) (syncGraph, error) {
 		var e syncGraphEdge
 		if err := edgeRows.Scan(&e.ID, &e.SourceID, &e.TargetID, &e.RelationshipName, &e.Properties,
 			&e.ValidFrom, &e.ValidUntil, &e.SupersededBy, &e.Confidence, &e.DatasetID); err != nil {
+			return syncGraph{}, err
+		}
+		e, err = normalizeSyncEdge(e)
+		if err != nil {
+			return syncGraph{}, err
+		}
+		e.Properties, err = syncJSONRank(e.Properties)
+		if err != nil {
 			return syncGraph{}, err
 		}
 		g.Edges = append(g.Edges, e)
@@ -685,12 +733,12 @@ func startSyncCollectionImport(cfg APIConfig, export syncCollectionExport) (fibe
 		// embedded and stored as its own vector.
 		units, skippedNoText, chunked := expandRecordsToUnits(export.Records, reembedMaxRunes, reembedMaxRunes/5)
 		status.Skipped += skippedNoText
+		status.Total = len(units)
 		if len(units) == 0 {
 			status.Status = "COMPLETED"
 			status.Message = "no embeddable text in records"
 			return
 		}
-		status.Total = len(units)
 
 		// Re-embed throughput is tuned to unit size. Short memory texts
 		// keep the high-throughput defaults (batch 50, concurrency 3).
@@ -724,6 +772,17 @@ func startSyncCollectionImport(cfg APIConfig, export syncCollectionExport) (fibe
 			}
 		}
 
+		receiverContract := cfg.Collections.ResolveEmbeddingContract(cfg.EmbedModel, targetDim, "cosine")
+		target := cfg.Collections.GetMeta(export.Collection)
+		if receiverContract.Empty() || target == nil || target.EmbeddingModel != receiverContract.Encoder ||
+			target.EmbeddingDim != receiverContract.Dim || strings.ToLower(target.DistanceMetric) != receiverContract.Metric ||
+			target.EmbeddingVersion != receiverContract.Fingerprint() || target.EmbeddingContract == nil ||
+			target.EmbeddingContract.Fingerprint() != receiverContract.Fingerprint() {
+			status.Status = "FAILED"
+			status.Message = "target collection embedding contract does not match receiver"
+			return
+		}
+
 		log.Printf("[sync-import] %s: %d records → %d units, source=%s/%d → target=%s/%d",
 			export.Collection, len(export.Records), len(units), export.SourceModel, export.SourceDim, cfg.EmbedModel, targetDim)
 
@@ -752,7 +811,17 @@ func startSyncCollectionImport(cfg APIConfig, export syncCollectionExport) (fibe
 			}
 			for j, vec := range vecs {
 				if j < len(batch) {
-					if err := cfg.Collections.Insert(export.Collection, batch[j].id, vec, batch[j].meta); err != nil {
+					// Imported absent/null metadata is an empty object; other nonobjects
+					// cannot carry a truthful receiver contract and are rejected.
+					var metadata map[string]any
+					if len(batch[j].meta) > 0 {
+						if err := json.Unmarshal(batch[j].meta, &metadata); err != nil {
+							status.Failed++
+							continue
+						}
+					}
+					stamped := embcontract.StampMetadata(metadata, receiverContract)
+					if err := cfg.Collections.Insert(export.Collection, batch[j].id, vec, stamped); err != nil {
 						status.Failed++
 					} else {
 						status.Processed++
@@ -869,12 +938,14 @@ func syncPullContext(ctx context.Context, cfg APIConfig, remoteURL string, types
 		var counts map[string]int
 		switch kind {
 		case "memories":
-			var records []syncMemory
-			if err = decodeSyncResponse(resp, &records); err == nil {
-				if len(records) == 0 {
-					results[kind] = "no data"
-				} else {
-					counts, _, err = importSyncMemories(ctx, cfg, records)
+			var batch syncMemoryBatch
+			if err = decodeSyncResponse(resp, &batch); err == nil {
+				if err = batch.validate(); err == nil {
+					if len(batch.Memories)+len(batch.Deletions) == 0 {
+						results[kind] = "no data"
+					} else {
+						counts, err = importSyncMemoryBatch(ctx, cfg, batch)
+					}
 				}
 			}
 		case "interactions":
@@ -951,10 +1022,10 @@ func syncPush(ctx context.Context, cfg APIConfig, remoteURL string, types []stri
 		empty := false
 		switch kind {
 		case "memories":
-			var records []syncMemory
-			records, err = exportSyncMemories(ctx, cfg, since)
-			payload = records
-			empty = len(records) == 0
+			var batch syncMemoryBatch
+			batch, err = exportSyncMemoryBatch(ctx, cfg, since)
+			payload = batch
+			empty = len(batch.Memories)+len(batch.Deletions) == 0
 		case "interactions":
 			var records []syncInteraction
 			records, err = exportSyncInteractions(ctx, cfg, since)
@@ -1112,143 +1183,710 @@ func syncPushCollections(ctx context.Context, cfg APIConfig, remoteURL string, c
 	return results
 }
 
+// IDs and creation/provenance fields are deliberately absent from the rank:
+// the exact logical identity is (key, owner_id, collection_name).
+func syncMemoryRank(memory syncMemory) string {
+	payload := struct {
+		Value              string
+		Type               string
+		Room               string
+		Hall               string
+		IsPinned           bool
+		PinPriority        int
+		ValidUntil         string
+		SupersededBy       string
+		SupersedesMemoryID string
+		SupersessionReason string
+		Tier               string
+		ConsolidatedFrom   string
+		ConsolidationRunID string
+	}{memory.Value, memory.Type, memory.Room, memory.Hall, memory.IsPinned, memory.PinPriority, memory.ValidUntil, memory.SupersededBy, memory.SupersedesMemoryID, memory.SupersessionReason, memory.Tier, memory.ConsolidatedFrom, memory.ConsolidationRunID}
+	encoded, _ := json.Marshal(payload)
+	return string(encoded)
+}
+
+func importSyncMemory(ctx context.Context, cfg APIConfig, incoming syncMemory) (syncMemory, bool, error) {
+	return importSyncMemoryTx(ctx, cfg, incoming, nil)
+}
+
+func importSyncMemoryTx(ctx context.Context, cfg APIConfig, incoming syncMemory, sharedTx *sql.Tx) (syncMemory, bool, error) {
+	if incoming.ID == "" {
+		return syncMemory{}, false, errors.New("sync memory ID required")
+	}
+	updated, err := normalizeSyncTimestamp(incoming.UpdatedAt, false)
+	if err != nil {
+		return syncMemory{}, false, err
+	}
+	incoming.UpdatedAt = updated
+	incoming.ValidUntil, err = normalizeSyncTimestamp(incoming.ValidUntil, true)
+	if err != nil {
+		return syncMemory{}, false, err
+	}
+	if incoming.SupersededBy != "" && incoming.ValidUntil == "" {
+		return syncMemory{}, false, errors.New("sync retired memory validity required")
+	}
+	tx := sharedTx
+	if tx == nil {
+		tx, err = beginSyncImportTx(ctx, cfg.DB, "memories")
+		if err != nil {
+			return syncMemory{}, false, err
+		}
+		defer tx.Rollback()
+	}
+	commit := func() error {
+		if sharedTx != nil {
+			return nil
+		}
+		return tx.Commit()
+	}
+	// ponytail: exact scoped tombstones block replay of a known deleted ID.
+	// Logical generations and aliases are still needed for unseen divergent IDs.
+	var deletedKey string
+	err = tx.QueryRowContext(ctx, Q(`SELECT key FROM memory_sync_deletions WHERE memory_id=$1 AND owner_id=$2 AND collection_name=$3`), incoming.ID, incoming.OwnerID, incoming.CollectionName).Scan(&deletedKey)
+	if err == nil {
+		if deletedKey != incoming.Key {
+			return syncMemory{}, false, errors.New("sync deleted memory ID identity conflict")
+		}
+		return syncMemory{}, false, commit()
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return syncMemory{}, false, err
+	}
+	var conflictingDeletedID int
+	if err := tx.QueryRowContext(ctx, Q(`SELECT COUNT(*) FROM memory_sync_deletions WHERE memory_id=$1 AND (key<>$2 OR owner_id<>$3 OR collection_name<>$4)`), incoming.ID, incoming.Key, incoming.OwnerID, incoming.CollectionName).Scan(&conflictingDeletedID); err != nil {
+		return syncMemory{}, false, err
+	}
+	if conflictingDeletedID != 0 {
+		return syncMemory{}, false, errors.New("sync deleted memory ID identity conflict")
+	}
+	// A remote physical ID cannot claim a different logical identity, even when
+	// the requested tuple already has another canonical local ID.
+	var key, owner, collection string
+	err = tx.QueryRowContext(ctx, Q(`SELECT key,owner_id,collection_name FROM memories WHERE id=$1`), incoming.ID).Scan(&key, &owner, &collection)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return syncMemory{}, false, err
+	}
+	if err == nil && (key != incoming.Key || owner != incoming.OwnerID || collection != incoming.CollectionName) {
+		return syncMemory{}, false, errors.New("sync memory ID identity conflict")
+	}
+
+	var current syncMemory
+	var superseded, validUntil string
+	err = tx.QueryRowContext(ctx, Q(`SELECT id,key,value,type,owner_id,collection_name,COALESCE(room,''),COALESCE(hall,''),is_pinned,pin_priority,CAST(created_at AS TEXT),CAST(updated_at AS TEXT),COALESCE(superseded_by,''),COALESCE(CAST(valid_until AS TEXT),''),supersedes_memory_id,supersession_reason
+ FROM memories WHERE key=$1 AND owner_id=$2 AND collection_name=$3`), incoming.Key, incoming.OwnerID, incoming.CollectionName).Scan(&current.ID, &current.Key, &current.Value, &current.Type, &current.OwnerID, &current.CollectionName, &current.Room, &current.Hall, &current.IsPinned, &current.PinPriority, &current.CreatedAt, &current.UpdatedAt, &superseded, &validUntil, &current.SupersedesMemoryID, &current.SupersessionReason)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return syncMemory{}, false, err
+	}
+	exists := err == nil
+	if exists {
+		current.SupersededBy = superseded
+		current.ValidUntil, err = normalizeSyncTimestamp(validUntil, true)
+		if err != nil {
+			return syncMemory{}, false, err
+		}
+		current.UpdatedAt, err = normalizeSyncTimestamp(current.UpdatedAt, false)
+		if err != nil {
+			return syncMemory{}, false, err
+		}
+		incomingTime, _ := time.Parse(time.RFC3339Nano, incoming.UpdatedAt)
+		currentTime, _ := time.Parse(time.RFC3339Nano, current.UpdatedAt)
+		if incomingTime.Before(currentTime) || (incomingTime.Equal(currentTime) && syncMemoryRank(incoming) <= syncMemoryRank(current)) {
+			return syncMemory{}, false, commit()
+		}
+		if (superseded != "" || validUntil != "") && incoming.ValidUntil == "" {
+			return syncMemory{}, false, errors.New("sync memory retired target cannot be replaced")
+		}
+		incoming.ID = current.ID
+		incoming.CreatedAt, err = normalizeSyncTimestamp(current.CreatedAt, false)
+		if err != nil {
+			return syncMemory{}, false, err
+		}
+	} else {
+		incoming.CreatedAt, err = normalizeSyncTimestamp(incoming.CreatedAt, false)
+		if err != nil {
+			return syncMemory{}, false, err
+		}
+	}
+	if cfg.MemoryIndexOutbox == nil && cfg.EmbedEndpoint != "" && cfg.Collections != nil {
+		return syncMemory{}, false, errors.New("sync memory index outbox not configured")
+	}
+	if exists {
+		provenance := ""
+		if incoming.Value != current.Value {
+			provenance = ", source_task_id='', source_receipt_ids='[]', verification_status='unverified'"
+		}
+		query, args := QArgs(`UPDATE memories SET value=$2,type=$3,room=$4,hall=$5,is_pinned=$6,pin_priority=$7,updated_at=$8,valid_until=$9,superseded_by=$10,supersedes_memory_id=$11,supersession_reason=$12`+provenance+` WHERE id=$1`, incoming.ID, incoming.Value, incoming.Type, incoming.Room, incoming.Hall, incoming.IsPinned, incoming.PinPriority, incoming.UpdatedAt, syncOptionalTime(incoming.ValidUntil), incoming.SupersededBy, incoming.SupersedesMemoryID, incoming.SupersessionReason)
+		if _, err := tx.ExecContext(ctx, query, args...); err != nil {
+			return syncMemory{}, false, err
+		}
+	} else {
+		query, args := QArgs(`INSERT INTO memories(id,key,value,type,owner_id,collection_name,room,hall,is_pinned,pin_priority,created_at,updated_at,source_task_id,source_receipt_ids,verification_status,valid_until,superseded_by,supersedes_memory_id,supersession_reason)
+   VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'','[]','unverified',$13,$14,$15,$16)`, incoming.ID, incoming.Key, incoming.Value, incoming.Type, incoming.OwnerID, incoming.CollectionName, incoming.Room, incoming.Hall, incoming.IsPinned, incoming.PinPriority, incoming.CreatedAt, incoming.UpdatedAt, syncOptionalTime(incoming.ValidUntil), incoming.SupersededBy, incoming.SupersedesMemoryID, incoming.SupersessionReason)
+		if _, err := tx.ExecContext(ctx, query, args...); err != nil {
+			return syncMemory{}, false, err
+		}
+	}
+	if cfg.MemoryIndexOutbox != nil {
+		digest := fmt.Sprintf("%x", sha256.Sum256([]byte(incoming.Key+"\x00"+incoming.Value)))
+		operation := "upsert_vector"
+		if incoming.ValidUntil != "" {
+			operation = "delete_vector"
+			digest = "delete:" + incoming.ID
+		}
+		job, err := cfg.MemoryIndexOutbox.EnqueueTx(ctx, tx, memoryindex.Job{MemoryID: incoming.ID, Operation: operation, Collection: incoming.CollectionName, OwnerID: incoming.OwnerID, Digest: digest, Model: cfg.EmbedModel})
+		if err != nil {
+			return syncMemory{}, false, err
+		}
+		if job.MemoryID != incoming.ID || job.OwnerID != incoming.OwnerID || job.Collection != incoming.CollectionName || job.Digest != digest {
+			return syncMemory{}, false, errors.New("sync memory outbox identity conflict")
+		}
+	}
+	if err := commit(); err != nil {
+		return syncMemory{}, false, err
+	}
+	return incoming, true, nil
+}
+
+// A lifecycle batch resolves foreign references under the same write lock as
+// its SQL and index-intent changes. Any unresolved link rolls back the batch.
+func importSyncMemoryLifecycle(ctx context.Context, cfg APIConfig, memories []syncMemory) (map[string]int, []syncMemory, error) {
+	counts := map[string]int{"imported": 0, "skipped": 0, "failed": 0, "total": len(memories)}
+	tx, err := beginSyncImportTx(ctx, cfg.DB, "memories")
+	if err != nil {
+		counts["failed"] = len(memories)
+		return counts, nil, err
+	}
+	defer tx.Rollback()
+	fail := func(err error) (map[string]int, []syncMemory, error) {
+		counts["imported"], counts["skipped"], counts["failed"] = 0, 0, len(memories)
+		return counts, nil, err
+	}
+	byID := make(map[string]syncMemory, len(memories))
+	canonical := make(map[string]string, len(memories))
+	type identity struct{ key, owner, collection string }
+	seen := make(map[identity]bool, len(memories))
+	for _, incoming := range memories {
+		tuple := identity{incoming.Key, incoming.OwnerID, incoming.CollectionName}
+		if incoming.ID == "" || seen[tuple] {
+			return fail(errors.New("sync lifecycle duplicate or missing identity"))
+		}
+		if _, ok := byID[incoming.ID]; ok {
+			return fail(errors.New("sync lifecycle duplicate memory ID"))
+		}
+		seen[tuple], byID[incoming.ID] = true, incoming
+		var k, o, c string
+		err := tx.QueryRowContext(ctx, Q(`SELECT key,owner_id,collection_name FROM memories WHERE id=$1`), incoming.ID).Scan(&k, &o, &c)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fail(err)
+		}
+		if err == nil && (k != incoming.Key || o != incoming.OwnerID || c != incoming.CollectionName) {
+			return fail(errors.New("sync lifecycle memory ID identity conflict"))
+		}
+		id := incoming.ID
+		err = tx.QueryRowContext(ctx, Q(`SELECT id FROM memories WHERE key=$1 AND owner_id=$2 AND collection_name=$3`), incoming.Key, incoming.OwnerID, incoming.CollectionName).Scan(&id)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fail(err)
+		}
+		canonical[incoming.ID] = id
+	}
+	resolve := func(incoming syncMemory, ref string) (string, error) {
+		if ref == "" {
+			return "", nil
+		}
+		if ref == incoming.ID {
+			return "", errors.New("sync lifecycle self reference")
+		}
+		if linked, ok := byID[ref]; ok {
+			if linked.OwnerID != incoming.OwnerID || linked.CollectionName != incoming.CollectionName {
+				return "", errors.New("sync lifecycle reference scope conflict")
+			}
+			var deleted int
+			if err := tx.QueryRowContext(ctx, Q(`SELECT COUNT(*) FROM memory_sync_deletions WHERE memory_id=$1 AND owner_id=$2 AND collection_name=$3`), ref, incoming.OwnerID, incoming.CollectionName).Scan(&deleted); err != nil {
+				return "", err
+			}
+			if deleted != 0 {
+				return "", errors.New("sync lifecycle reference is deleted")
+			}
+			return canonical[ref], nil
+		}
+		var id string
+		err := tx.QueryRowContext(ctx, Q(`SELECT id FROM memories WHERE id=$1 AND owner_id=$2 AND collection_name=$3`), ref, incoming.OwnerID, incoming.CollectionName).Scan(&id)
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", errors.New("sync lifecycle unresolved reference")
+		}
+		return id, err
+	}
+	prepared := append([]syncMemory(nil), memories...)
+	for i := range prepared {
+		prepared[i].SupersededBy, err = resolve(memories[i], memories[i].SupersededBy)
+		if err != nil {
+			return fail(err)
+		}
+		prepared[i].SupersedesMemoryID, err = resolve(memories[i], memories[i].SupersedesMemoryID)
+		if err != nil {
+			return fail(err)
+		}
+	}
+	for _, incoming := range prepared {
+		if incoming.SupersededBy != "" && incoming.SupersededBy == canonical[incoming.ID] || incoming.SupersedesMemoryID != "" && incoming.SupersedesMemoryID == canonical[incoming.ID] {
+			return fail(errors.New("sync lifecycle canonical self reference"))
+		}
+	}
+	var accepted []syncMemory
+	for _, incoming := range prepared {
+		row, changed, err := importSyncMemoryTx(ctx, cfg, incoming, tx)
+		if err != nil {
+			return fail(err)
+		}
+		if changed {
+			counts["imported"]++
+			accepted = append(accepted, row)
+		} else {
+			counts["skipped"]++
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fail(err)
+	}
+	return counts, accepted, nil
+}
+
 func importSyncMemories(ctx context.Context, cfg APIConfig, memories []syncMemory) (map[string]int, []syncMemory, error) {
 	if cfg.DB == nil {
 		return nil, nil, fmt.Errorf("database not configured")
 	}
-	imported, skipped, failed := 0, 0, 0
-	var firstErr error
-	var accepted []syncMemory
-	for _, m := range memories {
-		// Last-writer-wins, enforced atomically (finding H5, 2026-09-03
-		// review): the conflict clause carries a WHERE guard so a
-		// concurrent import that lands between our SELECT and INSERT can
-		// never be overwritten by an older row. The conditional insert
-		// also avoids the separate SELECT entirely.
-		q, qargs := QArgs(`INSERT INTO memories (
-					id, key, value, type, owner_id, collection_name, room, hall,
-					is_pinned, pin_priority, created_at, updated_at
-				)
-				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-				 ON CONFLICT(key, owner_id, collection_name) DO UPDATE SET
-					value = $3, type = $4, collection_name = $6, room = $7, hall = $8,
-					is_pinned = $9, pin_priority = $10, updated_at = $12
-				 WHERE memories.updated_at < EXCLUDED.updated_at`,
-			m.ID, m.Key, m.Value, m.Type, m.OwnerID, m.CollectionName,
-			m.Room, m.Hall, m.IsPinned, m.PinPriority, m.CreatedAt, m.UpdatedAt)
-		res, err := cfg.DB.ExecContext(ctx, q, qargs...)
-		if err != nil {
-			failed++
-			if firstErr == nil {
-				firstErr = err
-			}
-			continue
-		}
-		n, err := res.RowsAffected()
-		if err != nil {
-			failed++
-			if firstErr == nil {
-				firstErr = err
-			}
-			continue
-		}
-		if n > 0 {
-			imported++
-			accepted = append(accepted, m)
-		} else {
-			skipped++
+	for _, memory := range memories {
+		if memory.ValidUntil != "" || memory.SupersededBy != "" || memory.SupersedesMemoryID != "" {
+			return importSyncMemoryLifecycle(ctx, cfg, memories)
 		}
 	}
-
-	return map[string]int{"imported": imported, "skipped": skipped, "failed": failed, "total": len(memories)}, accepted, firstErr
+	counts := map[string]int{"imported": 0, "skipped": 0, "failed": 0, "total": len(memories)}
+	var firstErr error
+	var accepted []syncMemory
+	for _, incoming := range memories {
+		canonical, changed, err := importSyncMemory(ctx, cfg, incoming)
+		switch {
+		case err != nil:
+			counts["failed"]++
+			if firstErr == nil {
+				firstErr = err
+			}
+		case changed:
+			counts["imported"]++
+			accepted = append(accepted, canonical)
+		default:
+			counts["skipped"]++
+		}
+	}
+	return counts, accepted, firstErr
 }
 
+// A table write lock serializes absent-row creation as well as existing-row
+// comparison. Row locks alone cannot protect the first import of an ID.
+func beginSyncImportTx(ctx context.Context, db *sql.DB, table string) (*sql.Tx, error) {
+	if table != "memories" && table != "interactions" && table != "graph_nodes" && table != "graph_edges" {
+		return nil, errors.New("invalid sync import table")
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	lock := "LOCK TABLE " + table + " IN SHARE ROW EXCLUSIVE MODE"
+	if GetDBProvider() == DBSQLite {
+		lock = "UPDATE " + table + " SET id=id WHERE 1=0"
+	}
+	if _, err := tx.ExecContext(ctx, lock); err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+	return tx, nil
+}
+
+// Include the boundary so updates sharing a timestamp are replayed safely.
+func syncExportBoundary(since string) (*time.Time, error) {
+	if since == "" {
+		return nil, nil
+	}
+	normalized, err := normalizeSyncTimestamp(since, false)
+	if err != nil {
+		return nil, err
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, normalized)
+	return &parsed, err
+}
+func syncSinceIncludes(value string, boundary *time.Time) (bool, error) {
+	if boundary == nil {
+		return true, nil
+	}
+	normalized, err := normalizeSyncTimestamp(value, false)
+	if err != nil {
+		return false, err
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, normalized)
+	return !parsed.Before(*boundary), err
+}
+
+func normalizeSyncTimestamp(value string, optional bool) (string, error) {
+	if value == "" && optional {
+		return "", nil
+	}
+	for _, layout := range []string{time.RFC3339Nano, "2006-01-02 15:04:05.999999999Z07:00", "2006-01-02 15:04:05.999999999Z07", "2006-01-02 15:04:05.999999999", "2006-01-02"} {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			// Native PostgreSQL timestamps have microsecond precision and ties-to-even
+			// rounding. Canonical imports must produce the same state on SQLite.
+			parsed = parsed.Truncate(time.Second).Add(time.Duration(math.RoundToEven(float64(parsed.Nanosecond())/1000)) * time.Microsecond)
+			return parsed.UTC().Format(time.RFC3339Nano), nil
+		}
+	}
+	return "", errors.New("invalid sync timestamp")
+}
+
+// JSONB rewrites whitespace, object ordering and numeric spelling. Canonical
+// JSON keeps exact decimal coefficients, including integers above 2^53.
+func syncJSONRank(raw string) (string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return "{}", nil
+	}
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return "", err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return "", errors.New("invalid trailing sync properties")
+	}
+	normalized, err := normalizeSyncJSONValue(value)
+	if err != nil {
+		return "", err
+	}
+	encoded, err := json.Marshal(normalized)
+	return string(encoded), err
+}
+func normalizeSyncJSONValue(value any) (any, error) {
+	switch item := value.(type) {
+	case json.Number:
+		raw := string(item)
+		negative := strings.HasPrefix(raw, "-")
+		raw = strings.TrimPrefix(raw, "-")
+		coefficient, exponent := raw, new(big.Int)
+		if at := strings.IndexAny(raw, "eE"); at >= 0 {
+			coefficient = raw[:at]
+			if _, ok := exponent.SetString(raw[at+1:], 10); !ok {
+				return nil, errors.New("invalid sync JSON exponent")
+			}
+		}
+		if dot := strings.IndexByte(coefficient, '.'); dot >= 0 {
+			exponent.Sub(exponent, big.NewInt(int64(len(coefficient)-dot-1)))
+			coefficient = coefficient[:dot] + coefficient[dot+1:]
+		}
+		coefficient = strings.TrimLeft(coefficient, "0")
+		if coefficient == "" {
+			return json.Number("0"), nil
+		}
+		trimmed := strings.TrimRight(coefficient, "0")
+		exponent.Add(exponent, big.NewInt(int64(len(coefficient)-len(trimmed))))
+		coefficient = trimmed
+		if negative {
+			coefficient = "-" + coefficient
+		}
+		if exponent.Sign() != 0 {
+			coefficient += "e" + exponent.String()
+		}
+		return json.Number(coefficient), nil
+	case []any:
+		for i, child := range item {
+			normalized, err := normalizeSyncJSONValue(child)
+			if err != nil {
+				return nil, err
+			}
+			item[i] = normalized
+		}
+		return item, nil
+	case map[string]any:
+		for key, child := range item {
+			normalized, err := normalizeSyncJSONValue(child)
+			if err != nil {
+				return nil, err
+			}
+			item[key] = normalized
+		}
+		return item, nil
+	default:
+		return value, nil
+	}
+}
+func syncNodeRank(node syncGraphNode) (string, error) {
+	properties, err := syncJSONRank(node.Properties)
+	if err != nil {
+		return "", err
+	}
+	node.Properties = properties
+	encoded, err := json.Marshal(node)
+	return string(encoded), err
+}
+func normalizeSyncEdge(edge syncGraphEdge) (syncGraphEdge, error) {
+	var err error
+	edge.ValidFrom, err = normalizeSyncTimestamp(edge.ValidFrom, true)
+	if err != nil {
+		return edge, err
+	}
+	edge.ValidUntil, err = normalizeSyncTimestamp(edge.ValidUntil, true)
+	if err != nil {
+		return edge, err
+	}
+	if edge.Confidence == 0 {
+		edge.Confidence = 1
+	}
+	// PostgreSQL REAL stores float32; normalize before ranking on either dialect.
+	edge.Confidence = float64(float32(edge.Confidence))
+	if edge.Confidence == 0 || math.IsInf(edge.Confidence, 0) || math.IsNaN(edge.Confidence) {
+		return edge, errors.New("invalid sync confidence precision")
+	}
+	return edge, nil
+}
+func syncEdgeRank(edge syncGraphEdge) (string, error) {
+	properties, err := syncJSONRank(edge.Properties)
+	if err != nil {
+		return "", err
+	}
+	edge.Properties = properties
+	// Retirement still precedes active content, while bounds join independently.
+	rank := "0"
+	if edge.ValidUntil != "" || edge.SupersededBy != "" {
+		rank = "1"
+	}
+	edge.ValidFrom, edge.ValidUntil, edge.SupersededBy = "", "", ""
+	encoded, err := json.Marshal(edge)
+	return rank + string(encoded), err
+}
+
+// Inputs were parsed and normalized before this comparison.
+func syncTemporalBound(left, right string, earliest bool) string {
+	if left == "" {
+		return right
+	}
+	if right == "" {
+		return left
+	}
+	a, _ := time.Parse(time.RFC3339Nano, left)
+	b, _ := time.Parse(time.RFC3339Nano, right)
+	if earliest && b.Before(a) || !earliest && b.After(a) {
+		return right
+	}
+	return left
+}
+
+func importSyncInteraction(ctx context.Context, cfg APIConfig, incoming syncInteraction) (bool, error) {
+	var err error
+	incoming.CreatedAt, err = normalizeSyncTimestamp(incoming.CreatedAt, false)
+	if err != nil {
+		return false, err
+	}
+	wanted, _ := json.Marshal(incoming)
+	tx, err := beginSyncImportTx(ctx, cfg.DB, "interactions")
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	var current syncInteraction
+	err = tx.QueryRowContext(ctx, Q(`SELECT id,COALESCE(session_id,''),COALESCE(user_id,''),COALESCE(query,''),COALESCE(response,''),COALESCE(search_type,''),CAST(created_at AS TEXT) FROM interactions WHERE id=$1`), incoming.ID).Scan(&current.ID, &current.SessionID, &current.UserID, &current.Query, &current.Response, &current.SearchType, &current.CreatedAt)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return false, err
+	}
+	if err == nil {
+		current.CreatedAt, err = normalizeSyncTimestamp(current.CreatedAt, false)
+		if err != nil {
+			return false, err
+		}
+		existing, _ := json.Marshal(current)
+		if string(wanted) <= string(existing) {
+			return false, tx.Commit()
+		}
+	}
+	query, args := QArgs(`INSERT INTO interactions(id,session_id,user_id,query,response,search_type,created_at) VALUES($1,$2,$3,$4,$5,$6,$7)
+ ON CONFLICT(id) DO UPDATE SET session_id=$2,user_id=$3,query=$4,response=$5,search_type=$6,created_at=$7`, incoming.ID, incoming.SessionID, incoming.UserID, incoming.Query, incoming.Response, incoming.SearchType, incoming.CreatedAt)
+	if _, err := tx.ExecContext(ctx, query, args...); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
 func importSyncInteractions(ctx context.Context, cfg APIConfig, interactions []syncInteraction) (map[string]int, error) {
 	if cfg.DB == nil {
 		return nil, fmt.Errorf("database not configured")
 	}
-	imported, skipped, failed := 0, 0, 0
+	counts := map[string]int{"imported": 0, "skipped": 0, "failed": 0, "total": len(interactions)}
 	var firstErr error
-	for _, i := range interactions {
-		q, qargs := QArgs(`INSERT INTO interactions (id, session_id, user_id, query, response, search_type, created_at)
-				 VALUES ($1, $2, $3, $4, $5, $6, $7)
-				 ON CONFLICT(id) DO NOTHING`,
-			i.ID, i.SessionID, i.UserID, i.Query, i.Response, i.SearchType, i.CreatedAt)
-		res, err := cfg.DB.ExecContext(ctx, q, qargs...)
-		if err != nil {
-			failed++
+	for _, incoming := range interactions {
+		changed, err := importSyncInteraction(ctx, cfg, incoming)
+		switch {
+		case err != nil:
+			counts["failed"]++
 			if firstErr == nil {
 				firstErr = err
 			}
-			continue
-		}
-		n, err := res.RowsAffected()
-		if err != nil {
-			failed++
-			if firstErr == nil {
-				firstErr = err
-			}
-			continue
-		}
-		if n > 0 {
-			imported++
-		} else {
-			skipped++
+		case changed:
+			counts["imported"]++
+		default:
+			counts["skipped"]++
 		}
 	}
-
-	return map[string]int{"imported": imported, "skipped": skipped, "failed": failed, "total": len(interactions)}, firstErr
+	return counts, firstErr
 }
 
-func importSyncGraph(ctx context.Context, cfg APIConfig, g syncGraph) (map[string]int, error) {
+func importSyncGraphNode(ctx context.Context, cfg APIConfig, incoming syncGraphNode) (bool, error) {
+	var err error
+	incoming.Properties, err = syncJSONRank(incoming.Properties)
+	if err != nil {
+		return false, err
+	}
+	wanted, err := syncNodeRank(incoming)
+	if err != nil {
+		return false, err
+	}
+	tx, err := beginSyncImportTx(ctx, cfg.DB, "graph_nodes")
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	var current syncGraphNode
+	err = tx.QueryRowContext(ctx, Q(`SELECT id,name,type,COALESCE(description,''),COALESCE(properties,'{}'),COALESCE(dataset_id,'') FROM graph_nodes WHERE id=$1`), incoming.ID).Scan(&current.ID, &current.Name, &current.Type, &current.Description, &current.Properties, &current.DatasetID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return false, err
+	}
+	if err == nil {
+		if current.DatasetID != incoming.DatasetID {
+			return false, errors.New("sync graph node source identity conflict")
+		}
+		existing, err := syncNodeRank(current)
+		if err != nil {
+			return false, err
+		}
+		if wanted <= existing {
+			return false, tx.Commit()
+		}
+	}
+	query, args := QArgs(`INSERT INTO graph_nodes(id,name,type,description,properties,dataset_id) VALUES($1,$2,$3,$4,$5,$6)
+ ON CONFLICT(id) DO UPDATE SET name=$2,type=$3,description=$4,properties=$5`, incoming.ID, incoming.Name, incoming.Type, incoming.Description, incoming.Properties, incoming.DatasetID)
+	if _, err := tx.ExecContext(ctx, query, args...); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+func importSyncGraphEdge(ctx context.Context, cfg APIConfig, incoming syncGraphEdge) (bool, error) {
+	incoming, err := normalizeSyncEdge(incoming)
+	if err != nil {
+		return false, err
+	}
+	incoming.Properties, err = syncJSONRank(incoming.Properties)
+	if err != nil {
+		return false, err
+	}
+	wanted, err := syncEdgeRank(incoming)
+	if err != nil {
+		return false, err
+	}
+	tx, err := beginSyncImportTx(ctx, cfg.DB, "graph_edges")
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	var current syncGraphEdge
+	err = tx.QueryRowContext(ctx, Q(`SELECT id,source_id,target_id,relationship_name,COALESCE(properties,'{}'),COALESCE(CAST(valid_from AS TEXT),''),COALESCE(CAST(valid_until AS TEXT),''),COALESCE(superseded_by,''),COALESCE(confidence,1),COALESCE(dataset_id,'') FROM graph_edges WHERE id=$1`), incoming.ID).Scan(&current.ID, &current.SourceID, &current.TargetID, &current.RelationshipName, &current.Properties, &current.ValidFrom, &current.ValidUntil, &current.SupersededBy, &current.Confidence, &current.DatasetID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return false, err
+	}
+	if err == nil {
+		if current.DatasetID != incoming.DatasetID || current.SourceID != incoming.SourceID || current.TargetID != incoming.TargetID || current.RelationshipName != incoming.RelationshipName {
+			return false, errors.New("sync graph edge source identity conflict")
+		}
+		current, err = normalizeSyncEdge(current)
+		if err != nil {
+			return false, err
+		}
+		current.Properties, err = syncJSONRank(current.Properties)
+		if err != nil {
+			return false, err
+		}
+		existing, err := syncEdgeRank(current)
+		if err != nil {
+			return false, err
+		}
+		candidate := incoming
+		if wanted <= existing {
+			candidate = current
+		}
+		candidate.ValidFrom = syncTemporalBound(current.ValidFrom, incoming.ValidFrom, false)
+		candidate.ValidUntil = syncTemporalBound(current.ValidUntil, incoming.ValidUntil, true)
+		if current.SupersededBy > incoming.SupersededBy {
+			candidate.SupersededBy = current.SupersededBy
+		} else {
+			candidate.SupersededBy = incoming.SupersededBy
+		}
+		if candidate.ValidFrom != "" && candidate.ValidUntil != "" {
+			start, _ := time.Parse(time.RFC3339Nano, candidate.ValidFrom)
+			end, _ := time.Parse(time.RFC3339Nano, candidate.ValidUntil)
+			if end.Before(start) {
+				return false, errors.New("sync graph temporal identity conflict")
+			}
+		}
+		if candidate == current {
+			return false, tx.Commit()
+		}
+		incoming = candidate
+	}
+	query, args := QArgs(`INSERT INTO graph_edges(id,source_id,target_id,relationship_name,properties,valid_from,valid_until,superseded_by,confidence,dataset_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+ ON CONFLICT(id) DO UPDATE SET properties=$5,valid_from=$6,valid_until=$7,superseded_by=$8,confidence=$9`, incoming.ID, incoming.SourceID, incoming.TargetID, incoming.RelationshipName, incoming.Properties, syncOptionalTime(incoming.ValidFrom), syncOptionalTime(incoming.ValidUntil), incoming.SupersededBy, incoming.Confidence, incoming.DatasetID)
+	if _, err := tx.ExecContext(ctx, query, args...); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+func importSyncGraph(ctx context.Context, cfg APIConfig, graph syncGraph) (map[string]int, error) {
 	if cfg.DB == nil {
 		return nil, fmt.Errorf("database not configured")
 	}
-	nodesImported, edgesImported, nodesFailed, edgesFailed := 0, 0, 0, 0
+	counts := map[string]int{"nodes_imported": 0, "nodes_skipped": 0, "nodes_failed": 0, "nodes_total": len(graph.Nodes), "edges_imported": 0, "edges_skipped": 0, "edges_failed": 0, "edges_total": len(graph.Edges)}
 	var firstErr error
-
-	for _, n := range g.Nodes {
-		q, qargs := QArgs(`INSERT INTO graph_nodes (id, name, type, description, properties, dataset_id)
-				 VALUES ($1, $2, $3, $4, $5, $6)
-				 ON CONFLICT(id) DO UPDATE SET
-					name = $2, type = $3, description = $4, properties = $5, dataset_id = $6`,
-			n.ID, n.Name, n.Type, n.Description, n.Properties, n.DatasetID)
-		if _, err := cfg.DB.ExecContext(ctx, q, qargs...); err == nil {
-			nodesImported++
-		} else {
-			nodesFailed++
+	for _, node := range graph.Nodes {
+		changed, err := importSyncGraphNode(ctx, cfg, node)
+		switch {
+		case err != nil:
+			counts["nodes_failed"]++
 			if firstErr == nil {
 				firstErr = err
 			}
+		case changed:
+			counts["nodes_imported"]++
+		default:
+			counts["nodes_skipped"]++
 		}
 	}
-
-	for _, e := range g.Edges {
-		if e.Confidence == 0 {
-			e.Confidence = 1.0
-		}
-		q, qargs := QArgs(`INSERT INTO graph_edges (
-					id, source_id, target_id, relationship_name, properties,
-					valid_from, valid_until, superseded_by, confidence, dataset_id
-				)
-				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-				 ON CONFLICT(id) DO UPDATE SET
-					source_id = $2, target_id = $3, relationship_name = $4, properties = $5,
-					valid_from = $6, valid_until = $7, superseded_by = $8,
-					confidence = $9, dataset_id = $10`,
-			e.ID, e.SourceID, e.TargetID, e.RelationshipName, e.Properties,
-			syncOptionalTime(e.ValidFrom), syncOptionalTime(e.ValidUntil), e.SupersededBy, e.Confidence, e.DatasetID)
-		if _, err := cfg.DB.ExecContext(ctx, q, qargs...); err == nil {
-			edgesImported++
-		} else {
-			edgesFailed++
+	for _, edge := range graph.Edges {
+		changed, err := importSyncGraphEdge(ctx, cfg, edge)
+		switch {
+		case err != nil:
+			counts["edges_failed"]++
 			if firstErr == nil {
 				firstErr = err
 			}
+		case changed:
+			counts["edges_imported"]++
+		default:
+			counts["edges_skipped"]++
 		}
 	}
-
-	return map[string]int{"nodes_imported": nodesImported, "edges_imported": edgesImported, "nodes_failed": nodesFailed, "edges_failed": edgesFailed, "nodes_total": len(g.Nodes), "edges_total": len(g.Edges)}, firstErr
+	return counts, firstErr
 }
 
 func syncErrorText(err error, token string) string {
@@ -1316,11 +1954,11 @@ func syncAcceptedCount(value any) int {
 	count := 0
 	switch data := value.(type) {
 	case map[string]int:
-		for _, key := range []string{"imported", "skipped", "nodes_imported", "edges_imported"} {
+		for _, key := range []string{"imported", "skipped", "nodes_imported", "nodes_skipped", "edges_imported", "edges_skipped"} {
 			count += data[key]
 		}
 	case map[string]any:
-		for _, key := range []string{"imported", "skipped", "nodes_imported", "edges_imported"} {
+		for _, key := range []string{"imported", "skipped", "nodes_imported", "nodes_skipped", "edges_imported", "edges_skipped"} {
 			switch n := data[key].(type) {
 			case int:
 				count += n
@@ -1409,6 +2047,11 @@ func validateSyncImportAck(result map[string]any, payload any) error {
 	}
 	var batches []batch
 	switch records := payload.(type) {
+	case syncMemoryBatch:
+		if result["protocol_version"] != float64(syncMemoryProtocolVersion) {
+			return errors.New("remote memory protocol acknowledgement required")
+		}
+		batches = []batch{{"", len(records.Memories) + len(records.Deletions)}}
 	case []syncMemory:
 		batches = []batch{{"", len(records)}}
 	case []syncInteraction:

@@ -7,6 +7,8 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/stek0v/levara/pkg/access"
@@ -21,72 +23,168 @@ import (
 // Args: limit (float64, default 20), min_members (float64, default 2),
 // level (float64, optional).
 func ToolListCommunities(ctx context.Context, deps Deps, args map[string]any) ToolResult {
+	actor := dataActor(ctx)
+	authenticated := actor.UserID != ""
+	if actor.TenantID != "" || !access.APIKeyAllows(actor.APIKeyPermissions, access.ActionRead) {
+		return toolError("instance administrator required for global community summaries")
+	}
 	db := deps.DB()
 	if db == nil {
+		if authenticated {
+			return toolError("community access unavailable")
+		}
 		return jsonResult(map[string]any{"communities": []any{}})
 	}
-
+	policy := access.SQLPolicy{DB: db, Q: deps.Q}
+	if authenticated {
+		active, e1 := policy.IsActive(ctx, actor.UserID)
+		admin, e2 := policy.IsSuperuser(ctx, actor.UserID)
+		if e1 != nil || e2 != nil {
+			return toolError("community access unavailable")
+		}
+		if !active || !admin {
+			return toolError("instance administrator required for global community summaries")
+		}
+	}
 	allowed, err := graphDatasetScope(ctx, deps)
 	if err != nil {
-		return toolError(err.Error())
+		return toolError("community access unavailable")
 	}
-	// Community summaries aggregate the global graph without trustworthy
-	// dataset provenance; a dataset allowlist cannot safely filter them.
 	if allowed != nil {
 		return toolError("instance administrator required for global community summaries")
 	}
-
-	limit := 20
-	if lim, ok := args["limit"].(float64); ok && lim > 0 {
-		limit = int(lim)
+	limit, minMembers := 20, 2
+	if v, ok := args["limit"].(float64); ok && v > 0 {
+		limit = int(v)
 	}
-	minMembers := 2
-	if mm, ok := args["min_members"].(float64); ok {
-		minMembers = int(mm)
+	if v, ok := args["min_members"].(float64); ok {
+		minMembers = int(v)
 	}
-
-	var (
-		query     string
-		queryArgs []any
-	)
-	if levelVal, ok := args["level"].(float64); ok {
-		query = deps.Q(`SELECT id, level, parent_id, member_count, summary
-			FROM graph_communities
-			WHERE member_count >= $1 AND level = $2
-			ORDER BY member_count DESC LIMIT $3`)
-		queryArgs = []any{minMembers, int(levelVal), limit}
-	} else {
-		query = deps.Q(`SELECT id, level, parent_id, member_count, summary
-			FROM graph_communities
-			WHERE member_count >= $1
-			ORDER BY level ASC, member_count DESC LIMIT $2`)
-		queryArgs = []any{minMembers, limit}
+	columns := "id,level,parent_id,member_count,summary"
+	if authenticated {
+		columns += ",generation,sources_json,lineage_verified"
 	}
-
-	rows, err := db.QueryContext(ctx, query, queryArgs...)
+	query := "SELECT " + columns + " FROM graph_communities WHERE member_count >= $1"
+	queryArgs := []any{minMembers}
+	if v, ok := args["level"].(float64); ok {
+		query += " AND level=$2"
+		queryArgs = append(queryArgs, int(v))
+	}
+	query += fmt.Sprintf(" ORDER BY level ASC,member_count DESC LIMIT $%d", len(queryArgs)+1)
+	queryArgs = append(queryArgs, limit)
+	rows, err := db.QueryContext(ctx, deps.Q(query), queryArgs...)
 	if err != nil {
+		if authenticated {
+			return toolError("community access unavailable")
+		}
 		return jsonResult(map[string]any{"communities": []any{}})
 	}
-	defer rows.Close()
-
-	var communities []map[string]any
+	type candidate struct {
+		id, parent, summary, generation, sources string
+		level, members, verified                 int
+	}
+	var candidates []candidate
 	for rows.Next() {
-		var id, parentID, summary string
-		var level, memberCount int
-		if rows.Scan(&id, &level, &parentID, &memberCount, &summary) != nil {
+		var c candidate
+		var err error
+		if authenticated {
+			err = rows.Scan(&c.id, &c.level, &c.parent, &c.members, &c.summary, &c.generation, &c.sources, &c.verified)
+		} else {
+			err = rows.Scan(&c.id, &c.level, &c.parent, &c.members, &c.summary)
+		}
+		if err != nil {
+			if authenticated {
+				rows.Close()
+				return toolError("community access unavailable")
+			}
 			continue
 		}
-		communities = append(communities, map[string]any{
-			"id": id, "level": level, "parent_id": parentID,
-			"member_count": memberCount, "summary": summary,
-		})
+		candidates = append(candidates, c)
 	}
-
-	if communities == nil {
-		communities = []map[string]any{}
+	rowErr := rows.Err()
+	rows.Close() // Release pool1 before native source/policy reads.
+	if rowErr != nil && authenticated {
+		return toolError("community access unavailable")
 	}
+	communities := []map[string]any{}
+	var evidence []CommunityEvidence
+	for _, c := range candidates {
+		if authenticated {
+			if c.verified != 1 || c.generation == "" {
+				continue
+			}
+			sources, err := community.ParseSources(c.sources)
+			if err != nil {
+				continue
+			}
+			if err := community.CheckSources(ctx, policy, sources); err != nil {
+				if communityInvalidSource(err) {
+					continue
+				}
+				return toolError("community access unavailable")
+			}
+			if err := authorizeCommunitySources(ctx, policy, actor, sources, 0); err != nil {
+				if communityInvalidSource(err) {
+					continue
+				}
+				return toolError("community access unavailable")
+			}
+			evidence = append(evidence, CommunityEvidence{ID: c.id, Generation: c.generation, SourcesJSON: c.sources})
+		}
+		communities = append(communities, map[string]any{"id": c.id, "level": c.level, "parent_id": c.parent, "member_count": c.members, "summary": c.summary})
+	}
+	result := jsonResult(map[string]any{"communities": communities})
+	result.CommunityEvidence = evidence
+	return result
+}
 
-	return jsonResult(map[string]any{"communities": communities})
+func communityInvalidSource(err error) bool {
+	return errors.Is(err, access.ErrDocumentInvalid) || errors.Is(err, access.ErrDocumentNotFound) || errors.Is(err, access.ErrDocumentVersionConflict)
+}
+
+func authorizeCommunitySources(ctx context.Context, p access.SQLPolicy, actor access.Actor, sources []community.Source, depth int) error {
+	seen := make(map[community.Source]bool)
+	var visit func([]community.Source, int) error
+	visit = func(sources []community.Source, depth int) error {
+		if depth >= 16 || len(sources) > 256 {
+			return access.ErrDocumentInvalid
+		}
+		for _, s := range sources {
+			s.InputSHA256 = ""
+			if seen[s] {
+				continue
+			}
+			if len(seen) >= 256 {
+				return access.ErrDocumentInvalid
+			}
+			seen[s] = true
+			decision, err := p.AuthorizeDocument(ctx, actor, access.DocumentRef{DatasetID: s.DatasetID, DataID: s.DocumentID}, access.ActionRead)
+			if err != nil {
+				return err
+			}
+			if !decision.Allowed {
+				return access.ErrDocumentInvalid
+			}
+			if s.Derived {
+				lineage, present, err := p.DocumentIndexLineage(ctx, access.DocumentRef{DatasetID: s.DatasetID, DataID: s.DocumentID}, s.ContentRevision, s.Collection, s.Generation)
+				if err != nil {
+					return err
+				}
+				if !present {
+					return access.ErrDocumentVersionConflict
+				}
+				var children []community.Source
+				if len(lineage.SourcesJSON) > 128<<10 || json.Unmarshal([]byte(lineage.SourcesJSON), &children) != nil {
+					return access.ErrDocumentInvalid
+				}
+				if err := visit(children, depth+1); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	return visit(sources, depth)
 }
 
 // ToolPruneGraph removes superseded graph edges (and optionally orphan

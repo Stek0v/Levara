@@ -91,6 +91,84 @@ func ValidateCredential(ctx context.Context, db *sql.DB, q QueryRewriter, userID
 	return nil
 }
 
+// ValidateSessionCredential checks the live user, epoch and optional verified
+// browser session in one fresh SQL snapshot. Legacy JWTs need no session table.
+func ValidateSessionCredential(ctx context.Context, db *sql.DB, q QueryRewriter, userID string, epoch int64, sessionID string) error {
+	if db == nil {
+		return ErrProvisioningNoDB
+	}
+	return validateSessionCredential(ctx, db, q, userID, epoch, sessionID)
+}
+
+// ValidateSessionCredentialTenant returns one current tenant membership from the
+// same fresh SQL snapshot that validates the active user, epoch and optional SID.
+func ValidateSessionCredentialTenant(ctx context.Context, db *sql.DB, q QueryRewriter, userID string, epoch int64, sessionID string) (string, error) {
+	tenant, _, err := ValidateSessionCredentialAuthorization(ctx, db, q, userID, epoch, sessionID)
+	return tenant, err
+}
+
+// ValidateSessionCredentialAuthorization also returns the current global role
+// from the same snapshot, so one request does not re-query identity state.
+func ValidateSessionCredentialAuthorization(ctx context.Context, db *sql.DB, q QueryRewriter, userID string, epoch int64, sessionID string) (string, bool, error) {
+	if db == nil {
+		return "", false, ErrProvisioningNoDB
+	}
+	return validateSessionCredentialState(ctx, db, q, userID, epoch, sessionID, true)
+}
+
+func validateSessionCredential(ctx context.Context, reader documentQuerier, q QueryRewriter, userID string, epoch int64, sessionID string) error {
+	_, _, err := validateSessionCredentialState(ctx, reader, q, userID, epoch, sessionID, false)
+	return err
+}
+
+func validateSessionCredentialState(ctx context.Context, reader documentQuerier, q QueryRewriter, userID string, epoch int64, sessionID string, includeAuthorization bool) (string, bool, error) {
+	if userID == "" {
+		return "", false, ErrInactiveIdentity
+	}
+	if epoch < 0 {
+		return "", false, ErrRevokedCredential
+	}
+	validExpr := `COALESCE(e.epoch,0)=$1`
+	args := []any{epoch, userID}
+	userArg := "$2"
+	if sessionID != "" {
+		validExpr = `COALESCE(e.epoch,0)=$1 AND EXISTS (
+ SELECT 1 FROM auth_sessions s WHERE s.user_id=u.id AND s.id=$2
+ AND s.revoked=false AND s.expires_at>$3)`
+		args = []any{epoch, sessionID, time.Now().Unix(), userID}
+		userArg = "$4"
+	}
+	selectExpr := validExpr
+	if includeAuthorization {
+		selectExpr += `, COALESCE((SELECT tenant_id FROM user_tenant WHERE user_id=u.id LIMIT 1),''), COALESCE(u.is_superuser,false)`
+	}
+	query := `SELECT ` + selectExpr + ` FROM users u
+ LEFT JOIN credential_epochs e ON e.user_id=u.id
+ WHERE u.id=` + userArg + ` AND u.is_active=true`
+	if q != nil {
+		query = q(query)
+	}
+	var valid, superuser bool
+	var tenant string
+	row := reader.QueryRowContext(ctx, query, args...)
+	var err error
+	if includeAuthorization {
+		err = row.Scan(&valid, &tenant, &superuser)
+	} else {
+		err = row.Scan(&valid)
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, ErrInactiveIdentity
+	}
+	if err != nil {
+		return "", false, err
+	}
+	if !valid {
+		return "", false, ErrRevokedCredential
+	}
+	return tenant, superuser, nil
+}
+
 // revokeUserCredentials runs after locking/updating the users row. Key issuance
 // takes the same lock, so no key can escape a concurrent deactivation. This and
 // the active-state mutation must commit or roll back together.

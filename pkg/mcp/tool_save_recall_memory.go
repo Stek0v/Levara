@@ -210,41 +210,110 @@ func memoryReceiptJSON(ids []string) string {
 func indexMemorySync(deps Deps, collectionName, id, key, value, memType string) {
 	embedCtx, cancel := context.WithTimeout(context.Background(), saveMemoryEmbedTimeout)
 	defer cancel()
+	_ = indexMemoryContext(embedCtx, deps, collectionName, id, key, value, memType)
+}
 
+// indexMemoryContext retains the caller's lifetime for synchronous distillation.
+// SQL is already committed; non-cancellation indexing failures remain best effort.
+// Native collection calls cannot interrupt an insertion that has already started.
+func indexMemoryContext(ctx context.Context, deps Deps, collectionName, id, key, value, memType string) error {
+	return indexMemoryContextFenced(ctx, deps, collectionName, id, key, value, memType, "", nil)
+}
+
+// acquire fences source authority only during insertion/read-back, after embedding.
+// Release before callbacks or heartbeat SQL so a one-connection pool cannot self-wait.
+func indexMemoryContextFenced(ctx context.Context, deps Deps, collectionName, id, key, value, memType, ownerID string, acquire func() (func(), error)) error {
 	sidecar := memoryCollectionName(collectionName)
-
-	vec, err := deps.Embed(embedCtx, key+" "+value)
+	checkContext := func() error {
+		err := ctx.Err()
+		if err != nil {
+			reportMemoryDivergence(deps, sidecar, id, "index_canceled", err.Error())
+		}
+		return err
+	}
+	if err := checkContext(); err != nil {
+		return err
+	}
+	vec, err := deps.Embed(ctx, key+" "+value)
 	if err != nil {
 		reportMemoryDivergence(deps, sidecar, id, "embed_failed", err.Error())
-		return
+		return ctx.Err()
+	}
+	if err := checkContext(); err != nil {
+		return err
 	}
 
-	meta, _ := json.Marshal(map[string]string{
+	metadata := map[string]string{
 		"key":        key,
 		"value":      value,
 		"type":       memType,
 		"collection": collectionName,
 		"memory_id":  id,
-	})
+	}
+	if ownerID != "" {
+		metadata["owner_id"] = ownerID
+	}
+	meta, _ := json.Marshal(metadata)
 
-	// Insert, then verify the vector actually landed under the canonical
-	// id (synchronous index lookup, not a vector search — see
-	// CollectionHasRecord). Retry once on failure.
+	// Insert, then verify under the same source authority fence.
 	for attempt := 1; attempt <= memoryIndexMaxAttempts; attempt++ {
-		insErr := deps.CollectionInsert(sidecar, id, vec, meta)
+		if err := checkContext(); err != nil {
+			return err
+		}
+		release := func() {}
+		if acquire != nil {
+			var err error
+			release, err = acquire()
+			if err != nil {
+				return err
+			}
+		}
+		if err := ctx.Err(); err != nil {
+			release()
+			return checkContext()
+		}
+		var hook func()
+		var insErr error
+		if acquire != nil {
+			deferred, ok := deps.(interface {
+				CollectionInsertDeferredHook(string, string, []float32, any) (func(), error)
+			})
+			if !ok {
+				release()
+				return fmt.Errorf("source-fenced indexing requires deferred collection callbacks")
+			}
+			hook, insErr = deferred.CollectionInsertDeferredHook(sidecar, id, vec, meta)
+		} else {
+			insErr = deps.CollectionInsert(sidecar, id, vec, meta)
+		}
+		present := false
+		if insErr == nil && ctx.Err() == nil {
+			present = deps.CollectionHasRecord(sidecar, id)
+		}
+		release()
+		if err := checkContext(); err != nil {
+			return err
+		}
+		if hook != nil {
+			hook()
+		}
+		if err := checkContext(); err != nil {
+			return err
+		}
 		if insErr != nil {
 			if attempt == memoryIndexMaxAttempts {
 				reportMemoryDivergence(deps, sidecar, id, "insert_failed", insErr.Error())
 			}
 			continue
 		}
-		if deps.CollectionHasRecord(sidecar, id) {
-			return // verified present — SQL and vector agree
+		if present {
+			return nil
 		}
 		if attempt == memoryIndexMaxAttempts {
 			reportMemoryDivergence(deps, sidecar, id, "missing_after_insert", "vector absent on read-back")
 		}
 	}
+	return nil
 }
 
 // memoryIndexMaxAttempts bounds the insert+verify retry loop in
@@ -316,9 +385,6 @@ func ToolRecallMemory(ctx context.Context, deps Deps, args map[string]any) ToolR
 	if db == nil {
 		return jsonResult(map[string]any{"results": []any{}})
 	}
-	if provider, ok := deps.(interface{ MemoryIndexOutbox() *memoryindex.Store }); ok && provider.MemoryIndexOutbox() != nil {
-		provider.MemoryIndexOutbox().WaitReady(ctx, collectionName, ownerID, 200*time.Millisecond)
-	}
 	if includeSuperseded {
 		return recallWithHistory(ctx, deps, db, query, collectionName, room, hall, ownerID)
 	}
@@ -343,8 +409,8 @@ func ToolRecallMemory(ctx context.Context, deps Deps, args map[string]any) ToolR
 // recallViaSQLLike and recallViaVectorFiltered hydrate an identical shape.
 const memoryRowColumns = `id, key, value, type, owner_id, room, hall, created_at, updated_at,
 	verification_status, source_task_id, source_receipt_ids, supersedes_memory_id, superseded_by,
-	COALESCE(NULLIF(supersession_reason, ''), (SELECT supersession_reason FROM memories predecessor WHERE predecessor.id=memories.supersedes_memory_id AND predecessor.collection_name=memories.collection_name AND (predecessor.owner_id=memories.owner_id OR predecessor.owner_id='')), '') AS supersession_reason,
-	COALESCE(CAST(valid_until AS TEXT), (SELECT CAST(valid_until AS TEXT) FROM memories predecessor WHERE predecessor.id=memories.supersedes_memory_id AND predecessor.collection_name=memories.collection_name AND (predecessor.owner_id=memories.owner_id OR predecessor.owner_id='')), '') AS superseded_at`
+	COALESCE(NULLIF(supersession_reason, ''), (SELECT supersession_reason FROM memories predecessor WHERE predecessor.id=memories.supersedes_memory_id AND predecessor.collection_name=memories.collection_name AND predecessor.owner_id=memories.owner_id AND predecessor.superseded_by=memories.id), '') AS supersession_reason,
+	COALESCE(CAST(valid_until AS TEXT), (SELECT CAST(valid_until AS TEXT) FROM memories predecessor WHERE predecessor.id=memories.supersedes_memory_id AND predecessor.collection_name=memories.collection_name AND predecessor.owner_id=memories.owner_id AND predecessor.superseded_by=memories.id), '') AS superseded_at`
 
 // appendMemoryFilters appends the structural filters shared by both SQL
 // recall paths — owner scope, then optional collection/room/hall, then

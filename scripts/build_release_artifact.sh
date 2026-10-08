@@ -24,7 +24,7 @@ cp deploy/profiles/*.env.example "$DIST/profiles/"
 cp LICENSE "$DIST/"
 
 ARTIFACT="$PWD/levara-release.tar.gz"
-tar czf "$ARTIFACT" -C "$DIST" .
+COPYFILE_DISABLE=1 tar czf "$ARTIFACT" -C "$DIST" .
 
 # Assert the artifact carries nothing it must not carry.
 bad=$(tar tzf "$ARTIFACT" | grep -E '(^|/)(scripts|benchmark|webui|\.github)/|loadtest|qwen3rerank|(^|/)levara-contract$' || true)

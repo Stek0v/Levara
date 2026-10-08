@@ -16,6 +16,7 @@ import (
 	"github.com/stek0v/levara/internal/store"
 	"github.com/stek0v/levara/pkg/consolidate"
 	"github.com/stek0v/levara/pkg/llm"
+	"github.com/stek0v/levara/pkg/memoryindex"
 
 	_ "github.com/ncruces/go-sqlite3/driver"
 )
@@ -44,7 +45,7 @@ func seedDupInColl(t *testing.T, deps *fakeDeps, id, collection, value, created 
 	t.Helper()
 	_, err := deps.db.Exec(
 		`INSERT INTO memories (id, key, value, type, owner_id, collection_name, room, hall, is_pinned, created_at, updated_at, superseded_by, tier)
-		 VALUES (?, ?, ?, 'project', '', ?, '', '', 0, ?, ?, '', 'raw')`,
+		 VALUES (?, ?, ?, 'project', '', ?, '', 'fact', 0, ?, ?, '', 'raw')`,
 		id, "k-"+id, value, collection, created, created)
 	if err != nil {
 		t.Fatalf("seed %s/%s: %v", collection, id, err)
@@ -150,7 +151,7 @@ func setupConsolidateDB(t *testing.T) *fakeDeps {
 	})
 
 	stmt := `CREATE TABLE memories (
-		id TEXT PRIMARY KEY, key TEXT, value TEXT, type TEXT, owner_id TEXT DEFAULT '',
+		id TEXT PRIMARY KEY, key TEXT, value TEXT CHECK(value <> 'blocked abstract'), type TEXT, owner_id TEXT DEFAULT '',
 		collection_name TEXT DEFAULT '', room TEXT DEFAULT '', hall TEXT DEFAULT '',
 		is_pinned INTEGER DEFAULT 0, pin_priority INTEGER DEFAULT 0,
 		created_at TEXT, updated_at TEXT,
@@ -164,7 +165,11 @@ func setupConsolidateDB(t *testing.T) *fakeDeps {
 	if _, err := db.Exec(stmt); err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	return &fakeDeps{db: db}
+	outbox, err := memoryindex.NewStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &fakeDeps{db: db, memoryIndexOutbox: outbox}
 }
 
 // seedDup inserts a raw, non-superseded, unpinned memory row.

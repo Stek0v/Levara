@@ -72,7 +72,7 @@ test('manager grants users and groups, refreshes stale CAS, and revokes', async 
   await expect(dialog.getByText('restricted', { exact: true })).toBeVisible()
   await expect(dialog.getByRole('option', { name: 'peer@test.local' })).toBeAttached()
   await dialog.getByRole('button', { name: 'Grant access' }).click()
-  await expect(dialog.getByText(/peer@test.local.*Viewer/)).toBeVisible()
+  await expect(dialog.getByText('peer@test.local · Viewer', { exact: true })).toBeVisible()
 
   state.conflictNext = true
   await dialog.getByLabel('Role').selectOption('editor')
@@ -82,9 +82,9 @@ test('manager grants users and groups, refreshes stale CAS, and revokes', async 
 
   await dialog.getByLabel('Recipient type').selectOption('group')
   await dialog.getByRole('button', { name: 'Grant access' }).click()
-  await expect(dialog.getByText(/Reviewers.*Editor/)).toBeVisible()
-  await dialog.getByText(/peer@test.local.*Viewer/).locator('..').getByRole('button', { name: 'Revoke' }).click()
-  await expect(dialog.getByText(/peer@test.local.*Viewer/)).toHaveCount(0)
+  await expect(dialog.getByText('Reviewers · Editor', { exact: true })).toBeVisible()
+  await dialog.getByText('peer@test.local · Viewer', { exact: true }).locator('..').getByRole('button', { name: 'Revoke' }).click()
+  await expect(dialog.getByText('peer@test.local · Viewer', { exact: true })).toHaveCount(0)
 })
 
 test('unregistered document can enable an individual restricted policy', async ({ page }) => {

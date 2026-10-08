@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	accesspkg "github.com/stek0v/levara/pkg/access"
+	"github.com/stek0v/levara/pkg/community"
 	"io"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/stek0v/levara/internal/store"
@@ -368,8 +370,55 @@ func TestGraphACLMCPTransports(t *testing.T) {
 				if _, err := db.Exec(`UPDATE users SET is_superuser=TRUE WHERE id='alice'`); err != nil {
 					t.Fatal(err)
 				}
+				if result := call("alice", "list_communities", `{}`); result.IsError || strings.Contains(result.Content[0].Text, "foreign confidential summary") {
+					t.Fatalf("unverified legacy community exposed: %+v", result)
+				}
+				// Replace this legacy positive with a real native document publication.
+				nativeCtx, nativeCancel := context.WithTimeout(context.Background(), 4*time.Second)
+				policy := accesspkg.SQLPolicy{DB: db, Q: Q, QA: QArgs}
+				nativeActor := accesspkg.Actor{UserID: "alice"}
+				nativeRef := accesspkg.DocumentRef{DatasetID: "a", DataID: "community-native"}
+				if _, err := db.Exec(Q("INSERT INTO data(id,name,owner_id,raw_content_hash) VALUES('community-native','native consumer source','alice',$1)"), strings.Repeat("c", 64)); err != nil {
+					nativeCancel()
+					t.Fatal(err)
+				}
+				if _, err := db.Exec("INSERT INTO dataset_data(dataset_id,data_id) VALUES('a','community-native')"); err != nil {
+					nativeCancel()
+					t.Fatal(err)
+				}
+				if _, err := db.Exec("INSERT INTO tenants(id,name,owner_id) VALUES('community-consumer','Community consumer','alice')"); err != nil {
+					nativeCancel()
+					t.Fatal(err)
+				}
+				resource, err := policy.RegisterDocument(nativeCtx, nativeActor, nativeRef, "community-consumer", accesspkg.DocumentRestricted)
+				if err != nil {
+					nativeCancel()
+					t.Fatal(err)
+				}
+				version, hash, err := policy.SourceVersion(nativeCtx, nativeRef)
+				if err != nil {
+					nativeCancel()
+					t.Fatal(err)
+				}
+				locked, nativeRelease, err := policy.BeginReadFence(nativeCtx, GetDBProvider() == DBSQLite)
+				if err != nil {
+					nativeCancel()
+					t.Fatal(err)
+				}
+				err = locked.CommitDocumentIndexVersioned(nativeCtx, nativeActor, nativeRef, resource.ContentRevision, "docs", "native-graph-community", accesspkg.DocumentPublicationLineage{SourceRevision: version, RawContentHash: hash, SourcesJSON: "[]"})
+				nativeRelease()
+				if err != nil {
+					nativeCancel()
+					t.Fatal(err)
+				}
+				proof, _ := json.Marshal([]community.Source{{DatasetID: "a", DocumentID: "community-native", ContentRevision: resource.ContentRevision, Derived: true, Collection: "docs", Generation: "native-graph-community", SourceRevision: version, RawContentHash: hash, InputSHA256: strings.Repeat("d", 64)}})
+				_, err = db.Exec(Q("UPDATE graph_communities SET generation='native-community',sources_json=$1,lineage_verified=1 WHERE id='private'"), string(proof))
+				nativeCancel()
+				if err != nil {
+					t.Fatal(err)
+				}
 				if result := call("alice", "list_communities", `{}`); result.IsError || !strings.Contains(result.Content[0].Text, "foreign confidential summary") {
-					t.Errorf("active admin summaries: %+v", result)
+					t.Errorf("active admin native summaries: %+v", result)
 				}
 				if result := call("alice", "query_entity", `{"name":"entity"}`); result.IsError || !strings.Contains(result.Content[0].Text, "foreign-node") {
 					t.Errorf("active admin graph: %+v", result)

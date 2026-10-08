@@ -3,14 +3,18 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/stek0v/levara/pkg/workspace"
 )
 
 type WorkspaceWatchOptions struct {
@@ -30,8 +34,10 @@ type workspaceWatchKey struct {
 }
 
 type WorkspaceWatchState struct {
+	serviceMu        sync.RWMutex
 	mu               sync.RWMutex
 	enabled          bool
+	running          bool
 	startedAt        time.Time
 	stoppedAt        time.Time
 	lastScanAt       time.Time
@@ -138,9 +144,12 @@ func (s *WorkspaceWatchState) markStarted(opts WorkspaceWatchOptions) {
 	if s == nil {
 		return
 	}
+	s.serviceMu.Lock()
+	defer s.serviceMu.Unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.enabled = true
+	s.running = true
 	s.startedAt = time.Now().UTC()
 	s.stoppedAt = time.Time{}
 	s.interval = opts.Interval
@@ -153,9 +162,12 @@ func (s *WorkspaceWatchState) markStopped() {
 	if s == nil {
 		return
 	}
+	s.serviceMu.Lock()
+	defer s.serviceMu.Unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.enabled = false
+	s.running = false
 	s.stoppedAt = time.Now().UTC()
 	s.pendingBranches = 0
 	s.persistLocked()
@@ -325,7 +337,18 @@ func (s *WorkspaceWatchState) configurePersistence(path string) {
 }
 
 func (s *WorkspaceWatchState) loadPersisted(path string) error {
-	data, err := os.ReadFile(path)
+	root, name, err := openWatcherStateParent(path, false)
+	if os.IsNotExist(err) {
+		s.mu.Lock()
+		s.persistPath = path
+		s.mu.Unlock()
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	data, err := workspace.ReadFile(root, name)
 	if err != nil {
 		if os.IsNotExist(err) {
 			s.mu.Lock()
@@ -376,10 +399,14 @@ func (s *WorkspaceWatchState) persistLocked() {
 	if err != nil {
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(s.persistPath), 0755); err != nil {
+	root, name, err := openWatcherStateParent(s.persistPath, true)
+	if err != nil {
 		return
 	}
-	_ = os.WriteFile(s.persistPath, data, 0644)
+	defer root.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = workspace.WriteFile(ctx, root, name, data, 0644)
 }
 
 func parseWatchTime(value string) time.Time {
@@ -410,12 +437,19 @@ func StartWorkspaceWatcher(ctx context.Context, cfg APIConfig, opts WorkspaceWat
 		}
 		initial = map[workspaceWatchKey]string{}
 	}
+	dirty, bootstrapErr := workspaceWatchDirty(cfg, initial)
+	if bootstrapErr != nil {
+		opts.logf("[workspace-watch] inventory check failed: %v", bootstrapErr)
+		if cfg.WorkspaceWatcher != nil {
+			cfg.WorkspaceWatcher.recordError(bootstrapErr)
+		}
+	}
 	if cfg.WorkspaceWatcher != nil {
-		cfg.WorkspaceWatcher.recordScanBranches(initial, map[workspaceWatchKey]time.Time{})
+		cfg.WorkspaceWatcher.recordScanBranches(initial, dirty)
 	}
 	wctx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
-	go workspaceWatchLoop(wctx, cfg, opts, initial, done)
+	go workspaceWatchLoop(wctx, cfg, opts, initial, dirty, done)
 	return func() {
 		cancel()
 		<-done
@@ -454,9 +488,8 @@ func (opts WorkspaceWatchOptions) logf(format string, args ...any) {
 	}
 }
 
-func workspaceWatchLoop(ctx context.Context, cfg APIConfig, opts WorkspaceWatchOptions, previous map[workspaceWatchKey]string, done chan<- struct{}) {
+func workspaceWatchLoop(ctx context.Context, cfg APIConfig, opts WorkspaceWatchOptions, previous map[workspaceWatchKey]string, dirty map[workspaceWatchKey]time.Time, done chan<- struct{}) {
 	defer close(done)
-	dirty := make(map[workspaceWatchKey]time.Time)
 	ticker := time.NewTicker(opts.Interval)
 	defer ticker.Stop()
 	for {
@@ -496,54 +529,182 @@ func workspaceWatchLoop(ctx context.Context, cfg APIConfig, opts WorkspaceWatchO
 				if now.Sub(lastChanged) < opts.Debounce {
 					continue
 				}
+				// Continue scanning while a provider holds the project's effect fence.
+				outstanding, err := workspaceWatchOutstanding(cfg, key)
+				if err != nil {
+					if cfg.WorkspaceWatcher != nil {
+						cfg.WorkspaceWatcher.recordBranchError(key, err)
+					}
+					continue
+				}
+				if outstanding != nil {
+					if outstanding.Status == workspaceIndexJobDeadLetter || (outstanding.Status == workspaceIndexJobFailed && outstanding.NextRunAt == "") {
+						if cfg.WorkspaceWatcher != nil {
+							cfg.WorkspaceWatcher.recordBranchError(key, errors.New("workspace indexing requires manual retry"))
+						}
+					}
+					continue
+				}
 				generation, err := workspaceWatchReconcile(ctx, cfg, opts, key)
 				if err != nil {
 					opts.logf("[workspace-watch] reconcile %s/%s failed: %v", key.ProjectID, key.Branch, err)
 					if cfg.WorkspaceWatcher != nil {
 						cfg.WorkspaceWatcher.recordBranchError(key, err)
 					}
-				} else {
-					opts.logf("[workspace-watch] reconciled %s/%s", key.ProjectID, key.Branch)
+					continue
+				}
+				matched, err := workspaceWatchInventoryMatches(cfg, key)
+				if err != nil {
 					if cfg.WorkspaceWatcher != nil {
-						cfg.WorkspaceWatcher.recordReconcile(key, generation, len(dirty)-1)
+						cfg.WorkspaceWatcher.recordBranchError(key, err)
 					}
-					// Async mode: the reconcile was only enqueued (finding
-					// M17, 2026-09-03 review). Keep the branch dirty until
-					// its job actually completes so status reflects truth.
-					if opts.AsyncIndex && hasActiveWorkspaceIndexJob(cfg, key.ProjectID, key.Branch) {
-						continue
-					}
+					continue
+				}
+				if !matched {
+					continue
 				}
 				delete(dirty, key)
+				if cfg.WorkspaceWatcher != nil {
+					cfg.WorkspaceWatcher.recordReconcile(key, generation, len(dirty))
+				}
 			}
 		}
 	}
 }
 
 func workspaceWatchReconcile(ctx context.Context, cfg APIConfig, opts WorkspaceWatchOptions, key workspaceWatchKey) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	unlock := workspaceManifestLocks.lock(workspaceBranchLockKey(key.ProjectID, key.Branch))
+	defer unlock()
+	target, release, err := beginWorkspaceServiceFence(ctx, cfg, key)
+	if err != nil {
+		return "", err
+	}
+	defer release()
+	outstanding, err := workspaceWatchOutstanding(cfg, target)
+	if err != nil {
+		return "", err
+	}
+	if outstanding != nil {
+		if outstanding.Status == workspaceIndexJobDeadLetter || (outstanding.Status == workspaceIndexJobFailed && outstanding.NextRunAt == "") {
+			return outstanding.Request.Generation, errors.New("workspace indexing requires manual retry")
+		}
+		return outstanding.Request.Generation, nil
+	}
+	matched, err := workspaceWatchInventoryMatches(cfg, target)
+	if err != nil {
+		return "", err
+	}
+	if matched {
+		manifest, _, err := readWorkspaceManifest(cfg, target.ProjectID, target.Branch)
+		if err != nil {
+			return "", err
+		}
+		return manifest.ActiveGeneration, nil
+	}
 	generation := fmt.Sprintf("%s-%s", opts.GenerationPrefix, time.Now().UTC().Format("20060102T150405.000000000Z"))
 	req := workspaceReconcileRequest{
 		workspaceReindexRequest: workspaceReindexRequest{
-			ProjectID:          key.ProjectID,
-			Branch:             key.Branch,
-			Generation:         generation,
-			ChunkStrategy:      opts.ChunkStrategy,
-			MinChunkChars:      opts.MinChunkChars,
-			MaxChunkChars:      opts.MaxChunkChars,
+			ProjectID: target.ProjectID, Branch: target.Branch, Generation: generation,
+			ChunkStrategy: opts.ChunkStrategy, MinChunkChars: opts.MinChunkChars, MaxChunkChars: opts.MaxChunkChars,
 			ActivateGeneration: true,
 		},
+		DeleteMissing: true,
 	}
+	authority := &workspaceIndexJobAuthority{Service: true}
 	if opts.AsyncIndex {
-		_, err := enqueueWorkspaceIndexJobFromPayload(cfg, workspaceIndexJobPayloadFromReindex("reconcile", req.workspaceReindexRequest, req.DeleteMissing))
-		return generation, err
+		_, err = enqueueWorkspaceIndexJobFromPayload(cfg, workspaceIndexJobPayloadFromReindex("reconcile", req.workspaceReindexRequest, req.DeleteMissing), authority)
+	} else {
+		_, err = reconcileWorkspaceMarkdownLocked(ctx, cfg, req, authority)
 	}
-	_, err := reconcileWorkspaceMarkdown(ctx, cfg, req)
 	return generation, err
+}
+
+// Retryable failures already own their branch's work; the worker applies its backoff.
+func workspaceWatchOutstanding(cfg APIConfig, key workspaceWatchKey) (*workspaceIndexJob, error) {
+	jobs, err := listWorkspaceIndexJobs(cfg, workspaceIndexJobsRequest{ProjectID: key.ProjectID, Branch: key.Branch})
+	if err != nil {
+		return nil, err
+	}
+	for _, job := range jobs {
+		if job.SupersededByGeneration != "" && (job.Status == workspaceIndexJobFailed || job.Status == workspaceIndexJobDeadLetter) {
+			continue
+		}
+		if job.Request.Operation != "reconcile" && job.Request.Operation != "reindex" {
+			continue
+		}
+		if job.Status == workspaceIndexJobPending || job.Status == workspaceIndexJobRunning || job.Status == workspaceIndexJobFailed || job.Status == workspaceIndexJobDeadLetter {
+			return &job, nil
+		}
+	}
+	return nil, nil
+}
+
+func workspaceWatchInventoryMatches(cfg APIConfig, key workspaceWatchKey) (bool, error) {
+	manifest, exists, err := readWorkspaceManifest(cfg, key.ProjectID, key.Branch)
+	if err != nil || !exists {
+		return false, err
+	}
+	inventory, known := manifest.Files[manifest.ActiveGeneration]
+	if manifest.ActiveGeneration == "" || !known || inventory == nil {
+		return false, nil
+	}
+	actual, err := workspaceBranchInventory(cfg, workspaceProjectRoot(cfg, key.ProjectID, key.Branch))
+	if err != nil {
+		return false, err
+	}
+	if len(actual) != len(inventory) {
+		return false, nil
+	}
+	for path, digest := range actual {
+		if inventory[path] != digest {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func workspaceWatchDirty(cfg APIConfig, current map[workspaceWatchKey]string) (map[workspaceWatchKey]time.Time, error) {
+	dirty := make(map[workspaceWatchKey]time.Time)
+	now := time.Now().UTC()
+	if state := cfg.WorkspaceWatcher; state != nil {
+		state.mu.RLock()
+		for _, status := range state.branches {
+			if status.Pending {
+				dirty[workspaceWatchKey{ProjectID: status.ProjectID, Branch: status.Branch}] = now
+			}
+		}
+		state.mu.RUnlock()
+	}
+	var firstErr error
+	for key, fingerprint := range current {
+		if strings.HasPrefix(fingerprint, "restore:") {
+			dirty[key] = now
+			continue
+		}
+		matched, err := workspaceWatchInventoryMatches(cfg, key)
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+		if !matched {
+			dirty[key] = now
+		}
+	}
+	return dirty, firstErr
 }
 
 func workspaceWatchFingerprints(cfg APIConfig) (map[workspaceWatchKey]string, error) {
 	projectsRoot := filepath.Join(workspaceRoot(cfg), "projects")
-	projects, err := os.ReadDir(projectsRoot)
+	projectsDir, err := openWorkspaceDirectory(cfg, projectsRoot, false)
+	if os.IsNotExist(err) {
+		return map[workspaceWatchKey]string{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer projectsDir.Close()
+	projects, err := fs.ReadDir(projectsDir.FS(), ".")
 	if err != nil {
 		if os.IsNotExist(err) {
 			return map[workspaceWatchKey]string{}, nil
@@ -556,21 +717,36 @@ func workspaceWatchFingerprints(cfg APIConfig) (map[workspaceWatchKey]string, er
 			continue
 		}
 		projectRoot := filepath.Join(projectsRoot, project.Name())
-		branches, err := os.ReadDir(projectRoot)
+		projectDir, err := openWorkspaceDirectory(cfg, projectRoot, false)
 		if err != nil {
 			return nil, err
 		}
+		branches, err := fs.ReadDir(projectDir.FS(), ".")
+		if err != nil {
+			projectDir.Close()
+			return nil, err
+		}
+		signals, err := workspaceWatchRestoreSignals(cfg, projectDir, project.Name(), branches)
+		projectDir.Close()
+		if err != nil {
+			return nil, err
+		}
+		journalBranches := make(map[string]bool, len(signals))
+		for key, fingerprint := range signals {
+			out[key] = fingerprint
+			journalBranches[safeWorkspaceID(key.Branch)] = true
+		}
 		for _, branch := range branches {
+			if journalBranches[branch.Name()] || strings.HasPrefix(branch.Name(), ".restore-") || strings.HasPrefix(branch.Name(), ".backup-") {
+				continue
+			}
 			if !branch.IsDir() {
 				continue
 			}
 			branchRoot := filepath.Join(projectRoot, branch.Name())
-			fingerprint, hasMarkdown, err := workspaceBranchFingerprint(branchRoot)
+			fingerprint, _, err := workspaceBranchFingerprint(cfg, branchRoot)
 			if err != nil {
 				return nil, err
-			}
-			if !hasMarkdown {
-				continue
 			}
 			out[workspaceWatchKey{ProjectID: project.Name(), Branch: branch.Name()}] = fingerprint
 		}
@@ -578,22 +754,83 @@ func workspaceWatchFingerprints(cfg APIConfig) (map[workspaceWatchKey]string, er
 	return out, nil
 }
 
-func workspaceBranchFingerprint(root string) (string, bool, error) {
-	paths, err := listWorkspaceMarkdownPaths(root)
+// A restore can crash before the watcher observes a file change. Journals are
+// discovery signals only; the service fence resolves SQL authority and recovers.
+func workspaceWatchRestoreSignals(cfg APIConfig, dir *os.Root, projectDirectory string, entries []fs.DirEntry) (map[workspaceWatchKey]string, error) {
+	signals := make(map[workspaceWatchKey]string)
+	for _, entry := range entries {
+		name := entry.Name()
+		if !strings.HasPrefix(name, ".restore-state-") || !strings.HasSuffix(name, ".json") {
+			continue
+		}
+		raw, err := workspace.ReadFile(dir, name)
+		if err != nil {
+			return nil, err
+		}
+		if len(raw) > 64*1024 {
+			return nil, errors.New("workspace restore journal too large")
+		}
+		var journal workspaceRestoreJournal
+		if err := json.Unmarshal(raw, &journal); err != nil {
+			return nil, err
+		}
+		if journal.ProjectID == "" || safeWorkspaceID(journal.ProjectID) != projectDirectory || journal.Branch == "" ||
+			name != ".restore-state-"+safeWorkspaceID(journal.Branch)+".json" ||
+			journal.Live != filepath.Base(workspaceProjectRoot(cfg, journal.ProjectID, journal.Branch)) ||
+			!strings.HasPrefix(journal.Stage, ".restore-") || !strings.HasPrefix(journal.Backup, ".backup-") {
+			return nil, errors.New("workspace restore journal target mismatch")
+		}
+		if _, err := uuid.Parse(strings.TrimPrefix(journal.Stage, ".restore-")); err != nil {
+			return nil, errors.New("invalid restore stage identity")
+		}
+		if _, err := uuid.Parse(strings.TrimPrefix(journal.Backup, ".backup-")); err != nil {
+			return nil, errors.New("invalid restore backup identity")
+		}
+		signals[workspaceWatchKey{ProjectID: projectDirectory, Branch: journal.Branch}] = "restore:" + digestBytes(raw)
+	}
+	return signals, nil
+}
+
+func workspaceBranchFingerprint(cfg APIConfig, root string) (string, bool, error) {
+	inventory, err := workspaceBranchInventory(cfg, root)
 	if err != nil {
 		return "", false, err
 	}
+	raw, err := json.Marshal(inventory)
+	return string(raw), len(inventory) > 0, err
+}
+
+func workspaceBranchInventory(cfg APIConfig, root string) (map[string]string, error) {
+	paths, err := listWorkspaceMarkdownPaths(cfg, root)
+	if err != nil {
+		return nil, err
+	}
+	inventory := make(map[string]string, len(paths))
 	if len(paths) == 0 {
-		return "", false, nil
+		return inventory, nil
 	}
-	lines := make([]string, 0, len(paths))
+	dir, err := openWorkspaceDirectory(cfg, root, false)
+	if err != nil {
+		return nil, err
+	}
+	defer dir.Close()
 	for _, rel := range paths {
-		info, err := os.Stat(filepath.Join(root, filepath.FromSlash(rel)))
+		data, err := workspace.ReadFile(dir, filepath.FromSlash(rel))
 		if err != nil {
-			return "", false, err
+			return nil, err
 		}
-		lines = append(lines, fmt.Sprintf("%s:%d:%d", rel, info.Size(), info.ModTime().UnixNano()))
+		inventory[rel] = digestBytes(data)
 	}
-	sort.Strings(lines)
-	return strings.Join(lines, "\n"), true, nil
+	return inventory, nil
+}
+
+func openWatcherStateParent(absolute string, create bool) (*os.Root, string, error) {
+	base := filepath.Dir(absolute)
+	relative := "."
+	// Production state is a workspace-owned .kb sidecar; preserve standalone test/operator paths.
+	if filepath.Base(base) == ".kb" {
+		base, relative = filepath.Dir(base), ".kb"
+	}
+	root, err := workspace.OpenRoot(base, relative, create)
+	return root, filepath.Base(absolute), err
 }

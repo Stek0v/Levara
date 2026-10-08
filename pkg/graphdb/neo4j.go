@@ -6,11 +6,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
+	"math/big"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"github.com/stek0v/levara/pkg/graph"
 
 	"github.com/stek0v/levara/internal/metrics"
 )
@@ -88,7 +94,9 @@ type Writer struct {
 	// lazyValidFromOnce gates Stage-5 lazy temporal migration: the first read
 	// after process start backfills valid_from=0 (epoch) on legacy edges that
 	// pre-date the temporal model. Subsequent reads skip the no-op MATCH.
-	lazyValidFromOnce sync.Once
+	lazyValidFromOnce  sync.Once
+	episodeSchemaMu    sync.Mutex
+	episodeSchemaReady bool
 }
 
 // NewWriter creates a Neo4j writer. url is bolt:// or neo4j:// URI.
@@ -158,8 +166,12 @@ func (w *Writer) ensureValidFromBackfill(ctx context.Context) {
 // EnsureSchema creates required constraints/indexes if they do not exist.
 func (w *Writer) EnsureSchema(ctx context.Context) error {
 	_, err := RunWriteTx(ctx, w, func(ctx context.Context, tx neo4j.ManagedTransaction) (struct{}, error) {
-		for _, stmt := range requiredNeo4jSchemaStatements(baseLabel) {
-			if _, err := tx.Run(ctx, stmt, nil); err != nil {
+		for _, stmt := range append(requiredNeo4jSchemaStatements(baseLabel), episodeIdentityConstraint) {
+			res, err := tx.Run(ctx, stmt, nil)
+			if err != nil {
+				return struct{}{}, err
+			}
+			if _, err := res.Consume(ctx); err != nil {
 				return struct{}{}, err
 			}
 		}
@@ -192,11 +204,33 @@ func (w *Writer) BatchWrite(ctx context.Context, nodes []NodeRecord, edges []Edg
 	defer metrics.ObserveExternalCall("neo4j", "write", time.Now(), &obsErr)
 
 	nodeBatch := buildNodeBatch(nodes)
-	edgeBatch := buildEdgeBatch(edges)
+	edgeBatch, err := prepareEpisodeBatch(edges)
+	if err != nil {
+		return BatchWriteResult{Errors: []string{err.Error()}}
+	}
+	for _, node := range nodes {
+		if node.ID == "" {
+			return BatchWriteResult{Errors: []string{"node ID required"}}
+		}
+		if node.Label == "__EpisodeIdentity__" {
+			return BatchWriteResult{Errors: []string{"reserved internal node label"}}
+		}
+		if node.Label == "" {
+			return BatchWriteResult{Errors: []string{"node label required"}}
+		}
+	}
+	if len(edges) > 0 {
+		if err := w.ensureEpisodeIdentitySchema(ctx); err != nil {
+			return BatchWriteResult{Errors: []string{err.Error()}}
+		}
+	}
 
 	type counts struct{ nodes, edges int }
 	out, err := RunWriteTx(ctx, w, func(ctx context.Context, tx neo4j.ManagedTransaction) (counts, error) {
 		var c counts
+		if err := lockEpisodeBatch(ctx, tx, nodes, edges, edgeBatch); err != nil {
+			return counts{}, err
+		}
 		if len(nodeBatch) > 0 {
 			n, err := runNodeMerge(ctx, tx, nodeBatch)
 			if err != nil {
@@ -264,20 +298,6 @@ var nodeMergeCypher = fmt.Sprintf(`
 	RETURN count(labeledNode) AS cnt
 `, baseLabel)
 
-var edgeMergeCypher = fmt.Sprintf(`
-	UNWIND $edges AS edge
-	MATCH (from_node: `+"`%s`"+` {id: edge.from_node})
-	MATCH (to_node: `+"`%s`"+` {id: edge.to_node})
-	CALL apoc.merge.relationship(
-		from_node,
-		edge.relationship_name,
-		{source_node_id: edge.from_node, target_node_id: edge.to_node},
-		edge.properties,
-		to_node
-	) YIELD rel
-	RETURN count(rel) AS cnt
-`, baseLabel, baseLabel)
-
 func runNodeMerge(ctx context.Context, tx neo4j.ManagedTransaction, batch []map[string]any) (int, error) {
 	res, err := tx.Run(ctx, nodeMergeCypher, map[string]any{"nodes": batch})
 	if err != nil {
@@ -296,20 +316,421 @@ func runNodeMerge(ctx context.Context, tx neo4j.ManagedTransaction, batch []map[
 	return len(batch), nil
 }
 
-func runEdgeMerge(ctx context.Context, tx neo4j.ManagedTransaction, batch []map[string]any) (int, error) {
-	res, err := tx.Run(ctx, edgeMergeCypher, map[string]any{"edges": batch})
-	if err != nil {
-		return 0, err
+const episodeIdentityConstraint = "CREATE CONSTRAINT IF NOT EXISTS FOR (n:__EpisodeIdentity__) REQUIRE n.id IS UNIQUE"
+
+func (w *Writer) ensureEpisodeIdentitySchema(ctx context.Context) error {
+	w.episodeSchemaMu.Lock()
+	defer w.episodeSchemaMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	if res.Next(ctx) {
-		if c, ok := res.Record().Get("cnt"); ok {
-			if n, ok := c.(int64); ok {
-				return int(n), nil
+	if w.episodeSchemaReady {
+		return nil
+	}
+	_, err := RunWriteTx(ctx, w, func(ctx context.Context, tx neo4j.ManagedTransaction) (struct{}, error) {
+		for _, statement := range []string{requiredNeo4jSchemaStatements(baseLabel)[0], episodeIdentityConstraint} {
+			res, err := tx.Run(ctx, statement, nil)
+			if err != nil {
+				return struct{}{}, err
+			}
+			if _, err := res.Consume(ctx); err != nil {
+				return struct{}{}, err
+			}
+		}
+		return struct{}{}, nil
+	})
+	if err == nil {
+		w.episodeSchemaReady = true
+	}
+	return err
+}
+
+func episodeSecond(value any) (int64, bool, error) {
+	if value == nil {
+		return 0, false, nil
+	}
+	var n int64
+	switch v := value.(type) {
+	case int:
+		n = int64(v)
+	case int8:
+		n = int64(v)
+	case int16:
+		n = int64(v)
+	case int32:
+		n = int64(v)
+	case int64:
+		n = v
+	case uint:
+		if uint64(v) > math.MaxInt64 {
+			return 0, false, fmt.Errorf("timestamp overflow")
+		}
+		n = int64(v)
+	case uint64:
+		if v > math.MaxInt64 {
+			return 0, false, fmt.Errorf("timestamp overflow")
+		}
+		n = int64(v)
+	case uint8:
+		n = int64(v)
+	case uint16:
+		n = int64(v)
+	case uint32:
+		n = int64(v)
+	case float32:
+		return episodeSecond(float64(v))
+	case float64:
+		if math.IsNaN(v) || math.IsInf(v, 0) || math.Trunc(v) != v || v >= 9223372036854775808.0 || v < -9223372036854775808.0 {
+			return 0, false, fmt.Errorf("invalid timestamp number")
+		}
+		n = int64(v)
+	case json.Number:
+		raw := string(v)
+		if !json.Valid([]byte(raw)) {
+			return 0, false, fmt.Errorf("invalid timestamp number")
+		}
+		mantissa := strings.SplitN(strings.ToLower(raw), "e", 2)[0]
+		if strings.Trim(mantissa, "-0.") == "" {
+			n = 0
+			break
+		}
+		// Bound magnitude before exact parsing to avoid enormous exponent allocation.
+		approximate, err := v.Float64()
+		if err != nil || math.Abs(approximate) < 1 || math.Abs(approximate) > 9223372036854775808.0 {
+			return 0, false, fmt.Errorf("invalid timestamp number")
+		}
+		exact, ok := new(big.Rat).SetString(raw)
+		if !ok || !exact.IsInt() || !exact.Num().IsInt64() {
+			return 0, false, fmt.Errorf("invalid timestamp number")
+		}
+		n = exact.Num().Int64()
+	case string:
+		parsed, err := strconv.ParseInt(v, 10, 64)
+		if err == nil {
+			n = parsed
+		} else {
+			stamp, err := time.Parse(time.RFC3339Nano, v)
+			if err != nil {
+				return 0, false, fmt.Errorf("invalid timestamp: %q", v)
+			}
+			n = stamp.Unix()
+		}
+	default:
+		return 0, false, fmt.Errorf("invalid timestamp type %T", value)
+	}
+	return n, true, nil
+}
+
+func prepareEpisodeBatch(edges []EdgeRecord) ([]map[string]any, error) {
+	for _, edge := range edges {
+		for _, key := range []string{"id", "dataset_id", "superseded_by"} {
+			if value := edge.Properties[key]; value != nil {
+				if _, ok := value.(string); !ok {
+					return nil, fmt.Errorf("%s must be a string", key)
+				}
+			}
+		}
+		for _, key := range []string{"valid_from", "valid_until"} {
+			if _, _, err := episodeSecond(edge.Properties[key]); err != nil {
+				return nil, err
 			}
 		}
 	}
-	if err := res.Err(); err != nil {
-		return 0, fmt.Errorf("cypher: %w", err)
+	batch := buildEdgeBatch(edges)
+	for _, edge := range batch {
+		if edge["from_node"] == "" || edge["to_node"] == "" {
+			return nil, fmt.Errorf("edge endpoints required")
+		}
+		if edge["relationship_name"] == "" {
+			return nil, fmt.Errorf("relationship type required")
+		}
+		props := edge["properties"].(map[string]any)
+		for _, key := range []string{"id", "dataset_id"} {
+			if value := props[key]; value != nil {
+				if _, ok := value.(string); !ok {
+					return nil, fmt.Errorf("%s must be a string", key)
+				}
+			}
+		}
+		from, hasFrom, err := episodeSecond(props["valid_from"])
+		if err != nil {
+			return nil, err
+		}
+		until, closed, err := episodeSecond(props["valid_until"])
+		if err != nil {
+			return nil, err
+		}
+		if closed && !hasFrom {
+			from = 0
+			hasFrom = true
+		}
+		if closed && until < from {
+			return nil, fmt.Errorf("reversed validity bounds")
+		}
+		delete(props, "valid_from")
+		delete(props, "valid_until")
+		if hasFrom {
+			props["valid_from"] = from
+		}
+		if closed {
+			props["valid_until"] = until
+		}
+		id, _ := props["id"].(string)
+		if id == "" {
+			id = fmt.Sprintf("%s_%s_%s", edge["from_node"], edge["relationship_name"], edge["to_node"])
+		}
+		edge["candidate_id"], edge["has_from"], edge["closed"] = id, hasFrom, closed
+	}
+	return batch, nil
+}
+
+func episodeRows(ctx context.Context, tx neo4j.ManagedTransaction, query string, params map[string]any) ([]map[string]any, error) {
+	res, err := tx.Run(ctx, query, params)
+	if err != nil {
+		return nil, err
+	}
+	var rows []map[string]any
+	for res.Next(ctx) {
+		row := map[string]any{}
+		for _, key := range res.Record().Keys {
+			row[key], _ = res.Record().Get(key)
+		}
+		rows = append(rows, row)
+	}
+	return rows, res.Err()
+}
+
+func lockEpisodeIdentity(ctx context.Context, tx neo4j.ManagedTransaction, id string) error {
+	rows, err := episodeRows(ctx, tx, "MERGE (n:__EpisodeIdentity__ {id:$id}) WITH n CALL apoc.lock.nodes([n]) RETURN count(n) AS count", map[string]any{"id": id})
+	if err != nil {
+		return err
+	}
+	if len(rows) != 1 || rows[0]["count"] != int64(1) {
+		return fmt.Errorf("identity reservation failed")
+	}
+	return nil
+}
+
+func lockEpisodeBatch(ctx context.Context, tx neo4j.ManagedTransaction, nodes []NodeRecord, edges []EdgeRecord, batch []map[string]any) error {
+	candidates := map[string]bool{}
+	for _, edge := range batch {
+		candidates[edge["candidate_id"].(string)] = true
+		if !edge["closed"].(bool) {
+			props := edge["properties"].(map[string]any)
+			dataset, _ := props["dataset_id"].(string)
+			relation := edge["relationship_name"].(string)
+			rows, err := episodeRows(ctx, tx, `MATCH (a:__Node__ {id:$source})-[r]->(b:__Node__ {id:$target})
+			 WHERE coalesce(r.dataset_id,'')=$dataset AND r.valid_until IS NULL
+			 AND (($exclusive AND toLower(type(r))=toLower($type)) OR (NOT $exclusive AND type(r)=$type))
+			 RETURN r.id AS id`, map[string]any{"source": edge["from_node"], "target": edge["to_node"], "dataset": dataset, "type": relation, "exclusive": graph.IsExclusiveRelationship(relation)})
+			if err != nil {
+				return err
+			}
+			for _, row := range rows {
+				if id, ok := row["id"].(string); ok && id != "" {
+					candidates[id] = true
+				}
+			}
+		}
+	}
+	orderedIDs := make([]string, 0, len(candidates))
+	for id := range candidates {
+		orderedIDs = append(orderedIDs, id)
+	}
+	sort.Strings(orderedIDs)
+	for _, id := range orderedIDs {
+		if err := lockEpisodeIdentity(ctx, tx, id); err != nil {
+			return err
+		}
+	}
+	create := map[string]bool{}
+	endpoints := map[string]bool{}
+	for _, node := range nodes {
+		create[node.ID] = true
+		endpoints[node.ID] = true
+	}
+	for _, edge := range edges {
+		endpoints[edge.SourceID] = true
+		endpoints[edge.TargetID] = true
+	}
+	ordered := make([]string, 0, len(endpoints))
+	for id := range endpoints {
+		ordered = append(ordered, id)
+	}
+	sort.Strings(ordered)
+	for _, id := range ordered {
+		match := "MATCH"
+		if create[id] {
+			match = "MERGE"
+		}
+		rows, err := episodeRows(ctx, tx, match+" (n:__Node__ {id:$id}) WITH n CALL apoc.lock.nodes([n]) RETURN count(n) AS count", map[string]any{"id": id})
+		if err != nil {
+			return err
+		}
+		if len(rows) != 1 || rows[0]["count"] != int64(1) {
+			return fmt.Errorf("missing endpoint %s", id)
+		}
+	}
+	return nil
+}
+
+func episodeEvidence(props map[string]any) string {
+	ordinary := map[string]any{}
+	for key, value := range props {
+		if key != "id" && key != "valid_from" && key != "valid_until" && key != "superseded_by" && key != "source_node_id" && key != "target_node_id" && key != "dataset_id" {
+			ordinary[key] = value
+		}
+	}
+	encoded, _ := json.Marshal(ordinary)
+	return string(encoded)
+}
+
+func episodeByID(ctx context.Context, tx neo4j.ManagedTransaction, id string) ([]map[string]any, error) {
+	return episodeRows(ctx, tx, "MATCH (a:__Node__)-[r]->(b:__Node__) WHERE r.id=$id RETURN a.id AS source,b.id AS target,type(r) AS type,elementId(r) AS element,properties(r) AS props", map[string]any{"id": id})
+}
+
+func runEdgeMerge(ctx context.Context, tx neo4j.ManagedTransaction, batch []map[string]any) (int, error) {
+	now := time.Now().Unix()
+	for _, edge := range batch {
+		original := edge["properties"].(map[string]any)
+		props := map[string]any{}
+		for key, value := range original {
+			props[key] = value
+		}
+		dataset, _ := props["dataset_id"].(string)
+		relation := edge["relationship_name"].(string)
+		exclusive := graph.IsExclusiveRelationship(relation)
+		closed := edge["closed"].(bool)
+		params := map[string]any{"source": edge["from_node"], "target": edge["to_node"], "dataset": dataset, "type": relation, "exclusive": exclusive}
+		id := edge["candidate_id"].(string)
+		if closed {
+			rows, err := episodeByID(ctx, tx, id)
+			if err != nil {
+				return 0, err
+			}
+			if len(rows) > 0 {
+				old := rows[0]["props"].(map[string]any)
+				oldDataset, _ := old["dataset_id"].(string)
+				oldType := rows[0]["type"].(string)
+				sameType := oldType == relation || exclusive && strings.EqualFold(oldType, relation)
+				from, _, err := episodeSecond(old["valid_from"])
+				if err != nil {
+					return 0, err
+				}
+				until, wasClosed, err := episodeSecond(old["valid_until"])
+				if err != nil {
+					return 0, err
+				}
+				if len(rows) != 1 || rows[0]["source"] != edge["from_node"] || rows[0]["target"] != edge["to_node"] || oldDataset != dataset || !sameType || !wasClosed || from != props["valid_from"] || until != props["valid_until"] || episodeEvidence(old) == "" || episodeEvidence(props) == "" || episodeEvidence(old) != episodeEvidence(props) {
+					return 0, fmt.Errorf("closed episode ID conflict")
+				}
+				if successor, ok := props["superseded_by"]; ok && successor != old["superseded_by"] {
+					return 0, fmt.Errorf("closed successor conflict")
+				}
+				continue
+			}
+		}
+		var active []map[string]any
+		if !closed {
+			var err error
+			active, err = episodeRows(ctx, tx, `MATCH (a:__Node__ {id:$source})-[r]->(b:__Node__ {id:$target})
+			 WHERE coalesce(r.dataset_id,'')=$dataset AND r.valid_until IS NULL
+			 AND (($exclusive AND toLower(type(r))=toLower($type)) OR (NOT $exclusive AND type(r)=$type))
+			 RETURN elementId(r) AS element,properties(r) AS props,type(r) AS type ORDER BY elementId(r)`, params)
+			if err != nil {
+				return 0, err
+			}
+			if len(active) > 1 {
+				return 0, fmt.Errorf("duplicate active episodes")
+			}
+		}
+		from := now
+		if edge["has_from"].(bool) {
+			from = props["valid_from"].(int64)
+		}
+		var element string
+		if len(active) == 1 {
+			old := active[0]["props"].(map[string]any)
+			storedFrom, hasStart, err := episodeSecond(old["valid_from"])
+			if err != nil {
+				return 0, err
+			}
+			if !hasStart {
+				storedFrom = 0
+			}
+			if edge["has_from"].(bool) && from != storedFrom {
+				return 0, fmt.Errorf("active episode start conflict")
+			}
+			from = storedFrom
+			element = active[0]["element"].(string)
+			if storedID, ok := old["id"].(string); ok && storedID != "" {
+				id = storedID
+			}
+		}
+		for {
+			rows, err := episodeByID(ctx, tx, id)
+			if err != nil {
+				return 0, err
+			}
+			if len(rows) == 0 || len(rows) == 1 && rows[0]["element"] == element {
+				break
+			}
+			if element != "" {
+				return 0, fmt.Errorf("active episode ID conflict")
+			}
+			id = edge["candidate_id"].(string) + "_" + uuid.NewString()
+			if err := lockEpisodeIdentity(ctx, tx, id); err != nil {
+				return 0, err
+			}
+		}
+		if exclusive && !closed {
+			params["element"] = element
+			rows, err := episodeRows(ctx, tx, `MATCH (a:__Node__ {id:$source})-[r]->()
+			 WHERE coalesce(r.dataset_id,'')=$dataset AND r.valid_until IS NULL
+			 AND toLower(type(r))=toLower($type) AND elementId(r)<>$element RETURN properties(r) AS props`, params)
+			if err != nil {
+				return 0, err
+			}
+			for _, row := range rows {
+				oldFrom, _, err := episodeSecond(row["props"].(map[string]any)["valid_from"])
+				if err != nil {
+					return 0, err
+				}
+				if oldFrom > from {
+					return 0, fmt.Errorf("backdated exclusive transition")
+				}
+			}
+		}
+		props["id"], props["valid_from"] = id, from
+		if !closed {
+			delete(props, "valid_until")
+			delete(props, "superseded_by")
+		}
+		params["props"], params["element"] = props, element
+		var query string
+		if element != "" {
+			query = `MATCH ()-[r]->() WHERE elementId(r)=$element SET r += $props, r.valid_until=NULL, r.superseded_by=NULL
+			 WITH r CALL apoc.refactor.setType(r,$type) YIELD output RETURN elementId(output) AS element`
+		} else {
+			query = `MATCH (a:__Node__ {id:$source}),(b:__Node__ {id:$target})
+			 CALL apoc.create.relationship(a,$type,$props,b) YIELD rel RETURN elementId(rel) AS element`
+		}
+		rows, err := episodeRows(ctx, tx, query, params)
+		if err != nil {
+			return 0, err
+		}
+		if len(rows) != 1 {
+			return 0, fmt.Errorf("episode write count mismatch")
+		}
+		if exclusive && !closed {
+			params["element"], params["from"], params["id"] = rows[0]["element"], from, id
+			if _, err := episodeRows(ctx, tx, `MATCH (a:__Node__ {id:$source})-[r]->()
+			 WHERE coalesce(r.dataset_id,'')=$dataset AND r.valid_until IS NULL
+			 AND toLower(type(r))=toLower($type) AND elementId(r)<>$element
+			 SET r.valid_until=$from,r.superseded_by=$id RETURN count(r) AS count`, params); err != nil {
+				return 0, err
+			}
+		}
 	}
 	return len(batch), nil
 }

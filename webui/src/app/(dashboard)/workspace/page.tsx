@@ -1,6 +1,7 @@
 'use client'
 
 import { useMemo, useState } from 'react'
+import { ApiError } from '@/lib/api'
 import {
   useWorkspaceArtifacts,
   useWorkspaceAudit,
@@ -20,6 +21,10 @@ import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Input } from '@/components/ui/input'
 import { AlertTriangle, BookOpen, Files, History, RefreshCw, RotateCcw, Search, Upload } from 'lucide-react'
+
+function denied(error: unknown) {
+  return error instanceof ApiError && (error.status === 401 || error.status === 403)
+}
 
 function splitLines(value: string) {
   return value.split('\n').map((v) => v.trim()).filter(Boolean)
@@ -48,6 +53,8 @@ export default function WorkspacePage() {
   const [readPath, setReadPath] = useState('docs/note.md')
   const [artifactKind, setArtifactKind] = useState('')
   const [jobStatus, setJobStatus] = useState('')
+  const [createFile, setCreateFile] = useState(false)
+  const [denialStamp, setDenialStamp] = useState(0)
 
   const scope = useMemo(() => ({
     project_id: projectId.trim() || undefined,
@@ -68,8 +75,47 @@ export default function WorkspacePage() {
   const searchMutation = useWorkspaceSearch()
   const retryMutation = useWorkspaceRetryJob()
 
+  const observations = [ops, manifest, jobs, artifacts, conflicts, audit]
+  const scopeDenied = observations.some(query => denied(query.error))
+  const currentDenialStamp = Math.max(0, ...observations.filter(query => denied(query.error)).map(query => query.errorUpdatedAt))
+  if (currentDenialStamp > denialStamp) {
+    setDenialStamp(currentDenialStamp)
+    setCreateFile(false)
+  }
+
+  const opsData = scopeDenied ? undefined : ops.data
+  const manifestData = scopeDenied ? undefined : manifest.data
+  const jobsData = scopeDenied ? undefined : jobs.data
+  const artifactsData = scopeDenied ? undefined : artifacts.data
+  const conflictsData = scopeDenied ? undefined : conflicts.data
+  const auditData = scopeDenied ? undefined : audit.data
+
+  const readData = !scopeDenied && readMutation.submittedAt > denialStamp && readMutation.isSuccess &&
+    readMutation.variables?.project_id === scope.project_id &&
+    readMutation.variables?.branch === scope.branch &&
+    readMutation.variables?.path === readPath.trim() &&
+    readMutation.data.project_id === scope.project_id &&
+    readMutation.data.branch === scope.branch &&
+    readMutation.data.path === readPath.trim() ? readMutation.data : undefined
+  const searchData = !scopeDenied && searchMutation.submittedAt > denialStamp &&
+    searchMutation.variables?.project_id === scope.project_id &&
+    searchMutation.variables?.branch === scope.branch ? searchMutation.data : undefined
+  const writeData = !scopeDenied && writeMutation.submittedAt > denialStamp ? writeMutation.data : undefined
+  const indexData = !scopeDenied && indexMutation.submittedAt > denialStamp ? indexMutation.data : undefined
+  const reindexData = !scopeDenied && reindexMutation.submittedAt > denialStamp ? reindexMutation.data : undefined
+  const expectedDigest = scopeDenied ? undefined : createFile ? '' : readData?.path === path.trim() ? readData.file_digest : undefined
+  const resetScopeResults = () => {
+    readMutation.reset()
+    searchMutation.reset()
+    writeMutation.reset()
+    indexMutation.reset()
+    reindexMutation.reset()
+    retryMutation.reset()
+    setCreateFile(false)
+  }
+
   const handleIndex = () => {
-    if (!canUseWorkspace || !generation.trim() || !path.trim() || !text.trim()) return
+    if (!canUseWorkspace || !generation.trim() || !path.trim()) return
     indexMutation.mutate({
       project_id: projectId.trim(),
       branch: scope.branch,
@@ -82,7 +128,7 @@ export default function WorkspacePage() {
   }
 
   const handleWrite = () => {
-    if (!canUseWorkspace || !generation.trim() || !path.trim() || !text.trim()) return
+    if (!canUseWorkspace || !generation.trim() || !path.trim() || expectedDigest === undefined) return
     writeMutation.mutate({
       project_id: projectId.trim(),
       branch: scope.branch,
@@ -91,8 +137,9 @@ export default function WorkspacePage() {
       title: title.trim() || undefined,
       text,
       index: true,
+      expected_file_digest: expectedDigest,
       activate_generation: true,
-    })
+    }, { onSuccess: () => { readMutation.reset(); setCreateFile(false) }, onError: () => readMutation.reset() })
   }
 
   const handleReindex = () => {
@@ -131,22 +178,23 @@ export default function WorkspacePage() {
   }
 
   const conflictCount =
-    (conflicts.data?.dirty_paths?.length ?? 0) +
-    (conflicts.data?.unindexed_paths?.length ?? 0) +
-    (conflicts.data?.missing_indexed_paths?.length ?? 0)
+    (conflictsData?.dirty_paths?.length ?? 0) +
+    (conflictsData?.unindexed_paths?.length ?? 0) +
+    (conflictsData?.missing_indexed_paths?.length ?? 0)
 
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold">Workspace</h1>
+        <Button variant="secondary" disabled={!canUseWorkspace || ops.isFetching || jobs.isFetching} onClick={() => { void ops.refetch(); void manifest.refetch(); void jobs.refetch(); void artifacts.refetch(); void conflicts.refetch(); void audit.refetch() }}>Refresh workspace</Button>
         <Badge variant={canUseWorkspace ? 'success' : 'default'}>{canUseWorkspace ? 'scoped' : 'set project_id'}</Badge>
       </div>
 
       <section className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-5 mb-6">
         <h2 className="text-lg font-semibold mb-4 flex items-center gap-2"><Files className="h-5 w-5 text-blue-600" /> Project Scope</h2>
         <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-          <Input label="Project ID" value={projectId} onChange={(e) => setProjectId(e.target.value)} placeholder="payments" />
-          <Input label="Branch" value={branch} onChange={(e) => setBranch(e.target.value)} placeholder="main" />
+          <Input label="Project ID" value={projectId} onChange={(e) => { resetScopeResults(); setProjectId(e.target.value) }} placeholder="payments" />
+          <Input label="Branch" value={branch} onChange={(e) => { resetScopeResults(); setBranch(e.target.value) }} placeholder="main" />
           <Input label="Generation" value={generation} onChange={(e) => setGeneration(e.target.value)} placeholder="main" />
           <Input label="Job status" value={jobStatus} onChange={(e) => setJobStatus(e.target.value)} placeholder="failed" />
         </div>
@@ -156,17 +204,18 @@ export default function WorkspacePage() {
         <EmptyState icon={Files} title="Workspace scope required" description="Enter a project_id to load manifest, jobs, search, read, and audit tools." />
       ) : (
         <div className="space-y-6">
+          {[ops, manifest, jobs, artifacts, conflicts, audit].map((query, i) => query.isError && <p key={i} role="alert" className="text-sm text-red-600">{['Operational status', 'Manifest', 'Jobs', 'Artifacts', 'Conflicts', 'Audit'][i]} unavailable: {query.error instanceof Error ? query.error.message : 'Request failed'}{query.data && !denied(query.error) ? ' (showing stale data)' : ''}</p>)}
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
             <section className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-5">
               <h2 className="text-lg font-semibold mb-4">Operational Status</h2>
               <div className="space-y-3 text-sm">
-                <div className="flex justify-between"><span className="text-gray-500">Jobs</span><span>{ops.data?.jobs?.total ?? 0}</span></div>
-                <div className="flex justify-between"><span className="text-gray-500">Dead letters</span><span>{ops.data?.jobs?.dead_letter_count ?? 0}</span></div>
-                <div className="flex justify-between"><span className="text-gray-500">Audit events</span><span>{ops.data?.audit?.total_events ?? 0}</span></div>
-                <div className="flex justify-between"><span className="text-gray-500">Audit files</span><span>{ops.data?.audit?.files ?? 0}</span></div>
-                {ops.data?.jobs?.by_status && (
+                <div className="flex justify-between"><span className="text-gray-500">Jobs</span><span>{opsData?.jobs?.total ?? 0}</span></div>
+                <div className="flex justify-between"><span className="text-gray-500">Dead letters</span><span>{opsData?.jobs?.dead_letter_count ?? 0}</span></div>
+                <div className="flex justify-between"><span className="text-gray-500">Audit events</span><span>{opsData?.audit?.total_events ?? 0}</span></div>
+                <div className="flex justify-between"><span className="text-gray-500">Audit files</span><span>{opsData?.audit?.files ?? 0}</span></div>
+                {opsData?.jobs?.by_status && (
                   <div className="flex gap-2 flex-wrap pt-2">
-                    {Object.entries(ops.data.jobs.by_status).map(([status, count]) => (
+                    {Object.entries(opsData.jobs.by_status).map(([status, count]) => (
                       <Badge key={status} variant={statusVariant(status)}>{status}: {count}</Badge>
                     ))}
                   </div>
@@ -177,20 +226,20 @@ export default function WorkspacePage() {
             <section className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-5">
               <h2 className="text-lg font-semibold mb-4">Manifest</h2>
               <div className="space-y-3 text-sm">
-                <div className="flex justify-between gap-3"><span className="text-gray-500">Active generation</span><span className="truncate">{manifest.data?.active_generation || '-'}</span></div>
-                <div className="flex justify-between"><span className="text-gray-500">Chunks</span><span>{manifest.data?.chunks_count ?? manifest.data?.chunks?.length ?? 0}</span></div>
-                <div className="flex justify-between"><span className="text-gray-500">Generations</span><span>{manifest.data?.generations?.length ?? 0}</span></div>
-                <p className="text-xs text-gray-400 break-all">{manifest.data?.manifest_path || 'Manifest unavailable'}</p>
+                <div className="flex justify-between gap-3"><span className="text-gray-500">Active generation</span><span className="truncate">{manifestData?.active_generation || '-'}</span></div>
+                <div className="flex justify-between"><span className="text-gray-500">Chunks</span><span>{manifestData?.chunks_count ?? manifestData?.chunks?.length ?? 0}</span></div>
+                <div className="flex justify-between"><span className="text-gray-500">Generations</span><span>{manifestData?.generations?.length ?? 0}</span></div>
+                <p className="text-xs text-gray-400 break-all">{manifestData?.manifest_path || 'Manifest unavailable'}</p>
               </div>
             </section>
 
             <section className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-5">
               <h2 className="text-lg font-semibold mb-4 flex items-center gap-2"><AlertTriangle className="h-5 w-5 text-amber-600" /> Conflicts</h2>
               <div className="space-y-3 text-sm">
-                <div className="flex justify-between"><span className="text-gray-500">State</span><Badge variant={conflicts.data?.has_conflicts ? 'warning' : 'success'}>{conflicts.data?.has_conflicts ? 'needs reconcile' : 'clean'}</Badge></div>
+                <div className="flex justify-between"><span className="text-gray-500">State</span><Badge variant={conflicts.isError ? 'error' : conflicts.isPending ? 'default' : conflictsData?.has_conflicts ? 'warning' : 'success'}>{conflicts.isError ? 'unavailable' : conflicts.isPending ? 'loading' : conflictsData?.has_conflicts ? 'needs reconcile' : 'clean'}</Badge></div>
                 <div className="flex justify-between"><span className="text-gray-500">Paths</span><span>{conflictCount}</span></div>
                 <div className="flex gap-2 flex-wrap">
-                  {(conflicts.data?.recommended_actions ?? []).map((action) => <Badge key={action} variant="info">{action}</Badge>)}
+                  {(conflictsData?.recommended_actions ?? []).map((action) => <Badge key={action} variant="info">{action}</Badge>)}
                 </div>
               </div>
             </section>
@@ -207,15 +256,15 @@ export default function WorkspacePage() {
                     Search
                   </Button>
                 </div>
-                {searchMutation.data?.freshness && (
+                {searchData?.freshness && (
                   <div className="flex gap-2 flex-wrap">
-                    <Badge variant={searchMutation.data.freshness.stale ? 'warning' : 'success'}>{searchMutation.data.generation || 'generation'}</Badge>
-                    <Badge variant={searchMutation.data.freshness.potentially_stale ? 'warning' : 'default'}>{searchMutation.data.freshness.reason || 'fresh'}</Badge>
-                    <Badge variant="info">{searchMutation.data.collection || 'collection'}</Badge>
+                    <Badge variant={searchData.freshness.stale ? 'warning' : 'success'}>{searchData.generation || 'generation'}</Badge>
+                    <Badge variant={searchData.freshness.potentially_stale ? 'warning' : 'default'}>{searchData.freshness.reason || 'fresh'}</Badge>
+                    <Badge variant="info">{searchData.collection || 'collection'}</Badge>
                   </div>
                 )}
                 <div className="space-y-2">
-                  {(searchMutation.data?.results ?? []).slice(0, 8).map((result, i) => {
+                  {(searchData?.results ?? []).slice(0, 8).map((result, i) => {
                     const p = resultPath(result)
                     return (
                       <div key={`${p}-${i}`} className="rounded-md border border-gray-100 dark:border-gray-800 p-3 text-sm">
@@ -227,7 +276,7 @@ export default function WorkspacePage() {
                       </div>
                     )
                   })}
-                  {searchMutation.isSuccess && (searchMutation.data?.results ?? []).length === 0 && <p className="text-sm text-gray-400">No hits.</p>}
+                  {searchData && searchMutation.isSuccess && (searchData.results ?? []).length === 0 && <p className="text-sm text-gray-400">No hits.</p>}
                   {searchMutation.isError && <p className="text-xs text-red-600">{searchMutation.error instanceof Error ? searchMutation.error.message : 'Search failed'}</p>}
                 </div>
               </div>
@@ -237,19 +286,19 @@ export default function WorkspacePage() {
               <h2 className="text-lg font-semibold mb-4 flex items-center gap-2"><BookOpen className="h-5 w-5 text-cyan-600" /> Exact Read</h2>
               <div className="space-y-3">
                 <div className="flex gap-2">
-                  <Input value={readPath} onChange={(e) => setReadPath(e.target.value)} placeholder="docs/note.md" />
+                  <Input value={readPath} onChange={(e) => { readMutation.reset(); setReadPath(e.target.value) }} placeholder="docs/note.md" />
                   <Button variant="secondary" onClick={() => handleRead()} loading={readMutation.isPending} disabled={!readPath.trim()}>
                     <BookOpen className="h-4 w-4" />
                     Read
                   </Button>
                 </div>
-                {readMutation.data && (
+                {readData && (
                   <div className="rounded-md border border-gray-100 dark:border-gray-800">
                     <div className="flex items-center justify-between px-3 py-2 border-b border-gray-100 dark:border-gray-800">
-                      <code className="text-xs truncate">{readMutation.data.path}</code>
-                      <Badge variant="info">{readMutation.data.chunks?.length ?? 0} chunks</Badge>
+                      <code className="text-xs truncate">{readData.path}</code>
+                      <Badge variant="info">{readData.chunks?.length ?? 0} chunks</Badge>
                     </div>
-                    <pre className="max-h-72 overflow-auto whitespace-pre-wrap p-3 text-xs">{readMutation.data.text}</pre>
+                    <pre className="max-h-72 overflow-auto whitespace-pre-wrap p-3 text-xs">{readData.text}</pre>
                   </div>
                 )}
                 {readMutation.isError && <p className="text-xs text-red-600">{readMutation.error instanceof Error ? readMutation.error.message : 'Read failed'}</p>}
@@ -261,11 +310,13 @@ export default function WorkspacePage() {
             <section className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-5">
               <h2 className="text-lg font-semibold mb-4 flex items-center gap-2"><Upload className="h-5 w-5 text-green-600" /> Write / Index</h2>
               <div className="space-y-3">
-                <Input label="Path" value={path} onChange={(e) => setPath(e.target.value)} placeholder="docs/note.md" />
+                <Input label="Path" value={path} onChange={(e) => { readMutation.reset(); writeMutation.reset(); setCreateFile(false); setPath(e.target.value) }} placeholder="docs/note.md" />
                 <Input label="Title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Optional title" />
-                <textarea value={text} onChange={(e) => setText(e.target.value)} placeholder="Markdown or text to write and index" className="min-h-36 w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-3 py-2 text-sm" />
+                <textarea aria-label="File text" value={text} onChange={(e) => setText(e.target.value)} placeholder="Markdown or text to write and index" className="min-h-36 w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-3 py-2 text-sm" />
+                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={createFile} onChange={(e) => { setCreateFile(e.target.checked); writeMutation.reset() }} />Create new file (fails if it already exists)</label>
+                {!createFile && expectedDigest === undefined && <p className="text-xs text-gray-500">Read this path in the current project and branch before writing.</p>}
                 <div className="flex gap-2">
-                  <Button onClick={handleWrite} loading={writeMutation.isPending} disabled={!path.trim() || !text.trim()}>
+                  <Button onClick={handleWrite} loading={writeMutation.isPending} disabled={!path.trim() || !generation.trim() || expectedDigest === undefined}>
                     <Upload className="h-4 w-4" />
                     Write + Index
                   </Button>
@@ -273,9 +324,10 @@ export default function WorkspacePage() {
                     Index Only
                   </Button>
                 </div>
-                {writeMutation.isSuccess && <p className="text-xs text-green-600">Wrote {writeMutation.data.bytes} bytes to {writeMutation.data.path}.</p>}
-                {indexMutation.isSuccess && <p className="text-xs text-green-600">Indexed into {indexMutation.data.active_generation || generation}.</p>}
-                {(writeMutation.isError || indexMutation.isError) && <p className="text-xs text-red-600">Workspace write/index failed.</p>}
+                {writeMutation.isSuccess && writeData && <p className="text-xs text-green-600">Wrote {writeData.bytes} bytes to {writeData.path}.</p>}
+                {indexMutation.isSuccess && indexData && <p className="text-xs text-green-600">Indexed into {indexData.active_generation || generation}.</p>}
+                {writeMutation.isError && <p role="alert" className="text-xs text-red-600">{writeMutation.error instanceof Error ? writeMutation.error.message : 'Workspace write failed'}. Your draft is preserved; read the current file before retrying.</p>}
+                {indexMutation.isError && <p role="alert" className="text-xs text-red-600">{indexMutation.error instanceof Error ? indexMutation.error.message : 'Workspace index failed'}</p>}
               </div>
             </section>
 
@@ -287,7 +339,7 @@ export default function WorkspacePage() {
                   <RefreshCw className="h-4 w-4" />
                   Reindex
                 </Button>
-                {reindexMutation.isSuccess && <p className="text-xs text-green-600">Reindexed {reindexMutation.data.results?.length ?? 0} paths.</p>}
+                {reindexMutation.isSuccess && reindexData && <p className="text-xs text-green-600">Reindexed {reindexData.results?.length ?? 0} paths.</p>}
                 {reindexMutation.isError && <p className="text-xs text-red-600">{reindexMutation.error instanceof Error ? reindexMutation.error.message : 'Reindex failed'}</p>}
               </div>
             </section>
@@ -295,7 +347,7 @@ export default function WorkspacePage() {
 
           <section className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-5">
             <h2 className="text-lg font-semibold mb-4 flex items-center gap-2"><RotateCcw className="h-5 w-5 text-purple-600" /> Index Jobs</h2>
-            {jobs.data?.jobs?.length ? (
+            {jobsData?.jobs?.length ? (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="text-left text-gray-500">
@@ -309,10 +361,10 @@ export default function WorkspacePage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {jobs.data.jobs.slice(0, 20).map((job) => (
+                    {jobsData.jobs.slice(0, 20).map((job) => (
                       <tr key={job.id} className="border-t border-gray-100 dark:border-gray-800">
                         <td className="py-2 pr-3 font-mono text-xs">{job.id}</td>
-                        <td className="py-2 pr-3"><Badge variant={statusVariant(job.status)}>{job.status}</Badge></td>
+                        <td className="py-2 pr-3"><Badge variant={statusVariant(job.status)}>{job.status}</Badge>{job.last_error && <p role="alert" className="text-xs text-red-600">{job.last_error}</p>}</td>
                         <td className="py-2 pr-3">{job.attempts ?? 0}</td>
                         <td className="py-2 pr-3">{String(job.request?.operation || '-')}</td>
                         <td className="py-2 pr-3 text-gray-500">{job.updated_at ? new Date(job.updated_at).toLocaleString() : '-'}</td>
@@ -327,8 +379,9 @@ export default function WorkspacePage() {
                 </table>
               </div>
             ) : (
-              <p className="text-sm text-gray-400">{jobs.isFetching ? 'Loading jobs...' : 'No workspace jobs for this scope.'}</p>
+              <p className="text-sm text-gray-400">{jobs.isFetching ? 'Loading jobs...' : jobs.isError ? 'Workspace jobs unavailable.' : 'No workspace jobs for this scope.'}</p>
             )}
+            {retryMutation.isError && <p role="alert" className="text-xs text-red-600">{retryMutation.error instanceof Error ? retryMutation.error.message : 'Retry failed'}</p>}
           </section>
 
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
@@ -338,7 +391,7 @@ export default function WorkspacePage() {
                 <Input label="Kind filter" value={artifactKind} onChange={(e) => setArtifactKind(e.target.value)} placeholder="run, note, decision" />
               </div>
               <div className="space-y-2">
-                {(artifacts.data?.artifacts ?? []).slice(0, 12).map((artifact) => (
+                {(artifactsData?.artifacts ?? []).slice(0, 12).map((artifact) => (
                   <div key={artifact.id} className="rounded-md border border-gray-100 dark:border-gray-800 p-3 text-sm">
                     <div className="flex items-center justify-between gap-3">
                       <span className="font-medium truncate">{artifact.title || artifact.id}</span>
@@ -347,14 +400,14 @@ export default function WorkspacePage() {
                     <p className="mt-1 text-xs text-gray-500 break-all">{artifact.path || artifact.project_id || ''}</p>
                   </div>
                 ))}
-                {artifacts.isSuccess && (artifacts.data?.artifacts ?? []).length === 0 && <p className="text-sm text-gray-400">No context artifacts.</p>}
+                {artifacts.isSuccess && (artifactsData?.artifacts ?? []).length === 0 && <p className="text-sm text-gray-400">No context artifacts.</p>}
               </div>
             </section>
 
             <section className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-5">
               <h2 className="text-lg font-semibold mb-4 flex items-center gap-2"><History className="h-5 w-5 text-gray-600" /> Audit</h2>
               <div className="space-y-2">
-                {(audit.data?.events ?? []).map((event) => (
+                {(auditData?.events ?? []).map((event) => (
                   <div key={event.id} className="rounded-md border border-gray-100 dark:border-gray-800 p-3 text-sm">
                     <div className="flex items-center justify-between gap-3">
                       <span>{event.operation}</span>
@@ -363,7 +416,7 @@ export default function WorkspacePage() {
                     <p className="mt-1 text-xs text-gray-500">{event.at ? new Date(event.at).toLocaleString() : ''} {event.status ? `status ${event.status}` : ''}</p>
                   </div>
                 ))}
-                {audit.isSuccess && (audit.data?.events ?? []).length === 0 && <p className="text-sm text-gray-400">No audit events.</p>}
+                {audit.isSuccess && (auditData?.events ?? []).length === 0 && <p className="text-sm text-gray-400">No audit events.</p>}
               </div>
             </section>
           </div>

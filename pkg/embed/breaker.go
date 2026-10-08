@@ -26,11 +26,13 @@ func (e *BreakerOpenError) Unwrap() error { return ErrBreakerOpen }
 // probe: after `threshold` consecutive failures it opens for `cooldown`,
 // then lets a single probe through; a successful probe closes it again.
 type Breaker struct {
-	mu        sync.Mutex
-	failures  int
-	openUntil time.Time
-	threshold int
-	cooldown  time.Duration
+	mu         sync.Mutex
+	failures   int
+	probing    bool
+	generation uint64
+	openUntil  time.Time
+	threshold  int
+	cooldown   time.Duration
 }
 
 func NewBreaker(threshold int, cooldown time.Duration) *Breaker {
@@ -46,17 +48,68 @@ func NewBreaker(threshold int, cooldown time.Duration) *Breaker {
 // Allow reports whether a request may proceed. A nil error means closed
 // or half-open (probe allowed).
 func (b *Breaker) Allow() error {
+	_, _, err := b.acquire()
+	return err
+}
+
+func (b *Breaker) acquire() (uint64, bool, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if time.Now().After(b.openUntil) {
-		return nil
+	if err := b.checkLocked(); err != nil {
+		return 0, false, err
 	}
-	return &BreakerOpenError{RetryAt: b.openUntil}
+	probe := !b.openUntil.IsZero()
+	if probe {
+		b.probing = true
+	}
+	return b.generation, probe, nil
+}
+
+// check is a non-reserving check before waiting for admission.
+func (b *Breaker) check() error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.checkLocked()
+}
+
+func (b *Breaker) checkLocked() error {
+	if b.probing || time.Now().Before(b.openUntil) {
+		return &BreakerOpenError{RetryAt: b.openUntil}
+	}
+	return nil
+}
+
+// abort releases a probe that made no provider health observation.
+func (b *Breaker) abort(generation uint64) {
+	b.mu.Lock()
+	if generation == b.generation {
+		b.probing = false
+	}
+	b.mu.Unlock()
+}
+
+// complete ignores observations from requests admitted before a later opening.
+func (b *Breaker) complete(generation uint64, failed bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if generation != b.generation {
+		return
+	}
+	if failed {
+		b.recordFailureLocked()
+	} else {
+		b.recordSuccessLocked()
+	}
 }
 
 func (b *Breaker) RecordSuccess() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.recordSuccessLocked()
+}
+
+func (b *Breaker) recordSuccessLocked() {
+	b.probing = false
 	b.failures = 0
 	b.openUntil = time.Time{}
 }
@@ -64,8 +117,14 @@ func (b *Breaker) RecordSuccess() {
 func (b *Breaker) RecordFailure() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.recordFailureLocked()
+}
+
+func (b *Breaker) recordFailureLocked() {
+	b.probing = false
 	b.failures++
 	if b.failures >= b.threshold {
+		b.generation++
 		b.openUntil = time.Now().Add(b.cooldown)
 	}
 }

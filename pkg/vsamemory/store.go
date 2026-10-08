@@ -36,18 +36,19 @@ type Store struct {
 }
 
 type Candidate struct {
-	TargetID     string  `json:"target_id"`
-	TargetName   string  `json:"target_name,omitempty"`
-	EdgeID       string  `json:"edge_id"`
-	Predicate    string  `json:"predicate"`
-	DatasetID    string  `json:"dataset_id"`
-	DomainID     string  `json:"domain_id,omitempty"`
-	CollectionID string  `json:"collection_id,omitempty"`
-	DocumentID   string  `json:"document_id,omitempty"`
-	ShardID      string  `json:"shard_id"`
-	Similarity   float64 `json:"similarity"`
-	RerankScore  float64 `json:"rerank_score,omitempty"`
-	Confidence   float64 `json:"confidence,omitempty"`
+	TargetID         string  `json:"target_id"`
+	TargetName       string  `json:"target_name,omitempty"`
+	EdgeID           string  `json:"edge_id"`
+	Predicate        string  `json:"predicate"`
+	DatasetID        string  `json:"dataset_id"`
+	DomainID         string  `json:"domain_id,omitempty"`
+	CollectionID     string  `json:"collection_id,omitempty"`
+	DocumentID       string  `json:"document_id,omitempty"`
+	SourceDocumentID string  `json:"source_document_id,omitempty"`
+	ShardID          string  `json:"shard_id"`
+	Similarity       float64 `json:"similarity"`
+	RerankScore      float64 `json:"rerank_score,omitempty"`
+	Confidence       float64 `json:"confidence,omitempty"`
 }
 
 type QueryOptions struct {
@@ -215,13 +216,29 @@ func (s *Store) QueryObjectWithOptions(ctx context.Context, datasetID, subjectID
 	}
 	defer rows.Close()
 
-	scoreByTarget := map[string]Candidate{}
+	type shard struct {
+		id  string
+		raw string
+		dim int
+	}
+	var shards []shard
 	for rows.Next() {
-		var shardID, raw string
-		var dim int
-		if err := rows.Scan(&shardID, &dim, &raw); err != nil {
+		var row shard
+		if err := rows.Scan(&row.id, &row.dim, &row.raw); err != nil {
 			return nil, err
 		}
+		shards = append(shards, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	// Release the shard cursor before nested member reads; pool-size-one must work.
+	scoreByTarget := map[string]Candidate{}
+	for _, row := range shards {
+		shardID, raw, dim := row.id, row.raw, row.dim
 		if dim <= 0 {
 			dim = s.dim
 		}
@@ -247,17 +264,18 @@ func (s *Store) QueryObjectWithOptions(ctx context.Context, datasetID, subjectID
 				return nil, err
 			}
 			c := Candidate{
-				TargetID:     m.TargetID,
-				TargetName:   m.TargetName,
-				EdgeID:       m.EdgeID,
-				Predicate:    predicate,
-				DatasetID:    datasetID,
-				DomainID:     m.DomainID,
-				CollectionID: m.CollectionID,
-				DocumentID:   m.DocumentID,
-				ShardID:      shardID,
-				Similarity:   score,
-				Confidence:   m.Confidence,
+				TargetID:         m.TargetID,
+				TargetName:       m.TargetName,
+				EdgeID:           m.EdgeID,
+				Predicate:        predicate,
+				DatasetID:        datasetID,
+				DomainID:         m.DomainID,
+				CollectionID:     m.CollectionID,
+				DocumentID:       m.DocumentID,
+				SourceDocumentID: m.SourceDocumentID,
+				ShardID:          shardID,
+				Similarity:       score,
+				Confidence:       m.Confidence,
 			}
 			c.RerankScore = c.Similarity
 			if opts.Rerank {
@@ -268,10 +286,6 @@ func (s *Store) QueryObjectWithOptions(ctx context.Context, datasetID, subjectID
 			}
 		}
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
 	out := make([]Candidate, 0, len(scoreByTarget))
 	for _, c := range scoreByTarget {
 		out = append(out, c)
@@ -394,13 +408,14 @@ func (s *Store) Predicates(ctx context.Context, datasetID string) ([]string, err
 }
 
 type member struct {
-	EdgeID       string
-	TargetID     string
-	TargetName   string
-	Confidence   float64
-	DomainID     string
-	CollectionID string
-	DocumentID   string
+	EdgeID           string
+	TargetID         string
+	TargetName       string
+	Confidence       float64
+	DomainID         string
+	CollectionID     string
+	DocumentID       string
+	SourceDocumentID string
 }
 
 func (s *Store) membersForShard(ctx context.Context, shardID, subjectID string) ([]member, error) {
@@ -408,7 +423,8 @@ func (s *Store) membersForShard(ctx context.Context, shardID, subjectID string) 
 		SELECT m.edge_id, m.target_id, COALESCE(n.name, ''), COALESCE(e.confidence, 1.0),
 		       COALESCE(NULLIF(e.domain_id, ''), NULLIF(n.domain_id, ''), ''),
 		       COALESCE(NULLIF(e.collection_id, ''), NULLIF(n.collection_id, ''), ''),
-		       COALESCE(NULLIF(e.document_id, ''), NULLIF(n.document_id, ''), '')
+		       COALESCE(NULLIF(e.document_id, ''), NULLIF(n.document_id, ''), ''),
+		       COALESCE(CAST(e.properties AS TEXT), '{}')
 		FROM vsa_fact_members m
 		LEFT JOIN graph_nodes n ON n.id = m.target_id
 		LEFT JOIN graph_edges e ON e.id = m.edge_id
@@ -420,8 +436,15 @@ func (s *Store) membersForShard(ctx context.Context, shardID, subjectID string) 
 	var out []member
 	for rows.Next() {
 		var m member
-		if err := rows.Scan(&m.EdgeID, &m.TargetID, &m.TargetName, &m.Confidence, &m.DomainID, &m.CollectionID, &m.DocumentID); err != nil {
+		var properties string
+		if err := rows.Scan(&m.EdgeID, &m.TargetID, &m.TargetName, &m.Confidence, &m.DomainID, &m.CollectionID, &m.DocumentID, &properties); err != nil {
 			return nil, err
+		}
+		var provenance struct {
+			DocumentID string `json:"document_id"`
+		}
+		if json.Unmarshal([]byte(properties), &provenance) == nil {
+			m.SourceDocumentID = provenance.DocumentID
 		}
 		out = append(out, m)
 	}

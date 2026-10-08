@@ -3,11 +3,13 @@ package http
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/gofiber/fiber/v2"
 
+	accesspkg "github.com/stek0v/levara/pkg/access"
 	"github.com/stek0v/levara/pkg/mcp"
 )
 
@@ -58,6 +60,67 @@ func TestMCPReadOnlyAPIKeyCannotCallMutatingTool(t *testing.T) {
 	if allowed.IsError {
 		t.Fatalf("read-only tool denied: %+v", allowed)
 	}
+}
+
+func TestVerifiedMCPActorRequiresExactVerifiedIdentity(t *testing.T) {
+	tests := []struct {
+		name   string
+		key    string
+		value  any
+		userID string
+		want   bool
+	}{
+		{name: "jwt", key: "verified_jwt", value: jwtPayload{Sub: "user-a"}, userID: "user-a", want: true},
+		{name: "api key", key: "verified_api_key", value: accesspkg.APIKeyIdentity{UserID: "user-a"}, userID: "user-a", want: true},
+		{name: "external", key: "verified_external", value: ExternalPrincipal{UserID: "user-a"}, userID: "user-a", want: true},
+		{name: "mismatched actor", key: "verified_jwt", value: jwtPayload{Sub: "user-a"}, userID: "user-b"},
+		{name: "wrong local type", key: "verified_jwt", value: "user-a", userID: "user-a"},
+		{name: "anonymous", key: "verified_jwt", value: jwtPayload{Sub: "user-a"}, userID: ""},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			app := fiber.New(fiber.Config{DisableStartupMessage: true})
+			app.Get("/", func(c *fiber.Ctx) error {
+				c.Locals(test.key, test.value)
+				if got := verifiedMCPActor(c, test.userID); got != test.want {
+					t.Fatalf("verifiedMCPActor()=%v, want %v", got, test.want)
+				}
+				return c.SendStatus(fiber.StatusNoContent)
+			})
+			resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/", nil))
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = resp.Body.Close()
+		})
+	}
+}
+
+func TestVerifiedMCPAuthorizationRequiresExactUser(t *testing.T) {
+	app := fiber.New(fiber.Config{DisableStartupMessage: true})
+	app.Get("/", func(c *fiber.Ctx) error {
+		proof := verifiedMCPAuthorization{UserID: "user-a", TenantID: "tenant-a", Superuser: true}
+		c.Locals("verified_mcp_authorization", proof)
+		if tenant, ok := verifiedMCPDefaultTenantFor(c, "user-a"); !ok || tenant != "tenant-a" {
+			t.Fatalf("matching tenant proof: tenant=%q ok=%v", tenant, ok)
+		}
+		ctx := context.WithValue(context.Background(), verifiedMCPSuperuserKey{}, proof)
+		if superuser, ok := verifiedMCPSuperuser(ctx, "user-a"); !ok || !superuser {
+			t.Fatalf("matching role proof: superuser=%v ok=%v", superuser, ok)
+		}
+		if tenant, ok := verifiedMCPDefaultTenantFor(c, "user-b"); ok || tenant != "tenant-a" {
+			t.Fatalf("mismatched tenant proof: tenant=%q ok=%v", tenant, ok)
+		}
+		if _, ok := verifiedMCPSuperuser(ctx, "user-b"); ok {
+			t.Fatal("mismatched role proof accepted")
+		}
+		return c.SendStatus(fiber.StatusNoContent)
+	})
+	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
 }
 
 func TestMCPDeleteSessionRequiresBoundOwner(t *testing.T) {

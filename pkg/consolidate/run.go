@@ -3,6 +3,8 @@ package consolidate
 import (
 	"context"
 	"fmt"
+
+	"github.com/stek0v/levara/pkg/memoryhall"
 )
 
 // Store loads candidate records and applies/reverts consolidation actions.
@@ -87,7 +89,15 @@ func Run(ctx context.Context, p Params) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	clusters := ClusterComponents(edges, p.Cfg.TauLow)
+	filtered := make([]SimEdge, 0, len(edges))
+	for _, edge := range edges {
+		a, hasA := byID[edge.A]
+		b, hasB := byID[edge.B]
+		if hasA && hasB && sameClassification(a, b) {
+			filtered = append(filtered, edge)
+		}
+	}
+	clusters := ClusterComponents(filtered, p.Cfg.TauLow)
 	actions := Plan(byID, clusters, p.Cfg)
 
 	res := Result{Candidates: len(recs), Clusters: len(clusters)}
@@ -95,6 +105,10 @@ func Run(ctx context.Context, p Params) (Result, error) {
 	llmCalls := 0
 	for _, a := range actions {
 		if a.Kind == ActionAbstract {
+			if !memoryhall.IsValidHall(a.Hall) {
+				res.Skips = append(res.Skips, Skip{SourceIDs: a.SourceIDs, Reason: fmt.Sprintf("invalid hall for abstraction: %q", a.Hall)})
+				continue
+			}
 			// Oversized clusters always overflow the LLM token budget and
 			// degrade into truncation-induced guard failures — skip them up
 			// front, before spending an LLM call, with an explicit reason.

@@ -22,6 +22,9 @@ func maybeAttachDCDRouteObserve(ctx context.Context, c *fiber.Ctx, cfg APIConfig
 		return
 	}
 	teamID, _ := c.Locals("team_id").(string)
+	if ownerID != "" {
+		teamID, _ = c.Locals("tenant_id").(string)
+	}
 	requestedMode := dcdRouteRequestedMode()
 	mode := dcdRouteMode()
 	start := time.Now()
@@ -35,6 +38,7 @@ func maybeAttachDCDRouteObserve(ctx context.Context, c *fiber.Ctx, cfg APIConfig
 	candidates, err := resolveDCDRouteCandidates(ctx, cfg.DB, req.QueryText, dcdRouteScope{
 		OwnerID:           ownerID,
 		TeamID:            teamID,
+		ExactTenant:       ownerID != "",
 		AllowedDatasetIDs: req.AllowedDatasetIDs,
 	}, dcdRoutePolicy{
 		MaxCandidates:       dcdRouteMaxCandidates(),

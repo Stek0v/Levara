@@ -1,0 +1,33 @@
+schema: spec-driven
+
+context: |
+  Levara is a Go MCP server for durable agent memory, hybrid search, a temporal
+  knowledge graph, Markdown workspaces, synchronization, observability, and
+  scoped long-running tasks. The optional WebUI is a separate Next.js service.
+  SQL records and Markdown workspace content are authoritative; vector, search,
+  and graph projections are derived and rebuildable. Changes may affect MCP,
+  REST, gRPC, SQLite, PostgreSQL, runtime profiles, and generated API contracts.
+  AGENTS.md is the authoritative engineering and Levara-memory playbook.
+  Write OpenSpec artifacts in English.
+
+rules:
+  proposal:
+    - State scope and non-goals explicitly.
+    - Call out compatibility, migration, rollout, and security impact when relevant.
+  specs:
+    - Express acceptance criteria as observable behavior, including failure paths.
+  design:
+    - Identify affected public contracts, persistence backends, profiles, and feature flags.
+    - Preserve SQLite/PostgreSQL parity and authoritative-versus-derived state boundaries.
+  tasks:
+    - Give each implementation task a focused verification command and required service preflight.
+    - Include generated-contract drift checks when a public MCP, REST, or gRPC surface changes.
+
+operations:
+  apply:
+    guidance:
+      - Follow AGENTS.md, initialize Levara memory, and preserve unrelated dirty-worktree changes.
+      - Do not deploy, publish, or run live migrations without explicit user authority.
+  archive:
+    guidance:
+      - Validate the change and record the observed verification evidence before archiving.

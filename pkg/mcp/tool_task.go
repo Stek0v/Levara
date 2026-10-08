@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/stek0v/levara/pkg/access"
 	"github.com/stek0v/levara/pkg/memoryindex"
 )
 
@@ -474,6 +475,83 @@ func ToolTaskStep(ctx context.Context, deps Deps, args map[string]any) ToolResul
 	return jsonResult(map[string]any{"ok": true, "task_id": taskID, "step_id": stepID, "action": action, "version": baseVersion + 1})
 }
 
+// taskRequestDigest binds an idempotency key to the applied request, excluding
+// base_version so an exact request can replay after its version has advanced.
+func taskRequestDigest(ctx context.Context, args map[string]any, receipt bool, exitCode any) (string, error) {
+	payload := map[string]any{
+		"task_id": stringArg(args, "task_id"), "owner_id": taskOwner(ctx),
+		"actor_id": taskActor(ctx, args), "step_id": stringArg(args, "step_id"),
+		"workspace_revision": stringArg(args, "workspace_revision"),
+	}
+	if receipt {
+		payload["receipt_type"] = stringArg(args, "receipt_type")
+		payload["status"] = stringArg(args, "status")
+		payload["criterion_ids"] = stringSliceArg(args, "criterion_ids")
+		payload["observation"] = stringArg(args, "observation")
+		payload["exit_code"] = exitCode
+		payload["evidence_uri"] = stringArg(args, "evidence_uri")
+		payload["artifact_digest"] = stringArg(args, "artifact_digest")
+		payload["metadata"] = json.RawMessage(jsonArg(args, "metadata", map[string]any{}))
+	} else {
+		payload["summary"] = stringArg(args, "summary")
+		payload["verified"] = json.RawMessage(jsonArg(args, "verified", []string{}))
+		payload["failed"] = json.RawMessage(jsonArg(args, "failed", []string{}))
+		payload["next_action"] = stringArg(args, "next_action")
+		resolved := stringSliceArg(args, "resolved_blocker_ids")
+		if resolved == nil {
+			resolved = []string{}
+		}
+		payload["resolved_blocker_ids"] = resolved
+		if blocker, ok := args["blocker"].(map[string]any); ok && stringArg(blocker, "reason") != "" {
+			payload["blocker"] = map[string]any{"reason": stringArg(blocker, "reason"), "required_decision": stringArg(blocker, "required_decision")}
+		}
+		candidates := []any{}
+		if rawCandidates, ok := args["memory_candidates"].([]any); ok {
+			for i, raw := range rawCandidates {
+				candidate, ok := raw.(map[string]any)
+				if !ok {
+					return "", fmt.Errorf("memory_candidates[%d] must be an object", i)
+				}
+				key, value, room, hall := stringArg(candidate, "key"), stringArg(candidate, "value"), stringArg(candidate, "room"), stringArg(candidate, "hall")
+				if key == "" || value == "" || room == "" || !IsValidHall(hall) {
+					return "", fmt.Errorf("memory_candidates[%d] requires key, value, room, and valid hall", i)
+				}
+				candidates = append(candidates, map[string]any{"key": key, "value": value, "room": room, "hall": hall,
+					"evidence_receipt_ids": json.RawMessage(jsonArg(candidate, "evidence_receipt_ids", []string{}))})
+			}
+		}
+		payload["memory_candidates"] = candidates
+	}
+	// Decode then encode embedded JSON so object key ordering and whitespace do
+	// not change identity. UseNumber preserves exact JSON numbers without float loss.
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("invalid task idempotency payload: %w", err)
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(encoded)))
+	decoder.UseNumber()
+	var normalized any
+	if err := decoder.Decode(&normalized); err != nil {
+		return "", err
+	}
+	encoded, err = json.Marshal(normalized)
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(encoded)
+	return fmt.Sprintf("%x", digest), nil
+}
+
+func checkTaskRequestDigest(stored, requested string) error {
+	if stored == "" {
+		return errors.New("idempotency payload unverifiable for legacy record")
+	}
+	if stored != requested {
+		return errors.New("idempotency payload conflict")
+	}
+	return nil
+}
+
 // ToolTaskReceipt records immutable verification evidence.
 func ToolTaskReceipt(ctx context.Context, deps Deps, args map[string]any) ToolResult {
 	if deps.DB() == nil {
@@ -516,6 +594,10 @@ func ToolTaskReceipt(ctx context.Context, deps Deps, args map[string]any) ToolRe
 			return toolError("exit_code must be a signed 32-bit integer")
 		}
 	}
+	requestDigest, err := taskRequestDigest(ctx, args, true, exitCode)
+	if err != nil {
+		return toolError(err.Error())
+	}
 	db := deps.DB()
 	if db == nil {
 		return toolError("database not configured")
@@ -542,12 +624,19 @@ func ToolTaskReceipt(ctx context.Context, deps Deps, args map[string]any) ToolRe
 	if currentStatus == "completed" {
 		return toolError("completed task is immutable")
 	}
-	var existingReceiptID string
-	if err := tx.QueryRowContext(ctx, deps.Q(`SELECT id FROM task_receipts WHERE task_id=$1 AND idempotency_key=$2`), taskID, idem).Scan(&existingReceiptID); err == nil {
+	var existingReceiptID, storedDigest string
+	lookupErr := tx.QueryRowContext(ctx, deps.Q(`SELECT id,request_digest FROM task_receipts WHERE task_id=$1 AND idempotency_key=$2`), taskID, idem).Scan(&existingReceiptID, &storedDigest)
+	if lookupErr == nil {
+		if err := checkTaskRequestDigest(storedDigest, requestDigest); err != nil {
+			return toolError(err.Error())
+		}
 		if err := tx.Commit(); err != nil {
 			return toolError(err.Error())
 		}
 		return jsonResult(map[string]any{"ok": true, "task_id": taskID, "receipt_id": existingReceiptID, "version": current, "idempotent_replay": true})
+	}
+	if !errors.Is(lookupErr, sql.ErrNoRows) {
+		return toolError(lookupErr.Error())
 	}
 	if current != baseVersion {
 		return toolError(fmt.Sprintf("version conflict: current=%d", current))
@@ -579,15 +668,18 @@ func ToolTaskReceipt(ctx context.Context, deps Deps, args map[string]any) ToolRe
 	criteriaJSON, _ := json.Marshal(criteria)
 	insertResult, err := tx.ExecContext(ctx, deps.Q(`INSERT INTO task_receipts
 		(id,task_id,idempotency_key,owner_id,receipt_type,status,criterion_ids_json,observation,exit_code,
-		 evidence_uri,artifact_digest,workspace_revision,metadata_json,created_at)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+		 evidence_uri,artifact_digest,workspace_revision,metadata_json,created_at,request_digest)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
 		ON CONFLICT(task_id,idempotency_key) DO NOTHING`), receiptID, taskID, idem, taskOwner(ctx), receiptType, status,
 		string(criteriaJSON), stringArg(args, "observation"), exitCode, stringArg(args, "evidence_uri"),
-		stringArg(args, "artifact_digest"), revision, jsonArg(args, "metadata", map[string]any{}), now)
+		stringArg(args, "artifact_digest"), revision, jsonArg(args, "metadata", map[string]any{}), now, requestDigest)
 	if err != nil {
 		return toolError(err.Error())
 	}
-	if err := tx.QueryRowContext(ctx, deps.Q(`SELECT id FROM task_receipts WHERE task_id=$1 AND idempotency_key=$2`), taskID, idem).Scan(&receiptID); err != nil {
+	if err := tx.QueryRowContext(ctx, deps.Q(`SELECT id,request_digest FROM task_receipts WHERE task_id=$1 AND idempotency_key=$2`), taskID, idem).Scan(&receiptID, &storedDigest); err != nil {
+		return toolError(err.Error())
+	}
+	if err := checkTaskRequestDigest(storedDigest, requestDigest); err != nil {
 		return toolError(err.Error())
 	}
 	if inserted, _ := insertResult.RowsAffected(); inserted == 0 {
@@ -626,6 +718,10 @@ func ToolTaskCheckpoint(ctx context.Context, deps Deps, args map[string]any) Too
 	if taskID == "" || idem == "" || summary == "" || baseVersion < 1 {
 		return toolError("task_id, idempotency_key, summary, and positive base_version required")
 	}
+	requestDigest, err := taskRequestDigest(ctx, args, false, nil)
+	if err != nil {
+		return toolError(err.Error())
+	}
 	db := deps.DB()
 	if db == nil {
 		return toolError("database not configured")
@@ -643,12 +739,19 @@ func ToolTaskCheckpoint(ctx context.Context, deps Deps, args map[string]any) Too
 	if currentStatus == "completed" {
 		return toolError("completed task is immutable")
 	}
-	var existingCheckpointID string
-	if err := tx.QueryRowContext(ctx, deps.Q(`SELECT id FROM task_checkpoints WHERE task_id=$1 AND idempotency_key=$2`), taskID, idem).Scan(&existingCheckpointID); err == nil {
+	var existingCheckpointID, storedDigest string
+	lookupErr := tx.QueryRowContext(ctx, deps.Q(`SELECT id,request_digest FROM task_checkpoints WHERE task_id=$1 AND idempotency_key=$2`), taskID, idem).Scan(&existingCheckpointID, &storedDigest)
+	if lookupErr == nil {
+		if err := checkTaskRequestDigest(storedDigest, requestDigest); err != nil {
+			return toolError(err.Error())
+		}
 		if err := tx.Commit(); err != nil {
 			return toolError(err.Error())
 		}
 		return jsonResult(map[string]any{"ok": true, "task_id": taskID, "checkpoint_id": existingCheckpointID, "version": current, "idempotent_replay": true})
+	}
+	if !errors.Is(lookupErr, sql.ErrNoRows) {
+		return toolError(lookupErr.Error())
 	}
 	if current != baseVersion {
 		return toolError(fmt.Sprintf("version conflict: current=%d", current))
@@ -656,21 +759,28 @@ func ToolTaskCheckpoint(ctx context.Context, deps Deps, args map[string]any) Too
 	now, checkpointID := time.Now().UTC().Format(time.RFC3339Nano), uuid.NewString()
 	revision := stringArg(args, "workspace_revision")
 	insertResult, err := tx.ExecContext(ctx, deps.Q(`INSERT INTO task_checkpoints
-		(id,task_id,idempotency_key,step_id,summary,verified_json,failed_json,next_action,workspace_revision,created_at)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(task_id,idempotency_key) DO NOTHING`),
+		(id,task_id,idempotency_key,step_id,summary,verified_json,failed_json,next_action,workspace_revision,created_at,request_digest)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT(task_id,idempotency_key) DO NOTHING`),
 		checkpointID, taskID, idem, stringArg(args, "step_id"), summary, jsonArg(args, "verified", []string{}),
-		jsonArg(args, "failed", []string{}), stringArg(args, "next_action"), revision, now)
+		jsonArg(args, "failed", []string{}), stringArg(args, "next_action"), revision, now, requestDigest)
 	if err != nil {
 		return toolError(err.Error())
 	}
-	if err := tx.QueryRowContext(ctx, deps.Q(`SELECT id FROM task_checkpoints WHERE task_id=$1 AND idempotency_key=$2`), taskID, idem).Scan(&checkpointID); err != nil {
+	if err := tx.QueryRowContext(ctx, deps.Q(`SELECT id,request_digest FROM task_checkpoints WHERE task_id=$1 AND idempotency_key=$2`), taskID, idem).Scan(&checkpointID, &storedDigest); err != nil {
+		return toolError(err.Error())
+	}
+	if err := checkTaskRequestDigest(storedDigest, requestDigest); err != nil {
 		return toolError(err.Error())
 	}
 	if inserted, _ := insertResult.RowsAffected(); inserted == 0 {
+		var currentVersion int
+		if err := tx.QueryRowContext(ctx, deps.Q(`SELECT version FROM tasks WHERE id=$1`), taskID).Scan(&currentVersion); err != nil {
+			return toolError(err.Error())
+		}
 		if err := tx.Commit(); err != nil {
 			return toolError(err.Error())
 		}
-		return jsonResult(map[string]any{"ok": true, "task_id": taskID, "checkpoint_id": checkpointID, "version": baseVersion, "idempotent_replay": true})
+		return jsonResult(map[string]any{"ok": true, "task_id": taskID, "checkpoint_id": checkpointID, "version": currentVersion, "idempotent_replay": true})
 	}
 	resolvedBlockerIDs := stringSliceArg(args, "resolved_blocker_ids")
 	for _, blockerID := range resolvedBlockerIDs {
@@ -742,15 +852,19 @@ type taskValidation struct {
 	ReviewerSatisfied bool     `json:"reviewer_satisfied"`
 }
 
-func validateTask(ctx context.Context, deps Deps, taskID, owner, mode string) (taskValidation, int, error) {
+func validateTask(ctx context.Context, deps Deps, taskID, owner, mode string, transaction ...*sql.Tx) (taskValidation, int, error) {
 	db, rewrite := deps.DB(), deps.Q
 	if db == nil {
 		return taskValidation{TaskID: taskID, Mode: mode}, 0, errors.New("database not configured")
 	}
+	queryRows, queryRow := db.QueryContext, db.QueryRowContext
+	if len(transaction) != 0 && transaction[0] != nil {
+		queryRows, queryRow = transaction[0].QueryContext, transaction[0].QueryRowContext
+	}
 	v := taskValidation{TaskID: taskID, Mode: mode, MissingReceipts: []string{}, StaleReceipts: []string{}, FailedReceipts: []string{}, IncompleteSteps: []string{}, ActiveBlockers: []string{}, ActiveLeases: []string{}}
 	var risk, revision string
 	var version int
-	if err := db.QueryRowContext(ctx, rewrite(`SELECT risk_level,current_workspace_revision,version FROM tasks WHERE id=$1 AND (owner_id=$2 OR owner_id='')`), taskID, owner).Scan(&risk, &revision, &version); err != nil {
+	if err := queryRow(ctx, rewrite(`SELECT risk_level,current_workspace_revision,version FROM tasks WHERE id=$1 AND (owner_id=$2 OR owner_id='')`), taskID, owner).Scan(&risk, &revision, &version); err != nil {
 		return v, 0, err
 	}
 	v.AuditRequired = risk == "high"
@@ -759,30 +873,46 @@ func validateTask(ctx context.Context, deps Deps, taskID, owner, mode string) (t
 		exit                                                 sql.NullInt64
 	}
 	var receipts []receipt
-	rows, err := db.QueryContext(ctx, rewrite(`SELECT id,receipt_type,status,criterion_ids_json,workspace_revision,evidence_uri,artifact_digest,exit_code
+	rows, err := queryRows(ctx, rewrite(`SELECT id,receipt_type,status,criterion_ids_json,workspace_revision,evidence_uri,artifact_digest,exit_code
 		FROM task_receipts WHERE task_id=$1 ORDER BY created_at DESC`), taskID)
 	if err != nil {
 		return v, version, err
 	}
 	for rows.Next() {
 		var r receipt
-		if rows.Scan(&r.id, &r.typ, &r.status, &r.criteriaJSON, &r.rev, &r.evidence, &r.digest, &r.exit) == nil {
-			receipts = append(receipts, r)
+		if err := rows.Scan(&r.id, &r.typ, &r.status, &r.criteriaJSON, &r.rev, &r.evidence, &r.digest, &r.exit); err != nil {
+			rows.Close()
+			return v, version, err
 		}
+		receipts = append(receipts, r)
 	}
-	rows.Close()
-	criteriaRows, err := db.QueryContext(ctx, rewrite(`SELECT id FROM task_criteria WHERE task_id=$1 AND required=TRUE`), taskID)
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return v, version, err
+	}
+	if err := rows.Close(); err != nil {
+		return v, version, err
+	}
+	criteriaRows, err := queryRows(ctx, rewrite(`SELECT id FROM task_criteria WHERE task_id=$1 AND required=TRUE`), taskID)
 	if err != nil {
 		return v, version, err
 	}
 	var criteria []string
 	for criteriaRows.Next() {
 		var id string
-		if criteriaRows.Scan(&id) == nil {
-			criteria = append(criteria, id)
+		if err := criteriaRows.Scan(&id); err != nil {
+			criteriaRows.Close()
+			return v, version, err
 		}
+		criteria = append(criteria, id)
 	}
-	criteriaRows.Close()
+	if err := criteriaRows.Err(); err != nil {
+		criteriaRows.Close()
+		return v, version, err
+	}
+	if err := criteriaRows.Close(); err != nil {
+		return v, version, err
+	}
 	for _, criterionID := range criteria {
 		found, stale, failed := false, false, false
 		for _, r := range receipts {
@@ -822,35 +952,62 @@ func validateTask(ctx context.Context, deps Deps, taskID, owner, mode string) (t
 			}
 		}
 	}
-	stepRows, _ := db.QueryContext(ctx, rewrite(`SELECT id FROM task_steps WHERE task_id=$1 AND required=TRUE AND status<>'passed'`), taskID)
-	if stepRows != nil {
-		for stepRows.Next() {
-			var id string
-			if stepRows.Scan(&id) == nil {
-				v.IncompleteSteps = append(v.IncompleteSteps, id)
-			}
+	stepRows, err := queryRows(ctx, rewrite(`SELECT id FROM task_steps WHERE task_id=$1 AND required=TRUE AND status<>'passed'`), taskID)
+	if err != nil {
+		return v, version, err
+	}
+	for stepRows.Next() {
+		var id string
+		if err := stepRows.Scan(&id); err != nil {
+			stepRows.Close()
+			return v, version, err
 		}
+		v.IncompleteSteps = append(v.IncompleteSteps, id)
+	}
+	if err := stepRows.Err(); err != nil {
 		stepRows.Close()
+		return v, version, err
 	}
-	blockRows, _ := db.QueryContext(ctx, rewrite(`SELECT id FROM task_blockers WHERE task_id=$1 AND status='active'`), taskID)
-	if blockRows != nil {
-		for blockRows.Next() {
-			var id string
-			if blockRows.Scan(&id) == nil {
-				v.ActiveBlockers = append(v.ActiveBlockers, id)
-			}
+	if err := stepRows.Close(); err != nil {
+		return v, version, err
+	}
+	blockRows, err := queryRows(ctx, rewrite(`SELECT id FROM task_blockers WHERE task_id=$1 AND status='active'`), taskID)
+	if err != nil {
+		return v, version, err
+	}
+	for blockRows.Next() {
+		var id string
+		if err := blockRows.Scan(&id); err != nil {
+			blockRows.Close()
+			return v, version, err
 		}
+		v.ActiveBlockers = append(v.ActiveBlockers, id)
+	}
+	if err := blockRows.Err(); err != nil {
 		blockRows.Close()
+		return v, version, err
 	}
-	leaseRows, _ := db.QueryContext(ctx, rewrite(`SELECT step_id FROM task_leases WHERE task_id=$1 AND expires_at>$2`), taskID, time.Now().UTC().Format(time.RFC3339Nano))
-	if leaseRows != nil {
-		for leaseRows.Next() {
-			var id string
-			if leaseRows.Scan(&id) == nil {
-				v.ActiveLeases = append(v.ActiveLeases, id)
-			}
+	if err := blockRows.Close(); err != nil {
+		return v, version, err
+	}
+	leaseRows, err := queryRows(ctx, rewrite(`SELECT step_id FROM task_leases WHERE task_id=$1 AND expires_at>$2`), taskID, time.Now().UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return v, version, err
+	}
+	for leaseRows.Next() {
+		var id string
+		if err := leaseRows.Scan(&id); err != nil {
+			leaseRows.Close()
+			return v, version, err
 		}
+		v.ActiveLeases = append(v.ActiveLeases, id)
+	}
+	if err := leaseRows.Err(); err != nil {
 		leaseRows.Close()
+		return v, version, err
+	}
+	if err := leaseRows.Close(); err != nil {
+		return v, version, err
 	}
 	if v.AuditRequired && !v.ReviewerSatisfied {
 		for _, r := range receipts {
@@ -1098,25 +1255,95 @@ func queryMaps(ctx context.Context, db *sql.DB, rewrite func(string) string, que
 	return out
 }
 
-// ToolTaskComplete validates then atomically transitions the versioned task.
+type taskArtifactGuardKey struct{}
+type taskArtifactGuards map[string]func()
+
+func (guards taskArtifactGuards) release() {
+	for key, release := range guards {
+		release()
+		delete(guards, key)
+	}
+}
+
+// RetainArtifactGuard borrows the private completion lifetime. Only completion
+// creates this scope; tool arguments cannot supply it. Verifiers run sequentially.
+func RetainArtifactGuard(ctx context.Context, key string, acquire func() (func(), error)) (bool, error) {
+	guards, ok := ctx.Value(taskArtifactGuardKey{}).(taskArtifactGuards)
+	if !ok {
+		return false, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return true, err
+	}
+	if _, held := guards[key]; held {
+		return true, nil
+	}
+	release, err := acquire()
+	if err != nil {
+		return true, err
+	}
+	guards[key] = release
+	return true, nil
+}
+
+// ToolTaskComplete validates and transitions under the same bounded SQL fence.
 func ToolTaskComplete(ctx context.Context, deps Deps, args map[string]any) ToolResult {
 	if deps.DB() == nil {
 		return toolError("database not configured")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	actor := deps.MetadataActor(ctx)
+	if !actor.TrustedLocal && actor.Credential.ExpiresAt > 0 {
+		var expiryCancel context.CancelFunc
+		ctx, expiryCancel = context.WithDeadline(ctx, time.Unix(actor.Credential.ExpiresAt, 0))
+		defer expiryCancel()
 	}
 	taskID := stringArg(args, "task_id")
 	expected := intArg(args, "expected_version", 0)
 	if taskID == "" || expected < 1 {
 		return toolError("task_id and positive expected_version required")
 	}
+	policy := access.SQLPolicy{DB: deps.DB(), Q: deps.Q}
+	var tx *sql.Tx
+	var err error
+	if actor.TrustedLocal {
+		tx, err = deps.DB().BeginTx(ctx, nil)
+	} else {
+		tx, policy, err = policy.BeginMetadataWrite(ctx, actor, memoryCommitSQLite(deps))
+	}
+	if err != nil {
+		return toolError(err.Error())
+	}
+	guards := taskArtifactGuards{}
+	finish := func() { _ = tx.Rollback(); guards.release() }
+	defer finish()
+	// Match metadata/memory writer ordering, then acquire project locks only
+	// while verifying used evidence. Serialization bounds multi-project ordering.
+	if memoryCommitSQLite(deps) {
+		if _, err := tx.ExecContext(ctx, "UPDATE tasks SET id=id WHERE 1=0"); err != nil {
+			return toolError(err.Error())
+		}
+	} else {
+		if _, err := tx.ExecContext(ctx, "LOCK TABLE memories IN SHARE ROW EXCLUSIVE MODE"); err != nil {
+			return toolError(err.Error())
+		}
+	}
+	policy = policy.WithReadTransaction(tx)
+	if err := memoryCommitRecheck(ctx, policy, actor); err != nil {
+		return toolError(err.Error())
+	}
 	// Idempotent completion replay (finding M20, 2026-09-03 review): if the
 	// task is already completed, return success with the stored terminal
 	// version instead of a version conflict.
 	var doneStatus string
 	var doneVersion int
-	if err := deps.DB().QueryRowContext(ctx, deps.Q(`SELECT status,version FROM tasks WHERE id=$1 AND (owner_id=$2 OR owner_id='')`), taskID, taskOwner(ctx)).Scan(&doneStatus, &doneVersion); err == nil && doneStatus == "completed" {
+	if err := tx.QueryRowContext(ctx, deps.Q(`SELECT status,version FROM tasks WHERE id=$1 AND (owner_id=$2 OR owner_id='')`), taskID, taskOwner(ctx)).Scan(&doneStatus, &doneVersion); err == nil && doneStatus == "completed" {
 		return jsonResult(map[string]any{"ok": true, "task_id": taskID, "status": "completed", "version": doneVersion, "already_completed": true})
 	}
-	v, current, err := validateTask(ctx, deps, taskID, taskOwner(ctx), "completion")
+	ctx = context.WithValue(ctx, artifactReadPolicyKey{}, policy)
+	ctx = context.WithValue(ctx, taskArtifactGuardKey{}, guards)
+	v, current, err := validateTask(ctx, deps, taskID, taskOwner(ctx), "completion", tx)
 	if err != nil {
 		return toolError("task not found")
 	}
@@ -1124,22 +1351,11 @@ func ToolTaskComplete(ctx context.Context, deps Deps, args map[string]any) ToolR
 		return toolError(fmt.Sprintf("version conflict: current=%d", current))
 	}
 	if !v.Valid {
+		finish()
 		deps.LogHeartbeat("task_completion_rejected", map[string]any{"task_id": taskID, "version": current, "validation": v, "at": time.Now().UTC().Format(time.RFC3339Nano)})
 		return jsonResult(map[string]any{"ok": false, "task_id": taskID, "validation": v, "version": current})
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	tx, err := deps.DB().BeginTx(ctx, nil)
-	if err != nil {
-		return toolError(err.Error())
-	}
-	defer tx.Rollback()
-	// Promotion writes memories. Acquire that table lock before updating the
-	// task row, in the same order as prepared memory commits and supersession.
-	if !memoryCommitSQLite(deps) {
-		if _, err := tx.ExecContext(ctx, "LOCK TABLE memories IN ROW EXCLUSIVE MODE"); err != nil {
-			return toolError(err.Error())
-		}
-	}
 	res, err := tx.ExecContext(ctx, deps.Q(`UPDATE tasks SET status='completed',version=version+1,updated_at=$1,completed_at=$2 WHERE id=$3 AND version=$4 AND status<>'completed'`), now, now, taskID, expected)
 	if err != nil {
 		return toolError(err.Error())
@@ -1154,9 +1370,13 @@ func ToolTaskComplete(ctx context.Context, deps Deps, args map[string]any) ToolR
 	if err := taskEvent(ctx, tx, deps.Q, taskID, taskActor(ctx, args), "task_completed", map[string]any{"version": expected + 1}); err != nil {
 		return toolError(err.Error())
 	}
+	if err := memoryCommitRecheck(ctx, policy, actor); err != nil {
+		return toolError(err.Error())
+	}
 	if err := tx.Commit(); err != nil {
 		return toolError(err.Error())
 	}
+	finish()
 	syncTaskMemoryIndex(ctx, deps, taskID)
 	deps.LogHeartbeat("task_completed", map[string]any{"task_id": taskID, "promoted_memories": promoted, "rejected_memories": rejected, "at": now})
 	return jsonResult(map[string]any{"ok": true, "task_id": taskID, "status": "completed", "version": expected + 1, "promoted_memories": promoted, "rejected_memories": rejected})

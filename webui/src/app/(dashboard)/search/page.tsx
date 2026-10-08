@@ -1,8 +1,8 @@
 'use client'
 
-import { useState } from 'react'
-import { type SearchResult, type SearchRequest } from '@/lib/api'
-import { useSearch, useSubmitFeedback } from '@/hooks/use-levara'
+import { useRef, useState } from 'react'
+import { ApiError, type SearchResult, type SearchRequest } from '@/lib/api'
+import { useCollections, useSearch, useSubmitFeedback } from '@/hooks/use-levara'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -27,22 +27,20 @@ export default function SearchPage() {
   const [ragAnswer, setRagAnswer] = useState<string | null>(null)
   const [searched, setSearched] = useState(false)
   const [timing, setTiming] = useState<number | null>(null)
-  const [collections, setCollections] = useState<string[]>([])
-
-  // Load collections
-  useState(() => {
-    import('@/lib/api').then(({ levara }) =>
-      levara.collections().then((c) => setCollections(c.filter((x) => !x.name.startsWith('_') && x.name !== 'Triplet_text').map((x) => x.name)))
-    ).catch(() => {})
-  })
+  const collectionQuery = useCollections()
+  const collectionsDenied = collectionQuery.error instanceof ApiError && (collectionQuery.error.status === 401 || collectionQuery.error.status === 403)
+  const collections = collectionsDenied ? [] : (collectionQuery.data ?? []).filter(x => !x.name.startsWith('_') && x.name !== 'Triplet_text').map(x => x.name)
 
   const searchMutation = useSearch()
   const feedbackMutation = useSubmitFeedback()
   const loading = searchMutation.isPending
 
+  const searchInFlight = useRef(false)
   const handleSearch = async () => {
-    if (!query.trim()) return
+    if (!query.trim() || searchInFlight.current) return
+    searchInFlight.current = true
     setRagAnswer(null)
+    setSearched(false)
     const t0 = performance.now()
     try {
       const params: SearchRequest = { query_text: query, query_type: mode, top_k: 20, collection: collection || undefined }
@@ -58,10 +56,12 @@ export default function SearchPage() {
       } else {
         setResults([])
       }
+      setSearched(true)
     } catch {
       setResults([])
+      setTiming(null)
     } finally {
-      setSearched(true)
+      searchInFlight.current = false
     }
   }
 
@@ -83,15 +83,20 @@ export default function SearchPage() {
             onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
           />
         </div>
+        {collectionQuery.error instanceof ApiError && collectionQuery.error.status === 403 ? (
+          <Input aria-label="Collection" placeholder="Project collection name" value={collection} onChange={e => setCollection(e.target.value)} />
+        ) : (
         <select
           value={collection}
           onChange={(e) => setCollection(e.target.value)}
           className="h-9 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-3 text-sm"
           aria-label="Collection"
+          disabled={collectionQuery.isPending || collectionQuery.isError}
         >
           <option value="">All collections</option>
           {collections.map((c) => <option key={c} value={c}>{c}</option>)}
         </select>
+        )}
         <select
           value={mode}
           onChange={(e) => setMode(e.target.value)}
@@ -109,6 +114,11 @@ export default function SearchPage() {
           Search
         </Button>
       </div>
+
+      {collectionQuery.isPending && <p className="text-sm text-gray-500 mb-4">Loading collections...</p>}
+      {collectionQuery.isError && <p role="alert" className="text-sm text-red-600 mb-4">Collections unavailable: {collectionQuery.error instanceof Error ? collectionQuery.error.message : 'Request failed'}{collectionQuery.data && !collectionsDenied ? ' (showing stale data)' : ''}</p>}
+      {collectionQuery.isError && <Button variant="secondary" onClick={() => { void collectionQuery.refetch() }} disabled={collectionQuery.isFetching}>Retry collections</Button>}
+      {searchMutation.isError && <p role="alert" className="text-sm text-red-600 mb-4">Search failed: {searchMutation.error instanceof Error ? searchMutation.error.message : 'Request failed'}</p>}
 
       {/* Mode badges */}
       <div className="flex gap-2 mb-6 flex-wrap">
