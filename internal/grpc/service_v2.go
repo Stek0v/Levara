@@ -172,16 +172,6 @@ func insertRespFromV1(v1 *pbv1.StatusResp) *pbv2.InsertResp {
 	return &pbv2.InsertResp{Ok: v1.GetOk()}
 }
 
-// errFromV1 wraps a Go error into ErrorDetail. gRPC status codes live
-// outside this envelope; callers see both (ErrorDetail for parseable
-// categorisation, status.Status for transport-level handling).
-func errFromV1(err error) *pbv2.ErrorDetail {
-	if err == nil {
-		return nil
-	}
-	return errorDetailFromError(err)
-}
-
 func errorDetail(message string) *pbv2.ErrorDetail {
 	return errorDetailWithCode(pbv2.ErrorCode_ERROR_CODE_LEGACY, message)
 }

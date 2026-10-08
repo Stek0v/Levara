@@ -559,10 +559,6 @@ func identityFailureDetail(err error) string {
 
 var errIdentityUnavailable = errors.New("identity service unavailable")
 
-func activeExternalUser(ctx context.Context, db *sql.DB, principal ExternalPrincipal) bool {
-	return validateExternalUser(ctx, db, principal) == nil
-}
-
 func validateExternalUser(ctx context.Context, db *sql.DB, principal ExternalPrincipal) error {
 	return accesspkg.ValidateExternalCredential(ctx, db, Q, principal.UserID, principal.IssuedAt)
 }
