@@ -55,6 +55,13 @@ func (p SQLPolicy) PruneData(ctx context.Context, actor MetadataActor, includeGr
 		return err
 	}
 	if includeGraph {
+		// ponytail: global prune serializes graph writers in their nodes→edges
+		// order; narrower locks need a matching protocol in every graph writer.
+		if !sqlite {
+			if _, err := tx.ExecContext(ctx, "LOCK TABLE graph_nodes, graph_edges IN SHARE ROW EXCLUSIVE MODE"); err != nil {
+				return err
+			}
+		}
 		for _, stmt := range []string{"DELETE FROM graph_edges", "DELETE FROM graph_nodes"} {
 			if _, err := tx.ExecContext(ctx, stmt); err != nil {
 				return err

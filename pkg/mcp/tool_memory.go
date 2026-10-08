@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -64,7 +65,7 @@ func ToolListMemories(ctx context.Context, deps Deps, args map[string]any) ToolR
 		qargs = append(qargs, hall)
 	}
 
-	conds = append(conds, "superseded_by = ''")
+	conds = append(conds, "superseded_by = ''", "valid_until IS NULL")
 
 	sqlStr := `SELECT id, key, value, type, owner_id, room, hall, is_pinned, pin_priority, created_at, updated_at,
 		COALESCE(NULLIF(verification_status,''),'unverified'), COALESCE(source_task_id,''), COALESCE(source_receipt_ids,'[]') FROM memories`
@@ -124,6 +125,7 @@ func extractOwnerID(ctx context.Context) string {
 // Ownership scope: the update only matches rows owned by the caller or
 // owned by the empty string (shared memories). Zero rows affected is
 // surfaced as IsError so the client knows the pin had no effect.
+// A nonempty collection narrows the update; omitted/empty keeps legacy scope.
 func ToolPinMemory(ctx context.Context, deps Deps, args map[string]any) ToolResult {
 	db := deps.DB()
 	if db == nil {
@@ -139,6 +141,10 @@ func ToolPinMemory(ctx context.Context, deps Deps, args map[string]any) ToolResu
 			IsError: true,
 		}
 	}
+	collectionName, ok := args["collection"].(string)
+	if _, present := args["collection"]; present && !ok {
+		return toolError("'collection' must be a string")
+	}
 	priority := 1
 	if p, ok := args["priority"].(float64); ok {
 		priority = int(p)
@@ -146,11 +152,17 @@ func ToolPinMemory(ctx context.Context, deps Deps, args map[string]any) ToolResu
 	ownerID := extractOwnerID(ctx)
 	now := time.Now().UTC().Format(time.RFC3339)
 
-	// Placeholders $1..$4 are each used once — Q (not QArgs) is sufficient.
-	res, err := db.ExecContext(ctx, deps.Q(`
+	// Each placeholder is used once — Q (not QArgs) is sufficient.
+	sqlStr := `
 		UPDATE memories SET is_pinned = TRUE, pin_priority = $1, updated_at = $2
-		WHERE key = $3 AND (owner_id = $4 OR owner_id = '')
-	`), priority, now, key, ownerID)
+		WHERE key = $3 AND (owner_id = $4 OR owner_id = '') AND superseded_by='' AND valid_until IS NULL
+	`
+	qargs := []any{priority, now, key, ownerID}
+	if collectionName != "" {
+		sqlStr += " AND collection_name = $5"
+		qargs = append(qargs, collectionName)
+	}
+	res, err := db.ExecContext(ctx, deps.Q(sqlStr), qargs...)
 	if err != nil {
 		return ToolResult{
 			Content: []Content{{Type: "text", Text: "Error: " + err.Error()}},
@@ -172,6 +184,7 @@ func ToolPinMemory(ctx context.Context, deps Deps, args map[string]any) ToolResu
 // Unlike Pin, a missing row is NOT reported as an error — the target
 // state (unpinned) is already satisfied, so the call is idempotent by
 // design. Matches pre-refactor behavior.
+// Collection selection follows the same rule as Pin.
 func ToolUnpinMemory(ctx context.Context, deps Deps, args map[string]any) ToolResult {
 	db := deps.DB()
 	if db == nil {
@@ -187,13 +200,23 @@ func ToolUnpinMemory(ctx context.Context, deps Deps, args map[string]any) ToolRe
 			IsError: true,
 		}
 	}
+	collectionName, ok := args["collection"].(string)
+	if _, present := args["collection"]; present && !ok {
+		return toolError("'collection' must be a string")
+	}
 	ownerID := extractOwnerID(ctx)
 	now := time.Now().UTC().Format(time.RFC3339)
 
-	if _, err := db.ExecContext(ctx, deps.Q(`
+	sqlStr := `
 		UPDATE memories SET is_pinned = FALSE, pin_priority = 0, updated_at = $1
-		WHERE key = $2 AND (owner_id = $3 OR owner_id = '')
-	`), now, key, ownerID); err != nil {
+		WHERE key = $2 AND (owner_id = $3 OR owner_id = '') AND superseded_by='' AND valid_until IS NULL
+	`
+	qargs := []any{now, key, ownerID}
+	if collectionName != "" {
+		sqlStr += " AND collection_name = $4"
+		qargs = append(qargs, collectionName)
+	}
+	if _, err := db.ExecContext(ctx, deps.Q(sqlStr), qargs...); err != nil {
 		return ToolResult{
 			Content: []Content{{Type: "text", Text: "Error: " + err.Error()}},
 			IsError: true,
@@ -240,7 +263,7 @@ func ToolWakeUp(ctx context.Context, deps Deps, args map[string]any) ToolResult 
 	ownerID := extractOwnerID(ctx)
 
 	pinned := wakeUpPinned(ctx, db, deps.Q, ownerID, collectionName)
-	entities := wakeUpEntities(ctx, db, deps.Q, collectionName, topEntities)
+	entities := wakeUpEntities(ctx, deps, collectionName, topEntities)
 	scopeStatus := "exact"
 	if collectionName == "" {
 		scopeStatus = "empty"
@@ -281,7 +304,7 @@ func ToolWakeUp(ctx context.Context, deps Deps, args map[string]any) ToolResult 
 func wakeUpPinned(ctx context.Context, db *sql.DB, rewrite func(string) string, ownerID, collectionName string) []map[string]any {
 	sqlStr := fmt.Sprintf(`SELECT key, value, hall, room, pin_priority,
 		COALESCE(NULLIF(verification_status,''),'unverified'), COALESCE(source_task_id,''), COALESCE(source_receipt_ids,'[]') FROM memories
-		WHERE %s AND (owner_id = $1 OR owner_id = '') AND superseded_by = ''`, sqlcompat.BoolTrue("is_pinned"))
+		WHERE %s AND (owner_id = $1 OR owner_id = '') AND superseded_by = '' AND valid_until IS NULL`, sqlcompat.BoolTrue("is_pinned"))
 	qargs := []any{ownerID}
 	if collectionName != "" {
 		sqlStr += " AND collection_name = $2"
@@ -319,42 +342,126 @@ func wakeUpPinned(ctx context.Context, db *sql.DB, rewrite func(string) string, 
 // wakeUpEntities loads the top-N graph nodes by active-edge degree.
 // Edges are "active" if their valid_until is NULL or in the future.
 
-func wakeUpEntities(ctx context.Context, db *sql.DB, rewrite func(string) string, collectionName string, topN int) []map[string]any {
+func wakeUpEntities(ctx context.Context, deps Deps, collectionName string, topN int) []map[string]any {
 	// Graph context without an explicit collection is unsafe: global nodes can
 	// silently contaminate a project bootstrap. Pinned global memories remain
 	// backward compatible, but graph entities require an exact scope.
 	if collectionName == "" {
 		return []map[string]any{}
 	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	sqlStr := `SELECT n.name, n.type, COUNT(e.id) AS deg
-		FROM graph_nodes n
-		LEFT JOIN graph_edges e ON (e.source_id = n.id OR e.target_id = n.id)
-			AND (e.valid_until IS NULL OR e.valid_until > $1)
-		WHERE (n.collection_id = $2 OR n.dataset_id = $3)
-		GROUP BY n.id, n.name, n.type
-		ORDER BY deg DESC, n.updated_at DESC
-		LIMIT $4`
-
-	rows, err := db.QueryContext(ctx, rewrite(sqlStr), now, collectionName, collectionName, topN)
+	db := deps.DB()
+	allowed := []string(nil)
+	if authorizer, ok := deps.(GraphAssertionAuthorizer); ok {
+		var err error
+		allowed, err = authorizer.GraphDatasetIDs(ctx)
+		if err != nil || len(allowed) == 0 {
+			return []map[string]any{}
+		}
+	}
+	type entity struct {
+		id, name, typ, dataset, properties, updated string
+		degree                                      int
+	}
+	queryArgs := []any{collectionName, collectionName}
+	nodeQuery := `SELECT n.id,n.name,n.type,COALESCE(n.dataset_id,''),COALESCE(n.properties,'{}'),COALESCE(CAST(n.updated_at AS TEXT),'')
+		FROM graph_nodes n WHERE (n.collection_id = $1 OR n.dataset_id = $2)`
+	nodeQuery += graphDatasetPredicate("n.dataset_id", allowed, &queryArgs)
+	rows, err := db.QueryContext(ctx, deps.Q(nodeQuery), queryArgs...)
 	if err != nil {
 		return nil
 	}
-	defer rows.Close()
-
-	var out []map[string]any
+	var candidates []*entity
 	for rows.Next() {
-		var name, typ string
-		var deg int
-		if err := rows.Scan(&name, &typ, &deg); err != nil {
+		candidate := new(entity)
+		if err := rows.Scan(&candidate.id, &candidate.name, &candidate.typ, &candidate.dataset, &candidate.properties, &candidate.updated); err != nil {
+			rows.Close()
+			return nil
+		}
+		candidates = append(candidates, candidate)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil
+	}
+	rows.Close()
+	entities := make(map[string]*entity)
+	for _, candidate := range candidates {
+		if candidate.name != "" && graphAssertionsAllowed(ctx, deps, []GraphAssertion{{DatasetID: candidate.dataset, Properties: []byte(candidate.properties)}}) {
+			entities[candidate.id] = candidate
+		}
+	}
+	if len(entities) == 0 {
+		return []map[string]any{}
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	edgeQuery := `SELECT e.source_id,e.target_id,
+		COALESCE(src.dataset_id,''),COALESCE(src.properties,'{}'),
+		COALESCE(e.dataset_id,''),COALESCE(e.properties,'{}'),
+		COALESCE(dst.dataset_id,''),COALESCE(dst.properties,'{}')
+		FROM graph_edges e
+		JOIN graph_nodes src ON src.id=e.source_id
+		JOIN graph_nodes dst ON dst.id=e.target_id
+		WHERE (e.valid_until IS NULL OR e.valid_until > $1)
+		AND (src.collection_id=$2 OR src.dataset_id=$3 OR dst.collection_id=$4 OR dst.dataset_id=$5)`
+	rows, err = db.QueryContext(ctx, deps.Q(edgeQuery), now, collectionName, collectionName, collectionName, collectionName)
+	if err != nil {
+		return nil
+	}
+	type edge struct {
+		sourceID, targetID, sourceDataset, sourceProperties, dataset, properties, targetDataset, targetProperties string
+	}
+	var edges []edge
+	for rows.Next() {
+		var candidate edge
+		if err := rows.Scan(&candidate.sourceID, &candidate.targetID, &candidate.sourceDataset, &candidate.sourceProperties, &candidate.dataset, &candidate.properties, &candidate.targetDataset, &candidate.targetProperties); err != nil {
+			rows.Close()
+			return nil
+		}
+		edges = append(edges, candidate)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil
+	}
+	rows.Close()
+	for _, candidate := range edges {
+		if candidate.dataset == "" && candidate.sourceDataset == candidate.targetDataset {
+			candidate.dataset = candidate.sourceDataset
+		}
+		if !graphAssertionsAllowed(ctx, deps, []GraphAssertion{
+			{DatasetID: candidate.sourceDataset, Properties: []byte(candidate.sourceProperties)},
+			{DatasetID: candidate.dataset, Properties: []byte(candidate.properties)},
+			{DatasetID: candidate.targetDataset, Properties: []byte(candidate.targetProperties)},
+		}) {
 			continue
 		}
-		if name == "" {
-			continue
+		if source := entities[candidate.sourceID]; source != nil {
+			source.degree++
 		}
-		out = append(out, map[string]any{
-			"name": name, "type": typ, "edge_count": deg,
-		})
+		if target := entities[candidate.targetID]; target != nil && candidate.targetID != candidate.sourceID {
+			target.degree++
+		}
+	}
+	ranked := make([]*entity, 0, len(entities))
+	for _, candidate := range entities {
+		ranked = append(ranked, candidate)
+	}
+	sort.Slice(ranked, func(i, j int) bool {
+		if ranked[i].degree != ranked[j].degree {
+			return ranked[i].degree > ranked[j].degree
+		}
+		if ranked[i].updated != ranked[j].updated {
+			return ranked[i].updated > ranked[j].updated
+		}
+		return ranked[i].id < ranked[j].id
+	})
+	if len(ranked) > topN {
+		ranked = ranked[:topN]
+	}
+	out := make([]map[string]any, 0, len(ranked))
+	for _, candidate := range ranked {
+		out = append(out, map[string]any{"name": candidate.name, "type": candidate.typ, "edge_count": candidate.degree})
 	}
 	return out
 }

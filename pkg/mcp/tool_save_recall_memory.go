@@ -124,6 +124,9 @@ func ToolSaveMemory(ctx context.Context, deps Deps, args map[string]any) ToolRes
 	sourceTaskID := evidence.SourceTaskID
 	sourceReceiptIDs := memoryReceiptJSON(evidence.SourceReceiptIDs)
 	supersedesMemoryID, _ := args["supersedes_memory_id"].(string)
+	if err := archiveRetiredMemoryKey(ctx, tx, deps, key, ownerID, collectionName, now); err != nil {
+		return toolError(err.Error())
+	}
 
 	// Reused-value columns (value/type/collection_name/room/hall/
 	// is_pinned/pin_priority/updated_at) get their own placeholders in
@@ -185,6 +188,16 @@ func memoryReceiptJSON(ids []string) string {
 	return string(encoded)
 }
 
+type memorySQLExecer interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
+func archiveRetiredMemoryKey(ctx context.Context, exec memorySQLExecer, deps Deps, key, ownerID, collection, now string) error {
+	_, err := exec.ExecContext(ctx, deps.Q(`UPDATE memories SET key=key || '#retired:' || id,updated_at=$1
+		WHERE key=$2 AND owner_id=$3 AND collection_name=$4 AND (superseded_by<>'' OR valid_until IS NOT NULL)`), now, key, ownerID, collection)
+	return err
+}
+
 // indexMemorySync vector-indexes the memory inline — before ToolSaveMemory
 // returns — so the fresh record is immediately discoverable by semantic
 // recall, including filtered recall_memory(query, room=…).
@@ -210,41 +223,110 @@ func memoryReceiptJSON(ids []string) string {
 func indexMemorySync(deps Deps, collectionName, id, key, value, memType string) {
 	embedCtx, cancel := context.WithTimeout(context.Background(), saveMemoryEmbedTimeout)
 	defer cancel()
+	_ = indexMemoryContext(embedCtx, deps, collectionName, id, key, value, memType)
+}
 
+// indexMemoryContext retains the caller's lifetime for synchronous distillation.
+// SQL is already committed; non-cancellation indexing failures remain best effort.
+// Native collection calls cannot interrupt an insertion that has already started.
+func indexMemoryContext(ctx context.Context, deps Deps, collectionName, id, key, value, memType string) error {
+	return indexMemoryContextFenced(ctx, deps, collectionName, id, key, value, memType, "", nil)
+}
+
+// acquire fences source authority only during insertion/read-back, after embedding.
+// Release before callbacks or heartbeat SQL so a one-connection pool cannot self-wait.
+func indexMemoryContextFenced(ctx context.Context, deps Deps, collectionName, id, key, value, memType, ownerID string, acquire func() (func(), error)) error {
 	sidecar := memoryCollectionName(collectionName)
-
-	vec, err := deps.Embed(embedCtx, key+" "+value)
+	checkContext := func() error {
+		err := ctx.Err()
+		if err != nil {
+			reportMemoryDivergence(deps, sidecar, id, "index_canceled", err.Error())
+		}
+		return err
+	}
+	if err := checkContext(); err != nil {
+		return err
+	}
+	vec, err := deps.Embed(ctx, key+" "+value)
 	if err != nil {
 		reportMemoryDivergence(deps, sidecar, id, "embed_failed", err.Error())
-		return
+		return ctx.Err()
+	}
+	if err := checkContext(); err != nil {
+		return err
 	}
 
-	meta, _ := json.Marshal(map[string]string{
+	metadata := map[string]string{
 		"key":        key,
 		"value":      value,
 		"type":       memType,
 		"collection": collectionName,
 		"memory_id":  id,
-	})
+	}
+	if ownerID != "" {
+		metadata["owner_id"] = ownerID
+	}
+	meta, _ := json.Marshal(metadata)
 
-	// Insert, then verify the vector actually landed under the canonical
-	// id (synchronous index lookup, not a vector search — see
-	// CollectionHasRecord). Retry once on failure.
+	// Insert, then verify under the same source authority fence.
 	for attempt := 1; attempt <= memoryIndexMaxAttempts; attempt++ {
-		insErr := deps.CollectionInsert(sidecar, id, vec, meta)
+		if err := checkContext(); err != nil {
+			return err
+		}
+		release := func() {}
+		if acquire != nil {
+			var err error
+			release, err = acquire()
+			if err != nil {
+				return err
+			}
+		}
+		if err := ctx.Err(); err != nil {
+			release()
+			return checkContext()
+		}
+		var hook func()
+		var insErr error
+		if acquire != nil {
+			deferred, ok := deps.(interface {
+				CollectionInsertDeferredHook(string, string, []float32, any) (func(), error)
+			})
+			if !ok {
+				release()
+				return fmt.Errorf("source-fenced indexing requires deferred collection callbacks")
+			}
+			hook, insErr = deferred.CollectionInsertDeferredHook(sidecar, id, vec, meta)
+		} else {
+			insErr = deps.CollectionInsert(sidecar, id, vec, meta)
+		}
+		present := false
+		if insErr == nil && ctx.Err() == nil {
+			present = deps.CollectionHasRecord(sidecar, id)
+		}
+		release()
+		if err := checkContext(); err != nil {
+			return err
+		}
+		if hook != nil {
+			hook()
+		}
+		if err := checkContext(); err != nil {
+			return err
+		}
 		if insErr != nil {
 			if attempt == memoryIndexMaxAttempts {
 				reportMemoryDivergence(deps, sidecar, id, "insert_failed", insErr.Error())
 			}
 			continue
 		}
-		if deps.CollectionHasRecord(sidecar, id) {
-			return // verified present — SQL and vector agree
+		if present {
+			return nil
 		}
 		if attempt == memoryIndexMaxAttempts {
 			reportMemoryDivergence(deps, sidecar, id, "missing_after_insert", "vector absent on read-back")
 		}
 	}
+	return nil
 }
 
 // memoryIndexMaxAttempts bounds the insert+verify retry loop in
@@ -316,9 +398,6 @@ func ToolRecallMemory(ctx context.Context, deps Deps, args map[string]any) ToolR
 	if db == nil {
 		return jsonResult(map[string]any{"results": []any{}})
 	}
-	if provider, ok := deps.(interface{ MemoryIndexOutbox() *memoryindex.Store }); ok && provider.MemoryIndexOutbox() != nil {
-		provider.MemoryIndexOutbox().WaitReady(ctx, collectionName, ownerID, 200*time.Millisecond)
-	}
 	if includeSuperseded {
 		return recallWithHistory(ctx, deps, db, query, collectionName, room, hall, ownerID)
 	}
@@ -343,8 +422,9 @@ func ToolRecallMemory(ctx context.Context, deps Deps, args map[string]any) ToolR
 // recallViaSQLLike and recallViaVectorFiltered hydrate an identical shape.
 const memoryRowColumns = `id, key, value, type, owner_id, room, hall, created_at, updated_at,
 	verification_status, source_task_id, source_receipt_ids, supersedes_memory_id, superseded_by,
-	COALESCE(NULLIF(supersession_reason, ''), (SELECT supersession_reason FROM memories predecessor WHERE predecessor.id=memories.supersedes_memory_id AND predecessor.collection_name=memories.collection_name AND (predecessor.owner_id=memories.owner_id OR predecessor.owner_id='')), '') AS supersession_reason,
-	COALESCE(CAST(valid_until AS TEXT), (SELECT CAST(valid_until AS TEXT) FROM memories predecessor WHERE predecessor.id=memories.supersedes_memory_id AND predecessor.collection_name=memories.collection_name AND (predecessor.owner_id=memories.owner_id OR predecessor.owner_id='')), '') AS superseded_at`
+	COALESCE(NULLIF(supersession_reason, ''), (SELECT supersession_reason FROM memories predecessor WHERE predecessor.id=memories.supersedes_memory_id AND predecessor.collection_name=memories.collection_name AND predecessor.owner_id=memories.owner_id AND predecessor.superseded_by=memories.id), '') AS supersession_reason,
+	COALESCE(CAST(valid_until AS TEXT), (SELECT CAST(valid_until AS TEXT) FROM memories predecessor WHERE predecessor.id=memories.supersedes_memory_id AND predecessor.collection_name=memories.collection_name AND predecessor.owner_id=memories.owner_id AND predecessor.superseded_by=memories.id), '') AS superseded_at,
+	CASE WHEN superseded_by='' AND valid_until IS NULL THEN 1 ELSE 0 END AS is_active`
 
 // appendMemoryFilters appends the structural filters shared by both SQL
 // recall paths — owner scope, then optional collection/room/hall, then
@@ -371,7 +451,7 @@ func appendMemoryFilters(conds []string, qargs []any, pos int, collectionName, r
 		pos++
 	}
 	if !includeSuperseded {
-		conds = append(conds, "superseded_by = ''")
+		conds = append(conds, "superseded_by = ''", "valid_until IS NULL")
 	}
 	return conds, qargs, pos
 }
@@ -382,7 +462,8 @@ func scanMemoryRows(rows *sql.Rows) ([]map[string]any, error) {
 	var results []map[string]any
 	for rows.Next() {
 		var id, key, value, typ, oid, rm, hl, ca, ua, verification, taskID, receiptJSON, supersedes, supersededBy, reason, supersededAt string
-		if err := rows.Scan(&id, &key, &value, &typ, &oid, &rm, &hl, &ca, &ua, &verification, &taskID, &receiptJSON, &supersedes, &supersededBy, &reason, &supersededAt); err != nil {
+		var active int
+		if err := rows.Scan(&id, &key, &value, &typ, &oid, &rm, &hl, &ca, &ua, &verification, &taskID, &receiptJSON, &supersedes, &supersededBy, &reason, &supersededAt, &active); err != nil {
 			return nil, err
 		}
 		var receipts []string
@@ -390,9 +471,9 @@ func scanMemoryRows(rows *sql.Rows) ([]map[string]any, error) {
 		if receipts == nil {
 			receipts = []string{}
 		}
-		state := "active"
-		if supersededBy != "" {
-			state = "superseded"
+		state := "superseded"
+		if active == 1 {
+			state = "active"
 		}
 		results = append(results, map[string]any{
 			"id": id, "key": key, "value": value, "type": typ,

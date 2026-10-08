@@ -107,6 +107,47 @@ func TestHNSW_ConcurrentSearchAdd_NoRace(t *testing.T) {
 		searches.Load(), inserts.Load(), duration)
 }
 
+func TestHNSWSearchDoesNotWaitForInsertionSetup(t *testing.T) {
+	arena := NewVectorArena(2)
+	idx := NewHNSWIndex(arena, DefaultHNSWConfig())
+	offset, err := arena.Add([]float32{1, 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx.Add([]float32{1, 0}, "seed", offset)
+
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	idx.randFloat64 = func() float64 {
+		close(entered)
+		<-release
+		return 0.8
+	}
+	nextOffset, err := arena.Add([]float32{0, 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		idx.Add([]float32{0, 1}, "next", nextOffset)
+	}()
+	<-entered
+
+	searchDone := make(chan []VectroRecord, 1)
+	go func() { searchDone <- idx.Search([]float32{1, 0}, 1) }()
+	select {
+	case results := <-searchDone:
+		if len(results) != 1 || results[0].ID != "seed" {
+			t.Fatalf("search during insertion setup=%+v", results)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("search waited for insertion setup")
+	}
+	close(release)
+	<-done
+}
+
 func TestHNSW_ReinsertDeletedEntryRefreshesEntryLayer(t *testing.T) {
 	arena := NewVectorArena(3)
 	idx := NewHNSWIndex(arena, DefaultHNSWConfig())

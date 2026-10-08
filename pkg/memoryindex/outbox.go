@@ -3,6 +3,7 @@ package memoryindex
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -70,27 +71,35 @@ func NewStore(db *sql.DB) (*Store, error) {
 	return s, nil
 }
 
-// Enqueue adds a job outside any caller transaction.
+// Enqueue adds a job outside any caller transaction. Completed duplicates reopen
+// with a fresh ID so an old Finish/Defer cannot match a reset attempt counter.
 func (s *Store) Enqueue(ctx context.Context, j Job) (Job, error) {
+	if j.ID == "" {
+		j.ID = uuid.NewString()
+	}
 	j.Status = Pending
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	q := s.bind(`INSERT INTO memory_index_jobs (id,memory_id,operation,collection_name,owner_id,digest,embed_model,embed_dimension,status,created_at,updated_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(memory_id,operation,digest) DO NOTHING`)
-	if _, err := s.db.ExecContext(ctx, q, j.ID, j.MemoryID, j.Operation, j.Collection, j.OwnerID, j.Digest, j.Model, j.Dimension, string(j.Status), now, now); err != nil {
+		VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(memory_id,operation,digest) DO UPDATE SET
+		id=?,embed_model=excluded.embed_model,embed_dimension=excluded.embed_dimension,status='pending',attempts=0,next_run_at='',last_error='',updated_at=excluded.updated_at
+		WHERE memory_index_jobs.status='completed' AND memory_index_jobs.collection_name=excluded.collection_name AND memory_index_jobs.owner_id=excluded.owner_id`)
+	if _, err := s.db.ExecContext(ctx, q, j.ID, j.MemoryID, j.Operation, j.Collection, j.OwnerID, j.Digest, j.Model, j.Dimension, string(j.Status), now, now, uuid.NewString()); err != nil {
 		return Job{}, err
 	}
-	var id string
-	var status Status
-	var attempts int
-	err := s.db.QueryRowContext(ctx, s.bind(`SELECT id,status,attempts FROM memory_index_jobs WHERE memory_id=? AND operation=? AND digest=?`), j.MemoryID, j.Operation, j.Digest).Scan(&id, &status, &attempts)
+	owner, collection := j.OwnerID, j.Collection
+	err := s.db.QueryRowContext(ctx, s.bind(`SELECT id,status,attempts,collection_name,owner_id,embed_model,embed_dimension,next_run_at,last_error FROM memory_index_jobs WHERE memory_id=? AND operation=? AND digest=?`), j.MemoryID, j.Operation, j.Digest).
+		Scan(&j.ID, &j.Status, &j.Attempts, &j.Collection, &j.OwnerID, &j.Model, &j.Dimension, &j.NextRunAt, &j.LastError)
 	if err != nil {
 		return Job{}, err
 	}
-	j.ID, j.Status, j.Attempts = id, status, attempts
+	if j.Status == Completed && (j.OwnerID != owner || j.Collection != collection) {
+		return Job{}, fmt.Errorf("memory index outbox: completed publication namespace mismatch")
+	}
 	return j, nil
 }
 
-// EnqueueTx adds a job within the caller's transaction.
+// EnqueueTx adds or reopens a job within the caller's transaction. Rotation and
+// retry-budget reset roll back together with the caller's authoritative writes.
 func (s *Store) EnqueueTx(ctx context.Context, tx *sql.Tx, j Job) (Job, error) {
 	if j.ID == "" {
 		j.ID = uuid.NewString()
@@ -98,12 +107,22 @@ func (s *Store) EnqueueTx(ctx context.Context, tx *sql.Tx, j Job) (Job, error) {
 	j.Status = Pending
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	q := s.bind(`INSERT INTO memory_index_jobs (id,memory_id,operation,collection_name,owner_id,digest,embed_model,embed_dimension,status,created_at,updated_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(memory_id,operation,digest) DO NOTHING`)
-	if _, err := tx.ExecContext(ctx, q, j.ID, j.MemoryID, j.Operation, j.Collection, j.OwnerID, j.Digest, j.Model, j.Dimension, string(j.Status), now, now); err != nil {
+		VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(memory_id,operation,digest) DO UPDATE SET
+		id=?,embed_model=excluded.embed_model,embed_dimension=excluded.embed_dimension,status='pending',attempts=0,next_run_at='',last_error='',updated_at=excluded.updated_at
+		WHERE memory_index_jobs.status='completed' AND memory_index_jobs.collection_name=excluded.collection_name AND memory_index_jobs.owner_id=excluded.owner_id`)
+	if _, err := tx.ExecContext(ctx, q, j.ID, j.MemoryID, j.Operation, j.Collection, j.OwnerID, j.Digest, j.Model, j.Dimension, string(j.Status), now, now, uuid.NewString()); err != nil {
 		return Job{}, err
 	}
-	err := tx.QueryRowContext(ctx, s.bind(`SELECT id,status,attempts FROM memory_index_jobs WHERE memory_id=? AND operation=? AND digest=?`), j.MemoryID, j.Operation, j.Digest).Scan(&j.ID, &j.Status, &j.Attempts)
-	return j, err
+	owner, collection := j.OwnerID, j.Collection
+	err := tx.QueryRowContext(ctx, s.bind(`SELECT id,status,attempts,collection_name,owner_id,embed_model,embed_dimension,next_run_at,last_error FROM memory_index_jobs WHERE memory_id=? AND operation=? AND digest=?`), j.MemoryID, j.Operation, j.Digest).
+		Scan(&j.ID, &j.Status, &j.Attempts, &j.Collection, &j.OwnerID, &j.Model, &j.Dimension, &j.NextRunAt, &j.LastError)
+	if err != nil {
+		return Job{}, err
+	}
+	if j.Status == Completed && (j.OwnerID != owner || j.Collection != collection) {
+		return Job{}, fmt.Errorf("memory index outbox: completed publication namespace mismatch")
+	}
+	return j, nil
 }
 
 // Claim atomically moves the next due job to 'running'. Safe across
@@ -138,22 +157,24 @@ func (s *Store) Claim(ctx context.Context) (Job, bool, error) {
 	}
 	updQ := s.bind(`UPDATE memory_index_jobs SET status='running',attempts=attempts+1,updated_at=? WHERE id=? AND status IN ('pending','failed') AND (next_run_at='' OR next_run_at<=?)`)
 	for _, id := range candidates {
-		res, err := s.db.ExecContext(ctx, updQ, now, id, now)
+		tx, err := s.db.BeginTx(ctx, nil)
 		if err != nil {
 			return Job{}, false, err
-		}
-		n, err := res.RowsAffected()
-		if err != nil {
-			return Job{}, false, err
-		}
-		if n == 0 {
-			continue // another process claimed it first
 		}
 		var j Job
-		err = s.db.QueryRowContext(ctx, s.bind(`SELECT id,memory_id,operation,collection_name,owner_id,digest,embed_model,embed_dimension,status,attempts,next_run_at,last_error
-			FROM memory_index_jobs WHERE id=?`), id).
+		// Decode before committing: a failed read must not leave a durable
+		// running claim with no worker holding its full identity.
+		err = tx.QueryRowContext(ctx, updQ+` RETURNING id,memory_id,operation,collection_name,owner_id,digest,embed_model,embed_dimension,status,attempts,next_run_at,last_error`, now, id, now).
 			Scan(&j.ID, &j.MemoryID, &j.Operation, &j.Collection, &j.OwnerID, &j.Digest, &j.Model, &j.Dimension, &j.Status, &j.Attempts, &j.NextRunAt, &j.LastError)
 		if err != nil {
+			_ = tx.Rollback()
+			if errors.Is(err, sql.ErrNoRows) {
+				continue // another process claimed it first
+			}
+			return Job{}, false, err
+		}
+		if err := tx.Commit(); err != nil {
+			_ = tx.Rollback()
 			return Job{}, false, err
 		}
 		return j, true, nil
@@ -171,13 +192,13 @@ func (s *Store) Defer(ctx context.Context, j Job, until time.Time, maxAttempts i
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if maxAttempts > 0 && j.Attempts >= maxAttempts {
 		_, err := s.db.ExecContext(ctx, s.bind(`UPDATE memory_index_jobs SET status='dead_letter',last_error=CASE WHEN last_error='' THEN 'defer budget exhausted: embedding service unavailable' ELSE last_error END,next_run_at='',updated_at=?
-			WHERE id=? AND status='running' AND attempts=? AND next_run_at=?`),
-			now, j.ID, j.Attempts, j.NextRunAt)
+			WHERE id=? AND status='running' AND attempts=? AND next_run_at=? AND memory_id=? AND operation=? AND digest=? AND collection_name=? AND owner_id=?`),
+			now, j.ID, j.Attempts, j.NextRunAt, j.MemoryID, j.Operation, j.Digest, j.Collection, j.OwnerID)
 		return err
 	}
 	_, err := s.db.ExecContext(ctx, s.bind(`UPDATE memory_index_jobs SET status='pending',next_run_at=?,updated_at=?
-		WHERE id=? AND status='running' AND attempts=? AND next_run_at=?`),
-		until.UTC().Format(time.RFC3339Nano), now, j.ID, j.Attempts, j.NextRunAt)
+		WHERE id=? AND status='running' AND attempts=? AND next_run_at=? AND memory_id=? AND operation=? AND digest=? AND collection_name=? AND owner_id=?`),
+		until.UTC().Format(time.RFC3339Nano), now, j.ID, j.Attempts, j.NextRunAt, j.MemoryID, j.Operation, j.Digest, j.Collection, j.OwnerID)
 	return err
 }
 
@@ -194,9 +215,9 @@ func (s *Store) Finish(ctx context.Context, j Job, runErr error, maxAttempts int
 			next = time.Now().Add(backoff * time.Duration(1<<max(0, j.Attempts-1))).UTC().Format(time.RFC3339Nano)
 		}
 	}
-	// Status predicate: a stale worker whose job was reclaimed after lease
-	// loss must not clobber the new owner's state.
-	_, err := s.db.ExecContext(ctx, s.bind(`UPDATE memory_index_jobs SET status=?,last_error=?,next_run_at=?,updated_at=? WHERE id=? AND status='running' AND attempts=? AND next_run_at=?`), string(status), last, next, time.Now().UTC().Format(time.RFC3339Nano), j.ID, j.Attempts, j.NextRunAt)
+	// Match the full claim identity: caller-supplied IDs can be reused by another
+	// tuple after rotation, and stale workers must not change that publication.
+	_, err := s.db.ExecContext(ctx, s.bind(`UPDATE memory_index_jobs SET status=?,last_error=?,next_run_at=?,updated_at=? WHERE id=? AND status='running' AND attempts=? AND next_run_at=? AND memory_id=? AND operation=? AND digest=? AND collection_name=? AND owner_id=?`), string(status), last, next, time.Now().UTC().Format(time.RFC3339Nano), j.ID, j.Attempts, j.NextRunAt, j.MemoryID, j.Operation, j.Digest, j.Collection, j.OwnerID)
 	return err
 }
 

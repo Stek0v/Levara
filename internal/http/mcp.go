@@ -37,6 +37,7 @@ import (
 	"github.com/stek0v/levara/pkg/router"
 	"github.com/stek0v/levara/pkg/runreg"
 	"github.com/stek0v/levara/pkg/storage"
+	"github.com/stek0v/levara/pkg/workspace"
 )
 
 // F-4 wave 1b: the canonical type definitions live in pkg/mcp now. Local
@@ -239,6 +240,14 @@ func (h *mcpHandler) VerifyArtifact(ctx context.Context, evidenceURI, expectedDi
 			return accesspkg.ErrDocumentForbidden
 		}
 	}
+	if projectDirectory != "" {
+		_, err := mcp.RetainArtifactGuard(ctx, localRoot+"\x00"+projectDirectory, func() (func(), error) {
+			return workspace.LockProject(ctx, localRoot, projectDirectory)
+		})
+		if err != nil {
+			return err
+		}
+	}
 	var data []byte
 	var err error
 	if localRoot != "" {
@@ -317,6 +326,15 @@ func (h *mcpHandler) CollectionInsert(collection, id string, vec []float32, meta
 		return fmt.Errorf("collections not configured")
 	}
 	return h.cfg.Collections.Insert(collection, id, vec, meta)
+}
+
+// CollectionInsertDeferredHook lets source-fenced publication release SQL locks
+// before migration callbacks reacquire SQL or invoke an embedding provider.
+func (h *mcpHandler) CollectionInsertDeferredHook(collection, id string, vec []float32, meta any) (func(), error) {
+	if h.cfg.Collections == nil {
+		return nil, fmt.Errorf("collections not configured")
+	}
+	return h.cfg.Collections.InsertDeferredHook(collection, id, vec, meta)
 }
 
 // CollectionDelete implements mcp.Deps: tombstones a record by id in the
@@ -580,7 +598,10 @@ func (h *mcpHandler) LLMModel() string { return os.Getenv("LLM_MODEL") }
 // query to detect communities; kept as a separate method so tool code
 // can cache the result when it uses it multiple times.
 func (h *mcpHandler) SearchCapabilities(collection string) router.Capabilities {
-	return capabilitiesFromConfig(h.cfg, collection)
+	caps := capabilitiesFromConfig(h.cfg, collection)
+	// Match NewSearchPipeline: a configured endpoint alone cannot execute vectors.
+	caps.HasEmbedding = caps.HasEmbedding && h.cfg.EmbedClient != nil
+	return caps
 }
 
 // AllowedDatasetIDs implements mcp.Deps: resolves the caller's dataset/project
@@ -635,6 +656,11 @@ func (h *mcpHandler) DoSync(ctx context.Context, remoteURL, direction string, ty
 	if err := validateSyncRemote(h.cfg, remoteURL); err != nil {
 		return nil, nil, err
 	}
+	selectedTypes, selectedCollections, selectorErr := mcp.ValidateSyncSelectors(types, collections)
+	if selectorErr != nil {
+		return nil, nil, selectorErr
+	}
+	types, collections = selectedTypes, selectedCollections
 	rawManifest, err := syncManifestFromRemoteContext(ctx, remoteURL, h.cfg.SyncToken)
 	if err != nil {
 		return nil, nil, err
@@ -759,7 +785,7 @@ func (h *mcpHandler) handleRPC(c *fiber.Ctx) error {
 	if req.Method != "initialize" && req.Method != "ping" {
 		actor, authErr := h.authenticateMCPRequest(c)
 		if authErr != nil {
-			return c.SendStatus(404) // can't establish an owner → client should re-initialize
+			return c.SendStatus(mcpAuthFailureStatus(authErr, fiber.StatusNotFound)) // can't establish an owner → client should re-initialize
 		}
 		if sessionID != "" {
 			sess := h.getOrValidateSession(sessionID)
@@ -780,7 +806,7 @@ func (h *mcpHandler) handleRPC(c *fiber.Ctx) error {
 	case "initialize":
 		actor, authErr := h.authenticateMCPRequest(c)
 		if authErr != nil {
-			return c.Status(fiber.StatusUnauthorized).JSON(jsonRPCResponse{
+			return c.Status(mcpAuthFailureStatus(authErr, fiber.StatusUnauthorized)).JSON(jsonRPCResponse{
 				JSONRPC: "2.0",
 				ID:      req.ID,
 				Error:   &rpcError{Code: -32001, Message: authErr.Error()},
@@ -885,7 +911,10 @@ func (h *mcpHandler) handleToolCallWithSession(c *fiber.Ctx, req jsonRPCRequest,
 		toolCtx = context.WithValue(toolCtx, mcpTraceIDKey, strings.Clone(traceID))
 	}
 	actor, authErr := h.authenticateMCPRequest(c)
-	if authErr != nil || (actor.UserID == "" && sess != nil && sess.GetUserID() != "") {
+	if authErr != nil {
+		return c.SendStatus(mcpAuthFailureStatus(authErr, fiber.StatusNotFound))
+	}
+	if actor.UserID == "" && sess != nil && sess.GetUserID() != "" {
 		return c.SendStatus(fiber.StatusNotFound)
 	}
 	actor, authErr = h.resolveMCPActorTenant(c, actor)
@@ -895,6 +924,9 @@ func (h *mcpHandler) handleToolCallWithSession(c *fiber.Ctx, req jsonRPCRequest,
 	toolCtx = context.WithValue(toolCtx, mcp.TenantIDKey, actor.TenantID)
 	if actor.UserID != "" {
 		toolCtx = context.WithValue(toolCtx, mcpUserIDKey, actor.UserID)
+		if authorization, ok := verifiedMCPAuthorizationFor(c, actor.UserID); ok {
+			toolCtx = context.WithValue(toolCtx, verifiedMCPSuperuserKey{}, authorization)
+		}
 		if actor.APIKeyPermissions != "" {
 			toolCtx = context.WithValue(toolCtx, mcpAPIKeyPermissionsKey, actor.APIKeyPermissions)
 		}
@@ -910,11 +942,35 @@ func (h *mcpHandler) handleToolCallWithSession(c *fiber.Ctx, req jsonRPCRequest,
 	credential, _ := toolCtx.Value(searchEgressKey{}).(searchEgress)
 	credential.actor = actor
 	toolCtx = context.WithValue(toolCtx, searchEgressKey{}, credential)
-	if params.Name == "search" || params.Name == "cross_search" || params.Name == "git_search" || params.Name == "query_entity" ||
-		params.Name == "cognify" || params.Name == "analyze_commits" || params.Name == "cognify_status" ||
+	if params.Name == "workspace_context" || params.Name == "workspace_access_check" {
+		ctx, cancel, err := workspaceRequestContext(toolCtx, h.MetadataActor(toolCtx), timeoutFromEnvMs("SEARCH_REQUEST_TIMEOUT_MS", defaultSearchRequestTimeout))
+		if err != nil {
+			return c.JSON(jsonRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: workspaceMCPError(err)})
+		}
+		defer cancel()
+		err = withProtectedPolicyResponse(c, h.cfg, ctx, func(ctx context.Context, p accesspkg.SQLPolicy) error {
+			ctx = context.WithValue(ctx, searchReadPolicyKey{}, p)
+			result := h.executeTool(ctx, sess, params.Name, params.Arguments)
+			return c.JSON(jsonRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: result})
+		})
+		if err != nil {
+			return c.JSON(jsonRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: workspaceMCPError(err)})
+		}
+		return nil
+	}
+	if params.Name == "search" || params.Name == "workspace_search" || params.Name == "cross_search" || params.Name == "git_search" || params.Name == "query_entity" || params.Name == "wake_up" ||
+		params.Name == "list_communities" || params.Name == "codify" || params.Name == "cognify" || params.Name == "analyze_commits" || params.Name == "cognify_status" ||
 		params.Name == "ingestion_status" || params.Name == "recent_errors" || params.Name == "recall_chat" || params.Name == "search_chats" || params.Name == "save_chat" || params.Name == "list_data" || params.Name == "add" {
 		var cancel context.CancelFunc
-		toolCtx, cancel = context.WithTimeout(toolCtx, timeoutFromEnvMs("SEARCH_REQUEST_TIMEOUT_MS", defaultSearchRequestTimeout))
+		if params.Name == "list_communities" || params.Name == "codify" || params.Name == "workspace_search" {
+			var err error
+			toolCtx, cancel, err = workspaceRequestContext(toolCtx, h.MetadataActor(toolCtx), timeoutFromEnvMs("SEARCH_REQUEST_TIMEOUT_MS", defaultSearchRequestTimeout))
+			if err != nil {
+				return c.JSON(jsonRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: workspaceMCPError(err)})
+			}
+		} else {
+			toolCtx, cancel = context.WithTimeout(toolCtx, timeoutFromEnvMs("SEARCH_REQUEST_TIMEOUT_MS", defaultSearchRequestTimeout))
+		}
 		defer cancel()
 		toolCtx = context.WithValue(toolCtx, searchActorKey{}, actor)
 		toolCtx = context.WithValue(toolCtx, searchEvidenceKey{}, &searchEvidence{sources: make(map[searchDocumentSource]struct{})})
@@ -936,16 +992,24 @@ func (h *mcpHandler) handleToolCallWithSession(c *fiber.Ctx, req jsonRPCRequest,
 		return nil
 	}
 	result := h.executeTool(toolCtx, sess, params.Name, params.Arguments)
-	return c.JSON(jsonRPCResponse{
-		JSONRPC: "2.0", ID: req.ID, Result: result,
-	})
+	if err := c.JSON(jsonRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: result}); err != nil {
+		return err
+	}
+	if !result.IsError && (params.Name == "workspace_read" || params.Name == "workspace_manifest" || params.Name == "workspace_log" || params.Name == "workspace_context_artifacts" || params.Name == "workspace_ops_status" || params.Name == "workspace_conflicts" || params.Name == "workspace_watch_status" || params.Name == "workspace_audit_log" || params.Name == "workspace_index_jobs" || params.Name == "workspace_run_get") {
+		projectID, _ := params.Arguments["project_id"].(string)
+		if err := sendWorkspaceProtectedResponse(c, h.cfg, toolCtx, h.MetadataActor(toolCtx), projectID); err != nil {
+			return c.JSON(jsonRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: workspaceMCPError(err)})
+		}
+	}
+	return nil
 }
 
 func (h *mcpHandler) executeTool(ctx context.Context, sess *mcpSession, name string, args map[string]any) mcpToolResult {
 	toolStart := time.Now()
 	var result mcpToolResult
 	actor := workspaceActorFromMCP(ctx)
-	if !mcp.ToolAllowedForMode(os.Getenv("LEVARA_MCP_TOOLSET"), name) {
+	toolset, _ := EffectiveMCPToolsetName()
+	if !mcp.ToolAllowedForMode(toolset, name) {
 		result = mcpToolResult{Content: []mcpContent{{Type: "text", Text: "method not found in active MCP toolset"}}, IsError: true}
 	} else if !accesspkg.APIKeyAllows(actor.APIKeyPermissions, mcpToolAction(name)) {
 		result = mcpToolResult{Content: []mcpContent{{Type: "text", Text: "API key permissions denied"}}, IsError: true}
@@ -1087,7 +1151,7 @@ func (h *mcpHandler) executeToolInner(ctx context.Context, sess *mcpSession, nam
 		if _, ok := args["collection"]; !ok || args["collection"] == "" {
 			args["collection"] = h.resolveCollection(sess, args, true)
 		}
-	case "save_memory", "recall_memory", "memory_garden", "memory_markdown_digest", "memory_scaffold_block", "list_memories", "memory_commit_preview",
+	case "save_memory", "recall_memory", "chat_distill", "memory_garden", "memory_markdown_digest", "memory_scaffold_block", "list_memories", "memory_commit_preview",
 		"wake_up", "pin_memory", "unpin_memory",
 		"diary_write", "diary_read", "consolidate", "supersede_memory", "task_open":
 		// Memory tools: only inject session default, NOT "default" fallback.
@@ -1432,7 +1496,7 @@ func (h *mcpHandler) memoryKeyExists(ctx context.Context, args map[string]any) b
 	collection, _ := args["collection"].(string)
 	ownerID, _ := ctx.Value(mcpUserIDKey).(string)
 	var id string
-	err := h.cfg.DB.QueryRowContext(ctx, Q(`SELECT id FROM memories WHERE key=$1 AND owner_id=$2 AND collection_name=$3 LIMIT 1`), key, ownerID, collection).Scan(&id)
+	err := h.cfg.DB.QueryRowContext(ctx, Q(`SELECT id FROM memories WHERE key=$1 AND owner_id=$2 AND collection_name=$3 AND superseded_by='' AND valid_until IS NULL LIMIT 1`), key, ownerID, collection).Scan(&id)
 	if err != nil {
 		return false
 	}
@@ -1606,7 +1670,20 @@ func (h *mcpHandler) resourceCollectionDetail(name string) string {
 	return string(data)
 }
 
-func (h *mcpHandler) resourceMemories(ctx context.Context, memType, collName string) string {
+func verifiedMCPResourceOwner(c *fiber.Ctx) (string, bool) {
+	if identity, ok := c.Locals("verified_api_key").(accesspkg.APIKeyIdentity); ok && identity.UserID != "" {
+		return identity.UserID, true
+	}
+	if payload, ok := c.Locals("verified_jwt").(jwtPayload); ok && payload.Sub != "" {
+		return payload.Sub, true
+	}
+	if principal, ok := c.Locals("verified_external").(ExternalPrincipal); ok && principal.UserID != "" {
+		return principal.UserID, true
+	}
+	return "", false
+}
+
+func (h *mcpHandler) resourceMemories(ctx context.Context, ownerID, memType, collName string) string {
 	if h.cfg.DB == nil {
 		return "[]"
 	}
@@ -1615,12 +1692,14 @@ func (h *mcpHandler) resourceMemories(ctx context.Context, memType, collName str
 	if collName != "" {
 		rows, err = h.cfg.DB.QueryContext(ctx,
 			Q(`SELECT key, value, type, collection_name, updated_at FROM memories
-			 WHERE type = $1 AND collection_name = $2 ORDER BY updated_at DESC LIMIT 50`),
-			memType, collName)
+			 WHERE type = $1 AND collection_name = $2 AND (owner_id=$3 OR owner_id='')
+			 AND superseded_by='' AND valid_until IS NULL ORDER BY updated_at DESC LIMIT 50`),
+			memType, collName, ownerID)
 	} else {
 		rows, err = h.cfg.DB.QueryContext(ctx,
 			Q(`SELECT key, value, type, collection_name, updated_at FROM memories
-			 WHERE type = $1 ORDER BY updated_at DESC LIMIT 50`), memType)
+			 WHERE type = $1 AND (owner_id=$2 OR owner_id='') AND superseded_by='' AND valid_until IS NULL
+			 ORDER BY updated_at DESC LIMIT 50`), memType, ownerID)
 	}
 	if err != nil {
 		return "[]"
@@ -1649,6 +1728,12 @@ func (h *mcpHandler) resourceMemories(ctx context.Context, memType, collName str
 // was replaced by excluded.* syntax (SQLite 3.24+ / PostgreSQL 9.5+) so
 // no QArgs method is needed on Deps.
 func (h *mcpHandler) toolCodify(ctx context.Context, args map[string]any) mcpToolResult {
+	actor := workspaceActorFromMCP(ctx)
+	ctx = context.WithValue(ctx, searchActorKey{}, actor)
+	if !globalSearchGraphAllowed(ctx, h.cfg) || !accesspkg.APIKeyAllows(actor.APIKeyPermissions, accesspkg.ActionWrite) {
+		return mcpErrorResult("code publication requires instance administrator")
+	}
+	requireAdminSearchEvidence(ctx)
 	return mcp.ToolCodify(ctx, h, args)
 }
 
@@ -1733,7 +1818,11 @@ func (h *mcpHandler) handleSSEStream(c *fiber.Ctx) error {
 	if sess == nil {
 		return c.SendStatus(404)
 	}
-	if !h.requestOwnsMCPSession(c, sess) {
+	owned, err := h.requestOwnsMCPSession(c, sess)
+	if err != nil {
+		return c.SendStatus(mcpAuthFailureStatus(err, fiber.StatusNotFound))
+	}
+	if !owned {
 		return c.SendStatus(404)
 	}
 
@@ -1772,16 +1861,23 @@ func (h *mcpHandler) handleDeleteSession(c *fiber.Ctx) error {
 		return c.SendStatus(400)
 	}
 	sess := h.getOrValidateSession(sessionID)
-	if sess == nil || !h.requestOwnsMCPSession(c, sess) {
+	if sess == nil {
+		return c.SendStatus(404)
+	}
+	owned, err := h.requestOwnsMCPSession(c, sess)
+	if err != nil {
+		return c.SendStatus(mcpAuthFailureStatus(err, fiber.StatusNotFound))
+	}
+	if !owned {
 		return c.SendStatus(404)
 	}
 	h.deleteSession(sessionID)
 	return c.SendStatus(204)
 }
 
-func (h *mcpHandler) requestOwnsMCPSession(c *fiber.Ctx, sess *mcpSession) bool {
+func (h *mcpHandler) requestOwnsMCPSession(c *fiber.Ctx, sess *mcpSession) (bool, error) {
 	if sess == nil {
-		return false
+		return false, nil
 	}
 	previous := c.UserContext()
 	ctx, cancel := apiRequestContext(c)
@@ -1789,12 +1885,12 @@ func (h *mcpHandler) requestOwnsMCPSession(c *fiber.Ctx, sess *mcpSession) bool 
 	defer func() { c.SetUserContext(previous); cancel() }()
 	actor, err := h.authenticateMCPRequest(c)
 	if err != nil {
-		return false
+		return false, err
 	}
 	if sess.GetUserID() == "" {
-		return !h.cfg.RequireAuth || actor.UserID != ""
+		return !h.cfg.RequireAuth || actor.UserID != "", nil
 	}
-	return actor.UserID != "" && actor.UserID == sess.GetUserID()
+	return actor.UserID != "" && actor.UserID == sess.GetUserID(), nil
 }
 
 // MCPHealthHandler returns MCP-specific health info.
@@ -1813,7 +1909,23 @@ func MCPHealthHandler() fiber.Handler {
 // wave 3n moved the body (SQL query + JSON marshal) into pkg/mcp. No
 // new Deps methods — DB() and Q() were already in the interface.
 func (h *mcpHandler) toolListCommunities(ctx context.Context, args map[string]any) mcpToolResult {
-	return mcp.ToolListCommunities(ctx, h, args)
+	ctx = context.WithValue(ctx, searchActorKey{}, workspaceActorFromMCP(ctx))
+	if !globalSearchGraphAllowed(ctx, h.cfg) {
+		return mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: "global community summaries require instance administrator"}}, IsError: true}
+	}
+	requireAdminSearchEvidence(ctx)
+	result := mcp.ToolListCommunities(ctx, h, args)
+	if result.IsError {
+		return result
+	}
+	actor := workspaceActorFromMCP(ctx)
+	for _, evidence := range result.CommunityEvidence {
+		allowed, err := checkCommunityPublicationSources(ctx, h.cfg, actor, evidence)
+		if err != nil || !allowed {
+			return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "community access unavailable"}}, IsError: true}
+		}
+	}
+	return result
 }
 
 // toolCheckDrift is a thin shim over mcp.ToolCheckDrift. F-4 wave 3o

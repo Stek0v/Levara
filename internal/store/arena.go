@@ -156,6 +156,11 @@ func (a *VectorArena) Get(index uint32) ([]float32, error) {
 func (a *VectorArena) GetUnsafe(index uint32) ([]float32, error) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
+	return a.getUnsafeNoLock(index)
+}
+
+// getUnsafeNoLock returns a zero-copy arena slot while the caller holds a.mu.
+func (a *VectorArena) getUnsafeNoLock(index uint32) ([]float32, error) {
 	if index >= a.totalVectors {
 		return nil, fmt.Errorf("index out of bounds")
 	}

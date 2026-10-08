@@ -2,6 +2,8 @@ package graphstore
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/stek0v/levara/pkg/graphdb"
 )
@@ -33,24 +35,44 @@ func (n *Neo4jGraphStore) QueryNHop(ctx context.Context, entityNames []string, h
 	if n == nil || n.writer == nil || len(entityNames) == 0 {
 		return nil, nil
 	}
-	result, err := n.writer.ReadSubgraph(ctx, "", entityNames)
+	if hops <= 0 {
+		hops = 1
+	}
+	if hops > 8 {
+		hops = 8
+	}
+	names := make([]string, len(entityNames))
+	for i, name := range entityNames {
+		names[i] = strings.ToLower(name)
+	}
+	// Frontier nodes contribute their incident edges, matching native SQL depth.
+	query := fmt.Sprintf(`
+		MATCH (seed:__Node__) WHERE toLower(seed.name) IN $names
+		MATCH p=(seed)-[*0..%d]-(source:__Node__)
+		WHERE all(node IN nodes(p) WHERE node:__Node__)
+		WITH DISTINCT source
+		MATCH (source)-[r]-(target:__Node__)
+		WITH DISTINCT source, type(r) AS relationship, target
+		ORDER BY source.id, relationship, target.id
+		LIMIT 100
+		RETURN source.name AS source_name,
+		       coalesce(source.type, head([label IN labels(source) WHERE label <> '__Node__']), '') AS source_type,
+		       relationship,
+		       target.name AS target_name,
+		       coalesce(target.type, head([label IN labels(target) WHERE label <> '__Node__']), '') AS target_type
+	`, hops-1)
+	rows, err := n.writer.Query(ctx, query, map[string]any{"names": names})
 	if err != nil {
 		return nil, err
 	}
-	out := make([]GraphContext, 0, len(result.Edges))
-	nodes := map[string]graphdb.ReadNode{}
-	for _, node := range result.Nodes {
-		nodes[node.ID] = node
-	}
-	for _, edge := range result.Edges {
-		src := nodes[edge.SourceID]
-		tgt := nodes[edge.TargetID]
+	out := make([]GraphContext, 0, len(rows))
+	for _, row := range rows {
 		out = append(out, GraphContext{
-			SourceName:   propertyString(src.Properties, "name"),
-			SourceType:   src.Label,
-			Relationship: edge.RelationshipType,
-			TargetName:   propertyString(tgt.Properties, "name"),
-			TargetType:   tgt.Label,
+			SourceName:   propertyString(row, "source_name"),
+			SourceType:   propertyString(row, "source_type"),
+			Relationship: propertyString(row, "relationship"),
+			TargetName:   propertyString(row, "target_name"),
+			TargetType:   propertyString(row, "target_type"),
 		})
 	}
 	return out, nil
@@ -94,6 +116,12 @@ func (n *Neo4jGraphStore) WriteGraph(ctx context.Context, datasetID string, node
 	neoEdges := make([]graphdb.EdgeRecord, len(edges))
 	for i, edge := range edges {
 		props := cloneMap(edge.Properties)
+		if edge.ID != "" {
+			if propertyID, exists := props["id"]; exists && propertyID != nil && propertyID != edge.ID {
+				return BatchWriteResult{Errors: []string{fmt.Sprintf("edge ID conflicts with property ID: %s", edge.ID)}}
+			}
+			props["id"] = edge.ID
+		}
 		if datasetID != "" {
 			props["dataset_id"] = datasetID
 		}

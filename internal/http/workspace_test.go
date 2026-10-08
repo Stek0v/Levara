@@ -2557,6 +2557,10 @@ func TestWorkspaceAPIGCRemovesPendingGenerationCollectionsAndBM25(t *testing.T) 
 	if hits := cfg.BM25Indexes.Get(gen1.Result.Collection).Search("legacy keyword", 10); len(hits) == 0 {
 		t.Fatal("expected gen1 BM25 hit before GC")
 	}
+	if err := cfg.Collections.Insert(gen1.Result.Collection, "gc-foreign-control", []float32{1, 2}, map[string]any{"text": "Foreign quartz control"}); err != nil {
+		t.Fatal(err)
+	}
+	cfg.BM25Indexes.Get(gen1.Result.Collection).Add("gc-foreign-control", "Foreign quartz control", `{"text":"Foreign quartz control"}`)
 
 	body, status = workspaceTestPost(t, app, "/workspace/index", map[string]any{
 		"project_id":          "payments",
@@ -2586,8 +2590,8 @@ func TestWorkspaceAPIGCRemovesPendingGenerationCollectionsAndBM25(t *testing.T) 
 	if err := json.Unmarshal(body, &dryRun); err != nil {
 		t.Fatal(err)
 	}
-	if !dryRun.Result.DryRun || len(dryRun.Result.Generations) != 1 || len(dryRun.Result.DroppedCollections) != 1 {
-		t.Fatalf("dry-run result=%+v, want one pending generation/collection", dryRun.Result)
+	if !dryRun.Result.DryRun || len(dryRun.Result.Generations) != 1 || len(dryRun.Result.DroppedCollections) != 0 || len(dryRun.Result.DeletedVectorIDs) != len(gen1.Result.VectorIDs) {
+		t.Fatalf("dry-run result=%+v, want one pending generation and exact-ID deletion, no collection Drop", dryRun.Result)
 	}
 	if !cfg.Collections.Has(gen1.Result.Collection) {
 		t.Fatalf("dry-run dropped old collection %q", gen1.Result.Collection)
@@ -2600,11 +2604,24 @@ func TestWorkspaceAPIGCRemovesPendingGenerationCollectionsAndBM25(t *testing.T) 
 	if status != http.StatusOK {
 		t.Fatalf("gc status=%d body=%s", status, body)
 	}
-	if cfg.Collections.Has(gen1.Result.Collection) {
-		t.Fatalf("old collection %q still exists", gen1.Result.Collection)
+	if !cfg.Collections.Has(gen1.Result.Collection) {
+		t.Fatalf("shared collection %q was dropped", gen1.Result.Collection)
 	}
-	if cfg.BM25Indexes.Get(gen1.Result.Collection) != nil {
-		t.Fatalf("old BM25 collection %q still exists", gen1.Result.Collection)
+	oldDB, err := cfg.Collections.Get(gen1.Result.Collection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range gen1.Result.VectorIDs {
+		if _, _, found := oldDB.Get(id); found {
+			t.Fatalf("obsolete vector remained: %s", id)
+		}
+	}
+	if _, _, found := oldDB.Get("gc-foreign-control"); !found {
+		t.Fatal("GC deleted unrelated record")
+	}
+	lexical := cfg.BM25Indexes.Get(gen1.Result.Collection)
+	if lexical == nil || len(lexical.Search("legacy keyword", 10)) != 0 || len(lexical.Search("quartz", 10)) != 1 {
+		t.Fatal("GC failed exact lexical retirement/foreign preservation")
 	}
 	if !cfg.Collections.Has(gen2.Result.Collection) {
 		t.Fatalf("active collection %q was removed", gen2.Result.Collection)
@@ -2912,9 +2929,8 @@ func TestWorkspaceMCPSearchHybridRerank(t *testing.T) {
 			if preferred["path"] != "docs/gamma.md" || lexicalCandidates[preferred["id"].(string)] {
 				t.Fatalf("expected gamma beyond lexical window: %v", preferred)
 			}
-			// With top_k=2, gamma is the third vector hit only; its RRF
-			// score must not become the model's relevance score after promotion.
-			preferred["score"] = float64(float32(1.0 / 63))
+			// Preserve the observed fusion score when the model promotes gamma;
+			// manifest recovery can admit it in both retrieval legs.
 			var calls atomic.Int32
 			var fail atomic.Bool
 			sidecar := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -3603,6 +3619,13 @@ func TestWorkspaceMCPFullCycleSearchCommitRevertGC(t *testing.T) {
 		t.Fatalf("reverted search leaked changed text: %s", searchReverted.Content[0].Text)
 	}
 
+	beforeGC, _, err := loadWorkspaceManifest(cfg, "payments", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(beforeGC.ListChunks(workspace.ChunkFilter{Generation: "cycle-gen-1"})) == 0 || len(beforeGC.ListChunks(workspace.ChunkFilter{Generation: "cycle-gen-2"})) == 0 || len(beforeGC.ListChunks(workspace.ChunkFilter{Generation: "cycle-gen-3"})) == 0 {
+		t.Fatal("GC cycle lacks physical generation controls")
+	}
 	gc := h.executeToolInner(context.Background(), nil, "workspace_gc", map[string]any{
 		"project_id": "payments",
 		"branch":     "main",
@@ -3610,11 +3633,17 @@ func TestWorkspaceMCPFullCycleSearchCommitRevertGC(t *testing.T) {
 	if gc.IsError {
 		t.Fatalf("workspace_gc error: %+v", gc.Content)
 	}
-	if cfg.Collections.Has("cycle_gen_1") || cfg.Collections.Has("cycle_gen_2") {
-		t.Fatalf("gc did not drop stale collections: have gen1=%v gen2=%v", cfg.Collections.Has("cycle_gen_1"), cfg.Collections.Has("cycle_gen_2"))
+	for id, record := range beforeGC.Chunks {
+		if !cfg.Collections.Has(record.Collection) || cfg.Collections.HasRecord(record.Collection, id) != (record.Generation == "cycle-gen-3") {
+			t.Fatalf("GC exact retirement mismatch for %s/%s", record.Generation, id)
+		}
 	}
-	if !cfg.Collections.Has("cycle_gen_3") {
-		t.Fatal("gc dropped active collection")
+	afterGC, _, err := loadWorkspaceManifest(cfg, "payments", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterGC.ActiveGeneration != "cycle-gen-3" || len(afterGC.Generations) != 1 || len(afterGC.PendingRetirements) != 0 {
+		t.Fatal("GC did not retain only the active authoritative generation")
 	}
 }
 

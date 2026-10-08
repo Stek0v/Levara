@@ -306,6 +306,7 @@ func setupDiaryTestDB(t *testing.T) *fakeDeps {
 		collection_name TEXT, room TEXT, hall TEXT,
 		is_pinned INTEGER DEFAULT 0, pin_priority INTEGER DEFAULT 0,
 		created_at TEXT, updated_at TEXT,
+		superseded_by TEXT DEFAULT '', valid_until TEXT,
 		UNIQUE(key, owner_id, collection_name)
 	)`
 	if _, err := db.Exec(stmt); err != nil {
@@ -435,6 +436,32 @@ func TestToolDiaryWrite_UpsertOnConflict(t *testing.T) {
 	}
 	if value != "second" {
 		t.Errorf("value = %q, want 'second' (DO UPDATE SET should apply)", value)
+	}
+}
+
+func TestToolDiaryWriteCreatesFreshRowAfterValidityRetirement(t *testing.T) {
+	deps := setupDiaryTestDB(t)
+	args := map[string]any{"agent": "reviewer", "key": "k", "value": "old"}
+	if got := ToolDiaryWrite(context.Background(), deps, args); got.IsError {
+		t.Fatal(got.Content[0].Text)
+	}
+	var oldID string
+	if err := deps.db.QueryRow(`SELECT id FROM memories WHERE key='k'`).Scan(&oldID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := deps.db.Exec(`UPDATE memories SET valid_until='2026-10-08' WHERE id=?`, oldID); err != nil {
+		t.Fatal(err)
+	}
+	args["value"] = "new"
+	if got := ToolDiaryWrite(context.Background(), deps, args); got.IsError {
+		t.Fatal(got.Content[0].Text)
+	}
+	var activeID, value string
+	if err := deps.db.QueryRow(`SELECT id,value FROM memories WHERE key='k' AND valid_until IS NULL`).Scan(&activeID, &value); err != nil {
+		t.Fatal(err)
+	}
+	if activeID == oldID || value != "new" {
+		t.Fatalf("old=%s active=%s value=%q", oldID, activeID, value)
 	}
 }
 

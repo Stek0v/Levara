@@ -473,6 +473,22 @@ replacement/delete/prune до изменения inventory или storage.
 Поле `artifact_cleanup_pending` также возвращают upload/replacement и rename,
 если retired artifact не удалось физически удалить.
 
+REST `/graph/path` проверяет source assertions каждого ребра и обоих endpoints
+до выбора маршрута; недоступная короткая связь не скрывает разрешённый длинный
+маршрут. Документ и его publication должны оставаться разрешёнными в том же SQL
+snapshot до закрытия ответа. Request/credential deadline запрещает следующее
+чтение response stream даже при задержке callback таймера; это не обещание
+атомарного завершения сетевой отправки на границе deadline. В path API
+`as_of=0` сохраняет все временные связи, положительный `as_of` включает конец
+интервала; current/as_of `query_entity` имеет отдельный temporal контракт.
+Authenticated Neo4j path без SQL authority возвращает503.
+
+Local offline SQLite backup сохраняет held policy, tenant, source lineage и
+raw/original/structured bytes независимо от живых каталогов. Снятие hold и
+удаление живой association не изменяет прежний архив: его восстановленная
+policy по-прежнему блокирует delete. Это проверка локального held restore;
+внешний legal hold, S3 Object Lock и сроки retention требуют отдельной приёмки.
+
 Это не обещание физического стирания всех производных: raw blobs, старые
 индексы, граф и резервные копии требуют отдельной процедуры очистки и retention.
 
@@ -483,3 +499,24 @@ replacement/delete/prune до изменения inventory или storage.
 
 Проверенные сценарии, незакрытые ограничения и приоритеты развития собраны
 в [матрице приёмки](document-workflow-scenarios.md).
+
+## Temporal graph precision and enrichment availability
+
+`query_entity` uses current lower/upper validity bounds or an RFC3339 `as_of` snapshot with half-open intervals `[valid_from,valid_until)`. Omitted/empty `as_of` retains current mode; malformed or non-string values reject before SQL. Both SQL dialects use supported microsecond instants: new episode timestamps are normalized before binding; SQLite candidate strings are parsed precisely with PostgreSQL-compatible fractional ties-to-even. SQLite malformed persisted bounds are hidden and do not stop paging. Raw historical arbitrary native nanos imports are not repaired. Public graph/path retains its separate documented integer-second, AsOf0/all and inclusive-end contract.
+
+Returning an exclusive relationship to an earlier target creates a new temporal episode. Closed history stays closed; retry of the current relationship reuses its ID and original start. Sorted source/node SQL locks serialize transitions and capture their shared boundary after lock acquisition. A missing source in an exclusive edge-only batch rejects and rolls back. No automatic recovery of already lost historical transitions or Neo4j parity is implied.
+
+`POST /memify`, its status and stream routes currently return503 in authenticated mode (or for a caller with a user identity). The existing maintenance implementation cannot provide source-aware asynchronous authorization. Trusted anonymous local mode remains available; local entity consolidation preserves primary source metadata/dataset, and redundant graph snapshot replay is removed. These are explicit availability limits; administrator admission alone is not asynchronous source authorization. Source-aware authenticated enrichment remains unavailable; verified native SQL community rebuilding is documented below.
+
+
+## Global community response authority
+
+Authenticated `list_communities` requires an active instance administrator, read permission, and no selected tenant. Request arguments cannot supply broader actor authority. The SQL result is fully materialized and rows are closed before response authorization is reacquired, including with a one-connection pool. Trusted anonymous local empty/filter/error result shapes remain compatible.
+
+Completed protected responses use the earlier request deadline or verified JWT/external expiry. SQL acquisition and construction remain cancelable; only the completed body observer detaches from handler cancellation. The transfer fence retains credential/admin/source authority until the actual response Close, including after observer expiry; subsequent reads fail after expiry and repeated Close releases once. This bounded lifetime does not claim an arbitrary blocked transport can be forcibly drained or that earlier provider work is automatically credential capped.
+
+Community replacement checks every SQL operation and rolls back on failure on SQLite and PostgreSQL. Legacy summaries retain their text with empty generation, empty proof, and unverified lineage. Verified rebuilding now materializes one immutable native SQL graph snapshot, including all detection nodes, active edges and both endpoints. All communities carry the complete used native source closure and canonical snapshot digest; parent summaries use only materialized children. Known invalid/retired/revised sources fail before model effects. Legacy or unsupported proof is never automatically verified. Proof is bounded to 256 dependencies, depth16 and 128 KiB; native lineage accepts the existing serializer's empty workspace fields but rejects nonempty workspace evidence.
+
+Communities, memberships, summaries, generation and proof publish in one checked transaction. The source fence and PostgreSQL nodes-before-edges graph locks remain held until started model calls actually return. Pruning uses the same graph lock order. The supported verified path uses full Louvain recomputation; incremental optimization is deferred. Legacy summary updates clear their verification/generation/proof. Missing model yields no invented summary, while preserving source proof where valid.
+
+Embedding starts only after commit and explicit SQL fence release, including configured embedding guards on one connection. Embedding failure preserves committed SQL publication; late canceled vectors are not inserted. Physical stale vectors can remain: consumers require matching SQL generation and use SQL summary text, validate all native/raw dependencies, and recheck exact materialized publication before model/response transfer. Generic search carries trusted server collection origin, so malformed summary records cannot bypass proof by omitting a metadata marker. SQL/vector effects are not atomic, and graph snapshot proof does not schedule automatic rebuilding when an edge later expires. Source-scoped community partitions and Neo4j parity are outside this native global-publication change.

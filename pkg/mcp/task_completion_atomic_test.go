@@ -10,6 +10,47 @@ import (
 	"time"
 )
 
+func TestTaskPromotionCreatesFreshRowAfterValidityRetirement(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			var deps Deps
+			if dialect == "sqlite" {
+				deps = setupTaskTestDB(t)
+			} else {
+				db := openPostgresMemoryTestDB(t)
+				createTaskTestSchema(t, db)
+				deps = &postgresMemoryDeps{fakeDeps: &fakeDeps{db: db}}
+			}
+			if _, err := deps.DB().Exec(`INSERT INTO memories(id,key,value,type,owner_id,collection_name,valid_until) VALUES('retired','candidate','old','project','','levara','2026-10-08')`); err != nil {
+				t.Fatal(err)
+			}
+			ctx := context.Background()
+			taskID, version := openTask(t, deps, "low")
+			receipt := taskPayload(t, ToolTaskReceipt(ctx, deps, map[string]any{
+				"task_id": taskID, "base_version": float64(version), "idempotency_key": "proof",
+				"receipt_type": "command", "status": "pass", "criterion_ids": []any{"tests"}, "exit_code": float64(0), "workspace_revision": "rev-1",
+			}))
+			checkpoint := taskPayload(t, ToolTaskCheckpoint(ctx, deps, map[string]any{
+				"task_id": taskID, "base_version": receipt["version"], "idempotency_key": "candidate",
+				"summary": "verified", "workspace_revision": "rev-1", "memory_candidates": []any{map[string]any{
+					"key": "candidate", "value": "fresh", "room": "memory", "hall": "discovery", "evidence_receipt_ids": []any{receipt["receipt_id"]},
+				}},
+			}))
+			completed := ToolTaskComplete(ctx, deps, map[string]any{"task_id": taskID, "expected_version": checkpoint["version"]})
+			if completed.IsError {
+				t.Fatal(completed.Content[0].Text)
+			}
+			var activeID, value string
+			if err := deps.DB().QueryRow(`SELECT id,value FROM memories WHERE key='candidate' AND valid_until IS NULL`).Scan(&activeID, &value); err != nil {
+				t.Fatal(err)
+			}
+			if activeID == "retired" || value != "fresh" {
+				t.Fatalf("active=%q value=%q", activeID, value)
+			}
+		})
+	}
+}
+
 func TestTaskCompletionRollsBackFailedMemoryPromotion(t *testing.T) {
 	for _, failure := range []string{"memories", "task_events", "memory_index_jobs"} {
 		t.Run(failure, func(t *testing.T) {

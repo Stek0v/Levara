@@ -3,9 +3,12 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -32,6 +35,8 @@ func makeGitRepo(t *testing.T) string {
 			"GIT_AUTHOR_EMAIL=test@example.com",
 			"GIT_COMMITTER_NAME=Test",
 			"GIT_COMMITTER_EMAIL=test@example.com",
+			"GIT_AUTHOR_DATE=2026-01-01T00:00:00Z",
+			"GIT_COMMITTER_DATE=2026-01-01T00:00:00Z",
 		)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("%v: %v — %s", args, err, out)
@@ -335,3 +340,124 @@ func TestToolGitSearch_PipelineErrorSurfaces(t *testing.T) {
 type errSearch string
 
 func (e errSearch) Error() string { return string(e) }
+
+func TestToolAnalyzeCommitsEmptyAndRepeated(t *testing.T) {
+	repo := makeGitRepo(t)
+	deps := &fakeDeps{}
+	for i := 0; i < 2; i++ {
+		result := ToolAnalyzeCommits(context.Background(), deps, map[string]any{"repo_path": repo})
+		var payload struct {
+			Commits int `json:"commits_analyzed"`
+		}
+		if result.IsError || json.Unmarshal([]byte(result.Content[0].Text), &payload) != nil || payload.Commits != 2 {
+			t.Fatalf("repeat %d: %+v", i, result)
+		}
+	}
+	for _, kind := range []string{"unborn", "filtered"} {
+		path := repo
+		args := map[string]any{"repo_path": path}
+		if kind == "unborn" {
+			path = t.TempDir()
+			cmd := exec.Command("git", "-C", path, "init", "-q")
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("init: %v %s", err, out)
+			}
+			args["repo_path"] = path
+		} else {
+			args["since"] = "2030-01-01T00:00:00Z"
+		}
+		var prepared, pipelines atomic.Int32
+		emptyDeps := &fakeDeps{baseCfg: orchestrator.Config{EmbedEndpoint: "http://unused"}}
+		emptyDeps.prepareFn = func(_ context.Context, _ []string, cfg orchestrator.Config) (orchestrator.Config, error) {
+			prepared.Add(1)
+			return cfg, nil
+		}
+		emptyDeps.pipelineFn = func(_ context.Context, _ []string, _ orchestrator.Config, progress chan<- orchestrator.Progress) error {
+			pipelines.Add(1)
+			close(progress)
+			return nil
+		}
+		result := ToolAnalyzeCommits(context.Background(), emptyDeps, args)
+		if prepared.Load() != 0 || pipelines.Load() != 0 {
+			t.Fatalf("%s started empty ingestion", kind)
+		}
+		var payload struct {
+			Commits int    `json:"commits_analyzed"`
+			Summary string `json:"summary"`
+		}
+		if result.IsError || json.Unmarshal([]byte(result.Content[0].Text), &payload) != nil || payload.Commits != 0 || payload.Summary != "No commits found." {
+			t.Fatalf("%s: %+v", kind, result)
+		}
+	}
+}
+func TestToolAnalyzeCommitsCancellationStartsNoIngestion(t *testing.T) {
+	for _, phase := range []string{"before", "during-log"} {
+		t.Run(phase, func(t *testing.T) {
+			repo := makeGitRepo(t)
+			var prepareCalls, pipelineCalls atomic.Int32
+			deps := &fakeDeps{baseCfg: orchestrator.Config{EmbedEndpoint: "http://unused"}}
+			deps.prepareFn = func(_ context.Context, _ []string, cfg orchestrator.Config) (orchestrator.Config, error) {
+				prepareCalls.Add(1)
+				return cfg, nil
+			}
+			deps.pipelineFn = func(context.Context, []string, orchestrator.Config, chan<- orchestrator.Progress) error {
+				pipelineCalls.Add(1)
+				return nil
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if phase == "before" {
+				cancel()
+				result := ToolAnalyzeCommits(ctx, deps, map[string]any{"repo_path": repo})
+				if !result.IsError || !strings.Contains(result.Content[0].Text, "context canceled") {
+					t.Fatalf("precanceled: %+v", result)
+				}
+			} else {
+				if runtime.GOOS == "windows" {
+					t.Skip("POSIX subprocess fixture")
+				}
+				bin := t.TempDir()
+				marker := filepath.Join(t.TempDir(), "started")
+				script := "#!/bin/sh\ncase \"$3\" in\n rev-parse) if [ \"$4\" = --git-dir ]; then printf '.git\\n'; else printf '1111111111111111111111111111111111111111\\n'; fi ;;\n log) printf started > \"$LEVARA_TEST_GIT_MARKER\"; while :; do :; done ;;\n *) exit 2 ;;\nesac\n"
+				if err := os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0700); err != nil {
+					t.Fatal(err)
+				}
+				t.Setenv("PATH", bin)
+				t.Setenv("LEVARA_TEST_GIT_MARKER", marker)
+				done := make(chan ToolResult, 1)
+				go func() { done <- ToolAnalyzeCommits(ctx, deps, map[string]any{"repo_path": repo}) }()
+				ticker := time.NewTicker(time.Millisecond)
+				defer ticker.Stop()
+				timeout := time.NewTimer(2 * time.Second)
+				defer timeout.Stop()
+			waiting:
+				for {
+					if _, err := os.Stat(marker); err == nil {
+						break waiting
+					}
+					select {
+					case result := <-done:
+						t.Fatalf("log exited before cancellation: %+v", result)
+					case <-ticker.C:
+					case <-timeout.C:
+						cancel()
+						<-done
+						t.Fatal("log never reached fixture")
+					}
+				}
+				cancel()
+				select {
+				case result := <-done:
+					if !result.IsError || !strings.Contains(result.Content[0].Text, "context canceled") {
+						t.Fatalf("during log: %+v", result)
+					}
+				case <-time.After(time.Second):
+					t.Fatal("tool ignored cancellation")
+				}
+			}
+			if prepareCalls.Load() != 0 || pipelineCalls.Load() != 0 {
+				t.Fatal("canceled Git analysis started ingestion")
+			}
+		})
+	}
+}

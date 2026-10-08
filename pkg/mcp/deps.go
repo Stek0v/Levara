@@ -118,6 +118,21 @@ type GraphAssertion struct {
 	Properties []byte
 }
 
+type ProjectContextAggregates struct {
+	PublishedDocuments int
+	EntityTypes        map[string]int
+	RecentInteractions []ProjectContextInteraction
+}
+
+type ProjectContextInteraction struct {
+	Query    string
+	Response string
+}
+
+type ProjectContextAggregateProvider interface {
+	ProjectContextAggregates(context.Context, string) (ProjectContextAggregates, error)
+}
+
 // ArtifactVerifier is an optional capability used by Task Runtime completion
 // validation. Implementations must verify the current artifact bytes, not only
 // the syntax of the URI or digest. When a Deps implementation does not expose

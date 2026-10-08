@@ -5,12 +5,78 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 	accesspkg "github.com/stek0v/levara/pkg/access"
+	"github.com/stek0v/levara/pkg/mcp"
 )
+
+func TestSessionIdentityStoreFailureReturnsUnavailableBeforeDispatch(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "postgres"} {
+		for _, failure := range []string{"epoch", "session"} {
+			t.Run(dialect+"/"+failure, func(t *testing.T) {
+				db := newIdentityAuthDialectDB(t, dialect)
+				db.SetMaxOpenConns(1)
+				seedAuthUser(t, db, "outage-user")
+				var token string
+				if failure == "session" {
+					if err := accesspkg.EnsureBrowserSessionSchema(context.Background(), db, Q); err != nil {
+						t.Fatal(err)
+					}
+					var err error
+					token, err = IssueBrowserSessionJWT(context.Background(), db, "outage-user", "outage@example.test", "secret")
+					if err != nil {
+						t.Fatal(err)
+					}
+					if _, err := db.Exec("DROP TABLE auth_sessions"); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					token = createJWT("outage-user", "outage@example.test", "secret")
+					if _, err := db.Exec("DROP TABLE credential_epochs"); err != nil {
+						t.Fatal(err)
+					}
+				}
+
+				var dispatched atomic.Int32
+				app := fiber.New()
+				app.Use(func(c *fiber.Ctx) error { c.Locals("auth_db", &DBRef{DB: db}); return c.Next() })
+				app.Use(JWTMiddleware("secret", true))
+				app.Get("/protected", func(c *fiber.Ctx) error { dispatched.Add(1); return c.SendStatus(204) })
+				req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+				req.Header.Set("Authorization", "Bearer "+token)
+				resp, err := app.Test(req)
+				if err != nil {
+					t.Fatal(err)
+				}
+				resp.Body.Close()
+				if resp.StatusCode != http.StatusServiceUnavailable || dispatched.Load() != 0 {
+					t.Fatalf("REST status=%d dispatched=%d", resp.StatusCode, dispatched.Load())
+				}
+
+				h := &mcpHandler{cfg: APIConfig{DB: db, RequireAuth: true, JWTSecret: "secret"}, sessions: mcp.NewSessionStore()}
+				mcpApp := fiber.New()
+				mcpApp.Post("/mcp", h.handleRPC)
+				body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"heartbeat","arguments":{}}}`
+				mcpReq := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(body))
+				mcpReq.Header.Set("Content-Type", "application/json")
+				mcpReq.Header.Set("Authorization", "Bearer "+token)
+				mcpResp, err := mcpApp.Test(mcpReq)
+				if err != nil {
+					t.Fatal(err)
+				}
+				mcpResp.Body.Close()
+				if mcpResp.StatusCode != http.StatusServiceUnavailable {
+					t.Fatalf("MCP status=%d", mcpResp.StatusCode)
+				}
+			})
+		}
+	}
+}
 
 func TestBrowserExternalAssertionCannotUpgradeAcrossRevocation(t *testing.T) {
 	for _, dialect := range []string{"sqlite", "postgres"} {

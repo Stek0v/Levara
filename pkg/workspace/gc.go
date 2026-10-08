@@ -19,51 +19,61 @@ type GCResult struct {
 	SharedCollections    []string `json:"shared_collections,omitempty"`
 }
 
-// PlanGCGenerations reports the same generations, collections, and vector IDs
-// GCGenerations would remove, without mutating the manifest or vector store.
+// PlanGCGenerations reports exact recorded retirements without changing state.
+// One manifest cannot prove that a collection contains no other projects.
 func PlanGCGenerations(manifest *Manifest) (GCResult, error) {
 	if manifest == nil {
 		return GCResult{}, errors.New("manifest required")
 	}
-	manifest.ensureMaps()
-	targets := gcPendingGenerationIDs(manifest)
-	targetSet := make(map[string]struct{}, len(targets))
-	for _, id := range targets {
-		if id == manifest.ActiveGeneration {
-			return GCResult{}, fmt.Errorf("%w: %s", ErrCannotGCActiveGeneration, id)
-		}
-		targetSet[id] = struct{}{}
+	candidate := manifest.Clone()
+	candidate.ensureMaps()
+	targets := gcPendingGenerationIDs(candidate)
+	if err := checkGCTargets(candidate, targets); err != nil {
+		return GCResult{}, err
 	}
-	result := GCResult{DryRun: true, Generations: append([]string(nil), targets...)}
-	collections := targetCollections(manifest, targetSet)
-	for _, coll := range sortedKeys(collections) {
-		ids := collections[coll]
-		if collectionUsedOutside(manifest, coll, targetSet) {
-			result.SharedCollections = append(result.SharedCollections, coll)
-			result.DeletedVectorIDs = append(result.DeletedVectorIDs, ids...)
-			continue
-		}
-		result.ExclusiveCollections = append(result.ExclusiveCollections, coll)
-		result.DroppedCollections = append(result.DroppedCollections, coll)
+	queueGCChunks(candidate, targets)
+	collections, err := pendingRetirementCollections(candidate)
+	if err != nil {
+		return GCResult{}, err
 	}
-	for _, gen := range targets {
-		for _, rec := range manifest.ListChunks(ChunkFilter{Generation: gen}) {
-			if rec.Collection == "" {
-				result.DeletedVectorIDs = append(result.DeletedVectorIDs, rec.VectorID)
-			}
-		}
+	result := GCResult{DryRun: true, Generations: targets}
+	for _, collection := range sortedKeys(collections) {
+		result.SharedCollections = append(result.SharedCollections, collection)
+		result.DeletedVectorIDs = append(result.DeletedVectorIDs, collections[collection]...)
 	}
 	sort.Strings(result.DeletedVectorIDs)
-	sort.Strings(result.DroppedCollections)
-	sort.Strings(result.ExclusiveCollections)
-	sort.Strings(result.SharedCollections)
-	sort.Strings(result.Generations)
 	return result, nil
 }
 
-// GCGenerations removes generations marked gc_pending from the manifest and
-// vector store. Collections used only by those generations are dropped whole;
-// shared collections are cleaned by exact vector IDs.
+// RetirePendingChunks only cleans already queued exact IDs. Current manifest
+// membership protects an ID even if an obsolete retirement records it too.
+// Failed batches remain queued: DeleteMany may have partially succeeded.
+func RetirePendingChunks(manifest *Manifest, store vectorstore.VectorStore) error {
+	if manifest == nil {
+		return errors.New("manifest required")
+	}
+	if store == nil {
+		return errors.New("vector store required")
+	}
+	manifest.ensureMaps()
+	collections, err := pendingRetirementCollections(manifest)
+	if err != nil {
+		return err
+	}
+	for _, collection := range sortedKeys(collections) {
+		ids := collections[collection]
+		if errs := store.DeleteMany(collection, ids); len(errs) > 0 {
+			return fmt.Errorf("delete vectors from %s: %v", collection, errs)
+		}
+		for _, id := range ids {
+			delete(manifest.PendingRetirements, id)
+		}
+	}
+	return nil
+}
+
+// GCGenerations explicitly retires gc_pending generations. Publication callers
+// use RetirePendingChunks instead, retaining older generations until explicit GC.
 func GCGenerations(manifest *Manifest, store vectorstore.VectorStore) (GCResult, error) {
 	if manifest == nil {
 		return GCResult{}, errors.New("manifest required")
@@ -71,97 +81,101 @@ func GCGenerations(manifest *Manifest, store vectorstore.VectorStore) (GCResult,
 	if store == nil {
 		return GCResult{}, errors.New("vector store required")
 	}
-	manifest.ensureMaps()
-
-	targets := gcPendingGenerationIDs(manifest)
-	targetSet := make(map[string]struct{}, len(targets))
-	for _, id := range targets {
-		if id == manifest.ActiveGeneration {
-			return GCResult{}, fmt.Errorf("%w: %s", ErrCannotGCActiveGeneration, id)
-		}
-		targetSet[id] = struct{}{}
-	}
-
 	plan, err := PlanGCGenerations(manifest)
 	if err != nil {
 		return plan, err
 	}
-	result := GCResult{
-		ExclusiveCollections: append([]string(nil), plan.ExclusiveCollections...),
-		SharedCollections:    append([]string(nil), plan.SharedCollections...),
+	manifest.ensureMaps()
+	removed := queueGCChunks(manifest, plan.Generations)
+	before := make(map[string]struct{}, len(manifest.PendingRetirements))
+	for id := range manifest.PendingRetirements {
+		before[id] = struct{}{}
 	}
-	collections := targetCollections(manifest, targetSet)
-	for _, coll := range sortedKeys(collections) {
-		ids := collections[coll]
-		if collectionUsedOutside(manifest, coll, targetSet) {
-			if errs := store.DeleteMany(coll, ids); len(errs) > 0 {
-				return result, fmt.Errorf("delete vectors from %s: %v", coll, errs)
-			}
-			result.DeletedVectorIDs = append(result.DeletedVectorIDs, ids...)
-			continue
+	err = RetirePendingChunks(manifest, store)
+	result := GCResult{SharedCollections: plan.SharedCollections}
+	for id := range before {
+		if _, pending := manifest.PendingRetirements[id]; !pending {
+			result.DeletedVectorIDs = append(result.DeletedVectorIDs, id)
 		}
-		if store.Has(coll) {
-			if err := store.Drop(coll); err != nil {
-				return result, fmt.Errorf("drop collection %s: %w", coll, err)
-			}
-		}
-		result.DroppedCollections = append(result.DroppedCollections, coll)
 	}
-
-	for _, gen := range targets {
-		deleted := manifest.DeleteChunks(ChunkFilter{Generation: gen})
-		for _, rec := range deleted {
-			if rec.Collection == "" {
-				result.DeletedVectorIDs = append(result.DeletedVectorIDs, rec.VectorID)
+	// Preserve unresolved generation records for a later retry. Successfully
+	// deleted chunk records stay removed even if another collection failed.
+	for _, record := range removed {
+		if _, pending := manifest.PendingRetirements[record.VectorID]; pending {
+			manifest.Chunks[record.VectorID] = record
+		}
+	}
+	for _, generation := range plan.Generations {
+		unresolved := false
+		for _, record := range manifest.PendingRetirements {
+			if record.Generation == generation {
+				unresolved = true
+				break
 			}
 		}
-		delete(manifest.Generations, gen)
-		result.Generations = append(result.Generations, gen)
+		if !unresolved {
+			delete(manifest.Generations, generation)
+			delete(manifest.Files, generation)
+			result.Generations = append(result.Generations, generation)
+		}
 	}
 	sort.Strings(result.DeletedVectorIDs)
-	sort.Strings(result.DroppedCollections)
 	sort.Strings(result.Generations)
-	return result, nil
+	return result, err
+}
+
+func checkGCTargets(manifest *Manifest, targets []string) error {
+	for _, id := range targets {
+		if id == manifest.ActiveGeneration {
+			return fmt.Errorf("%w: %s", ErrCannotGCActiveGeneration, id)
+		}
+	}
+	return nil
+}
+
+func queueGCChunks(manifest *Manifest, targets []string) []ChunkRecord {
+	targetSet := make(map[string]bool, len(targets))
+	for _, id := range targets {
+		targetSet[id] = true
+	}
+	var removed []ChunkRecord
+	for id, record := range manifest.Chunks {
+		if !targetSet[record.Generation] {
+			continue
+		}
+		manifest.PendingRetirements[id] = record
+		removed = append(removed, record)
+		delete(manifest.Chunks, id)
+	}
+	return removed
+}
+
+func pendingRetirementCollections(manifest *Manifest) (map[string][]string, error) {
+	collections := make(map[string][]string)
+	for id, record := range manifest.PendingRetirements {
+		if _, current := manifest.Chunks[id]; current {
+			continue
+		}
+		if id == "" || record.VectorID != id || record.Collection == "" {
+			return nil, fmt.Errorf("retirement %q lacks exact vector identity or collection", id)
+		}
+		collections[record.Collection] = append(collections[record.Collection], id)
+	}
+	for collection := range collections {
+		sort.Strings(collections[collection])
+	}
+	return collections, nil
 }
 
 func gcPendingGenerationIDs(manifest *Manifest) []string {
 	var out []string
-	for id, gen := range manifest.Generations {
-		if gen.Status == GenerationGCPending {
+	for id, generation := range manifest.Generations {
+		if generation.Status == GenerationGCPending {
 			out = append(out, id)
 		}
 	}
 	sort.Strings(out)
 	return out
-}
-
-func targetCollections(manifest *Manifest, targetSet map[string]struct{}) map[string][]string {
-	out := make(map[string][]string)
-	for _, rec := range manifest.Chunks {
-		if _, ok := targetSet[rec.Generation]; !ok {
-			continue
-		}
-		if rec.Collection == "" {
-			continue
-		}
-		out[rec.Collection] = append(out[rec.Collection], rec.VectorID)
-	}
-	for coll := range out {
-		sort.Strings(out[coll])
-	}
-	return out
-}
-
-func collectionUsedOutside(manifest *Manifest, collection string, targetSet map[string]struct{}) bool {
-	for _, rec := range manifest.Chunks {
-		if rec.Collection != collection {
-			continue
-		}
-		if _, target := targetSet[rec.Generation]; !target {
-			return true
-		}
-	}
-	return false
 }
 
 func sortedKeys(m map[string][]string) []string {

@@ -40,9 +40,15 @@ func newSyncIntegDB(t *testing.T, name string) *sql.DB {
 			collection_name TEXT NOT NULL DEFAULT '', room TEXT NOT NULL DEFAULT '',
 			hall TEXT NOT NULL DEFAULT '', is_pinned BOOLEAN NOT NULL DEFAULT FALSE,
 			pin_priority INTEGER NOT NULL DEFAULT 0,
+			superseded_by TEXT NOT NULL DEFAULT '', valid_until TEXT,
+            supersedes_memory_id TEXT NOT NULL DEFAULT '', supersession_reason TEXT NOT NULL DEFAULT '',
+			source_task_id TEXT NOT NULL DEFAULT '', source_receipt_ids TEXT NOT NULL DEFAULT '[]',
+			verification_status TEXT NOT NULL DEFAULT 'unverified',
+ tier TEXT NOT NULL DEFAULT 'raw', consolidated_from TEXT NOT NULL DEFAULT '', consolidation_run_id TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
 			UNIQUE(key, owner_id, collection_name)
 		);
+		CREATE TABLE memory_sync_deletions(memory_id TEXT NOT NULL,key TEXT NOT NULL,owner_id TEXT NOT NULL,collection_name TEXT NOT NULL,deleted_at TEXT NOT NULL,PRIMARY KEY(memory_id,owner_id,collection_name));
 		CREATE TABLE interactions (
 			id TEXT PRIMARY KEY, session_id TEXT, user_id TEXT, query TEXT,
 			response TEXT, search_type TEXT, created_at TEXT NOT NULL
@@ -62,6 +68,9 @@ func newSyncIntegDB(t *testing.T, name string) *sql.DB {
 		t.Fatal(err)
 	}
 	if err := accesspkg.EnsureIdentitySchema(context.Background(), db, Q); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateMemorySyncGenerations(context.Background(), db); err != nil {
 		t.Fatal(err)
 	}
 	return db

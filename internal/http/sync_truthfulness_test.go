@@ -81,13 +81,12 @@ func syncTruthApp(t *testing.T, db *sql.DB) *fiber.App {
 	return app
 }
 
-func TestSyncTruthPartialImportRetainsSuccess(t *testing.T) {
+func TestSyncTruthGenerationImportRollsBackBatch(t *testing.T) {
 	db := syncTruthDB(t)
-	// A primary-key collision is an actual row-level SQL error; the following
-	// independent row must still import under the existing partial contract.
+	// A physical-ID collision must roll back the entire versioned lifecycle batch.
 	seedMemory(t, db, "old", "unchanged")
 	data := []syncMemory{{ID: "id-old", Key: "collision", Value: "bad", CreatedAt: "2026-09-05T00:00:00Z", UpdatedAt: "2026-09-05T00:00:00Z"}, {ID: "new", Key: "new", Value: "good", CreatedAt: "2026-09-05T00:00:00Z", UpdatedAt: "2026-09-05T00:00:00Z"}}
-	payload, _ := json.Marshal(data)
+	payload, _ := json.Marshal(syncMemoryFixtureBatch(data))
 	app := syncTruthApp(t, db)
 	req := httptest.NewRequest("POST", "/sync/import/memories", bytes.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
@@ -100,11 +99,11 @@ func TestSyncTruthPartialImportRetainsSuccess(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		t.Fatal(err)
 	}
-	if result["imported"] != float64(1) || result["failed"] != float64(1) || result["error"] == nil {
-		t.Errorf("partial SQL error hidden: status=%d result=%#v", resp.StatusCode, result)
+	if result["imported"] != float64(0) || result["failed"] != float64(2) || result["error"] == nil {
+		t.Errorf("atomic SQL error hidden: status=%d result=%#v", resp.StatusCode, result)
 	}
-	if !memoryExists(t, db, "new") {
-		t.Error("valid independent row was lost")
+	if memoryExists(t, db, "new") {
+		t.Error("failed lifecycle batch partially committed")
 	}
 }
 
@@ -121,7 +120,7 @@ func TestSyncTruthDoSyncPartialAndRecovery(t *testing.T) {
 				w.WriteHeader(503)
 				fmt.Fprint(w, `[]`)
 			} else {
-				fmt.Fprint(w, `[]`)
+				fmt.Fprint(w, `{"protocol_version":3,"memories":[],"deletions":[],"incarnations":[],"aliases":[]}`)
 			}
 		case "/sync/export/interactions":
 			fmt.Fprint(w, `[]`)
@@ -401,7 +400,7 @@ func TestSyncTruthAsyncCollectionFailureIsNotCompleted(t *testing.T) {
 }
 
 func TestSyncTruthPushRejectsIncompleteAcknowledgement(t *testing.T) {
-	for _, ack := range []string{`{"imported":0,"skipped":0,"total":1}`, `{"imported":"one","total":1}`, `{"imported":0,"skipped":0,"total":0}`} {
+	for _, ack := range []string{`{"protocol_version":3,"imported":0,"skipped":0,"total":1}`, `{"protocol_version":3,"imported":"one","total":1}`, `{"protocol_version":3,"imported":0,"skipped":0,"total":0}`} {
 		db := syncTruthDB(t)
 		seedMemory(t, db, "ack", "value")
 		remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, ack) }))
@@ -470,7 +469,7 @@ func TestSyncTruthRESTSQLDeadline(t *testing.T) {
 					fmt.Fprint(w, `{"version":"test"}`)
 					return
 				}
-				fmt.Fprint(w, `[{"id":"late","key":"late","value":"must not import after deadline","created_at":"2026-09-05T00:00:00Z","updated_at":"2026-09-05T00:00:00Z"}]`)
+				json.NewEncoder(w).Encode(syncMemoryFixtureBatch([]syncMemory{{ID: "late", Key: "late", Value: "must not import after deadline", CreatedAt: "2026-09-05T00:00:00Z", UpdatedAt: "2026-09-05T00:00:00Z"}}))
 			}))
 			defer remote.Close()
 			app := syncTruthApp(t, db)

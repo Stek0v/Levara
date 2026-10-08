@@ -2,10 +2,6 @@ package http
 
 import (
 	"context"
-	"database/sql"
-	"errors"
-	"os"
-	"sort"
 
 	"github.com/gofiber/fiber/v2"
 	accesspkg "github.com/stek0v/levara/pkg/access"
@@ -51,58 +47,113 @@ type workspaceBranchContext struct {
 
 func workspaceContextHandler(cfg APIConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		req := workspaceContextRequest{
-			ProjectID: c.Query("project_id"),
-			Branch:    c.Query("branch"),
-		}
-		userID, _ := c.Locals("user_id").(string)
-		resp, err := buildWorkspaceContext(c.UserContext(), cfg, userID, req)
+		req := workspaceContextRequest{ProjectID: c.Query("project_id"), Branch: c.Query("branch")}
+		actor := uploadMetadataActor(c, cfg, c.UserContext())
+		ctx, cancel, err := workspaceRequestContext(c.UserContext(), actor, timeoutFromEnvMs("SEARCH_REQUEST_TIMEOUT_MS", defaultSearchRequestTimeout))
 		if err != nil {
-			if errors.Is(err, errWorkspaceAccessDenied) {
-				return fiber.NewError(fiber.StatusForbidden, errWorkspaceAccessDenied.Error())
-			}
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+			return err
 		}
-		return c.JSON(resp)
+		defer cancel()
+		return withProtectedPolicyResponse(c, cfg, ctx, func(fenced context.Context, policy accesspkg.SQLPolicy) error {
+			resp, err := buildWorkspaceContextWithPolicy(fenced, cfg, actor, req, policy)
+			if err != nil {
+				return err
+			}
+			return c.JSON(resp)
+		})
 	}
 }
 
-func buildWorkspaceContext(ctx context.Context, cfg APIConfig, userID string, req workspaceContextRequest) (workspaceContextResponse, error) {
-	projectIDs, err := workspaceContextProjectIDs(ctx, cfg, userID, req.ProjectID)
+func buildWorkspaceContextAuthorized(ctx context.Context, cfg APIConfig, actor accesspkg.MetadataActor, req workspaceContextRequest) (workspaceContextResponse, error) {
+	ctx, cancel, err := workspaceRequestContext(ctx, actor, timeoutFromEnvMs("SEARCH_REQUEST_TIMEOUT_MS", defaultSearchRequestTimeout))
 	if err != nil {
 		return workspaceContextResponse{}, err
 	}
-	watch := workspaceWatchStatus(cfg)
-	resp := workspaceContextResponse{
-		RecommendedSearchType: "HYBRID",
-		ExactReadRequired:     true,
-		Watcher:               watch,
+	defer cancel()
+	policy, installed := ctx.Value(searchReadPolicyKey{}).(accesspkg.SQLPolicy)
+	if !installed {
+		policy = accesspkg.SQLPolicy{DB: cfg.DB, Q: Q, QA: QArgs}
+		if !actor.TrustedLocal || actor.UserID != "" || actor.TenantID != "" || cfg.RequireAuth {
+			locked, release, err := policy.BeginTransferFence(ctx, GetDBProvider() == DBSQLite)
+			if err != nil {
+				return workspaceContextResponse{}, fiber.NewError(fiber.StatusServiceUnavailable, "workspace authorization unavailable")
+			}
+			defer release()
+			policy = locked
+		}
 	}
-	for _, projectID := range projectIDs {
-		access, err := workspaceAccessCheck(ctx, cfg.DB, userID, projectID, workspaceAccessRead, "")
+	return buildWorkspaceContextWithPolicy(ctx, cfg, actor, req, policy)
+}
+
+func buildWorkspaceContextWithPolicy(ctx context.Context, cfg APIConfig, actor accesspkg.MetadataActor, req workspaceContextRequest, policy accesspkg.SQLPolicy) (workspaceContextResponse, error) {
+	local := actor.TrustedLocal && actor.UserID == "" && actor.TenantID == "" && !cfg.RequireAuth
+	if !local {
+		if actor.UserID == "" || (cfg.RequireAuth && actor.TrustedLocal) {
+			return workspaceContextResponse{}, fiber.NewError(fiber.StatusForbidden, "workspace requires verified authority")
+		}
+		if err := recheckDatasetShareActor(ctx, policy, actor); err != nil {
+			return workspaceContextResponse{}, fiber.NewError(fiber.StatusForbidden, "workspace access revoked")
+		}
+		if !accesspkg.APIKeyAllows(actor.APIKeyPermissions, accesspkg.ActionRead) {
+			return workspaceContextResponse{}, fiber.NewError(fiber.StatusForbidden, errWorkspaceAccessDenied.Error())
+		}
+	}
+	var projectIDs []string
+	if req.ProjectID != "" {
+		projectIDs = []string{req.ProjectID}
+	} else if local {
+		projectIDs = workspaceLocalProjectIDs(cfg)
+	} else {
+		var err error
+		projectIDs, err = policy.VisibleDatasetIDs(ctx, actor.UserID)
 		if err != nil {
 			return workspaceContextResponse{}, err
 		}
-		if !access.Allowed {
+	}
+	watch := workspaceWatchStatus(cfg)
+	resp := workspaceContextResponse{RecommendedSearchType: "HYBRID", ExactReadRequired: true}
+	admitted := map[string]bool{}
+	for _, projectID := range projectIDs {
+		decision, err := policy.AuthorizeWorkspace(ctx, accesspkg.WorkspaceRequest{
+			UserID: actor.UserID, TenantID: actor.TenantID, ProjectID: projectID, Action: string(workspaceAccessRead), APIKeyPermissions: actor.APIKeyPermissions,
+		})
+		if err != nil {
+			return workspaceContextResponse{}, err
+		}
+		if !decision.Allowed {
 			if req.ProjectID != "" {
-				return workspaceContextResponse{}, errWorkspaceAccessDenied
+				return workspaceContextResponse{}, fiber.NewError(fiber.StatusForbidden, errWorkspaceAccessDenied.Error())
 			}
 			continue
 		}
-		project := workspaceProjectContext{
+		admitted[safeWorkspaceID(projectID)] = true
+		resp.Projects = append(resp.Projects, workspaceProjectContext{
 			ProjectID: projectID,
-			Access:    access,
-			Branches:  workspaceContextBranches(ctx, cfg, projectID, req.Branch, watch),
+			Access: workspaceAccessCheckResponse{
+				ProjectID: projectID, UserID: actor.UserID, Access: string(workspaceAccessRead),
+				Allowed: decision.Allowed, Role: decision.Role, Reason: decision.Reason,
+				DevMode: decision.DevMode, Authenticated: decision.Authenticated, APIKeyAllowed: decision.APIKeyAllowed,
+			},
+		})
+	}
+	filtered := watch
+	filtered.Branches = map[string]WorkspaceBranchWatchStatus{}
+	for key, status := range watch.Branches {
+		if admitted[safeWorkspaceID(status.ProjectID)] && (req.Branch == "" || safeWorkspaceID(defaultBranch(status.Branch)) == safeWorkspaceID(defaultBranch(req.Branch))) {
+			filtered.Branches[key] = status
 		}
+	}
+	resp.Watcher = workspaceProjectWatchStatus(filtered, "", req.Branch)
+	for i := range resp.Projects {
+		project := &resp.Projects[i]
+		project.Branches = workspaceContextBranches(ctx, cfg, project.ProjectID, req.Branch, resp.Watcher)
 		if len(project.Branches) == 0 {
-			project.Guidance = workspaceContextInitializationPath(projectID, defaultBranch(req.Branch))
+			project.Guidance = workspaceContextInitializationPath(project.ProjectID, defaultBranch(req.Branch))
 		}
-		resp.Projects = append(resp.Projects, project)
 	}
 	if len(resp.Projects) > 0 {
 		resp.DefaultProjectID = resp.Projects[0].ProjectID
-	}
-	if len(resp.Projects) == 0 {
+	} else {
 		resp.Guidance = []string{
 			"Create or share a workspace project.",
 			"Write markdown with workspace_write, then run workspace_reconcile to publish an active generation.",
@@ -111,37 +162,8 @@ func buildWorkspaceContext(ctx context.Context, cfg APIConfig, userID string, re
 	return resp, nil
 }
 
-func workspaceContextProjectIDs(ctx context.Context, cfg APIConfig, userID, explicitProjectID string) ([]string, error) {
-	if explicitProjectID != "" {
-		return []string{explicitProjectID}, nil
-	}
-	seen := map[string]struct{}{}
-	for _, projectID := range workspaceLocalProjectIDs(cfg) {
-		seen[projectID] = struct{}{}
-	}
-	if cfg.DB != nil && userID != "" {
-		dbIDs, err := workspaceDBProjectIDs(ctx, cfg.DB, userID)
-		if err != nil {
-			return nil, err
-		}
-		for _, projectID := range dbIDs {
-			seen[projectID] = struct{}{}
-		}
-	}
-	out := make([]string, 0, len(seen))
-	for projectID := range seen {
-		out = append(out, projectID)
-	}
-	sort.Strings(out)
-	return out, nil
-}
-
 func workspaceLocalProjectIDs(cfg APIConfig) []string {
 	return workspace.ListLocalProjects(workspaceRoot(cfg))
-}
-
-func workspaceDBProjectIDs(ctx context.Context, db *sql.DB, userID string) ([]string, error) {
-	return accesspkg.SQLPolicy{DB: db, Q: Q, QA: QArgs}.VisibleDatasetIDs(ctx, userID)
 }
 
 func workspaceContextBranches(ctx context.Context, cfg APIConfig, projectID, branchFilter string, watch WorkspaceWatchStatus) []workspaceBranchContext {
@@ -164,12 +186,10 @@ func workspaceLocalBranches(cfg APIConfig, projectID string) []string {
 
 func workspaceContextBranch(reqCtx context.Context, cfg APIConfig, projectID, branch string, watch WorkspaceWatchStatus) workspaceBranchContext {
 	manifestPath := workspaceManifestPath(cfg, projectID, branch)
-	_, statErr := os.Stat(manifestPath)
 	out := workspaceBranchContext{
-		Branch:         defaultBranch(branch),
-		ManifestPath:   manifestPath,
-		ManifestExists: statErr == nil,
-		Watcher:        workspaceFreshnessBranchStatus(projectID, defaultBranch(branch), watch),
+		Branch:       defaultBranch(branch),
+		ManifestPath: manifestPath,
+		Watcher:      workspaceFreshnessBranchStatus(projectID, defaultBranch(branch), watch),
 	}
 	jobs, err := listWorkspaceIndexJobs(cfg, workspaceIndexJobsRequest{ProjectID: projectID, Branch: branch})
 	if err == nil && len(jobs) > 0 {
@@ -181,7 +201,8 @@ func workspaceContextBranch(reqCtx context.Context, cfg APIConfig, projectID, br
 	}); err == nil {
 		out.ContextArtifactCount = artifacts.Total
 	}
-	manifest, _, err := loadWorkspaceManifest(cfg, projectID, branch)
+	manifest, exists, err := readWorkspaceManifest(cfg, projectID, branch)
+	out.ManifestExists = exists
 	if err != nil {
 		out.Error = err.Error()
 		return out
@@ -192,14 +213,14 @@ func workspaceContextBranch(reqCtx context.Context, cfg APIConfig, projectID, br
 		return out
 	}
 	chunks := manifest.ListChunks(workspace.ChunkFilter{
-		ProjectID:  projectID,
-		Branch:     defaultBranch(branch),
+		ProjectID:  manifest.ProjectID,
+		Branch:     defaultBranch(manifest.Branch),
 		Generation: manifest.ActiveGeneration,
 	})
 	out.ActiveChunkCount = len(chunks)
 	out.ActivePathCount = workspaceSearchPathCount(chunks)
 	out.LastIndexedAt = workspaceSearchLastIndexedAt(chunks)
-	collection, err := workspaceSearchCollection(projectID, defaultBranch(branch), manifest.ActiveGeneration, chunks)
+	collection, err := workspaceSearchCollection(manifest.ProjectID, defaultBranch(manifest.Branch), manifest.ActiveGeneration, chunks)
 	if err != nil {
 		out.Error = err.Error()
 	} else {
@@ -221,8 +242,7 @@ func (h *mcpHandler) toolWorkspaceContext(ctx context.Context, args map[string]a
 	if err := decodeWorkspaceArgs(args, &req); err != nil {
 		return workspaceMCPError(err)
 	}
-	userID, _ := ctx.Value(mcpUserIDKey).(string)
-	resp, err := buildWorkspaceContext(ctx, h.cfg, userID, req)
+	resp, err := buildWorkspaceContextAuthorized(ctx, h.cfg, h.MetadataActor(ctx), req)
 	if err != nil {
 		return workspaceMCPError(err)
 	}

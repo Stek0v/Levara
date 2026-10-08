@@ -93,7 +93,16 @@ func NewLevara(dim int, storagePath string, cfg ...HNSWConfig) (*Levara, error) 
 	walPath := storagePath + ".wal"
 	wal, err := OpenWal(walPath)
 	if err != nil {
+		ds.Close()
 		return nil, err
+	}
+	failRecovery := func(err error) (*Levara, error) {
+		wal.Close()
+		ds.Close()
+		return nil, fmt.Errorf("native WAL recovery: %w", err)
+	}
+	if err := wal.prepareRecovery(dim); err != nil {
+		return failRecovery(err)
 	}
 	localArena := NewVectorArena(dim)
 
@@ -113,7 +122,7 @@ func NewLevara(dim int, storagePath string, cfg ...HNSWConfig) (*Levara, error) 
 	// Truncate meta.bin before WAL recovery: WAL contains full metadata,
 	// so we rebuild the disk store from scratch to guarantee valid offsets.
 	if err := ds.Truncate(); err != nil {
-		return nil, fmt.Errorf("failed to truncate disk store for recovery: %w", err)
+		return failRecovery(fmt.Errorf("failed to truncate disk store for recovery: %w", err))
 	}
 
 	fmt.Println("Replaying WAL to restore data....")
@@ -129,26 +138,29 @@ func NewLevara(dim int, storagePath string, cfg ...HNSWConfig) (*Levara, error) 
 	// Arena slots of deleted records remain allocated — this matches runtime
 	// Delete semantics (Delete only tombstones in HNSW). Checkpoint() is the
 	// only path that reclaims them.
+	var replayErr error
 	err = wal.RecoverEx(func(op byte, id string, vector []float32, meta []byte, loc FileLocation) {
+		if replayErr != nil {
+			return
+		}
 		switch op {
 		case OpInsert:
 			// Dim guard before disk write so a corrupt/migrated WAL entry
 			// doesn't leak metadata bytes on disk before the arena rejects it.
 			if len(vector) != db.dim {
-				fmt.Printf("WAL recovery: skipping %s — vector dim %d != expected %d\n",
-					id, len(vector), db.dim)
+				replayErr = fmt.Errorf("record %s vector dim %d != expected %d", id, len(vector), db.dim)
 				return
 			}
 			newLoc, writeErr := db.disk.Write(meta)
 			if writeErr != nil {
-				fmt.Printf("WAL recovery: failed to write metadata for %s: %v\n", id, writeErr)
+				replayErr = fmt.Errorf("record %s metadata write: %w", id, writeErr)
 				return
 			}
 			if err := db.insertInMemory(id, vector, newLoc); err != nil {
 				// Keep insertCount honest — partially-failed inserts leave the
 				// id unindexed, and continuing silently would make a later
 				// Delete for the same id appear to be a no-op (see T16 review C1).
-				fmt.Printf("WAL recovery: insertInMemory failed for %s: %v\n", id, err)
+				replayErr = fmt.Errorf("record %s insert: %w", id, err)
 				return
 			}
 			insertCount++
@@ -165,11 +177,14 @@ func NewLevara(dim int, storagePath string, cfg ...HNSWConfig) (*Levara, error) 
 			}
 		}
 	})
+	if err == nil {
+		err = replayErr
+	}
 	if err != nil {
 		metrics.WALRecoveriesTotal.WithLabelValues("fail").Inc()
-	} else {
-		metrics.WALRecoveriesTotal.WithLabelValues("ok").Inc()
+		return failRecovery(err)
 	}
+	metrics.WALRecoveriesTotal.WithLabelValues("ok").Inc()
 	fmt.Printf("Recovered %d records (%d deleted) from WAL\n", insertCount, deleteCount)
 
 	// Start background HNSW indexer.
@@ -266,6 +281,13 @@ func (db *Levara) Insert(id string, vector []float32, data any) error {
 		return fmt.Errorf("failed to marshal metadata: %w", err)
 	}
 
+	if len(vector) != db.dim {
+		return fmt.Errorf("vector dim %d != expected %d", len(vector), db.dim)
+	}
+	if err := validateWALRecord(OpInsert, id, vector, bytes, FileLocation{}); err != nil {
+		return err
+	}
+
 	// Write metadata to disk outside db.mu — DiskStore has its own internal
 	// mutex, and the returned FileLocation is an immutable (offset, length)
 	// pair that doesn't depend on db state. Moving it here reduces db.mu hold
@@ -348,30 +370,54 @@ func (db *Levara) insertInMemory(id string, vector []float32, loc FileLocation) 
 	return nil
 }
 
+// BatchError identifies the original item that failed in a batch operation.
+type BatchError struct {
+	Index int
+	ID    string
+	Err   error
+}
+
+func (e *BatchError) Error() string { return e.Err.Error() }
+func (e *BatchError) Unwrap() error { return e.Err }
+
+func batchError(index int, id string, err error) error {
+	return &BatchError{Index: index, ID: id, Err: err}
+}
+
 // BatchInsert durably stores multiple records in a single group-commit WAL fsync.
-// Metadata marshalling is done outside the lock for parallelism. Returns a slice of
-// per-record errors (nil entries mean success); the slice is nil if all records succeeded.
+// Metadata marshalling is done outside the lock for parallelism. Returned errors
+// carry the original item index and ID.
 func (db *Levara) BatchInsert(records []BatchItem) []error {
 	// Phase 0: marshal metadata outside lock (CPU-bound, no db state needed).
 	type prepared struct {
+		index int
 		rec   BatchItem
 		bytes []byte
 	}
 	prepped := make([]prepared, 0, len(records))
 	var errs []error
-	for _, rec := range records {
+	for i, rec := range records {
 		bytes, err := json.Marshal(rec.Data)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("%s: marshal: %w", rec.ID, err))
+			errs = append(errs, batchError(i, rec.ID, fmt.Errorf("%s: marshal: %w", rec.ID, err)))
 			continue
 		}
-		prepped = append(prepped, prepared{rec: rec, bytes: bytes})
+		if len(rec.Vector) != db.dim {
+			errs = append(errs, batchError(i, rec.ID, classifyError(ErrDimMismatch, "vector dim %d != expected %d", len(rec.Vector), db.dim)))
+			continue
+		}
+		if err := validateWALRecord(OpInsert, rec.ID, rec.Vector, bytes, FileLocation{}); err != nil {
+			errs = append(errs, batchError(i, rec.ID, err))
+			continue
+		}
+		prepped = append(prepped, prepared{index: i, rec: rec, bytes: bytes})
 	}
 
 	// Phase 0b: write metadata to disk outside db.mu — DiskStore has its own
 	// internal mutex. For a batch of 50 items this saves ~250μs of lock time
 	// (50 × ~5μs per buffered Write).
 	type diskPrep struct {
+		index int
 		rec   BatchItem
 		bytes []byte
 		loc   FileLocation
@@ -380,24 +426,25 @@ func (db *Levara) BatchInsert(records []BatchItem) []error {
 	for _, p := range prepped {
 		loc, err := db.disk.Write(p.bytes)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("%s: disk: %w", p.rec.ID, err))
+			errs = append(errs, batchError(p.index, p.rec.ID, fmt.Errorf("%s: disk: %w", p.rec.ID, err)))
 			continue
 		}
-		diskPrepped = append(diskPrepped, diskPrep{rec: p.rec, bytes: p.bytes, loc: loc})
+		diskPrepped = append(diskPrepped, diskPrep{index: p.index, rec: p.rec, bytes: p.bytes, loc: loc})
 	}
 
 	// Phase 1: arena + WAL + index maps under db.mu.
 	db.mu.Lock()
 	toIndex := make([]pendingItem, 0, len(diskPrepped))
+	committed := make([]diskPrep, 0, len(diskPrepped))
 
 	for _, d := range diskPrepped {
 		idx, err := db.arena.Add(d.rec.Vector)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("%s: arena: %w", d.rec.ID, err))
+			errs = append(errs, batchError(d.index, d.rec.ID, fmt.Errorf("%s: arena: %w", d.rec.ID, err)))
 			continue
 		}
 		if err := db.wal.WriteEntryNoFlush(OpInsert, d.rec.ID, d.rec.Vector, d.bytes, d.loc); err != nil {
-			errs = append(errs, fmt.Errorf("%s: wal: %w", d.rec.ID, err))
+			errs = append(errs, batchError(d.index, d.rec.ID, fmt.Errorf("%s: wal: %w", d.rec.ID, err)))
 			continue
 		}
 		db.replaceExistingLocked(d.rec.ID)
@@ -415,6 +462,7 @@ func (db *Levara) BatchInsert(records []BatchItem) []error {
 		vecCopy := make([]float32, len(d.rec.Vector))
 		copy(vecCopy, d.rec.Vector)
 		toIndex = append(toIndex, pendingItem{vector: vecCopy, id: d.rec.ID, idx: idx})
+		committed = append(committed, d)
 	}
 
 	// Enqueue under db.mu so the (idx, arena) pairing is atomic with arena.Add
@@ -429,7 +477,9 @@ func (db *Levara) BatchInsert(records []BatchItem) []error {
 
 	// Group commit: fsync outside db.mu lock
 	if err := db.wal.FlushAsync(); err != nil {
-		errs = append(errs, fmt.Errorf("wal flush: %w", err))
+		for _, d := range committed {
+			errs = append(errs, batchError(d.index, d.rec.ID, fmt.Errorf("wal flush: %w", err)))
+		}
 	}
 
 	if len(toIndex) > 0 {
@@ -469,7 +519,7 @@ func (db *Levara) Search(query []float32, topK int) []VectroRecord {
 	// would panic "slices must be of equal length" and take down the process.
 	// Search returns no error, so degrade to an empty result like the other
 	// guard clauses rather than crashing.
-	if len(query) != db.dim {
+	if len(query) != db.dim || topK <= 0 {
 		return nil
 	}
 
@@ -495,18 +545,28 @@ func (db *Levara) Search(query []float32, topK int) []VectroRecord {
 		for _, r := range records {
 			seen[r.ID] = struct{}{}
 		}
+		bestPending := make([]VectroRecord, 0, topK)
 		for _, p := range pending {
 			if _, dup := seen[p.id]; dup {
 				continue
 			}
 			seen[p.id] = struct{}{}
-			d := dist(normQ, p.vector)
-			records = append(records, VectroRecord{
-				ID:    p.id,
-				Score: 1 - d, // cosine similarity
-				Data:  json.RawMessage("{}"),
-			})
+			candidate := VectroRecord{ID: p.id, Score: 1 - dist(normQ, p.vector), Data: json.RawMessage("{}")}
+			if len(bestPending) < topK {
+				bestPending = append(bestPending, candidate)
+				continue
+			}
+			worst := 0
+			for i := 1; i < len(bestPending); i++ {
+				if bestPending[i].Score < bestPending[worst].Score {
+					worst = i
+				}
+			}
+			if candidate.Score > bestPending[worst].Score {
+				bestPending[worst] = candidate
+			}
 		}
+		records = append(records, bestPending...)
 		sort.Slice(records, func(i, j int) bool {
 			return records[i].Score > records[j].Score
 		})
@@ -548,7 +608,7 @@ func (db *Levara) Delete(id string) error {
 func (db *Levara) deleteLocked(id string) error {
 	idx, ok := db.index[id]
 	if !ok {
-		return fmt.Errorf("record %q not found", id)
+		return classifyError(ErrRecordNotFound, "record %q not found", id)
 	}
 	if err := db.wal.WriteEntryNoFlush(OpDelete, id, nil, nil, FileLocation{}); err != nil {
 		return fmt.Errorf("wal delete: %w", err)
@@ -604,20 +664,20 @@ func removePendingItemsByID(items []pendingItem, id string) []pendingItem {
 func (db *Levara) BatchDelete(ids []string) []error {
 	db.mu.Lock()
 	var errs []error
-	deleted := 0
-	for _, id := range ids {
+	var deleted []int
+	for i, id := range ids {
 		if err := db.deleteLocked(id); err != nil {
-			errs = append(errs, err)
+			errs = append(errs, batchError(i, id, err))
 		} else {
-			deleted++
+			deleted = append(deleted, i)
 		}
 	}
 	db.mu.Unlock()
-	if deleted > 0 {
+	if len(deleted) > 0 {
 		if err := db.wal.FlushAsync(); err != nil {
 			// Every buffered deletion has uncertain durability on a failed flush.
-			for range deleted {
-				errs = append(errs, fmt.Errorf("wal flush: %w", err))
+			for _, i := range deleted {
+				errs = append(errs, batchError(i, ids[i], fmt.Errorf("wal flush: %w", err)))
 			}
 		}
 	}
@@ -650,24 +710,43 @@ type SnapshotRecord struct {
 	Data   json.RawMessage `json:"data"`
 }
 
-// AllRecords returns all records for Raft snapshot. Thread-safe.
+// AllRecords retains the legacy no-error signature. Durable snapshot publishers
+// must use AllRecordsChecked to distinguish unavailable data from an empty store.
 func (db *Levara) AllRecords() []SnapshotRecord {
+	records, _ := db.AllRecordsChecked()
+	return records
+}
+
+// AllRecordsChecked captures the complete inventory or returns a source error.
+func (db *Levara) AllRecordsChecked() ([]SnapshotRecord, error) {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
+	return db.allRecordsLocked()
+}
+
+func (db *Levara) allRecordsLocked() ([]SnapshotRecord, error) {
 	records := make([]SnapshotRecord, 0, len(db.index))
 	for id, idx := range db.index {
-		vec, _ := db.arena.Get(idx)
-		metaLoc := db.metaLocs[idx]
-		meta, _ := db.disk.Read(metaLoc)
-		vecCopy := make([]float32, len(vec))
-		copy(vecCopy, vec)
+		vec, err := db.arena.Get(idx)
+		if err != nil || vec == nil {
+			return nil, fmt.Errorf("snapshot vector unavailable for %q: %v", id, err)
+		}
+		metaLoc, exists := db.metaLocs[idx]
+		if !exists || metaLoc.Offset < 0 || metaLoc.Length < 0 {
+			return nil, fmt.Errorf("snapshot metadata location unavailable for %q", id)
+		}
+		var meta []byte
+		if metaLoc.Length > 0 {
+			meta, err = db.disk.Read(metaLoc)
+			if err != nil {
+				return nil, fmt.Errorf("snapshot metadata read for %q: %w", id, err)
+			}
+		}
 		records = append(records, SnapshotRecord{
-			ID:     id,
-			Vector: vecCopy,
-			Data:   json.RawMessage(meta),
+			ID: id, Vector: append([]float32(nil), vec...), Data: json.RawMessage(meta),
 		})
 	}
-	return records
+	return records, nil
 }
 
 // RestoreSnapshot replaces the complete durable state. Failed staging leaves the
@@ -678,6 +757,18 @@ func (db *Levara) RestoreSnapshot(records []SnapshotRecord) error {
 	arena := NewVectorArena(db.dim)
 	hnsw := NewHNSWIndex(arena, db.hnswCfg)
 	index := make(map[string]uint32, len(records))
+	for _, record := range records {
+		if len(record.Vector) != db.dim {
+			return fmt.Errorf("snapshot vector dim %d != expected %d", len(record.Vector), db.dim)
+		}
+		if err := validateWALRecord(OpInsert, record.ID, record.Vector, record.Data, FileLocation{}); err != nil {
+			return err
+		}
+		if _, exists := index[record.ID]; exists {
+			return fmt.Errorf("duplicate snapshot ID %q", record.ID)
+		}
+		index[record.ID] = 0
+	}
 	reverse := make([]string, 0, len(records))
 	locations := make(map[uint32]FileLocation, len(records))
 	file, err := os.CreateTemp(filepath.Dir(db.wal.Path()), ".restore-*.wal")
@@ -693,12 +784,6 @@ func (db *Levara) RestoreSnapshot(records []SnapshotRecord) error {
 	}()
 	writer := bufio.NewWriter(file)
 	for _, record := range records {
-		if record.ID == "" {
-			return fmt.Errorf("snapshot contains empty record ID")
-		}
-		if _, exists := index[record.ID]; exists {
-			return fmt.Errorf("duplicate snapshot ID %q", record.ID)
-		}
 		vector := append([]float32(nil), record.Vector...)
 		offset, err := arena.Add(vector)
 		if err != nil {
@@ -782,6 +867,10 @@ func (db *Levara) Checkpoint() error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 
+	records, err := db.allRecordsLocked()
+	if err != nil {
+		return fmt.Errorf("checkpoint source: %w", err)
+	}
 	walPath := db.wal.Path()
 	tmpPath := walPath + ".compact"
 
@@ -792,31 +881,17 @@ func (db *Levara) Checkpoint() error {
 	}
 	writer := bufio.NewWriter(tmpFile)
 
-	// Write all live records
+	// Write the checked complete inventory; never compact away unreadable data.
 	count := 0
-	for id, idx := range db.index {
-		vec, err := db.arena.Get(idx)
-		if err != nil || vec == nil {
-			continue
-		}
-		metaLoc, ok := db.metaLocs[idx]
-		if !ok {
-			continue
-		}
-		meta, err := db.disk.Read(metaLoc)
-		if err != nil {
-			meta = []byte("{}")
-		}
-
-		// Write entry to tmp WAL (same binary format)
-		if err := writeWALEntryTo(writer, OpInsert, id, vec, meta, metaLoc); err != nil {
+	for _, record := range records {
+		metaLoc := db.metaLocs[db.index[record.ID]]
+		if err := writeWALEntryTo(writer, OpInsert, record.ID, record.Vector, record.Data, metaLoc); err != nil {
 			_ = tmpFile.Close()
 			_ = os.Remove(tmpPath)
-			return fmt.Errorf("checkpoint: write entry %s: %w", id, err)
+			return fmt.Errorf("checkpoint: write entry %s: %w", record.ID, err)
 		}
 		count++
 	}
-
 	// Flush and sync
 	if err := writer.Flush(); err != nil {
 		_ = tmpFile.Close()

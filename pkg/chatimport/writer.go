@@ -75,6 +75,27 @@ var SchemaStatements = []string{
 		UNIQUE(external_id, session_id, platform)
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_chat_import_messages_session ON chat_import_messages(platform, session_id, ordinal)`,
+	`CREATE TABLE IF NOT EXISTS chat_import_sessions (
+		id TEXT NOT NULL,
+		owner_id TEXT NOT NULL,
+		tenant_id TEXT NOT NULL,
+		platform TEXT NOT NULL,
+		source_session_id TEXT NOT NULL,
+		project_id TEXT NOT NULL DEFAULT '',
+		trusted_local BOOLEAN NOT NULL DEFAULT FALSE,
+		PRIMARY KEY(id, platform),
+		UNIQUE(owner_id, tenant_id, platform, source_session_id),
+		CHECK ((trusted_local AND owner_id = '' AND tenant_id = '') OR (NOT trusted_local AND owner_id <> ''))
+	)`,
+	`CREATE TABLE IF NOT EXISTS chat_import_run_scopes (
+		run_id TEXT PRIMARY KEY REFERENCES chat_import_runs(id) ON DELETE CASCADE,
+		owner_id TEXT NOT NULL,
+		tenant_id TEXT NOT NULL,
+		source_run_id TEXT NOT NULL,
+		trusted_local BOOLEAN NOT NULL DEFAULT FALSE,
+		UNIQUE(owner_id, tenant_id, source_run_id),
+		CHECK ((trusted_local AND owner_id = '' AND tenant_id = '') OR (NOT trusted_local AND owner_id <> ''))
+	)`,
 }
 
 // EnsureSchema creates the chat_import_* tables if they do not exist.
@@ -108,18 +129,8 @@ type RunInfo struct {
 // StartRun inserts a ledger row with status 'running'. Idempotent on the
 // run id so a retried POST recreates nothing.
 func StartRun(ctx context.Context, db *sql.DB, q Q, run RunInfo) error {
-	if run.ID == "" {
-		run.ID = uuid.NewString()
-	}
-	_, err := db.ExecContext(ctx, q(`
-		INSERT INTO chat_import_runs (id, platform, source_path, source_sha256, status, started_at)
-		VALUES ($1, $2, $3, $4, 'running', $5)
-		ON CONFLICT(id) DO NOTHING
-	`), run.ID, string(run.Platform), run.SourcePath, run.SourceSHA256, run.StartedAt)
-	if err != nil {
-		return fmt.Errorf("chatimport start run: %w", err)
-	}
-	return nil
+	_, err := StartScopedRun(ctx, db, q, ImportScope{TrustedLocal: true}, run)
+	return err
 }
 
 // FinishRun closes a ledger row with final counters. Only a 'running' row is
@@ -127,6 +138,40 @@ func StartRun(ctx context.Context, db *sql.DB, q Q, run RunInfo) error {
 // ledger history. Warnings are capped to keep the row small; the count stays
 // exact.
 func FinishRun(ctx context.Context, db *sql.DB, q Q, runID, status string, imported, skipped, warned int, warnings []string, finishedAt string) error {
+	if db == nil || q == nil {
+		return fmt.Errorf("chatimport: db and q are required")
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := lockImportWriter(ctx, tx, q); err != nil {
+		return err
+	}
+	row, found, err := readImportRun(ctx, tx, q, runID)
+	if err != nil {
+		return err
+	}
+	if found && (!row.local || row.owner != "" || row.tenant != "") {
+		return fmt.Errorf("chatimport: local finish run scope mismatch")
+	}
+	if err := finishRun(ctx, tx, q, runID, status, imported, skipped, warned, warnings, finishedAt); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// writerExecutor is the common native SQL surface of *sql.DB and *sql.Tx.
+type writerExecutor interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func finishRun(ctx context.Context, db writerExecutor, q Q, runID, status string, imported, skipped, warned int, warnings []string, finishedAt string) error {
 	const maxWarnings = 50
 	if len(warnings) > maxWarnings {
 		warnings = append(append([]string{}, warnings[:maxWarnings]...),
@@ -169,6 +214,11 @@ func messageID(platform Platform, sessionID, externalID string) string {
 // how many rows were actually inserted. Secrets scanning is warn-only: rows
 // are stored as-is and findings are appended to warnings.
 func InsertConversation(ctx context.Context, db *sql.DB, q Q, runID string, conv *Conversation, warnings *[]string, now time.Time) (int, error) {
+	_, inserted, err := InsertScopedConversation(ctx, db, q, ImportScope{TrustedLocal: true}, runID, conv, warnings, now)
+	return inserted, err
+}
+
+func insertConversation(ctx context.Context, db writerExecutor, q Q, runID, sessionID string, local bool, conv *Conversation, warnings *[]string, now time.Time) (int, error) {
 	if conv == nil || conv.SessionID == "" {
 		return 0, fmt.Errorf("chatimport: conversation without session_id")
 	}
@@ -181,9 +231,11 @@ func InsertConversation(ctx context.Context, db *sql.DB, q Q, runID string, conv
 		// helpers can split runes. Sanitize every text column so the row
 		// survives on both dialects (SQLite masks all of this in tests).
 		m.Content = sanitizePGText(m.Content)
+		metadata := make(map[string]string, len(m.Metadata))
 		for k, v := range m.Metadata {
-			m.Metadata[k] = sanitizePGText(v)
+			metadata[k] = sanitizePGText(v)
 		}
+		m.Metadata = metadata
 		meta := "{}"
 		if len(m.Metadata) > 0 {
 			raw, err := json.Marshal(m.Metadata)
@@ -195,14 +247,18 @@ func InsertConversation(ctx context.Context, db *sql.DB, q Q, runID string, conv
 		for _, finding := range ScanSecrets(m.Content) {
 			*warnings = append(*warnings, fmt.Sprintf("session %s message %s: possible %s (stored as-is)", conv.SessionID, m.ExternalID, finding))
 		}
+		id := messageID(conv.Platform, sessionID, m.ExternalID)
+		if !local {
+			id = importTupleID("message", string(conv.Platform), sessionID, m.ExternalID)
+		}
 		res, err := db.ExecContext(ctx, q(`
 			INSERT INTO chat_import_messages
 				(id, run_id, platform, session_id, session_title, external_id, ordinal, role, kind, model, content, source_created_at, metadata, imported_at)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 			ON CONFLICT(external_id, session_id, platform) DO NOTHING
 		`),
-			messageID(conv.Platform, conv.SessionID, m.ExternalID), runID, string(conv.Platform),
-			conv.SessionID, title, m.ExternalID, m.Ordinal, m.Role, string(m.Kind),
+			id, runID, string(conv.Platform),
+			sessionID, title, m.ExternalID, m.Ordinal, m.Role, string(m.Kind),
 			m.Model, m.Content, m.CreatedAt, meta, importedAt)
 		if err != nil {
 			return inserted, fmt.Errorf("chatimport insert message %s: %w", m.ExternalID, err)

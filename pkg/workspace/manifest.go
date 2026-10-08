@@ -2,6 +2,7 @@
 package workspace
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -73,26 +74,39 @@ type ChunkFilter struct {
 
 // Manifest is the durable workspace-index manifest for one project/branch pair.
 type Manifest struct {
-	Version          int                    `json:"version"`
-	ProjectID        string                 `json:"project_id"`
-	Branch           string                 `json:"branch"`
-	ActiveGeneration string                 `json:"active_generation,omitempty"`
-	Generations      map[string]Generation  `json:"generations"`
-	Chunks           map[string]ChunkRecord `json:"chunks"`
+	Version            int                          `json:"version"`
+	ProjectID          string                       `json:"project_id"`
+	Branch             string                       `json:"branch"`
+	ActiveGeneration   string                       `json:"active_generation,omitempty"`
+	Generations        map[string]Generation        `json:"generations"`
+	Chunks             map[string]ChunkRecord       `json:"chunks"`
+	Files              map[string]map[string]string `json:"files,omitempty"`
+	PendingRetirements map[string]ChunkRecord       `json:"pending_retirements,omitempty"`
 }
 
 func NewManifest(projectID, branch string) *Manifest {
 	return &Manifest{
-		Version:     ManifestVersion,
-		ProjectID:   projectID,
-		Branch:      branch,
-		Generations: make(map[string]Generation),
-		Chunks:      make(map[string]ChunkRecord),
+		Version:            ManifestVersion,
+		ProjectID:          projectID,
+		Branch:             branch,
+		Generations:        make(map[string]Generation),
+		Chunks:             make(map[string]ChunkRecord),
+		Files:              make(map[string]map[string]string),
+		PendingRetirements: make(map[string]ChunkRecord),
 	}
 }
 
 func LoadManifest(path string) (*Manifest, error) {
-	data, err := os.ReadFile(path)
+	root, err := OpenRoot(filepath.Dir(path), ".", false)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	return LoadManifestRoot(root, filepath.Base(path))
+}
+
+func LoadManifestRoot(root *os.Root, name string) (*Manifest, error) {
+	data, err := ReadFile(root, name)
 	if err != nil {
 		return nil, err
 	}
@@ -101,32 +115,25 @@ func LoadManifest(path string) (*Manifest, error) {
 		return nil, err
 	}
 	m.ensureMaps()
-	if m.Version == 0 {
-		m.Version = ManifestVersion
-	}
 	return &m, nil
 }
 
 func (m *Manifest) Save(path string) error {
-	m.ensureMaps()
-	if m.Version == 0 {
-		m.Version = ManifestVersion
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	root, err := OpenRoot(filepath.Dir(path), ".", true)
+	if err != nil {
 		return err
 	}
+	defer root.Close()
+	return m.SaveRoot(context.Background(), root, filepath.Base(path))
+}
+
+func (m *Manifest) SaveRoot(ctx context.Context, root *os.Root, name string) error {
+	m.ensureMaps()
 	data, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		return err
 	}
-	data = append(data, '\n')
-	// Atomic rename (finding H6, 2026-09-03 review): a concurrent reader
-	// must never observe a half-written manifest.
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return WriteFile(ctx, root, name, append(data, '\n'), 0644)
 }
 
 func (m *Manifest) SetGeneration(id string, status GenerationStatus, errText string) error {
@@ -246,6 +253,12 @@ func (r ChunkRecord) Validate() error {
 }
 
 func (m *Manifest) ensureMaps() {
+	if m.Files == nil {
+		m.Files = make(map[string]map[string]string)
+	}
+	if m.PendingRetirements == nil {
+		m.PendingRetirements = make(map[string]ChunkRecord)
+	}
 	if m.Version == 0 {
 		m.Version = ManifestVersion
 	}
@@ -284,4 +297,44 @@ func sortChunks(chunks []ChunkRecord) {
 		kb := fmt.Sprintf("%s\x00%s\x00%s\x00%s", b.Generation, b.Path, b.ChunkID, b.VectorID)
 		return ka < kb
 	})
+}
+
+// Clone prepares isolated candidate state without changing legacy unknown file
+// inventories. A present empty inner map certifies an explicitly empty inventory.
+func (m *Manifest) Clone() *Manifest {
+	if m == nil {
+		return nil
+	}
+	out := *m
+	out.Generations = make(map[string]Generation, len(m.Generations))
+	for id, generation := range m.Generations {
+		out.Generations[id] = generation
+	}
+	out.Chunks = make(map[string]ChunkRecord, len(m.Chunks))
+	for id, record := range m.Chunks {
+		if record.HeadingPath != nil {
+			record.HeadingPath = append([]string{}, record.HeadingPath...)
+		}
+		out.Chunks[id] = record
+	}
+	out.Files = make(map[string]map[string]string, len(m.Files))
+	for generation, files := range m.Files {
+		if files == nil {
+			out.Files[generation] = nil
+			continue
+		}
+		copyFiles := make(map[string]string, len(files))
+		for path, digest := range files {
+			copyFiles[path] = digest
+		}
+		out.Files[generation] = copyFiles
+	}
+	out.PendingRetirements = make(map[string]ChunkRecord, len(m.PendingRetirements))
+	for id, record := range m.PendingRetirements {
+		if record.HeadingPath != nil {
+			record.HeadingPath = append([]string{}, record.HeadingPath...)
+		}
+		out.PendingRetirements[id] = record
+	}
+	return &out
 }

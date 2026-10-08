@@ -4,15 +4,22 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"sort"
+	"sync/atomic"
 	"time"
 
 	"github.com/stek0v/levara/internal/metrics"
 	"golang.org/x/sync/errgroup"
 )
+
+// ErrGuardRejected identifies a caller authority rejection before provider egress.
+var ErrGuardRejected = errors.New("embedding authority guard rejected")
+
+var errProviderFailure = errors.New("embedding provider failed")
 
 // Client calls an OpenAI-compatible embedding API (embed-server, Ollama, etc.).
 type Client struct {
@@ -78,6 +85,16 @@ func (c *Client) Model() string {
 		return ""
 	}
 	return c.model
+}
+
+// WithModel selects a collection's encoder while preserving shared transport and QoS.
+func (c *Client) WithModel(model string) *Client {
+	if c == nil {
+		return nil
+	}
+	copy := *c
+	copy.model = model
+	return &copy
 }
 
 // WithQueryAlias enables the provider's fixed <model>:query alias on a copy.
@@ -166,7 +183,7 @@ func (c *Client) EmbedTexts(ctx context.Context, texts []string) ([][]float32, e
 		return nil, nil
 	}
 	if c.breaker != nil {
-		if err := c.breaker.Allow(); err != nil {
+		if err := c.breaker.check(); err != nil {
 			return nil, err
 		}
 	}
@@ -175,11 +192,19 @@ func (c *Client) EmbedTexts(ctx context.Context, texts []string) ([][]float32, e
 		return nil, err
 	}
 	defer release()
-	// The endpoint may have failed while this call waited for admission.
+	// Reserve a probe only after admission; the initial check did not reserve it.
+	probe := false
+	var generation uint64
 	if c.breaker != nil {
-		if err := c.breaker.Allow(); err != nil {
+		generation, probe, err = c.breaker.acquire()
+		if err != nil {
 			return nil, err
 		}
+		defer func() {
+			if probe {
+				c.breaker.abort(generation)
+			}
+		}()
 	}
 
 	allVecs := make([][]float32, len(texts))
@@ -209,6 +234,7 @@ func (c *Client) EmbedTexts(ctx context.Context, texts []string) ([][]float32, e
 
 	// Embed only misses
 	missVecs := make([][]float32, len(missTexts))
+	var providerFailed atomic.Bool
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(c.concurrency)
 
@@ -222,6 +248,9 @@ func (c *Client) EmbedTexts(ctx context.Context, texts []string) ([][]float32, e
 		g.Go(func() error {
 			vecs, err := c.embedBatch(gctx, missTexts[start:end])
 			if err != nil {
+				if errors.Is(err, errProviderFailure) {
+					providerFailed.Store(true)
+				}
 				return fmt.Errorf("batch [%d:%d]: %w", start, end, err)
 			}
 			for i, v := range vecs {
@@ -232,13 +261,15 @@ func (c *Client) EmbedTexts(ctx context.Context, texts []string) ([][]float32, e
 	}
 
 	if err := g.Wait(); err != nil {
-		if c.breaker != nil {
-			c.breaker.RecordFailure()
+		if c.breaker != nil && providerFailed.Load() {
+			c.breaker.complete(generation, true)
+			probe = false
 		}
 		return nil, err
 	}
 	if c.breaker != nil {
-		c.breaker.RecordSuccess()
+		c.breaker.complete(generation, false)
+		probe = false
 	}
 
 	// Place miss results back and cache them
@@ -271,10 +302,16 @@ func (c *Client) EmbedSingle(ctx context.Context, text string) ([]float32, error
 // embedBatch sends one batch to the embedding API.
 func (c *Client) embedBatch(ctx context.Context, texts []string) (vecs [][]float32, err error) {
 	defer metrics.ObserveExternalCall("embed", "embed", time.Now(), &err)
+	providerAttempt := false
+	defer func() {
+		if err != nil && providerAttempt && (ctx.Err() == nil || (!errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded))) {
+			err = fmt.Errorf("%w: %w", errProviderFailure, err)
+		}
+	}()
 	if c.guard != nil {
 		release, err := c.guard(ctx)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%w: %w", ErrGuardRejected, err)
 		}
 		defer release()
 	}
@@ -292,6 +329,7 @@ func (c *Client) embedBatch(ctx context.Context, texts []string) (vecs [][]float
 	}
 	req.Header.Set("Content-Type", "application/json")
 
+	providerAttempt = true
 	embedStart := time.Now()
 	resp, err := c.httpClient.Do(req)
 	embedDur := time.Since(embedStart).Seconds()

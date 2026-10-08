@@ -10,6 +10,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stek0v/levara/pipeline"
 	"github.com/stek0v/levara/pkg/bm25"
+	"github.com/stek0v/levara/pkg/embed"
 	"github.com/stek0v/levara/pkg/graphrank"
 	"github.com/stek0v/levara/pkg/router"
 )
@@ -53,41 +55,6 @@ const (
 	// multi-query branch generates per call. Matches pre-refactor.
 	searchMultiQueryN = 3
 )
-
-// searchTypesForMode returns the whitelist of search types allowed
-// under a given mode. nil means "no restriction" (full / auto).
-// Mirror of the pre-refactor helper in internal/http/mcp.go.
-func searchTypesForMode(mode string) map[string]bool {
-	switch mode {
-	case "rag":
-		return map[string]bool{
-			"CHUNKS": true, "HYBRID": true, "CHUNKS_LEXICAL": true,
-			"RAG_COMPLETION": true, "SUMMARIES": true, "WEIGHTED_HYBRID": true,
-		}
-	case "graph":
-		return map[string]bool{
-			"GRAPH_COMPLETION": true, "GRAPH_COMPLETION_COT": true,
-			"GRAPH_COMPLETION_CONTEXT_EXTENSION": true, "GRAPH_SUMMARY_COMPLETION": true,
-			"COMMUNITY_LOCAL": true, "COMMUNITY_GLOBAL": true,
-			"CYPHER": true, "TRIPLET_COMPLETION": true, "TEMPORAL": true,
-		}
-	default:
-		return nil
-	}
-}
-
-// defaultTypeForMode returns the fallback search_type to coerce to
-// when the caller asked for a type outside the mode's whitelist.
-func defaultTypeForMode(mode string) string {
-	switch mode {
-	case "rag":
-		return "CHUNKS"
-	case "graph":
-		return "GRAPH_COMPLETION"
-	default:
-		return "AUTO"
-	}
-}
 
 // extractQueryEntitiesForSearch finds graph entity names whose
 // lowercased `name` matches any whitespace-separated word of the
@@ -165,7 +132,7 @@ func parseSearchArgs(args map[string]any) searchArgs {
 	}
 	out.query, _ = args["search_query"].(string)
 	if st, _ := args["search_type"].(string); st != "" {
-		out.searchType = st
+		out.searchType = strings.ToUpper(strings.TrimSpace(st))
 	}
 	if tk, ok := numericArg(args["top_k"]); ok && tk > 0 {
 		out.topK = int(tk)
@@ -193,7 +160,7 @@ func parseSearchArgs(args map[string]any) searchArgs {
 		out.bm25Weight = w
 	}
 	if m, _ := args["mode"].(string); m != "" {
-		out.mode = m
+		out.mode = strings.ToLower(strings.TrimSpace(m))
 	}
 	return out
 }
@@ -214,27 +181,6 @@ func numericArg(v any) (float64, bool) {
 	default:
 		return 0, false
 	}
-}
-
-// applyModeGating coerces search_type when mode restricts it. Returns
-// the (possibly updated) searchType. "AUTO" and empty types pass
-// through untouched — the router handles them later.
-func applyModeGating(mode, searchType string) string {
-	if mode != "rag" && mode != "graph" {
-		return searchType
-	}
-	allowed := searchTypesForMode(mode)
-	if allowed == nil {
-		return searchType
-	}
-	upper := strings.ToUpper(searchType)
-	if upper == "AUTO" || upper == "" {
-		return searchType
-	}
-	if allowed[upper] {
-		return searchType
-	}
-	return defaultTypeForMode(mode)
 }
 
 // applyTypeFlags maps the (possibly routed) search_type into the
@@ -276,15 +222,14 @@ func searchNeedsVector(a searchArgs) bool {
 // top results plus routing metadata.
 //
 // High-level flow:
-//  1. Parse args + apply mode gating (rag/graph modes restrict
-//     search_type).
+//  1. Parse and validate supported retrieval types and modes.
 //  2. If search_type is AUTO/FEELING_LUCKY, consult the router with
-//     the deployment's capabilities.
+//     the deployment's capabilities and keep implemented retrieval candidates.
 //  3. Build a SearchPipeline via Deps when the selected strategy needs vectors.
 //     nil → "embedding not configured" short-circuit for vector strategies.
 //  4. For each collection (configured filter or all), dispatch on the
 //     flag combination and execute the matching strategy.
-//  5. Dedup (when enabled), apply room/tags post-filter, cap at topK.
+//  5. Apply room/tags filters before dedup (when enabled) and the topK cap.
 //  6. Marshal results + routing metadata to JSON.
 func ToolSearch(ctx context.Context, deps Deps, args map[string]any) ToolResult {
 	a := parseSearchArgs(args)
@@ -295,21 +240,54 @@ func ToolSearch(ctx context.Context, deps Deps, args map[string]any) ToolResult 
 		}
 	}
 
-	a.searchType = applyModeGating(a.mode, a.searchType)
+	if a.searchType == "" {
+		a.searchType = "AUTO"
+	}
+	if a.searchType == "BM25" {
+		a.searchType = "CHUNKS_LEXICAL"
+	}
+	switch a.searchType {
+	case "AUTO", "FEELING_LUCKY", "CHUNKS", "BASIC", "CHUNKS_LEXICAL", "HYBRID", "WEIGHTED_HYBRID", "PARENT_CHILD", "MULTI_QUERY", "RERANK", "GRAPH_RERANK":
+	default:
+		return toolError("unsupported search_type: " + a.searchType)
+	}
+	switch a.mode {
+	case "", "auto", "full", "rag":
+	default:
+		return toolError("unsupported search mode: " + a.mode)
+	}
 
 	// AUTO / FEELING_LUCKY → consult router.
 	var routingInfo *router.Decision
 	upper := strings.ToUpper(a.searchType)
 	if upper == "AUTO" || upper == "FEELING_LUCKY" {
 		caps := deps.SearchCapabilities(a.collection)
-		// Mode-aware: suppress graph capabilities in rag mode so the
-		// router doesn't pick a graph-backed search type.
-		if a.mode == "rag" {
-			caps.HasNeo4j = false
-			caps.HasPostgres = false
-			caps.HasCommunities = false
-		}
 		d := router.Route(a.query, caps)
+		// The shared router also serves REST generation/graph handlers.
+		// MCP retains only candidates it can actually dispatch.
+		candidates := []router.Alternative{{SearchType: d.SearchType, Score: d.Confidence}}
+		candidates = append(candidates, d.Alternatives...)
+		selected := router.Alternative{SearchType: "CHUNKS", Score: 0.1}
+		var supported []router.Alternative
+		for _, candidate := range candidates {
+			switch candidate.SearchType {
+			case "CHUNKS", "CHUNKS_LEXICAL", "HYBRID":
+				supported = append(supported, candidate)
+				if candidate.Score > selected.Score {
+					selected = candidate
+				}
+			}
+		}
+		if selected.SearchType != d.SearchType {
+			d.Reason = "MCP retrieval fallback; " + d.SearchType + " is unavailable"
+		}
+		d.SearchType, d.Confidence = selected.SearchType, selected.Score
+		d.Alternatives = nil
+		for _, candidate := range supported {
+			if candidate.SearchType != selected.SearchType {
+				d.Alternatives = append(d.Alternatives, candidate)
+			}
+		}
 		routingInfo = &d
 		a.searchType = d.SearchType
 	}
@@ -323,11 +301,35 @@ func ToolSearch(ctx context.Context, deps Deps, args map[string]any) ToolResult 
 	if searchNeedsVector(a) {
 		sp = deps.NewSearchPipeline(a.doRerank)
 	}
+	hybridFallback := isHybridSearchType(a.searchType) && sp == nil
+	if hybridFallback {
+		a.searchType = "CHUNKS_LEXICAL"
+		a.doRerank = false
+	}
 	if searchNeedsVector(a) && sp == nil {
 		return ToolResult{Content: []Content{{
 			Type: "text",
 			Text: "No results (embedding service not configured)",
 		}}}
+	}
+
+	// Report the branch selected by the existing precedence, including
+	// degraded feature flags, without changing retrieval or ACL fences.
+	effectiveType := a.searchType
+	switch {
+	case isLexicalSearchType(a.searchType), isHybridSearchType(a.searchType):
+	case a.doParentChild:
+		effectiveType = "PARENT_CHILD"
+	case a.doMultiQuery && deps.LLMProvider() != nil:
+		effectiveType = "MULTI_QUERY"
+	case a.doRerank && sp.RerankEnabled():
+		effectiveType = "RERANK"
+	case a.doGraphRerank && deps.DB() != nil:
+		effectiveType = "GRAPH_RERANK"
+	default:
+		if a.searchType != "BASIC" {
+			effectiveType = "CHUNKS"
+		}
 	}
 
 	var colls []string
@@ -349,8 +351,11 @@ func ToolSearch(ctx context.Context, deps Deps, args map[string]any) ToolResult 
 		allowedDatasetIDs = nil
 	}
 	if allowedDatasetIDs != nil && len(allowedDatasetIDs) == 0 {
+		if effectiveType == "RERANK" {
+			effectiveType = "CHUNKS"
+		}
 		return jsonResult(map[string]any{
-			"search_type": a.searchType,
+			"search_type": effectiveType,
 			"reranked":    false,
 			"results":     []any{},
 		})
@@ -360,7 +365,10 @@ func ToolSearch(ctx context.Context, deps Deps, args map[string]any) ToolResult 
 	wasReranked := false
 
 	for _, coll := range colls {
-		res, reranked, err := runSearchStrategy(ctx, deps, sp, coll, a.query, fetchK, a, allowedDatasetIDs)
+		res, reranked, err := runSearchStrategy(ctx, deps, sp, coll, a.query, fetchK, a, allowedDatasetIDs, hybridFallback)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return toolError("search canceled")
+		}
 		if err != nil {
 			return toolError("search authorization unavailable")
 		}
@@ -372,6 +380,7 @@ func ToolSearch(ctx context.Context, deps Deps, args map[string]any) ToolResult 
 			wasReranked = true
 		}
 
+		res = filterSearchMetadata(res, a)
 		if a.doDedup && len(res) > 1 {
 			res = pipeline.DeduplicateResults(res, searchDedupThreshold)
 		}
@@ -399,9 +408,14 @@ func ToolSearch(ctx context.Context, deps Deps, args map[string]any) ToolResult 
 	}
 
 	response := map[string]any{
-		"search_type": a.searchType,
+		"search_type": effectiveType,
 		"reranked":    wasReranked,
 	}
+	if effectiveType == "RERANK" && !wasReranked {
+		effectiveType = "CHUNKS"
+		response["search_type"] = effectiveType
+	}
+	a.searchType = effectiveType
 	response["interaction_id"] = recordSearchInteraction(ctx, deps, args, a, results)
 	if len(results) == 0 {
 		response["results"] = []any{}
@@ -409,12 +423,15 @@ func ToolSearch(ctx context.Context, deps Deps, args map[string]any) ToolResult 
 		response["results"] = results
 	}
 	if routingInfo != nil {
+		if effectiveType != routingInfo.SearchType {
+			routingInfo.Reason += "; feature flags selected " + effectiveType
+		}
 		altStrings := make([]string, 0, len(routingInfo.Alternatives))
 		for _, a := range routingInfo.Alternatives {
 			altStrings = append(altStrings, a.SearchType)
 		}
 		response["routing"] = map[string]any{
-			"selected_type": routingInfo.SearchType,
+			"selected_type": effectiveType,
 			"reason":        routingInfo.Reason,
 			"confidence":    routingInfo.Confidence,
 			"alternatives":  altStrings,
@@ -495,26 +512,59 @@ func searchMetadataDatasetID(metadata json.RawMessage) string {
 	return projectID
 }
 
+func terminalSearchError(ctx context.Context, err error) error {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	if errors.Is(err, embed.ErrGuardRejected) || errors.Is(err, pipeline.ErrResultFilterRejected) {
+		return err
+	}
+	return nil
+}
+
 // runSearchStrategy dispatches to one of the five search branches
 // based on the flag combination. Returns the results and whether a
 // rerank actually ran (HYBRID or the explicit rerank branch).
 // Errors from the pipeline are swallowed per branch — the caller
 // continues to the next collection, matching pre-refactor behavior.
-func runSearchStrategy(ctx context.Context, deps Deps, sp SearchPipeline, coll, query string, fetchK int, a searchArgs, allowedDatasetIDs []string) (results []pipeline.ScoredResult, reranked bool, authErr error) {
+func runSearchStrategy(ctx context.Context, deps Deps, sp SearchPipeline, coll, query string, fetchK int, a searchArgs, allowedDatasetIDs []string, hybridFallback bool) (results []pipeline.ScoredResult, reranked bool, authErr error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+	ctx = pipeline.WithSearchResultFilter(ctx, func(_ context.Context, currentCollection string, in []pipeline.ScoredResult) ([]pipeline.ScoredResult, error) {
+		// Child chunks may omit parent room/tags; match resolved parents.
+		if a.doParentChild && currentCollection == coll+"_child" {
+			return in, nil
+		}
+		return filterSearchMetadata(in, a), nil
+	})
 	switch {
 	case isLexicalSearchType(a.searchType):
-		return runLexicalSearch(deps, coll, query, fetchK), false, nil
+		res, err := runLexicalSearch(deps, coll, query, fetchK)
+		if terminal := terminalSearchError(ctx, err); terminal != nil {
+			return nil, false, terminal
+		}
+		if hybridFallback && err != nil {
+			return nil, false, err
+		}
+		return res, false, nil
 	case isHybridSearchType(a.searchType):
-		candidates := runHybridSearch(ctx, deps, sp, coll, query, fetchK, a)
+		candidates, err := runHybridSearch(ctx, deps, sp, coll, query, fetchK, a, allowedDatasetIDs)
+		if err != nil {
+			return nil, false, err
+		}
 		if !a.doRerank || !sp.RerankEnabled() {
 			return candidates, false, nil
 		}
-		// Preserve the legacy cap-before-ACL result even when filtering
-		// compacts candidates in place or reranking is skipped/fails.
+		// Preserve filtered fusion order when reranking is skipped/fails.
 		fallback := append([]pipeline.ScoredResult(nil), candidates[:min(fetchK, len(candidates))]...)
 		filtered, err := filterSearchAccess(ctx, candidates, allowedDatasetIDs)
 		if err != nil {
 			return nil, false, err
+		}
+		filtered = filterSearchMetadata(filtered, a)
+		if len(filtered) == 0 {
+			return nil, false, nil
 		}
 		rr, ordered := sp.ApplyRerank(ctx, query, filtered, fetchK)
 		// Empty output may signal a rejected authorization fence; keep it empty.
@@ -524,6 +574,9 @@ func runSearchStrategy(ctx context.Context, deps Deps, sp SearchPipeline, coll, 
 		return ordered, rr, nil
 	case a.doParentChild:
 		res, err := sp.SearchByTextParentChild(ctx, coll, query, fetchK)
+		if terminal := terminalSearchError(ctx, err); terminal != nil {
+			return nil, false, terminal
+		}
 		if err != nil {
 			return nil, false, nil
 		}
@@ -531,6 +584,9 @@ func runSearchStrategy(ctx context.Context, deps Deps, sp SearchPipeline, coll, 
 	case a.doMultiQuery && deps.LLMProvider() != nil:
 		res, err := sp.SearchByTextMultiQuery(ctx, coll, query, fetchK,
 			deps.LLMProvider(), deps.LLMModel(), searchMultiQueryN)
+		if terminal := terminalSearchError(ctx, err); terminal != nil {
+			return nil, false, terminal
+		}
 		if err != nil {
 			return nil, false, nil
 		}
@@ -545,6 +601,9 @@ func runSearchStrategy(ctx context.Context, deps Deps, sp SearchPipeline, coll, 
 			overfetch = 10
 		}
 		candidates, err := sp.SearchByText(ctx, coll, query, overfetch)
+		if terminal := terminalSearchError(ctx, err); terminal != nil {
+			return nil, false, terminal
+		}
 		if err != nil {
 			return nil, false, nil
 		}
@@ -552,10 +611,17 @@ func runSearchStrategy(ctx context.Context, deps Deps, sp SearchPipeline, coll, 
 		if err != nil {
 			return nil, false, err
 		}
+		filtered = filterSearchMetadata(filtered, a)
+		if len(filtered) == 0 {
+			return nil, false, nil
+		}
 		rr, ordered := sp.ApplyRerank(ctx, query, filtered, fetchK)
 		return ordered, rr, nil
 	case a.doGraphRerank && deps.DB() != nil:
 		res, err := sp.SearchByText(ctx, coll, query, fetchK)
+		if terminal := terminalSearchError(ctx, err); terminal != nil {
+			return nil, false, terminal
+		}
 		if err != nil || len(res) == 0 {
 			return res, false, nil
 		}
@@ -570,11 +636,14 @@ func runSearchStrategy(ctx context.Context, deps Deps, sp SearchPipeline, coll, 
 			if i >= len(res) {
 				break
 			}
-			res[i] = pipeline.ScoredResult{ID: r.ID, Score: r.Score, Metadata: r.Metadata}
+			res[i] = pipeline.ScoredResult{Collection: coll, ID: r.ID, Score: r.Score, Metadata: r.Metadata}
 		}
 		return res, false, nil
 	default:
 		res, err := sp.SearchByText(ctx, coll, query, fetchK)
+		if terminal := terminalSearchError(ctx, err); terminal != nil {
+			return nil, false, terminal
+		}
 		if err != nil {
 			return nil, false, nil
 		}
@@ -582,37 +651,76 @@ func runSearchStrategy(ctx context.Context, deps Deps, sp SearchPipeline, coll, 
 	}
 }
 
-func runLexicalSearch(deps Deps, coll, query string, fetchK int) []pipeline.ScoredResult {
+func filterSearchMetadata(results []pipeline.ScoredResult, a searchArgs) []pipeline.ScoredResult {
+	if a.roomFilter == "" && len(a.tagFilters) == 0 {
+		return results
+	}
+	filtered := make([]pipeline.ScoredResult, 0, len(results))
+	for _, r := range results {
+		if ChunkMetaMatches(r.Metadata, a.roomFilter, a.tagFilters) {
+			filtered = append(filtered, r)
+		}
+	}
+	return filtered
+}
+
+func runLexicalSearch(deps Deps, coll, query string, fetchK int) ([]pipeline.ScoredResult, error) {
 	results, err := deps.LexicalSearch(coll, query, fetchK)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	out := make([]pipeline.ScoredResult, 0, len(results))
 	for _, r := range results {
 		out = append(out, pipeline.ScoredResult{
-			ID:       r.ID,
-			Score:    float32(r.Score),
-			Metadata: json.RawMessage(r.Metadata),
+			Collection: coll,
+			ID:         r.ID,
+			Score:      float32(r.Score),
+			Metadata:   json.RawMessage(r.Metadata),
 		})
 	}
-	return out
+	return out, nil
 }
 
-func runHybridSearch(ctx context.Context, deps Deps, sp SearchPipeline, coll, query string, fetchK int, a searchArgs) []pipeline.ScoredResult {
+func runHybridSearch(ctx context.Context, deps Deps, sp SearchPipeline, coll, query string, fetchK int, a searchArgs, allowedDatasetIDs []string) ([]pipeline.ScoredResult, error) {
 	if sp == nil {
-		return nil
+		return nil, nil
 	}
 	fusionK := fetchK * 2
 	if fusionK < fetchK {
 		fusionK = fetchK
 	}
 	vectorResults, err := sp.SearchByText(ctx, coll, query, fusionK)
-	if err != nil {
-		return nil
+	vectorErr := err
+	if terminal := terminalSearchError(ctx, err); terminal != nil {
+		return nil, terminal
 	}
-	lexicalResults, err := deps.LexicalSearch(coll, query, fusionK)
 	if err != nil {
-		return nil
+		vectorResults = nil
+	}
+	lexicalResults, lexicalErr := deps.LexicalSearch(coll, query, fusionK)
+	if terminal := terminalSearchError(ctx, lexicalErr); terminal != nil {
+		return nil, terminal
+	}
+	if lexicalErr != nil {
+		lexicalResults = nil
+	}
+	// Revalidate live authority on each surviving leg before fusion caps it.
+	vectorResults, err = filterSearchAccess(ctx, vectorResults, allowedDatasetIDs)
+	if err != nil {
+		return nil, err
+	}
+	vectorResults = filterSearchMetadata(vectorResults, a)
+	lexicalCandidates := make([]pipeline.ScoredResult, 0, len(lexicalResults))
+	for _, r := range lexicalResults {
+		lexicalCandidates = append(lexicalCandidates, pipeline.ScoredResult{Collection: coll, ID: r.ID, Score: float32(r.Score), Metadata: json.RawMessage(r.Metadata)})
+	}
+	lexicalCandidates, err = filterSearchAccess(ctx, lexicalCandidates, allowedDatasetIDs)
+	if err != nil {
+		return nil, err
+	}
+	lexicalCandidates = filterSearchMetadata(lexicalCandidates, a)
+	if vectorErr != nil && lexicalErr != nil {
+		return nil, errors.Join(vectorErr, lexicalErr)
 	}
 
 	vr := make([]bm25.VectorResult, 0, len(vectorResults))
@@ -623,11 +731,11 @@ func runHybridSearch(ctx context.Context, deps Deps, sp SearchPipeline, coll, qu
 			Metadata: string(r.Metadata),
 		})
 	}
-	br := make([]bm25.Result, 0, len(lexicalResults))
-	for _, r := range lexicalResults {
+	br := make([]bm25.Result, 0, len(lexicalCandidates))
+	for _, r := range lexicalCandidates {
 		br = append(br, bm25.Result{
 			ID:       r.ID,
-			Score:    r.Score,
+			Score:    float64(r.Score),
 			Metadata: string(r.Metadata),
 		})
 	}
@@ -641,10 +749,11 @@ func runHybridSearch(ctx context.Context, deps Deps, sp SearchPipeline, coll, qu
 	out := make([]pipeline.ScoredResult, 0, len(hybrid))
 	for _, r := range hybrid {
 		out = append(out, pipeline.ScoredResult{
-			ID:       r.ID,
-			Score:    float32(r.FusedScore),
-			Metadata: json.RawMessage(r.Metadata),
+			Collection: coll,
+			ID:         r.ID,
+			Score:      float32(r.FusedScore),
+			Metadata:   json.RawMessage(r.Metadata),
 		})
 	}
-	return out
+	return out, nil
 }

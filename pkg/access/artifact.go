@@ -46,16 +46,29 @@ func (p SQLPolicy) AuthorizeArtifactLocation(ctx context.Context, actor Actor, l
 // Workspace directories use a lossy identifier. Resolve exactly one persisted
 // project; a colliding directory can never acquire another project's grant.
 func (p SQLPolicy) AuthorizeWorkspaceDirectory(ctx context.Context, actor Actor, directory string) (bool, error) {
+	project, err := p.ResolveWorkspaceDirectory(ctx, directory)
+	if err != nil || project == "" {
+		return false, err
+	}
+	d, err := p.AuthorizeDataset(ctx, actor, project, ActionRead)
+	return d.Allowed, err
+}
+
+// ResolveWorkspaceDirectory binds a filesystem namespace to one registered ID.
+func (p SQLPolicy) ResolveWorkspaceDirectory(ctx context.Context, directory string) (string, error) {
+	if p.DB == nil && p.readTx == nil {
+		return "", ErrDocumentInvalid
+	}
 	rows, err := p.reader().QueryContext(ctx, `SELECT id FROM datasets ORDER BY id LIMIT 10001`)
 	if err != nil {
-		return false, err
+		return "", err
 	}
 	project, count, matches := "", 0, 0
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
 			rows.Close()
-			return false, err
+			return "", err
 		}
 		count++
 		if workspace.SafeID(id) == directory {
@@ -63,14 +76,50 @@ func (p SQLPolicy) AuthorizeWorkspaceDirectory(ctx context.Context, actor Actor,
 		}
 	}
 	err = rows.Err()
-	rows.Close()
+	closeErr := rows.Close()
 	if err != nil {
-		return false, err
+		return "", err
+	}
+	if closeErr != nil {
+		return "", closeErr
 	}
 	// ponytail: bounded directory resolution; store canonical IDs if >10k projects need this path.
 	if count > 10000 || matches != 1 {
-		return false, nil
+		return "", nil
 	}
-	d, err := p.AuthorizeDataset(ctx, actor, project, ActionRead)
-	return d.Allowed, err
+	return project, nil
+}
+
+// WorkspaceProjectUnambiguous rejects distinct SQL objects sharing one directory.
+func (p SQLPolicy) WorkspaceProjectUnambiguous(ctx context.Context, projectID string) (bool, error) {
+	if (p.DB == nil && p.readTx == nil) || projectID == "" {
+		return false, ErrDocumentInvalid
+	}
+	rows, err := p.reader().QueryContext(ctx, `SELECT id FROM datasets LIMIT 10001`)
+	if err != nil {
+		return false, err
+	}
+	count, collision := 0, false
+	directory := workspace.SafeID(projectID)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return false, err
+		}
+		count++
+		if id != projectID && workspace.SafeID(id) == directory {
+			collision = true
+		}
+	}
+	err = rows.Err()
+	closeErr := rows.Close()
+	if err != nil {
+		return false, err
+	}
+	if closeErr != nil {
+		return false, closeErr
+	}
+	// ponytail: bounded scan like directory resolution; canonical IDs remove this 10k-project ceiling.
+	return count <= 10000 && !collision, nil
 }

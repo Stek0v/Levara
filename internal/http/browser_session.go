@@ -99,8 +99,11 @@ func logoutHandler(cfg AuthConfig) fiber.Handler {
 			token = c.Cookies("auth_token")
 		}
 		payload, valid := verifyJWT(token, cfg.JWTSecret)
-		if !valid || !validSession(ctx, cfg.DB, cfg.RequireAuth, payload) {
+		if !valid {
 			return c.SendStatus(fiber.StatusUnauthorized)
+		}
+		if err := validateSession(ctx, cfg.DB, cfg.RequireAuth, payload); err != nil {
+			return c.SendStatus(identityFailureStatus(err))
 		}
 		if payload.SessionID != "" {
 			if cfg.DB == nil {

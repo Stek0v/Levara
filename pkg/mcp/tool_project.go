@@ -8,140 +8,117 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/stek0v/levara/pkg/embcontract"
 )
 
-// ToolGetProjectContext assembles a context summary for a collection:
-// collection stats, recent memories, graph entity-type counts, and
-// recent interactions. Optional "include_related" arg appends summaries
-// of sibling collections.
-//
-// Error branch: missing collection arg → IsError.
-// Non-error branches: any section that errors (DB nil, missing table) is
-// silently skipped — a partial context is more useful than an error.
+// ToolGetProjectContext summarizes current caller/shared memories in a project.
+// Auxiliary sources without proven project/access scope are explicitly unavailable.
+// A failed read returns an error without publishing the partially assembled summary.
 func ToolGetProjectContext(ctx context.Context, deps Deps, args map[string]any) ToolResult {
 	collection, _ := args["collection"].(string)
 	if collection == "" {
-		return ToolResult{
-			Content: []Content{{Type: "text", Text: "Error: 'collection' required"}},
-			IsError: true,
-		}
+		return toolError("'collection' required")
 	}
-
-	var sb strings.Builder
 	db := deps.DB()
-
-	// 1. Collection stats
-	sb.WriteString("## Collection Stats\n")
-	meta := deps.CollectionMeta(collection)
-	if meta.Records > 0 || meta.Dim > 0 {
-		fmt.Fprintf(&sb, "- Name: %s\n- Records: %d\n- Dimension: %d\n- Metric: %s\n\n",
-			meta.Name, meta.Records, meta.Dim, meta.Metric)
-	} else {
-		fmt.Fprintf(&sb, "- Collection '%s' not found (no vectors indexed yet)\n\n", collection)
+	if db == nil {
+		return toolError("database not configured")
+	}
+	ownerID := extractOwnerID(ctx)
+	var sb strings.Builder
+	var aggregates *ProjectContextAggregates
+	if provider, ok := deps.(ProjectContextAggregateProvider); ok {
+		value, err := provider.ProjectContextAggregates(ctx, collection)
+		if err != nil {
+			return toolError("read project aggregates: " + err.Error())
+		}
+		aggregates = &value
 	}
 
-	// 2. Memories
-	sb.WriteString("## Project Memories\n")
-	if db != nil {
-		rows, err := db.QueryContext(ctx,
-			deps.Q(`SELECT key, value, type FROM memories
-			 WHERE collection_name = $1 ORDER BY updated_at DESC LIMIT 20`), collection)
-		if err == nil {
-			defer rows.Close()
-			count := 0
-			for rows.Next() {
-				var key, value, typ string
-				rows.Scan(&key, &value, &typ)
+	writeMemories := func(name string, limit int, compact bool) error {
+		rows, err := db.QueryContext(ctx, deps.Q(`SELECT key, value, type FROM memories
+			WHERE collection_name = $1 AND (owner_id = $2 OR owner_id = '')
+			AND superseded_by = '' AND valid_until IS NULL ORDER BY updated_at DESC LIMIT $3`), name, ownerID, limit)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		count := 0
+		for rows.Next() {
+			var key, value, typ string
+			if err := rows.Scan(&key, &value, &typ); err != nil {
+				return err
+			}
+			if compact {
+				fmt.Fprintf(&sb, "- %s: %s\n", key, Truncate(value, 100))
+			} else {
 				fmt.Fprintf(&sb, "- [%s] %s: %s\n", typ, key, Truncate(value, 200))
-				count++
 			}
-			if count == 0 {
-				sb.WriteString("- (no memories saved for this collection)\n")
-			}
-			sb.WriteString("\n")
+			count++
 		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		if count == 0 {
+			sb.WriteString("- (no memories saved for this collection)\n")
+		}
+		sb.WriteString("\n")
+		return nil
 	}
 
-	// 3. Graph entities (top types)
+	sb.WriteString("## Collection Stats\n")
+	if aggregates == nil {
+		sb.WriteString("- unavailable: vector statistics have no proven caller access scope\n\n")
+	} else {
+		fmt.Fprintf(&sb, "- Accessible published documents: %d\n\n", aggregates.PublishedDocuments)
+	}
+	sb.WriteString("## Project Memories\n")
+	if err := writeMemories(collection, 20, false); err != nil {
+		return toolError("read project memories: " + err.Error())
+	}
 	sb.WriteString("## Key Entity Types\n")
-	if db != nil {
-		rows, err := db.QueryContext(ctx,
-			deps.Q(`SELECT type, COUNT(*) as cnt FROM graph_nodes GROUP BY type ORDER BY cnt DESC LIMIT 10`))
-		if err == nil {
-			defer rows.Close()
-			count := 0
-			for rows.Next() {
-				var typ string
-				var cnt int
-				rows.Scan(&typ, &cnt)
-				fmt.Fprintf(&sb, "- %s: %d entities\n", typ, cnt)
-				count++
-			}
-			if count == 0 {
-				sb.WriteString("- (no entities extracted yet)\n")
-			}
-			sb.WriteString("\n")
+	if aggregates == nil {
+		sb.WriteString("- unavailable: graph sources have no proven project/access scope\n\n")
+	} else if len(aggregates.EntityTypes) == 0 {
+		sb.WriteString("- (none)\n\n")
+	} else {
+		types := make([]string, 0, len(aggregates.EntityTypes))
+		for typ := range aggregates.EntityTypes {
+			types = append(types, typ)
 		}
+		sort.Strings(types)
+		for _, typ := range types {
+			fmt.Fprintf(&sb, "- %s: %d\n", typ, aggregates.EntityTypes[typ])
+		}
+		sb.WriteString("\n")
 	}
-
-	// 4. Recent interactions
 	sb.WriteString("## Recent Interactions\n")
-	if db != nil {
-		rows, err := db.QueryContext(ctx,
-			deps.Q(`SELECT query, response, created_at FROM interactions
-			 ORDER BY created_at DESC LIMIT 5`))
-		if err == nil {
-			defer rows.Close()
-			count := 0
-			for rows.Next() {
-				var query, response, createdAt string
-				rows.Scan(&query, &response, &createdAt)
-				fmt.Fprintf(&sb, "- Q: %s\n  A: %s\n", Truncate(query, 100), Truncate(response, 150))
-				count++
-			}
-			if count == 0 {
-				sb.WriteString("- (no interactions recorded)\n")
-			}
+	if aggregates == nil {
+		sb.WriteString("- unavailable: interactions have no project collection provenance\n")
+	} else if len(aggregates.RecentInteractions) == 0 {
+		sb.WriteString("- (none)\n")
+	} else {
+		for _, interaction := range aggregates.RecentInteractions {
+			fmt.Fprintf(&sb, "- %s → %s\n", Truncate(interaction.Query, 100), Truncate(interaction.Response, 100))
 		}
 	}
 
-	// 5. Related projects (compact summaries)
 	if related, ok := args["include_related"].([]any); ok && len(related) > 0 {
 		sb.WriteString("\n## Related Projects\n")
 		for _, r := range related {
-			relColl, ok := r.(string)
-			if !ok || relColl == "" {
+			name, ok := r.(string)
+			if !ok || name == "" {
 				continue
 			}
-			fmt.Fprintf(&sb, "\n### %s\n", relColl)
-			relMeta := deps.CollectionMeta(relColl)
-			if relMeta.Records > 0 || relMeta.Dim > 0 {
-				fmt.Fprintf(&sb, "- Records: %d, Dim: %d\n", relMeta.Records, relMeta.Dim)
-			} else {
-				sb.WriteString("- (no vectors)\n")
-			}
-			if db != nil {
-				relRows, err := db.QueryContext(ctx,
-					deps.Q(`SELECT key, value FROM memories WHERE collection_name = $1 ORDER BY updated_at DESC LIMIT 3`), relColl)
-				if err == nil {
-					defer relRows.Close()
-					for relRows.Next() {
-						var key, value string
-						relRows.Scan(&key, &value)
-						fmt.Fprintf(&sb, "- %s: %s\n", key, Truncate(value, 100))
-					}
-				}
+			fmt.Fprintf(&sb, "\n### %s\n", name)
+			if err := writeMemories(name, 3, true); err != nil {
+				return toolError("read related project memories: " + err.Error())
 			}
 		}
 	}
-
-	return jsonResult(map[string]any{
-		"collection": collection,
-		"text":       sb.String(),
-	})
+	return jsonResult(map[string]any{"collection": collection, "text": sb.String()})
 }
 
 // driftResult mirrors embed.DriftCheckResult JSON shape without importing

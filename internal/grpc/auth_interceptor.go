@@ -12,6 +12,7 @@ package grpc
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"time"
@@ -79,8 +80,10 @@ func UnaryAuthInterceptor(secret string, requireAuth bool, policy access.SQLPoli
 				return nil, err
 			}
 		}
-		if requireAuth && (access.ValidateCredential(ctx, policy.DB, policy.Q, payload.Sub, payload.CredentialEpoch) != nil || access.ValidateBrowserSession(ctx, policy.DB, policy.Q, payload.Sub, payload.SessionID) != nil) {
-			return nil, status.Error(codes.Unauthenticated, "revoked credential")
+		if requireAuth {
+			if err := validateSessionCredential(ctx, policy, payload.Sub, payload.CredentialEpoch, payload.SessionID); err != nil {
+				return nil, err
+			}
 		}
 		ctx = context.WithValue(ctx, ctxUserIDKey{}, payload.Sub)
 		actor := access.Actor{UserID: payload.Sub}
@@ -119,8 +122,10 @@ func StreamAuthInterceptor(secret string, requireAuth bool, policy access.SQLPol
 				return err
 			}
 		}
-		if requireAuth && (access.ValidateCredential(ss.Context(), policy.DB, policy.Q, payload.Sub, payload.CredentialEpoch) != nil || access.ValidateBrowserSession(ss.Context(), policy.DB, policy.Q, payload.Sub, payload.SessionID) != nil) {
-			return status.Error(codes.Unauthenticated, "revoked credential")
+		if requireAuth {
+			if err := validateSessionCredential(ss.Context(), policy, payload.Sub, payload.CredentialEpoch, payload.SessionID); err != nil {
+				return err
+			}
 		}
 		return handler(srv, &authedStream{ServerStream: ss, ctx: context.WithValue(ss.Context(), ctxUserIDKey{}, payload.Sub)})
 	}
@@ -163,11 +168,8 @@ func authenticateScopedRPC(ctx context.Context, secret string, requireAuth bool,
 		if !active {
 			return nil, status.Error(codes.PermissionDenied, "active identity required")
 		}
-		if access.ValidateCredential(lookupCtx, policy.DB, policy.Q, actor.UserID, payload.CredentialEpoch) != nil || access.ValidateBrowserSession(lookupCtx, policy.DB, policy.Q, actor.UserID, payload.SessionID) != nil {
-			if lookupCtx.Err() != nil {
-				return nil, status.FromContextError(lookupCtx.Err()).Err()
-			}
-			return nil, status.Error(codes.Unauthenticated, "revoked credential")
+		if err := validateSessionCredential(lookupCtx, policy, actor.UserID, payload.CredentialEpoch, payload.SessionID); err != nil {
+			return nil, err
 		}
 		if actor.TenantID == "" {
 			actor.TenantID, err = policy.DefaultTenantForUser(lookupCtx, actor.UserID)
@@ -189,6 +191,20 @@ func authenticateScopedRPC(ctx context.Context, secret string, requireAuth bool,
 	}
 	ctx = context.WithValue(ctx, ctxUserIDKey{}, actor.UserID)
 	return context.WithValue(ctx, ctxMetadataActorKey{}, actor), nil
+}
+
+func validateSessionCredential(ctx context.Context, policy access.SQLPolicy, userID string, epoch int64, sessionID string) error {
+	err := access.ValidateSessionCredential(ctx, policy.DB, policy.Q, userID, epoch, sessionID)
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, access.ErrRevokedCredential) || errors.Is(err, access.ErrInactiveIdentity) {
+		return status.Error(codes.Unauthenticated, "revoked credential")
+	}
+	if ctx.Err() != nil {
+		return status.FromContextError(ctx.Err()).Err()
+	}
+	return status.Error(codes.Unavailable, "identity lookup unavailable")
 }
 
 func authorizeGlobalStorage(ctx context.Context, uid string, policy access.SQLPolicy) error {

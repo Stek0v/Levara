@@ -24,7 +24,8 @@ func setupCrossSearchDB(t *testing.T) *fakeDeps {
 			owner_id TEXT DEFAULT '', collection_name TEXT DEFAULT '',
 			room TEXT DEFAULT '', hall TEXT DEFAULT '',
 			is_pinned INTEGER DEFAULT 0, pin_priority INTEGER DEFAULT 0,
-			created_at TEXT, updated_at TEXT
+			created_at TEXT, updated_at TEXT,
+			superseded_by TEXT DEFAULT '', valid_until TEXT
 		)
 	`)
 	seed := []struct{ id, key, value, typ, coll string }{

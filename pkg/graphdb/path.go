@@ -123,23 +123,23 @@ func (w *Writer) PathBetween(ctx context.Context, q PathQuery) (_ PathResult, er
 	// before any cognify run has touched these relationships.
 	w.ensureValidFromBackfill(ctx)
 
-	// allShortestPaths bounds the result set to k-shortest geodesics; we then
-	// flatten edges across all returned paths and paginate via SKIP/LIMIT.
-	// Unbounded * + filter would explode for highly-connected graphs.
+	// Same-MATCH whole-path predicates filter visibility before shortest-path
+	// selection. Flattening first can expose invalid fragments or hide a longer
+	// live route behind an expired shortcut.
 	cypher := strings.TrimSpace(fmt.Sprintf(`
 		MATCH p=allShortestPaths((a:`+"`%s`"+` {id: $from})-[*..%d]-(b:`+"`%s`"+` {id: $to}))
+		WHERE ($asOf = 0)
+		   OR all(r IN relationships(p) WHERE coalesce(r.valid_from, 0) <= $asOf
+		       AND (r.valid_until IS NULL OR r.valid_until >= $asOf))
 		UNWIND relationships(p) AS r
 		WITH DISTINCT r
-		WHERE ($asOf = 0)
-		   OR (coalesce(r.valid_from, 0) <= $asOf
-		       AND (r.valid_until IS NULL OR r.valid_until >= $asOf))
 		RETURN startNode(r).id AS src,
 		       endNode(r).id   AS tgt,
 		       TYPE(r)         AS typ,
 		       coalesce(r.valid_from, 0) AS vf,
 		       r.valid_until   AS vu,
 		       properties(r)   AS props
-		ORDER BY src, tgt, typ
+		ORDER BY src, tgt, typ, coalesce(r.id, ""), elementId(r)
 		SKIP $skip LIMIT $limit
 	`, baseLabel, maxHops, baseLabel))
 

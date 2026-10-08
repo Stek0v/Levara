@@ -378,8 +378,11 @@ func authMeHandler(cfg AuthConfig) fiber.Handler {
 			return c.Status(401).JSON(fiber.Map{"detail": "not authenticated"})
 		}
 		payload, valid := verifyJWT(token, cfg.JWTSecret)
-		if !valid || !validSession(c.UserContext(), cfg.DB, cfg.RequireAuth, payload) {
+		if !valid {
 			return c.Status(401).JSON(fiber.Map{"detail": "invalid token"})
+		}
+		if err := validateSession(c.UserContext(), cfg.DB, cfg.RequireAuth, payload); err != nil {
+			return c.Status(identityFailureStatus(err)).JSON(fiber.Map{"detail": identityFailureDetail(err)})
 		}
 
 		// If DB available, fetch full user record
@@ -397,6 +400,9 @@ func authMeHandler(cfg AuthConfig) fiber.Handler {
 					"is_superuser": isSuperuser,
 					"is_verified":  isVerified,
 				})
+			}
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return c.Status(503).JSON(fiber.Map{"detail": "identity service unavailable"})
 			}
 			return c.Status(401).JSON(fiber.Map{"detail": "invalid user"})
 		}
@@ -430,14 +436,18 @@ func JWTMiddleware(secret string, requireAuth bool, cookieOrigins ...string) fib
 		if apiKey != "" {
 			// auth_db may be wrapped in a struct (to prevent fasthttp io.Closer auto-close)
 			authDB := extractAuthDB(c)
-			if authDB != nil {
-				id := verifyAPIKey(c.UserContext(), authDB, apiKey)
-				if id.Valid() {
-					c.Locals("verified_api_key", id)
-					c.Locals("user_id", id.UserID)
-					c.Locals("api_key_permissions", id.Permissions)
-					return c.Next()
-				}
+			if authDB == nil {
+				return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"detail": "identity service unavailable"})
+			}
+			id, err := verifyAPIKey(c.UserContext(), authDB, apiKey)
+			if err != nil {
+				return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"detail": "identity service unavailable"})
+			}
+			if id.Valid() {
+				c.Locals("verified_api_key", id)
+				c.Locals("user_id", id.UserID)
+				c.Locals("api_key_permissions", id.Permissions)
+				return c.Next()
 			}
 			return c.Status(401).JSON(fiber.Map{"detail": "invalid API key"})
 		}
@@ -468,8 +478,11 @@ func JWTMiddleware(secret string, requireAuth bool, cookieOrigins ...string) fib
 		}
 
 		payload, valid := verifyJWT(token, secret)
-		if !valid || !validSession(c.UserContext(), extractAuthDB(c), requireAuth, payload) {
+		if !valid {
 			return c.Status(401).JSON(fiber.Map{"detail": "invalid token"})
+		}
+		if err := validateSession(c.UserContext(), extractAuthDB(c), requireAuth, payload); err != nil {
+			return c.Status(identityFailureStatus(err)).JSON(fiber.Map{"detail": identityFailureDetail(err)})
 		}
 
 		c.Locals("user_id", payload.Sub)
@@ -496,12 +509,16 @@ func JWTMiddlewareWithOIDC(secret string, requireAuth bool, oidc ExternalBearerA
 		if c.Get("X-API-Key") == "" && strings.HasPrefix(c.Get("Authorization"), "Bearer ") {
 			token := bearerToken(c.Get("Authorization"))
 			if _, valid := verifyJWT(token, secret); token != "" && !valid {
-				if principal, err := oidc.Authenticate(c.UserContext(), token); err == nil && activeExternalUser(c.UserContext(), extractAuthDB(c), principal) {
-					c.Locals("user_id", principal.UserID)
-					c.Locals("email", principal.Email)
-					c.Locals("principal", principal)
-					c.Locals("verified_external", principal)
-					return c.Next()
+				if principal, err := oidc.Authenticate(c.UserContext(), token); err == nil {
+					if err := validateExternalUser(c.UserContext(), extractAuthDB(c), principal); err == nil {
+						c.Locals("user_id", principal.UserID)
+						c.Locals("email", principal.Email)
+						c.Locals("principal", principal)
+						c.Locals("verified_external", principal)
+						return c.Next()
+					} else if identityFailureStatus(err) == fiber.StatusServiceUnavailable {
+						return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"detail": "identity service unavailable"})
+					}
 				}
 			}
 		}
@@ -510,18 +527,40 @@ func JWTMiddlewareWithOIDC(secret string, requireAuth bool, oidc ExternalBearerA
 }
 
 func validSession(ctx context.Context, db *sql.DB, requireAuth bool, payload *jwtPayload) bool {
-	if payload == nil || payload.Sub == "" {
-		return false
-	}
-	if db == nil {
-		return !requireAuth
-	}
-	return accesspkg.ValidateCredential(ctx, db, Q, payload.Sub, payload.CredentialEpoch) == nil && accesspkg.ValidateBrowserSession(ctx, db, Q, payload.Sub, payload.SessionID) == nil
+	return validateSession(ctx, db, requireAuth, payload) == nil
 }
 
-func activeExternalUser(ctx context.Context, db *sql.DB, principal ExternalPrincipal) bool {
-	err := accesspkg.ValidateExternalCredential(ctx, db, Q, principal.UserID, principal.IssuedAt)
-	return err == nil
+func validateSession(ctx context.Context, db *sql.DB, requireAuth bool, payload *jwtPayload) error {
+	if payload == nil || payload.Sub == "" {
+		return accesspkg.ErrInactiveIdentity
+	}
+	if db == nil {
+		if requireAuth {
+			return accesspkg.ErrProvisioningNoDB
+		}
+		return nil
+	}
+	return accesspkg.ValidateSessionCredential(ctx, db, Q, payload.Sub, payload.CredentialEpoch, payload.SessionID)
+}
+
+func identityFailureStatus(err error) int {
+	if errors.Is(err, accesspkg.ErrRevokedCredential) || errors.Is(err, accesspkg.ErrInactiveIdentity) {
+		return fiber.StatusUnauthorized
+	}
+	return fiber.StatusServiceUnavailable
+}
+
+func identityFailureDetail(err error) string {
+	if identityFailureStatus(err) == fiber.StatusUnauthorized {
+		return "invalid token"
+	}
+	return "identity service unavailable"
+}
+
+var errIdentityUnavailable = errors.New("identity service unavailable")
+
+func validateExternalUser(ctx context.Context, db *sql.DB, principal ExternalPrincipal) error {
+	return accesspkg.ValidateExternalCredential(ctx, db, Q, principal.UserID, principal.IssuedAt)
 }
 
 // ExternalBearerAuth is the minimal seam the HTTP layer needs from an
@@ -565,24 +604,26 @@ func APIKeyPermissionMiddleware() fiber.Handler {
 
 // verifyAPIKey checks X-API-Key against api_keys table. Token hashing and the
 // key→user lookup stay here in the auth layer; the result is returned as the
-// transport-independent accesspkg.APIKeyIdentity (zero value when invalid).
-func verifyAPIKey(ctx context.Context, db *sql.DB, key string) accesspkg.APIKeyIdentity {
+// transport-independent accesspkg.APIKeyIdentity. A missing row is an invalid
+// credential; SQL and context failures remain distinguishable to transports.
+func verifyAPIKey(ctx context.Context, db *sql.DB, key string) (accesspkg.APIKeyIdentity, error) {
 	h := apikeyHash(key)
 	var keyID, userID, permissions string
 	err := db.QueryRowContext(ctx,
 		Q(`SELECT k.id, k.user_id, k.permissions FROM api_keys k JOIN users u ON u.id = k.user_id
 		WHERE k.key_hash = $1 AND k.revoked = FALSE AND u.is_active = true`), h,
 	).Scan(&keyID, &userID, &permissions)
-	if err != nil || keyID == "" {
-		return accesspkg.APIKeyIdentity{}
+	if errors.Is(err, sql.ErrNoRows) || err == nil && keyID == "" {
+		return accesspkg.APIKeyIdentity{}, nil
+	}
+	if err != nil {
+		return accesspkg.APIKeyIdentity{}, err
 	}
 	// Update last_used
-	db.ExecContext(ctx, Q(`UPDATE api_keys SET last_used = $1 WHERE key_hash = $2`),
-		time.Now().UTC().Format(time.RFC3339), h)
-	if ctx.Err() != nil {
-		return accesspkg.APIKeyIdentity{}
+	if _, err := db.ExecContext(ctx, Q(`UPDATE api_keys SET last_used = $1 WHERE key_hash = $2`), time.Now().UTC().Format(time.RFC3339), h); err != nil {
+		return accesspkg.APIKeyIdentity{}, err
 	}
-	return accesspkg.APIKeyIdentity{KeyID: keyID, UserID: userID, Permissions: permissions}
+	return accesspkg.APIKeyIdentity{KeyID: keyID, UserID: userID, Permissions: permissions}, nil
 }
 
 func sha256Hash(s string) string {

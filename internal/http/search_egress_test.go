@@ -134,3 +134,42 @@ func TestDocumentStatsHonorsSuppliedContext(t *testing.T) {
 		}
 	})
 }
+
+type laggingResponseDeadline struct {
+	context.Context
+	deadline time.Time
+}
+
+func (c laggingResponseDeadline) Deadline() (time.Time, bool) { return c.deadline, true }
+
+// Model a detached deadline whose timer callback has not yet set Err.
+func TestFencedResponseChecksDeadlineBeforeTimerCallback(t *testing.T) {
+	for _, expired := range []bool{false, true} {
+		t.Run(fmt.Sprint(expired), func(t *testing.T) {
+			deadline := time.Now().Add(time.Hour)
+			if expired {
+				deadline = time.Now().Add(-time.Second)
+			}
+			ctx := laggingResponseDeadline{Context: context.Background(), deadline: deadline}
+			released := 0
+			r := &fencedResponse{reader: bytes.NewReader([]byte("private")), ctx: ctx, release: func() { released++ }}
+			var dst bytes.Buffer
+			_, err := io.Copy(&dst, r)
+			if expired {
+				if !errors.Is(err, context.DeadlineExceeded) || dst.Len() != 0 {
+					t.Fatalf("expired transfer bytes=%q err=%v", dst.String(), err)
+				}
+			} else if err != nil || dst.String() != "private" {
+				t.Fatalf("live transfer bytes=%q err=%v", dst.String(), err)
+			}
+			if released != 0 {
+				t.Fatal("Read released SQL before Close")
+			}
+			_ = r.Close()
+			_ = r.Close()
+			if released != 1 {
+				t.Fatalf("release calls=%d", released)
+			}
+		})
+	}
+}

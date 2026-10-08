@@ -293,7 +293,7 @@ func vsaGraphContextItems(ctx context.Context, cfg APIConfig, entityNames []stri
 }
 
 func candidateHasDCDRouteMetadata(candidate vsamemory.Candidate) bool {
-	return candidate.DomainID != "" || candidate.CollectionID != "" || candidate.DocumentID != ""
+	return candidate.DomainID != "" || candidate.CollectionID != "" || candidate.DocumentID != "" || candidate.SourceDocumentID != ""
 }
 
 func rerankVSACandidatesByDCDRoute(candidates []vsamemory.Candidate, routes []dcdRouteCandidate) []vsamemory.Candidate {
@@ -330,6 +330,16 @@ func dcdRouteCandidateBoost(candidate vsamemory.Candidate, routes []dcdRouteCand
 			continue
 		}
 		boost := 0.0
+		if candidate.SourceDocumentID != "" || route.SourceDocumentID != "" {
+			if candidate.DatasetID == "" || route.DatasetID != candidate.DatasetID || candidate.SourceDocumentID == "" || route.SourceDocumentID != candidate.SourceDocumentID {
+				continue
+			}
+			boost = 0.35 * route.Confidence
+			if boost > best {
+				best = boost
+			}
+			continue
+		}
 		if route.DomainID != "" && candidate.DomainID == route.DomainID {
 			boost += 0.10
 		}
@@ -451,4 +461,23 @@ func isMissingVSADependency(err error) bool {
 	return strings.Contains(msg, "no such table") ||
 		strings.Contains(msg, "does not exist") ||
 		strings.Contains(msg, "no such column")
+}
+
+func rerankNativeGraphItemsByDCDRoute(items []graphContextItem, routes []dcdRouteCandidate) []graphContextItem {
+	if len(routes) == 0 {
+		return items
+	}
+	out := append([]graphContextItem(nil), items...)
+	for i := range out {
+		if out[i].Provider != graphContextProviderSQL {
+			continue
+		}
+		out[i].RouteBoost = dcdRouteCandidateBoost(vsamemory.Candidate{
+			DatasetID: out[i].DatasetID, SourceDocumentID: out[i].DocumentID,
+		}, routes)
+		out[i].HasRouteMeta = out[i].DocumentID != ""
+	}
+	// ponytail: rank within the existing 50 authorized SQL rows; widen only after measured recall loss.
+	sort.SliceStable(out, func(i, j int) bool { return out[i].RouteBoost > out[j].RouteBoost })
+	return out
 }

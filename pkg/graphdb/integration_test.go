@@ -5,6 +5,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
 // requireLiveNeo4j skips the test unless NEO4J_TEST_URL is set. Optional
@@ -43,7 +45,14 @@ func newLiveWriter(t *testing.T) *Writer {
 	t.Cleanup(func() {
 		_ = w.Close(context.Background())
 	})
-	if _, err := w.Query(ctx, "MATCH (n) DETACH DELETE n", nil); err != nil {
+	if _, err := RunWriteTx(ctx, w, func(ctx context.Context, tx neo4j.ManagedTransaction) (struct{}, error) {
+		res, err := tx.Run(ctx, "MATCH (n) DETACH DELETE n", nil)
+		if err != nil {
+			return struct{}{}, err
+		}
+		_, err = res.Consume(ctx)
+		return struct{}{}, err
+	}); err != nil {
 		t.Fatalf("clean db: %v", err)
 	}
 	if err := w.EnsureSchema(ctx); err != nil {
@@ -64,16 +73,16 @@ func TestBatchWrite_Atomicity(t *testing.T) {
 		{ID: "n-atomic-1", Label: "Entity", Properties: map[string]any{"name": "A"}},
 		{ID: "n-atomic-2", Label: "Entity", Properties: map[string]any{"name": "B"}},
 	}
-	// Edge points at a node that does not exist; runEdgeMerge MATCHes both
-	// endpoints so the inner statement returns 0 affected rows. To force a
-	// hard failure we corrupt the relationship name so Cypher rejects it.
+	// APOC accepts dynamic relationship names containing dashes. An unsupported
+	// property type forces an edge-statement failure after the node writes.
 	edges := []EdgeRecord{
-		{SourceID: "n-atomic-1", TargetID: "n-atomic-2", RelationshipName: "INVALID-NAME-WITH-DASH"},
+		{SourceID: "n-atomic-1", TargetID: "n-atomic-2", RelationshipName: "RELATES_TO",
+			Properties: map[string]any{"unsupported": complex(1, 2)}},
 	}
 
 	res := w.BatchWrite(ctx, nodes, edges)
 	if len(res.Errors) == 0 {
-		t.Fatalf("expected error from invalid relationship name, got none; result=%+v", res)
+		t.Fatalf("expected error from unsupported edge property, got none; result=%+v", res)
 	}
 	if res.NodesWritten != 0 || res.EdgesWritten != 0 {
 		t.Errorf("partial-success leak: NodesWritten=%d EdgesWritten=%d, want 0/0",

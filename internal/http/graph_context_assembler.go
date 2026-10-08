@@ -142,9 +142,7 @@ func assembleGraphContext(ctx context.Context, cfg APIConfig, entityNames []stri
 			line := item.format()
 			out.Context = append(out.Context, line)
 			lines = append(lines, line)
-			switch item.Provider {
-			case graphContextProviderVSA:
-				out.VSAContext = append(out.VSAContext, line)
+			if item.Provider == graphContextProviderVSA || (item.Provider == graphContextProviderSQL && len(policy.RouteCandidates) > 0) {
 				if item.RouteBoost > 0 {
 					out.RouteBoostedCount++
 				}
@@ -153,6 +151,10 @@ func assembleGraphContext(ctx context.Context, cfg APIConfig, entityNames []stri
 				} else {
 					out.RouteMetadataMissCount++
 				}
+			}
+			switch item.Provider {
+			case graphContextProviderVSA:
+				out.VSAContext = append(out.VSAContext, line)
 			case graphContextProviderNeo4j:
 				out.Neo4jContext = append(out.Neo4jContext, line)
 				if item.TargetName != "" {
@@ -183,6 +185,7 @@ func assembleGraphContext(ctx context.Context, cfg APIConfig, entityNames []stri
 		}
 		start := time.Now()
 		items := graphContextItems(ctx, cfg, entityNames, allowedDatasetIDs)
+		items = rerankNativeGraphItemsByDCDRoute(items, policy.RouteCandidates)
 		out.GraphLatency += time.Since(start)
 		for _, item := range items {
 			if item.Provider != "" {

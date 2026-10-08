@@ -36,8 +36,10 @@ set -a && source .env && set +a
 Expected workflow:
 
 - local MCP endpoint for Codex, Claude, Cursor, or similar agents;
+- room×hall memory tools advertised through the default `core` toolset;
 - `workspace_context`, `workspace_write`, `workspace_search`, and
-  `workspace_read` against a local markdown workspace;
+  `workspace_read` against a local markdown workspace after explicitly setting
+  `LEVARA_MCP_TOOLSET=workspace` or `full`;
 - no required Postgres or SSO;
 - lexical workspace search remains useful when dense embeddings are not
   configured.
@@ -132,8 +134,9 @@ with existing local accounts. Verify these boundaries before adding documents.
 ## MCP toolset binding (2026-09-27)
 
 Since the 2026-09-27 functional-audit decision Р1, `LEVARA_PROFILE=personal`
-binds the advertised MCP toolset to `core` (13 tools: the room×hall memory
-surface including `supersede_memory` and `delete_memory`) when
+binds the advertised MCP toolset to `core` (13 legacy tools: the room×hall memory
+surface including `supersede_memory` and `delete_memory`; latest exposes 12
+because it hides session-only `set_context`) when
 `LEVARA_MCP_TOOLSET` is unset. Priority: explicit `LEVARA_MCP_TOOLSET` >
 `personal` profile > historical `full` default. Other profiles and unknown
 profile values keep `full`, so deployments that set nothing change nothing.
@@ -141,9 +144,22 @@ The effective name and its source (`env` / `profile:personal` / `default`)
 are visible in `/admin/mcp/summary` (`toolset`, `toolset_source`) and the
 server startup log.
 
-`LEVARA_NOTEBOOKS` (default `off`) re-enables the notebooks REST surface that
-was cut from the product on 2026-09-27; it exists only until the code is
-removed in Ф2. An unrecognized value logs a warning and stays off.
+This binding describes advertised tools. Dispatch currently checks the raw
+`LEVARA_MCP_TOOLSET` environment value; with `personal` and an unset override,
+`tools/list` advertises `core` while manual calls use the historical `full`
+gate. This is an open source mismatch, not an authorization or containment
+guarantee. Use an explicit `core` override for consistent memory toolset
+selection, or explicit `workspace`/`full` to advertise manual workspace tools.
+The bounded task workspace worker additionally requires SQL,
+`LEVARA_LONG_HORIZON_RUNTIME=1`, `LEVARA_TASK_WORKER=1`, and explicit `full`;
+`long-horizon` alone lacks workspace action tools. See [Task Runtime](long-horizon-runtime.md).
+
+The retired notebooks REST routes and `/notebooks` WebUI page are removed.
+Old `LEVARA_NOTEBOOKS` values, including `1`, are ignored and do not restore
+execution or fail startup; legacy routes return the same unregistered-route
+404 as the former default-off configuration. SQL notebooks/cells and their
+indexes remain intact for administrative backup/restore. See the
+[notebook sunset contract](notebook-sunset.md) for compatibility and recovery.
 
 ## Validation
 

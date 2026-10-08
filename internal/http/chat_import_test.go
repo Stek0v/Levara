@@ -18,6 +18,9 @@ import (
 
 func chatImportTestApp(t *testing.T) (*fiber.App, *sql.DB) {
 	t.Helper()
+	previous := GetDBProvider()
+	SetDBProvider(DBSQLite)
+	t.Cleanup(func() { SetDBProvider(previous) })
 	db, err := sql.Open("sqlite3", "file:"+filepath.Join(t.TempDir(), "chatimport.db"))
 	if err != nil {
 		t.Fatal(err)

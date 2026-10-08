@@ -6,14 +6,17 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
+	accesspkg "github.com/stek0v/levara/pkg/access"
 	"github.com/stek0v/levara/pkg/workspace"
 )
 
@@ -79,11 +82,12 @@ type workspaceContextArtifact struct {
 }
 
 type workspaceContextArtifactsRequest struct {
-	ProjectID string   `json:"project_id,omitempty"`
-	Branch    string   `json:"branch,omitempty"`
-	Kind      string   `json:"kind,omitempty"`
-	IDs       []string `json:"ids,omitempty"`
-	IndexOnly bool     `json:"index_only,omitempty"`
+	ProjectID    string   `json:"project_id,omitempty"`
+	Branch       string   `json:"branch,omitempty"`
+	Kind         string   `json:"kind,omitempty"`
+	IDs          []string `json:"ids,omitempty"`
+	IndexOnly    bool     `json:"index_only,omitempty"`
+	metadataOnly bool
 }
 
 type workspaceContextArtifactsResponse struct {
@@ -113,16 +117,17 @@ func workspaceContextArtifactsHandler(cfg APIConfig) fiber.Handler {
 			Kind:      c.Query("kind"),
 			IndexOnly: strings.EqualFold(c.Query("index_only"), "true"),
 		}
-		if req.ProjectID != "" {
-			if err := authorizeWorkspaceFiber(c, cfg, req.ProjectID, workspaceAccessRead); err != nil {
-				return err
-			}
+		if err := authorizeWorkspaceFiber(c, cfg, req.ProjectID, workspaceAccessRead); err != nil {
+			return err
 		}
 		resp, err := listWorkspaceContextArtifacts(c.UserContext(), cfg, req)
 		if err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
-		return c.JSON(resp)
+		if err := c.JSON(resp); err != nil {
+			return err
+		}
+		return sendWorkspaceProtectedResponse(c, cfg, c.UserContext(), uploadMetadataActor(c, cfg, c.UserContext()), req.ProjectID)
 	}
 }
 
@@ -135,8 +140,12 @@ func workspaceReindexArtifactsHandler(cfg APIConfig) fiber.Handler {
 		if err := authorizeWorkspaceFiber(c, cfg, req.ProjectID, workspaceAccessWrite); err != nil {
 			return err
 		}
-		resp, err := reindexWorkspaceContextArtifacts(c.UserContext(), cfg, req)
+		resp, err := reindexWorkspaceContextArtifactsAuthorized(c.UserContext(), cfg, req, uploadMetadataActor(c, cfg, c.UserContext()))
 		if err != nil {
+			var fiberErr *fiber.Error
+			if errors.As(err, &fiberErr) {
+				return fiberErr
+			}
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
 		return c.JSON(resp)
@@ -160,7 +169,15 @@ func listWorkspaceContextArtifacts(ctx context.Context, cfg APIConfig, req works
 	}, nil
 }
 
-func reindexWorkspaceContextArtifacts(ctx context.Context, cfg APIConfig, req workspaceReindexArtifactsRequest) (workspaceReindexArtifactsResponse, error) {
+func reindexWorkspaceContextArtifactsAuthorized(ctx context.Context, cfg APIConfig, req workspaceReindexArtifactsRequest, actor accesspkg.MetadataActor) (workspaceReindexArtifactsResponse, error) {
+	ctx, cancel, err := workspaceRequestContext(ctx, actor, 30*time.Second)
+	if err != nil {
+		return workspaceReindexArtifactsResponse{}, err
+	}
+	defer cancel()
+	if err := validateWorkspaceCollection(req.Collection); err != nil {
+		return workspaceReindexArtifactsResponse{}, err
+	}
 	if req.ProjectID == "" {
 		return workspaceReindexArtifactsResponse{}, workspace.ErrMissingProjectID
 	}
@@ -168,10 +185,11 @@ func reindexWorkspaceContextArtifacts(ctx context.Context, cfg APIConfig, req wo
 		return workspaceReindexArtifactsResponse{}, workspace.ErrMissingGeneration
 	}
 	listReq := workspaceContextArtifactsRequest{
-		ProjectID: req.ProjectID,
-		Branch:    req.Branch,
-		IDs:       req.ArtifactIDs,
-		IndexOnly: true,
+		ProjectID:    req.ProjectID,
+		Branch:       req.Branch,
+		IDs:          req.ArtifactIDs,
+		IndexOnly:    true,
+		metadataOnly: true,
 	}
 	if len(req.Kinds) == 1 {
 		listReq.Kind = req.Kinds[0]
@@ -196,37 +214,55 @@ func reindexWorkspaceContextArtifacts(ctx context.Context, cfg APIConfig, req wo
 	var results []workspace.IndexResult
 	var manifestPath string
 	var active string
-	for _, artifact := range resp.Artifacts {
-		filePath, relPath, err := workspaceFilePath(cfg, artifact.ProjectID, artifact.Branch, artifact.Path)
-		if err != nil {
+	for i, artifact := range resp.Artifacts {
+		if err := ctx.Err(); err != nil {
 			return workspaceReindexArtifactsResponse{}, err
 		}
-		data, err := os.ReadFile(filePath)
-		if err != nil {
-			return workspaceReindexArtifactsResponse{}, err
-		}
-		tags := append([]string{}, artifact.Tags...)
-		tags = append(tags, "context-artifact", "kind:"+artifact.Kind)
-		indexResp, err := indexWorkspaceMarkdown(ctx, cfg, workspaceIndexRequest{
-			ProjectID:          artifact.ProjectID,
-			Branch:             artifact.Branch,
-			Generation:         req.Generation,
-			Collection:         req.Collection,
-			CommitHash:         req.CommitHash,
-			ChunkStrategy:      req.ChunkStrategy,
-			MinChunkChars:      req.MinChunkChars,
-			MaxChunkChars:      req.MaxChunkChars,
-			OverlapChars:       req.OverlapChars,
-			SnapToSentence:     req.SnapToSentence,
-			ActivateGeneration: req.ActivateGeneration,
-			Path:               relPath,
-			Text:               string(data),
-			FileDigest:         digestBytes(data),
-			DocumentID:         artifact.ID,
-			Title:              artifactTitle(artifact),
-			Room:               artifactRoom(artifact),
-			Tags:               uniqueStrings(tags),
-		})
+		indexResp, err := func() (workspaceIndexResponse, error) {
+			unlock := workspaceManifestLocks.lock(workspaceBranchLockKey(artifact.ProjectID, artifact.Branch))
+			defer unlock()
+			release, err := beginWorkspaceEffectFence(ctx, cfg, actor, artifact.ProjectID, workspaceAccessWrite)
+			if err != nil {
+				return workspaceIndexResponse{}, err
+			}
+			defer release()
+			_, relPath, err := workspaceFilePath(cfg, artifact.ProjectID, artifact.Branch, artifact.Path)
+			if err != nil {
+				return workspaceIndexResponse{}, err
+			}
+			if err := ctx.Err(); err != nil {
+				return workspaceIndexResponse{}, err
+			}
+			data, err := readWorkspaceArtifactFile(cfg, artifact.ProjectID, artifact.Branch, relPath)
+			if err != nil {
+				return workspaceIndexResponse{}, err
+			}
+			tags := append([]string{}, artifact.Tags...)
+			tags = append(tags, "context-artifact", "kind:"+artifact.Kind)
+			resp.Artifacts[i].Exists = true
+			resp.Artifacts[i].Bytes = int64(len(data))
+			resp.Artifacts[i].Digest = digestBytes(data)
+			return indexWorkspaceMarkdownLocked(ctx, cfg, workspaceIndexRequest{
+				ProjectID:          artifact.ProjectID,
+				Branch:             artifact.Branch,
+				Generation:         req.Generation,
+				Collection:         req.Collection,
+				CommitHash:         req.CommitHash,
+				ChunkStrategy:      req.ChunkStrategy,
+				MinChunkChars:      req.MinChunkChars,
+				MaxChunkChars:      req.MaxChunkChars,
+				OverlapChars:       req.OverlapChars,
+				SnapToSentence:     req.SnapToSentence,
+				ActivateGeneration: req.ActivateGeneration,
+				Path:               relPath,
+				Text:               string(data),
+				FileDigest:         digestBytes(data),
+				DocumentID:         artifact.ID,
+				Title:              artifactTitle(artifact),
+				Room:               artifactRoom(artifact),
+				Tags:               uniqueStrings(tags),
+			})
+		}()
 		if err != nil {
 			return workspaceReindexArtifactsResponse{}, err
 		}
@@ -248,7 +284,15 @@ func reindexWorkspaceContextArtifacts(ctx context.Context, cfg APIConfig, req wo
 
 func loadWorkspaceContextArtifactRegistry(cfg APIConfig) (workspaceContextArtifactRegistry, string, error) {
 	path := workspaceContextArtifactRegistryPath(cfg)
-	data, err := os.ReadFile(path)
+	root, err := workspace.OpenRoot(workspaceRoot(cfg), ".kb", false)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return workspaceContextArtifactRegistry{Version: workspaceArtifactRegistryVersion}, path, nil
+		}
+		return workspaceContextArtifactRegistry{}, path, err
+	}
+	defer root.Close()
+	data, err := workspace.ReadFile(root, "context-artifacts.json")
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return workspaceContextArtifactRegistry{Version: workspaceArtifactRegistryVersion}, path, nil
@@ -279,7 +323,7 @@ func resolveWorkspaceContextArtifacts(_ context.Context, cfg APIConfig, registry
 		if req.Branch != "" && branch != defaultBranch(req.Branch) {
 			continue
 		}
-		matches, err := expandWorkspaceArtifactInclude(cfg, include)
+		matches, err := expandWorkspaceArtifactInclude(cfg, include, req.metadataOnly)
 		if err != nil {
 			return nil, err
 		}
@@ -293,7 +337,7 @@ func resolveWorkspaceContextArtifacts(_ context.Context, cfg APIConfig, registry
 		if req.Branch != "" && branch != defaultBranch(req.Branch) {
 			continue
 		}
-		artifact, err := materializeWorkspaceArtifact(cfg, raw, "explicit")
+		artifact, err := materializeWorkspaceArtifact(cfg, raw, "explicit", req.metadataOnly)
 		if err != nil {
 			return nil, err
 		}
@@ -312,7 +356,7 @@ func resolveWorkspaceContextArtifacts(_ context.Context, cfg APIConfig, registry
 	return dedupeWorkspaceArtifacts(artifacts), nil
 }
 
-func expandWorkspaceArtifactInclude(cfg APIConfig, include workspaceContextArtifactInclude) ([]workspaceContextArtifact, error) {
+func expandWorkspaceArtifactInclude(cfg APIConfig, include workspaceContextArtifactInclude, metadataOnly bool) ([]workspaceContextArtifact, error) {
 	if include.ProjectID == "" {
 		return nil, errors.New("context artifact include project_id required")
 	}
@@ -320,18 +364,28 @@ func expandWorkspaceArtifactInclude(cfg APIConfig, include workspaceContextArtif
 		return nil, errors.New("context artifact include glob required")
 	}
 	branch := defaultBranch(include.Branch)
-	root := workspaceProjectRoot(cfg, include.ProjectID, branch)
+	relative, err := filepath.Rel(workspaceRoot(cfg), workspaceProjectRoot(cfg, include.ProjectID, branch))
+	if err != nil {
+		return nil, err
+	}
+	root, err := workspace.OpenRoot(workspaceRoot(cfg), relative, false)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return []workspaceContextArtifact{}, nil
+		}
+		return nil, err
+	}
+	defer root.Close()
 	var artifacts []workspaceContextArtifact
-	err := filepath.WalkDir(root, func(abs string, d os.DirEntry, err error) error {
+	err = fs.WalkDir(root.FS(), ".", func(rel string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if d.IsDir() {
 			return nil
 		}
-		rel, err := filepath.Rel(root, abs)
-		if err != nil {
-			return err
+		if d.Type()&os.ModeSymlink != 0 {
+			return errors.New("workspace artifact symlink rejected")
 		}
 		rel = filepath.ToSlash(rel)
 		if !workspaceArtifactGlobMatch(include.Glob, rel) {
@@ -354,7 +408,7 @@ func expandWorkspaceArtifactInclude(cfg APIConfig, include workspaceContextArtif
 			Tags:             include.Tags,
 			Index:            &index,
 			IncludeInContext: &includeInContext,
-		}, "include:"+include.Glob)
+		}, "include:"+include.Glob, metadataOnly)
 		if err != nil {
 			return err
 		}
@@ -370,7 +424,7 @@ func expandWorkspaceArtifactInclude(cfg APIConfig, include workspaceContextArtif
 	return artifacts, nil
 }
 
-func materializeWorkspaceArtifact(cfg APIConfig, raw workspaceContextArtifactRequest, source string) (workspaceContextArtifact, error) {
+func materializeWorkspaceArtifact(cfg APIConfig, raw workspaceContextArtifactRequest, source string, metadataOnly bool) (workspaceContextArtifact, error) {
 	if raw.ProjectID == "" {
 		return workspaceContextArtifact{}, workspace.ErrMissingProjectID
 	}
@@ -379,18 +433,19 @@ func materializeWorkspaceArtifact(cfg APIConfig, raw workspaceContextArtifactReq
 	if err != nil {
 		return workspaceContextArtifact{}, err
 	}
-	filePath, _, _ := workspaceFilePath(cfg, raw.ProjectID, branch, relPath)
-	info, statErr := os.Stat(filePath)
-	exists := statErr == nil && !info.IsDir()
+	var exists bool
 	var digest string
 	var size int64
-	if exists {
-		size = info.Size()
-		data, err := os.ReadFile(filePath)
-		if err != nil {
-			return workspaceContextArtifact{}, err
+	if !metadataOnly {
+		data, readErr := readWorkspaceArtifactFile(cfg, raw.ProjectID, branch, relPath)
+		if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+			return workspaceContextArtifact{}, readErr
 		}
-		digest = digestBytes(data)
+		exists = readErr == nil
+		if exists {
+			size = int64(len(data))
+			digest = digestBytes(data)
+		}
 	}
 	kind := normalizeWorkspaceArtifactKind(raw.Kind, relPath)
 	index := true
@@ -572,10 +627,8 @@ func (h *mcpHandler) toolWorkspaceContextArtifacts(ctx context.Context, args map
 	if err := decodeWorkspaceArgs(args, &req); err != nil {
 		return workspaceMCPError(err)
 	}
-	if req.ProjectID != "" {
-		if err := authorizeWorkspaceMCP(ctx, h.cfg, req.ProjectID, workspaceAccessRead); err != nil {
-			return workspaceMCPError(err)
-		}
+	if err := authorizeWorkspaceMCP(ctx, h.cfg, req.ProjectID, workspaceAccessRead); err != nil {
+		return workspaceMCPError(err)
 	}
 	resp, err := listWorkspaceContextArtifacts(ctx, h.cfg, req)
 	if err != nil {
@@ -592,9 +645,26 @@ func (h *mcpHandler) toolWorkspaceReindexArtifacts(ctx context.Context, args map
 	if err := authorizeWorkspaceMCP(ctx, h.cfg, req.ProjectID, workspaceAccessWrite); err != nil {
 		return workspaceMCPError(err)
 	}
-	resp, err := reindexWorkspaceContextArtifacts(ctx, h.cfg, req)
+	resp, err := reindexWorkspaceContextArtifactsAuthorized(ctx, h.cfg, req, h.MetadataActor(ctx))
 	if err != nil {
 		return workspaceMCPError(err)
 	}
 	return workspaceMCPJSON(resp)
+}
+
+func readWorkspaceArtifactFile(cfg APIConfig, projectID, branch, path string) ([]byte, error) {
+	_, relativePath, err := workspaceFilePath(cfg, projectID, branch, path)
+	if err != nil {
+		return nil, err
+	}
+	relativeRoot, err := filepath.Rel(workspaceRoot(cfg), workspaceProjectRoot(cfg, projectID, branch))
+	if err != nil {
+		return nil, err
+	}
+	root, err := workspace.OpenRoot(workspaceRoot(cfg), relativeRoot, false)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	return workspace.ReadFile(root, relativePath)
 }

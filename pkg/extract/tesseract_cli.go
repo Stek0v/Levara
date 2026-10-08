@@ -50,11 +50,14 @@ func extractImageTesseractCLI(data []byte, filename string) (string, error) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), tesseractTimeout())
 	defer cancel()
-	out, err := exec.CommandContext(ctx, bin, args...).CombinedOutput()
+	out, err := exec.CommandContext(ctx, bin, args...).Output()
 	if ctx.Err() == context.DeadlineExceeded {
 		return "", fmt.Errorf("tesseract OCR timed out after %s", tesseractTimeout())
 	}
 	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok && len(exitErr.Stderr) > 0 {
+			out = exitErr.Stderr
+		}
 		msg := strings.TrimSpace(string(out))
 		if msg == "" {
 			msg = err.Error()

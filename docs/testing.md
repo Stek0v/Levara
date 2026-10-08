@@ -412,7 +412,8 @@ MCP-конфиг клиента) — скрипт меряет только се
 Харнесс: `scripts/aplus_vs_b_gate.py` — два personal-сервера (toolset core /
 memory, чистые SQLite, одинаковый seed из 3 записей), живой LLM-агент видит
 реальный `tools/list` сервера и выбирает инструмент под задачу. Метрики:
-right/wrong/no-call, zero-result на recall, стоимость входных токенов.
+right/wrong/no-call, zero-result на recall, стоимость входных токенов, p50/p95
+латентность провайдера.
 14 сценариев (12 общих + 2 дистрактора на инструменты, отсутствующие в core).
 Повторов: 3, temperature 0.
 

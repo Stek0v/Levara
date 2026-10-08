@@ -7,13 +7,13 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test:e2e": "playwright test upload-flow.spec.ts document-sharing.spec.ts audit-regressions.spec.ts enterprise-auth.spec.ts auth-flow.spec.ts auth-guard.spec.ts error-scenarios.spec.ts invalidation.spec.ts memory-behavior.spec.ts memory-scaffold.spec.ts search-rerank-badge.spec.ts settings-persist.spec.ts",
+    "test:e2e": "playwright test upload-flow.spec.ts document-sharing.spec.ts audit-regressions.spec.ts enterprise-auth.spec.ts auth-flow.spec.ts auth-guard.spec.ts error-scenarios.spec.ts invalidation.spec.ts memory-behavior.spec.ts memory-scaffold.spec.ts search-rerank-badge.spec.ts settings-persist.spec.ts memory-delete.spec.ts projects-context.spec.ts projects-git.spec.ts projects-shares.spec.ts projects-i18n.spec.ts imported-chats.spec.ts domain-states.spec.ts query-states.spec.ts",
     "test:e2e:integration": "playwright test"
   },
   "dependencies": {
     "@types/d3": "^7.4.3",
     "d3": "^7.9.0",
-    "next": "^16.2.11",
+    "next": "16.3.8",
     "react": "19.2.4",
     "react-dom": "19.2.4"
   },
@@ -27,7 +27,7 @@
     "@types/react-dom": "^19",
     "clsx": "^2.1.1",
     "eslint": "^9",
-    "eslint-config-next": "^16.2.11",
+    "eslint-config-next": "16.3.8",
     "eslint-config-prettier": "^10.1.8",
     "lucide-react": "^1.8.0",
     "prettier": "^3.8.2",
@@ -39,6 +39,7 @@
   "overrides": {
     "postcss": "8.5.26",
     "nanoid": "3.3.18",
-    "sharp": "0.35.4"
+    "sharp": "0.35.5",
+    "source-map-js": "1.2.2"
   }
 }

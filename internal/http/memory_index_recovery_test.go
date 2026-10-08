@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,6 +16,28 @@ import (
 	"github.com/stek0v/levara/pkg/embed"
 	"github.com/stek0v/levara/pkg/memoryindex"
 )
+
+func TestMemoryIndexTerminalTransitionRetriesUntilPersistedOrStopped(t *testing.T) {
+	var attempts atomic.Int32
+	if !persistMemoryIndexTransition(context.Background(), func(context.Context) error {
+		if attempts.Add(1) == 1 {
+			return errors.New("temporary SQL failure")
+		}
+		return nil
+	}) || attempts.Load() != 2 {
+		t.Fatalf("transient transition attempts=%d", attempts.Load())
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	attempts.Store(0)
+	if persistMemoryIndexTransition(ctx, func(context.Context) error {
+		attempts.Add(1)
+		cancel()
+		return errors.New("persistent SQL failure")
+	}) || attempts.Load() != 1 {
+		t.Fatalf("cancelled transition attempts=%d", attempts.Load())
+	}
+}
 
 func TestMemoryIndexBreakerDeferSpendsAttemptAndRetainsCause(t *testing.T) {
 	db := newMCPMemoryBehaviorDB(t)

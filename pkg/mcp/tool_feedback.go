@@ -5,6 +5,8 @@ package mcp
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -21,9 +23,7 @@ const feedbackQueryLogMaxLen = 50
 // (unlike other tools, feedback has no useful degraded mode — if the
 // feedback table can't be written, the caller should know).
 //
-// The SQL insert is fire-and-forget: error return from ExecContext is
-// ignored to match pre-refactor behavior, since the duplicate-id
-// collision can be a benign retry.
+// Success is reported only after the feedback row is persisted.
 func ToolAddFeedback(ctx context.Context, deps Deps, args map[string]any) ToolResult {
 	query, _ := args["query"].(string)
 	if query == "" {
@@ -60,10 +60,12 @@ func ToolAddFeedback(ctx context.Context, deps Deps, args map[string]any) ToolRe
 	}
 
 	id := uuid.New().String()
-	db.ExecContext(ctx, deps.Q(`
+	if _, err := db.ExecContext(ctx, deps.Q(`
 		INSERT INTO search_feedback (id, query, result_id, collection, search_type, rating, comment, user_id)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-	`), id, query, resultID, collection, searchType, rating, comment, userID)
+	`), id, query, resultID, collection, searchType, rating, comment, userID); err != nil {
+		return errorResult("feedback storage unavailable")
+	}
 
 	return statusResult(true, fmt.Sprintf("Feedback saved: rating=%d for query '%s'", rating, Truncate(query, feedbackQueryLogMaxLen)))
 }
@@ -84,18 +86,20 @@ func ToolGetFeedbackStats(ctx context.Context, deps Deps, args map[string]any) T
 	var avgRating float64
 	var worstQuery string
 
+	where := ""
+	queryArgs := []any{}
 	if collection != "" {
-		db.QueryRowContext(ctx,
-			deps.Q(`SELECT COUNT(*), COALESCE(AVG(rating),0) FROM search_feedback WHERE collection = $1`),
-			collection).Scan(&total, &avgRating)
-		db.QueryRowContext(ctx,
-			deps.Q(`SELECT COALESCE(query,'') FROM search_feedback WHERE collection = $1 ORDER BY rating ASC LIMIT 1`),
-			collection).Scan(&worstQuery)
-	} else {
-		db.QueryRowContext(ctx,
-			deps.Q(`SELECT COUNT(*), COALESCE(AVG(rating),0) FROM search_feedback`)).Scan(&total, &avgRating)
-		db.QueryRowContext(ctx,
-			deps.Q(`SELECT COALESCE(query,'') FROM search_feedback ORDER BY rating ASC LIMIT 1`)).Scan(&worstQuery)
+		where = " WHERE collection = $1"
+		queryArgs = append(queryArgs, collection)
+	}
+	if err := db.QueryRowContext(ctx, deps.Q("SELECT COUNT(*), COALESCE(AVG(rating),0) FROM search_feedback"+where), queryArgs...).Scan(&total, &avgRating); err != nil {
+		return errorResult("feedback storage unavailable")
+	}
+	if err := db.QueryRowContext(ctx, deps.Q("SELECT COALESCE(query,'') FROM search_feedback"+where+" ORDER BY rating ASC LIMIT 1"), queryArgs...).Scan(&worstQuery); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return errorResult("feedback storage unavailable")
+	}
+	if ctx.Err() != nil {
+		return errorResult("feedback storage unavailable")
 	}
 
 	return jsonResult(map[string]any{

@@ -7,6 +7,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/stek0v/levara/pkg/orchestrator"
 )
 
 // setupCodifyDB creates a SQLite test DB with graph_nodes and graph_edges tables.
@@ -94,48 +96,32 @@ func Hello() string { return "hello" }
 	}
 }
 
-func TestToolCodify_InsertsGraphNodes(t *testing.T) {
+func TestToolCodify_PipelineOwnsGraphWrites(t *testing.T) {
 	deps := setupCodifyDB(t)
-	goCode := `package main
-func Hello() string { return "hello" }
-`
-	res := ToolCodify(context.Background(), deps, map[string]any{
-		"code":     goCode,
-		"filename": "main.go",
-	})
-	if res.IsError {
-		t.Fatalf("unexpected IsError: %q", res.Content[0].Text)
+	calls := 0
+	deps.pipelineFn = func(ctx context.Context, texts []string, cfg orchestrator.Config, updates chan<- orchestrator.Progress) error {
+		defer close(updates)
+		calls++
+		if cfg.Collection != "code_knowledge" || cfg.StaticGraph == nil || len(cfg.StaticGraph.Nodes) != 2 {
+			t.Errorf("unexpected static config: %+v", cfg)
+		}
+		return nil
 	}
-
-	// Check that at least one graph_node was inserted.
+	args := map[string]any{"code": "package main\nfunc Hello() {}\n", "filename": "main.go"}
+	for i := 0; i < 2; i++ {
+		if result := ToolCodify(context.Background(), deps, args); result.IsError {
+			t.Fatal(result.Content)
+		}
+	}
+	if calls != 2 {
+		t.Fatalf("pipeline calls=%d", calls)
+	}
 	var count int
-	deps.db.QueryRow("SELECT COUNT(*) FROM graph_nodes").Scan(&count)
-	if count == 0 {
-		t.Error("expected graph_nodes to be populated after codify")
+	if err := deps.db.QueryRow("SELECT COUNT(*) FROM graph_nodes").Scan(&count); err != nil {
+		t.Fatal(err)
 	}
-}
-
-func TestToolCodify_UpsertIdempotent(t *testing.T) {
-	deps := setupCodifyDB(t)
-	goCode := `package main
-func Hello() string { return "hello" }
-`
-	args := map[string]any{"code": goCode, "filename": "main.go"}
-
-	// Run twice — ON CONFLICT DO UPDATE should not error or duplicate rows.
-	res1 := ToolCodify(context.Background(), deps, args)
-	res2 := ToolCodify(context.Background(), deps, args)
-	if res1.IsError || res2.IsError {
-		t.Fatal("unexpected IsError on upsert")
-	}
-
-	var count int
-	deps.db.QueryRow("SELECT COUNT(*) FROM graph_nodes").Scan(&count)
-	// Count after two calls should equal count after one call.
-	var countOnce int
-	deps.db.QueryRow("SELECT COUNT(*) FROM graph_nodes").Scan(&countOnce)
-	if count != countOnce {
-		t.Errorf("duplicate nodes after second codify: first=%d, second=%d", countOnce, count)
+	if count != 0 {
+		t.Fatalf("codify bypassed pipeline with %d direct writes", count)
 	}
 }
 

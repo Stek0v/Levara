@@ -170,6 +170,7 @@ func crossSearchMemoriesFor(ctx context.Context, deps Deps, collection, query st
 		WHERE (key LIKE $1 OR value LIKE $2)
 		AND (collection_name = $3 OR collection_name = '')
 		AND (owner_id = $4 OR owner_id = '')
+		AND superseded_by = '' AND valid_until IS NULL
 		ORDER BY updated_at DESC LIMIT $5
 	`), pattern, pattern, collection, ownerID, topK)
 	if err != nil {

@@ -6,12 +6,15 @@ import "time"
 
 // MemoryRecord is the minimal projection of a memories row the engine needs.
 type MemoryRecord struct {
-	ID        string
-	Key       string
-	Value     string
-	Room      string
-	Hall      string
-	CreatedAt time.Time
+	ID         string
+	Key        string
+	Value      string
+	OwnerID    string
+	Collection string
+	Type       string
+	Room       string
+	Hall       string
+	CreatedAt  time.Time
 }
 
 // SimEdge is an undirected similarity edge between two candidate records.
@@ -40,6 +43,9 @@ type Action struct {
 	SurvivorID string   // merge: the kept (newest) record id; abstract: "" (a new record is created)
 	NewValue   string   // abstract: synthesized text; merge: ""
 	SourceIDs  []string // records to supersede
+	OwnerID    string
+	Collection string
+	Type       string
 	Room       string
 	Hall       string
 }

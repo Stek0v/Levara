@@ -174,7 +174,7 @@ func memoryCommitValidateEvidence(ctx context.Context, tx *sql.Tx, deps Deps, ow
 }
 
 // ArtifactReadPolicy returns the policy bound to the current memory-commit
-// transaction. Verifiers must use it for authorization reads instead of opening
+// or task-completion transaction. Verifiers must use it for authorization reads instead of opening
 // another DB connection. Its lifetime ends with this verifier call; it must not
 // be retained or committed by the verifier. The private key cannot be supplied
 // through tool arguments, and wrapping preserves the existing request context.

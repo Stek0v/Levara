@@ -55,7 +55,7 @@ func ToolDescriptors() []Tool {
 				"type": "object",
 				"properties": map[string]any{
 					"search_query":    map[string]any{"type": "string", "description": "Natural language search query"},
-					"search_type":     map[string]any{"type": "string", "description": "Search strategy: AUTO (intelligent routing), CHUNKS (vector), HYBRID (vector+BM25), RAG_COMPLETION (vector+LLM answer), GRAPH_COMPLETION (graph traversal+LLM), TEMPORAL (date-aware), SUMMARIES, CHUNKS_LEXICAL (BM25), CODING_RULES (code entities)", "default": "AUTO"},
+					"search_type":     map[string]any{"type": "string", "description": "Retrieval strategy: AUTO/FEELING_LUCKY routes only to implemented retrieval; CHUNKS/BASIC (vector), CHUNKS_LEXICAL/BM25 (lexical), HYBRID/WEIGHTED_HYBRID (fusion), PARENT_CHILD, MULTI_QUERY, RERANK, GRAPH_RERANK. Unsupported graph-only, RAG generation, temporal, summary, code and unknown strategies are rejected. MULTI_QUERY/RERANK/GRAPH_RERANK without usable dependencies report vector fallback. PARENT_CHILD denotes the selected algorithm and can internally fall back to vectors when child hits are unavailable.", "default": "AUTO"},
 					"top_k":           map[string]any{"type": "integer", "description": "Number of results to return", "default": 10},
 					"collection":      map[string]any{"type": "string", "description": "Project collection name to search in. Leave empty to search all."},
 					"room":            map[string]any{"type": "string", "description": "Filter chunks by room (sub-topic) attached during cognify."},
@@ -64,7 +64,7 @@ func ToolDescriptors() []Tool {
 					"parent_child":    map[string]any{"type": "boolean", "default": false, "description": "Search child chunks for precision, return parent chunks for context."},
 					"multi_query":     map[string]any{"type": "boolean", "default": false, "description": "Generate query variants via LLM for broader retrieval. Requires LLM."},
 					"dedup":           map[string]any{"type": "boolean", "default": true, "description": "Deduplicate overlapping results (useful for sliding window chunks)."},
-					"mode":            map[string]any{"type": "string", "enum": []string{"rag", "graph", "full", "auto"}, "default": "auto", "description": "Search mode. rag: vector only. graph: graph traversal only. full: all backends. auto: router decides."},
+					"mode":            map[string]any{"type": "string", "enum": []string{"rag", "full", "auto"}, "default": "auto", "description": "MCP retrieval mode. rag/full/auto use supported retrieval strategies; graph-only mode is unavailable and rejected."},
 					"graph_rerank":    map[string]any{"type": "boolean", "default": false, "description": "Rerank results using graph proximity (entity hop distance)."},
 					"vector_weight":   map[string]any{"type": "number", "default": 1.0, "description": "RRF weight for vector results in HYBRID / WEIGHTED_HYBRID search."},
 					"bm25_weight":     map[string]any{"type": "number", "default": 1.0, "description": "RRF weight for lexical BM25 results in HYBRID / WEIGHTED_HYBRID search."},
@@ -163,7 +163,7 @@ func ToolDescriptors() []Tool {
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"project_id": map[string]any{"type": "string", "description": "Optional workspace project filter."},
+					"project_id": map[string]any{"type": "string", "description": "Workspace project filter; required for authenticated callers, optional in trusted local mode."},
 					"branch":     map[string]any{"type": "string", "description": "Optional branch filter."},
 					"kind":       map[string]any{"type": "string", "description": "Optional artifact kind filter."},
 					"ids":        map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Optional artifact ID allow-list."},
@@ -230,7 +230,7 @@ func ToolDescriptors() []Tool {
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"project_id": map[string]any{"type": "string", "description": "Optional workspace project ID. When omitted, aggregates all local projects."},
+					"project_id": map[string]any{"type": "string", "description": "Workspace project ID; required for authenticated callers. Trusted local callers may omit it to aggregate all local projects."},
 					"branch":     map[string]any{"type": "string", "description": "Optional branch filter."},
 				},
 			},
@@ -286,11 +286,11 @@ func ToolDescriptors() []Tool {
 					"collection":    map[string]any{"type": "string", "description": "Optional explicit collection. Defaults to the collection recorded for the resolved generation."},
 					"search_query":  map[string]any{"type": "string", "description": "Natural language or keyword query."},
 					"query":         map[string]any{"type": "string", "description": "Alias for search_query."},
-					"search_type":   map[string]any{"type": "string", "default": "HYBRID", "description": "Search strategy. Defaults to HYBRID for workspace retrieval; use CHUNKS_LEXICAL for keyword-only search without embeddings."},
+					"search_type":   map[string]any{"type": "string", "default": "HYBRID", "description": "Supported MCP retrieval strategy; same strategy contract as search. Defaults to HYBRID; CHUNKS_LEXICAL/BM25 works without embeddings. Unsupported strategies are rejected."},
 					"top_k":         map[string]any{"type": "integer", "default": 10},
 					"room":          map[string]any{"type": "string", "description": "Filter chunks by room."},
 					"tags":          map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Filter chunks by tags."},
-					"mode":          map[string]any{"type": "string", "enum": []string{"rag", "graph", "full", "auto"}, "default": "rag", "description": "Defaults to rag so workspace search does not route into graph-only strategies."},
+					"mode":          map[string]any{"type": "string", "enum": []string{"rag", "full", "auto"}, "default": "rag", "description": "Defaults to rag for supported workspace retrieval. Graph-only mode is unavailable and rejected."},
 					"rerank":        map[string]any{"type": "boolean", "default": false},
 					"parent_child":  map[string]any{"type": "boolean", "default": false},
 					"multi_query":   map[string]any{"type": "boolean", "default": false},
@@ -345,14 +345,15 @@ func ToolDescriptors() []Tool {
 		},
 		{
 			Name:        "workspace_read",
-			Description: "Read an exact markdown file from the workspace truth layer and return related manifest chunks.",
+			Description: "Read exact UTF-8 Markdown bytes from the confined workspace truth layer, returning the current file_digest and related manifest chunks. Unsafe paths and invalid UTF-8 fail explicitly.",
 			OutputSchema: objectSchema(map[string]any{
-				"project_id": stringProp("Workspace project ID."),
-				"branch":     stringProp("Workspace branch namespace."),
-				"path":       stringProp("Markdown path inside the workspace."),
-				"text":       stringProp("Markdown file content."),
-				"citation":   objectSchema(map[string]any{"source_id": stringProp("Stable source ID."), "source_uri": stringProp("Workspace source URI."), "read_tool": stringProp("Tool that returns this exact source."), "read_args": objectSchema(map[string]any{})}),
-				"citations":  arrayOfObjectsProp(objectSchema(map[string]any{"source_id": stringProp("Chunk source ID."), "generation": stringProp("Generation containing this chunk."), "chunk_id": stringProp("Chunk ID."), "vector_id": stringProp("Vector ID.")}), "Chunk-level citations from the manifest."),
+				"project_id":  stringProp("Workspace project ID."),
+				"branch":      stringProp("Workspace branch namespace."),
+				"path":        stringProp("Markdown path inside the workspace."),
+				"text":        stringProp("Exact UTF-8 Markdown content."),
+				"file_digest": stringProp("SHA-256 of actually read file bytes; use as expected_file_digest for cooperative CAS."),
+				"citation":    objectSchema(map[string]any{"source_id": stringProp("Stable source ID."), "source_uri": stringProp("Workspace source URI."), "read_tool": stringProp("Tool that returns this exact source."), "read_args": objectSchema(map[string]any{})}),
+				"citations":   arrayOfObjectsProp(objectSchema(map[string]any{"source_id": stringProp("Chunk source ID."), "generation": stringProp("Generation containing this chunk."), "chunk_id": stringProp("Chunk ID."), "vector_id": stringProp("Vector ID.")}), "Chunk-level citations from the manifest."),
 			}),
 			InputSchema: map[string]any{
 				"type": "object",
@@ -422,7 +423,7 @@ func ToolDescriptors() []Tool {
 		},
 		{
 			Name:        "workspace_reconcile",
-			Description: "Scan the workspace filesystem truth layer and build a fresh markdown index generation from current .md files.",
+			Description: "Reconcile current Markdown files and publish the complete requested index batch after every file succeeds.",
 			OutputSchema: objectSchema(map[string]any{
 				"project_id":        stringProp("Workspace project ID."),
 				"branch":            stringProp("Workspace branch namespace."),
@@ -436,8 +437,9 @@ func ToolDescriptors() []Tool {
 				"properties": map[string]any{
 					"project_id":          map[string]any{"type": "string", "description": "Workspace project ID."},
 					"branch":              map[string]any{"type": "string", "default": "main", "description": "Branch namespace."},
-					"generation":          map[string]any{"type": "string", "description": "Fresh index generation ID."},
+					"generation":          map[string]any{"type": "string", "description": "Logical index generation ID; existing generations can be updated as one batch."},
 					"collection":          map[string]any{"type": "string", "description": "Optional explicit vector/BM25 collection."},
+					"delete_missing":      map[string]any{"type": "boolean", "default": false, "description": "Remove indexed paths missing from the selected scope; omitted paths selects all Markdown files."},
 					"paths":               map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Optional markdown paths; defaults to all .md files in the workspace."},
 					"activate_generation": map[string]any{"type": "boolean", "default": false, "description": "Mark the reconciled generation active."},
 					"chunk_strategy":      map[string]any{"type": "string", "enum": []string{"merged", "paragraph", "sentence", "sliding"}, "default": "merged"},
@@ -510,7 +512,7 @@ func ToolDescriptors() []Tool {
 		},
 		{
 			Name:        "workspace_watch_status",
-			Description: "Inspect workspace watcher status, lag counters, last reconciliation, and last error.",
+			Description: "Inspect watcher status for a project and optional branch. Authenticated callers must select project_id; trusted local callers may inspect global status.",
 			OutputSchema: objectSchema(map[string]any{
 				"enabled":           booleanProp("Whether the watcher is currently running."),
 				"scan_count":        integerProp("Number of polling scans completed."),
@@ -523,8 +525,11 @@ func ToolDescriptors() []Tool {
 				"last_error":        stringProp("Last watcher error, if any."),
 			}),
 			InputSchema: map[string]any{
-				"type":       "object",
-				"properties": map[string]any{},
+				"type": "object",
+				"properties": map[string]any{
+					"project_id": stringProp("Project ID; required for authenticated callers."),
+					"branch":     stringProp("Optional branch filter."),
+				},
 			},
 		},
 		{
@@ -657,7 +662,7 @@ func ToolDescriptors() []Tool {
 		},
 		{
 			Name:        "workspace_gc",
-			Description: "Garbage-collect workspace generations marked gc_pending, including vector collections and BM25 sidecar entries.",
+			Description: "Garbage-collect gc_pending workspace generations and retry obsolete vector IDs while preserving active records and shared collections.",
 			OutputSchema: objectSchema(map[string]any{
 				"project_id":        stringProp("Workspace project ID."),
 				"branch":            stringProp("Workspace branch namespace."),
@@ -665,11 +670,11 @@ func ToolDescriptors() []Tool {
 				"active_generation": stringProp("Active generation preserved by GC."),
 				"result": objectSchema(map[string]any{
 					"generations":           arrayOfStringsProp("Generations removed from the manifest."),
-					"dropped_collections":   arrayOfStringsProp("Exclusive vector collections dropped."),
-					"deleted_vector_ids":    arrayOfStringsProp("Vector IDs deleted from shared collections."),
+					"dropped_collections":   arrayOfStringsProp("Reserved compatibility field; exact-ID GC preserves collections."),
+					"deleted_vector_ids":    arrayOfStringsProp("Exact obsolete vector IDs deleted."),
 					"dry_run":               booleanProp("True when this is a preview and no state was changed."),
 					"shared_collections":    arrayOfStringsProp("Collections that require exact vector ID deletion."),
-					"exclusive_collections": arrayOfStringsProp("Collections used only by GC-pending generations."),
+					"exclusive_collections": arrayOfStringsProp("Reserved compatibility field; manifest-local ownership never permits dropping a collection."),
 				}),
 			}),
 			InputSchema: map[string]any{
@@ -686,11 +691,12 @@ func ToolDescriptors() []Tool {
 			Name:        "workspace_manifest",
 			Description: "Read a workspace manifest with active generation, generation states, and chunk-to-vector records.",
 			OutputSchema: objectSchema(map[string]any{
-				"project_id":        stringProp("Workspace project ID."),
-				"branch":            stringProp("Workspace branch namespace."),
-				"manifest_path":     stringProp("Durable manifest path."),
-				"active_generation": stringProp("Active generation."),
-				"chunks_count":      integerProp("Number of chunk records."),
+				"project_id":         stringProp("Workspace project ID."),
+				"branch":             stringProp("Workspace branch namespace."),
+				"manifest_path":      stringProp("Durable manifest path."),
+				"active_generation":  stringProp("Active generation."),
+				"chunks_count":       integerProp("Number of chunk records."),
+				"workspace_manifest": objectSchema(map[string]any{"files": objectSchema(map[string]any{}), "pending_retirements": objectSchema(map[string]any{})}),
 			}),
 			InputSchema: map[string]any{
 				"type": "object",
@@ -956,7 +962,7 @@ func ToolDescriptors() []Tool {
 			}, "required": []string{"collection"}},
 		},
 		{
-			Name: "memory_markdown_digest", Group: "memory", Description: "Render selected verified decisions and discoveries as a read-only Markdown export.",
+			Name: "memory_markdown_digest", Group: "memory", Description: "Render selected receipt-validated or legacy verified decisions and discoveries as a scoped read-only Markdown export. Stored labels describe publication provenance, not factual truth.",
 			OutputSchema: objectSchema(map[string]any{
 				"collection": stringProp("Source collection."), "generated_at": stringProp("RFC3339 export timestamp."), "count": integerProp("Memories exported."), "markdown": stringProp("Read-only Markdown digest; Levara remains the source of truth."),
 			}),
@@ -1007,7 +1013,7 @@ func ToolDescriptors() []Tool {
 		},
 		{
 			Name:         "consolidate",
-			Description:  "Consolidate near-duplicate/related memories in a collection: cluster, then merge (deterministic) or abstract (LLM). Reversible. dry_run defaults true.",
+			Description:  "Consolidate the verified owner's active raw memories in an explicit collection, preserving type/room/hall. Shared mode requires live administrator or trusted-local authority. Journaled unchanged runs can be reverted. dry_run defaults true.",
 			OutputSchema: objectSchema(map[string]any{"ok": booleanProp("Synchronous success when wait=true."), "message": stringProp("Synchronous result."), "job_id": stringProp("Async job ID."), "status": stringProp("pending|running|completed|failed."), "submitted_at": stringProp("RFC3339 submission time."), "poll_after_ms": integerProp("Suggested polling delay.")}),
 			InputSchema: map[string]any{
 				"type": "object",
@@ -1016,26 +1022,28 @@ func ToolDescriptors() []Tool {
 					"room":            map[string]any{"type": "string", "description": "Optional room scope."},
 					"hall":            map[string]any{"type": "string", "description": "Optional hall scope."},
 					"dry_run":         map[string]any{"type": "boolean", "description": "Preview only, no writes. Default true."},
+					"shared":          map[string]any{"type": "boolean", "description": "Select only shared memories; requires live administrator or trusted-local authority. Default false."},
 					"wait":            map[string]any{"type": "boolean", "description": "Run synchronously for backward compatibility. Default false."},
 					"wait_timeout_ms": map[string]any{"type": "integer", "description": "Reserved bounded wait timeout."},
-					"max_duration_ms": map[string]any{"type": "integer", "description": "Maximum asynchronous job duration; default 300000 ms."},
+					"max_duration_ms": map[string]any{"type": "integer", "minimum": 1, "maximum": 300000, "description": "Maximum asynchronous job duration, from 1 to 300000 ms; default 300000."},
 				},
 				"required": []string{"collection"},
 			},
 		},
 		{
-			Name: "consolidation_status", Description: "Read a durable asynchronous consolidation job.",
+			Name: "consolidation_status", Description: "Read your exact-owner asynchronous consolidation job. Interrupted authenticated jobs report unknown outcome and require resubmission.",
 			OutputSchema: objectSchema(map[string]any{"job_id": stringProp("Job ID."), "status": stringProp("pending|running|completed|failed."), "result": stringProp("Completed consolidation result."), "last_error": stringProp("Failure detail."), "updated_at": stringProp("RFC3339 update time."), "candidates": integerProp("Candidate memories."), "clusters": integerProp("Clusters found."), "actions": integerProp("Actions planned/applied."), "llm_calls": integerProp("LLM calls consumed.")}),
 			InputSchema:  map[string]any{"type": "object", "properties": map[string]any{"job_id": stringProp("Job ID.")}, "required": []string{"job_id"}},
 		},
 		{
 			Name:         "consolidation_revert",
-			Description:  "Reverse a consolidation run: reactivate superseded source memories and delete generated semantic records. Full reversibility.",
+			Description:  "Reverse an authorized journaled consolidation run after checking every affected row is unchanged. Restore source retirement fields and delete generated abstracts atomically; legacy or stale runs return an error.",
 			OutputSchema: statusMessageSchema(),
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"run_id": map[string]any{"type": "string", "description": "Consolidation run ID to reverse (returned by consolidate)."},
+					"shared": map[string]any{"type": "boolean", "description": "Explicit shared-run selector; requires live administrator or trusted-local authority. Default false."},
 				},
 				"required": []string{"run_id"},
 			},
@@ -1067,25 +1075,27 @@ func ToolDescriptors() []Tool {
 		},
 		{
 			Name:         "pin_memory",
-			Description:  "Mark a memory as pinned (critical fact). It will be returned by wake_up. Optional priority for ordering.",
+			Description:  "Mark a memory as pinned (critical fact). It will be returned by wake_up. Optional priority for ordering. A nonempty collection selects that project only; without a collection or session default, legacy key-and-owner selection applies across collections.",
 			OutputSchema: statusMessageSchema(),
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"key":      map[string]any{"type": "string", "description": "Memory key to pin"},
-					"priority": map[string]any{"type": "integer", "description": "Higher = loaded first. Default 1."},
+					"key":        map[string]any{"type": "string", "description": "Memory key to pin"},
+					"priority":   map[string]any{"type": "integer", "description": "Higher = loaded first. Default 1."},
+					"collection": map[string]any{"type": "string", "description": "Optional exact project collection. Legacy sessions supply their default when omitted or empty."},
 				},
 				"required": []string{"key"},
 			},
 		},
 		{
 			Name:         "unpin_memory",
-			Description:  "State change: remove a memory from the pinned briefing set when the user asks to unpin or deprioritize it. The record stays in storage. To read or search memories use recall_memory or list_memories instead.",
+			Description:  "State change: remove a memory from the pinned briefing set when the user asks to unpin or deprioritize it. The record stays in storage. A nonempty collection selects that project only; without a collection or session default, legacy key-and-owner selection applies across collections. To read or search memories use recall_memory or list_memories instead.",
 			OutputSchema: statusMessageSchema(),
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"key": map[string]any{"type": "string", "description": "Memory key to unpin"},
+					"key":        map[string]any{"type": "string", "description": "Memory key to unpin"},
+					"collection": map[string]any{"type": "string", "description": "Optional exact project collection. Legacy sessions supply their default when omitted or empty."},
 				},
 				"required": []string{"key"},
 			},
@@ -1140,7 +1150,7 @@ func ToolDescriptors() []Tool {
 		},
 		{
 			Name:         "diary_write",
-			Description:  "Append an entry to a per-agent diary (isolated memory namespace under owner_id=agent:<name>). Use for specialized agents (reviewer, architect, oncall) to keep their own notes without polluting project memory.",
+			Description:  "Write an entry to a diary scoped to the verified caller, selected tenant and trimmed agent name. Historical agent-only diaries remain available only in trusted local anonymous mode. Use for specialized agents to keep notes separate from project memory.",
 			OutputSchema: statusMessageSchema(),
 			InputSchema: map[string]any{
 				"type": "object",
@@ -1155,7 +1165,7 @@ func ToolDescriptors() []Tool {
 		},
 		{
 			Name:        "diary_read",
-			Description: "Read entries from a per-agent diary, optionally filtered by query.",
+			Description: "Read diary entries scoped to the verified caller, selected tenant and trimmed agent name, optionally filtered by query. Authenticated callers cannot read historical agent-only diaries.",
 			OutputSchema: objectSchema(map[string]any{
 				"entries": arrayOfObjectsProp(objectSchema(map[string]any{
 					"key":        stringProp("Entry key."),
@@ -1248,12 +1258,13 @@ func ToolDescriptors() []Tool {
 			},
 		}, {
 			Name:        "chat_distill",
-			Description: "Distill an imported chat session into durable memories via LLM: extracts a few hall-tagged records (decision/discovery/advice/fact/event) with provenance. Raw transcripts are not memory; this tool condenses them.",
+			Description: "Distill an imported chat readable by the verified caller or explicitly shared through a project into the caller’s durable memories via LLM: extracts a few hall-tagged records (decision/discovery/advice/fact/event) with provenance. Distilled text is stored as unverified with no Task or receipt references, including when replacing an existing memory. Transcript provenance does not validate the text. Dry-run leaves stored memories unchanged.",
 			OutputSchema: objectSchema(map[string]any{
 				"session_id": stringProp("Echo of the request."),
+				"chat_id":    stringProp("Canonical imported chat ID, when resolved."),
 				"platform":   stringProp("Echo of the request."),
 				"hall":       stringProp("Memory genre extracted."),
-				"saved":      integerProp("Records upserted (0 in dry_run)."),
+				"saved":      integerProp("Records upserted; omitted in a nonempty dry-run preview. Empty extraction returns 0."),
 				"dry_run":    booleanProp("True when candidates were not saved."),
 				"candidates": arrayOfObjectsProp(objectSchema(map[string]any{
 					"key":   stringProp("Kebab-case memory key."),
@@ -1264,20 +1275,25 @@ func ToolDescriptors() []Tool {
 				"type": "object",
 				"properties": map[string]any{
 					"platform":     map[string]any{"type": "string", "description": "codex | claude-code | cursor"},
-					"session_id":   map[string]any{"type": "string", "description": "Imported session to distill"},
+					"session_id":   map[string]any{"type": "string", "description": "Original source session ID; ambiguous shared sources require chat_id."},
+					"chat_id":      map[string]any{"type": "string", "description": "Canonical chat ID returned by import or session listing; selects that exact accessible chat."},
 					"hall":         map[string]any{"type": "string", "description": "Memory genre to extract (default: decision)"},
 					"max_memories": map[string]any{"type": "integer", "description": "Cap on extracted records, 1-20 (default: 5)"},
 					"dry_run":      map[string]any{"type": "boolean", "description": "Return candidates without saving"},
-					"collection":   map[string]any{"type": "string", "description": "Target collection (session default applies)."},
+					"collection":   map[string]any{"type": "string", "description": "Target collection. Legacy sessions supply their default; stateless calls select explicitly. Omitted without a default uses the base memory store."},
 					"room":         map[string]any{"type": "string", "description": "Room for saved memories (default: chat-import)."},
 				},
-				"required": []string{"platform", "session_id"},
+				"required": []string{"platform"},
+				"anyOf": []map[string]any{
+					{"required": []string{"session_id"}},
+					{"required": []string{"chat_id"}},
+				},
 			},
 		},
 
 		{
 			Name:        "get_project_context",
-			Description: "Look up the project context record previously selected with set_context (which project/collection is currently active). This is a narrow record read, not a session briefing — for the session-start summary call wake_up.",
+			Description: "Read a scoped project summary of current caller/shared memories, optionally including related projects. Production returns accessible current publication counts, authorized graph entity types, and recent caller-owned interactions with exact collection provenance; runtimes without that policy provider report those sections unavailable. Legacy sessions can supply their default collection; stateless calls select it explicitly. For a small session-start briefing call wake_up.",
 			OutputSchema: objectSchema(map[string]any{
 				"collection": stringProp("Project collection name."),
 				"text":       stringProp("Markdown project context summary."),
@@ -1362,7 +1378,7 @@ func ToolDescriptors() []Tool {
 					"direction":   map[string]any{"type": "string", "description": "pull (fetch from remote) or push (send to remote)", "default": "pull"},
 					"types":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Data types: memories, interactions, graph, collections. Empty = all except collections (explicit opt-in).", "default": []string{"memories", "interactions", "graph"}},
 					"collections": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Specific vector collection names to sync (requires re-embedding). Only used when types includes 'collections'."},
-					"since":       map[string]any{"type": "string", "description": "Incremental sync: only records updated after this RFC3339 timestamp"},
+					"since":       map[string]any{"type": "string", "description": "Incremental sync: records updated at or after this RFC3339 timestamp; inclusive boundary supports safe replay"},
 				},
 				"required": []string{"remote_url"},
 			},
@@ -1402,7 +1418,7 @@ func ToolDescriptors() []Tool {
 		},
 		{
 			Name:        "codify",
-			Description: "Analyze source code and extract entities (functions, classes, imports) and relationships (CALLS, IMPORTS, EXTENDS). Supports Go and Python.",
+			Description: "Analyze Go syntax with AST extraction or Python with heuristic extraction (no Python syntax validation); unsupported extensions and malformed Go return errors. Publishes source-scoped static knowledge synchronously through native source versioning, without model extraction; omitted collection uses code_knowledge. Authenticated use requires active instance administrator, no selected tenant and write authority. Trusted nil-DB use returns analysis only.",
 			OutputSchema: objectSchema(map[string]any{
 				"language":  stringProp("Detected language (go | python)."),
 				"entities":  integerProp("Count of extracted entities."),

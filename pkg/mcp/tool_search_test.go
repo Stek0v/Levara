@@ -750,31 +750,6 @@ func TestToolSearch_AUTORoutesThroughRouter(t *testing.T) {
 	}
 }
 
-func TestToolSearch_ModeRagCoercesGraphType(t *testing.T) {
-	// mode=rag + search_type=GRAPH_COMPLETION → coerce to CHUNKS.
-	// No router (mode gating happens before routing). Observe via
-	// the final searchType in the response.
-	fakePipe := &fakeSearchPipeline{
-		byText: func(ctx context.Context, coll, query string, topK int) ([]pipeline.ScoredResult, error) {
-			return []pipeline.ScoredResult{scoredRes("a", 0.5)}, nil
-		},
-	}
-	deps := &fakeDeps{
-		collections:      []string{"default"},
-		hasColls:         true,
-		searchPipelineFn: func(bool) SearchPipeline { return fakePipe },
-	}
-	res := ToolSearch(context.Background(), deps, map[string]any{
-		"search_query": "q",
-		"search_type":  "GRAPH_COMPLETION",
-		"mode":         "rag",
-	})
-	resp := decodeSearchResp(t, res)
-	if resp["search_type"] != "CHUNKS" {
-		t.Errorf("search_type=%v, want CHUNKS (mode=rag coerces graph types)", resp["search_type"])
-	}
-}
-
 func TestToolSearch_MetadataFilterOverfetchAndDrop(t *testing.T) {
 	// topK=2 with room filter → fetchK = 6. Return 6 results, 4
 	// matching room="alpha" → final 2 returned (capped at topK).
@@ -868,51 +843,6 @@ func TestToolSearch_EmptyResultsEncodesAsEmptyArray(t *testing.T) {
 }
 
 // ── pure-helper tests ──
-
-func TestSearchTypesForMode(t *testing.T) {
-	if rag := searchTypesForMode("rag"); !rag["CHUNKS"] || !rag["HYBRID"] || rag["GRAPH_COMPLETION"] {
-		t.Errorf("rag whitelist wrong: %v", rag)
-	}
-	if graph := searchTypesForMode("graph"); !graph["GRAPH_COMPLETION"] || graph["CHUNKS"] {
-		t.Errorf("graph whitelist wrong: %v", graph)
-	}
-	if searchTypesForMode("auto") != nil {
-		t.Error("auto mode should be unrestricted (nil)")
-	}
-}
-
-func TestDefaultTypeForMode(t *testing.T) {
-	if defaultTypeForMode("rag") != "CHUNKS" {
-		t.Errorf("rag default = %q, want CHUNKS", defaultTypeForMode("rag"))
-	}
-	if defaultTypeForMode("graph") != "GRAPH_COMPLETION" {
-		t.Errorf("graph default = %q, want GRAPH_COMPLETION", defaultTypeForMode("graph"))
-	}
-	if defaultTypeForMode("auto") != "AUTO" {
-		t.Errorf("auto default = %q, want AUTO", defaultTypeForMode("auto"))
-	}
-}
-
-func TestApplyModeGating(t *testing.T) {
-	cases := []struct {
-		mode, in, want string
-	}{
-		{"auto", "RERANK", "RERANK"},
-		{"full", "RERANK", "RERANK"},
-		{"rag", "GRAPH_COMPLETION", "CHUNKS"}, // outside whitelist → coerce
-		{"rag", "CHUNKS", "CHUNKS"},           // in whitelist → keep
-		{"rag", "AUTO", "AUTO"},               // AUTO passes through
-		{"rag", "", ""},                       // empty passes through
-		{"graph", "CHUNKS", "GRAPH_COMPLETION"},
-		{"graph", "GRAPH_COMPLETION", "GRAPH_COMPLETION"},
-	}
-	for _, c := range cases {
-		got := applyModeGating(c.mode, c.in)
-		if got != c.want {
-			t.Errorf("applyModeGating(%q, %q) = %q, want %q", c.mode, c.in, got, c.want)
-		}
-	}
-}
 
 func TestApplyTypeFlags(t *testing.T) {
 	cases := []struct {

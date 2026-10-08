@@ -23,17 +23,20 @@ contract merely to stay under a soft write budget.
    connection unless requested; mention skipped memory synchronization only
    when it materially matters.
 4. Never expose, retrieve, or copy Levara credentials while using memory.
-5. Detect whether `supersede_memory` is available. Full history-preserving
-   replacement requires a profile that exposes it (`memory`, `full`, or
-   `long-horizon`). `core` and `workspace` support recall and `save_memory`
-   only.
+5. Inspect the active `tools/list`. `supersede_memory` is advertised by `core`,
+   `memory`, `full`, and `long-horizon`; `workspace` supports recall and
+   `save_memory` without supersession. `delete_memory` is advertised by `core`,
+   `memory`, and `full`, but not `long-horizon` or `workspace`.
 
 ## Start substantial work
 
 1. Derive a stable collection from the repository or explicit project name.
    Do not use an absolute filesystem path.
-2. Call `set_context` with that collection.
-3. Call `wake_up` with the default small token budget.
+2. On legacy `/mcp`, call `set_context` with that collection using the same
+   session. Latest `/mcp/2026-07-28` is stateless: it hides and rejects
+   `set_context`; pass `collection` explicitly to every collection-aware call.
+3. Call `wake_up(collection="<project>", max_tokens=300)`. Keep that explicit
+   collection on subsequent recall, save, and other collection-aware calls.
 4. Recall the task topic before proposing architecture, revisiting a bug, or
    recommending an operational change. Filter by `room` or `hall` when known.
 5. Use `get_project_context` only for broad onboarding or resuming after a
@@ -87,8 +90,9 @@ Before saving, search or recall similar memories:
   the old row (`superseded_by` / `valid_until`) and inserts the replacement.
   Do not rely on `save_memory(supersedes_memory_id=...)` for replacement:
   that field is provenance only and does not retire the old row from recall.
-- On `core` / `workspace` without `supersede_memory`, either overwrite the same
-  key with `save_memory` (history is destroyed) or leave the old memory active
+- When the active toolset lacks `supersede_memory` (for example `workspace`),
+  either overwrite the same key with `save_memory` (history is destroyed) or
+  leave the old memory active
   and state that limitation. Never claim history-preserving supersession.
 - Prefer at most three new memories per task as a soft noise budget. Exceed it
   whenever additional independent durable outcomes exist; never postpone a

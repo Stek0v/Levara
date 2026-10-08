@@ -14,7 +14,7 @@ func TestWorkspacePathsPolicy(t *testing.T) {
 	if got := SafeID("../bad id!"); got != "bad_id" {
 		t.Fatalf("SafeID = %q, want bad_id", got)
 	}
-	if got := ManifestPath(root, "proj/1", "feature/x"); got != filepath.Join(root, ".kb", "manifests", "proj_1__feature_x.json") {
+	if got := ManifestPath(root, "proj/1", "feature/x"); got != filepath.Join(root, ".kb", "manifests", "proj_1", "feature_x.json") {
 		t.Fatalf("ManifestPath = %q", got)
 	}
 }

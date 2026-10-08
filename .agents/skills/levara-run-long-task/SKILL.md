@@ -17,11 +17,11 @@ Use Levara as the operational source of truth. Treat chat history and generated 
 
 ## Initialize
 
-1. Call `set_context` with the project collection.
-2. Call `wake_up` with that exact collection. Ignore graph entities unless `scope_status=exact`.
+1. Select the project collection. On legacy `/mcp`, call `set_context` in the same session; latest `/mcp/2026-07-28` hides and rejects it, so pass collection explicitly on every collection-aware call.
+2. Call `wake_up(collection="<project>", max_tokens=300)`. Ignore graph entities unless `scope_status=exact`.
 3. For `start`, call `task_open` with a non-empty collection, room, objective, authority, risk level, idempotency key, and structured Definition of Done.
 4. For other modes, require a stable `task_id` and call `task_bootstrap`.
-5. Stop if Task Runtime tools are unavailable; report that `LEVARA_LONG_HORIZON_RUNTIME` must be enabled. Do not emulate server state in chat.
+5. Stop if Task Runtime tools are unavailable; report the SQL database requirement, `LEVARA_LONG_HORIZON_RUNTIME=1`, and `LEVARA_MCP_TOOLSET=long-horizon` or `full`. Inspect actual `tools/list`; do not emulate server state in chat.
 
 ## Execute one verified step at a time
 
@@ -34,6 +34,20 @@ Use Levara as the operational source of truth. Treat chat history and generated 
 7. Pass or fail the step through `task_step`. Retry version conflicts by bootstrapping; do not overwrite newer state.
 
 Use a stable workspace revision. For Git work, record HEAD plus a digest of dirty tracked/untracked state. Re-run affected verification after any later mutation.
+
+## Optional server execution
+
+The bounded workspace worker requires SQL, `LEVARA_LONG_HORIZON_RUNTIME=1`,
+`LEVARA_TASK_WORKER=1`, and explicit `LEVARA_MCP_TOOLSET=full`. `long-horizon`
+alone lacks workspace action tools. The server uses `NewTaskExecutor` for
+`workspace_read` and `workspace_write` with `index` absent or false; shell,
+network, and unknown arguments are rejected. Each executable step needs a
+structured `action` with output assertions and criterion IDs. Execution requires
+`authority.auto_run=true`, task `allowed_tools`, an authenticated owner and live
+lease, a workspace grant, and a digest-pinned authority manifest granting the
+tool and an existing canonical directory. DevMode is denied; filesystem
+confinement supports Linux and macOS. See [Task Runtime](../../../docs/long-horizon-runtime.md)
+for setup; use the external host for other authorized work.
 
 ## Handle blockers and monitoring
 

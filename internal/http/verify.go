@@ -88,15 +88,17 @@ func hasValidMetadata(r fiber.Map) bool {
 	switch v := m.(type) {
 	case json.RawMessage:
 		var tmp map[string]any
-		return json.Unmarshal(v, &tmp) == nil
+		return json.Unmarshal(v, &tmp) == nil && tmp != nil
 	case []byte:
 		var tmp map[string]any
-		return json.Unmarshal(v, &tmp) == nil
+		return json.Unmarshal(v, &tmp) == nil && tmp != nil
 	case string:
 		var tmp map[string]any
-		return json.Unmarshal([]byte(v), &tmp) == nil
+		return json.Unmarshal([]byte(v), &tmp) == nil && tmp != nil
 	case map[string]any:
-		return true
+		return v != nil
+	case fiber.Map:
+		return v != nil
 	default:
 		return false
 	}

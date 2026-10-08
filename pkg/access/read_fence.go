@@ -10,6 +10,24 @@ import (
 	"time"
 )
 
+// CommunityPublicationCurrent checks the exact materialized publication under
+// the caller's existing authorization fence.
+func (p SQLPolicy) CommunityPublicationCurrent(ctx context.Context, id, generation, sourcesJSON string) (bool, error) {
+	if id == "" || generation == "" {
+		return false, nil
+	}
+	var currentGeneration, currentSources string
+	var verified int
+	err := p.reader().QueryRowContext(ctx, p.rewrite("SELECT generation,sources_json,lineage_verified FROM graph_communities WHERE id=$1"), id).Scan(&currentGeneration, &currentSources, &verified)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return verified == 1 && currentGeneration == generation && currentSources == sourcesJSON, nil
+}
+
 func (p SQLPolicy) reader() documentQuerier {
 	if p.readTx != nil {
 		return p.readTx
@@ -41,6 +59,15 @@ func (p SQLPolicy) AuthorizeWorkspaceFenced(ctx context.Context, tx *sql.Tx, sql
 // RecheckCredential uses already-verified token facts, never untrusted claims.
 // It runs again under the read fence to close revocation after middleware.
 func (p SQLPolicy) RecheckCredential(ctx context.Context, userID, kind, keyID, permissions, sessionID string, epoch, issuedAt, expiresAt int64) error {
+	if kind == "jwt" {
+		if expiresAt <= time.Now().Unix() {
+			return ErrRevokedCredential
+		}
+		if err := validateSessionCredential(ctx, p.reader(), p.Q, userID, epoch, sessionID); err != nil || expiresAt <= time.Now().Unix() {
+			return ErrRevokedCredential
+		}
+		return nil
+	}
 	var current, watermark int64
 	err := p.reader().QueryRowContext(ctx, p.rewrite(`SELECT COALESCE(e.epoch,0), COALESCE(e.revoked_before,0)
 	 FROM users u LEFT JOIN credential_epochs e ON e.user_id=u.id
@@ -49,14 +76,6 @@ func (p SQLPolicy) RecheckCredential(ctx context.Context, userID, kind, keyID, p
 		return ErrRevokedCredential
 	}
 	switch kind {
-	case "jwt":
-		if epoch < 0 || epoch != current || expiresAt <= time.Now().Unix() {
-			return ErrRevokedCredential
-		}
-		if sessionID != "" {
-			var id string
-			err = p.reader().QueryRowContext(ctx, p.rewrite("SELECT id FROM auth_sessions WHERE id=$1 AND user_id=$2 AND revoked=false AND expires_at>$3"), sessionID, userID, time.Now().Unix()).Scan(&id)
-		}
 	case "api_key":
 		var livePermissions string
 		err = p.reader().QueryRowContext(ctx, p.rewrite("SELECT permissions FROM api_keys WHERE id=$1 AND user_id=$2 AND revoked=false"), keyID, userID).Scan(&livePermissions)
@@ -102,15 +121,22 @@ func (p SQLPolicy) BeginReadFence(ctx context.Context, sqlite bool) (SQLPolicy, 
 // drains, even if its observer context expires. The transport must interrupt
 // blocked transfers on cancellation, and the caller must then release.
 func (p SQLPolicy) BeginTransferFence(ctx context.Context, sqlite bool) (SQLPolicy, func(), error) {
+	_, policy, release, err := p.BeginTransferFenceTx(ctx, sqlite)
+	return policy, release, err
+}
+
+// BeginTransferFenceTx exposes the same caller-owned transfer transaction for
+// authoritative row checks; release follows actual transfer drain.
+func (p SQLPolicy) BeginTransferFenceTx(ctx context.Context, sqlite bool) (*sql.Tx, SQLPolicy, func(), error) {
 	if p.DB == nil {
-		return p, nil, errors.New("access: transfer fence requires database")
+		return nil, p, nil, errors.New("access: transfer fence requires database")
 	}
 	if _, ok := ctx.Deadline(); !ok {
-		return p, nil, errors.New("access: transfer fence requires deadline")
+		return nil, p, nil, errors.New("access: transfer fence requires deadline")
 	}
 	conn, err := p.DB.Conn(ctx)
 	if err != nil {
-		return p, nil, err
+		return nil, p, nil, err
 	}
 	// Cancel BEGIN/acquisition with the observer; after handoff, lifetime follows
 	// actual transfer drain rather than the observer deadline.
@@ -121,19 +147,19 @@ func (p SQLPolicy) BeginTransferFence(ctx context.Context, sqlite bool) (SQLPoli
 		stop()
 		cancel()
 		_ = conn.Close()
-		return p, nil, err
+		return nil, p, nil, err
 	}
 	release := func() { stop(); _ = tx.Rollback(); cancel(); _ = conn.Close() }
 	if err := lockReadFence(ctx, tx, sqlite); err != nil {
 		release()
-		return p, nil, err
+		return nil, p, nil, err
 	}
 	if !stop() || ctx.Err() != nil {
 		release()
-		return p, nil, ctx.Err()
+		return nil, p, nil, ctx.Err()
 	}
 	p.readTx = tx
-	return p, release, nil
+	return tx, p, release, nil
 }
 
 func lockReadFence(ctx context.Context, tx *sql.Tx, sqlite bool) error {

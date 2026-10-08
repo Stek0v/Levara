@@ -160,9 +160,16 @@ type chatSourcesDaemon struct {
 
 // StartChatSourcesDaemon boots the opt-in transcript ingest daemon. It
 // never blocks startup and exits quietly when no sources are configured.
-func StartChatSourcesDaemon(ctx context.Context, db *sql.DB, loopbackBase string) {
+func StartChatSourcesDaemon(ctx context.Context, db *sql.DB, loopbackBase string, requireAuth bool) {
 	defs, ok := chatSourcesFromEnv()
 	if !ok || db == nil {
+		return
+	}
+	// This filesystem daemon is an explicit local importer. It never chooses
+	// an authenticated owner from ambient request state; janitors exclude scoped
+	// chats until a verified service identity and publication target are supplied.
+	if err := chatimport.EnsureSchema(ctx, db, Q); err != nil {
+		log.Printf("[chat-sources] import schema init failed, daemon disabled: %v", err)
 		return
 	}
 	if err := ensureChatSourcesSchema(ctx, db); err != nil {
@@ -180,14 +187,7 @@ func StartChatSourcesDaemon(ctx context.Context, db *sql.DB, loopbackBase string
 				distillBudget(), distillHallsLabel())
 		}
 	}
-	d := &chatSourcesDaemon{
-		db:       db,
-		loopback: loopbackBase,
-		dataset:  strings.TrimSpace(os.Getenv("LEVARA_CHAT_SOURCES_DATASET")),
-		seen:     make(map[string]fileFingerprint),
-		interval: chatSourcesInterval(),
-		client:   &http.Client{Timeout: 60 * time.Second},
-	}
+	d := configuredChatSourcesDaemon(db, loopbackBase, requireAuth)
 	// A3 resource governor: pause jobs when memory is tight
 	d.governor = governor.NewGovernorFromEnv()
 
@@ -198,6 +198,22 @@ func StartChatSourcesDaemon(ctx context.Context, db *sql.DB, loopbackBase string
 
 	log.Printf("[chat-sources] daemon enabled: %s (interval=%s, rag=%q, scheduler=%d jobs)",
 		formatSources(defs), d.interval, datasetLabel(d.dataset), len(sched.Status()))
+}
+
+func configuredChatSourcesDaemon(db *sql.DB, loopbackBase string, requireAuth bool) *chatSourcesDaemon {
+	if requireAuth {
+		// No verified service identity is configured for this local importer.
+		// Raw imports remain local-only; do not export them via global RAG/MCP.
+		loopbackBase = ""
+	}
+	return &chatSourcesDaemon{
+		db:       db,
+		loopback: loopbackBase,
+		dataset:  strings.TrimSpace(os.Getenv("LEVARA_CHAT_SOURCES_DATASET")),
+		seen:     make(map[string]fileFingerprint),
+		interval: chatSourcesInterval(),
+		client:   &http.Client{Timeout: 60 * time.Second},
+	}
 }
 
 func datasetLabel(d string) string {

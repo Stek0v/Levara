@@ -40,7 +40,7 @@ func ToolMemoryGarden(ctx context.Context, deps Deps, args map[string]any) ToolR
 	}
 
 	rows, err := db.QueryContext(ctx, deps.Q(`SELECT id,key,value,updated_at,verification_status,source_task_id,source_receipt_ids
-		FROM memories WHERE collection_name=$1 AND (owner_id=$2 OR owner_id='') AND superseded_by=''
+		FROM memories WHERE collection_name=$1 AND (owner_id=$2 OR owner_id='') AND superseded_by='' AND valid_until IS NULL
 		ORDER BY updated_at ASC,id ASC LIMIT $3`), collection, extractOwnerID(ctx), memoryGardenScanLimit+1)
 	if err != nil {
 		return toolError(err.Error())

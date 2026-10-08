@@ -71,8 +71,8 @@ func mcpAdminSummaryHandler(cfg APIConfig) fiber.Handler {
 		sessions, _ := listMCPAdminSessions(c.UserContext(), cfg, 5)
 		pinned, missingMetadata := 0, 0
 		if cfg.DB != nil {
-			_ = cfg.DB.QueryRowContext(c.UserContext(), Q(`SELECT COUNT(*) FROM memories WHERE is_pinned = TRUE OR is_pinned = 1`)).Scan(&pinned)
-			_ = cfg.DB.QueryRowContext(c.UserContext(), Q(`SELECT COUNT(*) FROM memories WHERE COALESCE(room, '') = '' OR COALESCE(hall, '') = ''`)).Scan(&missingMetadata)
+			_ = cfg.DB.QueryRowContext(c.UserContext(), Q(`SELECT COUNT(*) FROM memories WHERE is_pinned = TRUE AND superseded_by = '' AND valid_until IS NULL`)).Scan(&pinned)
+			_ = cfg.DB.QueryRowContext(c.UserContext(), Q(`SELECT COUNT(*) FROM memories WHERE superseded_by = '' AND valid_until IS NULL AND (COALESCE(room, '') = '' OR COALESCE(hall, '') = '')`)).Scan(&missingMetadata)
 		}
 		toolsetName, toolsetSource := EffectiveMCPToolsetName()
 		return c.JSON(fiber.Map{
@@ -113,11 +113,11 @@ func listMCPAdminSessions(ctx context.Context, cfg APIConfig, limit int) ([]mcpA
 	}
 	rows, err := cfg.DB.QueryContext(
 		ctx,
-		Q(`SELECT session_id, COUNT(*), COALESCE(MAX(created_at), ''), COALESCE(MAX(search_type), '')
+		Q(`SELECT session_id, COUNT(*), COALESCE(CAST(MAX(created_at) AS TEXT), ''), COALESCE(MAX(search_type), '')
 		   FROM interactions
 		   WHERE session_id <> ''
 		   GROUP BY session_id
-		   ORDER BY COALESCE(MAX(created_at), '') DESC
+		   ORDER BY MAX(created_at) DESC
 		   LIMIT $1`),
 		limit,
 	)

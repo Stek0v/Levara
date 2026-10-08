@@ -23,9 +23,11 @@ const (
 // SQLite migrations. It is intentionally derived from the migration statements
 // rather than maintained manually.
 func SchemaInventory() []SchemaObject {
-	out := make([]SchemaObject, 0, len(schemaStatements)+len(schemaSQLiteStatements))
+	out := make([]SchemaObject, 0, len(schemaStatements)+len(schemaSQLiteStatements)+2*len(memorySyncGenerationStatements))
 	out = append(out, schemaInventoryFor(DBPostgres, schemaStatements)...)
+	out = append(out, schemaInventoryFor(DBPostgres, memorySyncGenerationStatements)...)
 	out = append(out, schemaInventoryFor(DBSQLite, schemaSQLiteStatements)...)
+	out = append(out, schemaInventoryFor(DBSQLite, memorySyncGenerationStatements)...)
 	return out
 }
 

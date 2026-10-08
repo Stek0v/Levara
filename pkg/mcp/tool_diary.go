@@ -1,86 +1,165 @@
 package mcp
 
 // Per-agent diary tools: diary_write, diary_read.
-// Extracted from deps.go during F-4 wave 3j-split.
 
 import (
 	"context"
+	"database/sql"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/stek0v/levara/pkg/access"
 )
 
-// diaryReadLimit caps the number of entries ToolDiaryRead returns.
-const diaryReadLimit = 100
+const (
+	diaryReadLimit = 100
+	diaryTimeout   = 10 * time.Second
+)
 
-// ToolDiaryWrite inserts or updates a diary memory scoped to a
-// subagent (owner_id = "agent:<agent>"). Upsert semantics: same key
-// under the same owner replaces value + collection + updated_at.
-//
-// The original pre-refactor SQL reused placeholders ($3, $5, $7 in
-// both VALUES and DO UPDATE SET). The rewrite here uses unique
-// placeholders ($8, $9, $10) instead, which means we don't need
-// QArgs on the Deps interface — consistent with wave 3f's pin/unpin
-// simplification. Behavior is byte-for-byte identical.
+// diaryIdentity uses verified transport authority. Only explicitly trusted,
+// anonymous local callers retain the historical global agent namespace.
+func diaryIdentity(ctx context.Context, deps Deps, agent string) (string, access.MetadataActor, bool, error) {
+	actor := deps.MetadataActor(ctx)
+	legacy := actor.TrustedLocal && actor.UserID == "" && actor.TenantID == ""
+	if legacy {
+		return DiaryOwner(agent), actor, true, nil
+	}
+	actor.TrustedLocal = false
+	if actor.UserID == "" || actor.Credential.Kind == "" ||
+		actor.Credential.Kind == "api_key" && strings.TrimSpace(actor.APIKeyPermissions) == "" {
+		return "", actor, false, access.ErrRevokedCredential
+	}
+	identity, err := json.Marshal([3]string{actor.UserID, actor.TenantID, strings.TrimSpace(agent)})
+	if err != nil {
+		return "", actor, false, err
+	}
+	return "diary:v1:" + base64.RawURLEncoding.EncodeToString(identity), actor, false, nil
+}
+
+func diaryRecheck(ctx context.Context, policy access.SQLPolicy, actor access.MetadataActor) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	c := actor.Credential
+	if err := policy.RecheckCredential(ctx, actor.UserID, c.Kind, c.KeyID, actor.APIKeyPermissions, c.SessionID, c.Epoch, c.IssuedAt, c.ExpiresAt); err != nil {
+		return err
+	}
+	if actor.TenantID != "" {
+		member, err := policy.IsTenantMember(ctx, actor.UserID, actor.TenantID)
+		if err != nil {
+			return err
+		}
+		if !member {
+			return access.ErrDocumentForbidden
+		}
+	}
+	return ctx.Err()
+}
+
+// ToolDiaryWrite upserts an entry for the verified caller, selected tenant,
+// normalized agent and collection, preserving its canonical ID.
 func ToolDiaryWrite(ctx context.Context, deps Deps, args map[string]any) ToolResult {
 	db := deps.DB()
 	if db == nil {
-		return ToolResult{
-			Content: []Content{{Type: "text", Text: "Error: database not configured"}},
-			IsError: true,
-		}
+		return errorResult("database not configured")
 	}
 	agent, _ := args["agent"].(string)
 	key, _ := args["key"].(string)
 	value, _ := args["value"].(string)
-	if agent == "" || key == "" || value == "" {
-		return ToolResult{
-			Content: []Content{{Type: "text", Text: "Error: 'agent', 'key', 'value' required"}},
-			IsError: true,
-		}
+	if strings.TrimSpace(agent) == "" || key == "" || value == "" {
+		return errorResult("'agent', 'key', 'value' required")
+	}
+	ctx, cancel := context.WithTimeout(ctx, diaryTimeout)
+	defer cancel()
+	owner, actor, legacy, err := diaryIdentity(ctx, deps, agent)
+	if err != nil {
+		return errorResult(err.Error())
 	}
 	collectionName, _ := args["collection"].(string)
-	owner := DiaryOwner(agent)
+	var tx *sql.Tx
+	var policy access.SQLPolicy
+	if !legacy {
+		policy = access.SQLPolicy{DB: db, Q: deps.Q}
+		tx, policy, err = policy.BeginMetadataWrite(ctx, actor, memoryCommitSQLite(deps))
+		if err != nil {
+			return errorResult(err.Error())
+		}
+		defer tx.Rollback()
+	} else {
+		tx, err = db.BeginTx(ctx, nil)
+		if err != nil {
+			return errorResult(err.Error())
+		}
+		defer tx.Rollback()
+	}
 	id := uuid.New().String()
 	now := time.Now().UTC().Format(time.RFC3339)
+	if err := archiveRetiredMemoryKey(ctx, tx, deps, key, owner, collectionName, now); err != nil {
+		return errorResult(err.Error())
+	}
 
-	// value / collectionName / now repeat verbatim in the args slice
-	// ($8/$9/$10) to keep the DO UPDATE SET clause readable without
-	// QArgs placeholder-reuse machinery.
-	_, err := db.ExecContext(ctx, deps.Q(`
+	// Unique placeholders keep SQLite rewriting equivalent to PostgreSQL.
+	_, err = tx.ExecContext(ctx, deps.Q(`
 		INSERT INTO memories (id, key, value, type, owner_id, collection_name, room, hall, is_pinned, pin_priority, created_at, updated_at)
-		VALUES ($1, $2, $3, 'diary', $4, $5, '', '', 0, 0, $6, $7)
+		VALUES ($1, $2, $3, 'diary', $4, $5, '', '', FALSE, 0, $6, $7)
 		ON CONFLICT(key, owner_id, collection_name) DO UPDATE SET value = $8, updated_at = $9
 	`),
 		id, key, value, owner, collectionName, now, now,
 		value, now)
 	if err != nil {
-		return ToolResult{
-			Content: []Content{{Type: "text", Text: "Error: " + err.Error()}},
-			IsError: true,
+		return errorResult(err.Error())
+	}
+	if !legacy {
+		if err := diaryRecheck(ctx, policy, actor); err != nil {
+			return errorResult(err.Error())
 		}
+	}
+	if err := tx.Commit(); err != nil {
+		return errorResult(err.Error())
 	}
 	return statusResult(true, fmt.Sprintf("Diary[%s] wrote %s", agent, key))
 }
 
-// ToolDiaryRead returns diary entries for a subagent, optionally
-// filtered by query substring (matches key OR value) and/or
-// collection.
+// ToolDiaryRead returns complete entries in the caller's diary namespace,
+// optionally filtered by query substring and collection.
 func ToolDiaryRead(ctx context.Context, deps Deps, args map[string]any) ToolResult {
 	db := deps.DB()
 	if db == nil {
 		return jsonResult(map[string]any{"entries": []any{}})
 	}
 	agent, _ := args["agent"].(string)
-	if agent == "" {
-		return ToolResult{
-			Content: []Content{{Type: "text", Text: "Error: 'agent' required"}},
-			IsError: true,
-		}
+	if strings.TrimSpace(agent) == "" {
+		return errorResult("'agent' required")
 	}
-	owner := DiaryOwner(agent)
+	ctx, cancel := context.WithTimeout(ctx, diaryTimeout)
+	defer cancel()
+	owner, actor, legacy, err := diaryIdentity(ctx, deps, agent)
+	if err != nil {
+		return errorResult(err.Error())
+	}
+	query := db.QueryContext
+	var policy access.SQLPolicy
+	if !legacy {
+		if !access.APIKeyAllows(actor.APIKeyPermissions, access.ActionRead) {
+			return errorResult(access.ErrDocumentForbidden.Error())
+		}
+		var tx *sql.Tx
+		var release func()
+		policy = access.SQLPolicy{DB: db, Q: deps.Q}
+		tx, policy, release, err = policy.BeginTransferFenceTx(ctx, memoryCommitSQLite(deps))
+		if err != nil {
+			return errorResult(err.Error())
+		}
+		defer release()
+		if err := diaryRecheck(ctx, policy, actor); err != nil {
+			return errorResult(err.Error())
+		}
+		query = tx.QueryContext
+	}
 	queryStr, _ := args["query"].(string)
 	collectionName, _ := args["collection"].(string)
 
@@ -90,6 +169,7 @@ func ToolDiaryRead(ctx context.Context, deps Deps, args map[string]any) ToolResu
 	conds = append(conds, fmt.Sprintf("owner_id = $%d", pos))
 	qargs = append(qargs, owner)
 	pos++
+	conds = append(conds, "superseded_by = ''", "valid_until IS NULL")
 	if queryStr != "" {
 		pat := "%" + queryStr + "%"
 		conds = append(conds, fmt.Sprintf("(key LIKE $%d OR value LIKE $%d)", pos, pos+1))
@@ -104,13 +184,9 @@ func ToolDiaryRead(ctx context.Context, deps Deps, args map[string]any) ToolResu
 		SELECT key, value, created_at, updated_at FROM memories
 		WHERE %s ORDER BY updated_at DESC LIMIT %d
 	`, strings.Join(conds, " AND "), diaryReadLimit)
-
-	rows, err := db.QueryContext(ctx, deps.Q(sqlStr), qargs...)
+	rows, err := query(ctx, deps.Q(sqlStr), qargs...)
 	if err != nil {
-		return ToolResult{
-			Content: []Content{{Type: "text", Text: "Error: " + err.Error()}},
-			IsError: true,
-		}
+		return errorResult(err.Error())
 	}
 	defer rows.Close()
 
@@ -118,11 +194,25 @@ func ToolDiaryRead(ctx context.Context, deps Deps, args map[string]any) ToolResu
 	for rows.Next() {
 		var k, v, ca, ua string
 		if err := rows.Scan(&k, &v, &ca, &ua); err != nil {
-			continue
+			return errorResult(err.Error())
 		}
 		entries = append(entries, map[string]any{
 			"key": k, "value": v, "created_at": ca, "updated_at": ua,
 		})
+	}
+	if err := rows.Err(); err != nil {
+		return errorResult(err.Error())
+	}
+	if err := rows.Close(); err != nil {
+		return errorResult(err.Error())
+	}
+	if err := ctx.Err(); err != nil {
+		return errorResult(err.Error())
+	}
+	if !legacy {
+		if err := diaryRecheck(ctx, policy, actor); err != nil {
+			return errorResult(err.Error())
+		}
 	}
 	if entries == nil {
 		return jsonResult(map[string]any{

@@ -39,7 +39,11 @@ func ProjectRoot(root, projectID, branch string) string {
 }
 
 func ManifestPath(root, projectID, branch string) string {
-	return filepath.Join(root, ".kb", "manifests", SafeID(projectID)+"__"+SafeID(branch)+".json")
+	return filepath.Join(root, ".kb", "manifests", SafeID(projectID), SafeID(DefaultBranch(branch))+".json")
+}
+
+func LegacyManifestPath(root, projectID, branch string) string {
+	return filepath.Join(root, ".kb", "manifests", SafeID(projectID)+"__"+SafeID(DefaultBranch(branch))+".json")
 }
 
 func ListLocalProjects(root string) []string {

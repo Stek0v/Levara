@@ -72,7 +72,11 @@ func TestTeamOnboardingTruthfulAPIErrors(t *testing.T) {
 			cfg := AuthConfig{DB: db, JWTSecret: "isolated-team-test", RequireAuth: true}
 			app := fiber.New()
 			app.Post("/auth/register", registerHandler(cfg))
-			app.Use(func(c *fiber.Ctx) error { c.Locals("user_id", "owner"); return c.Next() })
+			app.Use(func(c *fiber.Ctx) error {
+				c.Locals("user_id", "owner")
+				c.Locals("verified_jwt", jwtPayload{Sub: "owner", Exp: time.Now().Add(time.Hour).Unix()})
+				return c.Next()
+			})
 			RegisterAPIKeyEndpoints(app, cfg)
 			RegisterRBACAPI(app, APIConfig{DB: db})
 			execSQL := func(query string) {
@@ -264,7 +268,11 @@ func TestTeamOnboardingConcurrentRegistrationAndMalformedLists(t *testing.T) {
 			execSQL("INSERT INTO api_keys(id,key_hash,user_id,name) VALUES('key','fixture',$1,'Key')", owner)
 			execSQL("INSERT INTO datasets(id,name,owner_id) VALUES('owned','Owned',$1)", owner)
 			execSQL("INSERT INTO dataset_shares(id,dataset_id,user_id,role) VALUES('share','owned',$1,'viewer')", owner)
-			app.Use(func(c *fiber.Ctx) error { c.Locals("user_id", owner); return c.Next() })
+			app.Use(func(c *fiber.Ctx) error {
+				c.Locals("user_id", owner)
+				c.Locals("verified_jwt", jwtPayload{Sub: owner, Exp: time.Now().Add(time.Hour).Unix()})
+				return c.Next()
+			})
 			RegisterAPIKeyEndpoints(app, cfg)
 			RegisterRBACAPI(app, APIConfig{DB: db})
 			for _, kind := range []string{"keys", "shares"} {

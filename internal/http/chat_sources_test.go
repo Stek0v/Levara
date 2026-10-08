@@ -22,6 +22,9 @@ const claudeFixture = `{"type":"summary","summary":"P2 daemon test","sessionId":
 
 func chatSourcesTestDB(t *testing.T) *sql.DB {
 	t.Helper()
+	previous := GetDBProvider()
+	SetDBProvider(DBSQLite)
+	t.Cleanup(func() { SetDBProvider(previous) })
 	db, err := sql.Open("sqlite3", filepath.Join(t.TempDir(), "sources.db"))
 	if err != nil {
 		t.Fatal(err)

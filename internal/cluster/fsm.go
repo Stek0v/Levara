@@ -70,7 +70,10 @@ func (f *FSM) Apply(log *raft.Log) interface{} {
 
 func (f *FSM) Snapshot() (raft.FSMSnapshot, error) {
 	// Serialize current DB state: all records (id, vector, metadata)
-	records := f.db.AllRecords()
+	records, err := f.db.AllRecordsChecked()
+	if err != nil {
+		return nil, fmt.Errorf("snapshot source: %w", err)
+	}
 	data, err := json.Marshal(records)
 	if err != nil {
 		return nil, fmt.Errorf("snapshot marshal: %w", err)
@@ -87,6 +90,9 @@ func (f *FSM) Restore(rc io.ReadCloser) error {
 	var records []store.SnapshotRecord
 	if err := json.Unmarshal(data, &records); err != nil {
 		return fmt.Errorf("snapshot unmarshal: %w", err)
+	}
+	if records == nil {
+		return fmt.Errorf("snapshot record inventory must be an array")
 	}
 	return f.db.RestoreSnapshot(records)
 }

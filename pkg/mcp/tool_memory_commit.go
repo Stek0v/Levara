@@ -104,7 +104,7 @@ func ToolMemoryCommitPreview(ctx context.Context, deps Deps, args map[string]any
 			item.Action, item.ReasonCode = "reject", "secret_rejected"
 		case candidate.SupersedesMemoryID != "":
 			var id, key, value, targetOwner string
-			err := tx.QueryRowContext(ctx, deps.Q(`SELECT id,key,value,owner_id FROM memories WHERE id=$1 AND collection_name=$2 AND (owner_id=$3 OR owner_id='') AND superseded_by=''`), candidate.SupersedesMemoryID, collection, ownerID).Scan(&id, &key, &value, &targetOwner)
+			err := tx.QueryRowContext(ctx, deps.Q(`SELECT id,key,value,owner_id FROM memories WHERE id=$1 AND collection_name=$2 AND (owner_id=$3 OR owner_id='') AND superseded_by='' AND valid_until IS NULL`), candidate.SupersedesMemoryID, collection, ownerID).Scan(&id, &key, &value, &targetOwner)
 			if err != nil {
 				item.Action, item.ReasonCode = "reject", "stale_target"
 
@@ -115,7 +115,7 @@ func ToolMemoryCommitPreview(ctx context.Context, deps Deps, args map[string]any
 			}
 		default:
 			var id, value string
-			err := tx.QueryRowContext(ctx, deps.Q(`SELECT id,value FROM memories WHERE key=$1 AND collection_name=$2 AND (owner_id=$3 OR owner_id='') AND superseded_by='' ORDER BY owner_id DESC LIMIT 1`), candidate.Key, collection, ownerID).Scan(&id, &value)
+			err := tx.QueryRowContext(ctx, deps.Q(`SELECT id,value FROM memories WHERE key=$1 AND collection_name=$2 AND (owner_id=$3 OR owner_id='') AND superseded_by='' AND valid_until IS NULL ORDER BY owner_id DESC LIMIT 1`), candidate.Key, collection, ownerID).Scan(&id, &value)
 			switch {
 			case err == sql.ErrNoRows:
 				item.Action, item.ReasonCode = "add", "no_equivalent"
@@ -228,7 +228,7 @@ func ToolMemoryCommitApply(ctx context.Context, deps Deps, args map[string]any) 
 		candidate.VerificationStatus = verification
 		if item.Action == "skip" {
 			var key, value string
-			err := tx.QueryRowContext(ctx, deps.Q(`SELECT key,value FROM memories WHERE id=$1 AND collection_name=$2 AND (owner_id=$3 OR owner_id='') AND superseded_by=''`), item.TargetMemoryID, plan.Collection, ownerID).Scan(&key, &value)
+			err := tx.QueryRowContext(ctx, deps.Q(`SELECT key,value FROM memories WHERE id=$1 AND collection_name=$2 AND (owner_id=$3 OR owner_id='') AND superseded_by='' AND valid_until IS NULL`), item.TargetMemoryID, plan.Collection, ownerID).Scan(&key, &value)
 			if err != nil || memoryCommitTargetDigest(key, value) != item.TargetDigest {
 				return toolError("prepared plan is stale")
 			}
@@ -242,7 +242,7 @@ func ToolMemoryCommitApply(ctx context.Context, deps Deps, args map[string]any) 
 		mutationOwner := ownerID
 		if item.Action == "add" {
 			var existing string
-			err := tx.QueryRowContext(ctx, deps.Q(`SELECT id FROM memories WHERE key=$1 AND collection_name=$2 AND (owner_id=$3 OR owner_id='') AND superseded_by='' ORDER BY owner_id DESC LIMIT 1`), candidate.Key, plan.Collection, ownerID).Scan(&existing)
+			err := tx.QueryRowContext(ctx, deps.Q(`SELECT id FROM memories WHERE key=$1 AND collection_name=$2 AND (owner_id=$3 OR owner_id='') AND superseded_by='' AND valid_until IS NULL ORDER BY owner_id DESC LIMIT 1`), candidate.Key, plan.Collection, ownerID).Scan(&existing)
 			if err != sql.ErrNoRows {
 				return toolError("prepared plan is stale")
 			}
@@ -253,7 +253,7 @@ func ToolMemoryCommitApply(ctx context.Context, deps Deps, args map[string]any) 
 			result["added"] = result["added"].(int) + 1
 		} else {
 			var oldKey, oldValue, oldType, oldOwner string
-			err := tx.QueryRowContext(ctx, deps.Q(`SELECT key,value,type,owner_id FROM memories WHERE id=$1 AND collection_name=$2 AND (owner_id=$3 OR owner_id='') AND superseded_by=''`), item.TargetMemoryID, plan.Collection, ownerID).
+			err := tx.QueryRowContext(ctx, deps.Q(`SELECT key,value,type,owner_id FROM memories WHERE id=$1 AND collection_name=$2 AND (owner_id=$3 OR owner_id='') AND superseded_by='' AND valid_until IS NULL`), item.TargetMemoryID, plan.Collection, ownerID).
 				Scan(&oldKey, &oldValue, &oldType, &oldOwner)
 			if err != nil || memoryCommitTargetDigest(oldKey, oldValue) != item.TargetDigest {
 				return toolError("prepared plan is stale")
@@ -263,7 +263,7 @@ func ToolMemoryCommitApply(ctx context.Context, deps Deps, args map[string]any) 
 				return toolError("shared memory mutation requires an active administrator")
 			}
 			var collision string
-			err = tx.QueryRowContext(ctx, deps.Q(`SELECT id FROM memories WHERE key=$1 AND collection_name=$2 AND (owner_id=$3 OR owner_id='') AND superseded_by='' AND id<>$4`), candidate.Key, plan.Collection, ownerID, item.TargetMemoryID).Scan(&collision)
+			err = tx.QueryRowContext(ctx, deps.Q(`SELECT id FROM memories WHERE key=$1 AND collection_name=$2 AND (owner_id=$3 OR owner_id='') AND superseded_by='' AND valid_until IS NULL AND id<>$4`), candidate.Key, plan.Collection, ownerID, item.TargetMemoryID).Scan(&collision)
 			if err != sql.ErrNoRows {
 				return toolError("prepared plan is stale")
 			}
@@ -271,7 +271,7 @@ func ToolMemoryCommitApply(ctx context.Context, deps Deps, args map[string]any) 
 			mutationOwner = oldOwner
 			now := time.Now().UTC().Format(time.RFC3339Nano)
 			archiveKey := fmt.Sprintf("%s#superseded:%s", oldKey, oldID)
-			updated, err := tx.ExecContext(ctx, deps.Q(`UPDATE memories SET key=$1,superseded_by=$2,supersession_reason=$3,valid_until=$4,updated_at=$5 WHERE id=$6 AND owner_id=$7 AND collection_name=$8 AND superseded_by=''`), archiveKey, newID, "memory commit", now, now, oldID, oldOwner, plan.Collection)
+			updated, err := tx.ExecContext(ctx, deps.Q(`UPDATE memories SET key=$1,superseded_by=$2,supersession_reason=$3,valid_until=$4,updated_at=$5 WHERE id=$6 AND owner_id=$7 AND collection_name=$8 AND superseded_by='' AND valid_until IS NULL`), archiveKey, newID, "memory commit", now, now, oldID, oldOwner, plan.Collection)
 			if err != nil || rowsAffected(updated) != 1 {
 				return toolError("prepared plan is stale")
 			}
@@ -323,6 +323,9 @@ func memoryCommitInsert(ctx context.Context, tx *sql.Tx, deps Deps, id string, c
 		verification = "unverified"
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if err := archiveRetiredMemoryKey(ctx, tx, deps, candidate.Key, ownerID, collection, now); err != nil {
+		return err
+	}
 	_, err := tx.ExecContext(ctx, deps.Q(`INSERT INTO memories(id,key,value,type,owner_id,collection_name,room,hall,is_pinned,pin_priority,superseded_by,source_task_id,source_receipt_ids,verification_status,supersedes_memory_id,created_at,updated_at)
 		VALUES($1,$2,$3,$4,$5,$6,$7,$8,FALSE,0,'',$9,$10,$11,$12,$13,$14)`), id, candidate.Key, candidate.Value, memType, ownerID, collection, candidate.Room, candidate.Hall, candidate.SourceTaskID, receipts, verification, supersedes, now, now)
 	return err

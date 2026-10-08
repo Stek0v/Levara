@@ -7,11 +7,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
 	"sort"
 	"time"
+
+	accesspkg "github.com/stek0v/levara/pkg/access"
+	"github.com/stek0v/levara/pkg/workspace"
 )
 
 type workspaceIndexJobStatus string
@@ -43,19 +47,32 @@ type workspaceIndexJobPayload struct {
 	DeleteMissing      bool     `json:"delete_missing,omitempty"`
 }
 
+type workspaceIndexJobAuthority struct {
+	Actor   *accesspkg.MetadataActor `json:"actor,omitempty"`
+	Service bool                     `json:"service,omitempty"`
+}
+
+// Private authority is persisted separately and omitted from public job JSON.
+type workspaceIndexJobDisk struct {
+	workspaceIndexJob
+	Authority *workspaceIndexJobAuthority `json:"authority,omitempty"`
+}
+
 type workspaceIndexJob struct {
-	ID             string                   `json:"id"`
-	IdempotencyKey string                   `json:"idempotency_key"`
-	Status         workspaceIndexJobStatus  `json:"status"`
-	Attempts       int                      `json:"attempts"`
-	CreatedAt      string                   `json:"created_at"`
-	UpdatedAt      string                   `json:"updated_at"`
-	StartedAt      string                   `json:"started_at,omitempty"`
-	FinishedAt     string                   `json:"finished_at,omitempty"`
-	NextRunAt      string                   `json:"next_run_at,omitempty"`
-	DeadLetterAt   string                   `json:"dead_letter_at,omitempty"`
-	LastError      string                   `json:"last_error,omitempty"`
-	Request        workspaceIndexJobPayload `json:"request"`
+	authority              *workspaceIndexJobAuthority
+	ID                     string                   `json:"id"`
+	IdempotencyKey         string                   `json:"idempotency_key"`
+	Status                 workspaceIndexJobStatus  `json:"status"`
+	Attempts               int                      `json:"attempts"`
+	CreatedAt              string                   `json:"created_at"`
+	UpdatedAt              string                   `json:"updated_at"`
+	StartedAt              string                   `json:"started_at,omitempty"`
+	FinishedAt             string                   `json:"finished_at,omitempty"`
+	NextRunAt              string                   `json:"next_run_at,omitempty"`
+	DeadLetterAt           string                   `json:"dead_letter_at,omitempty"`
+	LastError              string                   `json:"last_error,omitempty"`
+	SupersededByGeneration string                   `json:"superseded_by_generation,omitempty"`
+	Request                workspaceIndexJobPayload `json:"request"`
 }
 
 type workspaceIndexJobsRequest struct {
@@ -83,7 +100,7 @@ type WorkspaceIndexWorkerOptions struct {
 	Logf         func(format string, args ...any)
 }
 
-func beginWorkspaceIndexJob(cfg APIConfig, payload workspaceIndexJobPayload) (workspaceIndexJob, error) {
+func beginWorkspaceIndexJob(cfg APIConfig, payload workspaceIndexJobPayload, authorities ...*workspaceIndexJobAuthority) (workspaceIndexJob, error) {
 	payload.Branch = defaultBranch(payload.Branch)
 	payload.Paths = workspaceSortedPaths(payload.Paths)
 	if payload.ProjectID == "" {
@@ -95,10 +112,17 @@ func beginWorkspaceIndexJob(cfg APIConfig, payload workspaceIndexJobPayload) (wo
 	if payload.Operation == "" {
 		return workspaceIndexJob{}, errors.New("operation required")
 	}
-	idempotencyKey := workspaceIndexJobIdempotencyKey(payload)
+	if err := validateWorkspaceCollection(payload.Collection); err != nil {
+		return workspaceIndexJob{}, err
+	}
+	var authority *workspaceIndexJobAuthority
+	if len(authorities) > 0 {
+		authority = authorities[0]
+	}
+	idempotencyKey := workspaceIndexJobAuthorityKey(payload, authority)
 	id := "job_" + idempotencyKey[:20]
 	path := workspaceIndexJobPath(cfg, payload.ProjectID, payload.Branch, id)
-	job, err := loadWorkspaceIndexJobPath(path)
+	job, err := loadWorkspaceIndexJobConfined(cfg, path)
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			return workspaceIndexJob{}, err
@@ -108,10 +132,15 @@ func beginWorkspaceIndexJob(cfg APIConfig, payload workspaceIndexJobPayload) (wo
 			ID:             id,
 			IdempotencyKey: idempotencyKey,
 			CreatedAt:      now,
+			authority:      authority,
 		}
+	}
+	if !sameWorkspaceJobAuthorityScope(job.authority, authority) {
+		return workspaceIndexJob{}, errors.New("workspace job authority differs")
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	job.Request = payload
+	job.SupersededByGeneration = ""
 	job.Status = workspaceIndexJobRunning
 	job.Attempts++
 	job.StartedAt = now
@@ -120,7 +149,7 @@ func beginWorkspaceIndexJob(cfg APIConfig, payload workspaceIndexJobPayload) (wo
 	job.DeadLetterAt = ""
 	job.LastError = ""
 	job.UpdatedAt = now
-	if err := saveWorkspaceIndexJobPath(path, job); err != nil {
+	if err := saveWorkspaceIndexJobConfined(cfg, path, job); err != nil {
 		return workspaceIndexJob{}, err
 	}
 	refreshWorkspaceOperationalMetrics(cfg)
@@ -142,7 +171,7 @@ func finishWorkspaceIndexJob(cfg APIConfig, job workspaceIndexJob, runErr error)
 		job.DeadLetterAt = ""
 	}
 	job.UpdatedAt = now
-	err := saveWorkspaceIndexJobPath(workspaceIndexJobPath(cfg, job.Request.ProjectID, job.Request.Branch, job.ID), job)
+	err := saveWorkspaceIndexJobConfined(cfg, workspaceIndexJobPath(cfg, job.Request.ProjectID, job.Request.Branch, job.ID), job)
 	if err == nil {
 		refreshWorkspaceOperationalMetrics(cfg)
 	}
@@ -152,7 +181,7 @@ func finishWorkspaceIndexJob(cfg APIConfig, job workspaceIndexJob, runErr error)
 	return job, err
 }
 
-func enqueueWorkspaceIndexJob(cfg APIConfig, payload workspaceIndexJobPayload) (workspaceIndexJob, error) {
+func enqueueWorkspaceIndexJob(cfg APIConfig, payload workspaceIndexJobPayload, authorities ...*workspaceIndexJobAuthority) (workspaceIndexJob, error) {
 	payload.Branch = defaultBranch(payload.Branch)
 	payload.Paths = workspaceSortedPaths(payload.Paths)
 	if payload.ProjectID == "" {
@@ -164,10 +193,20 @@ func enqueueWorkspaceIndexJob(cfg APIConfig, payload workspaceIndexJobPayload) (
 	if payload.Operation == "" {
 		return workspaceIndexJob{}, errors.New("operation required")
 	}
-	idempotencyKey := workspaceIndexJobIdempotencyKey(payload)
+	if err := validateWorkspaceCollection(payload.Collection); err != nil {
+		return workspaceIndexJob{}, err
+	}
+	var authority *workspaceIndexJobAuthority
+	if len(authorities) > 0 {
+		authority = authorities[0]
+	}
+	idempotencyKey := workspaceIndexJobAuthorityKey(payload, authority)
 	id := "job_" + idempotencyKey[:20]
 	path := workspaceIndexJobPath(cfg, payload.ProjectID, payload.Branch, id)
-	if existing, err := loadWorkspaceIndexJobPath(path); err == nil {
+	if existing, err := loadWorkspaceIndexJobConfined(cfg, path); err == nil {
+		if !sameWorkspaceJobAuthorityScope(existing.authority, authority) {
+			return workspaceIndexJob{}, errors.New("workspace job authority differs")
+		}
 		return existing, nil
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return workspaceIndexJob{}, err
@@ -180,8 +219,9 @@ func enqueueWorkspaceIndexJob(cfg APIConfig, payload workspaceIndexJobPayload) (
 		CreatedAt:      now,
 		UpdatedAt:      now,
 		Request:        payload,
+		authority:      authority,
 	}
-	if err := saveWorkspaceIndexJobPath(path, job); err != nil {
+	if err := saveWorkspaceIndexJobConfined(cfg, path, job); err != nil {
 		return workspaceIndexJob{}, err
 	}
 	refreshWorkspaceOperationalMetrics(cfg)
@@ -194,7 +234,7 @@ func listWorkspaceIndexJobs(cfg APIConfig, req workspaceIndexJobsRequest) ([]wor
 		return nil, errors.New("project_id required")
 	}
 	dir := workspaceIndexJobDir(cfg, req.ProjectID, branch)
-	entries, err := os.ReadDir(dir)
+	entries, err := workspaceJobReadDir(cfg, dir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return []workspaceIndexJob{}, nil
@@ -203,10 +243,13 @@ func listWorkspaceIndexJobs(cfg APIConfig, req workspaceIndexJobsRequest) ([]wor
 	}
 	var jobs []workspaceIndexJob
 	for _, entry := range entries {
+		if entry.Type()&os.ModeSymlink != 0 {
+			return nil, errors.New("workspace job symlink rejected")
+		}
 		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
 			continue
 		}
-		job, err := loadWorkspaceIndexJobPath(filepath.Join(dir, entry.Name()))
+		job, err := loadWorkspaceIndexJobConfined(cfg, filepath.Join(dir, entry.Name()))
 		if err != nil {
 			continue
 		}
@@ -224,39 +267,193 @@ func listWorkspaceIndexJobs(cfg APIConfig, req workspaceIndexJobsRequest) ([]wor
 	return jobs, nil
 }
 
-func enqueueWorkspaceIndexJobFromPayload(cfg APIConfig, payload workspaceIndexJobPayload) (workspaceIndexJob, error) {
+func enqueueWorkspaceIndexJobFromPayload(cfg APIConfig, payload workspaceIndexJobPayload, authorities ...*workspaceIndexJobAuthority) (workspaceIndexJob, error) {
 	switch payload.Operation {
 	case "reindex", "reconcile":
 	default:
 		return workspaceIndexJob{}, fmt.Errorf("unsupported job operation %q", payload.Operation)
 	}
-	return enqueueWorkspaceIndexJob(cfg, payload)
+	return enqueueWorkspaceIndexJob(cfg, payload, authorities...)
 }
 
-// hasActiveWorkspaceIndexJob reports whether the branch has a pending or
-// running reconcile/reindex job (finding M17, 2026-09-03 review): the
-// watcher uses this to keep a branch marked dirty until its queued job has
-// actually completed instead of the moment of enqueue.
-func hasActiveWorkspaceIndexJob(cfg APIConfig, projectID, branch string) bool {
-	dir := workspaceIndexJobDir(cfg, projectID, branch)
-	entries, err := os.ReadDir(dir)
+func enqueueWorkspaceIndexJobFromPayloadAuthorized(ctx context.Context, cfg APIConfig, payload workspaceIndexJobPayload, actor accesspkg.MetadataActor) (workspaceIndexJob, error) {
+	ctx, cancel, err := workspaceRequestContext(ctx, actor, 30*time.Second)
 	if err != nil {
+		return workspaceIndexJob{}, err
+	}
+	defer cancel()
+	unlock := workspaceManifestLocks.lock(workspaceBranchLockKey(payload.ProjectID, payload.Branch))
+	defer unlock()
+	release, err := beginWorkspaceEffectFence(ctx, cfg, actor, payload.ProjectID, workspaceAccessWrite)
+	if err != nil {
+		return workspaceIndexJob{}, err
+	}
+	defer release()
+	return enqueueWorkspaceIndexJobFromPayload(cfg, payload, &workspaceIndexJobAuthority{Actor: &actor})
+}
+
+func sameWorkspaceJobAuthorityScope(a, b *workspaceIndexJobAuthority) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	if a.Service != b.Service {
 		return false
 	}
-	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
-			continue
+	if a.Actor == nil || b.Actor == nil {
+		return a.Actor == b.Actor
+	}
+	return a.Actor.UserID == b.Actor.UserID && a.Actor.TenantID == b.Actor.TenantID
+}
+
+func workspaceIndexJobAuthorityKey(payload workspaceIndexJobPayload, authority *workspaceIndexJobAuthority) string {
+	if authority == nil {
+		return workspaceIndexJobIdempotencyKey(payload)
+	}
+	scope := struct {
+		Payload          workspaceIndexJobPayload
+		UserID, TenantID string
+		Service          bool
+	}{Payload: payload, Service: authority.Service}
+	if authority.Actor != nil {
+		scope.UserID, scope.TenantID = authority.Actor.UserID, authority.Actor.TenantID
+	}
+	data, _ := json.Marshal(scope)
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+// A live watcher is explicit server authority over its configured filesystem root.
+func beginWorkspaceServiceFence(ctx context.Context, cfg APIConfig, key workspaceWatchKey) (workspaceWatchKey, func(), error) {
+	if err := ctx.Err(); err != nil {
+		return workspaceWatchKey{}, nil, err
+	}
+	key.Branch = defaultBranch(key.Branch)
+	release := func() {}
+	if cfg.RequireAuth {
+		watcher := cfg.WorkspaceWatcher
+		if watcher == nil {
+			return workspaceWatchKey{}, nil, errors.New("workspace service authority is not enabled")
 		}
-		job, err := loadWorkspaceIndexJobPath(filepath.Join(dir, entry.Name()))
+		// Keep service admission through drain; status callbacks use a separate mutex.
+		watcher.serviceMu.RLock()
+		watcher.mu.RLock()
+		running := watcher.running
+		watcher.mu.RUnlock()
+		if !running {
+			watcher.serviceMu.RUnlock()
+			return workspaceWatchKey{}, nil, errors.New("workspace service authority is not enabled")
+		}
+		policy, releaseSQL, err := (accesspkg.SQLPolicy{DB: cfg.DB, Q: Q, QA: QArgs}).BeginTransferFence(ctx, GetDBProvider() == DBSQLite)
 		if err != nil {
-			continue
+			watcher.serviceMu.RUnlock()
+			return workspaceWatchKey{}, nil, err
 		}
-		if (job.Status == workspaceIndexJobPending || job.Status == workspaceIndexJobRunning) &&
-			(job.Request.Operation == "reconcile" || job.Request.Operation == "reindex") {
-			return true
+		release = func() {
+			releaseSQL()
+			watcher.serviceMu.RUnlock()
+		}
+		project, err := policy.ResolveWorkspaceDirectory(ctx, safeWorkspaceID(key.ProjectID))
+		if err != nil || project == "" {
+			release()
+			if err == nil {
+				err = errWorkspaceAccessDenied
+			}
+			return workspaceWatchKey{}, nil, err
+		}
+		key.ProjectID = project
+	}
+	releaseFS, err := workspace.LockProject(ctx, workspaceRoot(cfg), key.ProjectID)
+	if err != nil {
+		release()
+		return workspaceWatchKey{}, nil, err
+	}
+	releaseAuthority := release
+	release = func() { releaseFS(); releaseAuthority() }
+	if err := recoverWorkspaceRestores(ctx, cfg, key.ProjectID); err != nil {
+		release()
+		return workspaceWatchKey{}, nil, err
+	}
+	manifest, exists, err := readWorkspaceManifest(cfg, key.ProjectID, key.Branch)
+	if err == nil && exists {
+		if cfg.RequireAuth && manifest.ProjectID != key.ProjectID {
+			err = errors.New("legacy workspace project identity requires index migration")
+		} else {
+			key.ProjectID, key.Branch = manifest.ProjectID, defaultBranch(manifest.Branch)
 		}
 	}
-	return false
+	if err == nil {
+		err = ctx.Err()
+	}
+	if err != nil {
+		release()
+		return workspaceWatchKey{}, nil, err
+	}
+	return key, release, nil
+}
+
+func beginWorkspaceJobFence(ctx context.Context, cfg APIConfig, job workspaceIndexJob) (func(), error) {
+	if job.authority != nil {
+		if job.authority.Service {
+			if job.authority.Actor != nil {
+				return nil, errors.New("invalid workspace job authority")
+			}
+			key, release, err := beginWorkspaceServiceFence(ctx, cfg, workspaceWatchKey{ProjectID: job.Request.ProjectID, Branch: job.Request.Branch})
+			if err != nil {
+				return nil, err
+			}
+			if key.ProjectID != job.Request.ProjectID || key.Branch != defaultBranch(job.Request.Branch) {
+				release()
+				return nil, errors.New("workspace service job target identity changed")
+			}
+			return release, nil
+		}
+		if job.authority.Actor != nil {
+			return beginWorkspaceEffectFence(ctx, cfg, *job.authority.Actor, job.Request.ProjectID, workspaceAccessWrite)
+		}
+	}
+	if cfg.RequireAuth {
+		return nil, errors.New("workspace job has no submitting authority")
+	}
+	return beginWorkspaceEffectFence(ctx, cfg, accesspkg.MetadataActor{TrustedLocal: true}, job.Request.ProjectID, workspaceAccessWrite)
+}
+
+func retryWorkspaceIndexJobAuthorized(ctx context.Context, cfg APIConfig, req workspaceRetryIndexJobRequest, actor accesspkg.MetadataActor) (workspaceRetryIndexJobResponse, error) {
+	ctx, cancel, err := workspaceRequestContext(ctx, actor, 30*time.Second)
+	if err != nil {
+		return workspaceRetryIndexJobResponse{}, err
+	}
+	defer cancel()
+	branch := defaultBranch(req.Branch)
+	unlock := workspaceManifestLocks.lock(workspaceBranchLockKey(req.ProjectID, branch))
+	defer unlock()
+	if req.ProjectID == "" || req.JobID == "" {
+		return workspaceRetryIndexJobResponse{}, errors.New("project_id and job_id required")
+	}
+	job, err := loadWorkspaceIndexJobConfined(cfg, workspaceIndexJobPath(cfg, req.ProjectID, branch, req.JobID))
+	if err != nil {
+		return workspaceRetryIndexJobResponse{}, err
+	}
+	if job.Request.ProjectID != req.ProjectID || defaultBranch(job.Request.Branch) != branch || job.ID != req.JobID {
+		return workspaceRetryIndexJobResponse{}, errors.New("workspace job target does not match request")
+	}
+	if err := validateWorkspaceCollection(job.Request.Collection); err != nil {
+		return workspaceRetryIndexJobResponse{}, err
+	}
+	release, err := beginWorkspaceEffectFence(ctx, cfg, actor, job.Request.ProjectID, workspaceAccessWrite)
+	if err != nil {
+		return workspaceRetryIndexJobResponse{}, err
+	}
+	defer release()
+	fresh, err := reloadWorkspaceIndexJobFenced(cfg, job)
+	if err != nil {
+		return workspaceRetryIndexJobResponse{}, err
+	}
+	if fresh.Status != job.Status && (fresh.Status == workspaceIndexJobCompleted || fresh.Status == workspaceIndexJobRunning) {
+		return workspaceRetryIndexJobResponse{Job: fresh}, nil
+	}
+	job = fresh
+	job, result, err := runWorkspaceIndexJobLocked(ctx, cfg, job, WorkspaceIndexWorkerOptions{MaxAttempts: job.Attempts + 1, Backoff: 0})
+	return workspaceRetryIndexJobResponse{Job: job, Result: result}, err
 }
 
 func retryWorkspaceIndexJob(ctx context.Context, cfg APIConfig, req workspaceRetryIndexJobRequest) (workspaceRetryIndexJobResponse, error) {
@@ -267,11 +464,16 @@ func retryWorkspaceIndexJob(ctx context.Context, cfg APIConfig, req workspaceRet
 	if req.JobID == "" {
 		return workspaceRetryIndexJobResponse{}, errors.New("job_id required")
 	}
-	job, err := loadWorkspaceIndexJobPath(workspaceIndexJobPath(cfg, req.ProjectID, branch, req.JobID))
+	unlock := workspaceManifestLocks.lock(workspaceBranchLockKey(req.ProjectID, branch))
+	defer unlock()
+	job, err := loadWorkspaceIndexJobConfined(cfg, workspaceIndexJobPath(cfg, req.ProjectID, branch, req.JobID))
 	if err != nil {
 		return workspaceRetryIndexJobResponse{}, err
 	}
-	job, result, err := runWorkspaceIndexJob(ctx, cfg, job, WorkspaceIndexWorkerOptions{
+	if job.Request.ProjectID != req.ProjectID || defaultBranch(job.Request.Branch) != branch || job.ID != req.JobID {
+		return workspaceRetryIndexJobResponse{}, errors.New("workspace job target does not match request")
+	}
+	job, result, err := runWorkspaceIndexJobLocked(ctx, cfg, job, WorkspaceIndexWorkerOptions{
 		MaxAttempts: job.Attempts + 1,
 		Backoff:     0,
 	})
@@ -279,15 +481,59 @@ func retryWorkspaceIndexJob(ctx context.Context, cfg APIConfig, req workspaceRet
 }
 
 func runWorkspaceIndexJob(ctx context.Context, cfg APIConfig, job workspaceIndexJob, opts WorkspaceIndexWorkerOptions) (workspaceIndexJob, any, error) {
+
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	unlock := workspaceManifestLocks.lock(workspaceBranchLockKey(job.Request.ProjectID, job.Request.Branch))
+	defer unlock()
+	fresh, err := loadWorkspaceIndexJobConfined(cfg, workspaceIndexJobPath(cfg, job.Request.ProjectID, job.Request.Branch, job.ID))
+	if err != nil {
+		return job, nil, err
+	}
+	if fresh.ID != job.ID || fresh.Request.ProjectID != job.Request.ProjectID || defaultBranch(fresh.Request.Branch) != defaultBranch(job.Request.Branch) {
+		return fresh, nil, errors.New("workspace job target changed")
+	}
+	if !workspaceIndexJobDue(fresh, time.Now().UTC()) {
+		return fresh, nil, nil
+	}
+	if fresh.authority != nil && fresh.authority.Actor != nil {
+		bounded, cancel, err := workspaceRequestContext(ctx, *fresh.authority.Actor, 30*time.Second)
+		if err != nil {
+			return fresh, nil, err
+		}
+		defer cancel()
+		ctx = bounded
+	}
+	release, err := beginWorkspaceJobFence(ctx, cfg, fresh)
+	if err != nil {
+		return fresh, nil, err
+	}
+	defer release()
+	fresh, err = reloadWorkspaceIndexJobFenced(cfg, fresh)
+	if err != nil {
+		return job, nil, err
+	}
+	if !workspaceIndexJobDue(fresh, time.Now().UTC()) {
+		return fresh, nil, nil
+	}
+	return runWorkspaceIndexJobLocked(ctx, cfg, fresh, opts)
+}
+
+func runWorkspaceIndexJobLocked(ctx context.Context, cfg APIConfig, job workspaceIndexJob, opts WorkspaceIndexWorkerOptions) (workspaceIndexJob, any, error) {
+	if err := validateWorkspaceCollection(job.Request.Collection); err != nil {
+		return job, nil, err
+	}
+
 	opts = normalizeWorkspaceIndexWorkerOptions(opts)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
+	job.SupersededByGeneration = ""
 	job.Status = workspaceIndexJobRunning
 	job.Attempts++
 	job.StartedAt = now
 	job.FinishedAt = ""
 	job.NextRunAt = ""
 	job.UpdatedAt = now
-	if err := saveWorkspaceIndexJobPath(workspaceIndexJobPath(cfg, job.Request.ProjectID, job.Request.Branch, job.ID), job); err != nil {
+	if err := saveWorkspaceIndexJobConfined(cfg, workspaceIndexJobPath(cfg, job.Request.ProjectID, job.Request.Branch, job.ID), job); err != nil {
 		return job, nil, err
 	}
 	refreshWorkspaceOperationalMetrics(cfg)
@@ -296,9 +542,9 @@ func runWorkspaceIndexJob(ctx context.Context, cfg APIConfig, job workspaceIndex
 	var runErr error
 	switch job.Request.Operation {
 	case "reindex":
-		result, runErr = reindexWorkspaceMarkdownDirect(ctx, cfg, job.Request.toReindexRequest())
+		result, runErr = reindexWorkspaceMarkdownDirectLocked(ctx, cfg, job.Request.toReindexRequest())
 	case "reconcile":
-		result, runErr = reconcileWorkspaceMarkdownDirect(ctx, cfg, job.Request.toReconcileRequest())
+		result, runErr = reconcileWorkspaceMarkdownDirectLocked(ctx, cfg, job.Request.toReconcileRequest())
 	default:
 		runErr = fmt.Errorf("unsupported job operation %q", job.Request.Operation)
 	}
@@ -311,7 +557,7 @@ func runWorkspaceIndexJob(ctx context.Context, cfg APIConfig, job workspaceIndex
 		job.LastError = ""
 		job.NextRunAt = ""
 		job.DeadLetterAt = ""
-		if err := saveWorkspaceIndexJobPath(workspaceIndexJobPath(cfg, job.Request.ProjectID, job.Request.Branch, job.ID), job); err != nil {
+		if err := saveWorkspaceIndexJobConfined(cfg, workspaceIndexJobPath(cfg, job.Request.ProjectID, job.Request.Branch, job.ID), job); err != nil {
 			return job, result, err
 		}
 		refreshWorkspaceOperationalMetrics(cfg)
@@ -327,7 +573,7 @@ func runWorkspaceIndexJob(ctx context.Context, cfg APIConfig, job workspaceIndex
 		job.Status = workspaceIndexJobFailed
 		job.NextRunAt = finished.Add(workspaceIndexJobBackoff(opts.Backoff, job.Attempts)).UTC().Format(time.RFC3339Nano)
 	}
-	if err := saveWorkspaceIndexJobPath(workspaceIndexJobPath(cfg, job.Request.ProjectID, job.Request.Branch, job.ID), job); err != nil {
+	if err := saveWorkspaceIndexJobConfined(cfg, workspaceIndexJobPath(cfg, job.Request.ProjectID, job.Request.Branch, job.ID), job); err != nil {
 		return job, result, err
 	}
 	refreshWorkspaceOperationalMetrics(cfg)
@@ -460,7 +706,7 @@ func workspaceIndexWorkerTick(ctx context.Context, cfg APIConfig, opts Workspace
 		}
 	}
 	for _, job := range jobs {
-		if !workspaceIndexJobDue(job, now) {
+		if !workspaceIndexJobDue(job, time.Now().UTC()) {
 			continue
 		}
 		done, _, err := runWorkspaceIndexJob(ctx, cfg, job, opts)
@@ -473,8 +719,47 @@ func workspaceIndexWorkerTick(ctx context.Context, cfg APIConfig, opts Workspace
 }
 
 func recoverWorkspaceRunningJob(cfg APIConfig, job workspaceIndexJob, now time.Time, opts WorkspaceIndexWorkerOptions) (workspaceIndexJob, bool, error) {
+	unlock := workspaceManifestLocks.lock(workspaceBranchLockKey(job.Request.ProjectID, job.Request.Branch))
+	defer unlock()
+	fresh, err := loadWorkspaceIndexJobConfined(cfg, workspaceIndexJobPath(cfg, job.Request.ProjectID, job.Request.Branch, job.ID))
+	if err != nil {
+		return job, false, err
+	}
+	if fresh.ID != job.ID || fresh.Request.ProjectID != job.Request.ProjectID || defaultBranch(fresh.Request.Branch) != defaultBranch(job.Request.Branch) {
+		return fresh, false, errors.New("workspace job target changed")
+	}
+	job = fresh
 	if job.Status != workspaceIndexJobRunning {
 		return job, false, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if job.authority != nil && job.authority.Actor != nil {
+		bounded, stop, err := workspaceRequestContext(ctx, *job.authority.Actor, 30*time.Second)
+		if err != nil {
+			return job, false, err
+		}
+		defer stop()
+		ctx = bounded
+	}
+	release, err := beginWorkspaceJobFence(ctx, cfg, job)
+	if err != nil {
+		return job, false, err
+	}
+	defer release()
+	fresh, err = reloadWorkspaceIndexJobFenced(cfg, job)
+	if err != nil {
+		return job, false, err
+	}
+	job = fresh
+	if job.Status != workspaceIndexJobRunning {
+		return job, false, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return job, false, err
+	}
+	if actual := time.Now().UTC(); actual.After(now) {
+		now = actual
 	}
 	staleAt := job.UpdatedAt
 	if staleAt == "" {
@@ -499,7 +784,7 @@ func recoverWorkspaceRunningJob(cfg APIConfig, job workspaceIndexJob, now time.T
 	if recovered.LastError == "" {
 		recovered.LastError = "worker restart recovery: job was left running without completion"
 	}
-	if err := saveWorkspaceIndexJobPath(workspaceIndexJobPath(cfg, recovered.Request.ProjectID, recovered.Request.Branch, recovered.ID), recovered); err != nil {
+	if err := saveWorkspaceIndexJobConfined(cfg, workspaceIndexJobPath(cfg, recovered.Request.ProjectID, recovered.Request.Branch, recovered.ID), recovered); err != nil {
 		return job, false, err
 	}
 	refreshWorkspaceOperationalMetrics(cfg)
@@ -508,7 +793,7 @@ func recoverWorkspaceRunningJob(cfg APIConfig, job workspaceIndexJob, now time.T
 
 func listAllWorkspaceIndexJobs(cfg APIConfig) ([]workspaceIndexJob, error) {
 	root := filepath.Join(workspaceRoot(cfg), ".kb", "jobs")
-	projects, err := os.ReadDir(root)
+	projects, err := workspaceJobReadDir(cfg, root)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return []workspaceIndexJob{}, nil
@@ -517,15 +802,21 @@ func listAllWorkspaceIndexJobs(cfg APIConfig) ([]workspaceIndexJob, error) {
 	}
 	var jobs []workspaceIndexJob
 	for _, project := range projects {
+		if project.Type()&os.ModeSymlink != 0 {
+			return nil, errors.New("workspace job namespace symlink rejected")
+		}
 		if !project.IsDir() {
 			continue
 		}
 		projectID := project.Name()
-		branches, err := os.ReadDir(filepath.Join(root, project.Name()))
+		branches, err := workspaceJobReadDir(cfg, filepath.Join(root, project.Name()))
 		if err != nil {
 			return nil, err
 		}
 		for _, branch := range branches {
+			if branch.Type()&os.ModeSymlink != 0 {
+				return nil, errors.New("workspace job namespace symlink rejected")
+			}
 			if !branch.IsDir() {
 				continue
 			}
@@ -548,7 +839,51 @@ func listAllWorkspaceIndexJobs(cfg APIConfig) ([]workspaceIndexJob, error) {
 	return jobs, nil
 }
 
+// Called only after publication, under the caller's verified project effect fence.
+// Preserve failed history rather than pretending that a different job completed it.
+func supersedeWorkspaceIndexFailures(cfg APIConfig, projectID, branch, generation string) error {
+	if projectID == "" || generation == "" {
+		return errors.New("workspace failure supersession requires project and generation")
+	}
+	branch = defaultBranch(branch)
+	dir := workspaceIndexJobDir(cfg, projectID, branch)
+	entries, err := workspaceJobReadDir(cfg, dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.Type()&os.ModeSymlink != 0 {
+			return errors.New("workspace job symlink rejected")
+		}
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		path := filepath.Join(dir, entry.Name())
+		job, err := loadWorkspaceIndexJobConfined(cfg, path)
+		if err != nil {
+			return err
+		}
+		if job.ID == "" || entry.Name() != filepath.Base(workspaceIndexJobPath(cfg, projectID, branch, job.ID)) || job.Request.ProjectID != projectID || defaultBranch(job.Request.Branch) != branch {
+			return errors.New("workspace failure supersession target mismatch")
+		}
+		if job.SupersededByGeneration != "" || (job.Status != workspaceIndexJobFailed && job.Status != workspaceIndexJobDeadLetter) {
+			continue
+		}
+		job.SupersededByGeneration = generation
+		if err := saveWorkspaceIndexJobConfined(cfg, path, job); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func workspaceIndexJobDue(job workspaceIndexJob, now time.Time) bool {
+	if job.SupersededByGeneration != "" && (job.Status == workspaceIndexJobFailed || job.Status == workspaceIndexJobDeadLetter) {
+		return false
+	}
 	switch job.Status {
 	case workspaceIndexJobPending:
 		return true
@@ -592,15 +927,18 @@ func workspaceIndexJobBackoff(base time.Duration, attempts int) time.Duration {
 	return time.Duration(mult) * base
 }
 
+// Legacy path entrypoints are retained for fixture setup only; production uses cfg-anchored helpers.
 func loadWorkspaceIndexJobPath(path string) (workspaceIndexJob, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return workspaceIndexJob{}, err
 	}
-	var job workspaceIndexJob
-	if err := json.Unmarshal(data, &job); err != nil {
+	var disk workspaceIndexJobDisk
+	if err := json.Unmarshal(data, &disk); err != nil {
 		return workspaceIndexJob{}, err
 	}
+	job := disk.workspaceIndexJob
+	job.authority = disk.Authority
 	return job, nil
 }
 
@@ -608,7 +946,7 @@ func saveWorkspaceIndexJobPath(path string, job workspaceIndexJob) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(job, "", "  ")
+	data, err := json.MarshalIndent(workspaceIndexJobDisk{workspaceIndexJob: job, Authority: job.authority}, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -635,4 +973,87 @@ func workspaceJobStatusSummary(jobs []workspaceIndexJob) map[string]int {
 		out[string(job.Status)]++
 	}
 	return out
+}
+
+// workspaceJobRoot binds persisted metadata to the configured workspace anchor.
+func workspaceJobRoot(cfg APIConfig, path string, create bool) (*os.Root, error) {
+	relative, err := filepath.Rel(workspaceRoot(cfg), filepath.Dir(path))
+	if err != nil {
+		return nil, err
+	}
+	return workspace.OpenRoot(workspaceRoot(cfg), relative, create)
+}
+
+func workspaceJobReadDir(cfg APIConfig, path string) ([]fs.DirEntry, error) {
+	root, err := workspaceJobRoot(cfg, filepath.Join(path, ".entries"), false)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	dir, err := root.Open(".")
+	if err != nil {
+		return nil, err
+	}
+	defer dir.Close()
+	return dir.ReadDir(-1)
+}
+
+func loadWorkspaceIndexJobConfined(cfg APIConfig, path string) (workspaceIndexJob, error) {
+	root, err := workspaceJobRoot(cfg, path, false)
+	if err != nil {
+		return workspaceIndexJob{}, err
+	}
+	defer root.Close()
+	data, err := workspace.ReadFile(root, filepath.Base(path))
+	if err != nil {
+		return workspaceIndexJob{}, err
+	}
+	var disk workspaceIndexJobDisk
+	if err := json.Unmarshal(data, &disk); err != nil {
+		return workspaceIndexJob{}, err
+	}
+	job := disk.workspaceIndexJob
+	job.authority = disk.Authority
+	return job, nil
+}
+
+func saveWorkspaceIndexJobConfined(cfg APIConfig, path string, job workspaceIndexJob) error {
+	root, err := workspaceJobRoot(cfg, path, true)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	data, err := json.MarshalIndent(workspaceIndexJobDisk{workspaceIndexJob: job, Authority: job.authority}, "", "  ")
+	if err != nil {
+		return err
+	}
+	// Status persistence intentionally survives cancellation of the indexing attempt.
+	return workspace.WriteFile(context.Background(), root, filepath.Base(path), append(data, '\n'), 0644)
+}
+
+// Reload after acquiring the cross-process fence: a queued admission snapshot
+// cannot authorize changed request/credentials or replay another worker's result.
+func reloadWorkspaceIndexJobFenced(cfg APIConfig, expected workspaceIndexJob) (workspaceIndexJob, error) {
+	fresh, err := loadWorkspaceIndexJobConfined(cfg, workspaceIndexJobPath(cfg, expected.Request.ProjectID, expected.Request.Branch, expected.ID))
+	if err != nil {
+		return fresh, err
+	}
+	type admitted struct {
+		ID             string
+		IdempotencyKey string
+		Request        workspaceIndexJobPayload
+		Authority      *workspaceIndexJobAuthority
+	}
+	oldProof, err := json.Marshal(admitted{expected.ID, expected.IdempotencyKey, expected.Request, expected.authority})
+	if err != nil {
+		return fresh, err
+	}
+	newProof, err := json.Marshal(admitted{fresh.ID, fresh.IdempotencyKey, fresh.Request, fresh.authority})
+	if err != nil {
+		return fresh, err
+	}
+	if string(oldProof) != string(newProof) {
+		return fresh, errors.New("workspace job admission changed while waiting")
+	}
+	return fresh, nil
 }

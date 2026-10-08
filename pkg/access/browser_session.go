@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
+	"errors"
 	"time"
 )
 
@@ -70,7 +71,10 @@ func ValidateBrowserSession(ctx context.Context, db *sql.DB, q QueryRewriter, us
 	}
 	var id string
 	if err := db.QueryRowContext(ctx, query, sessionID, userID, time.Now().Unix()).Scan(&id); err != nil {
-		return ErrRevokedCredential
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrRevokedCredential
+		}
+		return err
 	}
 	return nil
 }

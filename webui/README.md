@@ -38,9 +38,16 @@ status is not Ready; a missing run ID alone is not completion. Retry the same
 file after correcting the cause. The original download goes through the
 credentialed API and can be denied after access changes.
 
-Shares are individual viewer/editor/admin grants on a dataset. Use a separate
-dataset for one document; document/group ACLs are not implemented. Backend
-OIDC/SAML endpoints do not imply a built-in browser OIDC login flow. See
+Dataset and document access support current user/group grants enforced by the
+backend. Project administrators manage the audience on the dataset access card.
+Imported conversations appear on Chat alongside account-scoped RAG chat: an owner
+with project write access can share a private import; an owner or project
+administrator can detach it. Sharing controls submit server-authorized requests;
+a displayed control does not grant authority. Refresh and focus recheck imported
+transcripts, including revoked access. Private chats are not automatically visible
+to global administrators. Browser login supports configured OIDC/SAML methods.
+Task Runtime is read-only in the WebUI; diary, supersession, consolidation and
+backup/restore remain supported MCP/CLI/operator workflows. See
 [document management](../docs/document-management.md),
 [acceptance scenarios](../docs/document-workflow-scenarios.md) and
 [enterprise identity](../docs/enterprise-identity.md).

@@ -43,6 +43,7 @@ func (p SQLPolicy) Authorize(ctx context.Context, actor Actor, res Resource, act
 	case ResourceWorkspace:
 		return p.AuthorizeWorkspace(ctx, WorkspaceRequest{
 			UserID:            actor.UserID,
+			TenantID:          actor.TenantID,
 			ProjectID:         res.ID,
 			Action:            action,
 			APIKeyPermissions: actor.APIKeyPermissions,

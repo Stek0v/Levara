@@ -36,8 +36,8 @@ func ToolMemoryMarkdownDigest(ctx context.Context, deps Deps, args map[string]an
 		params = append(params, memoryID)
 	}
 	query := fmt.Sprintf(`SELECT key,value,room,hall,verification_status,source_task_id,source_receipt_ids,supersedes_memory_id,updated_at
-		FROM memories WHERE collection_name=$1 AND (owner_id=$2 OR owner_id='') AND superseded_by=''
-		AND verification_status='verified' AND hall IN ('decision','discovery') AND id IN (%s)
+		FROM memories WHERE collection_name=$1 AND (owner_id=$2 OR owner_id='') AND superseded_by='' AND valid_until IS NULL
+		AND verification_status IN ('verified','receipt-validated') AND hall IN ('decision','discovery') AND id IN (%s)
 		ORDER BY updated_at DESC,key ASC`, strings.Join(placeholders, ","))
 	rows, err := deps.DB().QueryContext(ctx, deps.Q(query), params...)
 	if err != nil {

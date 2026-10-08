@@ -14,6 +14,7 @@ import (
 	"unicode"
 
 	"github.com/google/uuid"
+	"github.com/stek0v/levara/pkg/access"
 	"github.com/stek0v/levara/pkg/chatimport"
 	"github.com/stek0v/levara/pkg/llm"
 )
@@ -36,12 +37,13 @@ type DistillCandidate struct {
 func ToolChatDistill(ctx context.Context, deps Deps, args map[string]any) ToolResult {
 	platform, _ := args["platform"].(string)
 	sessionID, _ := args["session_id"].(string)
+	chatID, _ := args["chat_id"].(string)
 	switch chatimport.Platform(platform) {
 	case chatimport.PlatformCodex, chatimport.PlatformClaudeCode, chatimport.PlatformCursor:
 	default:
 		return errorResult(fmt.Sprintf("invalid platform %q (codex|claude-code|cursor)", platform))
 	}
-	if sessionID == "" {
+	if chatID == "" && sessionID == "" {
 		return errorResult("'session_id' required")
 	}
 	hall, _ := args["hall"].(string)
@@ -66,7 +68,21 @@ func ToolChatDistill(ctx context.Context, deps Deps, args map[string]any) ToolRe
 		return errorResult("llm provider not configured")
 	}
 
-	transcript, title, err := distillLoadTranscript(ctx, db, deps.Q, platform, sessionID)
+	// A synchronous call retains the caller's earlier deadline and cancellation.
+	opCtx, cancelOp := context.WithTimeout(ctx, 4*time.Minute)
+	defer cancelOp()
+	actor := deps.MetadataActor(opCtx)
+	local := actor.TrustedLocal && actor.UserID == "" && actor.TenantID == ""
+	if !local {
+		actor.TrustedLocal = false
+	}
+	chat, tx, release, err := distillSourceFence(opCtx, deps, actor, chatID, platform, sessionID, false)
+	if err != nil {
+		return errorResult(err.Error())
+	}
+	transcript, title, err := distillLoadTranscriptQuery(opCtx, tx.QueryContext, deps.Q, string(chat.Platform), chat.ID)
+	release()
+	platform, sessionID, chatID = string(chat.Platform), chat.SourceSessionID, chat.ID
 	if err != nil {
 		return errorResult(err.Error())
 	}
@@ -74,26 +90,41 @@ func ToolChatDistill(ctx context.Context, deps Deps, args map[string]any) ToolRe
 		return errorResult("imported session not found or has no distillable messages")
 	}
 
-	// Local models need 50-90s per pass; the MCP request context is
-	// tighter. Distillation (LLM + saves) runs under its own budget.
-	opCtx, cancelOp := context.WithTimeout(context.Background(), 4*time.Minute)
-	defer cancelOp()
-	candidates, err := distillViaLLM(opCtx, deps, prov, transcript, hall, maxMemories)
+	recheck := func() error {
+		_, _, release, err := distillSourceFence(opCtx, deps, actor, chat.ID, string(chat.Platform), "", false)
+		if err == nil {
+			release()
+		}
+		return err
+	}
+	candidates, err := distillViaLLM(opCtx, deps, prov, transcript, hall, maxMemories, recheck)
 	if err != nil {
 		return errorResult("llm distillation failed: " + err.Error())
 	}
+	if err := opCtx.Err(); err != nil {
+		return errorResult(err.Error())
+	}
+	if err := recheck(); err != nil {
+		return errorResult(err.Error())
+	}
 	if len(candidates) == 0 {
 		return jsonResult(map[string]any{
-			"session_id": sessionID, "platform": platform, "saved": 0,
+			"chat_id": chatID, "session_id": sessionID, "platform": platform, "saved": 0,
 			"candidates": []any{}, "message": "model returned no memorable items",
 		})
 	}
 
 	provenance := fmt.Sprintf("[источник: %s session %s, %s]", platform, shortSessionID(sessionID), title)
+	if !local {
+		provenance += fmt.Sprintf(" [chat_id: %s]", chat.ID)
+	}
 	for i := range candidates {
 		candidates[i].Value = strings.TrimSpace(candidates[i].Value) + " " + provenance
 	}
 	if dryRun {
+		if err := opCtx.Err(); err != nil {
+			return errorResult(err.Error())
+		}
 		return jsonResult(map[string]any{"session_id": sessionID, "platform": platform, "hall": hall, "dry_run": true, "candidates": candidates})
 	}
 
@@ -102,30 +133,83 @@ func ToolChatDistill(ctx context.Context, deps Deps, args map[string]any) ToolRe
 	if room == "" {
 		room = "chat-import"
 	}
-	ownerID := extractOwnerID(ctx)
+	ownerID := actor.UserID
 	now := time.Now().UTC().Format(time.RFC3339)
 	saved := 0
 	for _, c := range candidates {
+		if err := opCtx.Err(); err != nil {
+			return errorResult(err.Error())
+		}
 		if c.Key == "" || c.Value == "" {
 			continue
 		}
-		var canonicalID string
-		if err := db.QueryRowContext(opCtx, deps.Q(`
-			INSERT INTO memories (id, key, value, type, owner_id, collection_name, room, hall, is_pinned, pin_priority, created_at, updated_at)
-			VALUES ($1, $2, $3, 'project', $4, $5, $6, $7, false, 0, $8, $9)
-			ON CONFLICT(key, owner_id, collection_name) DO UPDATE SET value = $10, room = $11, hall = $12, updated_at = $13
-			RETURNING id
+		_, saveTx, releaseSave, err := distillSourceFence(opCtx, deps, actor, chat.ID, platform, "", true)
+		if err != nil {
+			return errorResult(err.Error())
+		}
+		var canonicalID, canonicalKey, canonicalType string
+		if err := archiveRetiredMemoryKey(opCtx, saveTx, deps, c.Key, ownerID, collectionName, now); err != nil {
+			releaseSave()
+			return errorResult("archive retired candidate " + c.Key + ": " + err.Error())
+		}
+		if err := saveTx.QueryRowContext(opCtx, deps.Q(`
+			INSERT INTO memories (id, key, value, type, owner_id, collection_name, room, hall, is_pinned, pin_priority, verification_status, source_task_id, source_receipt_ids, created_at, updated_at)
+			VALUES ($1, $2, $3, 'project', $4, $5, $6, $7, false, 0, 'unverified', '', '[]', $8, $9)
+			ON CONFLICT(key, owner_id, collection_name) DO UPDATE SET value = $10, room = $11, hall = $12, updated_at = $13,
+				verification_status = 'unverified', source_task_id = '', source_receipt_ids = '[]'
+			RETURNING id, key, type
 		`),
 			uuid.NewString(), c.Key, c.Value, ownerID, collectionName, room, hall, now, now,
-			c.Value, room, hall, now).Scan(&canonicalID); err != nil {
+			c.Value, room, hall, now).Scan(&canonicalID, &canonicalKey, &canonicalType); err != nil {
+			releaseSave()
 			return errorResult("save candidate " + c.Key + ": " + err.Error())
 		}
+		if err := chatimport.RecheckChatActor(opCtx, access.SQLPolicy{DB: db, Q: deps.Q}.WithReadTransaction(saveTx), actor, access.ActionWrite); err != nil {
+			releaseSave()
+			return errorResult(err.Error())
+		}
+		if err := saveTx.Commit(); err != nil {
+			releaseSave()
+			return errorResult(err.Error())
+		}
+		releaseSave()
 		// Same vector-sidecar contract as save_memory so semantic recall
 		// sees distilled records, not just SQL listing.
 		if deps.EmbedAvailable() {
-			indexMemorySync(deps, collectionName, canonicalID, c.Key, c.Value, "project")
+			if err := recheck(); err != nil {
+				return errorResult(err.Error())
+			}
+			if err := indexMemoryContextFenced(opCtx, deps, collectionName, canonicalID, canonicalKey, c.Value, canonicalType, ownerID, func() (func(), error) {
+				_, indexTx, releaseIndex, err := distillSourceFence(opCtx, deps, actor, chat.ID, platform, "", false)
+				if err != nil {
+					return nil, err
+				}
+				var currentKey, currentValue, currentType string
+				query := "SELECT key,value,type FROM memories WHERE id=$1 AND owner_id=$2 AND collection_name=$3 AND superseded_by='' AND valid_until IS NULL"
+				if !memoryCommitSQLite(deps) {
+					query += " FOR SHARE"
+				}
+				err = indexTx.QueryRowContext(opCtx, deps.Q(query), canonicalID, ownerID, collectionName).Scan(&currentKey, &currentValue, &currentType)
+				if err == nil && (currentKey != canonicalKey || currentValue != c.Value || currentType != canonicalType) {
+					err = fmt.Errorf("memory changed before source publication")
+				}
+				if err != nil {
+					releaseIndex()
+					return nil, err
+				}
+				if err := chatimport.RecheckChatActor(opCtx, access.SQLPolicy{DB: db, Q: deps.Q}.WithReadTransaction(indexTx), actor, access.ActionRead); err != nil {
+					releaseIndex()
+					return nil, err
+				}
+				return releaseIndex, nil
+			}); err != nil {
+				return errorResult("index candidate " + c.Key + ": " + err.Error())
+			}
 		}
 		saved++
+	}
+	if err := opCtx.Err(); err != nil {
+		return errorResult(err.Error())
 	}
 	return jsonResult(map[string]any{
 		"session_id": sessionID, "platform": platform, "hall": hall,
@@ -133,11 +217,78 @@ func ToolChatDistill(ctx context.Context, deps Deps, args map[string]any) ToolRe
 	})
 }
 
-// distillLoadTranscript renders the conversation into a compact
+func distillSourceFence(ctx context.Context, deps Deps, actor access.MetadataActor, chatID, platform, session string, write bool) (chatimport.ChatIdentity, *sql.Tx, func(), error) {
+	policy := access.SQLPolicy{DB: deps.DB(), Q: deps.Q}
+	var tx *sql.Tx
+	var release func()
+	var err error
+	var stopLocal func() bool
+	if actor.TrustedLocal && actor.UserID == "" && actor.TenantID == "" {
+		if write {
+			tx, err = deps.DB().BeginTx(ctx, nil)
+			if err == nil {
+				release = func() { _ = tx.Rollback() }
+			}
+		} else {
+			var conn *sql.Conn
+			conn, err = deps.DB().Conn(ctx)
+			if err == nil {
+				txCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+				stopLocal = context.AfterFunc(ctx, cancel)
+				tx, err = conn.BeginTx(txCtx, nil)
+				if err != nil {
+					stopLocal()
+					cancel()
+					_ = conn.Close()
+				} else {
+					release = func() { stopLocal(); _ = tx.Rollback(); cancel(); _ = conn.Close() }
+				}
+			}
+		}
+		if err == nil {
+			policy = policy.WithReadTransaction(tx)
+			if memoryCommitSQLite(deps) {
+				_, err = tx.ExecContext(ctx, "UPDATE chat_import_sessions SET id=id WHERE 1=0")
+				if err != nil {
+					release()
+				}
+			}
+		}
+	} else if write {
+		tx, policy, err = policy.BeginMetadataWrite(ctx, actor, memoryCommitSQLite(deps))
+		if err == nil {
+			release = func() { _ = tx.Rollback() }
+		}
+	} else {
+		tx, policy, release, err = policy.BeginTransferFenceTx(ctx, memoryCommitSQLite(deps))
+	}
+	if err != nil {
+		return chatimport.ChatIdentity{}, nil, nil, err
+	}
+	if err := chatimport.LockChatRegistry(ctx, tx, memoryCommitSQLite(deps), false); err != nil {
+		release()
+		return chatimport.ChatIdentity{}, nil, nil, err
+	}
+	chat, err := chatimport.ResolveChat(ctx, tx, deps.Q, policy, actor, chatID, platform, session)
+	if err == nil && write {
+		err = chatimport.RecheckChatActor(ctx, policy, actor, access.ActionWrite)
+	}
+	if err != nil {
+		release()
+		return chatimport.ChatIdentity{}, nil, nil, err
+	}
+	if stopLocal != nil && (!stopLocal() || ctx.Err() != nil) {
+		release()
+		return chatimport.ChatIdentity{}, nil, nil, ctx.Err()
+	}
+	return chat, tx, release, nil
+}
+
+// distillLoadTranscriptQuery renders the conversation into a compact
 // user/assistant/reasoning transcript, skipping system boilerplate and
 // truncating tool chatter — the model sees the dialogue, not the noise.
-func distillLoadTranscript(ctx context.Context, db *sql.DB, q func(string) string, platform, sessionID string) (string, string, error) {
-	rows, err := db.QueryContext(ctx, q(`
+func distillLoadTranscriptQuery(ctx context.Context, query func(context.Context, string, ...any) (*sql.Rows, error), q func(string) string, platform, sessionID string) (string, string, error) {
+	rows, err := query(ctx, q(`
 		SELECT role, kind, content, session_title FROM chat_import_messages
 		WHERE platform = $1 AND session_id = $2
 		ORDER BY ordinal, source_created_at, external_id LIMIT 1500
@@ -154,6 +305,9 @@ func distillLoadTranscript(ctx context.Context, db *sql.DB, q func(string) strin
 		var role, kind, content string
 		if err := rows.Scan(&role, &kind, &content, &title); err != nil {
 			return "", "", err
+		}
+		if strings.TrimSpace(content) == "" {
+			continue
 		}
 		if role == "developer" {
 			// Harness instructions (permissions, app-context, skills,
@@ -204,12 +358,18 @@ func distillLoadTranscript(ctx context.Context, db *sql.DB, q func(string) strin
 	if err := rows.Err(); err != nil {
 		return "", "", err
 	}
+	if err := rows.Close(); err != nil {
+		return "", "", err
+	}
+	if err := ctx.Err(); err != nil {
+		return "", "", err
+	}
 	return b.String(), title, nil
 }
 
 // distillViaLLM prompts for a strict JSON array and parses defensively:
 // small local models wrap JSON in prose or code fences.
-func distillViaLLM(ctx context.Context, deps Deps, prov llm.Provider, transcript, hall string, maxMemories int) ([]DistillCandidate, error) {
+func distillViaLLM(ctx context.Context, deps Deps, prov llm.Provider, transcript, hall string, maxMemories int, recheck func() error) ([]DistillCandidate, error) {
 	hallGuide := map[string]string{
 		"decision":  "архитектурные и проектные решения с причинами (почему выбрали X, а не Y)",
 		"discovery": "найденные проблемы, корневые причины, неочевидные закономерности",
@@ -228,6 +388,9 @@ func distillViaLLM(ctx context.Context, deps Deps, prov llm.Provider, transcript
 Переписка:
 %s`, maxMemories, hall, hallGuide, transcript)
 
+	if err := recheck(); err != nil {
+		return nil, err
+	}
 	candidates, err := distillOnce(ctx, deps, prov, prompt, 0, maxMemories)
 	if err != nil {
 		return nil, err
@@ -236,12 +399,18 @@ func distillViaLLM(ctx context.Context, deps Deps, prov llm.Provider, transcript
 		// Small local models are brittle: near-identical prompts flip
 		// between four items and []. One retry with mild sampling usually
 		// recovers the extraction.
+		if err := recheck(); err != nil {
+			return nil, err
+		}
 		return distillOnce(ctx, deps, prov, prompt, 0.3, maxMemories)
 	}
 	return candidates, nil
 }
 
 func distillOnce(ctx context.Context, deps Deps, prov llm.Provider, prompt string, temperature float64, maxMemories int) ([]DistillCandidate, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	resp, err := prov.ChatCompletion(ctx, llm.CompletionRequest{
 		Model:       deps.LLMModel(),
 		Messages:    []llm.Message{{Role: "user", Content: prompt}},
@@ -249,6 +418,9 @@ func distillOnce(ctx context.Context, deps Deps, prov llm.Provider, prompt strin
 		MaxTokens:   1200,
 	})
 	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	return parseDistillCandidates(resp.Content, maxMemories)

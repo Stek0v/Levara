@@ -4,7 +4,7 @@ package mcp
 // collection and either merges them deterministically (newest survives, rest
 // superseded) or abstracts a cluster into one synthesized semantic record via
 // the LLM. Reversible: every write stamps consolidation_run_id so a later
-// revert can undo a run. dry_run defaults true.
+// guarded journal can undo an unchanged run. dry_run defaults true.
 //
 // This file also holds the three Deps adapters that bridge the
 // transport-independent consolidate engine to the application surface:
@@ -14,10 +14,10 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -26,102 +26,7 @@ import (
 	"github.com/stek0v/levara/internal/store"
 	"github.com/stek0v/levara/pkg/consolidate"
 	"github.com/stek0v/levara/pkg/llm"
-	"github.com/stek0v/levara/pkg/sqlcompat"
 )
-
-// sqlStore adapts the SQL surface to consolidate.Store. collection is the
-// logical memory collection (e.g. "levara"), used both to scope candidate
-// loading and to stamp collection_name on synthesized abstract records.
-type sqlStore struct {
-	deps       Deps
-	collection string
-}
-
-func (s *sqlStore) Candidates(ctx context.Context, collection, room, hall string) ([]consolidate.MemoryRecord, error) {
-	conds := []string{
-		"collection_name = $1",
-		"superseded_by = ''",
-		sqlcompat.BoolFalse("is_pinned"),
-		"tier = 'raw'",
-	}
-	qargs := []any{collection}
-	// Placeholder index is always len(qargs)+1 before appending, so adding
-	// more optional conditions later stays correct without tracking a counter.
-	if room != "" {
-		conds = append(conds, fmt.Sprintf("room = $%d", len(qargs)+1))
-		qargs = append(qargs, room)
-	}
-	if hall != "" {
-		conds = append(conds, fmt.Sprintf("hall = $%d", len(qargs)+1))
-		qargs = append(qargs, hall)
-	}
-	q := s.deps.Q(fmt.Sprintf(
-		`SELECT id, key, value, room, hall, created_at FROM memories WHERE %s`,
-		strings.Join(conds, " AND ")))
-
-	rows, err := s.deps.DB().QueryContext(ctx, q, qargs...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var out []consolidate.MemoryRecord
-	for rows.Next() {
-		var r consolidate.MemoryRecord
-		var created string
-		if err := rows.Scan(&r.ID, &r.Key, &r.Value, &r.Room, &r.Hall, &created); err != nil {
-			return nil, err
-		}
-		r.CreatedAt = parseTS(created)
-		out = append(out, r)
-	}
-	return out, rows.Err()
-}
-
-func (s *sqlStore) Apply(ctx context.Context, runID string, actions []consolidate.Action) error {
-	db := s.deps.DB()
-	// Transactional apply (finding M7, 2026-09-03 review): a mid-run failure
-	// previously left half-superseded sources with no semantic record.
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	for _, a := range actions {
-		switch a.Kind {
-		case consolidate.ActionMerge:
-			for _, src := range a.SourceIDs {
-				if _, err := tx.ExecContext(ctx, s.deps.Q(
-					`UPDATE memories SET superseded_by = $1, valid_until = $2, consolidation_run_id = $3 WHERE id = $4`),
-					a.SurvivorID, nowTS(), runID, src); err != nil {
-					return err
-				}
-			}
-		case consolidate.ActionAbstract:
-			newID := uuid.New().String()
-			from, _ := json.Marshal(a.SourceIDs)
-			if _, err := tx.ExecContext(ctx, s.deps.Q(
-				`INSERT INTO memories
-				   (id, key, value, type, owner_id, collection_name, room, hall, is_pinned, pin_priority,
-				    superseded_by, consolidated_from, consolidation_run_id, tier, created_at, updated_at)
-				 VALUES
-				   ($1, $2, $3, 'project', '', $4, $5, $6, 0, 0,
-				    '', $7, $8, 'semantic', $9, $10)`),
-				newID, "consolidated:"+newID, a.NewValue, s.collection, a.Room, a.Hall,
-				string(from), runID, nowTS(), nowTS()); err != nil {
-				return err
-			}
-			for _, src := range a.SourceIDs {
-				if _, err := tx.ExecContext(ctx, s.deps.Q(
-					`UPDATE memories SET superseded_by = $1, valid_until = $2, consolidation_run_id = $3 WHERE id = $4`),
-					newID, nowTS(), runID, src); err != nil {
-					return err
-				}
-			}
-		}
-	}
-	return tx.Commit()
-}
 
 // collectionNeighbors adapts the embed + vector-search surface to
 // consolidate.NeighborSource. collection is the already-resolved vector
@@ -134,11 +39,19 @@ type collectionNeighbors struct {
 	// candidate then fails the same way, yielding an empty graph; the flag
 	// lets ToolConsolidate surface "incompatible" instead of a silent zero.
 	dimMismatch bool
+	store       *sqlStore
 }
 
 func (n *collectionNeighbors) Edges(ctx context.Context, recs []consolidate.MemoryRecord, cfg consolidate.Config) ([]consolidate.SimEdge, error) {
 	if !n.deps.EmbedAvailable() {
 		return nil, nil
+	}
+	if n.store != nil {
+		release, err := n.store.providerFence(ctx)
+		if err != nil {
+			return nil, err
+		}
+		defer release()
 	}
 	// Restrict neighbors to the candidate set so superseded/pinned/other-
 	// collection rows that may exist in the vector index don't pollute edges.
@@ -150,6 +63,9 @@ func (n *collectionNeighbors) Edges(ctx context.Context, recs []consolidate.Memo
 	seen := make(map[string]struct{})
 	var edges []consolidate.SimEdge
 	for _, r := range recs {
+		if err := consolidationProviderReady(ctx, n.deps); err != nil {
+			return nil, err
+		}
 		// Embed key+value to match indexMemorySync (tool_save_recall_memory.go),
 		// which indexes Embed(key+" "+value). A value-only query vector is
 		// asymmetric against the key+value stored vectors and systematically
@@ -197,13 +113,22 @@ func (n *collectionNeighbors) Edges(ctx context.Context, recs []consolidate.Memo
 // When no provider is configured, Summarize returns an error and the engine
 // skips abstract clusters gracefully — deterministic merges still proceed.
 type llmSummarizer struct {
-	deps Deps
+	deps  Deps
+	store *sqlStore
+	calls atomic.Int64
 }
 
 func (l *llmSummarizer) Summarize(ctx context.Context, sources []string) (string, error) {
 	prov := l.deps.LLMProvider()
 	if prov == nil {
 		return "", fmt.Errorf("consolidate: llm not configured")
+	}
+	if l.store != nil {
+		release, err := l.store.providerFence(ctx)
+		if err != nil {
+			return "", err
+		}
+		defer release()
 	}
 	var b strings.Builder
 	b.WriteString("Combine the following memory notes into ONE concise statement. ")
@@ -214,6 +139,10 @@ func (l *llmSummarizer) Summarize(ctx context.Context, sources []string) (string
 		b.WriteString(s)
 		b.WriteString("\n")
 	}
+	if err := consolidationProviderReady(ctx, l.deps); err != nil {
+		return "", err
+	}
+	l.calls.Add(1)
 	resp, err := prov.ChatCompletion(ctx, llm.CompletionRequest{
 		Model:       l.deps.LLMModel(),
 		Messages:    []llm.Message{{Role: "user", Content: b.String()}},
@@ -248,7 +177,15 @@ func summaryMaxTokens(sources []string) int {
 // ToolConsolidate clusters and consolidates near-duplicate/related memories
 // in a collection. dry_run (default true) previews without writing.
 func ToolConsolidate(ctx context.Context, deps Deps, args map[string]any) ToolResult {
-	collection, _ := args["collection"].(string)
+	if deps == nil || deps.DB() == nil {
+		return errResult("database not configured")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+	collection, _, err := deleteMemoryStringArg(args, "collection")
+	if err != nil {
+		return errResult(err.Error())
+	}
 	if collection == "" {
 		return errResult("'collection' required (use '_memories' to target the base memory store)")
 	}
@@ -261,26 +198,54 @@ func ToolConsolidate(ctx context.Context, deps Deps, args map[string]any) ToolRe
 	if collection == baseMemoryCollection {
 		sqlCollection = ""
 	}
-	room, _ := args["room"].(string)
-	hall, _ := args["hall"].(string)
+	room, _, err := deleteMemoryStringArg(args, "room")
+	if err != nil {
+		return errResult(err.Error())
+	}
+	hall, _, err := deleteMemoryStringArg(args, "hall")
+	if err != nil {
+		return errResult(err.Error())
+	}
+	if hall != "" && !IsValidHall(hall) {
+		return errResult("invalid hall")
+	}
 	dryRun := true
-	if v, ok := args["dry_run"].(bool); ok {
+	if raw, exists := args["dry_run"]; exists {
+		v, ok := raw.(bool)
+		if !ok {
+			return errResult("dry_run must be a boolean")
+		}
 		dryRun = v
+	}
+	shared := false
+	if raw, exists := args["shared"]; exists {
+		v, ok := raw.(bool)
+		if !ok {
+			return errResult("shared must be a boolean")
+		}
+		shared = v
 	}
 	runID := uuid.New().String()
 
-	nbr := &collectionNeighbors{deps: deps, collection: memoryCollectionName(sqlCollection)}
+	s := &sqlStore{deps: deps, collection: sqlCollection, shared: shared}
+	if !dryRun {
+		if _, err := s.outbox(); err != nil {
+			return errResult(err.Error())
+		}
+	}
+	nbr := &collectionNeighbors{deps: deps, collection: memoryCollectionName(sqlCollection), store: s}
+	summarizer := &llmSummarizer{deps: deps, store: s}
 	res, err := consolidate.Run(ctx, consolidate.Params{
-		Store:      &sqlStore{deps: deps, collection: sqlCollection},
+		Store:      s,
 		Neighbors:  nbr,
-		Summarizer: &llmSummarizer{deps: deps},
+		Summarizer: summarizer,
 		Cfg:        consolidate.DefaultConfig(),
 		Collection: sqlCollection, Room: room, Hall: hall,
 		RunID: runID, DryRun: dryRun,
 	})
 	if err != nil {
 		metrics.ConsolidationRuns.WithLabelValues("error").Inc()
-		return errResult("consolidate: " + err.Error())
+		return errResult(fmt.Sprintf("consolidate: %v llm_calls=%d", err, summarizer.calls.Load()))
 	}
 	metrics.ConsolidationRuns.WithLabelValues("ok").Inc()
 	metrics.ConsolidationClusters.Add(float64(res.Clusters))
@@ -294,8 +259,8 @@ func ToolConsolidate(ctx context.Context, deps Deps, args map[string]any) ToolRe
 		mode = "dry_run"
 	}
 	text := fmt.Sprintf(
-		"consolidate %s: run=%s candidates=%d clusters=%d actions=%d skipped=%d",
-		mode, runID, res.Candidates, res.Clusters, len(res.Actions), res.Skipped)
+		"consolidate %s: run=%s candidates=%d clusters=%d actions=%d skipped=%d llm_calls=%d",
+		mode, runID, res.Candidates, res.Clusters, len(res.Actions), res.Skipped, summarizer.calls.Load())
 	if nbr.dimMismatch {
 		metrics.ConsolidationRuns.WithLabelValues("dim_incompatible").Inc()
 		text += fmt.Sprintf(
@@ -350,12 +315,43 @@ func NewConsolidationRunner(deps Deps, maxLLMCallsPerSweep int) *consolidationRu
 	return &consolidationRunner{deps: deps, maxLLMCallsPerSweep: maxLLMCallsPerSweep}
 }
 
-// RunOnce enumerates collections via Deps.ListCollections, skips internal
-// _memories* sidecars, and runs a non-dry consolidation pass per collection.
+// RunOnce enumerates authoritative SQL namespaces, skips internal sidecars,
+// and consolidates each owner independently under trusted-local authority.
 func (r *consolidationRunner) RunOnce(ctx context.Context) error {
+	if r.deps == nil || r.deps.DB() == nil {
+		return errors.New("database not configured")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+	if !r.deps.MetadataActor(ctx).TrustedLocal {
+		return errors.New("consolidation maintenance requires verified trusted-local authority")
+	}
+	rows, err := r.deps.DB().QueryContext(ctx, `SELECT DISTINCT collection_name,owner_id FROM memories WHERE superseded_by='' AND valid_until IS NULL AND tier='raw' ORDER BY collection_name,owner_id`)
+	if err != nil {
+		return err
+	}
+	type namespace struct{ collection, owner string }
+	var namespaces []namespace
+	for rows.Next() {
+		var ns namespace
+		if err := rows.Scan(&ns.collection, &ns.owner); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		namespaces = append(namespaces, ns)
+	}
+	err = rows.Err()
+	closeErr := rows.Close()
+	if err != nil {
+		return err
+	}
+	if closeErr != nil {
+		return closeErr
+	}
 	var errs []error
 	spent := 0 // LLM calls consumed so far this sweep
-	for _, c := range r.deps.ListCollections() {
+	for _, ns := range namespaces {
+		c := ns.collection
 		// Skip internal vector sidecars: the janitor iterates logical
 		// collections and resolves each one's _memories_<c> sidecar via
 		// memoryCollectionName below.
@@ -381,10 +377,15 @@ func (r *consolidationRunner) RunOnce(ctx context.Context) error {
 			}
 		}
 		runID := uuid.New().String()
+		s := &sqlStore{deps: r.deps, collection: c, maintenanceOwner: &ns.owner}
+		if _, err := s.outbox(); err != nil {
+			errs = append(errs, err)
+			continue
+		}
 		res, err := consolidate.Run(ctx, consolidate.Params{
-			Store:      &sqlStore{deps: r.deps, collection: c},
-			Neighbors:  &collectionNeighbors{deps: r.deps, collection: memoryCollectionName(c)},
-			Summarizer: &llmSummarizer{deps: r.deps},
+			Store:      s,
+			Neighbors:  &collectionNeighbors{deps: r.deps, collection: memoryCollectionName(c), store: s},
+			Summarizer: &llmSummarizer{deps: r.deps, store: s},
 			Cfg:        cfg,
 			Collection: c,
 			RunID:      runID,
@@ -401,43 +402,30 @@ func (r *consolidationRunner) RunOnce(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// Revert undoes a consolidation run identified by runID:
-//  1. Reactivates source rows that were superseded during the run.
-//  2. Deletes synthetic semantic records created during the run.
-//
-// sqlStore.collection is not used here; Revert operates purely by
-// consolidation_run_id so a zero-value collection field is fine.
-func (s *sqlStore) Revert(ctx context.Context, runID string) error {
-	// Transactional revert (finding M7, 2026-09-03 review): reactivation and
-	// semantic-record deletion must succeed together, or the memory set is
-	// left inconsistent (sources active AND synthetic records alive).
-	tx, err := s.deps.DB().BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	// Reactivate superseded source rows from this run.
-	if _, err := tx.ExecContext(ctx, s.deps.Q(
-		`UPDATE memories SET superseded_by='', valid_until=NULL, consolidation_run_id=''
-		 WHERE consolidation_run_id=$1 AND superseded_by<>''`), runID); err != nil {
-		return err
-	}
-	// Delete generated semantic records from this run.
-	if _, err := tx.ExecContext(ctx, s.deps.Q(
-		`DELETE FROM memories WHERE consolidation_run_id=$1 AND tier='semantic'`), runID); err != nil {
-		return err
-	}
-	return tx.Commit()
-}
-
 // ToolConsolidationRevert reverses a consolidation run: reactivates
 // superseded source memories and deletes generated semantic records.
 func ToolConsolidationRevert(ctx context.Context, deps Deps, args map[string]any) ToolResult {
-	runID, _ := args["run_id"].(string)
+	if deps == nil || deps.DB() == nil {
+		return errResult("database not configured")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+	runID, _, err := deleteMemoryStringArg(args, "run_id")
+	if err != nil {
+		return errResult(err.Error())
+	}
+	shared := false
+	if raw, exists := args["shared"]; exists {
+		var ok bool
+		shared, ok = raw.(bool)
+		if !ok {
+			return errResult("shared must be a boolean")
+		}
+	}
 	if runID == "" {
 		return errResult("'run_id' required")
 	}
-	if err := (&sqlStore{deps: deps}).Revert(ctx, runID); err != nil {
+	if err := (&sqlStore{deps: deps, shared: shared}).Revert(ctx, runID); err != nil {
 		return errResult("revert: " + err.Error())
 	}
 	metrics.ConsolidationRuns.WithLabelValues("revert").Inc()
@@ -447,13 +435,6 @@ func ToolConsolidationRevert(ctx context.Context, deps Deps, args map[string]any
 // nowTS / parseTS use RFC3339 to match the format ToolSaveMemory writes for
 // created_at/updated_at.
 func nowTS() string { return time.Now().UTC().Format(time.RFC3339) }
-
-func parseTS(s string) time.Time {
-	if t, err := time.Parse(time.RFC3339, s); err == nil {
-		return t
-	}
-	return time.Time{}
-}
 
 // errResult / okResult are local helpers mirroring the ToolResult shape used
 // across the memory tools (text content; IsError flag for failures).

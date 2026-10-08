@@ -49,7 +49,7 @@ func (h *mcpHandler) handleLatestRPC(c *fiber.Ctx) error {
 	switch req.Method {
 	case "tools/call", "resources/list", "resources/read":
 		if _, authErr := h.authenticateMCPRequest(c); authErr != nil {
-			return c.SendStatus(fiber.StatusNotFound)
+			return c.SendStatus(mcpAuthFailureStatus(authErr, fiber.StatusNotFound))
 		}
 	}
 

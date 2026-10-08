@@ -9,7 +9,8 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/stek0v/levara/pkg/memoryindex"
 )
 
@@ -23,12 +24,10 @@ func openPostgresMemoryTestDB(t *testing.T) *sql.DB {
 	if dsn == "" {
 		t.Skip("LEVARA_TEST_POSTGRES_DSN is not set")
 	}
-	db, err := sql.Open("pgx", dsn)
+	config, err := pgx.ParseConfig(dsn)
 	if err != nil {
-		t.Fatalf("open postgres: %v", err)
+		t.Fatalf("parse postgres DSN: %v", err)
 	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
 	schema := fmt.Sprintf("mcp_memory_test_%d", time.Now().UnixNano())
 	schema = strings.Map(func(r rune) rune {
 		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' {
@@ -36,17 +35,19 @@ func openPostgresMemoryTestDB(t *testing.T) *sql.DB {
 		}
 		return '_'
 	}, schema)
-	if _, err := db.Exec(`CREATE SCHEMA ` + schema); err != nil {
-		db.Close()
+	admin := stdlib.OpenDB(*config)
+	if _, err := admin.Exec(`CREATE SCHEMA ` + schema); err != nil {
+		admin.Close()
 		t.Fatalf("create schema: %v", err)
 	}
-	if _, err := db.Exec(`SET search_path TO ` + schema); err != nil {
-		db.Close()
-		t.Fatalf("set search_path: %v", err)
-	}
+	config.RuntimeParams["search_path"] = schema
+	db := stdlib.OpenDB(*config)
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 	t.Cleanup(func() {
-		_, _ = db.Exec(`DROP SCHEMA IF EXISTS ` + schema + ` CASCADE`)
 		_ = db.Close()
+		_, _ = admin.Exec(`DROP SCHEMA IF EXISTS ` + schema + ` CASCADE`)
+		_ = admin.Close()
 	})
 	return db
 }
@@ -59,6 +60,8 @@ func TestToolMemoryPostgresPinUnpin(t *testing.T) {
 		owner_id TEXT NOT NULL DEFAULT '',
 		is_pinned BOOLEAN NOT NULL DEFAULT FALSE,
 		pin_priority INTEGER NOT NULL DEFAULT 0,
+		superseded_by TEXT NOT NULL DEFAULT '',
+		valid_until TIMESTAMPTZ,
 		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 	)`); err != nil {
 		t.Fatalf("create memories: %v", err)
@@ -110,7 +113,7 @@ func TestToolDeleteMemoryPostgresExactIDAndAmbiguousLegacy(t *testing.T) {
 		id TEXT PRIMARY KEY, key TEXT NOT NULL, value TEXT NOT NULL DEFAULT '', type TEXT NOT NULL DEFAULT '',
 		owner_id TEXT NOT NULL DEFAULT '', collection_name TEXT NOT NULL DEFAULT '', room TEXT NOT NULL DEFAULT '', hall TEXT NOT NULL DEFAULT '',
 		is_pinned BOOLEAN NOT NULL DEFAULT FALSE, pin_priority INTEGER NOT NULL DEFAULT 0,
-		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), superseded_by TEXT NOT NULL DEFAULT '',
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), superseded_by TEXT NOT NULL DEFAULT '', valid_until TIMESTAMPTZ,
 		UNIQUE(key,owner_id,collection_name)
 	)`); err != nil {
 		t.Fatal(err)

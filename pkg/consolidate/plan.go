@@ -18,6 +18,21 @@ func Plan(recs map[string]MemoryRecord, clusters []Cluster, cfg Config) []Action
 		}
 		ids := append([]string(nil), c.IDs...)
 		sort.Strings(ids) // deterministic ordering
+		classification, exists := recs[ids[0]]
+		if !exists {
+			continue
+		}
+		homogeneous := true
+		for _, id := range ids[1:] {
+			r, exists := recs[id]
+			if !exists || !sameClassification(classification, r) {
+				homogeneous = false
+				break
+			}
+		}
+		if !homogeneous {
+			continue
+		}
 
 		if allTight(c.Edges, cfg.TauHigh) {
 			survivor := newest(ids, recs)
@@ -37,18 +52,24 @@ func Plan(recs map[string]MemoryRecord, clusters []Cluster, cfg Config) []Action
 					Kind:       ActionMerge,
 					SurvivorID: survivor,
 					SourceIDs:  sources,
-					Room:       recs[survivor].Room,
-					Hall:       recs[survivor].Hall,
+					OwnerID:    classification.OwnerID,
+					Collection: classification.Collection,
+					Type:       classification.Type,
+					Room:       classification.Room,
+					Hall:       classification.Hall,
 				})
 				continue
 			}
 		}
 
 		actions = append(actions, Action{
-			Kind:      ActionAbstract,
-			SourceIDs: ids,
-			Room:      dominantRoom(ids, recs),
-			Hall:      "semantic",
+			Kind:       ActionAbstract,
+			SourceIDs:  ids,
+			OwnerID:    classification.OwnerID,
+			Collection: classification.Collection,
+			Type:       classification.Type,
+			Room:       classification.Room,
+			Hall:       classification.Hall,
 		})
 	}
 	return actions
@@ -115,16 +136,7 @@ func newest(ids []string, recs map[string]MemoryRecord) string {
 	return best
 }
 
-func dominantRoom(ids []string, recs map[string]MemoryRecord) string {
-	count := map[string]int{}
-	for _, id := range ids {
-		count[recs[id].Room]++
-	}
-	best, bestN := "", -1
-	for room, n := range count {
-		if n > bestN {
-			best, bestN = room, n
-		}
-	}
-	return best
+func sameClassification(a, b MemoryRecord) bool {
+	return a.OwnerID == b.OwnerID && a.Collection == b.Collection && a.Type == b.Type &&
+		a.Room == b.Room && a.Hall == b.Hall
 }

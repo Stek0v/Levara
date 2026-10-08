@@ -57,11 +57,13 @@ class TransformersBackend:
                 f"recipe dim mismatch: {recipe.repo} produced {self.dim}-d, "
                 f"recipe said {recipe.dim}"
             )
-        # Apple Silicon: MPS is several times faster than CPU for these
-        # encoder sizes; harmless no-op elsewhere.
+        # Device pick: CUDA > MPS > CPU. Apple Silicon: MPS is several times
+        # faster than CPU for these encoder sizes.
         try:
             import torch as _t
-            if _t.backends.mps.is_available():
+            if _t.cuda.is_available():
+                self.model = self.model.to("cuda")
+            elif _t.backends.mps.is_available():
                 self.model = self.model.to("mps")
         except Exception:
             pass
@@ -138,7 +140,27 @@ class TransformersBackend:
             out = self.model(**inputs)
             pooled = self._project(self._mean_pool(out.last_hidden_state, inputs["attention_mask"]))
             normed = self._torch.nn.functional.normalize(pooled, p=2, dim=1)
-            return normed.cpu().tolist()
+            result = normed.cpu().tolist()
+            self._release_allocator_cache()
+            return result
+
+    def _release_allocator_cache(self, threshold_mb: int = 3072) -> None:
+        # Padded-batch activation buffers accumulate in the GPU caching
+        # allocator and are never returned to the OS: every distinct
+        # (batch, padded-length) shape gets its own retained pool, and one
+        # large batch can cache gigabytes (measured: MPS driver memory grew
+        # to 6+ GB on prod while torch-level allocation stayed flat).
+        # Drop the cache once the retained pool passes the threshold so a
+        # long-lived server stays bounded.
+        t = self._torch
+        try:
+            dev = next(self.model.parameters()).device
+            if dev.type == "cuda" and t.cuda.memory_reserved() > threshold_mb * 2**20:
+                t.cuda.empty_cache()
+            elif dev.type == "mps" and t.mps.driver_allocated_memory() > threshold_mb * 2**20:
+                t.mps.empty_cache()
+        except Exception:
+            pass
 
 
 class Model2VecBackend:

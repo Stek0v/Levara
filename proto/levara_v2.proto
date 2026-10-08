@@ -15,9 +15,6 @@
 // registered on the same port; a v2-aware client picks its flavour via
 // the service name, a v1 client sees v2 as not-implemented.
 //
-// This file is authored but NOT yet code-generated in this commit. Run
-// `make proto` once protoc-gen-go is wired into CI; in the meantime the
-// file serves as the reviewable contract.
 syntax = "proto3";
 package levara.v2;
 option go_package = "github.com/stek0v/levara/proto/pb/v2";
@@ -28,8 +25,18 @@ option go_package = "github.com/stek0v/levara/proto/pb/v2";
 // addition to the gRPC status code. Clients inspect Code to branch on
 // categories; Details carries key/value pairs specific to each category
 // (e.g. field="vector" for validation, retry_after="60" for rate-limit).
+enum ErrorCode {
+  ERROR_CODE_UNSPECIFIED = 0;
+  ERROR_CODE_LEGACY = 1;
+  ERROR_CODE_INVALID_ARGUMENT = 2;
+  ERROR_CODE_NOT_FOUND = 3;
+  ERROR_CODE_FAILED_PRECONDITION = 4;
+  ERROR_CODE_UNAVAILABLE = 5;
+  ERROR_CODE_INTERNAL = 6;
+}
+
 message ErrorDetail {
-  int32 code = 1;
+  ErrorCode code = 1;
   string message = 2;
   map<string, string> details = 3;
 }
@@ -102,6 +109,7 @@ message BatchInsertFailure {
   reserved 50 to 100;
   string id = 1;
   ErrorDetail error = 2;
+	int32 index = 3;
 }
 
 message DeleteReq {
@@ -115,6 +123,14 @@ message DeleteResp {
   int32 deleted = 1;
   int32 failed = 2;
   ErrorDetail error = 3;
+	repeated DeleteFailure failures = 4;
+}
+
+message DeleteFailure {
+	reserved 50 to 100;
+	string id = 1;
+	ErrorDetail error = 2;
+	int32 index = 3;
 }
 
 message SearchReq {

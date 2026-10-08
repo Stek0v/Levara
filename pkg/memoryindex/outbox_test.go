@@ -308,3 +308,53 @@ func benchmarkOutboxReadinessQueries(b *testing.B, db *sql.DB) {
 		}
 	})
 }
+
+func TestOutboxClaimReadFailureRollsBack(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		open func(testing.TB) *sql.DB
+	}{
+		{"sqlite", openSQLiteOutboxTestDB}, {"postgres", openPostgresOutboxTestDB},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := tc.open(t)
+			db.SetMaxOpenConns(1)
+			s, err := NewStore(db)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx := context.Background()
+			j, err := s.Enqueue(ctx, Job{MemoryID: "claim_source", Operation: "upsert_vector", Digest: "digest", OwnerID: "peer", Collection: "main"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if s.postgres {
+				if _, err = db.Exec(`ALTER TABLE memory_index_jobs ALTER COLUMN embed_dimension DROP DEFAULT; ALTER TABLE memory_index_jobs ALTER COLUMN embed_dimension TYPE TEXT USING embed_dimension::TEXT`); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// Force a returned-row decode failure after the conditional claim mutation.
+			if _, err = db.Exec(s.bind(`UPDATE memory_index_jobs SET embed_dimension=? WHERE id=?`), "invalid", j.ID); err != nil {
+				t.Fatal(err)
+			}
+			if _, ok, err := s.Claim(ctx); err == nil || ok {
+				t.Fatalf("malformed claim ok=%t err=%v", ok, err)
+			}
+			var status string
+			var attempts int
+			if err = db.QueryRow(s.bind(`SELECT status,attempts FROM memory_index_jobs WHERE id=?`), j.ID).Scan(&status, &attempts); err != nil {
+				t.Fatal(err)
+			}
+			if status != "pending" || attempts != 0 {
+				t.Fatalf("failed claim leaked mutation: status=%q attempts=%d", status, attempts)
+			}
+			if _, err = db.Exec(s.bind(`UPDATE memory_index_jobs SET embed_dimension=? WHERE id=?`), "0", j.ID); err != nil {
+				t.Fatal(err)
+			}
+			claimed, ok, err := s.Claim(ctx)
+			if err != nil || !ok || claimed.ID != j.ID || claimed.Attempts != 1 || claimed.Status != Running || claimed.OwnerID != "peer" || claimed.Collection != "main" {
+				t.Fatalf("claim after repair: %+v ok=%t err=%v", claimed, ok, err)
+			}
+		})
+	}
+}

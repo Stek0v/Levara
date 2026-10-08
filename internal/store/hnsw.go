@@ -14,20 +14,20 @@ import (
 type HNSWConfig struct {
 	M            int     // max neighbors per node (default 16)
 	M0           int     // max neighbors at layer 0 (default 2*M)
-	EfSearchMult int     // efSearch = k * EfSearchMult (default 8)
-	EfSearchMin  int     // minimum efSearch (default 64)
+	EfSearchMult int     // efSearch = k * EfSearchMult (default 6)
+	EfSearchMin  int     // minimum efSearch (default 48)
 	LevelMult    float64 // level distribution parameter (default 1/ln(2))
 }
 
 // DefaultHNSWConfig returns production-ready HNSW parameters: M=16, M0=32,
-// efSearchMult=8, efSearchMin=64. These values balance recall (~0.95) with
-// low search latency at the scales tested in Levara benchmarks.
+// efSearchMult=6, efSearchMin=48. These values preserve recall@10 >= 0.90
+// while keeping mixed search/write latency within the production SLO.
 func DefaultHNSWConfig() HNSWConfig {
 	return HNSWConfig{
 		M:            16,
 		M0:           32,
-		EfSearchMult: 8,
-		EfSearchMin:  64,
+		EfSearchMult: 6,
+		EfSearchMin:  48,
 		LevelMult:    1.0 / 0.69,
 	}
 }
@@ -62,6 +62,7 @@ type HNSWIndex struct {
 	cfg         HNSWConfig
 	randFloat64 func() float64
 	deletedSet  sync.Map // per-instance tombstone set (arena offset → struct{})
+	insertMu    sync.Mutex
 	sync.RWMutex
 }
 
@@ -186,16 +187,11 @@ func (h *HNSWIndex) refreshEntryNodeLocked() {
 	h.MaxLayer = entry.Layer
 }
 
-// vecFn abstracts arena access: GetNoLock during Add (write-locked),
-// GetUnsafe during Search (read-locked).
+// vecFn abstracts arena access during graph traversal.
 type vecFn func(offset uint32) []float32
 
 func (h *HNSWIndex) vecNoLock(offset uint32) []float32 {
-	return h.Arena.GetNoLock(offset)
-}
-
-func (h *HNSWIndex) vecUnsafe(offset uint32) []float32 {
-	v, _ := h.Arena.GetUnsafe(offset)
+	v, _ := h.Arena.getUnsafeNoLock(offset)
 	return v
 }
 
@@ -246,20 +242,19 @@ func (h *HNSWIndex) searchLayer(query []float32, entryPoint *HNSWNode, layer int
 }
 
 // Add inserts a new node to the HNSW graph with M-neighbor connections.
-// Uses GetNoLock since we hold the exclusive write lock — no concurrent arena modifications.
 func (h *HNSWIndex) Add(vector []float32, id string, idx uint32) {
-	h.Lock()
-	defer h.Unlock()
+	// Only one insertion mutates graph topology at a time. Searches keep the
+	// shared index lock while this writer traverses and updates node-local links.
+	h.insertMu.Lock()
+	defer h.insertMu.Unlock()
 
-	if existing, exists := h.Nodes[id]; exists {
-		if !h.isDeleted(existing.ArenaOffset) {
-			return
-		}
-		delete(h.Nodes, id)
-		if h.EntryNodeID == id {
-			h.refreshEntryNodeLocked()
-		}
+	h.RLock()
+	existing, exists := h.Nodes[id]
+	if exists && !h.isDeleted(existing.ArenaOffset) {
+		h.RUnlock()
+		return
 	}
+	h.RUnlock()
 
 	level := h.randomLevel()
 	newNode := &HNSWNode{
@@ -268,7 +263,6 @@ func (h *HNSWIndex) Add(vector []float32, id string, idx uint32) {
 		Connections: make([][]uint32, level+1),
 		ArenaOffset: idx,
 	}
-	// Pre-allocate connection slices with expected capacity
 	for l := 0; l <= level; l++ {
 		cap := h.cfg.M
 		if l == 0 {
@@ -277,67 +271,80 @@ func (h *HNSWIndex) Add(vector []float32, id string, idx uint32) {
 		newNode.Connections[l] = make([]uint32, 0, cap)
 	}
 
+	h.Lock()
+	if existing, exists := h.Nodes[id]; exists {
+		if !h.isDeleted(existing.ArenaOffset) {
+			h.Unlock()
+			return
+		}
+		delete(h.Nodes, id)
+		if h.EntryNodeID == id {
+			h.refreshEntryNodeLocked()
+		}
+	}
+	if h.EntryNodeID == "" {
+		h.Nodes[id] = newNode
+		h.registerNode(newNode)
+		h.EntryNodeID = id
+		h.MaxLayer = level
+		h.Unlock()
+		return
+	}
+	curr := h.Nodes[h.EntryNodeID]
+	maxLayer := h.MaxLayer
 	h.Nodes[id] = newNode
 	h.registerNode(newNode)
+	h.Unlock()
 
-	if h.EntryNodeID == "" {
-		h.EntryNodeID = id
-		h.MaxLayer = level
-		return
-	}
-
+	// Arena slots are immutable. Existing graph structure stays registered under
+	// the shared lock; node-local locks protect adjacency updates from Search.
+	h.RLock()
+	h.Arena.mu.RLock()
 	getVec := h.vecNoLock
-	curr := h.Nodes[h.EntryNodeID]
-	// If the entry node's vector is no longer reachable in the current arena
-	// (e.g. arena was swapped by Clear() before we got the write lock), abort
-	// the topology stitching — the new node remains as an orphan that the
-	// next Add will pick up as the entry point.
-	if curr == nil || getVec(curr.ArenaOffset) == nil {
-		return
-	}
-
-	// Zoom Phase: greedy search from top layer down to node's level
-	for l := h.MaxLayer; l > level; l-- {
-		curr = h.searchLayer(vector, curr, l, getVec)
-	}
-
-	startLayer := level
-	if h.MaxLayer < level {
-		startLayer = h.MaxLayer
-	}
-
-	// Build Phase: find M neighbors at each layer and create bidirectional links
-	for l := startLayer; l >= 0; l-- {
-		maxConn := h.cfg.M
-		if l == 0 {
-			maxConn = h.cfg.M0
+	if curr != nil && getVec(curr.ArenaOffset) != nil {
+		for l := maxLayer; l > level; l-- {
+			curr = h.searchLayer(vector, curr, l, getVec)
 		}
 
-		neighbors := h.searchLayerTopK(vector, curr, l, maxConn, getVec)
-
-		for _, sr := range neighbors {
-			if sr.node == nil || l >= len(sr.node.Connections) {
-				continue
+		startLayer := level
+		if maxLayer < level {
+			startLayer = maxLayer
+		}
+		for l := startLayer; l >= 0; l-- {
+			maxConn := h.cfg.M
+			if l == 0 {
+				maxConn = h.cfg.M0
 			}
-			newNode.Connections[l] = append(newNode.Connections[l], sr.node.ArenaOffset)
-
-			sr.node.Lock()
-			sr.node.Connections[l] = append(sr.node.Connections[l], idx)
-			if len(sr.node.Connections[l]) > maxConn {
-				h.pruneConnections(sr.node, l, maxConn, getVec)
+			neighbors := h.searchLayerTopK(vector, curr, l, maxConn, getVec)
+			for _, sr := range neighbors {
+				if sr.node == nil || l >= len(sr.node.Connections) {
+					continue
+				}
+				newNode.Lock()
+				newNode.Connections[l] = append(newNode.Connections[l], sr.node.ArenaOffset)
+				newNode.Unlock()
+				sr.node.Lock()
+				sr.node.Connections[l] = append(sr.node.Connections[l], idx)
+				if len(sr.node.Connections[l]) > maxConn {
+					h.pruneConnections(sr.node, l, maxConn, getVec)
+				}
+				sr.node.Unlock()
 			}
-			sr.node.Unlock()
-		}
-
-		if len(neighbors) > 0 {
-			curr = neighbors[0].node
+			if len(neighbors) > 0 {
+				curr = neighbors[0].node
+			}
 		}
 	}
+	h.Arena.mu.RUnlock()
+	h.RUnlock()
 
-	if level > h.MaxLayer {
+	// Promote the fully linked node to entry only after construction.
+	h.Lock()
+	if curr != nil && level > h.MaxLayer {
 		h.MaxLayer = level
 		h.EntryNodeID = id
 	}
+	h.Unlock()
 }
 
 // pruneConnections keeps only the closest maxConn neighbors using insertion sort.
@@ -473,16 +480,9 @@ func (h *HNSWIndex) isDeleted(arenaOffset uint32) bool {
 
 // Search finds and returns the k closest nodes to the query vector.
 //
-// Locking: holds h.RLock for the entire traversal. Previous implementation
-// released h.RLock before searchLayer/searchLayerTopK, letting concurrent
-// Add mutate nodesByIdx, EntryNodeID, and existing nodes' Connections
-// (newNode.Connections in Add was even modified without newNode.Lock).
-// That was a real data race flagged by -race in TestRecallAt10; see F-6 in
-// docs/testing.md. Holding RLock serialises writers against readers
-// — writers (Add) block while any Search is running, readers run concurrently
-// with each other. Fine-grained unlock is possible but requires Add to also
-// lock newNode during its link-up phase; deferred until there's a measured
-// throughput need.
+// Locking: Search holds the shared index and arena locks for traversal. Add
+// serializes insertions separately, builds links under the same shared locks,
+// and takes the exclusive index lock only to remove or publish a node.
 func (h *HNSWIndex) Search(query []float32, k int) []VectroRecord {
 	if len(query) == 0 {
 		return nil
@@ -492,6 +492,8 @@ func (h *HNSWIndex) Search(query []float32, k int) []VectroRecord {
 
 	h.RLock()
 	defer h.RUnlock()
+	h.Arena.mu.RLock()
+	defer h.Arena.mu.RUnlock()
 
 	entryID := h.EntryNodeID
 	maxL := h.MaxLayer
@@ -506,7 +508,7 @@ func (h *HNSWIndex) Search(query []float32, k int) []VectroRecord {
 	}
 
 	query = normQ
-	getVec := h.vecUnsafe
+	getVec := h.vecNoLock
 
 	curr := h.Nodes[entryID]
 	if curr == nil {

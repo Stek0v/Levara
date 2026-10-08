@@ -66,7 +66,7 @@ func ToolAnalyzeCommits(ctx context.Context, deps Deps, args map[string]any) Too
 		limit = int(l)
 	}
 
-	commits, err := git.ParseLog(repoPath, since, limit)
+	commits, err := git.ParseLogContext(ctx, repoPath, since, limit)
 	if err != nil {
 		return ToolResult{
 			Content: []Content{{Type: "text", Text: fmt.Sprintf("Error parsing git log: %s", err.Error())}},

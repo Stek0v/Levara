@@ -52,7 +52,7 @@ func parseThreshold(raw string) (float64, bool) {
 		return defaultAbstainThreshold, false
 	}
 	v, err := strconv.ParseFloat(raw, 64)
-	if err != nil || v < 0 || v > 1 {
+	if err != nil || math.IsNaN(v) || math.IsInf(v, 0) || v < 0 || v > 1 {
 		return defaultAbstainThreshold, false
 	}
 	return v, true
@@ -61,6 +61,8 @@ func parseThreshold(raw string) (float64, bool) {
 // normalizeScore maps both similarity-like and distance-like scores to [0,1].
 func normalizeScore(v float64) float64 {
 	switch {
+	case math.IsNaN(v) || math.IsInf(v, 0):
+		return 0
 	case v < 0:
 		return 0
 	case v <= 1:
@@ -77,13 +79,9 @@ func confidenceFromChunks(chunks []fiber.Map) float64 {
 	}
 	top := 0.0
 	second := 0.0
-	for i, c := range chunks {
-		s, ok := c["score"].(float64)
-		if !ok {
-			continue
-		}
-		n := normalizeScore(s)
-		if i == 0 || n > top {
+	for _, c := range chunks {
+		n := normalizeScore(extractResultScore(c))
+		if n > top {
 			second = top
 			top = n
 		} else if n > second {
@@ -114,7 +112,11 @@ func confidenceFromRouting(c *fiber.Ctx) float64 {
 	if !ok || rd == nil {
 		return 0.5
 	}
-	return float64(rd.Confidence)
+	v := float64(rd.Confidence)
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		return 0
+	}
+	return math.Max(0, math.Min(v, 1))
 }
 
 func combinedRAGConfidence(c *fiber.Ctx, chunks []fiber.Map) float64 {
@@ -122,6 +124,9 @@ func combinedRAGConfidence(c *fiber.Ctx, chunks []fiber.Map) float64 {
 }
 
 func buildConfidenceBreakdown(c *fiber.Ctx, chunks []fiber.Map, threshold float64) confidenceBreakdown {
+	if math.IsNaN(threshold) || math.IsInf(threshold, 0) || threshold < 0 || threshold > 1 {
+		threshold = defaultAbstainThreshold
+	}
 	retr := confidenceFromChunks(chunks)
 	route := confidenceFromRouting(c)
 	conf := retr*0.7 + route*0.3

@@ -1,10 +1,10 @@
 # Task Authority Manifests
 
-A task can bind a workspace YAML manifest by content digest. The current HTTP
-claim path verifies that binding before a bound task step is claimed. The
-package also provides tool/path/network allowlist helpers, but production
-executors do not universally call them. A manifest is therefore not an enforced
-sandbox or a replacement for the host's authorization.
+A task can bind a workspace YAML manifest by content digest. The HTTP claim
+path verifies that binding before a bound step is claimed. The bounded server
+workspace executor also checks the digest, tool allowlist, and directory grants
+at the actual file action. These checks apply to its supported workspace actions;
+the manifest is not a universal sandbox or a replacement for host authorization.
 
 Use this alongside [Task Runtime](long-horizon-runtime.md),
 [workspace operations](markdown-native-workspace.md) and the
@@ -18,6 +18,8 @@ bytes. The public `task_open` argument is `authority`, for example:
 ```json
 {
   "authority": {
+    "auto_run": true,
+    "allowed_tools": ["workspace_read", "workspace_write"],
     "manifest": "tasks/example/authority.yaml",
     "manifest_sha256": "REPLACE_WITH_SHA256_OF_EXACT_FILE_BYTES"
   }
@@ -37,17 +39,21 @@ update the binding intentionally when changing the authorized plan.
 
 ```yaml
 allowed_tools:
-  - search
-  - recall_memory
+  - workspace_read
+  - workspace_write
 allowed_paths:
-  - tasks/example/artifacts
-allowed_networks:
-  - api.example.com
+  - projects/example/main/tasks/artifacts
+allowed_networks: []
 ```
 
-Use narrow task-owned paths and only necessary tools/hosts. These fields express
-intent that an executor can check. They do not grant filesystem, credentials,
-network, deployment or publication permission by themselves.
+Use narrow task-owned paths and only necessary tools/hosts. For the bounded
+workspace executor, `allowed_paths` must name existing canonical directories
+under the configured workspace root; individual file grants are rejected.
+The target must descend from a granted directory. The task's `allowed_tools`
+and manifest tool list must both permit the action. These declarations do not
+grant workspace access, credentials, deployment, or publication permission;
+an authenticated owner, live lease, and workspace grant are also required.
+DevMode is denied. `allowed_networks` does not enable network actions in this executor.
 
 ## Enforced checks and integration limits
 
@@ -56,22 +62,27 @@ network, deployment or publication permission by themselves.
 | `ParseAuthorityManifest` | Parses and validates YAML |
 | `LoadAuthorityManifest` | Reads the manifest with workspace containment checks |
 | `VerifyTaskManifest` / `VerifyDigest` | Checks the stored file binding; wired into HTTP step claim |
-| `CheckToolAccess` | Helper rejects an unlisted tool when the executor calls it |
-| `CheckPathAccess` | Helper checks allowed roots and symlink containment when called |
-| `CheckNetworkAccess` | Helper accepts a listed host and rejects an unlisted one when called |
+| `CheckToolAccess` | Rejects unlisted tools; used by the bounded workspace executor |
+| `CheckPathAccess` | General helper for allowed roots and symlink containment; the bounded executor uses descriptor-based directory confinement |
+| `CheckNetworkAccess` | General helper for listed hosts; bounded workspace execution rejects network actions |
 
 The allowlist helpers exist in [pkg/mcp/authority.go](../pkg/mcp/authority.go),
 but their existence is not evidence that every tool, file or network operation
 is intercepted. The claim integration is in
 [authority_http.go](../internal/http/authority_http.go). The optional server task
-worker currently uses a logging executor; it does not implement a full
-manifest-enforced execution environment. Keep host permissions and review gates
-in force even when a task has a manifest.
+worker uses [NewTaskExecutor](../internal/http/task_executor.go) for `workspace_read`
+and `workspace_write` with `index` absent or false. It requires SQL,
+`LEVARA_LONG_HORIZON_RUNTIME=1`, `LEVARA_TASK_WORKER=1`, and explicit
+`LEVARA_MCP_TOOLSET=full`: the fence needs both `task_step` and the action tool,
+so `long-horizon` alone cannot execute workspace actions. Linux/macOS filesystem
+confinement rejects symlink/hard-link escape and unsafe or ambiguous project
+paths. Shell, network, indexing, and unknown arguments are unsupported. Keep
+host permissions and review gates in force for other actions.
 
 ## Verify an executor integration
 
 Before relying on it, test a bound manifest change, an undeclared tool, an
-outside-root path, a symlink escape and an unlisted network host through the
+outside-root path, a symlink escape and an unsupported network action through the
 actual executor, not just the helper functions. Confirm denied actions produce
 no side effect and that an allowed action still works. See [testing](testing.md)
 for the distinction between package tests and complete deployment evidence.

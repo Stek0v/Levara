@@ -20,6 +20,35 @@ import (
 // Claude Code, Cursor, Cline, and other MCP clients see when they call
 // tools/list — field names + required fields + inputSchema validity.
 
+func TestToolAllowedForModeMatchesDescriptors(t *testing.T) {
+	// Initialize with optional tools disabled, then toggle flags after admission.
+	t.Setenv("LEVARA_MEMORY_COMMIT", "0")
+	t.Setenv("LEVARA_LONG_HORIZON_RUNTIME", "0")
+	ToolAllowedForMode("full", "heartbeat")
+	for _, flags := range [][2]string{{"0", "0"}, {"1", "0"}, {"0", "1"}, {"1", "1"}, {"0", "0"}} {
+		t.Setenv("LEVARA_MEMORY_COMMIT", flags[0])
+		t.Setenv("LEVARA_LONG_HORIZON_RUNTIME", flags[1])
+		for _, mode := range []string{"", "full", "unknown", "light", " CORE ", "memory", "workspace", "ops", "long-horizon"} {
+			advertised := make(map[string]bool)
+			for _, tool := range ToolDescriptorsForMode(mode) {
+				advertised[tool.Name] = true
+			}
+			names := []string{"missing", "", "memory_commit_preview", "memory_commit_apply", "task_missing", "memory_commit_missing", "HEARTBEAT", " heartbeat "}
+			for _, tool := range ToolDescriptors() {
+				names = append(names, tool.Name)
+			}
+			for _, name := range names {
+				if got := ToolAllowedForMode(mode, name); got != advertised[name] {
+					t.Errorf("flags=%v mode=%q name=%q: admission=%v advertised=%v", flags, mode, name, got, advertised[name])
+				}
+			}
+		}
+	}
+	if allocs := testing.AllocsPerRun(100, func() { ToolAllowedForMode("full", "heartbeat") }); allocs != 0 {
+		t.Fatalf("dispatch allocates schemas: %v allocations", allocs)
+	}
+}
+
 func TestToolDescriptors_NotEmpty(t *testing.T) {
 	tools := ToolDescriptors()
 	if len(tools) < 15 {
@@ -34,6 +63,40 @@ func TestGitToolDescriptorsDeclareInstanceAdmin(t *testing.T) {
 				t.Errorf("%s description does not declare runtime authority: %q", tool.Name, tool.Description)
 			}
 		}
+	}
+}
+
+func TestMemoryPinDescriptor(t *testing.T) {
+	for _, name := range []string{"pin_memory", "unpin_memory"} {
+		t.Run(name, func(t *testing.T) {
+			var found bool
+			for _, tool := range ToolDescriptors() {
+				if tool.Name != name {
+					continue
+				}
+				found = true
+				props := tool.InputSchema["properties"].(map[string]any)
+				collection, ok := props["collection"].(map[string]any)
+				if !ok || collection["type"] != "string" {
+					t.Fatal("collection must be advertised as an optional string")
+				}
+				required := tool.InputSchema["required"].([]string)
+				if len(required) != 1 || required[0] != "key" {
+					t.Fatalf("required=%v, want only key", required)
+				}
+				got, err := json.Marshal(tool.OutputSchema)
+				if err != nil {
+					t.Fatal(err)
+				}
+				want, _ := json.Marshal(statusMessageSchema())
+				if string(got) != string(want) {
+					t.Fatal("pin result schema changed")
+				}
+			}
+			if !found || !ToolAllowedForMode("core", name) || !ToolAllowedForMode("full", name) || ToolAllowedForMode("ops", name) {
+				t.Fatal("pin tool visibility changed")
+			}
+		})
 	}
 }
 

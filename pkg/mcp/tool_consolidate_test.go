@@ -16,6 +16,7 @@ import (
 	"github.com/stek0v/levara/internal/store"
 	"github.com/stek0v/levara/pkg/consolidate"
 	"github.com/stek0v/levara/pkg/llm"
+	"github.com/stek0v/levara/pkg/memoryindex"
 
 	_ "github.com/ncruces/go-sqlite3/driver"
 )
@@ -44,7 +45,7 @@ func seedDupInColl(t *testing.T, deps *fakeDeps, id, collection, value, created 
 	t.Helper()
 	_, err := deps.db.Exec(
 		`INSERT INTO memories (id, key, value, type, owner_id, collection_name, room, hall, is_pinned, created_at, updated_at, superseded_by, tier)
-		 VALUES (?, ?, ?, 'project', '', ?, '', '', 0, ?, ?, '', 'raw')`,
+		 VALUES (?, ?, ?, 'project', '', ?, '', 'fact', 0, ?, ?, '', 'raw')`,
 		id, "k-"+id, value, collection, created, created)
 	if err != nil {
 		t.Fatalf("seed %s/%s: %v", collection, id, err)
@@ -150,7 +151,7 @@ func setupConsolidateDB(t *testing.T) *fakeDeps {
 	})
 
 	stmt := `CREATE TABLE memories (
-		id TEXT PRIMARY KEY, key TEXT, value TEXT, type TEXT, owner_id TEXT DEFAULT '',
+		id TEXT PRIMARY KEY, key TEXT, value TEXT CHECK(value <> 'blocked abstract'), type TEXT, owner_id TEXT DEFAULT '',
 		collection_name TEXT DEFAULT '', room TEXT DEFAULT '', hall TEXT DEFAULT '',
 		is_pinned INTEGER DEFAULT 0, pin_priority INTEGER DEFAULT 0,
 		created_at TEXT, updated_at TEXT,
@@ -164,7 +165,11 @@ func setupConsolidateDB(t *testing.T) *fakeDeps {
 	if _, err := db.Exec(stmt); err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	return &fakeDeps{db: db}
+	outbox, err := memoryindex.NewStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &fakeDeps{db: db, memoryIndexOutbox: outbox}
 }
 
 // seedDup inserts a raw, non-superseded, unpinned memory row.
@@ -343,6 +348,9 @@ func TestToolConsolidate_DryRunDoesNotApply(t *testing.T) {
 	if !strings.Contains(got.Content[0].Text, "dry_run") {
 		t.Errorf("text = %q, want dry_run mode", got.Content[0].Text)
 	}
+	if !strings.Contains(got.Content[0].Text, "llm_calls=0") {
+		t.Errorf("text = %q, want no provider calls", got.Content[0].Text)
+	}
 
 	var n int
 	if err := deps.db.QueryRow(`SELECT COUNT(*) FROM memories WHERE superseded_by != ''`).Scan(&n); err != nil {
@@ -350,6 +358,27 @@ func TestToolConsolidate_DryRunDoesNotApply(t *testing.T) {
 	}
 	if n != 0 {
 		t.Fatalf("dry run superseded %d rows, want 0", n)
+	}
+}
+
+func TestToolConsolidate_ReportsProviderCalls(t *testing.T) {
+	deps := setupConsolidateDB(t)
+	seedDupInColl(t, deps, "a", "c", "alpha apple", "2026-01-01T00:00:00Z")
+	seedDupInColl(t, deps, "b", "c", "alpha apricot", "2026-01-02T00:00:00Z")
+	deps.embedAvailable = true
+	deps.embedFn = func(context.Context, string) ([]float32, error) { return []float32{1, 0, 0}, nil }
+	deps.searchFn = func(string, []float32, int) ([]SearchResult, error) {
+		return []SearchResult{{ID: "a", Score: 0.92}, {ID: "b", Score: 0.92}}, nil
+	}
+	provider := &countingProvider{}
+	deps.llmProvider = provider
+
+	got := ToolConsolidate(context.Background(), deps, map[string]any{"collection": "c", "dry_run": true})
+	if got.IsError {
+		t.Fatalf("consolidate: %s", got.Content[0].Text)
+	}
+	if provider.calls != 1 || !strings.Contains(got.Content[0].Text, "llm_calls=1") {
+		t.Fatalf("calls=%d result=%q", provider.calls, got.Content[0].Text)
 	}
 }
 

@@ -43,8 +43,8 @@ func (f fakeNeighbors) Edges(_ context.Context, _ []MemoryRecord, _ Config) ([]S
 func TestRun_DryRunDoesNotApply(t *testing.T) {
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	store := &fakeStore{recs: []MemoryRecord{
-		{ID: "a", Value: "x", CreatedAt: t0},
-		{ID: "b", Value: "x", CreatedAt: t0.Add(time.Hour)},
+		{ID: "a", Value: "x", Hall: "fact", CreatedAt: t0},
+		{ID: "b", Value: "x", Hall: "fact", CreatedAt: t0.Add(time.Hour)},
 	}}
 	neigh := fakeNeighbors{edges: []SimEdge{{A: "a", B: "b", Score: 0.99}}}
 
@@ -66,8 +66,8 @@ func TestRun_DryRunDoesNotApply(t *testing.T) {
 func TestRun_AppliesWhenNotDryRun(t *testing.T) {
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	store := &fakeStore{recs: []MemoryRecord{
-		{ID: "a", Value: "x", CreatedAt: t0},
-		{ID: "b", Value: "x", CreatedAt: t0.Add(time.Hour)},
+		{ID: "a", Value: "x", Hall: "fact", CreatedAt: t0},
+		{ID: "b", Value: "x", Hall: "fact", CreatedAt: t0.Add(time.Hour)},
 	}}
 	neigh := fakeNeighbors{edges: []SimEdge{{A: "a", B: "b", Score: 0.99}}}
 
@@ -91,7 +91,7 @@ func TestRun_SkipsOversizedAbstractCluster(t *testing.T) {
 	ids := []string{"a", "b", "c", "d", "e", "f", "g"} // 7 > MaxAbstractSize 6
 	var recs []MemoryRecord
 	for i, id := range ids {
-		recs = append(recs, MemoryRecord{ID: id, Value: "note " + id, CreatedAt: t0.Add(time.Duration(i) * time.Hour)})
+		recs = append(recs, MemoryRecord{ID: id, Value: "note " + id, Hall: "fact", CreatedAt: t0.Add(time.Duration(i) * time.Hour)})
 	}
 	// All-pairs edges at 0.92: one connected component, between TauLow (0.90)
 	// and TauHigh (0.97) → classified abstract.
@@ -133,12 +133,12 @@ func TestRun_LLMCallBudgetCapsAbstractions(t *testing.T) {
 	// 0.92, between TauLow and TauHigh). Lowercase, number-free values so the
 	// coverage guard never rejects — this isolates the budget logic.
 	recs := []MemoryRecord{
-		{ID: "a", Value: "alpha apple", CreatedAt: t0},
-		{ID: "b", Value: "alpha apricot", CreatedAt: t0.Add(time.Hour)},
-		{ID: "c", Value: "beta banana", CreatedAt: t0.Add(2 * time.Hour)},
-		{ID: "d", Value: "beta berry", CreatedAt: t0.Add(3 * time.Hour)},
-		{ID: "e", Value: "gamma grape", CreatedAt: t0.Add(4 * time.Hour)},
-		{ID: "f", Value: "gamma guava", CreatedAt: t0.Add(5 * time.Hour)},
+		{ID: "a", Value: "alpha apple", Hall: "fact", CreatedAt: t0},
+		{ID: "b", Value: "alpha apricot", Hall: "fact", CreatedAt: t0.Add(time.Hour)},
+		{ID: "c", Value: "beta banana", Hall: "fact", CreatedAt: t0.Add(2 * time.Hour)},
+		{ID: "d", Value: "beta berry", Hall: "fact", CreatedAt: t0.Add(3 * time.Hour)},
+		{ID: "e", Value: "gamma grape", Hall: "fact", CreatedAt: t0.Add(4 * time.Hour)},
+		{ID: "f", Value: "gamma guava", Hall: "fact", CreatedAt: t0.Add(5 * time.Hour)},
 	}
 	edges := []SimEdge{
 		{A: "a", B: "b", Score: 0.92},
@@ -174,12 +174,12 @@ func TestRun_LLMCallBudgetCapsAbstractions(t *testing.T) {
 func TestRun_LLMBudgetZeroIsUnbounded(t *testing.T) {
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	recs := []MemoryRecord{
-		{ID: "a", Value: "alpha apple", CreatedAt: t0},
-		{ID: "b", Value: "alpha apricot", CreatedAt: t0.Add(time.Hour)},
-		{ID: "c", Value: "beta banana", CreatedAt: t0.Add(2 * time.Hour)},
-		{ID: "d", Value: "beta berry", CreatedAt: t0.Add(3 * time.Hour)},
-		{ID: "e", Value: "gamma grape", CreatedAt: t0.Add(4 * time.Hour)},
-		{ID: "f", Value: "gamma guava", CreatedAt: t0.Add(5 * time.Hour)},
+		{ID: "a", Value: "alpha apple", Hall: "fact", CreatedAt: t0},
+		{ID: "b", Value: "alpha apricot", Hall: "fact", CreatedAt: t0.Add(time.Hour)},
+		{ID: "c", Value: "beta banana", Hall: "fact", CreatedAt: t0.Add(2 * time.Hour)},
+		{ID: "d", Value: "beta berry", Hall: "fact", CreatedAt: t0.Add(3 * time.Hour)},
+		{ID: "e", Value: "gamma grape", Hall: "fact", CreatedAt: t0.Add(4 * time.Hour)},
+		{ID: "f", Value: "gamma guava", Hall: "fact", CreatedAt: t0.Add(5 * time.Hour)},
 	}
 	edges := []SimEdge{{A: "a", B: "b", Score: 0.92}, {A: "c", B: "d", Score: 0.92}, {A: "e", B: "f", Score: 0.92}}
 	cfg := DefaultConfig()
@@ -206,12 +206,12 @@ func TestRun_LLMBudgetZeroIsUnbounded(t *testing.T) {
 func TestRun_LLMBudgetIgnoresMerges(t *testing.T) {
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	recs := []MemoryRecord{
-		{ID: "m1", Value: "identical", CreatedAt: t0}, // tight pair → merge
-		{ID: "m2", Value: "identical", CreatedAt: t0.Add(time.Hour)},
-		{ID: "a", Value: "alpha apple", CreatedAt: t0.Add(2 * time.Hour)}, // abstract
-		{ID: "b", Value: "alpha apricot", CreatedAt: t0.Add(3 * time.Hour)},
-		{ID: "c", Value: "beta banana", CreatedAt: t0.Add(4 * time.Hour)}, // abstract
-		{ID: "d", Value: "beta berry", CreatedAt: t0.Add(5 * time.Hour)},
+		{ID: "m1", Value: "identical", Hall: "fact", CreatedAt: t0}, // tight pair → merge
+		{ID: "m2", Value: "identical", Hall: "fact", CreatedAt: t0.Add(time.Hour)},
+		{ID: "a", Value: "alpha apple", Hall: "fact", CreatedAt: t0.Add(2 * time.Hour)}, // abstract
+		{ID: "b", Value: "alpha apricot", Hall: "fact", CreatedAt: t0.Add(3 * time.Hour)},
+		{ID: "c", Value: "beta banana", Hall: "fact", CreatedAt: t0.Add(4 * time.Hour)}, // abstract
+		{ID: "d", Value: "beta berry", Hall: "fact", CreatedAt: t0.Add(5 * time.Hour)},
 	}
 	edges := []SimEdge{
 		{A: "m1", B: "m2", Score: 0.99}, // ≥ TauHigh → merge
@@ -245,10 +245,10 @@ func TestRun_LLMBudgetIgnoresMerges(t *testing.T) {
 func TestRun_LLMBudgetCountsRejectedAttempts(t *testing.T) {
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	recs := []MemoryRecord{
-		{ID: "a", Value: "value 111", CreatedAt: t0}, // numbers → guard rejects a dropping summary
-		{ID: "b", Value: "value 222", CreatedAt: t0.Add(time.Hour)},
-		{ID: "c", Value: "value 333", CreatedAt: t0.Add(2 * time.Hour)},
-		{ID: "d", Value: "value 444", CreatedAt: t0.Add(3 * time.Hour)},
+		{ID: "a", Value: "value 111", Hall: "fact", CreatedAt: t0}, // numbers → guard rejects a dropping summary
+		{ID: "b", Value: "value 222", Hall: "fact", CreatedAt: t0.Add(time.Hour)},
+		{ID: "c", Value: "value 333", Hall: "fact", CreatedAt: t0.Add(2 * time.Hour)},
+		{ID: "d", Value: "value 444", Hall: "fact", CreatedAt: t0.Add(3 * time.Hour)},
 	}
 	edges := []SimEdge{{A: "a", B: "b", Score: 0.92}, {A: "c", B: "d", Score: 0.92}}
 	cfg := DefaultConfig()
@@ -311,8 +311,8 @@ func TestActionCharDensity(t *testing.T) {
 func TestRun_ReportsCharDensities(t *testing.T) {
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	store := &fakeStore{recs: []MemoryRecord{
-		{ID: "a", Value: "1234567890", CreatedAt: t0},
-		{ID: "b", Value: "1234567890", CreatedAt: t0.Add(time.Hour)},
+		{ID: "a", Value: "1234567890", Hall: "fact", CreatedAt: t0},
+		{ID: "b", Value: "1234567890", Hall: "fact", CreatedAt: t0.Add(time.Hour)},
 	}}
 	neigh := fakeNeighbors{edges: []SimEdge{{A: "a", B: "b", Score: 0.99}}} // tight → merge
 	res, err := Run(context.Background(), Params{
@@ -336,8 +336,8 @@ func TestRun_ReportsCharDensities(t *testing.T) {
 func TestRun_RecordsGuardSkipReason(t *testing.T) {
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	store := &fakeStore{recs: []MemoryRecord{
-		{ID: "a", Value: "potion is 256 dim", CreatedAt: t0},
-		{ID: "b", Value: "potion runs on 9101", CreatedAt: t0.Add(time.Hour)},
+		{ID: "a", Value: "potion is 256 dim", Hall: "fact", CreatedAt: t0},
+		{ID: "b", Value: "potion runs on 9101", Hall: "fact", CreatedAt: t0.Add(time.Hour)},
 	}}
 	neigh := fakeNeighbors{edges: []SimEdge{{A: "a", B: "b", Score: 0.92}}}
 	res, err := Run(context.Background(), Params{

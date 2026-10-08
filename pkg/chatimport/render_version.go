@@ -83,6 +83,8 @@ func StaleRagSessions(ctx context.Context, db *sql.DB, q Q, currentVersion, limi
 		LEFT JOIN chat_import_rag r
 			ON r.platform = m.platform AND r.session_id = m.session_id
 		WHERE COALESCE(r.render_version, 0) < $1
+		  AND NOT EXISTS (SELECT 1 FROM chat_import_sessions s WHERE s.id=m.session_id AND s.platform=m.platform
+		      AND (s.owner_id<>'' OR s.tenant_id<>'' OR s.trusted_local=FALSE))
 		ORDER BY m.session_id
 		LIMIT $2
 	`), currentVersion, limit)
@@ -115,8 +117,10 @@ func LoadConversation(ctx context.Context, db *sql.DB, q Q, platform Platform, s
 		SELECT external_id, ordinal, role, kind, model, content, source_created_at, metadata, session_title
 		FROM chat_import_messages
 		WHERE platform = $1 AND session_id = $2
+		  AND NOT EXISTS (SELECT 1 FROM chat_import_sessions s WHERE s.platform=$3 AND s.id=$4
+		      AND (s.owner_id<>'' OR s.tenant_id<>'' OR s.trusted_local=FALSE))
 		ORDER BY ordinal, source_created_at, external_id
-	`), string(platform), sessionID)
+	`), string(platform), sessionID, string(platform), sessionID)
 	if err != nil {
 		return nil, err
 	}

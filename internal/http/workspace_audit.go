@@ -2,11 +2,13 @@ package http
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
@@ -19,6 +21,7 @@ import (
 	"github.com/stek0v/levara/internal/metrics"
 	accesspkg "github.com/stek0v/levara/pkg/access"
 	"github.com/stek0v/levara/pkg/audit"
+	"github.com/stek0v/levara/pkg/workspace"
 )
 
 type workspaceAccessCheckRequest struct {
@@ -119,13 +122,20 @@ func workspaceAccessCheckHandler(cfg APIConfig) fiber.Handler {
 		if err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
-		userID, _ := c.Locals("user_id").(string)
-		apiKeyPerms, _ := c.Locals("api_key_permissions").(string)
-		resp, err := workspaceAccessCheck(c.UserContext(), cfg.DB, userID, req.ProjectID, access, apiKeyPerms)
+		actor := uploadMetadataActor(c, cfg, c.UserContext())
+		ctx, cancel, err := workspaceRequestContext(c.UserContext(), actor, timeoutFromEnvMs("SEARCH_REQUEST_TIMEOUT_MS", defaultSearchRequestTimeout))
 		if err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "workspace access check failed"})
+			return err
 		}
-		return c.JSON(resp)
+		defer cancel()
+		return withProtectedPolicyResponse(c, cfg, ctx, func(ctx context.Context, policy accesspkg.SQLPolicy) error {
+			ctx = context.WithValue(ctx, searchReadPolicyKey{}, policy)
+			resp, err := workspaceAccessCheckAuthorized(ctx, cfg, actor, req.ProjectID, access)
+			if err != nil {
+				return err
+			}
+			return c.JSON(resp)
+		})
 	}
 }
 
@@ -145,12 +155,15 @@ func workspaceAuditLogHandler(cfg APIConfig) fiber.Handler {
 		if err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
-		return c.JSON(resp)
+		if err := c.JSON(resp); err != nil {
+			return err
+		}
+		return sendWorkspaceProtectedResponse(c, cfg, c.UserContext(), uploadMetadataActor(c, cfg, c.UserContext()), req.ProjectID)
 	}
 }
 
-func workspaceAccessCheck(ctx context.Context, db *sql.DB, userID, projectID string, access workspaceAccessLevel, apiKeyPerms string) (workspaceAccessCheckResponse, error) {
-	decision, err := workspaceAccessDecision(ctx, db, userID, projectID, access, apiKeyPerms)
+func workspaceAccessCheck(ctx context.Context, db *sql.DB, userID, projectID string, access workspaceAccessLevel, apiKeyPerms string, tenantIDs ...string) (workspaceAccessCheckResponse, error) {
+	decision, err := workspaceAccessDecision(ctx, db, userID, projectID, access, apiKeyPerms, tenantIDs...)
 	if err != nil {
 		return workspaceAccessCheckResponse{}, err
 	}
@@ -169,12 +182,53 @@ func workspaceAccessCheck(ctx context.Context, db *sql.DB, userID, projectID str
 
 type accessDB = *sql.DB
 
-func workspaceAccessDecision(ctx context.Context, db accessDB, userID, projectID string, access workspaceAccessLevel, apiKeyPerms string) (accesspkg.Decision, error) {
+func workspaceAccessCheckAuthorized(ctx context.Context, cfg APIConfig, actor accesspkg.MetadataActor, projectID string, access workspaceAccessLevel) (workspaceAccessCheckResponse, error) {
+	if projectID == "" {
+		return workspaceAccessCheckResponse{}, fiber.NewError(fiber.StatusBadRequest, "project_id required")
+	}
+	local := actor.TrustedLocal && !cfg.RequireAuth
+	if !local && (actor.UserID == "" || actor.TrustedLocal) {
+		return workspaceAccessCheckResponse{}, fiber.NewError(fiber.StatusForbidden, "workspace requires verified authority")
+	}
+	ctx, cancel, err := workspaceRequestContext(ctx, actor, timeoutFromEnvMs("SEARCH_REQUEST_TIMEOUT_MS", defaultSearchRequestTimeout))
+	if err != nil {
+		return workspaceAccessCheckResponse{}, err
+	}
+	defer cancel()
+	policy, installed := ctx.Value(searchReadPolicyKey{}).(accesspkg.SQLPolicy)
+	if !installed {
+		policy = accesspkg.SQLPolicy{DB: cfg.DB, Q: Q, QA: QArgs}
+		if !local {
+			locked, release, err := policy.BeginTransferFence(ctx, GetDBProvider() == DBSQLite)
+			if err != nil {
+				return workspaceAccessCheckResponse{}, fiber.NewError(fiber.StatusServiceUnavailable, "workspace authorization unavailable")
+			}
+			defer release()
+			policy = locked
+		}
+		ctx = context.WithValue(ctx, searchReadPolicyKey{}, policy)
+	}
+	if err := recheckDatasetShareActor(ctx, policy, actor); err != nil {
+		return workspaceAccessCheckResponse{}, fiber.NewError(fiber.StatusForbidden, "workspace access revoked")
+	}
+	return workspaceAccessCheck(ctx, cfg.DB, actor.UserID, projectID, access, actor.APIKeyPermissions, actor.TenantID)
+}
+
+func workspaceAccessDecision(ctx context.Context, db accessDB, userID, projectID string, access workspaceAccessLevel, apiKeyPerms string, tenantIDs ...string) (accesspkg.Decision, error) {
 	if access == "" {
 		access = workspaceAccessRead
 	}
-	return accesspkg.SQLPolicy{DB: db, Q: Q}.AuthorizeWorkspace(ctx, accesspkg.WorkspaceRequest{
+	policy, installed := ctx.Value(searchReadPolicyKey{}).(accesspkg.SQLPolicy)
+	if !installed {
+		policy = accesspkg.SQLPolicy{DB: db, Q: Q, QA: QArgs}
+	}
+	tenantID := ""
+	if len(tenantIDs) > 0 {
+		tenantID = tenantIDs[0]
+	}
+	return policy.AuthorizeWorkspace(ctx, accesspkg.WorkspaceRequest{
 		UserID:            userID,
+		TenantID:          tenantID,
 		ProjectID:         projectID,
 		Action:            string(access),
 		APIKeyPermissions: apiKeyPerms,
@@ -215,19 +269,19 @@ func recordWorkspaceAuditEvent(cfg APIConfig, event workspaceAuditEvent) (writeE
 	event.ProjectID = safeWorkspaceID(event.ProjectID)
 	event.Branch = defaultBranch(event.Branch)
 	path := workspaceAuditPath(cfg, event.ProjectID, time.Now().UTC())
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
-	}
 	data, err := json.Marshal(event)
 	if err != nil {
 		return err
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	root, name, err := openWorkspaceFileParent(cfg, path, true)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	if _, err := f.Write(append(data, '\n')); err != nil {
+	defer root.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	// The retained response already owns the project lock; append must not reacquire it.
+	if err := workspace.AppendFile(ctx, root, name, append(data, '\n'), 0644); err != nil {
 		return err
 	}
 	metrics.WorkspaceAuditEventsTotal.WithLabelValues(event.Source, event.Operation, event.Result).Inc()
@@ -273,7 +327,15 @@ func listWorkspaceAuditEvents(cfg APIConfig, req workspaceAuditListRequest) (wor
 		limit = 1000
 	}
 	dir := workspaceAuditDir(cfg, req.ProjectID)
-	entries, err := os.ReadDir(dir)
+	root, err := openWorkspaceDirectory(cfg, dir, false)
+	if errors.Is(err, os.ErrNotExist) {
+		return workspaceAuditLogResponse{ProjectID: req.ProjectID, Branch: req.Branch, Events: []workspaceAuditEvent{}, Limit: limit}, nil
+	}
+	if err != nil {
+		return workspaceAuditLogResponse{}, err
+	}
+	defer root.Close()
+	entries, err := fs.ReadDir(root.FS(), ".")
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return workspaceAuditLogResponse{ProjectID: req.ProjectID, Branch: req.Branch, Events: []workspaceAuditEvent{}, Limit: limit}, nil
@@ -285,7 +347,7 @@ func listWorkspaceAuditEvents(cfg APIConfig, req workspaceAuditListRequest) (wor
 		if entry.IsDir() || filepath.Ext(entry.Name()) != ".jsonl" {
 			continue
 		}
-		fileEvents, err := readWorkspaceAuditFile(filepath.Join(dir, entry.Name()), req)
+		fileEvents, err := readWorkspaceAuditFile(cfg, filepath.Join(dir, entry.Name()), req)
 		if err != nil {
 			return workspaceAuditLogResponse{}, err
 		}
@@ -310,14 +372,13 @@ func listWorkspaceAuditEvents(cfg APIConfig, req workspaceAuditListRequest) (wor
 	}, nil
 }
 
-func readWorkspaceAuditFile(path string, req workspaceAuditListRequest) ([]workspaceAuditEvent, error) {
-	f, err := os.Open(path)
+func readWorkspaceAuditFile(cfg APIConfig, path string, req workspaceAuditListRequest) ([]workspaceAuditEvent, error) {
+	data, err := readWorkspaceFile(cfg, path)
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
 	var events []workspaceAuditEvent
-	scanner := bufio.NewScanner(f)
+	scanner := bufio.NewScanner(bytes.NewReader(data))
 	for scanner.Scan() {
 		var event workspaceAuditEvent
 		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
@@ -546,8 +607,7 @@ func (h *mcpHandler) toolWorkspaceAccessCheck(ctx context.Context, args map[stri
 	if err != nil {
 		return workspaceMCPError(err)
 	}
-	userID, _ := ctx.Value(mcpUserIDKey).(string)
-	resp, err := workspaceAccessCheck(ctx, h.cfg.DB, userID, req.ProjectID, access, "")
+	resp, err := workspaceAccessCheckAuthorized(ctx, h.cfg, h.MetadataActor(ctx), req.ProjectID, access)
 	if err != nil {
 		return workspaceMCPError(err)
 	}

@@ -44,6 +44,8 @@ func reconcileTestHandler(t *testing.T) (*mcpHandler, *sql.DB, *store.Collection
 		hall TEXT NOT NULL DEFAULT '',
 		is_pinned INTEGER NOT NULL DEFAULT 0,
 		pin_priority INTEGER NOT NULL DEFAULT 0,
+		superseded_by TEXT NOT NULL DEFAULT '',
+		valid_until TEXT,
 		created_at TEXT NOT NULL DEFAULT '',
 		updated_at TEXT NOT NULL DEFAULT ''
 	)`); err != nil {

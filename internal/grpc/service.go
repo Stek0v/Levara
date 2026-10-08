@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -165,46 +166,86 @@ func (s *Service) HasCollection(_ context.Context, req *pb.HasCollectionReq) (*p
 }
 
 func (s *Service) Insert(_ context.Context, req *pb.InsertReq) (*pb.StatusResp, error) {
+	resp, _ := s.insert(req)
+	return resp, nil
+}
+
+func (s *Service) insert(req *pb.InsertReq) (*pb.StatusResp, error) {
 	if req.Collection == "" || req.Id == "" || len(req.Vector) == 0 {
-		return &pb.StatusResp{Ok: false, Error: "collection, id, and vector are required"}, nil
+		err := fmt.Errorf("%w: collection, id, and vector are required", errV2InvalidArgument)
+		return &pb.StatusResp{Ok: false, Error: "collection, id, and vector are required"}, err
 	}
 
 	var meta map[string]any
 	if req.MetadataJson != "" {
 		if err := json.Unmarshal([]byte(req.MetadataJson), &meta); err != nil {
-			return &pb.StatusResp{Ok: false, Error: fmt.Sprintf("invalid metadata JSON: %v", err)}, nil
+			cause := fmt.Errorf("%w: invalid metadata JSON: %v", errV2InvalidArgument, err)
+			return &pb.StatusResp{Ok: false, Error: cause.Error()}, cause
 		}
 	}
 
 	if err := s.collections.Insert(req.Collection, req.Id, req.Vector, meta); err != nil {
-		return &pb.StatusResp{Ok: false, Error: err.Error()}, nil
+		return &pb.StatusResp{Ok: false, Error: err.Error()}, err
 	}
 	return &pb.StatusResp{Ok: true}, nil
 }
 
 func (s *Service) BatchInsert(_ context.Context, req *pb.BatchInsertReq) (*pb.BatchInsertResp, error) {
+	resp, _ := s.batchInsert(req)
+	return resp, nil
+}
+
+func (s *Service) batchInsert(req *pb.BatchInsertReq) (*pb.BatchInsertResp, []error) {
 	if req.Collection == "" || len(req.Records) == 0 {
 		return &pb.BatchInsertResp{Failed: int32(len(req.Records)), Errors: []string{"collection and records are required"}}, nil
 	}
 
 	items := make([]store.BatchItem, 0, len(req.Records))
-	for _, r := range req.Records {
+	originalIndexes := make([]int, 0, len(req.Records))
+	var errs []error
+	for i, r := range req.Records {
 		var meta map[string]any
 		if r.MetadataJson != "" {
-			json.Unmarshal([]byte(r.MetadataJson), &meta)
+			if err := json.Unmarshal([]byte(r.MetadataJson), &meta); err != nil {
+				errs = append(errs, &store.BatchError{Index: i, ID: r.Id, Err: fmt.Errorf("%w: invalid metadata JSON: %v", errV2InvalidArgument, err)})
+				continue
+			}
 		}
 		items = append(items, store.BatchItem{
 			ID:     r.Id,
 			Vector: r.Vector,
 			Data:   meta,
 		})
+		originalIndexes = append(originalIndexes, i)
 	}
 
-	errs := s.collections.BatchInsert(req.Collection, items)
+	for _, itemErr := range s.collections.BatchInsert(req.Collection, items) {
+		var failure *store.BatchError
+		if errors.As(itemErr, &failure) && failure.Index >= 0 && failure.Index < len(originalIndexes) {
+			original := originalIndexes[failure.Index]
+			errs = append(errs, &store.BatchError{Index: original, ID: req.Records[original].Id, Err: failure.Err})
+		} else {
+			errs = append(errs, itemErr)
+		}
+	}
+	sort.SliceStable(errs, func(i, j int) bool {
+		var left, right *store.BatchError
+		return errors.As(errs[i], &left) && errors.As(errs[j], &right) && left.Index < right.Index
+	})
+	failed := make(map[int]struct{}, len(errs))
+	for _, err := range errs {
+		var batchErr *store.BatchError
+		if errors.As(err, &batchErr) {
+			failed[batchErr.Index] = struct{}{}
+		}
+	}
 
 	// Auto dual-index: also add to BM25 for hybrid search
 	idx := s.getBM25Index(req.Collection)
-	for _, r := range req.Records {
+	for i, r := range req.Records {
+		if _, skip := failed[i]; skip {
+			continue
+		}
 		// Extract text from metadata for BM25
 		text := ""
 		if r.MetadataJson != "" {
@@ -223,16 +264,21 @@ func (s *Service) BatchInsert(_ context.Context, req *pb.BatchInsertReq) (*pb.Ba
 	}
 
 	resp := &pb.BatchInsertResp{
-		Inserted: int32(len(items) - len(errs)),
+		Inserted: int32(len(req.Records) - len(errs)),
 		Failed:   int32(len(errs)),
 	}
 	for _, e := range errs {
 		resp.Errors = append(resp.Errors, e.Error())
 	}
-	return resp, nil
+	return resp, errs
 }
 
 func (s *Service) Delete(_ context.Context, req *pb.DeleteReq) (*pb.DeleteResp, error) {
+	resp, _ := s.batchDelete(req)
+	return resp, nil
+}
+
+func (s *Service) batchDelete(req *pb.DeleteReq) (*pb.DeleteResp, []error) {
 	if req.Collection == "" || len(req.Ids) == 0 {
 		return &pb.DeleteResp{Failed: int32(len(req.Ids)), Errors: []string{"collection and ids are required"}}, nil
 	}
@@ -246,7 +292,7 @@ func (s *Service) Delete(_ context.Context, req *pb.DeleteReq) (*pb.DeleteResp, 
 	for _, e := range errs {
 		resp.Errors = append(resp.Errors, e.Error())
 	}
-	return resp, nil
+	return resp, errs
 }
 
 func (s *Service) Search(_ context.Context, req *pb.SearchReq) (*pb.SearchResp, error) {
@@ -664,58 +710,81 @@ func (s *Service) BatchEmbedAndIndex(ctx context.Context, req *pb.BatchEmbedAndI
 
 // BatchWriteGraph writes nodes and edges to Neo4j in batch via UNWIND+MERGE.
 // Creates a short-lived Neo4j connection per call (caller provides credentials).
+// parseGraphBatchProperties preserves the wire spelling of temporal numbers while
+// keeping ordinary properties on the existing float64 JSON decoding contract.
+func parseGraphBatchProperties(input string, preserveTemporal bool) (map[string]any, error) {
+	if input == "" {
+		return map[string]any{}, nil
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(input), &raw); err != nil {
+		return nil, err
+	}
+	if raw == nil {
+		return map[string]any{}, nil
+	}
+	bounds := map[string]json.Number{}
+	for _, key := range []string{"valid_from", "valid_until"} {
+		value := strings.TrimSpace(string(raw[key]))
+		if preserveTemporal && len(value) > 0 && (value[0] == '-' || (value[0] >= '0' && value[0] <= '9')) {
+			bounds[key] = json.Number(value)
+			delete(raw, key)
+		}
+	}
+	ordinary, err := json.Marshal(raw)
+	if err != nil {
+		return nil, err
+	}
+	var props map[string]any
+	if err := json.Unmarshal(ordinary, &props); err != nil {
+		return nil, err
+	}
+	for key, value := range bounds {
+		props[key] = value
+	}
+	return props, nil
+}
+
 func (s *Service) BatchWriteGraph(ctx context.Context, req *pb.BatchWriteGraphReq) (*pb.BatchWriteGraphResp, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "request required")
+	}
 	if err := validateNeo4jURL(req.Neo4JUrl); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+	// Validate the complete batch before connecting to the external database.
+	nodes := make([]graphdb.NodeRecord, len(req.Nodes))
+	for i, n := range req.Nodes {
+		if n == nil {
+			return nil, status.Errorf(codes.InvalidArgument, "node %d required", i)
+		}
+		props, err := parseGraphBatchProperties(n.PropertiesJson, false)
+		if err != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "node %d properties: %v", i, err)
+		}
+		nodes[i] = graphdb.NodeRecord{ID: n.Id, Label: n.Label, Properties: props}
+	}
+	edges := make([]graphdb.EdgeRecord, len(req.Edges))
+	for i, e := range req.Edges {
+		if e == nil {
+			return nil, status.Errorf(codes.InvalidArgument, "edge %d required", i)
+		}
+		props, err := parseGraphBatchProperties(e.PropertiesJson, true)
+		if err != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "edge %d properties: %v", i, err)
+		}
+		edges[i] = graphdb.EdgeRecord{SourceID: e.SourceId, TargetID: e.TargetId, RelationshipName: e.RelationshipName, Properties: props}
 	}
 	dbName := req.Neo4JDatabase
 	if dbName == "" {
 		dbName = "neo4j"
 	}
-
 	writer, err := graphdb.NewWriter(ctx, req.Neo4JUrl, req.Neo4JUser, req.Neo4JPassword, dbName)
 	if err != nil {
 		return nil, status.Errorf(codes.Unavailable, "neo4j connect: %v", err)
 	}
 	defer writer.Close(ctx)
-
-	// Convert proto nodes
-	nodes := make([]graphdb.NodeRecord, len(req.Nodes))
-	for i, n := range req.Nodes {
-		var props map[string]any
-		if n.PropertiesJson != "" {
-			json.Unmarshal([]byte(n.PropertiesJson), &props)
-		}
-		if props == nil {
-			props = map[string]any{}
-		}
-		nodes[i] = graphdb.NodeRecord{
-			ID:         n.Id,
-			Label:      n.Label,
-			Properties: props,
-		}
-	}
-
-	// Convert proto edges
-	edges := make([]graphdb.EdgeRecord, len(req.Edges))
-	for i, e := range req.Edges {
-		var props map[string]any
-		if e.PropertiesJson != "" {
-			json.Unmarshal([]byte(e.PropertiesJson), &props)
-		}
-		if props == nil {
-			props = map[string]any{}
-		}
-		edges[i] = graphdb.EdgeRecord{
-			SourceID:         e.SourceId,
-			TargetID:         e.TargetId,
-			RelationshipName: e.RelationshipName,
-			Properties:       props,
-		}
-	}
-
 	result := writer.BatchWrite(ctx, nodes, edges)
-
 	return &pb.BatchWriteGraphResp{
 		NodesWritten: int32(result.NodesWritten),
 		EdgesWritten: int32(result.EdgesWritten),

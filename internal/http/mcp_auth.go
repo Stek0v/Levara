@@ -1,6 +1,8 @@
 package http
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -30,13 +32,37 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
+func mcpAuthFailureStatus(err error, denied int) int {
+	if errors.Is(err, errIdentityUnavailable) {
+		return fiber.StatusServiceUnavailable
+	}
+	return denied
+}
+
+func validMCPSession(c *fiber.Ctx, db *sql.DB, requireAuth bool, payload *jwtPayload) (verifiedMCPAuthorization, error) {
+	if payload == nil || payload.Sub == "" {
+		return verifiedMCPAuthorization{}, accesspkg.ErrInactiveIdentity
+	}
+	if db == nil {
+		if requireAuth {
+			return verifiedMCPAuthorization{}, accesspkg.ErrProvisioningNoDB
+		}
+		return verifiedMCPAuthorization{UserID: payload.Sub}, nil
+	}
+	tenant, superuser, err := accesspkg.ValidateSessionCredentialAuthorization(c.UserContext(), db, Q, payload.Sub, payload.CredentialEpoch, payload.SessionID)
+	return verifiedMCPAuthorization{UserID: payload.Sub, TenantID: tenant, Superuser: superuser}, err
+}
+
 // authenticateMCPRequest verifies the caller's identity from API key or JWT.
 func (h *mcpHandler) authenticateMCPRequest(c *fiber.Ctx) (accesspkg.Actor, error) {
 	if apiKey := firstNonEmpty(c.Get("X-API-Key"), c.Get("X-Api-Key")); apiKey != "" {
 		if h.cfg.DB == nil {
-			return accesspkg.Actor{}, fmt.Errorf("database required for API key auth")
+			return accesspkg.Actor{}, fmt.Errorf("%w: database required for API key auth", errIdentityUnavailable)
 		}
-		id := verifyAPIKey(c.UserContext(), h.cfg.DB, apiKey)
+		id, err := verifyAPIKey(c.UserContext(), h.cfg.DB, apiKey)
+		if err != nil {
+			return accesspkg.Actor{}, fmt.Errorf("%w: %v", errIdentityUnavailable, err)
+		}
 		if !id.Valid() {
 			return accesspkg.Actor{}, fmt.Errorf("invalid API key")
 		}
@@ -65,16 +91,25 @@ func (h *mcpHandler) authenticateMCPRequest(c *fiber.Ctx) (accesspkg.Actor, erro
 		// Not a Levara JWT: fall back to the external OIDC provider (A1),
 		// mirroring JWTMiddlewareWithOIDC. Fail-closed when both reject.
 		if h.cfg.OIDCBearer != nil {
-			if principal, err := h.cfg.OIDCBearer.Authenticate(c.UserContext(), token); err == nil && activeExternalUser(c.UserContext(), h.cfg.DB, principal) {
-				c.Locals("verified_external", principal)
-				return accesspkg.Actor{UserID: principal.UserID, AuthMethod: "oidc"}, nil
+			if principal, err := h.cfg.OIDCBearer.Authenticate(c.UserContext(), token); err == nil {
+				if err := validateExternalUser(c.UserContext(), h.cfg.DB, principal); err == nil {
+					c.Locals("verified_external", principal)
+					return accesspkg.Actor{UserID: principal.UserID, AuthMethod: "oidc"}, nil
+				} else if identityFailureStatus(err) == fiber.StatusServiceUnavailable {
+					return accesspkg.Actor{}, fmt.Errorf("%w: %v", errIdentityUnavailable, err)
+				}
 			}
 		}
 		return accesspkg.Actor{}, fmt.Errorf("invalid token")
 	}
-	if !validSession(c.UserContext(), h.cfg.DB, h.cfg.RequireAuth, payload) {
-		return accesspkg.Actor{}, fmt.Errorf("invalid or revoked user credential")
+	authorization, err := validMCPSession(c, h.cfg.DB, h.cfg.RequireAuth, payload)
+	if err != nil {
+		if identityFailureStatus(err) == fiber.StatusServiceUnavailable {
+			return accesspkg.Actor{}, fmt.Errorf("%w: %v", errIdentityUnavailable, err)
+		}
+		return accesspkg.Actor{}, err
 	}
 	c.Locals("verified_jwt", *payload)
+	c.Locals("verified_mcp_authorization", authorization)
 	return accesspkg.Actor{UserID: payload.Sub, AuthMethod: "jwt"}, nil
 }

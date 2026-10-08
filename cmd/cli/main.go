@@ -96,6 +96,8 @@ func main() {
 		cmdDatasets(args)
 	case "documents":
 		cmdDocuments(args)
+	case "taxonomy":
+		cmdTaxonomy(args)
 	case "team":
 		cmdTeam(args)
 	case "chats":
@@ -309,6 +311,9 @@ func ingestRequest(method, endpoint, contentType string, body io.Reader) []byte 
 			req.Header.Set("Content-Type", contentType)
 		}
 		applyAuth(req)
+		if chatsTenant != "" {
+			req.Header.Set("X-Tenant-Id", chatsTenant)
+		}
 		client := *http.DefaultClient
 		// A redirect must not turn an upload into a login page or replay it elsewhere.
 		client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
@@ -701,56 +706,11 @@ func cmdGitAnalyze(args []string) {
 	repo := flagValue(args, "--repo", ".")
 	since := flagValue(args, "--since", "")
 	limit := flagValue(args, "--limit", "100")
-
-	payload := map[string]any{
-		"name": "analyze_commits",
-		"arguments": map[string]any{
-			"repo_path": repo,
-			"since":     since,
-			"limit":     jsonNumber(limit),
-		},
-	}
-
-	// Call MCP tools/call endpoint
-	mcpURL := strings.TrimSuffix(baseURL, "/api/v1") + "/mcp"
-	rpcPayload := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"method":  "tools/call",
-		"params":  payload,
-	}
-
-	data, _ := json.Marshal(rpcPayload)
-	req, _ := http.NewRequest("POST", mcpURL, bytes.NewReader(data))
-	req.Header.Set("Content-Type", "application/json")
-	applyAuth(req)
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		fatalf("connection failed: %v", err)
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-
-	var result map[string]any
-	json.Unmarshal(body, &result)
-
-	if errObj, ok := result["error"]; ok {
-		fatalf("MCP error: %v", errObj)
-	}
-
-	// Extract text from result.content[0].text
-	if res, ok := result["result"].(map[string]any); ok {
-		if content, ok := res["content"].([]any); ok && len(content) > 0 {
-			if item, ok := content[0].(map[string]any); ok {
-				text, _ := item["text"].(string)
-				fmt.Println(text)
-				return
-			}
-		}
-	}
-
-	fmt.Printf("%s\n", body)
+	printGitMCPResult("analyze_commits", map[string]any{
+		"repo_path": repo,
+		"since":     since,
+		"limit":     jsonNumber(limit),
+	})
 }
 
 func cmdGitSearch(args []string) {
@@ -758,53 +718,67 @@ func cmdGitSearch(args []string) {
 	if len(positional) == 0 {
 		fatalf("usage: levara git search <query>")
 	}
-	query := strings.Join(positional, " ")
+	printGitMCPResult("git_search", map[string]any{"query": strings.Join(positional, " ")})
+}
 
-	payload := map[string]any{
-		"name": "git_search",
-		"arguments": map[string]any{
-			"query": query,
-		},
-	}
-
-	mcpURL := strings.TrimSuffix(baseURL, "/api/v1") + "/mcp"
-	rpcPayload := map[string]any{
+func printGitMCPResult(name string, arguments map[string]any) {
+	data, err := json.Marshal(map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
 		"method":  "tools/call",
-		"params":  payload,
+		"params":  map[string]any{"name": name, "arguments": arguments},
+	})
+	if err != nil {
+		fatalf("encode Git request: %v", err)
 	}
-
-	data, _ := json.Marshal(rpcPayload)
-	req, _ := http.NewRequest("POST", mcpURL, bytes.NewReader(data))
+	mcpURL := strings.TrimSuffix(baseURL, "/api/v1") + "/mcp"
+	req, err := http.NewRequest(http.MethodPost, mcpURL, bytes.NewReader(data))
+	if err != nil {
+		fatalf("create request: %v", err)
+	}
 	req.Header.Set("Content-Type", "application/json")
 	applyAuth(req)
-
-	resp, err := http.DefaultClient.Do(req)
+	client := *http.DefaultClient
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	resp, err := client.Do(req)
 	if err != nil {
 		fatalf("connection failed: %v", err)
 	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-
-	var result map[string]any
-	json.Unmarshal(body, &result)
-
-	if errObj, ok := result["error"]; ok {
-		fatalf("MCP error: %v", errObj)
+	body, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil {
+		fatalf("read response: %v", err)
 	}
-
-	if res, ok := result["result"].(map[string]any); ok {
-		if content, ok := res["content"].([]any); ok && len(content) > 0 {
-			if item, ok := content[0].(map[string]any); ok {
-				text, _ := item["text"].(string)
-				fmt.Println(text)
-				return
-			}
-		}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		fatalf("server error %d: %s", resp.StatusCode, body)
 	}
-
-	fmt.Printf("%s\n", body)
+	var result struct {
+		JSONRPC string          `json:"jsonrpc"`
+		ID      int             `json:"id"`
+		Error   json.RawMessage `json:"error"`
+		Result  *struct {
+			IsError bool `json:"isError"`
+			Content []struct {
+				Type string  `json:"type"`
+				Text *string `json:"text"`
+			} `json:"content"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		fatalf("invalid Git MCP response: %v", err)
+	}
+	if len(result.Error) != 0 && string(result.Error) != "null" {
+		fatalf("MCP error: %s", result.Error)
+	}
+	if result.JSONRPC != "2.0" || result.ID != 1 || result.Result == nil || len(result.Result.Content) == 0 ||
+		result.Result.Content[0].Type != "text" || result.Result.Content[0].Text == nil {
+		fatalf("invalid Git MCP response: expected text result")
+	}
+	text := *result.Result.Content[0].Text
+	if result.Result.IsError {
+		fatalf("MCP tool error: %s", text)
+	}
+	fmt.Println(text)
 }
 
 // ── workspace ───────────────────────────────────────────────────────────────
@@ -1606,6 +1580,9 @@ Commands:
   search   <query> [--type=CHUNKS] [--top-k=10] [--collection=name]
   datasets [list|create <name>|delete <id>]  Manage datasets
   documents [policy|register|recipients|shared|grant|revoke|group-create|group-members]
+  taxonomy import <file> --dataset <id> [--revision <value>]
+           list --dataset <id>
+           remove <domain> --dataset <id> [--collection <name>] [--document <title>] [--force]
   team apply --plan=<json> [--dry-run] [--state=<private-json>]  Local-password team setup
   chats    import --platform=<codex|claude-code> --path=<file|dir> [--no-reasoning] [--dry-run]
            [--dataset=<name>] [--cognify [--wait] [--collection=<name>]]  RAG items too

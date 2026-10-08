@@ -2,7 +2,9 @@ package mcp
 
 import (
 	"os"
+	"slices"
 	"strings"
+	"sync"
 )
 
 var toolProfiles = map[string][]string{
@@ -106,11 +108,26 @@ func ToolDescriptorsForMode(mode string) []Tool {
 
 func ToolDescriptorsLight() []Tool { return ToolDescriptorsForMode("memory") }
 
-func ToolAllowedForMode(mode, name string) bool {
-	for _, tool := range ToolDescriptorsForMode(mode) {
-		if tool.Name == name {
-			return true
-		}
+// ponytail: retain only registry names for dispatch; schemas stay fresh for tools/list.
+var registeredToolNames = sync.OnceValue(func() map[string]bool {
+	names := make(map[string]bool)
+	for _, tool := range ToolDescriptors() {
+		names[tool.Name] = true
 	}
-	return false
+	return names
+})
+
+func ToolAllowedForMode(mode, name string) bool {
+	if name == "memory_commit_preview" || name == "memory_commit_apply" {
+		if !memoryCommitEnabled() {
+			return false
+		}
+	} else if !registeredToolNames()[name] {
+		return false
+	}
+	if isLongHorizonTaskTool(name) && !longHorizonEnabled() {
+		return false
+	}
+	effective := ToolsetName(mode)
+	return effective == "full" || slices.Contains(toolProfiles[effective], name)
 }

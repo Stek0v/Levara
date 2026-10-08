@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-09-29T17:49:43+03:00",
-  "git_rev": "84d82e4ad0a25824cda25eee8d5bced9cfb6c2ab",
+  "generated_at": "2026-10-08T03:07:59+03:00",
+  "git_rev": "9a87687087a2109a7bebf9bcf4acdff79e91d1ce",
   "rest": [
     {
       "method": "POST",
@@ -77,6 +77,18 @@
     {
       "method": "GET",
       "path": "/chats/import/sessions/:platform/:sessionId",
+      "status": "canonical",
+      "group": "chats"
+    },
+    {
+      "method": "DELETE",
+      "path": "/chats/import/sessions/:platform/:sessionId/project",
+      "status": "canonical",
+      "group": "chats"
+    },
+    {
+      "method": "POST",
+      "path": "/chats/import/sessions/:platform/:sessionId/project",
       "status": "canonical",
       "group": "chats"
     },
@@ -277,6 +289,24 @@
       "path": "/datasets/:id/shares/:shareId",
       "status": "canonical",
       "group": "rbac"
+    },
+    {
+      "method": "DELETE",
+      "path": "/datasets/:id/taxonomy",
+      "status": "canonical",
+      "group": "taxonomy"
+    },
+    {
+      "method": "GET",
+      "path": "/datasets/:id/taxonomy",
+      "status": "canonical",
+      "group": "taxonomy"
+    },
+    {
+      "method": "POST",
+      "path": "/datasets/:id/taxonomy/import",
+      "status": "canonical",
+      "group": "taxonomy"
     },
     {
       "method": "GET",
@@ -543,66 +573,6 @@
       "group": "models"
     },
     {
-      "method": "GET",
-      "path": "/notebooks",
-      "status": "canonical",
-      "group": "notebooks"
-    },
-    {
-      "method": "POST",
-      "path": "/notebooks",
-      "status": "canonical",
-      "group": "notebooks"
-    },
-    {
-      "method": "DELETE",
-      "path": "/notebooks/:id",
-      "status": "canonical",
-      "group": "notebooks"
-    },
-    {
-      "method": "GET",
-      "path": "/notebooks/:id",
-      "status": "canonical",
-      "group": "notebooks"
-    },
-    {
-      "method": "PUT",
-      "path": "/notebooks/:id",
-      "status": "canonical",
-      "group": "notebooks"
-    },
-    {
-      "method": "POST",
-      "path": "/notebooks/:id/:cellId/run",
-      "status": "alias",
-      "group": "notebooks"
-    },
-    {
-      "method": "POST",
-      "path": "/notebooks/:id/cells",
-      "status": "canonical",
-      "group": "notebooks"
-    },
-    {
-      "method": "DELETE",
-      "path": "/notebooks/:id/cells/:cellId",
-      "status": "canonical",
-      "group": "notebooks"
-    },
-    {
-      "method": "PUT",
-      "path": "/notebooks/:id/cells/:cellId",
-      "status": "canonical",
-      "group": "notebooks"
-    },
-    {
-      "method": "POST",
-      "path": "/notebooks/:id/cells/:cellId/run",
-      "status": "canonical",
-      "group": "notebooks"
-    },
-    {
       "method": "POST",
       "path": "/ocr",
       "status": "canonical",
@@ -763,6 +733,18 @@
       "path": "/sync/status",
       "status": "canonical",
       "group": "sync"
+    },
+    {
+      "method": "GET",
+      "path": "/tasks",
+      "status": "canonical",
+      "group": "tasks"
+    },
+    {
+      "method": "GET",
+      "path": "/tasks/:taskId",
+      "status": "canonical",
+      "group": "tasks"
     },
     {
       "method": "GET",
@@ -1676,6 +1658,21 @@
     {
       "provider": "postgres",
       "kind": "alter",
+      "name": "graph_communities"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "graph_communities"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "graph_communities"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
       "name": "graph_edges"
     },
     {
@@ -1841,7 +1838,7 @@
     {
       "provider": "postgres",
       "kind": "alter",
-      "name": "task_criteria"
+      "name": "task_checkpoints"
     },
     {
       "provider": "postgres",
@@ -1851,7 +1848,7 @@
     {
       "provider": "postgres",
       "kind": "alter",
-      "name": "task_leases"
+      "name": "task_criteria"
     },
     {
       "provider": "postgres",
@@ -1872,6 +1869,16 @@
       "provider": "postgres",
       "kind": "alter",
       "name": "task_leases"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "task_leases"
+    },
+    {
+      "provider": "postgres",
+      "kind": "alter",
+      "name": "task_receipts"
     },
     {
       "provider": "postgres",
@@ -2106,6 +2113,16 @@
     {
       "provider": "postgres",
       "kind": "index",
+      "name": "idx_memory_sync_incarnations_scope"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
+      "name": "idx_memory_sync_incarnations_unresolved"
+    },
+    {
+      "provider": "postgres",
+      "kind": "index",
       "name": "idx_notebook_cells_notebook"
     },
     {
@@ -2281,12 +2298,37 @@
     {
       "provider": "postgres",
       "kind": "table",
+      "name": "knowledge_taxonomy_runs"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
       "name": "memories"
     },
     {
       "provider": "postgres",
       "kind": "table",
       "name": "memory_commits"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "memory_sync_aliases"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "memory_sync_deletions"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "memory_sync_heads"
+    },
+    {
+      "provider": "postgres",
+      "kind": "table",
+      "name": "memory_sync_incarnations"
     },
     {
       "provider": "postgres",
@@ -2436,6 +2478,21 @@
     {
       "provider": "sqlite",
       "kind": "alter",
+      "name": "graph_communities"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "graph_communities"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "graph_communities"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
       "name": "graph_edges"
     },
     {
@@ -2587,6 +2644,16 @@
       "provider": "sqlite",
       "kind": "alter",
       "name": "memories"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "task_checkpoints"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "alter",
+      "name": "task_receipts"
     },
     {
       "provider": "sqlite",
@@ -2821,6 +2888,16 @@
     {
       "provider": "sqlite",
       "kind": "index",
+      "name": "idx_memory_sync_incarnations_scope"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
+      "name": "idx_memory_sync_incarnations_unresolved"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "index",
       "name": "idx_notebook_cells_notebook"
     },
     {
@@ -3006,12 +3083,37 @@
     {
       "provider": "sqlite",
       "kind": "table",
+      "name": "knowledge_taxonomy_runs"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
       "name": "memories"
     },
     {
       "provider": "sqlite",
       "kind": "table",
       "name": "memory_commits"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "memory_sync_aliases"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "memory_sync_deletions"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "memory_sync_heads"
+    },
+    {
+      "provider": "sqlite",
+      "kind": "table",
+      "name": "memory_sync_incarnations"
     },
     {
       "provider": "sqlite",

@@ -12,19 +12,20 @@
 // the only unreality is using localhost instead of Ethernet.
 //
 // Structure:
-//   * TestConvergence_ReplicaCatchesUpFromSnapshot — seed primary, start
+//   - TestConvergence_ReplicaCatchesUpFromSnapshot — seed primary, start
 //     replica, verify snapshot bootstrap restores every record.
-//   * TestConvergence_PropertyStyle — random mixed insert/delete stream,
+//   - TestConvergence_PropertyStyle — random mixed insert/delete stream,
 //     replica state must equal primary state at steady-state.
-//   * TestChaos_ReplicaReconnectsAfterPrimaryGap — stop the primary
+//   - TestChaos_ReplicaReconnectsAfterPrimaryGap — stop the primary
 //     server mid-stream, restart it, verify the replica re-establishes
 //     the stream and picks up new writes.
-//   * TestChaos_ReplicaSurvivesBriefDisconnect — inject a mid-stream
+//   - TestChaos_ReplicaSurvivesBriefDisconnect — inject a mid-stream
 //     error via a wrapper handler, verify the streamLoop backoff path.
 package cluster
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math/rand"
 	"net"
@@ -411,10 +412,13 @@ func TestChaos_ReplicaExponentialBackoffOnFailure(t *testing.T) {
 	// return error and streamLoop to back off.
 	mux := http.NewServeMux()
 	mux.HandleFunc("/cluster/wal/stream", func(w http.ResponseWriter, r *http.Request) {
-		attempts.Add(1)
+		if attempts.Add(1) == 1 {
+			json.NewEncoder(w).Encode(replicationSnapshot{Version: 1, Kind: "snapshot", Records: []store.SnapshotRecord{}})
+			return // Successful initial snapshot, then EOF forces reconnect.
+		}
 		http.Error(w, "nope", 500)
 	})
-	// Snapshot is valid so Start() succeeds; empty body.
+	// Legacy snapshot endpoint is not used by the new stream.
 	mux.HandleFunc("/cluster/snapshot", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte("[]"))

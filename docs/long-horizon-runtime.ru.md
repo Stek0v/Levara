@@ -8,14 +8,14 @@ Long-Horizon Task Runtime — включаемый отдельно журнал
 Definition of Done, версионированный план, атомарные leases шагов, неизменяемые
 evidence, checkpoints, blockers и состояние завершения.
 
-Task Runtime не выполняет работу самостоятельно и не выдаёт дополнительных
-полномочий. Работу выполняет агент или host; Levara делает состояние и
+Работу выполняет внешний агент/host или ограниченный server worker, описанный
+ниже. Журнал не выдаёт дополнительных полномочий; он делает состояние и
 доказательства восстанавливаемыми и детерминированно проверяет завершение.
 
 ## Включение
 
-По умолчанию task-инструменты скрыты. Перед запуском сервера задайте обе
-переменные:
+Task-инструменты требуют SQL-базу, `LEVARA_LONG_HORIZON_RUNTIME=1` и toolset
+`long-horizon` либо `full`. Настройте их перед запуском сервера:
 
 ```bash
 export DB_PROVIDER=sqlite
@@ -38,6 +38,32 @@ export LEVARA_MCP_TOOLSET=long-horizon
 - `runtime_stats` сообщает `task_runtime.enabled=true`;
 - `doctor` видит схему Task Runtime и не находит orphan-записей;
 - в списке MCP присутствуют восемь `task_*` инструментов.
+
+## Ограниченный workspace worker
+
+С SQL-конфигурацией выше включите исполнение на сервере:
+
+```bash
+export LEVARA_LONG_HORIZON_RUNTIME=1
+export LEVARA_TASK_WORKER=1
+export LEVARA_MCP_TOOLSET=full
+```
+
+Сервер подключает [NewTaskExecutor](../internal/http/task_executor.go), который
+поддерживает только `workspace_read` и `workspace_write`; у write поле `index`
+должно отсутствовать либо быть false. Shell, network, indexing и неизвестные
+аргументы отклоняются. В `long-horizon` есть `task_step`, но нет workspace action
+tools; в `workspace` нет `task_step`. Execution fence требует оба инструмента,
+поэтому для этого worker задайте явный `full` и проверяйте фактический `tools/list`.
+
+Исполняемый шаг требует `action` (`kind=mcp_tool`, имя инструмента, аргументы
+и output assertions) и `criterion_ids`. В authority задачи нужны `auto_run=true`,
+`allowed_tools` и digest-pinned [authority-манифест](authority-manifests.md),
+который разрешает инструмент и существующий canonical directory. Дополнительно
+нужны authenticated owner задачи, действующий lease и workspace grant.
+DevMode отклоняется. Descriptor-based filesystem confinement поддерживает Linux
+и macOS; остальные платформы отклоняют эти файловые действия. Работу за пределами
+этого ограниченного набора выполняет внешний host в пределах его полномочий.
 
 ## Жизненный цикл
 
@@ -165,6 +191,10 @@ actor.
 }
 ```
 
+Повторный idempotency key для receipt или checkpoint требует того же нормализованного запроса: evidence, проверенного владельца, effective actor и побочных эффектов checkpoint. Точный повтор допускает старый base version и возвращает прежний ID и актуальную version. Изменённый payload возвращает явный конфликт без изменения ledger. Порядок ключей объекта и игнорируемые поля не меняют идентичность; порядок применяемых массивов сохраняется.
+
+Исторические receipts/checkpoints без сохранённого digest запроса остаются читаемыми и пригодными как evidence, но повтор такого ключа возвращает явную ошибку unverifiable payload. Additive migration не угадывает исходный запрос и не повторяет эффекты checkpoint. Новый ключ используйте только для намеренно новой операции.
+
 Receipts неизменяемы и идемпотентны. Фиксируйте реально наблюдаемый результат:
 намерение или summary не является evidence. Для `command`, `artifact` и
 `reviewer` обязателен workspace revision. После изменения revision старое
@@ -174,6 +204,8 @@ Artifact receipt требует `evidence_uri` и полный SHA-256 digest. �
 `file://` внутри настроенных storage/workspace roots и `storage://` из
 настроенного backend. При completion runtime повторно читает байты и проверяет
 digest.
+
+Completion проверяет authoritative SQL внутри ограниченной write transaction. Для workspace artifacts native project lock удерживается до commit или rollback: совместимые workspace writers не могут заменить проверенные байты в этом интервале. Отмена и expiry credential освобождают guards без завершения задачи. Повтор completed-задачи тоже требует актуального write-доступа. Произвольная запись через ОС или object backend не соблюдает workspace lock; атомарность filesystem/SQL при power loss не заявляется.
 
 ### 5. Checkpoint, blocker и продолжение
 
@@ -241,19 +273,21 @@ receipts; неподдерживаемые или недостаточно до�
 
 Task Runtime хранит состояние и доказательства в SQL. Read-only WebUI `/tasks`
 показывает задачи, шаги, lease, receipts, checkpoints и blockers. Работу выполняет
-внешний агент/host; этот журнал не выдаёт новые права.
+внешний агент/host или ограниченный worker; журнал не выдаёт новые права.
 
 - Профиль инструментов управляет видимостью, но не заменяет авторизацию.
 - Scope задачи включает владельца, collection и room.
 - Artifact verification проверяет поддерживаемые источники и containment путей;
   неизвестные URI не становятся доверенными автоматически.
-- `LEVARA_TASK_WORKER=1` включает цикл worker, однако server bootstrap подключает
-  `NewLoggingStepExecutor`: он пишет лог и возвращает синтетическое наблюдение,
-  не выполняя полезную задачу. Не используйте такой результат как evidence
-  выполнения команды, изменения файла или проверки качества.
-- [Authority-манифест](authority-manifests.md) может быть привязан к задаче;
-  digest проверяется на HTTP claim. Tool/path/network helpers не подключены
-  ко всем production-действиям и не образуют универсальный sandbox.
+- Ограниченный executor записывает observation receipt по фактическому output
+  инструмента и проверяет output assertions шага; passing workspace action
+  не доказывает запуск shell-команды или отдельной проверки качества.
+  `NewLoggingStepExecutor` остаётся compatibility fallback и отклоняет исполнение;
+  сервер использует `NewTaskExecutor`.
+- [Authority-манифест](authority-manifests.md) привязан к задаче; digest проверяется
+  на HTTP claim и повторно в ограниченном workspace executor. Executor проверяет
+  tool и directory grants для поддерживаемых действий; manifest helpers
+  не образуют универсальный sandbox для всех production-действий.
 
 Схемы — [API contract](api-contract.md), реальные границы тестового evidence —
 [testing](testing.md). [English version](long-horizon-runtime.md) описывает тот же

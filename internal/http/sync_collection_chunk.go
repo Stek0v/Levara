@@ -72,7 +72,7 @@ func expandRecordsToUnits(records []syncCollectionRecord, maxRunes, overlap int)
 // minimal object.
 func chunkMeta(orig json.RawMessage, sourceID, chunkText string, idx, total int) json.RawMessage {
 	m := map[string]json.RawMessage{}
-	if len(orig) == 0 || json.Unmarshal(orig, &m) != nil {
+	if len(orig) == 0 || json.Unmarshal(orig, &m) != nil || m == nil {
 		m = map[string]json.RawMessage{}
 	}
 	set := func(k string, v any) {

@@ -54,7 +54,7 @@ func TestMemoryIndexDoesNotResurrectRetiredMemory(t *testing.T) {
 			if _, err := db.Exec(query); err != nil {
 				t.Fatal(err)
 			}
-			if err := executeMemoryIndexJob(context.Background(), cfg, memoryindex.Job{MemoryID: "old", Operation: "delete_vector", Collection: "test"}); err != nil {
+			if err := executeMemoryIndexJob(context.Background(), cfg, memoryindex.Job{MemoryID: "old", Operation: "delete_vector", Collection: "test", OwnerID: "owner"}); err != nil {
 				t.Fatal(err)
 			}
 			release.Do(func() { close(resume) })

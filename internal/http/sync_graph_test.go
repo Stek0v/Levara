@@ -90,7 +90,7 @@ func TestSyncExportGraphPreservesTemporalMetadata(t *testing.T) {
 	if edge.ValidFrom != "2026-05-01T00:00:00Z" ||
 		edge.ValidUntil != "2026-05-10T00:00:00Z" ||
 		edge.SupersededBy != "e2" ||
-		edge.Confidence != 0.73 ||
+		edge.Confidence != float64(float32(0.73)) ||
 		edge.DatasetID != "ds-payments" {
 		t.Fatalf("edge temporal metadata lost: %+v", edge)
 	}
@@ -144,7 +144,7 @@ func TestSyncImportGraphPreservesTemporalMetadata(t *testing.T) {
 	if validFrom != "2026-05-01T00:00:00Z" ||
 		validUntil != "2026-05-10T00:00:00Z" ||
 		supersededBy != "e2" ||
-		confidence != 0.73 ||
+		confidence != float64(float32(0.73)) ||
 		datasetID != "ds-payments" {
 		t.Fatalf("imported edge metadata: valid_from=%q valid_until=%q superseded_by=%q confidence=%v dataset_id=%q",
 			validFrom, validUntil, supersededBy, confidence, datasetID)

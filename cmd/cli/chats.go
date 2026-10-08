@@ -22,19 +22,30 @@ import (
 	"github.com/stek0v/levara/pkg/chatimport"
 )
 
+var chatsTenant string
+
 func cmdChats(args []string) {
+	previousTenant := chatsTenant
+	chatsTenant, _ = chatsFlag(args, "--tenant")
+	defer func() { chatsTenant = previousTenant }()
 	if len(args) == 0 {
-		fatalf("usage: levara chats <import|runs|session> ...")
+		fatalf("usage: levara chats <import|runs|sessions|session|share|unshare> ...")
 	}
 	switch args[0] {
 	case "import":
 		cmdChatsImport(args[1:])
 	case "runs":
 		cmdChatsRuns(args[1:])
+	case "sessions":
+		cmdChatsSessions(args[1:])
 	case "session":
 		cmdChatsSession(args[1:])
+	case "share":
+		cmdChatsShare(args[1:], false)
+	case "unshare":
+		cmdChatsShare(args[1:], true)
 	default:
-		fatalf("unknown chats command: %s (import|runs|session)", args[0])
+		fatalf("unknown chats command: %s (import|runs|sessions|session|share|unshare)", args[0])
 	}
 }
 
@@ -135,8 +146,12 @@ func cmdChatsImport(args []string) {
 			Inserted    int      `json:"inserted"`
 			WarnedCount int      `json:"warned_count"`
 			Warnings    []string `json:"warnings"`
+			ChatID      string   `json:"chat_id"`
 		}
 		_ = json.Unmarshal(body, &resp)
+		if resp.ChatID != "" {
+			fmt.Printf("        chat_id=%s\n", resp.ChatID)
+		}
 		totalInserted += resp.Inserted
 		marker := colorGreen + "OK  " + colorReset
 		if resp.Inserted == 0 {
@@ -234,8 +249,12 @@ func cmdChatsImportCursor(args []string, path string) {
 				Inserted    int      `json:"inserted"`
 				WarnedCount int      `json:"warned_count"`
 				Warnings    []string `json:"warnings"`
+				ChatID      string   `json:"chat_id"`
 			}
 			_ = json.Unmarshal(body, &resp)
+			if resp.ChatID != "" {
+				fmt.Printf("        chat_id=%s\n", resp.ChatID)
+			}
 			totalInserted += resp.Inserted
 			marker := colorGreen + "OK  " + colorReset
 			if resp.Inserted == 0 {
@@ -380,7 +399,7 @@ func chatsTriggerCognify(dataset, collection string, wait bool) {
 		return
 	}
 	for i := 0; ; i++ {
-		statusBody, code := doGet(fmt.Sprintf("%s/cognify/%s/status", baseURL, url.PathEscape(resp.RunID)))
+		statusBody, code := chatsGet(fmt.Sprintf("%s/cognify/%s/status", baseURL, url.PathEscape(resp.RunID)))
 		if code != 200 {
 			fatalf("cognify status HTTP %d", code)
 		}
@@ -447,10 +466,17 @@ func postWithRetry(method, endpoint, contentType string, data []byte) ([]byte, i
 	return doRequest(method, endpoint, contentType, data)
 }
 
+func chatsGet(endpoint string) ([]byte, int) {
+	return doRequest(http.MethodGet, endpoint, "", nil)
+}
+
 func doRequest(method, endpoint, contentType string, data []byte) ([]byte, int) {
 	req, _ := http.NewRequest(method, endpoint, bytes.NewReader(data))
 	req.Header.Set("Content-Type", contentType)
 	applyAuth(req)
+	if chatsTenant != "" {
+		req.Header.Set("X-Tenant-Id", chatsTenant)
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		fatalf("connection failed: %v", err)
@@ -465,7 +491,7 @@ func cmdChatsRuns(args []string) {
 	if p, ok := chatsFlag(args, "--platform"); ok {
 		endpoint += "?platform=" + p
 	}
-	body, status := doGet(endpoint)
+	body, status := chatsGet(endpoint)
 	if status != 200 {
 		fatalf("HTTP %d: %s", status, truncateFor(string(body), 200))
 	}
@@ -499,8 +525,9 @@ func cmdChatsSession(args []string) {
 		fatalf("usage: levara chats session <platform> <session-id> [--kind=...] [--full]")
 	}
 	platform, sessionID := args[0], args[1]
-	endpoint := fmt.Sprintf("%s/chats/import/sessions/%s/%s", baseURL, platform, sessionID)
-	body, status := doGet(endpoint)
+	chatID, _ := chatsFlag(args, "--chat-id")
+	endpoint := chatSessionEndpoint(platform, sessionID, chatID)
+	body, status := chatsGet(endpoint)
 	if status != 200 {
 		fatalf("HTTP %d: %s", status, truncateFor(string(body), 200))
 	}
@@ -530,6 +557,54 @@ func cmdChatsSession(args []string) {
 		fmt.Printf("[%3d] %-9s %-10s %s\n      %s\n", m.Ordinal, m.Role, m.Kind, m.CreatedAt, content)
 	}
 	fmt.Printf("\n%d messages\n", len(resp.Messages))
+}
+
+func chatSessionEndpoint(platform, sessionID, chatID string) string {
+	endpoint := fmt.Sprintf("%s/chats/import/sessions/%s/%s", baseURL, url.PathEscape(platform), url.PathEscape(sessionID))
+	if chatID != "" {
+		endpoint += "?chat_id=" + url.QueryEscape(chatID)
+	}
+	return endpoint
+}
+
+func cmdChatsSessions(args []string) {
+	params := url.Values{}
+	if platform, ok := chatsFlag(args, "--platform"); ok {
+		params.Set("platform", platform)
+	}
+	endpoint := baseURL + "/chats/import/sessions"
+	if len(params) > 0 {
+		endpoint += "?" + params.Encode()
+	}
+	body, status := chatsGet(endpoint)
+	if status != http.StatusOK {
+		fatalf("HTTP %d: %s", status, truncateFor(string(body), 200))
+	}
+	printJSON(body)
+}
+
+func cmdChatsShare(args []string, remove bool) {
+	if len(args) < 2 {
+		fatalf("usage: levara chats share <platform> <chat-id> --project=<project-id> | unshare <platform> <chat-id>")
+	}
+	params := url.Values{"chat_id": []string{args[1]}}
+	endpoint := fmt.Sprintf("%s/chats/import/sessions/%s/%s/project?%s",
+		baseURL, url.PathEscape(args[0]), url.PathEscape(args[1]), params.Encode())
+	var body []byte
+	var status int
+	if remove {
+		body, status = doRequest(http.MethodDelete, endpoint, "", nil)
+	} else {
+		project, _ := chatsFlag(args, "--project")
+		if strings.TrimSpace(project) == "" {
+			fatalf("--project=<project-id> required")
+		}
+		body, status = postJSON(endpoint, map[string]string{"project_id": project})
+	}
+	if status < 200 || status >= 300 {
+		fatalf("HTTP %d: %s", status, truncateFor(string(body), 200))
+	}
+	printJSON(body)
 }
 
 func collectTranscriptFiles(path string) ([]string, error) {

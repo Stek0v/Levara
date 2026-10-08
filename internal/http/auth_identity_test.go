@@ -9,12 +9,14 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 	accesspkg "github.com/stek0v/levara/pkg/access"
+	"github.com/stek0v/levara/pkg/mcp"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -113,6 +115,143 @@ func TestAuthenticatedJWTMissingUserDenied(t *testing.T) {
 	}
 }
 
+func TestAPIKeyIdentityDenialAndUnavailableAreDistinct(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			db := newIdentityAuthDialectDB(t, dialect)
+			seedAuthUser(t, db, "api-owner")
+			if _, err := db.Exec(Q(`INSERT INTO api_keys(id,key_hash,user_id,permissions) VALUES($1,$2,$3,'read')`), "api-key", apikeyHash("valid-key"), "api-owner"); err != nil {
+				t.Fatal(err)
+			}
+
+			reached := false
+			rest := fiber.New(fiber.Config{DisableStartupMessage: true})
+			rest.Use(func(c *fiber.Ctx) error { c.Locals("auth_db", &DBRef{DB: db}); return c.Next() })
+			rest.Use(JWTMiddleware("secret", true))
+			rest.Get("/", func(c *fiber.Ctx) error { reached = true; return c.SendStatus(fiber.StatusNoContent) })
+			restStatus := func(key string) int {
+				t.Helper()
+				reached = false
+				req := httptest.NewRequest("GET", "/", nil)
+				req.Header.Set("X-API-Key", key)
+				resp, err := rest.Test(req)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer resp.Body.Close()
+				return resp.StatusCode
+			}
+
+			hMCP := &mcpHandler{cfg: APIConfig{DB: db, RequireAuth: true}, sessions: mcp.NewSessionStore()}
+			mcpApp := fiber.New(fiber.Config{DisableStartupMessage: true})
+			mcpApp.Post("/mcp", hMCP.handleRPC)
+			mcpStatus := func(key string) int {
+				t.Helper()
+				req := httptest.NewRequest("POST", "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"save_memory","arguments":{"key":"must-not-run","value":"x"}}}`))
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("X-API-Key", key)
+				resp, err := mcpApp.Test(req)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer resp.Body.Close()
+				return resp.StatusCode
+			}
+
+			if got := restStatus("missing-key"); got != fiber.StatusUnauthorized || reached {
+				t.Fatalf("REST denied status=%d reached=%v", got, reached)
+			}
+			if got := mcpStatus("missing-key"); got != fiber.StatusNotFound {
+				t.Fatalf("MCP denied status=%d", got)
+			}
+			if got := restStatus("valid-key"); got != fiber.StatusNoContent || !reached {
+				t.Fatalf("REST valid status=%d reached=%v", got, reached)
+			}
+			if _, err := db.Exec(Q(`UPDATE api_keys SET revoked=TRUE WHERE id=$1`), "api-key"); err != nil {
+				t.Fatal(err)
+			}
+			if got := restStatus("valid-key"); got != fiber.StatusUnauthorized || reached {
+				t.Fatalf("REST revoked status=%d reached=%v", got, reached)
+			}
+			if got := mcpStatus("valid-key"); got != fiber.StatusNotFound {
+				t.Fatalf("MCP revoked status=%d", got)
+			}
+			if _, err := db.Exec(Q(`UPDATE api_keys SET revoked=FALSE WHERE id=$1`), "api-key"); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.Exec(Q(`UPDATE users SET is_active=FALSE WHERE id=$1`), "api-owner"); err != nil {
+				t.Fatal(err)
+			}
+			if got := restStatus("valid-key"); got != fiber.StatusUnauthorized || reached {
+				t.Fatalf("REST inactive status=%d reached=%v", got, reached)
+			}
+			if got := mcpStatus("valid-key"); got != fiber.StatusNotFound {
+				t.Fatalf("MCP inactive status=%d", got)
+			}
+			if _, err := db.Exec(Q(`UPDATE users SET is_active=TRUE WHERE id=$1`), "api-owner"); err != nil {
+				t.Fatal(err)
+			}
+			cancelled, cancel := context.WithCancel(context.Background())
+			cancel()
+			if _, err := verifyAPIKey(cancelled, db, "valid-key"); err == nil {
+				t.Fatal("cancelled API-key lookup reported credential denial")
+			}
+
+			sessionID := hMCP.createSession("api-owner")
+
+			if _, err := db.Exec(`ALTER TABLE api_keys RENAME TO unavailable_api_keys`); err != nil {
+				t.Fatal(err)
+			}
+			if got := restStatus("valid-key"); got != fiber.StatusServiceUnavailable || reached {
+				t.Fatalf("REST unavailable status=%d reached=%v", got, reached)
+			}
+			if got := mcpStatus("valid-key"); got != fiber.StatusServiceUnavailable {
+				t.Fatalf("MCP unavailable status=%d", got)
+			}
+			deleteReq := httptest.NewRequest("DELETE", "/mcp", nil)
+			deleteReq.Header.Set("Mcp-Session-Id", sessionID)
+			deleteReq.Header.Set("X-API-Key", "valid-key")
+			mcpApp.Delete("/mcp", hMCP.handleDeleteSession)
+			deleteResp, err := mcpApp.Test(deleteReq)
+			if err != nil {
+				t.Fatal(err)
+			}
+			deleteResp.Body.Close()
+			if deleteResp.StatusCode != fiber.StatusServiceUnavailable || hMCP.getOrValidateSession(sessionID) == nil {
+				t.Fatalf("MCP session unavailable status=%d session=%v", deleteResp.StatusCode, hMCP.getOrValidateSession(sessionID) != nil)
+			}
+
+			nilDBREST := fiber.New(fiber.Config{DisableStartupMessage: true})
+			nilDBREST.Use(JWTMiddleware("secret", true))
+			nilDBREST.Get("/", func(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusNoContent) })
+			nilReq := httptest.NewRequest("GET", "/", nil)
+			nilReq.Header.Set("X-API-Key", "valid-key")
+			nilResp, err := nilDBREST.Test(nilReq)
+			if err != nil {
+				t.Fatal(err)
+			}
+			nilResp.Body.Close()
+			if nilResp.StatusCode != fiber.StatusServiceUnavailable {
+				t.Fatalf("REST missing DB status=%d", nilResp.StatusCode)
+			}
+			nilMCP := &mcpHandler{cfg: APIConfig{RequireAuth: true}, sessions: mcp.NewSessionStore()}
+			nilMCPApp := fiber.New(fiber.Config{DisableStartupMessage: true})
+			nilMCPApp.Post("/mcp", nilMCP.handleRPC)
+			nilMCPReq := httptest.NewRequest("POST", "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"levara_instructions","arguments":{}}}`))
+			nilMCPReq.Header.Set("Content-Type", "application/json")
+			nilMCPReq.Header.Set("X-API-Key", "valid-key")
+			nilMCPResp, err := nilMCPApp.Test(nilMCPReq)
+			if err != nil {
+				t.Fatal(err)
+			}
+			nilMCPResp.Body.Close()
+			if nilMCPResp.StatusCode != fiber.StatusServiceUnavailable {
+				t.Fatalf("MCP missing DB status=%d", nilMCPResp.StatusCode)
+			}
+		})
+	}
+}
+
 func seedAuthUser(t *testing.T, db *sql.DB, uid string) {
 	t.Helper()
 	if _, err := db.Exec(Q("INSERT INTO users (id, email, is_active) VALUES ($1, $2, true)"), uid, uid+"@example.test"); err != nil {
@@ -145,7 +284,7 @@ func TestSessionLoginMeAndMCPUseLiveIdentity(t *testing.T) {
 	h := &mcpHandler{cfg: APIConfig{DB: db, JWTSecret: secret, RequireAuth: true, OIDCBearer: &stubOIDCBearer{userID: uid, accept: func(token string) bool { return token == "external" }}}}
 	app.Get("/mcp-check", func(c *fiber.Ctx) error {
 		if _, err := h.authenticateMCPRequest(c); err != nil {
-			return c.SendStatus(401)
+			return c.SendStatus(mcpAuthFailureStatus(err, 401))
 		}
 		return c.SendStatus(200)
 	})
@@ -211,9 +350,9 @@ func TestSessionLoginMeAndMCPUseLiveIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, path := range []string{"/auth/me", "/mcp-check", "/rest-check"} {
-		check(path, fresh, 401)
+		check(path, fresh, 503)
 	}
-	check("/rest-check", "external", 401)
+	check("/rest-check", "external", 503)
 }
 
 func TestAuthenticatedModeRequiresSQLIdentityStore(t *testing.T) {
@@ -235,7 +374,7 @@ func TestAuthenticatedModeRequiresSQLIdentityStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != 401 {
+	if resp.StatusCode != 503 {
 		t.Errorf("me without DB=%d", resp.StatusCode)
 	}
 }

@@ -1,6 +1,7 @@
 'use client'
 
 import { useRef, useState } from 'react'
+import { ApiError } from '@/lib/api'
 import { useMemories, useSaveMemory, useDeleteMemory } from '@/hooks/use-levara'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -32,7 +33,9 @@ export default function MemoriesPage() {
   const deleteInFlight = useRef(false)
   const deleteMutation = useDeleteMemory()
 
-  const { data: memories = [], isLoading } = useMemories(filter)
+  const memoryQuery = useMemories(filter)
+  const denied = memoryQuery.error instanceof ApiError && (memoryQuery.error.status === 401 || memoryQuery.error.status === 403)
+  const memories = denied ? [] : memoryQuery.data ?? []
   const saveMutation = useSaveMemory()
 
   const handleAdd = async () => {
@@ -61,7 +64,7 @@ export default function MemoriesPage() {
     }
   }
 
-  if (isLoading) {
+  if (memoryQuery.isPending) {
     return (
       <div>
         <h1 className="text-2xl font-bold mb-6">{t('mem.title')}</h1>
@@ -76,6 +79,9 @@ export default function MemoriesPage() {
         <h1 className="text-2xl font-bold">Memories</h1>
         <Button size="sm" onClick={() => setShowAdd(!showAdd)}><Plus className="h-4 w-4" /> {t('mem.add')}</Button>
       </div>
+
+      <Button variant="secondary" onClick={() => { void memoryQuery.refetch() }} disabled={memoryQuery.isFetching}>Refresh memories</Button>
+      {memoryQuery.isError && <p role="alert" className="my-4 text-sm text-red-600">Memories unavailable: {memoryQuery.error instanceof Error ? memoryQuery.error.message : 'Request failed'}{memoryQuery.data && !denied ? ' (showing stale data)' : ''}</p>}
 
       {showAdd && (
         <div className="mb-4 p-4 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 space-y-3">
@@ -113,7 +119,7 @@ export default function MemoriesPage() {
 
       {deleteError && <p role="alert" className="text-sm text-red-500 mb-4">{deleteError}</p>}
 
-      {memories.length === 0 ? (
+      {memoryQuery.isSuccess && memories.length === 0 ? (
         <EmptyState icon={Brain} title={t('mem.empty')} description={t('mem.empty.desc')}
           action={{ label: t('mem.add'), onClick: () => setShowAdd(true) }} />
       ) : (
