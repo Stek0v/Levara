@@ -744,9 +744,9 @@ func main() {
 	defer stopBM25Autosave()
 
 	// Standalone deployments never had a WAL compaction trigger (Checkpoint
-	// was gRPC/Raft-only) — compact oversized collection WALs right after
-	// boot, then periodically. Keeps boot replay bounded and disk usage
-	// proportional to live data instead of to append history.
+	// was gRPC/Raft-only) — compact after 512 MiB of appended growth, checked
+	// periodically. Large live WALs are the baseline after boot, so they are
+	// not pointlessly rewritten every 15 minutes.
 	go func() {
 		check := func() {
 			n, err := colManager.CheckpointIfWALExceeds(512 << 20)

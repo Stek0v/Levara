@@ -1,0 +1,35 @@
+[Unit]
+Description=Levara ONNX rerank sidecar
+After=network.target
+
+[Service]
+Type=simple
+User=stek0v
+Group=stek0v
+WorkingDirectory=/home/stek0v/rerank-bench/sidecar
+Environment=RERANK_MODEL_DIR=/home/stek0v/rerank-bench/onnx/mmini-L12-int8
+Environment=RERANK_MODEL_FILE=model_quantized.onnx
+Environment=RERANK_MAX_DOC_LEN=384
+Environment=RERANK_BATCH_SIZE=16
+Environment=OMP_NUM_THREADS=4
+Environment=HF_HUB_OFFLINE=1
+Environment=TRANSFORMERS_OFFLINE=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/python3 -m uvicorn app:app --host 127.0.0.1 --port 9100
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=5min
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=true
+MemoryMax=2G
+CPUQuota=300%
+
+[Install]
+WantedBy=multi-user.target

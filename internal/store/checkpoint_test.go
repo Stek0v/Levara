@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -227,13 +228,17 @@ func TestCheckpoint_ContinuedWritesAfter(t *testing.T) {
 	}
 }
 
-func TestCheckpointIfWALExceedsCompactsOversizedCollections(t *testing.T) {
+func TestCheckpointIfWALExceedsUsesAppendedGrowth(t *testing.T) {
 	dir := t.TempDir()
 	cm, err := NewCollectionManager(16, dir)
 	if err != nil {
 		t.Fatalf("NewCollectionManager: %v", err)
 	}
-	defer func() { _ = cm.Close() }()
+	defer func() {
+		if cm != nil {
+			_ = cm.Close()
+		}
+	}()
 	if err := cm.Create("big"); err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -245,28 +250,122 @@ func TestCheckpointIfWALExceedsCompactsOversizedCollections(t *testing.T) {
 			t.Fatalf("insert: %v", err)
 		}
 	}
+	if err := cm.Close(); err != nil {
+		t.Fatalf("close before reopen: %v", err)
+	}
+	cm, err = NewCollectionManager(16, dir)
+	if err != nil {
+		t.Fatalf("reopen manager: %v", err)
+	}
 
-	// threshold 0: everything qualifies; only "big" has a WAL past it after
-	// inserts, but a fresh "small" WAL is empty — both stat fine, only
-	// non-empty oversized ones get compacted.
+	// Existing live WAL bytes become the startup baseline, however large.
 	n, err := cm.CheckpointIfWALExceeds(0)
 	if err != nil {
 		t.Fatalf("CheckpointIfWALExceeds: %v", err)
 	}
-	if n == 0 {
-		t.Fatal("no collections compacted")
+	if n != 0 {
+		t.Fatalf("startup WAL compacted %d collections, want 0", n)
 	}
-	// A huge threshold must compact nothing the second time around is not
-	// guaranteed (WAL still non-empty), but an impossible threshold must.
-	if n, err := cm.CheckpointIfWALExceeds(int64(1) << 62); err != nil || n != 0 {
-		t.Fatalf("impossible threshold compacted %d collections (err=%v)", n, err)
+
+	// Only the collection with appended growth is compacted.
+	if err := cm.Insert("big", "after-reopen", randomVec(16), nil); err != nil {
+		t.Fatalf("insert after reopen: %v", err)
 	}
-	// Live data survives compaction.
+	if n, err = cm.CheckpointIfWALExceeds(1); err != nil || n != 1 {
+		t.Fatalf("growth checkpoint compacted %d collections (err=%v), want 1", n, err)
+	}
+	if n, err = cm.CheckpointIfWALExceeds(0); err != nil || n != 0 {
+		t.Fatalf("no-growth check compacted %d collections (err=%v), want 0", n, err)
+	}
+
+	// Growth after a successful checkpoint triggers exactly once again.
+	if err := cm.Insert("big", "after-checkpoint", randomVec(16), nil); err != nil {
+		t.Fatalf("insert after checkpoint: %v", err)
+	}
+	if n, err = cm.CheckpointIfWALExceeds(1); err != nil || n != 1 {
+		t.Fatalf("second growth checkpoint compacted %d collections (err=%v), want 1", n, err)
+	}
+
+	if err := cm.Close(); err != nil {
+		t.Fatalf("close after checkpoints: %v", err)
+	}
+	cm, err = NewCollectionManager(16, dir)
+	if err != nil {
+		t.Fatalf("final reopen: %v", err)
+	}
 	db, err := cm.Get("big")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := len(db.AllRecords()); got != 40 {
-		t.Fatalf("live records after checkpoint = %d, want 40", got)
+	if got := len(db.AllRecords()); got != 42 {
+		t.Fatalf("live records after reopen = %d, want 42", got)
+	}
+}
+
+func TestCheckpointIfWALExceedsConcurrentChecksCompactOnce(t *testing.T) {
+	dir := t.TempDir()
+	cm, err := NewCollectionManager(4, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = cm.Close() }()
+	if err := cm.Create("chat"); err != nil {
+		t.Fatal(err)
+	}
+	if err := cm.Insert("chat", "one", randomVec(4), nil); err != nil {
+		t.Fatal(err)
+	}
+
+	const checks = 8
+	results := make(chan int, checks)
+	errs := make(chan error, checks)
+	for i := 0; i < checks; i++ {
+		go func() {
+			n, err := cm.CheckpointIfWALExceeds(0)
+			results <- n
+			errs <- err
+		}()
+	}
+	total := 0
+	for i := 0; i < checks; i++ {
+		total += <-results
+		if err := <-errs; err != nil {
+			t.Fatalf("concurrent checkpoint: %v", err)
+		}
+	}
+	if total != 1 {
+		t.Fatalf("concurrent checks compacted %d times, want 1", total)
+	}
+}
+
+func TestCheckpointIfWALExceedsContinuesAfterCollectionError(t *testing.T) {
+	dir := t.TempDir()
+	cm, err := NewCollectionManager(4, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = cm.Close() }()
+	for _, name := range []string{"broken", "healthy"} {
+		if err := cm.Create(name); err != nil {
+			t.Fatalf("create %s: %v", name, err)
+		}
+	}
+	broken, err := cm.Get("broken")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(broken.WALPath()); err != nil {
+		t.Fatalf("remove broken WAL: %v", err)
+	}
+	if err := cm.Insert("healthy", "one", randomVec(4), nil); err != nil {
+		t.Fatalf("insert healthy: %v", err)
+	}
+
+	n, err := cm.CheckpointIfWALExceeds(0)
+	if n != 1 {
+		t.Fatalf("compacted %d healthy collections, want 1", n)
+	}
+	if err == nil || !strings.Contains(err.Error(), `checkpoint "broken"`) {
+		t.Fatalf("aggregate error = %v, want broken collection context", err)
 	}
 }

@@ -59,6 +59,10 @@ type Levara struct {
 	dim int
 
 	wal *WAL
+	// walCheckpointBaseline is the durable WAL size at successful startup or
+	// the last successful checkpoint. Background compaction is driven by bytes
+	// appended since this baseline, not by irreducible live WAL size.
+	walCheckpointBaseline int64
 
 	hnsw    *HNSWIndex
 	hnswCfg HNSWConfig
@@ -186,6 +190,11 @@ func NewLevara(dim int, storagePath string, cfg ...HNSWConfig) (*Levara, error) 
 	}
 	metrics.WALRecoveriesTotal.WithLabelValues("ok").Inc()
 	fmt.Printf("Recovered %d records (%d deleted) from WAL\n", insertCount, deleteCount)
+	walInfo, err := os.Stat(wal.Path())
+	if err != nil {
+		return failRecovery(fmt.Errorf("checkpoint baseline: %w", err))
+	}
+	db.walCheckpointBaseline = walInfo.Size()
 
 	// Start background HNSW indexer.
 	go db.indexerLoop()
@@ -866,6 +875,36 @@ func (db *Levara) Close() error {
 func (db *Levara) Checkpoint() error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
+	return db.checkpointLocked()
+}
+
+// checkpointIfWALGrewBy checkpoints after more than threshold bytes have been
+// appended since startup or the last successful checkpoint. The decision and
+// compaction share db.mu so concurrent checks cannot compact the same growth.
+func (db *Levara) checkpointIfWALGrewBy(threshold int64) (bool, error) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	info, err := os.Stat(db.wal.Path())
+	if err != nil {
+		return false, err
+	}
+	if info.Size() < db.walCheckpointBaseline {
+		// The WAL was replaced or truncated outside this checkpoint path.
+		db.walCheckpointBaseline = info.Size()
+		return false, nil
+	}
+	if info.Size()-db.walCheckpointBaseline <= threshold {
+		return false, nil
+	}
+	if err := db.checkpointLocked(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// checkpointLocked compacts the WAL while db.mu is held.
+func (db *Levara) checkpointLocked() error {
 
 	records, err := db.allRecordsLocked()
 	if err != nil {
@@ -917,6 +956,11 @@ func (db *Levara) Checkpoint() error {
 	if err := dir.Sync(); err != nil {
 		return fmt.Errorf("checkpoint published; sync directory: %w", err)
 	}
+	info, err := os.Stat(walPath)
+	if err != nil {
+		return fmt.Errorf("checkpoint published; stat WAL: %w", err)
+	}
+	db.walCheckpointBaseline = info.Size()
 
 	fmt.Printf("Checkpoint complete: %d live records written to compacted WAL\n", count)
 	return nil

@@ -8,11 +8,13 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -576,7 +578,7 @@ func installGracefulShutdown(app *fiber.App, shards []store.ShardHandler, colMan
 }
 
 // registerHealthDetails wires the verbose /health/details endpoint that
-// probes every dependency (Postgres, Neo4j, embed service, LLM, Whisper)
+// probes every dependency (Postgres, Neo4j, embed service, rerank, LLM, Whisper)
 // and reports status + endpoint info per service.
 //
 // Big block (~110 lines) — pulled out of main verbatim to make the
@@ -631,7 +633,7 @@ func registerHealthDetails(app *fiber.App, deps healthDeps) {
 		}
 
 		if deps.rerankEndpoint != "" {
-			services["rerank"] = fiber.Map{"status": "configured", "endpoint": deps.rerankEndpoint, "model": deps.rerankModel}
+			services["rerank"] = probeHTTPDependency(deps.rerankEndpoint, deps.rerankModel, "health", "")
 		} else {
 			services["rerank"] = fiber.Map{"status": "not_configured"}
 		}
@@ -639,16 +641,7 @@ func registerHealthDetails(app *fiber.App, deps healthDeps) {
 		llmEP := os.Getenv("LLM_ENDPOINT")
 		llmMD := os.Getenv("LLM_MODEL")
 		if llmEP != "" {
-			resp, err := healthHTTPGet(llmEP + "/models")
-			if err == nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
-				resp.Body.Close()
-				services["llm"] = fiber.Map{"status": "connected", "endpoint": llmEP, "model": llmMD}
-			} else {
-				if resp != nil {
-					resp.Body.Close()
-				}
-				services["llm"] = fiber.Map{"status": "unreachable", "endpoint": llmEP, "model": llmMD}
-			}
+			services["llm"] = probeHTTPDependency(llmEP, llmMD, "models", os.Getenv("LLM_API_KEY"))
 		} else {
 			services["llm"] = fiber.Map{"status": "not_configured"}
 		}
@@ -715,7 +708,12 @@ func registerHealthDetails(app *fiber.App, deps healthDeps) {
 	})
 }
 
-var healthProbeClient = &http.Client{Timeout: 3 * time.Second}
+var healthProbeClient = &http.Client{
+	Timeout: 3 * time.Second,
+	CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+		return http.ErrUseLastResponse
+	},
+}
 
 func healthHTTPGet(rawURL string) (*http.Response, error) {
 	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
@@ -723,6 +721,136 @@ func healthHTTPGet(rawURL string) (*http.Response, error) {
 		return nil, err
 	}
 	return healthProbeClient.Do(req)
+}
+
+func probeHTTPDependency(endpoint, model, probe string, bearerToken string) fiber.Map {
+	result := fiber.Map{"model": model}
+	probeURL, err := dependencyProbeURL(endpoint, probe)
+	if err != nil {
+		result["status"] = "error"
+		result["error"] = "invalid endpoint"
+		return result
+	}
+	result["endpoint"] = sanitizedDependencyEndpoint(endpoint)
+	req, err := http.NewRequest(http.MethodGet, probeURL, nil)
+	if err != nil {
+		result["status"] = "error"
+		result["error"] = "invalid endpoint"
+		return result
+	}
+	if bearerToken != "" {
+		req.Header.Set("Authorization", "Bearer "+bearerToken)
+	}
+	resp, err := healthProbeClient.Do(req)
+	if err != nil {
+		result["status"] = "unreachable"
+		return result
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		result["status"] = "unavailable"
+		result["http_status"] = resp.StatusCode
+		return result
+	}
+	if probe == "models" && model != "" {
+		status, reason := verifyConfiguredModel(resp.Body, model)
+		result["status"] = status
+		if reason != "" {
+			result["reason"] = reason
+		}
+		return result
+	}
+	if probe == "health" {
+		status, reason := verifyRerankHealth(resp.Body)
+		result["status"] = status
+		if reason != "" {
+			result["reason"] = reason
+		}
+		return result
+	}
+	result["status"] = "connected"
+	return result
+}
+
+func sanitizedDependencyEndpoint(endpoint string) string {
+	u, _ := url.Parse(strings.TrimSpace(endpoint))
+	u.User = nil
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.String()
+}
+
+const maxDependencyProbeBody = 64 << 10
+
+func readBoundedDependencyBody(body io.Reader) ([]byte, bool) {
+	payload, err := io.ReadAll(io.LimitReader(body, maxDependencyProbeBody+1))
+	if err != nil || len(payload) > maxDependencyProbeBody {
+		return nil, false
+	}
+	return payload, true
+}
+
+func verifyConfiguredModel(body io.Reader, model string) (string, string) {
+	payload, ok := readBoundedDependencyBody(body)
+	if !ok {
+		return "unverified", "model_list_unverified"
+	}
+	var envelope map[string]json.RawMessage
+	if json.Unmarshal(payload, &envelope) != nil {
+		return "unverified", "model_list_unverified"
+	}
+	raw, ok := envelope["data"]
+	if !ok {
+		return "unverified", "model_list_unverified"
+	}
+	var models []struct {
+		ID string `json:"id"`
+	}
+	if json.Unmarshal(raw, &models) != nil {
+		return "unverified", "model_list_unverified"
+	}
+	for _, candidate := range models {
+		if candidate.ID == model {
+			return "connected", ""
+		}
+	}
+	return "unavailable", "configured_model_not_listed"
+}
+
+func verifyRerankHealth(body io.Reader) (string, string) {
+	payload, ok := readBoundedDependencyBody(body)
+	if !ok {
+		return "unverified", "health_response_unverified"
+	}
+	var health struct {
+		OK *bool `json:"ok"`
+	}
+	if json.Unmarshal(payload, &health) != nil || health.OK == nil {
+		return "unverified", "health_response_unverified"
+	}
+	if !*health.OK {
+		return "unavailable", "health_not_ready"
+	}
+	return "connected", ""
+}
+
+func dependencyProbeURL(endpoint, probe string) (string, error) {
+	u, err := url.Parse(strings.TrimSpace(endpoint))
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil {
+		return "", fmt.Errorf("invalid dependency endpoint")
+	}
+	path := strings.TrimRight(u.Path, "/")
+	switch probe {
+	case "health":
+		path = strings.TrimSuffix(path, "/rerank")
+	case "models":
+		path = strings.TrimSuffix(path, "/chat/completions")
+	}
+	u.Path = strings.TrimRight(path, "/") + "/" + probe
+	u.RawPath = ""
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.String(), nil
 }
 
 // healthDeps is the bundle of shared deps the verbose health endpoint
