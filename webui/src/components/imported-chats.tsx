@@ -73,7 +73,7 @@ export function ImportedChats({ userId, onAccountChanged }: { userId: string; on
   }, [begin, userId, onAccountChanged])
 
   useEffect(() => {
-    void refresh(null, true)
+    queueMicrotask(() => { void refresh(null, true) })
     const recheck = () => { void refresh(selection.current, true) }
     const credentialsChanged = (event: StorageEvent) => {
       if (event.key === 'levara_token' || event.key === null) recheck()
