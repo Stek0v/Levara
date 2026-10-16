@@ -1,4 +1,4 @@
-package http
+package memories
 
 import (
 	"bufio"
@@ -24,6 +24,9 @@ import (
 // We spin a real net.Listener instead of using app.Test because app.Test
 // buffers the whole response and the SSE handler only returns when the
 // request context is cancelled — which app.Test never does.
+//
+// Moved verbatim from internal/http/memory_events_e2e_test.go with the
+// Phase-1 pilot extraction of the memory REST slice.
 
 func newSSETestServer(t *testing.T) (addr string, cleanup func()) {
 	t.Helper()

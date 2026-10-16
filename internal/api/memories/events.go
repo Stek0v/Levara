@@ -1,7 +1,11 @@
-// memory_events.go — in-process pub/sub for memory mutations, consumed by
+// events.go — in-process pub/sub for memory mutations, consumed by
 // the SSE endpoint at GET /memories/stream so agents can subscribe instead
 // of polling /memories.
-package http
+//
+// Moved verbatim from internal/http/memory_events.go in the Phase-1 pilot
+// extraction (MODERNIZATION_BRIEF.md §3): the bus is consumed exclusively
+// by the memory REST API slice.
+package memories
 
 import (
 	"sync"

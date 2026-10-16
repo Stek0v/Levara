@@ -18,8 +18,9 @@ func memoryScopeTestApp(f *documentHTTPFixture) *fiber.App {
 		c.Locals("user_id", "alice")
 		return c.Next()
 	})
-	app.Get("/memories/:key", getMemoryHandler(f.cfg))
-	app.Post("/memories", saveMemoryHandler(f.cfg))
+	// The handlers now live in internal/api/memories; route through the
+	// registration shim so this regression exercises the real wiring.
+	RegisterMemoryAPI(app, f.cfg)
 	return app
 }
 
@@ -37,7 +38,7 @@ func TestMemorySaveRollsBackWhenIndexIntentFails(t *testing.T) {
 			c.Locals("user_id", "alice")
 			return c.Next()
 		})
-		app.Post("/memories", saveMemoryHandler(cfg))
+		RegisterMemoryAPI(app, cfg)
 		f.exec(`INSERT INTO memories(id,key,value,type,owner_id,collection_name,room,hall,verification_status,source_task_id,source_receipt_ids,created_at,updated_at)
 			VALUES('canonical','atomic','original','project','alice','main','memory','decision','receipt-validated','task-1','["receipt-1"]','2026-10-08','2026-10-08')`)
 		f.exec("DROP TABLE memory_index_jobs")
