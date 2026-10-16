@@ -1,0 +1,87 @@
+graph TD
+    subgraph Clients["Clients & ops"]
+        CMD[cmd/* binaries: server, cli, benchmark, loadtest, backup, reconcile]
+        WEB[webui Next.js dashboard]
+        E2E[tests/ pytest e2e]
+    end
+
+    subgraph API["MCP/HTTP API — internal/http 40k LOC, pkg/mcp, pkg/profile, pkg/router"]
+        MCPD[MCP dispatch + tool surface]
+        REST[REST admin + palace API]
+        STRAT[search strategy registry]
+    end
+
+    subgraph GRPC["gRPC API — internal/grpc, proto/ (36 RPCs, v1+v2)"]
+        G1[service.go v1 — partially dead]
+        G2[service_v2.go v2]
+    end
+
+    subgraph MEM["Memory system — pkg/memoryhall, memoryindex, consolidate"]
+        RECALL[recall + halls]
+        CONS[consolidation + supersession]
+    end
+
+    subgraph SEARCH["Search & retrieval — pkg/bm25, aggregator, graphrank, rerank, vsa"]
+        HYBRID[hybrid search + rerank]
+    end
+
+    subgraph AIML["AI/ML pipeline — pkg/embed, embcontract, llm, llmcache, llmproxy, chunker, classify, extract"]
+        EMB[embeddings — external server :9101]
+        LLM[LLM calls — cache + breaker]
+        CHUNK[chunking + extraction]
+    end
+
+    subgraph KG["Knowledge graph — pkg/graph, graphdb, graphstore, orchestrator, ontology, taxonomy, temporal, community"]
+        KGCORE[entities + temporal validity]
+    end
+
+    subgraph INGEST["Ingestion — pkg/ingest, git, chatimport, fetch, audio, fileio"]
+        ING[doc/git/chat ingest + URL fetch]
+    end
+
+    subgraph WORK["Workspace — pkg/workspace"]
+        WS[file workspaces + index jobs]
+    end
+
+    subgraph STORE["Storage & persistence — internal/store WAL, pkg/storage, vectorstore HNSW, sqlcompat, backup"]
+        WAL[(WAL + collections)]
+        HNSW[(HNSW vectors)]
+        SQL[(SQLite / PostgreSQL)]
+    end
+
+    subgraph ENT["Enterprise & auth — pkg/access, auth, agenthosts, audit, internal/contract (cross-cutting)"]
+        RBAC[RBAC + SAML/LDAP + audit]
+    end
+
+    subgraph PLAT["Platform — internal/cluster Raft, metrics, trajectory, pkg/governor, runreg, observe"]
+        RAFT[Raft clustering + telemetry]
+    end
+
+    CMD --> API
+    WEB --> API
+    E2E --> API
+    CMD --> GRPC
+    G1 --> STORE
+    G2 --> STORE
+    G2 --> SEARCH
+    MCPD --> MEM
+    MCPD --> SEARCH
+    MCPD --> KG
+    MCPD --> WORK
+    REST --> MEM
+    REST --> STORE
+    STRAT --> SEARCH
+    STRAT --> KG
+    MEM --> STORE
+    MEM --> AIML
+    CONS --> LLM
+    SEARCH --> HNSW
+    SEARCH --> EMB
+    KG --> STORE
+    ING --> CHUNK
+    ING --> STORE
+    WORK --> ING
+    WORK --> STORE
+    RBAC -.gates.-> API
+    RAFT --> STORE
+    EMB -.external :9101.-> EMBEXT[embed server — Python/MPS, separate runtime]
