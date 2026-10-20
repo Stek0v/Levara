@@ -247,9 +247,7 @@ func RegisterAPI(app fiber.Router, cfg APIConfig) {
 	// U22: Ontology upload (already registered via RegisterAPI for ontology list/upload)
 
 	// U18: Ontology management
-	app.Post("/ontologies", ontologyUploadHandler(cfg))
-	app.Get("/ontologies", ontologyListHandler(cfg))
-	app.Delete("/ontologies/:id", ontologyDeleteHandler(cfg))
+	registerOntologiesAPI(app, cfg)
 
 	// U10: RBAC — dataset sharing + permissions
 	RegisterRBACAPI(app, cfg)
