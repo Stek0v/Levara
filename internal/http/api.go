@@ -186,13 +186,7 @@ func RegisterAPI(app fiber.Router, cfg APIConfig) {
 	// carry dataset/document ACLs, so authenticated deployments keep them on
 	// the administrator surface.
 	adminOnly := GlobalResourceAdminOnly(cfg)
-	app.Get("/collections", adminOnly, collectionsListHandler(cfg))
-	app.Post("/collections", adminOnly, collectionCreateHandler(cfg))
-	app.Delete("/collections/:name", adminOnly, collectionDeleteHandler(cfg))
-	app.Delete("/collections/:name/records/:id", adminOnly, collectionRecordDeleteHandler(cfg))
-	app.Get("/collections/:name/meta", adminOnly, collectionMetaHandler(cfg))
-	app.Put("/collections/:name/meta", adminOnly, collectionMetaUpdateHandler(cfg))
-	app.Post("/collections/:name/rename", adminOnly, collectionRenameHandler(cfg))
+	registerCollectionsAPI(app, cfg, adminOnly)
 
 	// Phase 2: rerank info surface (resolves design open question — clients
 	// need a cheap way to confirm which reranker variant is configured).

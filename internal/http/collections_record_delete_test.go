@@ -29,7 +29,9 @@ func newRecordDeleteApp(t *testing.T) (*fiber.App, *store.CollectionManager, fun
 		t.Fatalf("NewCollectionManager: %v", err)
 	}
 	app := fiber.New(fiber.Config{DisableStartupMessage: true})
-	app.Delete("/collections/:name/records/:id", collectionRecordDeleteHandler(APIConfig{Collections: cm}))
+	// The handlers live in internal/api/collections now; route through the
+	// registration shim so this contract test exercises the real wiring.
+	registerCollectionsAPI(app, APIConfig{Collections: cm}, func(c *fiber.Ctx) error { return c.Next() })
 	cleanup := func() {
 		_ = cm.Close()
 		os.RemoveAll(dir)
