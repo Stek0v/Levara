@@ -1,0 +1,36 @@
+graph TD
+    %% Domain-level call graph — entry points highlighted (code-modernization map)
+    SERVER{{"★ cmd/server"}}
+    CLI{{"★ cmd/cli + 8 cmd/*"}}
+    WEBUI{{"★ webui (Next.js)"}}
+    E2E{{"★ tests (pytest e2e)"}}
+
+    SERVER --> API[MCP/HTTP API<br/>internal/http · pkg/mcp · profile · router<br/>54.3k LOC]
+    SERVER --> GRPC[gRPC v1+v2<br/>internal/grpc · proto<br/>14.3k LOC]
+    CLI --> API
+    WEBUI --> API
+    E2E --> API
+
+    API --> MEM[Memory<br/>memoryhall · memoryindex · consolidate]
+    API --> SEARCH[Search & rerank<br/>bm25 · aggregator · graphrank · vsa]
+    API --> KG[Knowledge graph<br/>orchestrator · temporal · graphdb · community]
+    API --> WORK[Workspace]
+    API --> AIML2[AI/ML]
+    GRPC --> STORE
+    GRPC --> SEARCH
+
+    MEM --> STORE[Storage<br/>internal/store WAL · storage · vectorstore · sqlcompat · backup]
+    MEM --> AIML[AI/ML pipeline<br/>embed · llm · llmcache · chunker · classify<br/>11 pkgs]
+    SEARCH --> AIML
+    SEARCH --> STORE
+    KG --> STORE
+    ING[Ingestion<br/>ingest · git · chatimport · fetch · audio] --> AIML
+    ING --> STORE
+    WORK --> ING
+    ENT[Enterprise<br/>access · auth · audit · contract] -.gates.-> API
+    PLAT[Platform<br/>cluster Raft · metrics · governor · runreg] --> STORE
+
+    EMB(("embed :9101<br/>external"))
+    LLM(("ollama<br/>external"))
+    AIML -.-> EMB
+    AIML -.-> LLM

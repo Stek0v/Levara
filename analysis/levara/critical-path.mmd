@@ -1,0 +1,16 @@
+flowchart TD
+    %% Primary persona flow: agent saves & recalls a memory.
+    %% Latency annotations from prod telemetry :8081/metrics, 2026-10-15.
+    A["Agent: save_memory"] -->|"p50 0.05s · p99 0.5s"| B["MCP dispatch<br/>internal/http + pkg/mcp"]
+    B --> C["memoryhall: hall + pin policy"]
+    C --> D["WAL append<br/>internal/store"]
+    C --> E["pkg/embed → embed server :9101<br/>⚠ external, p50 ~10s batch"]
+    E --> F["HNSW insert<br/>pkg/vectorstore"]
+
+    G["Agent (later session): recall_memory"] -->|"p50 0.01s when embed warm<br/>p95 10s+ when embed slow ⚠"| H["MCP dispatch"]
+    H --> I["Hybrid search<br/>bm25 + HNSW scan + rerank"]
+    I --> J["memoryindex ranking"]
+    J --> K["Ranked memories to agent"]
+
+    style E stroke:#cc785c,stroke-width:2px
+    style G stroke:#cc785c,stroke-width:2px

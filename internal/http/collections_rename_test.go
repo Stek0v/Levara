@@ -30,7 +30,7 @@ func newRenameApp(t *testing.T) (*fiber.App, *store.CollectionManager, func()) {
 		t.Fatalf("NewCollectionManager: %v", err)
 	}
 	app := fiber.New(fiber.Config{DisableStartupMessage: true})
-	app.Post("/collections/:name/rename", collectionRenameHandler(APIConfig{Collections: cm}))
+	registerCollectionsAPI(app, APIConfig{Collections: cm}, func(c *fiber.Ctx) error { return c.Next() })
 	cleanup := func() {
 		_ = cm.Close()
 		os.RemoveAll(dir)
@@ -137,7 +137,7 @@ func TestCollectionRenameHandler_MissingNewName(t *testing.T) {
 
 func TestCollectionRenameHandler_NoCollections(t *testing.T) {
 	app := fiber.New(fiber.Config{DisableStartupMessage: true})
-	app.Post("/collections/:name/rename", collectionRenameHandler(APIConfig{}))
+	registerCollectionsAPI(app, APIConfig{}, func(c *fiber.Ctx) error { return c.Next() })
 	r := httptest.NewRequest("POST", "/collections/foo/rename",
 		bytes.NewReader([]byte(`{"new_name":"bar"}`)))
 	r.Header.Set("Content-Type", "application/json")

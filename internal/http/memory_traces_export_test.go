@@ -38,6 +38,12 @@ func TestMemoryTraceExportStreamsGoodSanitizedJSONL(t *testing.T) {
 	}
 	body := string(raw)
 	scanner := bufio.NewScanner(strings.NewReader(body))
+	// The handler lives in internal/api/memtraces now; this test asserts the
+	// wire shape, so it defines its own mirror of the export DTO.
+	type curatedMemoryTrace struct {
+		TrajectoryID string `json:"trajectory_id"`
+		ReasonLabel  string `json:"reason_label"`
+	}
 	var rows []curatedMemoryTrace
 	for scanner.Scan() {
 		var row curatedMemoryTrace

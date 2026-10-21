@@ -186,13 +186,7 @@ func RegisterAPI(app fiber.Router, cfg APIConfig) {
 	// carry dataset/document ACLs, so authenticated deployments keep them on
 	// the administrator surface.
 	adminOnly := GlobalResourceAdminOnly(cfg)
-	app.Get("/collections", adminOnly, collectionsListHandler(cfg))
-	app.Post("/collections", adminOnly, collectionCreateHandler(cfg))
-	app.Delete("/collections/:name", adminOnly, collectionDeleteHandler(cfg))
-	app.Delete("/collections/:name/records/:id", adminOnly, collectionRecordDeleteHandler(cfg))
-	app.Get("/collections/:name/meta", adminOnly, collectionMetaHandler(cfg))
-	app.Put("/collections/:name/meta", adminOnly, collectionMetaUpdateHandler(cfg))
-	app.Post("/collections/:name/rename", adminOnly, collectionRenameHandler(cfg))
+	registerCollectionsAPI(app, cfg, adminOnly)
 
 	// Phase 2: rerank info surface (resolves design open question — clients
 	// need a cheap way to confirm which reranker variant is configured).
@@ -253,9 +247,7 @@ func RegisterAPI(app fiber.Router, cfg APIConfig) {
 	// U22: Ontology upload (already registered via RegisterAPI for ontology list/upload)
 
 	// U18: Ontology management
-	app.Post("/ontologies", ontologyUploadHandler(cfg))
-	app.Get("/ontologies", ontologyListHandler(cfg))
-	app.Delete("/ontologies/:id", ontologyDeleteHandler(cfg))
+	registerOntologiesAPI(app, cfg)
 
 	// U10: RBAC — dataset sharing + permissions
 	RegisterRBACAPI(app, cfg)

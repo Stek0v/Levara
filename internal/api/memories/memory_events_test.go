@@ -1,10 +1,13 @@
-package http
+package memories
 
 import (
 	"sync"
 	"testing"
 	"time"
 )
+
+// Moved verbatim from internal/http/memory_events_test.go with the
+// Phase-1 pilot extraction of the memory REST slice.
 
 func TestMemoryBus_SubscribePublishReceive(t *testing.T) {
 	bus := &memoryBus{subs: make(map[uint64]chan MemoryEvent)}

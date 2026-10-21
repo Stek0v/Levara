@@ -1,0 +1,34 @@
+graph LR
+    %% Data lineage — write ◀── | read ──▶ (domain-role heuristic, see observations)
+    subgraph writers
+        APIW[API/MCP]
+        MEMW[Memory system]
+        INGW[Ingestion]
+        GRW[gRPC API]
+        WS[Workspace]
+    end
+    subgraph readers
+        SRCH[Search & rerank]
+        KGR[Knowledge graph]
+        BK[backup / cmd/backup]
+    end
+
+    WAL[(WAL + collections<br/>internal/store)]
+    SQL[(SQLite + PostgreSQL<br/>via sqlcompat)]
+    NEO[(Neo4j)]
+    HNSW[(HNSW vectors)]
+
+    APIW -- write --> WAL
+    MEMW -- write --> WAL
+    INGW -- write --> SQL
+    GRW -- write --> WAL
+    WS -- write --> SQL
+    MEMW -- write --> HNSW
+    KGR -- write --> NEO
+
+    SRCH -- read --> HNSW
+    SRCH -- read --> SQL
+    KGR -- read --> NEO
+    APIW -- read --> SQL
+    BK -- read --> WAL
+    BK -- read --> SQL

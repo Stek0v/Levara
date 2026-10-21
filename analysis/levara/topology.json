@@ -1,0 +1,1875 @@
+{
+ "system": "Levara",
+ "root": {
+  "id": "sys",
+  "name": "Levara",
+  "kind": "system",
+  "children": [
+   {
+    "id": "dom:clients",
+    "name": "Clients",
+    "kind": "domain",
+    "children": [
+     {
+      "id": "cmd/agent-hosts",
+      "name": "agent-hosts",
+      "kind": "module",
+      "language": "go",
+      "loc": 46,
+      "file": "cmd/agent-hosts",
+      "domain": "clients"
+     },
+     {
+      "id": "cmd/audit",
+      "name": "audit",
+      "kind": "module",
+      "language": "go",
+      "loc": 89,
+      "file": "cmd/audit",
+      "domain": "clients"
+     },
+     {
+      "id": "cmd/backup",
+      "name": "backup",
+      "kind": "module",
+      "language": "go",
+      "loc": 224,
+      "file": "cmd/backup",
+      "domain": "clients"
+     },
+     {
+      "id": "cmd/benchmark",
+      "name": "benchmark",
+      "kind": "module",
+      "language": "go",
+      "loc": 152,
+      "file": "cmd/benchmark",
+      "domain": "clients"
+     },
+     {
+      "id": "cmd/cli",
+      "name": "cli",
+      "kind": "module",
+      "language": "go",
+      "loc": 3585,
+      "file": "cmd/cli",
+      "domain": "clients"
+     },
+     {
+      "id": "cmd/contract",
+      "name": "contract",
+      "kind": "module",
+      "language": "go",
+      "loc": 339,
+      "file": "cmd/contract",
+      "domain": "clients"
+     },
+     {
+      "id": "cmd/loadtest",
+      "name": "loadtest",
+      "kind": "module",
+      "language": "go",
+      "loc": 122,
+      "file": "cmd/loadtest",
+      "domain": "clients"
+     },
+     {
+      "id": "cmd/qwen3rerank",
+      "name": "qwen3rerank",
+      "kind": "module",
+      "language": "go",
+      "loc": 90,
+      "file": "cmd/qwen3rerank",
+      "domain": "clients"
+     },
+     {
+      "id": "cmd/reconcile",
+      "name": "reconcile",
+      "kind": "module",
+      "language": "go",
+      "loc": 328,
+      "file": "cmd/reconcile",
+      "domain": "clients"
+     },
+     {
+      "id": "cmd/server",
+      "name": "server",
+      "kind": "module",
+      "language": "go",
+      "loc": 4707,
+      "file": "cmd/server",
+      "domain": "clients"
+     },
+     {
+      "id": "tests",
+      "name": "tests (pytest e2e)",
+      "kind": "module",
+      "language": "py",
+      "loc": 13224,
+      "file": "tests",
+      "domain": "clients"
+     },
+     {
+      "id": "webui",
+      "name": "webui (Next.js)",
+      "kind": "module",
+      "language": "ts",
+      "loc": 11446,
+      "file": "webui",
+      "domain": "clients"
+     }
+    ]
+   },
+   {
+    "id": "dom:api",
+    "name": "Api",
+    "kind": "domain",
+    "children": [
+     {
+      "id": "internal/http",
+      "name": "http",
+      "kind": "module",
+      "language": "go",
+      "loc": 40406,
+      "file": "internal/http",
+      "domain": "api"
+     },
+     {
+      "id": "pkg/mcp",
+      "name": "mcp",
+      "kind": "module",
+      "language": "go",
+      "loc": 13266,
+      "file": "pkg/mcp",
+      "domain": "api"
+     },
+     {
+      "id": "pkg/profile",
+      "name": "profile",
+      "kind": "module",
+      "language": "go",
+      "loc": 139,
+      "file": "pkg/profile",
+      "domain": "api"
+     },
+     {
+      "id": "pkg/router",
+      "name": "router",
+      "kind": "module",
+      "language": "go",
+      "loc": 488,
+      "file": "pkg/router",
+      "domain": "api"
+     }
+    ]
+   },
+   {
+    "id": "dom:grpc-api",
+    "name": "Grpc Api",
+    "kind": "domain",
+    "children": [
+     {
+      "id": "internal/grpc",
+      "name": "grpc",
+      "kind": "module",
+      "language": "go",
+      "loc": 2944,
+      "file": "internal/grpc",
+      "domain": "grpc-api"
+     },
+     {
+      "id": "proto/pb",
+      "name": "pb",
+      "kind": "module",
+      "language": "go",
+      "loc": 9771,
+      "file": "proto/pb",
+      "domain": "grpc-api"
+     },
+     {
+      "id": "proto/pb/v2",
+      "name": "v2",
+      "kind": "module",
+      "language": "go",
+      "loc": 1587,
+      "file": "proto/pb/v2",
+      "domain": "grpc-api"
+     }
+    ]
+   },
+   {
+    "id": "dom:memory",
+    "name": "Memory",
+    "kind": "domain",
+    "children": [
+     {
+      "id": "pkg/consolidate",
+      "name": "consolidate",
+      "kind": "module",
+      "language": "go",
+      "loc": 645,
+      "file": "pkg/consolidate",
+      "domain": "memory"
+     },
+     {
+      "id": "pkg/memoryhall",
+      "name": "memoryhall",
+      "kind": "module",
+      "language": "go",
+      "loc": 17,
+      "file": "pkg/memoryhall",
+      "domain": "memory"
+     },
+     {
+      "id": "pkg/memoryindex",
+      "name": "memoryindex",
+      "kind": "module",
+      "language": "go",
+      "loc": 337,
+      "file": "pkg/memoryindex",
+      "domain": "memory"
+     }
+    ]
+   },
+   {
+    "id": "dom:search",
+    "name": "Search",
+    "kind": "domain",
+    "children": [
+     {
+      "id": "pkg/aggregator",
+      "name": "aggregator",
+      "kind": "module",
+      "language": "go",
+      "loc": 127,
+      "file": "pkg/aggregator",
+      "domain": "search"
+     },
+     {
+      "id": "pkg/bm25",
+      "name": "bm25",
+      "kind": "module",
+      "language": "go",
+      "loc": 1137,
+      "file": "pkg/bm25",
+      "domain": "search"
+     },
+     {
+      "id": "pkg/graphrank",
+      "name": "graphrank",
+      "kind": "module",
+      "language": "go",
+      "loc": 250,
+      "file": "pkg/graphrank",
+      "domain": "search"
+     },
+     {
+      "id": "pkg/rerank",
+      "name": "rerank",
+      "kind": "module",
+      "language": "go",
+      "loc": 528,
+      "file": "pkg/rerank",
+      "domain": "search"
+     },
+     {
+      "id": "pkg/vsa",
+      "name": "vsa",
+      "kind": "module",
+      "language": "go",
+      "loc": 153,
+      "file": "pkg/vsa",
+      "domain": "search"
+     },
+     {
+      "id": "pkg/vsamemory",
+      "name": "vsamemory",
+      "kind": "module",
+      "language": "go",
+      "loc": 656,
+      "file": "pkg/vsamemory",
+      "domain": "search"
+     }
+    ]
+   },
+   {
+    "id": "dom:ai-ml",
+    "name": "Ai Ml",
+    "kind": "domain",
+    "children": [
+     {
+      "id": "pkg/chunker",
+      "name": "chunker",
+      "kind": "module",
+      "language": "go",
+      "loc": 821,
+      "file": "pkg/chunker",
+      "domain": "ai-ml"
+     },
+     {
+      "id": "pkg/classify",
+      "name": "classify",
+      "kind": "module",
+      "language": "go",
+      "loc": 115,
+      "file": "pkg/classify",
+      "domain": "ai-ml"
+     },
+     {
+      "id": "pkg/docdetect",
+      "name": "docdetect",
+      "kind": "module",
+      "language": "go",
+      "loc": 262,
+      "file": "pkg/docdetect",
+      "domain": "ai-ml"
+     },
+     {
+      "id": "pkg/embcontract",
+      "name": "embcontract",
+      "kind": "module",
+      "language": "go",
+      "loc": 169,
+      "file": "pkg/embcontract",
+      "domain": "ai-ml"
+     },
+     {
+      "id": "pkg/embed",
+      "name": "embed",
+      "kind": "module",
+      "language": "go",
+      "loc": 1018,
+      "file": "pkg/embed",
+      "domain": "ai-ml"
+     },
+     {
+      "id": "pkg/extract",
+      "name": "extract",
+      "kind": "module",
+      "language": "go",
+      "loc": 768,
+      "file": "pkg/extract",
+      "domain": "ai-ml"
+     },
+     {
+      "id": "pkg/llm",
+      "name": "llm",
+      "kind": "module",
+      "language": "go",
+      "loc": 1003,
+      "file": "pkg/llm",
+      "domain": "ai-ml"
+     },
+     {
+      "id": "pkg/llm/mock",
+      "name": "mock",
+      "kind": "module",
+      "language": "go",
+      "loc": 134,
+      "file": "pkg/llm/mock",
+      "domain": "ai-ml"
+     },
+     {
+      "id": "pkg/llmcache",
+      "name": "llmcache",
+      "kind": "module",
+      "language": "go",
+      "loc": 258,
+      "file": "pkg/llmcache",
+      "domain": "ai-ml"
+     },
+     {
+      "id": "pkg/llmproxy",
+      "name": "llmproxy",
+      "kind": "module",
+      "language": "go",
+      "loc": 321,
+      "file": "pkg/llmproxy",
+      "domain": "ai-ml"
+     },
+     {
+      "id": "pkg/structuredextract",
+      "name": "structuredextract",
+      "kind": "module",
+      "language": "go",
+      "loc": 206,
+      "file": "pkg/structuredextract",
+      "domain": "ai-ml"
+     }
+    ]
+   },
+   {
+    "id": "dom:knowledge-graph",
+    "name": "Knowledge Graph",
+    "kind": "domain",
+    "children": [
+     {
+      "id": "pkg/community",
+      "name": "community",
+      "kind": "module",
+      "language": "go",
+      "loc": 1923,
+      "file": "pkg/community",
+      "domain": "knowledge-graph"
+     },
+     {
+      "id": "pkg/graph",
+      "name": "graph",
+      "kind": "module",
+      "language": "go",
+      "loc": 921,
+      "file": "pkg/graph",
+      "domain": "knowledge-graph"
+     },
+     {
+      "id": "pkg/graphdb",
+      "name": "graphdb",
+      "kind": "module",
+      "language": "go",
+      "loc": 1480,
+      "file": "pkg/graphdb",
+      "domain": "knowledge-graph"
+     },
+     {
+      "id": "pkg/graphstore",
+      "name": "graphstore",
+      "kind": "module",
+      "language": "go",
+      "loc": 996,
+      "file": "pkg/graphstore",
+      "domain": "knowledge-graph"
+     },
+     {
+      "id": "pkg/ontology",
+      "name": "ontology",
+      "kind": "module",
+      "language": "go",
+      "loc": 221,
+      "file": "pkg/ontology",
+      "domain": "knowledge-graph"
+     },
+     {
+      "id": "pkg/orchestrator",
+      "name": "orchestrator",
+      "kind": "module",
+      "language": "go",
+      "loc": 1664,
+      "file": "pkg/orchestrator",
+      "domain": "knowledge-graph"
+     },
+     {
+      "id": "pkg/taxonomy",
+      "name": "taxonomy",
+      "kind": "module",
+      "language": "go",
+      "loc": 703,
+      "file": "pkg/taxonomy",
+      "domain": "knowledge-graph"
+     },
+     {
+      "id": "pkg/temporal",
+      "name": "temporal",
+      "kind": "module",
+      "language": "go",
+      "loc": 396,
+      "file": "pkg/temporal",
+      "domain": "knowledge-graph"
+     }
+    ]
+   },
+   {
+    "id": "dom:ingestion",
+    "name": "Ingestion",
+    "kind": "domain",
+    "children": [
+     {
+      "id": "pkg/audio",
+      "name": "audio",
+      "kind": "module",
+      "language": "go",
+      "loc": 144,
+      "file": "pkg/audio",
+      "domain": "ingestion"
+     },
+     {
+      "id": "pkg/chatimport",
+      "name": "chatimport",
+      "kind": "module",
+      "language": "go",
+      "loc": 2433,
+      "file": "pkg/chatimport",
+      "domain": "ingestion"
+     },
+     {
+      "id": "pkg/fetch",
+      "name": "fetch",
+      "kind": "module",
+      "language": "go",
+      "loc": 244,
+      "file": "pkg/fetch",
+      "domain": "ingestion"
+     },
+     {
+      "id": "pkg/fileio",
+      "name": "fileio",
+      "kind": "module",
+      "language": "go",
+      "loc": 173,
+      "file": "pkg/fileio",
+      "domain": "ingestion"
+     },
+     {
+      "id": "pkg/git",
+      "name": "git",
+      "kind": "module",
+      "language": "go",
+      "loc": 153,
+      "file": "pkg/git",
+      "domain": "ingestion"
+     },
+     {
+      "id": "pkg/ingest",
+      "name": "ingest",
+      "kind": "module",
+      "language": "go",
+      "loc": 1505,
+      "file": "pkg/ingest",
+      "domain": "ingestion"
+     }
+    ]
+   },
+   {
+    "id": "dom:workspace",
+    "name": "Workspace",
+    "kind": "domain",
+    "children": [
+     {
+      "id": "pkg/workspace",
+      "name": "workspace",
+      "kind": "module",
+      "language": "go",
+      "loc": 1629,
+      "file": "pkg/workspace",
+      "domain": "workspace"
+     }
+    ]
+   },
+   {
+    "id": "dom:storage",
+    "name": "Storage",
+    "kind": "domain",
+    "children": [
+     {
+      "id": "internal/store",
+      "name": "store",
+      "kind": "module",
+      "language": "go",
+      "loc": 4525,
+      "file": "internal/store",
+      "domain": "storage"
+     },
+     {
+      "id": "pkg/backup",
+      "name": "backup",
+      "kind": "module",
+      "language": "go",
+      "loc": 2374,
+      "file": "pkg/backup",
+      "domain": "storage"
+     },
+     {
+      "id": "pkg/sqlcompat",
+      "name": "sqlcompat",
+      "kind": "module",
+      "language": "go",
+      "loc": 35,
+      "file": "pkg/sqlcompat",
+      "domain": "storage"
+     },
+     {
+      "id": "pkg/storage",
+      "name": "storage",
+      "kind": "module",
+      "language": "go",
+      "loc": 2526,
+      "file": "pkg/storage",
+      "domain": "storage"
+     },
+     {
+      "id": "pkg/vectorstore",
+      "name": "vectorstore",
+      "kind": "module",
+      "language": "go",
+      "loc": 344,
+      "file": "pkg/vectorstore",
+      "domain": "storage"
+     }
+    ]
+   },
+   {
+    "id": "dom:enterprise",
+    "name": "Enterprise",
+    "kind": "domain",
+    "children": [
+     {
+      "id": "internal/contract",
+      "name": "contract",
+      "kind": "module",
+      "language": "go",
+      "loc": 94,
+      "file": "internal/contract",
+      "domain": "enterprise"
+     },
+     {
+      "id": "pkg/access",
+      "name": "access",
+      "kind": "module",
+      "language": "go",
+      "loc": 5009,
+      "file": "pkg/access",
+      "domain": "enterprise"
+     },
+     {
+      "id": "pkg/agenthosts",
+      "name": "agenthosts",
+      "kind": "module",
+      "language": "go",
+      "loc": 223,
+      "file": "pkg/agenthosts",
+      "domain": "enterprise"
+     },
+     {
+      "id": "pkg/audit",
+      "name": "audit",
+      "kind": "module",
+      "language": "go",
+      "loc": 2339,
+      "file": "pkg/audit",
+      "domain": "enterprise"
+     },
+     {
+      "id": "pkg/auth",
+      "name": "auth",
+      "kind": "module",
+      "language": "go",
+      "loc": 865,
+      "file": "pkg/auth",
+      "domain": "enterprise"
+     }
+    ]
+   },
+   {
+    "id": "dom:platform",
+    "name": "Platform",
+    "kind": "domain",
+    "children": [
+     {
+      "id": "internal/cluster",
+      "name": "cluster",
+      "kind": "module",
+      "language": "go",
+      "loc": 912,
+      "file": "internal/cluster",
+      "domain": "platform"
+     },
+     {
+      "id": "internal/metrics",
+      "name": "metrics",
+      "kind": "module",
+      "language": "go",
+      "loc": 600,
+      "file": "internal/metrics",
+      "domain": "platform"
+     },
+     {
+      "id": "internal/trajectory",
+      "name": "trajectory",
+      "kind": "module",
+      "language": "go",
+      "loc": 310,
+      "file": "internal/trajectory",
+      "domain": "platform"
+     },
+     {
+      "id": "pkg/governor",
+      "name": "governor",
+      "kind": "module",
+      "language": "go",
+      "loc": 409,
+      "file": "pkg/governor",
+      "domain": "platform"
+     },
+     {
+      "id": "pkg/observe",
+      "name": "observe",
+      "kind": "module",
+      "language": "go",
+      "loc": 401,
+      "file": "pkg/observe",
+      "domain": "platform"
+     },
+     {
+      "id": "pkg/runreg",
+      "name": "runreg",
+      "kind": "module",
+      "language": "go",
+      "loc": 202,
+      "file": "pkg/runreg",
+      "domain": "platform"
+     }
+    ]
+   },
+   {
+    "id": "dom:data",
+    "name": "Data",
+    "kind": "domain",
+    "children": [
+     {
+      "id": "ds:embedsrv",
+      "name": "Embed server :9101 (external Python/MPS)",
+      "kind": "datastore",
+      "domain": "data"
+     },
+     {
+      "id": "ds:hnsw",
+      "name": "HNSW vector index",
+      "kind": "datastore",
+      "domain": "data"
+     },
+     {
+      "id": "ds:neo4j",
+      "name": "Neo4j graph",
+      "kind": "datastore",
+      "domain": "data"
+     },
+     {
+      "id": "ds:ollama",
+      "name": "Ollama LLM runtime (external)",
+      "kind": "datastore",
+      "domain": "data"
+     },
+     {
+      "id": "ds:postgres",
+      "name": "PostgreSQL (pgx)",
+      "kind": "datastore",
+      "domain": "data"
+     },
+     {
+      "id": "ds:sqlite",
+      "name": "SQLite (ncruces)",
+      "kind": "datastore",
+      "domain": "data"
+     },
+     {
+      "id": "ds:wal",
+      "name": "WAL + collections (internal/store)",
+      "kind": "datastore",
+      "domain": "data"
+     }
+    ]
+   }
+  ]
+ },
+ "edges": [
+  {
+   "source": "cmd/agent-hosts",
+   "target": "pkg/agenthosts",
+   "kind": "call"
+  },
+  {
+   "source": "cmd/audit",
+   "target": "pkg/audit",
+   "kind": "call"
+  },
+  {
+   "source": "cmd/backup",
+   "target": "pkg/backup",
+   "kind": "call"
+  },
+  {
+   "source": "cmd/benchmark",
+   "target": "internal/cluster",
+   "kind": "call"
+  },
+  {
+   "source": "cmd/benchmark",
+   "target": "internal/metrics",
+   "kind": "call"
+  },
+  {
+   "source": "cmd/benchmark",
+   "target": "internal/store",
+   "kind": "call"
+  },
+  {
+   "source": "cmd/cli",
+   "target": "pkg/chatimport",
+   "kind": "call"
+  },
+  {
+   "source": "cmd/contract",
+   "target": "internal/contract",
+   "kind": "call"
+  },
+  {
+   "source": "cmd/contract",
+   "target": "internal/grpc",
+   "kind": "call"
+  },
+  {
+   "source": "cmd/contract",
+   "target": "internal/http",
+   "kind": "call"
+  },
+  {
+   "source": "cmd/contract",
+   "target": "pkg/mcp",
+   "kind": "call"
+  },
+  {
+   "source": "cmd/qwen3rerank",
+   "target": "pkg/rerank",
+   "kind": "call"
+  },
+  {
+   "source": "cmd/server",
+   "target": "internal/cluster",
+   "kind": "call"
+  },
+  {
+   "source": "cmd/server",
+   "target": "internal/grpc",
+   "kind": "call"
+  },
+  {
+   "source": "cmd/server",
+   "target": "internal/http",
+   "kind": "call"
+  },
+  {
+   "source": "cmd/server",
+   "target": "internal/metrics",
+   "kind": "call"
+  },
+  {
+   "source": "cmd/server",
+   "target": "internal/store",
+   "kind": "call"
+  },
+  {
+   "source": "cmd/server",
+   "target": "pkg/access",
+   "kind": "call"
+  },
+  {
+   "source": "cmd/server",
+   "target": "pkg/audit",
+   "kind": "call"
+  },
+  {
+   "source": "cmd/server",
+   "target": "pkg/auth",
+   "kind": "call"
+  },
+  {
+   "source": "cmd/server",
+   "target": "pkg/backup",
+   "kind": "call"
+  },
+  {
+   "source": "cmd/server",
+   "target": "pkg/bm25",
+   "kind": "call"
+  },
+  {
+   "source": "cmd/server",
+   "target": "pkg/consolidate",
+   "kind": "call"
+  },
+  {
+   "source": "cmd/server",
+   "target": "pkg/embcontract",
+   "kind": "call"
+  },
+  {
+   "source": "cmd/server",
+   "target": "pkg/embed",
+   "kind": "call"
+  },
+  {
+   "source": "cmd/server",
+   "target": "pkg/graphdb",
+   "kind": "call"
+  },
+  {
+   "source": "cmd/server",
+   "target": "pkg/ingest",
+   "kind": "call"
+  },
+  {
+   "source": "cmd/server",
+   "target": "pkg/llm",
+   "kind": "call"
+  },
+  {
+   "source": "cmd/server",
+   "target": "pkg/llmcache",
+   "kind": "call"
+  },
+  {
+   "source": "cmd/server",
+   "target": "pkg/llmproxy",
+   "kind": "call"
+  },
+  {
+   "source": "cmd/server",
+   "target": "pkg/mcp",
+   "kind": "call"
+  },
+  {
+   "source": "cmd/server",
+   "target": "pkg/memoryindex",
+   "kind": "call"
+  },
+  {
+   "source": "cmd/server",
+   "target": "pkg/observe",
+   "kind": "call"
+  },
+  {
+   "source": "cmd/server",
+   "target": "pkg/profile",
+   "kind": "call"
+  },
+  {
+   "source": "cmd/server",
+   "target": "pkg/router",
+   "kind": "call"
+  },
+  {
+   "source": "cmd/server",
+   "target": "pkg/runreg",
+   "kind": "call"
+  },
+  {
+   "source": "cmd/server",
+   "target": "pkg/storage",
+   "kind": "call"
+  },
+  {
+   "source": "cmd/server",
+   "target": "proto/pb",
+   "kind": "call"
+  },
+  {
+   "source": "cmd/server",
+   "target": "proto/pb/v2",
+   "kind": "call"
+  },
+  {
+   "source": "internal/cluster",
+   "target": "internal/metrics",
+   "kind": "call"
+  },
+  {
+   "source": "internal/cluster",
+   "target": "internal/store",
+   "kind": "call"
+  },
+  {
+   "source": "internal/grpc",
+   "target": "internal/contract",
+   "kind": "call"
+  },
+  {
+   "source": "internal/grpc",
+   "target": "internal/metrics",
+   "kind": "call"
+  },
+  {
+   "source": "internal/grpc",
+   "target": "internal/store",
+   "kind": "call"
+  },
+  {
+   "source": "internal/grpc",
+   "target": "pkg/access",
+   "kind": "call"
+  },
+  {
+   "source": "internal/grpc",
+   "target": "pkg/aggregator",
+   "kind": "call"
+  },
+  {
+   "source": "internal/grpc",
+   "target": "pkg/auth",
+   "kind": "call"
+  },
+  {
+   "source": "internal/grpc",
+   "target": "pkg/bm25",
+   "kind": "call"
+  },
+  {
+   "source": "internal/grpc",
+   "target": "pkg/chunker",
+   "kind": "call"
+  },
+  {
+   "source": "internal/grpc",
+   "target": "pkg/embed",
+   "kind": "call"
+  },
+  {
+   "source": "internal/grpc",
+   "target": "pkg/extract",
+   "kind": "call"
+  },
+  {
+   "source": "internal/grpc",
+   "target": "pkg/fileio",
+   "kind": "call"
+  },
+  {
+   "source": "internal/grpc",
+   "target": "pkg/graph",
+   "kind": "call"
+  },
+  {
+   "source": "internal/grpc",
+   "target": "pkg/graphdb",
+   "kind": "call"
+  },
+  {
+   "source": "internal/grpc",
+   "target": "pkg/ingest",
+   "kind": "call"
+  },
+  {
+   "source": "internal/grpc",
+   "target": "pkg/llmcache",
+   "kind": "call"
+  },
+  {
+   "source": "internal/grpc",
+   "target": "pkg/orchestrator",
+   "kind": "call"
+  },
+  {
+   "source": "internal/grpc",
+   "target": "pkg/rerank",
+   "kind": "call"
+  },
+  {
+   "source": "internal/grpc",
+   "target": "pkg/storage",
+   "kind": "call"
+  },
+  {
+   "source": "internal/grpc",
+   "target": "pkg/temporal",
+   "kind": "call"
+  },
+  {
+   "source": "internal/grpc",
+   "target": "proto/pb",
+   "kind": "call"
+  },
+  {
+   "source": "internal/grpc",
+   "target": "proto/pb/v2",
+   "kind": "call"
+  },
+  {
+   "source": "internal/http",
+   "target": "internal/contract",
+   "kind": "call"
+  },
+  {
+   "source": "internal/http",
+   "target": "internal/metrics",
+   "kind": "call"
+  },
+  {
+   "source": "internal/http",
+   "target": "internal/store",
+   "kind": "call"
+  },
+  {
+   "source": "internal/http",
+   "target": "internal/trajectory",
+   "kind": "call"
+  },
+  {
+   "source": "internal/http",
+   "target": "pkg/access",
+   "kind": "call"
+  },
+  {
+   "source": "internal/http",
+   "target": "pkg/audit",
+   "kind": "call"
+  },
+  {
+   "source": "internal/http",
+   "target": "pkg/auth",
+   "kind": "call"
+  },
+  {
+   "source": "internal/http",
+   "target": "pkg/bm25",
+   "kind": "call"
+  },
+  {
+   "source": "internal/http",
+   "target": "pkg/chatimport",
+   "kind": "call"
+  },
+  {
+   "source": "internal/http",
+   "target": "pkg/chunker",
+   "kind": "call"
+  },
+  {
+   "source": "internal/http",
+   "target": "pkg/community",
+   "kind": "call"
+  },
+  {
+   "source": "internal/http",
+   "target": "pkg/docdetect",
+   "kind": "call"
+  },
+  {
+   "source": "internal/http",
+   "target": "pkg/embcontract",
+   "kind": "call"
+  },
+  {
+   "source": "internal/http",
+   "target": "pkg/embed",
+   "kind": "call"
+  },
+  {
+   "source": "internal/http",
+   "target": "pkg/extract",
+   "kind": "call"
+  },
+  {
+   "source": "internal/http",
+   "target": "pkg/fetch",
+   "kind": "call"
+  },
+  {
+   "source": "internal/http",
+   "target": "pkg/git",
+   "kind": "call"
+  },
+  {
+   "source": "internal/http",
+   "target": "pkg/governor",
+   "kind": "call"
+  },
+  {
+   "source": "internal/http",
+   "target": "pkg/graph",
+   "kind": "call"
+  },
+  {
+   "source": "internal/http",
+   "target": "pkg/graphdb",
+   "kind": "call"
+  },
+  {
+   "source": "internal/http",
+   "target": "pkg/graphrank",
+   "kind": "call"
+  },
+  {
+   "source": "internal/http",
+   "target": "pkg/graphstore",
+   "kind": "call"
+  },
+  {
+   "source": "internal/http",
+   "target": "pkg/ingest",
+   "kind": "call"
+  },
+  {
+   "source": "internal/http",
+   "target": "pkg/llm",
+   "kind": "call"
+  },
+  {
+   "source": "internal/http",
+   "target": "pkg/llmcache",
+   "kind": "call"
+  },
+  {
+   "source": "internal/http",
+   "target": "pkg/mcp",
+   "kind": "call"
+  },
+  {
+   "source": "internal/http",
+   "target": "pkg/memoryindex",
+   "kind": "call"
+  },
+  {
+   "source": "internal/http",
+   "target": "pkg/observe",
+   "kind": "call"
+  },
+  {
+   "source": "internal/http",
+   "target": "pkg/ontology",
+   "kind": "call"
+  },
+  {
+   "source": "internal/http",
+   "target": "pkg/orchestrator",
+   "kind": "call"
+  },
+  {
+   "source": "internal/http",
+   "target": "pkg/rerank",
+   "kind": "call"
+  },
+  {
+   "source": "internal/http",
+   "target": "pkg/router",
+   "kind": "call"
+  },
+  {
+   "source": "internal/http",
+   "target": "pkg/runreg",
+   "kind": "call"
+  },
+  {
+   "source": "internal/http",
+   "target": "pkg/sqlcompat",
+   "kind": "call"
+  },
+  {
+   "source": "internal/http",
+   "target": "pkg/storage",
+   "kind": "call"
+  },
+  {
+   "source": "internal/http",
+   "target": "pkg/structuredextract",
+   "kind": "call"
+  },
+  {
+   "source": "internal/http",
+   "target": "pkg/taxonomy",
+   "kind": "call"
+  },
+  {
+   "source": "internal/http",
+   "target": "pkg/temporal",
+   "kind": "call"
+  },
+  {
+   "source": "internal/http",
+   "target": "pkg/vectorstore",
+   "kind": "call"
+  },
+  {
+   "source": "internal/http",
+   "target": "pkg/vsamemory",
+   "kind": "call"
+  },
+  {
+   "source": "internal/http",
+   "target": "pkg/workspace",
+   "kind": "call"
+  },
+  {
+   "source": "internal/http",
+   "target": "proto/pb",
+   "kind": "call"
+  },
+  {
+   "source": "internal/store",
+   "target": "internal/metrics",
+   "kind": "call"
+  },
+  {
+   "source": "internal/store",
+   "target": "pkg/embcontract",
+   "kind": "call"
+  },
+  {
+   "source": "internal/trajectory",
+   "target": "pkg/audit",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/access",
+   "target": "pkg/workspace",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/backup",
+   "target": "internal/store",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/backup",
+   "target": "pkg/bm25",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/backup",
+   "target": "pkg/workspace",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/chatimport",
+   "target": "pkg/access",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/community",
+   "target": "internal/store",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/community",
+   "target": "pkg/access",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/community",
+   "target": "pkg/embed",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/community",
+   "target": "pkg/llm",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/community",
+   "target": "pkg/llmcache",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/community",
+   "target": "pkg/sqlcompat",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/consolidate",
+   "target": "pkg/memoryhall",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/docdetect",
+   "target": "pkg/extract",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/embed",
+   "target": "internal/metrics",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/embed",
+   "target": "internal/store",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/embed",
+   "target": "pkg/embcontract",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/extract",
+   "target": "pkg/audio",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/graphdb",
+   "target": "internal/metrics",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/graphdb",
+   "target": "pkg/graph",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/graphstore",
+   "target": "internal/metrics",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/graphstore",
+   "target": "pkg/graphdb",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/ingest",
+   "target": "pkg/access",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/ingest",
+   "target": "pkg/storage",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/llm",
+   "target": "internal/metrics",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/llm",
+   "target": "pkg/observe",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/llm/mock",
+   "target": "pkg/llm",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/llmproxy",
+   "target": "pkg/llmcache",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/mcp",
+   "target": "internal/contract",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/mcp",
+   "target": "internal/metrics",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/mcp",
+   "target": "internal/store",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/mcp",
+   "target": "pkg/access",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/mcp",
+   "target": "pkg/bm25",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/mcp",
+   "target": "pkg/chatimport",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/mcp",
+   "target": "pkg/community",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/mcp",
+   "target": "pkg/consolidate",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/mcp",
+   "target": "pkg/embcontract",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/mcp",
+   "target": "pkg/embed",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/mcp",
+   "target": "pkg/extract",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/mcp",
+   "target": "pkg/git",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/mcp",
+   "target": "pkg/graph",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/mcp",
+   "target": "pkg/graphrank",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/mcp",
+   "target": "pkg/ingest",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/mcp",
+   "target": "pkg/llm",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/mcp",
+   "target": "pkg/memoryhall",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/mcp",
+   "target": "pkg/memoryindex",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/mcp",
+   "target": "pkg/orchestrator",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/mcp",
+   "target": "pkg/router",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/mcp",
+   "target": "pkg/runreg",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/mcp",
+   "target": "pkg/sqlcompat",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/mcp",
+   "target": "pkg/storage",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/orchestrator",
+   "target": "internal/store",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/orchestrator",
+   "target": "pkg/bm25",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/orchestrator",
+   "target": "pkg/chunker",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/orchestrator",
+   "target": "pkg/classify",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/orchestrator",
+   "target": "pkg/community",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/orchestrator",
+   "target": "pkg/embed",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/orchestrator",
+   "target": "pkg/graph",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/orchestrator",
+   "target": "pkg/graphdb",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/orchestrator",
+   "target": "pkg/llm",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/orchestrator",
+   "target": "pkg/llmcache",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/orchestrator",
+   "target": "pkg/sqlcompat",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/orchestrator",
+   "target": "pkg/temporal",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/rerank",
+   "target": "internal/metrics",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/router",
+   "target": "pkg/temporal",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/taxonomy",
+   "target": "pkg/access",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/vectorstore",
+   "target": "internal/store",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/vsamemory",
+   "target": "pkg/vsa",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/workspace",
+   "target": "pkg/chunker",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/workspace",
+   "target": "pkg/vectorstore",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/mcp",
+   "target": "internal/http",
+   "kind": "dispatch"
+  },
+  {
+   "source": "cmd/server",
+   "target": "internal/grpc",
+   "kind": "dispatch"
+  },
+  {
+   "source": "internal/store",
+   "target": "ds:wal",
+   "kind": "read"
+  },
+  {
+   "source": "pkg/embed",
+   "target": "ds:embedsrv",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/graphdb",
+   "target": "ds:neo4j",
+   "kind": "read"
+  },
+  {
+   "source": "pkg/llm",
+   "target": "ds:ollama",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/llm/mock",
+   "target": "ds:ollama",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/llmcache",
+   "target": "ds:ollama",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/llmproxy",
+   "target": "ds:ollama",
+   "kind": "call"
+  },
+  {
+   "source": "pkg/storage",
+   "target": "ds:sqlite",
+   "kind": "read"
+  },
+  {
+   "source": "pkg/storage",
+   "target": "ds:postgres",
+   "kind": "read"
+  },
+  {
+   "source": "pkg/vectorstore",
+   "target": "ds:hnsw",
+   "kind": "read"
+  }
+ ],
+ "entryPoints": [
+  "cmd/server",
+  "cmd/cli",
+  "cmd/backup",
+  "cmd/benchmark",
+  "cmd/loadtest",
+  "cmd/reconcile",
+  "cmd/audit",
+  "cmd/contract",
+  "cmd/agent-hosts",
+  "cmd/qwen3rerank",
+  "webui",
+  "tests"
+ ],
+ "deadEnds": [
+  "pkg/llm/mock"
+ ],
+ "observations": [
+  "internal/http is the god-hub: nearly every domain imports or is dispatched through it; its own methods carry the hottest fan-outs (mcpHandler.Q 564).",
+  "cmd/server/main.go hand-wires every subsystem (betweenness 133, highest in app code) \u2014 single point of wiring failure; runreg exists but is not the sole path.",
+  "Recall path depends on the EXTERNAL embed server :9101 \u2014 prod telemetry shows p99/p50 = ~1000x variance when it is slow/down (documented incident class).",
+  "Data writes fan out to BOTH SQLite and PostgreSQL through pkg/sqlcompat \u2014 any storage refactor must keep the dual-DB contract tests green.",
+  "gRPC v1 (internal/grpc/service.go) coexists with v2 (service_v2.go); v1 ListCollections/HasCollection are import-graph dead \u2014 candidate retirement.",
+  "Symbol-level dead candidates inside internal/http/mcp*.go are suppressed from deadEnds: the MCP dispatch table reaches handlers dynamically; verify against ToolDescriptors before deleting (see ASSESSMENT.md #3).",
+  "Datastore read/write edges are domain-role heuristics (WRITE_DOMAINS/READ_DOMAINS), not per-call-site facts; treat as orientation, not proof."
+ ],
+ "flows": [
+  {
+   "name": "Agent saves and later recalls a memory",
+   "persona": "AI assistant using Levara over MCP (Claude, Codex, ZCode)",
+   "description": "An agent stores a durable decision in one session and retrieves it in a later session.",
+   "steps": [
+    {
+     "label": "Agent calls save_memory tool",
+     "nodes": [
+      "pkg/mcp",
+      "internal/http"
+     ]
+    },
+    {
+     "label": "Memory written to hall + WAL",
+     "nodes": [
+      "pkg/memoryhall",
+      "internal/store"
+     ]
+    },
+    {
+     "label": "Text embedded (external server)",
+     "nodes": [
+      "pkg/embed"
+     ]
+    },
+    {
+     "label": "Vector stored in collection",
+     "nodes": [
+      "pkg/vectorstore",
+      "ds:hnsw"
+     ]
+    },
+    {
+     "label": "Later: recall_memory query",
+     "nodes": [
+      "pkg/mcp",
+      "internal/http"
+     ]
+    },
+    {
+     "label": "Hybrid search + rerank",
+     "nodes": [
+      "pkg/bm25",
+      "pkg/rerank",
+      "pkg/vectorstore"
+     ]
+    },
+    {
+     "label": "Ranked memories returned",
+     "nodes": [
+      "pkg/memoryindex"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Engineer ingests a repository and explores the knowledge graph",
+   "persona": "Knowledge worker / onboarding engineer",
+   "description": "Someone points Levara at a git repo, lets it extract entities and edges, then queries who-did-what over time.",
+   "steps": [
+    {
+     "label": "Ingest documents from git",
+     "nodes": [
+      "pkg/ingest",
+      "pkg/git"
+     ]
+    },
+    {
+     "label": "Chunk + classify",
+     "nodes": [
+      "pkg/chunker",
+      "pkg/classify"
+     ]
+    },
+    {
+     "label": "LLM extracts entities/edges",
+     "nodes": [
+      "pkg/llm",
+      "pkg/structuredextract"
+     ]
+    },
+    {
+     "label": "Graph persisted with temporal validity",
+     "nodes": [
+      "pkg/orchestrator",
+      "pkg/temporal",
+      "pkg/graphdb"
+     ]
+    },
+    {
+     "label": "User queries entities / communities",
+     "nodes": [
+      "internal/http",
+      "pkg/community"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Operator backs up and restores production",
+   "persona": "On-call operator (Mac/Pi instances)",
+   "description": "Nightly or pre-migration snapshot of all collections with isolated restore verification.",
+   "steps": [
+    {
+     "label": "Run levara-backup verified",
+     "nodes": [
+      "cmd/backup",
+      "pkg/backup"
+     ]
+    },
+    {
+     "label": "Snapshot WAL + collections",
+     "nodes": [
+      "internal/store",
+      "pkg/storage"
+     ]
+    },
+    {
+     "label": "Restore into isolated copy",
+     "nodes": [
+      "pkg/backup",
+      "pkg/storage"
+     ]
+    },
+    {
+     "label": "Verification passes, archive kept",
+     "nodes": [
+      "cmd/backup"
+     ]
+    }
+   ]
+  }
+ ]
+}
