@@ -146,6 +146,15 @@ flowchart LR
 - [ ] Pilot retrospective written into `analysis/levara/PILOT_NOTES.md`
   (what the recipe missed) — input for brief regeneration.
 
+**Exit criteria — ALL MET 2026-10-16** (commits 8f23fb7, 64f6e6b, 92a29fc
+on `refactor/levara-core-1`): B3 invariant tests green on all three
+surfaces; dead-sweep executed with **zero deletions** (every candidate
+proved live — see BASELINE.md verdict table); pilot slice moved through
+the full recipe (build green first pass, 12/12 new-package tests, full
+http suite 322.4s green, contracts byte-identical, race green);
+`PILOT_NOTES.md` written. Owner decision Q10 (editor write-class canon)
+remains open — non-blocking for Phase 2, blocking for RULE-007 freeze.
+
 **Risks:** (1) dispatch-reachable "dead" methods deleted by mistake →
 mitigation: ToolDescriptors cross-check + contract drift gate + per-symbol
 `get_callers` verification; (2) pilot slice entangled with unrelated
