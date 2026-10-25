@@ -169,35 +169,8 @@ type workspaceSearchRequest struct {
 	BM25Weight   float64  `json:"bm25_weight,omitempty"`
 }
 
-type workspaceSearchFreshness struct {
-	Stale                      bool   `json:"stale"`
-	PotentiallyStale           bool   `json:"potentially_stale"`
-	Reason                     string `json:"reason,omitempty"`
-	ActiveGeneration           string `json:"active_generation,omitempty"`
-	RequestedGeneration        string `json:"requested_generation,omitempty"`
-	ResolvedGeneration         string `json:"resolved_generation,omitempty"`
-	LastIndexedAt              string `json:"last_indexed_at,omitempty"`
-	ActiveChunkCount           int    `json:"active_chunk_count"`
-	ActivePathCount            int    `json:"active_path_count"`
-	WatcherEnabled             bool   `json:"watcher_enabled"`
-	WatcherPending             int    `json:"watcher_pending_branches"`
-	WatcherLastReconcile       string `json:"watcher_last_reconcile_at,omitempty"`
-	WatcherLastError           string `json:"watcher_last_error,omitempty"`
-	WatcherBranchPending       bool   `json:"watcher_branch_pending"`
-	WatcherBranchLastScan      string `json:"watcher_branch_last_scan_at,omitempty"`
-	WatcherBranchLastChange    string `json:"watcher_branch_last_change_at,omitempty"`
-	WatcherBranchLastReconcile string `json:"watcher_branch_last_reconcile_at,omitempty"`
-	WatcherBranchLastError     string `json:"watcher_branch_last_error,omitempty"`
-}
-
-type workspaceSearchTarget struct {
-	Manifest     *workspace.Manifest
-	ManifestPath string
-	Branch       string
-	Generation   string
-	Collection   string
-	Chunks       []workspace.ChunkRecord
-}
+// workspaceSearchFreshness and workspaceSearchTarget moved to
+// internal/api/workspacecitations (aliased in workspace_citations.go).
 
 type workspaceResponse struct {
 	ProjectID        string `json:"project_id"`
