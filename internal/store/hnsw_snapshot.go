@@ -303,8 +303,10 @@ func openV3SnapshotLevara(dim int, storagePath, snapshotPath string, allowTail b
 	if err != nil {
 		return nil, err
 	}
-	file, states, err := validateV3SnapshotEnvelope(snapshotPath, dim, cfg, walBytes, allowTail)
-	if err != nil {
+	// Pre-recovery validation gate: only the error matters here; the
+	// envelope is re-validated after WAL recovery below, which re-derives
+	// file/states (ineffassign finding on the first states).
+	if _, _, err := validateV3SnapshotEnvelope(snapshotPath, dim, cfg, walBytes, allowTail); err != nil {
 		return nil, err
 	}
 	wal, err := OpenWal(storagePath + ".wal")
@@ -319,7 +321,7 @@ func openV3SnapshotLevara(dim int, storagePath, snapshotPath string, allowTail b
 	if err != nil {
 		return failWAL(err)
 	}
-	file, states, err = validateV3SnapshotEnvelope(snapshotPath, dim, cfg, walBytes, allowTail)
+	file, states, err := validateV3SnapshotEnvelope(snapshotPath, dim, cfg, walBytes, allowTail)
 	if err != nil {
 		return failWAL(err)
 	}

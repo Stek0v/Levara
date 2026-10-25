@@ -22,7 +22,7 @@ cd "$REPO_ROOT"
 OUT=${LEVARA_CI_LOCAL_OUT:-/tmp/levara-ci-local}
 TOOLS="$HOME/.cache/levara-ci-tools/bin"
 mkdir -p "$OUT" "$TOOLS"
-GOLANGCI_VERSION=v2.12.2
+GOLANGCI_VERSION=v2.15.0
 GITLEAKS_VERSION=v8.24.3
 PROM_VERSION=2.55.1
 NODE_MAJOR=22
@@ -100,7 +100,12 @@ PGUSER_LOCAL=$(whoami)
 # --- jobs (names mirror branch-protection contexts where 1:1) -----------------
 run_job vet_build bash -c 'go vet ./... && go build ./...'
 
-run_job golangci-lint "$GOLANGCI" run --timeout=5m
+# go1.27.x bumped the stdlib export-data format beyond what
+# golangci-lint (v2.15.0 at the time of writing) can decode. The lint job
+# therefore pins GOTOOLCHAIN=go1.26.6 (the go.mod language directive);
+# all other jobs build and test on the go1.27.3 toolchain line, which
+# carries the GO-2026-6809 stdlib fix.
+run_job golangci-lint env GOTOOLCHAIN=go1.26.6 "$GOLANGCI" run --timeout=5m ./cmd/... ./docs/... ./internal/... ./pipeline/... ./pkg/... ./proto/...
 
 run_job test bash -c "go list ./... | grep -v '/webui/node_modules/' | grep -v '/internal/http\$' | xargs go test -count=1"
 
