@@ -617,11 +617,6 @@ func uniqueStrings(xs []string) []string {
 	return out
 }
 
-func digestBytes(data []byte) string {
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
-}
-
 func (h *mcpHandler) toolWorkspaceContextArtifacts(ctx context.Context, args map[string]any) mcpToolResult {
 	var req workspaceContextArtifactsRequest
 	if err := decodeWorkspaceArgs(args, &req); err != nil {

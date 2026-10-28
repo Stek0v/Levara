@@ -269,27 +269,6 @@ func olderTimeString(current, candidate string) string {
 	return current
 }
 
-func newerTimeString(current, candidate string) string {
-	if candidate == "" {
-		return current
-	}
-	if current == "" {
-		return candidate
-	}
-	ct, cok := parseWorkspaceOpsTime(current)
-	nt, nok := parseWorkspaceOpsTime(candidate)
-	if !cok {
-		return candidate
-	}
-	if !nok {
-		return current
-	}
-	if nt.After(ct) {
-		return candidate
-	}
-	return current
-}
-
 func parseWorkspaceOpsTime(s string) (time.Time, bool) {
 	t, err := time.Parse(time.RFC3339Nano, s)
 	if err == nil {
