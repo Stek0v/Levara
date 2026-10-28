@@ -275,11 +275,38 @@ func NewerTimeString(current, candidate string) string {
 	return current
 }
 
-func parseOpsTime(s string) (time.Time, bool) {
+// OlderTimeString returns the older of two RFC3339 timestamp strings.
+func OlderTimeString(current, candidate string) string {
+	if candidate == "" {
+		return current
+	}
+	if current == "" {
+		return candidate
+	}
+	ct, cok := parseOpsTime(current)
+	nt, nok := parseOpsTime(candidate)
+	if !cok {
+		return candidate
+	}
+	if !nok {
+		return current
+	}
+	if nt.Before(ct) {
+		return candidate
+	}
+	return current
+}
+
+// ParseOpsTime parses RFC3339(Nano) timestamps.
+func ParseOpsTime(s string) (time.Time, bool) {
 	t, err := time.Parse(time.RFC3339Nano, s)
 	if err == nil {
 		return t, true
 	}
 	t, err = time.Parse(time.RFC3339, s)
 	return t, err == nil
+}
+
+func parseOpsTime(s string) (time.Time, bool) {
+	return ParseOpsTime(s)
 }
