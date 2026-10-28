@@ -1,15 +1,17 @@
+// workspace_ops.go — transport adapters. The audit JSONL scanner and the
+// watcher projection live in internal/api/workspaceops (Phase-2 workspace
+// campaign, leaf 4); the jobs aggregation stays here (unexported job
+// type); internal/http keeps the handlers and metrics refresh.
 package http
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
-	"errors"
-	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/stek0v/levara/internal/api/workspaceops"
+	"github.com/stek0v/levara/internal/api/workspacesvc"
 	"github.com/stek0v/levara/internal/metrics"
 )
 
@@ -172,131 +174,30 @@ func workspaceOpsJobs(cfg APIConfig, req workspaceOpsStatusRequest) (workspaceOp
 }
 
 func workspaceOpsAudit(cfg APIConfig, req workspaceOpsStatusRequest) (workspaceOpsAuditStatus, error) {
-	dirs, err := workspaceOpsAuditDirs(cfg, req.ProjectID)
+	dirs, err := workspaceops.AuditDirs(workspaceRoot(cfg), req.ProjectID)
 	if err != nil {
 		return workspaceOpsAuditStatus{}, err
 	}
-	out := workspaceOpsAuditStatus{
-		BySource: map[string]int{},
-		ByResult: map[string]int{},
-	}
-	for _, dir := range dirs {
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				continue
-			}
-			return workspaceOpsAuditStatus{}, err
-		}
-		for _, entry := range entries {
-			if entry.IsDir() || filepath.Ext(entry.Name()) != ".jsonl" {
-				continue
-			}
-			out.Files++
-			if err := workspaceOpsReadAuditSummary(filepath.Join(dir, entry.Name()), req, &out); err != nil {
-				return workspaceOpsAuditStatus{}, err
-			}
-		}
-	}
-	return out, nil
-}
-
-func workspaceOpsAuditDirs(cfg APIConfig, projectID string) ([]string, error) {
-	if projectID != "" {
-		return []string{workspaceAuditDir(cfg, projectID)}, nil
-	}
-	root := filepath.Join(workspaceRoot(cfg), ".kb", "audit")
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return []string{}, nil
-		}
-		return nil, err
-	}
-	var dirs []string
-	for _, entry := range entries {
-		if entry.IsDir() {
-			dirs = append(dirs, filepath.Join(root, entry.Name()))
-		}
-	}
-	return dirs, nil
-}
-
-func workspaceOpsReadAuditSummary(path string, req workspaceOpsStatusRequest, out *workspaceOpsAuditStatus) error {
-	f, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
+	decode := func(line []byte) (projectID, branch, at, source, result string, ok bool) {
 		var event workspaceAuditEvent
-		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
-			continue
+		if err := json.Unmarshal(line, &event); err != nil {
+			return "", "", "", "", "", false
 		}
-		if req.ProjectID != "" && event.ProjectID != safeWorkspaceID(req.ProjectID) {
-			continue
-		}
-		if req.Branch != "" && defaultBranch(event.Branch) != defaultBranch(req.Branch) {
-			continue
-		}
-		out.TotalEvents++
-		out.BySource[event.Source]++
-		out.ByResult[event.Result]++
-		out.LastEventAt = newerTimeString(out.LastEventAt, event.At)
+		return event.ProjectID, event.Branch, event.At, event.Source, event.Result, true
 	}
-	return scanner.Err()
+	audit, err := workspaceops.ScanAuditFiles(dirs, workspaceops.Request{ProjectID: req.ProjectID, Branch: req.Branch}, decode)
+	if err != nil {
+		return workspaceOpsAuditStatus{}, err
+	}
+	return workspaceOpsAuditStatus(audit), nil
 }
 
 func olderTimeString(current, candidate string) string {
-	if candidate == "" {
-		return current
-	}
-	if current == "" {
-		return candidate
-	}
-	ct, cok := parseWorkspaceOpsTime(current)
-	nt, nok := parseWorkspaceOpsTime(candidate)
-	if !cok {
-		return candidate
-	}
-	if !nok {
-		return current
-	}
-	if nt.Before(ct) {
-		return candidate
-	}
-	return current
-}
-
-func newerTimeString(current, candidate string) string {
-	if candidate == "" {
-		return current
-	}
-	if current == "" {
-		return candidate
-	}
-	ct, cok := parseWorkspaceOpsTime(current)
-	nt, nok := parseWorkspaceOpsTime(candidate)
-	if !cok {
-		return candidate
-	}
-	if !nok {
-		return current
-	}
-	if nt.After(ct) {
-		return candidate
-	}
-	return current
+	return workspacesvc.OlderTimeString(current, candidate)
 }
 
 func parseWorkspaceOpsTime(s string) (time.Time, bool) {
-	t, err := time.Parse(time.RFC3339Nano, s)
-	if err == nil {
-		return t, true
-	}
-	t, err = time.Parse(time.RFC3339, s)
-	return t, err == nil
+	return workspacesvc.ParseOpsTime(s)
 }
 
 func (h *mcpHandler) toolWorkspaceOpsStatus(ctx context.Context, args map[string]any) mcpToolResult {
@@ -316,33 +217,28 @@ func (h *mcpHandler) toolWorkspaceOpsStatus(ctx context.Context, args map[string
 }
 
 func workspaceProjectWatchStatus(watch WorkspaceWatchStatus, projectID, branch string) WorkspaceWatchStatus {
-	out := WorkspaceWatchStatus{
+	snap := workspaceops.WatcherSnapshot{
 		Enabled: watch.Enabled, StartedAt: watch.StartedAt, StoppedAt: watch.StoppedAt,
 		IntervalMs: watch.IntervalMs, DebounceMs: watch.DebounceMs, GenerationPrefix: watch.GenerationPrefix,
-		Branches: map[string]WorkspaceBranchWatchStatus{},
+		Branches: map[string]workspaceops.BranchSnapshot{},
 	}
 	for key, status := range watch.Branches {
-		if (projectID != "" && safeWorkspaceID(status.ProjectID) != safeWorkspaceID(projectID)) ||
-			(branch != "" && safeWorkspaceID(defaultBranch(status.Branch)) != safeWorkspaceID(defaultBranch(branch))) {
-			continue
-		}
-		out.Branches[key] = status
-		out.WatchedBranches++
-		if status.Pending {
-			out.PendingBranches++
-		}
-		out.ScanCount += status.ScanCount
-		out.ReconcileCount += status.ReconcileCount
-		out.ErrorCount += status.ErrorCount
-		out.LastScanAt = newerTimeString(out.LastScanAt, status.LastScanAt)
-		out.LastChangeAt = newerTimeString(out.LastChangeAt, status.LastChangeAt)
-		if status.LastReconcileAt != "" && newerTimeString(out.LastReconcileAt, status.LastReconcileAt) == status.LastReconcileAt {
-			out.LastReconcileAt, out.LastGeneration = status.LastReconcileAt, status.LastGeneration
-			out.LastProjectID, out.LastBranch = status.ProjectID, status.Branch
-		}
-		if status.LastError != "" && (out.LastError == "" || newerTimeString(out.LastErrorAt, status.LastErrorAt) == status.LastErrorAt) {
-			out.LastErrorAt, out.LastError = status.LastErrorAt, status.LastError
-		}
+		snap.Branches[key] = workspaceops.BranchSnapshot(status)
 	}
-	return out
+	out := workspaceops.ProjectWatchStatus(snap, projectID, branch, newerTimeString)
+	result := WorkspaceWatchStatus{
+		Enabled: out.Enabled, StartedAt: out.StartedAt, StoppedAt: out.StoppedAt,
+		LastScanAt: out.LastScanAt, LastChangeAt: out.LastChangeAt,
+		LastReconcileAt: out.LastReconcileAt, LastErrorAt: out.LastErrorAt,
+		LastError: out.LastError, LastGeneration: out.LastGeneration,
+		LastProjectID: out.LastProjectID, LastBranch: out.LastBranch,
+		ScanCount: out.ScanCount, ReconcileCount: out.ReconcileCount, ErrorCount: out.ErrorCount,
+		WatchedBranches: out.WatchedBranches, PendingBranches: out.PendingBranches,
+		IntervalMs: out.IntervalMs, DebounceMs: out.DebounceMs, GenerationPrefix: out.GenerationPrefix,
+		Branches: map[string]WorkspaceBranchWatchStatus{},
+	}
+	for key, status := range out.Branches {
+		result.Branches[key] = WorkspaceBranchWatchStatus(status)
+	}
+	return result
 }

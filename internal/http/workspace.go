@@ -2,8 +2,6 @@ package http
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -169,35 +167,8 @@ type workspaceSearchRequest struct {
 	BM25Weight   float64  `json:"bm25_weight,omitempty"`
 }
 
-type workspaceSearchFreshness struct {
-	Stale                      bool   `json:"stale"`
-	PotentiallyStale           bool   `json:"potentially_stale"`
-	Reason                     string `json:"reason,omitempty"`
-	ActiveGeneration           string `json:"active_generation,omitempty"`
-	RequestedGeneration        string `json:"requested_generation,omitempty"`
-	ResolvedGeneration         string `json:"resolved_generation,omitempty"`
-	LastIndexedAt              string `json:"last_indexed_at,omitempty"`
-	ActiveChunkCount           int    `json:"active_chunk_count"`
-	ActivePathCount            int    `json:"active_path_count"`
-	WatcherEnabled             bool   `json:"watcher_enabled"`
-	WatcherPending             int    `json:"watcher_pending_branches"`
-	WatcherLastReconcile       string `json:"watcher_last_reconcile_at,omitempty"`
-	WatcherLastError           string `json:"watcher_last_error,omitempty"`
-	WatcherBranchPending       bool   `json:"watcher_branch_pending"`
-	WatcherBranchLastScan      string `json:"watcher_branch_last_scan_at,omitempty"`
-	WatcherBranchLastChange    string `json:"watcher_branch_last_change_at,omitempty"`
-	WatcherBranchLastReconcile string `json:"watcher_branch_last_reconcile_at,omitempty"`
-	WatcherBranchLastError     string `json:"watcher_branch_last_error,omitempty"`
-}
-
-type workspaceSearchTarget struct {
-	Manifest     *workspace.Manifest
-	ManifestPath string
-	Branch       string
-	Generation   string
-	Collection   string
-	Chunks       []workspace.ChunkRecord
-}
+// workspaceSearchFreshness and workspaceSearchTarget moved to
+// internal/api/workspacecitations (aliased in workspace_citations.go).
 
 type workspaceResponse struct {
 	ProjectID        string `json:"project_id"`
@@ -1845,146 +1816,7 @@ func workspaceLexicalIndex(cfg APIConfig, collection string) *bm25.Index {
 	})
 }
 
-func loadWorkspaceManifest(cfg APIConfig, projectID, branch string) (*workspace.Manifest, string, error) {
-	manifest, _, err := readWorkspaceManifest(cfg, projectID, branch)
-	if err != nil {
-		return nil, "", err
-	}
-	return manifest, workspaceManifestPath(cfg, projectID, defaultBranch(branch)), nil
-}
 
-func readWorkspaceManifest(cfg APIConfig, projectID, branch string) (*workspace.Manifest, bool, error) {
-	if projectID == "" {
-		return nil, false, workspace.ErrMissingProjectID
-	}
-	branch = defaultBranch(branch)
-	paths := []string{
-		workspaceManifestPath(cfg, projectID, branch),
-		workspace.LegacyManifestPath(workspaceRoot(cfg), projectID, branch),
-	}
-	for i, path := range paths {
-		root, name, err := openWorkspaceFileParent(cfg, path, false)
-		if errors.Is(err, os.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			return nil, false, err
-		}
-		manifest, err := workspace.LoadManifestRoot(root, name)
-		root.Close()
-		if errors.Is(err, os.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			return nil, false, err
-		}
-		if manifest.ProjectID != "" &&
-			workspace.SafeID(manifest.ProjectID) == workspace.SafeID(projectID) &&
-			workspace.SafeID(defaultBranch(manifest.Branch)) == workspace.SafeID(branch) {
-			return manifest, true, nil
-		}
-		if i == 0 {
-			return nil, false, errors.New("workspace manifest target mismatch")
-		}
-	}
-	return workspace.NewManifest(projectID, branch), false, nil
-}
-
-func workspaceManifestPath(cfg APIConfig, projectID, branch string) string {
-	return workspace.ManifestPath(workspaceRoot(cfg), projectID, branch)
-}
-
-func workspaceRoot(cfg APIConfig) string {
-	if cfg.WorkspacePath != "" {
-		return cfg.WorkspacePath
-	}
-	return "data/workspace"
-}
-
-func workspaceProjectRoot(cfg APIConfig, projectID, branch string) string {
-	return workspace.ProjectRoot(workspaceRoot(cfg), projectID, branch)
-}
-
-func workspaceFilePath(cfg APIConfig, projectID, branch, path string) (string, string, error) {
-	if projectID == "" {
-		return "", "", workspace.ErrMissingProjectID
-	}
-	if path == "" {
-		return "", "", workspace.ErrMissingPath
-	}
-	if strings.IndexByte(path, 0) >= 0 {
-		return "", "", errors.New("workspace path contains NUL")
-	}
-	if filepath.IsAbs(path) {
-		return "", "", errors.New("workspace path must be relative")
-	}
-	clean := filepath.Clean(filepath.FromSlash(path))
-	if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(os.PathSeparator)) {
-		return "", "", errors.New("workspace path escapes project root")
-	}
-	rel := filepath.ToSlash(clean)
-	return filepath.Join(workspaceProjectRoot(cfg, projectID, branch), clean), rel, nil
-}
-
-func listWorkspaceMarkdownPaths(cfg APIConfig, absolute string) ([]string, error) {
-	root, err := openWorkspaceDirectory(cfg, absolute, false)
-	if errors.Is(err, os.ErrNotExist) {
-		return []string{}, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	defer root.Close()
-	var paths []string
-	err = fs.WalkDir(root.FS(), ".", func(name string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() {
-			return nil
-		}
-		info, err := entry.Info()
-		if err != nil {
-			return err
-		}
-		if !info.Mode().IsRegular() {
-			return errors.New("workspace contains unsafe nonregular file")
-		}
-		if strings.EqualFold(filepath.Ext(name), ".md") {
-			paths = append(paths, filepath.ToSlash(name))
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	sort.Strings(paths)
-	return paths, nil
-}
-
-func workspaceRunDir(cfg APIConfig, projectID, branch, runID string) (string, error) {
-	if runID == "" {
-		return "", errors.New("run_id required")
-	}
-	if filepath.IsAbs(runID) || strings.Contains(runID, "/") || strings.Contains(runID, string(os.PathSeparator)) || strings.Contains(runID, "..") {
-		return "", errors.New("run_id must be a simple identifier")
-	}
-	return filepath.Join(workspaceProjectRoot(cfg, projectID, branch), "runs", safeWorkspaceID(runID)), nil
-}
-
-func workspaceCommitsRoot(cfg APIConfig, projectID, branch string) string {
-	return filepath.Join(workspaceRoot(cfg), ".kb", "commits", safeWorkspaceID(projectID), safeWorkspaceID(branch))
-}
-
-func workspaceCommitDir(cfg APIConfig, projectID, branch, commitID string) (string, error) {
-	if commitID == "" {
-		return "", errors.New("commit_id required")
-	}
-	if filepath.IsAbs(commitID) || strings.Contains(commitID, "/") || strings.Contains(commitID, string(os.PathSeparator)) || strings.Contains(commitID, "..") {
-		return "", errors.New("commit_id must be a simple identifier")
-	}
-	return filepath.Join(workspaceCommitsRoot(cfg, projectID, branch), safeWorkspaceID(commitID)), nil
-}
 
 func runMetadataMarkdown(req workspaceRunStartRequest, runID string) string {
 	meta := map[string]any{
@@ -2365,11 +2197,6 @@ func defaultBranch(branch string) string {
 	return workspace.DefaultBranch(branch)
 }
 
-func digestText(text string) string {
-	sum := sha256.Sum256([]byte(text))
-	return hex.EncodeToString(sum[:])
-}
-
 func safeWorkspaceID(s string) string {
 	return workspace.SafeID(s)
 }
@@ -2686,42 +2513,3 @@ func workspaceMCPError(err error) mcpToolResult {
 	}
 }
 
-func workspaceBranchLockKey(projectID, branch string) string {
-	return safeWorkspaceID(projectID) + "/" + safeWorkspaceID(defaultBranch(branch))
-}
-
-func openWorkspaceDirectory(cfg APIConfig, absolute string, create bool) (*os.Root, error) {
-	relative, err := filepath.Rel(workspaceRoot(cfg), absolute)
-	if err != nil {
-		return nil, err
-	}
-	return workspace.OpenRoot(workspaceRoot(cfg), filepath.ToSlash(relative), create)
-}
-func openWorkspaceFileParent(cfg APIConfig, absolute string, create bool) (*os.Root, string, error) {
-	root, err := openWorkspaceDirectory(cfg, filepath.Dir(absolute), create)
-	return root, filepath.Base(absolute), err
-}
-func readWorkspaceFile(cfg APIConfig, absolute string) ([]byte, error) {
-	root, name, err := openWorkspaceFileParent(cfg, absolute, false)
-	if err != nil {
-		return nil, err
-	}
-	defer root.Close()
-	return workspace.ReadFile(root, name)
-}
-func writeWorkspaceFile(ctx context.Context, cfg APIConfig, absolute string, data []byte) error {
-	root, name, err := openWorkspaceFileParent(cfg, absolute, true)
-	if err != nil {
-		return err
-	}
-	defer root.Close()
-	return workspace.WriteFile(ctx, root, name, data, 0644)
-}
-func saveWorkspaceManifest(ctx context.Context, cfg APIConfig, absolute string, manifest *workspace.Manifest) error {
-	root, name, err := openWorkspaceFileParent(cfg, absolute, true)
-	if err != nil {
-		return err
-	}
-	defer root.Close()
-	return manifest.SaveRoot(ctx, root, name)
-}
