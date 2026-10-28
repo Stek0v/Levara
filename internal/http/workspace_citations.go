@@ -30,15 +30,3 @@ func workspaceCitationsFromChunks(projectID, branch, sourcePath string, chunks [
 func workspaceFileCitation(projectID, branch, sourcePath string) workspaceSourceCitation {
 	return workspacecitations.FileCitation(projectID, branch, sourcePath)
 }
-
-func workspaceSourceURI(projectID, branch, sourcePath string, headingPath []string) string {
-	return workspacecitations.SourceURI(projectID, branch, sourcePath, headingPath)
-}
-
-func workspaceCitationSourceID(projectID, branch, sourcePath, generation, chunkID, vectorID string) string {
-	return workspacecitations.CitationSourceID(projectID, branch, sourcePath, generation, chunkID, vectorID)
-}
-
-func workspaceHeadingAnchor(headingPath []string) string {
-	return workspacecitations.HeadingAnchor(headingPath)
-}

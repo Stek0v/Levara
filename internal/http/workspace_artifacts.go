@@ -23,18 +23,6 @@ import (
 	"github.com/stek0v/levara/internal/api/workspacesvc"
 )
 
-type workspaceContextArtifactKind = workspaceartifacts.Kind
-
-const (
-	workspaceArtifactOpenAPI   = workspaceartifacts.KindOpenAPI
-	workspaceArtifactDDL       = workspaceartifacts.KindDDL
-	workspaceArtifactTerraform = workspaceartifacts.KindTerraform
-	workspaceArtifactADR       = workspaceartifacts.KindADR
-	workspaceArtifactRunbook   = workspaceartifacts.KindRunbook
-	workspaceArtifactMarkdown  = workspaceartifacts.KindMarkdown
-	workspaceArtifactOther     = workspaceartifacts.KindOther
-)
-
 const workspaceArtifactRegistryVersion = workspaceartifacts.RegistryVersion
 
 type workspaceContextArtifactRegistry = workspaceartifacts.Registry
@@ -142,18 +130,6 @@ func readWorkspaceArtifactFile(cfg APIConfig, projectID, branch, path string) ([
 	}
 	defer root.Close()
 	return workspace.ReadFile(root, relativePath)
-}
-
-func workspaceArtifactGlobMatch(pattern, rel string) bool {
-	return workspaceartifacts.GlobMatch(pattern, rel)
-}
-
-func normalizeWorkspaceArtifactKind(kind, artifactPath string) string {
-	return workspaceartifacts.NormalizeKind(kind, artifactPath)
-}
-
-func stableWorkspaceArtifactID(projectID, branch, path string) string {
-	return workspaceartifacts.StableID(projectID, branch, path)
 }
 
 func (h *mcpHandler) toolWorkspaceContextArtifacts(ctx context.Context, args map[string]any) mcpToolResult {
