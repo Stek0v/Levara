@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -12,86 +11,28 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"github.com/stek0v/levara/internal/api/workspaceattempt"
 	"github.com/stek0v/levara/pkg/vectorstore"
 	"github.com/stek0v/levara/pkg/workspace"
 )
 
-// One retained attempt per branch: callers hold the native project lock.
-type workspaceGenerationAttempt struct {
-	ID         string `json:"id"`
-	ProjectID  string `json:"project_id"`
-	Branch     string `json:"branch"`
-	Generation string `json:"generation"`
-	Collection string `json:"collection"`
-}
+// The generation-attempt sidecar protocol lives in
+// internal/api/workspaceattempt; the publication core (indexer, manifest
+// clone/activation, lexical refresh) stays here with the unexported
+// indexing machinery.
+
+type workspaceGenerationAttempt = workspaceattempt.Attempt
 
 func workspaceGenerationAttemptPath(cfg APIConfig, projectID, branch string) string {
-	return workspaceManifestPath(cfg, projectID, branch) + ".attempt.json"
+	return workspaceattempt.Path(workspaceRoot(cfg), projectID, branch)
 }
 
 func removeWorkspaceGenerationAttempt(cfg APIConfig, projectID, branch string) error {
-	root, name, err := openWorkspaceFileParent(cfg, workspaceGenerationAttemptPath(cfg, projectID, branch), false)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	defer root.Close()
-	err = root.Remove(name)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	return err
+	return workspaceattempt.Remove(workspaceRoot(cfg), projectID, branch)
 }
 
 func recoverWorkspaceGenerationAttempt(cfg APIConfig, manifest *workspace.Manifest, store vectorstore.VectorStore) error {
-	data, err := readWorkspaceFile(cfg, workspaceGenerationAttemptPath(cfg, manifest.ProjectID, manifest.Branch))
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	var attempt workspaceGenerationAttempt
-	if err := json.Unmarshal(data, &attempt); err != nil {
-		return err
-	}
-	if _, err := uuid.Parse(attempt.ID); err != nil {
-		return errors.New("invalid workspace attempt identity")
-	}
-	if attempt.ProjectID != manifest.ProjectID || attempt.Branch != manifest.Branch || attempt.Generation == "" || attempt.Collection == "" {
-		return errors.New("workspace attempt target mismatch")
-	}
-	if err := validateWorkspaceCollection(attempt.Collection); err != nil {
-		return err
-	}
-	if store.Has(attempt.Collection) {
-		records, err := store.Scan(attempt.Collection)
-		if err != nil {
-			return err
-		}
-		var ids []string
-		for _, record := range records {
-			var metadata map[string]any
-			if err := json.Unmarshal(record.Metadata, &metadata); err != nil {
-				continue
-			}
-			if metadata["attempt_id"] != attempt.ID || metadata["project_id"] != attempt.ProjectID || metadata["branch"] != attempt.Branch || metadata["generation"] != attempt.Generation {
-				continue
-			}
-			if current, ok := manifest.Chunks[record.ID]; ok && current.Collection == attempt.Collection {
-				continue
-			}
-			ids = append(ids, record.ID)
-		}
-		if len(ids) > 0 {
-			if errs := store.DeleteMany(attempt.Collection, ids); len(errs) > 0 {
-				return fmt.Errorf("workspace attempt cleanup: %v", errs)
-			}
-		}
-	}
-	return removeWorkspaceGenerationAttempt(cfg, manifest.ProjectID, manifest.Branch)
+	return workspaceattempt.Recover(context.Background(), workspaceRoot(cfg), manifest, store)
 }
 
 // Candidate chunks stay ineligible until the one authoritative manifest save.
