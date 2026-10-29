@@ -118,12 +118,8 @@ type workspaceRunGetRequest struct {
 	RunID     string `json:"run_id"`
 }
 
-type workspaceCommitRequest struct {
-	ProjectID string `json:"project_id"`
-	Branch    string `json:"branch"`
-	Message   string `json:"message,omitempty"`
-	Author    string `json:"author,omitempty"`
-}
+// workspaceCommitRequest moved to internal/api/workspacehistory
+// (aliased in workspace_history_files.go).
 
 type workspaceRevertRequest struct {
 	ProjectID string `json:"project_id"`
@@ -230,28 +226,8 @@ type workspaceRunResponse struct {
 	Files     map[string]string `json:"files"`
 }
 
-type workspaceCommitFile struct {
-	Path   string `json:"path"`
-	Digest string `json:"digest"`
-	Size   int64  `json:"size"`
-}
-
-type workspaceCommitRecord struct {
-	ProjectID string                `json:"project_id"`
-	Branch    string                `json:"branch"`
-	CommitID  string                `json:"commit_id"`
-	Message   string                `json:"message,omitempty"`
-	Author    string                `json:"author,omitempty"`
-	CreatedAt string                `json:"created_at"`
-	Path      string                `json:"path,omitempty"`
-	Files     []workspaceCommitFile `json:"files"`
-}
-
-type workspaceLogResponse struct {
-	ProjectID string                  `json:"project_id"`
-	Branch    string                  `json:"branch"`
-	Commits   []workspaceCommitRecord `json:"commits"`
-}
+// workspaceCommitFile/Record, workspaceCommitRequest and workspaceLogResponse
+// moved to internal/api/workspacehistory (aliased in workspace_history_files.go).
 
 type workspaceRevertResponse struct {
 	ProjectID string                      `json:"project_id"`
