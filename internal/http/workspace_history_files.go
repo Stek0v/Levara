@@ -44,10 +44,6 @@ func listWorkspaceCommitRecordsConfined(cfg APIConfig, projectID, branch string)
 	return workspaceLogResponse(out), nil
 }
 
-func validateWorkspaceSnapshotPaths(files []workspaceCommitFile) error {
-	return workspacehistory.ValidateSnapshotPaths(files)
-}
-
 func restoreWorkspaceSnapshot(ctx context.Context, cfg APIConfig, projectID, branch, commitDir string, record workspaceCommitRecord) error {
 	return workspacehistory.RestoreSnapshot(ctx, workspaceRoot(cfg), projectID, branch, commitDir, record)
 }
