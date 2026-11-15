@@ -42,7 +42,20 @@ func ToolDescriptors() []Tool {
 			OutputSchema: objectSchema(map[string]any{
 				"results":     arrayOfObjectsProp(searchResultItemSchema(), "Ranked hits from the selected strategy."),
 				"search_type": stringProp("Strategy actually used (may differ from the request under AUTO routing)."),
-				"total":       integerProp("Total matches before top_k truncation (may be estimated)."),
+				"reranked":    booleanProp("Whether reranking was applied."),
+				"routing": objectSchema(map[string]any{
+					"selected_type": stringProp("The selected search type."),
+					"reason":        stringProp("Why this type was selected."),
+					"confidence":    numberProp("Confidence score of the routing decision."),
+					"source":        stringProp("Source of the routing decision."),
+					"alternatives": map[string]any{
+						"type": []string{"array", "null"},
+						"items": objectSchema(map[string]any{
+							"search_type": stringProp("Alternative search type."),
+							"score":       numberProp("Score of the alternative."),
+						}),
+					},
+				}),
 			}),
 			InputSchema: map[string]any{
 				"type": "object",
