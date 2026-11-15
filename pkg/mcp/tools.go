@@ -42,7 +42,7 @@ func ToolDescriptors() []Tool {
 				"interaction_id": stringProp("Opaque ID for explicit or implicit feedback correlation."),
 				"results":        arrayOfObjectsProp(searchResultItemSchema(), "Ranked hits from the selected strategy."),
 				"search_type":    stringProp("Strategy actually used (may differ from the request under AUTO routing)."),
-				"reranked":       booleanProp("Whether cross-encoder reranking was applied."),
+				"reranked":       booleanProp("Whether reranking was applied."),
 				"routing": objectSchema(map[string]any{
 					"selected_type": stringProp("Search type selected by AUTO routing."),
 					"reason":        stringProp("Router explanation."),
